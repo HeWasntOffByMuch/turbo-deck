@@ -20,10 +20,11 @@ export const PLAYER_ATTACK_RANGE = 50;
 export const ATTACK_ARC_COS_SQ = 0.5;
 export const PLAYER_ATTACK_DAMAGE = 8;
 export const PLAYER_ATTACK_COOLDOWN_TICKS = 24;
-// The player is rooted (movement ignored) for this long when they swing, so
-// attacking is a commitment. Shorter than the cooldown, so you can reposition
-// between swings.
-export const ATTACK_ROOT_TICKS = 12;
+// Anticipation before a pressed attack actually lands. The aim is captured when
+// the swing begins and the strike resolves this many ticks later.
+export const PLAYER_ATTACK_WINDUP_TICKS = 12;
+// Post-strike recovery: the player stays rooted this long after the hit lands.
+export const ATTACK_ROOT_TICKS = 6;
 
 export const ENEMY_MAX_HEALTH = 150;
 export const ENEMY_ATTACK_DAMAGE = 15;

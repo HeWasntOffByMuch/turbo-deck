@@ -22,6 +22,7 @@ import {
   PLAYER_ATTACK_COOLDOWN_TICKS,
   PLAYER_ATTACK_DAMAGE,
   PLAYER_ATTACK_RANGE,
+  PLAYER_ATTACK_WINDUP_TICKS,
   PLAYER_MAX_HEALTH,
   PLAYER_MAX_MANA,
   PLAYER_RADIUS,
@@ -100,6 +101,9 @@ export function initCombat(seed: number): CombatState {
       position: { x: ARENA_WIDTH * 0.35, y: ARENA_HEIGHT * 0.5 },
       attackCooldownUntil: 0,
       moveLockUntil: 0,
+      attackReleaseTick: 0,
+      attackAimX: 1,
+      attackAimY: 0,
       defenseLockUntil: 0,
       strikeCount: 0,
       damageBuffs: [],
@@ -125,9 +129,10 @@ export function step(
   const tick = state.tick + 1;
   const events: SimEvent[] = [];
 
-  // Decide the attack before moving so a swing roots the player this same tick.
-  const willAttack = input.attack && tick >= state.player.attackCooldownUntil;
-  const rooted = willAttack || tick < state.player.moveLockUntil;
+  // Decide attack state before moving so a wind-up roots the player immediately.
+  const swingPending = state.player.attackReleaseTick !== 0;
+  const startAttack = input.attack && !swingPending && tick >= state.player.attackCooldownUntil;
+  const rooted = swingPending || startAttack || tick < state.player.moveLockUntil;
 
   let player: PlayerState = {
     ...state.player,
@@ -140,16 +145,28 @@ export function step(
     enemy = { ...enemy, position: moveEnemyToward(enemy.position, player.position) };
   }
 
-  // Player attack: aimed, connects only within reach and the aim cone.
-  if (willAttack) {
-    const strikeCount = player.strikeCount + 1;
+  // Begin an attack wind-up: capture the aim now; the strike lands later.
+  if (startAttack) {
     player = {
       ...player,
+      attackReleaseTick: tick + PLAYER_ATTACK_WINDUP_TICKS,
+      attackAimX: input.aimX,
+      attackAimY: input.aimY,
+    };
+  }
+
+  // Resolve a pending swing at its release tick, using the aim captured earlier.
+  if (player.attackReleaseTick !== 0 && tick >= player.attackReleaseTick) {
+    const strikeCount = player.strikeCount + 1;
+    const connects = attackConnects(player.position, enemy.position, player.attackAimX, player.attackAimY);
+    player = {
+      ...player,
+      attackReleaseTick: 0,
       attackCooldownUntil: tick + PLAYER_ATTACK_COOLDOWN_TICKS,
       moveLockUntil: tick + ATTACK_ROOT_TICKS,
       strikeCount,
     };
-    if (attackConnects(player.position, enemy.position, input.aimX, input.aimY)) {
+    if (connects) {
       const wasAlive = enemy.health > 0;
       let damage = PLAYER_ATTACK_DAMAGE + activeDamageBuffTotal(player.damageBuffs, tick) + mods.attackDamageBonus;
       if (mods.nthStrikeEveryN > 0 && strikeCount % mods.nthStrikeEveryN === 0) {

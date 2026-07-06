@@ -19,6 +19,11 @@ export interface PlayerState {
   readonly attackCooldownUntil: number;
   /** Movement input is ignored until this tick (attack commitment). */
   readonly moveLockUntil: number;
+  /** Tick a pending swing resolves; 0 when no swing is winding up. */
+  readonly attackReleaseTick: number;
+  /** Aim direction captured when the current swing began. */
+  readonly attackAimX: number;
+  readonly attackAimY: number;
   readonly defenseLockUntil: number;
   /** Count of swings the player has committed; drives every-Nth-strike passives. */
   readonly strikeCount: number;

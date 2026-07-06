@@ -14,11 +14,32 @@ import {
   PERFECT_WINDOW_TICKS,
   PLAYER_ATTACK_DAMAGE,
   PLAYER_ATTACK_RANGE,
+  PLAYER_ATTACK_WINDUP_TICKS,
   PLAYER_MAX_HEALTH,
   PLAYER_RADIUS,
 } from './constants.js';
 import { initCombat, runSim, step } from './combat.js';
 import { IDENTITY_MODIFIERS, NEUTRAL_INPUT, type InputFrame, type Modifiers } from './types.js';
+
+/**
+ * Press attack (waiting for readiness first), advance through the wind-up, and
+ * return the state and events of the tick the strike actually resolves on.
+ */
+function swing(
+  state: ReturnType<typeof initCombat>,
+  aim: { aimX: number; aimY: number },
+  mods: Modifiers = IDENTITY_MODIFIERS,
+): ReturnType<typeof step> {
+  let s = state;
+  while (s.player.attackReleaseTick !== 0 || s.tick < s.player.attackCooldownUntil) s = step(s, NEUTRAL_INPUT, mods).state;
+  let r = step(s, { ...NEUTRAL_INPUT, attack: true, ...aim }, mods);
+  s = r.state;
+  while (s.player.attackReleaseTick !== 0) {
+    r = step(s, NEUTRAL_INPUT, mods);
+    s = r.state;
+  }
+  return r;
+}
 
 const HIT_TICK = ENEMY_IDLE_TICKS + ENEMY_WINDUP_TICKS; // first attack's resolution tick
 
@@ -163,32 +184,36 @@ describe('aimed attack cone', () => {
   }
 
   it('connects when the enemy is in range and inside the aim cone', () => {
-    const s = stateWithEnemyInRange();
-    const { events } = step(s, { ...NEUTRAL_INPUT, attack: true, aimX: 1, aimY: 0 }); // aim right, at the enemy
+    const { events } = swing(stateWithEnemyInRange(), { aimX: 1, aimY: 0 }); // aim right, at the enemy
     expect(events.some((e) => e.kind === 'enemyHit')).toBe(true);
     expect(events.some((e) => e.kind === 'attackMissed')).toBe(false);
   });
 
   it('misses an in-range enemy when aimed away from it', () => {
-    const s = stateWithEnemyInRange();
-    const { events } = step(s, { ...NEUTRAL_INPUT, attack: true, aimX: -1, aimY: 0 }); // aim left, away from the enemy
+    const { events } = swing(stateWithEnemyInRange(), { aimX: -1, aimY: 0 }); // aim left, away from the enemy
     expect(events.some((e) => e.kind === 'attackMissed')).toBe(true);
     expect(events.some((e) => e.kind === 'enemyHit')).toBe(false);
+  });
+
+  it('does not deal damage on the press tick; the strike lands one wind-up later', () => {
+    const press = step(stateWithEnemyInRange(), { ...NEUTRAL_INPUT, attack: true, aimX: 1, aimY: 0 });
+    expect(press.events.some((e) => e.kind === 'enemyHit')).toBe(false);
+    expect(press.state.player.attackReleaseTick).toBe(1 + PLAYER_ATTACK_WINDUP_TICKS);
   });
 });
 
 describe('attack commitment (stop when attacking)', () => {
-  it('roots the player on the swing and through the root window, then resumes', () => {
+  it('roots the player through the wind-up and recovery, then movement resumes', () => {
     let s = initCombat(11);
     const startX = s.player.position.x;
-    // Swing on tick 1 while holding right: the player must not move.
+    // Begin the wind-up on tick 1 while holding right: the player must not move.
     s = step(s, { ...NEUTRAL_INPUT, attack: true, moveX: 1, aimX: 1 }).state;
     expect(s.player.position.x).toBe(startX);
-    // Still planted for the rest of the root window despite holding right.
-    for (let t = 2; t <= ATTACK_ROOT_TICKS; t++) s = step(s, { ...NEUTRAL_INPUT, moveX: 1 }).state;
+    // Frozen for the entire wind-up despite holding right.
+    for (let i = 0; i < PLAYER_ATTACK_WINDUP_TICKS - 1; i++) s = step(s, { ...NEUTRAL_INPUT, moveX: 1 }).state;
     expect(s.player.position.x).toBe(startX);
-    // Once the root expires, movement resumes.
-    s = step(s, { ...NEUTRAL_INPUT, moveX: 1 }).state;
+    // After the strike lands and the recovery expires, movement resumes.
+    for (let i = 0; i < ATTACK_ROOT_TICKS + 3; i++) s = step(s, { ...NEUTRAL_INPUT, moveX: 1 }).state;
     expect(s.player.position.x).toBeGreaterThan(startX);
   });
 });
@@ -199,7 +224,6 @@ describe('passive modifiers', () => {
     const enemyX = base.player.position.x + PLAYER_ATTACK_RANGE + ENEMY_RADIUS - 5;
     return { ...base, enemy: { ...base.enemy, position: { x: enemyX, y: base.player.position.y } } };
   }
-  const AIM_RIGHT = { attack: true, aimX: 1, aimY: 0 } as const;
   const hitDamage = (events: readonly { kind: string }[]): number | undefined => {
     const hit = events.find((e) => e.kind === 'enemyHit');
     return hit && 'damage' in hit ? (hit as { damage: number }).damage : undefined;
@@ -207,21 +231,16 @@ describe('passive modifiers', () => {
 
   it('attackDamage bonus adds flat damage to each strike', () => {
     const mods: Modifiers = { ...IDENTITY_MODIFIERS, attackDamageBonus: 5 };
-    const { events } = step(plant(21), { ...NEUTRAL_INPUT, ...AIM_RIGHT }, mods);
+    const { events } = swing(plant(21), { aimX: 1, aimY: 0 }, mods);
     expect(hitDamage(events)).toBe(PLAYER_ATTACK_DAMAGE + 5);
   });
 
   it('every Nth strike gets the bonus, other strikes do not', () => {
     const mods: Modifiers = { ...IDENTITY_MODIFIERS, nthStrikeEveryN: 2, nthStrikeBonusFraction: 0.5 };
-    let s = plant(22);
-    let r = step(s, { ...NEUTRAL_INPUT, ...AIM_RIGHT }, mods); // strike 1
-    s = r.state;
-    const d1 = hitDamage(r.events);
-    while (s.tick < s.player.attackCooldownUntil) s = step(s, NEUTRAL_INPUT, mods).state;
-    r = step(s, { ...NEUTRAL_INPUT, ...AIM_RIGHT }, mods); // strike 2
-    const d2 = hitDamage(r.events);
-    expect(d1).toBe(PLAYER_ATTACK_DAMAGE);
-    expect(d2).toBe(Math.round(PLAYER_ATTACK_DAMAGE * 1.5));
+    const first = swing(plant(22), { aimX: 1, aimY: 0 }, mods); // strike 1
+    const second = swing(first.state, { aimX: 1, aimY: 0 }, mods); // strike 2
+    expect(hitDamage(first.events)).toBe(PLAYER_ATTACK_DAMAGE);
+    expect(hitDamage(second.events)).toBe(Math.round(PLAYER_ATTACK_DAMAGE * 1.5));
   });
 
   it('healthRegen restores health over time', () => {
