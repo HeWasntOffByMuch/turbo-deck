@@ -10,19 +10,26 @@ import {
   ENEMY_RADIUS,
   ENEMY_RECOVERY_TICKS,
   ENEMY_WINDUP_TICKS,
+  NORMAL_WINDOW_TICKS,
+  PERFECT_WINDOW_TICKS,
   PLAYER_ATTACK_COOLDOWN_TICKS,
+  PLAYER_ATTACK_RANGE,
   PLAYER_RADIUS,
+  TICK_RATE,
 } from '../sim/constants.js';
 import type { Vec2 } from '../sim/types.js';
 
 const ARENA_OFFSET_X = 40;
-const ARENA_OFFSET_Y = 40;
-const ARENA_SCALE = 1; // world units map 1:1 to pixels
-const SCREEN_WIDTH = ARENA_OFFSET_X * 2 + ARENA_WIDTH + 340;
-const SCREEN_HEIGHT = ARENA_OFFSET_Y + ARENA_HEIGHT + 180;
-const HAND_Y = ARENA_OFFSET_Y + ARENA_HEIGHT + 30;
-const MAX_LOG_LINES = 7;
+const ARENA_OFFSET_Y = 56;
+const ARENA_SCALE = 1.2; // zoomed in so the action reads clearly
+const ARENA_PX_W = ARENA_WIDTH * ARENA_SCALE;
+const ARENA_PX_H = ARENA_HEIGHT * ARENA_SCALE;
+const SCREEN_WIDTH = ARENA_OFFSET_X * 2 + ARENA_PX_W + 320;
+const SCREEN_HEIGHT = ARENA_OFFSET_Y + ARENA_PX_H + 190;
+const HAND_Y = ARENA_OFFSET_Y + ARENA_PX_H + 34;
+const MAX_LOG_LINES = 6;
 const TWO_PI = Math.PI * 2;
+const FLASH_FRAMES = 9;
 
 export interface ScreenPoint {
   readonly x: number;
@@ -34,7 +41,7 @@ function eventToLogLine(event: GameEvent): string | undefined {
     case 'perfectDefense':
       return `PERFECT ${event.defenseType.toUpperCase()}! (+bonus card)`;
     case 'normalDefense':
-      return `${event.defenseType} (partial)`;
+      return `${event.defenseType} (partial block)`;
     case 'enemyAttackAvoided':
       return 'dodged the slam by moving!';
     case 'playerHit':
@@ -65,40 +72,63 @@ function textStyle(fontSize: number, fill: string, weight: 'normal' | 'bold' = '
 export class Scene {
   private readonly arena = new Graphics();
   private readonly telegraphGfx = new Graphics();
+  private readonly swingGfx = new Graphics();
   private readonly enemyGfx = new Graphics();
   private readonly playerGfx = new Graphics();
   private readonly cooldownGfx = new Graphics();
+  private readonly playerLabel: Text;
+  private readonly enemyLabel: Text;
+  private readonly banner: Text;
+  private readonly prompt: Text;
   private readonly handSlots: { box: Graphics; text: Text }[] = [];
   private readonly bonusText: Text;
   private readonly synergyText: Text;
   private readonly logText: Text;
   private readonly logLines: string[] = [];
+  private playerFlash = 0;
+  private enemyFlash = 0;
 
   private constructor(readonly app: Application) {
     const stage = app.stage;
-    stage.addChild(this.arena, this.telegraphGfx, this.enemyGfx, this.playerGfx, this.cooldownGfx);
+    stage.addChild(this.arena, this.telegraphGfx, this.swingGfx, this.enemyGfx, this.playerGfx, this.cooldownGfx);
+
+    this.playerLabel = new Text({ text: 'YOU', style: textStyle(11, '#bfe0ff', 'bold') });
+    this.enemyLabel = new Text({ text: 'ENEMY', style: textStyle(11, '#ff9a9a', 'bold') });
+    this.playerLabel.anchor.set(0.5, 1);
+    this.enemyLabel.anchor.set(0.5, 1);
+    stage.addChild(this.playerLabel, this.enemyLabel);
+
+    this.banner = new Text({ text: '', style: textStyle(18, '#ffb347', 'bold') });
+    this.banner.anchor.set(0.5, 0);
+    this.banner.position.set(ARENA_OFFSET_X + ARENA_PX_W / 2, 18);
+    stage.addChild(this.banner);
+
+    this.prompt = new Text({ text: '', style: textStyle(20, '#ffd76a', 'bold') });
+    this.prompt.anchor.set(0.5, 1);
+    stage.addChild(this.prompt);
+
+    const panelX = ARENA_OFFSET_X + ARENA_PX_W + 40;
+    this.bonusText = new Text({ text: '', style: textStyle(14, '#ffd76a', 'bold') });
+    this.bonusText.position.set(panelX, ARENA_OFFSET_Y + 6);
+    stage.addChild(this.bonusText);
+
+    this.synergyText = new Text({ text: '', style: textStyle(15, '#7affc0', 'bold') });
+    this.synergyText.position.set(panelX, ARENA_OFFSET_Y + 44);
+    stage.addChild(this.synergyText);
+
+    this.logText = new Text({ text: '', style: textStyle(13, '#c8c8d8') });
+    this.logText.position.set(panelX, ARENA_OFFSET_Y + 92);
+    stage.addChild(this.logText);
 
     for (let i = 0; i < 3; i++) {
       const box = new Graphics();
       const text = new Text({ text: '', style: textStyle(13, '#e8e8f0') });
-      const x = ARENA_OFFSET_X + i * 230;
+      const x = ARENA_OFFSET_X + i * 236;
       box.position.set(x, HAND_Y);
-      text.position.set(x + 10, HAND_Y + 8);
+      text.position.set(x + 12, HAND_Y + 10);
       stage.addChild(box, text);
       this.handSlots.push({ box, text });
     }
-
-    this.bonusText = new Text({ text: '', style: textStyle(14, '#ffd76a', 'bold') });
-    this.bonusText.position.set(ARENA_OFFSET_X + ARENA_WIDTH + 40, 60);
-    stage.addChild(this.bonusText);
-
-    this.synergyText = new Text({ text: '', style: textStyle(14, '#7affc0', 'bold') });
-    this.synergyText.position.set(ARENA_OFFSET_X + ARENA_WIDTH + 40, 100);
-    stage.addChild(this.synergyText);
-
-    this.logText = new Text({ text: '', style: textStyle(12, '#c8c8d8') });
-    this.logText.position.set(ARENA_OFFSET_X + ARENA_WIDTH + 40, 150);
-    stage.addChild(this.logText);
 
     this.drawArena();
   }
@@ -122,7 +152,7 @@ export class Scene {
   private drawArena(): void {
     this.arena.clear();
     this.arena
-      .rect(ARENA_OFFSET_X, ARENA_OFFSET_Y, ARENA_WIDTH * ARENA_SCALE, ARENA_HEIGHT * ARENA_SCALE)
+      .rect(ARENA_OFFSET_X, ARENA_OFFSET_Y, ARENA_PX_W, ARENA_PX_H)
       .fill({ color: '#16161f' })
       .stroke({ color: '#33334a', width: 2 });
   }
@@ -131,22 +161,29 @@ export class Scene {
     for (const event of events) {
       const line = eventToLogLine(event);
       if (line) this.logLines.push(line);
+      if (event.kind === 'playerHit') this.playerFlash = FLASH_FRAMES;
+      if (event.kind === 'enemyHit') this.enemyFlash = FLASH_FRAMES;
     }
     while (this.logLines.length > MAX_LOG_LINES) this.logLines.shift();
     this.logText.text = this.logLines.join('\n');
 
     this.drawTelegraph(state);
     this.drawEnemy(state);
+    this.drawSwing(state, aim);
     this.drawPlayer(state, aim);
     this.drawCooldowns(state);
+    this.drawBannerAndPrompt(state);
     this.drawHand(state);
 
     const activeSynergies = getActiveSynergies(state.deck.hand, SYNERGY_DEFS, CARD_CATALOG);
     this.synergyText.text = activeSynergies.length > 0 ? `Synergy: ${activeSynergies.map((s) => s.id).join(', ')}!` : '';
 
     this.bonusText.text = state.deck.bonusSlot
-      ? `BONUS: ${CARD_CATALOG.get(state.deck.bonusSlot.defId)?.name ?? state.deck.bonusSlot.defId} (B)`
+      ? `BONUS: ${CARD_CATALOG.get(state.deck.bonusSlot.defId)?.name ?? state.deck.bonusSlot.defId} (press B)`
       : '';
+
+    if (this.playerFlash > 0) this.playerFlash--;
+    if (this.enemyFlash > 0) this.enemyFlash--;
   }
 
   private drawTelegraph(state: GameState): void {
@@ -154,69 +191,118 @@ export class Scene {
     const enemy = state.combat.enemy;
     if (enemy.phase !== 'windup' || !enemy.attackZoneCenter) return;
     const c = this.worldToScreen(enemy.attackZoneCenter);
+    const r = ENEMY_ATTACK_RADIUS * ARENA_SCALE;
     const ticksUntilHit = enemy.phaseEndsAtTick - state.combat.tick;
     const progress = 1 - Math.max(0, ticksUntilHit) / ENEMY_WINDUP_TICKS;
-    // Filled orange zone that intensifies as the slam approaches, plus a bright rim.
-    this.telegraphGfx
-      .circle(c.x, c.y, ENEMY_ATTACK_RADIUS * ARENA_SCALE)
-      .fill({ color: '#ff8c1a', alpha: 0.12 + 0.35 * progress });
-    this.telegraphGfx
-      .circle(c.x, c.y, ENEMY_ATTACK_RADIUS * ARENA_SCALE)
-      .stroke({ color: '#ffb347', width: 2, alpha: 0.6 + 0.4 * progress });
-    // Inner ring that shrinks toward the centre as a "time to impact" cue.
-    this.telegraphGfx
-      .circle(c.x, c.y, ENEMY_ATTACK_RADIUS * ARENA_SCALE * (1 - progress))
-      .stroke({ color: '#ffd76a', width: 2, alpha: 0.8 });
+    this.telegraphGfx.circle(c.x, c.y, r).fill({ color: '#ff8c1a', alpha: 0.14 + 0.4 * progress });
+    this.telegraphGfx.circle(c.x, c.y, r).stroke({ color: '#ffb347', width: 3, alpha: 0.6 + 0.4 * progress });
+    // Inner ring collapses toward the centre as a "time to impact" cue.
+    this.telegraphGfx.circle(c.x, c.y, r * (1 - progress)).stroke({ color: '#ffe08a', width: 2, alpha: 0.85 });
   }
 
   private drawEnemy(state: GameState): void {
     const e = state.combat.enemy;
     const p = this.worldToScreen(e.position);
+    const color = this.enemyFlash > 0 ? '#ffffff' : '#ff5a5a';
     this.enemyGfx.clear();
-    this.enemyGfx.circle(p.x, p.y, ENEMY_RADIUS * ARENA_SCALE).fill({ color: '#ff5a5a' });
-    this.drawBar(this.enemyGfx, p.x - 26, p.y - ENEMY_RADIUS - 14, 52, 6, e.health / e.maxHealth, '#ff5a5a');
+    this.enemyGfx.circle(p.x, p.y, ENEMY_RADIUS * ARENA_SCALE).fill({ color });
+    this.drawBar(this.enemyGfx, p.x - 30, p.y - ENEMY_RADIUS * ARENA_SCALE - 16, 60, 7, e.health / e.maxHealth, '#ff5a5a');
+    this.enemyLabel.position.set(p.x, p.y - ENEMY_RADIUS * ARENA_SCALE - 20);
+  }
+
+  private drawSwing(state: GameState, aim: ScreenPoint): void {
+    this.swingGfx.clear();
+    const pl = state.combat.player;
+    const tick = state.combat.tick;
+    if (tick >= pl.moveLockUntil) return; // only while committed to a swing
+    const p = this.worldToScreen(pl.position);
+    const ang = Math.atan2(aim.y, aim.x);
+    const reach = PLAYER_ATTACK_RANGE * ARENA_SCALE;
+    // Filled 90-degree wedge in the aim direction, fading as the swing settles.
+    this.swingGfx
+      .moveTo(p.x, p.y)
+      .arc(p.x, p.y, reach, ang - Math.PI / 4, ang + Math.PI / 4)
+      .lineTo(p.x, p.y)
+      .fill({ color: '#bfe0ff', alpha: 0.28 });
   }
 
   private drawPlayer(state: GameState, aim: ScreenPoint): void {
     const pl = state.combat.player;
     const p = this.worldToScreen(pl.position);
+    const color = this.playerFlash > 0 ? '#ffffff' : '#4ea1ff';
     this.playerGfx.clear();
-    this.playerGfx.circle(p.x, p.y, PLAYER_RADIUS * ARENA_SCALE).fill({ color: '#4ea1ff' });
+    this.playerGfx.circle(p.x, p.y, PLAYER_RADIUS * ARENA_SCALE).fill({ color });
 
-    // Facing indicator: a short line from the player toward the aim direction.
     const len = Math.hypot(aim.x, aim.y);
     if (len > 0.0001) {
       const ux = aim.x / len;
       const uy = aim.y / len;
+      const r = PLAYER_RADIUS * ARENA_SCALE;
       this.playerGfx
         .moveTo(p.x, p.y)
-        .lineTo(p.x + ux * (PLAYER_RADIUS + 14), p.y + uy * (PLAYER_RADIUS + 14))
-        .stroke({ color: '#bfe0ff', width: 3 });
+        .lineTo(p.x + ux * (r + 16), p.y + uy * (r + 16))
+        .stroke({ color: '#eaf3ff', width: 3 });
     }
 
-    this.drawBar(this.playerGfx, p.x - 26, p.y - PLAYER_RADIUS - 20, 52, 6, pl.health / pl.maxHealth, '#5ad65a');
-    this.drawBar(this.playerGfx, p.x - 26, p.y - PLAYER_RADIUS - 12, 52, 4, pl.mana / pl.maxMana, '#4ea1ff');
+    const r = PLAYER_RADIUS * ARENA_SCALE;
+    this.drawBar(this.playerGfx, p.x - 30, p.y - r - 24, 60, 7, pl.health / pl.maxHealth, '#5ad65a');
+    this.drawBar(this.playerGfx, p.x - 30, p.y - r - 14, 60, 5, pl.mana / pl.maxMana, '#4ea1ff');
+    this.playerLabel.position.set(p.x, p.y - r - 28);
   }
 
   private drawCooldowns(state: GameState): void {
     this.cooldownGfx.clear();
     const tick = state.combat.tick;
 
-    // Player attack cooldown: a ring that fills back up to a full circle as it recovers.
     const pl = state.combat.player;
     const p = this.worldToScreen(pl.position);
     const cdRemaining = Math.max(0, pl.attackCooldownUntil - tick);
     const readiness = 1 - cdRemaining / PLAYER_ATTACK_COOLDOWN_TICKS;
-    this.drawRadial(p.x, p.y, PLAYER_RADIUS + 6, readiness, readiness >= 1 ? '#7affc0' : '#4ea1ff');
+    this.drawRadial(p.x, p.y, PLAYER_RADIUS * ARENA_SCALE + 7, readiness, readiness >= 1 ? '#7affc0' : '#4ea1ff');
 
-    // Enemy attack cadence: a ring tracking progress through its current phase.
     const e = state.combat.enemy;
     const ep = this.worldToScreen(e.position);
     const phaseTotal =
       e.phase === 'idle' ? ENEMY_IDLE_TICKS : e.phase === 'windup' ? ENEMY_WINDUP_TICKS : ENEMY_RECOVERY_TICKS;
     const phaseProgress = 1 - Math.max(0, e.phaseEndsAtTick - tick) / phaseTotal;
     const ringColor = e.phase === 'windup' ? '#ff8c1a' : e.phase === 'recovery' ? '#7a5a5a' : '#c05050';
-    this.drawRadial(ep.x, ep.y, ENEMY_RADIUS + 6, phaseProgress, ringColor);
+    this.drawRadial(ep.x, ep.y, ENEMY_RADIUS * ARENA_SCALE + 7, phaseProgress, ringColor);
+  }
+
+  private drawBannerAndPrompt(state: GameState): void {
+    const e = state.combat.enemy;
+    const tick = state.combat.tick;
+
+    if (e.phase === 'windup') {
+      const remaining = Math.max(0, e.phaseEndsAtTick - tick);
+      this.banner.text = `⚠ SLAM INCOMING  —  ${(remaining / TICK_RATE).toFixed(1)}s`;
+      this.banner.style.fill = '#ff8c1a';
+    } else if (e.phase === 'recovery') {
+      this.banner.text = 'enemy recovering — punish!';
+      this.banner.style.fill = '#7affc0';
+    } else {
+      this.banner.text = 'enemy approaching';
+      this.banner.style.fill = '#9a9ab0';
+    }
+
+    // Parry/dodge timing prompt over the player: appears in the reactable window,
+    // turns bright green in the frame-tight perfect window.
+    const pScreen = this.worldToScreen(state.combat.player.position);
+    this.prompt.position.set(pScreen.x, pScreen.y - PLAYER_RADIUS * ARENA_SCALE - 46);
+    if (e.phase === 'windup') {
+      const remaining = e.phaseEndsAtTick - tick;
+      if (remaining <= PERFECT_WINDOW_TICKS) {
+        this.prompt.text = 'PARRY NOW!';
+        this.prompt.style.fill = '#7affc0';
+      } else if (remaining <= NORMAL_WINDOW_TICKS) {
+        this.prompt.text = 'parry (K) / dodge (L)';
+        this.prompt.style.fill = '#ffd76a';
+      } else {
+        this.prompt.text = '';
+      }
+    } else {
+      this.prompt.text = '';
+    }
   }
 
   /** Draw a radial "loader" arc from the top, clockwise, filling to `progress` (0..1). */
@@ -225,8 +311,7 @@ export class Scene {
     const start = -Math.PI / 2;
     this.cooldownGfx.circle(cx, cy, radius).stroke({ color: '#000000', width: 3, alpha: 0.25 });
     if (clamped <= 0) return;
-    // moveTo the arc's start point first: otherwise arc() draws a connector line
-    // from the pen's origin (0,0) to the start, streaking across the arena.
+    // moveTo the arc's start point first, else arc() streaks a line from the pen origin (0,0).
     this.cooldownGfx
       .moveTo(cx + radius * Math.cos(start), cy + radius * Math.sin(start))
       .arc(cx, cy, radius, start, start + clamped * TWO_PI)
@@ -244,7 +329,7 @@ export class Scene {
       const slot = this.handSlots[i];
       if (!slot) return;
       slot.box.clear();
-      slot.box.roundRect(0, 0, 210, 74, 6).stroke({ color: '#5a5a7a', width: 2 });
+      slot.box.roundRect(0, 0, 214, 76, 6).fill({ color: '#1b1b26' }).stroke({ color: '#5a5a7a', width: 2 });
       if (card) {
         const def = CARD_CATALOG.get(card.defId);
         slot.text.text = def ? `[${i + 1}] ${def.name}\ncost ${def.cost}  ${def.tags.join(',')}` : card.defId;
