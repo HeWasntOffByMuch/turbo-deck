@@ -1,4 +1,4 @@
-import { CARD_CATALOG, SYNERGY_DEFS } from '../cards/catalog.js';
+import { CARD_CATALOG } from '../cards/catalog.js';
 import { initGame, stepGame } from '../game/session.js';
 import { Rng } from '../shared/prng.js';
 import { botInput } from './bot.js';
@@ -45,7 +45,7 @@ export function simulateOneRun(deck: readonly string[], seed: number, maxTicks: 
     }
 
     const input = botInput(state, plannedReactionTick, tick);
-    const result = stepGame(state, input, CARD_CATALOG, SYNERGY_DEFS);
+    const result = stepGame(state, input, CARD_CATALOG);
     state = result.state;
 
     if (result.events.some((event) => event.kind === 'enemyDefeated')) return { outcome: 'win', ticks: tick };

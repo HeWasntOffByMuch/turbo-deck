@@ -3,22 +3,23 @@ import { InputCapture } from './input.js';
 import { GameLoop } from './loop.js';
 import { Scene } from './scene.js';
 
+// A deliberately mixed deck: active attacks/heals plus passives whose modifiers
+// stack in ways the player discovers (e.g. Reckless Hex + Blood Pact = sustain).
 const DECK = [
   'fireball',
   'fireball',
-  'fireball',
-  'emberlash',
-  'emberlash',
-  'emberlash',
   'iceshard',
   'iceshard',
-  'iceshard',
-  'frostbite',
-  'frostbite',
+  'emberlash',
   'guardbreak',
-  'guardbreak',
-  'manasurge',
-  'manasurge',
+  'mend',
+  'warcry',
+  'sharpen',
+  'momentum',
+  'vigor',
+  'focus',
+  'bloodpact',
+  'recklesshex',
 ];
 
 async function main(): Promise<void> {

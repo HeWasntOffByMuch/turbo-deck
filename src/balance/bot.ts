@@ -23,16 +23,18 @@ export function botInput(state: GameState, plannedReactionTick: number | null, t
   let playHandIndex: 0 | 1 | 2 | undefined;
   let playBonusCard = false;
 
+  // The bot only plays ACTIVE cards; it holds passives so their modifiers stay
+  // in effect, which is what lets archetypes express their builds.
   if (state.deck.bonusSlot) {
     const def = CARD_CATALOG.get(state.deck.bonusSlot.defId);
-    if (def && def.cost <= player.mana) playBonusCard = true;
+    if (def && def.kind === 'active' && def.cost <= player.mana) playBonusCard = true;
   }
   if (!playBonusCard) {
     for (let i = 0; i < state.deck.hand.length; i++) {
       const card = state.deck.hand[i];
       if (!card) continue;
       const def = CARD_CATALOG.get(card.defId);
-      if (def && def.cost <= player.mana) {
+      if (def && def.kind === 'active' && def.cost <= player.mana) {
         playHandIndex = i as 0 | 1 | 2;
         break;
       }

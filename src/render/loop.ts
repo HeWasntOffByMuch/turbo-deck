@@ -1,4 +1,4 @@
-import { CARD_CATALOG, SYNERGY_DEFS } from '../cards/catalog.js';
+import { CARD_CATALOG } from '../cards/catalog.js';
 import { stepGame, type GameEvent, type GameInput, type GameState } from '../game/session.js';
 import { TICK_RATE } from '../sim/constants.js';
 
@@ -33,7 +33,7 @@ export class GameLoop {
 
       const events: GameEvent[] = [];
       while (this.accumulatorMs >= TICK_MS) {
-        const result = stepGame(this.state, this.sampleInput(this.state), CARD_CATALOG, SYNERGY_DEFS);
+        const result = stepGame(this.state, this.sampleInput(this.state), CARD_CATALOG);
         this.state = result.state;
         events.push(...result.events);
         this.accumulatorMs -= TICK_MS;

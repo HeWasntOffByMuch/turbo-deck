@@ -1,6 +1,6 @@
 import { Application, Graphics, Text, TextStyle } from 'pixi.js';
-import { CARD_CATALOG, SYNERGY_DEFS } from '../cards/catalog.js';
-import { getActiveSynergies } from '../cards/synergy.js';
+import { CARD_CATALOG } from '../cards/catalog.js';
+import type { CardInstance, PassiveEffect } from '../cards/types.js';
 import type { GameEvent, GameState } from '../game/session.js';
 import {
   ARENA_HEIGHT,
@@ -46,6 +46,10 @@ function eventToLogLine(event: GameEvent): string | undefined {
       return 'dodged the slam by moving!';
     case 'playerHit':
       return `you took ${event.damage} damage`;
+    case 'playerHealed':
+      return `+${event.amount} healed`;
+    case 'passiveRetired':
+      return `retired ${CARD_CATALOG.get(event.defId)?.name ?? event.defId}`;
     case 'enemyHit':
       return `enemy took ${event.damage} damage`;
     case 'attackMissed':
@@ -69,6 +73,35 @@ function textStyle(fontSize: number, fill: string, weight: 'normal' | 'bold' = '
   return new TextStyle({ fontFamily: 'monospace', fontSize, fill, fontWeight: weight });
 }
 
+/** Short human-readable description of a passive's mechanic, for the hand + held list. */
+function passiveDescriptor(p: PassiveEffect): string {
+  switch (p.kind) {
+    case 'attackDamage':
+      return `+${p.amount} strike dmg`;
+    case 'nthStrikeDamage':
+      return `every ${p.everyN}${p.everyN === 2 ? 'nd' : 'th'} strike +${Math.round(p.bonusFraction * 100)}%`;
+    case 'healthRegen':
+      return `+${p.perSecond} HP/s`;
+    case 'manaRegen':
+      return `+${p.perSecond} mana/s`;
+    case 'healOnHurt':
+      return `heal ${p.amount} when hit`;
+    case 'enemyTempo':
+      return `enemy ${p.speedMultiplier < 1 ? 'faster' : 'slower'}, ${Math.round((1 - p.damageMultiplier) * 100)}% weaker`;
+  }
+}
+
+/** Names of the passive cards currently held (hand + bonus slot). */
+function heldPassiveNames(cards: readonly (CardInstance | null)[]): string[] {
+  const names: string[] = [];
+  for (const card of cards) {
+    if (!card) continue;
+    const def = CARD_CATALOG.get(card.defId);
+    if (def && def.kind === 'passive') names.push(def.name);
+  }
+  return names;
+}
+
 export class Scene {
   private readonly arena = new Graphics();
   private readonly telegraphGfx = new Graphics();
@@ -82,11 +115,12 @@ export class Scene {
   private readonly prompt: Text;
   private readonly handSlots: { box: Graphics; text: Text }[] = [];
   private readonly bonusText: Text;
-  private readonly synergyText: Text;
+  private readonly passivesText: Text;
   private readonly logText: Text;
   private readonly logLines: string[] = [];
   private playerFlash = 0;
   private enemyFlash = 0;
+  private healFlash = 0;
 
   private constructor(readonly app: Application) {
     const stage = app.stage;
@@ -112,9 +146,9 @@ export class Scene {
     this.bonusText.position.set(panelX, ARENA_OFFSET_Y + 6);
     stage.addChild(this.bonusText);
 
-    this.synergyText = new Text({ text: '', style: textStyle(15, '#7affc0', 'bold') });
-    this.synergyText.position.set(panelX, ARENA_OFFSET_Y + 44);
-    stage.addChild(this.synergyText);
+    this.passivesText = new Text({ text: '', style: textStyle(14, '#7affc0') });
+    this.passivesText.position.set(panelX, ARENA_OFFSET_Y + 44);
+    stage.addChild(this.passivesText);
 
     this.logText = new Text({ text: '', style: textStyle(13, '#c8c8d8') });
     this.logText.position.set(panelX, ARENA_OFFSET_Y + 92);
@@ -163,6 +197,7 @@ export class Scene {
       if (line) this.logLines.push(line);
       if (event.kind === 'playerHit') this.playerFlash = FLASH_FRAMES;
       if (event.kind === 'enemyHit') this.enemyFlash = FLASH_FRAMES;
+      if (event.kind === 'playerHealed') this.healFlash = FLASH_FRAMES;
     }
     while (this.logLines.length > MAX_LOG_LINES) this.logLines.shift();
     this.logText.text = this.logLines.join('\n');
@@ -175,8 +210,8 @@ export class Scene {
     this.drawBannerAndPrompt(state);
     this.drawHand(state);
 
-    const activeSynergies = getActiveSynergies(state.deck.hand, SYNERGY_DEFS, CARD_CATALOG);
-    this.synergyText.text = activeSynergies.length > 0 ? `Synergy: ${activeSynergies.map((s) => s.id).join(', ')}!` : '';
+    const held = heldPassiveNames([...state.deck.hand, state.deck.bonusSlot]);
+    this.passivesText.text = held.length > 0 ? `Passives active:\n  ${held.join('\n  ')}` : 'Passives active: none';
 
     this.bonusText.text = state.deck.bonusSlot
       ? `BONUS: ${CARD_CATALOG.get(state.deck.bonusSlot.defId)?.name ?? state.deck.bonusSlot.defId} (press B)`
@@ -184,6 +219,7 @@ export class Scene {
 
     if (this.playerFlash > 0) this.playerFlash--;
     if (this.enemyFlash > 0) this.enemyFlash--;
+    if (this.healFlash > 0) this.healFlash--;
   }
 
   private drawTelegraph(state: GameState): void {
@@ -229,7 +265,7 @@ export class Scene {
   private drawPlayer(state: GameState, aim: ScreenPoint): void {
     const pl = state.combat.player;
     const p = this.worldToScreen(pl.position);
-    const color = this.playerFlash > 0 ? '#ffffff' : '#4ea1ff';
+    const color = this.healFlash > 0 ? '#7affc0' : this.playerFlash > 0 ? '#ffffff' : '#4ea1ff';
     this.playerGfx.clear();
     this.playerGfx.circle(p.x, p.y, PLAYER_RADIUS * ARENA_SCALE).fill({ color });
 
@@ -329,10 +365,18 @@ export class Scene {
       const slot = this.handSlots[i];
       if (!slot) return;
       slot.box.clear();
-      slot.box.roundRect(0, 0, 214, 76, 6).fill({ color: '#1b1b26' }).stroke({ color: '#5a5a7a', width: 2 });
-      if (card) {
-        const def = CARD_CATALOG.get(card.defId);
-        slot.text.text = def ? `[${i + 1}] ${def.name}\ncost ${def.cost}  ${def.tags.join(',')}` : card.defId;
+      const def = card ? CARD_CATALOG.get(card.defId) : undefined;
+      // Passive cards get a green border so held modifiers are distinguishable at a glance.
+      const border = def?.kind === 'passive' ? '#7affc0' : '#5a5a7a';
+      slot.box.roundRect(0, 0, 214, 76, 6).fill({ color: '#1b1b26' }).stroke({ color: border, width: 2 });
+      if (card && def) {
+        if (def.kind === 'passive') {
+          slot.text.text = `[${i + 1}] ${def.name}  (PASSIVE)\nwhile held: ${passiveDescriptor(def.passive)}\nplay to retire`;
+        } else {
+          slot.text.text = `[${i + 1}] ${def.name}  (cost ${def.cost})\n${def.tags.join(', ')}\nplay to use`;
+        }
+      } else if (card) {
+        slot.text.text = card.defId;
       } else {
         slot.text.text = `[${i + 1}] (empty)`;
       }

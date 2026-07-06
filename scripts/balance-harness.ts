@@ -2,48 +2,54 @@ import { runArchetype, type Archetype } from '../src/balance/harness.js';
 
 const ARCHETYPES: readonly Archetype[] = [
   {
-    name: 'fire-aggro',
-    deck: [
-      'fireball', 'fireball', 'fireball', 'fireball', 'fireball', 'fireball',
-      'emberlash', 'emberlash', 'emberlash', 'emberlash', 'emberlash', 'emberlash',
-      'guardbreak', 'guardbreak', 'guardbreak',
-    ],
-  },
-  {
-    name: 'ice-control',
-    deck: [
-      'iceshard', 'iceshard', 'iceshard', 'iceshard', 'iceshard', 'iceshard',
-      'frostbite', 'frostbite', 'frostbite', 'frostbite', 'frostbite', 'frostbite',
-      'guardbreak', 'guardbreak', 'guardbreak',
-    ],
-  },
-  {
-    name: 'elemental-overload',
+    // Pure active damage, no passives held.
+    name: 'raw-aggro',
     deck: [
       'fireball', 'fireball', 'fireball', 'fireball', 'fireball',
-      'iceshard', 'iceshard', 'iceshard', 'iceshard', 'iceshard',
+      'iceshard', 'iceshard', 'iceshard', 'iceshard',
       'emberlash', 'emberlash', 'emberlash',
-      'frostbite', 'frostbite',
+      'guardbreak', 'guardbreak', 'guardbreak',
     ],
   },
   {
-    name: 'utility-heavy',
+    // Offensive passives: flat + every-other-strike bonus stacked with attacks.
+    name: 'strike-stacker',
     deck: [
-      'manasurge', 'manasurge', 'manasurge', 'manasurge', 'manasurge', 'manasurge',
-      'guardbreak', 'guardbreak', 'guardbreak', 'guardbreak',
+      'sharpen', 'sharpen', 'sharpen',
+      'momentum', 'momentum', 'momentum',
       'fireball', 'fireball', 'fireball',
-      'iceshard', 'iceshard',
+      'emberlash', 'emberlash', 'emberlash',
+      'guardbreak', 'guardbreak', 'guardbreak',
     ],
   },
   {
+    // The emergent sustain combo: enemy fast-but-weak + heal-on-hurt + regen.
+    name: 'hex-sustain',
+    deck: [
+      'recklesshex', 'recklesshex', 'recklesshex',
+      'bloodpact', 'bloodpact', 'bloodpact',
+      'vigor', 'vigor', 'vigor',
+      'fireball', 'fireball', 'fireball',
+      'emberlash', 'emberlash', 'emberlash',
+    ],
+  },
+  {
+    // Mana engine: focus passives fuel constant active casting.
+    name: 'focus-caster',
+    deck: [
+      'focus', 'focus', 'focus',
+      'fireball', 'fireball', 'fireball', 'fireball', 'fireball',
+      'iceshard', 'iceshard', 'iceshard', 'iceshard',
+      'mend', 'mend', 'warcry',
+    ],
+  },
+  {
+    // A little of everything.
     name: 'balanced',
     deck: [
-      'fireball', 'fireball', 'fireball',
-      'emberlash', 'emberlash', 'emberlash',
-      'iceshard', 'iceshard', 'iceshard',
-      'frostbite', 'frostbite', 'frostbite',
-      'guardbreak', 'guardbreak',
-      'manasurge',
+      'sharpen', 'momentum', 'vigor', 'focus', 'bloodpact', 'recklesshex',
+      'fireball', 'fireball', 'iceshard', 'iceshard',
+      'emberlash', 'guardbreak', 'mend', 'warcry', 'guardbreak',
     ],
   },
 ];
