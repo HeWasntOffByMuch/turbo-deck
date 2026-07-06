@@ -30,6 +30,14 @@ const HAND_Y = ARENA_OFFSET_Y + ARENA_PX_H + 34;
 const MAX_LOG_LINES = 6;
 const TWO_PI = Math.PI * 2;
 const FLASH_FRAMES = 9;
+const POPUP_LIFE_FRAMES = 42;
+const POPUP_RISE_PER_FRAME = -0.9;
+
+interface Popup {
+  readonly text: Text;
+  readonly vx: number;
+  life: number;
+}
 
 export interface ScreenPoint {
   readonly x: number;
@@ -121,6 +129,7 @@ export class Scene {
   private playerFlash = 0;
   private enemyFlash = 0;
   private healFlash = 0;
+  private readonly popups: Popup[] = [];
 
   private constructor(readonly app: Application) {
     const stage = app.stage;
@@ -195,10 +204,23 @@ export class Scene {
     for (const event of events) {
       const line = eventToLogLine(event);
       if (line) this.logLines.push(line);
-      if (event.kind === 'playerHit') this.playerFlash = FLASH_FRAMES;
-      if (event.kind === 'enemyHit') this.enemyFlash = FLASH_FRAMES;
-      if (event.kind === 'playerHealed') this.healFlash = FLASH_FRAMES;
+      if (event.kind === 'playerHit') {
+        this.playerFlash = FLASH_FRAMES;
+        const p = this.worldToScreen(state.combat.player.position);
+        this.spawnPopup(p.x, p.y, `-${event.damage}`, '#ff6b6b', 20);
+      }
+      if (event.kind === 'enemyHit') {
+        this.enemyFlash = FLASH_FRAMES;
+        const e = this.worldToScreen(state.combat.enemy.position);
+        this.spawnPopup(e.x, e.y, `${event.damage}`, '#ffe08a', 22);
+      }
+      if (event.kind === 'playerHealed') {
+        this.healFlash = FLASH_FRAMES;
+        const p = this.worldToScreen(state.combat.player.position);
+        this.spawnPopup(p.x, p.y, `+${event.amount}`, '#7affc0', 20);
+      }
     }
+    this.updatePopups();
     while (this.logLines.length > MAX_LOG_LINES) this.logLines.shift();
     this.logText.text = this.logLines.join('\n');
 
@@ -338,6 +360,31 @@ export class Scene {
       }
     } else {
       this.prompt.text = '';
+    }
+  }
+
+  /** Spawn a floating combat number that drifts up and fades (cosmetic only). */
+  private spawnPopup(x: number, y: number, label: string, color: string, fontSize: number): void {
+    const text = new Text({ text: label, style: textStyle(fontSize, color, 'bold') });
+    text.anchor.set(0.5, 1);
+    text.position.set(x + (Math.random() * 20 - 10), y - 24);
+    this.app.stage.addChild(text);
+    this.popups.push({ text, vx: Math.random() * 0.6 - 0.3, life: POPUP_LIFE_FRAMES });
+  }
+
+  private updatePopups(): void {
+    for (let i = this.popups.length - 1; i >= 0; i--) {
+      const popup = this.popups[i];
+      if (!popup) continue;
+      popup.life -= 1;
+      popup.text.position.x += popup.vx;
+      popup.text.position.y += POPUP_RISE_PER_FRAME;
+      popup.text.alpha = Math.max(0, popup.life / POPUP_LIFE_FRAMES);
+      if (popup.life <= 0) {
+        this.app.stage.removeChild(popup.text);
+        popup.text.destroy();
+        this.popups.splice(i, 1);
+      }
     }
   }
 
