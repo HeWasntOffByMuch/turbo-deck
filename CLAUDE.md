@@ -80,5 +80,7 @@ src/sim/         deterministic fixed-timestep combat sim, no rendering/DOM deps
 src/game/        composition root wiring cards to the sim (stepGame) — the only
                  place that translates a CardEffect into the sim's ExternalEffect
 src/render/      PixiJS renderer + keyboard input capture, no game rules
+src/balance/     Monte Carlo balance harness logic (seeded bot policy + runner),
+                 pure and testable; scripts/balance-harness.ts is its thin CLI
 scripts/         standalone scripts (e.g. the balance harness), run via tsx
 ```
