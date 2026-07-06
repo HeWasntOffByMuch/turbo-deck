@@ -77,6 +77,8 @@ specs/           spec markdown, one file per system, written before its code
 src/shared/      PRNG and other dependency-free helpers shared by sim and cards
 src/cards/       card/deck engine — pure data and pure functions, no sim/render deps
 src/sim/         deterministic fixed-timestep combat sim, no rendering/DOM deps
+src/game/        composition root wiring cards to the sim (stepGame) — the only
+                 place that translates a CardEffect into the sim's ExternalEffect
 src/render/      PixiJS renderer + keyboard input capture, no game rules
 scripts/         standalone scripts (e.g. the balance harness), run via tsx
 ```
