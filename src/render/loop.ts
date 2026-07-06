@@ -18,7 +18,7 @@ export class GameLoop {
 
   constructor(
     initialState: GameState,
-    private readonly sampleInput: () => GameInput,
+    private readonly sampleInput: (state: GameState) => GameInput,
     private readonly onTick: (state: GameState, events: readonly GameEvent[]) => void,
   ) {
     this.state = initialState;
@@ -33,7 +33,7 @@ export class GameLoop {
 
       const events: GameEvent[] = [];
       while (this.accumulatorMs >= TICK_MS) {
-        const result = stepGame(this.state, this.sampleInput(), CARD_CATALOG, SYNERGY_DEFS);
+        const result = stepGame(this.state, this.sampleInput(this.state), CARD_CATALOG, SYNERGY_DEFS);
         this.state = result.state;
         events.push(...result.events);
         this.accumulatorMs -= TICK_MS;

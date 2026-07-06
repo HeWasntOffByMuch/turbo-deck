@@ -30,19 +30,23 @@ async function main(): Promise<void> {
   const controls = document.createElement('div');
   controls.style.cssText = 'color:#9a9ab0;font:12px monospace;margin-top:8px;';
   controls.textContent =
-    'move: ←/→ or A/D  |  attack: space  |  parry: K  |  dodge: L  |  play card: 1/2/3  |  play bonus: B';
+    'move: WASD / arrows  |  aim: mouse  |  attack: click or space  |  parry: K  |  dodge: L  |  card: 1/2/3  |  bonus: B';
   container.appendChild(controls);
 
   const seed = Date.now();
   const initialState = initGame(seed, DECK);
 
   const input = new InputCapture();
-  input.attach(window);
+  input.attach(window, scene.canvas);
 
   const loop = new GameLoop(
     initialState,
-    () => input.sample(),
-    (state, events) => scene.render(state, events),
+    (state) => input.sample(scene.worldToScreen(state.combat.player.position)),
+    (state, events) => {
+      const playerScreen = scene.worldToScreen(state.combat.player.position);
+      const mouse = input.mouseScreen();
+      scene.render(state, events, { x: mouse.x - playerScreen.x, y: mouse.y - playerScreen.y });
+    },
   );
   loop.start();
 }
