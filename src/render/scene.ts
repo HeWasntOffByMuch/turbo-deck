@@ -1,4 +1,4 @@
-import { Application, Graphics, Text, TextStyle } from 'pixi.js';
+import { Application, Graphics, Sprite, Text, TextStyle } from 'pixi.js';
 import { CARD_CATALOG } from '../cards/catalog.js';
 import type { CardInstance, PassiveEffect } from '../cards/types.js';
 import type { GameEvent, GameState } from '../game/session.js';
@@ -14,10 +14,12 @@ import {
   PERFECT_WINDOW_TICKS,
   PLAYER_ATTACK_COOLDOWN_TICKS,
   PLAYER_ATTACK_RANGE,
+  PLAYER_ATTACK_WINDUP_TICKS,
   PLAYER_RADIUS,
   TICK_RATE,
 } from '../sim/constants.js';
 import type { Vec2 } from '../sim/types.js';
+import { buildDudeTextures, SPRITE_NATIVE_HEIGHT, type DudeTextures } from './sprites.js';
 
 const ARENA_OFFSET_X = 40;
 const ARENA_OFFSET_Y = 56;
@@ -32,6 +34,9 @@ const TWO_PI = Math.PI * 2;
 const FLASH_FRAMES = 9;
 const POPUP_LIFE_FRAMES = 42;
 const POPUP_RISE_PER_FRAME = -0.9;
+const SPRITE_SCALE = 2.2;
+const SPRITE_ANCHOR_Y = 0.7; // feet roughly at the actor's position
+const SPRITE_TOP_OFFSET = SPRITE_NATIVE_HEIGHT * SPRITE_SCALE * SPRITE_ANCHOR_Y; // px from position up to sprite top
 
 interface Popup {
   readonly text: Text;
@@ -117,6 +122,10 @@ export class Scene {
   private readonly enemyGfx = new Graphics();
   private readonly playerGfx = new Graphics();
   private readonly cooldownGfx = new Graphics();
+  private readonly playerSprite: Sprite;
+  private readonly enemySprite: Sprite;
+  private readonly playerTex: DudeTextures;
+  private readonly enemyTex: DudeTextures;
   private readonly playerLabel: Text;
   private readonly enemyLabel: Text;
   private readonly banner: Text;
@@ -131,9 +140,15 @@ export class Scene {
   private healFlash = 0;
   private readonly popups: Popup[] = [];
 
-  private constructor(readonly app: Application) {
+  private constructor(readonly app: Application, textures: { player: DudeTextures; enemy: DudeTextures }) {
     const stage = app.stage;
-    stage.addChild(this.arena, this.telegraphGfx, this.swingGfx, this.enemyGfx, this.playerGfx, this.cooldownGfx);
+    this.playerTex = textures.player;
+    this.enemyTex = textures.enemy;
+    this.playerSprite = new Sprite(textures.player.idle);
+    this.enemySprite = new Sprite(textures.enemy.idle);
+    for (const s of [this.playerSprite, this.enemySprite]) s.anchor.set(0.5, SPRITE_ANCHOR_Y);
+    // Order: arena, telegraph zone, actor sprites, swing wedge, bars/rings on top.
+    stage.addChild(this.arena, this.telegraphGfx, this.enemySprite, this.playerSprite, this.swingGfx, this.enemyGfx, this.playerGfx, this.cooldownGfx);
 
     this.playerLabel = new Text({ text: 'YOU', style: textStyle(11, '#bfe0ff', 'bold') });
     this.enemyLabel = new Text({ text: 'ENEMY', style: textStyle(11, '#ff9a9a', 'bold') });
@@ -180,7 +195,7 @@ export class Scene {
     const app = new Application();
     await app.init({ width: SCREEN_WIDTH, height: SCREEN_HEIGHT, background: '#101018', antialias: true });
     container.appendChild(app.canvas);
-    return new Scene(app);
+    return new Scene(app, buildDudeTextures());
   }
 
   get canvas(): HTMLCanvasElement {
@@ -226,7 +241,7 @@ export class Scene {
 
     this.drawTelegraph(state);
     this.drawEnemy(state);
-    this.drawSwing(state, aim);
+    this.drawSwing(state);
     this.drawPlayer(state, aim);
     this.drawCooldowns(state);
     this.drawBannerAndPrompt(state);
@@ -261,51 +276,59 @@ export class Scene {
   private drawEnemy(state: GameState): void {
     const e = state.combat.enemy;
     const p = this.worldToScreen(e.position);
-    const color = this.enemyFlash > 0 ? '#ffffff' : '#ff5a5a';
+
+    this.enemySprite.texture = e.phase === 'windup' ? this.enemyTex.windup : this.enemyTex.idle;
+    const faceRight = state.combat.player.position.x >= e.position.x;
+    const pop = 1 + 0.22 * (this.enemyFlash / FLASH_FRAMES);
+    this.enemySprite.position.set(p.x, p.y);
+    this.enemySprite.scale.set((faceRight ? 1 : -1) * SPRITE_SCALE * pop, SPRITE_SCALE * pop);
+
+    const barTop = p.y - SPRITE_TOP_OFFSET - 12;
     this.enemyGfx.clear();
-    this.enemyGfx.circle(p.x, p.y, ENEMY_RADIUS * ARENA_SCALE).fill({ color });
-    this.drawBar(this.enemyGfx, p.x - 30, p.y - ENEMY_RADIUS * ARENA_SCALE - 16, 60, 7, e.health / e.maxHealth, '#ff5a5a');
-    this.enemyLabel.position.set(p.x, p.y - ENEMY_RADIUS * ARENA_SCALE - 20);
+    this.drawBar(this.enemyGfx, p.x - 30, barTop, 60, 7, e.health / e.maxHealth, '#ff5a5a');
+    this.enemyLabel.position.set(p.x, barTop - 4);
   }
 
-  private drawSwing(state: GameState, aim: ScreenPoint): void {
+  private drawSwing(state: GameState): void {
     this.swingGfx.clear();
     const pl = state.combat.player;
     const tick = state.combat.tick;
-    if (tick >= pl.moveLockUntil) return; // only while committed to a swing
     const p = this.worldToScreen(pl.position);
-    const ang = Math.atan2(aim.y, aim.x);
+    const ang = Math.atan2(pl.attackAimY, pl.attackAimX); // aim captured at wind-up start
     const reach = PLAYER_ATTACK_RANGE * ARENA_SCALE;
-    // Filled 90-degree wedge in the aim direction, fading as the swing settles.
-    this.swingGfx
-      .moveTo(p.x, p.y)
-      .arc(p.x, p.y, reach, ang - Math.PI / 4, ang + Math.PI / 4)
-      .lineTo(p.x, p.y)
-      .fill({ color: '#bfe0ff', alpha: 0.28 });
+    const arc = (a0: number, a1: number): Graphics =>
+      this.swingGfx.moveTo(p.x, p.y).arc(p.x, p.y, reach, a0, a1).lineTo(p.x, p.y);
+
+    if (pl.attackReleaseTick !== 0) {
+      // Winding up: a growing outline wedge telegraphs the incoming strike.
+      const charge = 1 - Math.max(0, pl.attackReleaseTick - tick) / PLAYER_ATTACK_WINDUP_TICKS;
+      const half = (Math.PI / 4) * (0.5 + 0.5 * charge);
+      this.swingGfx.moveTo(p.x, p.y).arc(p.x, p.y, reach * (0.5 + 0.5 * charge), ang - half, ang + half).lineTo(p.x, p.y);
+      this.swingGfx.stroke({ color: '#bfe0ff', width: 2, alpha: 0.4 + 0.4 * charge });
+    } else if (tick < pl.moveLockUntil) {
+      // The strike: a bright filled wedge during the brief recovery.
+      arc(ang - Math.PI / 4, ang + Math.PI / 4).fill({ color: '#eaf3ff', alpha: 0.34 });
+    }
   }
 
   private drawPlayer(state: GameState, aim: ScreenPoint): void {
     const pl = state.combat.player;
+    const tick = state.combat.tick;
     const p = this.worldToScreen(pl.position);
-    const color = this.healFlash > 0 ? '#7affc0' : this.playerFlash > 0 ? '#ffffff' : '#4ea1ff';
+
+    const attacking = pl.attackReleaseTick !== 0 || tick < pl.moveLockUntil;
+    this.playerSprite.texture = attacking ? this.playerTex.windup : this.playerTex.idle;
+    const faceRight = aim.x >= 0;
+    const pop = 1 + 0.22 * (this.playerFlash / FLASH_FRAMES);
+    this.playerSprite.position.set(p.x, p.y);
+    this.playerSprite.scale.set((faceRight ? 1 : -1) * SPRITE_SCALE * pop, SPRITE_SCALE * pop);
+    this.playerSprite.tint = this.healFlash > 0 ? 0x7affc0 : this.playerFlash > 0 ? 0xffb0b0 : 0xffffff;
+
+    const barTop = p.y - SPRITE_TOP_OFFSET - 20;
     this.playerGfx.clear();
-    this.playerGfx.circle(p.x, p.y, PLAYER_RADIUS * ARENA_SCALE).fill({ color });
-
-    const len = Math.hypot(aim.x, aim.y);
-    if (len > 0.0001) {
-      const ux = aim.x / len;
-      const uy = aim.y / len;
-      const r = PLAYER_RADIUS * ARENA_SCALE;
-      this.playerGfx
-        .moveTo(p.x, p.y)
-        .lineTo(p.x + ux * (r + 16), p.y + uy * (r + 16))
-        .stroke({ color: '#eaf3ff', width: 3 });
-    }
-
-    const r = PLAYER_RADIUS * ARENA_SCALE;
-    this.drawBar(this.playerGfx, p.x - 30, p.y - r - 24, 60, 7, pl.health / pl.maxHealth, '#5ad65a');
-    this.drawBar(this.playerGfx, p.x - 30, p.y - r - 14, 60, 5, pl.mana / pl.maxMana, '#4ea1ff');
-    this.playerLabel.position.set(p.x, p.y - r - 28);
+    this.drawBar(this.playerGfx, p.x - 30, barTop, 60, 7, pl.health / pl.maxHealth, '#5ad65a');
+    this.drawBar(this.playerGfx, p.x - 30, barTop + 10, 60, 5, pl.mana / pl.maxMana, '#4ea1ff');
+    this.playerLabel.position.set(p.x, barTop - 4);
   }
 
   private drawCooldowns(state: GameState): void {
