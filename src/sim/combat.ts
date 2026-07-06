@@ -3,6 +3,7 @@ import {
   ARENA_HEIGHT,
   ARENA_WIDTH,
   ATTACK_ARC_COS_SQ,
+  ATTACK_ROOT_TICKS,
   DEFENSE_RECOVERY_TICKS,
   DIAGONAL_SCALE,
   ENEMY_ATTACK_DAMAGE,
@@ -96,6 +97,7 @@ export function initCombat(seed: number): CombatState {
       maxMana: PLAYER_MAX_MANA,
       position: { x: ARENA_WIDTH * 0.35, y: ARENA_HEIGHT * 0.5 },
       attackCooldownUntil: 0,
+      moveLockUntil: 0,
       defenseLockUntil: 0,
       damageBuffs: [],
     },
@@ -116,20 +118,24 @@ export function step(state: CombatState, input: InputFrame): { state: CombatStat
   const tick = state.tick + 1;
   const events: SimEvent[] = [];
 
+  // Decide the attack before moving so a swing roots the player this same tick.
+  const willAttack = input.attack && tick >= state.player.attackCooldownUntil;
+  const rooted = willAttack || tick < state.player.moveLockUntil;
+
   let player: PlayerState = {
     ...state.player,
-    position: movePlayer(state.player.position, input.moveX, input.moveY),
+    position: rooted ? state.player.position : movePlayer(state.player.position, input.moveX, input.moveY),
   };
   let enemy: EnemyState = state.enemy;
 
-  // Enemy homes toward the player, except while committed to a windup.
-  if (enemy.phase !== 'windup') {
+  // Enemy homes toward the player only while idle; it plants for windup and recovery.
+  if (enemy.phase === 'idle') {
     enemy = { ...enemy, position: moveEnemyToward(enemy.position, player.position) };
   }
 
   // Player attack: aimed, connects only within reach and the aim cone.
-  if (input.attack && tick >= player.attackCooldownUntil) {
-    player = { ...player, attackCooldownUntil: tick + PLAYER_ATTACK_COOLDOWN_TICKS };
+  if (willAttack) {
+    player = { ...player, attackCooldownUntil: tick + PLAYER_ATTACK_COOLDOWN_TICKS, moveLockUntil: tick + ATTACK_ROOT_TICKS };
     if (attackConnects(player.position, enemy.position, input.aimX, input.aimY)) {
       const wasAlive = enemy.health > 0;
       const damage = PLAYER_ATTACK_DAMAGE + activeDamageBuffTotal(player.damageBuffs, tick);

@@ -17,6 +17,8 @@ export interface PlayerState {
   readonly maxMana: number;
   readonly position: Vec2;
   readonly attackCooldownUntil: number;
+  /** Movement input is ignored until this tick (attack commitment). */
+  readonly moveLockUntil: number;
   readonly defenseLockUntil: number;
   readonly damageBuffs: readonly DamageBuff[];
 }

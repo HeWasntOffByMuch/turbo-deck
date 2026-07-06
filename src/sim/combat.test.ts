@@ -3,11 +3,15 @@ import fc from 'fast-check';
 import {
   ARENA_HEIGHT,
   ARENA_WIDTH,
+  ATTACK_ROOT_TICKS,
   ENEMY_ATTACK_DAMAGE,
   ENEMY_IDLE_TICKS,
   ENEMY_RADIUS,
+  ENEMY_RECOVERY_TICKS,
   ENEMY_WINDUP_TICKS,
   MANA_REGEN_PER_TICK,
+  NORMAL_WINDOW_TICKS,
+  PERFECT_WINDOW_TICKS,
   PLAYER_ATTACK_RANGE,
   PLAYER_MAX_HEALTH,
   PLAYER_RADIUS,
@@ -60,20 +64,20 @@ describe('perfect/normal/whiffed defense timing', () => {
   });
 
   it('a defend input at the edge of the perfect window still registers perfect', () => {
-    const { state, events } = runSim(1, defendAt(HIT_TICK - 3));
+    const { state, events } = runSim(1, defendAt(HIT_TICK - PERFECT_WINDOW_TICKS));
     expect(state.player.health).toBe(PLAYER_MAX_HEALTH);
     expect(events.some((e) => e.kind === 'perfectDefense')).toBe(true);
   });
 
   it('a defend input just outside the perfect window registers normal (halved damage)', () => {
-    const { state, events } = runSim(1, defendAt(HIT_TICK - 4));
+    const { state, events } = runSim(1, defendAt(HIT_TICK - PERFECT_WINDOW_TICKS - 1));
     expect(state.player.health).toBe(PLAYER_MAX_HEALTH - Math.round(ENEMY_ATTACK_DAMAGE / 2));
     expect(events.some((e) => e.kind === 'normalDefense')).toBe(true);
     expect(events.some((e) => e.kind === 'perfectDefense')).toBe(false);
   });
 
   it('a defend input far outside any window whiffs and takes full damage', () => {
-    const { state, events } = runSim(1, defendAt(HIT_TICK - ENEMY_WINDUP_TICKS + 1));
+    const { state, events } = runSim(1, defendAt(HIT_TICK - NORMAL_WINDOW_TICKS - 5));
     expect(state.player.health).toBe(PLAYER_MAX_HEALTH - ENEMY_ATTACK_DAMAGE);
     expect(events.some((e) => e.kind === 'perfectDefense')).toBe(false);
     expect(events.some((e) => e.kind === 'normalDefense')).toBe(false);
@@ -169,5 +173,50 @@ describe('aimed attack cone', () => {
     const { events } = step(s, { ...NEUTRAL_INPUT, attack: true, aimX: -1, aimY: 0 }); // aim left, away from the enemy
     expect(events.some((e) => e.kind === 'attackMissed')).toBe(true);
     expect(events.some((e) => e.kind === 'enemyHit')).toBe(false);
+  });
+});
+
+describe('attack commitment (stop when attacking)', () => {
+  it('roots the player on the swing and through the root window, then resumes', () => {
+    let s = initCombat(11);
+    const startX = s.player.position.x;
+    // Swing on tick 1 while holding right: the player must not move.
+    s = step(s, { ...NEUTRAL_INPUT, attack: true, moveX: 1, aimX: 1 }).state;
+    expect(s.player.position.x).toBe(startX);
+    // Still planted for the rest of the root window despite holding right.
+    for (let t = 2; t <= ATTACK_ROOT_TICKS; t++) s = step(s, { ...NEUTRAL_INPUT, moveX: 1 }).state;
+    expect(s.player.position.x).toBe(startX);
+    // Once the root expires, movement resumes.
+    s = step(s, { ...NEUTRAL_INPUT, moveX: 1 }).state;
+    expect(s.player.position.x).toBeGreaterThan(startX);
+  });
+});
+
+describe('enemy plants while attacking', () => {
+  it('holds position across every windup and recovery tick, moving only during idle', () => {
+    let s = initCombat(13);
+    let windupPos: string | null = null;
+    let recoveryPos: string | null = null;
+    let idleMoved = false;
+    const cycle = ENEMY_IDLE_TICKS + ENEMY_WINDUP_TICKS + ENEMY_RECOVERY_TICKS;
+    let prevIdleKey: string | null = null;
+    for (let t = 1; t <= cycle; t++) {
+      const before = s.enemy.position;
+      s = step(s, NEUTRAL_INPUT).state;
+      const key = `${s.enemy.position.x},${s.enemy.position.y}`;
+      if (s.enemy.phase === 'windup') {
+        if (windupPos === null) windupPos = key;
+        else expect(key).toBe(windupPos);
+      } else if (s.enemy.phase === 'recovery') {
+        if (recoveryPos === null) recoveryPos = key;
+        else expect(key).toBe(recoveryPos);
+      } else {
+        // idle: it should be closing on the (stationary) player at least once
+        const movedNow = s.enemy.position.x !== before.x || s.enemy.position.y !== before.y;
+        if (movedNow && prevIdleKey !== key) idleMoved = true;
+        prevIdleKey = key;
+      }
+    }
+    expect(idleMoved).toBe(true);
   });
 });
