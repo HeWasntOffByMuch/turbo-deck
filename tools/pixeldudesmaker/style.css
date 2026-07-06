@@ -1,0 +1,155 @@
+body { padding: 10px; background-color: #fff; }
+summary { cursor: default; }
+summary:hover { font-weight: bold; }
+fieldset { border: 1px solid #ccc; }
+* { font-family: monospace; box-sizing: border-box; }
+
+#all {
+  width: 910px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+#c {
+  width: 256px; height: 384px;
+  border: 1px solid #ccc;
+  padding: 4px;
+  image-rendering: optimizeSpeed;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: -o-crisp-edges;
+  image-rendering: pixelated;
+  -ms-interpolation-mode: nearest-neighbor;
+}
+
+.more {
+  padding: 10px;
+  text-align: left;
+
+    display: inline-block;
+    width: 200px;
+    padding: 0;
+    vertical-align: top;
+    margin-top: 20px;
+}
+
+
+.slider,
+.pal {
+  width: 680px;
+  margin: 0 auto;
+  text-align: left;
+}
+
+.slider { padding: 3px 0; }
+
+.slider > input { width: 500px; display: inline-block; }
+
+.lock {
+  min-width: 80px;
+  width: 80px;
+  display: inline-block;
+  vertical-align: top;
+  padding: 5px;
+}
+
+.lock:hover {
+  font-weight: bold;
+}
+
+.lock > input {
+  opacity: 0;
+  position: absolute;
+}
+
+.lock > input + span:after {
+  content: "[ ]";
+}
+.lock > input:checked + span:after {
+  content: "[L]";
+}
+
+.pal {
+  margin-bottom: 5px;
+  white-space: nowrap;
+}
+
+.slider > b,
+.pal > b {
+  display: inline-block;
+  width: 45px;
+}
+
+#palBody > * {
+  vertical-align: top;
+}
+
+.palItems {
+  display: flex;
+  width: 610px;
+}
+.palItem {
+  width: 24px;
+  height: 24px;
+  border: 1px solid black;
+  margin: -1px 0 0 -1px;
+}
+
+.palItem.active {
+  outline: 2px solid #000;
+  position: relative;
+  z-index: 1;
+}
+
+.palItem:hover {
+  position: relative;
+  z-index: 2;
+  outline: 5px solid #000 !important;
+}
+
+.toolbar {
+  margin: 10px 0;
+}
+
+.btn,
+.toolbar > button {
+  background-color: #fff;
+  display: inline-block;
+  padding: 16px 2px;
+  border: 1px solid black;
+  color: black;
+  text-decoration: none;
+  font-size: 1em;
+}
+
+.btn:hover,
+.toolbar > button:hover {
+  outline: 3px solid black;
+}
+
+.btn.sm {
+  padding: 1px 4px;
+}
+
+#say {
+  font-size: 1.5em;
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  background-color: white;
+  border: 1px solid black;
+  box-shadow: 4px 4px 0 rgba(0,0,0,0.5);
+  min-height: 50px;
+  padding: 20px;
+  text-align: start;
+  user-select: none;
+}
+#say:empty {
+  display: none;
+}
+
+fieldset > label { display: block; }
+
+.colorComponent {
+  display: inline-block;
+}

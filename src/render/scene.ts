@@ -19,7 +19,7 @@ import {
   TICK_RATE,
 } from '../sim/constants.js';
 import type { Vec2 } from '../sim/types.js';
-import { buildDudeTextures, SPRITE_NATIVE_HEIGHT, type DudeTextures } from './sprites.js';
+import { buildDudeTextures, SPRITE_NATIVE_HEIGHT, type DudeTextures, type DudeIdentity } from './sprites.js';
 
 const ARENA_OFFSET_X = 40;
 const ARENA_OFFSET_Y = 56;
@@ -140,7 +140,11 @@ export class Scene {
   private healFlash = 0;
   private readonly popups: Popup[] = [];
 
-  private constructor(readonly app: Application, textures: { player: DudeTextures; enemy: DudeTextures }) {
+  private constructor(
+    readonly app: Application,
+    textures: { player: DudeTextures; enemy: DudeTextures },
+    identity: DudeIdentity,
+  ) {
     const stage = app.stage;
     this.playerTex = textures.player;
     this.enemyTex = textures.enemy;
@@ -150,8 +154,8 @@ export class Scene {
     // Order: arena, telegraph zone, actor sprites, swing wedge, bars/rings on top.
     stage.addChild(this.arena, this.telegraphGfx, this.enemySprite, this.playerSprite, this.swingGfx, this.enemyGfx, this.playerGfx, this.cooldownGfx);
 
-    this.playerLabel = new Text({ text: 'YOU', style: textStyle(11, '#bfe0ff', 'bold') });
-    this.enemyLabel = new Text({ text: 'ENEMY', style: textStyle(11, '#ff9a9a', 'bold') });
+    this.playerLabel = new Text({ text: identity.playerName.toUpperCase(), style: textStyle(11, '#bfe0ff', 'bold') });
+    this.enemyLabel = new Text({ text: identity.enemyType.toUpperCase(), style: textStyle(11, '#ff9a9a', 'bold') });
     this.playerLabel.anchor.set(0.5, 1);
     this.enemyLabel.anchor.set(0.5, 1);
     stage.addChild(this.playerLabel, this.enemyLabel);
@@ -191,11 +195,11 @@ export class Scene {
     this.drawArena();
   }
 
-  static async create(container: HTMLElement): Promise<Scene> {
+  static async create(container: HTMLElement, identity: DudeIdentity): Promise<Scene> {
     const app = new Application();
     await app.init({ width: SCREEN_WIDTH, height: SCREEN_HEIGHT, background: '#101018', antialias: true });
     container.appendChild(app.canvas);
-    return new Scene(app, buildDudeTextures());
+    return new Scene(app, buildDudeTextures(identity), identity);
   }
 
   get canvas(): HTMLCanvasElement {

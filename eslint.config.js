@@ -4,7 +4,9 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**'],
+    // tools/ holds vendored third-party code (the pixeldudesmaker generator and
+    // its libs), captured as-is — not ours to lint against the strict config.
+    ignores: ['dist/**', 'node_modules/**', 'tools/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.strict,

@@ -3,6 +3,10 @@ import { InputCapture } from './input.js';
 import { GameLoop } from './loop.js';
 import { Scene } from './scene.js';
 
+// Cosmetic identity: seeds the deterministic dude sprites (one per player name,
+// one per enemy type). Singleplayer for now, so a single fixed pair.
+const IDENTITY = { playerName: 'Rook', enemyType: 'Brawler' };
+
 // A deliberately mixed deck: active attacks/heals plus passives whose modifiers
 // stack in ways the player discovers (e.g. Reckless Hex + Blood Pact = sustain).
 const DECK = [
@@ -26,7 +30,7 @@ async function main(): Promise<void> {
   const container = document.getElementById('app');
   if (!container) throw new Error('missing #app element');
 
-  const scene = await Scene.create(container);
+  const scene = await Scene.create(container, IDENTITY);
 
   const controls = document.createElement('div');
   controls.style.cssText = 'color:#9a9ab0;font:12px monospace;margin-top:8px;';
