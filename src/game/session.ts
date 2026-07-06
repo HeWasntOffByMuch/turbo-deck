@@ -11,8 +11,11 @@ export interface GameState {
 }
 
 export interface GameInput {
-  readonly moveDir: -1 | 0 | 1;
+  readonly moveX: -1 | 0 | 1;
+  readonly moveY: -1 | 0 | 1;
   readonly attack: boolean;
+  readonly aimX: number;
+  readonly aimY: number;
   readonly parry: boolean;
   readonly dodge: boolean;
   readonly playHandIndex?: 0 | 1 | 2;
@@ -87,8 +90,11 @@ export function stepGame(
   }
 
   const combatInput: InputFrame = {
-    moveDir: input.moveDir,
+    moveX: input.moveX,
+    moveY: input.moveY,
     attack: input.attack,
+    aimX: input.aimX,
+    aimY: input.aimY,
     parry: input.parry,
     dodge: input.dodge,
     ...(externalEffect ? { externalEffect } : {}),

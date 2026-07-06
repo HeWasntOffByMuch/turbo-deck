@@ -90,14 +90,17 @@ describe('fuzz smoke test', () => {
     () => {
       const inputArb: fc.Arbitrary<GameInput> = fc.record(
         {
-          moveDir: fc.constantFrom(-1 as const, 0 as const, 1 as const),
+          moveX: fc.constantFrom(-1 as const, 0 as const, 1 as const),
+          moveY: fc.constantFrom(-1 as const, 0 as const, 1 as const),
           attack: fc.boolean(),
+          aimX: fc.constantFrom(-1, 0, 1),
+          aimY: fc.constantFrom(-1, 0, 1),
           parry: fc.boolean(),
           dodge: fc.boolean(),
           playHandIndex: fc.constantFrom(0 as const, 1 as const, 2 as const),
           playBonusCard: fc.boolean(),
         },
-        { requiredKeys: ['moveDir', 'attack', 'parry', 'dodge', 'playBonusCard'] },
+        { requiredKeys: ['moveX', 'moveY', 'attack', 'aimX', 'aimY', 'parry', 'dodge', 'playBonusCard'] },
       );
 
       fc.assert(

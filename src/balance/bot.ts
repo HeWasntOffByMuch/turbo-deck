@@ -1,6 +1,6 @@
 import { CARD_CATALOG } from '../cards/catalog.js';
 import type { GameInput, GameState } from '../game/session.js';
-import { ATTACK_RANGE } from '../sim/constants.js';
+import { ENEMY_RADIUS, PLAYER_ATTACK_RANGE } from '../sim/constants.js';
 
 /**
  * A deterministic, moderately-skilled bot policy: not game logic, just a
@@ -9,9 +9,15 @@ import { ATTACK_RANGE } from '../sim/constants.js';
  */
 export function botInput(state: GameState, plannedReactionTick: number | null, tick: number): GameInput {
   const { player, enemy } = state.combat;
-  const distance = enemy.position - player.position;
-  const inRange = Math.abs(distance) <= ATTACK_RANGE;
-  const moveDir: -1 | 0 | 1 = inRange ? 0 : distance > 0 ? 1 : -1;
+  const dx = enemy.position.x - player.position.x;
+  const dy = enemy.position.y - player.position.y;
+  const distSq = dx * dx + dy * dy;
+  const reach = PLAYER_ATTACK_RANGE + ENEMY_RADIUS;
+  const inRange = distSq <= reach * reach;
+
+  // Close in on the enemy when out of range; always aim at it so attacks connect.
+  const moveX: -1 | 0 | 1 = inRange ? 0 : dx > 0 ? 1 : dx < 0 ? -1 : 0;
+  const moveY: -1 | 0 | 1 = inRange ? 0 : dy > 0 ? 1 : dy < 0 ? -1 : 0;
   const defend = enemy.phase === 'windup' && plannedReactionTick === tick;
 
   let playHandIndex: 0 | 1 | 2 | undefined;
@@ -34,8 +40,11 @@ export function botInput(state: GameState, plannedReactionTick: number | null, t
   }
 
   return {
-    moveDir,
+    moveX,
+    moveY,
     attack: inRange,
+    aimX: dx,
+    aimY: dy,
     parry: defend,
     dodge: false,
     ...(playHandIndex !== undefined ? { playHandIndex } : {}),

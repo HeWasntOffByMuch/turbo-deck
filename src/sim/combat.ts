@@ -1,13 +1,18 @@
 import { Rng } from '../shared/prng.js';
 import {
-  ARENA_MAX,
-  ARENA_MIN,
-  ATTACK_RANGE,
+  ARENA_HEIGHT,
+  ARENA_WIDTH,
+  ATTACK_ARC_COS_SQ,
   DEFENSE_RECOVERY_TICKS,
+  DIAGONAL_SCALE,
   ENEMY_ATTACK_DAMAGE,
+  ENEMY_ATTACK_RADIUS,
   ENEMY_IDLE_TICKS,
   ENEMY_MAX_HEALTH,
+  ENEMY_MOVE_SPEED_PER_TICK,
+  ENEMY_RADIUS,
   ENEMY_RECOVERY_TICKS,
+  ENEMY_STANDOFF,
   ENEMY_WINDUP_TICKS,
   MANA_REGEN_PER_TICK,
   MOVE_SPEED_PER_TICK,
@@ -15,8 +20,10 @@ import {
   PERFECT_WINDOW_TICKS,
   PLAYER_ATTACK_COOLDOWN_TICKS,
   PLAYER_ATTACK_DAMAGE,
+  PLAYER_ATTACK_RANGE,
   PLAYER_MAX_HEALTH,
   PLAYER_MAX_MANA,
+  PLAYER_RADIUS,
 } from './constants.js';
 import type {
   CombatState,
@@ -27,18 +34,59 @@ import type {
   InputFrame,
   PlayerState,
   SimEvent,
+  Vec2,
 } from './types.js';
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+function distanceSq(a: Vec2, b: Vec2): number {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return dx * dx + dy * dy;
+}
+
 function activeDamageBuffTotal(buffs: readonly DamageBuff[], tick: number): number {
   return buffs.reduce((sum, buff) => (buff.expiresAtTick > tick ? sum + buff.amount : sum), 0);
 }
 
+/** Move the player by an 8-directional input, normalizing diagonals, clamped to the arena. */
+function movePlayer(position: Vec2, moveX: number, moveY: number): Vec2 {
+  const scale = moveX !== 0 && moveY !== 0 ? DIAGONAL_SCALE : 1;
+  const x = clamp(position.x + moveX * MOVE_SPEED_PER_TICK * scale, PLAYER_RADIUS, ARENA_WIDTH - PLAYER_RADIUS);
+  const y = clamp(position.y + moveY * MOVE_SPEED_PER_TICK * scale, PLAYER_RADIUS, ARENA_HEIGHT - PLAYER_RADIUS);
+  return { x, y };
+}
+
+/** Enemy homes toward the player, stopping at the standoff distance, clamped to the arena. */
+function moveEnemyToward(position: Vec2, target: Vec2): Vec2 {
+  const dx = target.x - position.x;
+  const dy = target.y - position.y;
+  const distSq = dx * dx + dy * dy;
+  const standoffSq = ENEMY_STANDOFF * ENEMY_STANDOFF;
+  if (distSq <= standoffSq) return position;
+  const dist = Math.sqrt(distSq);
+  const step = Math.min(ENEMY_MOVE_SPEED_PER_TICK, dist - ENEMY_STANDOFF);
+  const x = clamp(position.x + (dx / dist) * step, ENEMY_RADIUS, ARENA_WIDTH - ENEMY_RADIUS);
+  const y = clamp(position.y + (dy / dist) * step, ENEMY_RADIUS, ARENA_HEIGHT - ENEMY_RADIUS);
+  return { x, y };
+}
+
+/** True if the enemy is within reach and inside the aim cone (pure dot-product, no trig). */
+function attackConnects(player: Vec2, enemy: Vec2, aimX: number, aimY: number): boolean {
+  const dx = enemy.x - player.x;
+  const dy = enemy.y - player.y;
+  const lenSqD = dx * dx + dy * dy;
+  const reach = PLAYER_ATTACK_RANGE + ENEMY_RADIUS;
+  if (lenSqD > reach * reach) return false;
+  const dot = dx * aimX + dy * aimY;
+  if (dot <= 0) return false;
+  const lenSqAim = aimX * aimX + aimY * aimY;
+  return dot * dot >= ATTACK_ARC_COS_SQ * lenSqD * lenSqAim;
+}
+
 export function initCombat(seed: number): CombatState {
-  const span = ARENA_MAX - ARENA_MIN;
   return {
     tick: 0,
     player: {
@@ -46,7 +94,7 @@ export function initCombat(seed: number): CombatState {
       maxHealth: PLAYER_MAX_HEALTH,
       mana: PLAYER_MAX_MANA,
       maxMana: PLAYER_MAX_MANA,
-      position: ARENA_MIN + span * 0.3,
+      position: { x: ARENA_WIDTH * 0.35, y: ARENA_HEIGHT * 0.5 },
       attackCooldownUntil: 0,
       defenseLockUntil: 0,
       damageBuffs: [],
@@ -54,10 +102,11 @@ export function initCombat(seed: number): CombatState {
     enemy: {
       health: ENEMY_MAX_HEALTH,
       maxHealth: ENEMY_MAX_HEALTH,
-      position: ARENA_MIN + span * 0.7,
+      position: { x: ARENA_WIDTH * 0.7, y: ARENA_HEIGHT * 0.5 },
       phase: 'idle',
       phaseEndsAtTick: ENEMY_IDLE_TICKS,
       incomingAttackOutcome: 'none',
+      attackZoneCenter: null,
     },
     rng: Rng.fromSeed(seed),
   };
@@ -69,15 +118,19 @@ export function step(state: CombatState, input: InputFrame): { state: CombatStat
 
   let player: PlayerState = {
     ...state.player,
-    position: clamp(state.player.position + input.moveDir * MOVE_SPEED_PER_TICK, ARENA_MIN, ARENA_MAX),
+    position: movePlayer(state.player.position, input.moveX, input.moveY),
   };
   let enemy: EnemyState = state.enemy;
 
-  // Player attack.
+  // Enemy homes toward the player, except while committed to a windup.
+  if (enemy.phase !== 'windup') {
+    enemy = { ...enemy, position: moveEnemyToward(enemy.position, player.position) };
+  }
+
+  // Player attack: aimed, connects only within reach and the aim cone.
   if (input.attack && tick >= player.attackCooldownUntil) {
     player = { ...player, attackCooldownUntil: tick + PLAYER_ATTACK_COOLDOWN_TICKS };
-    const distance = Math.abs(player.position - enemy.position);
-    if (distance <= ATTACK_RANGE) {
+    if (attackConnects(player.position, enemy.position, input.aimX, input.aimY)) {
       const wasAlive = enemy.health > 0;
       const damage = PLAYER_ATTACK_DAMAGE + activeDamageBuffTotal(player.damageBuffs, tick);
       enemy = { ...enemy, health: Math.max(0, enemy.health - damage) };
@@ -108,18 +161,37 @@ export function step(state: CombatState, input: InputFrame): { state: CombatStat
   // Enemy state machine.
   if (tick >= enemy.phaseEndsAtTick) {
     if (enemy.phase === 'idle') {
-      enemy = { ...enemy, phase: 'windup', phaseEndsAtTick: tick + ENEMY_WINDUP_TICKS, incomingAttackOutcome: 'none' };
+      // Snapshot the danger zone at the player's current position and telegraph it.
+      enemy = {
+        ...enemy,
+        phase: 'windup',
+        phaseEndsAtTick: tick + ENEMY_WINDUP_TICKS,
+        incomingAttackOutcome: 'none',
+        attackZoneCenter: player.position,
+      };
     } else if (enemy.phase === 'windup') {
       const outcome = enemy.incomingAttackOutcome;
-      const damage = outcome === 'perfect' ? 0 : outcome === 'normal' ? Math.round(ENEMY_ATTACK_DAMAGE / 2) : ENEMY_ATTACK_DAMAGE;
+      const zone = enemy.attackZoneCenter;
+      const inZone = zone !== null && distanceSq(player.position, zone) <= ENEMY_ATTACK_RADIUS * ENEMY_ATTACK_RADIUS;
+      const baseDamage = inZone ? ENEMY_ATTACK_DAMAGE : 0;
+      const damage = outcome === 'perfect' ? 0 : outcome === 'normal' ? Math.round(baseDamage / 2) : baseDamage;
       if (damage > 0) {
         const wasAlive = player.health > 0;
         const health = Math.max(0, player.health - damage);
         player = { ...player, health };
         events.push({ kind: 'playerHit', damage, tick });
         if (wasAlive && health <= 0) events.push({ kind: 'playerDefeated', tick });
+      } else if (!inZone && outcome !== 'perfect' && outcome !== 'normal') {
+        // The player stepped out of the telegraphed area entirely.
+        events.push({ kind: 'enemyAttackAvoided', tick });
       }
-      enemy = { ...enemy, phase: 'recovery', phaseEndsAtTick: tick + ENEMY_RECOVERY_TICKS, incomingAttackOutcome: 'none' };
+      enemy = {
+        ...enemy,
+        phase: 'recovery',
+        phaseEndsAtTick: tick + ENEMY_RECOVERY_TICKS,
+        incomingAttackOutcome: 'none',
+        attackZoneCenter: null,
+      };
     } else {
       enemy = { ...enemy, phase: 'idle', phaseEndsAtTick: tick + ENEMY_IDLE_TICKS };
     }

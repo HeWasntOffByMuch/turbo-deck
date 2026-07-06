@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import {
-  ARENA_MAX,
-  ARENA_MIN,
+  ARENA_HEIGHT,
+  ARENA_WIDTH,
   ENEMY_ATTACK_DAMAGE,
   ENEMY_IDLE_TICKS,
+  ENEMY_RADIUS,
   ENEMY_WINDUP_TICKS,
   MANA_REGEN_PER_TICK,
+  PLAYER_ATTACK_RANGE,
   PLAYER_MAX_HEALTH,
+  PLAYER_RADIUS,
 } from './constants.js';
 import { initCombat, runSim, step } from './combat.js';
 import { NEUTRAL_INPUT, type InputFrame } from './types.js';
@@ -28,8 +31,11 @@ function defendAt(tick: number, type: 'parry' | 'dodge' = 'parry'): InputFrame[]
 describe('combat sim determinism', () => {
   it('reproduces identical state and events for the same seed and input sequence', () => {
     const inputArb: fc.Arbitrary<InputFrame> = fc.record({
-      moveDir: fc.constantFrom(-1, 0, 1),
+      moveX: fc.constantFrom(-1, 0, 1),
+      moveY: fc.constantFrom(-1, 0, 1),
       attack: fc.boolean(),
+      aimX: fc.constantFrom(-1, 0, 1),
+      aimY: fc.constantFrom(-1, 0, 1),
       parry: fc.boolean(),
       dodge: fc.boolean(),
     });
@@ -111,13 +117,57 @@ describe('mana gating for external effects', () => {
 });
 
 describe('movement bounds', () => {
-  it('clamps player position to the arena regardless of how long a direction is held', () => {
-    const inputs = neutralSteps(1000).map((f) => ({ ...f, moveDir: -1 as const }));
-    const { state } = runSim(3, inputs);
-    expect(state.player.position).toBe(ARENA_MIN);
+  it('clamps player position to the arena rectangle regardless of how long a direction is held', () => {
+    const topLeft = neutralSteps(1000).map((f) => ({ ...f, moveX: -1 as const, moveY: -1 as const }));
+    const { state } = runSim(3, topLeft);
+    expect(state.player.position.x).toBe(PLAYER_RADIUS);
+    expect(state.player.position.y).toBe(PLAYER_RADIUS);
 
-    const inputsRight = neutralSteps(1000).map((f) => ({ ...f, moveDir: 1 as const }));
-    const { state: stateRight } = runSim(3, inputsRight);
-    expect(stateRight.player.position).toBe(ARENA_MAX);
+    const bottomRight = neutralSteps(1000).map((f) => ({ ...f, moveX: 1 as const, moveY: 1 as const }));
+    const { state: br } = runSim(3, bottomRight);
+    expect(br.player.position.x).toBe(ARENA_WIDTH - PLAYER_RADIUS);
+    expect(br.player.position.y).toBe(ARENA_HEIGHT - PLAYER_RADIUS);
+  });
+});
+
+describe('positional telegraph', () => {
+  it('moving fully out of the danger zone during windup avoids the hit', () => {
+    // Sprint sideways (with open floor ahead) the whole run; the zone is snapshotted
+    // at the player's position when windup begins, so by resolution the player is clear.
+    const inputs = neutralSteps(HIT_TICK).map((f) => ({ ...f, moveX: 1 as const }));
+    const { state, events } = runSim(7, inputs);
+    expect(state.player.health).toBe(PLAYER_MAX_HEALTH);
+    expect(events.some((e) => e.kind === 'playerHit')).toBe(false);
+    expect(events.some((e) => e.kind === 'enemyAttackAvoided')).toBe(true);
+  });
+
+  it('standing still inside the zone with no defense takes the full hit', () => {
+    const { state, events } = runSim(7, neutralSteps(HIT_TICK));
+    expect(state.player.health).toBe(PLAYER_MAX_HEALTH - ENEMY_ATTACK_DAMAGE);
+    expect(events.some((e) => e.kind === 'playerHit')).toBe(true);
+    expect(events.some((e) => e.kind === 'enemyAttackAvoided')).toBe(false);
+  });
+});
+
+describe('aimed attack cone', () => {
+  // Craft a state with the enemy planted just within reach, directly to the player's right.
+  function stateWithEnemyInRange(): ReturnType<typeof step>['state'] {
+    const base = initCombat(9);
+    const enemyX = base.player.position.x + PLAYER_ATTACK_RANGE + ENEMY_RADIUS - 5;
+    return { ...base, enemy: { ...base.enemy, position: { x: enemyX, y: base.player.position.y } } };
+  }
+
+  it('connects when the enemy is in range and inside the aim cone', () => {
+    const s = stateWithEnemyInRange();
+    const { events } = step(s, { ...NEUTRAL_INPUT, attack: true, aimX: 1, aimY: 0 }); // aim right, at the enemy
+    expect(events.some((e) => e.kind === 'enemyHit')).toBe(true);
+    expect(events.some((e) => e.kind === 'attackMissed')).toBe(false);
+  });
+
+  it('misses an in-range enemy when aimed away from it', () => {
+    const s = stateWithEnemyInRange();
+    const { events } = step(s, { ...NEUTRAL_INPUT, attack: true, aimX: -1, aimY: 0 }); // aim left, away from the enemy
+    expect(events.some((e) => e.kind === 'attackMissed')).toBe(true);
+    expect(events.some((e) => e.kind === 'enemyHit')).toBe(false);
   });
 });
