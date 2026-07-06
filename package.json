@@ -14,7 +14,8 @@
     "lint": "eslint .",
     "build": "vite build",
     "dev": "vite",
-    "balance": "tsx scripts/balance-harness.ts"
+    "balance": "tsx scripts/balance-harness.ts",
+    "bake:sprites": "tsx scripts/bake-dude-atlas.ts"
   },
   "dependencies": {
     "pixi.js": "^8.6.6",
