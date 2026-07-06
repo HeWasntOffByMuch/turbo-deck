@@ -83,39 +83,45 @@ describe('stepGame', () => {
 });
 
 describe('fuzz smoke test', () => {
-  it('never crashes or leaves an illegal state across thousands of ticks of seeded-random-but-valid input', () => {
-    const inputArb: fc.Arbitrary<GameInput> = fc.record(
-      {
-        moveDir: fc.constantFrom(-1 as const, 0 as const, 1 as const),
-        attack: fc.boolean(),
-        parry: fc.boolean(),
-        dodge: fc.boolean(),
-        playHandIndex: fc.constantFrom(0 as const, 1 as const, 2 as const),
-        playBonusCard: fc.boolean(),
-      },
-      { requiredKeys: ['moveDir', 'attack', 'parry', 'dodge', 'playBonusCard'] },
-    );
+  // Runs 20 * 2000 = 40,000 sim ticks; comfortably under a second locally but
+  // slow enough on a loaded CI runner to flake against Vitest's 5s default.
+  it(
+    'never crashes or leaves an illegal state across thousands of ticks of seeded-random-but-valid input',
+    () => {
+      const inputArb: fc.Arbitrary<GameInput> = fc.record(
+        {
+          moveDir: fc.constantFrom(-1 as const, 0 as const, 1 as const),
+          attack: fc.boolean(),
+          parry: fc.boolean(),
+          dodge: fc.boolean(),
+          playHandIndex: fc.constantFrom(0 as const, 1 as const, 2 as const),
+          playBonusCard: fc.boolean(),
+        },
+        { requiredKeys: ['moveDir', 'attack', 'parry', 'dodge', 'playBonusCard'] },
+      );
 
-    fc.assert(
-      fc.property(fc.integer({ min: 0, max: 2 ** 31 - 1 }), fc.array(inputArb, { minLength: 2000, maxLength: 2000 }), (seed, inputs) => {
-        let state = initGame(seed, DEF_IDS);
-        const total = countTotalCards(state);
+      fc.assert(
+        fc.property(fc.integer({ min: 0, max: 2 ** 31 - 1 }), fc.array(inputArb, { minLength: 2000, maxLength: 2000 }), (seed, inputs) => {
+          let state = initGame(seed, DEF_IDS);
+          const total = countTotalCards(state);
 
-        for (const input of inputs) {
-          const result = stepGame(state, input, CARD_CATALOG, SYNERGY_DEFS);
-          state = result.state;
+          for (const input of inputs) {
+            const result = stepGame(state, input, CARD_CATALOG, SYNERGY_DEFS);
+            state = result.state;
 
-          expect(state.deck.hand.length).toBe(HAND_SIZE);
-          expect(countTotalCards(state)).toBe(total);
-          expect(state.combat.player.health).toBeGreaterThanOrEqual(0);
-          expect(state.combat.player.health).toBeLessThanOrEqual(PLAYER_MAX_HEALTH);
-          expect(state.combat.player.mana).toBeGreaterThanOrEqual(0);
-          expect(state.combat.player.mana).toBeLessThanOrEqual(PLAYER_MAX_MANA + 1e-9);
-          expect(state.combat.enemy.health).toBeGreaterThanOrEqual(0);
-          expect(state.combat.enemy.health).toBeLessThanOrEqual(ENEMY_MAX_HEALTH);
-        }
-      }),
-      { numRuns: 20 },
-    );
-  });
+            expect(state.deck.hand.length).toBe(HAND_SIZE);
+            expect(countTotalCards(state)).toBe(total);
+            expect(state.combat.player.health).toBeGreaterThanOrEqual(0);
+            expect(state.combat.player.health).toBeLessThanOrEqual(PLAYER_MAX_HEALTH);
+            expect(state.combat.player.mana).toBeGreaterThanOrEqual(0);
+            expect(state.combat.player.mana).toBeLessThanOrEqual(PLAYER_MAX_MANA + 1e-9);
+            expect(state.combat.enemy.health).toBeGreaterThanOrEqual(0);
+            expect(state.combat.enemy.health).toBeLessThanOrEqual(ENEMY_MAX_HEALTH);
+          }
+        }),
+        { numRuns: 20 },
+      );
+    },
+    30_000,
+  );
 });
