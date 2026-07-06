@@ -26,16 +26,18 @@ import {
   PLAYER_MAX_MANA,
   PLAYER_RADIUS,
 } from './constants.js';
-import type {
-  CombatState,
-  DamageBuff,
-  DefenseOutcome,
-  DefenseType,
-  EnemyState,
-  InputFrame,
-  PlayerState,
-  SimEvent,
-  Vec2,
+import {
+  IDENTITY_MODIFIERS,
+  type CombatState,
+  type DamageBuff,
+  type DefenseOutcome,
+  type DefenseType,
+  type EnemyState,
+  type InputFrame,
+  type Modifiers,
+  type PlayerState,
+  type SimEvent,
+  type Vec2,
 } from './types.js';
 
 function clamp(value: number, min: number, max: number): number {
@@ -99,6 +101,7 @@ export function initCombat(seed: number): CombatState {
       attackCooldownUntil: 0,
       moveLockUntil: 0,
       defenseLockUntil: 0,
+      strikeCount: 0,
       damageBuffs: [],
     },
     enemy: {
@@ -114,7 +117,11 @@ export function initCombat(seed: number): CombatState {
   };
 }
 
-export function step(state: CombatState, input: InputFrame): { state: CombatState; events: SimEvent[] } {
+export function step(
+  state: CombatState,
+  input: InputFrame,
+  mods: Modifiers = IDENTITY_MODIFIERS,
+): { state: CombatState; events: SimEvent[] } {
   const tick = state.tick + 1;
   const events: SimEvent[] = [];
 
@@ -135,10 +142,19 @@ export function step(state: CombatState, input: InputFrame): { state: CombatStat
 
   // Player attack: aimed, connects only within reach and the aim cone.
   if (willAttack) {
-    player = { ...player, attackCooldownUntil: tick + PLAYER_ATTACK_COOLDOWN_TICKS, moveLockUntil: tick + ATTACK_ROOT_TICKS };
+    const strikeCount = player.strikeCount + 1;
+    player = {
+      ...player,
+      attackCooldownUntil: tick + PLAYER_ATTACK_COOLDOWN_TICKS,
+      moveLockUntil: tick + ATTACK_ROOT_TICKS,
+      strikeCount,
+    };
     if (attackConnects(player.position, enemy.position, input.aimX, input.aimY)) {
       const wasAlive = enemy.health > 0;
-      const damage = PLAYER_ATTACK_DAMAGE + activeDamageBuffTotal(player.damageBuffs, tick);
+      let damage = PLAYER_ATTACK_DAMAGE + activeDamageBuffTotal(player.damageBuffs, tick) + mods.attackDamageBonus;
+      if (mods.nthStrikeEveryN > 0 && strikeCount % mods.nthStrikeEveryN === 0) {
+        damage = Math.round(damage * (1 + mods.nthStrikeBonusFraction));
+      }
       enemy = { ...enemy, health: Math.max(0, enemy.health - damage) };
       events.push({ kind: 'enemyHit', damage, tick });
       if (wasAlive && enemy.health <= 0) events.push({ kind: 'enemyDefeated', tick });
@@ -164,14 +180,15 @@ export function step(state: CombatState, input: InputFrame): { state: CombatStat
     else if (outcome === 'normal') events.push({ kind: 'normalDefense', defenseType, tick });
   }
 
-  // Enemy state machine.
+  // Enemy state machine. Passive modifiers scale its cadence and hit damage.
+  const scaleDuration = (base: number): number => Math.max(1, Math.round(base * mods.enemySpeedMultiplier));
   if (tick >= enemy.phaseEndsAtTick) {
     if (enemy.phase === 'idle') {
       // Snapshot the danger zone at the player's current position and telegraph it.
       enemy = {
         ...enemy,
         phase: 'windup',
-        phaseEndsAtTick: tick + ENEMY_WINDUP_TICKS,
+        phaseEndsAtTick: tick + scaleDuration(ENEMY_WINDUP_TICKS),
         incomingAttackOutcome: 'none',
         attackZoneCenter: player.position,
       };
@@ -179,14 +196,22 @@ export function step(state: CombatState, input: InputFrame): { state: CombatStat
       const outcome = enemy.incomingAttackOutcome;
       const zone = enemy.attackZoneCenter;
       const inZone = zone !== null && distanceSq(player.position, zone) <= ENEMY_ATTACK_RADIUS * ENEMY_ATTACK_RADIUS;
-      const baseDamage = inZone ? ENEMY_ATTACK_DAMAGE : 0;
+      const fullDamage = Math.round(ENEMY_ATTACK_DAMAGE * mods.enemyDamageMultiplier);
+      const baseDamage = inZone ? fullDamage : 0;
       const damage = outcome === 'perfect' ? 0 : outcome === 'normal' ? Math.round(baseDamage / 2) : baseDamage;
       if (damage > 0) {
         const wasAlive = player.health > 0;
         const health = Math.max(0, player.health - damage);
         player = { ...player, health };
         events.push({ kind: 'playerHit', damage, tick });
-        if (wasAlive && health <= 0) events.push({ kind: 'playerDefeated', tick });
+        if (wasAlive && health <= 0) {
+          events.push({ kind: 'playerDefeated', tick });
+        } else if (mods.healOnHurt > 0) {
+          // Heal-on-hurt passive: recover after surviving a hit.
+          const healed = Math.min(player.maxHealth, player.health + mods.healOnHurt);
+          player = { ...player, health: healed };
+          events.push({ kind: 'playerHealed', amount: healed - health, tick });
+        }
       } else if (!inZone && outcome !== 'perfect' && outcome !== 'normal') {
         // The player stepped out of the telegraphed area entirely.
         events.push({ kind: 'enemyAttackAvoided', tick });
@@ -194,12 +219,12 @@ export function step(state: CombatState, input: InputFrame): { state: CombatStat
       enemy = {
         ...enemy,
         phase: 'recovery',
-        phaseEndsAtTick: tick + ENEMY_RECOVERY_TICKS,
+        phaseEndsAtTick: tick + scaleDuration(ENEMY_RECOVERY_TICKS),
         incomingAttackOutcome: 'none',
         attackZoneCenter: null,
       };
     } else {
-      enemy = { ...enemy, phase: 'idle', phaseEndsAtTick: tick + ENEMY_IDLE_TICKS };
+      enemy = { ...enemy, phase: 'idle', phaseEndsAtTick: tick + scaleDuration(ENEMY_IDLE_TICKS) };
     }
   }
 
@@ -227,10 +252,11 @@ export function step(state: CombatState, input: InputFrame): { state: CombatStat
     }
   }
 
-  // Mana regen + buff expiry.
+  // Mana + health regen (passives add to the base) and buff expiry.
   player = {
     ...player,
-    mana: Math.min(player.maxMana, player.mana + MANA_REGEN_PER_TICK),
+    health: Math.min(player.maxHealth, player.health + mods.healthRegenPerTick),
+    mana: Math.min(player.maxMana, player.mana + MANA_REGEN_PER_TICK + mods.manaRegenPerTick),
     damageBuffs: player.damageBuffs.filter((buff) => buff.expiresAtTick > tick),
   };
 
@@ -240,11 +266,12 @@ export function step(state: CombatState, input: InputFrame): { state: CombatStat
 export function runSim(
   seed: number,
   inputs: readonly InputFrame[],
+  mods: Modifiers = IDENTITY_MODIFIERS,
 ): { state: CombatState; events: SimEvent[] } {
   let state = initCombat(seed);
   const events: SimEvent[] = [];
   for (const input of inputs) {
-    const result = step(state, input);
+    const result = step(state, input, mods);
     state = result.state;
     events.push(...result.events);
   }

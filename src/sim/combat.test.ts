@@ -12,12 +12,13 @@ import {
   MANA_REGEN_PER_TICK,
   NORMAL_WINDOW_TICKS,
   PERFECT_WINDOW_TICKS,
+  PLAYER_ATTACK_DAMAGE,
   PLAYER_ATTACK_RANGE,
   PLAYER_MAX_HEALTH,
   PLAYER_RADIUS,
 } from './constants.js';
 import { initCombat, runSim, step } from './combat.js';
-import { NEUTRAL_INPUT, type InputFrame } from './types.js';
+import { IDENTITY_MODIFIERS, NEUTRAL_INPUT, type InputFrame, type Modifiers } from './types.js';
 
 const HIT_TICK = ENEMY_IDLE_TICKS + ENEMY_WINDUP_TICKS; // first attack's resolution tick
 
@@ -189,6 +190,65 @@ describe('attack commitment (stop when attacking)', () => {
     // Once the root expires, movement resumes.
     s = step(s, { ...NEUTRAL_INPUT, moveX: 1 }).state;
     expect(s.player.position.x).toBeGreaterThan(startX);
+  });
+});
+
+describe('passive modifiers', () => {
+  function plant(seed: number): ReturnType<typeof step>['state'] {
+    const base = initCombat(seed);
+    const enemyX = base.player.position.x + PLAYER_ATTACK_RANGE + ENEMY_RADIUS - 5;
+    return { ...base, enemy: { ...base.enemy, position: { x: enemyX, y: base.player.position.y } } };
+  }
+  const AIM_RIGHT = { attack: true, aimX: 1, aimY: 0 } as const;
+  const hitDamage = (events: readonly { kind: string }[]): number | undefined => {
+    const hit = events.find((e) => e.kind === 'enemyHit');
+    return hit && 'damage' in hit ? (hit as { damage: number }).damage : undefined;
+  };
+
+  it('attackDamage bonus adds flat damage to each strike', () => {
+    const mods: Modifiers = { ...IDENTITY_MODIFIERS, attackDamageBonus: 5 };
+    const { events } = step(plant(21), { ...NEUTRAL_INPUT, ...AIM_RIGHT }, mods);
+    expect(hitDamage(events)).toBe(PLAYER_ATTACK_DAMAGE + 5);
+  });
+
+  it('every Nth strike gets the bonus, other strikes do not', () => {
+    const mods: Modifiers = { ...IDENTITY_MODIFIERS, nthStrikeEveryN: 2, nthStrikeBonusFraction: 0.5 };
+    let s = plant(22);
+    let r = step(s, { ...NEUTRAL_INPUT, ...AIM_RIGHT }, mods); // strike 1
+    s = r.state;
+    const d1 = hitDamage(r.events);
+    while (s.tick < s.player.attackCooldownUntil) s = step(s, NEUTRAL_INPUT, mods).state;
+    r = step(s, { ...NEUTRAL_INPUT, ...AIM_RIGHT }, mods); // strike 2
+    const d2 = hitDamage(r.events);
+    expect(d1).toBe(PLAYER_ATTACK_DAMAGE);
+    expect(d2).toBe(Math.round(PLAYER_ATTACK_DAMAGE * 1.5));
+  });
+
+  it('healthRegen restores health over time', () => {
+    const mods: Modifiers = { ...IDENTITY_MODIFIERS, healthRegenPerTick: 1 };
+    let s = initCombat(23);
+    s = { ...s, player: { ...s.player, health: 50 } };
+    for (let i = 0; i < 10; i++) s = step(s, NEUTRAL_INPUT, mods).state;
+    expect(s.player.health).toBe(60);
+  });
+
+  it('healOnHurt heals after surviving a hit and emits playerHealed', () => {
+    const mods: Modifiers = { ...IDENTITY_MODIFIERS, healOnHurt: 10 };
+    const { state, events } = runSim(7, neutralSteps(HIT_TICK), mods);
+    expect(state.player.health).toBe(PLAYER_MAX_HEALTH - ENEMY_ATTACK_DAMAGE + 10);
+    expect(events.some((e) => e.kind === 'playerHealed' && e.amount === 10)).toBe(true);
+  });
+
+  it('enemyTempo makes the slam land sooner and hit for less', () => {
+    const mods: Modifiers = { ...IDENTITY_MODIFIERS, enemySpeedMultiplier: 0.5, enemyDamageMultiplier: 0.5 };
+    const early = ENEMY_IDLE_TICKS + Math.round(ENEMY_WINDUP_TICKS * 0.5);
+    const reduced = Math.round(ENEMY_ATTACK_DAMAGE * 0.5);
+    const { state, events } = runSim(7, neutralSteps(early), mods);
+    expect(events.some((e) => e.kind === 'playerHit' && e.damage === reduced)).toBe(true);
+    expect(state.player.health).toBe(PLAYER_MAX_HEALTH - reduced);
+    // Without the tempo modifier the slower slam has not landed by then.
+    const baseline = runSim(7, neutralSteps(early));
+    expect(baseline.events.some((e) => e.kind === 'playerHit')).toBe(false);
   });
 });
 

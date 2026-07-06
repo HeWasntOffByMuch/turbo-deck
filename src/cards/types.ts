@@ -1,31 +1,38 @@
 import type { Rng } from '../shared/prng.js';
 
-export type CardEffect =
+/** One-shot effect of an active card, applied when it is played. */
+export type ActiveEffect =
   | { kind: 'damage'; amount: number }
   | { kind: 'heal'; amount: number }
   | { kind: 'buffDamage'; amount: number; durationTicks: number };
 
-export type SynergyEffect =
-  | { kind: 'damageMultiplier'; multiplier: number }
-  | { kind: 'manaRefund'; amount: number };
+/**
+ * A passive card's effect, applied continuously while the card is held (in a
+ * hand slot or the bonus slot). These are mechanic modifiers -- combos emerge
+ * from how they stack, they are not named synergies.
+ */
+export type PassiveEffect =
+  | { kind: 'attackDamage'; amount: number }
+  | { kind: 'nthStrikeDamage'; everyN: number; bonusFraction: number }
+  | { kind: 'healthRegen'; perSecond: number }
+  | { kind: 'manaRegen'; perSecond: number }
+  | { kind: 'healOnHurt'; amount: number }
+  | { kind: 'enemyTempo'; speedMultiplier: number; damageMultiplier: number };
 
-export interface CardDef {
+interface CardBase {
   readonly id: string;
   readonly name: string;
   readonly tags: readonly string[];
   readonly cost: number;
-  readonly effect: CardEffect;
 }
+
+export type CardDef =
+  | (CardBase & { readonly kind: 'active'; readonly effect: ActiveEffect })
+  | (CardBase & { readonly kind: 'passive'; readonly passive: PassiveEffect });
 
 export interface CardInstance {
   readonly instanceId: number;
   readonly defId: string;
-}
-
-export interface SynergyDef {
-  readonly id: string;
-  readonly requiredTags: readonly string[];
-  readonly effect: SynergyEffect;
 }
 
 export type Catalog = ReadonlyMap<string, CardDef>;
