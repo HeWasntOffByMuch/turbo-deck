@@ -28,6 +28,17 @@ export interface PlayerState {
   /** Count of swings the player has committed; drives every-Nth-strike passives. */
   readonly strikeCount: number;
   readonly damageBuffs: readonly DamageBuff[];
+  // --- Poker-combo stance (spec 014); identity values (0) leave combat untouched. ---
+  /** Tick the activated stance expires; 0 when no stance is held. */
+  readonly stanceExpiresAtTick: number;
+  readonly stanceAttackBonus: number;
+  readonly stanceReductionPct: number;
+  readonly stanceRegenPerTick: number;
+  /** Brief damage-reduction window from a played spade; 0 when none. */
+  readonly guardExpiresAtTick: number;
+  readonly guardReductionPct: number;
+  /** Activate is refused until this tick (stance lockout). */
+  readonly activateLockUntil: number;
 }
 
 /**
@@ -72,6 +83,8 @@ export interface EnemyState {
   readonly type: string;
   readonly health: number;
   readonly maxHealth: number;
+  /** Per-enemy attack damage override (wave scaling); falls back to the type's. */
+  readonly attackDamage?: number;
   readonly position: Vec2;
   readonly behavior: EnemyBehavior;
   // --- hunting cadence (meaningful only while hunting) ---
@@ -95,6 +108,13 @@ export interface CombatState {
   readonly nextEnemyId: number;
   /** Next tick the spawner may add an enemy (when below the cap). */
   readonly nextSpawnTick: number;
+  /** When false, the ambient spawner is off (wave mode drives spawns instead). */
+  readonly ambientSpawner: boolean;
+  /** Count of waves spawned so far (spec 014); 0 before the first wave. */
+  readonly waveNumber: number;
+  /** Global enemy slow: tick it expires and its speed/telegraph multiplier (<1 = slower). */
+  readonly enemySlowExpiresAtTick: number;
+  readonly enemySlowMultiplier: number;
   /** True once the player is defeated; the sim then freezes. */
   readonly over: boolean;
   readonly rng: Rng;
@@ -108,6 +128,18 @@ export type ExternalEffect =
       readonly manaCost: number;
       readonly amount: number;
       readonly durationTicks: number;
+    }
+  // --- Poker-combo prototype effects (spec 014); no mana, resolved by the game layer. ---
+  | { readonly kind: 'guard'; readonly reductionPct: number; readonly durationTicks: number }
+  | { readonly kind: 'slowEnemies'; readonly multiplier: number; readonly durationTicks: number }
+  | {
+      readonly kind: 'applyStance';
+      readonly attackBonus: number;
+      readonly reductionPct: number;
+      readonly regenPerTick: number;
+      readonly slowMultiplier: number;
+      readonly durationTicks: number;
+      readonly lockoutTicks: number;
     };
 
 export interface InputFrame {
@@ -120,6 +152,8 @@ export interface InputFrame {
   readonly parry: boolean;
   readonly dodge: boolean;
   readonly externalEffect?: ExternalEffect;
+  /** Spawn the next escalating wave of enemies this tick (spec 014). */
+  readonly spawnWave?: boolean;
 }
 
 export const NEUTRAL_INPUT: InputFrame = {
@@ -144,4 +178,7 @@ export type SimEvent =
   | { readonly kind: 'enemyAttackAvoided'; readonly tick: number }
   | { readonly kind: 'effectRejectedInsufficientMana'; readonly tick: number }
   | { readonly kind: 'enemyDefeated'; readonly tick: number; readonly enemyId: number; readonly enemyType: string }
-  | { readonly kind: 'playerDefeated'; readonly tick: number };
+  | { readonly kind: 'playerDefeated'; readonly tick: number }
+  | { readonly kind: 'stanceApplied'; readonly tick: number }
+  | { readonly kind: 'stanceRejectedLocked'; readonly tick: number }
+  | { readonly kind: 'waveSpawned'; readonly tick: number; readonly waveNumber: number; readonly count: number };
