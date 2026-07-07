@@ -1,8 +1,9 @@
 export const TICK_RATE = 60;
 
-// Top-down rectangular arena, in world units.
-export const ARENA_WIDTH = 480;
-export const ARENA_HEIGHT = 360;
+// Top-down rectangular arena, in world units. Roomy so a small population and
+// their grazing read; the camera follows the player across it.
+export const ARENA_WIDTH = 1200;
+export const ARENA_HEIGHT = 900;
 
 export const PLAYER_RADIUS = 16;
 export const ENEMY_RADIUS = 22;
@@ -42,3 +43,24 @@ export const DEFENSE_RECOVERY_TICKS = 12;
 
 export const PLAYER_MAX_MANA = 10;
 export const MANA_REGEN_PER_TICK = PLAYER_MAX_MANA / (5 * TICK_RATE);
+
+// --- Population + spawner ---
+// Hard cap on live enemies; the spawner refills toward this but never past it.
+export const MAX_ENEMIES = 5;
+// Enemies present when combat starts.
+export const INITIAL_ENEMIES = 2;
+// Ticks between spawn attempts once below the cap (2s at 60Hz).
+export const ENEMY_SPAWN_INTERVAL_TICKS = 120;
+// A spawn is placed at least this far from the player so nothing appears on top of them.
+export const SPAWN_MIN_PLAYER_DIST = 220;
+
+// --- Grazing behaviour (passive enemies) ---
+// Grazing amble speed, slower than a hunting enemy's homing speed.
+export const GRAZE_MOVE_SPEED_PER_TICK = 0.45;
+// A new graze target is chosen within this radius of the enemy's current spot.
+export const GRAZE_WANDER_RADIUS = 160;
+// The enemy stands and "eats" for a random pause in this range before wandering on.
+export const GRAZE_PAUSE_MIN_TICKS = 60;
+export const GRAZE_PAUSE_MAX_TICKS = 210;
+// Reached-target epsilon (squared) for the graze walk.
+export const GRAZE_ARRIVE_EPS_SQ = 4;

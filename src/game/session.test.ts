@@ -4,13 +4,37 @@ import { CARD_CATALOG } from '../cards/catalog.js';
 import { HAND_SIZE } from '../cards/types.js';
 import {
   ENEMY_IDLE_TICKS,
-  ENEMY_MAX_HEALTH,
+  ENEMY_STANDOFF,
   ENEMY_WINDUP_TICKS,
+  MAX_ENEMIES,
   PLAYER_MAX_HEALTH,
   PLAYER_MAX_MANA,
 } from '../sim/constants.js';
-import { IDENTITY_MODIFIERS, NEUTRAL_INPUT } from '../sim/types.js';
+import { enemyTypeByKey } from '../sim/enemies.js';
+import { IDENTITY_MODIFIERS, NEUTRAL_INPUT, type EnemyState } from '../sim/types.js';
 import { computeModifiers, initGame, stepGame, type GameInput, type GameState } from './session.js';
+
+/** A game whose combat has one hunting enemy planted by the player, spawner off. */
+function huntingGame(seed: number, deck: readonly string[]): GameState {
+  const g = initGame(seed, deck);
+  const p = g.combat.player.position;
+  const type = enemyTypeByKey('brawler');
+  const enemy: EnemyState = {
+    id: 1,
+    type: 'brawler',
+    health: type.maxHealth,
+    maxHealth: type.maxHealth,
+    position: { x: p.x + ENEMY_STANDOFF, y: p.y },
+    behavior: 'hunting',
+    phase: 'idle',
+    phaseEndsAtTick: ENEMY_IDLE_TICKS,
+    incomingAttackOutcome: 'none',
+    attackZoneCenter: null,
+    grazeTarget: null,
+    grazeResumeTick: 0,
+  };
+  return { ...g, combat: { ...g.combat, enemies: [enemy], nextSpawnTick: Number.MAX_SAFE_INTEGER } };
+}
 
 // Active-only decks keep modifiers at identity, so enemy timing is unchanged.
 const ACTIVE_DECK = ['fireball', 'emberlash', 'iceshard', 'guardbreak', 'mend', 'fireball', 'iceshard', 'guardbreak'];
@@ -46,7 +70,7 @@ describe('stepGame active cards', () => {
     const result = stepGame(state, { ...NEUTRAL_GAME_INPUT, playHandIndex: handIndex as 0 | 1 | 2 }, CARD_CATALOG);
     state = result.state;
 
-    expect(state.combat.enemy.health).toBe(ENEMY_MAX_HEALTH - def.effect.amount);
+    expect(result.events.some((e) => e.kind === 'enemyHit' && e.damage === def.effect.amount)).toBe(true);
     expect(state.combat.player.mana).toBeLessThan(before.combat.player.mana + 0.001);
     expect(result.events.some((e) => e.kind === 'cardPlayed')).toBe(true);
     expect(state.deck.hand.length).toBe(HAND_SIZE);
@@ -65,11 +89,11 @@ describe('stepGame active cards', () => {
     expect(state.deck.bonusSlot).toBeNull();
     const result = stepGame(state, { ...NEUTRAL_GAME_INPUT, playBonusCard: true }, CARD_CATALOG);
     expect(result.state.deck.bonusSlot).toBeNull();
-    expect(result.state.combat.enemy.health).toBe(state.combat.enemy.health);
+    expect(result.events.some((e) => e.kind === 'enemyHit')).toBe(false);
   });
 
   it('a perfect defense always leaves the bonus slot occupied', () => {
-    let state = initGame(5, ACTIVE_DECK);
+    let state = huntingGame(5, ACTIVE_DECK);
     expect(state.deck.bonusSlot).toBeNull();
 
     const hitTick = ENEMY_IDLE_TICKS + ENEMY_WINDUP_TICKS; // identity mods, so timing is unchanged
@@ -102,14 +126,14 @@ describe('stepGame passive cards', () => {
     const result = stepGame(state, { ...NEUTRAL_GAME_INPUT, playHandIndex: 0 }, CARD_CATALOG);
     expect(result.events.some((e) => e.kind === 'passiveRetired')).toBe(true);
     expect(result.events.some((e) => e.kind === 'cardPlayed')).toBe(false);
-    // No mana spent (only the passive regen/base regen applied), enemy untouched.
+    // No mana spent (only the passive regen/base regen applied), enemies untouched.
     expect(result.state.combat.player.mana).toBeGreaterThanOrEqual(before.player.mana);
-    expect(result.state.combat.enemy.health).toBe(before.enemy.health);
+    expect(result.events.some((e) => e.kind === 'enemyHit')).toBe(false);
     expect(result.state.deck.hand.length).toBe(HAND_SIZE);
   });
 
   it('a held enemyTempo passive makes the slam land sooner — an emergent effect via the sim', () => {
-    let state = initGame(3, ['recklesshex', 'recklesshex', 'recklesshex']);
+    let state = huntingGame(3, ['recklesshex', 'recklesshex', 'recklesshex']);
     let hitTick: number | null = null;
     for (let tick = 1; tick <= ENEMY_IDLE_TICKS + ENEMY_WINDUP_TICKS && hitTick === null; tick++) {
       const result = stepGame(state, NEUTRAL_GAME_INPUT, CARD_CATALOG);
@@ -156,8 +180,11 @@ describe('fuzz smoke test', () => {
             expect(state.combat.player.health).toBeLessThanOrEqual(PLAYER_MAX_HEALTH);
             expect(state.combat.player.mana).toBeGreaterThanOrEqual(0);
             expect(state.combat.player.mana).toBeLessThanOrEqual(PLAYER_MAX_MANA + 1e-9);
-            expect(state.combat.enemy.health).toBeGreaterThanOrEqual(0);
-            expect(state.combat.enemy.health).toBeLessThanOrEqual(ENEMY_MAX_HEALTH);
+            expect(state.combat.enemies.length).toBeLessThanOrEqual(MAX_ENEMIES);
+            for (const enemy of state.combat.enemies) {
+              expect(enemy.health).toBeGreaterThan(0);
+              expect(enemy.health).toBeLessThanOrEqual(enemy.maxHealth);
+            }
           }
         }),
         { numRuns: 20 },

@@ -33,12 +33,17 @@ export function simulateOneRun(deck: readonly string[], seed: number, maxTicks: 
   let plannedReactionTick: number | null = null;
 
   for (let tick = 1; tick <= maxTicks; tick++) {
-    const enemy = state.combat.enemy;
-    if (enemy.phase === 'windup') {
+    // Plan a reaction against the most imminent hunting wind-up, if any.
+    let windup: (typeof state.combat.enemies)[number] | null = null;
+    for (const enemy of state.combat.enemies) {
+      if (enemy.behavior !== 'hunting' || enemy.phase !== 'windup') continue;
+      if (windup === null || enemy.phaseEndsAtTick < windup.phaseEndsAtTick) windup = enemy;
+    }
+    if (windup) {
       if (plannedReactionTick === null) {
         const [jitter, nextRng] = botRng.nextInt(REACTION_JITTER_MIN, REACTION_JITTER_MAX);
         botRng = nextRng;
-        plannedReactionTick = enemy.phaseEndsAtTick + jitter;
+        plannedReactionTick = windup.phaseEndsAtTick + jitter;
       }
     } else {
       plannedReactionTick = null;
