@@ -17,7 +17,7 @@ function handIds(deck: StandardDeck): (number | null)[] {
 }
 
 function snapshot(s: ComboGameState): string {
-  return JSON.stringify([handIds(s.deck), s.combat.tick, s.combat.player.health, s.combat.enemies.map((e) => [e.id, e.health])]);
+  return JSON.stringify([handIds(s.deck), s.refillAtTick, s.combat.tick, s.combat.player.health, s.combat.enemies.map((e) => [e.id, e.health])]);
 }
 
 describe('initComboGame', () => {
@@ -37,30 +37,44 @@ describe('stepComboGame wiring', () => {
     expect(r.state.combat.waveNumber).toBe(1);
   });
 
-  it('playing a card reports it, refills its slot, and conserves the deck', () => {
+  it('playing a card empties its slot, and only refills it after the draw delay', () => {
     const start = initComboGame(4);
     const before = deckIds(start.deck);
     const played = start.deck.hand[1];
-    const r = stepComboGame(start, { ...NEUTRAL, playHandIndex: 1 });
-    expect(r.events.some((e) => e.kind === 'cardPlayed' && e.card === played)).toBe(true);
-    expect(r.state.deck.hand.filter((c) => c !== null)).toHaveLength(HAND_SIZE);
-    expect(r.state.deck.hand[1]?.instanceId).not.toBe(played?.instanceId);
-    expect(deckIds(r.state.deck)).toEqual(before);
+    let s = stepComboGame(start, { ...NEUTRAL, playHandIndex: 1 }).state;
+    // The slot is now empty (spent card gone to discard) -- no instant refill.
+    expect(s.deck.hand[1]).toBeNull();
+    expect(s.deck.hand.filter((c) => c !== null)).toHaveLength(HAND_SIZE - 1);
+    expect(s.refillAtTick[1]).toBeGreaterThan(s.combat.tick);
+    expect(deckIds(s.deck)).toEqual(before); // spent card is in discard; nothing lost
+
+    // Idle right up to (but not through) the refill tick: still empty.
+    const refillTick = s.refillAtTick[1] as number;
+    while (s.combat.tick < refillTick - 1) s = stepComboGame(s, NEUTRAL).state;
+    expect(s.deck.hand[1]).toBeNull();
+
+    // One more tick reaches the refill: the slot draws a fresh, different card.
+    s = stepComboGame(s, NEUTRAL).state;
+    expect(s.deck.hand[1]).not.toBeNull();
+    expect(s.deck.hand[1]?.instanceId).not.toBe(played?.instanceId);
+    expect(s.refillAtTick[1]).toBeNull();
+    expect(s.deck.hand.filter((c) => c !== null)).toHaveLength(HAND_SIZE);
+    expect(deckIds(s.deck)).toEqual(before);
   });
 
-  it('activating cashes in the hand, then locks out a second activate', () => {
+  it('activating empties the whole hand under the same delay (no free instant refill)', () => {
     const start = initComboGame(7);
-    const beforeHand = handIds(start.deck);
     const r1 = stepComboGame(start, { ...NEUTRAL, activate: true });
     expect(r1.events.some((e) => e.kind === 'activated')).toBe(true);
-    expect(handIds(r1.state.deck)).not.toEqual(beforeHand); // whole hand redrawn
+    // The hand is spent, not instantly redrawn: every slot is empty and pending.
+    expect(r1.state.deck.hand.every((c) => c === null)).toBe(true);
+    expect(r1.state.refillAtTick.every((t) => t !== null)).toBe(true);
     expect(r1.state.combat.player.activateLockUntil).toBeGreaterThan(r1.state.combat.tick);
     expect(deckIds(r1.state.deck)).toHaveLength(52);
 
-    const handAfterR1 = handIds(r1.state.deck);
     const r2 = stepComboGame(r1.state, { ...NEUTRAL, activate: true });
     expect(r2.events.some((e) => e.kind === 'activateIgnoredLocked')).toBe(true);
-    expect(handIds(r2.state.deck)).toEqual(handAfterR1); // hand untouched while locked
+    expect(handIds(r2.state.deck)).toEqual(handIds(r1.state.deck)); // untouched while locked
   });
 
   it('replays identically for the same seed and input sequence (determinism)', () => {
@@ -88,7 +102,10 @@ describe('stepComboGame wiring', () => {
           const total = deckIds(s.deck).length;
           for (const input of inputs) {
             s = stepComboGame(s, input).state;
-            expect(s.deck.hand.filter((c) => c !== null)).toHaveLength(HAND_SIZE);
+            // Slots may sit empty on the draw-delay cooldown, but the hand array
+            // is always five slots and the 52-card multiset is always conserved.
+            expect(s.deck.hand).toHaveLength(HAND_SIZE);
+            expect(s.deck.hand.filter((c) => c !== null).length).toBeLessThanOrEqual(HAND_SIZE);
             expect(deckIds(s.deck)).toHaveLength(total);
           }
           return s;

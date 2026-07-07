@@ -28,10 +28,11 @@ legacy game (`src/game/session.ts`) and its renderer are left untouched.
   - `HAND_SIZE = 5`
   - `interface StandardDeck { drawPile, hand: (PlayingCard|null)[5], discardPile, rng }`
   - `initStandardDeck(rng): StandardDeck` — 52 instances, shuffled, deal 5.
-  - `playFromHand(deck, index): { deck, card }` — discard the card, refill that
-    one slot (reshuffle discard when the draw pile empties).
-  - `activateHand(deck): { deck, cards }` — discard all 5, draw a fresh 5. The
-    caller evaluates `cards` for the combo before calling.
+  - `discardFromHand(deck, index): { deck, card }` — spend a card, leaving the
+    slot empty (no draw). The refill is a separate step so the game layer can
+    impose a draw-delay cooldown.
+  - `drawIntoSlot(deck, index): { deck, card }` — draw one card into an empty
+    slot (reshuffle discard when the draw pile empties); a no-op if filled.
 
 - `poker.ts` — `evaluateHand(cards: PlayingCard[]): { category: PokerCategory; strength: number }`
   where `strength` is an ordinal 0..8 (high card … straight flush). Ace plays
@@ -75,10 +76,17 @@ enemies with health/damage scaled up each wave.
 
 `initComboGame(seed)` / `stepComboGame(state, input)` where input carries
 `playHandIndex?: 0..4`, `activate?: boolean`, `spawnWave?: boolean` plus the
-usual move/attack/defend frame. Play → `cardAction` → sim effect + slot refill.
-Activate (only when `tick >= activateLockUntil`) → `handStance` → `applyStance`
-effect + consume/redraw the whole hand. Deterministic: `(seed, inputs)` replays
-identically.
+usual move/attack/defend frame. Play → `cardAction` → sim effect, and the spent
+slot empties. Activate (only when `tick >= activateLockUntil`) → `handStance` →
+`applyStance` effect + consume the whole hand.
+
+**Draw-delay cooldown.** A spent slot does not refill immediately: the game
+tracks a per-slot `refillAtTick` and only draws the replacement
+`CARD_DRAW_DELAY_TICKS` (~3s) later. Activate empties all five under the same
+delay, so it can't be used as a free "refill everything now" button. The delay
+is deliberately significant — cycling the hand for actions or fishing for a
+combo is punished with a real hole in your options, which is the core lever for
+the play-vs-hold balance. Deterministic: `(seed, inputs)` replays identically.
 
 ### Render (`src/render/combo/`, thin)
 
@@ -102,8 +110,11 @@ would grant, an Activate button (with lockout timer) and a Spawn Wave button
   is in the future; a slow stance/effect stretches the enemy telegraph.
 - Sim regression: with `ambientSpawner` on and no new effects, `initCombat`
   and `step` behave exactly as before (legacy tests stay green).
-- `stepComboGame` conserves cards, keeps the hand at 5, and replays identically
-  for a fixed `(seed, inputs)`.
+- `stepComboGame` conserves the 52-card multiset (slots may sit empty on the
+  draw-delay cooldown) and replays identically for a fixed `(seed, inputs)`.
+- A played slot stays empty until `CARD_DRAW_DELAY_TICKS` have passed, then
+  draws a fresh card; Activate empties all five under the same delay rather than
+  redrawing instantly.
 
 ## Out of scope
 

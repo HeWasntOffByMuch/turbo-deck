@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import { Rng } from '../shared/prng.js';
-import { activateHand, cardLabel, HAND_SIZE, initStandardDeck, playFromHand, type PlayingCard, type StandardDeck } from './standard.js';
+import { cardLabel, discardFromHand, drawIntoSlot, HAND_SIZE, initStandardDeck, type PlayingCard, type StandardDeck } from './standard.js';
 
 function allCards(deck: StandardDeck): PlayingCard[] {
   return [...deck.drawPile, ...deck.hand.filter((c): c is PlayingCard => c !== null), ...deck.discardPile];
@@ -30,40 +30,47 @@ describe('standard deck', () => {
     expect(a.hand.map((c) => c && cardLabel(c))).toEqual(b.hand.map((c) => c && cardLabel(c)));
   });
 
-  it('playing a card refills only its slot and conserves the 52-card multiset', () => {
+  it('discarding a card empties its slot without drawing; drawing refills it', () => {
     let deck = initStandardDeck(Rng.fromSeed(7));
     const before = instanceIds(deck);
-    const played = deck.hand[2];
-    const { deck: next, card } = playFromHand(deck, 2);
-    deck = next;
-    expect(card).toBe(played);
+    const spent = deck.hand[2];
+
+    const discarded = discardFromHand(deck, 2);
+    deck = discarded.deck;
+    expect(discarded.card).toBe(spent);
+    expect(deck.hand[2]).toBeNull(); // no instant refill
+    expect(deck.hand.filter((c) => c !== null)).toHaveLength(HAND_SIZE - 1);
+    expect(instanceIds(deck)).toEqual(before); // spent card now sits in discard
+
+    const filled = drawIntoSlot(deck, 2);
+    deck = filled.deck;
+    expect(deck.hand[2]).not.toBeNull();
+    expect(deck.hand[2]?.instanceId).not.toBe(spent?.instanceId);
     expect(deck.hand.filter((c) => c !== null)).toHaveLength(HAND_SIZE);
     expect(instanceIds(deck)).toEqual(before);
   });
 
-  it('activating discards all five and draws a fresh five, conserving the deck', () => {
-    let deck = initStandardDeck(Rng.fromSeed(9));
-    const before = instanceIds(deck);
-    const held = deck.hand.filter((c): c is PlayingCard => c !== null);
-    const { deck: next, cards } = activateHand(deck);
-    deck = next;
-    expect(cards).toEqual(held);
-    expect(deck.hand.filter((c) => c !== null)).toHaveLength(HAND_SIZE);
-    expect(instanceIds(deck)).toEqual(before);
+  it('drawing into an already-filled slot is a no-op', () => {
+    const deck = initStandardDeck(Rng.fromSeed(11));
+    const occupant = deck.hand[0];
+    const { deck: after, card } = drawIntoSlot(deck, 0);
+    expect(card).toBe(occupant);
+    expect(after).toBe(deck);
   });
 
-  it('never loses or duplicates a card across a long random sequence of plays and activations', () => {
+  it('never loses or duplicates a card across a long random sequence of discards and draws', () => {
     fc.assert(
       fc.property(
         fc.integer({ min: 0, max: 2 ** 31 - 1 }),
-        fc.array(fc.oneof(fc.constant<'activate'>('activate'), fc.integer({ min: 0, max: 4 })), { minLength: 200, maxLength: 200 }),
-        (seed, ops) => {
+        fc.array(fc.integer({ min: 0, max: 4 }), { minLength: 200, maxLength: 200 }),
+        (seed, slots) => {
           let deck = initStandardDeck(Rng.fromSeed(seed));
           const expected = instanceIds(deck);
-          for (const op of ops) {
-            deck = op === 'activate' ? activateHand(deck).deck : playFromHand(deck, op).deck;
+          for (const slot of slots) {
+            // Toggle the slot: spend it if filled, refill it if empty.
+            deck = deck.hand[slot] ? discardFromHand(deck, slot).deck : drawIntoSlot(deck, slot).deck;
             expect(instanceIds(deck)).toEqual(expected);
-            expect(deck.hand.filter((c) => c !== null)).toHaveLength(HAND_SIZE);
+            expect(deck.hand).toHaveLength(HAND_SIZE);
           }
         },
       ),

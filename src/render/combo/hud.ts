@@ -33,6 +33,10 @@ const STYLE = `
 .td-card .pip { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 40px; }
 .td-card .foot { text-align: center; font-size: 11px; font-weight: 700; padding: 3px 2px 6px; color: #4a4436; }
 .td-card.red { color: #c0392b; } .td-card.red .foot { color: #9a3325; }
+.td-card.empty { background: #20202c; border-style: dashed; border-color: #3a3a4e; cursor: default; box-shadow: none; }
+.td-card.empty:hover { transform: none; border-color: #3a3a4e; }
+.td-card .cool { margin: auto; text-align: center; color: #7f8bd0; font-weight: 800; font-size: 15px; }
+.td-card .cool span { display: block; font-size: 10px; font-weight: 600; color: #5a5f80; margin-top: 3px; }
 .td-card .key { position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
   background: #2a2a38; color: #ffd76a; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 6px; }
 .td-controls { display: flex; gap: 12px; align-items: stretch; margin-top: 14px; }
@@ -139,7 +143,7 @@ export class ComboHud {
       stanceLeft > 0 ? `<b>Stance</b> ${stanceLeft.toFixed(1)}s` : `<b>Stance</b> —`;
 
     this.renderBanner(combat.enemies, combat.tick, combat.over);
-    this.renderHand(state.deck.hand);
+    this.renderHand(state.deck.hand, state.refillAtTick, combat.tick);
     this.renderControls(state, combat.tick);
   }
 
@@ -167,30 +171,57 @@ export class ComboHud {
     }
   }
 
-  private renderHand(hand: StandardHand): void {
+  private renderHand(hand: StandardHand, refillAtTick: readonly (number | null)[], tick: number): void {
+    // Rebuild faces only when the set of occupants changes...
     const key = hand.map((c) => (c ? c.instanceId : 'x')).join(',');
-    if (key === this.lastHandKey) return; // faces only change when the hand changes
-    this.lastHandKey = key;
-
+    if (key !== this.lastHandKey) {
+      this.lastHandKey = key;
+      hand.forEach((card, i) => this.buildFace(this.cards[i], card));
+    }
+    // ...but tick the cooldown countdown on empty slots every frame.
     hand.forEach((card, i) => {
-      const node = this.cards[i];
-      if (!node) return;
-      node.querySelectorAll('.corner,.pip,.foot').forEach((n) => n.remove());
-      node.classList.toggle('red', card?.suit === 'hearts' || card?.suit === 'diamonds');
-      node.style.visibility = card ? 'visible' : 'hidden';
-      if (!card) return;
-      const glyph = SUIT_GLYPH[card.suit];
-      const label = cardLabel(card).slice(0, -1);
-      const tl = el('span', 'corner tl');
-      tl.textContent = `${label}${glyph}`;
-      const pip = el('div', 'pip');
-      pip.textContent = glyph;
-      const br = el('span', 'corner br');
-      br.textContent = `${label}${glyph}`;
-      const foot = el('div', 'foot');
-      foot.textContent = actionLabel(card);
-      node.append(tl, pip, br, foot);
+      if (card) return;
+      const time = this.cards[i]?.querySelector('.cool');
+      const label = time?.firstChild;
+      if (!label) return;
+      const at = refillAtTick[i];
+      if (at !== null && at !== undefined) {
+        label.textContent = `↻ ${Math.max(0, (at - tick) / TICK_RATE).toFixed(1)}s`;
+      } else {
+        label.textContent = '—';
+      }
     });
+  }
+
+  private buildFace(node: HTMLElement | undefined, card: PlayingCard | null): void {
+    if (!node) return;
+    node.querySelectorAll('.corner,.pip,.foot,.cool').forEach((n) => n.remove());
+    node.classList.toggle('red', card?.suit === 'hearts' || card?.suit === 'diamonds');
+    node.classList.toggle('empty', !card);
+    node.style.visibility = 'visible';
+
+    if (!card) {
+      // Empty slot on draw-delay cooldown: show a live countdown to the refill.
+      const cool = el('div', 'cool');
+      cool.appendChild(document.createTextNode('↻')); // time, updated each frame
+      const caption = document.createElement('span');
+      caption.textContent = 'drawing';
+      cool.appendChild(caption);
+      node.appendChild(cool);
+      return;
+    }
+
+    const glyph = SUIT_GLYPH[card.suit];
+    const label = cardLabel(card).slice(0, -1);
+    const tl = el('span', 'corner tl');
+    tl.textContent = `${label}${glyph}`;
+    const pip = el('div', 'pip');
+    pip.textContent = glyph;
+    const br = el('span', 'corner br');
+    br.textContent = `${label}${glyph}`;
+    const foot = el('div', 'foot');
+    foot.textContent = actionLabel(card);
+    node.append(tl, pip, br, foot);
   }
 
   private renderControls(state: ComboGameState, tick: number): void {

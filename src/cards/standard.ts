@@ -101,41 +101,35 @@ export function initStandardDeck(rng: Rng): StandardDeck {
   return { drawPile, hand: hand as unknown as StandardHand, discardPile: [], rng: currentRng };
 }
 
-/** Spend the card in `index`, discard it, and draw its replacement into the same slot. */
-export function playFromHand(deck: StandardDeck, index: number): { deck: StandardDeck; card: PlayingCard } {
+/**
+ * Spend the card in `index`: discard it and leave the slot empty. The
+ * replacement is drawn separately, via `drawIntoSlot`, so callers can impose a
+ * draw-delay cooldown between spending a card and its refill (spec 014).
+ */
+export function discardFromHand(deck: StandardDeck, index: number): { deck: StandardDeck; card: PlayingCard } {
   const card = deck.hand[index];
-  if (!card) throw new Error(`playFromHand: hand slot ${index} is empty`);
-
-  const drawn = drawOne(deck.drawPile, deck.discardPile, deck.rng);
-  // If the deck is genuinely exhausted the spent card still goes to discard;
-  // otherwise the replacement is drawn first, then the spent card is discarded.
-  const discardPile = [...drawn.discardPile, card];
+  if (!card) throw new Error(`discardFromHand: hand slot ${index} is empty`);
   const hand = [...deck.hand] as (PlayingCard | null)[];
-  hand[index] = drawn.card;
-
+  hand[index] = null;
   return {
-    deck: { drawPile: drawn.drawPile, hand: hand as unknown as StandardHand, discardPile, rng: drawn.rng },
+    deck: { ...deck, hand: hand as unknown as StandardHand, discardPile: [...deck.discardPile, card] },
     card,
   };
 }
 
 /**
- * Cash in the whole hand: discard all five and draw a fresh five. Returns the
- * spent cards so the caller can evaluate them for the combo. Empty slots (a
- * fully exhausted deck) are ignored.
+ * Draw one card into the empty `index`, reshuffling the discard pile when the
+ * draw pile runs dry. A no-op (returning the current occupant) if the slot is
+ * already filled; `card` is null only when the whole deck is exhausted.
  */
-export function activateHand(deck: StandardDeck): { deck: StandardDeck; cards: PlayingCard[] } {
-  const spent = deck.hand.filter((c): c is PlayingCard => c !== null);
-  let drawPile = deck.drawPile;
-  let discardPile: readonly PlayingCard[] = [...deck.discardPile, ...spent];
-  let rng = deck.rng;
-  const hand: (PlayingCard | null)[] = [null, null, null, null, null];
-  for (let i = 0; i < HAND_SIZE; i++) {
-    const drawn = drawOne(drawPile, discardPile, rng);
-    hand[i] = drawn.card;
-    drawPile = drawn.drawPile;
-    discardPile = drawn.discardPile;
-    rng = drawn.rng;
-  }
-  return { deck: { drawPile, hand: hand as unknown as StandardHand, discardPile, rng }, cards: spent };
+export function drawIntoSlot(deck: StandardDeck, index: number): { deck: StandardDeck; card: PlayingCard | null } {
+  const occupant = deck.hand[index];
+  if (occupant) return { deck, card: occupant };
+  const drawn = drawOne(deck.drawPile, deck.discardPile, deck.rng);
+  const hand = [...deck.hand] as (PlayingCard | null)[];
+  hand[index] = drawn.card;
+  return {
+    deck: { drawPile: drawn.drawPile, hand: hand as unknown as StandardHand, discardPile: drawn.discardPile, rng: drawn.rng },
+    card: drawn.card,
+  };
 }

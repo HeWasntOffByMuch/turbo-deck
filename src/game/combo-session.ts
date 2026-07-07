@@ -1,4 +1,4 @@
-import { activateHand, initStandardDeck, playFromHand, type PlayingCard, type StandardDeck } from '../cards/standard.js';
+import { discardFromHand, drawIntoSlot, HAND_SIZE, initStandardDeck, type PlayingCard, type StandardDeck } from '../cards/standard.js';
 import { evaluateHand, type PokerCategory } from '../cards/poker.js';
 import { cardAction, handStance } from '../cards/stance.js';
 import { Rng } from '../shared/prng.js';
@@ -13,9 +13,21 @@ import { type CombatState, type ExternalEffect, type InputFrame, type SimEvent }
  * (seed, inputs) always replays to the same state.
  */
 
+/**
+ * A spent hand slot does not refill immediately: the replacement is delayed by
+ * CARD_DRAW_DELAY_TICKS so that churning the hand for actions (or fishing for a
+ * combo) is punished with a real hole in your options. It is significant on
+ * purpose -- roughly the cadence of an enemy's slam -- so you cannot answer
+ * every threat with a fresh card. This is the core knob for the play-vs-hold
+ * balance; raise it to punish cycling harder.
+ */
+export const CARD_DRAW_DELAY_TICKS = Math.round(3 * TICK_RATE);
+
 export interface ComboGameState {
   readonly combat: CombatState;
   readonly deck: StandardDeck;
+  /** Per hand slot: the tick its delayed refill draws, or null if not pending. */
+  readonly refillAtTick: readonly (number | null)[];
 }
 
 export interface ComboInput {
@@ -48,6 +60,7 @@ export function initComboGame(seed: number): ComboGameState {
     // Wave mode: the arena starts empty and only the Spawn Wave button populates it.
     combat: initCombat(seed, { ambientSpawner: false, initialEnemies: 0 }),
     deck: initStandardDeck(Rng.fromSeed(seed)),
+    refillAtTick: Array.from({ length: HAND_SIZE }, () => null),
   };
 }
 
@@ -70,12 +83,15 @@ export function stepComboGame(state: ComboGameState, input: ComboInput): { state
   const events: ComboEvent[] = [];
   let deck = state.deck;
   let externalEffect: ExternalEffect | undefined;
+  // Slots emptied this tick; their delayed refill is scheduled after combat steps.
+  const emptied: number[] = [];
 
   if (input.playHandIndex !== undefined) {
     const card = deck.hand[input.playHandIndex];
     if (card) {
       externalEffect = actionEffect(card);
-      deck = playFromHand(deck, input.playHandIndex).deck;
+      deck = discardFromHand(deck, input.playHandIndex).deck;
+      emptied.push(input.playHandIndex);
       events.push({ kind: 'cardPlayed', index: input.playHandIndex, card });
     } else {
       events.push({ kind: 'playIgnoredEmptySlot' });
@@ -98,7 +114,14 @@ export function stepComboGame(state: ComboGameState, input: ComboInput): { state
           durationTicks: seconds(grant.durationSeconds),
           lockoutTicks: seconds(grant.lockoutSeconds),
         };
-        deck = activateHand(deck).deck;
+        // Activate consumes the whole hand under the same draw-delay, so it can't
+        // be used as a free "refill everything now" button.
+        deck.hand.forEach((c, i) => {
+          if (c) {
+            deck = discardFromHand(deck, i).deck;
+            emptied.push(i);
+          }
+        });
         events.push({ kind: 'activated', category, strength });
       }
     }
@@ -117,7 +140,19 @@ export function stepComboGame(state: ComboGameState, input: ComboInput): { state
   };
 
   const combatResult = combatStep(state.combat, combatInput);
+  const tick = combatResult.state.tick;
   events.push(...combatResult.events);
 
-  return { state: { combat: combatResult.state, deck }, events };
+  // Schedule delayed refills for slots emptied this tick, then draw any that are due.
+  const refillAtTick = [...state.refillAtTick];
+  for (const slot of emptied) refillAtTick[slot] = tick + CARD_DRAW_DELAY_TICKS;
+  for (let slot = 0; slot < HAND_SIZE; slot++) {
+    const at = refillAtTick[slot];
+    if (at !== null && at !== undefined && tick >= at) {
+      deck = drawIntoSlot(deck, slot).deck;
+      refillAtTick[slot] = null;
+    }
+  }
+
+  return { state: { combat: combatResult.state, deck, refillAtTick }, events };
 }
