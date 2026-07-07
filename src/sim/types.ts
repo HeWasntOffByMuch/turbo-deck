@@ -59,22 +59,44 @@ export const IDENTITY_MODIFIERS: Modifiers = {
 
 export type EnemyPhase = 'idle' | 'windup' | 'recovery';
 export type DefenseOutcome = 'none' | 'perfect' | 'normal' | 'whiffed';
+/**
+ * grazing: passive, wanders to random graze spots, ignores the player.
+ * hunting: entered once the enemy takes player damage; homes and attacks.
+ */
+export type EnemyBehavior = 'grazing' | 'hunting';
 
 export interface EnemyState {
+  /** Stable identity for the renderer's sprite pool. */
+  readonly id: number;
+  /** Key into ENEMY_TYPES; also the sprite seed. */
+  readonly type: string;
   readonly health: number;
   readonly maxHealth: number;
   readonly position: Vec2;
+  readonly behavior: EnemyBehavior;
+  // --- hunting cadence (meaningful only while hunting) ---
   readonly phase: EnemyPhase;
   readonly phaseEndsAtTick: number;
   readonly incomingAttackOutcome: DefenseOutcome;
   /** Centre of the telegraphed danger zone during windup; null otherwise. */
   readonly attackZoneCenter: Vec2 | null;
+  // --- grazing (meaningful only while grazing) ---
+  /** Current wander destination; null while standing and "eating". */
+  readonly grazeTarget: Vec2 | null;
+  /** Tick at which a standing grazer picks its next target. */
+  readonly grazeResumeTick: number;
 }
 
 export interface CombatState {
   readonly tick: number;
   readonly player: PlayerState;
-  readonly enemy: EnemyState;
+  readonly enemies: readonly EnemyState[];
+  /** Monotonic id source for spawned enemies. */
+  readonly nextEnemyId: number;
+  /** Next tick the spawner may add an enemy (when below the cap). */
+  readonly nextSpawnTick: number;
+  /** True once the player is defeated; the sim then freezes. */
+  readonly over: boolean;
   readonly rng: Rng;
 }
 
@@ -117,9 +139,9 @@ export type SimEvent =
   | { readonly kind: 'normalDefense'; readonly defenseType: DefenseType; readonly tick: number }
   | { readonly kind: 'playerHit'; readonly damage: number; readonly tick: number }
   | { readonly kind: 'playerHealed'; readonly amount: number; readonly tick: number }
-  | { readonly kind: 'enemyHit'; readonly damage: number; readonly tick: number }
+  | { readonly kind: 'enemyHit'; readonly damage: number; readonly tick: number; readonly enemyId: number; readonly at: Vec2 }
   | { readonly kind: 'attackMissed'; readonly tick: number }
   | { readonly kind: 'enemyAttackAvoided'; readonly tick: number }
   | { readonly kind: 'effectRejectedInsufficientMana'; readonly tick: number }
-  | { readonly kind: 'enemyDefeated'; readonly tick: number }
+  | { readonly kind: 'enemyDefeated'; readonly tick: number; readonly enemyId: number; readonly enemyType: string }
   | { readonly kind: 'playerDefeated'; readonly tick: number };

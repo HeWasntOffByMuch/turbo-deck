@@ -33,7 +33,8 @@ function textureFromRgba(rgba: Uint8ClampedArray, w: number, h: number): Texture
   return texture;
 }
 
-function dudeTextures(name: string): DudeTextures {
+/** Bake the `{ idle, windup }` textures for one identity string (player name or enemy type). */
+export function dudeTexturesFor(name: string): DudeTextures {
   const dude: BakedDude = bakeDude(seedFromName(name));
   return {
     idle: textureFromRgba(dude.idle, dude.width, dude.height),
@@ -43,8 +44,8 @@ function dudeTextures(name: string): DudeTextures {
 
 export function buildDudeTextures(identity: DudeIdentity): { player: DudeTextures; enemy: DudeTextures } {
   return {
-    player: dudeTextures(identity.playerName),
-    enemy: dudeTextures(identity.enemyType),
+    player: dudeTexturesFor(identity.playerName),
+    enemy: dudeTexturesFor(identity.enemyType),
   };
 }
 

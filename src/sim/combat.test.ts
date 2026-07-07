@@ -8,8 +8,10 @@ import {
   ENEMY_IDLE_TICKS,
   ENEMY_RADIUS,
   ENEMY_RECOVERY_TICKS,
+  ENEMY_STANDOFF,
   ENEMY_WINDUP_TICKS,
   MANA_REGEN_PER_TICK,
+  MAX_ENEMIES,
   NORMAL_WINDOW_TICKS,
   PERFECT_WINDOW_TICKS,
   PLAYER_ATTACK_DAMAGE,
@@ -19,17 +21,69 @@ import {
   PLAYER_RADIUS,
 } from './constants.js';
 import { initCombat, runSim, step } from './combat.js';
-import { IDENTITY_MODIFIERS, NEUTRAL_INPUT, type InputFrame, type Modifiers } from './types.js';
+import { enemyTypeByKey } from './enemies.js';
+import {
+  IDENTITY_MODIFIERS,
+  NEUTRAL_INPUT,
+  type CombatState,
+  type EnemyState,
+  type InputFrame,
+  type Modifiers,
+  type Vec2,
+} from './types.js';
 
-/**
- * Press attack (waiting for readiness first), advance through the wind-up, and
- * return the state and events of the tick the strike actually resolves on.
- */
-function swing(
-  state: ReturnType<typeof initCombat>,
-  aim: { aimX: number; aimY: number },
-  mods: Modifiers = IDENTITY_MODIFIERS,
-): ReturnType<typeof step> {
+const BRAWLER = enemyTypeByKey('brawler');
+
+// A standing grazing enemy at a fixed spot (grazeResumeTick far off so it does
+// not wander), for deterministic cone/cleave tests.
+function enemyAt(id: number, position: Vec2, overrides: Partial<EnemyState> = {}): EnemyState {
+  return {
+    id,
+    type: 'brawler',
+    health: BRAWLER.maxHealth,
+    maxHealth: BRAWLER.maxHealth,
+    position,
+    behavior: 'grazing',
+    phase: 'idle',
+    phaseEndsAtTick: 0,
+    incomingAttackOutcome: 'none',
+    attackZoneCenter: null,
+    grazeTarget: null,
+    grazeResumeTick: Number.MAX_SAFE_INTEGER,
+    ...overrides,
+  };
+}
+
+/** Replace the population with `enemies` and disable the spawner for the test. */
+function withEnemies(base: CombatState, enemies: EnemyState[]): CombatState {
+  return { ...base, enemies, nextSpawnTick: Number.MAX_SAFE_INTEGER };
+}
+
+/** One hunting enemy planted at standoff to the player's right, fresh idle phase. */
+function huntingState(seed = 1): CombatState {
+  const base = initCombat(seed);
+  const p = base.player.position;
+  const enemy = enemyAt(1, { x: p.x + ENEMY_STANDOFF, y: p.y }, {
+    behavior: 'hunting',
+    phaseEndsAtTick: ENEMY_IDLE_TICKS,
+    grazeResumeTick: 0,
+  });
+  return withEnemies(base, [enemy]);
+}
+
+function runFrom(state: CombatState, inputs: readonly InputFrame[], mods: Modifiers = IDENTITY_MODIFIERS): ReturnType<typeof step> {
+  let s = state;
+  let events: ReturnType<typeof step>['events'] = [];
+  for (const input of inputs) {
+    const r = step(s, input, mods);
+    s = r.state;
+    events = [...events, ...r.events];
+  }
+  return { state: s, events };
+}
+
+/** Press attack (waiting for readiness), advance through the wind-up, return the resolving tick. */
+function swing(state: CombatState, aim: { aimX: number; aimY: number }, mods: Modifiers = IDENTITY_MODIFIERS): ReturnType<typeof step> {
   let s = state;
   while (s.player.attackReleaseTick !== 0 || s.tick < s.player.attackCooldownUntil) s = step(s, NEUTRAL_INPUT, mods).state;
   let r = step(s, { ...NEUTRAL_INPUT, attack: true, ...aim }, mods);
@@ -41,13 +95,13 @@ function swing(
   return r;
 }
 
-const HIT_TICK = ENEMY_IDLE_TICKS + ENEMY_WINDUP_TICKS; // first attack's resolution tick
+const HIT_TICK = ENEMY_IDLE_TICKS + ENEMY_WINDUP_TICKS; // first slam's resolution tick from a fresh idle
 
 function neutralSteps(count: number): InputFrame[] {
   return Array.from({ length: count }, () => NEUTRAL_INPUT);
 }
 
-/** Builds a full run through the first attack's resolution, pressing a defend input at `tick`. */
+/** Inputs through the first slam's resolution, pressing a defend input at `tick`. */
 function defendAt(tick: number, type: 'parry' | 'dodge' = 'parry'): InputFrame[] {
   const inputs = neutralSteps(HIT_TICK);
   inputs[tick - 1] = { ...NEUTRAL_INPUT, parry: type === 'parry', dodge: type === 'dodge' };
@@ -79,27 +133,27 @@ describe('combat sim determinism', () => {
 
 describe('perfect/normal/whiffed defense timing', () => {
   it('a defend input exactly on the hit tick registers perfect and negates damage', () => {
-    const { state, events } = runSim(1, defendAt(HIT_TICK));
+    const { state, events } = runFrom(huntingState(), defendAt(HIT_TICK));
     expect(state.player.health).toBe(PLAYER_MAX_HEALTH);
     expect(events).toContainEqual({ kind: 'perfectDefense', defenseType: 'parry', tick: HIT_TICK });
     expect(events.some((e) => e.kind === 'playerHit')).toBe(false);
   });
 
   it('a defend input at the edge of the perfect window still registers perfect', () => {
-    const { state, events } = runSim(1, defendAt(HIT_TICK - PERFECT_WINDOW_TICKS));
+    const { state, events } = runFrom(huntingState(), defendAt(HIT_TICK - PERFECT_WINDOW_TICKS));
     expect(state.player.health).toBe(PLAYER_MAX_HEALTH);
     expect(events.some((e) => e.kind === 'perfectDefense')).toBe(true);
   });
 
   it('a defend input just outside the perfect window registers normal (halved damage)', () => {
-    const { state, events } = runSim(1, defendAt(HIT_TICK - PERFECT_WINDOW_TICKS - 1));
+    const { state, events } = runFrom(huntingState(), defendAt(HIT_TICK - PERFECT_WINDOW_TICKS - 1));
     expect(state.player.health).toBe(PLAYER_MAX_HEALTH - Math.round(ENEMY_ATTACK_DAMAGE / 2));
     expect(events.some((e) => e.kind === 'normalDefense')).toBe(true);
     expect(events.some((e) => e.kind === 'perfectDefense')).toBe(false);
   });
 
   it('a defend input far outside any window whiffs and takes full damage', () => {
-    const { state, events } = runSim(1, defendAt(HIT_TICK - NORMAL_WINDOW_TICKS - 5));
+    const { state, events } = runFrom(huntingState(), defendAt(HIT_TICK - NORMAL_WINDOW_TICKS - 5));
     expect(state.player.health).toBe(PLAYER_MAX_HEALTH - ENEMY_ATTACK_DAMAGE);
     expect(events.some((e) => e.kind === 'perfectDefense')).toBe(false);
     expect(events.some((e) => e.kind === 'normalDefense')).toBe(false);
@@ -107,7 +161,7 @@ describe('perfect/normal/whiffed defense timing', () => {
   });
 
   it('no defend input at all takes full damage', () => {
-    const { state, events } = runSim(1, neutralSteps(HIT_TICK));
+    const { state, events } = runFrom(huntingState(), neutralSteps(HIT_TICK));
     expect(state.player.health).toBe(PLAYER_MAX_HEALTH - ENEMY_ATTACK_DAMAGE);
     expect(events).toContainEqual({ kind: 'playerHit', damage: ENEMY_ATTACK_DAMAGE, tick: HIT_TICK });
   });
@@ -116,7 +170,7 @@ describe('perfect/normal/whiffed defense timing', () => {
     const inputs = neutralSteps(HIT_TICK);
     inputs[HIT_TICK - 10] = { ...NEUTRAL_INPUT, parry: true }; // normal-window attempt, locks in 'normal'
     inputs[HIT_TICK - 1] = { ...NEUTRAL_INPUT, parry: true }; // would be perfect, but should be ignored
-    const { state, events } = runSim(1, inputs);
+    const { state, events } = runFrom(huntingState(), inputs);
     expect(events.filter((e) => e.kind === 'normalDefense' || e.kind === 'perfectDefense')).toHaveLength(1);
     expect(state.player.health).toBe(PLAYER_MAX_HEALTH - Math.round(ENEMY_ATTACK_DAMAGE / 2));
   });
@@ -158,17 +212,17 @@ describe('movement bounds', () => {
 
 describe('positional telegraph', () => {
   it('moving fully out of the danger zone during windup avoids the hit', () => {
-    // Sprint sideways (with open floor ahead) the whole run; the zone is snapshotted
-    // at the player's position when windup begins, so by resolution the player is clear.
+    // Sprint sideways the whole run; the zone is snapshotted at windup start, so
+    // by resolution the player has left it.
     const inputs = neutralSteps(HIT_TICK).map((f) => ({ ...f, moveX: 1 as const }));
-    const { state, events } = runSim(7, inputs);
+    const { state, events } = runFrom(huntingState(), inputs);
     expect(state.player.health).toBe(PLAYER_MAX_HEALTH);
     expect(events.some((e) => e.kind === 'playerHit')).toBe(false);
     expect(events.some((e) => e.kind === 'enemyAttackAvoided')).toBe(true);
   });
 
   it('standing still inside the zone with no defense takes the full hit', () => {
-    const { state, events } = runSim(7, neutralSteps(HIT_TICK));
+    const { state, events } = runFrom(huntingState(), neutralSteps(HIT_TICK));
     expect(state.player.health).toBe(PLAYER_MAX_HEALTH - ENEMY_ATTACK_DAMAGE);
     expect(events.some((e) => e.kind === 'playerHit')).toBe(true);
     expect(events.some((e) => e.kind === 'enemyAttackAvoided')).toBe(false);
@@ -176,21 +230,21 @@ describe('positional telegraph', () => {
 });
 
 describe('aimed attack cone', () => {
-  // Craft a state with the enemy planted just within reach, directly to the player's right.
-  function stateWithEnemyInRange(): ReturnType<typeof step>['state'] {
+  // One enemy planted just within reach, directly to the player's right.
+  function stateWithEnemyInRange(): CombatState {
     const base = initCombat(9);
-    const enemyX = base.player.position.x + PLAYER_ATTACK_RANGE + ENEMY_RADIUS - 5;
-    return { ...base, enemy: { ...base.enemy, position: { x: enemyX, y: base.player.position.y } } };
+    const p = base.player.position;
+    return withEnemies(base, [enemyAt(1, { x: p.x + PLAYER_ATTACK_RANGE + ENEMY_RADIUS - 5, y: p.y })]);
   }
 
   it('connects when the enemy is in range and inside the aim cone', () => {
-    const { events } = swing(stateWithEnemyInRange(), { aimX: 1, aimY: 0 }); // aim right, at the enemy
+    const { events } = swing(stateWithEnemyInRange(), { aimX: 1, aimY: 0 });
     expect(events.some((e) => e.kind === 'enemyHit')).toBe(true);
     expect(events.some((e) => e.kind === 'attackMissed')).toBe(false);
   });
 
   it('misses an in-range enemy when aimed away from it', () => {
-    const { events } = swing(stateWithEnemyInRange(), { aimX: -1, aimY: 0 }); // aim left, away from the enemy
+    const { events } = swing(stateWithEnemyInRange(), { aimX: -1, aimY: 0 });
     expect(events.some((e) => e.kind === 'attackMissed')).toBe(true);
     expect(events.some((e) => e.kind === 'enemyHit')).toBe(false);
   });
@@ -200,29 +254,39 @@ describe('aimed attack cone', () => {
     expect(press.events.some((e) => e.kind === 'enemyHit')).toBe(false);
     expect(press.state.player.attackReleaseTick).toBe(1 + PLAYER_ATTACK_WINDUP_TICKS);
   });
+
+  it('one swing cleaves every enemy inside the cone', () => {
+    const base = initCombat(9);
+    const p = base.player.position;
+    const state = withEnemies(base, [
+      enemyAt(1, { x: p.x + 40, y: p.y }),
+      enemyAt(2, { x: p.x + 45, y: p.y - 12 }),
+    ]);
+    const { events } = swing(state, { aimX: 1, aimY: 0 });
+    const hits = events.filter((e) => e.kind === 'enemyHit');
+    expect(hits).toHaveLength(2);
+    expect(new Set(hits.map((h) => (h as { enemyId: number }).enemyId))).toEqual(new Set([1, 2]));
+  });
 });
 
 describe('attack commitment (stop when attacking)', () => {
   it('roots the player through the wind-up and recovery, then movement resumes', () => {
-    let s = initCombat(11);
+    let s = huntingState(11);
     const startX = s.player.position.x;
-    // Begin the wind-up on tick 1 while holding right: the player must not move.
     s = step(s, { ...NEUTRAL_INPUT, attack: true, moveX: 1, aimX: 1 }).state;
     expect(s.player.position.x).toBe(startX);
-    // Frozen for the entire wind-up despite holding right.
     for (let i = 0; i < PLAYER_ATTACK_WINDUP_TICKS - 1; i++) s = step(s, { ...NEUTRAL_INPUT, moveX: 1 }).state;
     expect(s.player.position.x).toBe(startX);
-    // After the strike lands and the recovery expires, movement resumes.
     for (let i = 0; i < ATTACK_ROOT_TICKS + 3; i++) s = step(s, { ...NEUTRAL_INPUT, moveX: 1 }).state;
     expect(s.player.position.x).toBeGreaterThan(startX);
   });
 });
 
 describe('passive modifiers', () => {
-  function plant(seed: number): ReturnType<typeof step>['state'] {
+  function plant(seed: number): CombatState {
     const base = initCombat(seed);
-    const enemyX = base.player.position.x + PLAYER_ATTACK_RANGE + ENEMY_RADIUS - 5;
-    return { ...base, enemy: { ...base.enemy, position: { x: enemyX, y: base.player.position.y } } };
+    const p = base.player.position;
+    return withEnemies(base, [enemyAt(1, { x: p.x + PLAYER_ATTACK_RANGE + ENEMY_RADIUS - 5, y: p.y })]);
   }
   const hitDamage = (events: readonly { kind: string }[]): number | undefined => {
     const hit = events.find((e) => e.kind === 'enemyHit');
@@ -253,7 +317,7 @@ describe('passive modifiers', () => {
 
   it('healOnHurt heals after surviving a hit and emits playerHealed', () => {
     const mods: Modifiers = { ...IDENTITY_MODIFIERS, healOnHurt: 10 };
-    const { state, events } = runSim(7, neutralSteps(HIT_TICK), mods);
+    const { state, events } = runFrom(huntingState(), neutralSteps(HIT_TICK), mods);
     expect(state.player.health).toBe(PLAYER_MAX_HEALTH - ENEMY_ATTACK_DAMAGE + 10);
     expect(events.some((e) => e.kind === 'playerHealed' && e.amount === 10)).toBe(true);
   });
@@ -262,40 +326,100 @@ describe('passive modifiers', () => {
     const mods: Modifiers = { ...IDENTITY_MODIFIERS, enemySpeedMultiplier: 0.5, enemyDamageMultiplier: 0.5 };
     const early = ENEMY_IDLE_TICKS + Math.round(ENEMY_WINDUP_TICKS * 0.5);
     const reduced = Math.round(ENEMY_ATTACK_DAMAGE * 0.5);
-    const { state, events } = runSim(7, neutralSteps(early), mods);
+    const { state, events } = runFrom(huntingState(), neutralSteps(early), mods);
     expect(events.some((e) => e.kind === 'playerHit' && e.damage === reduced)).toBe(true);
     expect(state.player.health).toBe(PLAYER_MAX_HEALTH - reduced);
-    // Without the tempo modifier the slower slam has not landed by then.
-    const baseline = runSim(7, neutralSteps(early));
+    const baseline = runFrom(huntingState(), neutralSteps(early));
     expect(baseline.events.some((e) => e.kind === 'playerHit')).toBe(false);
   });
 });
 
-describe('enemy plants while attacking', () => {
+describe('hunting enemy plants while attacking', () => {
   it('holds position across every windup and recovery tick, moving only during idle', () => {
-    let s = initCombat(13);
+    let s = huntingState(13);
     let windupPos: string | null = null;
     let recoveryPos: string | null = null;
     let idleMoved = false;
     const cycle = ENEMY_IDLE_TICKS + ENEMY_WINDUP_TICKS + ENEMY_RECOVERY_TICKS;
     let prevIdleKey: string | null = null;
+    // Drift the player away so the idle-homing enemy has somewhere to close.
     for (let t = 1; t <= cycle; t++) {
-      const before = s.enemy.position;
-      s = step(s, NEUTRAL_INPUT).state;
-      const key = `${s.enemy.position.x},${s.enemy.position.y}`;
-      if (s.enemy.phase === 'windup') {
+      const before = (s.enemies[0] as EnemyState).position;
+      s = step(s, { ...NEUTRAL_INPUT, moveX: 1 }).state;
+      const e = s.enemies[0] as EnemyState;
+      const key = `${e.position.x},${e.position.y}`;
+      if (e.phase === 'windup') {
         if (windupPos === null) windupPos = key;
         else expect(key).toBe(windupPos);
-      } else if (s.enemy.phase === 'recovery') {
+      } else if (e.phase === 'recovery') {
         if (recoveryPos === null) recoveryPos = key;
         else expect(key).toBe(recoveryPos);
       } else {
-        // idle: it should be closing on the (stationary) player at least once
-        const movedNow = s.enemy.position.x !== before.x || s.enemy.position.y !== before.y;
+        const movedNow = e.position.x !== before.x || e.position.y !== before.y;
         if (movedNow && prevIdleKey !== key) idleMoved = true;
         prevIdleKey = key;
       }
     }
     expect(idleMoved).toBe(true);
+  });
+});
+
+describe('population: spawner, grazing, death', () => {
+  it('never exceeds the enemy cap across a long run', () => {
+    let s = initCombat(31);
+    for (let t = 0; t < 2000; t++) {
+      s = step(s, NEUTRAL_INPUT).state;
+      expect(s.enemies.length).toBeLessThanOrEqual(MAX_ENEMIES);
+    }
+  });
+
+  it('leaves untouched enemies passive: they never hunt or hit the player', () => {
+    // Player stands still and never attacks; the herd should just graze.
+    const { state, events } = runSim(31, neutralSteps(600));
+    expect(events.some((e) => e.kind === 'playerHit')).toBe(false);
+    expect(state.enemies.every((e) => e.behavior === 'grazing')).toBe(true);
+  });
+
+  it('keeps grazing enemies inside the arena bounds', () => {
+    const { state } = runSim(37, neutralSteps(1500));
+    for (const e of state.enemies) {
+      expect(e.position.x).toBeGreaterThanOrEqual(ENEMY_RADIUS);
+      expect(e.position.x).toBeLessThanOrEqual(ARENA_WIDTH - ENEMY_RADIUS);
+      expect(e.position.y).toBeGreaterThanOrEqual(ENEMY_RADIUS);
+      expect(e.position.y).toBeLessThanOrEqual(ARENA_HEIGHT - ENEMY_RADIUS);
+    }
+  });
+
+  it('an attacked enemy switches from grazing to hunting', () => {
+    const base = initCombat(9);
+    const p = base.player.position;
+    const state = withEnemies(base, [enemyAt(1, { x: p.x + 40, y: p.y })]);
+    expect(state.enemies[0]?.behavior).toBe('grazing');
+    const { state: after } = swing(state, { aimX: 1, aimY: 0 });
+    expect(after.enemies[0]?.behavior).toBe('hunting');
+  });
+
+  it('a lethal blow removes the enemy and emits enemyDefeated', () => {
+    const base = initCombat(9);
+    const p = base.player.position;
+    const state = withEnemies(base, [enemyAt(1, { x: p.x + 40, y: p.y }, { health: 4, maxHealth: 4 })]);
+    const { state: after, events } = swing(state, { aimX: 1, aimY: 0 });
+    expect(after.enemies.some((e) => e.id === 1)).toBe(false);
+    expect(events.some((e) => e.kind === 'enemyDefeated' && e.enemyId === 1)).toBe(true);
+  });
+});
+
+describe('player death', () => {
+  it('sets the game over, emits playerDefeated once, and then freezes the sim', () => {
+    const base = huntingState();
+    const state = { ...base, player: { ...base.player, health: 5 } };
+    const { state: dead, events } = runFrom(state, neutralSteps(HIT_TICK));
+    expect(dead.over).toBe(true);
+    expect(events.filter((e) => e.kind === 'playerDefeated')).toHaveLength(1);
+
+    // Further steps are inert.
+    const next = step(dead, { ...NEUTRAL_INPUT, moveX: 1 });
+    expect(next.state).toBe(dead);
+    expect(next.events).toEqual([]);
   });
 });

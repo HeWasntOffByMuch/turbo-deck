@@ -1,4 +1,4 @@
-import { Application, Graphics, Sprite, Text, TextStyle } from 'pixi.js';
+import { Application, Container, Graphics, Sprite, Text, TextStyle } from 'pixi.js';
 import { CARD_CATALOG } from '../cards/catalog.js';
 import type { CardInstance, PassiveEffect } from '../cards/types.js';
 import type { GameEvent, GameState } from '../game/session.js';
@@ -18,17 +18,30 @@ import {
   PLAYER_RADIUS,
   TICK_RATE,
 } from '../sim/constants.js';
-import type { Vec2 } from '../sim/types.js';
-import { buildDudeTextures, SPRITE_NATIVE_HEIGHT, type DudeTextures, type DudeIdentity } from './sprites.js';
+import type { EnemyState, Vec2 } from '../sim/types.js';
+import { buildDudeTextures, dudeTexturesFor, SPRITE_NATIVE_HEIGHT, type DudeTextures, type DudeIdentity } from './sprites.js';
 
+// The world view is a fixed window into the (larger) arena; the camera scrolls
+// the world under it while the HUD panel/hand sit to the right and below.
 const ARENA_OFFSET_X = 40;
 const ARENA_OFFSET_Y = 56;
-const ARENA_SCALE = 1.2; // zoomed in so the action reads clearly
-const ARENA_PX_W = ARENA_WIDTH * ARENA_SCALE;
-const ARENA_PX_H = ARENA_HEIGHT * ARENA_SCALE;
-const SCREEN_WIDTH = ARENA_OFFSET_X * 2 + ARENA_PX_W + 320;
-const SCREEN_HEIGHT = ARENA_OFFSET_Y + ARENA_PX_H + 190;
-const HAND_Y = ARENA_OFFSET_Y + ARENA_PX_H + 34;
+const ARENA_SCALE = 1.2;
+const VIEW_W = 720;
+const VIEW_H = 560;
+const VIEW_CENTER_X = ARENA_OFFSET_X + VIEW_W / 2;
+const VIEW_CENTER_Y = ARENA_OFFSET_Y + VIEW_H / 2;
+const HALF_VIEW_W = VIEW_W / (2 * ARENA_SCALE);
+const HALF_VIEW_H = VIEW_H / (2 * ARENA_SCALE);
+// Camera clamp so the view never leaves the arena (arena is larger than the view).
+const CAM_MIN_X = Math.min(HALF_VIEW_W, ARENA_WIDTH / 2);
+const CAM_MAX_X = Math.max(ARENA_WIDTH - HALF_VIEW_W, ARENA_WIDTH / 2);
+const CAM_MIN_Y = Math.min(HALF_VIEW_H, ARENA_HEIGHT / 2);
+const CAM_MAX_Y = Math.max(ARENA_HEIGHT - HALF_VIEW_H, ARENA_HEIGHT / 2);
+const CAMERA_LAG = 0.08; // fraction of the gap to the player closed each frame
+
+const SCREEN_WIDTH = ARENA_OFFSET_X * 2 + VIEW_W + 320;
+const SCREEN_HEIGHT = ARENA_OFFSET_Y + VIEW_H + 190;
+const HAND_Y = ARENA_OFFSET_Y + VIEW_H + 34;
 const MAX_LOG_LINES = 6;
 const TWO_PI = Math.PI * 2;
 const FLASH_FRAMES = 9;
@@ -36,12 +49,28 @@ const POPUP_LIFE_FRAMES = 42;
 const POPUP_RISE_PER_FRAME = -0.9;
 const SPRITE_SCALE = 2.2;
 const SPRITE_ANCHOR_Y = 0.7; // feet roughly at the actor's position
-const SPRITE_TOP_OFFSET = SPRITE_NATIVE_HEIGHT * SPRITE_SCALE * SPRITE_ANCHOR_Y; // px from position up to sprite top
+const SPRITE_TOP_OFFSET = SPRITE_NATIVE_HEIGHT * SPRITE_SCALE * SPRITE_ANCHOR_Y;
+
+// Grassy field palette.
+const GRASS_BASE = '#3f7a3a';
+const GRASS_LIGHT = '#478541';
+const GRASS_DARK = '#376b33';
+const GRASS_TUFT = '#2f5f2c';
+const GRASS_CELL = 64;
+
+const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
+const hash2 = (x: number, y: number): number => (((x * 73856093) ^ (y * 19349663)) >>> 0);
 
 interface Popup {
   readonly text: Text;
   readonly vx: number;
   life: number;
+}
+
+interface EnemyVisual {
+  readonly sprite: Sprite;
+  readonly label: Text;
+  readonly tex: DudeTextures;
 }
 
 export interface ScreenPoint {
@@ -74,7 +103,7 @@ function eventToLogLine(event: GameEvent): string | undefined {
     case 'bonusCardDrawn':
       return 'bonus card drawn!';
     case 'enemyDefeated':
-      return 'enemy defeated!';
+      return `${event.enemyType} defeated!`;
     case 'playerDefeated':
       return 'you were defeated...';
     default:
@@ -86,7 +115,6 @@ function textStyle(fontSize: number, fill: string, weight: 'normal' | 'bold' = '
   return new TextStyle({ fontFamily: 'monospace', fontSize, fill, fontWeight: weight });
 }
 
-/** Short human-readable description of a passive's mechanic, for the hand + held list. */
 function passiveDescriptor(p: PassiveEffect): string {
   switch (p.kind) {
     case 'attackDamage':
@@ -104,7 +132,6 @@ function passiveDescriptor(p: PassiveEffect): string {
   }
 }
 
-/** Names of the passive cards currently held (hand + bonus slot). */
 function heldPassiveNames(cards: readonly (CardInstance | null)[]): string[] {
   const names: string[] = [];
   for (const card of cards) {
@@ -115,19 +142,30 @@ function heldPassiveNames(cards: readonly (CardInstance | null)[]): string[] {
   return names;
 }
 
+/** The hunting enemy whose wind-up resolves soonest, if any. */
+function mostImminentWindup(enemies: readonly EnemyState[]): EnemyState | null {
+  let soonest: EnemyState | null = null;
+  for (const e of enemies) {
+    if (e.behavior !== 'hunting' || e.phase !== 'windup') continue;
+    if (soonest === null || e.phaseEndsAtTick < soonest.phaseEndsAtTick) soonest = e;
+  }
+  return soonest;
+}
+
 export class Scene {
-  private readonly arena = new Graphics();
+  private readonly world = new Container();
+  private readonly spriteLayer = new Container();
+  private readonly labelLayer = new Container();
+  private readonly popupLayer = new Container();
+  private readonly mapGfx = new Graphics();
   private readonly telegraphGfx = new Graphics();
   private readonly swingGfx = new Graphics();
   private readonly enemyGfx = new Graphics();
   private readonly playerGfx = new Graphics();
   private readonly cooldownGfx = new Graphics();
   private readonly playerSprite: Sprite;
-  private readonly enemySprite: Sprite;
   private readonly playerTex: DudeTextures;
-  private readonly enemyTex: DudeTextures;
   private readonly playerLabel: Text;
-  private readonly enemyLabel: Text;
   private readonly banner: Text;
   private readonly prompt: Text;
   private readonly handSlots: { box: Graphics; text: Text }[] = [];
@@ -135,41 +173,52 @@ export class Scene {
   private readonly passivesText: Text;
   private readonly logText: Text;
   private readonly logLines: string[] = [];
+  private readonly enemyVisuals = new Map<number, EnemyVisual>();
+  private readonly enemyTexCache = new Map<string, DudeTextures>();
+  private readonly enemyFlash = new Map<number, number>();
   private playerFlash = 0;
-  private enemyFlash = 0;
   private healFlash = 0;
+  private cam: Vec2 = { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 };
   private readonly popups: Popup[] = [];
 
-  private constructor(
-    readonly app: Application,
-    textures: { player: DudeTextures; enemy: DudeTextures },
-    identity: DudeIdentity,
-  ) {
+  private constructor(readonly app: Application, textures: { player: DudeTextures }, identity: DudeIdentity) {
     const stage = app.stage;
     this.playerTex = textures.player;
-    this.enemyTex = textures.enemy;
     this.playerSprite = new Sprite(textures.player.idle);
-    this.enemySprite = new Sprite(textures.enemy.idle);
-    for (const s of [this.playerSprite, this.enemySprite]) s.anchor.set(0.5, SPRITE_ANCHOR_Y);
-    // Order: arena, telegraph zone, actor sprites, swing wedge, bars/rings on top.
-    stage.addChild(this.arena, this.telegraphGfx, this.enemySprite, this.playerSprite, this.swingGfx, this.enemyGfx, this.playerGfx, this.cooldownGfx);
+    this.playerSprite.anchor.set(0.5, SPRITE_ANCHOR_Y);
+
+    // World view: everything in-arena, clipped to the viewport rectangle.
+    const mask = new Graphics().rect(ARENA_OFFSET_X, ARENA_OFFSET_Y, VIEW_W, VIEW_H).fill({ color: '#ffffff' });
+    this.world.mask = mask;
+    this.spriteLayer.addChild(this.playerSprite);
+    this.world.addChild(
+      this.mapGfx,
+      this.telegraphGfx,
+      this.spriteLayer,
+      this.swingGfx,
+      this.enemyGfx,
+      this.playerGfx,
+      this.cooldownGfx,
+      this.labelLayer,
+      this.popupLayer,
+    );
+    stage.addChild(mask, this.world);
 
     this.playerLabel = new Text({ text: identity.playerName.toUpperCase(), style: textStyle(11, '#bfe0ff', 'bold') });
-    this.enemyLabel = new Text({ text: identity.enemyType.toUpperCase(), style: textStyle(11, '#ff9a9a', 'bold') });
     this.playerLabel.anchor.set(0.5, 1);
-    this.enemyLabel.anchor.set(0.5, 1);
-    stage.addChild(this.playerLabel, this.enemyLabel);
-
-    this.banner = new Text({ text: '', style: textStyle(18, '#ffb347', 'bold') });
-    this.banner.anchor.set(0.5, 0);
-    this.banner.position.set(ARENA_OFFSET_X + ARENA_PX_W / 2, 18);
-    stage.addChild(this.banner);
+    this.labelLayer.addChild(this.playerLabel);
 
     this.prompt = new Text({ text: '', style: textStyle(20, '#ffd76a', 'bold') });
     this.prompt.anchor.set(0.5, 1);
-    stage.addChild(this.prompt);
+    this.labelLayer.addChild(this.prompt);
 
-    const panelX = ARENA_OFFSET_X + ARENA_PX_W + 40;
+    // HUD (screen-fixed, outside the world view).
+    this.banner = new Text({ text: '', style: textStyle(18, '#ffb347', 'bold') });
+    this.banner.anchor.set(0.5, 0);
+    this.banner.position.set(VIEW_CENTER_X, 18);
+    stage.addChild(this.banner);
+
+    const panelX = ARENA_OFFSET_X + VIEW_W + 40;
     this.bonusText = new Text({ text: '', style: textStyle(14, '#ffd76a', 'bold') });
     this.bonusText.position.set(panelX, ARENA_OFFSET_Y + 6);
     stage.addChild(this.bonusText);
@@ -191,8 +240,6 @@ export class Scene {
       stage.addChild(box, text);
       this.handSlots.push({ box, text });
     }
-
-    this.drawArena();
   }
 
   static async create(container: HTMLElement, identity: DudeIdentity): Promise<Scene> {
@@ -206,20 +253,27 @@ export class Scene {
     return this.app.canvas;
   }
 
-  /** Uniform, non-flipping world->screen transform. */
+  /** Camera-relative world->screen transform; the player sits near the view centre. */
   worldToScreen(v: Vec2): ScreenPoint {
-    return { x: ARENA_OFFSET_X + v.x * ARENA_SCALE, y: ARENA_OFFSET_Y + v.y * ARENA_SCALE };
+    return { x: VIEW_CENTER_X + (v.x - this.cam.x) * ARENA_SCALE, y: VIEW_CENTER_Y + (v.y - this.cam.y) * ARENA_SCALE };
   }
 
-  private drawArena(): void {
-    this.arena.clear();
-    this.arena
-      .rect(ARENA_OFFSET_X, ARENA_OFFSET_Y, ARENA_PX_W, ARENA_PX_H)
-      .fill({ color: '#16161f' })
-      .stroke({ color: '#33334a', width: 2 });
+  private texFor(type: string): DudeTextures {
+    let tex = this.enemyTexCache.get(type);
+    if (!tex) {
+      tex = dudeTexturesFor(type);
+      this.enemyTexCache.set(type, tex);
+    }
+    return tex;
   }
 
   render(state: GameState, events: readonly GameEvent[], aim: ScreenPoint): void {
+    // Ease the camera toward the player (with lag), clamped inside the arena.
+    this.cam = {
+      x: clamp(this.cam.x + (state.combat.player.position.x - this.cam.x) * CAMERA_LAG, CAM_MIN_X, CAM_MAX_X),
+      y: clamp(this.cam.y + (state.combat.player.position.y - this.cam.y) * CAMERA_LAG, CAM_MIN_Y, CAM_MAX_Y),
+    };
+
     for (const event of events) {
       const line = eventToLogLine(event);
       if (line) this.logLines.push(line);
@@ -229,8 +283,8 @@ export class Scene {
         this.spawnPopup(p.x, p.y, `-${event.damage}`, '#ff6b6b', 20);
       }
       if (event.kind === 'enemyHit') {
-        this.enemyFlash = FLASH_FRAMES;
-        const e = this.worldToScreen(state.combat.enemy.position);
+        this.enemyFlash.set(event.enemyId, FLASH_FRAMES);
+        const e = this.worldToScreen(event.at);
         this.spawnPopup(e.x, e.y, `${event.damage}`, '#ffe08a', 22);
       }
       if (event.kind === 'playerHealed') {
@@ -243,8 +297,9 @@ export class Scene {
     while (this.logLines.length > MAX_LOG_LINES) this.logLines.shift();
     this.logText.text = this.logLines.join('\n');
 
+    this.drawMap();
     this.drawTelegraph(state);
-    this.drawEnemy(state);
+    this.drawEnemies(state);
     this.drawSwing(state);
     this.drawPlayer(state, aim);
     this.drawCooldowns(state);
@@ -259,38 +314,93 @@ export class Scene {
       : '';
 
     if (this.playerFlash > 0) this.playerFlash--;
-    if (this.enemyFlash > 0) this.enemyFlash--;
     if (this.healFlash > 0) this.healFlash--;
+    for (const [id, f] of this.enemyFlash) {
+      if (f <= 1) this.enemyFlash.delete(id);
+      else this.enemyFlash.set(id, f - 1);
+    }
+  }
+
+  /** Grassy field: a mowed-lawn checker of two greens with occasional tufts, scrolling with the camera. */
+  private drawMap(): void {
+    this.mapGfx.clear();
+    this.mapGfx.rect(ARENA_OFFSET_X, ARENA_OFFSET_Y, VIEW_W, VIEW_H).fill({ color: GRASS_BASE });
+
+    const cx0 = Math.floor(Math.max(0, this.cam.x - HALF_VIEW_W) / GRASS_CELL);
+    const cx1 = Math.ceil(Math.min(ARENA_WIDTH, this.cam.x + HALF_VIEW_W) / GRASS_CELL);
+    const cy0 = Math.floor(Math.max(0, this.cam.y - HALF_VIEW_H) / GRASS_CELL);
+    const cy1 = Math.ceil(Math.min(ARENA_HEIGHT, this.cam.y + HALF_VIEW_H) / GRASS_CELL);
+    const size = GRASS_CELL * ARENA_SCALE + 1;
+    for (let cy = cy0; cy < cy1; cy++) {
+      for (let cx = cx0; cx < cx1; cx++) {
+        const s = this.worldToScreen({ x: cx * GRASS_CELL, y: cy * GRASS_CELL });
+        this.mapGfx.rect(s.x, s.y, size, size).fill({ color: (cx + cy) % 2 === 0 ? GRASS_LIGHT : GRASS_DARK });
+        const h = hash2(cx, cy);
+        if (h % 4 === 0) {
+          const ox = (h % GRASS_CELL) * ARENA_SCALE;
+          const oy = ((h >> 8) % GRASS_CELL) * ARENA_SCALE;
+          this.mapGfx.circle(s.x + ox, s.y + oy, 2.5).fill({ color: GRASS_TUFT });
+        }
+      }
+    }
+
+    // Arena boundary.
+    const tl = this.worldToScreen({ x: 0, y: 0 });
+    const br = this.worldToScreen({ x: ARENA_WIDTH, y: ARENA_HEIGHT });
+    this.mapGfx.rect(tl.x, tl.y, br.x - tl.x, br.y - tl.y).stroke({ color: '#274d24', width: 5 });
   }
 
   private drawTelegraph(state: GameState): void {
     this.telegraphGfx.clear();
-    const enemy = state.combat.enemy;
-    if (enemy.phase !== 'windup' || !enemy.attackZoneCenter) return;
-    const c = this.worldToScreen(enemy.attackZoneCenter);
     const r = ENEMY_ATTACK_RADIUS * ARENA_SCALE;
-    const ticksUntilHit = enemy.phaseEndsAtTick - state.combat.tick;
-    const progress = 1 - Math.max(0, ticksUntilHit) / ENEMY_WINDUP_TICKS;
-    this.telegraphGfx.circle(c.x, c.y, r).fill({ color: '#ff8c1a', alpha: 0.14 + 0.4 * progress });
-    this.telegraphGfx.circle(c.x, c.y, r).stroke({ color: '#ffb347', width: 3, alpha: 0.6 + 0.4 * progress });
-    // Inner ring collapses toward the centre as a "time to impact" cue.
-    this.telegraphGfx.circle(c.x, c.y, r * (1 - progress)).stroke({ color: '#ffe08a', width: 2, alpha: 0.85 });
+    for (const enemy of state.combat.enemies) {
+      if (enemy.behavior !== 'hunting' || enemy.phase !== 'windup' || !enemy.attackZoneCenter) continue;
+      const c = this.worldToScreen(enemy.attackZoneCenter);
+      const progress = 1 - Math.max(0, enemy.phaseEndsAtTick - state.combat.tick) / ENEMY_WINDUP_TICKS;
+      this.telegraphGfx.circle(c.x, c.y, r).fill({ color: '#ff8c1a', alpha: 0.14 + 0.4 * progress });
+      this.telegraphGfx.circle(c.x, c.y, r).stroke({ color: '#ffb347', width: 3, alpha: 0.6 + 0.4 * progress });
+      this.telegraphGfx.circle(c.x, c.y, r * (1 - progress)).stroke({ color: '#ffe08a', width: 2, alpha: 0.85 });
+    }
   }
 
-  private drawEnemy(state: GameState): void {
-    const e = state.combat.enemy;
-    const p = this.worldToScreen(e.position);
-
-    this.enemySprite.texture = e.phase === 'windup' ? this.enemyTex.windup : this.enemyTex.idle;
-    const faceRight = state.combat.player.position.x >= e.position.x;
-    const pop = 1 + 0.22 * (this.enemyFlash / FLASH_FRAMES);
-    this.enemySprite.position.set(p.x, p.y);
-    this.enemySprite.scale.set((faceRight ? 1 : -1) * SPRITE_SCALE * pop, SPRITE_SCALE * pop);
-
-    const barTop = p.y - SPRITE_TOP_OFFSET - 12;
+  private drawEnemies(state: GameState): void {
     this.enemyGfx.clear();
-    this.drawBar(this.enemyGfx, p.x - 30, barTop, 60, 7, e.health / e.maxHealth, '#ff5a5a');
-    this.enemyLabel.position.set(p.x, barTop - 4);
+    const seen = new Set<number>();
+    for (const e of state.combat.enemies) {
+      seen.add(e.id);
+      let vis = this.enemyVisuals.get(e.id);
+      if (!vis) {
+        const tex = this.texFor(e.type);
+        const sprite = new Sprite(tex.idle);
+        sprite.anchor.set(0.5, SPRITE_ANCHOR_Y);
+        const label = new Text({ text: e.type.toUpperCase(), style: textStyle(10, '#ff9a9a', 'bold') });
+        label.anchor.set(0.5, 1);
+        this.spriteLayer.addChild(sprite);
+        this.labelLayer.addChild(label);
+        vis = { sprite, label, tex };
+        this.enemyVisuals.set(e.id, vis);
+      }
+      const p = this.worldToScreen(e.position);
+      vis.sprite.texture = e.behavior === 'hunting' && e.phase === 'windup' ? vis.tex.windup : vis.tex.idle;
+      const faceRight = state.combat.player.position.x >= e.position.x;
+      const pop = 1 + 0.22 * ((this.enemyFlash.get(e.id) ?? 0) / FLASH_FRAMES);
+      vis.sprite.position.set(p.x, p.y);
+      vis.sprite.scale.set((faceRight ? 1 : -1) * SPRITE_SCALE * pop, SPRITE_SCALE * pop);
+      // Grazers read as calm (dim), hunters as alert (bright red flash on hit).
+      vis.sprite.tint = (this.enemyFlash.get(e.id) ?? 0) > 0 ? 0xffb0b0 : e.behavior === 'grazing' ? 0xdfe6df : 0xffffff;
+
+      const barTop = p.y - SPRITE_TOP_OFFSET - 12;
+      this.drawBar(this.enemyGfx, p.x - 26, barTop, 52, 6, e.health / e.maxHealth, e.behavior === 'hunting' ? '#ff5a5a' : '#8fbf6a');
+      vis.label.position.set(p.x, barTop - 4);
+    }
+
+    // Retire visuals for enemies that died or despawned.
+    for (const [id, vis] of this.enemyVisuals) {
+      if (seen.has(id)) continue;
+      vis.sprite.destroy();
+      vis.label.destroy();
+      this.enemyVisuals.delete(id);
+    }
   }
 
   private drawSwing(state: GameState): void {
@@ -298,20 +408,16 @@ export class Scene {
     const pl = state.combat.player;
     const tick = state.combat.tick;
     const p = this.worldToScreen(pl.position);
-    const ang = Math.atan2(pl.attackAimY, pl.attackAimX); // aim captured at wind-up start
+    const ang = Math.atan2(pl.attackAimY, pl.attackAimX);
     const reach = PLAYER_ATTACK_RANGE * ARENA_SCALE;
-    const arc = (a0: number, a1: number): Graphics =>
-      this.swingGfx.moveTo(p.x, p.y).arc(p.x, p.y, reach, a0, a1).lineTo(p.x, p.y);
 
     if (pl.attackReleaseTick !== 0) {
-      // Winding up: a growing outline wedge telegraphs the incoming strike.
       const charge = 1 - Math.max(0, pl.attackReleaseTick - tick) / PLAYER_ATTACK_WINDUP_TICKS;
       const half = (Math.PI / 4) * (0.5 + 0.5 * charge);
       this.swingGfx.moveTo(p.x, p.y).arc(p.x, p.y, reach * (0.5 + 0.5 * charge), ang - half, ang + half).lineTo(p.x, p.y);
       this.swingGfx.stroke({ color: '#bfe0ff', width: 2, alpha: 0.4 + 0.4 * charge });
     } else if (tick < pl.moveLockUntil) {
-      // The strike: a bright filled wedge during the brief recovery.
-      arc(ang - Math.PI / 4, ang + Math.PI / 4).fill({ color: '#eaf3ff', alpha: 0.34 });
+      this.swingGfx.moveTo(p.x, p.y).arc(p.x, p.y, reach, ang - Math.PI / 4, ang + Math.PI / 4).lineTo(p.x, p.y).fill({ color: '#eaf3ff', alpha: 0.34 });
     }
   }
 
@@ -345,37 +451,41 @@ export class Scene {
     const readiness = 1 - cdRemaining / PLAYER_ATTACK_COOLDOWN_TICKS;
     this.drawRadial(p.x, p.y, PLAYER_RADIUS * ARENA_SCALE + 7, readiness, readiness >= 1 ? '#7affc0' : '#4ea1ff');
 
-    const e = state.combat.enemy;
-    const ep = this.worldToScreen(e.position);
-    const phaseTotal =
-      e.phase === 'idle' ? ENEMY_IDLE_TICKS : e.phase === 'windup' ? ENEMY_WINDUP_TICKS : ENEMY_RECOVERY_TICKS;
-    const phaseProgress = 1 - Math.max(0, e.phaseEndsAtTick - tick) / phaseTotal;
-    const ringColor = e.phase === 'windup' ? '#ff8c1a' : e.phase === 'recovery' ? '#7a5a5a' : '#c05050';
-    this.drawRadial(ep.x, ep.y, ENEMY_RADIUS * ARENA_SCALE + 7, phaseProgress, ringColor);
+    for (const e of state.combat.enemies) {
+      if (e.behavior !== 'hunting') continue;
+      const ep = this.worldToScreen(e.position);
+      const phaseTotal =
+        e.phase === 'idle' ? ENEMY_IDLE_TICKS : e.phase === 'windup' ? ENEMY_WINDUP_TICKS : ENEMY_RECOVERY_TICKS;
+      const phaseProgress = 1 - Math.max(0, e.phaseEndsAtTick - tick) / phaseTotal;
+      const ringColor = e.phase === 'windup' ? '#ff8c1a' : e.phase === 'recovery' ? '#7a5a5a' : '#c05050';
+      this.drawRadial(ep.x, ep.y, ENEMY_RADIUS * ARENA_SCALE + 7, phaseProgress, ringColor);
+    }
   }
 
   private drawBannerAndPrompt(state: GameState): void {
-    const e = state.combat.enemy;
     const tick = state.combat.tick;
+    const windup = mostImminentWindup(state.combat.enemies);
+    const hunting = state.combat.enemies.some((e) => e.behavior === 'hunting');
 
-    if (e.phase === 'windup') {
-      const remaining = Math.max(0, e.phaseEndsAtTick - tick);
+    if (state.combat.over) {
+      this.banner.text = 'YOU WERE DEFEATED';
+      this.banner.style.fill = '#ff5a5a';
+    } else if (windup) {
+      const remaining = Math.max(0, windup.phaseEndsAtTick - tick);
       this.banner.text = `⚠ SLAM INCOMING  —  ${(remaining / TICK_RATE).toFixed(1)}s`;
       this.banner.style.fill = '#ff8c1a';
-    } else if (e.phase === 'recovery') {
-      this.banner.text = 'enemy recovering — punish!';
+    } else if (hunting) {
+      this.banner.text = 'enemy engaged — punish the recovery!';
       this.banner.style.fill = '#7affc0';
     } else {
-      this.banner.text = 'enemy approaching';
+      this.banner.text = 'the herd grazes peacefully';
       this.banner.style.fill = '#9a9ab0';
     }
 
-    // Parry/dodge timing prompt over the player: appears in the reactable window,
-    // turns bright green in the frame-tight perfect window.
     const pScreen = this.worldToScreen(state.combat.player.position);
     this.prompt.position.set(pScreen.x, pScreen.y - PLAYER_RADIUS * ARENA_SCALE - 46);
-    if (e.phase === 'windup') {
-      const remaining = e.phaseEndsAtTick - tick;
+    if (windup && !state.combat.over) {
+      const remaining = windup.phaseEndsAtTick - tick;
       if (remaining <= PERFECT_WINDOW_TICKS) {
         this.prompt.text = 'PARRY NOW!';
         this.prompt.style.fill = '#7affc0';
@@ -390,12 +500,11 @@ export class Scene {
     }
   }
 
-  /** Spawn a floating combat number that drifts up and fades (cosmetic only). */
   private spawnPopup(x: number, y: number, label: string, color: string, fontSize: number): void {
     const text = new Text({ text: label, style: textStyle(fontSize, color, 'bold') });
     text.anchor.set(0.5, 1);
     text.position.set(x + (Math.random() * 20 - 10), y - 24);
-    this.app.stage.addChild(text);
+    this.popupLayer.addChild(text);
     this.popups.push({ text, vx: Math.random() * 0.6 - 0.3, life: POPUP_LIFE_FRAMES });
   }
 
@@ -408,20 +517,17 @@ export class Scene {
       popup.text.position.y += POPUP_RISE_PER_FRAME;
       popup.text.alpha = Math.max(0, popup.life / POPUP_LIFE_FRAMES);
       if (popup.life <= 0) {
-        this.app.stage.removeChild(popup.text);
         popup.text.destroy();
         this.popups.splice(i, 1);
       }
     }
   }
 
-  /** Draw a radial "loader" arc from the top, clockwise, filling to `progress` (0..1). */
   private drawRadial(cx: number, cy: number, radius: number, progress: number, color: string): void {
     const clamped = Math.max(0, Math.min(1, progress));
     const start = -Math.PI / 2;
     this.cooldownGfx.circle(cx, cy, radius).stroke({ color: '#000000', width: 3, alpha: 0.25 });
     if (clamped <= 0) return;
-    // moveTo the arc's start point first, else arc() streaks a line from the pen origin (0,0).
     this.cooldownGfx
       .moveTo(cx + radius * Math.cos(start), cy + radius * Math.sin(start))
       .arc(cx, cy, radius, start, start + clamped * TWO_PI)
@@ -440,7 +546,6 @@ export class Scene {
       if (!slot) return;
       slot.box.clear();
       const def = card ? CARD_CATALOG.get(card.defId) : undefined;
-      // Passive cards get a green border so held modifiers are distinguishable at a glance.
       const border = def?.kind === 'passive' ? '#7affc0' : '#5a5a7a';
       slot.box.roundRect(0, 0, 214, 76, 6).fill({ color: '#1b1b26' }).stroke({ color: border, width: 2 });
       if (card && def) {
