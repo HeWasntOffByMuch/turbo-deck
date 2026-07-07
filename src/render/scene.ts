@@ -20,6 +20,20 @@ import {
 } from '../sim/constants.js';
 import type { EnemyState, Vec2 } from '../sim/types.js';
 import { buildDudeTextures, dudeTexturesFor, SPRITE_NATIVE_HEIGHT, type DudeTextures, type DudeIdentity } from './sprites.js';
+import {
+  ACTIVE_VFX,
+  PASSIVE_VFX,
+  AoeEffect,
+  ProjectileEffect,
+  OverheadSymbolEffect,
+  drawGlow,
+  drawUnderglow,
+  drawRotatingShapes,
+  drawOverheadSymbol,
+  type ActiveEffect,
+  type PassiveVfx,
+  type Project,
+} from './effects.js';
 
 // The world view is a fixed window into the (larger) arena; the camera scrolls
 // the world under it while the HUD panel/hand sit to the right and below.
@@ -159,6 +173,8 @@ export class Scene {
   private readonly popupLayer = new Container();
   private readonly mapGfx = new Graphics();
   private readonly telegraphGfx = new Graphics();
+  private readonly auraFloorGfx = new Graphics();
+  private readonly auraTopGfx = new Graphics();
   private readonly swingGfx = new Graphics();
   private readonly enemyGfx = new Graphics();
   private readonly playerGfx = new Graphics();
@@ -180,6 +196,8 @@ export class Scene {
   private healFlash = 0;
   private cam: Vec2 = { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 };
   private readonly popups: Popup[] = [];
+  private readonly activeEffects: ActiveEffect[] = [];
+  private frame = 0;
 
   private constructor(readonly app: Application, textures: { player: DudeTextures }, identity: DudeIdentity) {
     const stage = app.stage;
@@ -194,10 +212,12 @@ export class Scene {
     this.world.addChild(
       this.mapGfx,
       this.telegraphGfx,
+      this.auraFloorGfx,
       this.spriteLayer,
       this.swingGfx,
       this.enemyGfx,
       this.playerGfx,
+      this.auraTopGfx,
       this.cooldownGfx,
       this.labelLayer,
       this.popupLayer,
@@ -268,6 +288,7 @@ export class Scene {
   }
 
   render(state: GameState, events: readonly GameEvent[], aim: ScreenPoint): void {
+    this.frame++;
     // Ease the camera toward the player (with lag), clamped inside the arena.
     this.cam = {
       x: clamp(this.cam.x + (state.combat.player.position.x - this.cam.x) * CAMERA_LAG, CAM_MIN_X, CAM_MAX_X),
@@ -294,6 +315,7 @@ export class Scene {
       }
     }
     this.updatePopups();
+    this.spawnActiveEffects(state, events, aim);
     while (this.logLines.length > MAX_LOG_LINES) this.logLines.shift();
     this.logText.text = this.logLines.join('\n');
 
@@ -302,6 +324,7 @@ export class Scene {
     this.drawEnemies(state);
     this.drawSwing(state);
     this.drawPlayer(state, aim);
+    this.drawEffectsAndAuras(state);
     this.drawCooldowns(state);
     this.drawBannerAndPrompt(state);
     this.drawHand(state);
@@ -497,6 +520,121 @@ export class Scene {
       }
     } else {
       this.prompt.text = '';
+    }
+  }
+
+  /**
+   * Turn each active card played this frame into a cosmetic effect: a
+   * projectile flying at the enemy the sim actually struck (or off along the
+   * aim on a miss), or a ground AOE that winds up on the caster / forward point.
+   */
+  private spawnActiveEffects(state: GameState, events: readonly GameEvent[], aim: ScreenPoint): void {
+    const player = state.combat.player.position;
+    const norm = Math.hypot(aim.x, aim.y);
+    const dir = norm > 1e-3 ? { x: aim.x / norm, y: aim.y / norm } : { x: 1, y: 0 };
+    const hits = events.filter((e): e is Extract<GameEvent, { kind: 'enemyHit' }> => e.kind === 'enemyHit');
+
+    for (const ev of events) {
+      if (ev.kind !== 'cardPlayed' && ev.kind !== 'bonusCardPlayed') continue;
+      const vfx = ACTIVE_VFX[ev.defId];
+      if (!vfx) continue;
+      const def = CARD_CATALOG.get(ev.defId);
+      const amount = def?.kind === 'active' && def.effect.kind === 'damage' ? def.effect.amount : undefined;
+
+      if (vfx.kind === 'projectile') {
+        const hit = (amount !== undefined ? hits.find((h) => h.damage === amount) : undefined) ?? hits[0];
+        const target: Vec2 = hit ? hit.at : { x: player.x + dir.x * 400, y: player.y + dir.y * 400 };
+        this.activeEffects.push(new ProjectileEffect(player, target, vfx));
+      } else {
+        const center: Vec2 = vfx.forward
+          ? { x: player.x + dir.x * vfx.radius * 0.5, y: player.y + dir.y * vfx.radius * 0.5 }
+          : player;
+        this.activeEffects.push(new AoeEffect(center, vfx));
+        if (vfx.symbol) {
+          for (const h of hits) {
+            this.activeEffects.push(new OverheadSymbolEffect(h.at, SPRITE_TOP_OFFSET + 14, vfx.symbol, vfx.glow, vfx.castTicks));
+          }
+        }
+      }
+    }
+  }
+
+  /** Advance and draw live active effects, then paint the held passives' auras. */
+  private drawEffectsAndAuras(state: GameState): void {
+    this.auraFloorGfx.clear();
+    this.auraTopGfx.clear();
+    const project: Project = (v) => this.worldToScreen(v);
+
+    this.drawPassiveAuras(state, project);
+
+    for (let i = this.activeEffects.length - 1; i >= 0; i--) {
+      const fx = this.activeEffects[i];
+      if (!fx) continue;
+      if (!fx.update()) {
+        this.activeEffects.splice(i, 1);
+        continue;
+      }
+      fx.drawFloor(this.auraFloorGfx, project, ARENA_SCALE);
+      fx.drawTop(this.auraTopGfx, project, ARENA_SCALE);
+    }
+  }
+
+  private drawPassiveAuras(state: GameState, project: Project): void {
+    const playerVfx: PassiveVfx[] = [];
+    let enemyVfx: PassiveVfx | undefined;
+    const seen = new Set<string>();
+    for (const card of [...state.deck.hand, state.deck.bonusSlot]) {
+      if (!card) continue;
+      const def = CARD_CATALOG.get(card.defId);
+      if (!def || def.kind !== 'passive' || seen.has(def.passive.kind)) continue;
+      seen.add(def.passive.kind);
+      const vfx = PASSIVE_VFX[def.passive.kind];
+      if (vfx.target === 'player') playerVfx.push(vfx);
+      else enemyVfx = vfx;
+    }
+
+    if (playerVfx.length > 0) {
+      const p = project(state.combat.player.position);
+      const baseR = PLAYER_RADIUS * ARENA_SCALE;
+      playerVfx.forEach((vfx, idx) => this.paintAura(vfx, p.x, p.y, p.y - baseR * 0.5, baseR, idx, p.y - SPRITE_TOP_OFFSET - 20));
+    }
+
+    if (enemyVfx) {
+      const baseR = ENEMY_RADIUS * ARENA_SCALE;
+      for (const e of state.combat.enemies) {
+        const ep = project(e.position);
+        this.paintAura(enemyVfx, ep.x, ep.y, ep.y - baseR * 0.5, baseR, 0, ep.y - SPRITE_TOP_OFFSET - 22);
+      }
+    }
+  }
+
+  private paintAura(vfx: PassiveVfx, cx: number, feetY: number, bodyY: number, baseR: number, idx: number, symbolY: number): void {
+    for (const prim of vfx.primitives) {
+      switch (prim) {
+        case 'underglow':
+          drawUnderglow(this.auraFloorGfx, cx, feetY, baseR, vfx.color, 1, this.frame);
+          break;
+        case 'glow':
+          drawGlow(this.auraTopGfx, cx, bodyY, baseR, vfx.color, 1, this.frame + idx * 20);
+          break;
+        case 'rotatingShapes':
+          drawRotatingShapes(
+            this.auraTopGfx,
+            cx,
+            bodyY,
+            baseR + 14 + idx * 6,
+            4,
+            vfx.color,
+            vfx.sides ?? 3,
+            vfx.count ?? 3,
+            this.frame * (vfx.spin ?? 0.05),
+            0.7,
+          );
+          break;
+        case 'overheadSymbol':
+          if (vfx.symbol) drawOverheadSymbol(this.auraTopGfx, cx, symbolY, vfx.color, vfx.symbol, 0.85);
+          break;
+      }
     }
   }
 
