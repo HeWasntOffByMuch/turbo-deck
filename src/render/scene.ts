@@ -1,6 +1,6 @@
 import { Application, Container, Graphics, Sprite, Text, TextStyle } from 'pixi.js';
 import { CARD_CATALOG } from '../cards/catalog.js';
-import type { CardInstance, PassiveEffect } from '../cards/types.js';
+import type { CardInstance } from '../cards/types.js';
 import type { GameEvent, GameState } from '../game/session.js';
 import {
   ARENA_HEIGHT,
@@ -19,6 +19,7 @@ import {
   TICK_RATE,
 } from '../sim/constants.js';
 import type { EnemyState, Vec2 } from '../sim/types.js';
+import { CARD_H, CARD_W, HandView } from './hand.js';
 import { buildDudeTextures, dudeTexturesFor, SPRITE_NATIVE_HEIGHT, type DudeTextures, type DudeIdentity } from './sprites.js';
 
 // The world view is a fixed window into the (larger) arena; the camera scrolls
@@ -40,8 +41,13 @@ const CAM_MAX_Y = Math.max(ARENA_HEIGHT - HALF_VIEW_H, ARENA_HEIGHT / 2);
 const CAMERA_LAG = 0.08; // fraction of the gap to the player closed each frame
 
 const SCREEN_WIDTH = ARENA_OFFSET_X * 2 + VIEW_W + 320;
-const SCREEN_HEIGHT = ARENA_OFFSET_Y + VIEW_H + 190;
-const HAND_Y = ARENA_OFFSET_Y + VIEW_H + 34;
+// Room below the arena view for a row of portrait Balatro-style cards.
+const HAND_TOP = ARENA_OFFSET_Y + VIEW_H + 24;
+const HAND_CENTER_Y = HAND_TOP + CARD_H / 2;
+const HAND_PITCH = 160;
+const SCREEN_HEIGHT = HAND_TOP + CARD_H + 24;
+const PANEL_X = ARENA_OFFSET_X + VIEW_W + 40;
+const BONUS_CENTER = { x: PANEL_X + CARD_W / 2 + 18, y: HAND_CENTER_Y };
 const MAX_LOG_LINES = 6;
 const TWO_PI = Math.PI * 2;
 const FLASH_FRAMES = 9;
@@ -115,23 +121,6 @@ function textStyle(fontSize: number, fill: string, weight: 'normal' | 'bold' = '
   return new TextStyle({ fontFamily: 'monospace', fontSize, fill, fontWeight: weight });
 }
 
-function passiveDescriptor(p: PassiveEffect): string {
-  switch (p.kind) {
-    case 'attackDamage':
-      return `+${p.amount} strike dmg`;
-    case 'nthStrikeDamage':
-      return `every ${p.everyN}${p.everyN === 2 ? 'nd' : 'th'} strike +${Math.round(p.bonusFraction * 100)}%`;
-    case 'healthRegen':
-      return `+${p.perSecond} HP/s`;
-    case 'manaRegen':
-      return `+${p.perSecond} mana/s`;
-    case 'healOnHurt':
-      return `heal ${p.amount} when hit`;
-    case 'enemyTempo':
-      return `enemy ${p.speedMultiplier < 1 ? 'faster' : 'slower'}, ${Math.round((1 - p.damageMultiplier) * 100)}% weaker`;
-  }
-}
-
 function heldPassiveNames(cards: readonly (CardInstance | null)[]): string[] {
   const names: string[] = [];
   for (const card of cards) {
@@ -168,8 +157,7 @@ export class Scene {
   private readonly playerLabel: Text;
   private readonly banner: Text;
   private readonly prompt: Text;
-  private readonly handSlots: { box: Graphics; text: Text }[] = [];
-  private readonly bonusText: Text;
+  private readonly hand: HandView;
   private readonly passivesText: Text;
   private readonly logText: Text;
   private readonly logLines: string[] = [];
@@ -218,28 +206,29 @@ export class Scene {
     this.banner.position.set(VIEW_CENTER_X, 18);
     stage.addChild(this.banner);
 
-    const panelX = ARENA_OFFSET_X + VIEW_W + 40;
-    this.bonusText = new Text({ text: '', style: textStyle(14, '#ffd76a', 'bold') });
-    this.bonusText.position.set(panelX, ARENA_OFFSET_Y + 6);
-    stage.addChild(this.bonusText);
-
+    const panelX = PANEL_X;
     this.passivesText = new Text({ text: '', style: textStyle(14, '#7affc0') });
-    this.passivesText.position.set(panelX, ARENA_OFFSET_Y + 44);
+    this.passivesText.position.set(panelX, ARENA_OFFSET_Y + 6);
     stage.addChild(this.passivesText);
 
     this.logText = new Text({ text: '', style: textStyle(13, '#c8c8d8') });
-    this.logText.position.set(panelX, ARENA_OFFSET_Y + 92);
+    this.logText.position.set(panelX, ARENA_OFFSET_Y + 54);
     stage.addChild(this.logText);
 
-    for (let i = 0; i < 3; i++) {
-      const box = new Graphics();
-      const text = new Text({ text: '', style: textStyle(13, '#e8e8f0') });
-      const x = ARENA_OFFSET_X + i * 236;
-      box.position.set(x, HAND_Y);
-      text.position.set(x + 12, HAND_Y + 10);
-      stage.addChild(box, text);
-      this.handSlots.push({ box, text });
-    }
+    const bonusLabel = new Text({ text: 'BONUS  (press B)', style: textStyle(12, '#ffd76a', 'bold') });
+    bonusLabel.anchor.set(0.5, 1);
+    bonusLabel.position.set(BONUS_CENTER.x, BONUS_CENTER.y - CARD_H / 2 - 8);
+    stage.addChild(bonusLabel);
+
+    // The card hand and its play animation live in their own view (spec 013).
+    this.hand = new HandView(stage, {
+      handCenters: [
+        { x: VIEW_CENTER_X - HAND_PITCH, y: HAND_CENTER_Y },
+        { x: VIEW_CENTER_X, y: HAND_CENTER_Y },
+        { x: VIEW_CENTER_X + HAND_PITCH, y: HAND_CENTER_Y },
+      ],
+      bonusCenter: BONUS_CENTER,
+    });
   }
 
   static async create(container: HTMLElement, identity: DudeIdentity): Promise<Scene> {
@@ -304,14 +293,10 @@ export class Scene {
     this.drawPlayer(state, aim);
     this.drawCooldowns(state);
     this.drawBannerAndPrompt(state);
-    this.drawHand(state);
+    this.hand.render(state.deck.hand, state.deck.bonusSlot, CARD_CATALOG);
 
     const held = heldPassiveNames([...state.deck.hand, state.deck.bonusSlot]);
     this.passivesText.text = held.length > 0 ? `Passives active:\n  ${held.join('\n  ')}` : 'Passives active: none';
-
-    this.bonusText.text = state.deck.bonusSlot
-      ? `BONUS: ${CARD_CATALOG.get(state.deck.bonusSlot.defId)?.name ?? state.deck.bonusSlot.defId} (press B)`
-      : '';
 
     if (this.playerFlash > 0) this.playerFlash--;
     if (this.healFlash > 0) this.healFlash--;
@@ -540,25 +525,4 @@ export class Scene {
     gfx.rect(x, y, width * clamped, height).fill({ color });
   }
 
-  private drawHand(state: GameState): void {
-    state.deck.hand.forEach((card, i) => {
-      const slot = this.handSlots[i];
-      if (!slot) return;
-      slot.box.clear();
-      const def = card ? CARD_CATALOG.get(card.defId) : undefined;
-      const border = def?.kind === 'passive' ? '#7affc0' : '#5a5a7a';
-      slot.box.roundRect(0, 0, 214, 76, 6).fill({ color: '#1b1b26' }).stroke({ color: border, width: 2 });
-      if (card && def) {
-        if (def.kind === 'passive') {
-          slot.text.text = `[${i + 1}] ${def.name}  (PASSIVE)\nwhile held: ${passiveDescriptor(def.passive)}\nplay to retire`;
-        } else {
-          slot.text.text = `[${i + 1}] ${def.name}  (cost ${def.cost})\n${def.tags.join(', ')}\nplay to use`;
-        }
-      } else if (card) {
-        slot.text.text = card.defId;
-      } else {
-        slot.text.text = `[${i + 1}] (empty)`;
-      }
-    });
-  }
 }
