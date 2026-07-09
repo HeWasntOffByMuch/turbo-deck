@@ -14,11 +14,16 @@
 //     fingerstyle guitar recording in D natural minor (F D F G F | D F E G F |
 //     D D F E | E D E D over a Dm–F–C–Gm loop), taken slower and warmer — a
 //     triangle lead over a gentle alternating bass and an eighth-note arpeggio.
+//   - The death theme (`buildDeathSong`) is that same guitar in mourning: it
+//     plays once the player is defeated. It keeps the D-minor center but bends
+//     it sinister — a slow descending Andalusian cadence (Dm–C–B♭–A, the drop
+//     onto an A-major dominant lending a C♯ leading tone), a Phrygian ♭2 (E♭) in
+//     the lead, a sawtooth lead over a low triangle toll and a sawtooth drone.
 
 export type Waveform = 'sine' | 'square' | 'sawtooth' | 'triangle';
 export type MusicVoice = 'bass' | 'arp' | 'lead' | 'pad';
-/** Which soundtrack is playing: the fight, or the between-wave lull. */
-export type MusicPhase = 'combat' | 'calm';
+/** Which soundtrack is playing: the fight, the between-wave lull, or the death dirge. */
+export type MusicPhase = 'combat' | 'calm' | 'death';
 
 export interface MusicNote {
   /** Onset in beats from the start of the loop. */
@@ -53,6 +58,14 @@ export function midiToFreq(midi: number): number {
  */
 export function musicPhaseForEnemyCount(enemyCount: number): MusicPhase {
   return enemyCount > 0 ? 'combat' : 'calm';
+}
+
+/**
+ * The full music rule including defeat: once the player is down the death dirge
+ * takes over everything, otherwise combat/calm follows the enemy count. Pure.
+ */
+export function musicPhaseFor(enemyCount: number, over: boolean): MusicPhase {
+  return over ? 'death' : musicPhaseForEnemyCount(enemyCount);
 }
 
 const BEATS_PER_BAR = 4;
@@ -254,6 +267,53 @@ const CALM_SPEC: SongSpec = {
   padGain: 0.09,
 };
 
+// --- Death dirge (spec 020) ----------------------------------------------
+
+// Dm – C – B♭ – A, one bar each: the Andalusian cadence, roots stepping *down*
+// (D–C–B♭–A) for a sense of collapse. The final chord is A **major** — its C♯
+// is the raised leading tone that never resolves back up here, the sinister pull
+// that keeps the dirge circling. Roots sit an octave below the calm theme.
+const DEATH_PROGRESSION: readonly Chord[] = [
+  { root: 38, tones: [50, 53, 57] }, // Dm : D2 / D3 F3 A3
+  { root: 36, tones: [48, 52, 55] }, // C  : C2 / C3 E3 G3
+  { root: 34, tones: [46, 50, 53] }, // B♭ : A#1 / A#2 D3 F3
+  { root: 33, tones: [45, 49, 52] }, // A  : A1 / A2 C#3 E3  (major: the leading tone)
+];
+
+// A slow toll rather than a runner: the low root with an occasional fifth,
+// re-struck to drone. Heavy and deliberate under the dirge.
+const DEATH_BASS_PATTERN: readonly number[] = [0, 0, 0, 7, 0, 0, 7, 0];
+
+// The guitar in mourning: a slow descending lament. Bar 1 falls F–E♭–D, the E♭
+// the Phrygian ♭2 that darkens the tonic; the line sinks through the cadence and
+// bar 4 circles the A-major C♯, ending unresolved on A so the loop keeps looming.
+const DEATH_LEAD_BARS: readonly LeadBar[] = [
+  // Dm : F  E♭ D
+  [[0, 1, 65], [1, 1, 63], [2, 2, 62]],
+  // C  : D  C  B♭
+  [[0, 1, 62], [1, 1, 60], [2, 2, 58]],
+  // B♭ : A  B♭ A   (a sighing half-step)
+  [[0, 1.5, 57], [1.5, 0.5, 58], [2, 2, 57]],
+  // A  : C# D  C# A — the leading tone circling, left hanging on the dominant.
+  [[0, 1, 61], [1, 1, 62], [2, 1, 61], [3, 1, 57]],
+];
+
+const DEATH_SPEC: SongSpec = {
+  bpm: 72,
+  progression: DEATH_PROGRESSION,
+  bassPattern: DEATH_BASS_PATTERN,
+  bassWave: 'triangle',
+  bassGain: 0.26,
+  arpPerBeat: 2,
+  arpWave: 'sine',
+  arpGain: 0.08,
+  leadBars: DEATH_LEAD_BARS,
+  leadWave: 'sawtooth',
+  leadGain: 0.18,
+  padWave: 'sawtooth',
+  padGain: 0.06,
+};
+
 /** The combat theme (spec 014). Deterministic; notes sorted by onset. */
 export function buildSong(): Song {
   return assemble(COMBAT_SPEC);
@@ -262,4 +322,9 @@ export function buildSong(): Song {
 /** The calm between-wave theme (spec 017). Deterministic; notes sorted by onset. */
 export function buildCalmSong(): Song {
   return assemble(CALM_SPEC);
+}
+
+/** The sinister death dirge (spec 020), played once the player is defeated. */
+export function buildDeathSong(): Song {
+  return assemble(DEATH_SPEC);
 }

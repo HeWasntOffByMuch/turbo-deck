@@ -3,7 +3,7 @@
 // it renders the pure descriptions from music.ts and sfx.ts. Because the
 // interesting choices live in those testable modules, this stays thin.
 
-import { buildCalmSong, buildSong, midiToFreq, type MusicPhase, type Song, type Waveform } from './music.js';
+import { buildCalmSong, buildDeathSong, buildSong, midiToFreq, type MusicPhase, type Song, type Waveform } from './music.js';
 import { SFX, sfxForEvent, spellEventSfx, type SfxSegment } from './sfx.js';
 import type { GameEvent } from '../game/session.js';
 import type { SpellGameEvent } from '../game/spell-session.js';
@@ -62,8 +62,12 @@ export class GameAudio {
   private musicBus: GainNode | undefined;
   private sfxBus: GainNode | undefined;
   private noiseBuffer: AudioBuffer | undefined;
-  // Both themes are always scheduled; `phase` selects which one is audible.
-  private readonly loops: readonly MusicLoop[] = [makeLoop(buildSong(), 'combat'), makeLoop(buildCalmSong(), 'calm')];
+  // Every theme is always scheduled; `phase` selects which one is audible.
+  private readonly loops: readonly MusicLoop[] = [
+    makeLoop(buildSong(), 'combat'),
+    makeLoop(buildCalmSong(), 'calm'),
+    makeLoop(buildDeathSong(), 'death'),
+  ];
   private phase: MusicPhase = 'calm';
   private muted = false;
   private started = false;

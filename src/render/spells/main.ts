@@ -1,7 +1,7 @@
 import { initSpellGame, stepSpellGame, type SpellGameEvent, type SpellGameState } from '../../game/spell-session.js';
 import { TICK_RATE } from '../../sim/constants.js';
 import { GameAudio } from '../audio.js';
-import { musicPhaseForEnemyCount } from '../music.js';
+import { musicPhaseFor } from '../music.js';
 import { SCALE, SpellArenaView } from './arena.js';
 import { SpellHud } from './hud.js';
 import { SpellInputCapture } from './input.js';
@@ -71,8 +71,8 @@ function main(): void {
     arena.render(state, events, { x: mouse.x - playerScreen.x, y: mouse.y - playerScreen.y });
     hud.render(state);
     audio.handleSpellEvents(events);
-    // Calm theme in the between-wave lull, combat theme once a wave is on screen.
-    audio.setMusicPhase(musicPhaseForEnemyCount(state.combat.enemies.length));
+    // Calm in the lull, combat once a wave is on screen, the death dirge when defeated.
+    audio.setMusicPhase(musicPhaseFor(state.combat.enemies.length, state.combat.over));
     audio.update();
 
     requestAnimationFrame(frame);
