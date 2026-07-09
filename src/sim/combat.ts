@@ -45,6 +45,7 @@ import {
 import { ENEMY_TYPES, enemyTypeByKey, type EnemyType } from './enemies.js';
 import {
   IDENTITY_MODIFIERS,
+  type AuraState,
   type CombatState,
   type DamageBuff,
   type DefenseOutcome,
@@ -52,6 +53,7 @@ import {
   type EnemyState,
   type InputFrame,
   type Modifiers,
+  type PendingAoe,
   type PlayerState,
   type SimEvent,
   type Vec2,
@@ -109,6 +111,43 @@ function attackConnects(player: Vec2, enemy: Vec2, aimX: number, aimY: number): 
   if (dot <= 0) return false;
   const lenSqAim = aimX * aimX + aimY * aimY;
   return dot * dot >= ATTACK_ARC_COS_SQ * lenSqD * lenSqAim;
+}
+
+/** Clamp a point to the player's movable bounds. */
+function clampPlayerPos(x: number, y: number): Vec2 {
+  return {
+    x: clamp(x, PLAYER_RADIUS, ARENA_WIDTH - PLAYER_RADIUS),
+    y: clamp(y, PLAYER_RADIUS, ARENA_HEIGHT - PLAYER_RADIUS),
+  };
+}
+
+/** Parameterized cone hit (spec 018 spell casts); `aim` need not be normalized. */
+function coneHits(from: Vec2, target: Vec2, aimX: number, aimY: number, range: number, arcCosSq: number, targetRadius: number): boolean {
+  const dx = target.x - from.x;
+  const dy = target.y - from.y;
+  const lenSq = dx * dx + dy * dy;
+  const reach = range + targetRadius;
+  if (lenSq > reach * reach) return false;
+  const dot = dx * aimX + dy * aimY;
+  if (dot <= 0) return false;
+  const aimLenSq = aimX * aimX + aimY * aimY;
+  return dot * dot >= arcCosSq * lenSq * aimLenSq;
+}
+
+/** True if `target` lies inside a forward rectangle from `from` along unit `(ux,uy)`. */
+function rectHits(from: Vec2, target: Vec2, ux: number, uy: number, length: number, halfWidth: number, targetRadius: number): boolean {
+  const dx = target.x - from.x;
+  const dy = target.y - from.y;
+  const along = dx * ux + dy * uy;
+  if (along < -targetRadius || along > length + targetRadius) return false;
+  const perp = Math.abs(dx * -uy + dy * ux);
+  return perp <= halfWidth + targetRadius;
+}
+
+/** Circle overlap: `target` (radius `targetRadius`) within `radius` of `center`. */
+function circleHits(center: Vec2, target: Vec2, radius: number, targetRadius: number): boolean {
+  const r = radius + targetRadius;
+  return distanceSq(center, target) <= r * r;
 }
 
 /** Unit vector from `from` toward `to`; falls back to +x when they coincide. */
@@ -243,6 +282,15 @@ export function initCombat(seed: number, opts: CombatOptions = {}): CombatState 
     guardExpiresAtTick: 0,
     guardReductionPct: 0,
     activateLockUntil: 0,
+    shieldAmount: 0,
+    shieldExpiresAtTick: 0,
+    auras: [],
+    pendingAoes: [],
+    dashDx: 0,
+    dashDy: 0,
+    dashExpiresAtTick: 0,
+    dashDamage: 0,
+    dashHitIds: [],
   };
   const enemies: EnemyState[] = [];
   let nextEnemyId = 1;
@@ -289,15 +337,20 @@ export function step(
   // --- Player intent + movement ---
   const swingPending = state.player.attackReleaseTick !== 0;
   const startAttack = input.attack && !swingPending && tick >= state.player.attackCooldownUntil;
-  const rooted = swingPending || startAttack || tick < state.player.moveLockUntil;
+  // A dash (spec 018) overrides ordinary movement and ignores attack rooting.
+  const dashing = tick < state.player.dashExpiresAtTick;
+  const rooted = !dashing && (swingPending || startAttack || tick < state.player.moveLockUntil);
 
-  let player: PlayerState = {
-    ...state.player,
-    position: rooted ? state.player.position : movePlayer(state.player.position, input.moveX, input.moveY),
-  };
+  const nextPos = dashing
+    ? clampPlayerPos(state.player.position.x + state.player.dashDx, state.player.position.y + state.player.dashDy)
+    : rooted
+      ? state.player.position
+      : movePlayer(state.player.position, input.moveX, input.moveY);
+  let player: PlayerState = { ...state.player, position: nextPos };
 
   // --- Enemy movement: grazers wander, hunters home while idle ---
   let enemies: EnemyState[] = state.enemies.map((enemy) => {
+    if (enemy.stunnedUntilTick && tick < enemy.stunnedUntilTick) return enemy; // frozen by a bury-feet stun
     if (enemy.behavior === 'grazing') return grazeStep(enemy, tick, draw);
     if (enemy.phase === 'idle') {
       const speed = enemyTypeByKey(enemy.type).moveSpeed * (enemy.speedMult ?? 1) * slowMult;
@@ -305,6 +358,20 @@ export function step(
     }
     return enemy; // hunting but planted for windup/recovery
   });
+
+  // --- Damaging dash (three-dash fusion): strike each body it passes, once per dash ---
+  if (dashing && state.player.dashDamage > 0) {
+    const alreadyHit = new Set(state.player.dashHitIds);
+    const newlyHit: number[] = [];
+    enemies = enemies.map((enemy) => {
+      if (alreadyHit.has(enemy.id) || !circleHits(player.position, enemy.position, PLAYER_RADIUS, ENEMY_RADIUS)) return enemy;
+      newlyHit.push(enemy.id);
+      const health = Math.max(0, enemy.health - state.player.dashDamage);
+      events.push({ kind: 'enemyHit', damage: state.player.dashDamage, tick, enemyId: enemy.id, at: enemy.position });
+      return aggro({ ...enemy, health }, tick);
+    });
+    if (newlyHit.length > 0) player = { ...player, dashHitIds: [...state.player.dashHitIds, ...newlyHit] };
+  }
 
   // Begin an attack wind-up: capture the aim now; the strike lands later.
   if (startAttack) {
@@ -418,7 +485,130 @@ export function step(
         events.push({ kind: 'stanceApplied', tick });
         break;
       }
+      case 'castSpells': {
+        // A synergy window's worth of resolved geometry, executed at once.
+        const aimLen = Math.sqrt(effect.aimX * effect.aimX + effect.aimY * effect.aimY);
+        const ux = aimLen < 1e-6 ? 1 : effect.aimX / aimLen;
+        const uy = aimLen < 1e-6 ? 0 : effect.aimY / aimLen;
+        const castPos = player.position;
+        let auras = player.auras;
+        let pendingAoes = player.pendingAoes;
+        let dashDx = player.dashDx;
+        let dashDy = player.dashDy;
+        let dashExpiresAtTick = player.dashExpiresAtTick;
+        let dashDamage = player.dashDamage;
+        let dashHitIds = player.dashHitIds;
+        let shieldAmount = player.shieldAmount;
+        let shieldExpiresAtTick = player.shieldExpiresAtTick;
+        const applyInstant = (hit: (e: EnemyState) => boolean, dmg: number): void => {
+          enemies = enemies.map((enemy) => {
+            if (!hit(enemy)) return enemy;
+            const health = Math.max(0, enemy.health - dmg);
+            events.push({ kind: 'enemyHit', damage: dmg, tick, enemyId: enemy.id, at: enemy.position });
+            return aggro({ ...enemy, health }, tick);
+          });
+        };
+        for (const spell of effect.spells) {
+          switch (spell.kind) {
+            case 'cone':
+              applyInstant((e) => coneHits(castPos, e.position, ux, uy, spell.range, spell.arcCosSq, ENEMY_RADIUS), spell.damage);
+              break;
+            case 'rect':
+              applyInstant((e) => rectHits(castPos, e.position, ux, uy, spell.length, spell.halfWidth, ENEMY_RADIUS), spell.damage);
+              break;
+            case 'pointAoe': {
+              const origin = spell.origin === 'player' ? castPos : { x: effect.targetX, y: effect.targetY };
+              const added: PendingAoe[] = [];
+              for (let i = 0; i < spell.count; i++) {
+                added.push({
+                  x: origin.x,
+                  y: origin.y,
+                  radius: spell.radius,
+                  damage: spell.damage,
+                  stunTicks: spell.stunTicks,
+                  impactTick: tick + spell.delayTicks + i * spell.spreadTicks,
+                });
+              }
+              pendingAoes = [...pendingAoes, ...added];
+              break;
+            }
+            case 'aura':
+              auras = [
+                ...auras,
+                {
+                  radius: spell.radius,
+                  pulseDamage: spell.pulseDamage,
+                  pulseIntervalTicks: spell.pulseIntervalTicks,
+                  nextPulseTick: tick + spell.pulseIntervalTicks,
+                  expiresAtTick: tick + spell.durationTicks,
+                },
+              ];
+              break;
+            case 'dash': {
+              const dur = Math.max(1, spell.durationTicks);
+              dashDx = ux * (spell.distance / dur);
+              dashDy = uy * (spell.distance / dur);
+              dashExpiresAtTick = tick + dur;
+              dashDamage = spell.damage;
+              dashHitIds = [];
+              events.push({ kind: 'dashPerformed', tick });
+              break;
+            }
+            case 'shield': {
+              const active = tick < shieldExpiresAtTick ? shieldAmount : 0;
+              shieldAmount = Math.max(active, spell.amount);
+              shieldExpiresAtTick = tick + spell.durationTicks;
+              break;
+            }
+          }
+        }
+        player = { ...player, auras, pendingAoes, dashDx, dashDy, dashExpiresAtTick, dashDamage, dashHitIds, shieldAmount, shieldExpiresAtTick };
+        events.push({ kind: 'spellCast', tick, spellCount: effect.spells.length });
+        break;
+      }
     }
+  }
+
+  // --- Spell upkeep: aura pulses and telegraphed AOE impacts (spec 018) ---
+  if (player.auras.length > 0) {
+    const auras = player.auras;
+    const anyDue = auras.some((aura) => tick >= aura.nextPulseTick && tick < aura.expiresAtTick);
+    if (anyDue) {
+      enemies = enemies.map((enemy) => {
+        let dmg = 0;
+        for (const aura of auras) {
+          if (tick >= aura.nextPulseTick && tick < aura.expiresAtTick && circleHits(player.position, enemy.position, aura.radius, ENEMY_RADIUS)) {
+            dmg += aura.pulseDamage;
+          }
+        }
+        if (dmg <= 0) return enemy;
+        const health = Math.max(0, enemy.health - dmg);
+        events.push({ kind: 'enemyHit', damage: dmg, tick, enemyId: enemy.id, at: enemy.position });
+        return aggro({ ...enemy, health }, tick);
+      });
+    }
+    const advanced: AuraState[] = auras
+      .map((aura) => (tick >= aura.nextPulseTick && tick < aura.expiresAtTick ? { ...aura, nextPulseTick: aura.nextPulseTick + aura.pulseIntervalTicks } : aura))
+      .filter((aura) => tick < aura.expiresAtTick);
+    player = { ...player, auras: advanced };
+  }
+
+  if (player.pendingAoes.length > 0) {
+    const due = player.pendingAoes.filter((a) => tick >= a.impactTick);
+    for (const aoe of due) {
+      enemies = enemies.map((enemy) => {
+        if (!circleHits({ x: aoe.x, y: aoe.y }, enemy.position, aoe.radius, ENEMY_RADIUS)) return enemy;
+        const health = Math.max(0, enemy.health - aoe.damage);
+        if (aoe.damage > 0) events.push({ kind: 'enemyHit', damage: aoe.damage, tick, enemyId: enemy.id, at: enemy.position });
+        if (aoe.stunTicks > 0) {
+          const stunnedUntilTick = Math.max(enemy.stunnedUntilTick ?? 0, tick + aoe.stunTicks);
+          return aggro({ ...enemy, health, stunnedUntilTick }, tick);
+        }
+        return aggro({ ...enemy, health }, tick);
+      });
+      events.push({ kind: 'aoeImpact', tick, at: { x: aoe.x, y: aoe.y }, radius: aoe.radius });
+    }
+    if (due.length > 0) player = { ...player, pendingAoes: player.pendingAoes.filter((a) => tick < a.impactTick) };
   }
 
   // --- Remove dead enemies ---
@@ -453,8 +643,10 @@ export function step(
 
   // --- Hunting state machine: idle -> windup -> (slam) -> recovery -> idle ---
   let playerHealth = player.health;
+  let shieldAmount = player.shieldAmount;
   let over = false;
   enemies = enemies.map((enemy) => {
+    if (enemy.stunnedUntilTick && tick < enemy.stunnedUntilTick) return enemy; // stunned: no wind-up
     if (enemy.behavior !== 'hunting' || tick < enemy.phaseEndsAtTick) return enemy;
     if (enemy.phase === 'idle') {
       // Attack only when in range: beyond the trigger distance the enemy keeps
@@ -480,7 +672,13 @@ export function step(
         (tick < player.stanceExpiresAtTick ? player.stanceReductionPct : 0) +
           (tick < player.guardExpiresAtTick ? player.guardReductionPct : 0),
       );
-      const damage = Math.round(afterDefense * (1 - reduction));
+      let damage = Math.round(afterDefense * (1 - reduction));
+      // A Rocky Raise shield eats the incoming hit before health does.
+      if (damage > 0 && tick < player.shieldExpiresAtTick && shieldAmount > 0) {
+        const absorbed = Math.min(shieldAmount, damage);
+        shieldAmount -= absorbed;
+        damage -= absorbed;
+      }
       if (damage > 0 && !over && playerHealth > 0) {
         playerHealth = Math.max(0, playerHealth - damage);
         events.push({ kind: 'playerHit', damage, tick });
@@ -499,7 +697,7 @@ export function step(
     }
     return { ...enemy, phase: 'idle', phaseEndsAtTick: tick + scaleDuration(ENEMY_IDLE_TICKS, enemy.attackSpeedMult ?? 1) };
   });
-  player = { ...player, health: playerHealth };
+  player = { ...player, health: playerHealth, shieldAmount };
 
   // --- Wave cleared: heal the player to full when the last enemy of a wave dies ---
   if (!over && state.waveNumber >= 1 && state.enemies.length > 0 && enemies.length === 0 && player.health < player.maxHealth) {

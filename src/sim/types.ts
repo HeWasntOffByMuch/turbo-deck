@@ -1,4 +1,5 @@
 import type { Rng } from '../shared/prng.js';
+import type { SpellSpec } from '../shared/spell-spec.js';
 
 export interface Vec2 {
   readonly x: number;
@@ -8,6 +9,25 @@ export interface Vec2 {
 export interface DamageBuff {
   readonly amount: number;
   readonly expiresAtTick: number;
+}
+
+/** A burning aura the player carries (spec 018): pulses damage to nearby enemies. */
+export interface AuraState {
+  readonly radius: number;
+  readonly pulseDamage: number;
+  readonly pulseIntervalTicks: number;
+  readonly nextPulseTick: number;
+  readonly expiresAtTick: number;
+}
+
+/** A telegraphed point blast (meteor, bury feet, blaze explosions) that lands later. */
+export interface PendingAoe {
+  readonly x: number;
+  readonly y: number;
+  readonly radius: number;
+  readonly damage: number;
+  readonly stunTicks: number;
+  readonly impactTick: number;
 }
 
 export interface PlayerState {
@@ -39,6 +59,22 @@ export interface PlayerState {
   readonly guardReductionPct: number;
   /** Activate is refused until this tick (stance lockout). */
   readonly activateLockUntil: number;
+  // --- Spell cards (spec 018); identity values leave combat untouched. ---
+  /** Rocky Raise shield: damage it can still absorb, and the tick it expires. */
+  readonly shieldAmount: number;
+  readonly shieldExpiresAtTick: number;
+  /** Blaze Aura DOT fields the player carries. */
+  readonly auras: readonly AuraState[];
+  /** Telegraphed blasts awaiting their impact tick. */
+  readonly pendingAoes: readonly PendingAoe[];
+  /** Dash velocity per tick and the tick the dash ends; movement input is ignored while dashing. */
+  readonly dashDx: number;
+  readonly dashDy: number;
+  readonly dashExpiresAtTick: number;
+  /** Damage a damaging dash deals to each body it passes through (0 = harmless dash). */
+  readonly dashDamage: number;
+  /** Enemy ids already struck by the current dash, so each is hit at most once. */
+  readonly dashHitIds: readonly number[];
 }
 
 /**
@@ -105,6 +141,8 @@ export interface EnemyState {
   readonly grazeTarget: Vec2 | null;
   /** Tick at which a standing grazer picks its next target. */
   readonly grazeResumeTick: number;
+  /** Bury-Feet stun: while `tick < stunnedUntilTick` the enemy neither moves nor attacks. Absent = 0. */
+  readonly stunnedUntilTick?: number;
 }
 
 export interface CombatState {
@@ -147,6 +185,17 @@ export type ExternalEffect =
       readonly slowMultiplier: number;
       readonly durationTicks: number;
       readonly lockoutTicks: number;
+    }
+  // --- Spell cards (spec 018): a window's worth of resolved geometry, cast at once. ---
+  | {
+      readonly kind: 'castSpells';
+      readonly spells: readonly SpellSpec[];
+      /** Aim direction for cones/rects/dashes; need not be normalized. */
+      readonly aimX: number;
+      readonly aimY: number;
+      /** World point for target-origin AOEs (meteor, bury feet). */
+      readonly targetX: number;
+      readonly targetY: number;
     };
 
 export interface InputFrame {
@@ -188,4 +237,8 @@ export type SimEvent =
   | { readonly kind: 'playerDefeated'; readonly tick: number }
   | { readonly kind: 'stanceApplied'; readonly tick: number }
   | { readonly kind: 'stanceRejectedLocked'; readonly tick: number }
+  // --- Spell cards (spec 018) ---
+  | { readonly kind: 'spellCast'; readonly tick: number; readonly spellCount: number }
+  | { readonly kind: 'aoeImpact'; readonly tick: number; readonly at: Vec2; readonly radius: number }
+  | { readonly kind: 'dashPerformed'; readonly tick: number }
   | { readonly kind: 'waveSpawned'; readonly tick: number; readonly waveNumber: number; readonly count: number };
