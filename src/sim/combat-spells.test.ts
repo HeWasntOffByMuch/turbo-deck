@@ -192,6 +192,22 @@ describe('Fire Storm (nearest-enemy AOE)', () => {
   });
 });
 
+describe('mis-timed window slow', () => {
+  it('slows the player\'s walk for the punishment window and announces it', () => {
+    const casted = run(arena(), [
+      { ...NEUTRAL_INPUT, externalEffect: { kind: 'castSpells', spells: [], aimX: 1, aimY: 0, targetX: 0, targetY: 0, playerSlowTicks: 90 } },
+    ]);
+    expect(casted.events.some((e) => e.kind === 'playerSlowed')).toBe(true);
+    expect(casted.state.player.moveSlowUntilTick).toBeGreaterThan(casted.state.tick);
+
+    const walk = { ...NEUTRAL_INPUT, moveX: 1 as const };
+    const slowedDist = run(casted.state, Array.from({ length: 10 }, () => walk)).state.player.position.x - casted.state.player.position.x;
+    const freshDist = run(arena(), Array.from({ length: 10 }, () => walk)).state.player.position.x - CENTER.x;
+    expect(slowedDist).toBeGreaterThan(0);
+    expect(slowedDist).toBeLessThan(freshDist); // slowed covers less ground
+  });
+});
+
 describe('determinism', () => {
   it('replays identically for the same seed and inputs', () => {
     const spec: SpellSpec = { kind: 'aura', radius: 95, pulseDamage: 5, pulseIntervalTicks: 12, durationTicks: 180 };

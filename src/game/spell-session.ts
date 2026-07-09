@@ -41,6 +41,13 @@ export const SYNERGY_WINDOW_TICKS = Math.round(0.25 * TICK_RATE);
  */
 export const CARD_DRAW_DELAY_TICKS = Math.round(1.5 * TICK_RATE);
 
+/**
+ * Mis-timed window punishment (spec 021): playing two-or-more cards in a window
+ * where at least one does not fuse into a synergy slows the player's walk for
+ * this long. Combo carefully or pay for the fumble.
+ */
+export const MISPLAY_SLOW_TICKS = Math.round(1.5 * TICK_RATE);
+
 export type RewardKind = 'remove' | 'upgrade' | 'addFire';
 /** One of the three deck edits offered when a wave is cleared (spec 019). */
 export interface RewardOffer {
@@ -176,7 +183,20 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
   let resolved: { ids: SpellId[]; specs: SpellSpec[] } | null = null;
   if (windowClosesAtTick !== null && tick >= windowClosesAtTick) {
     const specs = resolveSynergies(windowCards);
-    externalEffect = { kind: 'castSpells', spells: specs, aimX: input.aimX, aimY: input.aimY, targetX: input.targetX, targetY: input.targetY };
+    // Punish a fumbled combo: more than one card played, but at least one of them
+    // stood alone (its id had no partner to fuse with) in the window.
+    const counts = new Map<SpellId, number>();
+    for (const p of windowCards) counts.set(p.id, (counts.get(p.id) ?? 0) + 1);
+    const misplay = windowCards.length > 1 && [...counts.values()].some((c) => c === 1);
+    externalEffect = {
+      kind: 'castSpells',
+      spells: specs,
+      aimX: input.aimX,
+      aimY: input.aimY,
+      targetX: input.targetX,
+      targetY: input.targetY,
+      ...(misplay ? { playerSlowTicks: MISPLAY_SLOW_TICKS } : {}),
+    };
     resolved = { ids: windowCards.map((p) => p.id), specs };
     windowCards = [];
     windowClosesAtTick = null;

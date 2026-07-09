@@ -81,6 +81,7 @@ describe('spellEventSfx routing (spec 018/019)', () => {
     const events: SpellGameEvent[] = [
       { kind: 'cardPlayed', index: 0, id: 'attack' },
       { kind: 'aoeImpact', tick: 1, at: { x: 0, y: 0 }, radius: 90 },
+      { kind: 'playerSlowed', tick: 1, durationTicks: 90 },
       { kind: 'rewardOffered', offers: [] },
       { kind: 'rewardChosen', offer: { kind: 'remove', cardId: 'dash' } },
       { kind: 'playerHit', damage: 5, tick: 1 },

@@ -132,7 +132,8 @@ export class SpellHud {
     this.waveText.innerHTML = `<b>Wave</b> ${combat.waveNumber}`;
     this.windowPip.classList.toggle('open', state.windowClosesAtTick !== null);
 
-    this.renderBanner(combat.enemies, combat.over);
+    const slowed = combat.tick < player.moveSlowUntilTick;
+    this.renderBanner(combat.enemies, combat.over, slowed);
     this.renderHand(state.deck.hand, state.refillAtTick, combat.tick);
     this.renderReward(state.pendingReward);
 
@@ -157,10 +158,15 @@ export class SpellHud {
     });
   }
 
-  private renderBanner(enemies: SpellGameState['combat']['enemies'], over: boolean): void {
+  private renderBanner(enemies: SpellGameState['combat']['enemies'], over: boolean, slowed: boolean): void {
     if (over) {
       this.banner.textContent = '☠ DEFEATED — reload to retry';
       this.banner.style.color = '#ff5a5a';
+      return;
+    }
+    if (slowed) {
+      this.banner.textContent = 'fumbled combo — slowed!';
+      this.banner.style.color = '#b49be0';
       return;
     }
     if (enemies.length === 0) {

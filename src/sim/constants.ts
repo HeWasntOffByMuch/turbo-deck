@@ -48,6 +48,10 @@ export const PERFECT_WINDOW_TICKS = 4;
 export const NORMAL_WINDOW_TICKS = 14;
 export const DEFENSE_RECOVERY_TICKS = 12;
 
+// Movement speed multiplier while the player is slowed by a mis-timed window
+// (spec 021): playing non-synergising cards together drags you to a crawl.
+export const PLAYER_SLOW_MULTIPLIER = 0.4;
+
 export const PLAYER_MAX_MANA = 10;
 export const MANA_REGEN_PER_TICK = PLAYER_MAX_MANA / (5 * TICK_RATE);
 

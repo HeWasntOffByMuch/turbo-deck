@@ -227,6 +227,13 @@ export const SFX: Record<string, SfxSpec> = {
       { wave: 'sine', startFreq: 990, endFreq: 990, duration: 0.1, gain: 0.16, delay: 0.06 },
     ],
   },
+  // Mis-timed window: a deflating, sludgy downward buzz — the sound of a fumble.
+  fumble: {
+    segments: [
+      { wave: 'sawtooth', startFreq: 300, endFreq: 90, duration: 0.3, gain: 0.18 },
+      { wave: 'square', startFreq: 180, endFreq: 70, duration: 0.22, gain: 0.1, delay: 0.05 },
+    ],
+  },
 };
 
 // Which effect voices each played active card. Falls back to 'cast' for any
@@ -313,6 +320,8 @@ export function spellEventSfx(event: SpellGameEvent): string[] {
     }
     case 'aoeImpact':
       return ['boom'];
+    case 'playerSlowed':
+      return ['fumble'];
     case 'rewardOffered':
       return ['waveClear'];
     case 'rewardChosen':

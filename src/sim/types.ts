@@ -101,6 +101,8 @@ export interface PlayerState {
   /** Conjure Flame: remaining cone casts that get bonus fire damage, and the bonus. */
   readonly attackFlameCharges: number;
   readonly attackFlameBonus: number;
+  /** Mis-timed window punishment (spec 021): walking is slowed until this tick. */
+  readonly moveSlowUntilTick: number;
 }
 
 /**
@@ -222,6 +224,8 @@ export type ExternalEffect =
       /** World point for target-origin AOEs (meteor, bury feet). */
       readonly targetX: number;
       readonly targetY: number;
+      /** Slow the player's walk for this many ticks (mis-timed window); 0/absent = none. */
+      readonly playerSlowTicks?: number;
     };
 
 export interface InputFrame {
@@ -267,4 +271,5 @@ export type SimEvent =
   | { readonly kind: 'spellCast'; readonly tick: number; readonly spellCount: number }
   | { readonly kind: 'aoeImpact'; readonly tick: number; readonly at: Vec2; readonly radius: number }
   | { readonly kind: 'dashPerformed'; readonly tick: number }
+  | { readonly kind: 'playerSlowed'; readonly tick: number; readonly durationTicks: number }
   | { readonly kind: 'waveSpawned'; readonly tick: number; readonly waveNumber: number; readonly count: number };

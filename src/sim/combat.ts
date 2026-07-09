@@ -34,6 +34,7 @@ import {
   PLAYER_MAX_HEALTH,
   PLAYER_MAX_MANA,
   PLAYER_RADIUS,
+  PLAYER_SLOW_MULTIPLIER,
   SPAWN_MIN_PLAYER_DIST,
   WAVE_ATTACK_SPEED_GROWTH,
   WAVE_BASE_COUNT,
@@ -83,10 +84,11 @@ const clampToArena = (x: number, y: number): Vec2 => ({
 });
 
 /** Move the player by an 8-directional input, normalizing diagonals, clamped to the arena. */
-function movePlayer(position: Vec2, moveX: number, moveY: number): Vec2 {
-  const scale = moveX !== 0 && moveY !== 0 ? DIAGONAL_SCALE : 1;
-  const x = clamp(position.x + moveX * MOVE_SPEED_PER_TICK * scale, PLAYER_RADIUS, ARENA_WIDTH - PLAYER_RADIUS);
-  const y = clamp(position.y + moveY * MOVE_SPEED_PER_TICK * scale, PLAYER_RADIUS, ARENA_HEIGHT - PLAYER_RADIUS);
+function movePlayer(position: Vec2, moveX: number, moveY: number, speedScale = 1): Vec2 {
+  const diag = moveX !== 0 && moveY !== 0 ? DIAGONAL_SCALE : 1;
+  const speed = MOVE_SPEED_PER_TICK * diag * speedScale;
+  const x = clamp(position.x + moveX * speed, PLAYER_RADIUS, ARENA_WIDTH - PLAYER_RADIUS);
+  const y = clamp(position.y + moveY * speed, PLAYER_RADIUS, ARENA_HEIGHT - PLAYER_RADIUS);
   return { x, y };
 }
 
@@ -320,6 +322,7 @@ export function initCombat(seed: number, opts: CombatOptions = {}): CombatState 
     groundFires: [],
     attackFlameCharges: 0,
     attackFlameBonus: 0,
+    moveSlowUntilTick: 0,
   };
   const enemies: EnemyState[] = [];
   let nextEnemyId = 1;
@@ -370,11 +373,13 @@ export function step(
   const dashing = tick < state.player.dashExpiresAtTick;
   const rooted = !dashing && (swingPending || startAttack || tick < state.player.moveLockUntil);
 
+  // A mis-timed window (spec 021) drags the walk speed down for a spell.
+  const moveScale = tick < state.player.moveSlowUntilTick ? PLAYER_SLOW_MULTIPLIER : 1;
   const nextPos = dashing
     ? clampPlayerPos(state.player.position.x + state.player.dashDx, state.player.position.y + state.player.dashDy)
     : rooted
       ? state.player.position
-      : movePlayer(state.player.position, input.moveX, input.moveY);
+      : movePlayer(state.player.position, input.moveX, input.moveY, moveScale);
   let player: PlayerState = { ...state.player, position: nextPos };
 
   // --- Enemy movement: grazers wander, hunters home while idle ---
@@ -626,6 +631,7 @@ export function step(
             }
           }
         }
+        const slowTicks = effect.playerSlowTicks ?? 0;
         player = {
           ...player,
           auras,
@@ -640,7 +646,9 @@ export function step(
           shieldExpiresAtTick,
           attackFlameCharges: flameCharges,
           attackFlameBonus: flameBonus,
+          ...(slowTicks > 0 ? { moveSlowUntilTick: tick + slowTicks } : {}),
         };
+        if (slowTicks > 0) events.push({ kind: 'playerSlowed', tick, durationTicks: slowTicks });
         events.push({ kind: 'spellCast', tick, spellCount: effect.spells.length });
         break;
       }

@@ -301,6 +301,24 @@ export class SpellArenaView {
       ctx.lineCap = 'butt';
     }
 
+    // Mis-timed window slow: a sluggish violet drag ring with sinking motes.
+    if (tick < player.moveSlowUntilTick) {
+      ctx.strokeStyle = 'rgba(150,120,210,0.7)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r + 6, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(150,120,210,0.8)';
+      for (let i = 0; i < 3; i++) {
+        const t = ((this.frame * 0.04 + i / 3) % 1);
+        ctx.globalAlpha = 1 - t;
+        ctx.beginPath();
+        ctx.arc(p.x - r + i * r, p.y - r + t * (r * 2.4), 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
     // Shield ring.
     if (tick < player.shieldExpiresAtTick && player.shieldAmount > 0) {
       ctx.strokeStyle = '#8fd0ff';

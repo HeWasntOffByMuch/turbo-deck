@@ -120,6 +120,45 @@ describe('spell session', () => {
   });
 });
 
+describe('mis-timed window punishment', () => {
+  const settle = Array.from({ length: SYNERGY_WINDOW_TICKS + 2 }, () => NEUTRAL);
+
+  it('slows the player when a multi-card window holds a non-synergy', () => {
+    // Two cards of different ids played together: neither fuses.
+    let seed = 1;
+    let start = initSpellGame(seed);
+    let pair: [number, number] | null = null;
+    for (let tries = 0; tries < 50 && !pair; tries++) {
+      const ids = start.deck.hand.map((c) => c?.id);
+      const a = ids.findIndex((id) => id != null);
+      const b = ids.findIndex((id, i) => id != null && i !== a && id !== ids[a]);
+      if (a >= 0 && b >= 0) pair = [a, b];
+      else start = initSpellGame(++seed);
+    }
+    if (!pair) throw new Error('no seed produced two different cards');
+    const [a, b] = pair;
+    const after = run(start, [play(a as 0 | 1 | 2 | 3), play(b as 0 | 1 | 2 | 3), ...settle]).state;
+    expect(after.combat.player.moveSlowUntilTick).toBeGreaterThan(after.combat.tick);
+  });
+
+  it('does not slow when both cards fuse into a synergy', () => {
+    let seed = 1;
+    let start = initSpellGame(seed);
+    while (![...new Set(start.deck.hand.map((c) => c?.id))].some((id) => id && slotsWithId(start, id).length >= 2)) {
+      start = initSpellGame(++seed);
+    }
+    const dup = [...new Set(start.deck.hand.map((c) => c?.id))].find((id) => id && slotsWithId(start, id).length >= 2) as SpellId;
+    const [a, b] = slotsWithId(start, dup) as [number, number];
+    const after = run(start, [play(a as 0 | 1 | 2 | 3), play(b as 0 | 1 | 2 | 3), ...settle]).state;
+    expect(after.combat.player.moveSlowUntilTick).toBe(0); // fused cleanly, no punishment
+  });
+
+  it('does not slow a single card played alone', () => {
+    const after = run(initSpellGame(3), [play(0), ...settle]).state;
+    expect(after.combat.player.moveSlowUntilTick).toBe(0);
+  });
+});
+
 describe('wave rewards', () => {
   it('offers three deck edits when the wave is cleared', () => {
     const { state, attackSlot } = almostClearedWave(1);
