@@ -21,7 +21,8 @@ export type SpellSpec =
     }
   | {
       readonly kind: 'pointAoe';
-      readonly origin: 'player' | 'target';
+      // 'nearestEnemyToTarget' centres the blast on the foe closest to the cursor (Fire Storm).
+      readonly origin: 'player' | 'target' | 'nearestEnemyToTarget';
       readonly radius: number;
       readonly damage: number;
       readonly stunTicks: number;
@@ -32,5 +33,17 @@ export type SpellSpec =
       /** Ticks between successive blasts when `count > 1`. */
       readonly spreadTicks: number;
     }
-  | { readonly kind: 'dash'; readonly distance: number; readonly durationTicks: number; readonly damage: number }
-  | { readonly kind: 'shield'; readonly amount: number; readonly durationTicks: number };
+  | {
+      readonly kind: 'dash';
+      readonly distance: number;
+      readonly durationTicks: number;
+      readonly damage: number;
+      // Optional fire trail (Basking Path): drops ground fire under the player as it travels.
+      readonly trailRadius?: number;
+      readonly trailPulseDamage?: number;
+      readonly trailPulseIntervalTicks?: number;
+      readonly trailDurationTicks?: number;
+    }
+  | { readonly kind: 'shield'; readonly amount: number; readonly durationTicks: number }
+  // Conjure Flame: arm the next few cone casts with bonus fire damage.
+  | { readonly kind: 'empower'; readonly charges: number; readonly bonusDamage: number };

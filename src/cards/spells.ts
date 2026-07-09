@@ -17,6 +17,9 @@ export type SpellId =
   | 'fireBlast'
   | 'blazeAura'
   | 'meteorStrike'
+  | 'baskingPath'
+  | 'conjureFlame'
+  | 'fireStorm'
   // Earth set.
   | 'groundStomp'
   | 'rockyRaise'
@@ -38,10 +41,18 @@ export const SPELL_CARDS: Record<SpellId, SpellCardDef> = {
   fireBlast: { id: 'fireBlast', name: 'Fire Blast', set: 'fire', blurb: 'Damage cone' },
   blazeAura: { id: 'blazeAura', name: 'Blaze Aura', set: 'fire', blurb: 'Burning aura (DOT)' },
   meteorStrike: { id: 'meteorStrike', name: 'Meteor Strike', set: 'fire', blurb: 'Aimed AOE' },
+  baskingPath: { id: 'baskingPath', name: 'Basking Path', set: 'fire', blurb: 'Dash, leave fire' },
+  conjureFlame: { id: 'conjureFlame', name: 'Conjure Flame', set: 'fire', blurb: 'Next 3 attacks burn' },
+  fireStorm: { id: 'fireStorm', name: 'Fire Storm', set: 'fire', blurb: 'Blast around a foe' },
   groundStomp: { id: 'groundStomp', name: 'Ground Stomp', set: 'earth', blurb: 'Forward line hit' },
   rockyRaise: { id: 'rockyRaise', name: 'Rocky Raise', set: 'earth', blurb: 'Shield (~8s)' },
   buryFeet: { id: 'buryFeet', name: 'Bury Feet', set: 'earth', blurb: 'Aimed AOE stun' },
 };
+
+/** The fire set, used by the "add a random fire card" wave reward (spec 019). */
+export const FIRE_CARD_IDS: readonly SpellId[] = Object.values(SPELL_CARDS)
+  .filter((def) => def.set === 'fire')
+  .map((def) => def.id);
 
 /** The deck a run starts with (spec 018): 3 dash, 3 attack, 2 fire blast, 1 blaze aura. */
 export const STARTING_DECK: readonly SpellId[] = [
@@ -62,6 +73,8 @@ export interface SpellCard {
   /** Stable identity within a deck; the renderer diffs on it to animate. */
   readonly instanceId: number;
   readonly id: SpellId;
+  /** Upgrade level (spec 019); 1 is un-upgraded. Each level over 1 scales the cast's damage. */
+  readonly level: number;
 }
 
 export type SpellHand = readonly [
@@ -104,7 +117,7 @@ function drawOne(drawPile: readonly SpellCard[], discardPile: readonly SpellCard
 
 /** Build a deck from a list of spell ids (defaults to the starting deck), then deal a hand of four. */
 export function initSpellDeck(rng: Rng, ids: readonly SpellId[] = STARTING_DECK): SpellDeck {
-  const cards: SpellCard[] = ids.map((id, instanceId) => ({ instanceId, id }));
+  const cards: SpellCard[] = ids.map((id, instanceId) => ({ instanceId, id, level: 1 }));
   const [shuffled, afterShuffle] = shuffle(cards, rng);
   let drawPile: readonly SpellCard[] = shuffled;
   let currentRng = afterShuffle;
@@ -149,4 +162,72 @@ export function drawIntoSlot(deck: SpellDeck, index: number): { deck: SpellDeck;
     deck: { drawPile: drawn.drawPile, hand: hand as unknown as SpellHand, discardPile: drawn.discardPile, rng: drawn.rng },
     card: drawn.card,
   };
+}
+
+// --- Deck edits for wave rewards (spec 019) ---
+
+/** Every distinct card id currently anywhere in the deck (hand + piles). */
+export function deckCardIds(deck: SpellDeck): SpellId[] {
+  const ids = new Set<SpellId>();
+  for (const c of deck.drawPile) ids.add(c.id);
+  for (const c of deck.hand) if (c) ids.add(c.id);
+  for (const c of deck.discardPile) ids.add(c.id);
+  return [...ids];
+}
+
+/** Highest instanceId in use, so a freshly added card can claim the next one. */
+function maxInstanceId(deck: SpellDeck): number {
+  let max = -1;
+  for (const c of deck.drawPile) max = Math.max(max, c.instanceId);
+  for (const c of deck.hand) if (c) max = Math.max(max, c.instanceId);
+  for (const c of deck.discardPile) max = Math.max(max, c.instanceId);
+  return max;
+}
+
+/**
+ * Remove one copy of `id`, searched in a fixed order (draw pile, then discard,
+ * then hand) so the edit is deterministic. A no-op if no copy exists.
+ */
+export function removeOneCard(deck: SpellDeck, id: SpellId): SpellDeck {
+  const drawIdx = deck.drawPile.findIndex((c) => c.id === id);
+  if (drawIdx >= 0) return { ...deck, drawPile: deck.drawPile.filter((_, i) => i !== drawIdx) };
+  const discardIdx = deck.discardPile.findIndex((c) => c.id === id);
+  if (discardIdx >= 0) return { ...deck, discardPile: deck.discardPile.filter((_, i) => i !== discardIdx) };
+  const handIdx = deck.hand.findIndex((c) => c?.id === id);
+  if (handIdx >= 0) {
+    const hand = [...deck.hand] as (SpellCard | null)[];
+    hand[handIdx] = null;
+    return { ...deck, hand: hand as unknown as SpellHand };
+  }
+  return deck;
+}
+
+/** Raise one copy of `id` by a level, searched draw -> discard -> hand. No-op if absent. */
+export function upgradeOneCard(deck: SpellDeck, id: SpellId): SpellDeck {
+  const bump = (c: SpellCard): SpellCard => ({ ...c, level: c.level + 1 });
+  const drawIdx = deck.drawPile.findIndex((c) => c.id === id);
+  if (drawIdx >= 0) {
+    const drawPile = [...deck.drawPile];
+    drawPile[drawIdx] = bump(drawPile[drawIdx] as SpellCard);
+    return { ...deck, drawPile };
+  }
+  const discardIdx = deck.discardPile.findIndex((c) => c.id === id);
+  if (discardIdx >= 0) {
+    const discardPile = [...deck.discardPile];
+    discardPile[discardIdx] = bump(discardPile[discardIdx] as SpellCard);
+    return { ...deck, discardPile };
+  }
+  const handIdx = deck.hand.findIndex((c) => c?.id === id);
+  if (handIdx >= 0) {
+    const hand = [...deck.hand] as (SpellCard | null)[];
+    hand[handIdx] = bump(hand[handIdx] as SpellCard);
+    return { ...deck, hand: hand as unknown as SpellHand };
+  }
+  return deck;
+}
+
+/** Add a fresh level-1 card of `id` to the discard pile, so it shuffles back in. */
+export function addCard(deck: SpellDeck, id: SpellId): SpellDeck {
+  const card: SpellCard = { instanceId: maxInstanceId(deck) + 1, id, level: 1 };
+  return { ...deck, discardPile: [...deck.discardPile, card] };
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SpellId } from '../cards/spells.js';
+import type { EnemyState } from '../sim/types.js';
 import {
   CARD_DRAW_DELAY_TICKS,
   initSpellGame,
@@ -14,6 +15,35 @@ const NEUTRAL: SpellInput = { moveX: 0, moveY: 0, aimX: 1, aimY: 0, targetX: 0, 
 
 function play(slot: 0 | 1 | 2 | 3): SpellInput {
   return { ...NEUTRAL, playHandIndex: slot };
+}
+
+/** A wave-in-progress with one near-dead enemy standing in front of the player. */
+function almostClearedWave(seed: number): { state: SpellGameState; attackSlot: 0 | 1 | 2 | 3 } {
+  let s = initSpellGame(seed);
+  let slot = s.deck.hand.findIndex((c) => c?.id === 'attack');
+  while (slot < 0) {
+    s = initSpellGame(++seed);
+    slot = s.deck.hand.findIndex((c) => c?.id === 'attack');
+  }
+  const p = s.combat.player.position;
+  const enemy: EnemyState = {
+    id: 1,
+    type: 'brawler',
+    health: 5,
+    maxHealth: 21,
+    position: { x: p.x + 40, y: p.y },
+    behavior: 'grazing',
+    phase: 'idle',
+    phaseEndsAtTick: 0,
+    incomingAttackOutcome: 'none',
+    attackAim: null,
+    grazeTarget: null,
+    grazeResumeTick: Number.MAX_SAFE_INTEGER,
+  };
+  return {
+    state: { ...s, combat: { ...s.combat, enemies: [enemy], waveNumber: 1, nextEnemyId: 2 } },
+    attackSlot: slot as 0 | 1 | 2 | 3,
+  };
 }
 
 function run(state: SpellGameState, inputs: readonly SpellInput[]): { state: SpellGameState; events: SpellGameEvent[] } {
@@ -87,5 +117,38 @@ describe('spell session', () => {
     const a = run(initSpellGame(11), inputs).state;
     const b = run(initSpellGame(11), inputs).state;
     expect(a).toEqual(b);
+  });
+});
+
+describe('wave rewards', () => {
+  it('offers three deck edits when the wave is cleared', () => {
+    const { state, attackSlot } = almostClearedWave(1);
+    const { state: after, events } = run(state, [play(attackSlot), ...Array.from({ length: SYNERGY_WINDOW_TICKS + 2 }, () => NEUTRAL)]);
+    expect(after.combat.enemies).toHaveLength(0);
+    const offered = events.find((e) => e.kind === 'rewardOffered');
+    expect(offered).toBeDefined();
+    expect(after.pendingReward).toHaveLength(3);
+    expect(after.pendingReward?.map((o) => o.kind)).toEqual(['remove', 'upgrade', 'addFire']);
+  });
+
+  it('applies the chosen reward and clears the panel', () => {
+    const { state, attackSlot } = almostClearedWave(1);
+    const cleared = run(state, [play(attackSlot), ...Array.from({ length: SYNERGY_WINDOW_TICKS + 2 }, () => NEUTRAL)]).state;
+    const addOffer = cleared.pendingReward?.[2];
+    expect(addOffer?.kind).toBe('addFire');
+    const countAll = (s: SpellGameState, id?: SpellId): number =>
+      [...s.deck.drawPile, ...s.deck.discardPile, ...s.deck.hand].filter((c) => c && c.id === id).length;
+    const before = countAll(cleared, addOffer?.cardId);
+    const after = run(cleared, [{ ...NEUTRAL, chooseReward: 2 }]).state;
+    expect(after.pendingReward).toBeNull();
+    expect(countAll(after, addOffer?.cardId)).toBe(before + 1); // the fire card was added
+  });
+
+  it('ignores Spawn Wave while a reward is pending', () => {
+    const { state, attackSlot } = almostClearedWave(1);
+    const cleared = run(state, [play(attackSlot), ...Array.from({ length: SYNERGY_WINDOW_TICKS + 2 }, () => NEUTRAL)]).state;
+    expect(cleared.pendingReward).not.toBeNull();
+    const blocked = run(cleared, [{ ...NEUTRAL, spawnWave: true }]).state;
+    expect(blocked.combat.waveNumber).toBe(1); // no new wave spawned
   });
 });

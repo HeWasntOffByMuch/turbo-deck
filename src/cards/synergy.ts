@@ -17,6 +17,12 @@ export type { SpellSpec };
 /** Ticks per second; mirrors the sim's fixed timestep (kept local to avoid a sim dependency). */
 const TPS = 60;
 
+/** A played card carries its upgrade level so fusion can scale its damage (spec 019). */
+export interface SpellCardPlay {
+  readonly id: SpellId;
+  readonly level: number;
+}
+
 /**
  * Per-card fusion table, keyed by copies-in-window. Index 0 is the single-copy
  * base; index 1 the two-copy fusion; a third entry (dash) the three-copy fusion.
@@ -45,6 +51,18 @@ const TABLE: Record<SpellId, readonly SpellSpec[]> = {
     { kind: 'pointAoe', origin: 'target', radius: 92, damage: 40, stunTicks: 0, delayTicks: 30, count: 1, spreadTicks: 0 },
     { kind: 'pointAoe', origin: 'target', radius: 130, damage: 72, stunTicks: 0, delayTicks: 30, count: 1, spreadTicks: 0 },
   ],
+  baskingPath: [
+    { kind: 'dash', distance: 220, durationTicks: 14, damage: 0, trailRadius: 55, trailPulseDamage: 4, trailPulseIntervalTicks: 12, trailDurationTicks: Math.round(2.5 * TPS) },
+    { kind: 'dash', distance: 300, durationTicks: 17, damage: 0, trailRadius: 70, trailPulseDamage: 7, trailPulseIntervalTicks: 12, trailDurationTicks: 3 * TPS },
+  ],
+  conjureFlame: [
+    { kind: 'empower', charges: 3, bonusDamage: 10 },
+    { kind: 'empower', charges: 3, bonusDamage: 22 },
+  ],
+  fireStorm: [
+    { kind: 'pointAoe', origin: 'nearestEnemyToTarget', radius: 110, damage: 26, stunTicks: 0, delayTicks: 8, count: 1, spreadTicks: 0 },
+    { kind: 'pointAoe', origin: 'nearestEnemyToTarget', radius: 150, damage: 46, stunTicks: 0, delayTicks: 8, count: 1, spreadTicks: 0 },
+  ],
   groundStomp: [
     { kind: 'rect', length: 165, halfWidth: 26, damage: 16 },
     { kind: 'rect', length: 225, halfWidth: 34, damage: 30 },
@@ -59,11 +77,39 @@ const TABLE: Record<SpellId, readonly SpellSpec[]> = {
   ],
 };
 
-/** Resolve a single card group (`count` copies of `id`) to its tiered spec. */
-function resolveOne(id: SpellId, count: number): SpellSpec {
+/** Scale a spec's damage-bearing fields by `mult` (upgrade levels); geometry is unchanged. */
+function scaleSpec(spec: SpellSpec, mult: number): SpellSpec {
+  if (mult === 1) return spec;
+  const r = (n: number): number => Math.round(n * mult);
+  switch (spec.kind) {
+    case 'cone':
+      return { ...spec, damage: r(spec.damage) };
+    case 'rect':
+      return { ...spec, damage: r(spec.damage) };
+    case 'aura':
+      return { ...spec, pulseDamage: r(spec.pulseDamage) };
+    case 'pointAoe':
+      return { ...spec, damage: r(spec.damage) };
+    case 'dash':
+      return {
+        ...spec,
+        damage: r(spec.damage),
+        ...(spec.trailPulseDamage !== undefined ? { trailPulseDamage: r(spec.trailPulseDamage) } : {}),
+      };
+    case 'shield':
+      return { ...spec, amount: r(spec.amount) };
+    case 'empower':
+      return { ...spec, bonusDamage: r(spec.bonusDamage) };
+  }
+}
+
+/** Resolve one card group to its tiered spec, scaled by the group's total upgrades. */
+function resolveOne(id: SpellId, count: number, sumLevel: number): SpellSpec {
   const tiers = TABLE[id];
   const tier = Math.min(count, tiers.length) - 1;
-  return tiers[tier] as SpellSpec;
+  const base = tiers[tier] as SpellSpec;
+  // Each upgrade level over 1 across the group adds +40% damage.
+  return scaleSpec(base, 1 + 0.4 * (sumLevel - count));
 }
 
 /**
@@ -72,12 +118,14 @@ function resolveOne(id: SpellId, count: number): SpellSpec {
  * it is deterministic and independent of the order copies of the same card were
  * played.
  */
-export function resolveSynergies(playedIds: readonly SpellId[]): SpellSpec[] {
+export function resolveSynergies(plays: readonly SpellCardPlay[]): SpellSpec[] {
   const counts = new Map<SpellId, number>();
+  const levels = new Map<SpellId, number>();
   const order: SpellId[] = [];
-  for (const id of playedIds) {
-    if (!counts.has(id)) order.push(id);
-    counts.set(id, (counts.get(id) ?? 0) + 1);
+  for (const play of plays) {
+    if (!counts.has(play.id)) order.push(play.id);
+    counts.set(play.id, (counts.get(play.id) ?? 0) + 1);
+    levels.set(play.id, (levels.get(play.id) ?? 0) + play.level);
   }
-  return order.map((id) => resolveOne(id, counts.get(id) as number));
+  return order.map((id) => resolveOne(id, counts.get(id) as number, levels.get(id) as number));
 }

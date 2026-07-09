@@ -30,6 +30,25 @@ export interface PendingAoe {
   readonly impactTick: number;
 }
 
+/** A stationary burning patch (Basking Path trail, spec 019) that pulses until it expires. */
+export interface GroundFire {
+  readonly x: number;
+  readonly y: number;
+  readonly radius: number;
+  readonly pulseDamage: number;
+  readonly pulseIntervalTicks: number;
+  readonly nextPulseTick: number;
+  readonly expiresAtTick: number;
+}
+
+/** Fire trail a dash leaves behind while travelling (Basking Path); null for a plain dash. */
+export interface DashTrail {
+  readonly radius: number;
+  readonly pulseDamage: number;
+  readonly pulseIntervalTicks: number;
+  readonly durationTicks: number;
+}
+
 export interface PlayerState {
   readonly health: number;
   readonly maxHealth: number;
@@ -75,6 +94,13 @@ export interface PlayerState {
   readonly dashDamage: number;
   /** Enemy ids already struck by the current dash, so each is hit at most once. */
   readonly dashHitIds: readonly number[];
+  /** Fire trail dropped while dashing (Basking Path); null for a plain dash. */
+  readonly dashTrail: DashTrail | null;
+  /** Stationary burning patches currently on the ground. */
+  readonly groundFires: readonly GroundFire[];
+  /** Conjure Flame: remaining cone casts that get bonus fire damage, and the bonus. */
+  readonly attackFlameCharges: number;
+  readonly attackFlameBonus: number;
 }
 
 /**

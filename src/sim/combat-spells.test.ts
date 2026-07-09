@@ -145,6 +145,53 @@ describe('shield', () => {
   });
 });
 
+describe('Conjure Flame (empower)', () => {
+  it('adds bonus damage to the next cone cast, once per charge', () => {
+    const state = withEnemy(arena(), { id: 1, position: { x: CENTER.x + 40, y: CENTER.y } });
+    const empower: SpellSpec = { kind: 'empower', charges: 3, bonusDamage: 10 };
+    const cone: SpellSpec = { kind: 'cone', range: 72, arcCosSq: 0.5, damage: 12 };
+    // Empower then a cone in the same cast: the cone is buffed (12 + 10).
+    const after = run(state, [cast([empower, cone])]).state;
+    expect(only(after).health).toBe(200 - 22);
+    expect(after.player.attackFlameCharges).toBe(2); // one of three spent
+  });
+});
+
+describe('Basking Path (fire trail)', () => {
+  it('lays ground fire that burns an enemy standing in the path', () => {
+    const state = withEnemy(arena(), { id: 1, position: { x: CENTER.x + 80, y: CENTER.y } });
+    const spec: SpellSpec = {
+      kind: 'dash',
+      distance: 220,
+      durationTicks: 14,
+      damage: 0, // all damage must come from the trail
+      trailRadius: 55,
+      trailPulseDamage: 4,
+      trailPulseIntervalTicks: 12,
+      trailDurationTicks: 150,
+    };
+    const after = run(state, [cast([spec], CENTER, { x: 1, y: 0 }), ...Array.from({ length: 60 }, () => NEUTRAL_INPUT)]).state;
+    const dmg = 200 - only(after).health;
+    expect(dmg).toBeGreaterThan(0);
+    expect(dmg % 4).toBe(0); // only 4-damage trail pulses
+  });
+});
+
+describe('Fire Storm (nearest-enemy AOE)', () => {
+  it('centres on the foe nearest the cursor and catches its neighbours', () => {
+    const a = { x: CENTER.x + 200, y: CENTER.y };
+    let state = withEnemy(arena(), { id: 1, position: a }); // nearest the cursor
+    state = withEnemy(state, { id: 2, position: { x: a.x + 60, y: a.y } }); // adjacent to A
+    state = withEnemy(state, { id: 3, position: { x: a.x, y: a.y - 400 } }); // far away
+    const spec: SpellSpec = { kind: 'pointAoe', origin: 'nearestEnemyToTarget', radius: 110, damage: 26, stunTicks: 0, delayTicks: 8, count: 1, spreadTicks: 0 };
+    const after = run(state, [cast([spec], a), ...Array.from({ length: 12 }, () => NEUTRAL_INPUT)]).state;
+    const hp = (id: number): number => after.enemies.find((e) => e.id === id)?.health ?? -1;
+    expect(hp(1)).toBe(200 - 26);
+    expect(hp(2)).toBe(200 - 26); // caught in the blast around A
+    expect(hp(3)).toBe(200); // out of range
+  });
+});
+
 describe('determinism', () => {
   it('replays identically for the same seed and inputs', () => {
     const spec: SpellSpec = { kind: 'aura', radius: 95, pulseDamage: 5, pulseIntervalTicks: 12, durationTicks: 180 };

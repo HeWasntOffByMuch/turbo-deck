@@ -51,6 +51,7 @@ import {
   type DefenseOutcome,
   type DefenseType,
   type EnemyState,
+  type GroundFire,
   type InputFrame,
   type Modifiers,
   type PendingAoe,
@@ -148,6 +149,30 @@ function rectHits(from: Vec2, target: Vec2, ux: number, uy: number, length: numb
 function circleHits(center: Vec2, target: Vec2, radius: number, targetRadius: number): boolean {
   const r = radius + targetRadius;
   return distanceSq(center, target) <= r * r;
+}
+
+/** Where a point-AOE lands: on the player, at the cursor, or on the foe nearest the cursor. */
+function pointAoeOrigin(
+  origin: 'player' | 'target' | 'nearestEnemyToTarget',
+  playerPos: Vec2,
+  targetX: number,
+  targetY: number,
+  enemies: readonly EnemyState[],
+): Vec2 {
+  if (origin === 'player') return playerPos;
+  if (origin === 'target') return { x: targetX, y: targetY };
+  // nearestEnemyToTarget: centre on the closest foe to the cursor, else the cursor.
+  const cursor = { x: targetX, y: targetY };
+  let best: EnemyState | null = null;
+  let bestSq = Infinity;
+  for (const enemy of enemies) {
+    const d = distanceSq(enemy.position, cursor);
+    if (d < bestSq) {
+      bestSq = d;
+      best = enemy;
+    }
+  }
+  return best ? best.position : cursor;
 }
 
 /** Unit vector from `from` toward `to`; falls back to +x when they coincide. */
@@ -291,6 +316,10 @@ export function initCombat(seed: number, opts: CombatOptions = {}): CombatState 
     dashExpiresAtTick: 0,
     dashDamage: 0,
     dashHitIds: [],
+    dashTrail: null,
+    groundFires: [],
+    attackFlameCharges: 0,
+    attackFlameBonus: 0,
   };
   const enemies: EnemyState[] = [];
   let nextEnemyId = 1;
@@ -371,6 +400,21 @@ export function step(
       return aggro({ ...enemy, health }, tick);
     });
     if (newlyHit.length > 0) player = { ...player, dashHitIds: [...state.player.dashHitIds, ...newlyHit] };
+  }
+
+  // --- Basking Path: lay a burning patch under the player every few ticks of the dash ---
+  if (dashing && state.player.dashTrail && (state.player.dashExpiresAtTick - tick) % 3 === 0) {
+    const trail = state.player.dashTrail;
+    const fire: GroundFire = {
+      x: player.position.x,
+      y: player.position.y,
+      radius: trail.radius,
+      pulseDamage: trail.pulseDamage,
+      pulseIntervalTicks: trail.pulseIntervalTicks,
+      nextPulseTick: tick + trail.pulseIntervalTicks,
+      expiresAtTick: tick + trail.durationTicks,
+    };
+    player = { ...player, groundFires: [...player.groundFires, fire] };
   }
 
   // Begin an attack wind-up: capture the aim now; the strike lands later.
@@ -498,8 +542,11 @@ export function step(
         let dashExpiresAtTick = player.dashExpiresAtTick;
         let dashDamage = player.dashDamage;
         let dashHitIds = player.dashHitIds;
+        let dashTrail = player.dashTrail;
         let shieldAmount = player.shieldAmount;
         let shieldExpiresAtTick = player.shieldExpiresAtTick;
+        let flameCharges = player.attackFlameCharges;
+        let flameBonus = player.attackFlameBonus;
         const applyInstant = (hit: (e: EnemyState) => boolean, dmg: number): void => {
           enemies = enemies.map((enemy) => {
             if (!hit(enemy)) return enemy;
@@ -510,14 +557,18 @@ export function step(
         };
         for (const spell of effect.spells) {
           switch (spell.kind) {
-            case 'cone':
-              applyInstant((e) => coneHits(castPos, e.position, ux, uy, spell.range, spell.arcCosSq, ENEMY_RADIUS), spell.damage);
+            case 'cone': {
+              // Conjure Flame arms cone casts with bonus fire damage; each cone spends one charge.
+              const bonus = flameCharges > 0 ? flameBonus : 0;
+              if (flameCharges > 0) flameCharges -= 1;
+              applyInstant((e) => coneHits(castPos, e.position, ux, uy, spell.range, spell.arcCosSq, ENEMY_RADIUS), spell.damage + bonus);
               break;
+            }
             case 'rect':
               applyInstant((e) => rectHits(castPos, e.position, ux, uy, spell.length, spell.halfWidth, ENEMY_RADIUS), spell.damage);
               break;
             case 'pointAoe': {
-              const origin = spell.origin === 'player' ? castPos : { x: effect.targetX, y: effect.targetY };
+              const origin = pointAoeOrigin(spell.origin, castPos, effect.targetX, effect.targetY, enemies);
               const added: PendingAoe[] = [];
               for (let i = 0; i < spell.count; i++) {
                 added.push({
@@ -532,6 +583,10 @@ export function step(
               pendingAoes = [...pendingAoes, ...added];
               break;
             }
+            case 'empower':
+              flameCharges += spell.charges;
+              flameBonus = spell.bonusDamage;
+              break;
             case 'aura':
               auras = [
                 ...auras,
@@ -551,6 +606,15 @@ export function step(
               dashExpiresAtTick = tick + dur;
               dashDamage = spell.damage;
               dashHitIds = [];
+              dashTrail =
+                spell.trailRadius !== undefined && spell.trailPulseDamage !== undefined && spell.trailDurationTicks !== undefined
+                  ? {
+                      radius: spell.trailRadius,
+                      pulseDamage: spell.trailPulseDamage,
+                      pulseIntervalTicks: spell.trailPulseIntervalTicks ?? 12,
+                      durationTicks: spell.trailDurationTicks,
+                    }
+                  : null;
               events.push({ kind: 'dashPerformed', tick });
               break;
             }
@@ -562,7 +626,21 @@ export function step(
             }
           }
         }
-        player = { ...player, auras, pendingAoes, dashDx, dashDy, dashExpiresAtTick, dashDamage, dashHitIds, shieldAmount, shieldExpiresAtTick };
+        player = {
+          ...player,
+          auras,
+          pendingAoes,
+          dashDx,
+          dashDy,
+          dashExpiresAtTick,
+          dashDamage,
+          dashHitIds,
+          dashTrail,
+          shieldAmount,
+          shieldExpiresAtTick,
+          attackFlameCharges: flameCharges,
+          attackFlameBonus: flameBonus,
+        };
         events.push({ kind: 'spellCast', tick, spellCount: effect.spells.length });
         break;
       }
@@ -591,6 +669,30 @@ export function step(
       .map((aura) => (tick >= aura.nextPulseTick && tick < aura.expiresAtTick ? { ...aura, nextPulseTick: aura.nextPulseTick + aura.pulseIntervalTicks } : aura))
       .filter((aura) => tick < aura.expiresAtTick);
     player = { ...player, auras: advanced };
+  }
+
+  // --- Ground fire (Basking Path trail): stationary patches pulse like auras ---
+  if (player.groundFires.length > 0) {
+    const fires = player.groundFires;
+    const anyDue = fires.some((f) => tick >= f.nextPulseTick && tick < f.expiresAtTick);
+    if (anyDue) {
+      enemies = enemies.map((enemy) => {
+        let dmg = 0;
+        for (const f of fires) {
+          if (tick >= f.nextPulseTick && tick < f.expiresAtTick && circleHits({ x: f.x, y: f.y }, enemy.position, f.radius, ENEMY_RADIUS)) {
+            dmg += f.pulseDamage;
+          }
+        }
+        if (dmg <= 0) return enemy;
+        const health = Math.max(0, enemy.health - dmg);
+        events.push({ kind: 'enemyHit', damage: dmg, tick, enemyId: enemy.id, at: enemy.position });
+        return aggro({ ...enemy, health }, tick);
+      });
+    }
+    const advancedFires: GroundFire[] = fires
+      .map((f) => (tick >= f.nextPulseTick && tick < f.expiresAtTick ? { ...f, nextPulseTick: f.nextPulseTick + f.pulseIntervalTicks } : f))
+      .filter((f) => tick < f.expiresAtTick);
+    player = { ...player, groundFires: advancedFires };
   }
 
   if (player.pendingAoes.length > 0) {
