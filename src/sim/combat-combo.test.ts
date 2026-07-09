@@ -22,7 +22,7 @@ function plant(state: CombatState, enemy: Partial<EnemyState>): CombatState {
     phase: 'idle',
     phaseEndsAtTick: ENEMY_IDLE_TICKS,
     incomingAttackOutcome: 'none',
-    attackZoneCenter: null,
+    attackAim: null,
     grazeTarget: null,
     grazeResumeTick: 0,
     ...enemy,

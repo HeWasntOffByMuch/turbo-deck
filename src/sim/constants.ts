@@ -29,8 +29,15 @@ export const ATTACK_ROOT_TICKS = 6;
 
 export const ENEMY_MAX_HEALTH = 150;
 export const ENEMY_ATTACK_DAMAGE = 15;
-// Radius of the telegraphed danger zone the enemy slams.
-export const ENEMY_ATTACK_RADIUS = 52;
+// The enemy slam is a forward cone (wedge), not a circle: it reaches this far
+// from the enemy's own (planted) centre, within a wedge aimed where the player
+// stood when the wind-up began. Side-stepping out of the arc dodges it.
+export const ENEMY_ATTACK_RANGE = 120;
+// Squared cosine of the cone half-angle. 0.5 == cos(45 deg)^2, a 90 deg wedge.
+export const ENEMY_ATTACK_ARC_COS_SQ = 0.5;
+// An enemy commits to a wind-up only once the player is within this distance of
+// its centre; beyond it the enemy keeps closing instead of slamming empty air.
+export const ENEMY_ATTACK_TRIGGER_RANGE = 96;
 // Distance the enemy holds from the player while closing in.
 export const ENEMY_STANDOFF = PLAYER_RADIUS + ENEMY_RADIUS + 8;
 export const ENEMY_IDLE_TICKS = 66;

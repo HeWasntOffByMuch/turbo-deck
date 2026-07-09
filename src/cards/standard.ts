@@ -26,10 +26,9 @@ export interface PlayingCard {
   readonly rank: Rank;
 }
 
-export const HAND_SIZE = 5;
+export const HAND_SIZE = 4;
 
 export type StandardHand = readonly [
-  PlayingCard | null,
   PlayingCard | null,
   PlayingCard | null,
   PlayingCard | null,
@@ -91,7 +90,7 @@ export function initStandardDeck(rng: Rng): StandardDeck {
   const [shuffled, afterShuffle] = shuffle(buildDeck(), rng);
   let drawPile: readonly PlayingCard[] = shuffled;
   let currentRng = afterShuffle;
-  const hand: (PlayingCard | null)[] = [null, null, null, null, null];
+  const hand: (PlayingCard | null)[] = [null, null, null, null];
   for (let i = 0; i < HAND_SIZE; i++) {
     const drawn = drawOne(drawPile, [], currentRng);
     hand[i] = drawn.card;

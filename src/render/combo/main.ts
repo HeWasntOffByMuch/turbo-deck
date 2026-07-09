@@ -21,7 +21,7 @@ function main(): void {
 
   const title = document.createElement('div');
   title.style.cssText = "font-family:'Segoe UI',system-ui,sans-serif;color:#c9c9d8;margin:6px 2px 10px;font-size:13px;";
-  title.textContent = 'turbo-deck · combo-tension prototype — clubs hit, hearts heal, spades guard, diamonds slow. Hold five for a poker stance… or spend them. (M mutes)';
+  title.textContent = 'turbo-deck · combo-tension prototype — clubs hit, hearts heal, spades guard, diamonds slow. Hold four for a poker stance… or spend them. (M mutes)';
   app.appendChild(title);
 
   const canvas = document.createElement('canvas');

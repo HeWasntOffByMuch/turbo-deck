@@ -21,7 +21,7 @@ function snapshot(s: ComboGameState): string {
 }
 
 describe('initComboGame', () => {
-  it('starts with an empty arena and a full five-card hand', () => {
+  it('starts with an empty arena and a full four-card hand', () => {
     const s = initComboGame(1);
     expect(s.combat.enemies).toHaveLength(0);
     expect(s.deck.hand.filter((c) => c !== null)).toHaveLength(HAND_SIZE);
@@ -88,7 +88,7 @@ describe('stepComboGame wiring', () => {
         parry: fc.boolean(),
         dodge: fc.boolean(),
         // Left out of requiredKeys, so these are randomly present or omitted per input.
-        playHandIndex: fc.constantFrom(0 as const, 1 as const, 2 as const, 3 as const, 4 as const),
+        playHandIndex: fc.constantFrom(0 as const, 1 as const, 2 as const, 3 as const),
         activate: fc.boolean(),
         spawnWave: fc.boolean(),
       },
@@ -103,7 +103,7 @@ describe('stepComboGame wiring', () => {
           for (const input of inputs) {
             s = stepComboGame(s, input).state;
             // Slots may sit empty on the draw-delay cooldown, but the hand array
-            // is always five slots and the 52-card multiset is always conserved.
+            // is always four slots and the 52-card multiset is always conserved.
             expect(s.deck.hand).toHaveLength(HAND_SIZE);
             expect(s.deck.hand.filter((c) => c !== null).length).toBeLessThanOrEqual(HAND_SIZE);
             expect(deckIds(s.deck)).toHaveLength(total);

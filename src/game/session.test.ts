@@ -29,7 +29,7 @@ function huntingGame(seed: number, deck: readonly string[]): GameState {
     phase: 'idle',
     phaseEndsAtTick: ENEMY_IDLE_TICKS,
     incomingAttackOutcome: 'none',
-    attackZoneCenter: null,
+    attackAim: null,
     grazeTarget: null,
     grazeResumeTick: 0,
   };

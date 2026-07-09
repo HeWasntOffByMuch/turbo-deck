@@ -1,7 +1,8 @@
 import {
   ARENA_HEIGHT,
   ARENA_WIDTH,
-  ENEMY_ATTACK_RADIUS,
+  ENEMY_ATTACK_ARC_COS_SQ,
+  ENEMY_ATTACK_RANGE,
   ENEMY_IDLE_TICKS,
   ENEMY_RADIUS,
   ENEMY_RECOVERY_TICKS,
@@ -116,20 +117,26 @@ export class ArenaView {
   }
 
   private drawTelegraph(enemy: EnemyState, tick: number): void {
-    if (enemy.behavior !== 'hunting' || enemy.phase !== 'windup' || !enemy.attackZoneCenter) return;
+    if (enemy.behavior !== 'hunting' || enemy.phase !== 'windup' || !enemy.attackAim) return;
     const { ctx } = this;
-    const c = this.worldToScreen(enemy.attackZoneCenter);
-    const r = ENEMY_ATTACK_RADIUS * SCALE;
+    const apex = this.worldToScreen(enemy.position);
+    const range = ENEMY_ATTACK_RANGE * SCALE;
+    const ang = Math.atan2(enemy.attackAim.y, enemy.attackAim.x);
+    const half = Math.acos(Math.sqrt(ENEMY_ATTACK_ARC_COS_SQ));
     const remaining = Math.max(0, enemy.phaseEndsAtTick - tick);
     const progress = 1 - remaining / ENEMY_WINDUP_TICKS;
     ctx.fillStyle = `rgba(255,140,26,${0.12 + 0.35 * progress})`;
     ctx.beginPath();
-    ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+    ctx.moveTo(apex.x, apex.y);
+    ctx.arc(apex.x, apex.y, range, ang - half, ang + half);
+    ctx.closePath();
     ctx.fill();
     ctx.strokeStyle = '#ffb347';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(c.x, c.y, r * (1 - progress), 0, Math.PI * 2); // shrinking = time to slam
+    ctx.moveTo(apex.x, apex.y);
+    ctx.arc(apex.x, apex.y, range * (1 - progress), ang - half, ang + half); // shrinking = time to slam
+    ctx.closePath();
     ctx.stroke();
   }
 

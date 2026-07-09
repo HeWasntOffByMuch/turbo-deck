@@ -47,7 +47,7 @@ function enemyAt(id: number, position: Vec2, overrides: Partial<EnemyState> = {}
     phase: 'idle',
     phaseEndsAtTick: 0,
     incomingAttackOutcome: 'none',
-    attackZoneCenter: null,
+    attackAim: null,
     grazeTarget: null,
     grazeResumeTick: Number.MAX_SAFE_INTEGER,
     ...overrides,
@@ -210,22 +210,42 @@ describe('movement bounds', () => {
   });
 });
 
-describe('positional telegraph', () => {
-  it('moving fully out of the danger zone during windup avoids the hit', () => {
-    // Sprint sideways the whole run; the zone is snapshotted at windup start, so
-    // by resolution the player has left it.
-    const inputs = neutralSteps(HIT_TICK).map((f) => ({ ...f, moveX: 1 as const }));
+describe('positional telegraph (cone)', () => {
+  it('side-stepping out of the cone during windup avoids the hit', () => {
+    // Stand still through the idle phase so the cone is aimed straight at rest,
+    // then slip sideways (perpendicular to the aim) once the windup begins; by
+    // resolution the player has left the wedge.
+    const inputs = neutralSteps(HIT_TICK);
+    for (let t = ENEMY_IDLE_TICKS; t < HIT_TICK; t++) inputs[t] = { ...NEUTRAL_INPUT, moveY: 1 };
     const { state, events } = runFrom(huntingState(), inputs);
     expect(state.player.health).toBe(PLAYER_MAX_HEALTH);
     expect(events.some((e) => e.kind === 'playerHit')).toBe(false);
     expect(events.some((e) => e.kind === 'enemyAttackAvoided')).toBe(true);
   });
 
-  it('standing still inside the zone with no defense takes the full hit', () => {
+  it('standing still inside the cone with no defense takes the full hit', () => {
     const { state, events } = runFrom(huntingState(), neutralSteps(HIT_TICK));
     expect(state.player.health).toBe(PLAYER_MAX_HEALTH - ENEMY_ATTACK_DAMAGE);
     expect(events.some((e) => e.kind === 'playerHit')).toBe(true);
     expect(events.some((e) => e.kind === 'enemyAttackAvoided')).toBe(false);
+  });
+});
+
+describe('enemies attack only when in range', () => {
+  it('a hunting enemy the player keeps outrunning never winds up or lands a hit', () => {
+    const base = initCombat(1);
+    const p = base.player.position;
+    // Far to the right, well beyond the trigger range, freshly hunting.
+    const enemy = enemyAt(1, { x: p.x + 400, y: p.y }, {
+      behavior: 'hunting',
+      phaseEndsAtTick: ENEMY_IDLE_TICKS,
+      grazeResumeTick: 0,
+    });
+    // Sprint left, faster than the enemy homes, so it never closes to reach.
+    const inputs = neutralSteps(150).map((f) => ({ ...f, moveX: -1 as const }));
+    const { state, events } = runFrom(withEnemies(base, [enemy]), inputs);
+    expect(state.enemies[0]?.phase).toBe('idle'); // never committed to a windup
+    expect(events.some((e) => e.kind === 'playerHit')).toBe(false);
   });
 });
 

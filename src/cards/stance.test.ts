@@ -37,17 +37,17 @@ describe('cardAction', () => {
 
 describe('handStance', () => {
   it('a flush pours the whole bonus into its one matching stat', () => {
-    const clubsStance = handStance(flush('clubs', [2, 5, 8, 11, 13]));
+    const clubsStance = handStance(flush('clubs', [2, 5, 8, 11]));
     expect(clubsStance.attackBonus).toBeGreaterThan(0);
     expect(clubsStance.reductionPct).toBe(0);
     expect(clubsStance.regenPerSecond).toBe(0);
     expect(clubsStance.slowMultiplier).toBe(1);
 
-    const spadesStance = handStance(flush('spades', [2, 5, 8, 11, 13]));
+    const spadesStance = handStance(flush('spades', [2, 5, 8, 11]));
     expect(spadesStance.reductionPct).toBeGreaterThan(0);
     expect(spadesStance.attackBonus).toBe(0);
 
-    const diamondsStance = handStance(flush('diamonds', [2, 5, 8, 11, 13]));
+    const diamondsStance = handStance(flush('diamonds', [2, 5, 8, 11]));
     expect(diamondsStance.slowMultiplier).toBeLessThan(1);
     expect(diamondsStance.regenPerSecond).toBe(0);
   });
@@ -55,16 +55,16 @@ describe('handStance', () => {
   it('a stronger poker hand never yields a smaller bonus for the same suit mix', () => {
     // Both all-clubs (identical suit composition), but one is a plain flush and
     // the other a straight flush -- higher strength must not weaken the stat.
-    const plainFlush = handStance(flush('clubs', [2, 5, 8, 11, 13]));
-    const straightFlush = handStance(flush('clubs', [5, 6, 7, 8, 9]));
+    const plainFlush = handStance(flush('clubs', [2, 5, 8, 11]));
+    const straightFlush = handStance(flush('clubs', [5, 6, 7, 8]));
     expect(straightFlush.attackBonus).toBeGreaterThan(plainFlush.attackBonus);
     expect(straightFlush.durationSeconds).toBeGreaterThan(plainFlush.durationSeconds);
     expect(straightFlush.lockoutSeconds).toBeGreaterThan(straightFlush.durationSeconds);
   });
 
   it('blends stats for a mixed hand by suit share', () => {
-    // 3 clubs, 2 hearts -> mostly attack, some regen, nothing else.
-    const stance = handStance([card('clubs', 9), card('clubs', 9), card('clubs', 4), card('hearts', 5), card('hearts', 7)]);
+    // 3 clubs, 1 heart -> mostly attack, some regen, nothing else.
+    const stance = handStance([card('clubs', 9), card('clubs', 9), card('clubs', 4), card('hearts', 5)]);
     expect(stance.attackBonus).toBeGreaterThan(0);
     expect(stance.regenPerSecond).toBeGreaterThan(0);
     expect(stance.reductionPct).toBe(0);
