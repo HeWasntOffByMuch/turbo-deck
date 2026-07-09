@@ -11,9 +11,14 @@ import type { SpellGameEvent } from '../game/spell-session.js';
 const MASTER_GAIN = 0.55;
 const MUSIC_GAIN = 0.7;
 const SFX_GAIN = 0.9;
-// How far ahead of the audio clock we queue music notes each update. Larger
-// than a render frame (~16ms) so we never starve even after a hitch.
-const SCHEDULE_AHEAD_S = 0.2;
+// How far ahead of the audio clock we queue music notes each top-up. Kept well
+// over a second because background tabs throttle timers (and stop rAF entirely):
+// as long as we re-queue before this buffer drains, playback in a hidden tab
+// stays smooth instead of grinding to a halt.
+const SCHEDULE_AHEAD_S = 2.0;
+// How often the self-driving scheduler tops the queue up. Foreground it fires at
+// this rate; a background tab throttles it toward ~1s, still inside the buffer.
+const SCHEDULE_INTERVAL_MS = 400;
 // Seconds to fade one theme out and the other in when the wave state flips.
 const CROSSFADE_S = 0.7;
 
@@ -71,6 +76,9 @@ export class GameAudio {
   private phase: MusicPhase = 'calm';
   private muted = false;
   private started = false;
+  // Music scheduling runs on its own timer, not the render loop, so a
+  // backgrounded tab (where rAF stops) keeps the queue fed.
+  private schedulerTimer: ReturnType<typeof setInterval> | undefined;
 
   /**
    * Create/resume the AudioContext. Must be called from a user gesture, since
@@ -113,6 +121,13 @@ export class GameAudio {
     // (and also try synchronously, for a context that is already running).
     void this.ctx.resume().then(() => this.startLoop());
     this.startLoop();
+
+    // Top the music queue up on a timer independent of the render loop. rAF is
+    // paused in a hidden tab, but this keeps scheduling notes onto the audio
+    // clock so playback there doesn't slow to a crawl.
+    if (this.schedulerTimer === undefined && typeof setInterval === 'function') {
+      this.schedulerTimer = setInterval(() => this.update(), SCHEDULE_INTERVAL_MS);
+    }
   }
 
   /** Kick off the look-ahead music loop once the context is actually running. */
