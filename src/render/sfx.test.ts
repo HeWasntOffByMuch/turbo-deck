@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CARD_CATALOG } from '../cards/catalog.js';
 import type { GameEvent } from '../game/session.js';
-import type { ComboEvent } from '../game/combo-session.js';
-import { SUITS, type PlayingCard } from '../cards/standard.js';
-import { POKER_ORDER } from '../cards/poker.js';
-import { SFX, sfxForComboEvent, sfxForEvent } from './sfx.js';
+import { SFX, sfxForEvent } from './sfx.js';
 
 describe('SFX library', () => {
   it('gives every spec at least one segment with positive duration and gain', () => {
@@ -58,45 +55,5 @@ describe('sfxForEvent routing', () => {
     expect(sfxForEvent({ kind: 'playCardIgnoredEmptySlot' })).toBeUndefined();
     expect(sfxForEvent({ kind: 'enemyAttackAvoided', tick: 1 })).toBeUndefined();
     expect(sfxForEvent({ kind: 'effectRejectedInsufficientMana', tick: 1 })).toBeUndefined();
-  });
-});
-
-describe('sfxForComboEvent routing (spec 014 prototype)', () => {
-  const card = (suit: PlayingCard['suit']): PlayingCard => ({ instanceId: 1, suit, rank: 7 });
-
-  it('voices a card play by suit, and every suit maps to a real SFX', () => {
-    for (const suit of SUITS) {
-      const id = sfxForComboEvent({ kind: 'cardPlayed', index: 0, card: card(suit) });
-      expect(id, `no sfx for suit ${suit}`).toBeDefined();
-      expect(id !== undefined && SFX[id], `sfx '${id}' missing`).toBeDefined();
-    }
-  });
-
-  it('voices every poker-stance activation with its own real SFX', () => {
-    for (const category of POKER_ORDER) {
-      const id = sfxForComboEvent({ kind: 'activated', category, strength: POKER_ORDER.indexOf(category) });
-      expect(id, `no sfx for combo ${category}`).toBeDefined();
-      expect(id !== undefined && SFX[id], `sfx '${id}' missing for ${category}`).toBeDefined();
-    }
-  });
-
-  it('defers shared combat events to the common routing', () => {
-    const events: ComboEvent[] = [
-      { kind: 'enemyHit', damage: 10, tick: 1, enemyId: 1, at: { x: 0, y: 0 } },
-      { kind: 'playerHit', damage: 5, tick: 1 },
-      { kind: 'perfectDefense', defenseType: 'parry', tick: 1 },
-      { kind: 'enemyDefeated', tick: 1, enemyId: 1, enemyType: 'Brawler' },
-      { kind: 'playerDefeated', tick: 1 },
-    ];
-    for (const event of events) {
-      const id = sfxForComboEvent(event);
-      expect(id, `no sfx for ${event.kind}`).toBeDefined();
-      expect(id !== undefined && SFX[id]).toBeDefined();
-    }
-  });
-
-  it('stays silent for ignored-input events', () => {
-    expect(sfxForComboEvent({ kind: 'playIgnoredEmptySlot' })).toBeUndefined();
-    expect(sfxForComboEvent({ kind: 'activateIgnoredLocked' })).toBeUndefined();
   });
 });
