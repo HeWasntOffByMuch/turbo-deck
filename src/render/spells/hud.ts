@@ -1,5 +1,5 @@
 import { HAND_SIZE, SPELL_CARDS, type CardSet, type SpellCard, type SpellHand } from '../../cards/spells.js';
-import type { SpellGameState } from '../../game/spell-session.js';
+import type { RewardOffer, SpellGameState } from '../../game/spell-session.js';
 import { TICK_RATE, WAVE_BASE_COUNT } from '../../sim/constants.js';
 import type { SpellInputCapture } from './input.js';
 
@@ -22,28 +22,34 @@ const STYLE = `
 .sp-status b { color: #fff; font-size: 16px; }
 .sp-banner { min-width: 260px; font-weight: 700; }
 .sp-hand { display: flex; gap: 12px; align-items: flex-end; }
-.sp-card { width: 96px; height: 132px; border-radius: 10px; background: #e7e3d6; color: #1b1b22;
+.sp-card { box-sizing: border-box; width: 100px; height: 136px; border-radius: 10px; background: #e7e3d6; color: #1b1b22;
   box-shadow: 0 3px 8px rgba(0,0,0,.4); cursor: pointer; position: relative; user-select: none;
-  border: 2px solid #b9b09a; transition: transform .08s ease; display: flex; flex-direction: column; overflow: hidden; }
+  border: 2px solid #b9b09a; transition: transform .08s ease; display: flex; flex-direction: column; overflow: hidden; padding: 8px; }
 .sp-card:hover { transform: translateY(-8px); }
-.sp-card .name { font-weight: 800; font-size: 14px; padding: 8px 8px 2px; }
-.sp-card .set { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; padding: 0 8px; opacity: .7; }
-.sp-card .blurb { margin-top: auto; font-size: 11px; padding: 6px 8px 10px; color: #3c3830; }
+.sp-card .name { font-weight: 800; font-size: 13px; line-height: 1.12; overflow-wrap: anywhere; }
+.sp-card .set { font-size: 9px; text-transform: uppercase; letter-spacing: .06em; opacity: .65; margin-top: 2px; }
+.sp-card .blurb { margin-top: auto; font-size: 10.5px; line-height: 1.18; color: #3c3830; overflow-wrap: anywhere; }
 .sp-card.empty { background: #20202c; border-style: dashed; border-color: #3a3a4e; cursor: default; box-shadow: none; color: #6b6f8a; }
 .sp-card.empty:hover { transform: none; }
 .sp-card .cool { margin: auto; text-align: center; color: #7f8bd0; font-weight: 800; font-size: 15px; }
 .sp-card .cool span { display: block; font-size: 10px; font-weight: 600; color: #5a5f80; margin-top: 3px; }
 .sp-card .key { position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
   background: #2a2a38; color: #ffd76a; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 6px; }
-.sp-controls { display: flex; gap: 12px; align-items: stretch; margin-top: 14px; }
+.sp-card .lv { position: absolute; top: 5px; right: 5px; background: #b9862a; color: #fff;
+  font-size: 10px; font-weight: 800; padding: 1px 5px; border-radius: 6px; }
+.sp-controls { display: flex; gap: 12px; align-items: stretch; margin-top: 14px; flex-wrap: wrap; }
 .sp-btn { border: none; border-radius: 10px; padding: 10px 16px; cursor: pointer; color: #fff;
   font-size: 14px; font-weight: 700; text-align: left; line-height: 1.35; }
 .sp-btn small { font-weight: 400; opacity: .85; }
 .sp-wave { background: #7a3a6a; } .sp-wave:hover { background: #8f458a; }
-.sp-window { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #3a3a4e; }
+.sp-reward { background: #2c6b4a; min-width: 150px; } .sp-reward:hover { background: #348055; }
+.sp-reward-title { color: #7affc0; font-weight: 700; font-size: 13px; margin: 12px 2px 2px; }
+.sp-window { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #3a3a4e; vertical-align: middle; }
 .sp-window.open { background: #ffd76a; box-shadow: 0 0 8px #ffd76a; }
 .sp-hint { color: #8a8a9a; font-size: 12px; margin-top: 10px; }
 `;
+
+const REWARD_VERB: Record<string, string> = { remove: 'Remove', upgrade: 'Upgrade', addFire: 'Add' };
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
@@ -58,6 +64,9 @@ export class SpellHud {
   private readonly windowPip: HTMLElement;
   private readonly cards: HTMLElement[] = [];
   private readonly waveBtn: HTMLButtonElement;
+  private readonly rewardTitle: HTMLElement;
+  private readonly rewardRow: HTMLElement;
+  private readonly rewardBtns: HTMLButtonElement[] = [];
   private lastHandKey = '';
 
   constructor(root: HTMLElement, input: SpellInputCapture) {
@@ -89,6 +98,20 @@ export class SpellHud {
     }
     root.appendChild(hand);
 
+    // Wave-reward panel: hidden until a wave clears, then three offer buttons.
+    this.rewardTitle = el('div', 'sp-reward-title');
+    this.rewardTitle.textContent = 'Wave cleared — choose a reward:';
+    this.rewardRow = el('div', 'sp-controls');
+    for (let i = 0; i < 3; i++) {
+      const btn = el('button', 'sp-btn sp-reward');
+      btn.addEventListener('click', () => input.queueReward(i as 0 | 1 | 2));
+      this.rewardBtns.push(btn);
+      this.rewardRow.appendChild(btn);
+    }
+    this.rewardTitle.style.display = 'none';
+    this.rewardRow.style.display = 'none';
+    root.append(this.rewardTitle, this.rewardRow);
+
     const controls = el('div', 'sp-controls');
     this.waveBtn = el('button', 'sp-btn sp-wave');
     this.waveBtn.addEventListener('click', () => input.queueWave());
@@ -111,9 +134,27 @@ export class SpellHud {
 
     this.renderBanner(combat.enemies, combat.over);
     this.renderHand(state.deck.hand, state.refillAtTick, combat.tick);
+    this.renderReward(state.pendingReward);
 
     const next = combat.waveNumber + 1;
     this.waveBtn.innerHTML = `SPAWN WAVE ${next}<br><small>${WAVE_BASE_COUNT + next} enemies, tougher</small>`;
+  }
+
+  private renderReward(offers: SpellGameState['pendingReward']): void {
+    const show = offers !== null;
+    this.rewardTitle.style.display = show ? '' : 'none';
+    this.rewardRow.style.display = show ? '' : 'none';
+    this.waveBtn.disabled = show;
+    if (!offers) return;
+    offers.forEach((offer: RewardOffer, i) => {
+      const btn = this.rewardBtns[i];
+      if (!btn) return;
+      const name = SPELL_CARDS[offer.cardId].name;
+      const verb = REWARD_VERB[offer.kind] ?? offer.kind;
+      const sub =
+        offer.kind === 'remove' ? 'thin your deck' : offer.kind === 'upgrade' ? '+1 level, more damage' : 'a fresh fire card';
+      btn.innerHTML = `${verb.toUpperCase()}: ${name}<br><small>${sub}</small>`;
+    });
   }
 
   private renderBanner(enemies: SpellGameState['combat']['enemies'], over: boolean): void {
@@ -135,7 +176,8 @@ export class SpellHud {
   }
 
   private renderHand(hand: SpellHand, refillAtTick: readonly (number | null)[], tick: number): void {
-    const key = hand.map((c) => (c ? c.instanceId : 'x')).join(',');
+    // Include level so an upgraded card's badge refreshes even though its id is stable.
+    const key = hand.map((c) => (c ? `${c.instanceId}:${c.level}` : 'x')).join(',');
     if (key !== this.lastHandKey) {
       this.lastHandKey = key;
       hand.forEach((card, i) => this.buildFace(this.cards[i], card));
@@ -151,7 +193,7 @@ export class SpellHud {
 
   private buildFace(node: HTMLElement | undefined, card: SpellCard | null): void {
     if (!node) return;
-    node.querySelectorAll('.name,.set,.blurb,.cool').forEach((n) => n.remove());
+    node.querySelectorAll('.name,.set,.blurb,.cool,.lv').forEach((n) => n.remove());
     node.classList.toggle('empty', !card);
 
     if (!card) {
@@ -177,5 +219,10 @@ export class SpellHud {
     const blurb = el('div', 'blurb');
     blurb.textContent = def.blurb;
     node.append(name, set, blurb);
+    if (card.level > 1) {
+      const lv = el('span', 'lv');
+      lv.textContent = `Lv${card.level}`;
+      node.appendChild(lv);
+    }
   }
 }

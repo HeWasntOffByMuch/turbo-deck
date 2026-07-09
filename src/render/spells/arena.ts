@@ -47,8 +47,14 @@ interface Flash {
   max: number;
 }
 
+// Transient shapes for instant casts (cone/rect), so a swing reads on screen.
+type CastFx =
+  | { kind: 'cone'; x: number; y: number; ang: number; range: number; half: number; life: number; max: number }
+  | { kind: 'rect'; x: number; y: number; ang: number; length: number; halfWidth: number; life: number; max: number };
+
 const POPUP_LIFE = 42;
 const FLASH_LIFE = 18;
+const CAST_LIFE = 12;
 
 export interface ScreenPoint {
   readonly x: number;
@@ -59,6 +65,7 @@ export class SpellArenaView {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly popups: Popup[] = [];
   private readonly flashes: Flash[] = [];
+  private readonly casts: CastFx[] = [];
   private frame = 0;
 
   constructor(readonly canvas: HTMLCanvasElement) {
@@ -79,10 +86,12 @@ export class SpellArenaView {
     this.ingestEvents(combat.player, events);
 
     this.drawField();
+    this.drawGroundFires(combat.player);
     this.drawPendingAoes(combat.player, combat.tick);
     for (const enemy of combat.enemies) this.drawTelegraph(enemy, combat.tick);
     for (const enemy of combat.enemies) this.drawEnemy(enemy, combat.tick, combat.player.position);
     this.drawAuras(combat.player, combat.tick);
+    this.updateAndDrawCasts();
     this.drawPlayer(combat.player, combat.tick, aim);
     this.updateAndDrawFlashes();
     this.updateAndDrawPopups();
@@ -96,8 +105,17 @@ export class SpellArenaView {
       else if (e.kind === 'aoeImpact') {
         const at = this.worldToScreen(e.at);
         this.flashes.push({ x: at.x, y: at.y, radius: e.radius * SCALE, life: FLASH_LIFE, max: FLASH_LIFE });
-      } else if (e.kind === 'spellsResolved' && e.ids.length >= 2) {
-        this.spawn(this.worldToScreen(player.position), 'SYNERGY!', '#ffd76a', -1.3);
+      } else if (e.kind === 'spellsResolved') {
+        const origin = this.worldToScreen(player.position);
+        const ang = Math.atan2(e.aimY, e.aimX);
+        for (const spec of e.specs) {
+          if (spec.kind === 'cone') {
+            this.casts.push({ kind: 'cone', x: origin.x, y: origin.y, ang, range: spec.range * SCALE, half: Math.acos(Math.sqrt(spec.arcCosSq)), life: CAST_LIFE, max: CAST_LIFE });
+          } else if (spec.kind === 'rect') {
+            this.casts.push({ kind: 'rect', x: origin.x, y: origin.y, ang, length: spec.length * SCALE, halfWidth: spec.halfWidth * SCALE, life: CAST_LIFE, max: CAST_LIFE });
+          }
+        }
+        if (e.ids.length >= 2) this.spawn(origin, 'SYNERGY!', '#ffd76a', -1.3);
       }
     }
   }
@@ -159,6 +177,54 @@ export class SpellArenaView {
       ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
       ctx.stroke();
     }
+  }
+
+  private drawGroundFires(player: PlayerState): void {
+    const { ctx } = this;
+    for (const f of player.groundFires) {
+      const c = this.worldToScreen({ x: f.x, y: f.y });
+      const r = f.radius * SCALE;
+      const flick = 0.5 + 0.5 * Math.sin(this.frame * 0.4 + f.x * 0.05);
+      ctx.fillStyle = `rgba(230,90,30,${0.14 + 0.1 * flick})`;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,160,60,0.5)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r * (0.7 + 0.2 * flick), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  private updateAndDrawCasts(): void {
+    const { ctx } = this;
+    for (let i = this.casts.length - 1; i >= 0; i--) {
+      const fx = this.casts[i];
+      if (!fx) continue;
+      fx.life -= 1;
+      if (fx.life <= 0) {
+        this.casts.splice(i, 1);
+        continue;
+      }
+      const t = fx.life / fx.max;
+      ctx.globalAlpha = t * 0.55;
+      ctx.fillStyle = '#ffe6b0';
+      if (fx.kind === 'cone') {
+        ctx.beginPath();
+        ctx.moveTo(fx.x, fx.y);
+        ctx.arc(fx.x, fx.y, fx.range, fx.ang - fx.half, fx.ang + fx.half);
+        ctx.closePath();
+        ctx.fill();
+      } else {
+        ctx.save();
+        ctx.translate(fx.x, fx.y);
+        ctx.rotate(fx.ang);
+        ctx.fillRect(0, -fx.halfWidth, fx.length, fx.halfWidth * 2);
+        ctx.restore();
+      }
+    }
+    ctx.globalAlpha = 1;
   }
 
   private drawTelegraph(enemy: EnemyState, tick: number): void {
@@ -259,6 +325,16 @@ export class SpellArenaView {
     ctx.stroke();
 
     this.healthBar(p.x - r - 4, p.y - r - 14, r * 2 + 8, player.health / player.maxHealth, '#5ad65a');
+
+    // Conjure Flame charges: a small orange pip per remaining buffed attack.
+    if (player.attackFlameCharges > 0) {
+      ctx.fillStyle = '#ff9b3a';
+      for (let i = 0; i < player.attackFlameCharges; i++) {
+        ctx.beginPath();
+        ctx.arc(p.x - (player.attackFlameCharges - 1) * 3 + i * 6, p.y - r - 20, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
   }
 
   private healthBar(x: number, y: number, w: number, frac: number, color: string): void {
