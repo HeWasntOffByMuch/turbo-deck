@@ -1,5 +1,6 @@
 import { initComboGame, stepComboGame, type ComboEvent, type ComboGameState } from '../../game/combo-session.js';
 import { TICK_RATE } from '../../sim/constants.js';
+import { GameAudio } from '../audio.js';
 import { ArenaView } from './arena.js';
 import { ComboHud } from './hud.js';
 import { ComboInputCapture } from './input.js';
@@ -20,7 +21,7 @@ function main(): void {
 
   const title = document.createElement('div');
   title.style.cssText = "font-family:'Segoe UI',system-ui,sans-serif;color:#c9c9d8;margin:6px 2px 10px;font-size:13px;";
-  title.textContent = 'turbo-deck · combo-tension prototype — clubs hit, hearts heal, spades guard, diamonds slow. Hold five for a poker stance… or spend them.';
+  title.textContent = 'turbo-deck · combo-tension prototype — clubs hit, hearts heal, spades guard, diamonds slow. Hold five for a poker stance… or spend them. (M mutes)';
   app.appendChild(title);
 
   const canvas = document.createElement('canvas');
@@ -34,6 +35,17 @@ function main(): void {
   const input = new ComboInputCapture(canvas);
   input.attach(window);
   const hud = new ComboHud(hudRoot, input);
+
+  // Synthesized retro-arcade soundtrack + attack SFX. Browsers block autoplay,
+  // so the AudioContext can only start from a user gesture — resume it on the
+  // first key/pointer input; 'M' toggles mute.
+  const audio = new GameAudio();
+  const unlock = (): void => audio.resume();
+  window.addEventListener('keydown', (e) => {
+    unlock();
+    if (e.code === 'KeyM') audio.toggleMute();
+  });
+  window.addEventListener('pointerdown', unlock);
 
   let state: ComboGameState = initComboGame(Date.now() >>> 0);
   let accumulator = 0;
@@ -56,6 +68,8 @@ function main(): void {
     const mouse = input.mouseScreen();
     arena.render(state, events, { x: mouse.x - playerScreen.x, y: mouse.y - playerScreen.y });
     hud.render(state);
+    audio.handleComboEvents(events);
+    audio.update();
 
     requestAnimationFrame(frame);
   };

@@ -43,8 +43,11 @@ in Node while the browser-only Web Audio glue stays thin:
   Web Audio `AudioContext`. `resume()` (from a user gesture, since browsers
   block autoplay), `handleEvents(events)` → plays the routed SFX, `update()` →
   look-ahead schedules the next slice of the music loop, `toggleMute()`. Wired
-  in `main.ts`: resumed on first input, `handleEvents`/`update` called each
-  render tick.
+  into whichever front end is live: the combo prototype (`combo/main.ts`, the
+  current entry) resumes on first input and calls `handleComboEvents`/`update`
+  each render tick; the legacy `main.ts` uses `handleEvents`. Both share the
+  same routing — `handleComboEvents` translates the combo event stream via
+  `sfxForComboEvent`, deferring combat `SimEvent`s to the common `sfxForEvent`.
 
 ## Invariants tested
 

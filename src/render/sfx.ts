@@ -5,6 +5,8 @@
 // game event to the effect that voices it, so "attacks" are audible.
 
 import type { GameEvent } from '../game/session.js';
+import type { ComboEvent } from '../game/combo-session.js';
+import type { Suit } from '../cards/standard.js';
 import type { Waveform } from './music.js';
 
 export interface SfxSegment {
@@ -176,5 +178,36 @@ export function sfxForEvent(event: GameEvent): string | undefined {
       return 'gameOver';
     default:
       return undefined;
+  }
+}
+
+// A single-card suit action voices by what it does: clubs hit, hearts heal,
+// spades guard, diamonds slow (a cold shard). Every value exists in `SFX`.
+const SUIT_SFX: Record<Suit, string> = {
+  clubs: 'fireball',
+  hearts: 'heal',
+  spades: 'block',
+  diamonds: 'iceshard',
+};
+
+/**
+ * Route a combo-prototype event (spec 014) to its SFX. The combo session emits
+ * its own card/stance events plus the shared `SimEvent`s; the combat ones defer
+ * to `sfxForEvent`, so hits/defenses/deaths sound identical across both front
+ * ends. Cosmetic "ignored input" events stay silent.
+ */
+export function sfxForComboEvent(event: ComboEvent): string | undefined {
+  switch (event.kind) {
+    case 'cardPlayed':
+      return SUIT_SFX[event.card.suit];
+    case 'activated':
+      // Cashing five cards in for a poker stance: a triumphant fanfare stab.
+      return 'buff';
+    case 'playIgnoredEmptySlot':
+    case 'activateIgnoredLocked':
+      return undefined;
+    default:
+      // Everything else is a shared SimEvent; reuse the common routing.
+      return sfxForEvent(event);
   }
 }

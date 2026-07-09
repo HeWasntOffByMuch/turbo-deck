@@ -4,8 +4,9 @@
 // interesting choices live in those testable modules, this stays thin.
 
 import { buildSong, midiToFreq, type Song, type Waveform } from './music.js';
-import { SFX, sfxForEvent, type SfxSegment } from './sfx.js';
+import { SFX, sfxForComboEvent, sfxForEvent, type SfxSegment } from './sfx.js';
 import type { GameEvent } from '../game/session.js';
+import type { ComboEvent } from '../game/combo-session.js';
 
 const MASTER_GAIN = 0.55;
 const MUSIC_GAIN = 0.7;
@@ -68,12 +69,21 @@ export class GameAudio {
       this.sfxBus.gain.value = SFX_GAIN;
       this.sfxBus.connect(this.master);
     }
-    void this.ctx.resume();
-    if (!this.started && this.ctx.state === 'running') {
-      this.started = true;
-      this.loopStart = this.ctx.currentTime + 0.1;
-      this.cursor = 0;
-    }
+    // `resume()` is async: a context created during a gesture starts
+    // 'suspended' and only flips to 'running' a microtask later, so checking
+    // the state synchronously here would miss the first gesture and leave the
+    // music silent until some later input. Start the loop when resume settles
+    // (and also try synchronously, for a context that is already running).
+    void this.ctx.resume().then(() => this.startLoop());
+    this.startLoop();
+  }
+
+  /** Kick off the look-ahead music loop once the context is actually running. */
+  private startLoop(): void {
+    if (!this.ctx || this.started || this.ctx.state !== 'running') return;
+    this.started = true;
+    this.loopStart = this.ctx.currentTime + 0.1;
+    this.cursor = 0;
   }
 
   toggleMute(): boolean {
@@ -87,6 +97,15 @@ export class GameAudio {
     if (!this.ctx || this.muted) return;
     for (const event of events) {
       const id = sfxForEvent(event);
+      if (id) this.playSfx(id);
+    }
+  }
+
+  /** As `handleEvents`, but for the combo-prototype's event stream (spec 014). */
+  handleComboEvents(events: readonly ComboEvent[]): void {
+    if (!this.ctx || this.muted) return;
+    for (const event of events) {
+      const id = sfxForComboEvent(event);
       if (id) this.playSfx(id);
     }
   }
