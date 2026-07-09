@@ -1,4 +1,4 @@
-# 015 — Wave speed & attack-speed scaling
+# 016 — Wave speed & attack-speed scaling
 
 ## Problem
 

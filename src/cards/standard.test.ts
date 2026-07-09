@@ -62,7 +62,7 @@ describe('standard deck', () => {
     fc.assert(
       fc.property(
         fc.integer({ min: 0, max: 2 ** 31 - 1 }),
-        fc.array(fc.integer({ min: 0, max: 4 }), { minLength: 200, maxLength: 200 }),
+        fc.array(fc.integer({ min: 0, max: 3 }), { minLength: 200, maxLength: 200 }),
         (seed, slots) => {
           let deck = initStandardDeck(Rng.fromSeed(seed));
           const expected = instanceIds(deck);

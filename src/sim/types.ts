@@ -95,8 +95,11 @@ export interface EnemyState {
   readonly phase: EnemyPhase;
   readonly phaseEndsAtTick: number;
   readonly incomingAttackOutcome: DefenseOutcome;
-  /** Centre of the telegraphed danger zone during windup; null otherwise. */
-  readonly attackZoneCenter: Vec2 | null;
+  /**
+   * Unit direction of the attack cone, captured at wind-up start; the cone's
+   * apex is the enemy's own (planted) position. Null when not winding up.
+   */
+  readonly attackAim: Vec2 | null;
   // --- grazing (meaningful only while grazing) ---
   /** Current wander destination; null while standing and "eating". */
   readonly grazeTarget: Vec2 | null;

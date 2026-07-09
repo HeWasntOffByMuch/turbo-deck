@@ -22,7 +22,7 @@ function plant(state: CombatState, enemy: Partial<EnemyState>): CombatState {
     phase: 'idle',
     phaseEndsAtTick: ENEMY_IDLE_TICKS,
     incomingAttackOutcome: 'none',
-    attackZoneCenter: null,
+    attackAim: null,
     grazeTarget: null,
     grazeResumeTick: 0,
     ...enemy,
@@ -74,7 +74,7 @@ describe('wave spawner', () => {
   });
 });
 
-describe('wave speed & attack-speed scaling (spec 015)', () => {
+describe('wave speed & attack-speed scaling (spec 016)', () => {
   const only = (s: CombatState): EnemyState => {
     const e = s.enemies[0];
     if (e === undefined) throw new Error('expected exactly one enemy');

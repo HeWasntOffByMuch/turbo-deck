@@ -39,7 +39,7 @@ export interface ComboInput {
   readonly parry: boolean;
   readonly dodge: boolean;
   /** Play the card in this hand slot as a single suit action. */
-  readonly playHandIndex?: 0 | 1 | 2 | 3 | 4;
+  readonly playHandIndex?: 0 | 1 | 2 | 3;
   /** Cash the whole hand in as a poker-strength stance. */
   readonly activate?: boolean;
   /** Summon the next escalating wave. */

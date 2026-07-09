@@ -1,5 +1,5 @@
 import type { PlayingCard, Suit } from './standard.js';
-import { evaluateHand } from './poker.js';
+import { evaluateHand, MAX_POKER_STRENGTH } from './poker.js';
 
 /**
  * The two mappings that give every card a dual identity (spec 014): what a card
@@ -86,7 +86,7 @@ function suitFraction(cards: readonly PlayingCard[], suit: Suit): number {
  */
 export function handStance(cards: readonly PlayingCard[]): StanceGrant {
   const strength = evaluateHand(cards).strength;
-  const tier = 0.15 + 0.85 * (strength / 8); // 0.15 (high card) .. 1.0 (straight flush)
+  const tier = 0.15 + 0.85 * (strength / MAX_POKER_STRENGTH); // 0.15 (high card) .. 1.0 (four of a kind)
   const slowStrength = STANCE_SLOW_MAX * tier * suitFraction(cards, 'diamonds');
   return {
     attackBonus: STANCE_ATTACK_MAX * tier * suitFraction(cards, 'clubs'),

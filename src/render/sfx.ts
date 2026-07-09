@@ -7,6 +7,7 @@
 import type { GameEvent } from '../game/session.js';
 import type { ComboEvent } from '../game/combo-session.js';
 import type { Suit } from '../cards/standard.js';
+import type { PokerCategory } from '../cards/poker.js';
 import type { Waveform } from './music.js';
 
 export interface SfxSegment {
@@ -131,6 +132,67 @@ export const SFX: Record<string, SfxSpec> = {
       { wave: 'square', startFreq: 1319, endFreq: 1319, duration: 0.1, gain: 0.18, delay: 0.05 },
     ],
   },
+  // --- Poker-combo activation fanfares (spec 015), one per hand category, ---
+  // --- escalating in notes and brightness with the hand's strength. ---
+  // High card: a modest single chime — barely a payoff.
+  comboHighCard: {
+    segments: [{ wave: 'sine', startFreq: 523, endFreq: 523, duration: 0.12, gain: 0.16 }],
+  },
+  // Pair: a two-note lift.
+  comboPair: {
+    segments: [
+      { wave: 'triangle', startFreq: 523, endFreq: 523, duration: 0.08, gain: 0.18 },
+      { wave: 'triangle', startFreq: 659, endFreq: 659, duration: 0.12, gain: 0.18, delay: 0.07 },
+    ],
+  },
+  // Two pair: two quick paired blips.
+  comboTwoPair: {
+    segments: [
+      { wave: 'square', startFreq: 587, endFreq: 587, duration: 0.07, gain: 0.17 },
+      { wave: 'square', startFreq: 587, endFreq: 587, duration: 0.07, gain: 0.15, delay: 0.08 },
+      { wave: 'square', startFreq: 784, endFreq: 784, duration: 0.11, gain: 0.18, delay: 0.16 },
+    ],
+  },
+  // Straight: a clean ascending run.
+  comboStraight: {
+    segments: [
+      { wave: 'square', startFreq: 523, endFreq: 523, duration: 0.06, gain: 0.18 },
+      { wave: 'square', startFreq: 659, endFreq: 659, duration: 0.06, gain: 0.18, delay: 0.06 },
+      { wave: 'square', startFreq: 784, endFreq: 784, duration: 0.12, gain: 0.19, delay: 0.12 },
+    ],
+  },
+  // Flush: a shimmering rising sweep with a bright tail.
+  comboFlush: {
+    segments: [
+      { wave: 'sawtooth', startFreq: 392, endFreq: 784, duration: 0.14, gain: 0.2 },
+      { wave: 'sine', startFreq: 988, endFreq: 988, duration: 0.16, gain: 0.15, delay: 0.12 },
+    ],
+  },
+  // Trips: a bright major triad stab (rarer than a flush here, so grander).
+  comboTrips: {
+    segments: [
+      { wave: 'sawtooth', startFreq: 659, endFreq: 659, duration: 0.09, gain: 0.2 },
+      { wave: 'sawtooth', startFreq: 831, endFreq: 831, duration: 0.09, gain: 0.19, delay: 0.08 },
+      { wave: 'sawtooth', startFreq: 988, endFreq: 988, duration: 0.16, gain: 0.2, delay: 0.16 },
+    ],
+  },
+  // Straight flush: a triumphant four-note fanfare.
+  comboStraightFlush: {
+    segments: [
+      { wave: 'square', startFreq: 659, endFreq: 659, duration: 0.07, gain: 0.2 },
+      { wave: 'square', startFreq: 880, endFreq: 880, duration: 0.07, gain: 0.2, delay: 0.07 },
+      { wave: 'square', startFreq: 1047, endFreq: 1047, duration: 0.07, gain: 0.2, delay: 0.14 },
+      { wave: 'square', startFreq: 1319, endFreq: 1319, duration: 0.16, gain: 0.21, delay: 0.21 },
+    ],
+  },
+  // Four of a kind: the top payoff — a huge rising power stab with a noise crack.
+  comboFourKind: {
+    segments: [
+      { wave: 'sawtooth', startFreq: 262, endFreq: 1047, duration: 0.16, gain: 0.24 },
+      { wave: 'noise', startFreq: 0, endFreq: 0, duration: 0.06, gain: 0.16 },
+      { wave: 'square', startFreq: 1319, endFreq: 1319, duration: 0.2, gain: 0.2, delay: 0.14 },
+    ],
+  },
 };
 
 // Which effect voices each played active card. Falls back to 'cast' for any
@@ -190,6 +252,19 @@ const SUIT_SFX: Record<Suit, string> = {
   diamonds: 'iceshard',
 };
 
+// Each cashed-in poker combo gets its own activation fanfare (spec 015), so the
+// strength of the hand you spent is audible. Every value exists in `SFX`.
+const COMBO_SFX: Record<PokerCategory, string> = {
+  highCard: 'comboHighCard',
+  pair: 'comboPair',
+  twoPair: 'comboTwoPair',
+  straight: 'comboStraight',
+  flush: 'comboFlush',
+  trips: 'comboTrips',
+  straightFlush: 'comboStraightFlush',
+  fourKind: 'comboFourKind',
+};
+
 /**
  * Route a combo-prototype event (spec 014) to its SFX. The combo session emits
  * its own card/stance events plus the shared `SimEvent`s; the combat ones defer
@@ -201,8 +276,8 @@ export function sfxForComboEvent(event: ComboEvent): string | undefined {
     case 'cardPlayed':
       return SUIT_SFX[event.card.suit];
     case 'activated':
-      // Cashing five cards in for a poker stance: a triumphant fanfare stab.
-      return 'buff';
+      // Cashing the hand in for a poker stance: a fanfare voiced by the combo.
+      return COMBO_SFX[event.category];
     case 'playIgnoredEmptySlot':
     case 'activateIgnoredLocked':
       return undefined;

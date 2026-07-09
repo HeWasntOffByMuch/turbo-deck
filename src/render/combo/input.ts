@@ -16,7 +16,7 @@ const RIGHT = new Set(['ArrowRight', 'KeyD']);
 const ATTACK = new Set(['Space']);
 const PARRY = new Set(['KeyK']);
 const DODGE = new Set(['KeyL']);
-const PLAY_KEYS: Record<string, 0 | 1 | 2 | 3 | 4> = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3, Digit5: 4 };
+const PLAY_KEYS: Record<string, 0 | 1 | 2 | 3> = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3 };
 const ACTIVATE_KEY = 'KeyE';
 const WAVE_KEY = 'KeyQ';
 
@@ -29,7 +29,7 @@ export class ComboInputCapture {
   private readonly held = new Set<string>();
   private mouse: ScreenPoint = { x: 0, y: 0 };
   private mouseDown = false;
-  private queuedPlay: 0 | 1 | 2 | 3 | 4 | null = null;
+  private queuedPlay: 0 | 1 | 2 | 3 | null = null;
   private queuedActivate = false;
   private queuedWave = false;
 
@@ -71,7 +71,7 @@ export class ComboInputCapture {
   }
 
   // --- HUD buttons call these directly. ---
-  queuePlay(index: 0 | 1 | 2 | 3 | 4): void {
+  queuePlay(index: 0 | 1 | 2 | 3): void {
     this.queuedPlay = index;
   }
   queueActivate(): void {
