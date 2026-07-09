@@ -1,6 +1,7 @@
 import { initComboGame, stepComboGame, type ComboEvent, type ComboGameState } from '../../game/combo-session.js';
 import { TICK_RATE } from '../../sim/constants.js';
 import { GameAudio } from '../audio.js';
+import { musicPhaseForEnemyCount } from '../music.js';
 import { ArenaView } from './arena.js';
 import { ComboHud } from './hud.js';
 import { ComboInputCapture } from './input.js';
@@ -69,6 +70,8 @@ function main(): void {
     arena.render(state, events, { x: mouse.x - playerScreen.x, y: mouse.y - playerScreen.y });
     hud.render(state);
     audio.handleComboEvents(events);
+    // Calm theme in the between-wave lull, combat theme once a wave is on screen.
+    audio.setMusicPhase(musicPhaseForEnemyCount(state.combat.enemies.length));
     audio.update();
 
     requestAnimationFrame(frame);
