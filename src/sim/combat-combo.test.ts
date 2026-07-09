@@ -72,6 +72,21 @@ describe('wave spawner', () => {
     for (let i = 0; i < 400; i++) s = step(s, NEUTRAL_INPUT).state;
     expect(s.enemies).toHaveLength(0);
   });
+
+  it('heals the player to full when the last enemy of a wave is defeated', () => {
+    // A wave in progress with one nearly-dead enemy and a wounded player.
+    const base = plant(waveArena(1), { health: 1 });
+    const state: CombatState = {
+      ...base,
+      waveNumber: 1,
+      player: { ...base.player, health: 1 },
+    };
+    const attackWindow = Array.from({ length: PLAYER_ATTACK_WINDUP_TICKS + 4 }, () => ({ ...NEUTRAL_INPUT, attack: true }));
+    const { state: after, events } = runFrom(state, attackWindow);
+    expect(after.enemies).toHaveLength(0);
+    expect(after.player.health).toBe(after.player.maxHealth);
+    expect(events.some((e) => e.kind === 'playerHealed')).toBe(true);
+  });
 });
 
 describe('wave speed & attack-speed scaling (spec 016)', () => {

@@ -501,6 +501,12 @@ export function step(
   });
   player = { ...player, health: playerHealth };
 
+  // --- Wave cleared: heal the player to full when the last enemy of a wave dies ---
+  if (!over && state.waveNumber >= 1 && state.enemies.length > 0 && enemies.length === 0 && player.health < player.maxHealth) {
+    events.push({ kind: 'playerHealed', amount: player.maxHealth - player.health, tick });
+    player = { ...player, health: player.maxHealth };
+  }
+
   // --- Ambient spawner: refill toward the cap (off in wave mode) ---
   let nextSpawnTick = state.nextSpawnTick;
   let nextEnemyId = state.nextEnemyId;
