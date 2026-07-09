@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { CARD_CATALOG } from '../cards/catalog.js';
 import type { GameEvent } from '../game/session.js';
-import { SFX, sfxForEvent } from './sfx.js';
+import type { SpellGameEvent } from '../game/spell-session.js';
+import { SPELL_CARDS, type SpellId } from '../cards/spells.js';
+import { SFX, sfxForEvent, spellEventSfx } from './sfx.js';
 
 describe('SFX library', () => {
   it('gives every spec at least one segment with positive duration and gain', () => {
@@ -55,5 +57,45 @@ describe('sfxForEvent routing', () => {
     expect(sfxForEvent({ kind: 'playCardIgnoredEmptySlot' })).toBeUndefined();
     expect(sfxForEvent({ kind: 'enemyAttackAvoided', tick: 1 })).toBeUndefined();
     expect(sfxForEvent({ kind: 'effectRejectedInsufficientMana', tick: 1 })).toBeUndefined();
+  });
+});
+
+describe('spellEventSfx routing (spec 018/019)', () => {
+  const allIdsReal = (ids: string[]): boolean => ids.every((id) => SFX[id] !== undefined);
+
+  it('voices every spell card with a real SFX when its cast resolves', () => {
+    for (const id of Object.keys(SPELL_CARDS) as SpellId[]) {
+      const out = spellEventSfx({ kind: 'spellsResolved', ids: [id], specs: [], aimX: 1, aimY: 0 });
+      expect(out.length, `no sfx for ${id}`).toBeGreaterThan(0);
+      expect(allIdsReal(out), `sfx for ${id} missing from library`).toBe(true);
+    }
+  });
+
+  it('adds a synergy flourish when copies fuse', () => {
+    const out = spellEventSfx({ kind: 'spellsResolved', ids: ['fireBlast', 'fireBlast'], specs: [], aimX: 1, aimY: 0 });
+    expect(out).toContain('synergy');
+    expect(allIdsReal(out)).toBe(true);
+  });
+
+  it('routes card plays, impacts, and rewards to real SFX', () => {
+    const events: SpellGameEvent[] = [
+      { kind: 'cardPlayed', index: 0, id: 'attack' },
+      { kind: 'aoeImpact', tick: 1, at: { x: 0, y: 0 }, radius: 90 },
+      { kind: 'rewardOffered', offers: [] },
+      { kind: 'rewardChosen', offer: { kind: 'remove', cardId: 'dash' } },
+      { kind: 'playerHit', damage: 5, tick: 1 },
+      { kind: 'enemyDefeated', tick: 1, enemyId: 1, enemyType: 'brawler' },
+    ];
+    for (const event of events) {
+      const out = spellEventSfx(event);
+      expect(out.length, `no sfx for ${event.kind}`).toBeGreaterThan(0);
+      expect(allIdsReal(out), `sfx for ${event.kind} missing`).toBe(true);
+    }
+  });
+
+  it('stays silent for frequent/cosmetic events', () => {
+    expect(spellEventSfx({ kind: 'enemyHit', damage: 4, tick: 1, enemyId: 1, at: { x: 0, y: 0 } })).toEqual([]);
+    expect(spellEventSfx({ kind: 'dashPerformed', tick: 1 })).toEqual([]);
+    expect(spellEventSfx({ kind: 'playIgnoredEmptySlot' })).toEqual([]);
   });
 });

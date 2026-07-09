@@ -1,5 +1,7 @@
 import { initSpellGame, stepSpellGame, type SpellGameEvent, type SpellGameState } from '../../game/spell-session.js';
 import { TICK_RATE } from '../../sim/constants.js';
+import { GameAudio } from '../audio.js';
+import { musicPhaseForEnemyCount } from '../music.js';
 import { SCALE, SpellArenaView } from './arena.js';
 import { SpellHud } from './hud.js';
 import { SpellInputCapture } from './input.js';
@@ -21,7 +23,7 @@ function main(): void {
   const title = document.createElement('div');
   title.style.cssText = "font-family:'Segoe UI',system-ui,sans-serif;color:#c9c9d8;margin:6px 2px 10px;font-size:13px;";
   title.textContent =
-    'turbo-deck · spell-card combat — attacks and dashes are cards. Play two of a kind fast to fuse them into something bigger.';
+    'turbo-deck · spell-card combat — attacks and dashes are cards. Play two of a kind fast to fuse them into something bigger. (M mutes)';
   app.appendChild(title);
 
   const canvas = document.createElement('canvas');
@@ -35,6 +37,17 @@ function main(): void {
   const input = new SpellInputCapture(canvas);
   input.attach(window);
   const hud = new SpellHud(hudRoot, input);
+
+  // Synthesized retro soundtrack + spell SFX. Browsers block autoplay, so the
+  // AudioContext can only start from a user gesture — resume it on the first
+  // key/pointer input; 'M' toggles mute.
+  const audio = new GameAudio();
+  const unlock = (): void => audio.resume();
+  window.addEventListener('keydown', (e) => {
+    unlock();
+    if (e.code === 'KeyM') audio.toggleMute();
+  });
+  window.addEventListener('pointerdown', unlock);
 
   let state: SpellGameState = initSpellGame(Date.now() >>> 0);
   let accumulator = 0;
@@ -57,6 +70,10 @@ function main(): void {
     const mouse = input.mouseScreen();
     arena.render(state, events, { x: mouse.x - playerScreen.x, y: mouse.y - playerScreen.y });
     hud.render(state);
+    audio.handleSpellEvents(events);
+    // Calm theme in the between-wave lull, combat theme once a wave is on screen.
+    audio.setMusicPhase(musicPhaseForEnemyCount(state.combat.enemies.length));
+    audio.update();
 
     requestAnimationFrame(frame);
   };
