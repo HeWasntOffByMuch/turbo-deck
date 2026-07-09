@@ -68,12 +68,21 @@ export class GameAudio {
       this.sfxBus.gain.value = SFX_GAIN;
       this.sfxBus.connect(this.master);
     }
-    void this.ctx.resume();
-    if (!this.started && this.ctx.state === 'running') {
-      this.started = true;
-      this.loopStart = this.ctx.currentTime + 0.1;
-      this.cursor = 0;
-    }
+    // `resume()` is async: a context created during a gesture starts
+    // 'suspended' and only flips to 'running' a microtask later, so checking
+    // the state synchronously here would miss the first gesture and leave the
+    // music silent until some later input. Start the loop when resume settles
+    // (and also try synchronously, for a context that is already running).
+    void this.ctx.resume().then(() => this.startLoop());
+    this.startLoop();
+  }
+
+  /** Kick off the look-ahead music loop once the context is actually running. */
+  private startLoop(): void {
+    if (!this.ctx || this.started || this.ctx.state !== 'running') return;
+    this.started = true;
+    this.loopStart = this.ctx.currentTime + 0.1;
+    this.cursor = 0;
   }
 
   toggleMute(): boolean {
