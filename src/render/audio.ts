@@ -3,7 +3,7 @@
 // it renders the pure descriptions from music.ts and sfx.ts. Because the
 // interesting choices live in those testable modules, this stays thin.
 
-import { buildSong, midiToFreq, type Song, type Waveform } from './music.js';
+import { buildCalmSong, buildSong, midiToFreq, type MusicPhase, type Song, type Waveform } from './music.js';
 import { SFX, sfxForComboEvent, sfxForEvent, type SfxSegment } from './sfx.js';
 import type { GameEvent } from '../game/session.js';
 import type { ComboEvent } from '../game/combo-session.js';
@@ -14,6 +14,8 @@ const SFX_GAIN = 0.9;
 // How far ahead of the audio clock we queue music notes each update. Larger
 // than a render frame (~16ms) so we never starve even after a hitch.
 const SCHEDULE_AHEAD_S = 0.2;
+// Seconds to fade one theme out and the other in when the wave state flips.
+const CROSSFADE_S = 0.7;
 
 /** A short, self-contained white-noise buffer reused for percussive segments. */
 function makeNoiseBuffer(ctx: AudioContext): AudioBuffer {
@@ -23,26 +25,48 @@ function makeNoiseBuffer(ctx: AudioContext): AudioBuffer {
   return buffer;
 }
 
+/**
+ * One looping theme's scheduler state. Both themes run continuously on their own
+ * cursor and sub-bus so switching phase is just a gain cross-fade between the
+ * two buses — no cursor reset, no seam.
+ */
+interface MusicLoop {
+  readonly song: Song;
+  readonly secondsPerBeat: number;
+  readonly loopSeconds: number;
+  readonly phase: MusicPhase;
+  /** Audio-clock time at which the current loop iteration started. */
+  loopStart: number;
+  /** Index into the (beat-sorted) song of the next note to schedule. */
+  cursor: number;
+  /** Per-theme gain node; cross-faded to 1 when this theme's phase is active. */
+  bus: GainNode | undefined;
+}
+
+function makeLoop(song: Song, phase: MusicPhase): MusicLoop {
+  const secondsPerBeat = 60 / song.bpm;
+  return {
+    song,
+    secondsPerBeat,
+    loopSeconds: song.lengthBeats * secondsPerBeat,
+    phase,
+    loopStart: 0,
+    cursor: 0,
+    bus: undefined,
+  };
+}
+
 export class GameAudio {
   private ctx: AudioContext | undefined;
   private master: GainNode | undefined;
   private musicBus: GainNode | undefined;
   private sfxBus: GainNode | undefined;
   private noiseBuffer: AudioBuffer | undefined;
-  private readonly song: Song = buildSong();
-  private readonly secondsPerBeat: number;
-  private readonly loopSeconds: number;
-  /** Audio-clock time at which the current loop iteration started. */
-  private loopStart = 0;
-  /** Index into the (beat-sorted) song of the next note to schedule. */
-  private cursor = 0;
+  // Both themes are always scheduled; `phase` selects which one is audible.
+  private readonly loops: readonly MusicLoop[] = [makeLoop(buildSong(), 'combat'), makeLoop(buildCalmSong(), 'calm')];
+  private phase: MusicPhase = 'calm';
   private muted = false;
   private started = false;
-
-  constructor() {
-    this.secondsPerBeat = 60 / this.song.bpm;
-    this.loopSeconds = this.song.lengthBeats * this.secondsPerBeat;
-  }
 
   /**
    * Create/resume the AudioContext. Must be called from a user gesture, since
@@ -65,6 +89,15 @@ export class GameAudio {
       this.musicBus.gain.value = MUSIC_GAIN;
       this.musicBus.connect(this.master);
 
+      // One sub-bus per theme, feeding the shared music bus, so we can cross-fade
+      // the two loops independently. Start each at its phase's target gain.
+      for (const loop of this.loops) {
+        const bus = ctx.createGain();
+        bus.gain.value = loop.phase === this.phase ? 1 : 0;
+        bus.connect(this.musicBus);
+        loop.bus = bus;
+      }
+
       this.sfxBus = ctx.createGain();
       this.sfxBus.gain.value = SFX_GAIN;
       this.sfxBus.connect(this.master);
@@ -82,14 +115,38 @@ export class GameAudio {
   private startLoop(): void {
     if (!this.ctx || this.started || this.ctx.state !== 'running') return;
     this.started = true;
-    this.loopStart = this.ctx.currentTime + 0.1;
-    this.cursor = 0;
+    const at = this.ctx.currentTime + 0.1;
+    for (const loop of this.loops) {
+      loop.loopStart = at;
+      loop.cursor = 0;
+    }
   }
 
   toggleMute(): boolean {
     this.muted = !this.muted;
     if (this.master) this.master.gain.value = this.muted ? 0 : MASTER_GAIN;
     return this.muted;
+  }
+
+  /**
+   * Select which theme is audible (spec 017): the combat loop during a wave, the
+   * calm loop in the between-wave lull. Cross-fades the two music sub-buses; a
+   * no-op when the phase is unchanged, so it is safe to call every frame.
+   */
+  setMusicPhase(phase: MusicPhase): void {
+    if (phase === this.phase) return;
+    this.phase = phase;
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    for (const loop of this.loops) {
+      const bus = loop.bus;
+      if (!bus) continue;
+      const target = loop.phase === phase ? 1 : 0;
+      bus.gain.cancelScheduledValues(now);
+      bus.gain.setValueAtTime(bus.gain.value, now);
+      bus.gain.linearRampToValueAtTime(target, now + CROSSFADE_S);
+    }
   }
 
   /** Voice every audible event produced by the sim this tick. */
@@ -112,27 +169,34 @@ export class GameAudio {
 
   /** Called each render frame: keep the look-ahead music queue topped up. */
   update(): void {
-    const musicBus = this.musicBus;
-    if (!this.ctx || !musicBus || !this.started || this.muted) return;
+    if (!this.ctx || !this.started || this.muted) return;
     const until = this.ctx.currentTime + SCHEDULE_AHEAD_S;
+    for (const loop of this.loops) this.scheduleLoop(loop, until);
+  }
+
+  /** Top up one theme's look-ahead queue up to `until` on its own sub-bus. */
+  private scheduleLoop(loop: MusicLoop, until: number): void {
+    const ctx = this.ctx;
+    const bus = loop.bus;
+    if (!ctx || !bus) return;
     // Advance the loop window forward past any iterations that have fully elapsed.
-    while (this.loopStart + this.loopSeconds <= this.ctx.currentTime) {
-      this.loopStart += this.loopSeconds;
-      this.cursor = 0;
+    while (loop.loopStart + loop.loopSeconds <= ctx.currentTime) {
+      loop.loopStart += loop.loopSeconds;
+      loop.cursor = 0;
     }
-    while (this.cursor < this.song.notes.length) {
-      const note = this.song.notes[this.cursor];
+    while (loop.cursor < loop.song.notes.length) {
+      const note = loop.song.notes[loop.cursor];
       if (!note) break;
-      const when = this.loopStart + note.beat * this.secondsPerBeat;
+      const when = loop.loopStart + note.beat * loop.secondsPerBeat;
       if (when > until) break;
-      this.scheduleTone(midiToFreq(note.midi), midiToFreq(note.midi), note.wave, note.duration * this.secondsPerBeat, note.gain, when, musicBus);
-      this.cursor++;
+      this.scheduleTone(midiToFreq(note.midi), midiToFreq(note.midi), note.wave, note.duration * loop.secondsPerBeat, note.gain, when, bus);
+      loop.cursor++;
     }
     // If we scheduled the whole loop, wrap for the next iteration immediately so
     // there is no gap at the seam.
-    if (this.cursor >= this.song.notes.length && this.loopStart + this.loopSeconds <= until) {
-      this.loopStart += this.loopSeconds;
-      this.cursor = 0;
+    if (loop.cursor >= loop.song.notes.length && loop.loopStart + loop.loopSeconds <= until) {
+      loop.loopStart += loop.loopSeconds;
+      loop.cursor = 0;
     }
   }
 

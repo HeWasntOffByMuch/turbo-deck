@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSong, midiToFreq, type MusicVoice } from './music.js';
+import { buildCalmSong, buildSong, midiToFreq, musicPhaseForEnemyCount, type MusicVoice, type Song } from './music.js';
 
 describe('midiToFreq', () => {
   it('anchors A4 (69) at 440Hz', () => {
@@ -12,11 +12,12 @@ describe('midiToFreq', () => {
   });
 });
 
-describe('buildSong', () => {
-  const song = buildSong();
+// The invariants both themes must satisfy — a well-formed, loopable Song.
+function assertWellFormed(build: () => Song): void {
+  const song = build();
 
   it('is deterministic', () => {
-    expect(buildSong()).toEqual(buildSong());
+    expect(build()).toEqual(build());
   });
 
   it('has a sane tempo and loop length', () => {
@@ -47,5 +48,39 @@ describe('buildSong', () => {
   it('includes all four voices', () => {
     const voices = new Set<MusicVoice>(song.notes.map((n) => n.voice));
     expect(voices).toEqual(new Set<MusicVoice>(['bass', 'arp', 'lead', 'pad']));
+  });
+}
+
+describe('buildSong (combat theme)', () => {
+  assertWellFormed(buildSong);
+});
+
+describe('buildCalmSong (no-wave theme)', () => {
+  assertWellFormed(buildCalmSong);
+
+  it('is a distinct theme from the combat song', () => {
+    const calm = buildCalmSong();
+    const combat = buildSong();
+    expect(calm.bpm).not.toBe(combat.bpm);
+    const calmLead = calm.notes.filter((n) => n.voice === 'lead').map((n) => n.midi);
+    const combatLead = combat.notes.filter((n) => n.voice === 'lead').map((n) => n.midi);
+    expect(calmLead).not.toEqual(combatLead);
+  });
+
+  it('voices its lead melody in D natural minor', () => {
+    // D natural minor pitch classes: D E F G A A#/Bb C.
+    const dMinor = new Set([2, 4, 5, 7, 9, 10, 0]);
+    for (const note of buildCalmSong().notes) {
+      if (note.voice !== 'lead') continue;
+      expect(dMinor.has(note.midi % 12)).toBe(true);
+    }
+  });
+});
+
+describe('musicPhaseForEnemyCount', () => {
+  it('is calm with an empty arena and combat once a wave is present', () => {
+    expect(musicPhaseForEnemyCount(0)).toBe('calm');
+    expect(musicPhaseForEnemyCount(1)).toBe('combat');
+    expect(musicPhaseForEnemyCount(7)).toBe('combat');
   });
 });
