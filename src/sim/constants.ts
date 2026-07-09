@@ -54,6 +54,17 @@ export const ENEMY_SPAWN_INTERVAL_TICKS = 120;
 // A spawn is placed at least this far from the player so nothing appears on top of them.
 export const SPAWN_MIN_PLAYER_DIST = 220;
 
+// --- Waves (poker-combo prototype, spec 014) ---
+// Wave N spawns WAVE_BASE_COUNT + N hunting enemies (N starts at 1).
+export const WAVE_BASE_COUNT = 2;
+// Per-wave scaling of enemy toughness, compounding by wave index (wave 1 = x1).
+export const WAVE_HEALTH_GROWTH = 0.35;
+export const WAVE_DAMAGE_GROWTH = 0.25;
+// A hard ceiling on live enemies even in wave mode, so the arena never gridlocks.
+export const WAVE_MAX_ENEMIES = 40;
+// Cap on stacked incoming-damage reduction (stance + guard), so nothing is fully immune.
+export const MAX_DAMAGE_REDUCTION = 0.85;
+
 // --- Grazing behaviour (passive enemies) ---
 // Grazing amble speed, slower than a hunting enemy's homing speed.
 export const GRAZE_MOVE_SPEED_PER_TICK = 0.45;

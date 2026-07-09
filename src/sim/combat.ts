@@ -20,6 +20,7 @@ import {
   GRAZE_WANDER_RADIUS,
   INITIAL_ENEMIES,
   MANA_REGEN_PER_TICK,
+  MAX_DAMAGE_REDUCTION,
   MAX_ENEMIES,
   MOVE_SPEED_PER_TICK,
   NORMAL_WINDOW_TICKS,
@@ -32,6 +33,10 @@ import {
   PLAYER_MAX_MANA,
   PLAYER_RADIUS,
   SPAWN_MIN_PLAYER_DIST,
+  WAVE_BASE_COUNT,
+  WAVE_DAMAGE_GROWTH,
+  WAVE_HEALTH_GROWTH,
+  WAVE_MAX_ENEMIES,
 } from './constants.js';
 import { ENEMY_TYPES, enemyTypeByKey, type EnemyType } from './enemies.js';
 import {
@@ -102,8 +107,18 @@ function attackConnects(player: Vec2, enemy: Vec2, aimX: number, aimY: number): 
   return dot * dot >= ATTACK_ARC_COS_SQ * lenSqD * lenSqAim;
 }
 
-/** Spawn a fresh grazing enemy of a random type, placed away from the player. */
-function spawnEnemy(id: number, playerPos: Vec2, tick: number, draw: Draw): EnemyState {
+interface SpawnOpts {
+  /** Scale the type's base health/damage (wave escalation); default 1. */
+  readonly healthMult: number;
+  readonly damageMult: number;
+  /** Spawn already hunting the player (wave mode) rather than grazing. */
+  readonly hunting: boolean;
+}
+
+const GRAZE_SPAWN: SpawnOpts = { healthMult: 1, damageMult: 1, hunting: false };
+
+/** Spawn a fresh enemy of a random type, placed away from the player. */
+function spawnEnemy(id: number, playerPos: Vec2, tick: number, draw: Draw, opts: SpawnOpts = GRAZE_SPAWN): EnemyState {
   const type = ENEMY_TYPES[draw(0, ENEMY_TYPES.length - 1)] as EnemyType;
   let position = clampToArena(ARENA_WIDTH / 2, ARENA_HEIGHT / 2);
   const minSq = SPAWN_MIN_PLAYER_DIST * SPAWN_MIN_PLAYER_DIST;
@@ -111,15 +126,17 @@ function spawnEnemy(id: number, playerPos: Vec2, tick: number, draw: Draw): Enem
     position = clampToArena(draw(0, ARENA_WIDTH), draw(0, ARENA_HEIGHT));
     if (distanceSq(position, playerPos) >= minSq) break;
   }
+  const maxHealth = Math.round(type.maxHealth * opts.healthMult);
   return {
     id,
     type: type.key,
-    health: type.maxHealth,
-    maxHealth: type.maxHealth,
+    health: maxHealth,
+    maxHealth,
+    attackDamage: Math.round(type.attackDamage * opts.damageMult),
     position,
-    behavior: 'grazing',
+    behavior: opts.hunting ? 'hunting' : 'grazing',
     phase: 'idle',
-    phaseEndsAtTick: 0,
+    phaseEndsAtTick: opts.hunting ? tick + ENEMY_IDLE_TICKS : 0,
     incomingAttackOutcome: 'none',
     attackZoneCenter: null,
     grazeTarget: null,
@@ -159,7 +176,16 @@ function aggro(enemy: EnemyState, tick: number): EnemyState {
   };
 }
 
-export function initCombat(seed: number): CombatState {
+export interface CombatOptions {
+  /** Enemies present at tick 0; defaults to the legacy INITIAL_ENEMIES. */
+  readonly initialEnemies?: number;
+  /** When false, the ambient refill spawner is off (wave mode). Default true. */
+  readonly ambientSpawner?: boolean;
+}
+
+export function initCombat(seed: number, opts: CombatOptions = {}): CombatState {
+  const ambientSpawner = opts.ambientSpawner ?? true;
+  const initialEnemies = opts.initialEnemies ?? INITIAL_ENEMIES;
   let rng = Rng.fromSeed(seed);
   const draw: Draw = (min, max) => {
     const [value, next] = rng.nextInt(min, max);
@@ -180,10 +206,17 @@ export function initCombat(seed: number): CombatState {
     defenseLockUntil: 0,
     strikeCount: 0,
     damageBuffs: [],
+    stanceExpiresAtTick: 0,
+    stanceAttackBonus: 0,
+    stanceReductionPct: 0,
+    stanceRegenPerTick: 0,
+    guardExpiresAtTick: 0,
+    guardReductionPct: 0,
+    activateLockUntil: 0,
   };
   const enemies: EnemyState[] = [];
   let nextEnemyId = 1;
-  for (let i = 0; i < INITIAL_ENEMIES; i++) {
+  for (let i = 0; i < initialEnemies; i++) {
     enemies.push(spawnEnemy(nextEnemyId, player.position, 0, draw));
     nextEnemyId++;
   }
@@ -192,7 +225,11 @@ export function initCombat(seed: number): CombatState {
     player,
     enemies,
     nextEnemyId,
-    nextSpawnTick: ENEMY_SPAWN_INTERVAL_TICKS,
+    nextSpawnTick: ambientSpawner ? ENEMY_SPAWN_INTERVAL_TICKS : Number.MAX_SAFE_INTEGER,
+    ambientSpawner,
+    waveNumber: 0,
+    enemySlowExpiresAtTick: 0,
+    enemySlowMultiplier: 1,
     over: false,
     rng,
   };
@@ -214,7 +251,9 @@ export function step(
     rng = next;
     return value;
   };
-  const scaleDuration = (base: number): number => Math.max(1, Math.round(base * mods.enemySpeedMultiplier));
+  // Enemy slow (stance/diamond): <1 slows homing and stretches telegraphs.
+  const slowMult = tick < state.enemySlowExpiresAtTick ? state.enemySlowMultiplier : 1;
+  const scaleDuration = (base: number): number => Math.max(1, Math.round((base * mods.enemySpeedMultiplier) / slowMult));
 
   // --- Player intent + movement ---
   const swingPending = state.player.attackReleaseTick !== 0;
@@ -230,7 +269,7 @@ export function step(
   let enemies: EnemyState[] = state.enemies.map((enemy) => {
     if (enemy.behavior === 'grazing') return grazeStep(enemy, tick, draw);
     if (enemy.phase === 'idle') {
-      const speed = enemyTypeByKey(enemy.type).moveSpeed;
+      const speed = enemyTypeByKey(enemy.type).moveSpeed * slowMult;
       return { ...enemy, position: moveToward(enemy.position, player.position, speed, ENEMY_STANDOFF) };
     }
     return enemy; // hunting but planted for windup/recovery
@@ -244,7 +283,8 @@ export function step(
   // --- Resolve a pending swing: a cleave that hits every enemy in the cone ---
   if (player.attackReleaseTick !== 0 && tick >= player.attackReleaseTick) {
     const strikeCount = player.strikeCount + 1;
-    let damage = PLAYER_ATTACK_DAMAGE + activeDamageBuffTotal(player.damageBuffs, tick) + mods.attackDamageBonus;
+    const stanceAttack = tick < player.stanceExpiresAtTick ? player.stanceAttackBonus : 0;
+    let damage = PLAYER_ATTACK_DAMAGE + activeDamageBuffTotal(player.damageBuffs, tick) + mods.attackDamageBonus + stanceAttack;
     if (mods.nthStrikeEveryN > 0 && strikeCount % mods.nthStrikeEveryN === 0) {
       damage = Math.round(damage * (1 + mods.nthStrikeBonusFraction));
     }
@@ -266,34 +306,87 @@ export function step(
     };
   }
 
-  // --- External effect (a played card) ---
+  // Enemy-slow state may be refreshed by an effect this tick; carried at the end.
+  let enemySlowExpiresAtTick = state.enemySlowExpiresAtTick;
+  let enemySlowMultiplier = state.enemySlowMultiplier;
+
+  // --- External effect (a played card / activated stance) ---
   if (input.externalEffect) {
     const effect = input.externalEffect;
-    if (player.mana < effect.manaCost) {
-      events.push({ kind: 'effectRejectedInsufficientMana', tick });
-    } else if (effect.kind === 'damageEnemy') {
-      // Target the nearest enemy; damaging it also wakes it.
-      let nearest: EnemyState | null = null;
-      let nearestSq = Infinity;
-      for (const enemy of enemies) {
-        const d = distanceSq(enemy.position, player.position);
-        if (d < nearestSq) {
-          nearest = enemy;
-          nearestSq = d;
+    switch (effect.kind) {
+      case 'damageEnemy': {
+        if (player.mana < effect.manaCost) {
+          events.push({ kind: 'effectRejectedInsufficientMana', tick });
+          break;
         }
+        // Target the nearest enemy; damaging it also wakes it.
+        let nearest: EnemyState | null = null;
+        let nearestSq = Infinity;
+        for (const enemy of enemies) {
+          const d = distanceSq(enemy.position, player.position);
+          if (d < nearestSq) {
+            nearest = enemy;
+            nearestSq = d;
+          }
+        }
+        if (nearest) {
+          const target = nearest;
+          const health = Math.max(0, target.health - effect.amount);
+          enemies = enemies.map((enemy) => (enemy.id === target.id ? aggro({ ...enemy, health }, tick) : enemy));
+          player = { ...player, mana: player.mana - effect.manaCost };
+          events.push({ kind: 'enemyHit', damage: effect.amount, tick, enemyId: target.id, at: target.position });
+        }
+        break;
       }
-      if (nearest) {
-        const target = nearest;
-        const health = Math.max(0, target.health - effect.amount);
-        enemies = enemies.map((enemy) => (enemy.id === target.id ? aggro({ ...enemy, health }, tick) : enemy));
-        player = { ...player, mana: player.mana - effect.manaCost };
-        events.push({ kind: 'enemyHit', damage: effect.amount, tick, enemyId: target.id, at: target.position });
+      case 'healPlayer': {
+        if (player.mana < effect.manaCost) {
+          events.push({ kind: 'effectRejectedInsufficientMana', tick });
+          break;
+        }
+        player = { ...player, mana: player.mana - effect.manaCost, health: Math.min(player.maxHealth, player.health + effect.amount) };
+        break;
       }
-    } else if (effect.kind === 'healPlayer') {
-      player = { ...player, mana: player.mana - effect.manaCost, health: Math.min(player.maxHealth, player.health + effect.amount) };
-    } else {
-      const damageBuffs = [...player.damageBuffs, { amount: effect.amount, expiresAtTick: tick + effect.durationTicks }];
-      player = { ...player, mana: player.mana - effect.manaCost, damageBuffs };
+      case 'buffPlayerDamage': {
+        if (player.mana < effect.manaCost) {
+          events.push({ kind: 'effectRejectedInsufficientMana', tick });
+          break;
+        }
+        const damageBuffs = [...player.damageBuffs, { amount: effect.amount, expiresAtTick: tick + effect.durationTicks }];
+        player = { ...player, mana: player.mana - effect.manaCost, damageBuffs };
+        break;
+      }
+      case 'guard': {
+        // A played spade: a brief incoming-damage-reduction window.
+        player = { ...player, guardExpiresAtTick: tick + effect.durationTicks, guardReductionPct: effect.reductionPct };
+        break;
+      }
+      case 'slowEnemies': {
+        // A played diamond: slow the whole population for a moment.
+        enemySlowExpiresAtTick = tick + effect.durationTicks;
+        enemySlowMultiplier = effect.multiplier;
+        break;
+      }
+      case 'applyStance': {
+        // Cashed-in poker hand. Refused while the previous stance's lockout holds.
+        if (tick < player.activateLockUntil) {
+          events.push({ kind: 'stanceRejectedLocked', tick });
+          break;
+        }
+        player = {
+          ...player,
+          stanceExpiresAtTick: tick + effect.durationTicks,
+          stanceAttackBonus: effect.attackBonus,
+          stanceReductionPct: effect.reductionPct,
+          stanceRegenPerTick: effect.regenPerTick,
+          activateLockUntil: tick + effect.lockoutTicks,
+        };
+        if (effect.slowMultiplier < 1) {
+          enemySlowExpiresAtTick = tick + effect.durationTicks;
+          enemySlowMultiplier = effect.slowMultiplier;
+        }
+        events.push({ kind: 'stanceApplied', tick });
+        break;
+      }
     }
   }
 
@@ -338,10 +431,18 @@ export function step(
     if (enemy.phase === 'windup') {
       const zone = enemy.attackZoneCenter;
       const inZone = zone !== null && distanceSq(player.position, zone) <= ENEMY_ATTACK_RADIUS * ENEMY_ATTACK_RADIUS;
-      const fullDamage = Math.round(enemyTypeByKey(enemy.type).attackDamage * mods.enemyDamageMultiplier);
+      const baseAttack = enemy.attackDamage ?? enemyTypeByKey(enemy.type).attackDamage;
+      const fullDamage = Math.round(baseAttack * mods.enemyDamageMultiplier);
       const baseDamage = inZone ? fullDamage : 0;
       const outcome = enemy.incomingAttackOutcome;
-      const damage = outcome === 'perfect' ? 0 : outcome === 'normal' ? Math.round(baseDamage / 2) : baseDamage;
+      const afterDefense = outcome === 'perfect' ? 0 : outcome === 'normal' ? Math.round(baseDamage / 2) : baseDamage;
+      // Stack the held stance and any brief guard, capped, against the incoming hit.
+      const reduction = Math.min(
+        MAX_DAMAGE_REDUCTION,
+        (tick < player.stanceExpiresAtTick ? player.stanceReductionPct : 0) +
+          (tick < player.guardExpiresAtTick ? player.guardReductionPct : 0),
+      );
+      const damage = Math.round(afterDefense * (1 - reduction));
       if (damage > 0 && !over && playerHealth > 0) {
         playerHealth = Math.max(0, playerHealth - damage);
         events.push({ kind: 'playerHit', damage, tick });
@@ -362,26 +463,61 @@ export function step(
   });
   player = { ...player, health: playerHealth };
 
-  // --- Spawner: refill toward the cap ---
+  // --- Ambient spawner: refill toward the cap (off in wave mode) ---
   let nextSpawnTick = state.nextSpawnTick;
   let nextEnemyId = state.nextEnemyId;
-  if (!over && tick >= nextSpawnTick && enemies.length < MAX_ENEMIES) {
+  if (state.ambientSpawner && !over && tick >= nextSpawnTick && enemies.length < MAX_ENEMIES) {
     enemies = [...enemies, spawnEnemy(nextEnemyId, player.position, tick, draw)];
     nextEnemyId++;
     nextSpawnTick = tick + ENEMY_SPAWN_INTERVAL_TICKS;
   }
 
+  // --- Wave spawner: an escalating burst of hunting enemies on demand ---
+  let waveNumber = state.waveNumber;
+  if (input.spawnWave === true && !over) {
+    waveNumber += 1;
+    const count = Math.min(WAVE_BASE_COUNT + waveNumber, WAVE_MAX_ENEMIES - enemies.length);
+    const opts: SpawnOpts = {
+      healthMult: 1 + WAVE_HEALTH_GROWTH * (waveNumber - 1),
+      damageMult: 1 + WAVE_DAMAGE_GROWTH * (waveNumber - 1),
+      hunting: true,
+    };
+    const spawned: EnemyState[] = [];
+    for (let i = 0; i < count; i++) {
+      spawned.push(spawnEnemy(nextEnemyId, player.position, tick, draw, opts));
+      nextEnemyId++;
+    }
+    enemies = [...enemies, ...spawned];
+    events.push({ kind: 'waveSpawned', tick, waveNumber, count: spawned.length });
+  }
+
   // --- Regen + buff expiry (skipped once the game is over) ---
   if (!over) {
+    const stanceRegen = tick < player.stanceExpiresAtTick ? player.stanceRegenPerTick : 0;
     player = {
       ...player,
-      health: Math.min(player.maxHealth, player.health + mods.healthRegenPerTick),
+      health: Math.min(player.maxHealth, player.health + mods.healthRegenPerTick + stanceRegen),
       mana: Math.min(player.maxMana, player.mana + MANA_REGEN_PER_TICK + mods.manaRegenPerTick),
       damageBuffs: player.damageBuffs.filter((buff) => buff.expiresAtTick > tick),
     };
   }
 
-  return { state: { tick, player, enemies, nextEnemyId, nextSpawnTick, over, rng }, events };
+  return {
+    state: {
+      tick,
+      player,
+      enemies,
+      nextEnemyId,
+      nextSpawnTick,
+      ambientSpawner: state.ambientSpawner,
+      waveNumber,
+      enemySlowExpiresAtTick,
+      enemySlowMultiplier,
+      over,
+      rng,
+    },
+    events,
+  };
 }
 
 export function runSim(
