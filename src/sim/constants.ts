@@ -33,9 +33,9 @@ export const ENEMY_ATTACK_DAMAGE = 15;
 export const ENEMY_ATTACK_RADIUS = 52;
 // Distance the enemy holds from the player while closing in.
 export const ENEMY_STANDOFF = PLAYER_RADIUS + ENEMY_RADIUS + 8;
-export const ENEMY_IDLE_TICKS = 60;
-export const ENEMY_WINDUP_TICKS = 48;
-export const ENEMY_RECOVERY_TICKS = 48;
+export const ENEMY_IDLE_TICKS = 66;
+export const ENEMY_WINDUP_TICKS = 54;
+export const ENEMY_RECOVERY_TICKS = 54;
 
 export const PERFECT_WINDOW_TICKS = 4;
 export const NORMAL_WINDOW_TICKS = 14;
@@ -60,6 +60,10 @@ export const WAVE_BASE_COUNT = 2;
 // Per-wave scaling of enemy toughness, compounding by wave index (wave 1 = x1).
 export const WAVE_HEALTH_GROWTH = 0.35;
 export const WAVE_DAMAGE_GROWTH = 0.25;
+// Per-wave scaling of enemy homing speed and attack cadence (wave 1 = x1).
+// Kept smaller than health/damage growth: speed compounds difficulty quickly.
+export const WAVE_SPEED_GROWTH = 0.12;
+export const WAVE_ATTACK_SPEED_GROWTH = 0.15;
 // A hard ceiling on live enemies even in wave mode, so the arena never gridlocks.
 export const WAVE_MAX_ENEMIES = 40;
 // Cap on stacked incoming-damage reduction (stance + guard), so nothing is fully immune.

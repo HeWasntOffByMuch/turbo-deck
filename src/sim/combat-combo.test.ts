@@ -74,6 +74,66 @@ describe('wave spawner', () => {
   });
 });
 
+describe('wave speed & attack-speed scaling (spec 015)', () => {
+  const only = (s: CombatState): EnemyState => {
+    const e = s.enemies[0];
+    if (e === undefined) throw new Error('expected exactly one enemy');
+    return e;
+  };
+  const advance = (s: CombatState, n: number): CombatState => {
+    for (let i = 0; i < n; i++) s = step(s, NEUTRAL_INPUT).state;
+    return s;
+  };
+
+  it('leaves wave 1 at base speed but escalates later waves', () => {
+    const r1 = step(waveArena(3), { ...NEUTRAL_INPUT, spawnWave: true });
+    for (const e of r1.state.enemies) {
+      expect(e.speedMult).toBe(1);
+      expect(e.attackSpeedMult).toBe(1);
+    }
+    const idAfterWave1 = r1.state.nextEnemyId;
+    const r2 = step(r1.state, { ...NEUTRAL_INPUT, spawnWave: true });
+    for (const e of r2.state.enemies.filter((e) => e.id >= idAfterWave1)) {
+      expect(e.speedMult ?? 1).toBeGreaterThan(1);
+      expect(e.attackSpeedMult ?? 1).toBeGreaterThan(1);
+    }
+  });
+
+  it('a higher speedMult homes toward the player faster', () => {
+    const base = waveArena(1);
+    const start = { x: base.player.position.x + 400, y: base.player.position.y };
+    // Kept idle the whole time (phase never ends) so both only home, never plant for a swing.
+    const slow = plant(base, { position: { ...start }, speedMult: 1, phase: 'idle', phaseEndsAtTick: 100_000 });
+    const fast = plant(base, { position: { ...start }, speedMult: 1.5, phase: 'idle', phaseEndsAtTick: 100_000 });
+    // Both close in (x decreases toward the player); the faster one covers more ground.
+    expect(only(advance(fast, 20)).position.x).toBeLessThan(only(advance(slow, 20)).position.x);
+  });
+
+  it('a higher attackSpeedMult shortens the attack phases', () => {
+    const base = waveArena(1);
+    // phaseEndsAtTick 0 => the first step flips idle -> windup; read the resulting windup length.
+    const windupLen = (mult: number): number => {
+      const after = step(plant(base, { phase: 'idle', phaseEndsAtTick: 0, attackSpeedMult: mult }), NEUTRAL_INPUT).state;
+      const e = only(after);
+      expect(e.phase).toBe('windup');
+      return e.phaseEndsAtTick - after.tick;
+    };
+    expect(windupLen(2)).toBeLessThan(windupLen(1));
+  });
+
+  it('replays identically across waves for a fixed seed and inputs', () => {
+    const run = (): CombatState => {
+      let s = waveArena(7);
+      for (let i = 0; i < 5; i++) {
+        s = step(s, { ...NEUTRAL_INPUT, spawnWave: true }).state;
+        s = advance(s, 120);
+      }
+      return s;
+    };
+    expect(JSON.stringify(run())).toBe(JSON.stringify(run()));
+  });
+});
+
 describe('activated stance', () => {
   const bigStance = (over: Partial<Extract<ExternalEffect, { kind: 'applyStance' }>>): ExternalEffect => ({
     kind: 'applyStance',
