@@ -4,8 +4,9 @@
 // interesting choices live in those testable modules, this stays thin.
 
 import { buildSong, midiToFreq, type Song, type Waveform } from './music.js';
-import { SFX, sfxForEvent, type SfxSegment } from './sfx.js';
+import { SFX, sfxForComboEvent, sfxForEvent, type SfxSegment } from './sfx.js';
 import type { GameEvent } from '../game/session.js';
+import type { ComboEvent } from '../game/combo-session.js';
 
 const MASTER_GAIN = 0.55;
 const MUSIC_GAIN = 0.7;
@@ -96,6 +97,15 @@ export class GameAudio {
     if (!this.ctx || this.muted) return;
     for (const event of events) {
       const id = sfxForEvent(event);
+      if (id) this.playSfx(id);
+    }
+  }
+
+  /** As `handleEvents`, but for the combo-prototype's event stream (spec 014). */
+  handleComboEvents(events: readonly ComboEvent[]): void {
+    if (!this.ctx || this.muted) return;
+    for (const event of events) {
+      const id = sfxForComboEvent(event);
       if (id) this.playSfx(id);
     }
   }
