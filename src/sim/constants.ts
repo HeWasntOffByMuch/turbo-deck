@@ -27,7 +27,7 @@ export const PLAYER_ATTACK_WINDUP_TICKS = 12;
 // Post-strike recovery: the player stays rooted this long after the hit lands.
 export const ATTACK_ROOT_TICKS = 6;
 
-export const ENEMY_MAX_HEALTH = 150;
+export const ENEMY_MAX_HEALTH = 21;
 export const ENEMY_ATTACK_DAMAGE = 15;
 // Radius of the telegraphed danger zone the enemy slams.
 export const ENEMY_ATTACK_RADIUS = 52;
