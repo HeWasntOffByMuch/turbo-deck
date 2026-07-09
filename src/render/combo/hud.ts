@@ -7,7 +7,7 @@ import { TICK_RATE } from '../../sim/constants.js';
 import type { ComboInputCapture } from './input.js';
 
 /**
- * DOM heads-up display for the prototype (spec 014). Renders the five held
+ * DOM heads-up display for the prototype (spec 014). Renders the four held
  * cards as real playing cards, a live poker readout of what the hand is worth
  * as a combo, and the Activate / Spawn Wave buttons. Its whole job is to make
  * the "play this card now vs. hold it for the combo" trade-off legible at a
@@ -108,7 +108,7 @@ export class ComboHud {
     const hand = el('div', 'td-hand');
     for (let i = 0; i < HAND_SIZE; i++) {
       const card = el('div', 'td-card');
-      card.addEventListener('click', () => input.queuePlay(i as 0 | 1 | 2 | 3 | 4));
+      card.addEventListener('click', () => input.queuePlay(i as 0 | 1 | 2 | 3));
       const key = el('span', 'key');
       key.textContent = String(i + 1);
       card.appendChild(key);
@@ -127,7 +127,7 @@ export class ComboHud {
 
     const hint = el('div', 'td-hint');
     hint.textContent =
-      'move: WASD  ·  aim: mouse  ·  attack: click / space  ·  parry: K  ·  dodge: L  ·  play card: 1–5 / click  ·  activate combo: E  ·  spawn wave: Q';
+      'move: WASD  ·  aim: mouse  ·  attack: click / space  ·  parry: K  ·  dodge: L  ·  play card: 1–4 / click  ·  activate combo: E  ·  spawn wave: Q';
     root.appendChild(hint);
   }
 

@@ -21,18 +21,17 @@ function hand(spec: string): PlayingCard[] {
 
 describe('evaluateHand', () => {
   const cases: readonly (readonly [string, PokerCategory])[] = [
-    ['2c 5d 9h Js Ac', 'highCard'],
-    ['2c 2d 9h Js Ac', 'pair'],
-    ['2c 2d 9h 9s Ac', 'twoPair'],
-    ['2c 2d 2h 9s Ac', 'trips'],
-    ['5c 6d 7h 8s 9c', 'straight'],
-    ['Ac 2d 3h 4s 5c', 'straight'], // the wheel
-    ['Tc Jd Qh Ks Ac', 'straight'], // broadway
-    ['2c 5c 9c Jc Ac', 'flush'],
-    ['2c 2d 2h 9s 9c', 'fullHouse'],
-    ['2c 2d 2h 2s Ac', 'fourKind'],
-    ['5c 6c 7c 8c 9c', 'straightFlush'],
-    ['Tc Jc Qc Kc Ac', 'straightFlush'], // royal
+    ['2c 5d 9h Js', 'highCard'],
+    ['2c 2d 9h Js', 'pair'],
+    ['2c 2d 9h 9s', 'twoPair'],
+    ['2c 2d 2h 9s', 'trips'],
+    ['5c 6d 7h 8s', 'straight'],
+    ['Ac 2d 3h 4s', 'straight'], // the wheel (ace low)
+    ['Jc Qd Kh As', 'straight'], // broadway
+    ['2c 5c 9c Jc', 'flush'],
+    ['2c 2d 2h 2s', 'fourKind'],
+    ['5c 6c 7c 8c', 'straightFlush'],
+    ['Jc Qc Kc Ac', 'straightFlush'], // royal
   ];
 
   for (const [spec, expected] of cases) {
@@ -46,9 +45,11 @@ describe('evaluateHand', () => {
     for (const [spec, expected] of cases) {
       expect(evaluateHand(hand(spec)).strength).toBe(POKER_ORDER.indexOf(expected));
     }
-    // A pair outranks a high card, a flush outranks a straight, etc.
-    expect(evaluateHand(hand('2c 2d 9h Js Ac')).strength).toBeGreaterThan(evaluateHand(hand('2c 5d 9h Js Ac')).strength);
-    expect(evaluateHand(hand('2c 5c 9c Jc Ac')).strength).toBeGreaterThan(evaluateHand(hand('5c 6d 7h 8s 9c')).strength);
-    expect(Math.max(...strengths)).toBe(8);
+    // A pair outranks a high card; a flush outranks a straight; in the four-card
+    // variant trips outranks a flush; four of a kind tops the ladder.
+    expect(evaluateHand(hand('2c 2d 9h Js')).strength).toBeGreaterThan(evaluateHand(hand('2c 5d 9h Js')).strength);
+    expect(evaluateHand(hand('2c 5c 9c Jc')).strength).toBeGreaterThan(evaluateHand(hand('5c 6d 7h 8s')).strength);
+    expect(evaluateHand(hand('2c 2d 2h 9s')).strength).toBeGreaterThan(evaluateHand(hand('2c 5c 9c Jc')).strength);
+    expect(Math.max(...strengths)).toBe(POKER_ORDER.length - 1);
   });
 });
