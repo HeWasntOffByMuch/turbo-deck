@@ -5,7 +5,8 @@ import type { GameEvent, GameState } from '../game/session.js';
 import {
   ARENA_HEIGHT,
   ARENA_WIDTH,
-  ENEMY_ATTACK_RADIUS,
+  ENEMY_ATTACK_ARC_COS_SQ,
+  ENEMY_ATTACK_RANGE,
   ENEMY_IDLE_TICKS,
   ENEMY_RADIUS,
   ENEMY_RECOVERY_TICKS,
@@ -360,14 +361,28 @@ export class Scene {
 
   private drawTelegraph(state: GameState): void {
     this.telegraphGfx.clear();
-    const r = ENEMY_ATTACK_RADIUS * ARENA_SCALE;
+    const range = ENEMY_ATTACK_RANGE * ARENA_SCALE;
+    const half = Math.acos(Math.sqrt(ENEMY_ATTACK_ARC_COS_SQ));
     for (const enemy of state.combat.enemies) {
-      if (enemy.behavior !== 'hunting' || enemy.phase !== 'windup' || !enemy.attackZoneCenter) continue;
-      const c = this.worldToScreen(enemy.attackZoneCenter);
+      if (enemy.behavior !== 'hunting' || enemy.phase !== 'windup' || !enemy.attackAim) continue;
+      const apex = this.worldToScreen(enemy.position);
+      const ang = Math.atan2(enemy.attackAim.y, enemy.attackAim.x);
       const progress = 1 - Math.max(0, enemy.phaseEndsAtTick - state.combat.tick) / ENEMY_WINDUP_TICKS;
-      this.telegraphGfx.circle(c.x, c.y, r).fill({ color: '#ff8c1a', alpha: 0.14 + 0.4 * progress });
-      this.telegraphGfx.circle(c.x, c.y, r).stroke({ color: '#ffb347', width: 3, alpha: 0.6 + 0.4 * progress });
-      this.telegraphGfx.circle(c.x, c.y, r * (1 - progress)).stroke({ color: '#ffe08a', width: 2, alpha: 0.85 });
+      this.telegraphGfx
+        .moveTo(apex.x, apex.y)
+        .arc(apex.x, apex.y, range, ang - half, ang + half)
+        .lineTo(apex.x, apex.y)
+        .fill({ color: '#ff8c1a', alpha: 0.14 + 0.4 * progress });
+      this.telegraphGfx
+        .moveTo(apex.x, apex.y)
+        .arc(apex.x, apex.y, range, ang - half, ang + half)
+        .lineTo(apex.x, apex.y)
+        .stroke({ color: '#ffb347', width: 3, alpha: 0.6 + 0.4 * progress });
+      this.telegraphGfx
+        .moveTo(apex.x, apex.y)
+        .arc(apex.x, apex.y, range * (1 - progress), ang - half, ang + half)
+        .lineTo(apex.x, apex.y)
+        .stroke({ color: '#ffe08a', width: 2, alpha: 0.85 });
     }
   }
 

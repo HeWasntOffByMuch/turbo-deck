@@ -6,7 +6,9 @@ import {
   ATTACK_ROOT_TICKS,
   DEFENSE_RECOVERY_TICKS,
   DIAGONAL_SCALE,
-  ENEMY_ATTACK_RADIUS,
+  ENEMY_ATTACK_ARC_COS_SQ,
+  ENEMY_ATTACK_RANGE,
+  ENEMY_ATTACK_TRIGGER_RANGE,
   ENEMY_IDLE_TICKS,
   ENEMY_RADIUS,
   ENEMY_RECOVERY_TICKS,
@@ -107,6 +109,27 @@ function attackConnects(player: Vec2, enemy: Vec2, aimX: number, aimY: number): 
   return dot * dot >= ATTACK_ARC_COS_SQ * lenSqD * lenSqAim;
 }
 
+/** Unit vector from `from` toward `to`; falls back to +x when they coincide. */
+function unitToward(from: Vec2, to: Vec2): Vec2 {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  return len < 1e-6 ? { x: 1, y: 0 } : { x: dx / len, y: dy / len };
+}
+
+/** True if `target` lies inside the enemy's slam cone (apex, unit `aim`, reach + arc). */
+function enemyConeHits(apex: Vec2, aim: Vec2, target: Vec2): boolean {
+  const dx = target.x - apex.x;
+  const dy = target.y - apex.y;
+  const lenSq = dx * dx + dy * dy;
+  const reach = ENEMY_ATTACK_RANGE + PLAYER_RADIUS;
+  if (lenSq > reach * reach) return false;
+  const dot = dx * aim.x + dy * aim.y;
+  if (dot <= 0) return false;
+  // aim is a unit vector, so its squared length is 1.
+  return dot * dot >= ENEMY_ATTACK_ARC_COS_SQ * lenSq;
+}
+
 interface SpawnOpts {
   /** Scale the type's base health/damage (wave escalation); default 1. */
   readonly healthMult: number;
@@ -138,7 +161,7 @@ function spawnEnemy(id: number, playerPos: Vec2, tick: number, draw: Draw, opts:
     phase: 'idle',
     phaseEndsAtTick: opts.hunting ? tick + ENEMY_IDLE_TICKS : 0,
     incomingAttackOutcome: 'none',
-    attackZoneCenter: null,
+    attackAim: null,
     grazeTarget: null,
     // Stagger initial wander so a fresh herd doesn't all move on the same tick.
     grazeResumeTick: tick + draw(0, GRAZE_PAUSE_MAX_TICKS),
@@ -172,7 +195,7 @@ function aggro(enemy: EnemyState, tick: number): EnemyState {
     phaseEndsAtTick: tick + ENEMY_IDLE_TICKS,
     grazeTarget: null,
     incomingAttackOutcome: 'none',
-    attackZoneCenter: null,
+    attackAim: null,
   };
 }
 
@@ -426,11 +449,18 @@ export function step(
   enemies = enemies.map((enemy) => {
     if (enemy.behavior !== 'hunting' || tick < enemy.phaseEndsAtTick) return enemy;
     if (enemy.phase === 'idle') {
-      return { ...enemy, phase: 'windup', phaseEndsAtTick: tick + scaleDuration(ENEMY_WINDUP_TICKS), incomingAttackOutcome: 'none', attackZoneCenter: player.position };
+      // Attack only when in range: beyond the trigger distance the enemy keeps
+      // closing (another idle beat of homing) instead of committing to a slam.
+      const inRange = distanceSq(enemy.position, player.position) <= ENEMY_ATTACK_TRIGGER_RANGE * ENEMY_ATTACK_TRIGGER_RANGE;
+      if (!inRange) return { ...enemy, phaseEndsAtTick: tick + scaleDuration(ENEMY_IDLE_TICKS) };
+      // Commit: snapshot the cone direction toward the player now; the enemy is
+      // planted for the wind-up so its position is the cone's apex at the slam.
+      const aim = unitToward(enemy.position, player.position);
+      return { ...enemy, phase: 'windup', phaseEndsAtTick: tick + scaleDuration(ENEMY_WINDUP_TICKS), incomingAttackOutcome: 'none', attackAim: aim };
     }
     if (enemy.phase === 'windup') {
-      const zone = enemy.attackZoneCenter;
-      const inZone = zone !== null && distanceSq(player.position, zone) <= ENEMY_ATTACK_RADIUS * ENEMY_ATTACK_RADIUS;
+      const aim = enemy.attackAim;
+      const inZone = aim !== null && enemyConeHits(enemy.position, aim, player.position);
       const baseAttack = enemy.attackDamage ?? enemyTypeByKey(enemy.type).attackDamage;
       const fullDamage = Math.round(baseAttack * mods.enemyDamageMultiplier);
       const baseDamage = inZone ? fullDamage : 0;
@@ -457,7 +487,7 @@ export function step(
       } else if (!inZone && outcome !== 'perfect' && outcome !== 'normal') {
         events.push({ kind: 'enemyAttackAvoided', tick });
       }
-      return { ...enemy, phase: 'recovery', phaseEndsAtTick: tick + scaleDuration(ENEMY_RECOVERY_TICKS), incomingAttackOutcome: 'none', attackZoneCenter: null };
+      return { ...enemy, phase: 'recovery', phaseEndsAtTick: tick + scaleDuration(ENEMY_RECOVERY_TICKS), incomingAttackOutcome: 'none', attackAim: null };
     }
     return { ...enemy, phase: 'idle', phaseEndsAtTick: tick + scaleDuration(ENEMY_IDLE_TICKS) };
   });
