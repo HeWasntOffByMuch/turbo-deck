@@ -7,21 +7,17 @@ import {
   ENEMY_RADIUS,
   ENEMY_RECOVERY_TICKS,
   ENEMY_WINDUP_TICKS,
-  NORMAL_WINDOW_TICKS,
-  PERFECT_WINDOW_TICKS,
-  PLAYER_ATTACK_RANGE,
-  PLAYER_ATTACK_WINDUP_TICKS,
   PLAYER_RADIUS,
 } from '../../sim/constants.js';
-import type { ComboEvent, ComboGameState } from '../../game/combo-session.js';
+import type { SpellGameEvent, SpellGameState } from '../../game/spell-session.js';
 import type { EnemyState, PlayerState, Vec2 } from '../../sim/types.js';
 
 /**
- * Canvas2D arena for the poker-combo prototype (spec 014). Deliberately a thin,
- * shape-based view: the whole arena is fit into the canvas with no camera, so
- * every enemy and every telegraph is on screen at once. It reads sim state and
- * draws it -- no game rules live here. The card economy is rendered by the DOM
- * HUD; this module only paints the fight.
+ * Canvas2D arena for the spell game (spec 018). A thin, shape-based view: the
+ * whole arena fits the canvas with no camera, so every enemy, telegraph and
+ * spell effect is on screen at once. It reads sim state and draws it -- carrying
+ * auras, telegraphed AOEs, shields, stuns and dashes straight from the sim's
+ * player/enemy fields. No game rules here.
  */
 
 export const SCALE = 0.75;
@@ -43,16 +39,26 @@ interface Popup {
   vy: number;
 }
 
+interface Flash {
+  x: number;
+  y: number;
+  radius: number;
+  life: number;
+  max: number;
+}
+
 const POPUP_LIFE = 42;
+const FLASH_LIFE = 18;
 
 export interface ScreenPoint {
   readonly x: number;
   readonly y: number;
 }
 
-export class ArenaView {
+export class SpellArenaView {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly popups: Popup[] = [];
+  private readonly flashes: Flash[] = [];
   private frame = 0;
 
   constructor(readonly canvas: HTMLCanvasElement) {
@@ -67,30 +73,32 @@ export class ArenaView {
     return { x: v.x * SCALE, y: v.y * SCALE };
   }
 
-  render(state: ComboGameState, events: readonly ComboEvent[], aim: ScreenPoint): void {
+  render(state: SpellGameState, events: readonly SpellGameEvent[], aim: ScreenPoint): void {
     this.frame++;
-    const { ctx } = this;
     const combat = state.combat;
-
     this.ingestEvents(combat.player, events);
 
     this.drawField();
+    this.drawPendingAoes(combat.player, combat.tick);
     for (const enemy of combat.enemies) this.drawTelegraph(enemy, combat.tick);
     for (const enemy of combat.enemies) this.drawEnemy(enemy, combat.tick, combat.player.position);
+    this.drawAuras(combat.player, combat.tick);
     this.drawPlayer(combat.player, combat.tick, aim);
-    this.drawSlowVeil(combat.tick, combat.enemySlowExpiresAtTick);
+    this.updateAndDrawFlashes();
     this.updateAndDrawPopups();
-
-    void ctx; // ctx used throughout via helpers
   }
 
-  private ingestEvents(player: PlayerState, events: readonly ComboEvent[]): void {
+  private ingestEvents(player: PlayerState, events: readonly SpellGameEvent[]): void {
     for (const e of events) {
       if (e.kind === 'enemyHit') this.spawn(this.worldToScreen(e.at), `${e.damage}`, '#ffe08a', -0.9);
       else if (e.kind === 'playerHit') this.spawn(this.worldToScreen(player.position), `-${e.damage}`, '#ff6b6b', -1.0);
       else if (e.kind === 'playerHealed') this.spawn(this.worldToScreen(player.position), `+${e.amount}`, '#7affc0', -1.0);
-      else if (e.kind === 'perfectDefense') this.spawn(this.worldToScreen(player.position), 'PERFECT', '#7affc0', -1.2);
-      else if (e.kind === 'stanceApplied') this.spawn(this.worldToScreen(player.position), 'STANCE!', '#ffd76a', -1.2);
+      else if (e.kind === 'aoeImpact') {
+        const at = this.worldToScreen(e.at);
+        this.flashes.push({ x: at.x, y: at.y, radius: e.radius * SCALE, life: FLASH_LIFE, max: FLASH_LIFE });
+      } else if (e.kind === 'spellsResolved' && e.ids.length >= 2) {
+        this.spawn(this.worldToScreen(player.position), 'SYNERGY!', '#ffd76a', -1.3);
+      }
     }
   }
 
@@ -100,20 +108,57 @@ export class ArenaView {
 
   private drawField(): void {
     const { ctx } = this;
-    ctx.fillStyle = '#26361f';
-    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-    // Subtle mowed-lawn checker.
     const cell = 64 * SCALE;
     for (let y = 0; y < CANVAS_H; y += cell) {
       for (let x = 0; x < CANVAS_W; x += cell) {
         const even = (Math.floor(x / cell) + Math.floor(y / cell)) % 2 === 0;
-        ctx.fillStyle = even ? '#2c3d23' : '#2f4226';
+        ctx.fillStyle = even ? '#242433' : '#28283a';
         ctx.fillRect(x, y, cell, cell);
       }
     }
-    ctx.strokeStyle = '#18240f';
+    ctx.strokeStyle = '#12121c';
     ctx.lineWidth = 4;
     ctx.strokeRect(2, 2, CANVAS_W - 4, CANVAS_H - 4);
+  }
+
+  private drawPendingAoes(player: PlayerState, tick: number): void {
+    const { ctx } = this;
+    for (const aoe of player.pendingAoes) {
+      const c = this.worldToScreen({ x: aoe.x, y: aoe.y });
+      const r = aoe.radius * SCALE;
+      const remaining = Math.max(0, aoe.impactTick - tick);
+      const total = Math.max(1, aoe.impactTick - (aoe.impactTick - 30)); // ~telegraph length
+      const progress = 1 - remaining / total;
+      const warm = aoe.stunTicks > 0 ? '120,180,255' : '255,120,40';
+      ctx.fillStyle = `rgba(${warm},${0.08 + 0.2 * progress})`;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = `rgba(${warm},0.9)`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r * (0.15 + 0.85 * progress), 0, Math.PI * 2); // closing ring = time to impact
+      ctx.stroke();
+    }
+  }
+
+  private drawAuras(player: PlayerState, tick: number): void {
+    const { ctx } = this;
+    const p = this.worldToScreen(player.position);
+    for (const aura of player.auras) {
+      if (tick >= aura.expiresAtTick) continue;
+      const r = aura.radius * SCALE;
+      const pulse = 0.5 + 0.5 * Math.sin(this.frame * 0.35);
+      ctx.fillStyle = `rgba(255,110,40,${0.06 + 0.06 * pulse})`;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = `rgba(255,150,60,${0.35 + 0.25 * pulse})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
   }
 
   private drawTelegraph(enemy: EnemyState, tick: number): void {
@@ -131,13 +176,6 @@ export class ArenaView {
     ctx.arc(apex.x, apex.y, range, ang - half, ang + half);
     ctx.closePath();
     ctx.fill();
-    ctx.strokeStyle = '#ffb347';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(apex.x, apex.y);
-    ctx.arc(apex.x, apex.y, range * (1 - progress), ang - half, ang + half); // shrinking = time to slam
-    ctx.closePath();
-    ctx.stroke();
   }
 
   private drawEnemy(enemy: EnemyState, tick: number, playerPos: Vec2): void {
@@ -145,24 +183,31 @@ export class ArenaView {
     const p = this.worldToScreen(enemy.position);
     const r = ENEMY_RADIUS * SCALE;
     const color = ENEMY_COLORS[enemy.type] ?? '#c07070';
+    const stunned = (enemy.stunnedUntilTick ?? 0) > tick;
 
-    // Body, dimmed while grazing.
     ctx.globalAlpha = enemy.behavior === 'grazing' ? 0.75 : 1;
-    ctx.fillStyle = color;
+    ctx.fillStyle = stunned ? '#6f7590' : color;
     ctx.beginPath();
     ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 1;
 
-    // Facing pip toward the player.
     const dir = norm({ x: playerPos.x - enemy.position.x, y: playerPos.y - enemy.position.y });
     ctx.fillStyle = '#1a1208';
     ctx.beginPath();
     ctx.arc(p.x + dir.x * r * 0.5, p.y + dir.y * r * 0.5, r * 0.22, 0, Math.PI * 2);
     ctx.fill();
 
-    // Phase ring (hunting cadence).
-    if (enemy.behavior === 'hunting') {
+    if (stunned) {
+      // Little orbiting "stars" to read the stun at a glance.
+      ctx.fillStyle = '#ffe08a';
+      for (let i = 0; i < 3; i++) {
+        const a = this.frame * 0.15 + (i * Math.PI * 2) / 3;
+        ctx.beginPath();
+        ctx.arc(p.x + Math.cos(a) * (r + 6), p.y - r - 4 + Math.sin(a) * 3, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else if (enemy.behavior === 'hunting') {
       const total = enemy.phase === 'idle' ? ENEMY_IDLE_TICKS : enemy.phase === 'windup' ? ENEMY_WINDUP_TICKS : ENEMY_RECOVERY_TICKS;
       const prog = 1 - Math.max(0, enemy.phaseEndsAtTick - tick) / total;
       const ring = enemy.phase === 'windup' ? '#ff8c1a' : enemy.phase === 'recovery' ? '#7a5a5a' : '#d0605a';
@@ -178,45 +223,34 @@ export class ArenaView {
     const r = PLAYER_RADIUS * SCALE;
     const ang = Math.atan2(aim.y, aim.x);
 
-    // Stance aura ring, colored by the dominant active stat.
-    if (tick < player.stanceExpiresAtTick) {
-      const c = dominantStanceColor(player);
-      ctx.strokeStyle = c;
-      ctx.lineWidth = 3;
-      ctx.globalAlpha = 0.5 + 0.3 * Math.sin(this.frame * 0.2);
+    // Dash streak.
+    if (tick < player.dashExpiresAtTick) {
+      ctx.strokeStyle = 'rgba(180,220,255,0.55)';
+      ctx.lineWidth = r * 1.6;
+      ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.arc(p.x, p.y, r + 10, 0, Math.PI * 2);
+      ctx.moveTo(p.x - player.dashDx * SCALE * 3, p.y - player.dashDy * SCALE * 3);
+      ctx.lineTo(p.x, p.y);
       ctx.stroke();
-      ctx.globalAlpha = 1;
-    }
-    // Guard flash.
-    if (tick < player.guardExpiresAtTick) {
-      ctx.strokeStyle = '#7fd6ff';
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, r + 4, 0, Math.PI * 2);
-      ctx.stroke();
+      ctx.lineCap = 'butt';
     }
 
-    // Swing arc during windup / follow-through.
-    if (player.attackReleaseTick !== 0) {
-      const charge = 1 - Math.max(0, player.attackReleaseTick - tick) / PLAYER_ATTACK_WINDUP_TICKS;
-      const reach = PLAYER_ATTACK_RANGE * SCALE * (0.5 + 0.5 * charge);
-      const half = (Math.PI / 4) * (0.6 + 0.4 * charge);
-      const swingAng = Math.atan2(player.attackAimY, player.attackAimX);
-      ctx.fillStyle = `rgba(191,224,255,${0.15 + 0.25 * charge})`;
+    // Shield ring.
+    if (tick < player.shieldExpiresAtTick && player.shieldAmount > 0) {
+      ctx.strokeStyle = '#8fd0ff';
+      ctx.lineWidth = 4;
+      ctx.globalAlpha = 0.5 + 0.3 * Math.sin(this.frame * 0.18);
       ctx.beginPath();
-      ctx.moveTo(p.x, p.y);
-      ctx.arc(p.x, p.y, reach, swingAng - half, swingAng + half);
-      ctx.closePath();
-      ctx.fill();
+      ctx.arc(p.x, p.y, r + 9, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
     }
 
     ctx.fillStyle = '#e8eef7';
     ctx.beginPath();
     ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
     ctx.fill();
-    // Aim indicator.
+
     ctx.strokeStyle = '#9fb7d4';
     ctx.lineWidth = 3;
     ctx.beginPath();
@@ -225,16 +259,6 @@ export class ArenaView {
     ctx.stroke();
 
     this.healthBar(p.x - r - 4, p.y - r - 14, r * 2 + 8, player.health / player.maxHealth, '#5ad65a');
-
-    // Parry prompt near the player when a slam is imminent.
-    // (drawn by the HUD's banner too, but the in-arena cue helps timing.)
-  }
-
-  private drawSlowVeil(tick: number, slowUntil: number): void {
-    if (tick >= slowUntil) return;
-    const { ctx } = this;
-    ctx.fillStyle = 'rgba(120,90,200,0.10)';
-    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
   }
 
   private healthBar(x: number, y: number, w: number, frac: number, color: string): void {
@@ -243,6 +267,26 @@ export class ArenaView {
     ctx.fillRect(x, y, w, 5);
     ctx.fillStyle = color;
     ctx.fillRect(x, y, w * Math.max(0, Math.min(1, frac)), 5);
+  }
+
+  private updateAndDrawFlashes(): void {
+    const { ctx } = this;
+    for (let i = this.flashes.length - 1; i >= 0; i--) {
+      const f = this.flashes[i];
+      if (!f) continue;
+      f.life -= 1;
+      if (f.life <= 0) {
+        this.flashes.splice(i, 1);
+        continue;
+      }
+      const t = f.life / f.max;
+      ctx.globalAlpha = t * 0.8;
+      ctx.fillStyle = '#ffd27a';
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, f.radius * (1.1 - t * 0.3), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
   }
 
   private updateAndDrawPopups(): void {
@@ -267,18 +311,6 @@ export class ArenaView {
   }
 }
 
-/** Which stance stat is strongest right now, for the aura color. */
-function dominantStanceColor(player: PlayerState): string {
-  const stats: readonly [number, string][] = [
-    [player.stanceAttackBonus / 20, '#ff6b6b'],
-    [player.stanceReductionPct / 0.7, '#7fd6ff'],
-    [player.stanceRegenPerTick, '#7affc0'],
-  ];
-  let best = stats[0] as [number, string];
-  for (const s of stats) if (s[0] > best[0]) best = s;
-  return best[1];
-}
-
 function norm(v: Vec2): Vec2 {
   const len = Math.hypot(v.x, v.y);
   return len < 1e-4 ? { x: 1, y: 0 } : { x: v.x / len, y: v.y / len };
@@ -292,6 +324,3 @@ function strokeArc(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius
   ctx.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + clamped * Math.PI * 2);
   ctx.stroke();
 }
-
-/** Timing windows exposed so the HUD can show a matching parry prompt. */
-export const DEFENSE_WINDOWS = { perfect: PERFECT_WINDOW_TICKS, normal: NORMAL_WINDOW_TICKS };

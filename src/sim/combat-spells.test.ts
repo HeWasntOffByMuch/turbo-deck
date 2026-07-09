@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import type { SpellSpec } from '../shared/spell-spec.js';
 import { ARENA_HEIGHT, ARENA_WIDTH, ENEMY_STANDOFF } from './constants.js';
 import { initCombat, step } from './combat.js';
-import { enemyTypeByKey } from './enemies.js';
 import { NEUTRAL_INPUT, type CombatState, type EnemyState, type InputFrame, type SimEvent } from './types.js';
 
 const CENTER = { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 };
@@ -13,13 +12,11 @@ function arena(seed = 1): CombatState {
 
 /** Drop a stationary (idle, never-wandering) enemy into the arena. */
 function withEnemy(state: CombatState, partial: Partial<EnemyState> & { position: EnemyState['position'] }): CombatState {
-  const brawler = enemyTypeByKey('brawler');
   const enemy: EnemyState = {
     id: state.nextEnemyId,
     type: 'brawler',
     health: 200,
     maxHealth: 200,
-    position: partial.position,
     behavior: 'grazing',
     phase: 'idle',
     phaseEndsAtTick: 0,
