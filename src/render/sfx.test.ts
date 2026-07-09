@@ -3,6 +3,7 @@ import { CARD_CATALOG } from '../cards/catalog.js';
 import type { GameEvent } from '../game/session.js';
 import type { ComboEvent } from '../game/combo-session.js';
 import { SUITS, type PlayingCard } from '../cards/standard.js';
+import { POKER_ORDER } from '../cards/poker.js';
 import { SFX, sfxForComboEvent, sfxForEvent } from './sfx.js';
 
 describe('SFX library', () => {
@@ -71,9 +72,12 @@ describe('sfxForComboEvent routing (spec 014 prototype)', () => {
     }
   });
 
-  it('voices a poker-stance activation', () => {
-    const id = sfxForComboEvent({ kind: 'activated', category: 'pair', strength: 2 });
-    expect(id !== undefined && SFX[id]).toBeDefined();
+  it('voices every poker-stance activation with its own real SFX', () => {
+    for (const category of POKER_ORDER) {
+      const id = sfxForComboEvent({ kind: 'activated', category, strength: POKER_ORDER.indexOf(category) });
+      expect(id, `no sfx for combo ${category}`).toBeDefined();
+      expect(id !== undefined && SFX[id], `sfx '${id}' missing for ${category}`).toBeDefined();
+    }
   });
 
   it('defers shared combat events to the common routing', () => {
