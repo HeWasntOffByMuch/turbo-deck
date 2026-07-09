@@ -35,10 +35,12 @@ import {
   PLAYER_MAX_MANA,
   PLAYER_RADIUS,
   SPAWN_MIN_PLAYER_DIST,
+  WAVE_ATTACK_SPEED_GROWTH,
   WAVE_BASE_COUNT,
   WAVE_DAMAGE_GROWTH,
   WAVE_HEALTH_GROWTH,
   WAVE_MAX_ENEMIES,
+  WAVE_SPEED_GROWTH,
 } from './constants.js';
 import { ENEMY_TYPES, enemyTypeByKey, type EnemyType } from './enemies.js';
 import {
@@ -134,11 +136,14 @@ interface SpawnOpts {
   /** Scale the type's base health/damage (wave escalation); default 1. */
   readonly healthMult: number;
   readonly damageMult: number;
+  /** Scale the type's homing speed and attack cadence (wave escalation); default 1. */
+  readonly speedMult: number;
+  readonly attackSpeedMult: number;
   /** Spawn already hunting the player (wave mode) rather than grazing. */
   readonly hunting: boolean;
 }
 
-const GRAZE_SPAWN: SpawnOpts = { healthMult: 1, damageMult: 1, hunting: false };
+const GRAZE_SPAWN: SpawnOpts = { healthMult: 1, damageMult: 1, speedMult: 1, attackSpeedMult: 1, hunting: false };
 
 /** Spawn a fresh enemy of a random type, placed away from the player. */
 function spawnEnemy(id: number, playerPos: Vec2, tick: number, draw: Draw, opts: SpawnOpts = GRAZE_SPAWN): EnemyState {
@@ -156,10 +161,12 @@ function spawnEnemy(id: number, playerPos: Vec2, tick: number, draw: Draw, opts:
     health: maxHealth,
     maxHealth,
     attackDamage: Math.round(type.attackDamage * opts.damageMult),
+    speedMult: opts.speedMult,
+    attackSpeedMult: opts.attackSpeedMult,
     position,
     behavior: opts.hunting ? 'hunting' : 'grazing',
     phase: 'idle',
-    phaseEndsAtTick: opts.hunting ? tick + ENEMY_IDLE_TICKS : 0,
+    phaseEndsAtTick: opts.hunting ? tick + Math.max(1, Math.round(ENEMY_IDLE_TICKS / opts.attackSpeedMult)) : 0,
     incomingAttackOutcome: 'none',
     attackAim: null,
     grazeTarget: null,
@@ -276,7 +283,8 @@ export function step(
   };
   // Enemy slow (stance/diamond): <1 slows homing and stretches telegraphs.
   const slowMult = tick < state.enemySlowExpiresAtTick ? state.enemySlowMultiplier : 1;
-  const scaleDuration = (base: number): number => Math.max(1, Math.round((base * mods.enemySpeedMultiplier) / slowMult));
+  const scaleDuration = (base: number, attackSpeedMult = 1): number =>
+    Math.max(1, Math.round((base * mods.enemySpeedMultiplier) / (slowMult * attackSpeedMult)));
 
   // --- Player intent + movement ---
   const swingPending = state.player.attackReleaseTick !== 0;
@@ -292,7 +300,7 @@ export function step(
   let enemies: EnemyState[] = state.enemies.map((enemy) => {
     if (enemy.behavior === 'grazing') return grazeStep(enemy, tick, draw);
     if (enemy.phase === 'idle') {
-      const speed = enemyTypeByKey(enemy.type).moveSpeed * slowMult;
+      const speed = enemyTypeByKey(enemy.type).moveSpeed * (enemy.speedMult ?? 1) * slowMult;
       return { ...enemy, position: moveToward(enemy.position, player.position, speed, ENEMY_STANDOFF) };
     }
     return enemy; // hunting but planted for windup/recovery
@@ -452,11 +460,11 @@ export function step(
       // Attack only when in range: beyond the trigger distance the enemy keeps
       // closing (another idle beat of homing) instead of committing to a slam.
       const inRange = distanceSq(enemy.position, player.position) <= ENEMY_ATTACK_TRIGGER_RANGE * ENEMY_ATTACK_TRIGGER_RANGE;
-      if (!inRange) return { ...enemy, phaseEndsAtTick: tick + scaleDuration(ENEMY_IDLE_TICKS) };
+      if (!inRange) return { ...enemy, phaseEndsAtTick: tick + scaleDuration(ENEMY_IDLE_TICKS, enemy.attackSpeedMult ?? 1) };
       // Commit: snapshot the cone direction toward the player now; the enemy is
       // planted for the wind-up so its position is the cone's apex at the slam.
       const aim = unitToward(enemy.position, player.position);
-      return { ...enemy, phase: 'windup', phaseEndsAtTick: tick + scaleDuration(ENEMY_WINDUP_TICKS), incomingAttackOutcome: 'none', attackAim: aim };
+      return { ...enemy, phase: 'windup', phaseEndsAtTick: tick + scaleDuration(ENEMY_WINDUP_TICKS, enemy.attackSpeedMult ?? 1), incomingAttackOutcome: 'none', attackAim: aim };
     }
     if (enemy.phase === 'windup') {
       const aim = enemy.attackAim;
@@ -487,9 +495,9 @@ export function step(
       } else if (!inZone && outcome !== 'perfect' && outcome !== 'normal') {
         events.push({ kind: 'enemyAttackAvoided', tick });
       }
-      return { ...enemy, phase: 'recovery', phaseEndsAtTick: tick + scaleDuration(ENEMY_RECOVERY_TICKS), incomingAttackOutcome: 'none', attackAim: null };
+      return { ...enemy, phase: 'recovery', phaseEndsAtTick: tick + scaleDuration(ENEMY_RECOVERY_TICKS, enemy.attackSpeedMult ?? 1), incomingAttackOutcome: 'none', attackAim: null };
     }
-    return { ...enemy, phase: 'idle', phaseEndsAtTick: tick + scaleDuration(ENEMY_IDLE_TICKS) };
+    return { ...enemy, phase: 'idle', phaseEndsAtTick: tick + scaleDuration(ENEMY_IDLE_TICKS, enemy.attackSpeedMult ?? 1) };
   });
   player = { ...player, health: playerHealth };
 
@@ -510,6 +518,8 @@ export function step(
     const opts: SpawnOpts = {
       healthMult: 1 + WAVE_HEALTH_GROWTH * (waveNumber - 1),
       damageMult: 1 + WAVE_DAMAGE_GROWTH * (waveNumber - 1),
+      speedMult: 1 + WAVE_SPEED_GROWTH * (waveNumber - 1),
+      attackSpeedMult: 1 + WAVE_ATTACK_SPEED_GROWTH * (waveNumber - 1),
       hunting: true,
     };
     const spawned: EnemyState[] = [];

@@ -13,9 +13,9 @@ export interface EnemyType {
 }
 
 export const ENEMY_TYPES: readonly EnemyType[] = [
-  { key: 'brawler', maxHealth: 150, attackDamage: 15, moveSpeed: 1.0 },
-  { key: 'skitter', maxHealth: 80, attackDamage: 9, moveSpeed: 1.7 },
-  { key: 'brute', maxHealth: 240, attackDamage: 24, moveSpeed: 0.65 },
+  { key: 'brawler', maxHealth: 21, attackDamage: 15, moveSpeed: 1.0 },
+  { key: 'skitter', maxHealth: 18, attackDamage: 9, moveSpeed: 1.7 },
+  { key: 'brute', maxHealth: 24, attackDamage: 24, moveSpeed: 0.65 },
 ];
 
 const BY_KEY = new Map(ENEMY_TYPES.map((t) => [t.key, t]));

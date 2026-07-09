@@ -85,6 +85,10 @@ export interface EnemyState {
   readonly maxHealth: number;
   /** Per-enemy attack damage override (wave scaling); falls back to the type's. */
   readonly attackDamage?: number;
+  /** Per-enemy homing-speed multiplier (wave scaling); defaults to 1 when absent. */
+  readonly speedMult?: number;
+  /** Per-enemy attack-cadence multiplier (wave scaling); higher = faster attacks; defaults to 1. */
+  readonly attackSpeedMult?: number;
   readonly position: Vec2;
   readonly behavior: EnemyBehavior;
   // --- hunting cadence (meaningful only while hunting) ---

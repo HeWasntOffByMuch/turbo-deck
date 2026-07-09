@@ -27,7 +27,7 @@ export const PLAYER_ATTACK_WINDUP_TICKS = 12;
 // Post-strike recovery: the player stays rooted this long after the hit lands.
 export const ATTACK_ROOT_TICKS = 6;
 
-export const ENEMY_MAX_HEALTH = 150;
+export const ENEMY_MAX_HEALTH = 21;
 export const ENEMY_ATTACK_DAMAGE = 15;
 // The enemy slam is a forward cone (wedge), not a circle: it reaches this far
 // from the enemy's own (planted) centre, within a wedge aimed where the player
@@ -67,6 +67,10 @@ export const WAVE_BASE_COUNT = 2;
 // Per-wave scaling of enemy toughness, compounding by wave index (wave 1 = x1).
 export const WAVE_HEALTH_GROWTH = 0.35;
 export const WAVE_DAMAGE_GROWTH = 0.25;
+// Per-wave scaling of enemy homing speed and attack cadence (wave 1 = x1).
+// Kept smaller than health/damage growth: speed compounds difficulty quickly.
+export const WAVE_SPEED_GROWTH = 0.12;
+export const WAVE_ATTACK_SPEED_GROWTH = 0.15;
 // A hard ceiling on live enemies even in wave mode, so the arena never gridlocks.
 export const WAVE_MAX_ENEMIES = 40;
 // Cap on stacked incoming-damage reduction (stance + guard), so nothing is fully immune.
