@@ -33,9 +33,9 @@ export const ENEMY_ATTACK_DAMAGE = 15;
 export const ENEMY_ATTACK_RADIUS = 52;
 // Distance the enemy holds from the player while closing in.
 export const ENEMY_STANDOFF = PLAYER_RADIUS + ENEMY_RADIUS + 8;
-export const ENEMY_IDLE_TICKS = 66;
-export const ENEMY_WINDUP_TICKS = 54;
-export const ENEMY_RECOVERY_TICKS = 54;
+export const ENEMY_IDLE_TICKS = 60;
+export const ENEMY_WINDUP_TICKS = 48;
+export const ENEMY_RECOVERY_TICKS = 48;
 
 export const PERFECT_WINDOW_TICKS = 4;
 export const NORMAL_WINDOW_TICKS = 14;
