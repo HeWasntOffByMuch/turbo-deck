@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { SpellId } from '../cards/spells.js';
+import { deckSize, HAND_SIZE, type SpellCard, type SpellDeck, type SpellId } from '../cards/spells.js';
+import { Rng } from '../shared/prng.js';
 import type { EnemyState } from '../sim/types.js';
 import {
   CARD_DRAW_DELAY_TICKS,
@@ -156,6 +157,56 @@ describe('mis-timed window punishment', () => {
   it('does not slow a single card played alone', () => {
     const after = run(initSpellGame(3), [play(0), ...settle]).state;
     expect(after.combat.player.moveSlowUntilTick).toBe(0);
+  });
+});
+
+describe('refill never stalls (regression)', () => {
+  const card = (id: SpellId, instanceId: number): SpellCard => ({ id, instanceId, level: 1 });
+
+  it('refills a slot emptied by a Remove reward instead of stalling on "drawing"', () => {
+    // meteorStrike lives only in the hand, so removing it nulls a hand slot.
+    const deck: SpellDeck = {
+      drawPile: [card('dash', 10), card('attack', 11), card('fireBlast', 12)],
+      hand: [card('meteorStrike', 0), card('dash', 1), card('attack', 2), card('fireBlast', 3)],
+      discardPile: [],
+      rng: Rng.fromSeed(1),
+    };
+    const start: SpellGameState = {
+      ...initSpellGame(1),
+      deck,
+      pendingReward: [
+        { kind: 'remove', cardId: 'meteorStrike' },
+        { kind: 'upgrade', cardId: 'dash' },
+        { kind: 'addFire', cardId: 'meteorStrike' },
+      ],
+    };
+    const chosen = run(start, [{ ...NEUTRAL, chooseReward: 0 }]).state;
+    expect(chosen.deck.hand[0]).toBeNull(); // removal emptied the slot
+
+    const after = run(chosen, Array.from({ length: CARD_DRAW_DELAY_TICKS + 2 }, () => NEUTRAL)).state;
+    expect(after.deck.hand[0]).not.toBeNull(); // self-healed, not stuck
+    expect(after.deck.hand.every((c) => c !== null)).toBe(true);
+  });
+
+  it('never thins the deck below a full hand', () => {
+    const deck: SpellDeck = {
+      drawPile: [],
+      hand: [card('dash', 0), card('attack', 1), card('fireBlast', 2), card('blazeAura', 3)],
+      discardPile: [],
+      rng: Rng.fromSeed(1),
+    };
+    const start: SpellGameState = {
+      ...initSpellGame(1),
+      deck,
+      pendingReward: [
+        { kind: 'remove', cardId: 'dash' },
+        { kind: 'upgrade', cardId: 'attack' },
+        { kind: 'addFire', cardId: 'meteorStrike' },
+      ],
+    };
+    const after = run(start, [{ ...NEUTRAL, chooseReward: 0 }]).state;
+    expect(deckSize(after.deck)).toBe(HAND_SIZE); // remove refused at the floor
+    expect(after.deck.hand.every((c) => c !== null)).toBe(true);
   });
 });
 

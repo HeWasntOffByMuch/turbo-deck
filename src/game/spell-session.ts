@@ -1,6 +1,7 @@
 import {
   addCard,
   deckCardIds,
+  deckSize,
   discardFromHand,
   drawIntoSlot,
   FIRE_CARD_IDS,
@@ -134,7 +135,8 @@ function rollRewards(deck: SpellDeck, rng: Rng): { offers: RewardOffer[]; rng: R
 function applyReward(deck: SpellDeck, offer: RewardOffer): SpellDeck {
   switch (offer.kind) {
     case 'remove':
-      return removeOneCard(deck, offer.cardId);
+      // Never thin the deck below a full hand, or slots could never refill.
+      return deckSize(deck) > HAND_SIZE ? removeOneCard(deck, offer.cardId) : deck;
     case 'upgrade':
       return upgradeOneCard(deck, offer.cardId);
     case 'addFire':
@@ -233,11 +235,21 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
   // Schedule delayed refills for slots emptied this tick, then draw any now due.
   const refillAtTick = [...state.refillAtTick];
   for (const slot of emptied) refillAtTick[slot] = tick + CARD_DRAW_DELAY_TICKS;
+  // Self-heal: any empty slot without a pending refill (e.g. a card removed from
+  // hand by a wave reward) gets one scheduled, so no slot can stall on "drawing".
+  for (let slot = 0; slot < HAND_SIZE; slot++) {
+    if (deck.hand[slot] === null && (refillAtTick[slot] === null || refillAtTick[slot] === undefined)) {
+      refillAtTick[slot] = tick + CARD_DRAW_DELAY_TICKS;
+    }
+  }
   for (let slot = 0; slot < HAND_SIZE; slot++) {
     const at = refillAtTick[slot];
     if (at !== null && at !== undefined && tick >= at) {
-      deck = drawIntoSlot(deck, slot).deck;
-      refillAtTick[slot] = null;
+      const drawn = drawIntoSlot(deck, slot);
+      deck = drawn.deck;
+      // Only clear the schedule once a card actually landed; if the deck is
+      // momentarily dry, keep it pending so the slot retries instead of stalling.
+      if (drawn.card) refillAtTick[slot] = null;
     }
   }
 

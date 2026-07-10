@@ -166,6 +166,11 @@ export function drawIntoSlot(deck: SpellDeck, index: number): { deck: SpellDeck;
 
 // --- Deck edits for wave rewards (spec 019) ---
 
+/** Total number of cards anywhere in the deck (hand + piles). */
+export function deckSize(deck: SpellDeck): number {
+  return deck.drawPile.length + deck.hand.filter((c) => c !== null).length + deck.discardPile.length;
+}
+
 /** Every distinct card id currently anywhere in the deck (hand + piles). */
 export function deckCardIds(deck: SpellDeck): SpellId[] {
   const ids = new Set<SpellId>();
