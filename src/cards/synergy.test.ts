@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SpellSpec } from '../shared/spell-spec.js';
-import { resolveSynergies, type SpellCardPlay } from './synergy.js';
+import { empowerSpecs, resolveSynergies, type SpellCardPlay } from './synergy.js';
 import type { SpellId } from './spells.js';
 
 /** Level-1 plays from a list of ids. */
@@ -17,7 +17,7 @@ function first(specs: SpellSpec[]): SpellSpec {
 
 describe('resolveSynergies', () => {
   it('resolves a lone card to its base spec', () => {
-    expect(resolveSynergies(plays('attack'))).toEqual([{ kind: 'cone', range: 72, arcCosSq: 0.5, damage: 12 }]);
+    expect(resolveSynergies(plays('attack'))).toEqual([{ kind: 'cone', range: 72, arcCosSq: 0.5, damage: 12, interrupt: true }]);
   });
 
   it('fuses two Fire Blasts into a longer, wider, harder cone', () => {
@@ -69,7 +69,7 @@ describe('resolveSynergies', () => {
 
 describe('upgrade levels (spec 019)', () => {
   it('leaves all-level-1 output identical to the 018 numbers', () => {
-    expect(resolveSynergies(plays('attack'))).toEqual([{ kind: 'cone', range: 72, arcCosSq: 0.5, damage: 12 }]);
+    expect(resolveSynergies(plays('attack'))).toEqual([{ kind: 'cone', range: 72, arcCosSq: 0.5, damage: 12, interrupt: true }]);
   });
 
   it('scales a group\'s damage by its total upgrades', () => {
@@ -87,6 +87,31 @@ describe('upgrade levels (spec 019)', () => {
     if (spec.kind !== 'cone') throw new Error('expected cone');
     // fused base 50, upgrades = (2-1)+(3-1) = 3 => x(1 + 0.4*3) = x2.2
     expect(spec.damage).toBe(Math.round(50 * 2.2));
+  });
+});
+
+describe('adrenaline empower (spec 023)', () => {
+  it('scales damage by +20% per point and leaves geometry alone', () => {
+    const base = first(resolveSynergies(plays('fireBlast', 'fireBlast'))); // fused cone, damage 50
+    if (base.kind !== 'cone') throw new Error('expected cone');
+    const [empowered] = empowerSpecs([base], 3);
+    if (!empowered || empowered.kind !== 'cone') throw new Error('expected cone');
+    expect(empowered.damage).toBe(Math.round(base.damage * (1 + 0.2 * 3))); // +60%
+    expect(empowered.range).toBe(base.range); // geometry untouched
+    expect(empowered.arcCosSq).toBe(base.arcCosSq);
+  });
+
+  it('is a no-op at zero adrenaline', () => {
+    const specs = resolveSynergies(plays('fireBlast', 'fireBlast'));
+    expect(empowerSpecs(specs, 0)).toEqual(specs);
+  });
+
+  it('doubles a full bank of five', () => {
+    const base = first(resolveSynergies(plays('fireBlast', 'fireBlast')));
+    if (base.kind !== 'cone') throw new Error('expected cone');
+    const [empowered] = empowerSpecs([base], 5);
+    if (!empowered || empowered.kind !== 'cone') throw new Error('expected cone');
+    expect(empowered.damage).toBe(Math.round(base.damage * 2)); // 1 + 0.2*5 = 2
   });
 });
 

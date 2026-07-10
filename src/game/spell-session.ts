@@ -13,7 +13,7 @@ import {
   type SpellDeck,
   type SpellId,
 } from '../cards/spells.js';
-import { resolveSynergies, type SpellCardPlay } from '../cards/synergy.js';
+import { empowerSpecs, resolveSynergies, type SpellCardPlay } from '../cards/synergy.js';
 import type { SpellSpec } from '../shared/spell-spec.js';
 import { Rng } from '../shared/prng.js';
 import { initCombat, step as combatStep } from '../sim/combat.js';
@@ -215,12 +215,17 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
   let externalEffect: ExternalEffect | undefined;
   let resolved: { ids: SpellId[]; specs: SpellSpec[] } | null = null;
   if (windowClosesAtTick !== null && tick >= windowClosesAtTick) {
-    const specs = resolveSynergies(windowCards);
-    // Punish a fumbled combo: more than one card played, but at least one of them
-    // stood alone (its id had no partner to fuse with) in the window.
+    const baseSpecs = resolveSynergies(windowCards);
     const counts = new Map<SpellId, number>();
     for (const p of windowCards) counts.set(p.id, (counts.get(p.id) ?? 0) + 1);
+    // Punish a fumbled combo: more than one card played, but at least one of them
+    // stood alone (its id had no partner to fuse with) in the window.
     const misplay = windowCards.length > 1 && [...counts.values()].some((c) => c === 1);
+    // A synergy is any window where a card fused (some id played 2+ times). Banked
+    // adrenaline empowers a synergy cast and is spent by it (spec 023).
+    const isSynergy = [...counts.values()].some((c) => c >= 2);
+    const spendAdrenaline = isSynergy && state.combat.player.adrenaline > 0;
+    const specs = spendAdrenaline ? empowerSpecs(baseSpecs, state.combat.player.adrenaline) : baseSpecs;
     externalEffect = {
       kind: 'castSpells',
       spells: specs,
@@ -229,6 +234,7 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
       targetX: input.targetX,
       targetY: input.targetY,
       ...(misplay ? { playerSlowTicks: MISPLAY_SLOW_TICKS } : {}),
+      ...(spendAdrenaline ? { spendAdrenaline: true } : {}),
     };
     resolved = { ids: windowCards.map((p) => p.id), specs };
     windowCards = [];

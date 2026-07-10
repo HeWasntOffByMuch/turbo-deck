@@ -220,6 +220,40 @@ describe('refill never stalls (regression)', () => {
   });
 });
 
+describe('adrenaline synergy spend (spec 023)', () => {
+  const card = (id: SpellId, instanceId: number): SpellCard => ({ id, instanceId, level: 1 });
+  const settle = Array.from({ length: SYNERGY_WINDOW_TICKS + 2 }, () => NEUTRAL);
+
+  /** A game with a chosen hand and a pre-loaded adrenaline bank. */
+  function withBank(hand: [SpellCard, SpellCard, SpellCard, SpellCard], adrenaline: number): SpellGameState {
+    const base = initSpellGame(1);
+    const deck: SpellDeck = { drawPile: [card('dash', 20), card('dash', 21)], hand, discardPile: [], rng: Rng.fromSeed(1) };
+    return { ...base, deck, combat: { ...base.combat, player: { ...base.combat.player, adrenaline } } };
+  }
+
+  it('empowers a fused synergy by the bank and spends it to zero', () => {
+    const start = withBank([card('fireBlast', 0), card('fireBlast', 1), card('dash', 2), card('attack', 3)], 5);
+    const { state: after, events } = run(start, [play(0), play(1), ...settle]);
+    const resolved = events.find((e) => e.kind === 'spellsResolved');
+    if (!resolved || resolved.kind !== 'spellsResolved') throw new Error('expected a resolved cast');
+    const cone = resolved.specs[0];
+    if (!cone || cone.kind !== 'cone') throw new Error('expected a cone');
+    expect(cone.damage).toBe(Math.round(50 * (1 + 0.2 * 5))); // fused 50, doubled by 5 adrenaline
+    expect(after.combat.player.adrenaline).toBe(0); // synergy spent the bank
+  });
+
+  it('does not empower or spend on a lone (non-synergy) card', () => {
+    const start = withBank([card('fireBlast', 0), card('dash', 1), card('attack', 2), card('dash', 3)], 5);
+    const { state: after, events } = run(start, [play(0), ...settle]);
+    const resolved = events.find((e) => e.kind === 'spellsResolved');
+    if (!resolved || resolved.kind !== 'spellsResolved') throw new Error('expected a resolved cast');
+    const cone = resolved.specs[0];
+    if (!cone || cone.kind !== 'cone') throw new Error('expected a cone');
+    expect(cone.damage).toBe(16); // base fire blast, un-empowered
+    expect(after.combat.player.adrenaline).toBe(5); // bank untouched
+  });
+});
+
 describe('wave rewards', () => {
   it('offers three deck edits when the wave is cleared', () => {
     const { state, attackSlot } = almostClearedWave(1);
