@@ -49,6 +49,14 @@ export interface DashTrail {
   readonly durationTicks: number;
 }
 
+/** Burning Speed's end-of-effect payload (spec 022): burns foes near the player when it expires. */
+export interface BurnBurst {
+  readonly atTick: number;
+  readonly radius: number;
+  readonly dps: number;
+  readonly durationTicks: number;
+}
+
 export interface PlayerState {
   readonly health: number;
   readonly maxHealth: number;
@@ -103,6 +111,15 @@ export interface PlayerState {
   readonly attackFlameBonus: number;
   /** Mis-timed window punishment (spec 021): walking is slowed until this tick. */
   readonly moveSlowUntilTick: number;
+  // --- Burning Speed (spec 022); identity values leave movement/health untouched. ---
+  /** Haste from Burning Speed: walk-speed multiplier and the tick it expires. */
+  readonly moveHasteUntilTick: number;
+  readonly moveHasteMult: number;
+  /** Self-Burning drain (hp/second) the player suffers, and the tick it ends. */
+  readonly burningUntilTick: number;
+  readonly burningDps: number;
+  /** Burn foes near the player when Burning Speed ends; null when none pending. */
+  readonly pendingBurnBurst: BurnBurst | null;
 }
 
 /**
@@ -171,6 +188,9 @@ export interface EnemyState {
   readonly grazeResumeTick: number;
   /** Bury-Feet stun: while `tick < stunnedUntilTick` the enemy neither moves nor attacks. Absent = 0. */
   readonly stunnedUntilTick?: number;
+  /** Burning condition (spec 022): loses `burningDps` hp/second until this tick. Absent = not burning. */
+  readonly burningUntilTick?: number;
+  readonly burningDps?: number;
 }
 
 export interface CombatState {

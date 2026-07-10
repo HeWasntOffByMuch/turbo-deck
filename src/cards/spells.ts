@@ -20,6 +20,7 @@ export type SpellId =
   | 'baskingPath'
   | 'conjureFlame'
   | 'fireStorm'
+  | 'burningSpeed'
   // Earth set.
   | 'groundStomp'
   | 'rockyRaise'
@@ -44,6 +45,7 @@ export const SPELL_CARDS: Record<SpellId, SpellCardDef> = {
   baskingPath: { id: 'baskingPath', name: 'Basking Path', set: 'fire', blurb: 'Dash, leave fire' },
   conjureFlame: { id: 'conjureFlame', name: 'Conjure Flame', set: 'fire', blurb: 'Next 3 attacks burn' },
   fireStorm: { id: 'fireStorm', name: 'Fire Storm', set: 'fire', blurb: 'Blast around a foe' },
+  burningSpeed: { id: 'burningSpeed', name: 'Burning Speed', set: 'fire', blurb: 'Haste; you burn, foes burn' },
   groundStomp: { id: 'groundStomp', name: 'Ground Stomp', set: 'earth', blurb: 'Forward line hit' },
   rockyRaise: { id: 'rockyRaise', name: 'Rocky Raise', set: 'earth', blurb: 'Shield (~8s)' },
   buryFeet: { id: 'buryFeet', name: 'Bury Feet', set: 'earth', blurb: 'Aimed AOE stun' },

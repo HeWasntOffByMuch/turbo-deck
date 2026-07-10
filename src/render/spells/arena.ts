@@ -280,6 +280,14 @@ export class SpellArenaView {
       strokeArc(ctx, p.x, p.y, r + 5, prog, ring);
     }
 
+    // Burning condition: a licking ember over the body.
+    if ((enemy.burningUntilTick ?? 0) > tick) {
+      ctx.fillStyle = `rgba(255,110,40,${0.45 + 0.4 * Math.sin(this.frame * 0.4 + enemy.id)})`;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y - r - 2, 3 + Math.sin(this.frame * 0.5 + enemy.id), 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     this.healthBar(p.x - r, p.y - r - 12, r * 2, enemy.health / enemy.maxHealth, enemy.behavior === 'hunting' ? '#ff5a5a' : '#8fbf6a');
   }
 
@@ -317,6 +325,23 @@ export class SpellArenaView {
         ctx.fill();
       }
       ctx.globalAlpha = 1;
+    }
+
+    // Burning Speed: a warm haste ring and flickering self-burn embers.
+    if (tick < player.moveHasteUntilTick) {
+      ctx.strokeStyle = 'rgba(255,150,60,0.75)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r + 7, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    if (tick < player.burningUntilTick) {
+      ctx.fillStyle = `rgba(255,120,40,${0.5 + 0.4 * Math.sin(this.frame * 0.5)})`;
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.arc(p.x - r + i * r, p.y - r - 3, 2.4 + Math.sin(this.frame * 0.3 + i), 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
     // Shield ring.

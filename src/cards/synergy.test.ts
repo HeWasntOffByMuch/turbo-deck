@@ -20,15 +20,21 @@ describe('resolveSynergies', () => {
     expect(resolveSynergies(plays('attack'))).toEqual([{ kind: 'cone', range: 72, arcCosSq: 0.5, damage: 12 }]);
   });
 
-  it('fuses two identical cards into the stronger tier', () => {
-    const spec = first(resolveSynergies(plays('fireBlast', 'fireBlast')));
-    expect(spec.kind).toBe('cone');
-    if (spec.kind === 'cone') expect(spec.damage).toBe(34); // > the base 16
+  it('fuses two Fire Blasts into a longer, wider, harder cone', () => {
+    const one = first(resolveSynergies(plays('fireBlast')));
+    const two = first(resolveSynergies(plays('fireBlast', 'fireBlast')));
+    if (one.kind !== 'cone' || two.kind !== 'cone') throw new Error('expected cones');
+    expect(two.range).toBeGreaterThan(one.range);
+    expect(two.arcCosSq).toBeLessThan(one.arcCosSq); // lower cos^2 = wider cone
+    expect(two.damage).toBeGreaterThan(one.damage);
   });
 
-  it('turns two blaze auras into three explosions at the player', () => {
-    const spec = first(resolveSynergies(plays('blazeAura', 'blazeAura')));
-    expect(spec).toMatchObject({ kind: 'pointAoe', origin: 'player', count: 3 });
+  it('keeps two Blaze Auras an aura — just bigger and hotter (spec 022)', () => {
+    const one = first(resolveSynergies(plays('blazeAura')));
+    const two = first(resolveSynergies(plays('blazeAura', 'blazeAura')));
+    if (one.kind !== 'aura' || two.kind !== 'aura') throw new Error('expected auras');
+    expect(two.radius).toBeGreaterThan(one.radius);
+    expect(two.pulseDamage).toBeGreaterThan(one.pulseDamage);
   });
 
   it('makes three dashes deal damage where one does not', () => {
@@ -79,8 +85,8 @@ describe('upgrade levels (spec 019)', () => {
       { id: 'fireBlast', level: 3 },
     ]));
     if (spec.kind !== 'cone') throw new Error('expected cone');
-    // fused base 34, upgrades = (2-1)+(3-1) = 3 => x(1 + 0.4*3) = x2.2
-    expect(spec.damage).toBe(Math.round(34 * 2.2));
+    // fused base 50, upgrades = (2-1)+(3-1) = 3 => x(1 + 0.4*3) = x2.2
+    expect(spec.damage).toBe(Math.round(50 * 2.2));
   });
 });
 
@@ -100,5 +106,15 @@ describe('new fire cards (spec 019)', () => {
   it('Fire Storm centres on the nearest foe to the cursor', () => {
     const spec = first(resolveSynergies(plays('fireStorm')));
     expect(spec).toMatchObject({ kind: 'pointAoe', origin: 'nearestEnemyToTarget' });
+  });
+
+  it('Burning Speed scales haste 30/42/45% and foe burn 3/8/9s by copies', () => {
+    const one = first(resolveSynergies(plays('burningSpeed')));
+    const two = first(resolveSynergies(plays('burningSpeed', 'burningSpeed')));
+    const three = first(resolveSynergies(plays('burningSpeed', 'burningSpeed', 'burningSpeed')));
+    if (one.kind !== 'burningSpeed' || two.kind !== 'burningSpeed' || three.kind !== 'burningSpeed') throw new Error('expected burningSpeed');
+    expect([one.hasteMult, two.hasteMult, three.hasteMult]).toEqual([1.3, 1.42, 1.45]);
+    expect([one.foeBurnDurationTicks, two.foeBurnDurationTicks, three.foeBurnDurationTicks]).toEqual([180, 480, 540]);
+    expect(one.selfBurnDps).toBe(4);
   });
 });

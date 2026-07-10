@@ -208,6 +208,49 @@ describe('mis-timed window slow', () => {
   });
 });
 
+describe('Burning Speed', () => {
+  const bs = (over: Partial<Extract<SpellSpec, { kind: 'burningSpeed' }>> = {}): SpellSpec => ({
+    kind: 'burningSpeed',
+    hasteMult: 1.5,
+    durationTicks: 30,
+    selfBurnDps: 4,
+    foeBurnRadius: 120,
+    foeBurnDps: 10,
+    foeBurnDurationTicks: 120,
+    ...over,
+  });
+
+  it('hastes the walk while active', () => {
+    const casted = run(arena(), [cast([bs({ durationTicks: 600 })])]).state;
+    const walk = { ...NEUTRAL_INPUT, moveX: 1 as const };
+    const hasted = run(casted, Array.from({ length: 10 }, () => walk)).state.player.position.x - casted.player.position.x;
+    const fresh = run(arena(), Array.from({ length: 10 }, () => walk)).state.player.position.x - CENTER.x;
+    expect(hasted).toBeGreaterThan(fresh);
+  });
+
+  it('self-burn drains health but never downs the player', () => {
+    const base = arena();
+    const low: CombatState = { ...base, player: { ...base.player, health: 5 } };
+    const after = run(low, [cast([bs({ durationTicks: 600, selfBurnDps: 100 })]), ...Array.from({ length: 70 }, () => NEUTRAL_INPUT)]).state;
+    expect(after.player.health).toBe(1); // floored, not defeated
+    expect(after.over).toBe(false);
+  });
+
+  it('ignites adjacent foes when it ends', () => {
+    const state = withEnemy(arena(), { id: 1, position: { x: CENTER.x + 50, y: CENTER.y } });
+    const after = run(state, [cast([bs()], CENTER), ...Array.from({ length: 70 }, () => NEUTRAL_INPUT)]).state;
+    expect(only(after).health).toBeLessThan(200); // caught the end-of-effect burn
+  });
+});
+
+describe('burning condition', () => {
+  it('burns an enemy over time and can kill it', () => {
+    const state = withEnemy(arena(), { id: 1, position: { x: CENTER.x + 50, y: CENTER.y }, health: 10, burningUntilTick: 100000, burningDps: 8 });
+    const after = run(state, Array.from({ length: 90 }, () => NEUTRAL_INPUT)).state;
+    expect(after.enemies).toHaveLength(0); // ~3 pulses of 4 > 10 hp
+  });
+});
+
 describe('determinism', () => {
   it('replays identically for the same seed and inputs', () => {
     const spec: SpellSpec = { kind: 'aura', radius: 95, pulseDamage: 5, pulseIntervalTicks: 12, durationTicks: 180 };

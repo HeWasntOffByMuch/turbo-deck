@@ -40,12 +40,13 @@ const TABLE: Record<SpellId, readonly SpellSpec[]> = {
   ],
   fireBlast: [
     { kind: 'cone', range: 118, arcCosSq: 0.34, damage: 16 },
-    { kind: 'cone', range: 158, arcCosSq: 0.25, damage: 34 },
+    // Two blasts fuse into a longer, wider cone that hits much harder.
+    { kind: 'cone', range: 200, arcCosSq: 0.18, damage: 50 },
   ],
   blazeAura: [
     { kind: 'aura', radius: 95, pulseDamage: 5, pulseIntervalTicks: 12, durationTicks: 3 * TPS },
-    // Two auras fuse into three staggered explosions at the player's feet.
-    { kind: 'pointAoe', origin: 'player', radius: 78, damage: 14, stunTicks: 0, delayTicks: 0, count: 3, spreadTicks: 9 },
+    // Two auras fuse into a *bigger, hotter* aura -- same behaviour, more area + damage.
+    { kind: 'aura', radius: 135, pulseDamage: 10, pulseIntervalTicks: 12, durationTicks: 3 * TPS },
   ],
   meteorStrike: [
     { kind: 'pointAoe', origin: 'target', radius: 92, damage: 40, stunTicks: 0, delayTicks: 30, count: 1, spreadTicks: 0 },
@@ -62,6 +63,11 @@ const TABLE: Record<SpellId, readonly SpellSpec[]> = {
   fireStorm: [
     { kind: 'pointAoe', origin: 'nearestEnemyToTarget', radius: 110, damage: 26, stunTicks: 0, delayTicks: 8, count: 1, spreadTicks: 0 },
     { kind: 'pointAoe', origin: 'nearestEnemyToTarget', radius: 150, damage: 46, stunTicks: 0, delayTicks: 8, count: 1, spreadTicks: 0 },
+  ],
+  burningSpeed: [
+    { kind: 'burningSpeed', hasteMult: 1.3, durationTicks: 7 * TPS, selfBurnDps: 4, foeBurnRadius: 95, foeBurnDps: 4, foeBurnDurationTicks: 3 * TPS },
+    { kind: 'burningSpeed', hasteMult: 1.42, durationTicks: 7 * TPS, selfBurnDps: 4, foeBurnRadius: 110, foeBurnDps: 4, foeBurnDurationTicks: 8 * TPS },
+    { kind: 'burningSpeed', hasteMult: 1.45, durationTicks: 7 * TPS, selfBurnDps: 4, foeBurnRadius: 120, foeBurnDps: 4, foeBurnDurationTicks: 9 * TPS },
   ],
   groundStomp: [
     { kind: 'rect', length: 165, halfWidth: 26, damage: 16 },
@@ -100,6 +106,9 @@ function scaleSpec(spec: SpellSpec, mult: number): SpellSpec {
       return { ...spec, amount: r(spec.amount) };
     case 'empower':
       return { ...spec, bonusDamage: r(spec.bonusDamage) };
+    case 'burningSpeed':
+      // Upgrades sharpen the offensive payoff (the foe burn), not the haste.
+      return { ...spec, foeBurnDps: r(spec.foeBurnDps) };
   }
 }
 

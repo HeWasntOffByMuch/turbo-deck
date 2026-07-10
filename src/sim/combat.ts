@@ -4,6 +4,7 @@ import {
   ARENA_WIDTH,
   ATTACK_ARC_COS_SQ,
   ATTACK_ROOT_TICKS,
+  BURN_PULSE_INTERVAL_TICKS,
   DEFENSE_RECOVERY_TICKS,
   DIAGONAL_SCALE,
   ENEMY_ATTACK_ARC_COS_SQ,
@@ -36,6 +37,7 @@ import {
   PLAYER_RADIUS,
   PLAYER_SLOW_MULTIPLIER,
   SPAWN_MIN_PLAYER_DIST,
+  TICK_RATE,
   WAVE_ATTACK_SPEED_GROWTH,
   WAVE_BASE_COUNT,
   WAVE_DAMAGE_GROWTH,
@@ -323,6 +325,11 @@ export function initCombat(seed: number, opts: CombatOptions = {}): CombatState 
     attackFlameCharges: 0,
     attackFlameBonus: 0,
     moveSlowUntilTick: 0,
+    moveHasteUntilTick: 0,
+    moveHasteMult: 1,
+    burningUntilTick: 0,
+    burningDps: 0,
+    pendingBurnBurst: null,
   };
   const enemies: EnemyState[] = [];
   let nextEnemyId = 1;
@@ -373,8 +380,10 @@ export function step(
   const dashing = tick < state.player.dashExpiresAtTick;
   const rooted = !dashing && (swingPending || startAttack || tick < state.player.moveLockUntil);
 
-  // A mis-timed window (spec 021) drags the walk speed down for a spell.
-  const moveScale = tick < state.player.moveSlowUntilTick ? PLAYER_SLOW_MULTIPLIER : 1;
+  // Walk speed: a mis-timed window (spec 021) drags it down, Burning Speed (spec 022) lifts it.
+  const slowActive = tick < state.player.moveSlowUntilTick;
+  const hasteActive = tick < state.player.moveHasteUntilTick;
+  const moveScale = (slowActive ? PLAYER_SLOW_MULTIPLIER : 1) * (hasteActive ? state.player.moveHasteMult : 1);
   const nextPos = dashing
     ? clampPlayerPos(state.player.position.x + state.player.dashDx, state.player.position.y + state.player.dashDy)
     : rooted
@@ -552,6 +561,11 @@ export function step(
         let shieldExpiresAtTick = player.shieldExpiresAtTick;
         let flameCharges = player.attackFlameCharges;
         let flameBonus = player.attackFlameBonus;
+        let moveHasteUntilTick = player.moveHasteUntilTick;
+        let moveHasteMult = player.moveHasteMult;
+        let burningUntilTick = player.burningUntilTick;
+        let burningDps = player.burningDps;
+        let pendingBurnBurst = player.pendingBurnBurst;
         const applyInstant = (hit: (e: EnemyState) => boolean, dmg: number): void => {
           enemies = enemies.map((enemy) => {
             if (!hit(enemy)) return enemy;
@@ -591,6 +605,19 @@ export function step(
             case 'empower':
               flameCharges += spell.charges;
               flameBonus = spell.bonusDamage;
+              break;
+            case 'burningSpeed':
+              moveHasteUntilTick = tick + spell.durationTicks;
+              moveHasteMult = spell.hasteMult;
+              burningUntilTick = tick + spell.durationTicks;
+              burningDps = spell.selfBurnDps;
+              // Ignite adjacent foes when the effect ends.
+              pendingBurnBurst = {
+                atTick: tick + spell.durationTicks,
+                radius: spell.foeBurnRadius,
+                dps: spell.foeBurnDps,
+                durationTicks: spell.foeBurnDurationTicks,
+              };
               break;
             case 'aura':
               auras = [
@@ -646,6 +673,11 @@ export function step(
           shieldExpiresAtTick,
           attackFlameCharges: flameCharges,
           attackFlameBonus: flameBonus,
+          moveHasteUntilTick,
+          moveHasteMult,
+          burningUntilTick,
+          burningDps,
+          pendingBurnBurst,
           ...(slowTicks > 0 ? { moveSlowUntilTick: tick + slowTicks } : {}),
         };
         if (slowTicks > 0) events.push({ kind: 'playerSlowed', tick, durationTicks: slowTicks });
@@ -719,6 +751,32 @@ export function step(
       events.push({ kind: 'aoeImpact', tick, at: { x: aoe.x, y: aoe.y }, radius: aoe.radius });
     }
     if (due.length > 0) player = { ...player, pendingAoes: player.pendingAoes.filter((a) => tick < a.impactTick) };
+  }
+
+  // --- Burning condition (spec 022): the end-of-effect burst, then DOT on cadence ---
+  // When Burning Speed expires, ignite foes standing near the player *now*.
+  if (player.pendingBurnBurst && tick >= player.pendingBurnBurst.atTick) {
+    const burst = player.pendingBurnBurst;
+    enemies = enemies.map((enemy) =>
+      circleHits(player.position, enemy.position, burst.radius, ENEMY_RADIUS)
+        ? { ...enemy, burningUntilTick: tick + burst.durationTicks, burningDps: burst.dps }
+        : enemy,
+    );
+    player = { ...player, pendingBurnBurst: null };
+  }
+  // Burning ticks integer chunks on a shared half-second cadence.
+  if (tick % BURN_PULSE_INTERVAL_TICKS === 0) {
+    const perPulse = (dps: number): number => Math.max(1, Math.round((dps * BURN_PULSE_INTERVAL_TICKS) / TICK_RATE));
+    enemies = enemies.map((enemy) => {
+      if (enemy.burningDps === undefined || enemy.burningUntilTick === undefined || tick >= enemy.burningUntilTick) return enemy;
+      const damage = perPulse(enemy.burningDps);
+      events.push({ kind: 'enemyHit', damage, tick, enemyId: enemy.id, at: enemy.position });
+      return aggro({ ...enemy, health: Math.max(0, enemy.health - damage) }, tick);
+    });
+    // Self-Burning drains the player but never downs them (min 1 hp).
+    if (tick < player.burningUntilTick && player.burningDps > 0) {
+      player = { ...player, health: Math.max(1, player.health - perPulse(player.burningDps)) };
+    }
   }
 
   // --- Remove dead enemies ---

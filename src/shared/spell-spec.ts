@@ -46,4 +46,14 @@ export type SpellSpec =
     }
   | { readonly kind: 'shield'; readonly amount: number; readonly durationTicks: number }
   // Conjure Flame: arm the next few cone casts with bonus fire damage.
-  | { readonly kind: 'empower'; readonly charges: number; readonly bonusDamage: number };
+  | { readonly kind: 'empower'; readonly charges: number; readonly bonusDamage: number }
+  // Burning Speed: haste + self-Burning for its duration, then Burning on adjacent foes.
+  | {
+      readonly kind: 'burningSpeed';
+      readonly hasteMult: number;
+      readonly durationTicks: number;
+      readonly selfBurnDps: number;
+      readonly foeBurnRadius: number;
+      readonly foeBurnDps: number;
+      readonly foeBurnDurationTicks: number;
+    };

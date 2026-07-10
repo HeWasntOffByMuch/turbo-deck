@@ -295,6 +295,7 @@ const CARD_SFX_ID: Record<SpellId, string> = {
   baskingPath: 'ignite',
   conjureFlame: 'charge',
   fireStorm: 'launch',
+  burningSpeed: 'ignite',
   groundStomp: 'quake',
   rockyRaise: 'shieldUp',
   buryFeet: 'rumble',
