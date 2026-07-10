@@ -20,6 +20,39 @@ describe('SFX library', () => {
   });
 });
 
+describe('gameOver "death song"', () => {
+  const segments = SFX.gameOver?.segments ?? [];
+  const pitched = segments.filter((s) => s.wave !== 'noise');
+  // The short lead phrase (the descending line) vs. the sustained tonic it lands on.
+  const HELD = 0.5;
+  const lead = pitched.filter((s) => s.duration < HELD).sort((a, b) => (a.delay ?? 0) - (b.delay ?? 0));
+  const held = pitched.filter((s) => s.duration >= HELD);
+
+  it('is built from discrete steady pitches, not formless glides', () => {
+    // Every note holds a single pitch (start === end) so the ear can anticipate
+    // and land on it — a glide (start !== end) would be the unsatisfying siren.
+    expect(pitched.length).toBeGreaterThan(0);
+    for (const seg of pitched) {
+      expect(seg.startFreq, 'a death-song note glides instead of holding a pitch').toBe(seg.endFreq);
+    }
+  });
+
+  it('descends step by step, then resolves onto a held low tonic', () => {
+    expect(lead.length).toBeGreaterThanOrEqual(3);
+    let prev = Infinity;
+    for (const note of lead) {
+      expect(note.startFreq, 'death song should step strictly downward').toBeLessThan(prev);
+      prev = note.startFreq;
+    }
+    // The sustained resolution sits at or below the lowest note of the descent.
+    const lowestLead = Math.min(...lead.map((s) => s.startFreq));
+    expect(held.length).toBeGreaterThan(0);
+    for (const note of held) {
+      expect(note.startFreq, 'the held resolution should not sit above the descent').toBeLessThanOrEqual(lowestLead);
+    }
+  });
+});
+
 describe('sfxForEvent routing', () => {
   const at = { x: 0, y: 0 };
   const attackEvents: GameEvent[] = [

@@ -118,11 +118,18 @@ export const SFX: Record<string, SfxSpec> = {
       { wave: 'square', startFreq: 392, endFreq: 262, duration: 0.16, gain: 0.2, delay: 0.14 },
     ],
   },
-  // Player defeated: long sad descending glide.
+  // Player defeated: a sad but resolved descending "lament". Discrete, steady
+  // pitches (not a formless glide) so the ear can anticipate each step — the
+  // descending A-minor tetrachord A4→G4→F4→E4 (the classic lament figure), then
+  // a resolution down to the tonic A held under a low octave for finality.
   gameOver: {
     segments: [
-      { wave: 'sawtooth', startFreq: 440, endFreq: 110, duration: 0.5, gain: 0.24 },
-      { wave: 'square', startFreq: 330, endFreq: 82, duration: 0.6, gain: 0.18, delay: 0.12 },
+      { wave: 'square', startFreq: 440, endFreq: 440, duration: 0.16, gain: 0.22 }, // A4
+      { wave: 'square', startFreq: 392, endFreq: 392, duration: 0.16, gain: 0.21, delay: 0.17 }, // G4
+      { wave: 'square', startFreq: 349, endFreq: 349, duration: 0.16, gain: 0.2, delay: 0.34 }, // F4
+      { wave: 'square', startFreq: 330, endFreq: 330, duration: 0.18, gain: 0.2, delay: 0.51 }, // E4
+      { wave: 'triangle', startFreq: 220, endFreq: 220, duration: 0.7, gain: 0.22, delay: 0.72 }, // A3 (tonic)
+      { wave: 'sawtooth', startFreq: 110, endFreq: 110, duration: 0.7, gain: 0.16, delay: 0.72 }, // A2 under it
     ],
   },
   // Bonus card drawn: cheerful pickup blip up an octave.
