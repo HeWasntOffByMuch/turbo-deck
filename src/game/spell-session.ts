@@ -50,10 +50,19 @@ export const CARD_DRAW_DELAY_TICKS = Math.round(1.5 * TICK_RATE);
 export const MISPLAY_SLOW_TICKS = Math.round(1.5 * TICK_RATE);
 
 export type RewardKind = 'remove' | 'upgrade' | 'addFire';
-/** One of the three deck edits offered when a wave is cleared (spec 019). */
+/**
+ * One of the three deck edits offered when a wave is cleared (spec 019). Only
+ * addFire carries a card up front; Remove/Upgrade open a picker instead (spec 022).
+ */
 export interface RewardOffer {
   readonly kind: RewardKind;
-  readonly cardId: SpellId;
+  readonly cardId?: SpellId;
+}
+
+/** The open card picker for a chosen Remove/Upgrade action (spec 022). */
+export interface RewardPick {
+  readonly kind: 'remove' | 'upgrade';
+  readonly candidates: readonly SpellId[];
 }
 
 export interface SpellGameState {
@@ -67,6 +76,8 @@ export interface SpellGameState {
   readonly windowClosesAtTick: number | null;
   /** Three deck-edit offers shown after a wave clear, or null when none pending. */
   readonly pendingReward: readonly RewardOffer[] | null;
+  /** An open card picker after choosing Remove/Upgrade, or null. */
+  readonly pendingPick: RewardPick | null;
   /** Session RNG for reward rolls, kept separate from the sim/deck streams. */
   readonly rng: Rng;
 }
@@ -84,6 +95,8 @@ export interface SpellInput {
   readonly playHandIndex?: 0 | 1 | 2 | 3;
   /** Take the reward offer at this index (only while one is pending). */
   readonly chooseReward?: 0 | 1 | 2;
+  /** Pick a card from the open Remove/Upgrade picker (index into its candidates). */
+  readonly chooseCard?: number;
   /** Summon the next escalating wave. */
   readonly spawnWave?: boolean;
 }
@@ -111,37 +124,28 @@ export function initSpellGame(seed: number, ids?: readonly SpellId[]): SpellGame
     windowCards: [],
     windowClosesAtTick: null,
     pendingReward: null,
+    pendingPick: null,
     rng: Rng.fromSeed((seed ^ 0x5f356495) >>> 0),
   };
 }
 
-/** Roll three deck-edit offers: thin a card, upgrade a card, or gain a fire card. */
-function rollRewards(deck: SpellDeck, rng: Rng): { offers: RewardOffer[]; rng: Rng } {
-  const present = deckCardIds(deck);
-  let r = rng;
-  const pick = <T>(arr: readonly T[]): T => {
-    const [i, next] = r.nextInt(0, arr.length - 1);
-    r = next;
-    return arr[i] as T;
-  };
+/**
+ * Roll the three wave-clear offers. Remove and Upgrade are chosen from a picker
+ * later (spec 022), so they carry no card here; only the fire gift is rolled now.
+ */
+function rollRewards(rng: Rng): { offers: RewardOffer[]; rng: Rng } {
+  const [i, r] = rng.nextInt(0, FIRE_CARD_IDS.length - 1);
   const offers: RewardOffer[] = [
-    { kind: 'remove', cardId: pick(present) },
-    { kind: 'upgrade', cardId: pick(present) },
-    { kind: 'addFire', cardId: pick(FIRE_CARD_IDS) },
+    { kind: 'remove' },
+    { kind: 'upgrade' },
+    { kind: 'addFire', cardId: FIRE_CARD_IDS[i] as SpellId },
   ];
   return { offers, rng: r };
 }
 
-function applyReward(deck: SpellDeck, offer: RewardOffer): SpellDeck {
-  switch (offer.kind) {
-    case 'remove':
-      // Never thin the deck below a full hand, or slots could never refill.
-      return deckSize(deck) > HAND_SIZE ? removeOneCard(deck, offer.cardId) : deck;
-    case 'upgrade':
-      return upgradeOneCard(deck, offer.cardId);
-    case 'addFire':
-      return addCard(deck, offer.cardId);
-  }
+/** Cards the Upgrade reward may target: any non-regular card in the deck (spec 022). */
+function upgradeCandidates(deck: SpellDeck): SpellId[] {
+  return deckCardIds(deck).filter((id) => id !== 'attack' && id !== 'dash');
 }
 
 export function stepSpellGame(state: SpellGameState, input: SpellInput): { state: SpellGameState; events: SpellGameEvent[] } {
@@ -150,17 +154,44 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
   let windowCards = state.windowCards;
   let windowClosesAtTick = state.windowClosesAtTick;
   let pendingReward = state.pendingReward;
+  let pendingPick = state.pendingPick;
   // Slots emptied this tick; their delayed refill is scheduled after combat steps.
   const emptied: number[] = [];
 
-  // --- Take a wave reward, if one is pending and the player picks an offer ---
+  // --- Reward step 1: choose an action. addFire applies now; Remove/Upgrade open a picker. ---
   if (pendingReward !== null && input.chooseReward !== undefined) {
     const offer = pendingReward[input.chooseReward];
     if (offer) {
-      deck = applyReward(deck, offer);
-      events.push({ kind: 'rewardChosen', offer });
+      if (offer.kind === 'addFire' && offer.cardId) {
+        deck = addCard(deck, offer.cardId);
+        events.push({ kind: 'rewardChosen', offer });
+      } else if (offer.kind === 'remove') {
+        // Never let the deck be thinned below a full hand (spec 021 floor).
+        const candidates = deckSize(deck) > HAND_SIZE ? deckCardIds(deck) : [];
+        if (candidates.length > 0) pendingPick = { kind: 'remove', candidates };
+      } else if (offer.kind === 'upgrade') {
+        const candidates = upgradeCandidates(deck);
+        if (candidates.length > 0) pendingPick = { kind: 'upgrade', candidates };
+      }
       pendingReward = null;
     }
+  }
+
+  // --- Reward step 2: pick the card the chosen action targets ---
+  if (pendingPick !== null && input.chooseCard !== undefined) {
+    const cardId = pendingPick.candidates[input.chooseCard];
+    if (cardId) {
+      if (pendingPick.kind === 'remove') {
+        if (deckSize(deck) > HAND_SIZE) {
+          deck = removeOneCard(deck, cardId);
+          events.push({ kind: 'rewardChosen', offer: { kind: 'remove', cardId } });
+        }
+      } else {
+        deck = upgradeOneCard(deck, cardId);
+        events.push({ kind: 'rewardChosen', offer: { kind: 'upgrade', cardId } });
+      }
+    }
+    pendingPick = null;
   }
 
   // --- Play a card into the synergy window ---
@@ -214,8 +245,8 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
     parry: false,
     dodge: false,
     ...(externalEffect ? { externalEffect } : {}),
-    // A wave cannot be summoned while a reward is still on offer.
-    ...(input.spawnWave && pendingReward === null ? { spawnWave: true } : {}),
+    // A wave cannot be summoned while a reward or its picker is still open.
+    ...(input.spawnWave && pendingReward === null && pendingPick === null ? { spawnWave: true } : {}),
   };
 
   const hadEnemies = state.combat.enemies.length > 0;
@@ -225,8 +256,8 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
 
   // --- Wave cleared: offer three deck edits (once) ---
   let rng = state.rng;
-  if (pendingReward === null && hadEnemies && combatResult.state.enemies.length === 0 && combatResult.state.waveNumber >= 1) {
-    const rolled = rollRewards(deck, rng);
+  if (pendingReward === null && pendingPick === null && hadEnemies && combatResult.state.enemies.length === 0 && combatResult.state.waveNumber >= 1) {
+    const rolled = rollRewards(rng);
     pendingReward = rolled.offers;
     rng = rolled.rng;
     events.push({ kind: 'rewardOffered', offers: rolled.offers });
@@ -254,7 +285,7 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
   }
 
   return {
-    state: { combat: combatResult.state, deck, refillAtTick, windowCards, windowClosesAtTick, pendingReward, rng },
+    state: { combat: combatResult.state, deck, refillAtTick, windowCards, windowClosesAtTick, pendingReward, pendingPick, rng },
     events,
   };
 }

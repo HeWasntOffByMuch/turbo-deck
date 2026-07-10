@@ -26,6 +26,7 @@ export class SpellInputCapture {
   private queuedPlay: 0 | 1 | 2 | 3 | null = null;
   private queuedWave = false;
   private queuedReward: 0 | 1 | 2 | null = null;
+  private queuedPick: number | null = null;
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
@@ -68,6 +69,9 @@ export class SpellInputCapture {
   queueReward(index: 0 | 1 | 2): void {
     this.queuedReward = index;
   }
+  queuePick(index: number): void {
+    this.queuedPick = index;
+  }
 
   mouseScreen(): ScreenPoint {
     return this.mouse;
@@ -89,6 +93,7 @@ export class SpellInputCapture {
 
     const play = this.queuedPlay;
     const reward = this.queuedReward;
+    const pick = this.queuedPick;
     const input: SpellInput = {
       moveX,
       moveY,
@@ -98,11 +103,13 @@ export class SpellInputCapture {
       targetY: this.mouse.y / scale,
       ...(play !== null ? { playHandIndex: play } : {}),
       ...(reward !== null ? { chooseReward: reward } : {}),
+      ...(pick !== null ? { chooseCard: pick } : {}),
       ...(this.queuedWave ? { spawnWave: true } : {}),
     };
 
     this.queuedPlay = null;
     this.queuedReward = null;
+    this.queuedPick = null;
     this.queuedWave = false;
     return input;
   }

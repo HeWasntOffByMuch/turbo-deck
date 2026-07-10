@@ -63,6 +63,11 @@ function slotsWithId(state: SpellGameState, id: SpellId): number[] {
   return state.deck.hand.flatMap((c, i) => (c && c.id === id ? [i] : []));
 }
 
+/** Count copies of `id` across the whole deck. */
+function countId(deck: SpellDeck, id: SpellId): number {
+  return [...deck.drawPile, ...deck.hand.filter((c) => c !== null), ...deck.discardPile].filter((c) => c && c.id === id).length;
+}
+
 describe('spell session', () => {
   it('resolves a lone card as its base spell when the window closes', () => {
     const state = initSpellGame(7);
@@ -180,7 +185,12 @@ describe('refill never stalls (regression)', () => {
         { kind: 'addFire', cardId: 'meteorStrike' },
       ],
     };
-    const chosen = run(start, [{ ...NEUTRAL, chooseReward: 0 }]).state;
+    // Choose Remove (opens the picker), then pick meteorStrike.
+    const picking = run(start, [{ ...NEUTRAL, chooseReward: 0 }]).state;
+    expect(picking.pendingPick?.kind).toBe('remove');
+    const idx = (picking.pendingPick?.candidates ?? []).indexOf('meteorStrike');
+    expect(idx).toBeGreaterThanOrEqual(0);
+    const chosen = run(picking, [{ ...NEUTRAL, chooseCard: idx }]).state;
     expect(chosen.deck.hand[0]).toBeNull(); // removal emptied the slot
 
     const after = run(chosen, Array.from({ length: CARD_DRAW_DELAY_TICKS + 2 }, () => NEUTRAL)).state;
@@ -240,5 +250,50 @@ describe('wave rewards', () => {
     expect(cleared.pendingReward).not.toBeNull();
     const blocked = run(cleared, [{ ...NEUTRAL, spawnWave: true }]).state;
     expect(blocked.combat.waveNumber).toBe(1); // no new wave spawned
+  });
+});
+
+describe('reward pickers (spec 022)', () => {
+  const clearWave = (seed = 1): SpellGameState => {
+    const { state, attackSlot } = almostClearedWave(seed);
+    return run(state, [play(attackSlot), ...Array.from({ length: SYNERGY_WINDOW_TICKS + 2 }, () => NEUTRAL)]).state;
+  };
+
+  it('Remove opens a picker of every deck card, and the chosen one is removed', () => {
+    const cleared = clearWave();
+    const picking = run(cleared, [{ ...NEUTRAL, chooseReward: 0 }]).state;
+    expect(picking.pendingReward).toBeNull();
+    expect(picking.pendingPick?.kind).toBe('remove');
+    const cands = picking.pendingPick?.candidates ?? [];
+    expect(cands.length).toBeGreaterThan(0);
+    const target = cands[0] as SpellId;
+    const before = countId(picking.deck, target);
+    const done = run(picking, [{ ...NEUTRAL, chooseCard: 0 }]).state;
+    expect(done.pendingPick).toBeNull();
+    expect(countId(done.deck, target)).toBe(before - 1);
+  });
+
+  it('Upgrade offers only non-attack, non-dash cards and raises the chosen level', () => {
+    const cleared = clearWave();
+    const picking = run(cleared, [{ ...NEUTRAL, chooseReward: 1 }]).state;
+    expect(picking.pendingPick?.kind).toBe('upgrade');
+    const cands = picking.pendingPick?.candidates ?? [];
+    expect(cands).not.toContain('attack');
+    expect(cands).not.toContain('dash');
+    expect(cands.length).toBeGreaterThan(0);
+    const target = cands[0] as SpellId;
+    const topLevel = (s: SpellGameState): number =>
+      Math.max(...[...s.deck.drawPile, ...s.deck.discardPile, ...s.deck.hand.filter((c) => c)].filter((c) => c && c.id === target).map((c) => (c as { level: number }).level));
+    const before = topLevel(picking);
+    const done = run(picking, [{ ...NEUTRAL, chooseCard: 0 }]).state;
+    expect(done.pendingPick).toBeNull();
+    expect(topLevel(done)).toBe(before + 1);
+  });
+
+  it('ignores Spawn Wave while a card picker is open', () => {
+    const picking = run(clearWave(), [{ ...NEUTRAL, chooseReward: 0 }]).state;
+    expect(picking.pendingPick).not.toBeNull();
+    const blocked = run(picking, [{ ...NEUTRAL, spawnWave: true }]).state;
+    expect(blocked.combat.waveNumber).toBe(1);
   });
 });

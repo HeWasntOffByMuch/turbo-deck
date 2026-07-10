@@ -49,8 +49,6 @@ const STYLE = `
 .sp-hint { color: #8a8a9a; font-size: 12px; margin-top: 10px; }
 `;
 
-const REWARD_VERB: Record<string, string> = { remove: 'Remove', upgrade: 'Upgrade', addFire: 'Add' };
-
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -67,9 +65,14 @@ export class SpellHud {
   private readonly rewardTitle: HTMLElement;
   private readonly rewardRow: HTMLElement;
   private readonly rewardBtns: HTMLButtonElement[] = [];
+  private readonly pickTitle: HTMLElement;
+  private readonly pickRow: HTMLElement;
+  private readonly input: SpellInputCapture;
   private lastHandKey = '';
+  private lastPickKey = '';
 
   constructor(root: HTMLElement, input: SpellInputCapture) {
+    this.input = input;
     const style = el('style');
     style.textContent = STYLE;
     document.head.appendChild(style);
@@ -112,6 +115,13 @@ export class SpellHud {
     this.rewardRow.style.display = 'none';
     root.append(this.rewardTitle, this.rewardRow);
 
+    // Card picker: shown after choosing Remove/Upgrade, one button per candidate.
+    this.pickTitle = el('div', 'sp-reward-title');
+    this.pickRow = el('div', 'sp-controls');
+    this.pickTitle.style.display = 'none';
+    this.pickRow.style.display = 'none';
+    root.append(this.pickTitle, this.pickRow);
+
     const controls = el('div', 'sp-controls');
     this.waveBtn = el('button', 'sp-btn sp-wave');
     this.waveBtn.addEventListener('click', () => input.queueWave());
@@ -136,6 +146,8 @@ export class SpellHud {
     this.renderBanner(combat.enemies, combat.over, slowed);
     this.renderHand(state.deck.hand, state.refillAtTick, combat.tick);
     this.renderReward(state.pendingReward);
+    this.renderPick(state.pendingPick);
+    this.waveBtn.disabled = state.pendingReward !== null || state.pendingPick !== null;
 
     const next = combat.waveNumber + 1;
     this.waveBtn.innerHTML = `SPAWN WAVE ${next}<br><small>${WAVE_BASE_COUNT + next} enemies, tougher</small>`;
@@ -145,16 +157,39 @@ export class SpellHud {
     const show = offers !== null;
     this.rewardTitle.style.display = show ? '' : 'none';
     this.rewardRow.style.display = show ? '' : 'none';
-    this.waveBtn.disabled = show;
     if (!offers) return;
     offers.forEach((offer: RewardOffer, i) => {
       const btn = this.rewardBtns[i];
       if (!btn) return;
-      const name = SPELL_CARDS[offer.cardId].name;
-      const verb = REWARD_VERB[offer.kind] ?? offer.kind;
-      const sub =
-        offer.kind === 'remove' ? 'thin your deck' : offer.kind === 'upgrade' ? '+1 level, more damage' : 'a fresh fire card';
-      btn.innerHTML = `${verb.toUpperCase()}: ${name}<br><small>${sub}</small>`;
+      if (offer.kind === 'addFire' && offer.cardId) {
+        btn.innerHTML = `ADD: ${SPELL_CARDS[offer.cardId].name}<br><small>a fresh fire card</small>`;
+      } else if (offer.kind === 'remove') {
+        btn.innerHTML = 'REMOVE A CARD<br><small>choose any to thin</small>';
+      } else {
+        btn.innerHTML = 'UPGRADE A CARD<br><small>choose one (not attack/dash)</small>';
+      }
+    });
+  }
+
+  private renderPick(pick: SpellGameState['pendingPick']): void {
+    const show = pick !== null;
+    this.pickTitle.style.display = show ? '' : 'none';
+    this.pickRow.style.display = show ? '' : 'none';
+    if (!pick) {
+      this.lastPickKey = '';
+      return;
+    }
+    this.pickTitle.textContent = pick.kind === 'remove' ? 'Remove which card?' : 'Upgrade which card?';
+    // Rebuild the candidate buttons only when the list changes.
+    const key = `${pick.kind}|${pick.candidates.join(',')}`;
+    if (key === this.lastPickKey) return;
+    this.lastPickKey = key;
+    this.pickRow.replaceChildren();
+    pick.candidates.forEach((id, i) => {
+      const btn = el('button', 'sp-btn sp-reward');
+      btn.textContent = SPELL_CARDS[id].name;
+      btn.addEventListener('click', () => this.input.queuePick(i));
+      this.pickRow.appendChild(btn);
     });
   }
 
