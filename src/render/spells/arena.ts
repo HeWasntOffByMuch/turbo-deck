@@ -7,6 +7,7 @@ import {
   ENEMY_RADIUS,
   ENEMY_RECOVERY_TICKS,
   ENEMY_WINDUP_TICKS,
+  MAX_ADRENALINE,
   PLAYER_RADIUS,
 } from '../../sim/constants.js';
 import type { SpellGameEvent, SpellGameState } from '../../game/spell-session.js';
@@ -116,6 +117,10 @@ export class SpellArenaView {
           }
         }
         if (e.ids.length >= 2) this.spawn(origin, 'SYNERGY!', '#ffd76a', -1.3);
+      } else if (e.kind === 'adrenalineChanged') {
+        const at = this.worldToScreen(player.position);
+        if (e.delta > 0) this.spawn(at, '+ADR', '#ff8a5a', -1.1);
+        else this.spawn(at, 'ADRENALINE!', '#ff5a3a', -1.4);
       }
     }
   }
@@ -340,6 +345,24 @@ export class SpellArenaView {
       for (let i = 0; i < 3; i++) {
         ctx.beginPath();
         ctx.arc(p.x - r + i * r, p.y - r - 3, 2.4 + Math.sin(this.frame * 0.3 + i), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Adrenaline: a heat glow around the player that grows with the banked charge,
+    // plus a small ember pip per point over the head, so the resource reads in-arena.
+    if (player.adrenaline > 0) {
+      const frac = player.adrenaline / MAX_ADRENALINE;
+      const pulse = 0.5 + 0.5 * Math.sin(this.frame * 0.22);
+      ctx.strokeStyle = `rgba(255,${Math.round(120 - 60 * frac)},50,${0.35 + 0.4 * frac * pulse})`;
+      ctx.lineWidth = 2 + 3 * frac;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r + 5 + 3 * frac, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#ff6a3a';
+      for (let i = 0; i < player.adrenaline; i++) {
+        ctx.beginPath();
+        ctx.arc(p.x - (player.adrenaline - 1) * 3.5 + i * 7, p.y - r - 26, 2.6, 0, Math.PI * 2);
         ctx.fill();
       }
     }

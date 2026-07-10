@@ -1,6 +1,7 @@
 import { HAND_SIZE, SPELL_CARDS, type CardSet, type SpellCard, type SpellHand } from '../../cards/spells.js';
+import { ADRENALINE_DAMAGE_PER_POINT } from '../../cards/synergy.js';
 import type { RewardOffer, SpellGameState } from '../../game/spell-session.js';
-import { TICK_RATE, WAVE_BASE_COUNT } from '../../sim/constants.js';
+import { MAX_ADRENALINE, TICK_RATE, WAVE_BASE_COUNT } from '../../sim/constants.js';
 import type { SpellInputCapture } from './input.js';
 
 /**
@@ -46,6 +47,11 @@ const STYLE = `
 .sp-reward-title { color: #7affc0; font-weight: 700; font-size: 13px; margin: 12px 2px 2px; }
 .sp-window { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #3a3a4e; vertical-align: middle; }
 .sp-window.open { background: #ffd76a; box-shadow: 0 0 8px #ffd76a; }
+.sp-adr { display: inline-flex; gap: 4px; align-items: center; }
+.sp-adr .pip { width: 13px; height: 13px; border-radius: 3px; background: #37232a; border: 1px solid #52333a;
+  transform: skewX(-12deg); transition: background .12s ease, box-shadow .12s ease; }
+.sp-adr .pip.on { background: linear-gradient(#ff8a3a, #ff4d3d); border-color: #ffb066; box-shadow: 0 0 7px rgba(255,90,50,.7); }
+.sp-adr .bonus { color: #ff8a5a; font-weight: 800; font-size: 12px; margin-left: 4px; min-width: 34px; }
 .sp-hint { color: #8a8a9a; font-size: 12px; margin-top: 10px; }
 `;
 
@@ -60,6 +66,8 @@ export class SpellHud {
   private readonly hp: HTMLElement;
   private readonly waveText: HTMLElement;
   private readonly windowPip: HTMLElement;
+  private readonly adrPips: HTMLElement[] = [];
+  private readonly adrBonus: HTMLElement;
   private readonly cards: HTMLElement[] = [];
   private readonly waveBtn: HTMLButtonElement;
   private readonly rewardTitle: HTMLElement;
@@ -85,8 +93,20 @@ export class SpellHud {
     const windowWrap = el('span');
     this.windowPip = el('span', 'sp-window');
     windowWrap.append(document.createTextNode('Window '), this.windowPip);
+    // Adrenaline gauge: five skewed pips that fill up, plus the live empower bonus.
+    const adrWrap = el('span', 'sp-adr');
+    const adrLabel = el('b');
+    adrLabel.textContent = 'ADR';
+    adrWrap.appendChild(adrLabel);
+    for (let i = 0; i < MAX_ADRENALINE; i++) {
+      const pip = el('span', 'pip');
+      this.adrPips.push(pip);
+      adrWrap.appendChild(pip);
+    }
+    this.adrBonus = el('span', 'bonus');
+    adrWrap.appendChild(this.adrBonus);
     this.banner = el('span', 'sp-banner');
-    status.append(this.hp, this.waveText, windowWrap, this.banner);
+    status.append(this.hp, this.waveText, adrWrap, windowWrap, this.banner);
     root.appendChild(status);
 
     const hand = el('div', 'sp-hand');
@@ -130,7 +150,7 @@ export class SpellHud {
 
     const hint = el('div', 'sp-hint');
     hint.textContent =
-      'move: WASD · aim: mouse · play card: 1–4 / click · spawn wave: Q · play two of a kind fast for a synergy';
+      'move: WASD · aim: mouse · play card: 1–4 / click · spawn wave: Q · Attack interrupts wind-ups & banks ADR · dump ADR into a synergy';
     root.appendChild(hint);
   }
 
@@ -141,6 +161,7 @@ export class SpellHud {
     this.hp.innerHTML = `<b>HP</b> ${Math.ceil(player.health)}/${player.maxHealth}`;
     this.waveText.innerHTML = `<b>Wave</b> ${combat.waveNumber}`;
     this.windowPip.classList.toggle('open', state.windowClosesAtTick !== null);
+    this.renderAdrenaline(player.adrenaline);
 
     const slowed = combat.tick < player.moveSlowUntilTick;
     this.renderBanner(combat.enemies, combat.over, slowed);
@@ -151,6 +172,12 @@ export class SpellHud {
 
     const next = combat.waveNumber + 1;
     this.waveBtn.innerHTML = `SPAWN WAVE ${next}<br><small>${WAVE_BASE_COUNT + next} enemies, tougher</small>`;
+  }
+
+  private renderAdrenaline(adrenaline: number): void {
+    this.adrPips.forEach((pip, i) => pip.classList.toggle('on', i < adrenaline));
+    const bonus = Math.round(ADRENALINE_DAMAGE_PER_POINT * adrenaline * 100);
+    this.adrBonus.textContent = bonus > 0 ? `+${bonus}%` : '';
   }
 
   private renderReward(offers: SpellGameState['pendingReward']): void {
