@@ -23,6 +23,7 @@ import {
   GRAZE_WANDER_RADIUS,
   INITIAL_ENEMIES,
   MANA_REGEN_PER_TICK,
+  MAX_ADRENALINE,
   MAX_DAMAGE_REDUCTION,
   MAX_ENEMIES,
   MOVE_SPEED_PER_TICK,
@@ -330,6 +331,7 @@ export function initCombat(seed: number, opts: CombatOptions = {}): CombatState 
     burningUntilTick: 0,
     burningDps: 0,
     pendingBurnBurst: null,
+    adrenaline: 0,
   };
   const enemies: EnemyState[] = [];
   let nextEnemyId = 1;
@@ -566,6 +568,8 @@ export function step(
         let burningUntilTick = player.burningUntilTick;
         let burningDps = player.burningDps;
         let pendingBurnBurst = player.pendingBurnBurst;
+        // A basic-attack (interrupt) cone that connects banks adrenaline (spec 023).
+        let basicHit = false;
         const applyInstant = (hit: (e: EnemyState) => boolean, dmg: number): void => {
           enemies = enemies.map((enemy) => {
             if (!hit(enemy)) return enemy;
@@ -580,7 +584,31 @@ export function step(
               // Conjure Flame arms cone casts with bonus fire damage; each cone spends one charge.
               const bonus = flameCharges > 0 ? flameBonus : 0;
               if (flameCharges > 0) flameCharges -= 1;
-              applyInstant((e) => coneHits(castPos, e.position, ux, uy, spell.range, spell.arcCosSq, ENEMY_RADIUS), spell.damage + bonus);
+              const dmg = spell.damage + bonus;
+              const inCone = (e: EnemyState): boolean => coneHits(castPos, e.position, ux, uy, spell.range, spell.arcCosSq, ENEMY_RADIUS);
+              if (!spell.interrupt) {
+                applyInstant(inCone, dmg);
+                break;
+              }
+              // Basic attack: damage, interrupt any wind-up it catches, and flag the hit
+              // so adrenaline banks once for the whole cast.
+              enemies = enemies.map((enemy) => {
+                if (!inCone(enemy)) return enemy;
+                basicHit = true;
+                const health = Math.max(0, enemy.health - dmg);
+                events.push({ kind: 'enemyHit', damage: dmg, tick, enemyId: enemy.id, at: enemy.position });
+                // Cancel a slam in progress: the enemy drops to recovery and never lands it.
+                const interrupted =
+                  enemy.behavior === 'hunting' && enemy.phase === 'windup'
+                    ? {
+                        phase: 'recovery' as const,
+                        phaseEndsAtTick: tick + scaleDuration(ENEMY_RECOVERY_TICKS, enemy.attackSpeedMult ?? 1),
+                        attackAim: null,
+                        incomingAttackOutcome: 'none' as const,
+                      }
+                    : {};
+                return aggro({ ...enemy, health, ...interrupted }, tick);
+              });
               break;
             }
             case 'rect':
@@ -659,8 +687,15 @@ export function step(
           }
         }
         const slowTicks = effect.playerSlowTicks ?? 0;
+        // Adrenaline (spec 023): a connecting basic attack banks +1; a synergy spends
+        // the whole bank. Spend is applied after the gain so a double-attack fusion
+        // (both a basic hit and a synergy) nets to zero.
+        let adrenaline = player.adrenaline;
+        if (basicHit) adrenaline = Math.min(MAX_ADRENALINE, adrenaline + 1);
+        if (effect.spendAdrenaline) adrenaline = 0;
         player = {
           ...player,
+          adrenaline,
           auras,
           pendingAoes,
           dashDx,
@@ -681,6 +716,9 @@ export function step(
           ...(slowTicks > 0 ? { moveSlowUntilTick: tick + slowTicks } : {}),
         };
         if (slowTicks > 0) events.push({ kind: 'playerSlowed', tick, durationTicks: slowTicks });
+        if (adrenaline !== state.player.adrenaline) {
+          events.push({ kind: 'adrenalineChanged', tick, value: adrenaline, delta: adrenaline - state.player.adrenaline });
+        }
         events.push({ kind: 'spellCast', tick, spellCount: effect.spells.length });
         break;
       }

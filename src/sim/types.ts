@@ -120,6 +120,9 @@ export interface PlayerState {
   readonly burningDps: number;
   /** Burn foes near the player when Burning Speed ends; null when none pending. */
   readonly pendingBurnBurst: BurnBurst | null;
+  // --- Adrenaline (spec 023); 0 leaves everything untouched. ---
+  /** Banked by basic attacks that connect (0..MAX_ADRENALINE); synergies spend it. */
+  readonly adrenaline: number;
 }
 
 /**
@@ -246,6 +249,8 @@ export type ExternalEffect =
       readonly targetY: number;
       /** Slow the player's walk for this many ticks (mis-timed window); 0/absent = none. */
       readonly playerSlowTicks?: number;
+      /** Spend all banked adrenaline (a synergy cast); the empower is already baked into the specs. */
+      readonly spendAdrenaline?: boolean;
     };
 
 export interface InputFrame {
@@ -292,4 +297,6 @@ export type SimEvent =
   | { readonly kind: 'aoeImpact'; readonly tick: number; readonly at: Vec2; readonly radius: number }
   | { readonly kind: 'dashPerformed'; readonly tick: number }
   | { readonly kind: 'playerSlowed'; readonly tick: number; readonly durationTicks: number }
+  // --- Adrenaline (spec 023): net change this tick; delta > 0 gained, < 0 spent. ---
+  | { readonly kind: 'adrenalineChanged'; readonly tick: number; readonly value: number; readonly delta: number }
   | { readonly kind: 'waveSpawned'; readonly tick: number; readonly waveNumber: number; readonly count: number };

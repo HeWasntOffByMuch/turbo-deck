@@ -56,6 +56,10 @@ export const PLAYER_SLOW_MULTIPLIER = 0.4;
 // stays deterministic integer chunks (dps * interval / TICK_RATE per pulse).
 export const BURN_PULSE_INTERVAL_TICKS = 30;
 
+// Adrenaline (spec 023): a basic attack that connects banks one point, capped
+// here; a synergy spends the whole bank to empower its cast.
+export const MAX_ADRENALINE = 5;
+
 export const PLAYER_MAX_MANA = 10;
 export const MANA_REGEN_PER_TICK = PLAYER_MAX_MANA / (5 * TICK_RATE);
 

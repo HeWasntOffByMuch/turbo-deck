@@ -10,7 +10,9 @@
  * shields and auras attach to the player.
  */
 export type SpellSpec =
-  | { readonly kind: 'cone'; readonly range: number; readonly arcCosSq: number; readonly damage: number }
+  // `interrupt` marks a basic-attack cone: it cancels an enemy wind-up it hits
+  // and banks adrenaline in the sim. Ordinary cones (Fire Blast) leave it unset.
+  | { readonly kind: 'cone'; readonly range: number; readonly arcCosSq: number; readonly damage: number; readonly interrupt?: boolean }
   | { readonly kind: 'rect'; readonly length: number; readonly halfWidth: number; readonly damage: number }
   | {
       readonly kind: 'aura';

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SpellSpec } from '../shared/spell-spec.js';
-import { ARENA_HEIGHT, ARENA_WIDTH, ENEMY_STANDOFF } from './constants.js';
+import { ARENA_HEIGHT, ARENA_WIDTH, ENEMY_STANDOFF, MAX_ADRENALINE } from './constants.js';
 import { initCombat, step } from './combat.js';
 import { NEUTRAL_INPUT, type CombatState, type EnemyState, type InputFrame, type SimEvent } from './types.js';
 
@@ -248,6 +248,91 @@ describe('burning condition', () => {
     const state = withEnemy(arena(), { id: 1, position: { x: CENTER.x + 50, y: CENTER.y }, health: 10, burningUntilTick: 100000, burningDps: 8 });
     const after = run(state, Array.from({ length: 90 }, () => NEUTRAL_INPUT)).state;
     expect(after.enemies).toHaveLength(0); // ~3 pulses of 4 > 10 hp
+  });
+});
+
+describe('basic-attack interrupt (spec 023)', () => {
+  const BASIC: SpellSpec = { kind: 'cone', range: 72, arcCosSq: 0.5, damage: 12, interrupt: true };
+  const PLAIN: SpellSpec = { kind: 'cone', range: 72, arcCosSq: 0.5, damage: 12 };
+
+  /** A hunting enemy poised to slam the player, one tick from its wind-up ending. */
+  const aboutToSlam = (state: CombatState): CombatState =>
+    withEnemy(state, {
+      id: 1,
+      position: { x: CENTER.x + 40, y: CENTER.y },
+      behavior: 'hunting',
+      phase: 'windup',
+      phaseEndsAtTick: state.tick + 1,
+      attackAim: { x: -1, y: 0 },
+    });
+
+  it('cancels a wind-up it catches so the slam never lands', () => {
+    const state = aboutToSlam(arena());
+    const { state: after, events } = run(state, [cast([BASIC])]);
+    expect(after.player.health).toBe(state.player.maxHealth); // no slam damage taken
+    expect(only(after).phase).toBe('recovery'); // dropped out of its wind-up
+    expect(events.some((e) => e.kind === 'playerHit')).toBe(false);
+  });
+
+  it('a plain cone does not interrupt — the slam still lands', () => {
+    const state = aboutToSlam(arena());
+    const { state: after, events } = run(state, [cast([PLAIN])]);
+    expect(after.player.health).toBeLessThan(state.player.maxHealth); // took the hit
+    expect(events.some((e) => e.kind === 'playerHit')).toBe(true);
+  });
+});
+
+describe('adrenaline (spec 023)', () => {
+  const BASIC: SpellSpec = { kind: 'cone', range: 72, arcCosSq: 0.5, damage: 12, interrupt: true };
+  const PLAIN: SpellSpec = { kind: 'cone', range: 72, arcCosSq: 0.5, damage: 12 };
+  const inCone = { x: CENTER.x + 40, y: CENTER.y };
+
+  it('banks one point when a basic attack connects', () => {
+    const state = withEnemy(arena(), { id: 1, position: inCone });
+    const { state: after, events } = run(state, [cast([BASIC])]);
+    expect(after.player.adrenaline).toBe(1);
+    expect(events.some((e) => e.kind === 'adrenalineChanged' && e.delta === 1)).toBe(true);
+  });
+
+  it('banks nothing when the basic attack hits no one', () => {
+    const state = withEnemy(arena(), { id: 1, position: { x: CENTER.x - 200, y: CENTER.y } }); // behind, out of cone
+    const after = run(state, [cast([BASIC])]).state;
+    expect(after.player.adrenaline).toBe(0);
+  });
+
+  it('a non-interrupt cone never banks adrenaline', () => {
+    const state = withEnemy(arena(), { id: 1, position: inCone });
+    const after = run(state, [cast([PLAIN])]).state;
+    expect(after.player.adrenaline).toBe(0);
+  });
+
+  it('caps at MAX_ADRENALINE no matter how many basics connect', () => {
+    const state = withEnemy(arena(), { id: 1, position: inCone, health: 100000 });
+    const after = run(state, Array.from({ length: MAX_ADRENALINE + 3 }, () => cast([BASIC]))).state;
+    expect(after.player.adrenaline).toBe(MAX_ADRENALINE);
+  });
+
+  it('spendAdrenaline empties the bank when a synergy casts', () => {
+    const base = withEnemy(arena(), { id: 1, position: inCone });
+    const state: CombatState = { ...base, player: { ...base.player, adrenaline: 4 } };
+    const spend: InputFrame = {
+      ...NEUTRAL_INPUT,
+      externalEffect: { kind: 'castSpells', spells: [PLAIN], aimX: 1, aimY: 0, targetX: CENTER.x, targetY: CENTER.y, spendAdrenaline: true },
+    };
+    const { state: after, events } = run(state, [spend]);
+    expect(after.player.adrenaline).toBe(0);
+    expect(events.some((e) => e.kind === 'adrenalineChanged' && e.delta === -4)).toBe(true);
+  });
+
+  it('a double-attack synergy nets to zero: banks one, then spends all', () => {
+    const base = withEnemy(arena(), { id: 1, position: inCone });
+    const state: CombatState = { ...base, player: { ...base.player, adrenaline: 2 } };
+    const spend: InputFrame = {
+      ...NEUTRAL_INPUT,
+      externalEffect: { kind: 'castSpells', spells: [BASIC], aimX: 1, aimY: 0, targetX: CENTER.x, targetY: CENTER.y, spendAdrenaline: true },
+    };
+    const after = run(state, [spend]).state;
+    expect(after.player.adrenaline).toBe(0); // +1 from the hit, then reset to 0
   });
 });
 
