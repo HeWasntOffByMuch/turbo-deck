@@ -169,7 +169,15 @@ export class GameAudio {
 
   /** Called each render frame: keep the look-ahead music queue topped up. */
   update(): void {
-    if (!this.ctx || !this.started || this.muted) return;
+    if (!this.ctx) return;
+    // Self-heal the music start: on some browsers `ctx.resume()` resolves while
+    // the context is still 'suspended' and only flips to 'running' a beat later,
+    // so the startLoop() we fired from resume() can miss and the loop never
+    // begins — leaving SFX audible (they don't gate on `started`) but the music
+    // silent. Retrying here every frame starts the loop the moment the context
+    // is actually running, regardless of resume()'s timing.
+    this.startLoop();
+    if (!this.started || this.muted) return;
     const until = this.ctx.currentTime + SCHEDULE_AHEAD_S;
     for (const loop of this.loops) this.scheduleLoop(loop, until);
   }
