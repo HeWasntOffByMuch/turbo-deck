@@ -51,16 +51,16 @@ export class DudeSkins {
   }
 
   /**
-   * Draw `name`'s sprite standing on the ground point (footX, footY), sized so it
-   * is `targetH` screen px tall (width follows the sprite's aspect). `faceLeft`
-   * mirrors it horizontally; `alpha` fades it (grazing/stunned).
+   * Draw `name`'s sprite centred on (cx, cy) -- the actor's hitbox centre -- sized
+   * so it is `targetH` screen px tall (width follows the sprite's aspect).
+   * `faceLeft` mirrors it horizontally; `alpha` fades it (grazing/stunned).
    */
   draw(
     ctx: CanvasRenderingContext2D,
     name: string,
     frame: Frame,
-    footX: number,
-    footY: number,
+    cx: number,
+    cy: number,
     targetH: number,
     faceLeft: boolean,
     alpha = 1,
@@ -72,13 +72,9 @@ export class DudeSkins {
     ctx.save();
     ctx.imageSmoothingEnabled = false;
     ctx.globalAlpha = alpha;
-    // Anchor the sprite's feet (bottom-centre) on the point, so it stands on it.
-    ctx.translate(footX, footY - h);
-    if (faceLeft) {
-      ctx.translate(w, 0);
-      ctx.scale(-1, 1);
-    }
-    ctx.drawImage(src, 0, 0, w, h);
+    ctx.translate(cx, cy);
+    if (faceLeft) ctx.scale(-1, 1);
+    ctx.drawImage(src, -w / 2, -h / 2, w, h);
     ctx.restore();
   }
 }

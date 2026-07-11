@@ -254,22 +254,24 @@ export class SpellArenaView {
     const stunned = (enemy.stunnedUntilTick ?? 0) > tick;
 
     // Baked pixel-dude skin, keyed by type so each mob looks distinct (spec 011 art).
+    // Centred on the enemy's hitbox so the art lines up with collision/targeting.
     const faceLeft = playerPos.x < enemy.position.x;
     const frame = enemy.behavior === 'hunting' && enemy.phase === 'windup' ? 'windup' : 'idle';
     const alpha = stunned ? 0.55 : enemy.behavior === 'grazing' ? 0.82 : 1;
-    const fy = p.y + r * 0.72; // ground point the sprite stands on
-    const size = r * 3.4;
-    const headTop = fy - size;
+    const size = r * 2.4; // roughly the hitbox height, so the sprite reads as the target
+    const half = size / 2;
+    const headTop = p.y - half;
+    const feet = p.y + half;
 
-    this.groundShadow(p.x, fy, r * 1.05);
+    this.groundShadow(p.x, feet - r * 0.1, r * 0.95);
     // Hunting/attack progress reads as a telegraph ring on the ground under the mob.
     if (!stunned && enemy.behavior === 'hunting') {
       const total = enemy.phase === 'idle' ? ENEMY_IDLE_TICKS : enemy.phase === 'windup' ? ENEMY_WINDUP_TICKS : ENEMY_RECOVERY_TICKS;
       const prog = 1 - Math.max(0, enemy.phaseEndsAtTick - tick) / total;
       const ring = enemy.phase === 'windup' ? '#ff8c1a' : enemy.phase === 'recovery' ? '#7a5a5a' : '#d0605a';
-      this.groundRing(p.x, fy, r * 1.05, prog, ring);
+      this.groundRing(p.x, feet - r * 0.1, r * 0.95, prog, ring);
     }
-    this.dudes.draw(ctx, enemy.type, frame, p.x, fy, size, faceLeft, alpha);
+    this.dudes.draw(ctx, enemy.type, frame, p.x, p.y, size, faceLeft, alpha);
 
     if (stunned) {
       // Little orbiting "stars" to read the stun at a glance.
@@ -298,9 +300,10 @@ export class SpellArenaView {
     const p = this.worldToScreen(player.position);
     const r = PLAYER_RADIUS * SCALE;
     const ang = Math.atan2(aim.y, aim.x);
-    const fy = p.y + r * 0.72; // ground point the hero stands on
-    const size = r * 4.0;
-    const headTop = fy - size;
+    const size = r * 2.7; // centred on the hitbox, roughly its height
+    const half = size / 2;
+    const headTop = p.y - half;
+    const feet = p.y + half;
 
     // Dash streak.
     if (tick < player.dashExpiresAtTick) {
@@ -378,9 +381,9 @@ export class SpellArenaView {
       ctx.globalAlpha = 1;
     }
 
-    // Baked pixel-dude hero skin; faces the aim direction.
-    this.groundShadow(p.x, fy, r * 1.15);
-    this.dudes.draw(ctx, PLAYER_SKIN, 'idle', p.x, fy, size, aim.x < 0);
+    // Baked pixel-dude hero skin; centred on the hitbox, faces the aim direction.
+    this.groundShadow(p.x, feet - r * 0.1, r * 1.0);
+    this.dudes.draw(ctx, PLAYER_SKIN, 'idle', p.x, p.y, size, aim.x < 0);
 
     // A short aim tick so the cursor direction still reads for cones/dashes.
     ctx.strokeStyle = 'rgba(159,183,212,0.9)';
