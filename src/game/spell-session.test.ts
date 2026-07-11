@@ -3,8 +3,10 @@ import { deckSize, HAND_SIZE, type SpellCard, type SpellDeck, type SpellId } fro
 import { Rng } from '../shared/prng.js';
 import type { EnemyState } from '../sim/types.js';
 import {
+  ADRENALINE_COST_PER_SPELL,
   CARD_DRAW_DELAY_TICKS,
   initSpellGame,
+  spellCardCost,
   stepSpellGame,
   SYNERGY_WINDOW_TICKS,
   type SpellGameEvent,
@@ -16,6 +18,11 @@ const NEUTRAL: SpellInput = { moveX: 0, moveY: 0, aimX: 1, aimY: 0, targetX: 0, 
 
 function play(slot: 0 | 1 | 2 | 3): SpellInput {
   return { ...NEUTRAL, playHandIndex: slot };
+}
+
+/** Pre-load the adrenaline bank so costed spell cards (spec 024) can be played. */
+function withAdr(state: SpellGameState, adrenaline: number): SpellGameState {
+  return { ...state, combat: { ...state.combat, player: { ...state.combat.player, adrenaline } } };
 }
 
 /** A wave-in-progress with one near-dead enemy standing in front of the player. */
@@ -108,7 +115,7 @@ describe('spell session', () => {
   });
 
   it('leaves a played slot empty until the draw delay elapses', () => {
-    const state = initSpellGame(5);
+    const state = withAdr(initSpellGame(5), 5); // afford whatever sits in slot 1
     const played = run(state, [play(1)]).state;
     expect(played.deck.hand[1]).toBeNull();
     // Still empty just before the delay, refilled just after.
@@ -143,7 +150,7 @@ describe('mis-timed window punishment', () => {
     }
     if (!pair) throw new Error('no seed produced two different cards');
     const [a, b] = pair;
-    const after = run(start, [play(a as 0 | 1 | 2 | 3), play(b as 0 | 1 | 2 | 3), ...settle]).state;
+    const after = run(withAdr(start, 5), [play(a as 0 | 1 | 2 | 3), play(b as 0 | 1 | 2 | 3), ...settle]).state;
     expect(after.combat.player.moveSlowUntilTick).toBeGreaterThan(after.combat.tick);
   });
 
@@ -220,29 +227,29 @@ describe('refill never stalls (regression)', () => {
   });
 });
 
-describe('adrenaline synergy spend (spec 023)', () => {
+describe('adrenaline cost economy (spec 023/024)', () => {
   const card = (id: SpellId, instanceId: number): SpellCard => ({ id, instanceId, level: 1 });
   const settle = Array.from({ length: SYNERGY_WINDOW_TICKS + 2 }, () => NEUTRAL);
 
   /** A game with a chosen hand and a pre-loaded adrenaline bank. */
   function withBank(hand: [SpellCard, SpellCard, SpellCard, SpellCard], adrenaline: number): SpellGameState {
     const base = initSpellGame(1);
-    const deck: SpellDeck = { drawPile: [card('dash', 20), card('dash', 21)], hand, discardPile: [], rng: Rng.fromSeed(1) };
-    return { ...base, deck, combat: { ...base.combat, player: { ...base.combat.player, adrenaline } } };
+    const deck: SpellDeck = { drawPile: [card('attack', 20), card('attack', 21)], hand, discardPile: [], rng: Rng.fromSeed(1) };
+    return withAdr({ ...base, deck }, adrenaline);
   }
 
-  it('empowers a fused synergy by the bank and spends it to zero', () => {
+  it('empowers a fused synergy by the whole bank but spends only the cards cost', () => {
     const start = withBank([card('fireBlast', 0), card('fireBlast', 1), card('dash', 2), card('attack', 3)], 5);
     const { state: after, events } = run(start, [play(0), play(1), ...settle]);
     const resolved = events.find((e) => e.kind === 'spellsResolved');
     if (!resolved || resolved.kind !== 'spellsResolved') throw new Error('expected a resolved cast');
     const cone = resolved.specs[0];
     if (!cone || cone.kind !== 'cone') throw new Error('expected a cone');
-    expect(cone.damage).toBe(Math.round(50 * (1 + 0.2 * 5))); // fused 50, doubled by 5 adrenaline
-    expect(after.combat.player.adrenaline).toBe(0); // synergy spent the bank
+    expect(cone.damage).toBe(Math.round(50 * (1 + 0.2 * 5))); // fused 50, doubled by a bank of 5
+    expect(after.combat.player.adrenaline).toBe(3); // 5 - two fireBlasts at cost 1 each
   });
 
-  it('does not empower or spend on a lone (non-synergy) card', () => {
+  it('a lone spell card pays its cost but is not empowered', () => {
     const start = withBank([card('fireBlast', 0), card('dash', 1), card('attack', 2), card('dash', 3)], 5);
     const { state: after, events } = run(start, [play(0), ...settle]);
     const resolved = events.find((e) => e.kind === 'spellsResolved');
@@ -250,7 +257,80 @@ describe('adrenaline synergy spend (spec 023)', () => {
     const cone = resolved.specs[0];
     if (!cone || cone.kind !== 'cone') throw new Error('expected a cone');
     expect(cone.damage).toBe(16); // base fire blast, un-empowered
-    expect(after.combat.player.adrenaline).toBe(5); // bank untouched
+    expect(after.combat.player.adrenaline).toBe(4); // paid its cost of 1
+  });
+
+  it('refuses a costed card the bank cannot afford, leaving it in hand', () => {
+    const start = withBank([card('fireBlast', 0), card('dash', 1), card('attack', 2), card('dash', 3)], 0);
+    const { state: after, events } = run(start, [play(0)]);
+    expect(events.some((e) => e.kind === 'playRejectedNoAdrenaline')).toBe(true);
+    expect(after.deck.hand[0]?.id).toBe('fireBlast'); // still held
+    expect(after.windowCards).toHaveLength(0); // nothing entered the window
+  });
+
+  it('always lets a free attack or dash be played at zero adrenaline', () => {
+    const start = withBank([card('attack', 0), card('dash', 1), card('fireBlast', 2), card('fireBlast', 3)], 0);
+    const { events } = run(start, [play(1)]); // dash, free
+    expect(events.some((e) => e.kind === 'cardPlayed' && e.id === 'dash')).toBe(true);
+  });
+
+  it('caps a burst: a second fireBlast is refused when the bank only covers one', () => {
+    const start = withBank([card('fireBlast', 0), card('fireBlast', 1), card('dash', 2), card('attack', 3)], 1);
+    const { state: after, events } = run(start, [play(0), play(1)]);
+    expect(events.filter((e) => e.kind === 'cardPlayed')).toHaveLength(1); // only the first fit the budget
+    expect(events.some((e) => e.kind === 'playRejectedNoAdrenaline')).toBe(true);
+    expect(after.windowCards).toHaveLength(1);
+  });
+});
+
+describe('spellCardCost (spec 024)', () => {
+  it('is free for the regular set and costs adrenaline for fire/earth cards', () => {
+    expect(spellCardCost('attack')).toBe(0);
+    expect(spellCardCost('dash')).toBe(0);
+    expect(spellCardCost('fireBlast')).toBe(ADRENALINE_COST_PER_SPELL);
+    expect(spellCardCost('groundStomp')).toBe(ADRENALINE_COST_PER_SPELL);
+  });
+});
+
+describe('generator guarantee (spec 024)', () => {
+  const card = (id: SpellId, instanceId: number): SpellCard => ({ id, instanceId, level: 1 });
+
+  it('puts an Attack in hand when the bank is empty and none is held', () => {
+    const base = initSpellGame(1);
+    const deck: SpellDeck = {
+      drawPile: [card('attack', 10), card('dash', 11)],
+      hand: [card('fireBlast', 0), card('blazeAura', 1), card('fireBlast', 2), card('dash', 3)],
+      discardPile: [], rng: Rng.fromSeed(1),
+    };
+    const start: SpellGameState = withAdr({ ...base, deck }, 0);
+    expect(start.deck.hand.some((c) => c?.id === 'attack')).toBe(false); // none to begin with
+    const after = run(start, [NEUTRAL]).state;
+    expect(after.deck.hand.some((c) => c?.id === 'attack')).toBe(true); // guaranteed one
+    expect(after.deck.hand.every((c) => c !== null)).toBe(true); // hand stays full
+  });
+
+  it('is a no-op when an Attack is already held', () => {
+    const base = initSpellGame(2);
+    const deck: SpellDeck = {
+      drawPile: [card('dash', 10)],
+      hand: [card('attack', 0), card('fireBlast', 1), card('dash', 2), card('blazeAura', 3)],
+      discardPile: [], rng: Rng.fromSeed(1),
+    };
+    const start: SpellGameState = withAdr({ ...base, deck }, 0);
+    const after = run(start, [NEUTRAL]).state;
+    expect(after.deck.hand.map((c) => c?.id)).toEqual(['attack', 'fireBlast', 'dash', 'blazeAura']); // unchanged
+  });
+
+  it('does not fire while the bank is non-zero', () => {
+    const base = initSpellGame(3);
+    const deck: SpellDeck = {
+      drawPile: [card('attack', 10)],
+      hand: [card('fireBlast', 0), card('dash', 1), card('fireBlast', 2), card('dash', 3)],
+      discardPile: [], rng: Rng.fromSeed(1),
+    };
+    const start: SpellGameState = withAdr({ ...base, deck }, 2);
+    const after = run(start, [NEUTRAL]).state;
+    expect(after.deck.hand.some((c) => c?.id === 'attack')).toBe(false); // banked, so no rescue
   });
 });
 

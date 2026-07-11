@@ -8,9 +8,11 @@ import {
   HAND_SIZE,
   initSpellDeck,
   removeOneCard,
+  SPELL_CARDS,
   upgradeOneCard,
   type SpellCard,
   type SpellDeck,
+  type SpellHand,
   type SpellId,
 } from '../cards/spells.js';
 import { empowerSpecs, resolveSynergies, type SpellCardPlay } from '../cards/synergy.js';
@@ -48,6 +50,59 @@ export const CARD_DRAW_DELAY_TICKS = Math.round(1.5 * TICK_RATE);
  * this long. Combo carefully or pay for the fumble.
  */
 export const MISPLAY_SLOW_TICKS = Math.round(1.5 * TICK_RATE);
+
+/**
+ * Adrenaline cost to play one non-regular (fire/earth) card (spec 024). The
+ * regular set -- `attack` (which builds adrenaline) and `dash` -- is free.
+ */
+export const ADRENALINE_COST_PER_SPELL = 1;
+
+/** Adrenaline a card costs to play: 0 for the regular set, the flat cost otherwise. */
+export function spellCardCost(id: SpellId): number {
+  return SPELL_CARDS[id].set === 'regular' ? 0 : ADRENALINE_COST_PER_SPELL;
+}
+
+/**
+ * Keep a generator reachable (spec 024): if the bank is empty and no hand slot
+ * holds an `attack`, place one in the hand so the player can never soft-lock
+ * unable to afford a spell yet unable to build adrenaline. The attack is pulled
+ * from the piles to hold deck composition (minted only if none remain); a
+ * displaced hand card returns to the discard. A no-op when an attack is held.
+ */
+function ensureAttackInHand(deck: SpellDeck): SpellDeck {
+  if (deck.hand.some((c) => c?.id === 'attack')) return deck;
+  const hand = [...deck.hand] as (SpellCard | null)[];
+  // Convert a held spell card first (it is unaffordable at zero anyway), then any
+  // held card, and only fill a genuinely empty slot as a last resort.
+  let slot = hand.findIndex((c) => c !== null && spellCardCost(c.id) > 0);
+  if (slot < 0) slot = hand.findIndex((c) => c !== null);
+  if (slot < 0) slot = 0;
+  const displaced = hand[slot];
+
+  const drawPile = [...deck.drawPile];
+  const discardPile = [...deck.discardPile];
+  let attack: SpellCard;
+  const di = drawPile.findIndex((c) => c.id === 'attack');
+  if (di >= 0) {
+    attack = drawPile[di] as SpellCard;
+    drawPile.splice(di, 1);
+  } else {
+    const ci = discardPile.findIndex((c) => c.id === 'attack');
+    if (ci >= 0) {
+      attack = discardPile[ci] as SpellCard;
+      discardPile.splice(ci, 1);
+    } else {
+      let maxId = -1;
+      for (const c of drawPile) maxId = Math.max(maxId, c.instanceId);
+      for (const c of deck.hand) if (c) maxId = Math.max(maxId, c.instanceId);
+      for (const c of discardPile) maxId = Math.max(maxId, c.instanceId);
+      attack = { instanceId: maxId + 1, id: 'attack', level: 1 };
+    }
+  }
+  if (displaced) discardPile.push(displaced);
+  hand[slot] = attack;
+  return { drawPile, hand: hand as unknown as SpellHand, discardPile, rng: deck.rng };
+}
 
 export type RewardKind = 'remove' | 'upgrade' | 'addFire';
 /**
@@ -104,6 +159,7 @@ export interface SpellInput {
 export type SpellGameEvent =
   | { readonly kind: 'cardPlayed'; readonly index: number; readonly id: SpellId }
   | { readonly kind: 'playIgnoredEmptySlot' }
+  | { readonly kind: 'playRejectedNoAdrenaline'; readonly index: number; readonly id: SpellId }
   | {
       readonly kind: 'spellsResolved';
       readonly ids: readonly SpellId[];
@@ -199,12 +255,20 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
     const idx = input.playHandIndex;
     const card: SpellCard | null = deck.hand[idx];
     if (card) {
-      deck = discardFromHand(deck, idx).deck;
-      emptied.push(idx);
-      windowCards = [...windowCards, { id: card.id, level: card.level }];
-      // The first card of a window arms the timer; later plays just join the buffer.
-      if (windowClosesAtTick === null) windowClosesAtTick = state.combat.tick + SYNERGY_WINDOW_TICKS;
-      events.push({ kind: 'cardPlayed', index: idx, id: card.id });
+      // Costed cards (spec 024) are gated on the bank, counting what the open
+      // window has already committed so a burst can't overspend.
+      const cost = spellCardCost(card.id);
+      const committed = windowCards.reduce((sum, p) => sum + spellCardCost(p.id), 0);
+      if (cost > 0 && state.combat.player.adrenaline < committed + cost) {
+        events.push({ kind: 'playRejectedNoAdrenaline', index: idx, id: card.id });
+      } else {
+        deck = discardFromHand(deck, idx).deck;
+        emptied.push(idx);
+        windowCards = [...windowCards, { id: card.id, level: card.level }];
+        // The first card of a window arms the timer; later plays just join the buffer.
+        if (windowClosesAtTick === null) windowClosesAtTick = state.combat.tick + SYNERGY_WINDOW_TICKS;
+        events.push({ kind: 'cardPlayed', index: idx, id: card.id });
+      }
     } else {
       events.push({ kind: 'playIgnoredEmptySlot' });
     }
@@ -222,10 +286,12 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
     // stood alone (its id had no partner to fuse with) in the window.
     const misplay = windowCards.length > 1 && [...counts.values()].some((c) => c === 1);
     // A synergy is any window where a card fused (some id played 2+ times). Banked
-    // adrenaline empowers a synergy cast and is spent by it (spec 023).
+    // adrenaline empowers a synergy by the *whole bank* (spec 023); the cast then
+    // spends only the played cards' cost, so the bank persists (spec 024).
+    const bank = state.combat.player.adrenaline;
     const isSynergy = [...counts.values()].some((c) => c >= 2);
-    const spendAdrenaline = isSynergy && state.combat.player.adrenaline > 0;
-    const specs = spendAdrenaline ? empowerSpecs(baseSpecs, state.combat.player.adrenaline) : baseSpecs;
+    const specs = isSynergy && bank > 0 ? empowerSpecs(baseSpecs, bank) : baseSpecs;
+    const spendAdrenaline = windowCards.reduce((sum, p) => sum + spellCardCost(p.id), 0);
     externalEffect = {
       kind: 'castSpells',
       spells: specs,
@@ -234,7 +300,7 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
       targetX: input.targetX,
       targetY: input.targetY,
       ...(misplay ? { playerSlowTicks: MISPLAY_SLOW_TICKS } : {}),
-      ...(spendAdrenaline ? { spendAdrenaline: true } : {}),
+      ...(spendAdrenaline > 0 ? { spendAdrenaline } : {}),
     };
     resolved = { ids: windowCards.map((p) => p.id), specs };
     windowCards = [];
@@ -287,6 +353,16 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
       // Only clear the schedule once a card actually landed; if the deck is
       // momentarily dry, keep it pending so the slot retries instead of stalling.
       if (drawn.card) refillAtTick[slot] = null;
+    }
+  }
+
+  // Generator guarantee (spec 024): while broke, keep a basic Attack in hand so the
+  // hand can never stall unable to afford a spell yet unable to build adrenaline.
+  if (combatResult.state.player.adrenaline === 0 && !deck.hand.some((c) => c?.id === 'attack')) {
+    deck = ensureAttackInHand(deck);
+    // A slot the guarantee just filled no longer needs its pending refill.
+    for (let slot = 0; slot < HAND_SIZE; slot++) {
+      if (deck.hand[slot] !== null && refillAtTick[slot] !== null) refillAtTick[slot] = null;
     }
   }
 
