@@ -17,14 +17,6 @@ export type { SpellSpec };
 /** Ticks per second; mirrors the sim's fixed timestep (kept local to avoid a sim dependency). */
 const TPS = 60;
 
-/**
- * How much one point of banked adrenaline empowers a synergy cast (spec 023):
- * a flat +20% damage per point, so a full bank of 5 doubles the cast. Adrenaline's
- * value comes from the sim; how much a point is worth is a card-damage rule and
- * lives here alongside the other damage scaling.
- */
-export const ADRENALINE_DAMAGE_PER_POINT = 0.2;
-
 /** A played card carries its upgrade level so fusion can scale its damage (spec 019). */
 export interface SpellCardPlay {
   readonly id: SpellId;
@@ -146,15 +138,4 @@ export function resolveSynergies(plays: readonly SpellCardPlay[]): SpellSpec[] {
     levels.set(play.id, (levels.get(play.id) ?? 0) + play.level);
   }
   return order.map((id) => resolveOne(id, counts.get(id) as number, levels.get(id) as number));
-}
-
-/**
- * Empower a resolved synergy's specs by the banked adrenaline (spec 023): each
- * point adds `ADRENALINE_DAMAGE_PER_POINT` to the damage multiplier, geometry
- * untouched. `adrenaline === 0` returns the specs unchanged.
- */
-export function empowerSpecs(specs: readonly SpellSpec[], adrenaline: number): SpellSpec[] {
-  if (adrenaline <= 0) return [...specs];
-  const mult = 1 + ADRENALINE_DAMAGE_PER_POINT * adrenaline;
-  return specs.map((spec) => scaleSpec(spec, mult));
 }

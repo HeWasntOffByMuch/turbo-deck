@@ -15,7 +15,7 @@ import {
   type SpellHand,
   type SpellId,
 } from '../cards/spells.js';
-import { empowerSpecs, resolveSynergies, type SpellCardPlay } from '../cards/synergy.js';
+import { resolveSynergies, type SpellCardPlay } from '../cards/synergy.js';
 import type { SpellSpec } from '../shared/spell-spec.js';
 import { Rng } from '../shared/prng.js';
 import { initCombat, step as combatStep } from '../sim/combat.js';
@@ -285,12 +285,9 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
     // Punish a fumbled combo: more than one card played, but at least one of them
     // stood alone (its id had no partner to fuse with) in the window.
     const misplay = windowCards.length > 1 && [...counts.values()].some((c) => c === 1);
-    // A synergy is any window where a card fused (some id played 2+ times). Banked
-    // adrenaline empowers a synergy by the *whole bank* (spec 023); the cast then
-    // spends only the played cards' cost, so the bank persists (spec 024).
-    const bank = state.combat.player.adrenaline;
-    const isSynergy = [...counts.values()].some((c) => c >= 2);
-    const specs = isSynergy && bank > 0 ? empowerSpecs(baseSpecs, bank) : baseSpecs;
+    // Adrenaline no longer empowers the cast (spec 025) -- it buys walk speed. The
+    // cast still spends the played cards' cost so banking/spending is intact.
+    const specs = baseSpecs;
     const spendAdrenaline = windowCards.reduce((sum, p) => sum + spellCardCost(p.id), 0);
     externalEffect = {
       kind: 'castSpells',

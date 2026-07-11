@@ -238,18 +238,18 @@ describe('adrenaline cost economy (spec 023/024)', () => {
     return withAdr({ ...base, deck }, adrenaline);
   }
 
-  it('empowers a fused synergy by the whole bank but spends only the cards cost', () => {
+  it('spends the played cards cost but no longer empowers the cast (spec 025)', () => {
     const start = withBank([card('fireBlast', 0), card('fireBlast', 1), card('dash', 2), card('attack', 3)], 5);
     const { state: after, events } = run(start, [play(0), play(1), ...settle]);
     const resolved = events.find((e) => e.kind === 'spellsResolved');
     if (!resolved || resolved.kind !== 'spellsResolved') throw new Error('expected a resolved cast');
     const cone = resolved.specs[0];
     if (!cone || cone.kind !== 'cone') throw new Error('expected a cone');
-    expect(cone.damage).toBe(Math.round(50 * (1 + 0.2 * 5))); // fused 50, doubled by a bank of 5
+    expect(cone.damage).toBe(50); // fused base, no adrenaline amplification
     expect(after.combat.player.adrenaline).toBe(3); // 5 - two fireBlasts at cost 1 each
   });
 
-  it('a lone spell card pays its cost but is not empowered', () => {
+  it('a lone spell card pays its cost', () => {
     const start = withBank([card('fireBlast', 0), card('dash', 1), card('attack', 2), card('dash', 3)], 5);
     const { state: after, events } = run(start, [play(0), ...settle]);
     const resolved = events.find((e) => e.kind === 'spellsResolved');
