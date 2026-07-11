@@ -18,9 +18,9 @@ import {
 import { resolveSynergies, type SpellCardPlay } from '../cards/synergy.js';
 import type { SpellSpec } from '../shared/spell-spec.js';
 import { Rng } from '../shared/prng.js';
-import { initCombat, step as combatStep } from '../sim/combat.js';
+import { initCombat, step as combatStep, type CollideFn } from '../sim/combat.js';
 import { TICK_RATE } from '../sim/constants.js';
-import { type CombatState, type ExternalEffect, type InputFrame, type SimEvent } from '../sim/types.js';
+import { IDENTITY_MODIFIERS, type CombatState, type ExternalEffect, type InputFrame, type SimEvent } from '../sim/types.js';
 
 /**
  * Composition root for the spell-card game (spec 018/019): the only place a
@@ -221,7 +221,11 @@ function upgradeCandidates(deck: SpellDeck): SpellId[] {
   return deckCardIds(deck).filter((id) => id !== 'attack' && id !== 'dash');
 }
 
-export function stepSpellGame(state: SpellGameState, input: SpellInput): { state: SpellGameState; events: SpellGameEvent[] } {
+export function stepSpellGame(
+  state: SpellGameState,
+  input: SpellInput,
+  collide?: CollideFn,
+): { state: SpellGameState; events: SpellGameEvent[] } {
   const events: SpellGameEvent[] = [];
   let deck = state.deck;
   let windowCards = state.windowCards;
@@ -336,7 +340,7 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
   };
 
   const hadEnemies = state.combat.enemies.length > 0;
-  const combatResult = combatStep(state.combat, combatInput);
+  const combatResult = combatStep(state.combat, combatInput, IDENTITY_MODIFIERS, collide);
   events.push(...combatResult.events);
   if (resolved !== null) events.push({ kind: 'spellsResolved', ids: resolved.ids, specs: resolved.specs, aimX: input.aimX, aimY: input.aimY });
 

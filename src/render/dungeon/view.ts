@@ -5,6 +5,7 @@ import {
   ENEMY_RADIUS,
   ENEMY_RECOVERY_TICKS,
   ENEMY_WINDUP_TICKS,
+  MAX_ADRENALINE,
   PLAYER_RADIUS,
 } from '../../sim/constants.js';
 import { TILE, tileAt, roomCenterWorld, type Dungeon, type Room } from '../../sim/dungeon.js';
@@ -27,8 +28,21 @@ interface Popup {
   color: string;
   life: number;
 }
+interface Flash {
+  x: number;
+  y: number;
+  radius: number;
+  life: number;
+  max: number;
+}
+// Transient shapes for instant spell casts (cone/rect), in world space.
+type CastFx =
+  | { kind: 'cone'; x: number; y: number; ang: number; range: number; half: number; life: number; max: number }
+  | { kind: 'rect'; x: number; y: number; ang: number; length: number; halfWidth: number; life: number; max: number };
 
 const POPUP_LIFE = 42;
+const FLASH_LIFE = 18;
+const CAST_LIFE = 12;
 
 // Flat-colour fallbacks used until the tileset PNG finishes loading.
 const FALLBACK = {
@@ -49,6 +63,8 @@ export class DungeonView {
   private readonly tileset = new DungeonTileset();
   private readonly dudes = new DudeSkins();
   private readonly popups: Popup[] = [];
+  private readonly flashes: Flash[] = [];
+  private readonly casts: CastFx[] = [];
   private cam: Vec2 = { x: 0, y: 0 };
   private frame = 0;
   private theme: FloorTheme = 'blue';
@@ -64,7 +80,6 @@ export class DungeonView {
     this.ctx = ctx;
   }
 
-  /** Precompute room-cell lookups + theme the first time we see a dungeon. */
   private ensureInit(d: Dungeon): void {
     if (this.initialized) return;
     this.theme = themeForSeed(d.seed);
@@ -87,20 +102,31 @@ export class DungeonView {
     return { x: (v.x - this.cam.x) * SCALE + CANVAS_W / 2, y: (v.y - this.cam.y) * SCALE + CANVAS_H / 2 };
   }
 
+  /** The world point under a screen point (for aimed spell targets). */
+  screenToWorld(s: ScreenPoint): Vec2 {
+    return { x: (s.x - CANVAS_W / 2) / SCALE + this.cam.x, y: (s.y - CANVAS_H / 2) / SCALE + this.cam.y };
+  }
+
   render(state: DungeonGameState, events: readonly DungeonGameEvent[], aim: ScreenPoint): void {
     this.frame++;
     const d = state.dungeon;
     this.ensureInit(d);
-    this.ingestEvents(state.combat.player, events);
+    const combat = state.spell.combat;
+    this.ingestEvents(combat.player, events);
 
-    const p = state.combat.player.position;
+    const p = combat.player.position;
     this.cam = { x: this.cam.x + (p.x - this.cam.x) * CAMERA_LAG, y: this.cam.y + (p.y - this.cam.y) * CAMERA_LAG };
     this.clampCamera(d);
 
     this.drawTiles(state);
-    for (const enemy of state.combat.enemies) this.drawTelegraph(enemy);
-    for (const enemy of state.combat.enemies) this.drawEnemy(enemy, state.combat.tick);
-    this.drawPlayer(state.combat.player, aim);
+    this.drawGroundFires(combat.player);
+    this.drawPendingAoes(combat.player, combat.tick);
+    for (const enemy of combat.enemies) this.drawTelegraph(enemy);
+    for (const enemy of combat.enemies) this.drawEnemy(enemy, combat.tick);
+    this.drawAuras(combat.player, combat.tick);
+    this.updateAndDrawCasts();
+    this.drawPlayer(combat.player, combat.tick, aim);
+    this.updateAndDrawFlashes();
     this.updateAndDrawPopups();
     this.drawHud(state);
   }
@@ -123,7 +149,25 @@ export class DungeonView {
       else if (e.kind === 'playerHealed') this.spawnPopup(player.position, `+${e.amount}`, '#7affc0');
       else if (e.kind === 'roomEntered') this.spawnPopup(player.position, 'SEALED!', '#ff9b3a');
       else if (e.kind === 'roomCleared') this.spawnPopup(player.position, 'CLEARED!', '#7affc0');
-      else if (e.kind === 'perfectDefense') this.spawnPopup(player.position, 'PERFECT', '#8fd0ff');
+      else if (e.kind === 'aoeImpact') {
+        const at = this.worldToScreen(e.at);
+        this.flashes.push({ x: at.x, y: at.y, radius: e.radius * SCALE, life: FLASH_LIFE, max: FLASH_LIFE });
+      } else if (e.kind === 'spellsResolved') {
+        const origin = this.worldToScreen(player.position);
+        const ang = Math.atan2(e.aimY, e.aimX);
+        for (const spec of e.specs) {
+          if (spec.kind === 'cone') {
+            this.casts.push({ kind: 'cone', x: origin.x, y: origin.y, ang, range: spec.range * SCALE, half: Math.acos(Math.sqrt(spec.arcCosSq)), life: CAST_LIFE, max: CAST_LIFE });
+          } else if (spec.kind === 'rect') {
+            this.casts.push({ kind: 'rect', x: origin.x, y: origin.y, ang, length: spec.length * SCALE, halfWidth: spec.halfWidth * SCALE, life: CAST_LIFE, max: CAST_LIFE });
+          }
+        }
+        if (e.ids.length >= 2) this.spawnPopup(player.position, 'SYNERGY!', '#ffd76a');
+      } else if (e.kind === 'adrenalineChanged') {
+        this.spawnPopup(player.position, e.delta > 0 ? '+ADR' : 'ADRENALINE!', e.delta > 0 ? '#ff8a5a' : '#ff5a3a');
+      } else if (e.kind === 'playRejectedNoAdrenaline') {
+        this.spawnPopup(player.position, 'NEED ADR', '#ff6b6b');
+      }
     }
   }
 
@@ -137,12 +181,10 @@ export class DungeonView {
     ctx.fillStyle = FALLBACK.void;
     ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
-    // The active (sealed) room's door cells are drawn barred.
     const activeRoom = state.activeRoomId === null ? null : d.rooms[state.activeRoomId] ?? null;
     const sealed = new Set<number>();
     if (activeRoom) for (const dr of activeRoom.doors) sealed.add(dr.cy * d.cols + dr.cx);
 
-    // Iterate only cells inside the viewport.
     const minCx = Math.floor((this.cam.x - CANVAS_W / 2 / SCALE) / TILE) - 1;
     const maxCx = Math.floor((this.cam.x + CANVAS_W / 2 / SCALE) / TILE) + 1;
     const minCy = Math.floor((this.cam.y - CANVAS_H / 2 / SCALE) / TILE) - 1;
@@ -212,6 +254,93 @@ export class DungeonView {
     ctx.fillRect(tl.x, tl.y, room.w * TILE * SCALE, room.h * TILE * SCALE);
   }
 
+  private drawGroundFires(player: PlayerState): void {
+    const { ctx } = this;
+    for (const f of player.groundFires) {
+      const c = this.worldToScreen({ x: f.x, y: f.y });
+      const r = f.radius * SCALE;
+      const flick = 0.5 + 0.5 * Math.sin(this.frame * 0.4 + f.x * 0.05);
+      ctx.fillStyle = `rgba(230,90,30,${0.14 + 0.1 * flick})`;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,160,60,0.5)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r * (0.7 + 0.2 * flick), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  private drawPendingAoes(player: PlayerState, tick: number): void {
+    const { ctx } = this;
+    for (const aoe of player.pendingAoes) {
+      const c = this.worldToScreen({ x: aoe.x, y: aoe.y });
+      const r = aoe.radius * SCALE;
+      const remaining = Math.max(0, aoe.impactTick - tick);
+      const progress = 1 - remaining / 30;
+      const warm = aoe.stunTicks > 0 ? '120,180,255' : '255,120,40';
+      ctx.fillStyle = `rgba(${warm},${0.08 + 0.2 * progress})`;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = `rgba(${warm},0.9)`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r * (0.15 + 0.85 * Math.max(0, Math.min(1, progress))), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  private drawAuras(player: PlayerState, tick: number): void {
+    const { ctx } = this;
+    const p = this.worldToScreen(player.position);
+    for (const aura of player.auras) {
+      if (tick >= aura.expiresAtTick) continue;
+      const r = aura.radius * SCALE;
+      const pulse = 0.5 + 0.5 * Math.sin(this.frame * 0.35);
+      ctx.fillStyle = `rgba(255,110,40,${0.06 + 0.06 * pulse})`;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = `rgba(255,150,60,${0.35 + 0.25 * pulse})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  private updateAndDrawCasts(): void {
+    const { ctx } = this;
+    for (let i = this.casts.length - 1; i >= 0; i--) {
+      const fx = this.casts[i];
+      if (!fx) continue;
+      fx.life -= 1;
+      if (fx.life <= 0) {
+        this.casts.splice(i, 1);
+        continue;
+      }
+      const t = fx.life / fx.max;
+      ctx.globalAlpha = t * 0.55;
+      ctx.fillStyle = '#ffe6b0';
+      if (fx.kind === 'cone') {
+        ctx.beginPath();
+        ctx.moveTo(fx.x, fx.y);
+        ctx.arc(fx.x, fx.y, fx.range, fx.ang - fx.half, fx.ang + fx.half);
+        ctx.closePath();
+        ctx.fill();
+      } else {
+        ctx.save();
+        ctx.translate(fx.x, fx.y);
+        ctx.rotate(fx.ang);
+        ctx.fillRect(0, -fx.halfWidth, fx.length, fx.halfWidth * 2);
+        ctx.restore();
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
   private drawTelegraph(enemy: EnemyState): void {
     if (enemy.behavior !== 'hunting' || enemy.phase !== 'windup' || !enemy.attackAim) return;
     const { ctx } = this;
@@ -235,20 +364,27 @@ export class DungeonView {
     const half = size / 2;
     const feet = p.y + half;
     const headTop = p.y - half;
+    const stunned = (enemy.stunnedUntilTick ?? 0) > tick;
     const frame = enemy.phase === 'windup' ? 'windup' : 'idle';
 
     this.groundShadow(p.x, feet - r * 0.1, r * 0.95);
-    if (enemy.behavior === 'hunting') {
+    if (!stunned && enemy.behavior === 'hunting') {
       const total = enemy.phase === 'idle' ? ENEMY_IDLE_TICKS : enemy.phase === 'windup' ? ENEMY_WINDUP_TICKS : ENEMY_RECOVERY_TICKS;
       const prog = 1 - Math.max(0, enemy.phaseEndsAtTick - tick) / total;
       const ring = enemy.phase === 'windup' ? '#ff8c1a' : enemy.phase === 'recovery' ? '#7a5a5a' : '#d0605a';
       this.groundRing(p.x, feet - r * 0.1, r * 0.95, prog, ring);
     }
-    this.dudes.draw(ctx, enemy.type, frame, p.x, p.y, size, false);
+    this.dudes.draw(ctx, enemy.type, frame, p.x, p.y, size, false, stunned ? 0.6 : 1);
+    if ((enemy.burningUntilTick ?? 0) > tick) {
+      ctx.fillStyle = `rgba(255,110,40,${0.45 + 0.4 * Math.sin(this.frame * 0.4 + enemy.id)})`;
+      ctx.beginPath();
+      ctx.arc(p.x, headTop - 5, 3 + Math.sin(this.frame * 0.5 + enemy.id), 0, Math.PI * 2);
+      ctx.fill();
+    }
     this.healthBar(p.x - r, headTop - 8, r * 2, enemy.health / enemy.maxHealth, '#ff5a5a');
   }
 
-  private drawPlayer(player: PlayerState, aim: ScreenPoint): void {
+  private drawPlayer(player: PlayerState, tick: number, aim: ScreenPoint): void {
     const { ctx } = this;
     const p = this.worldToScreen(player.position);
     const r = PLAYER_RADIUS * SCALE;
@@ -257,6 +393,68 @@ export class DungeonView {
     const feet = p.y + half;
     const headTop = p.y - half;
     const ang = Math.atan2(aim.y, aim.x);
+
+    // Dash streak.
+    if (tick < player.dashExpiresAtTick) {
+      ctx.strokeStyle = 'rgba(180,220,255,0.55)';
+      ctx.lineWidth = r * 1.6;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(p.x - player.dashDx * SCALE * 3, p.y - player.dashDy * SCALE * 3);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+      ctx.lineCap = 'butt';
+    }
+    // Mis-timed slow ring.
+    if (tick < player.moveSlowUntilTick) {
+      ctx.strokeStyle = 'rgba(150,120,210,0.7)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r + 6, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    // Burning Speed haste ring + self-burn embers.
+    if (tick < player.moveHasteUntilTick) {
+      ctx.strokeStyle = 'rgba(255,150,60,0.75)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r + 7, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    if (tick < player.burningUntilTick) {
+      ctx.fillStyle = `rgba(255,120,40,${0.5 + 0.4 * Math.sin(this.frame * 0.5)})`;
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.arc(p.x - r + i * r, p.y - r - 3, 2.4 + Math.sin(this.frame * 0.3 + i), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    // Adrenaline heat glow + ember pips.
+    if (player.adrenaline > 0) {
+      const frac = player.adrenaline / MAX_ADRENALINE;
+      const pulse = 0.5 + 0.5 * Math.sin(this.frame * 0.22);
+      ctx.strokeStyle = `rgba(255,${Math.round(120 - 60 * frac)},50,${0.35 + 0.4 * frac * pulse})`;
+      ctx.lineWidth = 2 + 3 * frac;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r + 5 + 3 * frac, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#ff6a3a';
+      for (let i = 0; i < player.adrenaline; i++) {
+        ctx.beginPath();
+        ctx.arc(p.x - (player.adrenaline - 1) * 3.5 + i * 7, headTop - 15, 2.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    // Shield ring.
+    if (tick < player.shieldExpiresAtTick && player.shieldAmount > 0) {
+      ctx.strokeStyle = '#8fd0ff';
+      ctx.lineWidth = 4;
+      ctx.globalAlpha = 0.5 + 0.3 * Math.sin(this.frame * 0.18);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r + 9, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
 
     this.groundShadow(p.x, feet - r * 0.1, r);
     this.dudes.draw(ctx, PLAYER_SKIN, 'idle', p.x, p.y, size, aim.x < 0);
@@ -269,6 +467,16 @@ export class DungeonView {
     ctx.stroke();
 
     this.healthBar(p.x - r - 4, headTop - 9, r * 2 + 8, player.health / player.maxHealth, '#5ad65a');
+
+    // Conjure Flame charges.
+    if (player.attackFlameCharges > 0) {
+      ctx.fillStyle = '#ff9b3a';
+      for (let i = 0; i < player.attackFlameCharges; i++) {
+        ctx.beginPath();
+        ctx.arc(p.x - (player.attackFlameCharges - 1) * 3 + i * 6, headTop - 22, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
   }
 
   private groundShadow(cx: number, cy: number, rx: number): void {
@@ -297,6 +505,26 @@ export class DungeonView {
     ctx.fillRect(x, y, w, 5);
     ctx.fillStyle = color;
     ctx.fillRect(x, y, w * Math.max(0, Math.min(1, frac)), 5);
+  }
+
+  private updateAndDrawFlashes(): void {
+    const { ctx } = this;
+    for (let i = this.flashes.length - 1; i >= 0; i--) {
+      const f = this.flashes[i];
+      if (!f) continue;
+      f.life -= 1;
+      if (f.life <= 0) {
+        this.flashes.splice(i, 1);
+        continue;
+      }
+      const t = f.life / f.max;
+      ctx.globalAlpha = t * 0.8;
+      ctx.fillStyle = '#ffd27a';
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, f.radius * (1.1 - t * 0.3), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
   }
 
   private updateAndDrawPopups(): void {
@@ -333,7 +561,7 @@ export class DungeonView {
     ctx.fillStyle = '#e6e6f0';
     ctx.fillText(`Rooms cleared  ${cleared} / ${combatRooms.length}`, 20, 30);
 
-    if (state.combat.over) this.banner('YOU DIED', '#ff6b6b');
+    if (state.spell.combat.over) this.banner('YOU DIED', '#ff6b6b');
     else if (state.complete) this.banner('DUNGEON COMPLETE', '#ffd76a');
     else if (state.activeRoomId !== null) {
       ctx.textAlign = 'center';

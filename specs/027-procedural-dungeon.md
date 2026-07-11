@@ -94,8 +94,12 @@ Backward-compatible so every existing spell/arena test is untouched:
 
 ## 3. Room-lock state machine (`src/game/dungeon-session.ts`)
 
-Owns a single persistent `CombatState` (the player lives here for the whole run)
-plus the `Dungeon` and per-room `status: 'idle' | 'locked' | 'cleared'`.
+Owns a single persistent `SpellGameState` (the player and their deck live here
+for the whole run — the dungeon plays with the same card/adrenaline/spell combat
+and movement as the main game, via `stepSpellGame` threaded with the collision
+resolver) plus the `Dungeon` and per-room `status: 'idle' | 'locked' | 'cleared'`.
+Waves and the wave-clear reward economy do not apply in a dungeon, so only
+movement, aim, target and card plays are forwarded to the spell game.
 
 Invariant: **at most one room is `locked` at a time** — the player can only be
 inside one room, so any live enemy belongs to the active room. That collapses
@@ -158,4 +162,6 @@ A camera-follow Canvas2D view that blits the 48×48 tileset:
   their room (a convex rectangle, so homing needs no pathfinding).
 - Non-rectangular / diagonal rooms; autotiled wall corners (a single wall tile is
   used for all wall cells).
-- Changes to the existing spell-card arena game or its tuning.
+- Changes to the existing spell-card arena game or its tuning; the dungeon reuses
+  that game as-is (its DOM HUD still reads "Wave 0" — the Spawn Wave control is
+  hidden). Per-room deck-edit rewards are not wired.

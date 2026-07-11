@@ -1,5 +1,5 @@
 import { Rng } from '../shared/prng.js';
-import { initCombat, makeHuntingEnemy, step as combatStep } from '../sim/combat.js';
+import { makeHuntingEnemy } from '../sim/combat.js';
 import { ENEMY_RADIUS, PLAYER_RADIUS } from '../sim/constants.js';
 import {
   circleOverlapsSolid,
@@ -14,63 +14,58 @@ import {
   type Room,
 } from '../sim/dungeon.js';
 import { ENEMY_TYPES } from '../sim/enemies.js';
-import { IDENTITY_MODIFIERS, type CombatState, type EnemyState, type InputFrame, type SimEvent, type Vec2 } from '../sim/types.js';
+import { initSpellGame, stepSpellGame, type SpellGameEvent, type SpellGameState, type SpellInput } from './spell-session.js';
+import type { CombatState, EnemyState, Vec2 } from '../sim/types.js';
 
 /**
- * Composition root for the dungeon mode (spec 027): the only place a room
- * trigger becomes spawned enemies. It owns one persistent `CombatState` — the
- * player lives here for the whole run — alongside the generated `Dungeon` and
- * each room's lock status.
+ * Composition root for the dungeon mode (spec 027): it wraps the full spell-card
+ * game (deck, hand, synergy windows, adrenaline, spells — the same combat and
+ * movement mechanics as the main game) with a procedurally generated dungeon and
+ * a room-lock loop. It is the only place a room trigger becomes spawned enemies.
  *
- * The player roams corridors and open rooms with tilemap collision. Walking into
- * an uncleared combat room seals its doors and injects its rolled roster;
- * defeating them all reopens the doors for good. At most one room is locked at a
- * time (the player can only be in one), so every live enemy belongs to the active
- * room — clearing them clears the room. Everything (rosters, positions, triggers)
- * is a pure function of (seed, inputs), so the same run always replays.
+ * The player (and their deck) live in one persistent `SpellGameState` for the
+ * whole run. Roaming uses tilemap collision through corridors; walking into an
+ * uncleared combat room seals its doors and injects its rolled roster; defeating
+ * them reopens the doors for good. At most one room is locked at a time, so every
+ * live enemy belongs to the active room. Rosters, positions and triggers are pure
+ * functions of (seed, inputs), so the same run always replays.
  */
 
 export type RoomStatus = 'idle' | 'locked' | 'cleared';
 
 export interface DungeonGameState {
   readonly dungeon: Dungeon;
-  readonly combat: CombatState;
+  /** The persistent spell game (player, deck, and the room's live enemies). */
+  readonly spell: SpellGameState;
   /** Lock status per room, indexed by room id. */
   readonly roomStatus: readonly RoomStatus[];
   /** The single currently-sealed room, or null when roaming. */
   readonly activeRoomId: number | null;
   /** True once the player reaches the exit with every combat room cleared. */
   readonly complete: boolean;
-  /** Session RNG for roster type/placement, kept separate from the combat stream. */
+  /** Session RNG for roster type/placement, kept separate from the game streams. */
   readonly rng: Rng;
 }
 
-export interface DungeonInput {
-  readonly moveX: -1 | 0 | 1;
-  readonly moveY: -1 | 0 | 1;
-  readonly aimX: number;
-  readonly aimY: number;
-  readonly attack: boolean;
-  readonly parry: boolean;
-  readonly dodge: boolean;
-}
+/** The dungeon takes the spell game's input verbatim (movement, aim, card plays). */
+export type DungeonInput = SpellInput;
 
 export type DungeonGameEvent =
   | { readonly kind: 'roomEntered'; readonly roomId: number; readonly enemyCount: number; readonly tick: number }
   | { readonly kind: 'roomCleared'; readonly roomId: number; readonly tick: number }
   | { readonly kind: 'dungeonComplete'; readonly tick: number }
-  | SimEvent;
+  | SpellGameEvent;
 
 export function initDungeonGame(seed: number, opts?: DungeonOptions): DungeonGameState {
   const dungeon = generateDungeon(seed, opts);
-  const base = initCombat(seed, { ambientSpawner: false, initialEnemies: 0 });
+  const base = initSpellGame(seed);
   const entry = dungeon.rooms.find((r) => r.id === dungeon.entryRoomId);
-  const start = entry ? roomCenterWorld(entry) : base.player.position;
-  const combat: CombatState = { ...base, player: { ...base.player, position: start } };
+  const start = entry ? roomCenterWorld(entry) : base.combat.player.position;
+  const spell: SpellGameState = { ...base, combat: { ...base.combat, player: { ...base.combat.player, position: start } } };
   const roomStatus: RoomStatus[] = dungeon.rooms.map((r) => (r.kind === 'combat' ? 'idle' : 'cleared'));
   return {
     dungeon,
-    combat,
+    spell,
     roomStatus,
     activeRoomId: null,
     complete: false,
@@ -80,11 +75,10 @@ export function initDungeonGame(seed: number, opts?: DungeonOptions): DungeonGam
 
 /** A cell is solid when it is void/wall, or a door of the currently-locked room. */
 function makeIsSolid(dungeon: Dungeon, lockedDoors: ReadonlySet<number>): (cx: number, cy: number) => boolean {
-  const doorKey = (cx: number, cy: number): number => cy * dungeon.cols + cx;
   return (cx, cy) => {
     const k = tileAt(dungeon, cx, cy);
     if (k === 'void' || k === 'wall') return true;
-    if (k === 'door') return lockedDoors.has(doorKey(cx, cy));
+    if (k === 'door') return lockedDoors.has(cy * dungeon.cols + cx);
     return false;
   };
 }
@@ -95,18 +89,18 @@ function doorSet(dungeon: Dungeon, room: Room): Set<number> {
   return s;
 }
 
+function distSq(a: Vec2, b: Vec2): number {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return dx * dx + dy * dy;
+}
+
 /**
  * Roll a room's roster: `enemyCount` hunting enemies at distinct interior cells,
  * each clear of the room's doors and a little apart from the player and each
  * other. Threads the session `Rng` so placement replays exactly.
  */
-function spawnRoster(
-  state: DungeonGameState,
-  room: Room,
-  firstId: number,
-  tick: number,
-  playerPos: Vec2,
-): { enemies: EnemyState[]; rng: Rng } {
+function spawnRoster(state: DungeonGameState, room: Room, firstId: number, tick: number, playerPos: Vec2): { enemies: EnemyState[]; rng: Rng } {
   let rng = state.rng;
   const draw = (min: number, max: number): number => {
     const [v, next] = rng.nextInt(min, max);
@@ -120,7 +114,6 @@ function spawnRoster(
   const minFromPlayer = PLAYER_RADIUS + ENEMY_RADIUS + 40;
   for (let i = 0; i < room.enemyCount; i++) {
     const type = ENEMY_TYPES[draw(0, ENEMY_TYPES.length - 1)] ?? (ENEMY_TYPES[0] as (typeof ENEMY_TYPES)[number]);
-    const typeKey = type.key;
     let pos = tileCenterWorld(room.x + draw(0, room.w - 1), room.y + draw(0, room.h - 1));
     for (let attempt = 0; attempt < 12; attempt++) {
       const candidate = tileCenterWorld(room.x + draw(0, room.w - 1), room.y + draw(0, room.h - 1));
@@ -133,20 +126,14 @@ function spawnRoster(
       }
       pos = candidate;
     }
-    enemies.push(makeHuntingEnemy(firstId + i, typeKey, pos, tick));
+    enemies.push(makeHuntingEnemy(firstId + i, type.key, pos, tick));
   }
   return { enemies, rng };
 }
 
-function distSq(a: Vec2, b: Vec2): number {
-  const dx = a.x - b.x;
-  const dy = a.y - b.y;
-  return dx * dx + dy * dy;
-}
-
 /** True once every combat room has been cleared. */
-function allCombatCleared(state: DungeonGameState): boolean {
-  return state.dungeon.rooms.every((r) => r.kind !== 'combat' || state.roomStatus[r.id] === 'cleared');
+function allCombatCleared(roomStatus: readonly RoomStatus[], dungeon: Dungeon): boolean {
+  return dungeon.rooms.every((r) => r.kind !== 'combat' || roomStatus[r.id] === 'cleared');
 }
 
 export function stepDungeonGame(state: DungeonGameState, input: DungeonInput): { state: DungeonGameState; events: DungeonGameEvent[] } {
@@ -159,24 +146,26 @@ export function stepDungeonGame(state: DungeonGameState, input: DungeonInput): {
   const isSolid = makeIsSolid(dungeon, lockedDoors);
   const collide = (from: Vec2, desired: Vec2, radius: number): Vec2 => resolveMove(from, desired, radius, isSolid);
 
-  const combatInput: InputFrame = {
+  // Waves and the wave-clear reward economy do not apply in a dungeon: forward
+  // only movement, aim, target and card plays to the spell game.
+  const spellInput: SpellInput = {
     moveX: input.moveX,
     moveY: input.moveY,
-    attack: input.attack,
     aimX: input.aimX,
     aimY: input.aimY,
-    parry: input.parry,
-    dodge: input.dodge,
+    targetX: input.targetX,
+    targetY: input.targetY,
+    ...(input.playHandIndex !== undefined ? { playHandIndex: input.playHandIndex } : {}),
   };
-
-  const combatResult = combatStep(state.combat, combatInput, IDENTITY_MODIFIERS, collide);
-  let combat = combatResult.state;
-  events.push(...combatResult.events);
+  const spellResult = stepSpellGame(state.spell, spellInput, collide);
+  let spell = spellResult.state;
+  events.push(...spellResult.events);
 
   let roomStatus = state.roomStatus;
   let activeRoomId = state.activeRoomId;
   let rng = state.rng;
   let complete = state.complete;
+  const combat: CombatState = spell.combat;
   const tick = combat.tick;
   const playerPos = combat.player.position;
   const here = roomAtWorld(dungeon, playerPos);
@@ -190,18 +179,16 @@ export function stepDungeonGame(state: DungeonGameState, input: DungeonInput): {
   }
 
   // --- Lock: player has committed into an idle combat room (clear of its doors) ---
-  if (
-    activeRoomId === null &&
-    here !== null &&
-    here.kind === 'combat' &&
-    roomStatus[here.id] === 'idle'
-  ) {
+  if (activeRoomId === null && here !== null && here.kind === 'combat' && roomStatus[here.id] === 'idle') {
     const doors = doorSet(dungeon, here);
     const doorSolid = (cx: number, cy: number): boolean => doors.has(cy * dungeon.cols + cx);
     if (!circleOverlapsSolid(playerPos, PLAYER_RADIUS, doorSolid)) {
       const spawn = spawnRoster(state, here, combat.nextEnemyId, tick, playerPos);
       rng = spawn.rng;
-      combat = { ...combat, enemies: [...combat.enemies, ...spawn.enemies], nextEnemyId: combat.nextEnemyId + spawn.enemies.length };
+      spell = {
+        ...spell,
+        combat: { ...combat, enemies: [...combat.enemies, ...spawn.enemies], nextEnemyId: combat.nextEnemyId + spawn.enemies.length },
+      };
       roomStatus = roomStatus.map((s, id) => (id === here.id ? 'locked' : s));
       activeRoomId = here.id;
       events.push({ kind: 'roomEntered', roomId: here.id, enemyCount: spawn.enemies.length, tick });
@@ -209,16 +196,13 @@ export function stepDungeonGame(state: DungeonGameState, input: DungeonInput): {
   }
 
   // --- Completion: reach the exit interior with every combat room cleared ---
-  if (!complete && here !== null && here.id === dungeon.exitRoomId && activeRoomId === null) {
-    const nextState: DungeonGameState = { ...state, roomStatus };
-    if (allCombatCleared(nextState)) {
-      complete = true;
-      events.push({ kind: 'dungeonComplete', tick });
-    }
+  if (!complete && here !== null && here.id === dungeon.exitRoomId && activeRoomId === null && allCombatCleared(roomStatus, dungeon)) {
+    complete = true;
+    events.push({ kind: 'dungeonComplete', tick });
   }
 
   return {
-    state: { dungeon, combat, roomStatus, activeRoomId, complete, rng },
+    state: { dungeon, spell, roomStatus, activeRoomId, complete, rng },
     events,
   };
 }

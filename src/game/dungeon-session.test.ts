@@ -3,13 +3,13 @@ import { initDungeonGame, stepDungeonGame, type DungeonGameEvent, type DungeonGa
 import { roomAtWorld, roomCenterWorld, tileAt, tileCenterWorld, worldToTile, type Dungeon, type Room, type TileKind } from '../sim/dungeon.js';
 import type { Vec2 } from '../sim/types.js';
 
-const IDLE: DungeonInput = { moveX: 0, moveY: 0, aimX: 1, aimY: 0, attack: false, parry: false, dodge: false };
+const IDLE: DungeonInput = { moveX: 0, moveY: 0, aimX: 1, aimY: 0, targetX: 0, targetY: 0 };
 
 function dirInput(dx: -1 | 0 | 1, dy: -1 | 0 | 1, extra: Partial<DungeonInput> = {}): DungeonInput {
   return { ...IDLE, moveX: dx, moveY: dy, aimX: dx || 1, aimY: dy, ...extra };
 }
 
-/** Sign of a number as a -1|0|1 step. */
+/** Sign of a number as a -1|0|1 step, with a small deadzone. */
 function stepSign(d: number): -1 | 0 | 1 {
   return d > 6 ? 1 : d < -6 ? -1 : 0;
 }
@@ -53,26 +53,22 @@ function routeCells(d: Dungeon, from: { cx: number; cy: number }, to: { cx: numb
   return path;
 }
 
+const playerPos = (s: DungeonGameState): Vec2 => s.spell.combat.player.position;
+
 /**
  * Navigate the player to a world target by following a BFS route over the tile
  * grid, one tick at a time. Returns the resulting state and events seen en route.
  */
-function navTo(
-  state: DungeonGameState,
-  target: Vec2,
-  maxTicks: number,
-  extra: Partial<DungeonInput> = {},
-): { state: DungeonGameState; events: DungeonGameEvent[] } {
+function navTo(state: DungeonGameState, target: Vec2, maxTicks: number, extra: Partial<DungeonInput> = {}): { state: DungeonGameState; events: DungeonGameEvent[] } {
   const events: DungeonGameEvent[] = [];
   let s = state;
-  const startCell = worldToTile(s.combat.player.position);
-  const path = routeCells(s.dungeon, startCell, worldToTile(target));
+  const path = routeCells(s.dungeon, worldToTile(playerPos(s)), worldToTile(target));
   let wp = 0;
   let ticks = 0;
   while (ticks < maxTicks) {
     const wpc = path[wp] as { cx: number; cy: number };
     const aim = wp < path.length ? tileCenterWorld(wpc.cx, wpc.cy) : target;
-    const p = s.combat.player.position;
+    const p = playerPos(s);
     const dx = aim.x - p.x;
     const dy = aim.y - p.y;
     if (Math.abs(dx) <= 6 && Math.abs(dy) <= 6) {
@@ -90,15 +86,12 @@ function navTo(
   return { state: s, events };
 }
 
-/**
- * Naively push toward a world target (no routing), one tick at a time. Used to
- * shove the player at a wall/door to prove it cannot pass.
- */
+/** Naively push toward a world target (no routing), used to shove at a wall/door. */
 function pushTo(state: DungeonGameState, target: Vec2, maxTicks: number): { state: DungeonGameState; events: DungeonGameEvent[] } {
   const events: DungeonGameEvent[] = [];
   let s = state;
   for (let i = 0; i < maxTicks; i++) {
-    const p = s.combat.player.position;
+    const p = playerPos(s);
     const r = stepDungeonGame(s, dirInput(stepSign(target.x - p.x), stepSign(target.y - p.y)));
     s = r.state;
     events.push(...r.events);
@@ -113,12 +106,13 @@ function combatRoom(state: DungeonGameState): Room {
 }
 
 describe('initDungeonGame', () => {
-  it('starts the player in the entry room, with combat rooms idle and no active room', () => {
+  it('starts the player in the entry room with a deck, combat rooms idle, no active room', () => {
     const s = initDungeonGame(42);
-    const here = roomAtWorld(s.dungeon, s.combat.player.position);
+    const here = roomAtWorld(s.dungeon, playerPos(s));
     expect(here?.id).toBe(s.dungeon.entryRoomId);
     expect(s.activeRoomId).toBeNull();
-    expect(s.combat.enemies).toHaveLength(0);
+    expect(s.spell.combat.enemies).toHaveLength(0);
+    expect(s.spell.deck.hand.some((c) => c !== null)).toBe(true); // dealt a hand
     expect(s.complete).toBe(false);
     for (const r of s.dungeon.rooms) {
       expect(s.roomStatus[r.id]).toBe(r.kind === 'combat' ? 'idle' : 'cleared');
@@ -135,7 +129,7 @@ describe('room lock / clear loop', () => {
     expect(entered).toBeDefined();
     expect(state.activeRoomId).toBe(room.id);
     expect(state.roomStatus[room.id]).toBe('locked');
-    expect(state.combat.enemies).toHaveLength(room.enemyCount);
+    expect(state.spell.combat.enemies).toHaveLength(room.enemyCount);
     if (entered && entered.kind === 'roomEntered') expect(entered.enemyCount).toBe(room.enemyCount);
   });
 
@@ -144,18 +138,15 @@ describe('room lock / clear loop', () => {
     const room = combatRoom(s0);
     const locked = navTo(s0, roomCenterWorld(room), 4000).state;
     expect(locked.activeRoomId).toBe(room.id);
-    // Try to leave through every door for a good while; the player can never
-    // stand on a door cell of the room it is locked inside.
     let s = locked;
     for (const door of room.doors) {
       const out = pushTo(s, tileCenterWorld(door.cx, door.cy), 800);
       s = out.state;
-      const cell = worldToTile(s.combat.player.position);
+      const cell = worldToTile(playerPos(s));
       const onThisDoor = room.doors.some((d) => d.cx === cell.cx && d.cy === cell.cy);
       expect(onThisDoor).toBe(false);
-      // Still locked in the same room (never escaped).
       expect(s.activeRoomId).toBe(room.id);
-      expect(roomAtWorld(s.dungeon, s.combat.player.position)?.id).toBe(room.id);
+      expect(roomAtWorld(s.dungeon, playerPos(s))?.id).toBe(room.id);
     }
   });
 
@@ -166,7 +157,7 @@ describe('room lock / clear loop', () => {
     expect(s.activeRoomId).toBe(room.id);
     // Kill the roster directly (combat is exercised elsewhere); the session must
     // still notice the empty active room and clear it.
-    s = { ...s, combat: { ...s.combat, enemies: [] } };
+    s = { ...s, spell: { ...s.spell, combat: { ...s.spell.combat, enemies: [] } } };
     const cleared = stepDungeonGame(s, IDLE);
     expect(cleared.events.some((e) => e.kind === 'roomCleared')).toBe(true);
     expect(cleared.state.activeRoomId).toBeNull();
@@ -176,21 +167,19 @@ describe('room lock / clear loop', () => {
     const again = navTo(cleared.state, roomCenterWorld(room), 4000);
     expect(again.events.some((e) => e.kind === 'roomEntered')).toBe(false);
     expect(again.state.activeRoomId).toBeNull();
-    expect(again.state.combat.enemies).toHaveLength(0);
+    expect(again.state.spell.combat.enemies).toHaveLength(0);
   });
 });
 
 describe('completion', () => {
   it('fires dungeonComplete once the player reaches the exit with all combat rooms cleared', () => {
     const s0 = initDungeonGame(42);
-    // Force every combat room cleared without fighting, to isolate the exit rule.
-    const roomStatus = s0.dungeon.rooms.map((r) => (r.kind === 'combat' ? ('cleared' as const) : ('cleared' as const)));
+    const roomStatus = s0.dungeon.rooms.map(() => 'cleared' as const);
     const primed: DungeonGameState = { ...s0, roomStatus };
     const exit = primed.dungeon.rooms.find((r) => r.id === primed.dungeon.exitRoomId) as Room;
     const { state, events } = navTo(primed, roomCenterWorld(exit), 8000);
     expect(events.some((e) => e.kind === 'dungeonComplete')).toBe(true);
     expect(state.complete).toBe(true);
-    // It only fires once.
     const more = stepDungeonGame(state, IDLE);
     expect(more.events.some((e) => e.kind === 'dungeonComplete')).toBe(false);
   });
@@ -199,7 +188,6 @@ describe('completion', () => {
     const s0 = initDungeonGame(42);
     const exit = s0.dungeon.rooms.find((r) => r.id === s0.dungeon.exitRoomId) as Room;
     const { state, events } = navTo(s0, roomCenterWorld(exit), 8000);
-    // Some combat rooms remain idle, so no completion regardless of reaching exit.
     expect(events.some((e) => e.kind === 'dungeonComplete')).toBe(false);
     expect(state.complete).toBe(false);
   });
@@ -208,11 +196,12 @@ describe('completion', () => {
 describe('determinism', () => {
   it('same seed + same inputs replay to identical state and events', () => {
     const inputs: DungeonInput[] = [];
-    // A pseudo-varied but fixed input script.
     for (let i = 0; i < 800; i++) {
       const dx = (((i * 7) % 3) - 1) as -1 | 0 | 1;
       const dy = (((i * 5) % 3) - 1) as -1 | 0 | 1;
-      inputs.push(dirInput(dx, dy, { attack: i % 9 === 0, parry: i % 13 === 0 }));
+      // Exercise the card system too, so its RNG streams are part of the replay.
+      const extra: Partial<DungeonInput> = i % 11 === 0 ? { playHandIndex: (i % 4) as 0 | 1 | 2 | 3 } : {};
+      inputs.push(dirInput(dx, dy, extra));
     }
     const run = (): { state: DungeonGameState; events: DungeonGameEvent[] } => {
       let s = initDungeonGame(777);
@@ -226,9 +215,10 @@ describe('determinism', () => {
     };
     const a = run();
     const b = run();
-    expect(b.state.combat.player.position).toEqual(a.state.combat.player.position);
+    expect(playerPos(b.state)).toEqual(playerPos(a.state));
     expect(b.state.roomStatus).toEqual(a.state.roomStatus);
-    expect(b.state.combat.enemies).toEqual(a.state.combat.enemies);
+    expect(b.state.spell.combat.enemies).toEqual(a.state.spell.combat.enemies);
+    expect(b.state.spell.combat.player.adrenaline).toEqual(a.state.spell.combat.player.adrenaline);
     expect(b.state.rng.getState()).toEqual(a.state.rng.getState());
     expect(b.events).toEqual(a.events);
   });
