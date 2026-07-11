@@ -68,9 +68,23 @@ import {
 /** Advances an immutable Rng through a closure so draws read as plain calls. */
 type Draw = (minInclusive: number, maxInclusive: number) => number;
 
+/**
+ * Resolves a desired move (from -> desired) for a mover of the given radius,
+ * returning the position it actually reaches. The dungeon (spec 027) passes a
+ * tilemap resolver so movers slide on walls; omitted, movement clamps to the
+ * arena rectangle exactly as the open-arena modes always have.
+ */
+export type CollideFn = (from: Vec2, desired: Vec2, radius: number) => Vec2;
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
+
+/** Default resolver: clamp the desired point to the arena, inset by `radius`. */
+const clampToArenaCollide: CollideFn = (_from, desired, radius) => ({
+  x: clamp(desired.x, radius, ARENA_WIDTH - radius),
+  y: clamp(desired.y, radius, ARENA_HEIGHT - radius),
+});
 
 function distanceSq(a: Vec2, b: Vec2): number {
   const dx = a.x - b.x;
@@ -87,24 +101,22 @@ const clampToArena = (x: number, y: number): Vec2 => ({
   y: clamp(y, ENEMY_RADIUS, ARENA_HEIGHT - ENEMY_RADIUS),
 });
 
-/** Move the player by an 8-directional input, normalizing diagonals, clamped to the arena. */
-function movePlayer(position: Vec2, moveX: number, moveY: number, speedScale = 1): Vec2 {
+/** Move the player by an 8-directional input, normalizing diagonals, resolved against `collide`. */
+function movePlayer(position: Vec2, moveX: number, moveY: number, collide: CollideFn, speedScale = 1): Vec2 {
   const diag = moveX !== 0 && moveY !== 0 ? DIAGONAL_SCALE : 1;
   const speed = MOVE_SPEED_PER_TICK * diag * speedScale;
-  const x = clamp(position.x + moveX * speed, PLAYER_RADIUS, ARENA_WIDTH - PLAYER_RADIUS);
-  const y = clamp(position.y + moveY * speed, PLAYER_RADIUS, ARENA_HEIGHT - PLAYER_RADIUS);
-  return { x, y };
+  return collide(position, { x: position.x + moveX * speed, y: position.y + moveY * speed }, PLAYER_RADIUS);
 }
 
-/** Step `position` toward `target` at `speed`, stopping `stopDist` short, clamped to the arena. */
-function moveToward(position: Vec2, target: Vec2, speed: number, stopDist: number): Vec2 {
+/** Step `position` toward `target` at `speed`, stopping `stopDist` short, resolved against `collide`. */
+function moveToward(position: Vec2, target: Vec2, speed: number, stopDist: number, collide: CollideFn): Vec2 {
   const dx = target.x - position.x;
   const dy = target.y - position.y;
   const distSq = dx * dx + dy * dy;
   if (distSq <= stopDist * stopDist) return position;
   const dist = Math.sqrt(distSq);
   const step = Math.min(speed, dist - stopDist);
-  return clampToArena(position.x + (dx / dist) * step, position.y + (dy / dist) * step);
+  return collide(position, { x: position.x + (dx / dist) * step, y: position.y + (dy / dist) * step }, ENEMY_RADIUS);
 }
 
 /** True if `enemy` is within reach and inside the aim cone (pure dot-product, no trig). */
@@ -118,14 +130,6 @@ function attackConnects(player: Vec2, enemy: Vec2, aimX: number, aimY: number): 
   if (dot <= 0) return false;
   const lenSqAim = aimX * aimX + aimY * aimY;
   return dot * dot >= ATTACK_ARC_COS_SQ * lenSqD * lenSqAim;
-}
-
-/** Clamp a point to the player's movable bounds. */
-function clampPlayerPos(x: number, y: number): Vec2 {
-  return {
-    x: clamp(x, PLAYER_RADIUS, ARENA_WIDTH - PLAYER_RADIUS),
-    y: clamp(y, PLAYER_RADIUS, ARENA_HEIGHT - PLAYER_RADIUS),
-  };
 }
 
 /** Parameterized cone hit (spec 018 spell casts); `aim` need not be normalized. */
@@ -245,8 +249,49 @@ function spawnEnemy(id: number, playerPos: Vec2, tick: number, draw: Draw, opts:
   };
 }
 
+/** Per-enemy scaling for an injected roster (dungeon rooms); all default to 1. */
+export interface HuntingEnemyOpts {
+  readonly healthMult?: number;
+  readonly damageMult?: number;
+  readonly speedMult?: number;
+  readonly attackSpeedMult?: number;
+}
+
+/**
+ * Build one already-hunting enemy at an explicit world position (spec 027): the
+ * dungeon injects a room's roster this way rather than through the ambient/wave
+ * spawner, so placement is the caller's (a valid cell inside the sealed room).
+ */
+export function makeHuntingEnemy(
+  id: number,
+  typeKey: string,
+  position: Vec2,
+  tick: number,
+  opts: HuntingEnemyOpts = {},
+): EnemyState {
+  const type = enemyTypeByKey(typeKey);
+  const maxHealth = Math.round(type.maxHealth * (opts.healthMult ?? 1));
+  return {
+    id,
+    type: type.key,
+    health: maxHealth,
+    maxHealth,
+    attackDamage: Math.round(type.attackDamage * (opts.damageMult ?? 1)),
+    speedMult: opts.speedMult ?? 1,
+    attackSpeedMult: opts.attackSpeedMult ?? 1,
+    position,
+    behavior: 'hunting',
+    phase: 'idle',
+    phaseEndsAtTick: tick + ENEMY_IDLE_TICKS,
+    incomingAttackOutcome: 'none',
+    attackAim: null,
+    grazeTarget: null,
+    grazeResumeTick: 0,
+  };
+}
+
 /** A grazing enemy: amble to a random spot, stand and "eat", repeat. Never attacks. */
-function grazeStep(enemy: EnemyState, tick: number, draw: Draw): EnemyState {
+function grazeStep(enemy: EnemyState, tick: number, draw: Draw, collide: CollideFn): EnemyState {
   if (enemy.grazeTarget === null) {
     if (tick < enemy.grazeResumeTick) return enemy; // standing, eating
     const target = clampToArena(
@@ -259,7 +304,7 @@ function grazeStep(enemy: EnemyState, tick: number, draw: Draw): EnemyState {
     const pause = draw(GRAZE_PAUSE_MIN_TICKS, GRAZE_PAUSE_MAX_TICKS);
     return { ...enemy, position: enemy.grazeTarget, grazeTarget: null, grazeResumeTick: tick + pause };
   }
-  return { ...enemy, position: moveToward(enemy.position, enemy.grazeTarget, GRAZE_MOVE_SPEED_PER_TICK, 0) };
+  return { ...enemy, position: moveToward(enemy.position, enemy.grazeTarget, GRAZE_MOVE_SPEED_PER_TICK, 0, collide) };
 }
 
 /** Flip a grazing enemy to hunting; a no-op if it is already hunting. */
@@ -359,6 +404,7 @@ export function step(
   state: CombatState,
   input: InputFrame,
   mods: Modifiers = IDENTITY_MODIFIERS,
+  collide: CollideFn = clampToArenaCollide,
 ): { state: CombatState; events: SimEvent[] } {
   const events: SimEvent[] = [];
   // Terminal freeze: once the player is defeated the sim stops advancing.
@@ -390,19 +436,23 @@ export function step(
   const adrenalineSpeed = 1 + ADRENALINE_SPEED_PER_POINT * state.player.adrenaline;
   const moveScale = (slowActive ? PLAYER_SLOW_MULTIPLIER : 1) * (hasteActive ? state.player.moveHasteMult : 1) * adrenalineSpeed;
   const nextPos = dashing
-    ? clampPlayerPos(state.player.position.x + state.player.dashDx, state.player.position.y + state.player.dashDy)
+    ? collide(
+        state.player.position,
+        { x: state.player.position.x + state.player.dashDx, y: state.player.position.y + state.player.dashDy },
+        PLAYER_RADIUS,
+      )
     : rooted
       ? state.player.position
-      : movePlayer(state.player.position, input.moveX, input.moveY, moveScale);
+      : movePlayer(state.player.position, input.moveX, input.moveY, collide, moveScale);
   let player: PlayerState = { ...state.player, position: nextPos };
 
   // --- Enemy movement: grazers wander, hunters home while idle ---
   let enemies: EnemyState[] = state.enemies.map((enemy) => {
     if (enemy.stunnedUntilTick && tick < enemy.stunnedUntilTick) return enemy; // frozen by a bury-feet stun
-    if (enemy.behavior === 'grazing') return grazeStep(enemy, tick, draw);
+    if (enemy.behavior === 'grazing') return grazeStep(enemy, tick, draw, collide);
     if (enemy.phase === 'idle') {
       const speed = enemyTypeByKey(enemy.type).moveSpeed * (enemy.speedMult ?? 1) * slowMult;
-      return { ...enemy, position: moveToward(enemy.position, player.position, speed, ENEMY_STANDOFF) };
+      return { ...enemy, position: moveToward(enemy.position, player.position, speed, ENEMY_STANDOFF, collide) };
     }
     return enemy; // hunting but planted for windup/recovery
   });
