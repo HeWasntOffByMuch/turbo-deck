@@ -249,8 +249,8 @@ export type ExternalEffect =
       readonly targetY: number;
       /** Slow the player's walk for this many ticks (mis-timed window); 0/absent = none. */
       readonly playerSlowTicks?: number;
-      /** Spend all banked adrenaline (a synergy cast); the empower is already baked into the specs. */
-      readonly spendAdrenaline?: boolean;
+      /** Deduct this much banked adrenaline (the played cards' cost); the empower is already baked into the specs. */
+      readonly spendAdrenaline?: number;
     };
 
 export interface InputFrame {

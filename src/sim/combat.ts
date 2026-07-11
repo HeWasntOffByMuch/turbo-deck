@@ -687,12 +687,12 @@ export function step(
           }
         }
         const slowTicks = effect.playerSlowTicks ?? 0;
-        // Adrenaline (spec 023): a connecting basic attack banks +1; a synergy spends
-        // the whole bank. Spend is applied after the gain so a double-attack fusion
-        // (both a basic hit and a synergy) nets to zero.
+        // Adrenaline (spec 023/024): a connecting basic attack banks +1; the played
+        // cards' cost is deducted. Gain is applied before the spend so an attack that
+        // is part of the same cast pays into the bank first.
         let adrenaline = player.adrenaline;
         if (basicHit) adrenaline = Math.min(MAX_ADRENALINE, adrenaline + 1);
-        if (effect.spendAdrenaline) adrenaline = 0;
+        if (effect.spendAdrenaline) adrenaline = Math.max(0, adrenaline - effect.spendAdrenaline);
         player = {
           ...player,
           adrenaline,

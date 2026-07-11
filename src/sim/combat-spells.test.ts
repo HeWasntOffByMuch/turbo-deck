@@ -312,27 +312,37 @@ describe('adrenaline (spec 023)', () => {
     expect(after.player.adrenaline).toBe(MAX_ADRENALINE);
   });
 
-  it('spendAdrenaline empties the bank when a synergy casts', () => {
+  it('spendAdrenaline deducts exactly the given amount, leaving the rest banked', () => {
     const base = withEnemy(arena(), { id: 1, position: inCone });
     const state: CombatState = { ...base, player: { ...base.player, adrenaline: 4 } };
     const spend: InputFrame = {
       ...NEUTRAL_INPUT,
-      externalEffect: { kind: 'castSpells', spells: [PLAIN], aimX: 1, aimY: 0, targetX: CENTER.x, targetY: CENTER.y, spendAdrenaline: true },
+      externalEffect: { kind: 'castSpells', spells: [PLAIN], aimX: 1, aimY: 0, targetX: CENTER.x, targetY: CENTER.y, spendAdrenaline: 2 },
     };
     const { state: after, events } = run(state, [spend]);
-    expect(after.player.adrenaline).toBe(0);
-    expect(events.some((e) => e.kind === 'adrenalineChanged' && e.delta === -4)).toBe(true);
+    expect(after.player.adrenaline).toBe(2); // 4 - 2 spent
+    expect(events.some((e) => e.kind === 'adrenalineChanged' && e.delta === -2)).toBe(true);
   });
 
-  it('a double-attack synergy nets to zero: banks one, then spends all', () => {
+  it('applies a basic-attack gain before the spend in the same cast', () => {
     const base = withEnemy(arena(), { id: 1, position: inCone });
     const state: CombatState = { ...base, player: { ...base.player, adrenaline: 2 } };
     const spend: InputFrame = {
       ...NEUTRAL_INPUT,
-      externalEffect: { kind: 'castSpells', spells: [BASIC], aimX: 1, aimY: 0, targetX: CENTER.x, targetY: CENTER.y, spendAdrenaline: true },
+      externalEffect: { kind: 'castSpells', spells: [BASIC], aimX: 1, aimY: 0, targetX: CENTER.x, targetY: CENTER.y, spendAdrenaline: 1 },
     };
     const after = run(state, [spend]).state;
-    expect(after.player.adrenaline).toBe(0); // +1 from the hit, then reset to 0
+    expect(after.player.adrenaline).toBe(2); // 2 + 1 (hit) - 1 (spend)
+  });
+
+  it('never drives the bank below zero', () => {
+    const base = withEnemy(arena(), { id: 1, position: inCone });
+    const state: CombatState = { ...base, player: { ...base.player, adrenaline: 1 } };
+    const spend: InputFrame = {
+      ...NEUTRAL_INPUT,
+      externalEffect: { kind: 'castSpells', spells: [PLAIN], aimX: 1, aimY: 0, targetX: CENTER.x, targetY: CENTER.y, spendAdrenaline: 5 },
+    };
+    expect(run(state, [spend]).state.player.adrenaline).toBe(0);
   });
 });
 
