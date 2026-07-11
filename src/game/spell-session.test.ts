@@ -292,45 +292,63 @@ describe('spellCardCost (spec 024)', () => {
   });
 });
 
-describe('generator guarantee (spec 024)', () => {
+describe('generator guarantee (spec 024/025)', () => {
   const card = (id: SpellId, instanceId: number): SpellCard => ({ id, instanceId, level: 1 });
+  const idle = (n: number): SpellInput[] => Array.from({ length: n }, () => NEUTRAL);
 
-  it('puts an Attack in hand when the bank is empty and none is held', () => {
-    const base = initSpellGame(1);
+  /** A broke hand with a free dash to cycle plus an attack waiting in the draw pile. */
+  const brokeWithDash = (): SpellGameState => {
     const deck: SpellDeck = {
-      drawPile: [card('attack', 10), card('dash', 11)],
-      hand: [card('fireBlast', 0), card('blazeAura', 1), card('fireBlast', 2), card('dash', 3)],
+      drawPile: [card('fireBlast', 10), card('attack', 11)], // fireBlast is on top, attack behind it
+      hand: [card('dash', 0), card('fireBlast', 1), card('blazeAura', 2), card('fireBlast', 3)],
       discardPile: [], rng: Rng.fromSeed(1),
     };
-    const start: SpellGameState = withAdr({ ...base, deck }, 0);
-    expect(start.deck.hand.some((c) => c?.id === 'attack')).toBe(false); // none to begin with
-    const after = run(start, [NEUTRAL]).state;
-    expect(after.deck.hand.some((c) => c?.id === 'attack')).toBe(true); // guaranteed one
-    expect(after.deck.hand.every((c) => c !== null)).toBe(true); // hand stays full
+    return withAdr({ ...initSpellGame(1), deck }, 0);
+  };
+
+  it('does not instantly swap an attack in — the rhythm is kept', () => {
+    const after = run(brokeWithDash(), [NEUTRAL]).state; // no play: no slot emptied
+    expect(after.deck.hand.some((c) => c?.id === 'attack')).toBe(false); // must cycle a card first
   });
 
-  it('is a no-op when an Attack is already held', () => {
-    const base = initSpellGame(2);
+  it('biases the next refill draw to an attack while broke', () => {
+    const start = brokeWithDash();
+    const played = run(start, [play(0)]).state; // play the free dash to open a slot
+    expect(played.deck.hand[0]).toBeNull();
+    const justBefore = run(played, idle(CARD_DRAW_DELAY_TICKS - 2)).state;
+    expect(justBefore.deck.hand[0]).toBeNull(); // still on the draw delay, not an instant swap
+    const after = run(justBefore, idle(3)).state;
+    expect(after.deck.hand[0]?.id).toBe('attack'); // biased past the top fireBlast to the attack
+  });
+
+  it('does not bias while the bank is non-zero — the top card is drawn', () => {
+    const start = withAdr(brokeWithDash(), 3);
+    const played = run(start, [play(0)]).state; // dash is free
+    const after = run(played, idle(CARD_DRAW_DELAY_TICKS + 2)).state;
+    expect(after.deck.hand[0]?.id).toBe('fireBlast'); // normal draw took the top card
+  });
+
+  it('breaks a locked full hand of unaffordable spells immediately', () => {
+    const deck: SpellDeck = {
+      drawPile: [], // dry, so the attack is minted
+      hand: [card('fireBlast', 0), card('fireBlast', 1), card('blazeAura', 2), card('groundStomp', 3)],
+      discardPile: [], rng: Rng.fromSeed(1),
+    };
+    const start: SpellGameState = withAdr({ ...initSpellGame(1), deck }, 0);
+    const after = run(start, [NEUTRAL]).state; // no free card, no empty slot: draw-bias can't help
+    expect(after.deck.hand.some((c) => c?.id === 'attack')).toBe(true); // dead-end breaker swapped one in
+    expect(after.deck.hand.every((c) => c !== null)).toBe(true);
+  });
+
+  it('is a no-op when an attack is already held', () => {
     const deck: SpellDeck = {
       drawPile: [card('dash', 10)],
       hand: [card('attack', 0), card('fireBlast', 1), card('dash', 2), card('blazeAura', 3)],
       discardPile: [], rng: Rng.fromSeed(1),
     };
-    const start: SpellGameState = withAdr({ ...base, deck }, 0);
+    const start: SpellGameState = withAdr({ ...initSpellGame(2), deck }, 0);
     const after = run(start, [NEUTRAL]).state;
     expect(after.deck.hand.map((c) => c?.id)).toEqual(['attack', 'fireBlast', 'dash', 'blazeAura']); // unchanged
-  });
-
-  it('does not fire while the bank is non-zero', () => {
-    const base = initSpellGame(3);
-    const deck: SpellDeck = {
-      drawPile: [card('attack', 10)],
-      hand: [card('fireBlast', 0), card('dash', 1), card('fireBlast', 2), card('dash', 3)],
-      discardPile: [], rng: Rng.fromSeed(1),
-    };
-    const start: SpellGameState = withAdr({ ...base, deck }, 2);
-    const after = run(start, [NEUTRAL]).state;
-    expect(after.deck.hand.some((c) => c?.id === 'attack')).toBe(false); // banked, so no rescue
   });
 });
 

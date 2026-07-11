@@ -47,9 +47,14 @@ spellCardCost(id): number      // 0 for the regular set (attack/dash), else the 
   its specs by the *current bank*. The cast carries
   `spendAdrenaline = Σ spellCardCost(card)` over the window (independent of
   whether it fused), so lone spell cards pay their cost too.
-- **Generator guarantee:** after refills, if `player.adrenaline === 0` and no
-  hand slot holds an `attack`, one is placed in the hand (sourced from the
-  piles, or minted if none remain; a displaced card returns to the discard).
+- **Generator guarantee:** while broke (`player.adrenaline === 0`) and holding no
+  `attack`, refills are **draw-biased** — an empty slot draws an `attack` (pulled
+  from the piles, minted only if none remain) instead of the top card, so a
+  generator returns on the normal draw-delay rhythm rather than by an instant
+  swap. Draw-bias only acts on an empty slot, so the one state it cannot fix — a
+  full hand of unaffordable spell cards with no free card to cycle — is caught by
+  a dead-end breaker that swaps one spell card for an `attack` immediately (the
+  displaced card returns to the discard).
 
 ### Render (`src/render/spells/`)
 
@@ -69,8 +74,10 @@ spellCardCost(id): number      // 0 for the regular set (attack/dash), else the 
 - Resolve: a synergy empowers by the bank and spends only the cards' cost, so
   the bank persists (e.g. bank 5, two-cost synergy ⇒ empowered ×2, bank 3
   after). A lone spell card pays its cost but is not empowered.
-- Guarantee: from a zero bank with no `attack` in hand, a step puts one there;
-  it is a no-op when an `attack` is already held or the bank is non-zero.
+- Guarantee: while broke with no `attack` held, an emptied slot refills to an
+  `attack` (respecting the draw delay, not an instant swap); a locked full hand
+  of unaffordable spells is broken immediately; it is a no-op when an `attack` is
+  held or the bank is non-zero.
 - Determinism: same seed + inputs ⇒ bit-identical state, gate and guarantee
   included.
 

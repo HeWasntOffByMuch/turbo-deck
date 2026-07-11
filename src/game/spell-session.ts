@@ -62,45 +62,62 @@ export function spellCardCost(id: SpellId): number {
   return SPELL_CARDS[id].set === 'regular' ? 0 : ADRENALINE_COST_PER_SPELL;
 }
 
-/**
- * Keep a generator reachable (spec 024): if the bank is empty and no hand slot
- * holds an `attack`, place one in the hand so the player can never soft-lock
- * unable to afford a spell yet unable to build adrenaline. The attack is pulled
- * from the piles to hold deck composition (minted only if none remain); a
- * displaced hand card returns to the discard. A no-op when an attack is held.
- */
-function ensureAttackInHand(deck: SpellDeck): SpellDeck {
-  if (deck.hand.some((c) => c?.id === 'attack')) return deck;
-  const hand = [...deck.hand] as (SpellCard | null)[];
-  // Convert a held spell card first (it is unaffordable at zero anyway), then any
-  // held card, and only fill a genuinely empty slot as a last resort.
-  let slot = hand.findIndex((c) => c !== null && spellCardCost(c.id) > 0);
-  if (slot < 0) slot = hand.findIndex((c) => c !== null);
-  if (slot < 0) slot = 0;
-  const displaced = hand[slot];
+/** True while the player has no way to build adrenaline: broke and holding no `attack`. */
+function needsGenerator(deck: SpellDeck, adrenaline: number): boolean {
+  return adrenaline === 0 && !deck.hand.some((c) => c?.id === 'attack');
+}
 
+/** Lowest unused instanceId, so a minted card never collides with a live one. */
+function nextInstanceId(deck: SpellDeck): number {
+  let max = -1;
+  for (const c of deck.drawPile) max = Math.max(max, c.instanceId);
+  for (const c of deck.hand) if (c) max = Math.max(max, c.instanceId);
+  for (const c of deck.discardPile) max = Math.max(max, c.instanceId);
+  return max + 1;
+}
+
+/**
+ * Pull one `attack` out of the piles (draw first, then discard) to hold deck
+ * composition, minting a fresh one only when the deck has none left. Returns the
+ * card and the piles with it removed.
+ */
+function takeAttack(deck: SpellDeck): { card: SpellCard; drawPile: SpellCard[]; discardPile: SpellCard[] } {
   const drawPile = [...deck.drawPile];
   const discardPile = [...deck.discardPile];
-  let attack: SpellCard;
   const di = drawPile.findIndex((c) => c.id === 'attack');
-  if (di >= 0) {
-    attack = drawPile[di] as SpellCard;
-    drawPile.splice(di, 1);
-  } else {
-    const ci = discardPile.findIndex((c) => c.id === 'attack');
-    if (ci >= 0) {
-      attack = discardPile[ci] as SpellCard;
-      discardPile.splice(ci, 1);
-    } else {
-      let maxId = -1;
-      for (const c of drawPile) maxId = Math.max(maxId, c.instanceId);
-      for (const c of deck.hand) if (c) maxId = Math.max(maxId, c.instanceId);
-      for (const c of discardPile) maxId = Math.max(maxId, c.instanceId);
-      attack = { instanceId: maxId + 1, id: 'attack', level: 1 };
-    }
-  }
+  if (di >= 0) return { card: drawPile.splice(di, 1)[0] as SpellCard, drawPile, discardPile };
+  const ci = discardPile.findIndex((c) => c.id === 'attack');
+  if (ci >= 0) return { card: discardPile.splice(ci, 1)[0] as SpellCard, drawPile, discardPile };
+  return { card: { instanceId: nextInstanceId(deck), id: 'attack', level: 1 }, drawPile, discardPile };
+}
+
+/**
+ * Draw-bias for the generator guarantee (spec 024/025): fill an *empty* slot with
+ * an `attack` instead of the top card, so a broke hand refills into a generator on
+ * the normal draw-delay rhythm rather than by an instant swap. Returns the drawn
+ * card (never null -- it mints if the piles are dry).
+ */
+function drawAttackIntoSlot(deck: SpellDeck, slot: number): { deck: SpellDeck; card: SpellCard } {
+  const { card, drawPile, discardPile } = takeAttack(deck);
+  const hand = [...deck.hand] as (SpellCard | null)[];
+  hand[slot] = card;
+  return { deck: { drawPile, hand: hand as unknown as SpellHand, discardPile, rng: deck.rng }, card };
+}
+
+/**
+ * Dead-end breaker (spec 024/025): only for the state draw-bias cannot fix -- a
+ * full hand of unaffordable spell cards with no free card to cycle, so no slot
+ * ever empties. Replace one spell card with an `attack` (the displaced card
+ * returns to the discard) so the hand can never hard-lock.
+ */
+function breakGeneratorDeadEnd(deck: SpellDeck): SpellDeck {
+  const hand = [...deck.hand] as (SpellCard | null)[];
+  const slot = hand.findIndex((c) => c !== null && spellCardCost(c.id) > 0);
+  if (slot < 0) return deck; // nothing to convert (shouldn't happen at a dead-end)
+  const { card, drawPile, discardPile } = takeAttack(deck);
+  const displaced = hand[slot];
   if (displaced) discardPile.push(displaced);
-  hand[slot] = attack;
+  hand[slot] = card;
   return { drawPile, hand: hand as unknown as SpellHand, discardPile, rng: deck.rng };
 }
 
@@ -342,10 +359,14 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
       refillAtTick[slot] = tick + CARD_DRAW_DELAY_TICKS;
     }
   }
+  const adrenaline = combatResult.state.player.adrenaline;
   for (let slot = 0; slot < HAND_SIZE; slot++) {
     const at = refillAtTick[slot];
     if (at !== null && at !== undefined && tick >= at) {
-      const drawn = drawIntoSlot(deck, slot);
+      // Generator guarantee (spec 024/025): while broke and holding no attack, bias
+      // the refill draw to an attack (keeping the draw-delay rhythm) instead of the
+      // top card, re-checked each fill so it only supplies one.
+      const drawn = needsGenerator(deck, adrenaline) ? drawAttackIntoSlot(deck, slot) : drawIntoSlot(deck, slot);
       deck = drawn.deck;
       // Only clear the schedule once a card actually landed; if the deck is
       // momentarily dry, keep it pending so the slot retries instead of stalling.
@@ -353,14 +374,11 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
     }
   }
 
-  // Generator guarantee (spec 024): while broke, keep a basic Attack in hand so the
-  // hand can never stall unable to afford a spell yet unable to build adrenaline.
-  if (combatResult.state.player.adrenaline === 0 && !deck.hand.some((c) => c?.id === 'attack')) {
-    deck = ensureAttackInHand(deck);
-    // A slot the guarantee just filled no longer needs its pending refill.
-    for (let slot = 0; slot < HAND_SIZE; slot++) {
-      if (deck.hand[slot] !== null && refillAtTick[slot] !== null) refillAtTick[slot] = null;
-    }
+  // Dead-end breaker: draw-bias can only act on an empty slot, so a full hand of
+  // unaffordable spell cards (no attack, no free card to cycle) would never refill.
+  // Swap an attack in immediately for exactly that locked state.
+  if (needsGenerator(deck, adrenaline) && deck.hand.every((c) => c !== null) && !deck.hand.some((c) => c && spellCardCost(c.id) === 0)) {
+    deck = breakGeneratorDeadEnd(deck);
   }
 
   return {
