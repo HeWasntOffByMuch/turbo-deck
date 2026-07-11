@@ -121,6 +121,8 @@ export class SpellArenaView {
         const at = this.worldToScreen(player.position);
         if (e.delta > 0) this.spawn(at, '+ADR', '#ff8a5a', -1.1);
         else this.spawn(at, 'ADRENALINE!', '#ff5a3a', -1.4);
+      } else if (e.kind === 'playRejectedNoAdrenaline') {
+        this.spawn(this.worldToScreen(player.position), 'NEED ADR', '#ff6b6b', -1.0);
       }
     }
   }

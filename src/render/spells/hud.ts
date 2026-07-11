@@ -1,6 +1,6 @@
 import { HAND_SIZE, SPELL_CARDS, type CardSet, type SpellCard, type SpellHand } from '../../cards/spells.js';
 import { ADRENALINE_DAMAGE_PER_POINT } from '../../cards/synergy.js';
-import type { RewardOffer, SpellGameState } from '../../game/spell-session.js';
+import { spellCardCost, type RewardOffer, type SpellGameState } from '../../game/spell-session.js';
 import { MAX_ADRENALINE, TICK_RATE, WAVE_BASE_COUNT } from '../../sim/constants.js';
 import type { SpellInputCapture } from './input.js';
 
@@ -38,6 +38,10 @@ const STYLE = `
   background: #2a2a38; color: #ffd76a; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 6px; }
 .sp-card .lv { position: absolute; top: 5px; right: 5px; background: #b9862a; color: #fff;
   font-size: 10px; font-weight: 800; padding: 1px 5px; border-radius: 6px; }
+.sp-card .cost { position: absolute; bottom: 5px; right: 5px; background: #8a2f28; color: #ffd8cc;
+  font-size: 10px; font-weight: 800; padding: 1px 6px; border-radius: 6px; box-shadow: 0 0 5px rgba(255,80,50,.5); }
+.sp-card.unafford { filter: grayscale(.65) brightness(.7); }
+.sp-card.unafford:hover { transform: none; }
 .sp-controls { display: flex; gap: 12px; align-items: stretch; margin-top: 14px; flex-wrap: wrap; }
 .sp-btn { border: none; border-radius: 10px; padding: 10px 16px; cursor: pointer; color: #fff;
   font-size: 14px; font-weight: 700; text-align: left; line-height: 1.35; }
@@ -150,7 +154,7 @@ export class SpellHud {
 
     const hint = el('div', 'sp-hint');
     hint.textContent =
-      'move: WASD · aim: mouse · play card: 1–4 / click · spawn wave: Q · Attack interrupts wind-ups & banks ADR · dump ADR into a synergy';
+      'move: WASD · aim: mouse · play: 1–4 / click · wave: Q · Attack interrupts & banks ADR · spell cards cost ◆ADR · fuse a synergy to empower it';
     root.appendChild(hint);
   }
 
@@ -165,7 +169,7 @@ export class SpellHud {
 
     const slowed = combat.tick < player.moveSlowUntilTick;
     this.renderBanner(combat.enemies, combat.over, slowed);
-    this.renderHand(state.deck.hand, state.refillAtTick, combat.tick);
+    this.renderHand(state.deck.hand, state.refillAtTick, combat.tick, player.adrenaline);
     this.renderReward(state.pendingReward);
     this.renderPick(state.pendingPick);
     this.waveBtn.disabled = state.pendingReward !== null || state.pendingPick !== null;
@@ -243,7 +247,7 @@ export class SpellHud {
     }
   }
 
-  private renderHand(hand: SpellHand, refillAtTick: readonly (number | null)[], tick: number): void {
+  private renderHand(hand: SpellHand, refillAtTick: readonly (number | null)[], tick: number, adrenaline: number): void {
     // Include level so an upgraded card's badge refreshes even though its id is stable.
     const key = hand.map((c) => (c ? `${c.instanceId}:${c.level}` : 'x')).join(',');
     if (key !== this.lastHandKey) {
@@ -251,8 +255,13 @@ export class SpellHud {
       hand.forEach((card, i) => this.buildFace(this.cards[i], card));
     }
     hand.forEach((card, i) => {
+      const node = this.cards[i];
+      if (!node) return;
+      // Dim a costed card the current bank can't pay for (spec 024).
+      const cost = card ? spellCardCost(card.id) : 0;
+      node.classList.toggle('unafford', card !== null && cost > adrenaline);
       if (card) return;
-      const label = this.cards[i]?.querySelector('.cool')?.firstChild;
+      const label = node.querySelector('.cool')?.firstChild;
       if (!label) return;
       const at = refillAtTick[i];
       label.textContent = at !== null && at !== undefined ? `↻ ${Math.max(0, (at - tick) / TICK_RATE).toFixed(1)}s` : '—';
@@ -261,8 +270,9 @@ export class SpellHud {
 
   private buildFace(node: HTMLElement | undefined, card: SpellCard | null): void {
     if (!node) return;
-    node.querySelectorAll('.name,.set,.blurb,.cool,.lv').forEach((n) => n.remove());
+    node.querySelectorAll('.name,.set,.blurb,.cool,.lv,.cost').forEach((n) => n.remove());
     node.classList.toggle('empty', !card);
+    if (!card) node.classList.remove('unafford');
 
     if (!card) {
       node.style.background = '';
@@ -291,6 +301,13 @@ export class SpellHud {
       const lv = el('span', 'lv');
       lv.textContent = `Lv${card.level}`;
       node.appendChild(lv);
+    }
+    const cost = spellCardCost(card.id);
+    if (cost > 0) {
+      const badge = el('span', 'cost');
+      badge.textContent = `◆${cost}`;
+      badge.title = `${cost} adrenaline to play`;
+      node.appendChild(badge);
     }
   }
 }
