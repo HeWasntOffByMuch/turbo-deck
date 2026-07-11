@@ -346,6 +346,20 @@ describe('adrenaline (spec 023)', () => {
   });
 });
 
+describe('adrenaline move speed (spec 025)', () => {
+  it('speeds the walk by 4% per banked point', () => {
+    const withAdr = (adr: number): CombatState => {
+      const base = arena();
+      return { ...base, player: { ...base.player, adrenaline: adr } };
+    };
+    const walk: InputFrame = { ...NEUTRAL_INPUT, moveX: 1 };
+    const dx0 = run(withAdr(0), [walk]).state.player.position.x - CENTER.x;
+    const dx5 = run(withAdr(5), [walk]).state.player.position.x - CENTER.x;
+    expect(dx0).toBeGreaterThan(0);
+    expect(dx5).toBeCloseTo(dx0 * (1 + 0.04 * 5), 6); // +20% at a full bank
+  });
+});
+
 describe('determinism', () => {
   it('replays identically for the same seed and inputs', () => {
     const spec: SpellSpec = { kind: 'aura', radius: 95, pulseDamage: 5, pulseIntervalTicks: 12, durationTicks: 180 };

@@ -1,5 +1,6 @@
 import { Rng } from '../shared/prng.js';
 import {
+  ADRENALINE_SPEED_PER_POINT,
   ARENA_HEIGHT,
   ARENA_WIDTH,
   ATTACK_ARC_COS_SQ,
@@ -382,10 +383,12 @@ export function step(
   const dashing = tick < state.player.dashExpiresAtTick;
   const rooted = !dashing && (swingPending || startAttack || tick < state.player.moveLockUntil);
 
-  // Walk speed: a mis-timed window (spec 021) drags it down, Burning Speed (spec 022) lifts it.
+  // Walk speed: a mis-timed window (spec 021) drags it down, Burning Speed (spec 022)
+  // lifts it, and each banked adrenaline point adds +4% (spec 025).
   const slowActive = tick < state.player.moveSlowUntilTick;
   const hasteActive = tick < state.player.moveHasteUntilTick;
-  const moveScale = (slowActive ? PLAYER_SLOW_MULTIPLIER : 1) * (hasteActive ? state.player.moveHasteMult : 1);
+  const adrenalineSpeed = 1 + ADRENALINE_SPEED_PER_POINT * state.player.adrenaline;
+  const moveScale = (slowActive ? PLAYER_SLOW_MULTIPLIER : 1) * (hasteActive ? state.player.moveHasteMult : 1) * adrenalineSpeed;
   const nextPos = dashing
     ? clampPlayerPos(state.player.position.x + state.player.dashDx, state.player.position.y + state.player.dashDy)
     : rooted

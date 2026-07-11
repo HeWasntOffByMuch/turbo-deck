@@ -57,8 +57,11 @@ export const PLAYER_SLOW_MULTIPLIER = 0.4;
 export const BURN_PULSE_INTERVAL_TICKS = 30;
 
 // Adrenaline (spec 023): a basic attack that connects banks one point, capped
-// here; a synergy spends the whole bank to empower its cast.
+// here; spell cards spend it to be played.
 export const MAX_ADRENALINE = 5;
+// Each banked point speeds the player's walk by this much (spec 025): +4%/point,
+// so a full bank of 5 is +20% movement.
+export const ADRENALINE_SPEED_PER_POINT = 0.04;
 
 export const PLAYER_MAX_MANA = 10;
 export const MANA_REGEN_PER_TICK = PLAYER_MAX_MANA / (5 * TICK_RATE);
