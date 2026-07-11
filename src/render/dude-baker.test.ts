@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { bakeDude, seedFromName, SPRITE_W, SPRITE_H } from './dude-baker.js';
+import { ENEMY_TYPES } from '../sim/enemies.js';
+import { PLAYER_SKIN } from './spells/dudes.js';
 
 const bytes = (a: Uint8ClampedArray): number[] => Array.from(a);
 const PIXELS = SPRITE_W * SPRITE_H * 4;
@@ -47,5 +49,15 @@ describe('bakeDude', () => {
   it('renders a distinct wind-up pose from idle', () => {
     const dude = bakeDude(seedFromName('Warden'));
     expect(bytes(dude.idle)).not.toEqual(bytes(dude.windup));
+  });
+
+  it('bakes a distinct skin for the hero and every enemy type (spec 011 art)', () => {
+    const names = [PLAYER_SKIN, ...ENEMY_TYPES.map((t) => t.key)];
+    const idles = names.map((n) => bytes(bakeDude(seedFromName(n)).idle));
+    for (let i = 0; i < idles.length; i++) {
+      for (let j = i + 1; j < idles.length; j++) {
+        expect(idles[i], `${names[i]} vs ${names[j]} must differ`).not.toEqual(idles[j]);
+      }
+    }
   });
 });

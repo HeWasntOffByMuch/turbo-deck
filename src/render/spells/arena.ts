@@ -12,6 +12,7 @@ import {
 } from '../../sim/constants.js';
 import type { SpellGameEvent, SpellGameState } from '../../game/spell-session.js';
 import type { EnemyState, PlayerState, Vec2 } from '../../sim/types.js';
+import { DudeSkins, PLAYER_SKIN } from './dudes.js';
 
 /**
  * Canvas2D arena for the spell game (spec 018). A thin, shape-based view: the
@@ -24,12 +25,6 @@ import type { EnemyState, PlayerState, Vec2 } from '../../sim/types.js';
 export const SCALE = 0.75;
 export const CANVAS_W = Math.round(ARENA_WIDTH * SCALE);
 export const CANVAS_H = Math.round(ARENA_HEIGHT * SCALE);
-
-const ENEMY_COLORS: Readonly<Record<string, string>> = {
-  brawler: '#c9683f',
-  skitter: '#5fb4d6',
-  brute: '#9a5ad0',
-};
 
 interface Popup {
   x: number;
@@ -67,6 +62,7 @@ export class SpellArenaView {
   private readonly popups: Popup[] = [];
   private readonly flashes: Flash[] = [];
   private readonly casts: CastFx[] = [];
+  private readonly dudes = new DudeSkins();
   private frame = 0;
 
   constructor(readonly canvas: HTMLCanvasElement) {
@@ -255,21 +251,25 @@ export class SpellArenaView {
     const { ctx } = this;
     const p = this.worldToScreen(enemy.position);
     const r = ENEMY_RADIUS * SCALE;
-    const color = ENEMY_COLORS[enemy.type] ?? '#c07070';
     const stunned = (enemy.stunnedUntilTick ?? 0) > tick;
 
-    ctx.globalAlpha = enemy.behavior === 'grazing' ? 0.75 : 1;
-    ctx.fillStyle = stunned ? '#6f7590' : color;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
+    // Baked pixel-dude skin, keyed by type so each mob looks distinct (spec 011 art).
+    const faceLeft = playerPos.x < enemy.position.x;
+    const frame = enemy.behavior === 'hunting' && enemy.phase === 'windup' ? 'windup' : 'idle';
+    const alpha = stunned ? 0.55 : enemy.behavior === 'grazing' ? 0.82 : 1;
+    const fy = p.y + r * 0.72; // ground point the sprite stands on
+    const size = r * 3.4;
+    const headTop = fy - size;
 
-    const dir = norm({ x: playerPos.x - enemy.position.x, y: playerPos.y - enemy.position.y });
-    ctx.fillStyle = '#1a1208';
-    ctx.beginPath();
-    ctx.arc(p.x + dir.x * r * 0.5, p.y + dir.y * r * 0.5, r * 0.22, 0, Math.PI * 2);
-    ctx.fill();
+    this.groundShadow(p.x, fy, r * 1.05);
+    // Hunting/attack progress reads as a telegraph ring on the ground under the mob.
+    if (!stunned && enemy.behavior === 'hunting') {
+      const total = enemy.phase === 'idle' ? ENEMY_IDLE_TICKS : enemy.phase === 'windup' ? ENEMY_WINDUP_TICKS : ENEMY_RECOVERY_TICKS;
+      const prog = 1 - Math.max(0, enemy.phaseEndsAtTick - tick) / total;
+      const ring = enemy.phase === 'windup' ? '#ff8c1a' : enemy.phase === 'recovery' ? '#7a5a5a' : '#d0605a';
+      this.groundRing(p.x, fy, r * 1.05, prog, ring);
+    }
+    this.dudes.draw(ctx, enemy.type, frame, p.x, fy, size, faceLeft, alpha);
 
     if (stunned) {
       // Little orbiting "stars" to read the stun at a glance.
@@ -277,25 +277,20 @@ export class SpellArenaView {
       for (let i = 0; i < 3; i++) {
         const a = this.frame * 0.15 + (i * Math.PI * 2) / 3;
         ctx.beginPath();
-        ctx.arc(p.x + Math.cos(a) * (r + 6), p.y - r - 4 + Math.sin(a) * 3, 2.2, 0, Math.PI * 2);
+        ctx.arc(p.x + Math.cos(a) * (r + 4), headTop - 3 + Math.sin(a) * 3, 2.2, 0, Math.PI * 2);
         ctx.fill();
       }
-    } else if (enemy.behavior === 'hunting') {
-      const total = enemy.phase === 'idle' ? ENEMY_IDLE_TICKS : enemy.phase === 'windup' ? ENEMY_WINDUP_TICKS : ENEMY_RECOVERY_TICKS;
-      const prog = 1 - Math.max(0, enemy.phaseEndsAtTick - tick) / total;
-      const ring = enemy.phase === 'windup' ? '#ff8c1a' : enemy.phase === 'recovery' ? '#7a5a5a' : '#d0605a';
-      strokeArc(ctx, p.x, p.y, r + 5, prog, ring);
     }
 
-    // Burning condition: a licking ember over the body.
+    // Burning condition: a licking ember over the head.
     if ((enemy.burningUntilTick ?? 0) > tick) {
       ctx.fillStyle = `rgba(255,110,40,${0.45 + 0.4 * Math.sin(this.frame * 0.4 + enemy.id)})`;
       ctx.beginPath();
-      ctx.arc(p.x, p.y - r - 2, 3 + Math.sin(this.frame * 0.5 + enemy.id), 0, Math.PI * 2);
+      ctx.arc(p.x, headTop - 5, 3 + Math.sin(this.frame * 0.5 + enemy.id), 0, Math.PI * 2);
       ctx.fill();
     }
 
-    this.healthBar(p.x - r, p.y - r - 12, r * 2, enemy.health / enemy.maxHealth, enemy.behavior === 'hunting' ? '#ff5a5a' : '#8fbf6a');
+    this.healthBar(p.x - r, headTop - 9, r * 2, enemy.health / enemy.maxHealth, enemy.behavior === 'hunting' ? '#ff5a5a' : '#8fbf6a');
   }
 
   private drawPlayer(player: PlayerState, tick: number, aim: ScreenPoint): void {
@@ -303,6 +298,9 @@ export class SpellArenaView {
     const p = this.worldToScreen(player.position);
     const r = PLAYER_RADIUS * SCALE;
     const ang = Math.atan2(aim.y, aim.x);
+    const fy = p.y + r * 0.72; // ground point the hero stands on
+    const size = r * 4.0;
+    const headTop = fy - size;
 
     // Dash streak.
     if (tick < player.dashExpiresAtTick) {
@@ -364,7 +362,7 @@ export class SpellArenaView {
       ctx.fillStyle = '#ff6a3a';
       for (let i = 0; i < player.adrenaline; i++) {
         ctx.beginPath();
-        ctx.arc(p.x - (player.adrenaline - 1) * 3.5 + i * 7, p.y - r - 26, 2.6, 0, Math.PI * 2);
+        ctx.arc(p.x - (player.adrenaline - 1) * 3.5 + i * 7, headTop - 15, 2.6, 0, Math.PI * 2);
         ctx.fill();
       }
     }
@@ -380,29 +378,51 @@ export class SpellArenaView {
       ctx.globalAlpha = 1;
     }
 
-    ctx.fillStyle = '#e8eef7';
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-    ctx.fill();
+    // Baked pixel-dude hero skin; faces the aim direction.
+    this.groundShadow(p.x, fy, r * 1.15);
+    this.dudes.draw(ctx, PLAYER_SKIN, 'idle', p.x, fy, size, aim.x < 0);
 
-    ctx.strokeStyle = '#9fb7d4';
+    // A short aim tick so the cursor direction still reads for cones/dashes.
+    ctx.strokeStyle = 'rgba(159,183,212,0.9)';
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(p.x, p.y);
-    ctx.lineTo(p.x + Math.cos(ang) * r * 1.6, p.y + Math.sin(ang) * r * 1.6);
+    ctx.moveTo(p.x + Math.cos(ang) * r * 1.1, p.y + Math.sin(ang) * r * 1.1);
+    ctx.lineTo(p.x + Math.cos(ang) * r * 2.1, p.y + Math.sin(ang) * r * 2.1);
     ctx.stroke();
 
-    this.healthBar(p.x - r - 4, p.y - r - 14, r * 2 + 8, player.health / player.maxHealth, '#5ad65a');
+    this.healthBar(p.x - r - 4, headTop - 9, r * 2 + 8, player.health / player.maxHealth, '#5ad65a');
 
     // Conjure Flame charges: a small orange pip per remaining buffed attack.
     if (player.attackFlameCharges > 0) {
       ctx.fillStyle = '#ff9b3a';
       for (let i = 0; i < player.attackFlameCharges; i++) {
         ctx.beginPath();
-        ctx.arc(p.x - (player.attackFlameCharges - 1) * 3 + i * 6, p.y - r - 20, 2.5, 0, Math.PI * 2);
+        ctx.arc(p.x - (player.attackFlameCharges - 1) * 3 + i * 6, headTop - 22, 2.5, 0, Math.PI * 2);
         ctx.fill();
       }
     }
+  }
+
+  /** A soft elliptical shadow under a standing sprite, to ground it on the field. */
+  private groundShadow(cx: number, cy: number, rx: number): void {
+    const { ctx } = this;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx, rx * 0.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /** A flattened progress ring on the ground (an enemy's attack-charge telegraph). */
+  private groundRing(cx: number, cy: number, rx: number, progress: number, color: string): void {
+    const { ctx } = this;
+    const clamped = Math.max(0, Math.min(1, progress));
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx, rx * 0.4, 0, -Math.PI / 2, -Math.PI / 2 + clamped * Math.PI * 2);
+    ctx.stroke();
   }
 
   private healthBar(x: number, y: number, w: number, frac: number, color: string): void {
@@ -453,18 +473,4 @@ export class SpellArenaView {
     ctx.globalAlpha = 1;
     ctx.textAlign = 'left';
   }
-}
-
-function norm(v: Vec2): Vec2 {
-  const len = Math.hypot(v.x, v.y);
-  return len < 1e-4 ? { x: 1, y: 0 } : { x: v.x / len, y: v.y / len };
-}
-
-function strokeArc(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius: number, progress: number, color: string): void {
-  const clamped = Math.max(0, Math.min(1, progress));
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + clamped * Math.PI * 2);
-  ctx.stroke();
 }
