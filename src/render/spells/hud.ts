@@ -1,7 +1,6 @@
 import { HAND_SIZE, SPELL_CARDS, type CardSet, type SpellCard, type SpellHand } from '../../cards/spells.js';
-import { ADRENALINE_DAMAGE_PER_POINT } from '../../cards/synergy.js';
 import { spellCardCost, type RewardOffer, type SpellGameState } from '../../game/spell-session.js';
-import { MAX_ADRENALINE, TICK_RATE, WAVE_BASE_COUNT } from '../../sim/constants.js';
+import { ADRENALINE_SPEED_PER_POINT, MAX_ADRENALINE, TICK_RATE, WAVE_BASE_COUNT } from '../../sim/constants.js';
 import type { SpellInputCapture } from './input.js';
 
 /**
@@ -55,7 +54,7 @@ const STYLE = `
 .sp-adr .pip { width: 13px; height: 13px; border-radius: 3px; background: #37232a; border: 1px solid #52333a;
   transform: skewX(-12deg); transition: background .12s ease, box-shadow .12s ease; }
 .sp-adr .pip.on { background: linear-gradient(#ff8a3a, #ff4d3d); border-color: #ffb066; box-shadow: 0 0 7px rgba(255,90,50,.7); }
-.sp-adr .bonus { color: #ff8a5a; font-weight: 800; font-size: 12px; margin-left: 4px; min-width: 34px; }
+.sp-adr .bonus { color: #ff8a5a; font-weight: 800; font-size: 12px; margin-left: 4px; min-width: 60px; }
 .sp-hint { color: #8a8a9a; font-size: 12px; margin-top: 10px; }
 `;
 
@@ -154,7 +153,7 @@ export class SpellHud {
 
     const hint = el('div', 'sp-hint');
     hint.textContent =
-      'move: WASD · aim: mouse · play: 1–4 / click · wave: Q · Attack interrupts & banks ADR · spell cards cost ◆ADR · fuse a synergy to empower it';
+      'move: WASD · aim: mouse · play: 1–4 / click · wave: Q · Attack interrupts & banks ADR (each point = +4% move speed) · spell cards cost ◆ADR';
     root.appendChild(hint);
   }
 
@@ -180,8 +179,8 @@ export class SpellHud {
 
   private renderAdrenaline(adrenaline: number): void {
     this.adrPips.forEach((pip, i) => pip.classList.toggle('on', i < adrenaline));
-    const bonus = Math.round(ADRENALINE_DAMAGE_PER_POINT * adrenaline * 100);
-    this.adrBonus.textContent = bonus > 0 ? `+${bonus}%` : '';
+    const bonus = Math.round(ADRENALINE_SPEED_PER_POINT * adrenaline * 100);
+    this.adrBonus.textContent = bonus > 0 ? `+${bonus}% SPD` : '';
   }
 
   private renderReward(offers: SpellGameState['pendingReward']): void {

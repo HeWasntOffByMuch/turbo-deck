@@ -23,7 +23,7 @@ function main(): void {
   const title = document.createElement('div');
   title.style.cssText = "font-family:'Segoe UI',system-ui,sans-serif;color:#c9c9d8;margin:6px 2px 10px;font-size:13px;";
   title.textContent =
-    'turbo-deck · spell-card combat — Attack interrupts enemy wind-ups and banks adrenaline; fuse two of a kind into a synergy to spend it for a bigger hit. (M mutes)';
+    'turbo-deck · spell-card combat — Attack interrupts enemy wind-ups and banks adrenaline (each point = faster movement); spell cards cost adrenaline to play. (M mutes)';
   app.appendChild(title);
 
   const canvas = document.createElement('canvas');
