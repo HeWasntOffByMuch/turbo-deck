@@ -19,9 +19,23 @@
 //     it sinister — a slow descending Andalusian cadence (Dm–C–B♭–A, the drop
 //     onto an A-major dominant lending a C♯ leading tone), a Phrygian ♭2 (E♭) in
 //     the lead, a sawtooth lead over a low triangle toll and a sawtooth drone.
+//
+// The combat theme also carries a fifth voice, the `flourish` (spec 027): fast
+// 16th-note runs an octave above the lead, a jazzy-overture line that the audio
+// engine holds silent for the first `FLOURISH_ONSET_SECONDS` of a wave and then
+// layers in, so a sustained fight audibly builds. The notes live in the song at
+// their natural onsets; the *delay* is an engine concern (audio.ts), not the
+// note data.
 
 export type Waveform = 'sine' | 'square' | 'sawtooth' | 'triangle';
-export type MusicVoice = 'bass' | 'arp' | 'lead' | 'pad';
+export type MusicVoice = 'bass' | 'arp' | 'lead' | 'pad' | 'flourish';
+
+/**
+ * How long the combat theme runs before its `flourish` voice enters. This is an
+ * arrangement decision expressed as data so the audio engine's real-time gate
+ * has a single, testable source of truth (spec 027).
+ */
+export const FLOURISH_ONSET_SECONDS = 10;
 /** Which soundtrack is playing: the fight, the between-wave lull, or the death dirge. */
 export type MusicPhase = 'combat' | 'calm' | 'death';
 
@@ -97,6 +111,13 @@ interface SongSpec {
   readonly leadGain: number;
   readonly padWave: Waveform;
   readonly padGain: number;
+  /**
+   * Optional fast overtop melody (spec 027). When present the assembler emits a
+   * `flourish` voice; themes that omit it (calm, death) have no flourish.
+   */
+  readonly flourishBars?: readonly LeadBar[];
+  readonly flourishWave?: Waveform;
+  readonly flourishGain?: number;
 }
 
 function bassNotes(spec: SongSpec, chord: Chord, barStart: number): MusicNote[] {
@@ -145,6 +166,22 @@ function leadNotes(spec: SongSpec, barIndex: number, barStart: number): MusicNot
   }));
 }
 
+function flourishNotes(spec: SongSpec, barIndex: number, barStart: number): MusicNote[] {
+  const bar = spec.flourishBars?.[barIndex];
+  if (!bar || spec.flourishWave === undefined || spec.flourishGain === undefined) return [];
+  const wave = spec.flourishWave;
+  const gain = spec.flourishGain;
+  return bar.map(([beat, duration, midi]) => ({
+    beat: barStart + beat,
+    // Tighter than the lead's 0.92 so the fast runs read as crisp and staccato.
+    duration: duration * 0.85,
+    midi,
+    wave,
+    gain,
+    voice: 'flourish' as const,
+  }));
+}
+
 function padNotes(spec: SongSpec, chord: Chord, barStart: number): MusicNote[] {
   // A soft sustained triad under everything, filling the harmony.
   return chord.tones.map((midi) => ({
@@ -170,6 +207,7 @@ function assemble(spec: SongSpec): Song {
       ...bassNotes(spec, chord, barStart),
       ...arpNotes(spec, chord, barStart),
       ...leadNotes(spec, bar, barStart),
+      ...flourishNotes(spec, bar, barStart),
       ...padNotes(spec, chord, barStart),
     );
   });
@@ -205,6 +243,29 @@ const COMBAT_LEAD_BARS: readonly LeadBar[] = [
   [[0, 1, 62], [1, 1, 59], [2, 1, 62], [3, 1, 64]],
 ];
 
+// The delayed "overture" flourish (spec 027): fast 16th-note runs an octave
+// above the lead, tracing each chord (Am / F / C / G) with a jazzy up-and-down
+// figure that answers itself and resolves toward the Am downbeat on the loop.
+// One phrase per bar: [beatWithinBar, duration, midi], A natural minor.
+const COMBAT_FLOURISH_BARS: readonly LeadBar[] = [
+  // Am — A C E arpeggio up, scale back down, settle on A.
+  [[0, 0.25, 69], [0.25, 0.25, 72], [0.5, 0.25, 76], [0.75, 0.25, 81],
+   [1, 0.25, 79], [1.25, 0.25, 77], [1.5, 0.25, 76], [1.75, 0.25, 74],
+   [2, 0.5, 72], [2.5, 0.5, 76], [3, 1, 69]],
+  // F — F A C reaching up to C6, then a long fifth.
+  [[0, 0.25, 77], [0.25, 0.25, 74], [0.5, 0.25, 72], [0.75, 0.25, 69],
+   [1, 0.25, 72], [1.25, 0.25, 77], [1.5, 0.25, 81], [1.75, 0.25, 84],
+   [2, 1, 81], [3, 1, 77]],
+  // C — brightest bar, C E G climbing over the top of the run.
+  [[0, 0.25, 72], [0.25, 0.25, 76], [0.5, 0.25, 79], [0.75, 0.25, 84],
+   [1, 0.25, 83], [1.25, 0.25, 79], [1.5, 0.25, 76], [1.75, 0.25, 72],
+   [2, 0.5, 76], [2.5, 0.5, 79], [3, 1, 84]],
+  // G — G B D turning downward to pull the ear back to the Am downbeat.
+  [[0, 0.25, 79], [0.25, 0.25, 76], [0.5, 0.25, 74], [0.75, 0.25, 71],
+   [1, 0.25, 74], [1.25, 0.25, 79], [1.5, 0.25, 83], [1.75, 0.25, 79],
+   [2, 0.5, 76], [2.5, 0.5, 74], [3, 1, 72]],
+];
+
 const COMBAT_SPEC: SongSpec = {
   bpm: 116,
   progression: COMBAT_PROGRESSION,
@@ -219,6 +280,9 @@ const COMBAT_SPEC: SongSpec = {
   leadGain: 0.2,
   padWave: 'sine',
   padGain: 0.08,
+  flourishBars: COMBAT_FLOURISH_BARS,
+  flourishWave: 'square',
+  flourishGain: 0.12,
 };
 
 // --- Calm "no-wave" theme (spec 017) -------------------------------------

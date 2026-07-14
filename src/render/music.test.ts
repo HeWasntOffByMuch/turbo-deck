@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCalmSong, buildDeathSong, buildSong, midiToFreq, musicPhaseFor, musicPhaseForEnemyCount, type MusicVoice, type Song } from './music.js';
+import { buildCalmSong, buildDeathSong, buildSong, FLOURISH_ONSET_SECONDS, midiToFreq, musicPhaseFor, musicPhaseForEnemyCount, type MusicVoice, type Song } from './music.js';
 
 describe('midiToFreq', () => {
   it('anchors A4 (69) at 440Hz', () => {
@@ -45,14 +45,33 @@ function assertWellFormed(build: () => Song): void {
     }
   });
 
-  it('includes all four voices', () => {
+  it('includes the four core voices', () => {
     const voices = new Set<MusicVoice>(song.notes.map((n) => n.voice));
-    expect(voices).toEqual(new Set<MusicVoice>(['bass', 'arp', 'lead', 'pad']));
+    for (const voice of ['bass', 'arp', 'lead', 'pad'] as const) {
+      expect(voices.has(voice)).toBe(true);
+    }
   });
 }
 
 describe('buildSong (combat theme)', () => {
   assertWellFormed(buildSong);
+
+  it('layers a faster flourish voice the other themes have not', () => {
+    expect(buildSong().notes.some((n) => n.voice === 'flourish')).toBe(true);
+    expect(buildCalmSong().notes.some((n) => n.voice === 'flourish')).toBe(false);
+    expect(buildDeathSong().notes.some((n) => n.voice === 'flourish')).toBe(false);
+  });
+
+  it('phrases the flourish in shorter notes than the lead', () => {
+    const notes = buildSong().notes;
+    const shortest = (voice: MusicVoice): number =>
+      Math.min(...notes.filter((n) => n.voice === voice).map((n) => n.duration));
+    expect(shortest('flourish')).toBeLessThan(shortest('lead'));
+  });
+
+  it('holds the flourish back for a positive stretch of combat', () => {
+    expect(FLOURISH_ONSET_SECONDS).toBeGreaterThan(0);
+  });
 });
 
 describe('buildCalmSong (no-wave theme)', () => {
