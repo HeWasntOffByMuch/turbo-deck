@@ -36,7 +36,7 @@ async function main(): Promise<void> {
   const controls = document.createElement('div');
   controls.style.cssText = 'color:#9a9ab0;font:12px monospace;margin-top:8px;';
   controls.textContent =
-    'move: right-click  |  aim: mouse  |  attack: left-click or space  |  parry: K  |  dodge: L  |  card: 1/2/3  |  bonus: B  |  mute: M';
+    'move: right-click  |  aim: mouse  |  attack: left-click or space  |  parry: K  |  dodge: L  |  card: 1/2/3  |  bonus: B  |  character: C  |  mute: M';
   container.appendChild(controls);
 
   const seed = Date.now();

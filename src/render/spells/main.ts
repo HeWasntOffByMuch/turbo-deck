@@ -1,4 +1,5 @@
 import { initSpellGame, stepSpellGame, type SpellGameEvent, type SpellGameState } from '../../game/spell-session.js';
+import { characterAt } from '../../sim/characters.js';
 import { TICK_RATE } from '../../sim/constants.js';
 import { GameAudio } from '../audio.js';
 import { musicPhaseFor } from '../music.js';
@@ -25,6 +26,10 @@ function main(): void {
   title.textContent =
     'turbo-deck · spell-card combat — Attack interrupts enemy wind-ups and banks adrenaline (each point = faster movement); spell cards cost adrenaline to play. (M mutes)';
   app.appendChild(title);
+
+  const controls = document.createElement('div');
+  controls.style.cssText = "font-family:'Segoe UI',system-ui,sans-serif;color:#9a9ab0;margin:0 2px 8px;font-size:12px;";
+  app.appendChild(controls);
 
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'display:block;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.5);';
@@ -69,6 +74,8 @@ function main(): void {
     const playerScreen = arena.worldToScreen(state.combat.player.position);
     const mouse = input.mouseScreen();
     arena.render(state, events, { x: mouse.x - playerScreen.x, y: mouse.y - playerScreen.y });
+    const ch = characterAt(state.combat.player.characterIndex);
+    controls.textContent = `move: right-click  ·  character (press C): ${ch.name} — ${ch.moveSpeed} speed / ${ch.turnRate}°/s turn`;
     hud.render(state);
     audio.handleSpellEvents(events);
     // Calm in the lull, combat once a wave is on screen, the death dirge when defeated.

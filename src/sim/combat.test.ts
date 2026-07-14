@@ -304,6 +304,48 @@ describe('MOBA movement: speed, turn rate, facing gate', () => {
   });
 });
 
+describe('character presets (spec 028)', () => {
+  it('defaults to character 0 and cycles through the presets, wrapping', () => {
+    let s = initCombat(1);
+    expect(s.player.characterIndex).toBe(0);
+    s = step(s, { ...NEUTRAL_INPUT, cycleCharacter: true }).state;
+    expect(s.player.characterIndex).toBe(1);
+    s = step(s, { ...NEUTRAL_INPUT, cycleCharacter: true }).state;
+    expect(s.player.characterIndex).toBe(0); // two presets, so it wraps back
+  });
+
+  it('the faster-turning preset begins moving sooner on a click behind', () => {
+    // Order due west (180 behind east-facing); count ticks of pure rotation
+    // before translation begins, per preset.
+    const ticksToMove = (characterIndex: number): number => {
+      let s = initCombat(1, { characterIndex });
+      const start = { ...s.player.position };
+      const west = moveTo(start.x - 400, start.y);
+      for (let t = 1; t <= 60; t++) {
+        s = step(s, west).state;
+        if (s.player.position.x < start.x - 1e-9) return t;
+      }
+      return -1;
+    };
+    const slow = ticksToMove(0); // 360 deg/s
+    const fast = ticksToMove(1); // 900 deg/s
+    expect(fast).toBeGreaterThan(0);
+    expect(slow).toBeGreaterThan(fast); // a slower turn rate spends more ticks rotating first
+  });
+
+  it('each preset translates at its own move speed', () => {
+    const firstStepDist = (characterIndex: number): number => {
+      const s = initCombat(1, { characterIndex });
+      const start = { ...s.player.position };
+      // Order straight east (already faced), so the first tick is pure translation.
+      const r = step(s, moveTo(start.x + 400, start.y));
+      return r.state.player.position.x - start.x;
+    };
+    expect(firstStepDist(0)).toBeCloseTo(295 / 60, 6); // Warden: 295 u/s
+    expect(firstStepDist(1)).toBeCloseTo(275 / 60, 6); // Zephyr: 275 u/s
+  });
+});
+
 describe('positional telegraph (cone)', () => {
   it('side-stepping out of the cone during windup avoids the hit', () => {
     // Stand still through the idle phase so the cone is aimed straight at rest,

@@ -6,6 +6,7 @@ const PARRY_KEYS = new Set(['KeyK']);
 const DODGE_KEYS = new Set(['KeyL']);
 const HAND_KEYS: Record<string, 0 | 1 | 2> = { Digit1: 0, Digit2: 1, Digit3: 2 };
 const BONUS_KEY = 'KeyB';
+const CYCLE_CHARACTER_KEY = 'KeyC';
 
 export interface ScreenPoint {
   readonly x: number;
@@ -97,6 +98,7 @@ export class InputCapture {
       }
     }
     const playBonusCard = this.justPressed.has(BONUS_KEY);
+    const cycleCharacter = this.justPressed.has(CYCLE_CHARACTER_KEY);
 
     const aimY = this.mouse.y - playerScreen.y;
     let aimX = this.mouse.x - playerScreen.x;
@@ -110,6 +112,7 @@ export class InputCapture {
       parry: this.heldAny(PARRY_KEYS),
       dodge: this.heldAny(DODGE_KEYS),
       ...(moveOrdered ? { moveTarget: mouseWorld } : {}),
+      ...(cycleCharacter ? { cycleCharacter: true } : {}),
       ...(playHandIndex !== undefined ? { playHandIndex } : {}),
       ...(playBonusCard ? { playBonusCard } : {}),
     };

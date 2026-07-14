@@ -12,6 +12,7 @@ import type { Vec2 } from '../../sim/types.js';
 
 const PLAY_KEYS: Record<string, 0 | 1 | 2 | 3> = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3 };
 const WAVE_KEY = 'KeyQ';
+const CYCLE_CHARACTER_KEY = 'KeyC';
 
 export interface ScreenPoint {
   readonly x: number;
@@ -23,6 +24,8 @@ export class SpellInputCapture {
   private mouse: ScreenPoint = { x: 0, y: 0 };
   // A right-click move order is a discrete edge, consumed once by sample().
   private rightClicked = false;
+  // Character-swap edge (press C), consumed once by sample().
+  private queuedCycleCharacter = false;
   private queuedPlay: 0 | 1 | 2 | 3 | null = null;
   private queuedWave = false;
   private queuedReward: 0 | 1 | 2 | null = null;
@@ -34,6 +37,7 @@ export class SpellInputCapture {
     const play = PLAY_KEYS[e.code];
     if (play !== undefined) this.queuePlay(play);
     else if (e.code === WAVE_KEY) this.queueWave();
+    else if (e.code === CYCLE_CHARACTER_KEY) this.queuedCycleCharacter = true;
   };
 
   private readonly onKeyUp = (e: KeyboardEvent): void => {
@@ -98,6 +102,7 @@ export class SpellInputCapture {
       targetX: worldCursor.x,
       targetY: worldCursor.y,
       ...(this.rightClicked ? { moveTarget: worldCursor } : {}),
+      ...(this.queuedCycleCharacter ? { cycleCharacter: true } : {}),
       ...(play !== null ? { playHandIndex: play } : {}),
       ...(reward !== null ? { chooseReward: reward } : {}),
       ...(pick !== null ? { chooseCard: pick } : {}),
@@ -109,6 +114,7 @@ export class SpellInputCapture {
     this.queuedPick = null;
     this.queuedWave = false;
     this.rightClicked = false;
+    this.queuedCycleCharacter = false;
     return input;
   }
 }

@@ -157,6 +157,8 @@ export interface SpellGameState {
 export interface SpellInput {
   /** MOBA move order to a world point this tick; absent keeps the standing order (spec 028). */
   readonly moveTarget?: Vec2;
+  /** Swap to the next movement character preset this tick (spec 028). */
+  readonly cycleCharacter?: boolean;
   /** Aim direction (player -> cursor) for cones, rects and dashes. */
   readonly aimX: number;
   readonly aimY: number;
@@ -329,6 +331,7 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
     parry: false,
     dodge: false,
     ...(input.moveTarget ? { moveTarget: input.moveTarget } : {}),
+    ...(input.cycleCharacter ? { cycleCharacter: true } : {}),
     ...(externalEffect ? { externalEffect } : {}),
     // A wave cannot be summoned while a reward or its picker is still open.
     ...(input.spawnWave && pendingReward === null && pendingPick === null ? { spawnWave: true } : {}),

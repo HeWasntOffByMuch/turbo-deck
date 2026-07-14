@@ -67,6 +67,8 @@ export interface PlayerState {
   readonly facing: number;
   /** Standing move-to destination in world units; null when idle / arrived. */
   readonly moveTarget: Vec2 | null;
+  /** Index into CHARACTERS: the active movement archetype (speed + turn rate). */
+  readonly characterIndex: number;
   readonly attackCooldownUntil: number;
   /** Movement input is ignored until this tick (attack commitment). */
   readonly moveLockUntil: number;
@@ -265,6 +267,8 @@ export interface InputFrame {
    * press, never while a button is held.
    */
   readonly moveTarget?: Vec2;
+  /** Advance to the next character preset this tick (movement speed + turn rate). */
+  readonly cycleCharacter?: boolean;
   readonly attack: boolean;
   /** Aim direction for the attack cone; need not be normalized. */
   readonly aimX: number;

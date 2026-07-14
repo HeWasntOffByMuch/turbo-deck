@@ -37,12 +37,19 @@ Input (`InputFrame`, and the game-layer inputs `GameInput` / `SpellInput`):
   renderer emits `moveTarget` on the tick of a right-click press, never while a
   button is held.
 
-New constants (`sim/constants.ts`):
+Movement speed and turn rate come from a selectable **character** preset
+(`sim/characters.ts`), so different archetypes feel distinct:
 
-- `PLAYER_BASE_MOVE_SPEED = 300` — base speed in world units/second.
+- `CHARACTERS[0]` "Warden" — 295 u/s, 360°/s (ambles, pivots slowly).
+- `CHARACTERS[1]` "Zephyr" — 275 u/s, 900°/s (a touch slower, whips around).
+
+`PlayerState.characterIndex` selects the active one; `InputFrame.cycleCharacter`
+advances to the next preset (wrapping), taking effect the same tick, so the two
+feels can be swapped live (bound to **C** in both renderers).
+
+Constants (`sim/constants.ts`):
+
 - `MOVE_SPEED_HARD_MIN = 100`, `MOVE_SPEED_HARD_MAX = 550` — HoN speed caps.
-- `PLAYER_TURN_RATE = 540` — turn rate in degrees/second (a 180° about-face in
-  1/3 s; HoN slow units are 360, fast ones 900+).
 - `MOVE_FACING_THRESHOLD_DEG = 135` — a unit must face within this many degrees
   of its move direction before it begins translating; otherwise it rotates in
   place. (So a 180° reversal only needs a 45° turn to get moving.)
@@ -65,11 +72,11 @@ Per tick, when the player is not dashing and not rooted (attack wind-up/recovery
 still roots as before) and has a `moveTarget`:
 
 1. desired heading = angle from position to target.
-2. rotate `facing` toward desired by at most `PLAYER_TURN_RATE/TICK_RATE`
+2. rotate `facing` toward desired by at most `character.turnRate/TICK_RATE`
    degrees (snapping when within one step).
 3. if the remaining angle between `facing` and desired ≤ 135°, translate
    **straight toward the target** (not along the lagging facing — no arc) by
-   `computeMoveSpeed(PLAYER_BASE_MOVE_SPEED)/TICK_RATE × moveScale` (clamped to
+   `computeMoveSpeed(character.moveSpeed)/TICK_RATE × moveScale` (clamped to
    the arena; capped at the remaining distance). Otherwise stand and keep turning.
 4. clear `moveTarget` on arrival (within `MOVE_ARRIVE_EPS`).
 
@@ -97,6 +104,9 @@ clicking behind you cost a real rotation.
   terms in the documented order.
 - Attack commitment is unchanged: the player is rooted (no translation, no
   turning) through wind-up + recovery, then resumes toward its order.
+- `cycleCharacter` advances the preset (wrapping); the faster-turning preset
+  starts moving sooner on a click behind, and each preset translates at its own
+  move speed.
 
 ## Out of scope
 

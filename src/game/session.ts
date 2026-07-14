@@ -13,6 +13,8 @@ export interface GameState {
 export interface GameInput {
   /** MOBA move order to a world point this tick; absent keeps the standing order (spec 028). */
   readonly moveTarget?: Vec2;
+  /** Swap to the next movement character preset this tick (spec 028). */
+  readonly cycleCharacter?: boolean;
   readonly attack: boolean;
   readonly aimX: number;
   readonly aimY: number;
@@ -136,6 +138,7 @@ export function stepGame(
     parry: input.parry,
     dodge: input.dodge,
     ...(input.moveTarget ? { moveTarget: input.moveTarget } : {}),
+    ...(input.cycleCharacter ? { cycleCharacter: true } : {}),
     ...(externalEffect ? { externalEffect } : {}),
   };
 

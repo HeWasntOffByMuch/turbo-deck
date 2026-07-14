@@ -36,12 +36,10 @@ import {
   PLAYER_ATTACK_DAMAGE,
   PLAYER_ATTACK_RANGE,
   PLAYER_ATTACK_WINDUP_TICKS,
-  PLAYER_BASE_MOVE_SPEED,
   PLAYER_MAX_HEALTH,
   PLAYER_MAX_MANA,
   PLAYER_RADIUS,
   PLAYER_SLOW_MULTIPLIER,
-  PLAYER_TURN_RATE,
   SPAWN_MIN_PLAYER_DIST,
   TICK_RATE,
   WAVE_ATTACK_SPEED_GROWTH,
@@ -51,6 +49,7 @@ import {
   WAVE_MAX_ENEMIES,
   WAVE_SPEED_GROWTH,
 } from './constants.js';
+import { characterAt, CHARACTERS, DEFAULT_CHARACTER_INDEX } from './characters.js';
 import { ENEMY_TYPES, enemyTypeByKey, type EnemyType } from './enemies.js';
 import {
   IDENTITY_MODIFIERS,
@@ -93,7 +92,6 @@ const clampToArena = (x: number, y: number): Vec2 => ({
 
 const DEG2RAD = Math.PI / 180;
 const TWO_PI = Math.PI * 2;
-const MAX_TURN_PER_TICK = (PLAYER_TURN_RATE * DEG2RAD) / TICK_RATE;
 const MOVE_FACING_THRESHOLD = MOVE_FACING_THRESHOLD_DEG * DEG2RAD;
 
 /** Wrap an angle into (-PI, PI]. */
@@ -139,23 +137,22 @@ export function computeMoveSpeed(
   return Math.round(clamp(speed, MOVE_SPEED_HARD_MIN, MOVE_SPEED_HARD_MAX));
 }
 
-const PLAYER_MOVE_SPEED_PER_TICK = computeMoveSpeed(PLAYER_BASE_MOVE_SPEED) / TICK_RATE;
-
 /**
  * Advance the player one tick under a MOBA move order (spec 028): rotate
- * `facing` toward the destination at the turn rate, and translate only once
- * within the 135-degree gate. Movement is a straight line toward the target (no
- * arc); the residual rotation finishes cosmetically while travelling. `scale`
- * is the walk-speed multiplier (adrenaline/haste/slow). Clears the order on
- * arrival. With no order the unit keeps its heading (it does NOT rotate to
- * follow the cursor) -- otherwise a standing unit would always already face the
- * click point and never spend any turn time.
+ * `facing` toward the destination by at most `maxTurn` radians, and translate
+ * only once within the 135-degree gate. Movement is a straight line toward the
+ * target (no arc); the residual rotation finishes cosmetically while travelling.
+ * `speedPerTick` is the already-scaled per-tick step (character speed x walk
+ * multiplier). Clears the order on arrival. With no order the unit keeps its
+ * heading (it does NOT rotate to follow the cursor) -- otherwise a standing unit
+ * would always already face the click point and never spend any turn time.
  */
 function stepPlayerMovement(
   position: Vec2,
   facing: number,
   moveTarget: Vec2 | null,
-  scale: number,
+  speedPerTick: number,
+  maxTurn: number,
 ): { position: Vec2; facing: number; moveTarget: Vec2 | null } {
   if (moveTarget === null) return { position, facing, moveTarget: null };
 
@@ -165,13 +162,13 @@ function stepPlayerMovement(
   if (dist <= MOVE_ARRIVE_EPS) return { position, facing, moveTarget: null };
 
   const desired = Math.atan2(dy, dx);
-  const nextFacing = turnToward(facing, desired, MAX_TURN_PER_TICK);
+  const nextFacing = turnToward(facing, desired, maxTurn);
   // Gate closed: still facing too far off, so rotate in place and don't move yet.
   if (Math.abs(normalizeAngle(desired - nextFacing)) > MOVE_FACING_THRESHOLD) {
     return { position, facing: nextFacing, moveTarget };
   }
   // Gate open: travel straight toward the target (no arcing along the lagging facing).
-  const step = Math.min(PLAYER_MOVE_SPEED_PER_TICK * scale, dist);
+  const step = Math.min(speedPerTick, dist);
   const nextPos = clampPlayerPos(position.x + (dx / dist) * step, position.y + (dy / dist) * step);
   const arrived = Math.hypot(moveTarget.x - nextPos.x, moveTarget.y - nextPos.y) <= MOVE_ARRIVE_EPS;
   return { position: nextPos, facing: nextFacing, moveTarget: arrived ? null : moveTarget };
@@ -362,6 +359,8 @@ export interface CombatOptions {
   readonly initialEnemies?: number;
   /** When false, the ambient refill spawner is off (wave mode). Default true. */
   readonly ambientSpawner?: boolean;
+  /** Starting movement character (index into CHARACTERS); defaults to the first. */
+  readonly characterIndex?: number;
 }
 
 export function initCombat(seed: number, opts: CombatOptions = {}): CombatState {
@@ -381,6 +380,7 @@ export function initCombat(seed: number, opts: CombatOptions = {}): CombatState 
     position: { x: ARENA_WIDTH * 0.5, y: ARENA_HEIGHT * 0.5 },
     facing: 0,
     moveTarget: null,
+    characterIndex: opts.characterIndex ?? DEFAULT_CHARACTER_INDEX,
     attackCooldownUntil: 0,
     moveLockUntil: 0,
     attackReleaseTick: 0,
@@ -472,6 +472,12 @@ export function step(
   const hasteActive = tick < state.player.moveHasteUntilTick;
   const adrenalineSpeed = 1 + ADRENALINE_SPEED_PER_POINT * state.player.adrenaline;
   const moveScale = (slowActive ? PLAYER_SLOW_MULTIPLIER : 1) * (hasteActive ? state.player.moveHasteMult : 1) * adrenalineSpeed;
+  // Character swap: cycling advances to the next preset's speed + turn rate,
+  // which take effect this same tick.
+  const characterIndex = input.cycleCharacter ? state.player.characterIndex + 1 : state.player.characterIndex;
+  const character = characterAt(characterIndex);
+  const speedPerTick = (computeMoveSpeed(character.moveSpeed) / TICK_RATE) * moveScale;
+  const maxTurnPerTick = (character.turnRate * DEG2RAD) / TICK_RATE;
   // A move order issued this tick (re)sets the standing destination; otherwise
   // the previous order stands. It persists across dash/rooted ticks so movement
   // resumes once the override ends. Off-map orders are honoured as-is: the
@@ -485,8 +491,15 @@ export function step(
       }
     : rooted
       ? { position: state.player.position, facing: state.player.facing, moveTarget: orderedTarget }
-      : stepPlayerMovement(state.player.position, state.player.facing, orderedTarget, moveScale);
-  let player: PlayerState = { ...state.player, position: moved.position, facing: moved.facing, moveTarget: moved.moveTarget };
+      : stepPlayerMovement(state.player.position, state.player.facing, orderedTarget, speedPerTick, maxTurnPerTick);
+  let player: PlayerState = {
+    ...state.player,
+    position: moved.position,
+    facing: moved.facing,
+    moveTarget: moved.moveTarget,
+    // Store the normalized index so it stays in range as it cycles.
+    characterIndex: ((characterIndex % CHARACTERS.length) + CHARACTERS.length) % CHARACTERS.length,
+  };
 
   // --- Enemy movement: grazers wander, hunters home while idle ---
   let enemies: EnemyState[] = state.enemies.map((enemy) => {
