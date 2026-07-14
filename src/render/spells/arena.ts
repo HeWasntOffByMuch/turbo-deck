@@ -77,7 +77,7 @@ export class SpellArenaView {
     return { x: v.x * SCALE, y: v.y * SCALE };
   }
 
-  render(state: SpellGameState, events: readonly SpellGameEvent[], aim: ScreenPoint): void {
+  render(state: SpellGameState, events: readonly SpellGameEvent[]): void {
     this.frame++;
     const combat = state.combat;
     this.ingestEvents(combat.player, events);
@@ -89,7 +89,7 @@ export class SpellArenaView {
     for (const enemy of combat.enemies) this.drawEnemy(enemy, combat.tick, combat.player.position);
     this.drawAuras(combat.player, combat.tick);
     this.updateAndDrawCasts();
-    this.drawPlayer(combat.player, combat.tick, aim);
+    this.drawPlayer(combat.player, combat.tick);
     this.updateAndDrawFlashes();
     this.updateAndDrawPopups();
   }
@@ -295,11 +295,11 @@ export class SpellArenaView {
     this.healthBar(p.x - r, headTop - 9, r * 2, enemy.health / enemy.maxHealth, enemy.behavior === 'hunting' ? '#ff5a5a' : '#8fbf6a');
   }
 
-  private drawPlayer(player: PlayerState, tick: number, aim: ScreenPoint): void {
+  private drawPlayer(player: PlayerState, tick: number): void {
     const { ctx } = this;
     const p = this.worldToScreen(player.position);
     const r = PLAYER_RADIUS * SCALE;
-    const ang = Math.atan2(aim.y, aim.x);
+    const facing = player.facing; // the unit's heading, not the cursor
     const size = r * 2.7; // centred on the hitbox, roughly its height
     const half = size / 2;
     const headTop = p.y - half;
@@ -381,17 +381,29 @@ export class SpellArenaView {
       ctx.globalAlpha = 1;
     }
 
-    // Baked pixel-dude hero skin; centred on the hitbox, faces the aim direction.
+    // Baked pixel-dude hero skin; centred on the hitbox, flipped by the unit's
+    // heading (not the cursor) so which way it faces reads honestly.
     this.groundShadow(p.x, feet - r * 0.1, r * 1.0);
-    this.dudes.draw(ctx, PLAYER_SKIN, 'idle', p.x, p.y, size, aim.x < 0);
+    this.dudes.draw(ctx, PLAYER_SKIN, 'idle', p.x, p.y, size, Math.cos(facing) < 0);
 
-    // A short aim tick so the cursor direction still reads for cones/dashes.
-    ctx.strokeStyle = 'rgba(159,183,212,0.9)';
+    // Heading arrow: represents the unit's actual facing (which the turn rate
+    // rotates), so you can see it pivot before it can move or attack.
+    const fx = Math.cos(facing);
+    const fy = Math.sin(facing);
+    const tipX = p.x + fx * r * 2.1;
+    const tipY = p.y + fy * r * 2.1;
+    ctx.strokeStyle = 'rgba(191,224,255,0.95)';
     ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(p.x + Math.cos(ang) * r * 1.1, p.y + Math.sin(ang) * r * 1.1);
-    ctx.lineTo(p.x + Math.cos(ang) * r * 2.1, p.y + Math.sin(ang) * r * 2.1);
+    ctx.moveTo(p.x + fx * r * 0.9, p.y + fy * r * 0.9);
+    ctx.lineTo(tipX, tipY);
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(tipX - Math.cos(facing - 0.5) * r * 0.7, tipY - Math.sin(facing - 0.5) * r * 0.7);
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(tipX - Math.cos(facing + 0.5) * r * 0.7, tipY - Math.sin(facing + 0.5) * r * 0.7);
     ctx.stroke();
+    ctx.lineCap = 'butt';
 
     this.healthBar(p.x - r - 4, headTop - 9, r * 2 + 8, player.health / player.maxHealth, '#5ad65a');
 

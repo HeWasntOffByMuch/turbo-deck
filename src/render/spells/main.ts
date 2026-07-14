@@ -71,9 +71,7 @@ function main(): void {
       accumulator -= TICK_MS;
     }
 
-    const playerScreen = arena.worldToScreen(state.combat.player.position);
-    const mouse = input.mouseScreen();
-    arena.render(state, events, { x: mouse.x - playerScreen.x, y: mouse.y - playerScreen.y });
+    arena.render(state, events);
     const ch = characterAt(state.combat.player.characterIndex);
     controls.textContent = `move: right-click  ·  character (press C): ${ch.name} — ${ch.moveSpeed} speed / ${ch.turnRate}°/s turn`;
     hud.render(state);

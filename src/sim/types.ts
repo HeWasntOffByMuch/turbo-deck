@@ -93,6 +93,12 @@ export interface PlayerState {
   /** Activate is refused until this tick (stance lockout). */
   readonly activateLockUntil: number;
   // --- Spell cards (spec 018); identity values leave combat untouched. ---
+  /**
+   * A directional cast (attack/cone/rect/dash) waiting for the unit to finish
+   * turning to face its aim before it fires (spec 028); null when none pending.
+   * While set the unit is stationary and rotating toward the cast's aim.
+   */
+  readonly pendingCast: CastSpellsEffect | null;
   /** Rocky Raise shield: damage it can still absorb, and the tick it expires. */
   readonly shieldAmount: number;
   readonly shieldExpiresAtTick: number;
@@ -244,20 +250,23 @@ export type ExternalEffect =
       readonly lockoutTicks: number;
     }
   // --- Spell cards (spec 018): a window's worth of resolved geometry, cast at once. ---
-  | {
-      readonly kind: 'castSpells';
-      readonly spells: readonly SpellSpec[];
-      /** Aim direction for cones/rects/dashes; need not be normalized. */
-      readonly aimX: number;
-      readonly aimY: number;
-      /** World point for target-origin AOEs (meteor, bury feet). */
-      readonly targetX: number;
-      readonly targetY: number;
-      /** Slow the player's walk for this many ticks (mis-timed window); 0/absent = none. */
-      readonly playerSlowTicks?: number;
-      /** Deduct this much banked adrenaline (the played cards' cost); the empower is already baked into the specs. */
-      readonly spendAdrenaline?: number;
-    };
+  | CastSpellsEffect;
+
+/** A resolved synergy window's geometry, cast at once (spec 018). */
+export interface CastSpellsEffect {
+  readonly kind: 'castSpells';
+  readonly spells: readonly SpellSpec[];
+  /** Aim direction for cones/rects/dashes; need not be normalized. */
+  readonly aimX: number;
+  readonly aimY: number;
+  /** World point for target-origin AOEs (meteor, bury feet). */
+  readonly targetX: number;
+  readonly targetY: number;
+  /** Slow the player's walk for this many ticks (mis-timed window); 0/absent = none. */
+  readonly playerSlowTicks?: number;
+  /** Deduct this much banked adrenaline (the played cards' cost); the empower is already baked into the specs. */
+  readonly spendAdrenaline?: number;
+}
 
 export interface InputFrame {
   /**

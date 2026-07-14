@@ -107,13 +107,29 @@ clicking behind you cost a real rotation.
 - `cycleCharacter` advances the preset (wrapping); the faster-turning preset
   starts moving sooner on a click behind, and each preset translates at its own
   move speed.
+- **Facing-gated attacks**: a directional cast (an attack/cone, a rect, or a
+  dash) aimed away from the unit's heading does not fire on the cast tick — it is
+  buffered (`PlayerState.pendingCast`), the unit stops and turns to face the aim
+  at its turn rate, and it fires the tick it is aligned. Aimed where the unit
+  already faces, it fires immediately. Omni-directional casts (point AOEs,
+  self-buffs) fire instantly regardless of facing. The faster-turning preset
+  fires a behind-aimed attack sooner. No extra root: once fired, the unit resumes
+  its standing move order.
+
+## Renderer
+
+- Movement is right-click; a right-click issues one move order (no button-hold).
+- The player sprite flips by the unit's **facing**, not the cursor, and a heading
+  arrow shows the actual facing so the turn (and the turn-to-attack) is visible.
+  The old cursor-following aim tick is gone.
 
 ## Out of scope
 
 - Enemy movement / turn rate — enemies keep their existing homing model.
-- Dashing keeps its own velocity override; turn-rate gating does not apply to it.
-- Facing-gated **attacks/casts** (requiring the unit to face the target before a
-  swing resolves). Attacks still resolve off the mouse `aim`.
+- Dashing's own velocity override is unchanged; only the *decision to cast* a
+  dash is facing-gated (it turns to face, then dashes).
 - Flat/percentage/slow speed *modifiers* wired to cards — `computeMoveSpeed`
   supports them, but the sim only feeds the existing `moveScale`.
+- The sim's built-in melee (legacy game) still fires off `aim` without the
+  turn-to-face gate; only the spell game's casts are gated.
 - Pathfinding / obstacle avoidance — movement is straight toward the order.
