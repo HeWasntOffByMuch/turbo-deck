@@ -3,7 +3,7 @@
 // it renders the pure descriptions from music.ts and sfx.ts. Because the
 // interesting choices live in those testable modules, this stays thin.
 
-import { buildCalmSong, buildDeathSong, buildSong, midiToFreq, type MusicPhase, type Song, type Waveform } from './music.js';
+import { buildCalmSong, buildDeathSong, buildSong, FLOURISH_ONSET_SECONDS, midiToFreq, type MusicNote, type MusicPhase, type Song, type Waveform } from './music.js';
 import { SFX, sfxForEvent, spellEventSfx, type SfxSegment } from './sfx.js';
 import type { GameEvent } from '../game/session.js';
 import type { SpellGameEvent } from '../game/spell-session.js';
@@ -79,6 +79,10 @@ export class GameAudio {
   // Music scheduling runs on its own timer, not the render loop, so a
   // backgrounded tab (where rAF stops) keeps the queue fed.
   private schedulerTimer: ReturnType<typeof setInterval> | undefined;
+  // Audio-clock time the combat phase last became active, or undefined outside
+  // combat. The combat theme's `flourish` voice stays silent until
+  // FLOURISH_ONSET_SECONDS past this, so each fresh wave builds up again (027).
+  private combatStart: number | undefined;
 
   /**
    * Create/resume the AudioContext. Must be called from a user gesture, since
@@ -158,6 +162,8 @@ export class GameAudio {
     const ctx = this.ctx;
     if (!ctx) return;
     const now = ctx.currentTime;
+    // Restart the flourish build-up on entering combat; forget it otherwise.
+    this.combatStart = phase === 'combat' ? now : undefined;
     for (const loop of this.loops) {
       const bus = loop.bus;
       if (!bus) continue;
@@ -207,7 +213,12 @@ export class GameAudio {
       if (!note) break;
       const when = loop.loopStart + note.beat * loop.secondsPerBeat;
       if (when > until) break;
-      this.scheduleTone(midiToFreq(note.midi), midiToFreq(note.midi), note.wave, note.duration * loop.secondsPerBeat, note.gain, when, bus);
+      // The flourish voice is held back for the first stretch of each wave;
+      // advance past its notes without sounding them until it has earned its
+      // entrance, then let it ride the same combat bus (spec 027).
+      if (!this.flourishSuppressed(note, when)) {
+        this.scheduleTone(midiToFreq(note.midi), midiToFreq(note.midi), note.wave, note.duration * loop.secondsPerBeat, note.gain, when, bus);
+      }
       loop.cursor++;
     }
     // If we scheduled the whole loop, wrap for the next iteration immediately so
@@ -216,6 +227,15 @@ export class GameAudio {
       loop.loopStart += loop.loopSeconds;
       loop.cursor = 0;
     }
+  }
+
+  /**
+   * True while a `flourish` note should stay silent: before combat has begun, or
+   * within FLOURISH_ONSET_SECONDS of that start. Every other voice always plays.
+   */
+  private flourishSuppressed(note: MusicNote, when: number): boolean {
+    if (note.voice !== 'flourish') return false;
+    return this.combatStart === undefined || when < this.combatStart + FLOURISH_ONSET_SECONDS;
   }
 
   private playSfx(id: string): void {
