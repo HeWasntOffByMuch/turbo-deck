@@ -74,8 +74,11 @@ still roots as before) and has a `moveTarget`:
 4. clear `moveTarget` on arrival (within `MOVE_ARRIVE_EPS`).
 
 `moveScale` is the existing walk-speed multiplier (adrenaline / haste / slow),
-so those systems keep working. With no move order, `facing` eases toward the aim
-(mouse) direction at the same turn rate, so the character points where you aim.
+so those systems keep working. A standing unit (no move order) keeps its
+heading — it does **not** rotate to follow the cursor. If facing tracked the
+mouse, a stationary hero would always already be pointing at the click point and
+so would never spend any turn time; keeping the heading fixed is what makes
+clicking behind you cost a real rotation.
 
 ## Invariants tested
 

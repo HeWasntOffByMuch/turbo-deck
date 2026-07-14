@@ -147,20 +147,17 @@ const PLAYER_MOVE_SPEED_PER_TICK = computeMoveSpeed(PLAYER_BASE_MOVE_SPEED) / TI
  * within the 135-degree gate. Movement is a straight line toward the target (no
  * arc); the residual rotation finishes cosmetically while travelling. `scale`
  * is the walk-speed multiplier (adrenaline/haste/slow). Clears the order on
- * arrival. With no order the unit eases its facing toward `aim`.
+ * arrival. With no order the unit keeps its heading (it does NOT rotate to
+ * follow the cursor) -- otherwise a standing unit would always already face the
+ * click point and never spend any turn time.
  */
 function stepPlayerMovement(
   position: Vec2,
   facing: number,
   moveTarget: Vec2 | null,
-  aim: Vec2,
   scale: number,
 ): { position: Vec2; facing: number; moveTarget: Vec2 | null } {
-  if (moveTarget === null) {
-    const aimLen = Math.hypot(aim.x, aim.y);
-    const nextFacing = aimLen > 1e-6 ? turnToward(facing, Math.atan2(aim.y, aim.x), MAX_TURN_PER_TICK) : facing;
-    return { position, facing: nextFacing, moveTarget: null };
-  }
+  if (moveTarget === null) return { position, facing, moveTarget: null };
 
   const dx = moveTarget.x - position.x;
   const dy = moveTarget.y - position.y;
@@ -488,7 +485,7 @@ export function step(
       }
     : rooted
       ? { position: state.player.position, facing: state.player.facing, moveTarget: orderedTarget }
-      : stepPlayerMovement(state.player.position, state.player.facing, orderedTarget, { x: input.aimX, y: input.aimY }, moveScale);
+      : stepPlayerMovement(state.player.position, state.player.facing, orderedTarget, moveScale);
   let player: PlayerState = { ...state.player, position: moved.position, facing: moved.facing, moveTarget: moved.moveTarget };
 
   // --- Enemy movement: grazers wander, hunters home while idle ---

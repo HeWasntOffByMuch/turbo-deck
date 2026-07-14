@@ -280,10 +280,27 @@ describe('MOBA movement: speed, turn rate, facing gate', () => {
     expect(s.player.position).toEqual(held);
   });
 
-  it('with no move order, facing eases toward the aim direction', () => {
+  it('with no move order, facing stays fixed — it does NOT follow the cursor/aim', () => {
+    // A standing unit keeps its heading; otherwise it would always already face
+    // the click point and never spend any turn time.
     let s = initCombat(1); // faces east
-    for (let i = 0; i < 300; i++) s = step(s, { ...NEUTRAL_INPUT, aimX: 0, aimY: 1 }).state; // aim south
-    expect(s.player.facing).toBeCloseTo(Math.PI / 2, 5);
+    for (let i = 0; i < 300; i++) s = step(s, { ...NEUTRAL_INPUT, aimX: 0, aimY: 1 }).state; // aim south, no order
+    expect(s.player.facing).toBe(0);
+  });
+
+  it('a click behind spends turn time before moving, even right after arriving elsewhere', () => {
+    // Walk east to a target and arrive (facing east), then click due west: the
+    // unit must rotate ~45deg before it can move, so the first ticks are pure turn.
+    let s = initCombat(1);
+    const start = { ...s.player.position };
+    for (let i = 0; i < 200 && s.player.moveTarget !== null; i++) s = step(s, moveTo(start.x + 120, start.y)).state;
+    for (let i = 0; i < 200 && s.player.position.x < start.x + 100; i++) s = step(s, moveTo(start.x + 120, start.y)).state;
+    expect(s.player.facing).toBeCloseTo(0, 5); // arrived facing east
+    const arrivedX = s.player.position.x;
+    // Now order due west; the first tick must only rotate (no translation).
+    const r1 = step(s, moveTo(arrivedX - 300, s.player.position.y));
+    expect(r1.state.player.position.x).toBe(arrivedX); // gate closed: turned, didn't move
+    expect(r1.state.player.facing).not.toBe(s.player.facing); // began turning
   });
 });
 
