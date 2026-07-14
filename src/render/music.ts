@@ -217,13 +217,22 @@ function assemble(spec: SongSpec): Song {
 
 // --- Combat theme (spec 014) ---------------------------------------------
 
-// Am – F – C – G, one bar each. Roots sit in octave 2, triad tones in octave
-// 3/4 so the arp sparkles above the bass.
+// An eight-bar A/B form (spec 028). Roots sit in octave 2, triad tones in
+// octave 3/4 so the arp sparkles above the bass. The A section is the original
+// Am–F–C–G; the B section answers it (Am–F–Dm–E) and closes on E **major** —
+// its G♯ is the raised leading tone that yanks the ear back to the Am downbeat
+// when the loop restarts, the way a platformer overworld theme snaps home.
 const COMBAT_PROGRESSION: readonly Chord[] = [
+  // A section
   { root: 45, tones: [57, 60, 64] }, // Am : A2 / A3 C4 E4
   { root: 41, tones: [53, 57, 60] }, // F  : F2 / F3 A3 C4
   { root: 48, tones: [55, 60, 64] }, // C  : C3 / G3 C4 E4
   { root: 43, tones: [55, 59, 62] }, // G  : G2 / G3 B3 D4
+  // B section
+  { root: 45, tones: [57, 60, 64] }, // Am : A2 / A3 C4 E4
+  { root: 41, tones: [53, 57, 60] }, // F  : F2 / F3 A3 C4
+  { root: 38, tones: [53, 57, 62] }, // Dm : D2 / F3 A3 D4
+  { root: 40, tones: [52, 56, 59] }, // E  : E2 / E3 G#3 B3  (major: the leading tone)
 ];
 
 // Octave-pulse bass: driving eighth notes that pop up an octave and brush the
@@ -231,23 +240,37 @@ const COMBAT_PROGRESSION: readonly Chord[] = [
 const COMBAT_BASS_PATTERN: readonly number[] = [0, 0, 7, 0, 12, 0, 7, 0];
 
 // A written lead melody, one entry per bar: [beatWithinBar, duration, midi].
-// Scale tones of A minor phrased to lean into each chord and loop back cleanly.
+// The hook is in the *timing*: off-beat (.5) onsets give it a spring, and each
+// phrase ends by stopping — a bar-long rest where the bass/arp/pad carry the
+// groove — before the next answers, the call-and-response bounce of a classic
+// overworld theme. A minor throughout; the E-major bar leans on G♯4 (68).
 const COMBAT_LEAD_BARS: readonly LeadBar[] = [
-  // Am
-  [[0, 1, 64], [1, 0.5, 67], [1.5, 0.5, 64], [2, 1, 62], [3, 1, 60]],
-  // F
-  [[0, 1, 65], [1, 1, 64], [2, 2, 60]],
-  // C
-  [[0, 1, 64], [1, 0.5, 65], [1.5, 0.5, 64], [2, 1, 62], [3, 1, 60]],
-  // G — resolve upward (D->E) to pull the ear back to the Am downbeat.
-  [[0, 1, 62], [1, 1, 59], [2, 1, 62], [3, 1, 64]],
+  // A section
+  // Am — the rising hook, then stop and let the groove breathe.
+  [[0, 0.5, 69], [0.5, 0.5, 72], [1, 0.5, 76], [1.5, 0.5, 72], [2, 1, 74]],
+  // F  — a short answer, a rest, then a pickup back in.
+  [[0, 0.5, 72], [0.5, 0.5, 69], [1, 1, 65], [3, 1, 64]],
+  // C  — restate the hook a step brighter, stop again.
+  [[0, 0.5, 67], [0.5, 0.5, 72], [1, 0.5, 76], [1.5, 0.5, 79], [2, 1, 76]],
+  // G  — syncopated turnaround that walks up into the B section.
+  [[0, 1, 74], [1.5, 0.5, 71], [2, 0.5, 74], [2.5, 0.5, 72], [3, 1, 71]],
+  // B section — higher, hookier, same stops.
+  // Am — top the melody out, then rest.
+  [[0, 0.5, 81], [0.5, 0.5, 79], [1, 0.5, 76], [1.5, 0.5, 74], [2, 1, 76]],
+  // F  — answer and pickup.
+  [[0, 0.5, 77], [0.5, 0.5, 76], [1, 1, 72], [3, 1, 72]],
+  // Dm — syncopated climb.
+  [[0, 0.5, 74], [0.5, 0.5, 77], [1, 0.5, 81], [1.5, 0.5, 77], [2, 1, 74]],
+  // E  — the leading-tone cadence (G♯4), then the big stop before the loop.
+  [[0, 1, 71], [1, 0.5, 68], [1.5, 0.5, 64], [2, 1, 64]],
 ];
 
-// The delayed "overture" flourish (spec 027): fast 16th-note runs an octave
-// above the lead, tracing each chord (Am / F / C / G) with a jazzy up-and-down
-// figure that answers itself and resolves toward the Am downbeat on the loop.
-// One phrase per bar: [beatWithinBar, duration, midi], A natural minor.
+// The delayed "overture" flourish (spec 027, extended over the eight-bar form in
+// spec 028): fast 16th-note runs an octave above the lead, one phrase per bar,
+// tracing each chord across both sections and resolving toward the Am downbeat
+// on the loop. [beatWithinBar, duration, midi], A natural minor.
 const COMBAT_FLOURISH_BARS: readonly LeadBar[] = [
+  // A section
   // Am — A C E arpeggio up, scale back down, settle on A.
   [[0, 0.25, 69], [0.25, 0.25, 72], [0.5, 0.25, 76], [0.75, 0.25, 81],
    [1, 0.25, 79], [1.25, 0.25, 77], [1.5, 0.25, 76], [1.75, 0.25, 74],
@@ -264,6 +287,22 @@ const COMBAT_FLOURISH_BARS: readonly LeadBar[] = [
   [[0, 0.25, 79], [0.25, 0.25, 76], [0.5, 0.25, 74], [0.75, 0.25, 71],
    [1, 0.25, 74], [1.25, 0.25, 79], [1.5, 0.25, 83], [1.75, 0.25, 79],
    [2, 0.5, 76], [2.5, 0.5, 74], [3, 1, 72]],
+  // B section — the runs ride higher to match the lead's B-section lift.
+  // Am — up to the octave A, curl back, land low.
+  [[0, 0.25, 81], [0.25, 0.25, 79], [0.5, 0.25, 76], [0.75, 0.25, 72],
+   [1, 0.25, 76], [1.25, 0.25, 79], [1.5, 0.25, 81], [1.75, 0.25, 84],
+   [2, 0.5, 81], [2.5, 0.5, 76], [3, 1, 69]],
+  // F — F A C up to the top, then a held fifth.
+  [[0, 0.25, 77], [0.25, 0.25, 72], [0.5, 0.25, 69], [0.75, 0.25, 72],
+   [1, 0.25, 77], [1.25, 0.25, 81], [1.5, 0.25, 84], [1.75, 0.25, 81],
+   [2, 1, 77], [3, 1, 72]],
+  // Dm — F A D reaching to D6, tumbling back down.
+  [[0, 0.25, 74], [0.25, 0.25, 77], [0.5, 0.25, 81], [0.75, 0.25, 86],
+   [1, 0.25, 81], [1.25, 0.25, 77], [1.5, 0.25, 74], [1.75, 0.25, 69],
+   [2, 0.5, 74], [2.5, 0.5, 77], [3, 1, 81]],
+  // E — a G♯ arpeggio descent that leaves space for the lead's big stop.
+  [[0, 0.25, 80], [0.25, 0.25, 76], [0.5, 0.25, 71], [0.75, 0.25, 68],
+   [1, 0.5, 64], [1.5, 0.5, 68], [2, 1, 64]],
 ];
 
 const COMBAT_SPEC: SongSpec = {

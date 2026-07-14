@@ -72,6 +72,28 @@ describe('buildSong (combat theme)', () => {
   it('holds the flourish back for a positive stretch of combat', () => {
     expect(FLOURISH_ONSET_SECONDS).toBeGreaterThan(0);
   });
+
+  // Spec 028: a longer A/B form with a syncopated, breathing melody.
+  it('runs a longer eight-bar loop than the calm and death themes', () => {
+    const combat = buildSong();
+    expect(combat.lengthBeats).toBe(32);
+    expect(combat.lengthBeats).toBeGreaterThan(buildCalmSong().lengthBeats);
+    expect(combat.lengthBeats).toBeGreaterThan(buildDeathSong().lengthBeats);
+  });
+
+  it('syncopates the lead with off-beat onsets', () => {
+    const lead = buildSong().notes.filter((n) => n.voice === 'lead');
+    expect(lead.some((n) => n.beat % 1 !== 0)).toBe(true);
+  });
+
+  it('lets the lead breathe: a full-beat rest somewhere in the loop', () => {
+    const onsets = buildSong().notes
+      .filter((n) => n.voice === 'lead')
+      .map((n) => n.beat)
+      .sort((a, b) => a - b);
+    const maxGap = Math.max(...onsets.slice(1).map((beat, i) => beat - (onsets[i] ?? beat)));
+    expect(maxGap).toBeGreaterThanOrEqual(1);
+  });
 });
 
 describe('buildCalmSong (no-wave theme)', () => {
