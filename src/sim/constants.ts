@@ -8,10 +8,26 @@ export const ARENA_HEIGHT = 900;
 export const PLAYER_RADIUS = 16;
 export const ENEMY_RADIUS = 22;
 
-export const MOVE_SPEED_PER_TICK = 2.0;
 export const ENEMY_MOVE_SPEED_PER_TICK = 1.0;
-// Diagonal movement is scaled by 1/sqrt(2) so it isn't faster than cardinal.
-export const DIAGONAL_SCALE = Math.SQRT1_2;
+
+// --- MOBA-style player movement (spec 028) ---
+// Base movement speed in world units per second (HoN-style). The sim converts
+// it to a per-tick step via TICK_RATE. Speed is hard-capped to [100, 550] u/s,
+// mirroring HoN's caps.
+export const PLAYER_BASE_MOVE_SPEED = 300;
+export const MOVE_SPEED_HARD_MIN = 100;
+export const MOVE_SPEED_HARD_MAX = 550;
+// Turn rate in degrees per second: how fast the unit can rotate its heading.
+// 360 => 0.5s to turn 180 degrees; 540 is nimble but not instant.
+export const PLAYER_TURN_RATE = 540;
+// A unit must be facing within this many degrees of its intended move direction
+// before it begins to translate; otherwise it rotates in place. So a full 180
+// reversal only needs a 45-degree turn (135 from the opposite heading) to start
+// moving, then it travels in a straight line (no arc).
+export const MOVE_FACING_THRESHOLD_DEG = 135;
+// A move order is considered fulfilled once the unit is within this distance of
+// the destination, at which point the standing order is cleared.
+export const MOVE_ARRIVE_EPS = 2;
 
 export const PLAYER_MAX_HEALTH = 100;
 // Reach of the player's melee strike, measured from the player's centre to the

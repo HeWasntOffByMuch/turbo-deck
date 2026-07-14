@@ -63,6 +63,10 @@ export interface PlayerState {
   readonly mana: number;
   readonly maxMana: number;
   readonly position: Vec2;
+  /** Heading in radians (0 = +x). Governs the turn-rate movement gate (spec 028). */
+  readonly facing: number;
+  /** Standing move-to destination in world units; null when idle / arrived. */
+  readonly moveTarget: Vec2 | null;
   readonly attackCooldownUntil: number;
   /** Movement input is ignored until this tick (attack commitment). */
   readonly moveLockUntil: number;
@@ -254,8 +258,13 @@ export type ExternalEffect =
     };
 
 export interface InputFrame {
-  readonly moveX: -1 | 0 | 1;
-  readonly moveY: -1 | 0 | 1;
+  /**
+   * A move order issued this tick, to a world point (spec 028). Present => set
+   * the player's standing destination; absent => keep obeying the current one.
+   * Orders are discrete clicks: the renderer emits this only on a right-click
+   * press, never while a button is held.
+   */
+  readonly moveTarget?: Vec2;
   readonly attack: boolean;
   /** Aim direction for the attack cone; need not be normalized. */
   readonly aimX: number;
@@ -268,8 +277,6 @@ export interface InputFrame {
 }
 
 export const NEUTRAL_INPUT: InputFrame = {
-  moveX: 0,
-  moveY: 0,
   attack: false,
   aimX: 1,
   aimY: 0,

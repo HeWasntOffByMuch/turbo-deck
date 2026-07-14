@@ -33,9 +33,10 @@ export function botInput(state: GameState, plannedReactionTick: number | null, t
   const reach = PLAYER_ATTACK_RANGE + ENEMY_RADIUS;
   const inRange = target !== null && nearestSq <= reach * reach;
 
-  // Close in on the target when out of range; always aim at it so attacks connect.
-  const moveX: -1 | 0 | 1 = inRange || !target ? 0 : dx > 0 ? 1 : dx < 0 ? -1 : 0;
-  const moveY: -1 | 0 | 1 = inRange || !target ? 0 : dy > 0 ? 1 : dy < 0 ? -1 : 0;
+  // Issue a move order onto the target when out of range; always aim at it so
+  // attacks connect. In range (or no target) it orders itself to its own spot,
+  // which resolves instantly so the standing order clears and it holds still.
+  const moveTarget = !inRange && target ? target.position : player.position;
   const defend = plannedReactionTick === tick && enemies.some((e) => e.behavior === 'hunting' && e.phase === 'windup');
 
   let playHandIndex: 0 | 1 | 2 | undefined;
@@ -60,8 +61,7 @@ export function botInput(state: GameState, plannedReactionTick: number | null, t
   }
 
   return {
-    moveX,
-    moveY,
+    moveTarget,
     attack: inRange,
     aimX: dx,
     aimY: dy,

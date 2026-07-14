@@ -200,7 +200,7 @@ describe('mis-timed window slow', () => {
     expect(casted.events.some((e) => e.kind === 'playerSlowed')).toBe(true);
     expect(casted.state.player.moveSlowUntilTick).toBeGreaterThan(casted.state.tick);
 
-    const walk = { ...NEUTRAL_INPUT, moveX: 1 as const };
+    const walk = { ...NEUTRAL_INPUT, moveTarget: { x: CENTER.x + 10000, y: CENTER.y } };
     const slowedDist = run(casted.state, Array.from({ length: 10 }, () => walk)).state.player.position.x - casted.state.player.position.x;
     const freshDist = run(arena(), Array.from({ length: 10 }, () => walk)).state.player.position.x - CENTER.x;
     expect(slowedDist).toBeGreaterThan(0);
@@ -222,7 +222,7 @@ describe('Burning Speed', () => {
 
   it('hastes the walk while active', () => {
     const casted = run(arena(), [cast([bs({ durationTicks: 600 })])]).state;
-    const walk = { ...NEUTRAL_INPUT, moveX: 1 as const };
+    const walk = { ...NEUTRAL_INPUT, moveTarget: { x: CENTER.x + 10000, y: CENTER.y } };
     const hasted = run(casted, Array.from({ length: 10 }, () => walk)).state.player.position.x - casted.player.position.x;
     const fresh = run(arena(), Array.from({ length: 10 }, () => walk)).state.player.position.x - CENTER.x;
     expect(hasted).toBeGreaterThan(fresh);
@@ -352,7 +352,7 @@ describe('adrenaline move speed (spec 025)', () => {
       const base = arena();
       return { ...base, player: { ...base.player, adrenaline: adr } };
     };
-    const walk: InputFrame = { ...NEUTRAL_INPUT, moveX: 1 };
+    const walk: InputFrame = { ...NEUTRAL_INPUT, moveTarget: { x: CENTER.x + 10000, y: CENTER.y } };
     const dx0 = run(withAdr(0), [walk]).state.player.position.x - CENTER.x;
     const dx5 = run(withAdr(5), [walk]).state.player.position.x - CENTER.x;
     expect(dx0).toBeGreaterThan(0);
@@ -363,7 +363,10 @@ describe('adrenaline move speed (spec 025)', () => {
 describe('determinism', () => {
   it('replays identically for the same seed and inputs', () => {
     const spec: SpellSpec = { kind: 'aura', radius: 95, pulseDamage: 5, pulseIntervalTicks: 12, durationTicks: 180 };
-    const inputs = [cast([spec]), ...Array.from({ length: 40 }, (_, i) => ({ ...NEUTRAL_INPUT, moveX: (i % 3 === 0 ? 1 : 0) as -1 | 0 | 1 }))];
+    const inputs = [
+      cast([spec]),
+      ...Array.from({ length: 40 }, (_, i) => (i % 3 === 0 ? { ...NEUTRAL_INPUT, moveTarget: { x: CENTER.x + 10000, y: CENTER.y } } : NEUTRAL_INPUT)),
+    ];
     const a = run(withEnemy(arena(9), { id: 1, position: { x: CENTER.x + 50, y: CENTER.y } }), inputs).state;
     const b = run(withEnemy(arena(9), { id: 1, position: { x: CENTER.x + 50, y: CENTER.y } }), inputs).state;
     expect(a).toEqual(b);

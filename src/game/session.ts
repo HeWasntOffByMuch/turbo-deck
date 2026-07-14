@@ -2,7 +2,7 @@ import { drawBonusCard, initDeck, useBonusCard, useCard } from '../cards/deck.js
 import type { ActiveEffect, Catalog, CardInstance, DeckState, PassiveEffect } from '../cards/types.js';
 import { Rng } from '../shared/prng.js';
 import { initCombat, step as combatStep } from '../sim/combat.js';
-import { IDENTITY_MODIFIERS, type CombatState, type ExternalEffect, type InputFrame, type Modifiers, type SimEvent } from '../sim/types.js';
+import { IDENTITY_MODIFIERS, type CombatState, type ExternalEffect, type InputFrame, type Modifiers, type SimEvent, type Vec2 } from '../sim/types.js';
 import { TICK_RATE } from '../sim/constants.js';
 
 export interface GameState {
@@ -11,8 +11,8 @@ export interface GameState {
 }
 
 export interface GameInput {
-  readonly moveX: -1 | 0 | 1;
-  readonly moveY: -1 | 0 | 1;
+  /** MOBA move order to a world point this tick; absent keeps the standing order (spec 028). */
+  readonly moveTarget?: Vec2;
   readonly attack: boolean;
   readonly aimX: number;
   readonly aimY: number;
@@ -130,13 +130,12 @@ export function stepGame(
   const mods = computeModifiers(deck, catalog);
 
   const combatInput: InputFrame = {
-    moveX: input.moveX,
-    moveY: input.moveY,
     attack: input.attack,
     aimX: input.aimX,
     aimY: input.aimY,
     parry: input.parry,
     dodge: input.dodge,
+    ...(input.moveTarget ? { moveTarget: input.moveTarget } : {}),
     ...(externalEffect ? { externalEffect } : {}),
   };
 

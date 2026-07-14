@@ -20,7 +20,7 @@ import type { SpellSpec } from '../shared/spell-spec.js';
 import { Rng } from '../shared/prng.js';
 import { initCombat, step as combatStep } from '../sim/combat.js';
 import { TICK_RATE } from '../sim/constants.js';
-import { type CombatState, type ExternalEffect, type InputFrame, type SimEvent } from '../sim/types.js';
+import { type CombatState, type ExternalEffect, type InputFrame, type SimEvent, type Vec2 } from '../sim/types.js';
 
 /**
  * Composition root for the spell-card game (spec 018/019): the only place a
@@ -155,8 +155,8 @@ export interface SpellGameState {
 }
 
 export interface SpellInput {
-  readonly moveX: -1 | 0 | 1;
-  readonly moveY: -1 | 0 | 1;
+  /** MOBA move order to a world point this tick; absent keeps the standing order (spec 028). */
+  readonly moveTarget?: Vec2;
   /** Aim direction (player -> cursor) for cones, rects and dashes. */
   readonly aimX: number;
   readonly aimY: number;
@@ -322,14 +322,13 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
   }
 
   const combatInput: InputFrame = {
-    moveX: input.moveX,
-    moveY: input.moveY,
     // Attacks are cards; the sim's built-in melee is never triggered here.
     attack: false,
     aimX: input.aimX,
     aimY: input.aimY,
     parry: false,
     dodge: false,
+    ...(input.moveTarget ? { moveTarget: input.moveTarget } : {}),
     ...(externalEffect ? { externalEffect } : {}),
     // A wave cannot be summoned while a reward or its picker is still open.
     ...(input.spawnWave && pendingReward === null && pendingPick === null ? { spawnWave: true } : {}),

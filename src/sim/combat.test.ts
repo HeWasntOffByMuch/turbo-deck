@@ -12,6 +12,9 @@ import {
   ENEMY_WINDUP_TICKS,
   MANA_REGEN_PER_TICK,
   MAX_ENEMIES,
+  MOVE_ARRIVE_EPS,
+  MOVE_SPEED_HARD_MAX,
+  MOVE_SPEED_HARD_MIN,
   NORMAL_WINDOW_TICKS,
   PERFECT_WINDOW_TICKS,
   PLAYER_ATTACK_DAMAGE,
@@ -20,7 +23,7 @@ import {
   PLAYER_MAX_HEALTH,
   PLAYER_RADIUS,
 } from './constants.js';
-import { initCombat, runSim, step } from './combat.js';
+import { computeMoveSpeed, initCombat, runSim, step } from './combat.js';
 import { enemyTypeByKey } from './enemies.js';
 import {
   IDENTITY_MODIFIERS,
@@ -101,6 +104,11 @@ function neutralSteps(count: number): InputFrame[] {
   return Array.from({ length: count }, () => NEUTRAL_INPUT);
 }
 
+/** An input carrying a standing move order to a world point. */
+function moveTo(x: number, y: number, extra: Partial<InputFrame> = {}): InputFrame {
+  return { ...NEUTRAL_INPUT, moveTarget: { x, y }, ...extra };
+}
+
 /** Inputs through the first slam's resolution, pressing a defend input at `tick`. */
 function defendAt(tick: number, type: 'parry' | 'dodge' = 'parry'): InputFrame[] {
   const inputs = neutralSteps(HIT_TICK);
@@ -110,15 +118,18 @@ function defendAt(tick: number, type: 'parry' | 'dodge' = 'parry'): InputFrame[]
 
 describe('combat sim determinism', () => {
   it('reproduces identical state and events for the same seed and input sequence', () => {
-    const inputArb: fc.Arbitrary<InputFrame> = fc.record({
-      moveX: fc.constantFrom(-1, 0, 1),
-      moveY: fc.constantFrom(-1, 0, 1),
-      attack: fc.boolean(),
-      aimX: fc.constantFrom(-1, 0, 1),
-      aimY: fc.constantFrom(-1, 0, 1),
-      parry: fc.boolean(),
-      dodge: fc.boolean(),
-    });
+    const inputArb: fc.Arbitrary<InputFrame> = fc.record(
+      {
+        attack: fc.boolean(),
+        aimX: fc.constantFrom(-1, 0, 1),
+        aimY: fc.constantFrom(-1, 0, 1),
+        parry: fc.boolean(),
+        dodge: fc.boolean(),
+        // Left out of requiredKeys: randomly present (a Vec2) or omitted entirely.
+        moveTarget: fc.record({ x: fc.integer({ min: 0, max: ARENA_WIDTH }), y: fc.integer({ min: 0, max: ARENA_HEIGHT }) }),
+      },
+      { requiredKeys: ['attack', 'aimX', 'aimY', 'parry', 'dodge'] },
+    );
 
     fc.assert(
       fc.property(fc.integer({ min: 0, max: 2 ** 31 - 1 }), fc.array(inputArb, { maxLength: 300 }), (seed, inputs) => {
@@ -197,26 +208,92 @@ describe('mana gating for external effects', () => {
 });
 
 describe('movement bounds', () => {
-  it('clamps player position to the arena rectangle regardless of how long a direction is held', () => {
-    const topLeft = neutralSteps(1000).map((f) => ({ ...f, moveX: -1 as const, moveY: -1 as const }));
+  it('clamps player position to the arena rectangle regardless of how long a move order stands', () => {
+    // Order past the top-left corner: the unit walks to the edge and clamps there.
+    const topLeft = Array.from({ length: 1000 }, () => moveTo(-500, -500));
     const { state } = runSim(3, topLeft);
     expect(state.player.position.x).toBe(PLAYER_RADIUS);
     expect(state.player.position.y).toBe(PLAYER_RADIUS);
 
-    const bottomRight = neutralSteps(1000).map((f) => ({ ...f, moveX: 1 as const, moveY: 1 as const }));
+    const bottomRight = Array.from({ length: 1000 }, () => moveTo(ARENA_WIDTH + 500, ARENA_HEIGHT + 500));
     const { state: br } = runSim(3, bottomRight);
     expect(br.player.position.x).toBe(ARENA_WIDTH - PLAYER_RADIUS);
     expect(br.player.position.y).toBe(ARENA_HEIGHT - PLAYER_RADIUS);
   });
 });
 
+describe('MOBA movement: speed, turn rate, facing gate', () => {
+  it('computeMoveSpeed applies flat/pct/slow terms and clamps to [100, 550]', () => {
+    expect(computeMoveSpeed(300)).toBe(300);
+    expect(computeMoveSpeed(300, 100)).toBe(400); // flat bonus
+    expect(computeMoveSpeed(300, 0, 1.5)).toBe(450); // percentage bonus
+    expect(computeMoveSpeed(300, 0, 1, [{ multiplier: 0.5 }])).toBe(150); // a 50% slow
+    // A slow damped to half strength by slow resistance: 1 - (1 - 0.5) * 0.5 = 0.75.
+    expect(computeMoveSpeed(300, 0, 1, [{ multiplier: 0.5, resistance: 0.5 }])).toBe(225);
+    expect(computeMoveSpeed(9999)).toBe(MOVE_SPEED_HARD_MAX);
+    expect(computeMoveSpeed(1)).toBe(MOVE_SPEED_HARD_MIN);
+  });
+
+  it('starts translating on the first tick for an order within the facing gate', () => {
+    const base = initCombat(1); // player faces +x (east)
+    const start = base.player.position;
+    const { state } = step(base, moveTo(start.x + 300, start.y)); // due east, already faced
+    expect(state.player.position.x).toBeGreaterThan(start.x);
+    expect(state.player.position.y).toBeCloseTo(start.y, 6);
+  });
+
+  it('an order directly behind only rotates on the first tick — zero translation', () => {
+    const base = initCombat(1); // faces east; order is due west (180 degrees behind)
+    const start = base.player.position;
+    const { state } = step(base, moveTo(start.x - 300, start.y));
+    expect(state.player.position).toEqual(start); // gate closed: no movement yet
+    expect(state.player.facing).not.toBe(0); // but it has begun turning
+  });
+
+  it('travels in a straight line to the target — no arc even when it must turn', () => {
+    // Order due south from a unit facing east: it should move straight down the
+    // x=start.x line the entire way (perpendicular offset stays ~0), never bowing
+    // east along its lagging facing.
+    let s = initCombat(1);
+    const start = s.player.position;
+    const target = { x: start.x, y: start.y + 300 };
+    let maxOffset = 0;
+    for (let i = 0; i < 120; i++) {
+      s = step(s, moveTo(target.x, target.y)).state;
+      maxOffset = Math.max(maxOffset, Math.abs(s.player.position.x - start.x));
+      if (s.player.moveTarget === null) break;
+    }
+    expect(maxOffset).toBeLessThanOrEqual(1e-6); // dead straight, no arc
+    expect(s.player.position.y).toBeGreaterThan(start.y + 100);
+  });
+
+  it('reaches a reachable order and clears the standing move target (no drift after)', () => {
+    let s = initCombat(1);
+    const target = { x: s.player.position.x + 220, y: s.player.position.y - 160 };
+    for (let i = 0; i < 300; i++) s = step(s, moveTo(target.x, target.y)).state;
+    const dist = Math.hypot(s.player.position.x - target.x, s.player.position.y - target.y);
+    expect(dist).toBeLessThanOrEqual(MOVE_ARRIVE_EPS);
+    expect(s.player.moveTarget).toBeNull();
+    // With the order cleared and no new one, the unit does not drift (no momentum).
+    const held = s.player.position;
+    s = step(s, NEUTRAL_INPUT).state;
+    expect(s.player.position).toEqual(held);
+  });
+
+  it('with no move order, facing eases toward the aim direction', () => {
+    let s = initCombat(1); // faces east
+    for (let i = 0; i < 300; i++) s = step(s, { ...NEUTRAL_INPUT, aimX: 0, aimY: 1 }).state; // aim south
+    expect(s.player.facing).toBeCloseTo(Math.PI / 2, 5);
+  });
+});
+
 describe('positional telegraph (cone)', () => {
   it('side-stepping out of the cone during windup avoids the hit', () => {
     // Stand still through the idle phase so the cone is aimed straight at rest,
-    // then slip sideways (perpendicular to the aim) once the windup begins; by
-    // resolution the player has left the wedge.
+    // then order a move straight south (perpendicular to the westward cone) once
+    // the windup begins; by resolution the player has left the wedge.
     const inputs = neutralSteps(HIT_TICK);
-    for (let t = ENEMY_IDLE_TICKS; t < HIT_TICK; t++) inputs[t] = { ...NEUTRAL_INPUT, moveY: 1 };
+    for (let t = ENEMY_IDLE_TICKS; t < HIT_TICK; t++) inputs[t] = moveTo(ARENA_WIDTH / 2, ARENA_HEIGHT * 2);
     const { state, events } = runFrom(huntingState(), inputs);
     expect(state.player.health).toBe(PLAYER_MAX_HEALTH);
     expect(events.some((e) => e.kind === 'playerHit')).toBe(false);
@@ -242,7 +319,7 @@ describe('enemies attack only when in range', () => {
       grazeResumeTick: 0,
     });
     // Sprint left, faster than the enemy homes, so it never closes to reach.
-    const inputs = neutralSteps(150).map((f) => ({ ...f, moveX: -1 as const }));
+    const inputs = Array.from({ length: 150 }, () => moveTo(-500, p.y));
     const { state, events } = runFrom(withEnemies(base, [enemy]), inputs);
     expect(state.enemies[0]?.phase).toBe('idle'); // never committed to a windup
     expect(events.some((e) => e.kind === 'playerHit')).toBe(false);
@@ -293,11 +370,13 @@ describe('attack commitment (stop when attacking)', () => {
   it('roots the player through the wind-up and recovery, then movement resumes', () => {
     let s = huntingState(11);
     const startX = s.player.position.x;
-    s = step(s, { ...NEUTRAL_INPUT, attack: true, moveX: 1, aimX: 1 }).state;
+    const east = moveTo(ARENA_WIDTH * 2, s.player.position.y, { attack: true, aimX: 1 });
+    const eastMove = moveTo(ARENA_WIDTH * 2, s.player.position.y);
+    s = step(s, east).state;
     expect(s.player.position.x).toBe(startX);
-    for (let i = 0; i < PLAYER_ATTACK_WINDUP_TICKS - 1; i++) s = step(s, { ...NEUTRAL_INPUT, moveX: 1 }).state;
+    for (let i = 0; i < PLAYER_ATTACK_WINDUP_TICKS - 1; i++) s = step(s, eastMove).state;
     expect(s.player.position.x).toBe(startX);
-    for (let i = 0; i < ATTACK_ROOT_TICKS + 3; i++) s = step(s, { ...NEUTRAL_INPUT, moveX: 1 }).state;
+    for (let i = 0; i < ATTACK_ROOT_TICKS + 3; i++) s = step(s, eastMove).state;
     expect(s.player.position.x).toBeGreaterThan(startX);
   });
 });
@@ -362,10 +441,12 @@ describe('hunting enemy plants while attacking', () => {
     let idleMoved = false;
     const cycle = ENEMY_IDLE_TICKS + ENEMY_WINDUP_TICKS + ENEMY_RECOVERY_TICKS;
     let prevIdleKey: string | null = null;
-    // Drift the player away so the idle-homing enemy has somewhere to close.
+    // Drift the player east (its start heading) so the idle-homing enemy has
+    // somewhere to close; the order stands for the whole cycle.
+    const eastMove = moveTo(ARENA_WIDTH * 2, s.player.position.y);
     for (let t = 1; t <= cycle; t++) {
       const before = (s.enemies[0] as EnemyState).position;
-      s = step(s, { ...NEUTRAL_INPUT, moveX: 1 }).state;
+      s = step(s, eastMove).state;
       const e = s.enemies[0] as EnemyState;
       const key = `${e.position.x},${e.position.y}`;
       if (e.phase === 'windup') {
@@ -438,7 +519,7 @@ describe('player death', () => {
     expect(events.filter((e) => e.kind === 'playerDefeated')).toHaveLength(1);
 
     // Further steps are inert.
-    const next = step(dead, { ...NEUTRAL_INPUT, moveX: 1 });
+    const next = step(dead, moveTo(ARENA_WIDTH * 2, dead.player.position.y));
     expect(next.state).toBe(dead);
     expect(next.events).toEqual([]);
   });

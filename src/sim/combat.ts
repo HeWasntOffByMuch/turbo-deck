@@ -7,7 +7,6 @@ import {
   ATTACK_ROOT_TICKS,
   BURN_PULSE_INTERVAL_TICKS,
   DEFENSE_RECOVERY_TICKS,
-  DIAGONAL_SCALE,
   ENEMY_ATTACK_ARC_COS_SQ,
   ENEMY_ATTACK_RANGE,
   ENEMY_ATTACK_TRIGGER_RANGE,
@@ -27,17 +26,22 @@ import {
   MAX_ADRENALINE,
   MAX_DAMAGE_REDUCTION,
   MAX_ENEMIES,
-  MOVE_SPEED_PER_TICK,
+  MOVE_ARRIVE_EPS,
+  MOVE_FACING_THRESHOLD_DEG,
+  MOVE_SPEED_HARD_MAX,
+  MOVE_SPEED_HARD_MIN,
   NORMAL_WINDOW_TICKS,
   PERFECT_WINDOW_TICKS,
   PLAYER_ATTACK_COOLDOWN_TICKS,
   PLAYER_ATTACK_DAMAGE,
   PLAYER_ATTACK_RANGE,
   PLAYER_ATTACK_WINDUP_TICKS,
+  PLAYER_BASE_MOVE_SPEED,
   PLAYER_MAX_HEALTH,
   PLAYER_MAX_MANA,
   PLAYER_RADIUS,
   PLAYER_SLOW_MULTIPLIER,
+  PLAYER_TURN_RATE,
   SPAWN_MIN_PLAYER_DIST,
   TICK_RATE,
   WAVE_ATTACK_SPEED_GROWTH,
@@ -87,13 +91,93 @@ const clampToArena = (x: number, y: number): Vec2 => ({
   y: clamp(y, ENEMY_RADIUS, ARENA_HEIGHT - ENEMY_RADIUS),
 });
 
-/** Move the player by an 8-directional input, normalizing diagonals, clamped to the arena. */
-function movePlayer(position: Vec2, moveX: number, moveY: number, speedScale = 1): Vec2 {
-  const diag = moveX !== 0 && moveY !== 0 ? DIAGONAL_SCALE : 1;
-  const speed = MOVE_SPEED_PER_TICK * diag * speedScale;
-  const x = clamp(position.x + moveX * speed, PLAYER_RADIUS, ARENA_WIDTH - PLAYER_RADIUS);
-  const y = clamp(position.y + moveY * speed, PLAYER_RADIUS, ARENA_HEIGHT - PLAYER_RADIUS);
-  return { x, y };
+const DEG2RAD = Math.PI / 180;
+const TWO_PI = Math.PI * 2;
+const MAX_TURN_PER_TICK = (PLAYER_TURN_RATE * DEG2RAD) / TICK_RATE;
+const MOVE_FACING_THRESHOLD = MOVE_FACING_THRESHOLD_DEG * DEG2RAD;
+
+/** Wrap an angle into (-PI, PI]. */
+function normalizeAngle(a: number): number {
+  let x = a % TWO_PI;
+  if (x <= -Math.PI) x += TWO_PI;
+  else if (x > Math.PI) x -= TWO_PI;
+  return x;
+}
+
+/** Rotate `facing` toward `desired` by at most `maxStep` radians, snapping when within reach. */
+function turnToward(facing: number, desired: number, maxStep: number): number {
+  const diff = normalizeAngle(desired - facing);
+  if (Math.abs(diff) <= maxStep) return normalizeAngle(desired);
+  return normalizeAngle(facing + Math.sign(diff) * maxStep);
+}
+
+/** A single slow debuff: `multiplier` (<1 slows) damped by `resistance` (0..1). */
+export interface MoveSlow {
+  readonly multiplier: number;
+  readonly resistance?: number;
+}
+
+/**
+ * HoN movement-speed formula: ((base + flat) * pct) with each slow applied
+ * multiplicatively (a slow's bite reduced by its slow resistance), then clamped
+ * to [MIN, MAX] and rounded. With no bonuses/slows this is just `round(base)`
+ * clamped to the caps.
+ */
+export function computeMoveSpeed(
+  base: number,
+  flatBonus = 0,
+  pctBonus = 1,
+  slows: readonly MoveSlow[] = [],
+): number {
+  let speed = (base + flatBonus) * pctBonus;
+  for (const slow of slows) {
+    const resistance = slow.resistance ?? 1;
+    // multiplier<1 is a slow; resistance dampens how much of it applies.
+    const effective = 1 - (1 - slow.multiplier) * resistance;
+    speed *= effective;
+  }
+  return Math.round(clamp(speed, MOVE_SPEED_HARD_MIN, MOVE_SPEED_HARD_MAX));
+}
+
+const PLAYER_MOVE_SPEED_PER_TICK = computeMoveSpeed(PLAYER_BASE_MOVE_SPEED) / TICK_RATE;
+
+/**
+ * Advance the player one tick under a MOBA move order (spec 028): rotate
+ * `facing` toward the destination at the turn rate, and translate only once
+ * within the 135-degree gate. Movement is a straight line toward the target (no
+ * arc); the residual rotation finishes cosmetically while travelling. `scale`
+ * is the walk-speed multiplier (adrenaline/haste/slow). Clears the order on
+ * arrival. With no order the unit eases its facing toward `aim`.
+ */
+function stepPlayerMovement(
+  position: Vec2,
+  facing: number,
+  moveTarget: Vec2 | null,
+  aim: Vec2,
+  scale: number,
+): { position: Vec2; facing: number; moveTarget: Vec2 | null } {
+  if (moveTarget === null) {
+    const aimLen = Math.hypot(aim.x, aim.y);
+    const nextFacing = aimLen > 1e-6 ? turnToward(facing, Math.atan2(aim.y, aim.x), MAX_TURN_PER_TICK) : facing;
+    return { position, facing: nextFacing, moveTarget: null };
+  }
+
+  const dx = moveTarget.x - position.x;
+  const dy = moveTarget.y - position.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist <= MOVE_ARRIVE_EPS) return { position, facing, moveTarget: null };
+
+  const desired = Math.atan2(dy, dx);
+  const nextFacing = turnToward(facing, desired, MAX_TURN_PER_TICK);
+  // Gate closed: still facing too far off, so rotate in place and don't move yet.
+  if (Math.abs(normalizeAngle(desired - nextFacing)) > MOVE_FACING_THRESHOLD) {
+    return { position, facing: nextFacing, moveTarget };
+  }
+  // Gate open: travel straight toward the target (no arcing along the lagging facing).
+  const step = Math.min(PLAYER_MOVE_SPEED_PER_TICK * scale, dist);
+  const nextPos = clampPlayerPos(position.x + (dx / dist) * step, position.y + (dy / dist) * step);
+  const arrived = Math.hypot(moveTarget.x - nextPos.x, moveTarget.y - nextPos.y) <= MOVE_ARRIVE_EPS;
+  return { position: nextPos, facing: nextFacing, moveTarget: arrived ? null : moveTarget };
 }
 
 /** Step `position` toward `target` at `speed`, stopping `stopDist` short, clamped to the arena. */
@@ -298,6 +382,8 @@ export function initCombat(seed: number, opts: CombatOptions = {}): CombatState 
     mana: PLAYER_MAX_MANA,
     maxMana: PLAYER_MAX_MANA,
     position: { x: ARENA_WIDTH * 0.5, y: ARENA_HEIGHT * 0.5 },
+    facing: 0,
+    moveTarget: null,
     attackCooldownUntil: 0,
     moveLockUntil: 0,
     attackReleaseTick: 0,
@@ -389,12 +475,21 @@ export function step(
   const hasteActive = tick < state.player.moveHasteUntilTick;
   const adrenalineSpeed = 1 + ADRENALINE_SPEED_PER_POINT * state.player.adrenaline;
   const moveScale = (slowActive ? PLAYER_SLOW_MULTIPLIER : 1) * (hasteActive ? state.player.moveHasteMult : 1) * adrenalineSpeed;
-  const nextPos = dashing
-    ? clampPlayerPos(state.player.position.x + state.player.dashDx, state.player.position.y + state.player.dashDy)
+  // A move order issued this tick (re)sets the standing destination; otherwise
+  // the previous order stands. It persists across dash/rooted ticks so movement
+  // resumes once the override ends. Off-map orders are honoured as-is: the
+  // per-tick position clamp walks the unit to the nearest edge and holds it.
+  const orderedTarget = input.moveTarget ?? state.player.moveTarget;
+  const moved = dashing
+    ? {
+        position: clampPlayerPos(state.player.position.x + state.player.dashDx, state.player.position.y + state.player.dashDy),
+        facing: state.player.facing,
+        moveTarget: orderedTarget,
+      }
     : rooted
-      ? state.player.position
-      : movePlayer(state.player.position, input.moveX, input.moveY, moveScale);
-  let player: PlayerState = { ...state.player, position: nextPos };
+      ? { position: state.player.position, facing: state.player.facing, moveTarget: orderedTarget }
+      : stepPlayerMovement(state.player.position, state.player.facing, orderedTarget, { x: input.aimX, y: input.aimY }, moveScale);
+  let player: PlayerState = { ...state.player, position: moved.position, facing: moved.facing, moveTarget: moved.moveTarget };
 
   // --- Enemy movement: grazers wander, hunters home while idle ---
   let enemies: EnemyState[] = state.enemies.map((enemy) => {

@@ -14,7 +14,7 @@ import {
   type SpellInput,
 } from './spell-session.js';
 
-const NEUTRAL: SpellInput = { moveX: 0, moveY: 0, aimX: 1, aimY: 0, targetX: 0, targetY: 0 };
+const NEUTRAL: SpellInput = { aimX: 1, aimY: 0, targetX: 0, targetY: 0 };
 
 function play(slot: 0 | 1 | 2 | 3): SpellInput {
   return { ...NEUTRAL, playHandIndex: slot };

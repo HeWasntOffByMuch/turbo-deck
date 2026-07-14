@@ -1,9 +1,6 @@
 import type { GameInput } from '../game/session.js';
+import type { Vec2 } from '../sim/types.js';
 
-const MOVE_UP_KEYS = new Set(['ArrowUp', 'KeyW']);
-const MOVE_DOWN_KEYS = new Set(['ArrowDown', 'KeyS']);
-const MOVE_LEFT_KEYS = new Set(['ArrowLeft', 'KeyA']);
-const MOVE_RIGHT_KEYS = new Set(['ArrowRight', 'KeyD']);
 const ATTACK_KEYS = new Set(['Space']);
 const PARRY_KEYS = new Set(['KeyK']);
 const DODGE_KEYS = new Set(['KeyL']);
@@ -26,6 +23,9 @@ export class InputCapture {
   private readonly justPressed = new Set<string>();
   private mouse: ScreenPoint = { x: 0, y: 0 };
   private mouseDown = false;
+  // A right-click move order is a discrete edge, consumed once by the next
+  // sample(); holding the button does NOT keep issuing orders (spec 028).
+  private rightClicked = false;
   private canvas: HTMLCanvasElement | undefined;
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
@@ -45,10 +45,16 @@ export class InputCapture {
 
   private readonly onMouseDown = (e: MouseEvent): void => {
     if (e.button === 0) this.mouseDown = true;
+    else if (e.button === 2) this.rightClicked = true;
   };
 
   private readonly onMouseUp = (e: MouseEvent): void => {
     if (e.button === 0) this.mouseDown = false;
+  };
+
+  // Right-click is the move command, so suppress the browser context menu.
+  private readonly onContextMenu = (e: MouseEvent): void => {
+    e.preventDefault();
   };
 
   attach(target: Window, canvas: HTMLCanvasElement): void {
@@ -58,6 +64,7 @@ export class InputCapture {
     target.addEventListener('mousemove', this.onMouseMove);
     target.addEventListener('mousedown', this.onMouseDown);
     target.addEventListener('mouseup', this.onMouseUp);
+    canvas.addEventListener('contextmenu', this.onContextMenu);
   }
 
   detach(target: Window): void {
@@ -66,6 +73,7 @@ export class InputCapture {
     target.removeEventListener('mousemove', this.onMouseMove);
     target.removeEventListener('mousedown', this.onMouseDown);
     target.removeEventListener('mouseup', this.onMouseUp);
+    this.canvas?.removeEventListener('contextmenu', this.onContextMenu);
   }
 
   /** Latest mouse position in canvas-local pixels. */
@@ -77,17 +85,10 @@ export class InputCapture {
    * Sample the current input for one sim tick. Aim points from the player's
    * on-screen position toward the mouse; because world->screen is a uniform,
    * non-flipping transform, this screen-space direction equals the world-space
-   * aim direction the sim needs.
+   * aim direction the sim needs. `mouseWorld` is the cursor projected back into
+   * world space; a pending right-click emits it as this tick's move order.
    */
-  sample(playerScreen: ScreenPoint): GameInput {
-    let moveX: -1 | 0 | 1 = 0;
-    if (this.heldAny(MOVE_LEFT_KEYS) && !this.heldAny(MOVE_RIGHT_KEYS)) moveX = -1;
-    else if (this.heldAny(MOVE_RIGHT_KEYS) && !this.heldAny(MOVE_LEFT_KEYS)) moveX = 1;
-
-    let moveY: -1 | 0 | 1 = 0;
-    if (this.heldAny(MOVE_UP_KEYS) && !this.heldAny(MOVE_DOWN_KEYS)) moveY = -1;
-    else if (this.heldAny(MOVE_DOWN_KEYS) && !this.heldAny(MOVE_UP_KEYS)) moveY = 1;
-
+  sample(playerScreen: ScreenPoint, mouseWorld: Vec2): GameInput {
     let playHandIndex: 0 | 1 | 2 | undefined;
     for (const [code, index] of Object.entries(HAND_KEYS)) {
       if (this.justPressed.has(code)) {
@@ -101,19 +102,20 @@ export class InputCapture {
     let aimX = this.mouse.x - playerScreen.x;
     if (aimX === 0 && aimY === 0) aimX = 1; // avoid a zero-length aim
 
+    const moveOrdered = this.rightClicked;
     const input: GameInput = {
-      moveX,
-      moveY,
       attack: this.mouseDown || this.heldAny(ATTACK_KEYS),
       aimX,
       aimY,
       parry: this.heldAny(PARRY_KEYS),
       dodge: this.heldAny(DODGE_KEYS),
+      ...(moveOrdered ? { moveTarget: mouseWorld } : {}),
       ...(playHandIndex !== undefined ? { playHandIndex } : {}),
       ...(playBonusCard ? { playBonusCard } : {}),
     };
 
     this.justPressed.clear();
+    this.rightClicked = false;
     return input;
   }
 
