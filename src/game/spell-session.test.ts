@@ -106,8 +106,9 @@ describe('spell session', () => {
     expect(casts).toHaveLength(1);
   });
 
-  it('announces a behind-aimed attack swing on the fire tick, in sync with the turn (spec 028)', () => {
-    // Find an opening hand holding the basic attack (a directional cone).
+  it('announces the swing (visual + sound) on the same tick the cast fires', () => {
+    // The window resolves and fires the same tick, so spellsResolved and the sim's
+    // spellCast are emitted together -- the swing stays in sync with the damage.
     let seed = 1;
     let start = initSpellGame(seed);
     let slot = start.deck.hand.findIndex((c) => c?.id === 'attack');
@@ -117,21 +118,17 @@ describe('spell session', () => {
     }
     expect(slot).toBeGreaterThanOrEqual(0);
 
-    const west: SpellInput = { ...NEUTRAL, aimX: -1, aimY: 0 }; // unit starts facing east
-    const playWest: SpellInput = { ...west, playHandIndex: slot as 0 | 1 | 2 | 3 };
-
     let s = start;
     let firedTick = -1;
     let resolvedTick = -1;
-    for (let t = 1; t <= 100; t++) {
-      const r = stepSpellGame(s, t === 1 ? playWest : west);
+    for (let t = 1; t <= 60; t++) {
+      const r = stepSpellGame(s, t === 1 ? { ...NEUTRAL, playHandIndex: slot as 0 | 1 | 2 | 3 } : NEUTRAL);
       s = r.state;
       if (firedTick < 0 && r.events.some((e) => e.kind === 'spellCast')) firedTick = t;
       if (resolvedTick < 0 && r.events.some((e) => e.kind === 'spellsResolved')) resolvedTick = t;
     }
-    expect(firedTick).toBeGreaterThan(SYNERGY_WINDOW_TICKS); // waited out the window AND the 180-degree turn
-    expect(resolvedTick).toBe(firedTick); // the swing visual/sound is announced exactly when it fires
-    expect(Math.cos(s.combat.player.facing)).toBeLessThan(-0.9); // ended up facing where it fired (west)
+    expect(firedTick).toBeGreaterThan(0);
+    expect(resolvedTick).toBe(firedTick);
   });
 
   it('using any card cancels the standing move order and halts the unit (spec 028)', () => {

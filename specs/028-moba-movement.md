@@ -107,19 +107,18 @@ clicking behind you cost a real rotation.
 - `cycleCharacter` advances the preset (wrapping); the faster-turning preset
   starts moving sooner on a click behind, and each preset translates at its own
   move speed.
-- **Facing-gated attacks**: a directional cast (an attack/cone, a rect, or a
-  dash) aimed away from the unit's heading does not fire on the cast tick — it is
-  buffered (`PlayerState.pendingCast`), the unit stops and turns to face the aim
-  at its turn rate, and it fires the tick it is aligned. Aimed where the unit
-  already faces, it fires immediately. Omni-directional casts (point AOEs,
-  self-buffs) fire instantly regardless of facing. The faster-turning preset
-  fires a behind-aimed attack sooner.
+- **Attacks fire along facing, immediately**: a cone/rect (an attack) resolves the
+  tick its window closes — no turn-to-face gate — but along the unit's *current
+  heading*, not the cursor. You aim attacks by pointing the unit (it turns as it
+  moves), so a click behind the enemy still hits whatever the unit is turned
+  toward. The swing visual is drawn along that facing.
+- **Dash fires along the mouse, immediately**: a dash resolves at once toward the
+  cursor aim and re-points the unit that way (so subsequent attacks follow).
 - **Using a card halts the unit**: playing any card cancels the standing move
   order (`InputFrame.cancelMove`), MOBA-style, so the unit stays in place after
   a skill rather than walking on to its old destination.
 - The cast's swing visual + sound (`spellsResolved`) is announced on the tick the
-  cast actually fires, in sync with its damage — not when the synergy window
-  closed (which, with the facing gate, can be many ticks earlier).
+  cast fires (the sim's `spellCast`), in sync with its damage.
 
 ## Renderer
 
@@ -131,10 +130,10 @@ clicking behind you cost a real rotation.
 ## Out of scope
 
 - Enemy movement / turn rate — enemies keep their existing homing model.
-- Dashing's own velocity override is unchanged; only the *decision to cast* a
-  dash is facing-gated (it turns to face, then dashes).
+- Point-target AOEs (meteor, bury feet) still land at the cursor world point, and
+  self-buffs (shield, aura, empower, burning speed) are non-directional — none of
+  these are re-aimed to facing.
 - Flat/percentage/slow speed *modifiers* wired to cards — `computeMoveSpeed`
   supports them, but the sim only feeds the existing `moveScale`.
-- The sim's built-in melee (legacy game) still fires off `aim` without the
-  turn-to-face gate; only the spell game's casts are gated.
+- The sim's built-in melee (legacy game) fires off `aim`, unchanged.
 - Pathfinding / obstacle avoidance — movement is straight toward the order.

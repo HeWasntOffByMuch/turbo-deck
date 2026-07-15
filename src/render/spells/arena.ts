@@ -104,7 +104,8 @@ export class SpellArenaView {
         this.flashes.push({ x: at.x, y: at.y, radius: e.radius * SCALE, life: FLASH_LIFE, max: FLASH_LIFE });
       } else if (e.kind === 'spellsResolved') {
         const origin = this.worldToScreen(player.position);
-        const ang = Math.atan2(e.aimY, e.aimX);
+        // Attacks (cones/rects) fire along the unit's heading, not the cursor (spec 028).
+        const ang = player.facing;
         for (const spec of e.specs) {
           if (spec.kind === 'cone') {
             this.casts.push({ kind: 'cone', x: origin.x, y: origin.y, ang, range: spec.range * SCALE, half: Math.acos(Math.sqrt(spec.arcCosSq)), life: CAST_LIFE, max: CAST_LIFE });

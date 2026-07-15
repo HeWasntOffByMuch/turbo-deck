@@ -282,69 +282,39 @@ describe('basic-attack interrupt (spec 023)', () => {
   });
 });
 
-describe('attacks must face their target first (spec 028)', () => {
+describe('attacks fire along facing, dashes along the mouse (spec 028)', () => {
   const ATTACK: SpellSpec = { kind: 'cone', range: 220, arcCosSq: 0.5, damage: 10, interrupt: true };
 
-  it('a cast aimed where the unit already faces fires immediately', () => {
-    const s = withEnemy(arena(), { position: { x: CENTER.x + 60, y: CENTER.y } });
-    const first = step(s, cast([ATTACK], CENTER, { x: 1, y: 0 })); // east, unit faces east
-    expect(first.events.some((e) => e.kind === 'enemyHit')).toBe(true);
-    expect(first.state.player.pendingCast).toBeNull();
+  it('an attack fires immediately along the unit facing, ignoring the mouse aim', () => {
+    // Unit faces east; an enemy is due east, another due west. The cursor aims
+    // WEST, but the attack hits the EAST enemy (where the unit is turned) at once.
+    let s = withEnemy(arena(), { id: 1, position: { x: CENTER.x + 60, y: CENTER.y } });
+    s = withEnemy(s, { id: 2, position: { x: CENTER.x - 60, y: CENTER.y } });
+    const first = step(s, cast([ATTACK], CENTER, { x: -1, y: 0 })); // mouse aimed west
+    expect(first.events.some((e) => e.kind === 'enemyHit')).toBe(true); // fired this tick
+    expect(first.state.enemies.find((e) => e.id === 1)?.health).toBe(200 - 10); // east enemy hit
+    expect(first.state.enemies.find((e) => e.id === 2)?.health).toBe(200); // west enemy spared
   });
 
-  it('a cast aimed behind is buffered: the unit turns first, then fires at it', () => {
-    const s = withEnemy(arena(), { position: { x: CENTER.x - 60, y: CENTER.y } }); // enemy due west
-    const first = step(s, cast([ATTACK], CENTER, { x: -1, y: 0 })); // aim west, unit faces east
-    // The attack does not go off this tick; it is held while the unit rotates.
-    expect(first.events.some((e) => e.kind === 'enemyHit')).toBe(false);
-    expect(first.state.player.pendingCast).not.toBeNull();
-    // Given time to finish turning, it fires and connects with the enemy behind.
-    const r = run(first.state, Array.from({ length: 40 }, () => NEUTRAL_INPUT));
-    expect(r.events.some((e) => e.kind === 'enemyHit')).toBe(true);
-    expect(r.state.player.pendingCast).toBeNull();
-    // It ended up facing (roughly) due west, where it fired.
-    expect(Math.cos(r.state.player.facing)).toBeLessThan(-0.99);
+  it('the attack follows the unit facing wherever it points', () => {
+    // Face the unit south; a southern enemy is hit, an eastern one is not, even
+    // though the cursor still points east.
+    let s = withEnemy(arena(), { id: 1, position: { x: CENTER.x, y: CENTER.y + 60 } }); // south
+    s = withEnemy(s, { id: 2, position: { x: CENTER.x + 60, y: CENTER.y } }); // east
+    s = { ...s, player: { ...s.player, facing: Math.PI / 2 } }; // face south
+    const r = step(s, cast([ATTACK], CENTER, { x: 1, y: 0 })); // mouse still says east
+    expect(r.state.enemies.find((e) => e.id === 1)?.health).toBe(200 - 10); // south enemy hit
+    expect(r.state.enemies.find((e) => e.id === 2)?.health).toBe(200); // east enemy untouched
   });
 
-  it('the faster-turning preset fires a behind-aimed attack sooner', () => {
-    const ticksToHit = (characterIndex: number): number => {
-      const s = withEnemy(arena(), { position: { x: CENTER.x - 60, y: CENTER.y } });
-      let cur = step({ ...s, player: { ...s.player, characterIndex } }, cast([ATTACK], CENTER, { x: -1, y: 0 }));
-      if (cur.events.some((e) => e.kind === 'enemyHit')) return 1;
-      for (let t = 2; t <= 80; t++) {
-        cur = step(cur.state, NEUTRAL_INPUT);
-        if (cur.events.some((e) => e.kind === 'enemyHit')) return t;
-      }
-      return -1;
-    };
-    const slow = ticksToHit(0); // Warden, 360 deg/s
-    const fast = ticksToHit(1); // Zephyr, 900 deg/s
-    expect(fast).toBeGreaterThan(0);
-    expect(slow).toBeGreaterThan(fast);
-  });
-
-  it('an omni-directional cast (self shield) fires instantly even aimed behind', () => {
-    const shield: SpellSpec = { kind: 'shield', amount: 20, durationTicks: 120 };
-    const first = step(arena(), cast([shield], CENTER, { x: -1, y: 0 })); // aimed west, unit faces east
-    expect(first.state.player.shieldAmount).toBeGreaterThan(0);
-    expect(first.state.player.pendingCast).toBeNull();
-  });
-
-  it('is stationary while turning to aim, then resumes its move order after firing', () => {
-    // Attack due west while also holding a move order due east.
-    const cx = CENTER.x;
-    const attackWestMoveEast: InputFrame = {
-      ...cast([ATTACK], CENTER, { x: -1, y: 0 }),
-      moveTarget: { x: cx + 400, y: CENTER.y },
-    };
-    const first = step(arena(), attackWestMoveEast);
-    expect(first.state.player.position.x).toBe(cx); // did not translate while aiming
-    const held = step(first.state, NEUTRAL_INPUT); // still turning, still stationary
-    expect(held.state.player.position.x).toBe(cx);
-    // After it fires and finishes turning back east, the standing order carries it east.
-    const r = run(held.state, Array.from({ length: 120 }, () => NEUTRAL_INPUT));
-    expect(r.state.player.pendingCast).toBeNull();
-    expect(r.state.player.position.x).toBeGreaterThan(cx);
+  it('a dash fires immediately in the mouse direction and re-points the unit that way', () => {
+    // Unit faces east; dash aimed WEST goes west at once and turns the unit west.
+    const s = arena();
+    const first = step(s, cast([{ kind: 'dash', distance: 320, durationTicks: 17, damage: 0 }], CENTER, { x: -1, y: 0 }));
+    expect(first.state.player.dashDx).toBeLessThan(0); // moving west immediately
+    expect(Math.cos(first.state.player.facing)).toBeLessThan(-0.99); // re-pointed west
+    const after = run(first.state, Array.from({ length: 20 }, () => NEUTRAL_INPUT)).state;
+    expect(after.player.position.x).toBeLessThan(CENTER.x - 100); // travelled west
   });
 });
 
