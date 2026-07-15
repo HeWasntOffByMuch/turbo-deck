@@ -30,6 +30,7 @@ export class SpellInputCapture {
   private queuedWave = false;
   private queuedReward: 0 | 1 | 2 | null = null;
   private queuedPick: number | null = null;
+  private queuedAllocate: 'strength' | 'agility' | 'intelligence' | null = null;
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
@@ -81,6 +82,12 @@ export class SpellInputCapture {
   queuePick(index: number): void {
     this.queuedPick = index;
   }
+  queueCycleCharacter(): void {
+    this.queuedCycleCharacter = true;
+  }
+  queueAllocate(stat: 'strength' | 'agility' | 'intelligence'): void {
+    this.queuedAllocate = stat;
+  }
 
   mouseScreen(): ScreenPoint {
     return this.mouse;
@@ -96,6 +103,7 @@ export class SpellInputCapture {
     const play = this.queuedPlay;
     const reward = this.queuedReward;
     const pick = this.queuedPick;
+    const allocate = this.queuedAllocate;
     const input: SpellInput = {
       aimX,
       aimY,
@@ -103,6 +111,7 @@ export class SpellInputCapture {
       targetY: worldCursor.y,
       ...(this.rightClicked ? { moveTarget: worldCursor } : {}),
       ...(this.queuedCycleCharacter ? { cycleCharacter: true } : {}),
+      ...(allocate !== null ? { allocateStat: allocate } : {}),
       ...(play !== null ? { playHandIndex: play } : {}),
       ...(reward !== null ? { chooseReward: reward } : {}),
       ...(pick !== null ? { chooseCard: pick } : {}),
@@ -115,6 +124,7 @@ export class SpellInputCapture {
     this.queuedWave = false;
     this.rightClicked = false;
     this.queuedCycleCharacter = false;
+    this.queuedAllocate = null;
     return input;
   }
 }

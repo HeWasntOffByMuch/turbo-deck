@@ -3,11 +3,17 @@ import {
   ADRENALINE_SPEED_PER_POINT,
   ARENA_HEIGHT,
   ARENA_WIDTH,
+  ARMOR_PER_AGILITY,
   ATTACK_ANIM_TICKS,
   ATTACK_ARC_COS_SQ,
   ATTACK_ROOT_TICKS,
+  ATTACK_SPEED_PER_AGILITY,
   BURN_PULSE_INTERVAL_TICKS,
   DEFENSE_RECOVERY_TICKS,
+  HP_PER_STRENGTH,
+  SPELL_DAMAGE_PER_INTELLIGENCE,
+  STAT_POINTS_PER_LEVEL,
+  TURN_RATE_PER_AGILITY,
   ENEMY_ATTACK_ARC_COS_SQ,
   ENEMY_ATTACK_RANGE,
   ENEMY_ATTACK_TRIGGER_RANGE,
@@ -397,6 +403,11 @@ export function initCombat(seed: number, opts: CombatOptions = {}): CombatState 
     facing: 0,
     moveTarget: null,
     characterIndex: opts.characterIndex ?? DEFAULT_CHARACTER_INDEX,
+    level: 1,
+    statPoints: 0,
+    strength: 0,
+    agility: 0,
+    intelligence: 0,
     pendingAttack: null,
     attackCooldownUntil: 0,
     moveLockUntil: 0,
@@ -483,6 +494,29 @@ export function step(
   const dashing = tick < state.player.dashExpiresAtTick;
   const rooted = !dashing && (swingPending || startAttack || tick < state.player.moveLockUntil);
 
+  // --- RPG stat allocation (spec 029): spend one banked point on a stat. ---
+  let strength = state.player.strength;
+  let agility = state.player.agility;
+  let intelligence = state.player.intelligence;
+  let statPoints = state.player.statPoints;
+  let maxHealth = state.player.maxHealth;
+  let allocHealthGain = 0;
+  if (input.allocateStat && statPoints > 0) {
+    statPoints -= 1;
+    if (input.allocateStat === 'strength') {
+      strength += 1;
+      maxHealth += HP_PER_STRENGTH;
+      allocHealthGain = HP_PER_STRENGTH; // a Strength point also heals for the new HP
+    } else if (input.allocateStat === 'agility') {
+      agility += 1;
+    } else {
+      intelligence += 1;
+    }
+  }
+  // Intelligence scales all spell damage; Agility scales turn rate + attack speed + armor.
+  const spellDamageMult = 1 + intelligence * SPELL_DAMAGE_PER_INTELLIGENCE;
+  const armorReduction = agility * ARMOR_PER_AGILITY;
+
   // Walk speed: a mis-timed window (spec 021) drags it down, Burning Speed (spec 022)
   // lifts it, and each banked adrenaline point adds +4% (spec 025).
   const slowActive = tick < state.player.moveSlowUntilTick;
@@ -494,7 +528,8 @@ export function step(
   const characterIndex = input.cycleCharacter ? state.player.characterIndex + 1 : state.player.characterIndex;
   const character = characterAt(characterIndex);
   const speedPerTick = (computeMoveSpeed(character.moveSpeed) / TICK_RATE) * moveScale;
-  const maxTurnPerTick = (character.turnRate * DEG2RAD) / TICK_RATE;
+  // Agility adds to the character's turn rate (spec 029).
+  const maxTurnPerTick = ((character.turnRate + agility * TURN_RATE_PER_AGILITY) * DEG2RAD) / TICK_RATE;
 
   // An attack (cone/rect) turns to face its aim, winds up the attack animation,
   // then fires (spec 028). A fresh move command cancels it. Non-attack casts
@@ -535,14 +570,23 @@ export function step(
     moveTarget: moved.moveTarget,
     // Store the normalized index so it stays in range as it cycles.
     characterIndex: ((characterIndex % CHARACTERS.length) + CHARACTERS.length) % CHARACTERS.length,
+    // Applied RPG stat allocation (spec 029); a Strength point also heals.
+    strength,
+    agility,
+    intelligence,
+    statPoints,
+    maxHealth,
+    health: Math.min(maxHealth, state.player.health + allocHealthGain),
   };
 
+  // Agility shortens the attack animation (faster attack speed, spec 029).
+  const attackAnimTicks = Math.max(1, Math.round(ATTACK_ANIM_TICKS / (1 + agility * ATTACK_SPEED_PER_AGILITY)));
   // Advance the pending attack: once turned to face the aim, wind up the attack
   // animation; when it completes, fire the cast (resolved below).
   let castToResolve: CastSpellsEffect | null = null;
   if (pendingAttack !== null) {
     if (pendingAttack.fireAtTick === 0 && Math.abs(normalizeAngle(attackAimAngle - player.facing)) <= ATTACK_FACING_EPS) {
-      pendingAttack = { ...pendingAttack, fireAtTick: tick + ATTACK_ANIM_TICKS }; // turned: start the animation
+      pendingAttack = { ...pendingAttack, fireAtTick: tick + attackAnimTicks }; // turned: start the animation
     }
     if (pendingAttack.fireAtTick !== 0 && tick >= pendingAttack.fireAtTick) {
       castToResolve = pendingAttack.effect;
@@ -735,6 +779,8 @@ export function step(
         let pendingBurnBurst = player.pendingBurnBurst;
         // A basic-attack (interrupt) cone that connects banks adrenaline (spec 023).
         let basicHit = false;
+        // Intelligence scales all spell damage (spec 029).
+        const spellDmg = (base: number): number => Math.round(base * spellDamageMult);
         const applyInstant = (hit: (e: EnemyState) => boolean, dmg: number): void => {
           enemies = enemies.map((enemy) => {
             if (!hit(enemy)) return enemy;
@@ -749,7 +795,7 @@ export function step(
               // Conjure Flame arms cone casts with bonus fire damage; each cone spends one charge.
               const bonus = flameCharges > 0 ? flameBonus : 0;
               if (flameCharges > 0) flameCharges -= 1;
-              const dmg = spell.damage + bonus;
+              const dmg = spellDmg(spell.damage + bonus);
               const inCone = (e: EnemyState): boolean => coneHits(castPos, e.position, ux, uy, spell.range, spell.arcCosSq, ENEMY_RADIUS);
               if (!spell.interrupt) {
                 applyInstant(inCone, dmg);
@@ -777,7 +823,7 @@ export function step(
               break;
             }
             case 'rect':
-              applyInstant((e) => rectHits(castPos, e.position, ux, uy, spell.length, spell.halfWidth, ENEMY_RADIUS), spell.damage);
+              applyInstant((e) => rectHits(castPos, e.position, ux, uy, spell.length, spell.halfWidth, ENEMY_RADIUS), spellDmg(spell.damage));
               break;
             case 'pointAoe': {
               const origin = pointAoeOrigin(spell.origin, castPos, effect.targetX, effect.targetY, enemies);
@@ -787,7 +833,7 @@ export function step(
                   x: origin.x,
                   y: origin.y,
                   radius: spell.radius,
-                  damage: spell.damage,
+                  damage: spellDmg(spell.damage),
                   stunTicks: spell.stunTicks,
                   impactTick: tick + spell.delayTicks + i * spell.spreadTicks,
                 });
@@ -817,7 +863,7 @@ export function step(
                 ...auras,
                 {
                   radius: spell.radius,
-                  pulseDamage: spell.pulseDamage,
+                  pulseDamage: spellDmg(spell.pulseDamage),
                   pulseIntervalTicks: spell.pulseIntervalTicks,
                   nextPulseTick: tick + spell.pulseIntervalTicks,
                   expiresAtTick: tick + spell.durationTicks,
@@ -830,7 +876,7 @@ export function step(
               dashDy = uy * (spell.distance / dur);
               castFacing = Math.atan2(uy, ux); // re-point the unit the way it dashed
               dashExpiresAtTick = tick + dur;
-              dashDamage = spell.damage;
+              dashDamage = spellDmg(spell.damage);
               dashHitIds = [];
               dashTrail =
                 spell.trailRadius !== undefined && spell.trailPulseDamage !== undefined && spell.trailDurationTicks !== undefined
@@ -1039,10 +1085,11 @@ export function step(
       const baseDamage = inZone ? fullDamage : 0;
       const outcome = enemy.incomingAttackOutcome;
       const afterDefense = outcome === 'perfect' ? 0 : outcome === 'normal' ? Math.round(baseDamage / 2) : baseDamage;
-      // Stack the held stance and any brief guard, capped, against the incoming hit.
+      // Stack Agility armor, the held stance, and any brief guard -- capped -- against the hit.
       const reduction = Math.min(
         MAX_DAMAGE_REDUCTION,
-        (tick < player.stanceExpiresAtTick ? player.stanceReductionPct : 0) +
+        armorReduction +
+          (tick < player.stanceExpiresAtTick ? player.stanceReductionPct : 0) +
           (tick < player.guardExpiresAtTick ? player.guardReductionPct : 0),
       );
       let damage = Math.round(afterDefense * (1 - reduction));
@@ -1072,10 +1119,12 @@ export function step(
   });
   player = { ...player, health: playerHealth, shieldAmount };
 
-  // --- Wave cleared: heal the player to full when the last enemy of a wave dies ---
-  if (!over && state.waveNumber >= 1 && state.enemies.length > 0 && enemies.length === 0 && player.health < player.maxHealth) {
-    events.push({ kind: 'playerHealed', amount: player.maxHealth - player.health, tick });
-    player = { ...player, health: player.maxHealth };
+  // --- Wave cleared: level up (spec 029) and heal to full when a wave's last enemy dies ---
+  if (!over && state.waveNumber >= 1 && state.enemies.length > 0 && enemies.length === 0) {
+    if (player.health < player.maxHealth) events.push({ kind: 'playerHealed', amount: player.maxHealth - player.health, tick });
+    const level = player.level + 1; // one wave is one level (spec 029)
+    player = { ...player, health: player.maxHealth, level, statPoints: player.statPoints + STAT_POINTS_PER_LEVEL };
+    events.push({ kind: 'leveledUp', tick, level, statPoints: player.statPoints });
   }
 
   // --- Ambient spawner: refill toward the cap (off in wave mode) ---

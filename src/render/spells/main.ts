@@ -1,5 +1,4 @@
 import { initSpellGame, stepSpellGame, type SpellGameEvent, type SpellGameState } from '../../game/spell-session.js';
-import { characterAt } from '../../sim/characters.js';
 import { TICK_RATE } from '../../sim/constants.js';
 import { GameAudio } from '../audio.js';
 import { musicPhaseFor } from '../music.js';
@@ -24,29 +23,30 @@ function main(): void {
   const title = document.createElement('div');
   title.style.cssText = "font-family:'Segoe UI',system-ui,sans-serif;color:#c9c9d8;margin:6px 2px 10px;font-size:13px;";
   title.textContent =
-    'turbo-deck · spell-card combat — Attack interrupts enemy wind-ups and banks adrenaline (each point = faster movement); spell cards cost adrenaline to play. (M mutes)';
+    'turbo-deck · spell-card combat — attack banks adrenaline; spell cards spend it. Clear a wave to level up and spend a stat point.';
   app.appendChild(title);
 
-  const controls = document.createElement('div');
-  controls.style.cssText = "font-family:'Segoe UI',system-ui,sans-serif;color:#9a9ab0;margin:0 2px 8px;font-size:12px;";
-  app.appendChild(controls);
-
+  // Layout: canvas with the controls panel to its right, the card hand below.
+  const gameRow = document.createElement('div');
+  gameRow.style.cssText = 'display:flex;gap:16px;align-items:flex-start;';
   const canvas = document.createElement('canvas');
-  canvas.style.cssText = 'display:block;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.5);';
-  app.appendChild(canvas);
+  canvas.style.cssText = 'display:block;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.5);flex:0 0 auto;';
+  const sideRoot = document.createElement('div');
+  gameRow.append(canvas, sideRoot);
+  app.appendChild(gameRow);
 
-  const hudRoot = document.createElement('div');
-  app.appendChild(hudRoot);
+  const handRoot = document.createElement('div');
+  app.appendChild(handRoot);
 
   const arena = new SpellArenaView(canvas);
   const input = new SpellInputCapture(canvas);
   input.attach(window);
-  const hud = new SpellHud(hudRoot, input);
 
   // Synthesized retro soundtrack + spell SFX. Browsers block autoplay, so the
   // AudioContext can only start from a user gesture — resume it on the first
-  // key/pointer input; 'M' toggles mute.
+  // key/pointer input; 'M' or the Mute button toggles mute.
   const audio = new GameAudio();
+  const hud = new SpellHud(sideRoot, handRoot, input, () => audio.toggleMute());
   const unlock = (): void => audio.resume();
   window.addEventListener('keydown', (e) => {
     unlock();
@@ -72,8 +72,6 @@ function main(): void {
     }
 
     arena.render(state, events);
-    const ch = characterAt(state.combat.player.characterIndex);
-    controls.textContent = `move: right-click  ·  character (press C): ${ch.name} — ${ch.moveSpeed} speed / ${ch.turnRate}°/s turn`;
     hud.render(state);
     audio.handleSpellEvents(events);
     // Calm in the lull, combat once a wave is on screen, the death dirge when defeated.

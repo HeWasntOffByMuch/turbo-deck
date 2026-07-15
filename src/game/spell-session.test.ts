@@ -476,3 +476,22 @@ describe('reward pickers (spec 022)', () => {
     expect(blocked.combat.waveNumber).toBe(1);
   });
 });
+
+describe('RPG progression (spec 029)', () => {
+  it('clearing a wave levels up and grants a stat point', () => {
+    const { state, attackSlot } = almostClearedWave(1);
+    const startLevel = state.combat.player.level;
+    const { state: after, events } = run(state, [play(attackSlot), ...Array.from({ length: CAST_SETTLE }, () => NEUTRAL)]);
+    expect(events.some((e) => e.kind === 'leveledUp')).toBe(true);
+    expect(after.combat.player.level).toBe(startLevel + 1);
+    expect(after.combat.player.statPoints).toBe(1);
+  });
+
+  it('allocateStat spends a banked point through the session', () => {
+    const base = initSpellGame(1);
+    const withPoint: SpellGameState = { ...base, combat: { ...base.combat, player: { ...base.combat.player, statPoints: 1 } } };
+    const after = run(withPoint, [{ ...NEUTRAL, allocateStat: 'intelligence' }]).state;
+    expect(after.combat.player.intelligence).toBe(1);
+    expect(after.combat.player.statPoints).toBe(0);
+  });
+});

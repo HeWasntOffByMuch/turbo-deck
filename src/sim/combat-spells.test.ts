@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { SpellSpec } from '../shared/spell-spec.js';
-import { ARENA_HEIGHT, ARENA_WIDTH, ATTACK_ANIM_TICKS, ENEMY_STANDOFF, MAX_ADRENALINE } from './constants.js';
+import {
+  ARENA_HEIGHT,
+  ARENA_WIDTH,
+  ARMOR_PER_AGILITY,
+  ATTACK_ANIM_TICKS,
+  ENEMY_STANDOFF,
+  HP_PER_STRENGTH,
+  MAX_ADRENALINE,
+  SPELL_DAMAGE_PER_INTELLIGENCE,
+} from './constants.js';
 import { initCombat, step } from './combat.js';
 import { NEUTRAL_INPUT, type CombatState, type EnemyState, type InputFrame, type SimEvent } from './types.js';
 
@@ -430,5 +439,78 @@ describe('determinism', () => {
     const a = run(withEnemy(arena(9), { id: 1, position: { x: CENTER.x + 50, y: CENTER.y } }), inputs).state;
     const b = run(withEnemy(arena(9), { id: 1, position: { x: CENTER.x + 50, y: CENTER.y } }), inputs).state;
     expect(a).toEqual(b);
+  });
+});
+
+describe('RPG stats (spec 029)', () => {
+  const alloc = (stat: 'strength' | 'agility' | 'intelligence'): InputFrame => ({ ...NEUTRAL_INPUT, allocateStat: stat });
+
+  it('allocateStat spends a banked point and raises the stat', () => {
+    const base = arena();
+    const s0: CombatState = { ...base, player: { ...base.player, statPoints: 2 } };
+    const s1 = step(s0, alloc('agility')).state;
+    expect(s1.player.agility).toBe(1);
+    expect(s1.player.statPoints).toBe(1);
+    // With no points banked, allocation is a no-op.
+    const broke: CombatState = { ...base, player: { ...base.player, statPoints: 0 } };
+    expect(step(broke, alloc('agility')).state.player.agility).toBe(0);
+  });
+
+  it('Strength raises max health and heals for the gain', () => {
+    const base = arena();
+    const hurt: CombatState = { ...base, player: { ...base.player, statPoints: 1, health: 50 } };
+    const s = step(hurt, alloc('strength')).state;
+    expect(s.player.strength).toBe(1);
+    expect(s.player.maxHealth).toBe(base.player.maxHealth + HP_PER_STRENGTH);
+    expect(s.player.health).toBe(50 + HP_PER_STRENGTH);
+  });
+
+  it('Intelligence scales spell damage', () => {
+    const spec: SpellSpec = { kind: 'cone', range: 72, arcCosSq: 0.5, damage: 12 };
+    const enemyAt = { id: 1, position: { x: CENTER.x + 40, y: CENTER.y } };
+    const dumb = fireCast(withEnemy(arena(), enemyAt), cast([spec])).state;
+    const smartBase: CombatState = { ...withEnemy(arena(), enemyAt), player: { ...arena().player, intelligence: 5 } };
+    const smart = fireCast(smartBase, cast([spec])).state;
+    const dmgDumb = 200 - (dumb.enemies[0]?.health ?? 200);
+    const dmgSmart = 200 - (smart.enemies[0]?.health ?? 200);
+    expect(dmgDumb).toBe(12);
+    expect(dmgSmart).toBe(Math.round(12 * (1 + 5 * SPELL_DAMAGE_PER_INTELLIGENCE)));
+    expect(dmgSmart).toBeGreaterThan(dmgDumb);
+  });
+
+  it('Agility armor reduces incoming slam damage', () => {
+    const slamDamage = (agility: number): number => {
+      const base = withEnemy(arena(), {
+        id: 1,
+        position: { x: CENTER.x + 40, y: CENTER.y },
+        behavior: 'hunting',
+        phase: 'windup',
+        phaseEndsAtTick: 1,
+        attackAim: { x: -1, y: 0 },
+        attackDamage: 40,
+      });
+      const s: CombatState = { ...base, player: { ...base.player, agility } };
+      const hit = run(s, [NEUTRAL_INPUT, NEUTRAL_INPUT]).events.find((e) => e.kind === 'playerHit');
+      return hit && 'damage' in hit ? hit.damage : 0;
+    };
+    expect(slamDamage(0)).toBe(40);
+    expect(slamDamage(5)).toBe(Math.round(40 * (1 - 5 * ARMOR_PER_AGILITY)));
+    expect(slamDamage(5)).toBeLessThan(slamDamage(0));
+  });
+
+  it('Agility attack speed shortens the attack animation (fires sooner)', () => {
+    const spec: SpellSpec = { kind: 'cone', range: 72, arcCosSq: 0.5, damage: 5, interrupt: true };
+    const fireTick = (agility: number): number => {
+      const base = withEnemy(arena(), { id: 1, position: { x: CENTER.x + 40, y: CENTER.y }, health: 100000 });
+      let s: CombatState = { ...base, player: { ...base.player, agility } };
+      for (let t = 1; t <= 40; t++) {
+        const r = step(s, cast([spec])); // aim east == facing, so no turn; only the animation
+        s = r.state;
+        if (r.events.some((e) => e.kind === 'enemyHit')) return t;
+      }
+      return -1;
+    };
+    expect(fireTick(0)).toBeGreaterThan(0);
+    expect(fireTick(6)).toBeLessThan(fireTick(0)); // faster attack speed lands sooner
   });
 });

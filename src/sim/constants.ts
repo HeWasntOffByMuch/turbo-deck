@@ -28,6 +28,19 @@ export const MOVE_ARRIVE_EPS = 2;
 // window (or the turn before it) cancels the attack. ~0.2s at 60Hz.
 export const ATTACK_ANIM_TICKS = 12;
 
+// --- RPG progression (spec 029): three stats, gained by levelling ---
+// Clearing a wave grants a level and this many stat points to spend.
+export const STAT_POINTS_PER_LEVEL = 1;
+// Strength: each point adds this much maximum health.
+export const HP_PER_STRENGTH = 10;
+// Agility: each point adds this much damage reduction (armor), this much turn
+// rate (deg/s), and this fractional attack-speed bonus (shorter attack animation).
+export const ARMOR_PER_AGILITY = 0.03;
+export const TURN_RATE_PER_AGILITY = 30;
+export const ATTACK_SPEED_PER_AGILITY = 0.05;
+// Intelligence: each point adds this fraction to all spell damage.
+export const SPELL_DAMAGE_PER_INTELLIGENCE = 0.06;
+
 export const PLAYER_MAX_HEALTH = 100;
 // Reach of the player's melee strike, measured from the player's centre to the
 // enemy's centre it must be within (ENEMY_RADIUS is added at the call site).

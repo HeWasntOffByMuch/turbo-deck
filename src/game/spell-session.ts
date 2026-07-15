@@ -172,6 +172,8 @@ export interface SpellInput {
   readonly moveTarget?: Vec2;
   /** Swap to the next movement character preset this tick (spec 028). */
   readonly cycleCharacter?: boolean;
+  /** Spend one stat point this tick (spec 029). */
+  readonly allocateStat?: 'strength' | 'agility' | 'intelligence';
   /** Aim direction (player -> cursor) for cones, rects and dashes. */
   readonly aimX: number;
   readonly aimY: number;
@@ -369,6 +371,7 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
     ...(input.moveTarget ? { moveTarget: input.moveTarget } : {}),
     ...(cancelMove ? { cancelMove: true } : {}),
     ...(input.cycleCharacter ? { cycleCharacter: true } : {}),
+    ...(input.allocateStat ? { allocateStat: input.allocateStat } : {}),
     ...(externalEffect ? { externalEffect } : {}),
     // A wave cannot be summoned while a reward or its picker is still open.
     ...(input.spawnWave && pendingReward === null && pendingPick === null ? { spawnWave: true } : {}),

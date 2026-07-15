@@ -69,6 +69,17 @@ export interface PlayerState {
   readonly moveTarget: Vec2 | null;
   /** Index into CHARACTERS: the active movement archetype (speed + turn rate). */
   readonly characterIndex: number;
+  // --- RPG progression (spec 029): level up per wave, spend points on stats. ---
+  /** Current level; starts at 1, +1 per wave cleared. */
+  readonly level: number;
+  /** Unspent stat points earned from levelling. */
+  readonly statPoints: number;
+  /** Strength scales max health. */
+  readonly strength: number;
+  /** Agility scales armor (damage reduction), attack speed, and turn rate. */
+  readonly agility: number;
+  /** Intelligence scales spell damage. */
+  readonly intelligence: number;
   readonly attackCooldownUntil: number;
   /** Movement input is ignored until this tick (attack commitment). */
   readonly moveLockUntil: number;
@@ -285,6 +296,8 @@ export interface InputFrame {
   readonly moveTarget?: Vec2;
   /** Cancel the standing move order this tick (e.g. on using a card), halting the unit (spec 028). */
   readonly cancelMove?: boolean;
+  /** Spend one stat point on this stat this tick, if any are unspent (spec 029). */
+  readonly allocateStat?: 'strength' | 'agility' | 'intelligence';
   /** Advance to the next character preset this tick (movement speed + turn rate). */
   readonly cycleCharacter?: boolean;
   readonly attack: boolean;
@@ -324,6 +337,7 @@ export type SimEvent =
   // --- Spell cards (spec 018) ---
   | { readonly kind: 'spellCast'; readonly tick: number; readonly spellCount: number }
   | { readonly kind: 'attackCancelled'; readonly tick: number }
+  | { readonly kind: 'leveledUp'; readonly tick: number; readonly level: number; readonly statPoints: number }
   | { readonly kind: 'aoeImpact'; readonly tick: number; readonly at: Vec2; readonly radius: number }
   | { readonly kind: 'dashPerformed'; readonly tick: number }
   | { readonly kind: 'playerSlowed'; readonly tick: number; readonly durationTicks: number }
