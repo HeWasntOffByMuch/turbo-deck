@@ -146,6 +146,13 @@ export interface SpellGameState {
   readonly windowCards: readonly SpellCardPlay[];
   /** Tick the open window resolves, or null when no window is open. */
   readonly windowClosesAtTick: number | null;
+  /**
+   * A resolved window whose geometry is waiting on the sim to actually fire it
+   * (spec 028): a directional cast is buffered while the unit turns to face its
+   * aim, so `spellsResolved` (the swing visual + sound) is emitted on the fire
+   * tick, in sync with the damage, not when the window closed. Null when none.
+   */
+  readonly pendingResolved: { readonly ids: readonly SpellId[]; readonly specs: readonly SpellSpec[]; readonly aimX: number; readonly aimY: number } | null;
   /** Three deck-edit offers shown after a wave clear, or null when none pending. */
   readonly pendingReward: readonly RewardOffer[] | null;
   /** An open card picker after choosing Remove/Upgrade, or null. */
@@ -198,6 +205,7 @@ export function initSpellGame(seed: number, ids?: readonly SpellId[]): SpellGame
     refillAtTick: Array.from({ length: HAND_SIZE }, () => null),
     windowCards: [],
     windowClosesAtTick: null,
+    pendingResolved: null,
     pendingReward: null,
     pendingPick: null,
     rng: Rng.fromSeed((seed ^ 0x5f356495) >>> 0),
@@ -296,7 +304,9 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
   // --- Resolve the window if it is due (the tick advances in combatStep) ---
   const tick = state.combat.tick + 1;
   let externalEffect: ExternalEffect | undefined;
-  let resolved: { ids: SpellId[]; specs: SpellSpec[] } | null = null;
+  // A resolved window whose swing visual/sound is waiting on the sim to fire it
+  // (a directional cast turns to face its aim first, spec 028).
+  let pendingResolved = state.pendingResolved;
   if (windowClosesAtTick !== null && tick >= windowClosesAtTick) {
     const baseSpecs = resolveSynergies(windowCards);
     const counts = new Map<SpellId, number>();
@@ -318,7 +328,8 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
       ...(misplay ? { playerSlowTicks: MISPLAY_SLOW_TICKS } : {}),
       ...(spendAdrenaline > 0 ? { spendAdrenaline } : {}),
     };
-    resolved = { ids: windowCards.map((p) => p.id), specs };
+    // Stash the geometry + committed aim; it is announced on the fire tick below.
+    pendingResolved = { ids: windowCards.map((p) => p.id), specs, aimX: input.aimX, aimY: input.aimY };
     windowCards = [];
     windowClosesAtTick = null;
   }
@@ -340,7 +351,13 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
   const hadEnemies = state.combat.enemies.length > 0;
   const combatResult = combatStep(state.combat, combatInput);
   events.push(...combatResult.events);
-  if (resolved !== null) events.push({ kind: 'spellsResolved', ids: resolved.ids, specs: resolved.specs, aimX: input.aimX, aimY: input.aimY });
+  // Announce the cast (swing visual + sound) on the tick the sim actually fires
+  // it -- instantly, or after the unit finished turning to face a directional
+  // cast -- so it stays in sync with the damage (spec 028).
+  if (pendingResolved !== null && combatResult.events.some((e) => e.kind === 'spellCast')) {
+    events.push({ kind: 'spellsResolved', ids: pendingResolved.ids, specs: pendingResolved.specs, aimX: pendingResolved.aimX, aimY: pendingResolved.aimY });
+    pendingResolved = null;
+  }
 
   // --- Wave cleared: offer three deck edits (once) ---
   let rng = state.rng;
@@ -384,7 +401,7 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
   }
 
   return {
-    state: { combat: combatResult.state, deck, refillAtTick, windowCards, windowClosesAtTick, pendingReward, pendingPick, rng },
+    state: { combat: combatResult.state, deck, refillAtTick, windowCards, windowClosesAtTick, pendingResolved, pendingReward, pendingPick, rng },
     events,
   };
 }

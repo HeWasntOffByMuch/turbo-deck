@@ -106,6 +106,34 @@ describe('spell session', () => {
     expect(casts).toHaveLength(1);
   });
 
+  it('announces a behind-aimed attack swing on the fire tick, in sync with the turn (spec 028)', () => {
+    // Find an opening hand holding the basic attack (a directional cone).
+    let seed = 1;
+    let start = initSpellGame(seed);
+    let slot = start.deck.hand.findIndex((c) => c?.id === 'attack');
+    while (slot < 0 && seed < 500) {
+      start = initSpellGame(++seed);
+      slot = start.deck.hand.findIndex((c) => c?.id === 'attack');
+    }
+    expect(slot).toBeGreaterThanOrEqual(0);
+
+    const west: SpellInput = { ...NEUTRAL, aimX: -1, aimY: 0 }; // unit starts facing east
+    const playWest: SpellInput = { ...west, playHandIndex: slot as 0 | 1 | 2 | 3 };
+
+    let s = start;
+    let firedTick = -1;
+    let resolvedTick = -1;
+    for (let t = 1; t <= 100; t++) {
+      const r = stepSpellGame(s, t === 1 ? playWest : west);
+      s = r.state;
+      if (firedTick < 0 && r.events.some((e) => e.kind === 'spellCast')) firedTick = t;
+      if (resolvedTick < 0 && r.events.some((e) => e.kind === 'spellsResolved')) resolvedTick = t;
+    }
+    expect(firedTick).toBeGreaterThan(SYNERGY_WINDOW_TICKS); // waited out the window AND the 180-degree turn
+    expect(resolvedTick).toBe(firedTick); // the swing visual/sound is announced exactly when it fires
+    expect(Math.cos(s.combat.player.facing)).toBeLessThan(-0.9); // ended up facing where it fired (west)
+  });
+
   it('ignores a play on an empty slot', () => {
     let state = initSpellGame(3);
     // Empty slot 0 by playing it, then immediately try to play it again.
