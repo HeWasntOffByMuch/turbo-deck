@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SpellSpec } from '../shared/spell-spec.js';
-import { ARENA_HEIGHT, ARENA_WIDTH, ENEMY_STANDOFF, MAX_ADRENALINE } from './constants.js';
+import { ARENA_HEIGHT, ARENA_WIDTH, ATTACK_ANIM_TICKS, ENEMY_STANDOFF, MAX_ADRENALINE } from './constants.js';
 import { initCombat, step } from './combat.js';
 import { NEUTRAL_INPUT, type CombatState, type EnemyState, type InputFrame, type SimEvent } from './types.js';
 
@@ -44,6 +44,13 @@ function run(state: CombatState, inputs: readonly InputFrame[]): { state: Combat
   return { state: s, events };
 }
 
+// An attack (cone/rect) turns to face its aim then plays the attack animation
+// before firing (spec 028); this casts it and advances past that windup.
+const ATTACK_SETTLE = 60; // covers a full 180-degree turn (slowest preset) + the animation
+function fireCast(state: CombatState, first: InputFrame): { state: CombatState; events: SimEvent[] } {
+  return run(state, [first, ...Array.from({ length: ATTACK_SETTLE }, () => NEUTRAL_INPUT)]);
+}
+
 const only = (s: CombatState): EnemyState => {
   const e = s.enemies[0];
   if (!e) throw new Error('expected an enemy');
@@ -55,7 +62,7 @@ describe('cone spell', () => {
     let state = withEnemy(arena(), { id: 1, position: { x: CENTER.x + 40, y: CENTER.y } });
     state = withEnemy(state, { id: 2, position: { x: CENTER.x - 40, y: CENTER.y } });
     const spec: SpellSpec = { kind: 'cone', range: 72, arcCosSq: 0.5, damage: 12 };
-    const after = run(state, [cast([spec])]).state;
+    const after = fireCast(state, cast([spec])).state;
     expect(after.enemies.find((e) => e.id === 1)?.health).toBe(200 - 12);
     expect(after.enemies.find((e) => e.id === 2)?.health).toBe(200);
   });
@@ -66,7 +73,7 @@ describe('rect spell', () => {
     let state = withEnemy(arena(), { id: 1, position: { x: CENTER.x + 80, y: CENTER.y } }); // in front
     state = withEnemy(state, { id: 2, position: { x: CENTER.x + 40, y: CENTER.y + 60 } }); // off to the side
     const spec: SpellSpec = { kind: 'rect', length: 165, halfWidth: 26, damage: 16 };
-    const after = run(state, [cast([spec])]).state;
+    const after = fireCast(state, cast([spec])).state;
     expect(after.enemies.find((e) => e.id === 1)?.health).toBe(200 - 16);
     expect(after.enemies.find((e) => e.id === 2)?.health).toBe(200);
   });
@@ -151,7 +158,7 @@ describe('Conjure Flame (empower)', () => {
     const empower: SpellSpec = { kind: 'empower', charges: 3, bonusDamage: 10 };
     const cone: SpellSpec = { kind: 'cone', range: 72, arcCosSq: 0.5, damage: 12 };
     // Empower then a cone in the same cast: the cone is buffed (12 + 10).
-    const after = run(state, [cast([empower, cone])]).state;
+    const after = fireCast(state, cast([empower, cone])).state;
     expect(only(after).health).toBe(200 - 22);
     expect(after.player.attackFlameCharges).toBe(2); // one of three spent
   });
@@ -262,13 +269,15 @@ describe('basic-attack interrupt (spec 023)', () => {
       position: { x: CENTER.x + 40, y: CENTER.y },
       behavior: 'hunting',
       phase: 'windup',
-      phaseEndsAtTick: state.tick + 1,
+      // The enemy's wind-up outlasts the attack animation, so a timely attack can
+      // still catch it (attacks are no longer instant, spec 028).
+      phaseEndsAtTick: state.tick + ATTACK_ANIM_TICKS + 12,
       attackAim: { x: -1, y: 0 },
     });
 
   it('cancels a wind-up it catches so the slam never lands', () => {
     const state = aboutToSlam(arena());
-    const { state: after, events } = run(state, [cast([BASIC])]);
+    const { state: after, events } = fireCast(state, cast([BASIC]));
     expect(after.player.health).toBe(state.player.maxHealth); // no slam damage taken
     expect(only(after).phase).toBe('recovery'); // dropped out of its wind-up
     expect(events.some((e) => e.kind === 'playerHit')).toBe(false);
@@ -276,35 +285,50 @@ describe('basic-attack interrupt (spec 023)', () => {
 
   it('a plain cone does not interrupt — the slam still lands', () => {
     const state = aboutToSlam(arena());
-    const { state: after, events } = run(state, [cast([PLAIN])]);
+    const { state: after, events } = fireCast(state, cast([PLAIN]));
     expect(after.player.health).toBeLessThan(state.player.maxHealth); // took the hit
     expect(events.some((e) => e.kind === 'playerHit')).toBe(true);
   });
 });
 
-describe('attacks fire along facing, dashes along the mouse (spec 028)', () => {
+describe('attacks turn to the mouse then animate; dashes fire at once (spec 028)', () => {
   const ATTACK: SpellSpec = { kind: 'cone', range: 220, arcCosSq: 0.5, damage: 10, interrupt: true };
 
-  it('an attack fires immediately along the unit facing, ignoring the mouse aim', () => {
-    // Unit faces east; an enemy is due east, another due west. The cursor aims
-    // WEST, but the attack hits the EAST enemy (where the unit is turned) at once.
-    let s = withEnemy(arena(), { id: 1, position: { x: CENTER.x + 60, y: CENTER.y } });
-    s = withEnemy(s, { id: 2, position: { x: CENTER.x - 60, y: CENTER.y } });
-    const first = step(s, cast([ATTACK], CENTER, { x: -1, y: 0 })); // mouse aimed west
-    expect(first.events.some((e) => e.kind === 'enemyHit')).toBe(true); // fired this tick
-    expect(first.state.enemies.find((e) => e.id === 1)?.health).toBe(200 - 10); // east enemy hit
-    expect(first.state.enemies.find((e) => e.id === 2)?.health).toBe(200); // west enemy spared
+  it('an attack aims at the mouse: the unit turns to it, animates, then fires', () => {
+    // Unit faces east; the cursor aims WEST at an enemy due west. It does not fire
+    // this tick (turning + winding up), but connects with the west enemy in time.
+    const s = withEnemy(arena(), { id: 1, position: { x: CENTER.x - 60, y: CENTER.y } });
+    const first = step(s, cast([ATTACK], CENTER, { x: -1, y: 0 }));
+    expect(first.events.some((e) => e.kind === 'enemyHit')).toBe(false); // not instant
+    expect(first.state.player.pendingAttack).not.toBeNull();
+    const r = fireCast(s, cast([ATTACK], CENTER, { x: -1, y: 0 }));
+    expect(r.state.enemies.find((e) => e.id === 1)?.health).toBe(200 - 10); // west enemy hit
+    expect(Math.cos(r.state.player.facing)).toBeLessThan(-0.99); // turned to face west
   });
 
-  it('the attack follows the unit facing wherever it points', () => {
-    // Face the unit south; a southern enemy is hit, an eastern one is not, even
-    // though the cursor still points east.
-    let s = withEnemy(arena(), { id: 1, position: { x: CENTER.x, y: CENTER.y + 60 } }); // south
-    s = withEnemy(s, { id: 2, position: { x: CENTER.x + 60, y: CENTER.y } }); // east
-    s = { ...s, player: { ...s.player, facing: Math.PI / 2 } }; // face south
-    const r = step(s, cast([ATTACK], CENTER, { x: 1, y: 0 })); // mouse still says east
-    expect(r.state.enemies.find((e) => e.id === 1)?.health).toBe(200 - 10); // south enemy hit
-    expect(r.state.enemies.find((e) => e.id === 2)?.health).toBe(200); // east enemy untouched
+  it('a move command during the attack animation cancels it (no hit)', () => {
+    const s = withEnemy(arena(), { id: 1, position: { x: CENTER.x + 60, y: CENTER.y } });
+    let cur = step(s, cast([ATTACK], CENTER, { x: 1, y: 0 })); // start the attack (east, aligned)
+    expect(cur.state.player.pendingAttack).not.toBeNull();
+    // Move a few ticks in: cancels the attack and emits attackCancelled.
+    cur = step(cur.state, { ...NEUTRAL_INPUT, moveTarget: { x: CENTER.x, y: CENTER.y + 300 } });
+    expect(cur.events.some((e) => e.kind === 'attackCancelled')).toBe(true);
+    expect(cur.state.player.pendingAttack).toBeNull();
+    const r = run(cur.state, Array.from({ length: 30 }, () => NEUTRAL_INPUT));
+    expect(r.state.enemies.find((e) => e.id === 1)?.health).toBe(200); // never fired
+  });
+
+  it('the faster-turning preset fires a behind-aimed attack sooner', () => {
+    const ticksToHit = (characterIndex: number): number => {
+      const base = withEnemy(arena(), { id: 1, position: { x: CENTER.x - 60, y: CENTER.y } });
+      let cur = { state: { ...base, player: { ...base.player, characterIndex } }, events: [] as SimEvent[] };
+      for (let t = 1; t <= 80; t++) {
+        cur = step(cur.state, cast([ATTACK], CENTER, { x: -1, y: 0 }));
+        if (cur.events.some((e) => e.kind === 'enemyHit')) return t;
+      }
+      return -1;
+    };
+    expect(ticksToHit(0)).toBeGreaterThan(ticksToHit(1)); // Warden (360) slower than Zephyr (900)
   });
 
   it('a dash fires immediately in the mouse direction and re-points the unit that way', () => {
@@ -325,27 +349,27 @@ describe('adrenaline (spec 023)', () => {
 
   it('banks one point when a basic attack connects', () => {
     const state = withEnemy(arena(), { id: 1, position: inCone });
-    const { state: after, events } = run(state, [cast([BASIC])]);
+    const { state: after, events } = fireCast(state, cast([BASIC]));
     expect(after.player.adrenaline).toBe(1);
     expect(events.some((e) => e.kind === 'adrenalineChanged' && e.delta === 1)).toBe(true);
   });
 
   it('banks nothing when the basic attack hits no one', () => {
     const state = withEnemy(arena(), { id: 1, position: { x: CENTER.x - 200, y: CENTER.y } }); // behind, out of cone
-    const after = run(state, [cast([BASIC])]).state;
+    const after = fireCast(state, cast([BASIC])).state;
     expect(after.player.adrenaline).toBe(0);
   });
 
   it('a non-interrupt cone never banks adrenaline', () => {
     const state = withEnemy(arena(), { id: 1, position: inCone });
-    const after = run(state, [cast([PLAIN])]).state;
+    const after = fireCast(state, cast([PLAIN])).state;
     expect(after.player.adrenaline).toBe(0);
   });
 
   it('caps at MAX_ADRENALINE no matter how many basics connect', () => {
-    const state = withEnemy(arena(), { id: 1, position: inCone, health: 100000 });
-    const after = run(state, Array.from({ length: MAX_ADRENALINE + 3 }, () => cast([BASIC]))).state;
-    expect(after.player.adrenaline).toBe(MAX_ADRENALINE);
+    let s = withEnemy(arena(), { id: 1, position: inCone, health: 100000 });
+    for (let i = 0; i < MAX_ADRENALINE + 3; i++) s = fireCast(s, cast([BASIC])).state;
+    expect(s.player.adrenaline).toBe(MAX_ADRENALINE);
   });
 
   it('spendAdrenaline deducts exactly the given amount, leaving the rest banked', () => {
@@ -355,7 +379,7 @@ describe('adrenaline (spec 023)', () => {
       ...NEUTRAL_INPUT,
       externalEffect: { kind: 'castSpells', spells: [PLAIN], aimX: 1, aimY: 0, targetX: CENTER.x, targetY: CENTER.y, spendAdrenaline: 2 },
     };
-    const { state: after, events } = run(state, [spend]);
+    const { state: after, events } = fireCast(state, spend);
     expect(after.player.adrenaline).toBe(2); // 4 - 2 spent
     expect(events.some((e) => e.kind === 'adrenalineChanged' && e.delta === -2)).toBe(true);
   });
@@ -367,7 +391,7 @@ describe('adrenaline (spec 023)', () => {
       ...NEUTRAL_INPUT,
       externalEffect: { kind: 'castSpells', spells: [BASIC], aimX: 1, aimY: 0, targetX: CENTER.x, targetY: CENTER.y, spendAdrenaline: 1 },
     };
-    const after = run(state, [spend]).state;
+    const after = fireCast(state, spend).state;
     expect(after.player.adrenaline).toBe(2); // 2 + 1 (hit) - 1 (spend)
   });
 
@@ -378,7 +402,7 @@ describe('adrenaline (spec 023)', () => {
       ...NEUTRAL_INPUT,
       externalEffect: { kind: 'castSpells', spells: [PLAIN], aimX: 1, aimY: 0, targetX: CENTER.x, targetY: CENTER.y, spendAdrenaline: 5 },
     };
-    expect(run(state, [spend]).state.player.adrenaline).toBe(0);
+    expect(fireCast(state, spend).state.player.adrenaline).toBe(0);
   });
 });
 

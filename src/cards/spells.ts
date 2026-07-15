@@ -150,6 +150,27 @@ export function discardFromHand(deck: SpellDeck, index: number): { deck: SpellDe
 }
 
 /**
+ * Reserve the card in `index`: take it out of the hand (leaving the slot empty)
+ * WITHOUT discarding it, so a cast in progress can hold it and either discard it
+ * on fire or hand it back on cancel (spec 028). Throws if the slot is empty.
+ */
+export function reserveFromHand(deck: SpellDeck, index: number): { deck: SpellDeck; card: SpellCard } {
+  const card = deck.hand[index];
+  if (!card) throw new Error(`reserveFromHand: hand slot ${index} is empty`);
+  const hand = [...deck.hand] as (SpellCard | null)[];
+  hand[index] = null;
+  return { deck: { ...deck, hand: hand as unknown as SpellHand }, card };
+}
+
+/** Put a reserved card back into its (empty) hand slot; a no-op if the slot is filled. */
+export function restoreToHand(deck: SpellDeck, index: number, card: SpellCard): SpellDeck {
+  if (deck.hand[index]) return deck;
+  const hand = [...deck.hand] as (SpellCard | null)[];
+  hand[index] = card;
+  return { ...deck, hand: hand as unknown as SpellHand };
+}
+
+/**
  * Draw one card into the empty `index`, reshuffling the discard pile when the
  * draw pile runs dry. A no-op (returning the current occupant) if the slot is
  * already filled; `card` is null only when the whole deck is exhausted.

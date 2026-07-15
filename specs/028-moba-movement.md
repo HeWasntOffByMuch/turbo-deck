@@ -107,18 +107,27 @@ clicking behind you cost a real rotation.
 - `cycleCharacter` advances the preset (wrapping); the faster-turning preset
   starts moving sooner on a click behind, and each preset translates at its own
   move speed.
-- **Attacks fire along facing, immediately**: a cone/rect (an attack) resolves the
-  tick its window closes — no turn-to-face gate — but along the unit's *current
-  heading*, not the cursor. You aim attacks by pointing the unit (it turns as it
-  moves), so a click behind the enemy still hits whatever the unit is turned
-  toward. The swing visual is drawn along that facing.
-- **Dash fires along the mouse, immediately**: a dash resolves at once toward the
-  cursor aim and re-points the unit that way (so subsequent attacks follow).
+- **Attacks aim at the mouse, turn-to-face, then play an attack animation before
+  firing**. Playing an attack (a cone/rect) buffers it (`PlayerState.pendingAttack`):
+  the unit stops, turns to face the cursor aim at its turn rate, then winds up for
+  `ATTACK_ANIM_TICKS` — the *attack animation*, the time between being turned and the
+  attack actually firing — and only then does damage land. The faster-turning
+  preset reaches the fire sooner. The renderer draws a charging cone that fills
+  through the animation.
+- **A move command cancels an in-progress attack** (during the turn or the
+  animation): the sim clears `pendingAttack` and emits `attackCancelled`, and the
+  unit obeys the move.
+- **Cards are not consumed until the attack fires**. The session *reserves* played
+  cards (out of hand, not discarded) through the whole cast; on the sim's
+  `spellCast` (fire) it discards them and starts their draw-delay refill, and on
+  `attackCancelled` it hands every reserved card in the window back to its slot,
+  unconsumed. Fusion (multiple cards in the synergy window) is preserved.
+- **Dash fires immediately in the mouse direction** (no turn-to-face, no animation)
+  and re-points the unit that way; point AOEs and self-buffs resolve at once too.
 - **Using a card halts the unit**: playing any card cancels the standing move
-  order (`InputFrame.cancelMove`), MOBA-style, so the unit stays in place after
-  a skill rather than walking on to its old destination.
-- The cast's swing visual + sound (`spellsResolved`) is announced on the tick the
-  cast fires (the sim's `spellCast`), in sync with its damage.
+  order (`InputFrame.cancelMove`), so the unit stays put for the cast.
+- The swing visual + sound (`spellsResolved`) is announced on the tick the cast
+  fires (the sim's `spellCast`), in sync with its damage.
 
 ## Renderer
 

@@ -93,6 +93,8 @@ export interface PlayerState {
   /** Activate is refused until this tick (stance lockout). */
   readonly activateLockUntil: number;
   // --- Spell cards (spec 018); identity values leave combat untouched. ---
+  /** An attack (cone/rect) turning to face + winding up before it fires (spec 028); null when none. */
+  readonly pendingAttack: PendingAttack | null;
   /** Rocky Raise shield: damage it can still absorb, and the tick it expires. */
   readonly shieldAmount: number;
   readonly shieldExpiresAtTick: number;
@@ -246,6 +248,17 @@ export type ExternalEffect =
   // --- Spell cards (spec 018): a window's worth of resolved geometry, cast at once. ---
   | CastSpellsEffect;
 
+/**
+ * An attack cast (a cone/rect) in progress (spec 028): the unit turns to face
+ * the cast's aim, then winds up the attack animation, then fires. A move command
+ * cancels it. Non-attack casts (dash, AOEs, buffs) never enter this state.
+ */
+export interface PendingAttack {
+  readonly effect: CastSpellsEffect;
+  /** Tick the attack fires; 0 while the unit is still turning to face the aim. */
+  readonly fireAtTick: number;
+}
+
 /** A resolved synergy window's geometry, cast at once (spec 018). */
 export interface CastSpellsEffect {
   readonly kind: 'castSpells';
@@ -310,6 +323,7 @@ export type SimEvent =
   | { readonly kind: 'stanceRejectedLocked'; readonly tick: number }
   // --- Spell cards (spec 018) ---
   | { readonly kind: 'spellCast'; readonly tick: number; readonly spellCount: number }
+  | { readonly kind: 'attackCancelled'; readonly tick: number }
   | { readonly kind: 'aoeImpact'; readonly tick: number; readonly at: Vec2; readonly radius: number }
   | { readonly kind: 'dashPerformed'; readonly tick: number }
   | { readonly kind: 'playerSlowed'; readonly tick: number; readonly durationTicks: number }

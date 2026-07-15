@@ -3,6 +3,7 @@ import {
   ADRENALINE_SPEED_PER_POINT,
   ARENA_HEIGHT,
   ARENA_WIDTH,
+  ATTACK_ANIM_TICKS,
   ATTACK_ARC_COS_SQ,
   ATTACK_ROOT_TICKS,
   BURN_PULSE_INTERVAL_TICKS,
@@ -54,6 +55,7 @@ import { ENEMY_TYPES, enemyTypeByKey, type EnemyType } from './enemies.js';
 import {
   IDENTITY_MODIFIERS,
   type AuraState,
+  type CastSpellsEffect,
   type CombatState,
   type DamageBuff,
   type DefenseOutcome,
@@ -63,6 +65,7 @@ import {
   type InputFrame,
   type Modifiers,
   type PendingAoe,
+  type PendingAttack,
   type PlayerState,
   type SimEvent,
   type Vec2,
@@ -107,6 +110,19 @@ function turnToward(facing: number, desired: number, maxStep: number): number {
   const diff = normalizeAngle(desired - facing);
   if (Math.abs(diff) <= maxStep) return normalizeAngle(desired);
   return normalizeAngle(facing + Math.sign(diff) * maxStep);
+}
+
+// The unit counts as "facing the aim" for an attack within this many radians;
+// turnToward snaps exactly onto it once within one turn-step (spec 028).
+const ATTACK_FACING_EPS = 1e-3;
+
+/**
+ * Only an attack -- a cone or a rect -- turns to face its aim and plays the
+ * attack animation before firing (spec 028). A dash fires immediately toward the
+ * mouse; point AOEs and self-buffs are omni-directional.
+ */
+function castIsAttack(effect: CastSpellsEffect): boolean {
+  return effect.spells.some((s) => s.kind === 'cone' || s.kind === 'rect');
 }
 
 /** A single slow debuff: `multiplier` (<1 slows) damped by `resistance` (0..1). */
@@ -381,6 +397,7 @@ export function initCombat(seed: number, opts: CombatOptions = {}): CombatState 
     facing: 0,
     moveTarget: null,
     characterIndex: opts.characterIndex ?? DEFAULT_CHARACTER_INDEX,
+    pendingAttack: null,
     attackCooldownUntil: 0,
     moveLockUntil: 0,
     attackReleaseTick: 0,
@@ -479,6 +496,20 @@ export function step(
   const speedPerTick = (computeMoveSpeed(character.moveSpeed) / TICK_RATE) * moveScale;
   const maxTurnPerTick = (character.turnRate * DEG2RAD) / TICK_RATE;
 
+  // An attack (cone/rect) turns to face its aim, winds up the attack animation,
+  // then fires (spec 028). A fresh move command cancels it. Non-attack casts
+  // (dash, AOEs, buffs) resolve immediately and never enter this state.
+  const incomingAttack = input.externalEffect?.kind === 'castSpells' && castIsAttack(input.externalEffect) ? input.externalEffect : null;
+  const moveCommanded = input.moveTarget != null;
+  let pendingAttack: PendingAttack | null = state.player.pendingAttack;
+  if (incomingAttack !== null && pendingAttack === null) pendingAttack = { effect: incomingAttack, fireAtTick: 0 };
+  let attackCancelled = false;
+  if (pendingAttack !== null && moveCommanded) {
+    pendingAttack = null;
+    attackCancelled = true; // moving aborts the attack; the unit then obeys the move
+  }
+  const attackAimAngle = pendingAttack !== null ? Math.atan2(pendingAttack.effect.aimY, pendingAttack.effect.aimX) : 0;
+
   // A move order issued this tick (re)sets the standing destination; otherwise
   // the previous order stands (cancelMove clears it -- using a card halts the
   // unit, MOBA-style). It persists across dash/rooted ticks so movement resumes
@@ -491,9 +522,12 @@ export function step(
         facing: state.player.facing,
         moveTarget: orderedTarget,
       }
-    : rooted
-      ? { position: state.player.position, facing: state.player.facing, moveTarget: orderedTarget }
-      : stepPlayerMovement(state.player.position, state.player.facing, orderedTarget, speedPerTick, maxTurnPerTick);
+    : pendingAttack !== null
+      ? // Aiming an attack: stationary, turning to face the mouse aim.
+        { position: state.player.position, facing: turnToward(state.player.facing, attackAimAngle, maxTurnPerTick), moveTarget: orderedTarget }
+      : rooted
+        ? { position: state.player.position, facing: state.player.facing, moveTarget: orderedTarget }
+        : stepPlayerMovement(state.player.position, state.player.facing, orderedTarget, speedPerTick, maxTurnPerTick);
   let player: PlayerState = {
     ...state.player,
     position: moved.position,
@@ -502,6 +536,21 @@ export function step(
     // Store the normalized index so it stays in range as it cycles.
     characterIndex: ((characterIndex % CHARACTERS.length) + CHARACTERS.length) % CHARACTERS.length,
   };
+
+  // Advance the pending attack: once turned to face the aim, wind up the attack
+  // animation; when it completes, fire the cast (resolved below).
+  let castToResolve: CastSpellsEffect | null = null;
+  if (pendingAttack !== null) {
+    if (pendingAttack.fireAtTick === 0 && Math.abs(normalizeAngle(attackAimAngle - player.facing)) <= ATTACK_FACING_EPS) {
+      pendingAttack = { ...pendingAttack, fireAtTick: tick + ATTACK_ANIM_TICKS }; // turned: start the animation
+    }
+    if (pendingAttack.fireAtTick !== 0 && tick >= pendingAttack.fireAtTick) {
+      castToResolve = pendingAttack.effect;
+      pendingAttack = null;
+    }
+  }
+  if (attackCancelled) events.push({ kind: 'attackCancelled', tick });
+  player = { ...player, pendingAttack };
 
   // --- Enemy movement: grazers wander, hunters home while idle ---
   let enemies: EnemyState[] = state.enemies.map((enemy) => {
@@ -579,8 +628,11 @@ export function step(
   let enemySlowMultiplier = state.enemySlowMultiplier;
 
   // --- External effect (a played card / activated stance) ---
-  if (input.externalEffect) {
-    const effect = input.externalEffect;
+  // Fire the attack whose animation just finished, if any; otherwise resolve the
+  // incoming effect -- unless it is an attack now turning/winding up (buffered above).
+  const effectToResolve = castToResolve ?? (incomingAttack !== null ? undefined : input.externalEffect);
+  if (effectToResolve) {
+    const effect = effectToResolve;
     switch (effect.kind) {
       case 'damageEnemy': {
         if (player.mana < effect.manaCost) {
@@ -656,14 +708,12 @@ export function step(
         break;
       }
       case 'castSpells': {
-        // A synergy window's worth of resolved geometry, executed at once (spec 028):
-        // attacks (cones/rects) fire immediately along the unit's *current facing*;
-        // a dash fires immediately toward the *mouse* aim (and turns to face it).
+        // A synergy window's worth of resolved geometry, executed at once. Everything
+        // fires toward the mouse aim (spec 028): an attack (cone/rect) has already
+        // turned to face it by now; a dash fires that way and re-points the unit.
         const aimLen = Math.sqrt(effect.aimX * effect.aimX + effect.aimY * effect.aimY);
-        const ux = aimLen < 1e-6 ? 1 : effect.aimX / aimLen; // mouse aim (dash)
+        const ux = aimLen < 1e-6 ? 1 : effect.aimX / aimLen;
         const uy = aimLen < 1e-6 ? 0 : effect.aimY / aimLen;
-        const fx = Math.cos(player.facing); // heading (attacks)
-        const fy = Math.sin(player.facing);
         let castFacing = player.facing; // a dash re-points the unit toward the mouse
         const castPos = player.position;
         let auras = player.auras;
@@ -700,7 +750,7 @@ export function step(
               const bonus = flameCharges > 0 ? flameBonus : 0;
               if (flameCharges > 0) flameCharges -= 1;
               const dmg = spell.damage + bonus;
-              const inCone = (e: EnemyState): boolean => coneHits(castPos, e.position, fx, fy, spell.range, spell.arcCosSq, ENEMY_RADIUS);
+              const inCone = (e: EnemyState): boolean => coneHits(castPos, e.position, ux, uy, spell.range, spell.arcCosSq, ENEMY_RADIUS);
               if (!spell.interrupt) {
                 applyInstant(inCone, dmg);
                 break;
@@ -727,7 +777,7 @@ export function step(
               break;
             }
             case 'rect':
-              applyInstant((e) => rectHits(castPos, e.position, fx, fy, spell.length, spell.halfWidth, ENEMY_RADIUS), spell.damage);
+              applyInstant((e) => rectHits(castPos, e.position, ux, uy, spell.length, spell.halfWidth, ENEMY_RADIUS), spell.damage);
               break;
             case 'pointAoe': {
               const origin = pointAoeOrigin(spell.origin, castPos, effect.targetX, effect.targetY, enemies);

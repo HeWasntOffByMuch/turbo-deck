@@ -23,6 +23,10 @@ export const MOVE_FACING_THRESHOLD_DEG = 135;
 // A move order is considered fulfilled once the unit is within this distance of
 // the destination, at which point the standing order is cleared.
 export const MOVE_ARRIVE_EPS = 2;
+// Attack animation (spec 028): once the unit has turned to face the attack aim,
+// it winds up for this long before the attack actually fires. Moving during this
+// window (or the turn before it) cancels the attack. ~0.2s at 60Hz.
+export const ATTACK_ANIM_TICKS = 12;
 
 export const PLAYER_MAX_HEALTH = 100;
 // Reach of the player's melee strike, measured from the player's centre to the

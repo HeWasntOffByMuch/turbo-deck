@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { deckSize, HAND_SIZE, type SpellCard, type SpellDeck, type SpellId } from '../cards/spells.js';
 import { Rng } from '../shared/prng.js';
+import { ATTACK_ANIM_TICKS } from '../sim/constants.js';
 import type { EnemyState } from '../sim/types.js';
 import {
   ADRENALINE_COST_PER_SPELL,
@@ -15,6 +16,10 @@ import {
 } from './spell-session.js';
 
 const NEUTRAL: SpellInput = { aimX: 1, aimY: 0, targetX: 0, targetY: 0 };
+
+// Ticks to let a cast fully resolve: the synergy window, then (for an attack aimed
+// where the unit already faces) the attack animation, plus a small margin (spec 028).
+const CAST_SETTLE = SYNERGY_WINDOW_TICKS + ATTACK_ANIM_TICKS + 4;
 
 function play(slot: 0 | 1 | 2 | 3): SpellInput {
   return { ...NEUTRAL, playHandIndex: slot };
@@ -78,7 +83,7 @@ function countId(deck: SpellDeck, id: SpellId): number {
 describe('spell session', () => {
   it('resolves a lone card as its base spell when the window closes', () => {
     const state = initSpellGame(7);
-    const { events } = run(state, [play(0), ...Array.from({ length: SYNERGY_WINDOW_TICKS }, () => NEUTRAL)]);
+    const { events } = run(state, [play(0), ...Array.from({ length: CAST_SETTLE }, () => NEUTRAL)]);
     const resolved = events.find((e) => e.kind === 'spellsResolved');
     expect(resolved).toBeDefined();
     if (resolved && resolved.kind === 'spellsResolved') expect(resolved.ids).toHaveLength(1);
@@ -97,7 +102,7 @@ describe('spell session', () => {
     const { events } = run(start, [
       play(a as 0 | 1 | 2 | 3),
       play(b as 0 | 1 | 2 | 3),
-      ...Array.from({ length: SYNERGY_WINDOW_TICKS }, () => NEUTRAL),
+      ...Array.from({ length: CAST_SETTLE }, () => NEUTRAL),
     ]);
     const resolved = events.filter((e) => e.kind === 'spellsResolved');
     expect(resolved).toHaveLength(1); // one window, one cast
@@ -155,14 +160,14 @@ describe('spell session', () => {
     expect(events.some((e) => e.kind === 'playIgnoredEmptySlot')).toBe(true);
   });
 
-  it('leaves a played slot empty until the draw delay elapses', () => {
+  it('leaves a played slot empty until the draw delay after the cast fires', () => {
     const state = withAdr(initSpellGame(5), 5); // afford whatever sits in slot 1
     const played = run(state, [play(1)]).state;
-    expect(played.deck.hand[1]).toBeNull();
-    // Still empty just before the delay, refilled just after.
-    const justBefore = run(played, Array.from({ length: CARD_DRAW_DELAY_TICKS - 2 }, () => NEUTRAL)).state;
-    expect(justBefore.deck.hand[1]).toBeNull();
-    const justAfter = run(justBefore, Array.from({ length: 3 }, () => NEUTRAL)).state;
+    expect(played.deck.hand[1]).toBeNull(); // reserved out of hand
+    // Consumed only when the cast fires; the draw delay runs from there (spec 028).
+    const fired = run(played, Array.from({ length: CAST_SETTLE }, () => NEUTRAL)).state;
+    expect(fired.deck.hand[1]).toBeNull(); // fired + consumed, refill not yet due
+    const justAfter = run(fired, Array.from({ length: CARD_DRAW_DELAY_TICKS + 2 }, () => NEUTRAL)).state;
     expect(justAfter.deck.hand[1]).not.toBeNull();
   });
 
@@ -175,7 +180,7 @@ describe('spell session', () => {
 });
 
 describe('mis-timed window punishment', () => {
-  const settle = Array.from({ length: SYNERGY_WINDOW_TICKS + 2 }, () => NEUTRAL);
+  const settle = Array.from({ length: CAST_SETTLE }, () => NEUTRAL);
 
   it('slows the player when a multi-card window holds a non-synergy', () => {
     // Two cards of different ids played together: neither fuses.
@@ -270,7 +275,7 @@ describe('refill never stalls (regression)', () => {
 
 describe('adrenaline cost economy (spec 023/024)', () => {
   const card = (id: SpellId, instanceId: number): SpellCard => ({ id, instanceId, level: 1 });
-  const settle = Array.from({ length: SYNERGY_WINDOW_TICKS + 2 }, () => NEUTRAL);
+  const settle = Array.from({ length: CAST_SETTLE }, () => NEUTRAL);
 
   /** A game with a chosen hand and a pre-loaded adrenaline bank. */
   function withBank(hand: [SpellCard, SpellCard, SpellCard, SpellCard], adrenaline: number): SpellGameState {
@@ -306,7 +311,7 @@ describe('adrenaline cost economy (spec 023/024)', () => {
     const { state: after, events } = run(start, [play(0)]);
     expect(events.some((e) => e.kind === 'playRejectedNoAdrenaline')).toBe(true);
     expect(after.deck.hand[0]?.id).toBe('fireBlast'); // still held
-    expect(after.windowCards).toHaveLength(0); // nothing entered the window
+    expect(after.reserved).toHaveLength(0); // nothing entered the window
   });
 
   it('always lets a free attack or dash be played at zero adrenaline', () => {
@@ -320,7 +325,7 @@ describe('adrenaline cost economy (spec 023/024)', () => {
     const { state: after, events } = run(start, [play(0), play(1)]);
     expect(events.filter((e) => e.kind === 'cardPlayed')).toHaveLength(1); // only the first fit the budget
     expect(events.some((e) => e.kind === 'playRejectedNoAdrenaline')).toBe(true);
-    expect(after.windowCards).toHaveLength(1);
+    expect(after.reserved).toHaveLength(1);
   });
 });
 
@@ -356,16 +361,17 @@ describe('generator guarantee (spec 024/025)', () => {
     const start = brokeWithDash();
     const played = run(start, [play(0)]).state; // play the free dash to open a slot
     expect(played.deck.hand[0]).toBeNull();
-    const justBefore = run(played, idle(CARD_DRAW_DELAY_TICKS - 2)).state;
-    expect(justBefore.deck.hand[0]).toBeNull(); // still on the draw delay, not an instant swap
-    const after = run(justBefore, idle(3)).state;
+    // The card is consumed only when the cast fires; the draw delay runs from there.
+    const fired = run(played, idle(CAST_SETTLE)).state;
+    expect(fired.deck.hand[0]).toBeNull(); // still on the draw delay, not an instant swap
+    const after = run(fired, idle(CARD_DRAW_DELAY_TICKS + 2)).state;
     expect(after.deck.hand[0]?.id).toBe('attack'); // biased past the top fireBlast to the attack
   });
 
   it('does not bias while the bank is non-zero — the top card is drawn', () => {
     const start = withAdr(brokeWithDash(), 3);
     const played = run(start, [play(0)]).state; // dash is free
-    const after = run(played, idle(CARD_DRAW_DELAY_TICKS + 2)).state;
+    const after = run(played, idle(CAST_SETTLE + CARD_DRAW_DELAY_TICKS + 2)).state;
     expect(after.deck.hand[0]?.id).toBe('fireBlast'); // normal draw took the top card
   });
 
@@ -396,7 +402,7 @@ describe('generator guarantee (spec 024/025)', () => {
 describe('wave rewards', () => {
   it('offers three deck edits when the wave is cleared', () => {
     const { state, attackSlot } = almostClearedWave(1);
-    const { state: after, events } = run(state, [play(attackSlot), ...Array.from({ length: SYNERGY_WINDOW_TICKS + 2 }, () => NEUTRAL)]);
+    const { state: after, events } = run(state, [play(attackSlot), ...Array.from({ length: CAST_SETTLE }, () => NEUTRAL)]);
     expect(after.combat.enemies).toHaveLength(0);
     const offered = events.find((e) => e.kind === 'rewardOffered');
     expect(offered).toBeDefined();
@@ -406,7 +412,7 @@ describe('wave rewards', () => {
 
   it('applies the chosen reward and clears the panel', () => {
     const { state, attackSlot } = almostClearedWave(1);
-    const cleared = run(state, [play(attackSlot), ...Array.from({ length: SYNERGY_WINDOW_TICKS + 2 }, () => NEUTRAL)]).state;
+    const cleared = run(state, [play(attackSlot), ...Array.from({ length: CAST_SETTLE }, () => NEUTRAL)]).state;
     const addOffer = cleared.pendingReward?.[2];
     expect(addOffer?.kind).toBe('addFire');
     const countAll = (s: SpellGameState, id?: SpellId): number =>
@@ -419,7 +425,7 @@ describe('wave rewards', () => {
 
   it('ignores Spawn Wave while a reward is pending', () => {
     const { state, attackSlot } = almostClearedWave(1);
-    const cleared = run(state, [play(attackSlot), ...Array.from({ length: SYNERGY_WINDOW_TICKS + 2 }, () => NEUTRAL)]).state;
+    const cleared = run(state, [play(attackSlot), ...Array.from({ length: CAST_SETTLE }, () => NEUTRAL)]).state;
     expect(cleared.pendingReward).not.toBeNull();
     const blocked = run(cleared, [{ ...NEUTRAL, spawnWave: true }]).state;
     expect(blocked.combat.waveNumber).toBe(1); // no new wave spawned
@@ -429,7 +435,7 @@ describe('wave rewards', () => {
 describe('reward pickers (spec 022)', () => {
   const clearWave = (seed = 1): SpellGameState => {
     const { state, attackSlot } = almostClearedWave(seed);
-    return run(state, [play(attackSlot), ...Array.from({ length: SYNERGY_WINDOW_TICKS + 2 }, () => NEUTRAL)]).state;
+    return run(state, [play(attackSlot), ...Array.from({ length: CAST_SETTLE }, () => NEUTRAL)]).state;
   };
 
   it('Remove opens a picker of every deck card, and the chosen one is removed', () => {

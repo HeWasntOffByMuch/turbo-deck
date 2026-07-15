@@ -1,6 +1,7 @@
 import {
   ARENA_HEIGHT,
   ARENA_WIDTH,
+  ATTACK_ANIM_TICKS,
   ENEMY_ATTACK_ARC_COS_SQ,
   ENEMY_ATTACK_RANGE,
   ENEMY_IDLE_TICKS,
@@ -305,6 +306,28 @@ export class SpellArenaView {
     const half = size / 2;
     const headTop = p.y - half;
     const feet = p.y + half;
+
+    // Attack animation (spec 028): an attack turns to face the mouse then winds up.
+    // Draw a charging cone in the aim direction that fills as the animation nears its
+    // release, so the cast (and the window to cancel it by moving) reads on screen.
+    if (player.pendingAttack) {
+      const pa = player.pendingAttack;
+      const aimAng = Math.atan2(pa.effect.aimY, pa.effect.aimX);
+      const cone = pa.effect.spells.find((s) => s.kind === 'cone');
+      const range = ((cone && cone.kind === 'cone' ? cone.range : 90) as number) * SCALE;
+      const arcHalf = cone && cone.kind === 'cone' ? Math.acos(Math.sqrt(cone.arcCosSq)) : Math.PI / 5;
+      // 0 while still turning (fireAtTick 0), then ramps 0..1 across the animation.
+      const charge = pa.fireAtTick === 0 ? 0 : 1 - Math.max(0, pa.fireAtTick - tick) / ATTACK_ANIM_TICKS;
+      ctx.fillStyle = `rgba(255,210,120,${0.08 + 0.22 * charge})`;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.arc(p.x, p.y, range * (0.4 + 0.6 * charge), aimAng - arcHalf, aimAng + arcHalf);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = `rgba(255,225,150,${0.4 + 0.5 * charge})`;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
 
     // Dash streak.
     if (tick < player.dashExpiresAtTick) {
