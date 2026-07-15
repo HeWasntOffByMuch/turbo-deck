@@ -238,6 +238,8 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
   let windowClosesAtTick = state.windowClosesAtTick;
   let pendingReward = state.pendingReward;
   let pendingPick = state.pendingPick;
+  // Using a card halts the unit (spec 028): cancel the standing move order.
+  let cancelMove = false;
   // Slots emptied this tick; their delayed refill is scheduled after combat steps.
   const emptied: number[] = [];
 
@@ -294,6 +296,7 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
         windowCards = [...windowCards, { id: card.id, level: card.level }];
         // The first card of a window arms the timer; later plays just join the buffer.
         if (windowClosesAtTick === null) windowClosesAtTick = state.combat.tick + SYNERGY_WINDOW_TICKS;
+        cancelMove = true; // using a card halts the unit
         events.push({ kind: 'cardPlayed', index: idx, id: card.id });
       }
     } else {
@@ -342,6 +345,7 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
     parry: false,
     dodge: false,
     ...(input.moveTarget ? { moveTarget: input.moveTarget } : {}),
+    ...(cancelMove ? { cancelMove: true } : {}),
     ...(input.cycleCharacter ? { cycleCharacter: true } : {}),
     ...(externalEffect ? { externalEffect } : {}),
     // A wave cannot be summoned while a reward or its picker is still open.

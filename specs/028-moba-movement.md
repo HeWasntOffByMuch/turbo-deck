@@ -113,8 +113,13 @@ clicking behind you cost a real rotation.
   at its turn rate, and it fires the tick it is aligned. Aimed where the unit
   already faces, it fires immediately. Omni-directional casts (point AOEs,
   self-buffs) fire instantly regardless of facing. The faster-turning preset
-  fires a behind-aimed attack sooner. No extra root: once fired, the unit resumes
-  its standing move order.
+  fires a behind-aimed attack sooner.
+- **Using a card halts the unit**: playing any card cancels the standing move
+  order (`InputFrame.cancelMove`), MOBA-style, so the unit stays in place after
+  a skill rather than walking on to its old destination.
+- The cast's swing visual + sound (`spellsResolved`) is announced on the tick the
+  cast actually fires, in sync with its damage — not when the synergy window
+  closed (which, with the facing gate, can be many ticks earlier).
 
 ## Renderer
 

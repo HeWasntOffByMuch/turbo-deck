@@ -91,12 +91,15 @@ export function stepGame(
   const events: GameEvent[] = [];
   let deck = state.deck;
   let externalEffect: ExternalEffect | undefined;
+  // Using a card halts the unit (spec 028): cancel the standing move order.
+  let cancelMove = false;
 
   if (input.playHandIndex !== undefined) {
     const card = deck.hand[input.playHandIndex];
     if (card) {
       const def = catalog.get(card.defId);
       if (def) {
+        cancelMove = true;
         if (def.kind === 'active') {
           externalEffect = activeEffectToExternalEffect(def.effect, def.cost);
           deck = useCard(deck, input.playHandIndex).state;
@@ -116,6 +119,7 @@ export function stepGame(
     if (def) {
       const used = useBonusCard(deck);
       if (used) {
+        cancelMove = true;
         deck = used.state;
         if (def.kind === 'active') {
           externalEffect = activeEffectToExternalEffect(def.effect, def.cost);
@@ -138,6 +142,7 @@ export function stepGame(
     parry: input.parry,
     dodge: input.dodge,
     ...(input.moveTarget ? { moveTarget: input.moveTarget } : {}),
+    ...(cancelMove ? { cancelMove: true } : {}),
     ...(input.cycleCharacter ? { cycleCharacter: true } : {}),
     ...(externalEffect ? { externalEffect } : {}),
   };

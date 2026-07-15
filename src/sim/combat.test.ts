@@ -280,6 +280,20 @@ describe('MOBA movement: speed, turn rate, facing gate', () => {
     expect(s.player.position).toEqual(held);
   });
 
+  it('cancelMove clears the standing order so the unit halts in place', () => {
+    let s = initCombat(1);
+    const start = { ...s.player.position };
+    for (let i = 0; i < 5; i++) s = step(s, moveTo(start.x + 300, start.y)).state;
+    expect(s.player.position.x).toBeGreaterThan(start.x);
+    expect(s.player.moveTarget).not.toBeNull();
+    // Cancel: the order is dropped and the unit holds position thereafter.
+    s = step(s, { ...NEUTRAL_INPUT, cancelMove: true }).state;
+    expect(s.player.moveTarget).toBeNull();
+    const held = s.player.position;
+    s = step(s, NEUTRAL_INPUT).state;
+    expect(s.player.position).toEqual(held);
+  });
+
   it('with no move order, facing stays fixed — it does NOT follow the cursor/aim', () => {
     // A standing unit keeps its heading; otherwise it would always already face
     // the click point and never spend any turn time.

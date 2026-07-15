@@ -507,10 +507,11 @@ export function step(
   if (incomingCastNeedsFacing && pendingCast === null) pendingCast = incomingCast;
 
   // A move order issued this tick (re)sets the standing destination; otherwise
-  // the previous order stands. It persists across dash/rooted/aiming ticks so
-  // movement resumes once the override ends. Off-map orders are honoured as-is:
-  // the per-tick position clamp walks the unit to the nearest edge and holds it.
-  const orderedTarget = input.moveTarget ?? state.player.moveTarget;
+  // the previous order stands (cancelMove clears it -- using a card halts the
+  // unit, MOBA-style). It persists across dash/rooted/aiming ticks so movement
+  // resumes once the override ends. Off-map orders are honoured as-is: the
+  // per-tick position clamp walks the unit to the nearest edge and holds it.
+  const orderedTarget = input.moveTarget ?? (input.cancelMove ? null : state.player.moveTarget);
   const moved = dashing
     ? {
         position: clampPlayerPos(state.player.position.x + state.player.dashDx, state.player.position.y + state.player.dashDy),

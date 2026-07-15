@@ -134,6 +134,22 @@ describe('spell session', () => {
     expect(Math.cos(s.combat.player.facing)).toBeLessThan(-0.9); // ended up facing where it fired (west)
   });
 
+  it('using any card cancels the standing move order and halts the unit (spec 028)', () => {
+    let s = withAdr(initSpellGame(3), 99); // afford any card
+    const startX = s.combat.player.position.x;
+    const target = { x: startX + 400, y: s.combat.player.position.y };
+    for (let i = 0; i < 5; i++) s = stepSpellGame(s, { ...NEUTRAL, moveTarget: target }).state;
+    expect(s.combat.player.moveTarget).not.toBeNull();
+    expect(s.combat.player.position.x).toBeGreaterThan(startX); // it was moving
+
+    const slot = s.deck.hand.findIndex((c) => c !== null) as 0 | 1 | 2 | 3;
+    const r = stepSpellGame(s, { ...NEUTRAL, playHandIndex: slot });
+    expect(r.state.combat.player.moveTarget).toBeNull(); // the order is cancelled
+    const held = r.state.combat.player.position;
+    const after = stepSpellGame(r.state, NEUTRAL).state;
+    expect(after.combat.player.position).toEqual(held); // and it stays put
+  });
+
   it('ignores a play on an empty slot', () => {
     let state = initSpellGame(3);
     // Empty slot 0 by playing it, then immediately try to play it again.

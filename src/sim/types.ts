@@ -276,6 +276,8 @@ export interface InputFrame {
    * press, never while a button is held.
    */
   readonly moveTarget?: Vec2;
+  /** Cancel the standing move order this tick (e.g. on using a card), halting the unit (spec 028). */
+  readonly cancelMove?: boolean;
   /** Advance to the next character preset this tick (movement speed + turn rate). */
   readonly cycleCharacter?: boolean;
   readonly attack: boolean;
