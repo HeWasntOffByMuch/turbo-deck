@@ -373,8 +373,11 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
     ...(input.cycleCharacter ? { cycleCharacter: true } : {}),
     ...(input.allocateStat ? { allocateStat: input.allocateStat } : {}),
     ...(externalEffect ? { externalEffect } : {}),
-    // A wave cannot be summoned while a reward or its picker is still open.
-    ...(input.spawnWave && pendingReward === null && pendingPick === null ? { spawnWave: true } : {}),
+    // A wave can only be summoned once the arena is clear (no stacking waves,
+    // spec 029) and while no reward or its picker is open.
+    ...(input.spawnWave && state.combat.enemies.length === 0 && pendingReward === null && pendingPick === null
+      ? { spawnWave: true }
+      : {}),
   };
 
   const hadEnemies = state.combat.enemies.length > 0;

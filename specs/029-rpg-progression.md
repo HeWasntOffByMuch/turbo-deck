@@ -30,8 +30,14 @@ reduction per tick, and a spell-damage multiplier at cast resolution.
 
 UI: all **controls move to a panel on the right of the canvas** — status line,
 a Stats panel (level, unspent points, STR/AGI/INT with `+` buttons that describe
-what each scales), Spawn Wave / Character / Mute buttons, wave-reward choices,
-and the hint. The **card hand stays in a row below the canvas**.
+what each scales), a Character panel (name + effective speed/turn rate), Spawn
+Wave / Character / Mute buttons, wave-reward choices, and the hint. The **card
+hand stays in a row below the canvas**. Swapping character (the `C` button/key)
+changes only the movement profile — it keeps level, stat points and STR/AGI/INT.
+
+Only **one wave at a time**: the Spawn Wave input is a no-op while enemies are
+alive (or a reward/pick is pending), and the button is disabled with a
+"wave in progress" note so waves can't be stacked.
 
 ## Invariants tested
 

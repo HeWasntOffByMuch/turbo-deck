@@ -1,7 +1,7 @@
 import { HAND_SIZE, SPELL_CARDS, type CardSet, type SpellCard, type SpellHand } from '../../cards/spells.js';
 import { spellCardCost, type RewardOffer, type SpellGameState } from '../../game/spell-session.js';
 import { characterAt } from '../../sim/characters.js';
-import { ADRENALINE_SPEED_PER_POINT, MAX_ADRENALINE, TICK_RATE, WAVE_BASE_COUNT } from '../../sim/constants.js';
+import { ADRENALINE_SPEED_PER_POINT, MAX_ADRENALINE, TICK_RATE, TURN_RATE_PER_AGILITY, WAVE_BASE_COUNT } from '../../sim/constants.js';
 import type { SpellInputCapture } from './input.js';
 
 /**
@@ -83,6 +83,22 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string): 
   return node;
 }
 
+/** A fixed-width row label (e.g. "Speed") for the character stats panel. */
+function makeLabel(text: string): HTMLElement {
+  const span = el('span', 'tag');
+  span.textContent = text;
+  span.style.width = '52px';
+  span.style.color = '#c9c9d8';
+  return span;
+}
+
+/** A dim descriptor cell for a stat row. */
+function makeEff(text: string): HTMLElement {
+  const span = el('span', 'eff');
+  span.textContent = text;
+  return span;
+}
+
 type Stat = 'strength' | 'agility' | 'intelligence';
 
 export class SpellHud {
@@ -94,7 +110,9 @@ export class SpellHud {
   private readonly adrBonus: HTMLElement;
   private readonly cards: HTMLElement[] = [];
   private readonly waveBtn: HTMLButtonElement;
-  private readonly charBtn: HTMLButtonElement;
+  private readonly charName: HTMLElement;
+  private readonly charSpeed: HTMLElement;
+  private readonly charTurn: HTMLElement;
   private readonly levelText: HTMLElement;
   private readonly statVals: Record<Stat, HTMLElement>;
   private readonly statPlus: Record<Stat, HTMLButtonElement>;
@@ -165,16 +183,30 @@ export class SpellHud {
     });
     sideRoot.appendChild(stats);
 
-    // --- Buttons: spawn wave, swap character, mute ---
+    // --- Character panel: the movement archetype's stats (spec 029) ---
+    const charPanel = el('div', 'sp-panel');
+    const charHead = el('h4');
+    charHead.append(document.createTextNode('Character · '), (this.charName = el('span', 'sp-lvl')));
+    charPanel.appendChild(charHead);
+    const speedRow = el('div', 'sp-stat');
+    speedRow.append(makeLabel('Speed'), (this.charSpeed = el('span', 'val')), makeEff('world units / sec'));
+    const turnRow = el('div', 'sp-stat');
+    turnRow.append(makeLabel('Turn'), (this.charTurn = el('span', 'val')), makeEff('deg / sec (base + AGI)'));
+    const swapBtn = el('button', 'sp-btn sp-alt');
+    swapBtn.style.marginTop = '6px';
+    swapBtn.textContent = 'SWAP CHARACTER (C)';
+    swapBtn.addEventListener('click', () => input.queueCycleCharacter());
+    charPanel.append(speedRow, turnRow, swapBtn);
+    sideRoot.appendChild(charPanel);
+
+    // --- Buttons: spawn wave, mute ---
     const controls = el('div', 'sp-controls');
     this.waveBtn = el('button', 'sp-btn sp-wave');
     this.waveBtn.addEventListener('click', () => input.queueWave());
-    this.charBtn = el('button', 'sp-btn sp-alt');
-    this.charBtn.addEventListener('click', () => input.queueCycleCharacter());
     const muteBtn = el('button', 'sp-btn sp-alt');
     muteBtn.textContent = 'Mute (M)';
     muteBtn.addEventListener('click', onToggleMute);
-    controls.append(this.waveBtn, this.charBtn, muteBtn);
+    controls.append(this.waveBtn, muteBtn);
     sideRoot.appendChild(controls);
 
     // --- Wave-reward panel + card picker (choices = controls, so on the side) ---
@@ -231,12 +263,20 @@ export class SpellHud {
     this.renderHand(state.deck.hand, state.refillAtTick, combat.tick, player.adrenaline);
     this.renderReward(state.pendingReward);
     this.renderPick(state.pendingPick);
-    this.waveBtn.disabled = state.pendingReward !== null || state.pendingPick !== null;
 
+    // A new wave can't be summoned mid-wave (no stacking) or while a reward is open.
+    const waveInProgress = combat.enemies.length > 0;
+    this.waveBtn.disabled = state.pendingReward !== null || state.pendingPick !== null || waveInProgress;
     const next = combat.waveNumber + 1;
-    this.waveBtn.innerHTML = `SPAWN WAVE ${next}<br><small>${WAVE_BASE_COUNT + next} enemies, tougher</small>`;
+    this.waveBtn.innerHTML = waveInProgress
+      ? 'WAVE IN PROGRESS<br><small>clear the arena first</small>'
+      : `SPAWN WAVE ${next}<br><small>${WAVE_BASE_COUNT + next} enemies, tougher</small>`;
+
+    // Character stats (spec 029): the base preset speed and the AGILITY-boosted turn rate.
     const ch = characterAt(player.characterIndex);
-    this.charBtn.innerHTML = `CHARACTER (C)<br><small>${ch.name}: ${ch.moveSpeed} spd / ${ch.turnRate}°/s</small>`;
+    this.charName.textContent = ch.name;
+    this.charSpeed.textContent = String(ch.moveSpeed);
+    this.charTurn.textContent = String(ch.turnRate + player.agility * TURN_RATE_PER_AGILITY);
   }
 
   private renderStats(level: number, points: number, str: number, agi: number, int: number): void {

@@ -494,4 +494,27 @@ describe('RPG progression (spec 029)', () => {
     expect(after.combat.player.intelligence).toBe(1);
     expect(after.combat.player.statPoints).toBe(0);
   });
+
+  it('cannot spawn a new wave while one is already in progress', () => {
+    const s1 = run(initSpellGame(1), [{ ...NEUTRAL, spawnWave: true }]).state;
+    expect(s1.combat.enemies.length).toBeGreaterThan(0);
+    expect(s1.combat.waveNumber).toBe(1);
+    const s2 = run(s1, [{ ...NEUTRAL, spawnWave: true }]).state; // enemies still alive
+    expect(s2.combat.waveNumber).toBe(1); // blocked -- no stacking waves
+  });
+
+  it('swapping character keeps the RPG stats, level and points', () => {
+    const base = initSpellGame(1);
+    const grown: SpellGameState = {
+      ...base,
+      combat: { ...base.combat, player: { ...base.combat.player, strength: 3, agility: 2, intelligence: 1, level: 4, statPoints: 2 } },
+    };
+    const after = run(grown, [{ ...NEUTRAL, cycleCharacter: true }]).state;
+    expect(after.combat.player.characterIndex).toBe(1); // did swap
+    expect(after.combat.player.strength).toBe(3);
+    expect(after.combat.player.agility).toBe(2);
+    expect(after.combat.player.intelligence).toBe(1);
+    expect(after.combat.player.level).toBe(4);
+    expect(after.combat.player.statPoints).toBe(2);
+  });
 });
