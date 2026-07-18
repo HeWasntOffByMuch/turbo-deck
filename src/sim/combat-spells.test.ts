@@ -161,6 +161,50 @@ describe('shield', () => {
   });
 });
 
+describe('dash invulnerability (i-frames, spec 030)', () => {
+  // A hunting enemy planted mid-wind-up, aimed at the player, slamming `ticks` from now.
+  const slammingEnemy = (p: EnemyState['position'], ticks: number, tick: number) => ({
+    id: 1,
+    position: { x: p.x + ENEMY_STANDOFF, y: p.y },
+    behavior: 'hunting' as const,
+    phase: 'windup' as const,
+    phaseEndsAtTick: tick + ticks,
+    attackAim: { x: -1, y: 0 },
+  });
+  // A stationary dash (distance 0) keeps the unit inside the slam cone, so any
+  // absence of damage is the i-frames -- not the unit simply stepping out of it.
+  const stationaryDash = (durationTicks: number): SpellSpec => ({ kind: 'dash', distance: 0, durationTicks, damage: 0 });
+
+  it('phases the unit through a slam that would otherwise land', () => {
+    const base = arena();
+    const enemy = slammingEnemy(base.player.position, 1, base.tick);
+    const dashed = run(withEnemy(base, enemy), [cast([stationaryDash(17)])]);
+    const control = run(withEnemy(base, enemy), [NEUTRAL_INPUT]);
+    expect(dashed.state.player.health).toBe(base.player.health); // unscathed while dashing
+    expect(dashed.events.some((e) => e.kind === 'enemyAttackAvoided')).toBe(true);
+    expect(dashed.events.some((e) => e.kind === 'playerHit')).toBe(false);
+    expect(control.state.player.health).toBeLessThan(base.player.health); // control: the slam lands
+  });
+
+  it('does not spend a shield to block a slam the dash already dodged', () => {
+    const base = arena();
+    const withShield: CombatState = { ...base, player: { ...base.player, shieldAmount: 100, shieldExpiresAtTick: base.tick + 100 } };
+    const enemy = slammingEnemy(base.player.position, 1, base.tick);
+    const dashed = run(withEnemy(withShield, enemy), [cast([stationaryDash(17)])]).state;
+    expect(dashed.player.health).toBe(base.player.health); // unhurt
+    expect(dashed.player.shieldAmount).toBe(100); // shield untouched -- the dash dodged, not the shield
+  });
+
+  it('is vulnerable again once the dash window ends', () => {
+    const base = arena();
+    // Slam resolves 5 ticks out; a 2-tick dash has long expired by then.
+    const enemy = slammingEnemy(base.player.position, 5, base.tick);
+    const after = run(withEnemy(base, enemy), [cast([stationaryDash(2)]), ...Array.from({ length: 6 }, () => NEUTRAL_INPUT)]);
+    expect(after.state.player.health).toBeLessThan(base.player.health); // no longer dashing => hurt
+    expect(after.events.some((e) => e.kind === 'playerHit')).toBe(true);
+  });
+});
+
 describe('Conjure Flame (empower)', () => {
   it('adds bonus damage to the next cone cast, once per charge', () => {
     const state = withEnemy(arena(), { id: 1, position: { x: CENTER.x + 40, y: CENTER.y } });
