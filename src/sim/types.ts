@@ -63,6 +63,23 @@ export interface PlayerState {
   readonly mana: number;
   readonly maxMana: number;
   readonly position: Vec2;
+  /** Heading in radians (0 = +x). Governs the turn-rate movement gate (spec 028). */
+  readonly facing: number;
+  /** Standing move-to destination in world units; null when idle / arrived. */
+  readonly moveTarget: Vec2 | null;
+  /** Index into CHARACTERS: the active movement archetype (speed + turn rate). */
+  readonly characterIndex: number;
+  // --- RPG progression (spec 029): level up per wave, spend points on stats. ---
+  /** Current level; starts at 1, +1 per wave cleared. */
+  readonly level: number;
+  /** Unspent stat points earned from levelling. */
+  readonly statPoints: number;
+  /** Strength scales max health. */
+  readonly strength: number;
+  /** Agility scales armor (damage reduction), attack speed, and turn rate. */
+  readonly agility: number;
+  /** Intelligence scales spell damage. */
+  readonly intelligence: number;
   readonly attackCooldownUntil: number;
   /** Movement input is ignored until this tick (attack commitment). */
   readonly moveLockUntil: number;
@@ -87,6 +104,8 @@ export interface PlayerState {
   /** Activate is refused until this tick (stance lockout). */
   readonly activateLockUntil: number;
   // --- Spell cards (spec 018); identity values leave combat untouched. ---
+  /** An attack (cone/rect) turning to face + winding up before it fires (spec 028); null when none. */
+  readonly pendingAttack: PendingAttack | null;
   /** Rocky Raise shield: damage it can still absorb, and the tick it expires. */
   readonly shieldAmount: number;
   readonly shieldExpiresAtTick: number;
@@ -238,24 +257,49 @@ export type ExternalEffect =
       readonly lockoutTicks: number;
     }
   // --- Spell cards (spec 018): a window's worth of resolved geometry, cast at once. ---
-  | {
-      readonly kind: 'castSpells';
-      readonly spells: readonly SpellSpec[];
-      /** Aim direction for cones/rects/dashes; need not be normalized. */
-      readonly aimX: number;
-      readonly aimY: number;
-      /** World point for target-origin AOEs (meteor, bury feet). */
-      readonly targetX: number;
-      readonly targetY: number;
-      /** Slow the player's walk for this many ticks (mis-timed window); 0/absent = none. */
-      readonly playerSlowTicks?: number;
-      /** Deduct this much banked adrenaline (the played cards' cost); the empower is already baked into the specs. */
-      readonly spendAdrenaline?: number;
-    };
+  | CastSpellsEffect;
+
+/**
+ * An attack cast (a cone/rect) in progress (spec 028): the unit turns to face
+ * the cast's aim, then winds up the attack animation, then fires. A move command
+ * cancels it. Non-attack casts (dash, AOEs, buffs) never enter this state.
+ */
+export interface PendingAttack {
+  readonly effect: CastSpellsEffect;
+  /** Tick the attack fires; 0 while the unit is still turning to face the aim. */
+  readonly fireAtTick: number;
+}
+
+/** A resolved synergy window's geometry, cast at once (spec 018). */
+export interface CastSpellsEffect {
+  readonly kind: 'castSpells';
+  readonly spells: readonly SpellSpec[];
+  /** Aim direction for cones/rects/dashes; need not be normalized. */
+  readonly aimX: number;
+  readonly aimY: number;
+  /** World point for target-origin AOEs (meteor, bury feet). */
+  readonly targetX: number;
+  readonly targetY: number;
+  /** Slow the player's walk for this many ticks (mis-timed window); 0/absent = none. */
+  readonly playerSlowTicks?: number;
+  /** Deduct this much banked adrenaline (the played cards' cost); the empower is already baked into the specs. */
+  readonly spendAdrenaline?: number;
+}
 
 export interface InputFrame {
-  readonly moveX: -1 | 0 | 1;
-  readonly moveY: -1 | 0 | 1;
+  /**
+   * A move order issued this tick, to a world point (spec 028). Present => set
+   * the player's standing destination; absent => keep obeying the current one.
+   * Orders are discrete clicks: the renderer emits this only on a right-click
+   * press, never while a button is held.
+   */
+  readonly moveTarget?: Vec2;
+  /** Cancel the standing move order this tick (e.g. on using a card), halting the unit (spec 028). */
+  readonly cancelMove?: boolean;
+  /** Spend one stat point on this stat this tick, if any are unspent (spec 029). */
+  readonly allocateStat?: 'strength' | 'agility' | 'intelligence';
+  /** Advance to the next character preset this tick (movement speed + turn rate). */
+  readonly cycleCharacter?: boolean;
   readonly attack: boolean;
   /** Aim direction for the attack cone; need not be normalized. */
   readonly aimX: number;
@@ -268,8 +312,6 @@ export interface InputFrame {
 }
 
 export const NEUTRAL_INPUT: InputFrame = {
-  moveX: 0,
-  moveY: 0,
   attack: false,
   aimX: 1,
   aimY: 0,
@@ -294,6 +336,8 @@ export type SimEvent =
   | { readonly kind: 'stanceRejectedLocked'; readonly tick: number }
   // --- Spell cards (spec 018) ---
   | { readonly kind: 'spellCast'; readonly tick: number; readonly spellCount: number }
+  | { readonly kind: 'attackCancelled'; readonly tick: number }
+  | { readonly kind: 'leveledUp'; readonly tick: number; readonly level: number; readonly statPoints: number }
   | { readonly kind: 'aoeImpact'; readonly tick: number; readonly at: Vec2; readonly radius: number }
   | { readonly kind: 'dashPerformed'; readonly tick: number }
   | { readonly kind: 'playerSlowed'; readonly tick: number; readonly durationTicks: number }

@@ -3,11 +3,17 @@ import {
   ADRENALINE_SPEED_PER_POINT,
   ARENA_HEIGHT,
   ARENA_WIDTH,
+  ARMOR_PER_AGILITY,
+  ATTACK_ANIM_TICKS,
   ATTACK_ARC_COS_SQ,
   ATTACK_ROOT_TICKS,
+  ATTACK_SPEED_PER_AGILITY,
   BURN_PULSE_INTERVAL_TICKS,
   DEFENSE_RECOVERY_TICKS,
-  DIAGONAL_SCALE,
+  HP_PER_STRENGTH,
+  SPELL_DAMAGE_PER_INTELLIGENCE,
+  STAT_POINTS_PER_LEVEL,
+  TURN_RATE_PER_AGILITY,
   ENEMY_ATTACK_ARC_COS_SQ,
   ENEMY_ATTACK_RANGE,
   ENEMY_ATTACK_TRIGGER_RANGE,
@@ -27,7 +33,10 @@ import {
   MAX_ADRENALINE,
   MAX_DAMAGE_REDUCTION,
   MAX_ENEMIES,
-  MOVE_SPEED_PER_TICK,
+  MOVE_ARRIVE_EPS,
+  MOVE_FACING_THRESHOLD_DEG,
+  MOVE_SPEED_HARD_MAX,
+  MOVE_SPEED_HARD_MIN,
   NORMAL_WINDOW_TICKS,
   PERFECT_WINDOW_TICKS,
   PLAYER_ATTACK_COOLDOWN_TICKS,
@@ -47,10 +56,12 @@ import {
   WAVE_MAX_ENEMIES,
   WAVE_SPEED_GROWTH,
 } from './constants.js';
+import { characterAt, CHARACTERS, DEFAULT_CHARACTER_INDEX } from './characters.js';
 import { ENEMY_TYPES, enemyTypeByKey, type EnemyType } from './enemies.js';
 import {
   IDENTITY_MODIFIERS,
   type AuraState,
+  type CastSpellsEffect,
   type CombatState,
   type DamageBuff,
   type DefenseOutcome,
@@ -60,6 +71,7 @@ import {
   type InputFrame,
   type Modifiers,
   type PendingAoe,
+  type PendingAttack,
   type PlayerState,
   type SimEvent,
   type Vec2,
@@ -87,13 +99,101 @@ const clampToArena = (x: number, y: number): Vec2 => ({
   y: clamp(y, ENEMY_RADIUS, ARENA_HEIGHT - ENEMY_RADIUS),
 });
 
-/** Move the player by an 8-directional input, normalizing diagonals, clamped to the arena. */
-function movePlayer(position: Vec2, moveX: number, moveY: number, speedScale = 1): Vec2 {
-  const diag = moveX !== 0 && moveY !== 0 ? DIAGONAL_SCALE : 1;
-  const speed = MOVE_SPEED_PER_TICK * diag * speedScale;
-  const x = clamp(position.x + moveX * speed, PLAYER_RADIUS, ARENA_WIDTH - PLAYER_RADIUS);
-  const y = clamp(position.y + moveY * speed, PLAYER_RADIUS, ARENA_HEIGHT - PLAYER_RADIUS);
-  return { x, y };
+const DEG2RAD = Math.PI / 180;
+const TWO_PI = Math.PI * 2;
+const MOVE_FACING_THRESHOLD = MOVE_FACING_THRESHOLD_DEG * DEG2RAD;
+
+/** Wrap an angle into (-PI, PI]. */
+function normalizeAngle(a: number): number {
+  let x = a % TWO_PI;
+  if (x <= -Math.PI) x += TWO_PI;
+  else if (x > Math.PI) x -= TWO_PI;
+  return x;
+}
+
+/** Rotate `facing` toward `desired` by at most `maxStep` radians, snapping when within reach. */
+function turnToward(facing: number, desired: number, maxStep: number): number {
+  const diff = normalizeAngle(desired - facing);
+  if (Math.abs(diff) <= maxStep) return normalizeAngle(desired);
+  return normalizeAngle(facing + Math.sign(diff) * maxStep);
+}
+
+// The unit counts as "facing the aim" for an attack within this many radians;
+// turnToward snaps exactly onto it once within one turn-step (spec 028).
+const ATTACK_FACING_EPS = 1e-3;
+
+/**
+ * Only an attack -- a cone or a rect -- turns to face its aim and plays the
+ * attack animation before firing (spec 028). A dash fires immediately toward the
+ * mouse; point AOEs and self-buffs are omni-directional.
+ */
+function castIsAttack(effect: CastSpellsEffect): boolean {
+  return effect.spells.some((s) => s.kind === 'cone' || s.kind === 'rect');
+}
+
+/** A single slow debuff: `multiplier` (<1 slows) damped by `resistance` (0..1). */
+export interface MoveSlow {
+  readonly multiplier: number;
+  readonly resistance?: number;
+}
+
+/**
+ * HoN movement-speed formula: ((base + flat) * pct) with each slow applied
+ * multiplicatively (a slow's bite reduced by its slow resistance), then clamped
+ * to [MIN, MAX] and rounded. With no bonuses/slows this is just `round(base)`
+ * clamped to the caps.
+ */
+export function computeMoveSpeed(
+  base: number,
+  flatBonus = 0,
+  pctBonus = 1,
+  slows: readonly MoveSlow[] = [],
+): number {
+  let speed = (base + flatBonus) * pctBonus;
+  for (const slow of slows) {
+    const resistance = slow.resistance ?? 1;
+    // multiplier<1 is a slow; resistance dampens how much of it applies.
+    const effective = 1 - (1 - slow.multiplier) * resistance;
+    speed *= effective;
+  }
+  return Math.round(clamp(speed, MOVE_SPEED_HARD_MIN, MOVE_SPEED_HARD_MAX));
+}
+
+/**
+ * Advance the player one tick under a MOBA move order (spec 028): rotate
+ * `facing` toward the destination by at most `maxTurn` radians, and translate
+ * only once within the 135-degree gate. Movement is a straight line toward the
+ * target (no arc); the residual rotation finishes cosmetically while travelling.
+ * `speedPerTick` is the already-scaled per-tick step (character speed x walk
+ * multiplier). Clears the order on arrival. With no order the unit keeps its
+ * heading (it does NOT rotate to follow the cursor) -- otherwise a standing unit
+ * would always already face the click point and never spend any turn time.
+ */
+function stepPlayerMovement(
+  position: Vec2,
+  facing: number,
+  moveTarget: Vec2 | null,
+  speedPerTick: number,
+  maxTurn: number,
+): { position: Vec2; facing: number; moveTarget: Vec2 | null } {
+  if (moveTarget === null) return { position, facing, moveTarget: null };
+
+  const dx = moveTarget.x - position.x;
+  const dy = moveTarget.y - position.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist <= MOVE_ARRIVE_EPS) return { position, facing, moveTarget: null };
+
+  const desired = Math.atan2(dy, dx);
+  const nextFacing = turnToward(facing, desired, maxTurn);
+  // Gate closed: still facing too far off, so rotate in place and don't move yet.
+  if (Math.abs(normalizeAngle(desired - nextFacing)) > MOVE_FACING_THRESHOLD) {
+    return { position, facing: nextFacing, moveTarget };
+  }
+  // Gate open: travel straight toward the target (no arcing along the lagging facing).
+  const step = Math.min(speedPerTick, dist);
+  const nextPos = clampPlayerPos(position.x + (dx / dist) * step, position.y + (dy / dist) * step);
+  const arrived = Math.hypot(moveTarget.x - nextPos.x, moveTarget.y - nextPos.y) <= MOVE_ARRIVE_EPS;
+  return { position: nextPos, facing: nextFacing, moveTarget: arrived ? null : moveTarget };
 }
 
 /** Step `position` toward `target` at `speed`, stopping `stopDist` short, clamped to the arena. */
@@ -281,6 +381,8 @@ export interface CombatOptions {
   readonly initialEnemies?: number;
   /** When false, the ambient refill spawner is off (wave mode). Default true. */
   readonly ambientSpawner?: boolean;
+  /** Starting movement character (index into CHARACTERS); defaults to the first. */
+  readonly characterIndex?: number;
 }
 
 export function initCombat(seed: number, opts: CombatOptions = {}): CombatState {
@@ -298,6 +400,15 @@ export function initCombat(seed: number, opts: CombatOptions = {}): CombatState 
     mana: PLAYER_MAX_MANA,
     maxMana: PLAYER_MAX_MANA,
     position: { x: ARENA_WIDTH * 0.5, y: ARENA_HEIGHT * 0.5 },
+    facing: 0,
+    moveTarget: null,
+    characterIndex: opts.characterIndex ?? DEFAULT_CHARACTER_INDEX,
+    level: 1,
+    statPoints: 0,
+    strength: 0,
+    agility: 0,
+    intelligence: 0,
+    pendingAttack: null,
     attackCooldownUntil: 0,
     moveLockUntil: 0,
     attackReleaseTick: 0,
@@ -383,18 +494,107 @@ export function step(
   const dashing = tick < state.player.dashExpiresAtTick;
   const rooted = !dashing && (swingPending || startAttack || tick < state.player.moveLockUntil);
 
+  // --- RPG stat allocation (spec 029): spend one banked point on a stat. ---
+  let strength = state.player.strength;
+  let agility = state.player.agility;
+  let intelligence = state.player.intelligence;
+  let statPoints = state.player.statPoints;
+  let maxHealth = state.player.maxHealth;
+  let allocHealthGain = 0;
+  if (input.allocateStat && statPoints > 0) {
+    statPoints -= 1;
+    if (input.allocateStat === 'strength') {
+      strength += 1;
+      maxHealth += HP_PER_STRENGTH;
+      allocHealthGain = HP_PER_STRENGTH; // a Strength point also heals for the new HP
+    } else if (input.allocateStat === 'agility') {
+      agility += 1;
+    } else {
+      intelligence += 1;
+    }
+  }
+  // Intelligence scales all spell damage; Agility scales turn rate + attack speed + armor.
+  const spellDamageMult = 1 + intelligence * SPELL_DAMAGE_PER_INTELLIGENCE;
+  const armorReduction = agility * ARMOR_PER_AGILITY;
+
   // Walk speed: a mis-timed window (spec 021) drags it down, Burning Speed (spec 022)
   // lifts it, and each banked adrenaline point adds +4% (spec 025).
   const slowActive = tick < state.player.moveSlowUntilTick;
   const hasteActive = tick < state.player.moveHasteUntilTick;
   const adrenalineSpeed = 1 + ADRENALINE_SPEED_PER_POINT * state.player.adrenaline;
   const moveScale = (slowActive ? PLAYER_SLOW_MULTIPLIER : 1) * (hasteActive ? state.player.moveHasteMult : 1) * adrenalineSpeed;
-  const nextPos = dashing
-    ? clampPlayerPos(state.player.position.x + state.player.dashDx, state.player.position.y + state.player.dashDy)
-    : rooted
-      ? state.player.position
-      : movePlayer(state.player.position, input.moveX, input.moveY, moveScale);
-  let player: PlayerState = { ...state.player, position: nextPos };
+  // Character swap: cycling advances to the next preset's speed + turn rate,
+  // which take effect this same tick.
+  const characterIndex = input.cycleCharacter ? state.player.characterIndex + 1 : state.player.characterIndex;
+  const character = characterAt(characterIndex);
+  const speedPerTick = (computeMoveSpeed(character.moveSpeed) / TICK_RATE) * moveScale;
+  // Agility adds to the character's turn rate (spec 029).
+  const maxTurnPerTick = ((character.turnRate + agility * TURN_RATE_PER_AGILITY) * DEG2RAD) / TICK_RATE;
+
+  // An attack (cone/rect) turns to face its aim, winds up the attack animation,
+  // then fires (spec 028). A fresh move command cancels it. Non-attack casts
+  // (dash, AOEs, buffs) resolve immediately and never enter this state.
+  const incomingAttack = input.externalEffect?.kind === 'castSpells' && castIsAttack(input.externalEffect) ? input.externalEffect : null;
+  const moveCommanded = input.moveTarget != null;
+  let pendingAttack: PendingAttack | null = state.player.pendingAttack;
+  if (incomingAttack !== null && pendingAttack === null) pendingAttack = { effect: incomingAttack, fireAtTick: 0 };
+  let attackCancelled = false;
+  if (pendingAttack !== null && moveCommanded) {
+    pendingAttack = null;
+    attackCancelled = true; // moving aborts the attack; the unit then obeys the move
+  }
+  const attackAimAngle = pendingAttack !== null ? Math.atan2(pendingAttack.effect.aimY, pendingAttack.effect.aimX) : 0;
+
+  // A move order issued this tick (re)sets the standing destination; otherwise
+  // the previous order stands (cancelMove clears it -- using a card halts the
+  // unit, MOBA-style). It persists across dash/rooted ticks so movement resumes
+  // once the override ends. Off-map orders are honoured as-is: the per-tick
+  // position clamp walks the unit to the nearest edge and holds it.
+  const orderedTarget = input.moveTarget ?? (input.cancelMove ? null : state.player.moveTarget);
+  const moved = dashing
+    ? {
+        position: clampPlayerPos(state.player.position.x + state.player.dashDx, state.player.position.y + state.player.dashDy),
+        facing: state.player.facing,
+        moveTarget: orderedTarget,
+      }
+    : pendingAttack !== null
+      ? // Aiming an attack: stationary, turning to face the mouse aim.
+        { position: state.player.position, facing: turnToward(state.player.facing, attackAimAngle, maxTurnPerTick), moveTarget: orderedTarget }
+      : rooted
+        ? { position: state.player.position, facing: state.player.facing, moveTarget: orderedTarget }
+        : stepPlayerMovement(state.player.position, state.player.facing, orderedTarget, speedPerTick, maxTurnPerTick);
+  let player: PlayerState = {
+    ...state.player,
+    position: moved.position,
+    facing: moved.facing,
+    moveTarget: moved.moveTarget,
+    // Store the normalized index so it stays in range as it cycles.
+    characterIndex: ((characterIndex % CHARACTERS.length) + CHARACTERS.length) % CHARACTERS.length,
+    // Applied RPG stat allocation (spec 029); a Strength point also heals.
+    strength,
+    agility,
+    intelligence,
+    statPoints,
+    maxHealth,
+    health: Math.min(maxHealth, state.player.health + allocHealthGain),
+  };
+
+  // Agility shortens the attack animation (faster attack speed, spec 029).
+  const attackAnimTicks = Math.max(1, Math.round(ATTACK_ANIM_TICKS / (1 + agility * ATTACK_SPEED_PER_AGILITY)));
+  // Advance the pending attack: once turned to face the aim, wind up the attack
+  // animation; when it completes, fire the cast (resolved below).
+  let castToResolve: CastSpellsEffect | null = null;
+  if (pendingAttack !== null) {
+    if (pendingAttack.fireAtTick === 0 && Math.abs(normalizeAngle(attackAimAngle - player.facing)) <= ATTACK_FACING_EPS) {
+      pendingAttack = { ...pendingAttack, fireAtTick: tick + attackAnimTicks }; // turned: start the animation
+    }
+    if (pendingAttack.fireAtTick !== 0 && tick >= pendingAttack.fireAtTick) {
+      castToResolve = pendingAttack.effect;
+      pendingAttack = null;
+    }
+  }
+  if (attackCancelled) events.push({ kind: 'attackCancelled', tick });
+  player = { ...player, pendingAttack };
 
   // --- Enemy movement: grazers wander, hunters home while idle ---
   let enemies: EnemyState[] = state.enemies.map((enemy) => {
@@ -472,8 +672,11 @@ export function step(
   let enemySlowMultiplier = state.enemySlowMultiplier;
 
   // --- External effect (a played card / activated stance) ---
-  if (input.externalEffect) {
-    const effect = input.externalEffect;
+  // Fire the attack whose animation just finished, if any; otherwise resolve the
+  // incoming effect -- unless it is an attack now turning/winding up (buffered above).
+  const effectToResolve = castToResolve ?? (incomingAttack !== null ? undefined : input.externalEffect);
+  if (effectToResolve) {
+    const effect = effectToResolve;
     switch (effect.kind) {
       case 'damageEnemy': {
         if (player.mana < effect.manaCost) {
@@ -549,10 +752,13 @@ export function step(
         break;
       }
       case 'castSpells': {
-        // A synergy window's worth of resolved geometry, executed at once.
+        // A synergy window's worth of resolved geometry, executed at once. Everything
+        // fires toward the mouse aim (spec 028): an attack (cone/rect) has already
+        // turned to face it by now; a dash fires that way and re-points the unit.
         const aimLen = Math.sqrt(effect.aimX * effect.aimX + effect.aimY * effect.aimY);
         const ux = aimLen < 1e-6 ? 1 : effect.aimX / aimLen;
         const uy = aimLen < 1e-6 ? 0 : effect.aimY / aimLen;
+        let castFacing = player.facing; // a dash re-points the unit toward the mouse
         const castPos = player.position;
         let auras = player.auras;
         let pendingAoes = player.pendingAoes;
@@ -573,6 +779,8 @@ export function step(
         let pendingBurnBurst = player.pendingBurnBurst;
         // A basic-attack (interrupt) cone that connects banks adrenaline (spec 023).
         let basicHit = false;
+        // Intelligence scales all spell damage (spec 029).
+        const spellDmg = (base: number): number => Math.round(base * spellDamageMult);
         const applyInstant = (hit: (e: EnemyState) => boolean, dmg: number): void => {
           enemies = enemies.map((enemy) => {
             if (!hit(enemy)) return enemy;
@@ -587,7 +795,7 @@ export function step(
               // Conjure Flame arms cone casts with bonus fire damage; each cone spends one charge.
               const bonus = flameCharges > 0 ? flameBonus : 0;
               if (flameCharges > 0) flameCharges -= 1;
-              const dmg = spell.damage + bonus;
+              const dmg = spellDmg(spell.damage + bonus);
               const inCone = (e: EnemyState): boolean => coneHits(castPos, e.position, ux, uy, spell.range, spell.arcCosSq, ENEMY_RADIUS);
               if (!spell.interrupt) {
                 applyInstant(inCone, dmg);
@@ -615,7 +823,7 @@ export function step(
               break;
             }
             case 'rect':
-              applyInstant((e) => rectHits(castPos, e.position, ux, uy, spell.length, spell.halfWidth, ENEMY_RADIUS), spell.damage);
+              applyInstant((e) => rectHits(castPos, e.position, ux, uy, spell.length, spell.halfWidth, ENEMY_RADIUS), spellDmg(spell.damage));
               break;
             case 'pointAoe': {
               const origin = pointAoeOrigin(spell.origin, castPos, effect.targetX, effect.targetY, enemies);
@@ -625,7 +833,7 @@ export function step(
                   x: origin.x,
                   y: origin.y,
                   radius: spell.radius,
-                  damage: spell.damage,
+                  damage: spellDmg(spell.damage),
                   stunTicks: spell.stunTicks,
                   impactTick: tick + spell.delayTicks + i * spell.spreadTicks,
                 });
@@ -655,7 +863,7 @@ export function step(
                 ...auras,
                 {
                   radius: spell.radius,
-                  pulseDamage: spell.pulseDamage,
+                  pulseDamage: spellDmg(spell.pulseDamage),
                   pulseIntervalTicks: spell.pulseIntervalTicks,
                   nextPulseTick: tick + spell.pulseIntervalTicks,
                   expiresAtTick: tick + spell.durationTicks,
@@ -666,8 +874,9 @@ export function step(
               const dur = Math.max(1, spell.durationTicks);
               dashDx = ux * (spell.distance / dur);
               dashDy = uy * (spell.distance / dur);
+              castFacing = Math.atan2(uy, ux); // re-point the unit the way it dashed
               dashExpiresAtTick = tick + dur;
-              dashDamage = spell.damage;
+              dashDamage = spellDmg(spell.damage);
               dashHitIds = [];
               dashTrail =
                 spell.trailRadius !== undefined && spell.trailPulseDamage !== undefined && spell.trailDurationTicks !== undefined
@@ -698,6 +907,7 @@ export function step(
         if (effect.spendAdrenaline) adrenaline = Math.max(0, adrenaline - effect.spendAdrenaline);
         player = {
           ...player,
+          facing: castFacing,
           adrenaline,
           auras,
           pendingAoes,
@@ -875,10 +1085,11 @@ export function step(
       const baseDamage = inZone ? fullDamage : 0;
       const outcome = enemy.incomingAttackOutcome;
       const afterDefense = outcome === 'perfect' ? 0 : outcome === 'normal' ? Math.round(baseDamage / 2) : baseDamage;
-      // Stack the held stance and any brief guard, capped, against the incoming hit.
+      // Stack Agility armor, the held stance, and any brief guard -- capped -- against the hit.
       const reduction = Math.min(
         MAX_DAMAGE_REDUCTION,
-        (tick < player.stanceExpiresAtTick ? player.stanceReductionPct : 0) +
+        armorReduction +
+          (tick < player.stanceExpiresAtTick ? player.stanceReductionPct : 0) +
           (tick < player.guardExpiresAtTick ? player.guardReductionPct : 0),
       );
       let damage = Math.round(afterDefense * (1 - reduction));
@@ -908,10 +1119,12 @@ export function step(
   });
   player = { ...player, health: playerHealth, shieldAmount };
 
-  // --- Wave cleared: heal the player to full when the last enemy of a wave dies ---
-  if (!over && state.waveNumber >= 1 && state.enemies.length > 0 && enemies.length === 0 && player.health < player.maxHealth) {
-    events.push({ kind: 'playerHealed', amount: player.maxHealth - player.health, tick });
-    player = { ...player, health: player.maxHealth };
+  // --- Wave cleared: level up (spec 029) and heal to full when a wave's last enemy dies ---
+  if (!over && state.waveNumber >= 1 && state.enemies.length > 0 && enemies.length === 0) {
+    if (player.health < player.maxHealth) events.push({ kind: 'playerHealed', amount: player.maxHealth - player.health, tick });
+    const level = player.level + 1; // one wave is one level (spec 029)
+    player = { ...player, health: player.maxHealth, level, statPoints: player.statPoints + STAT_POINTS_PER_LEVEL };
+    events.push({ kind: 'leveledUp', tick, level, statPoints: player.statPoints });
   }
 
   // --- Ambient spawner: refill toward the cap (off in wave mode) ---

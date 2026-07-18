@@ -36,7 +36,7 @@ async function main(): Promise<void> {
   const controls = document.createElement('div');
   controls.style.cssText = 'color:#9a9ab0;font:12px monospace;margin-top:8px;';
   controls.textContent =
-    'move: WASD / arrows  |  aim: mouse  |  attack: click or space  |  parry: K  |  dodge: L  |  card: 1/2/3  |  bonus: B  |  mute: M';
+    'move: right-click  |  aim: mouse  |  attack: left-click or space  |  parry: K  |  dodge: L  |  card: 1/2/3  |  bonus: B  |  character: C  |  mute: M';
   container.appendChild(controls);
 
   const seed = Date.now();
@@ -58,7 +58,7 @@ async function main(): Promise<void> {
 
   const loop = new GameLoop(
     initialState,
-    (state) => input.sample(scene.worldToScreen(state.combat.player.position)),
+    (state) => input.sample(scene.worldToScreen(state.combat.player.position), scene.screenToWorld(input.mouseScreen())),
     (state, events) => {
       const playerScreen = scene.worldToScreen(state.combat.player.position);
       const mouse = input.mouseScreen();

@@ -3,6 +3,8 @@ import fc from 'fast-check';
 import { CARD_CATALOG } from '../cards/catalog.js';
 import { HAND_SIZE } from '../cards/types.js';
 import {
+  ARENA_HEIGHT,
+  ARENA_WIDTH,
   ENEMY_IDLE_TICKS,
   ENEMY_STANDOFF,
   ENEMY_WINDUP_TICKS,
@@ -152,8 +154,7 @@ describe('fuzz smoke test', () => {
     () => {
       const inputArb: fc.Arbitrary<GameInput> = fc.record(
         {
-          moveX: fc.constantFrom(-1 as const, 0 as const, 1 as const),
-          moveY: fc.constantFrom(-1 as const, 0 as const, 1 as const),
+          moveTarget: fc.record({ x: fc.integer({ min: 0, max: ARENA_WIDTH }), y: fc.integer({ min: 0, max: ARENA_HEIGHT }) }),
           attack: fc.boolean(),
           aimX: fc.constantFrom(-1, 0, 1),
           aimY: fc.constantFrom(-1, 0, 1),
@@ -162,7 +163,7 @@ describe('fuzz smoke test', () => {
           playHandIndex: fc.constantFrom(0 as const, 1 as const, 2 as const),
           playBonusCard: fc.boolean(),
         },
-        { requiredKeys: ['moveX', 'moveY', 'attack', 'aimX', 'aimY', 'parry', 'dodge', 'playBonusCard'] },
+        { requiredKeys: ['attack', 'aimX', 'aimY', 'parry', 'dodge', 'playBonusCard'] },
       );
 
       fc.assert(

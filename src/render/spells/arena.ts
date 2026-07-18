@@ -1,6 +1,7 @@
 import {
   ARENA_HEIGHT,
   ARENA_WIDTH,
+  ATTACK_ANIM_TICKS,
   ENEMY_ATTACK_ARC_COS_SQ,
   ENEMY_ATTACK_RANGE,
   ENEMY_IDLE_TICKS,
@@ -77,7 +78,7 @@ export class SpellArenaView {
     return { x: v.x * SCALE, y: v.y * SCALE };
   }
 
-  render(state: SpellGameState, events: readonly SpellGameEvent[], aim: ScreenPoint): void {
+  render(state: SpellGameState, events: readonly SpellGameEvent[]): void {
     this.frame++;
     const combat = state.combat;
     this.ingestEvents(combat.player, events);
@@ -89,7 +90,7 @@ export class SpellArenaView {
     for (const enemy of combat.enemies) this.drawEnemy(enemy, combat.tick, combat.player.position);
     this.drawAuras(combat.player, combat.tick);
     this.updateAndDrawCasts();
-    this.drawPlayer(combat.player, combat.tick, aim);
+    this.drawPlayer(combat.player, combat.tick);
     this.updateAndDrawFlashes();
     this.updateAndDrawPopups();
   }
@@ -104,7 +105,8 @@ export class SpellArenaView {
         this.flashes.push({ x: at.x, y: at.y, radius: e.radius * SCALE, life: FLASH_LIFE, max: FLASH_LIFE });
       } else if (e.kind === 'spellsResolved') {
         const origin = this.worldToScreen(player.position);
-        const ang = Math.atan2(e.aimY, e.aimX);
+        // Attacks (cones/rects) fire along the unit's heading, not the cursor (spec 028).
+        const ang = player.facing;
         for (const spec of e.specs) {
           if (spec.kind === 'cone') {
             this.casts.push({ kind: 'cone', x: origin.x, y: origin.y, ang, range: spec.range * SCALE, half: Math.acos(Math.sqrt(spec.arcCosSq)), life: CAST_LIFE, max: CAST_LIFE });
@@ -295,15 +297,37 @@ export class SpellArenaView {
     this.healthBar(p.x - r, headTop - 9, r * 2, enemy.health / enemy.maxHealth, enemy.behavior === 'hunting' ? '#ff5a5a' : '#8fbf6a');
   }
 
-  private drawPlayer(player: PlayerState, tick: number, aim: ScreenPoint): void {
+  private drawPlayer(player: PlayerState, tick: number): void {
     const { ctx } = this;
     const p = this.worldToScreen(player.position);
     const r = PLAYER_RADIUS * SCALE;
-    const ang = Math.atan2(aim.y, aim.x);
+    const facing = player.facing; // the unit's heading, not the cursor
     const size = r * 2.7; // centred on the hitbox, roughly its height
     const half = size / 2;
     const headTop = p.y - half;
     const feet = p.y + half;
+
+    // Attack animation (spec 028): an attack turns to face the mouse then winds up.
+    // Draw a charging cone in the aim direction that fills as the animation nears its
+    // release, so the cast (and the window to cancel it by moving) reads on screen.
+    if (player.pendingAttack) {
+      const pa = player.pendingAttack;
+      const aimAng = Math.atan2(pa.effect.aimY, pa.effect.aimX);
+      const cone = pa.effect.spells.find((s) => s.kind === 'cone');
+      const range = ((cone && cone.kind === 'cone' ? cone.range : 90) as number) * SCALE;
+      const arcHalf = cone && cone.kind === 'cone' ? Math.acos(Math.sqrt(cone.arcCosSq)) : Math.PI / 5;
+      // 0 while still turning (fireAtTick 0), then ramps 0..1 across the animation.
+      const charge = pa.fireAtTick === 0 ? 0 : 1 - Math.max(0, pa.fireAtTick - tick) / ATTACK_ANIM_TICKS;
+      ctx.fillStyle = `rgba(255,210,120,${0.08 + 0.22 * charge})`;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.arc(p.x, p.y, range * (0.4 + 0.6 * charge), aimAng - arcHalf, aimAng + arcHalf);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = `rgba(255,225,150,${0.4 + 0.5 * charge})`;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
 
     // Dash streak.
     if (tick < player.dashExpiresAtTick) {
@@ -381,17 +405,29 @@ export class SpellArenaView {
       ctx.globalAlpha = 1;
     }
 
-    // Baked pixel-dude hero skin; centred on the hitbox, faces the aim direction.
+    // Baked pixel-dude hero skin; centred on the hitbox, flipped by the unit's
+    // heading (not the cursor) so which way it faces reads honestly.
     this.groundShadow(p.x, feet - r * 0.1, r * 1.0);
-    this.dudes.draw(ctx, PLAYER_SKIN, 'idle', p.x, p.y, size, aim.x < 0);
+    this.dudes.draw(ctx, PLAYER_SKIN, 'idle', p.x, p.y, size, Math.cos(facing) < 0);
 
-    // A short aim tick so the cursor direction still reads for cones/dashes.
-    ctx.strokeStyle = 'rgba(159,183,212,0.9)';
+    // Heading arrow: represents the unit's actual facing (which the turn rate
+    // rotates), so you can see it pivot before it can move or attack.
+    const fx = Math.cos(facing);
+    const fy = Math.sin(facing);
+    const tipX = p.x + fx * r * 2.1;
+    const tipY = p.y + fy * r * 2.1;
+    ctx.strokeStyle = 'rgba(191,224,255,0.95)';
     ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(p.x + Math.cos(ang) * r * 1.1, p.y + Math.sin(ang) * r * 1.1);
-    ctx.lineTo(p.x + Math.cos(ang) * r * 2.1, p.y + Math.sin(ang) * r * 2.1);
+    ctx.moveTo(p.x + fx * r * 0.9, p.y + fy * r * 0.9);
+    ctx.lineTo(tipX, tipY);
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(tipX - Math.cos(facing - 0.5) * r * 0.7, tipY - Math.sin(facing - 0.5) * r * 0.7);
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(tipX - Math.cos(facing + 0.5) * r * 0.7, tipY - Math.sin(facing + 0.5) * r * 0.7);
     ctx.stroke();
+    ctx.lineCap = 'butt';
 
     this.healthBar(p.x - r - 4, headTop - 9, r * 2 + 8, player.health / player.maxHealth, '#5ad65a');
 

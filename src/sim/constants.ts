@@ -8,10 +8,38 @@ export const ARENA_HEIGHT = 900;
 export const PLAYER_RADIUS = 16;
 export const ENEMY_RADIUS = 22;
 
-export const MOVE_SPEED_PER_TICK = 2.0;
 export const ENEMY_MOVE_SPEED_PER_TICK = 1.0;
-// Diagonal movement is scaled by 1/sqrt(2) so it isn't faster than cardinal.
-export const DIAGONAL_SCALE = Math.SQRT1_2;
+
+// --- MOBA-style player movement (spec 028) ---
+// A unit's movement speed and turn rate come from its selected character (see
+// characters.ts). Speed is hard-capped to [100, 550] u/s, mirroring HoN's caps.
+export const MOVE_SPEED_HARD_MIN = 100;
+export const MOVE_SPEED_HARD_MAX = 550;
+// A unit must be facing within this many degrees of its intended move direction
+// before it begins to translate; otherwise it rotates in place. So a full 180
+// reversal only needs a 45-degree turn (135 from the opposite heading) to start
+// moving, then it travels in a straight line (no arc).
+export const MOVE_FACING_THRESHOLD_DEG = 135;
+// A move order is considered fulfilled once the unit is within this distance of
+// the destination, at which point the standing order is cleared.
+export const MOVE_ARRIVE_EPS = 2;
+// Attack animation (spec 028): once the unit has turned to face the attack aim,
+// it winds up for this long before the attack actually fires. Moving during this
+// window (or the turn before it) cancels the attack. ~0.2s at 60Hz.
+export const ATTACK_ANIM_TICKS = 12;
+
+// --- RPG progression (spec 029): three stats, gained by levelling ---
+// Clearing a wave grants a level and this many stat points to spend.
+export const STAT_POINTS_PER_LEVEL = 1;
+// Strength: each point adds this much maximum health.
+export const HP_PER_STRENGTH = 10;
+// Agility: each point adds this much damage reduction (armor), this much turn
+// rate (deg/s), and this fractional attack-speed bonus (shorter attack animation).
+export const ARMOR_PER_AGILITY = 0.03;
+export const TURN_RATE_PER_AGILITY = 30;
+export const ATTACK_SPEED_PER_AGILITY = 0.05;
+// Intelligence: each point adds this fraction to all spell damage.
+export const SPELL_DAMAGE_PER_INTELLIGENCE = 0.06;
 
 export const PLAYER_MAX_HEALTH = 100;
 // Reach of the player's melee strike, measured from the player's centre to the

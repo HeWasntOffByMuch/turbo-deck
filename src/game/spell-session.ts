@@ -2,12 +2,13 @@ import {
   addCard,
   deckCardIds,
   deckSize,
-  discardFromHand,
   drawIntoSlot,
   FIRE_CARD_IDS,
   HAND_SIZE,
   initSpellDeck,
   removeOneCard,
+  reserveFromHand,
+  restoreToHand,
   SPELL_CARDS,
   upgradeOneCard,
   type SpellCard,
@@ -20,7 +21,7 @@ import type { SpellSpec } from '../shared/spell-spec.js';
 import { Rng } from '../shared/prng.js';
 import { initCombat, step as combatStep } from '../sim/combat.js';
 import { TICK_RATE } from '../sim/constants.js';
-import { type CombatState, type ExternalEffect, type InputFrame, type SimEvent } from '../sim/types.js';
+import { type CombatState, type ExternalEffect, type InputFrame, type SimEvent, type Vec2 } from '../sim/types.js';
 
 /**
  * Composition root for the spell-card game (spec 018/019): the only place a
@@ -142,10 +143,22 @@ export interface SpellGameState {
   readonly deck: SpellDeck;
   /** Per hand slot: the tick its delayed refill draws, or null if not pending. */
   readonly refillAtTick: readonly (number | null)[];
-  /** Cards played into the open synergy window (id + level), in play order. */
-  readonly windowCards: readonly SpellCardPlay[];
-  /** Tick the open window resolves, or null when no window is open. */
+  /**
+   * Cards committed to the in-progress cast, held (not discarded) until it fires
+   * or is cancelled (spec 028): played into the open synergy window, then kept
+   * in flight while an attack turns/winds up. Consumed on fire, handed back on
+   * cancel. Empty when no cast is in progress.
+   */
+  readonly reserved: readonly { readonly card: SpellCard; readonly slot: number }[];
+  /** Tick the open window resolves, or null when no window is open (or already sent). */
   readonly windowClosesAtTick: number | null;
+  /**
+   * A resolved window whose geometry is waiting on the sim to actually fire it
+   * (spec 028): a directional cast is buffered while the unit turns to face its
+   * aim, so `spellsResolved` (the swing visual + sound) is emitted on the fire
+   * tick, in sync with the damage, not when the window closed. Null when none.
+   */
+  readonly pendingResolved: { readonly ids: readonly SpellId[]; readonly specs: readonly SpellSpec[]; readonly aimX: number; readonly aimY: number } | null;
   /** Three deck-edit offers shown after a wave clear, or null when none pending. */
   readonly pendingReward: readonly RewardOffer[] | null;
   /** An open card picker after choosing Remove/Upgrade, or null. */
@@ -155,8 +168,12 @@ export interface SpellGameState {
 }
 
 export interface SpellInput {
-  readonly moveX: -1 | 0 | 1;
-  readonly moveY: -1 | 0 | 1;
+  /** MOBA move order to a world point this tick; absent keeps the standing order (spec 028). */
+  readonly moveTarget?: Vec2;
+  /** Swap to the next movement character preset this tick (spec 028). */
+  readonly cycleCharacter?: boolean;
+  /** Spend one stat point this tick (spec 029). */
+  readonly allocateStat?: 'strength' | 'agility' | 'intelligence';
   /** Aim direction (player -> cursor) for cones, rects and dashes. */
   readonly aimX: number;
   readonly aimY: number;
@@ -194,8 +211,9 @@ export function initSpellGame(seed: number, ids?: readonly SpellId[]): SpellGame
     combat: initCombat(seed, { ambientSpawner: false, initialEnemies: 0 }),
     deck: initSpellDeck(Rng.fromSeed(seed), ids),
     refillAtTick: Array.from({ length: HAND_SIZE }, () => null),
-    windowCards: [],
+    reserved: [],
     windowClosesAtTick: null,
+    pendingResolved: null,
     pendingReward: null,
     pendingPick: null,
     rng: Rng.fromSeed((seed ^ 0x5f356495) >>> 0),
@@ -224,12 +242,18 @@ function upgradeCandidates(deck: SpellDeck): SpellId[] {
 export function stepSpellGame(state: SpellGameState, input: SpellInput): { state: SpellGameState; events: SpellGameEvent[] } {
   const events: SpellGameEvent[] = [];
   let deck = state.deck;
-  let windowCards = state.windowCards;
+  let reserved = state.reserved;
   let windowClosesAtTick = state.windowClosesAtTick;
   let pendingReward = state.pendingReward;
   let pendingPick = state.pendingPick;
-  // Slots emptied this tick; their delayed refill is scheduled after combat steps.
+  // Using a card halts the unit (spec 028): cancel the standing move order.
+  let cancelMove = false;
+  // Slots emptied (a card actually consumed) this tick; their delayed refill is
+  // scheduled after combat steps.
   const emptied: number[] = [];
+  // A cast is "in flight" once its window has been sent to the sim (an attack
+  // turning/winding up): reserved cards held, but the window timer is cleared.
+  const inFlight = reserved.length > 0 && windowClosesAtTick === null;
 
   // --- Reward step 1: choose an action. addFire applies now; Remove/Upgrade open a picker. ---
   if (pendingReward !== null && input.chooseReward !== undefined) {
@@ -268,22 +292,25 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
   }
 
   // --- Play a card into the synergy window ---
-  if (input.playHandIndex !== undefined) {
+  // Ignored while a cast is already in flight (an attack turning/winding up) --
+  // you can't queue over an in-progress cast; move to cancel it first.
+  if (input.playHandIndex !== undefined && !inFlight) {
     const idx = input.playHandIndex;
     const card: SpellCard | null = deck.hand[idx];
     if (card) {
       // Costed cards (spec 024) are gated on the bank, counting what the open
       // window has already committed so a burst can't overspend.
       const cost = spellCardCost(card.id);
-      const committed = windowCards.reduce((sum, p) => sum + spellCardCost(p.id), 0);
+      const committed = reserved.reduce((sum, r) => sum + spellCardCost(r.card.id), 0);
       if (cost > 0 && state.combat.player.adrenaline < committed + cost) {
         events.push({ kind: 'playRejectedNoAdrenaline', index: idx, id: card.id });
       } else {
-        deck = discardFromHand(deck, idx).deck;
-        emptied.push(idx);
-        windowCards = [...windowCards, { id: card.id, level: card.level }];
+        // Reserve, don't discard: the card is only consumed if the cast fires.
+        deck = reserveFromHand(deck, idx).deck;
+        reserved = [...reserved, { card, slot: idx }];
         // The first card of a window arms the timer; later plays just join the buffer.
         if (windowClosesAtTick === null) windowClosesAtTick = state.combat.tick + SYNERGY_WINDOW_TICKS;
+        cancelMove = true; // using a card halts the unit
         events.push({ kind: 'cardPlayed', index: idx, id: card.id });
       }
     } else {
@@ -291,21 +318,32 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
     }
   }
 
+  // --- Move-cancel during the open window: hand the reserved cards back ---
+  // (An in-flight attack is cancelled inside the sim; handled after combatStep.)
+  if (input.moveTarget != null && reserved.length > 0 && windowClosesAtTick !== null) {
+    for (const r of reserved) deck = restoreToHand(deck, r.slot, r.card);
+    reserved = [];
+    windowClosesAtTick = null;
+  }
+
   // --- Resolve the window if it is due (the tick advances in combatStep) ---
   const tick = state.combat.tick + 1;
   let externalEffect: ExternalEffect | undefined;
-  let resolved: { ids: SpellId[]; specs: SpellSpec[] } | null = null;
+  // A resolved window whose swing visual/sound is waiting on the sim to fire it
+  // (a directional cast turns to face its aim first, spec 028).
+  let pendingResolved = state.pendingResolved;
   if (windowClosesAtTick !== null && tick >= windowClosesAtTick) {
-    const baseSpecs = resolveSynergies(windowCards);
+    const plays: SpellCardPlay[] = reserved.map((r) => ({ id: r.card.id, level: r.card.level }));
+    const baseSpecs = resolveSynergies(plays);
     const counts = new Map<SpellId, number>();
-    for (const p of windowCards) counts.set(p.id, (counts.get(p.id) ?? 0) + 1);
+    for (const p of plays) counts.set(p.id, (counts.get(p.id) ?? 0) + 1);
     // Punish a fumbled combo: more than one card played, but at least one of them
     // stood alone (its id had no partner to fuse with) in the window.
-    const misplay = windowCards.length > 1 && [...counts.values()].some((c) => c === 1);
+    const misplay = plays.length > 1 && [...counts.values()].some((c) => c === 1);
     // Adrenaline no longer empowers the cast (spec 025) -- it buys walk speed. The
     // cast still spends the played cards' cost so banking/spending is intact.
     const specs = baseSpecs;
-    const spendAdrenaline = windowCards.reduce((sum, p) => sum + spellCardCost(p.id), 0);
+    const spendAdrenaline = plays.reduce((sum, p) => sum + spellCardCost(p.id), 0);
     externalEffect = {
       kind: 'castSpells',
       spells: specs,
@@ -316,29 +354,55 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
       ...(misplay ? { playerSlowTicks: MISPLAY_SLOW_TICKS } : {}),
       ...(spendAdrenaline > 0 ? { spendAdrenaline } : {}),
     };
-    resolved = { ids: windowCards.map((p) => p.id), specs };
-    windowCards = [];
+    // Stash the geometry + committed aim; it is announced on the fire tick below.
+    pendingResolved = { ids: plays.map((p) => p.id), specs, aimX: input.aimX, aimY: input.aimY };
+    // The window is sent to the sim; the reserved cards stay held (in flight) until
+    // the sim fires (consume) or a move cancels the attack (hand back).
     windowClosesAtTick = null;
   }
 
   const combatInput: InputFrame = {
-    moveX: input.moveX,
-    moveY: input.moveY,
     // Attacks are cards; the sim's built-in melee is never triggered here.
     attack: false,
     aimX: input.aimX,
     aimY: input.aimY,
     parry: false,
     dodge: false,
+    ...(input.moveTarget ? { moveTarget: input.moveTarget } : {}),
+    ...(cancelMove ? { cancelMove: true } : {}),
+    ...(input.cycleCharacter ? { cycleCharacter: true } : {}),
+    ...(input.allocateStat ? { allocateStat: input.allocateStat } : {}),
     ...(externalEffect ? { externalEffect } : {}),
-    // A wave cannot be summoned while a reward or its picker is still open.
-    ...(input.spawnWave && pendingReward === null && pendingPick === null ? { spawnWave: true } : {}),
+    // A wave can only be summoned once the arena is clear (no stacking waves,
+    // spec 029) and while no reward or its picker is open.
+    ...(input.spawnWave && state.combat.enemies.length === 0 && pendingReward === null && pendingPick === null
+      ? { spawnWave: true }
+      : {}),
   };
 
   const hadEnemies = state.combat.enemies.length > 0;
   const combatResult = combatStep(state.combat, combatInput);
   events.push(...combatResult.events);
-  if (resolved !== null) events.push({ kind: 'spellsResolved', ids: resolved.ids, specs: resolved.specs, aimX: input.aimX, aimY: input.aimY });
+  // The cast fired: consume the reserved cards (discard + schedule refill) and
+  // announce the swing (visual + sound) in sync with the damage (spec 028).
+  if (combatResult.events.some((e) => e.kind === 'spellCast')) {
+    for (const r of reserved) {
+      deck = { ...deck, discardPile: [...deck.discardPile, r.card] };
+      emptied.push(r.slot);
+    }
+    reserved = [];
+    if (pendingResolved !== null) {
+      events.push({ kind: 'spellsResolved', ids: pendingResolved.ids, specs: pendingResolved.specs, aimX: pendingResolved.aimX, aimY: pendingResolved.aimY });
+      pendingResolved = null;
+    }
+  }
+  // The attack was cancelled mid-cast (a move command): hand the reserved cards
+  // back to their slots, unconsumed.
+  if (combatResult.events.some((e) => e.kind === 'attackCancelled')) {
+    for (const r of reserved) deck = restoreToHand(deck, r.slot, r.card);
+    reserved = [];
+    pendingResolved = null;
+  }
 
   // --- Wave cleared: offer three deck edits (once) ---
   let rng = state.rng;
@@ -349,13 +413,16 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
     events.push({ kind: 'rewardOffered', offers: rolled.offers });
   }
 
+  // Slots holding a reserved card must never refill (the card is only away in
+  // flight; it returns on cancel or is discarded-then-refilled on fire).
+  const reservedSlots = new Set(reserved.map((r) => r.slot));
   // Schedule delayed refills for slots emptied this tick, then draw any now due.
   const refillAtTick = [...state.refillAtTick];
   for (const slot of emptied) refillAtTick[slot] = tick + CARD_DRAW_DELAY_TICKS;
   // Self-heal: any empty slot without a pending refill (e.g. a card removed from
   // hand by a wave reward) gets one scheduled, so no slot can stall on "drawing".
   for (let slot = 0; slot < HAND_SIZE; slot++) {
-    if (deck.hand[slot] === null && (refillAtTick[slot] === null || refillAtTick[slot] === undefined)) {
+    if (!reservedSlots.has(slot) && deck.hand[slot] === null && (refillAtTick[slot] === null || refillAtTick[slot] === undefined)) {
       refillAtTick[slot] = tick + CARD_DRAW_DELAY_TICKS;
     }
   }
@@ -382,7 +449,7 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
   }
 
   return {
-    state: { combat: combatResult.state, deck, refillAtTick, windowCards, windowClosesAtTick, pendingReward, pendingPick, rng },
+    state: { combat: combatResult.state, deck, refillAtTick, reserved, windowClosesAtTick, pendingResolved, pendingReward, pendingPick, rng },
     events,
   };
 }
