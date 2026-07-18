@@ -1,4 +1,5 @@
 import type { Rng } from '../shared/prng.js';
+import type { SpellSpec } from '../shared/spell-spec.js';
 
 export interface Vec2 {
   readonly x: number;
@@ -10,12 +11,75 @@ export interface DamageBuff {
   readonly expiresAtTick: number;
 }
 
+/** A burning aura the player carries (spec 018): pulses damage to nearby enemies. */
+export interface AuraState {
+  readonly radius: number;
+  readonly pulseDamage: number;
+  readonly pulseIntervalTicks: number;
+  readonly nextPulseTick: number;
+  readonly expiresAtTick: number;
+}
+
+/** A telegraphed point blast (meteor, bury feet, blaze explosions) that lands later. */
+export interface PendingAoe {
+  readonly x: number;
+  readonly y: number;
+  readonly radius: number;
+  readonly damage: number;
+  readonly stunTicks: number;
+  readonly impactTick: number;
+}
+
+/** A stationary burning patch (Basking Path trail, spec 019) that pulses until it expires. */
+export interface GroundFire {
+  readonly x: number;
+  readonly y: number;
+  readonly radius: number;
+  readonly pulseDamage: number;
+  readonly pulseIntervalTicks: number;
+  readonly nextPulseTick: number;
+  readonly expiresAtTick: number;
+}
+
+/** Fire trail a dash leaves behind while travelling (Basking Path); null for a plain dash. */
+export interface DashTrail {
+  readonly radius: number;
+  readonly pulseDamage: number;
+  readonly pulseIntervalTicks: number;
+  readonly durationTicks: number;
+}
+
+/** Burning Speed's end-of-effect payload (spec 022): burns foes near the player when it expires. */
+export interface BurnBurst {
+  readonly atTick: number;
+  readonly radius: number;
+  readonly dps: number;
+  readonly durationTicks: number;
+}
+
 export interface PlayerState {
   readonly health: number;
   readonly maxHealth: number;
   readonly mana: number;
   readonly maxMana: number;
   readonly position: Vec2;
+  /** Heading in radians (0 = +x). Governs the turn-rate movement gate (spec 028). */
+  readonly facing: number;
+  /** Standing move-to destination in world units; null when idle / arrived. */
+  readonly moveTarget: Vec2 | null;
+  /** Index into CHARACTERS: the active movement archetype (speed + turn rate). */
+  readonly characterIndex: number;
+  // --- RPG progression (spec 029): level up per wave, spend points on stats. ---
+  /** Current level; starts at 1, +1 per wave cleared. */
+  readonly level: number;
+  /** Unspent stat points earned from levelling. */
+  readonly statPoints: number;
+  /** Strength scales max health. */
+  readonly strength: number;
+  /** Agility scales armor (damage reduction), attack speed, and turn rate. */
+  readonly agility: number;
+  /** Intelligence scales spell damage. */
+  readonly intelligence: number;
   readonly attackCooldownUntil: number;
   /** Movement input is ignored until this tick (attack commitment). */
   readonly moveLockUntil: number;
@@ -39,6 +103,45 @@ export interface PlayerState {
   readonly guardReductionPct: number;
   /** Activate is refused until this tick (stance lockout). */
   readonly activateLockUntil: number;
+  // --- Spell cards (spec 018); identity values leave combat untouched. ---
+  /** An attack (cone/rect) turning to face + winding up before it fires (spec 028); null when none. */
+  readonly pendingAttack: PendingAttack | null;
+  /** Rocky Raise shield: damage it can still absorb, and the tick it expires. */
+  readonly shieldAmount: number;
+  readonly shieldExpiresAtTick: number;
+  /** Blaze Aura DOT fields the player carries. */
+  readonly auras: readonly AuraState[];
+  /** Telegraphed blasts awaiting their impact tick. */
+  readonly pendingAoes: readonly PendingAoe[];
+  /** Dash velocity per tick and the tick the dash ends; movement input is ignored while dashing. */
+  readonly dashDx: number;
+  readonly dashDy: number;
+  readonly dashExpiresAtTick: number;
+  /** Damage a damaging dash deals to each body it passes through (0 = harmless dash). */
+  readonly dashDamage: number;
+  /** Enemy ids already struck by the current dash, so each is hit at most once. */
+  readonly dashHitIds: readonly number[];
+  /** Fire trail dropped while dashing (Basking Path); null for a plain dash. */
+  readonly dashTrail: DashTrail | null;
+  /** Stationary burning patches currently on the ground. */
+  readonly groundFires: readonly GroundFire[];
+  /** Conjure Flame: remaining cone casts that get bonus fire damage, and the bonus. */
+  readonly attackFlameCharges: number;
+  readonly attackFlameBonus: number;
+  /** Mis-timed window punishment (spec 021): walking is slowed until this tick. */
+  readonly moveSlowUntilTick: number;
+  // --- Burning Speed (spec 022); identity values leave movement/health untouched. ---
+  /** Haste from Burning Speed: walk-speed multiplier and the tick it expires. */
+  readonly moveHasteUntilTick: number;
+  readonly moveHasteMult: number;
+  /** Self-Burning drain (hp/second) the player suffers, and the tick it ends. */
+  readonly burningUntilTick: number;
+  readonly burningDps: number;
+  /** Burn foes near the player when Burning Speed ends; null when none pending. */
+  readonly pendingBurnBurst: BurnBurst | null;
+  // --- Adrenaline (spec 023); 0 leaves everything untouched. ---
+  /** Banked by basic attacks that connect (0..MAX_ADRENALINE); synergies spend it. */
+  readonly adrenaline: number;
 }
 
 /**
@@ -105,6 +208,11 @@ export interface EnemyState {
   readonly grazeTarget: Vec2 | null;
   /** Tick at which a standing grazer picks its next target. */
   readonly grazeResumeTick: number;
+  /** Bury-Feet stun: while `tick < stunnedUntilTick` the enemy neither moves nor attacks. Absent = 0. */
+  readonly stunnedUntilTick?: number;
+  /** Burning condition (spec 022): loses `burningDps` hp/second until this tick. Absent = not burning. */
+  readonly burningUntilTick?: number;
+  readonly burningDps?: number;
 }
 
 export interface CombatState {
@@ -147,11 +255,51 @@ export type ExternalEffect =
       readonly slowMultiplier: number;
       readonly durationTicks: number;
       readonly lockoutTicks: number;
-    };
+    }
+  // --- Spell cards (spec 018): a window's worth of resolved geometry, cast at once. ---
+  | CastSpellsEffect;
+
+/**
+ * An attack cast (a cone/rect) in progress (spec 028): the unit turns to face
+ * the cast's aim, then winds up the attack animation, then fires. A move command
+ * cancels it. Non-attack casts (dash, AOEs, buffs) never enter this state.
+ */
+export interface PendingAttack {
+  readonly effect: CastSpellsEffect;
+  /** Tick the attack fires; 0 while the unit is still turning to face the aim. */
+  readonly fireAtTick: number;
+}
+
+/** A resolved synergy window's geometry, cast at once (spec 018). */
+export interface CastSpellsEffect {
+  readonly kind: 'castSpells';
+  readonly spells: readonly SpellSpec[];
+  /** Aim direction for cones/rects/dashes; need not be normalized. */
+  readonly aimX: number;
+  readonly aimY: number;
+  /** World point for target-origin AOEs (meteor, bury feet). */
+  readonly targetX: number;
+  readonly targetY: number;
+  /** Slow the player's walk for this many ticks (mis-timed window); 0/absent = none. */
+  readonly playerSlowTicks?: number;
+  /** Deduct this much banked adrenaline (the played cards' cost); the empower is already baked into the specs. */
+  readonly spendAdrenaline?: number;
+}
 
 export interface InputFrame {
-  readonly moveX: -1 | 0 | 1;
-  readonly moveY: -1 | 0 | 1;
+  /**
+   * A move order issued this tick, to a world point (spec 028). Present => set
+   * the player's standing destination; absent => keep obeying the current one.
+   * Orders are discrete clicks: the renderer emits this only on a right-click
+   * press, never while a button is held.
+   */
+  readonly moveTarget?: Vec2;
+  /** Cancel the standing move order this tick (e.g. on using a card), halting the unit (spec 028). */
+  readonly cancelMove?: boolean;
+  /** Spend one stat point on this stat this tick, if any are unspent (spec 029). */
+  readonly allocateStat?: 'strength' | 'agility' | 'intelligence';
+  /** Advance to the next character preset this tick (movement speed + turn rate). */
+  readonly cycleCharacter?: boolean;
   readonly attack: boolean;
   /** Aim direction for the attack cone; need not be normalized. */
   readonly aimX: number;
@@ -164,8 +312,6 @@ export interface InputFrame {
 }
 
 export const NEUTRAL_INPUT: InputFrame = {
-  moveX: 0,
-  moveY: 0,
   attack: false,
   aimX: 1,
   aimY: 0,
@@ -188,4 +334,13 @@ export type SimEvent =
   | { readonly kind: 'playerDefeated'; readonly tick: number }
   | { readonly kind: 'stanceApplied'; readonly tick: number }
   | { readonly kind: 'stanceRejectedLocked'; readonly tick: number }
+  // --- Spell cards (spec 018) ---
+  | { readonly kind: 'spellCast'; readonly tick: number; readonly spellCount: number }
+  | { readonly kind: 'attackCancelled'; readonly tick: number }
+  | { readonly kind: 'leveledUp'; readonly tick: number; readonly level: number; readonly statPoints: number }
+  | { readonly kind: 'aoeImpact'; readonly tick: number; readonly at: Vec2; readonly radius: number }
+  | { readonly kind: 'dashPerformed'; readonly tick: number }
+  | { readonly kind: 'playerSlowed'; readonly tick: number; readonly durationTicks: number }
+  // --- Adrenaline (spec 023): net change this tick; delta > 0 gained, < 0 spent. ---
+  | { readonly kind: 'adrenalineChanged'; readonly tick: number; readonly value: number; readonly delta: number }
   | { readonly kind: 'waveSpawned'; readonly tick: number; readonly waveNumber: number; readonly count: number };

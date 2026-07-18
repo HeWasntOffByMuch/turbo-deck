@@ -3,17 +3,22 @@
 // it renders the pure descriptions from music.ts and sfx.ts. Because the
 // interesting choices live in those testable modules, this stays thin.
 
-import { buildCalmSong, buildSong, midiToFreq, type MusicPhase, type Song, type Waveform } from './music.js';
-import { SFX, sfxForComboEvent, sfxForEvent, type SfxSegment } from './sfx.js';
+import { buildCalmSong, buildDeathSong, buildSong, FLOURISH_ONSET_SECONDS, midiToFreq, type MusicNote, type MusicPhase, type Song, type Waveform } from './music.js';
+import { SFX, sfxForEvent, spellEventSfx, type SfxSegment } from './sfx.js';
 import type { GameEvent } from '../game/session.js';
-import type { ComboEvent } from '../game/combo-session.js';
+import type { SpellGameEvent } from '../game/spell-session.js';
 
 const MASTER_GAIN = 0.55;
 const MUSIC_GAIN = 0.7;
 const SFX_GAIN = 0.9;
-// How far ahead of the audio clock we queue music notes each update. Larger
-// than a render frame (~16ms) so we never starve even after a hitch.
-const SCHEDULE_AHEAD_S = 0.2;
+// How far ahead of the audio clock we queue music notes each top-up. Kept well
+// over a second because background tabs throttle timers (and stop rAF entirely):
+// as long as we re-queue before this buffer drains, playback in a hidden tab
+// stays smooth instead of grinding to a halt.
+const SCHEDULE_AHEAD_S = 2.0;
+// How often the self-driving scheduler tops the queue up. Foreground it fires at
+// this rate; a background tab throttles it toward ~1s, still inside the buffer.
+const SCHEDULE_INTERVAL_MS = 400;
 // Seconds to fade one theme out and the other in when the wave state flips.
 const CROSSFADE_S = 0.7;
 
@@ -62,11 +67,22 @@ export class GameAudio {
   private musicBus: GainNode | undefined;
   private sfxBus: GainNode | undefined;
   private noiseBuffer: AudioBuffer | undefined;
-  // Both themes are always scheduled; `phase` selects which one is audible.
-  private readonly loops: readonly MusicLoop[] = [makeLoop(buildSong(), 'combat'), makeLoop(buildCalmSong(), 'calm')];
+  // Every theme is always scheduled; `phase` selects which one is audible.
+  private readonly loops: readonly MusicLoop[] = [
+    makeLoop(buildSong(), 'combat'),
+    makeLoop(buildCalmSong(), 'calm'),
+    makeLoop(buildDeathSong(), 'death'),
+  ];
   private phase: MusicPhase = 'calm';
   private muted = false;
   private started = false;
+  // Music scheduling runs on its own timer, not the render loop, so a
+  // backgrounded tab (where rAF stops) keeps the queue fed.
+  private schedulerTimer: ReturnType<typeof setInterval> | undefined;
+  // Audio-clock time the combat phase last became active, or undefined outside
+  // combat. The combat theme's `flourish` voice stays silent until
+  // FLOURISH_ONSET_SECONDS past this, so each fresh wave builds up again (027).
+  private combatStart: number | undefined;
 
   /**
    * Create/resume the AudioContext. Must be called from a user gesture, since
@@ -109,6 +125,13 @@ export class GameAudio {
     // (and also try synchronously, for a context that is already running).
     void this.ctx.resume().then(() => this.startLoop());
     this.startLoop();
+
+    // Top the music queue up on a timer independent of the render loop. rAF is
+    // paused in a hidden tab, but this keeps scheduling notes onto the audio
+    // clock so playback there doesn't slow to a crawl.
+    if (this.schedulerTimer === undefined && typeof setInterval === 'function') {
+      this.schedulerTimer = setInterval(() => this.update(), SCHEDULE_INTERVAL_MS);
+    }
   }
 
   /** Kick off the look-ahead music loop once the context is actually running. */
@@ -139,6 +162,8 @@ export class GameAudio {
     const ctx = this.ctx;
     if (!ctx) return;
     const now = ctx.currentTime;
+    // Restart the flourish build-up on entering combat; forget it otherwise.
+    this.combatStart = phase === 'combat' ? now : undefined;
     for (const loop of this.loops) {
       const bus = loop.bus;
       if (!bus) continue;
@@ -158,12 +183,11 @@ export class GameAudio {
     }
   }
 
-  /** As `handleEvents`, but for the combo-prototype's event stream (spec 014). */
-  handleComboEvents(events: readonly ComboEvent[]): void {
+  /** As `handleEvents`, but for the spell game's event stream (spec 018/019). */
+  handleSpellEvents(events: readonly SpellGameEvent[]): void {
     if (!this.ctx || this.muted) return;
     for (const event of events) {
-      const id = sfxForComboEvent(event);
-      if (id) this.playSfx(id);
+      for (const id of spellEventSfx(event)) this.playSfx(id);
     }
   }
 
@@ -189,7 +213,12 @@ export class GameAudio {
       if (!note) break;
       const when = loop.loopStart + note.beat * loop.secondsPerBeat;
       if (when > until) break;
-      this.scheduleTone(midiToFreq(note.midi), midiToFreq(note.midi), note.wave, note.duration * loop.secondsPerBeat, note.gain, when, bus);
+      // The flourish voice is held back for the first stretch of each wave;
+      // advance past its notes without sounding them until it has earned its
+      // entrance, then let it ride the same combat bus (spec 027).
+      if (!this.flourishSuppressed(note, when)) {
+        this.scheduleTone(midiToFreq(note.midi), midiToFreq(note.midi), note.wave, note.duration * loop.secondsPerBeat, note.gain, when, bus);
+      }
       loop.cursor++;
     }
     // If we scheduled the whole loop, wrap for the next iteration immediately so
@@ -198,6 +227,15 @@ export class GameAudio {
       loop.loopStart += loop.loopSeconds;
       loop.cursor = 0;
     }
+  }
+
+  /**
+   * True while a `flourish` note should stay silent: before combat has begun, or
+   * within FLOURISH_ONSET_SECONDS of that start. Every other voice always plays.
+   */
+  private flourishSuppressed(note: MusicNote, when: number): boolean {
+    if (note.voice !== 'flourish') return false;
+    return this.combatStart === undefined || when < this.combatStart + FLOURISH_ONSET_SECONDS;
   }
 
   private playSfx(id: string): void {

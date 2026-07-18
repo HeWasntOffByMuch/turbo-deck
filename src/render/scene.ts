@@ -19,7 +19,7 @@ import {
   PLAYER_RADIUS,
   TICK_RATE,
 } from '../sim/constants.js';
-import type { EnemyState, Vec2 } from '../sim/types.js';
+import type { EnemyState, PlayerState, Vec2 } from '../sim/types.js';
 import { CARD_H, CARD_W, HandView } from './hand.js';
 import { buildDudeTextures, dudeTexturesFor, SPRITE_NATIVE_HEIGHT, type DudeTextures, type DudeIdentity } from './sprites.js';
 import {
@@ -268,6 +268,11 @@ export class Scene {
     return { x: VIEW_CENTER_X + (v.x - this.cam.x) * ARENA_SCALE, y: VIEW_CENTER_Y + (v.y - this.cam.y) * ARENA_SCALE };
   }
 
+  /** Inverse of worldToScreen: project a viewport pixel back into world coordinates. */
+  screenToWorld(p: ScreenPoint): Vec2 {
+    return { x: this.cam.x + (p.x - VIEW_CENTER_X) / ARENA_SCALE, y: this.cam.y + (p.y - VIEW_CENTER_Y) / ARENA_SCALE };
+  }
+
   private texFor(type: string): DudeTextures {
     let tex = this.enemyTexCache.get(type);
     if (!tex) {
@@ -313,7 +318,7 @@ export class Scene {
     this.drawTelegraph(state);
     this.drawEnemies(state);
     this.drawSwing(state);
-    this.drawPlayer(state, aim);
+    this.drawPlayer(state);
     this.drawEffectsAndAuras(state);
     this.drawCooldowns(state);
     this.drawBannerAndPrompt(state);
@@ -444,14 +449,16 @@ export class Scene {
     }
   }
 
-  private drawPlayer(state: GameState, aim: ScreenPoint): void {
+  private drawPlayer(state: GameState): void {
     const pl = state.combat.player;
     const tick = state.combat.tick;
     const p = this.worldToScreen(pl.position);
 
     const attacking = pl.attackReleaseTick !== 0 || tick < pl.moveLockUntil;
     this.playerSprite.texture = attacking ? this.playerTex.windup : this.playerTex.idle;
-    const faceRight = aim.x >= 0;
+    // Flip by the unit's actual heading so the turn rate reads as the sprite
+    // swinging around, rather than snapping to the cursor.
+    const faceRight = Math.cos(pl.facing) >= 0;
     const pop = 1 + 0.22 * (this.playerFlash / FLASH_FRAMES);
     this.playerSprite.position.set(p.x, p.y);
     this.playerSprite.scale.set((faceRight ? 1 : -1) * SPRITE_SCALE * pop, SPRITE_SCALE * pop);
@@ -459,9 +466,28 @@ export class Scene {
 
     const barTop = p.y - SPRITE_TOP_OFFSET - 20;
     this.playerGfx.clear();
+    this.drawMoveTarget(pl);
+    this.drawFacingArrow(pl, p);
     this.drawBar(this.playerGfx, p.x - 30, barTop, 60, 7, pl.health / pl.maxHealth, '#5ad65a');
     this.drawBar(this.playerGfx, p.x - 30, barTop + 10, 60, 5, pl.mana / pl.maxMana, '#4ea1ff');
     this.playerLabel.position.set(p.x, barTop - 4);
+  }
+
+  /** A pulsing ring at the standing move order, MOBA-style, so the destination reads. */
+  private drawMoveTarget(pl: PlayerState): void {
+    if (!pl.moveTarget) return;
+    const t = this.worldToScreen(pl.moveTarget);
+    const pulse = 4 + 2 * Math.sin(this.frame * 0.25);
+    this.playerGfx.circle(t.x, t.y, 6 + pulse).stroke({ color: '#7affc0', width: 2, alpha: 0.7 });
+    this.playerGfx.moveTo(t.x - 5, t.y).lineTo(t.x + 5, t.y).moveTo(t.x, t.y - 5).lineTo(t.x, t.y + 5).stroke({ color: '#7affc0', width: 2, alpha: 0.9 });
+  }
+
+  /** A short heading arrow at the player's feet so the turn rate is visible. */
+  private drawFacingArrow(pl: PlayerState, p: ScreenPoint): void {
+    const len = (PLAYER_RADIUS + 14) * ARENA_SCALE;
+    const tx = p.x + Math.cos(pl.facing) * len;
+    const ty = p.y + Math.sin(pl.facing) * len;
+    this.playerGfx.moveTo(p.x, p.y).lineTo(tx, ty).stroke({ color: '#bfe0ff', width: 2, alpha: 0.5 });
   }
 
   private drawCooldowns(state: GameState): void {

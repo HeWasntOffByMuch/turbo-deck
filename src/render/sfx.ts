@@ -5,9 +5,8 @@
 // game event to the effect that voices it, so "attacks" are audible.
 
 import type { GameEvent } from '../game/session.js';
-import type { ComboEvent } from '../game/combo-session.js';
-import type { Suit } from '../cards/standard.js';
-import type { PokerCategory } from '../cards/poker.js';
+import type { SpellGameEvent } from '../game/spell-session.js';
+import type { SpellId } from '../cards/spells.js';
 import type { Waveform } from './music.js';
 
 export interface SfxSegment {
@@ -132,65 +131,107 @@ export const SFX: Record<string, SfxSpec> = {
       { wave: 'square', startFreq: 1319, endFreq: 1319, duration: 0.1, gain: 0.18, delay: 0.05 },
     ],
   },
-  // --- Poker-combo activation fanfares (spec 015), one per hand category, ---
-  // --- escalating in notes and brightness with the hand's strength. ---
-  // High card: a modest single chime — barely a payoff.
-  comboHighCard: {
-    segments: [{ wave: 'sine', startFreq: 523, endFreq: 523, duration: 0.12, gain: 0.16 }],
+
+  // --- Spell-card voices (spec 018/019) ---
+  // Tiny select tick when a card is played into the window.
+  select: {
+    segments: [{ wave: 'square', startFreq: 1200, endFreq: 980, duration: 0.03, gain: 0.1 }],
   },
-  // Pair: a two-note lift.
-  comboPair: {
+  // Attack cone: a snappy physical slash with a noise edge.
+  slash: {
     segments: [
-      { wave: 'triangle', startFreq: 523, endFreq: 523, duration: 0.08, gain: 0.18 },
-      { wave: 'triangle', startFreq: 659, endFreq: 659, duration: 0.12, gain: 0.18, delay: 0.07 },
+      { wave: 'triangle', startFreq: 640, endFreq: 240, duration: 0.09, gain: 0.2 },
+      { wave: 'noise', startFreq: 0, endFreq: 0, duration: 0.05, gain: 0.13 },
     ],
   },
-  // Two pair: two quick paired blips.
-  comboTwoPair: {
+  // Dash: an airy rising whoosh.
+  dashWhoosh: {
     segments: [
-      { wave: 'square', startFreq: 587, endFreq: 587, duration: 0.07, gain: 0.17 },
-      { wave: 'square', startFreq: 587, endFreq: 587, duration: 0.07, gain: 0.15, delay: 0.08 },
-      { wave: 'square', startFreq: 784, endFreq: 784, duration: 0.11, gain: 0.18, delay: 0.16 },
+      { wave: 'sine', startFreq: 300, endFreq: 760, duration: 0.14, gain: 0.14 },
+      { wave: 'noise', startFreq: 0, endFreq: 0, duration: 0.12, gain: 0.1 },
     ],
   },
-  // Straight: a clean ascending run.
-  comboStraight: {
+  // Fire Blast cone: a hot rising zap that bursts downward.
+  fireCone: {
     segments: [
-      { wave: 'square', startFreq: 523, endFreq: 523, duration: 0.06, gain: 0.18 },
-      { wave: 'square', startFreq: 659, endFreq: 659, duration: 0.06, gain: 0.18, delay: 0.06 },
-      { wave: 'square', startFreq: 784, endFreq: 784, duration: 0.12, gain: 0.19, delay: 0.12 },
+      { wave: 'sawtooth', startFreq: 200, endFreq: 780, duration: 0.09, gain: 0.24 },
+      { wave: 'square', startFreq: 780, endFreq: 170, duration: 0.15, gain: 0.2, delay: 0.07 },
     ],
   },
-  // Flush: a shimmering rising sweep with a bright tail.
-  comboFlush: {
+  // Blaze Aura / Basking Path ignition: a crackling swell.
+  ignite: {
     segments: [
-      { wave: 'sawtooth', startFreq: 392, endFreq: 784, duration: 0.14, gain: 0.2 },
-      { wave: 'sine', startFreq: 988, endFreq: 988, duration: 0.16, gain: 0.15, delay: 0.12 },
+      { wave: 'sawtooth', startFreq: 120, endFreq: 380, duration: 0.2, gain: 0.18 },
+      { wave: 'noise', startFreq: 0, endFreq: 0, duration: 0.14, gain: 0.1, delay: 0.04 },
     ],
   },
-  // Trips: a bright major triad stab (rarer than a flush here, so grander).
-  comboTrips: {
+  // Meteor / Fire Storm launch: a rising whistle telegraphing the drop.
+  launch: {
+    segments: [{ wave: 'sine', startFreq: 300, endFreq: 1200, duration: 0.24, gain: 0.16 }],
+  },
+  // Telegraphed AOE impact: a low, gritty boom.
+  boom: {
     segments: [
-      { wave: 'sawtooth', startFreq: 659, endFreq: 659, duration: 0.09, gain: 0.2 },
-      { wave: 'sawtooth', startFreq: 831, endFreq: 831, duration: 0.09, gain: 0.19, delay: 0.08 },
-      { wave: 'sawtooth', startFreq: 988, endFreq: 988, duration: 0.16, gain: 0.2, delay: 0.16 },
+      { wave: 'sawtooth', startFreq: 180, endFreq: 55, duration: 0.24, gain: 0.28 },
+      { wave: 'noise', startFreq: 0, endFreq: 0, duration: 0.14, gain: 0.2 },
     ],
   },
-  // Straight flush: a triumphant four-note fanfare.
-  comboStraightFlush: {
+  // Conjure Flame: a magical shimmer charging up.
+  charge: {
     segments: [
-      { wave: 'square', startFreq: 659, endFreq: 659, duration: 0.07, gain: 0.2 },
-      { wave: 'square', startFreq: 880, endFreq: 880, duration: 0.07, gain: 0.2, delay: 0.07 },
-      { wave: 'square', startFreq: 1047, endFreq: 1047, duration: 0.07, gain: 0.2, delay: 0.14 },
-      { wave: 'square', startFreq: 1319, endFreq: 1319, duration: 0.16, gain: 0.21, delay: 0.21 },
+      { wave: 'triangle', startFreq: 440, endFreq: 880, duration: 0.14, gain: 0.16 },
+      { wave: 'sine', startFreq: 660, endFreq: 990, duration: 0.18, gain: 0.12, delay: 0.1 },
     ],
   },
-  // Four of a kind: the top payoff — a huge rising power stab with a noise crack.
-  comboFourKind: {
+  // Ground Stomp: a heavy low thud.
+  quake: {
     segments: [
-      { wave: 'sawtooth', startFreq: 262, endFreq: 1047, duration: 0.16, gain: 0.24 },
-      { wave: 'noise', startFreq: 0, endFreq: 0, duration: 0.06, gain: 0.16 },
-      { wave: 'square', startFreq: 1319, endFreq: 1319, duration: 0.2, gain: 0.2, delay: 0.14 },
+      { wave: 'square', startFreq: 150, endFreq: 68, duration: 0.16, gain: 0.26 },
+      { wave: 'noise', startFreq: 0, endFreq: 0, duration: 0.09, gain: 0.16 },
+    ],
+  },
+  // Rocky Raise: a warm rising shield chord.
+  shieldUp: {
+    segments: [
+      { wave: 'triangle', startFreq: 330, endFreq: 330, duration: 0.14, gain: 0.18 },
+      { wave: 'triangle', startFreq: 494, endFreq: 494, duration: 0.2, gain: 0.14, delay: 0.06 },
+    ],
+  },
+  // Bury Feet: a low grinding rumble.
+  rumble: {
+    segments: [
+      { wave: 'sawtooth', startFreq: 92, endFreq: 66, duration: 0.3, gain: 0.22 },
+      { wave: 'noise', startFreq: 0, endFreq: 0, duration: 0.18, gain: 0.12 },
+    ],
+  },
+  // Synergy fusion: a bright ascending three-note flourish.
+  synergy: {
+    segments: [
+      { wave: 'square', startFreq: 659, endFreq: 659, duration: 0.06, gain: 0.2 },
+      { wave: 'square', startFreq: 880, endFreq: 880, duration: 0.06, gain: 0.2, delay: 0.06 },
+      { wave: 'square', startFreq: 1319, endFreq: 1319, duration: 0.13, gain: 0.21, delay: 0.12 },
+    ],
+  },
+  // Wave cleared: a triumphant little jingle.
+  waveClear: {
+    segments: [
+      { wave: 'square', startFreq: 784, endFreq: 784, duration: 0.08, gain: 0.2 },
+      { wave: 'square', startFreq: 988, endFreq: 988, duration: 0.08, gain: 0.2, delay: 0.08 },
+      { wave: 'square', startFreq: 1319, endFreq: 1319, duration: 0.16, gain: 0.21, delay: 0.16 },
+    ],
+  },
+  // Reward chosen: a soft confirming blip.
+  reward: {
+    segments: [
+      { wave: 'sine', startFreq: 660, endFreq: 660, duration: 0.07, gain: 0.16 },
+      { wave: 'sine', startFreq: 990, endFreq: 990, duration: 0.1, gain: 0.16, delay: 0.06 },
+    ],
+  },
+  // Mis-timed window: a deflating, sludgy downward buzz — the sound of a fumble.
+  fumble: {
+    segments: [
+      { wave: 'sawtooth', startFreq: 300, endFreq: 90, duration: 0.3, gain: 0.18 },
+      { wave: 'square', startFreq: 180, endFreq: 70, duration: 0.22, gain: 0.1, delay: 0.05 },
     ],
   },
 };
@@ -243,46 +284,59 @@ export function sfxForEvent(event: GameEvent): string | undefined {
   }
 }
 
-// A single-card suit action voices by what it does: clubs hit, hearts heal,
-// spades guard, diamonds slow (a cold shard). Every value exists in `SFX`.
-const SUIT_SFX: Record<Suit, string> = {
-  clubs: 'fireball',
-  hearts: 'heal',
-  spades: 'block',
-  diamonds: 'iceshard',
-};
-
-// Each cashed-in poker combo gets its own activation fanfare (spec 015), so the
-// strength of the hand you spent is audible. Every value exists in `SFX`.
-const COMBO_SFX: Record<PokerCategory, string> = {
-  highCard: 'comboHighCard',
-  pair: 'comboPair',
-  twoPair: 'comboTwoPair',
-  straight: 'comboStraight',
-  flush: 'comboFlush',
-  trips: 'comboTrips',
-  straightFlush: 'comboStraightFlush',
-  fourKind: 'comboFourKind',
+// The signature voice of each spell card, played once when its cast resolves.
+// Every value exists in `SFX`.
+const CARD_SFX_ID: Record<SpellId, string> = {
+  attack: 'slash',
+  dash: 'dashWhoosh',
+  fireBlast: 'fireCone',
+  blazeAura: 'ignite',
+  meteorStrike: 'launch',
+  baskingPath: 'ignite',
+  conjureFlame: 'charge',
+  fireStorm: 'launch',
+  burningSpeed: 'ignite',
+  groundStomp: 'quake',
+  rockyRaise: 'shieldUp',
+  buryFeet: 'rumble',
 };
 
 /**
- * Route a combo-prototype event (spec 014) to its SFX. The combo session emits
- * its own card/stance events plus the shared `SimEvent`s; the combat ones defer
- * to `sfxForEvent`, so hits/defenses/deaths sound identical across both front
- * ends. Cosmetic "ignored input" events stay silent.
+ * Route a spell-game event (spec 018/019) to the SFX ids it should voice -- a
+ * list, since a resolved window may fire several cards at once. Card casts voice
+ * per distinct card (plus a synergy flourish when copies fused); telegraphed
+ * blasts boom on impact; wave clears and rewards get their own jingles. Frequent
+ * per-hit damage events stay silent so damage-over-time never becomes a wall of
+ * noise -- the cast and death sounds carry the feedback. Every id exists in `SFX`.
  */
-export function sfxForComboEvent(event: ComboEvent): string | undefined {
+export function spellEventSfx(event: SpellGameEvent): string[] {
   switch (event.kind) {
     case 'cardPlayed':
-      return SUIT_SFX[event.card.suit];
-    case 'activated':
-      // Cashing the hand in for a poker stance: a fanfare voiced by the combo.
-      return COMBO_SFX[event.category];
-    case 'playIgnoredEmptySlot':
-    case 'activateIgnoredLocked':
-      return undefined;
+      return ['select'];
+    case 'spellsResolved': {
+      const distinct = [...new Set(event.ids)];
+      const out = distinct.map((id) => CARD_SFX_ID[id]);
+      if (event.ids.length > distinct.length) out.push('synergy'); // two-of-a-kind fused
+      return out;
+    }
+    case 'aoeImpact':
+      return ['boom'];
+    case 'playerSlowed':
+      return ['fumble'];
+    case 'rewardOffered':
+      return ['waveClear'];
+    case 'rewardChosen':
+      return ['reward'];
+    case 'playerHit':
+      return ['hurt'];
+    case 'playerHealed':
+      return ['heal'];
+    case 'enemyDefeated':
+      return ['enemyDown'];
+    case 'playerDefeated':
+      return ['gameOver'];
     default:
-      // Everything else is a shared SimEvent; reuse the common routing.
-      return sfxForEvent(event);
+      // enemyHit, spellCast, dashPerformed, cosmetic events: silent (covered elsewhere).
+      return [];
   }
 }

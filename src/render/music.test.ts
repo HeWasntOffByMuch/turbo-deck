@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCalmSong, buildSong, midiToFreq, musicPhaseForEnemyCount, type MusicVoice, type Song } from './music.js';
+import { buildCalmSong, buildDeathSong, buildSong, FLOURISH_ONSET_SECONDS, midiToFreq, musicPhaseFor, musicPhaseForEnemyCount, type MusicVoice, type Song } from './music.js';
 
 describe('midiToFreq', () => {
   it('anchors A4 (69) at 440Hz', () => {
@@ -45,14 +45,33 @@ function assertWellFormed(build: () => Song): void {
     }
   });
 
-  it('includes all four voices', () => {
+  it('includes the four core voices', () => {
     const voices = new Set<MusicVoice>(song.notes.map((n) => n.voice));
-    expect(voices).toEqual(new Set<MusicVoice>(['bass', 'arp', 'lead', 'pad']));
+    for (const voice of ['bass', 'arp', 'lead', 'pad'] as const) {
+      expect(voices.has(voice)).toBe(true);
+    }
   });
 }
 
 describe('buildSong (combat theme)', () => {
   assertWellFormed(buildSong);
+
+  it('layers a faster flourish voice the other themes have not', () => {
+    expect(buildSong().notes.some((n) => n.voice === 'flourish')).toBe(true);
+    expect(buildCalmSong().notes.some((n) => n.voice === 'flourish')).toBe(false);
+    expect(buildDeathSong().notes.some((n) => n.voice === 'flourish')).toBe(false);
+  });
+
+  it('phrases the flourish in shorter notes than the lead', () => {
+    const notes = buildSong().notes;
+    const shortest = (voice: MusicVoice): number =>
+      Math.min(...notes.filter((n) => n.voice === voice).map((n) => n.duration));
+    expect(shortest('flourish')).toBeLessThan(shortest('lead'));
+  });
+
+  it('holds the flourish back for a positive stretch of combat', () => {
+    expect(FLOURISH_ONSET_SECONDS).toBeGreaterThan(0);
+  });
 });
 
 describe('buildCalmSong (no-wave theme)', () => {
@@ -77,10 +96,41 @@ describe('buildCalmSong (no-wave theme)', () => {
   });
 });
 
+describe('buildDeathSong (death dirge)', () => {
+  assertWellFormed(buildDeathSong);
+
+  it('is slower and distinct from the other themes', () => {
+    const death = buildDeathSong();
+    expect(death.bpm).toBeLessThan(buildCalmSong().bpm);
+    expect(death.bpm).toBeLessThan(buildSong().bpm);
+    const deathLead = death.notes.filter((n) => n.voice === 'lead').map((n) => n.midi);
+    const calmLead = buildCalmSong().notes.filter((n) => n.voice === 'lead').map((n) => n.midi);
+    expect(deathLead).not.toEqual(calmLead);
+  });
+
+  it('bends sinister: the lead carries the Phrygian ♭2 (E♭) and the A-major leading tone (C♯)', () => {
+    const leadPcs = new Set(buildDeathSong().notes.filter((n) => n.voice === 'lead').map((n) => n.midi % 12));
+    expect(leadPcs.has(3)).toBe(true); // E♭ — outside D natural minor
+    expect(leadPcs.has(1)).toBe(true); // C♯ — the raised leading tone
+  });
+});
+
 describe('musicPhaseForEnemyCount', () => {
   it('is calm with an empty arena and combat once a wave is present', () => {
     expect(musicPhaseForEnemyCount(0)).toBe('calm');
     expect(musicPhaseForEnemyCount(1)).toBe('combat');
     expect(musicPhaseForEnemyCount(7)).toBe('combat');
+  });
+});
+
+describe('musicPhaseFor', () => {
+  it('plays the death dirge once defeated, whatever the arena holds', () => {
+    expect(musicPhaseFor(0, true)).toBe('death');
+    expect(musicPhaseFor(5, true)).toBe('death');
+  });
+
+  it('follows the enemy count while alive', () => {
+    expect(musicPhaseFor(0, false)).toBe('calm');
+    expect(musicPhaseFor(3, false)).toBe('combat');
   });
 });
