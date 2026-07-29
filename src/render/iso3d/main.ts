@@ -28,13 +28,18 @@ function mountCombat(container: HTMLElement): ViewHandle {
   const title = document.createElement('div');
   title.style.cssText = "font-family:'Segoe UI',system-ui,sans-serif;color:#c9c9d8;margin:6px 2px 12px;font-size:13px;";
   root.appendChild(title);
-  const canvas = document.createElement('canvas');
-  root.appendChild(canvas);
-  container.appendChild(root);
 
   const seed = Date.now() >>> 0;
+  const canvas = document.createElement('canvas');
   const scene = new IsoScene(canvas, seed);
   const input = new IsoInputCapture(canvas);
+
+  // Canvas with the camera/light control panel alongside it (spec 033).
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;';
+  row.append(canvas, scene.controls.element);
+  root.appendChild(row);
+  container.appendChild(root);
 
   let state: SpellGameState = initSpellGame(seed);
 

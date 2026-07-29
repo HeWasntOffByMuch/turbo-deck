@@ -8,6 +8,8 @@ import { PALETTE } from './palette.js';
 import { makeBush, makeGround, makeHeadingArrow, makeMoveMarker, makeTree } from './meshes.js';
 import { MechRig } from './rigs.js';
 import { scatterProps } from './scatter.js';
+import { createViewControls, type ViewControls } from './view-controls.js';
+import { DEFAULT_VIEW_HALF_WIDTH } from './view-settings.js';
 
 /**
  * The movement sandbox tab (spec 032): no game -- just one controllable mech
@@ -23,17 +25,19 @@ const RENDER_W = 480;
 const RENDER_H = 300;
 const DISPLAY_W = 960;
 const DISPLAY_H = 600;
-const VIEW_HALF_WIDTH = 320;
-const CAMERA_OFFSET = new THREE.Vector3(420, 520, 420);
-
 const TICK_MS = 1000 / TICK_RATE;
 const MAX_CATCH_UP = 8;
 
 /** A minimal three.js scene: ground + scenery + one controllable mech. */
 class MovementScene {
+  /** Camera/light control panel (spec 033); mount `.controls.element` beside the canvas. */
+  readonly controls: ViewControls = createViewControls();
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
+  private readonly sun = new THREE.DirectionalLight(0xfff4e0, 2.1);
+  private readonly camOffset = new THREE.Vector3();
+  private lastHalfWidth = -1;
   private readonly mech = new MechRig('ally', PALETTE.mechAlly);
   private readonly moveMarker: THREE.Mesh;
   private readonly target = new THREE.Vector3(ARENA_WIDTH / 2, 0, ARENA_HEIGHT / 2);
@@ -59,18 +63,10 @@ class MovementScene {
     this.scene.background = new THREE.Color(PALETTE.sky);
 
     const aspect = RENDER_W / RENDER_H;
-    this.camera = new THREE.OrthographicCamera(
-      -VIEW_HALF_WIDTH,
-      VIEW_HALF_WIDTH,
-      VIEW_HALF_WIDTH / aspect,
-      -VIEW_HALF_WIDTH / aspect,
-      1,
-      4000,
-    );
+    const hw = DEFAULT_VIEW_HALF_WIDTH;
+    this.camera = new THREE.OrthographicCamera(-hw, hw, hw / aspect, -hw / aspect, 1, 4000);
 
-    const sun = new THREE.DirectionalLight(0xfff4e0, 2.1);
-    sun.position.set(-0.6, 1.4, -0.5);
-    this.scene.add(sun);
+    this.scene.add(this.sun);
     this.scene.add(new THREE.AmbientLight(0x8090a0, 1.1));
 
     const bleed = 600;
@@ -129,9 +125,30 @@ class MovementScene {
     }
 
     this.target.set(p.position.x, 0, p.position.y);
-    this.camera.position.copy(this.target).add(CAMERA_OFFSET);
+    this.applyControls();
     this.camera.lookAt(this.target);
     this.renderer.render(this.scene, this.camera);
+  }
+
+  /** Place the camera/light and refresh the ortho zoom from the panel (spec 033). */
+  private applyControls(): void {
+    const off = this.controls.cameraOffset();
+    this.camOffset.set(off.x, off.y, off.z);
+    this.camera.position.copy(this.target).add(this.camOffset);
+
+    const hw = this.controls.viewHalfWidth();
+    if (hw !== this.lastHalfWidth) {
+      const aspect = RENDER_W / RENDER_H;
+      this.camera.left = -hw;
+      this.camera.right = hw;
+      this.camera.top = hw / aspect;
+      this.camera.bottom = -hw / aspect;
+      this.camera.updateProjectionMatrix();
+      this.lastHalfWidth = hw;
+    }
+
+    const light = this.controls.lightOffset();
+    this.sun.position.set(light.x, light.y, light.z);
   }
 }
 
@@ -153,12 +170,17 @@ export function mountMovement(container: HTMLElement): ViewHandle {
   const title = document.createElement('div');
   title.style.cssText = "font-family:'Segoe UI',system-ui,sans-serif;color:#c9c9d8;margin:6px 2px 12px;font-size:13px;";
   root.appendChild(title);
-  const canvas = document.createElement('canvas');
-  root.appendChild(canvas);
-  container.appendChild(root);
 
   const seed = Date.now() >>> 0;
+  const canvas = document.createElement('canvas');
   const scene = new MovementScene(canvas, seed);
+
+  // Canvas with the camera/light control panel alongside it (spec 033).
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;';
+  row.append(canvas, scene.controls.element);
+  root.appendChild(row);
+  container.appendChild(root);
   const input = new IsoInputCapture(canvas);
   // No enemies and no ambient spawner: a pure movement sandbox.
   let state: CombatState = initCombat(seed, { ambientSpawner: false, initialEnemies: 0 });
