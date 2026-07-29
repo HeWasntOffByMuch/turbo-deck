@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Vec2 } from '../../sim/types.js';
-import { scatterProps } from './scatter.js';
+import { footprintRadius, scatterProps, type Prop } from './scatter.js';
 
 const W = 1200;
 const H = 900;
@@ -57,5 +57,18 @@ describe('scatterProps', () => {
     const props = scatterProps(5, W, H, KEEP_OUT, { trees: 10, bushes: 12 });
     expect(props.filter((p) => p.kind === 'tree')).toHaveLength(10);
     expect(props.filter((p) => p.kind === 'bush')).toHaveLength(12);
+  });
+});
+
+describe('footprintRadius', () => {
+  const prop = (kind: 'tree' | 'bush', scale: number): Prop => ({ kind, x: 0, y: 0, scale, rotation: 0, tint: 0 });
+
+  it('is positive and larger for a tree than a bush at equal scale', () => {
+    expect(footprintRadius(prop('bush', 1))).toBeGreaterThan(0);
+    expect(footprintRadius(prop('tree', 1))).toBeGreaterThan(footprintRadius(prop('bush', 1)));
+  });
+
+  it('scales linearly with the prop scale', () => {
+    expect(footprintRadius(prop('tree', 2))).toBeCloseTo(footprintRadius(prop('tree', 1)) * 2, 5);
   });
 });

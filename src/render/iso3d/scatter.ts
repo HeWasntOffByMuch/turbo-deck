@@ -112,3 +112,9 @@ export function scatterProps(
   place('bush', opt.bushes);
   return props;
 }
+
+/** Ground-footprint radius a prop blocks, for the unwalkable-terrain overlay (spec 034). */
+const FOOTPRINT_BASE: Record<PropKind, number> = { tree: 24, bush: 16 };
+export function footprintRadius(prop: Prop): number {
+  return FOOTPRINT_BASE[prop.kind] * prop.scale;
+}

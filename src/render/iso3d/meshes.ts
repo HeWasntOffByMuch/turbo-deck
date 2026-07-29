@@ -122,6 +122,34 @@ export function makeAttackCone(): THREE.Mesh {
   return m;
 }
 
+/**
+ * A unit-radius flat ground marker for the unwalkable-terrain overlay (spec 034):
+ * a faint filled disc under a brighter ring, so a blocked footprint reads as a
+ * no-go zone. The scene scales it by the prop's footprint radius and drops it on
+ * the ground; it never occludes the geometry above it (`depthWrite` off).
+ */
+export function makeUnwalkableMarker(): THREE.Group {
+  const g = new THREE.Group();
+  const fillGeo = new THREE.CircleGeometry(1, 28);
+  fillGeo.rotateX(-Math.PI / 2);
+  const fill = new THREE.Mesh(
+    fillGeo,
+    new THREE.MeshBasicMaterial({ color: PALETTE.blocked, transparent: true, opacity: 0.16, depthWrite: false }),
+  );
+  fill.position.y = 1.5;
+
+  const ringGeo = new THREE.RingGeometry(0.82, 1, 28);
+  ringGeo.rotateX(-Math.PI / 2);
+  const ring = new THREE.Mesh(
+    ringGeo,
+    new THREE.MeshBasicMaterial({ color: PALETTE.blocked, transparent: true, opacity: 0.55, depthWrite: false }),
+  );
+  ring.position.y = 1.6;
+
+  g.add(fill, ring);
+  return g;
+}
+
 /** A unit-radius ground wedge centred on +x, spanning ±`arcHalf`, laid flat. */
 export function sectorGeometry(arcHalf: number): THREE.BufferGeometry {
   const geo = new THREE.CircleGeometry(1, 24, -arcHalf, arcHalf * 2);
