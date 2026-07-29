@@ -134,15 +134,29 @@ driving the mech.
   quadrant guarantee above still holds (verified headless + visually).
 
 - **Raised "recovery" leg + pointy legs.** Instead of every leg scrambling to
-  touch down during a turn, at most **one** leg may lift and tuck close to the
-  body — a held recovery leg. It rides tucked under the moving body (carrying no
-  weight) and only plants, as a deliberate secure step, when its support is
-  genuinely needed: the hold times out (~0.7–1.4 s), a supporting foot gets badly
-  overstretched, support would drop below two feet, or the mech settles. A hold is
-  only *started* from a fully-planted, in-motion stance, lifting whichever leg has
-  the most slack; while one is held only a single other leg may swing, so ≥2 feet
-  always stay down. The blocky foot boxes are gone — each shin now tapers to a
-  point (a spider's tarsus tip), so the legs end pointy.
+  touch down during a turn, one leg may lift into a **slightly-raised** recovery
+  hold. It stays over its rest spot (no tuck-in), carries no weight, and only
+  plants — a deliberate secure step — when its support is genuinely needed: the
+  hold times out, a supporting foot gets overstretched, support would drop below
+  two feet, or the mech settles. A hold only *starts* from a fully-planted,
+  in-motion stance, lifting whichever leg has the most slack; while one is held
+  only a single other leg may swing, so ≥2 feet always stay down. The blocky foot
+  boxes are gone — each shin tapers to a point (a spider's tarsus tip).
+  `tuning.raisedLegs` (0 or 1) caps how many legs may be raised, so 0 disables the
+  behaviour entirely.
+
+- **Second unit: the grey metal walker + a unit picker.** The sandbox now offers
+  two units, chosen from a side-panel picker. Alongside the spider is a
+  deliberately simpler **`WalkerRig`** in the pre-ground-lock, animation-only
+  style: a *fixed* four-leg platform of two-bone legs that swing a cosmetic walk
+  cycle along the travel direction (not ground-locked — it slides a little, on
+  purpose), carrying a turret. The **leg base never yaws**; only the **turret**
+  rotates to the heading, so the turn-rate applies to the upper body only and it
+  reads like a mech with a rotating top on a walking base. It exposes
+  `orientsWithGroupYaw = false` so the sandbox leaves its group un-yawed and lets
+  the rig turn its turret internally; the heading arrow became a scene-managed
+  mesh so it shows facing for either unit. All MOBA movement still comes from the
+  sim; the spider is unchanged and the combat scene still uses `MechRig` only.
 
 `scene.ts`, `main.ts`, `input.ts`, cards/game — unchanged (the rig signature is
 preserved). The only sim change is the two default-off input overrides above.

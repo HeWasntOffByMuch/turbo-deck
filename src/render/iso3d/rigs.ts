@@ -315,14 +315,15 @@ const STEP_COOLDOWN = 0.05; // min seconds a foot rests after a plant before it 
 // reaches across or behind the body to a stranded foot.
 const MIN_FORE = 12; // min |fore/aft| offset of a foot from body centre (x size)
 const MIN_LAT = 14; // min |lateral| offset of a foot from body centre (x size)
-// One leg may lift and tuck close to the body (a "recovery" leg, like a spider
-// holding a leg raised) instead of every leg scrambling to touch down. It stays
-// up until its support is genuinely needed, then plants securely. HOLD_TUCK pulls
-// the tucked foot in toward the hip; HOLD_HEIGHT raises it; the hold ends on a
-// timeout, when two other legs need to step, or when the mech settles.
-const HOLD_TUCK_FORE = 0.5; // fraction of rest fore/aft the tucked foot keeps
-const HOLD_TUCK_LAT = 0.55; // fraction of rest lateral the tucked foot keeps
-const HOLD_HEIGHT = 26; // tucked foot height above ground (x size)
+// A leg may lift into a "recovery" hold (like a spider briefly holding a leg up)
+// instead of every leg scrambling to touch down. The held foot stays over its
+// rest spot and is only *slightly* raised -- not tucked in toward the body -- and
+// the hold ends on a timeout, when a supporting foot is overstretched, when
+// support would drop below two feet, or when the mech settles. `tuning.raisedLegs`
+// caps how many legs may be held (0 disables it, 1 allows a single raised leg).
+const HOLD_TUCK_FORE = 1.0; // keep the held foot at its rest fore/aft (no tuck-in)
+const HOLD_TUCK_LAT = 1.0; // keep the held foot at its rest lateral (no tuck-in)
+const HOLD_HEIGHT = 9; // held foot height above ground -- only slightly raised (x size)
 const HOLD_COOLDOWN = 0.45; // min seconds between holds
 const HOLD_SECURE_STRETCH = 1.15; // a plant out of a hold is a touch slower (deliberate)
 // A supporting foot this far past its trigger ends the hold so the gait gets its
@@ -385,6 +386,8 @@ export interface MechTuning {
   stepDurRun: number;
   /** Max legs airborne at once (1 = careful, 2 = a diagonal trot). */
   maxStepping: number;
+  /** Max legs that may lift into a slightly-raised "recovery" hold (0 or 1). */
+  raisedLegs: number;
   /** How hard inside legs shorten / outside legs lengthen their step when turning. */
   turnStepBias: number;
   /**
@@ -431,6 +434,7 @@ export function defaultMechTuning(): MechTuning {
     stepDurWalk: 0.2,
     stepDurRun: 0.13,
     maxStepping: 2,
+    raisedLegs: 1,
     turnStepBias: 0.5,
     yawLag: 0.55,
     stepPredict: 0.6,
@@ -604,6 +608,9 @@ export class MechRig {
   get locomotionState(): LocomotionState {
     return this.state;
   }
+
+  /** This rig turns its whole group to the heading; the scene sets group.rotation.y. */
+  readonly orientsWithGroupYaw = true;
 
   /** Resize the body meshes and leg bones to `s` (only when the size actually changes). */
   private applyScale(s: number): void {
@@ -797,6 +804,7 @@ export class MechRig {
     info: readonly { readonly over: number }[],
   ): void {
     const S = this.scale;
+    const allowHold = Math.round(clamp(this.tuning.raisedLegs, 0, 1)) >= 1;
     const heldIdx = this.plants.findIndex((l) => l.held);
     const stepping = this.plants.reduce((n, l) => n + (l.stepping ? 1 : 0), 0);
     const planted = this.plants.reduce((n, l) => n + (!l.stepping && !l.held ? 1 : 0), 0);
@@ -805,12 +813,12 @@ export class MechRig {
     if (heldIdx >= 0) {
       const hleg = this.plants[heldIdx];
       if (!hleg) return;
-      // Pin the tucked foot close under the body so it rides along as it moves/turns.
-      const tuck = localToWorldXZ(hleg.rest.x * S * HOLD_TUCK_FORE, hleg.rest.z * S * HOLD_TUCK_LAT, ry);
-      hleg.world = { x: wx + tuck.x, z: wz + tuck.z };
+      // Keep the held foot over its rest spot, only slightly raised (no tuck-in).
+      const rest = localToWorldXZ(hleg.rest.x * S * HOLD_TUCK_FORE, hleg.rest.z * S * HOLD_TUCK_LAT, ry);
+      hleg.world = { x: wx + rest.x, z: wz + rest.z };
       hleg.y = HOLD_HEIGHT * S;
       const settling = this.speed < IDLE_SPEED && Math.abs(this.yawRate) < TURN_RATE * 0.3;
-      const needed = hleg.holdT > hleg.holdMax || maxOver > HOLD_EXIT_OVER * S || planted < 2 || settling;
+      const needed = !allowHold || hleg.holdT > hleg.holdMax || maxOver > HOLD_EXIT_OVER * S || planted < 2 || settling;
       if (needed) {
         // Secure plant: swing down from the tuck to a fresh, solid foothold ahead.
         hleg.held = false;
@@ -823,7 +831,7 @@ export class MechRig {
 
     // Enter a hold only from a stable, fully-planted stance while in motion.
     const moving = this.speed > IDLE_SPEED || Math.abs(this.yawRate) > TURN_RATE * 0.25;
-    if (this.holdCooldown > 0 || stepping > 0 || planted < 4 || run01 > 0.9 || !moving) return;
+    if (!allowHold || this.holdCooldown > 0 || stepping > 0 || planted < 4 || run01 > 0.9 || !moving) return;
     let best = -1;
     let bestOver = Infinity;
     info.forEach((e, i) => {
@@ -1012,6 +1020,153 @@ export class MechRig {
       p.kneeCur += (kneeTarget - p.kneeCur) * aKnee;
       leg.pose(_hip, _foot, p.kneeCur);
     });
+  }
+}
+
+// --- The grey "mech" walker (spec 033) --------------------------------------
+// A second sandbox unit with a deliberately simpler, animation-only gait (the
+// pre-ground-lock style): a fixed quad-leg platform whose two-bone legs swing a
+// cosmetic walk cycle along the travel direction -- never ground-locked, so it
+// slides a little, on purpose. The platform does NOT yaw; only the turret rotates
+// to the heading (turn-rate applies to the upper body), so it reads like a mech
+// with a rotating top on a walking base. MOBA movement still comes from the sim.
+const WK_HIP_Y = 26; // leg hip height
+const WK_HIP_INSET = 15; // hip corner offset from centre
+const WK_REST_X = 26; // foot rest fore/aft (in the fixed leg frame)
+const WK_REST_Z = 30; // foot rest lateral
+const WK_THIGH = 20;
+const WK_SHIN = 24;
+const WK_BODY_Y = 32; // turret height
+const WK_STRIDE = 40; // travel distance per full leg cycle
+const WK_SWING = 15; // fore/aft foot swing amplitude along travel
+const WK_STEP_H = 11; // foot lift height
+
+/** A plain two-bone walker leg (thigh + shin), knee bowed up; purely animated. */
+class WalkerLeg {
+  private readonly thigh: THREE.Mesh;
+  private readonly shin: THREE.Mesh;
+  private readonly foot: THREE.Mesh;
+
+  constructor(
+    color: number,
+    private readonly thighLen: number,
+    private readonly shinLen: number,
+    group: THREE.Group,
+  ) {
+    this.thigh = box(4.5, 1, 4.5, color);
+    this.shin = box(3.5, 1, 3.5, color);
+    this.foot = box(7, 3, 9, darken(color, 0.8));
+    group.add(this.thigh, this.shin, this.foot);
+  }
+
+  /** Two-bone IK from `hip` to `foot` (both local to the leg group), knee up. */
+  pose(hip: THREE.Vector3, foot: THREE.Vector3): void {
+    _target.copy(foot);
+    _dir.copy(_target).sub(hip);
+    let d = _dir.length() || 1e-4;
+    const maxReach = this.thighLen + this.shinLen - 1e-3;
+    if (d > maxReach) {
+      _dir.multiplyScalar(maxReach / d);
+      _target.copy(hip).add(_dir);
+      d = maxReach;
+    }
+    _dir.multiplyScalar(1 / d);
+    const a = (this.thighLen * this.thighLen - this.shinLen * this.shinLen + d * d) / (2 * d);
+    const h = Math.sqrt(Math.max(0, this.thighLen * this.thighLen - a * a));
+    _pole.copy(UP).addScaledVector(_dir, -UP.dot(_dir));
+    if (_pole.lengthSq() < 1e-6) _pole.set(0, 0, 1);
+    _pole.normalize();
+    _knee.copy(hip).addScaledVector(_dir, a).addScaledVector(_pole, h);
+    orientSegment(this.thigh, hip, _knee);
+    orientSegment(this.shin, _knee, _target);
+    this.foot.position.copy(_target);
+  }
+}
+
+/**
+ * The grey metal walker: a fixed four-leg platform carrying a turret that rotates
+ * to the heading. The legs animate a simple cosmetic walk cycle (two-bone, not
+ * ground-locked) whose stride swings along the actual travel direction, so it can
+ * walk any direction without the base turning; only the turret follows the facing.
+ * Driven, like the spider, purely from the observed world transform.
+ */
+export class WalkerRig {
+  readonly group = new THREE.Group();
+  private readonly legsGroup = new THREE.Group();
+  private readonly turret = new THREE.Group();
+  private readonly legs: readonly WalkerLeg[];
+  private readonly corners: readonly [number, number][] = [
+    [1, -1],
+    [1, 1],
+    [-1, -1],
+    [-1, 1],
+  ];
+  private prev: { x: number; z: number } | null = null;
+  private dist = 0;
+  private amp = 0;
+  private dir = { x: 1, z: 0 };
+  private state: LocomotionState = 'idle';
+
+  constructor(bodyColor: number = PALETTE.walkerBody) {
+    const legColor = darken(bodyColor, 0.7);
+    this.group.add(this.legsGroup, this.turret);
+
+    // Upper body (turret): a boxy torso with a barrel + eye, built facing +x.
+    const torso = box(24, 15, 22, bodyColor);
+    torso.position.y = WK_BODY_Y;
+    const plate = box(20, 4, 18, darken(bodyColor, 0.85));
+    plate.position.y = WK_BODY_Y + 9;
+    const barrel = box(16, 5, 5, darken(bodyColor, 0.6));
+    barrel.position.set(16, WK_BODY_Y + 1, 0);
+    const eye = box(3, 5, 11, PALETTE.enemyEye);
+    eye.position.set(12, WK_BODY_Y + 4, 0);
+    this.turret.add(torso, plate, barrel, eye);
+
+    this.legs = this.corners.map(() => new WalkerLeg(legColor, WK_THIGH, WK_SHIN, this.legsGroup));
+  }
+
+  get locomotionState(): LocomotionState {
+    return this.state;
+  }
+
+  /** This rig keeps its group un-yawed; it turns only its turret to the heading. */
+  readonly orientsWithGroupYaw = false;
+
+  update(dt: number, worldPos: Vec2, ry: number): void {
+    dt = Math.max(1e-4, dt);
+    const wx = worldPos.x;
+    const wz = worldPos.y;
+    if (this.prev === null) this.prev = { x: wx, z: wz };
+    const dx = wx - this.prev.x;
+    const dz = wz - this.prev.z;
+    const moved = Math.hypot(dx, dz);
+    this.prev = { x: wx, z: wz };
+    const speed = moved / dt;
+    if (moved > 0.05) this.dir = { x: dx / moved, z: dz / moved };
+    this.dist += moved;
+    this.amp += ((speed > 6 ? 1 : 0) - this.amp) * Math.min(1, dt * 8);
+    this.state = speed < 6 ? 'idle' : speed > 120 ? 'running' : 'walking';
+
+    // The leg platform stays world-aligned; only the turret follows the heading.
+    this.legsGroup.rotation.y = 0;
+    this.turret.rotation.y = ry;
+
+    // Animated walk cycle: diagonal pairs a half-cycle apart, each foot swinging
+    // fore/aft along the travel direction and lifting on the recovery half.
+    const phase = (this.dist / WK_STRIDE) * TWO_PI;
+    this.legs.forEach((leg, i) => {
+      const corner = this.corners[i];
+      if (!corner) return;
+      const [sx, sz] = corner;
+      const legPhase = phase + (i === 0 || i === 3 ? 0 : Math.PI);
+      const swing = Math.cos(legPhase) * WK_SWING * this.amp;
+      const lift = Math.max(0, Math.sin(legPhase)) * WK_STEP_H * this.amp;
+      _hip.set(sx * WK_HIP_INSET, WK_HIP_Y, sz * WK_HIP_INSET);
+      _foot.set(sx * WK_REST_X + this.dir.x * swing, lift, sz * WK_REST_Z + this.dir.z * swing);
+      leg.pose(_hip, _foot);
+    });
+    // A little turret bob keeps the walk from feeling perfectly rigid.
+    this.turret.position.y = Math.max(0, Math.sin(phase)) * 1.5 * this.amp;
   }
 }
 

@@ -6,19 +6,23 @@ import type { CombatState, InputFrame, Vec2 } from '../../sim/types.js';
 import { IsoInputCapture } from './input.js';
 import { PALETTE } from './palette.js';
 import { makeBush, makeGround, makeHeadingArrow, makeMoveMarker, makeTree } from './meshes.js';
-import { defaultMechTuning, MechRig, type MechTuning } from './rigs.js';
+import { defaultMechTuning, MechRig, WalkerRig, type MechTuning } from './rigs.js';
 import { scatterProps } from './scatter.js';
 
 /**
- * The movement sandbox tab (spec 032/033): no game -- just one controllable mech
- * driven through the sim's MOBA movement so the turn-rate rules and the mech's
- * organic spider legs can be watched and *tuned* in isolation. It reuses the
- * deterministic combat sim (no enemies, no ambient spawner) and only ever feeds
- * it movement inputs: a right-click move order, C to cycle the movement
- * archetype, and live speed/turn-rate overrides from the side panel. Every other
- * knob on the panel edits the rig's cosmetic tuning directly. Game rules stay in
- * the sim; this layer only reads state and poses the (cosmetic) rig.
+ * The movement sandbox tab (spec 032/033): no game -- just one controllable unit
+ * driven through the sim's MOBA movement so the turn-rate rules and the units'
+ * legs can be watched and *tuned* in isolation. A unit picker switches between the
+ * organic spider mech and a grey metal walker (a rotating turret on a fixed
+ * animated leg base). It reuses the deterministic combat sim (no enemies, no
+ * ambient spawner) and only ever feeds it movement inputs: a right-click move
+ * order, C to cycle the movement archetype, and live speed/turn-rate overrides
+ * from the side panel. Every other knob edits the spider's cosmetic tuning. Game
+ * rules stay in the sim; this layer only reads state and poses the (cosmetic) rig.
  */
+
+/** The selectable sandbox units. */
+export type UnitKind = 'spider' | 'walker';
 
 // Same low-res, upscaled retro look and fixed iso follow-camera as the combat view.
 const RENDER_W = 480;
@@ -36,7 +40,10 @@ class MovementScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
-  readonly mech = new MechRig('ally', PALETTE.mechAlly);
+  private readonly spider = new MechRig('ally', PALETTE.mechAlly);
+  private readonly walker = new WalkerRig(PALETTE.walkerBody);
+  private active: MechRig | WalkerRig = this.spider;
+  private readonly headingArrow = makeHeadingArrow();
   private readonly moveMarker: THREE.Mesh;
   private readonly target = new THREE.Vector3(ARENA_WIDTH / 2, 0, ARENA_HEIGHT / 2);
   private lastNow = performance.now();
@@ -81,12 +88,32 @@ class MovementScene {
     this.scene.add(ground);
     this.addScenery(seed);
 
-    // A heading arrow parented to the mech reads its facing (turn-rate movement).
-    this.mech.group.add(makeHeadingArrow());
-    this.scene.add(this.mech.group);
+    // A scene-managed heading arrow shows the facing for either unit (the walker
+    // keeps its group un-yawed, so the arrow can't be parented to it).
+    this.scene.add(this.headingArrow);
+    this.scene.add(this.active.group);
     this.moveMarker = makeMoveMarker();
     this.moveMarker.visible = false;
     this.scene.add(this.moveMarker);
+  }
+
+  /** The spider's live-editable tuning (the panel binds to it; the walker ignores it). */
+  get tuning(): MechTuning {
+    return this.spider.tuning;
+  }
+
+  /** The active unit's locomotion state, for the status line. */
+  get unitState(): string {
+    return this.active.locomotionState;
+  }
+
+  /** Swap the controllable unit, keeping the sim (position/heading) running. */
+  setUnit(kind: UnitKind): void {
+    const next = kind === 'walker' ? this.walker : this.spider;
+    if (next === this.active) return;
+    this.scene.remove(this.active.group);
+    this.active = next;
+    this.scene.add(this.active.group);
   }
 
   private addScenery(seed: number): void {
@@ -119,9 +146,13 @@ class MovementScene {
     const p = state.player;
     // A mesh built facing +x maps to world facing `theta` at rotation.y = -theta.
     const ry = -p.facing;
-    this.mech.group.position.set(p.position.x, 0, p.position.y);
-    this.mech.group.rotation.y = ry;
-    this.mech.update(dt, p.position, ry);
+    this.active.group.position.set(p.position.x, 0, p.position.y);
+    // The spider turns its whole group to face; the walker keeps its base
+    // un-yawed and turns only its turret internally.
+    this.active.group.rotation.y = this.active.orientsWithGroupYaw ? ry : 0;
+    this.active.update(dt, p.position, ry);
+    this.headingArrow.position.set(p.position.x, 3, p.position.y);
+    this.headingArrow.rotation.y = ry;
 
     if (p.moveTarget) {
       this.moveMarker.visible = true;
@@ -175,6 +206,7 @@ const SLIDER_GROUPS: readonly { readonly title: string; readonly rows: readonly 
       { label: 'Step time · walk (s)', min: 0.08, max: 0.45, step: 0.01, key: 'stepDurWalk', digits: 2 },
       { label: 'Step time · run (s)', min: 0.06, max: 0.35, step: 0.01, key: 'stepDurRun', digits: 2 },
       { label: 'Legs airborne', min: 1, max: 2, step: 1, key: 'maxStepping' },
+      { label: 'Raised legs', min: 0, max: 1, step: 1, key: 'raisedLegs' },
     ],
   },
   {
@@ -202,7 +234,11 @@ const PANEL_TEXT = '#c9c9d8';
 const LABEL_CSS = `font-family:'Segoe UI',system-ui,sans-serif;color:${PANEL_TEXT};`;
 
 /** Build the side control panel; returns the element and a fn to sync sliders to tuning. */
-function buildPanel(tuning: MechTuning, onReset: () => void): { element: HTMLElement; sync: () => void } {
+function buildPanel(
+  tuning: MechTuning,
+  onReset: () => void,
+  onUnit: (kind: UnitKind) => void,
+): { element: HTMLElement; sync: () => void } {
   const panel = document.createElement('div');
   panel.style.cssText =
     `${LABEL_CSS}width:300px;max-height:${DISPLAY_H}px;overflow-y:auto;padding:4px 12px 12px;` +
@@ -212,12 +248,41 @@ function buildPanel(tuning: MechTuning, onReset: () => void): { element: HTMLEle
   help.style.cssText = 'line-height:1.5;color:#9a9ab0;margin:6px 0 10px;';
   help.innerHTML =
     '<b style="color:#f0f0f8;">Movement sandbox</b><br>' +
-    '<b>Right-click</b> the ground to move. MOBA turn-rate: the mech turns to face ' +
+    '<b>Right-click</b> the ground to move. MOBA turn-rate: the unit turns to face ' +
     'the destination before it travels.<br>' +
     '<b>C</b> loads the next archetype preset into the sliders.<br>' +
-    'The legs turn first and the body follows; feet re-plant to steer, so it ' +
-    'never spins on a central axis. Everything below is live — drag to retune.';
+    'Pick a unit below; the sliders retune the <b>spider</b>.';
   panel.appendChild(help);
+
+  // Unit picker: two chips choosing which unit the sandbox controls.
+  const pickerLabel = document.createElement('div');
+  pickerLabel.textContent = 'Unit';
+  pickerLabel.style.cssText = 'color:#f0f0f8;font-weight:600;margin:2px 0 4px;letter-spacing:.03em;';
+  panel.appendChild(pickerLabel);
+  const picker = document.createElement('div');
+  picker.style.cssText = 'display:flex;gap:6px;margin:0 0 6px;';
+  const units: readonly { kind: UnitKind; label: string }[] = [
+    { kind: 'spider', label: 'Spider' },
+    { kind: 'walker', label: 'Mech (grey)' },
+  ];
+  const chips: HTMLButtonElement[] = [];
+  const styleChip = (btn: HTMLButtonElement, on: boolean): void => {
+    btn.style.cssText =
+      `${LABEL_CSS}flex:1;padding:6px;border-radius:6px;cursor:pointer;font-size:12px;border:1px solid #2a2a3a;` +
+      (on ? 'background:#3a5c7a;color:#f0f0f8;' : 'background:#20202c;color:#9a9ab0;');
+  };
+  units.forEach((u, i) => {
+    const btn = document.createElement('button');
+    btn.textContent = u.label;
+    styleChip(btn, i === 0);
+    btn.addEventListener('click', () => {
+      chips.forEach((c, j) => styleChip(c, j === i));
+      onUnit(u.kind);
+    });
+    picker.appendChild(btn);
+    chips.push(btn);
+  });
+  panel.appendChild(picker);
 
   const refreshers: (() => void)[] = [];
 
@@ -296,20 +361,29 @@ export function mountMovement(container: HTMLElement): ViewHandle {
 
   const seed = Date.now() >>> 0;
   const scene = new MovementScene(canvas, seed);
-  const tuning = scene.mech.tuning;
+  const tuning = scene.tuning;
   const input = new IsoInputCapture(canvas);
   // No enemies and no ambient spawner: a pure movement sandbox.
   let state: CombatState = initCombat(seed, { ambientSpawner: false, initialEnemies: 0 });
 
-  const panel = buildPanel(tuning, () => {
-    Object.assign(tuning, defaultMechTuning());
-    panel.sync();
-  });
+  let unit: UnitKind = 'spider';
+  const panel = buildPanel(
+    tuning,
+    () => {
+      Object.assign(tuning, defaultMechTuning());
+      panel.sync();
+    },
+    (kind) => {
+      unit = kind;
+      scene.setUnit(kind);
+    },
+  );
   layout.appendChild(panel.element);
 
   const setStatus = (): void => {
     const name = characterAt(state.player.characterIndex).name;
-    status.textContent = `Archetype: ${name} (press C to load its preset)  ·  gait: ${scene.mech.locomotionState}`;
+    const unitName = unit === 'walker' ? 'Mech (grey)' : 'Spider';
+    status.textContent = `Unit: ${unitName}  ·  Archetype: ${name} (C to cycle)  ·  gait: ${scene.unitState}`;
   };
   setStatus();
 
