@@ -439,7 +439,7 @@ const SLIDER_GROUPS: readonly { readonly title: string; readonly rows: readonly 
         step: 0.05,
         key: 'coxaSwing',
         digits: 2,
-        tip: 'How much the hip joint swings the leg front-to-back. 1 aims it straight at the foot; 0 keeps it pointing out to the side; higher exaggerates the swing.',
+        tip: "How much the hip joint carries the whole leg front-to-back, pivoting the entire limb at the hip so it reaches toward the target. 0 keeps the coxa pointing out to the side (all fore/aft in the knee); 1 makes the hip do all the reach; higher exaggerates it.",
       },
       {
         label: 'Foot follow (smooth)',

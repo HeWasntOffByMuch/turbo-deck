@@ -103,7 +103,6 @@ const _mid = new THREE.Vector3();
 const _foot = new THREE.Vector3();
 const _hip = new THREE.Vector3();
 const _shoulder = new THREE.Vector3();
-const _horiz = new THREE.Vector3();
 const _side = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
@@ -278,8 +277,9 @@ class MechLeg {
   /**
    * Pose the leg so its foot sits at `foot` and its hip at `hip` (both rig-local),
    * knee bowed upward. `kneeSway` tilts the knee a touch sideways for organic
-   * joint variation. The coxa aims horizontally toward the foot; the IK solves
-   * from the coxa's shoulder, so the body-corner joint visibly rotates.
+   * joint variation. The coxa reaches out to the foot's side and swings its
+   * shoulder fore/aft toward the foot (`coxaSwing`); the IK then solves the
+   * femur/tibia from that shoulder, so the hip joint carries the whole leg.
    */
   pose(hip: THREE.Vector3, foot: THREE.Vector3, kneeSway: number, coxaScale: number, coxaSwing: number): void {
     // Never solve from a non-finite hip/foot: leave the leg in its last good pose
@@ -291,16 +291,22 @@ class MechLeg {
     ) {
       return;
     }
-    // Coxa: a level segment aimed out toward the foot's ground azimuth. Its length
-    // (the hip joint's reach) is scaled by `coxaScale`; the fore/aft (leg-frame x)
-    // part of its aim is scaled by `coxaSwing`, so the hip joint swings the leg
-    // more or less front-to-back (protraction/retraction) -- the rest of the
-    // fore/aft motion then lives in the knee.
-    _horiz.set((foot.x - hip.x) * finiteOr(coxaSwing, 1), 0, foot.z - hip.z);
-    if (_horiz.lengthSq() < 1e-6) _horiz.copy(this.restAzimuth);
-    else _horiz.normalize();
-    _shoulder.copy(hip).addScaledVector(_horiz, this.coxaLen * finiteOr(coxaScale, 1));
-    _shoulder.y = hip.y;
+    // Coxa (hip joint): the segment closest to the body. It reaches OUT to the
+    // foot's side by `coxaLen * coxaScale` (the outward reach), and SWINGS
+    // fore/aft by carrying its far end -- the "shoulder" the femur hangs from --
+    // toward the foot's fore/aft by `coxaSwing`. So moving the hip joint moves the
+    // whole leg with it: the femur/tibia keep their shape and the entire limb
+    // pivots at the hip, reaching further toward (or back from) the target rather
+    // than the knee absorbing the fore/aft. 0 keeps the coxa pointing straight out
+    // to the side (all fore/aft motion lives in the knee); 1 carries the shoulder
+    // level with the foot so the hip does all the protraction/retraction; >1
+    // exaggerates the swing past the foot.
+    const latSign = Math.sign(foot.z - hip.z) || Math.sign(this.restAzimuth.z) || 1;
+    _shoulder.set(
+      hip.x + (foot.x - hip.x) * finiteOr(coxaSwing, 1),
+      hip.y,
+      hip.z + latSign * this.coxaLen * finiteOr(coxaScale, 1),
+    );
     orientSegment(this.coxa, hip, _shoulder);
 
     // Femur + tibia: 2-bone IK from the shoulder to the foot, knee on the up side.
@@ -459,10 +465,13 @@ export interface MechTuning {
    */
   coxaReach: number;
   /**
-   * Hip-joint (coxa) fore/aft swing: how much the hip joint swings the leg
-   * front-to-back (protraction/retraction). 1 aims the coxa straight at the foot
-   * (default); 0 keeps the coxa pointing out to the side so all fore/aft motion
-   * lives in the knee; higher exaggerates the front-to-back swing of the hip.
+   * Hip-joint (coxa) fore/aft swing: how much the hip joint carries the whole leg
+   * front-to-back (protraction/retraction). The hip swings the shoulder the femur
+   * hangs from toward the foot's fore/aft, so the entire leg pivots at the hip and
+   * reaches toward the target rather than the knee absorbing the motion. 0 keeps
+   * the coxa pointing out to the side so all fore/aft motion lives in the knee; 1
+   * (default) carries the shoulder level with the foot so the hip does all the
+   * protraction/retraction; higher exaggerates the swing past the foot.
    */
   coxaSwing: number;
   /**
