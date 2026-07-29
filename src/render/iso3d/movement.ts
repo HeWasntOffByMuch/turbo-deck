@@ -34,7 +34,7 @@ class MovementScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
-  private readonly mech = new MechRig('ally', PALETTE.mechAlly);
+  readonly mech = new MechRig('ally', PALETTE.mechAlly);
   private readonly moveMarker: THREE.Mesh;
   private readonly target = new THREE.Vector3(ARENA_WIDTH / 2, 0, ARENA_HEIGHT / 2);
   private lastNow = performance.now();
@@ -166,9 +166,10 @@ export function mountMovement(container: HTMLElement): ViewHandle {
   const setTitle = (): void => {
     const name = characterAt(state.player.characterIndex).name;
     title.textContent =
-      `turbo-deck · movement sandbox (spec 032) — right-click to move a mech unit. ` +
+      `turbo-deck · movement sandbox (spec 032/033) — right-click to move a mech unit. ` +
       `MOBA turn-rate movement: it turns to face the destination before it travels. ` +
-      `C swaps the movement archetype (${name}).`;
+      `Watch the organic spider gait: diagonal stepping, body bob/sway/pitch, center-of-mass lean. ` +
+      `C swaps the movement archetype (${name}) · gait: ${scene.mech.locomotionState}.`;
   };
   setTitle();
 
