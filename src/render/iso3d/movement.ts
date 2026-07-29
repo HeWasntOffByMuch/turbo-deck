@@ -5,11 +5,14 @@ import { ARENA_HEIGHT, ARENA_WIDTH, TICK_RATE } from '../../sim/constants.js';
 import type { CombatState, InputFrame, Vec2 } from '../../sim/types.js';
 import { IsoInputCapture } from './input.js';
 import { PALETTE } from './palette.js';
-import { makeBush, makeGround, makeHeadingArrow, makeMoveMarker, makeTree } from './meshes.js';
+import { makeBush, makeGround, makeHeadingArrow, makeMoveMarker, makeTree, makeUnwalkableMarker } from './meshes.js';
 import { MechRig } from './rigs.js';
-import { scatterProps } from './scatter.js';
+import { footprintRadius, scatterProps } from './scatter.js';
 import { createViewControls, type ViewControls } from './view-controls.js';
-import { DEFAULT_VIEW_HALF_WIDTH } from './view-settings.js';
+import { DEFAULT_CAMERA_OFFSET, DEFAULT_VIEW_HALF_WIDTH } from './view-settings.js';
+
+// Per-frame easing fraction for camera framing changes (spec 034), matching IsoScene.
+const CAMERA_SMOOTH = 0.15;
 
 /**
  * The movement sandbox tab (spec 032): no game -- just one controllable mech
@@ -36,7 +39,14 @@ class MovementScene {
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
   private readonly sun = new THREE.DirectionalLight(0xfff4e0, 2.1);
-  private readonly camOffset = new THREE.Vector3();
+  private readonly unwalkable = new THREE.Group();
+  private readonly camOffsetCurrent = new THREE.Vector3(
+    DEFAULT_CAMERA_OFFSET.x,
+    DEFAULT_CAMERA_OFFSET.y,
+    DEFAULT_CAMERA_OFFSET.z,
+  );
+  private readonly camOffsetTarget = new THREE.Vector3();
+  private halfWidth = DEFAULT_VIEW_HALF_WIDTH;
   private lastHalfWidth = -1;
   private readonly mech = new MechRig('ally', PALETTE.mechAlly);
   private readonly moveMarker: THREE.Mesh;
@@ -74,6 +84,7 @@ class MovementScene {
     ground.position.set(-bleed, 0, -bleed);
     this.scene.add(ground);
     this.addScenery(seed);
+    this.scene.add(this.unwalkable);
 
     // A heading arrow parented to the mech reads its facing (turn-rate movement).
     this.mech.group.add(makeHeadingArrow());
@@ -91,6 +102,12 @@ class MovementScene {
       g.scale.setScalar(prop.scale);
       g.rotation.y = prop.rotation;
       this.scene.add(g);
+
+      const r = footprintRadius(prop);
+      const marker = makeUnwalkableMarker();
+      marker.position.set(prop.x, 0, prop.y);
+      marker.scale.set(r, 1, r);
+      this.unwalkable.add(marker);
     }
   }
 
@@ -130,15 +147,18 @@ class MovementScene {
     this.renderer.render(this.scene, this.camera);
   }
 
-  /** Place the camera/light and refresh the ortho zoom from the panel (spec 033). */
+  /** Ease the camera/light and refresh the ortho zoom from the panel (spec 033/034). */
   private applyControls(): void {
     const off = this.controls.cameraOffset();
-    this.camOffset.set(off.x, off.y, off.z);
-    this.camera.position.copy(this.target).add(this.camOffset);
+    this.camOffsetTarget.set(off.x, off.y, off.z);
+    this.camOffsetCurrent.lerp(this.camOffsetTarget, CAMERA_SMOOTH);
+    this.camera.position.copy(this.target).add(this.camOffsetCurrent);
 
-    const hw = this.controls.viewHalfWidth();
-    if (hw !== this.lastHalfWidth) {
+    const targetHalfWidth = this.controls.viewHalfWidth();
+    this.halfWidth += (targetHalfWidth - this.halfWidth) * CAMERA_SMOOTH;
+    if (Math.abs(this.halfWidth - this.lastHalfWidth) > 0.05) {
       const aspect = RENDER_W / RENDER_H;
+      const hw = this.halfWidth;
       this.camera.left = -hw;
       this.camera.right = hw;
       this.camera.top = hw / aspect;
@@ -149,6 +169,8 @@ class MovementScene {
 
     const light = this.controls.lightOffset();
     this.sun.position.set(light.x, light.y, light.z);
+
+    this.unwalkable.visible = this.controls.showUnwalkable();
   }
 }
 

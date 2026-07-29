@@ -36,6 +36,8 @@ export const PALETTE = {
   attack: 0xffd27a,
   // Pale dust puff kicked up under the hero's feet while walking.
   poof: 0xf2efe4,
+  // Warning red marking an unwalkable terrain footprint (toggleable overlay).
+  blocked: 0xd6483f,
 } as const;
 
 /** Enemy body colour by sim type key, falling back to a neutral tone. */

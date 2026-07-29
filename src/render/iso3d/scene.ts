@@ -2,12 +2,24 @@ import * as THREE from 'three';
 import { ARENA_HEIGHT, ARENA_WIDTH, ATTACK_ANIM_TICKS } from '../../sim/constants.js';
 import type { CombatState, Vec2 } from '../../sim/types.js';
 import { PALETTE } from './palette.js';
-import { makeAttackCone, makeBush, makeGround, makeMoveMarker, makeTree, sectorGeometry } from './meshes.js';
+import {
+  makeAttackCone,
+  makeBush,
+  makeGround,
+  makeMoveMarker,
+  makeTree,
+  makeUnwalkableMarker,
+  sectorGeometry,
+} from './meshes.js';
 import { MechRig, Poofs, PlayerRig } from './rigs.js';
 import { worldToIso, type IsoParams } from './projection.js';
-import { scatterProps } from './scatter.js';
+import { footprintRadius, scatterProps } from './scatter.js';
 import { createViewControls, type ViewControls } from './view-controls.js';
-import { DEFAULT_VIEW_HALF_WIDTH } from './view-settings.js';
+import { DEFAULT_CAMERA_OFFSET, DEFAULT_VIEW_HALF_WIDTH } from './view-settings.js';
+
+// Fraction of the gap to the target camera framing closed each rendered frame,
+// so orbit/zoom slider changes glide instead of snapping (spec 034).
+const CAMERA_SMOOTH = 0.15;
 
 /**
  * The isometric 3D view (spec 031): owns a three.js scene that draws the sim as
@@ -34,8 +46,16 @@ export class IsoScene {
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
   private readonly sun = new THREE.DirectionalLight(0xfff4e0, 2.1);
-  // Reused every frame so applying the orbit/zoom allocates nothing.
-  private readonly camOffset = new THREE.Vector3();
+  // Overlay marking scenery footprints as unwalkable; toggled via the controls (spec 034).
+  private readonly unwalkable = new THREE.Group();
+  // Eased camera framing: the current offset/zoom glide toward the control values.
+  private readonly camOffsetCurrent = new THREE.Vector3(
+    DEFAULT_CAMERA_OFFSET.x,
+    DEFAULT_CAMERA_OFFSET.y,
+    DEFAULT_CAMERA_OFFSET.z,
+  );
+  private readonly camOffsetTarget = new THREE.Vector3();
+  private halfWidth = DEFAULT_VIEW_HALF_WIDTH;
   private lastHalfWidth = -1;
   private readonly playerRig = new PlayerRig();
   private readonly poofs: Poofs;
@@ -86,6 +106,7 @@ export class IsoScene {
     ground.position.set(-bleed, 0, -bleed);
     this.scene.add(ground);
     this.addScenery(seed);
+    this.scene.add(this.unwalkable);
 
     this.scene.add(this.playerRig.group);
     this.poofs = new Poofs(this.scene);
@@ -107,6 +128,13 @@ export class IsoScene {
       g.scale.setScalar(prop.scale);
       g.rotation.y = prop.rotation;
       this.scene.add(g);
+
+      // A ground footprint marking this prop as unwalkable terrain (spec 034).
+      const r = footprintRadius(prop);
+      const marker = makeUnwalkableMarker();
+      marker.position.set(prop.x, 0, prop.y);
+      marker.scale.set(r, 1, r);
+      this.unwalkable.add(marker);
     }
   }
 
@@ -167,19 +195,23 @@ export class IsoScene {
   }
 
   /**
-   * Place the camera at `target + cameraOffset()`, refresh the ortho zoom when
-   * the view-span slider moved, and swing the sun to the light offset -- reading
-   * the control panel (spec 033). The camera still only follows; it never rotates
-   * the world, so screen->world picking stays a plain projection.
+   * Read the control panel (spec 033/034): ease the camera offset and ortho zoom
+   * toward the slider values (so changes glide instead of snapping), swing the sun
+   * to the light offset, and show/hide the unwalkable-terrain overlay. The camera
+   * still only follows; it never rotates the world, so screen->world picking stays
+   * a plain projection.
    */
   private applyControls(): void {
     const off = this.controls.cameraOffset();
-    this.camOffset.set(off.x, off.y, off.z);
-    this.camera.position.copy(this.target).add(this.camOffset);
+    this.camOffsetTarget.set(off.x, off.y, off.z);
+    this.camOffsetCurrent.lerp(this.camOffsetTarget, CAMERA_SMOOTH);
+    this.camera.position.copy(this.target).add(this.camOffsetCurrent);
 
-    const hw = this.controls.viewHalfWidth();
-    if (hw !== this.lastHalfWidth) {
+    const targetHalfWidth = this.controls.viewHalfWidth();
+    this.halfWidth += (targetHalfWidth - this.halfWidth) * CAMERA_SMOOTH;
+    if (Math.abs(this.halfWidth - this.lastHalfWidth) > 0.05) {
       const aspect = RENDER_W / RENDER_H;
+      const hw = this.halfWidth;
       this.camera.left = -hw;
       this.camera.right = hw;
       this.camera.top = hw / aspect;
@@ -190,6 +222,8 @@ export class IsoScene {
 
     const light = this.controls.lightOffset();
     this.sun.position.set(light.x, light.y, light.z);
+
+    this.unwalkable.visible = this.controls.showUnwalkable();
   }
 
   /**
