@@ -1,8 +1,18 @@
 import * as THREE from 'three';
-import { ARENA_HEIGHT, ARENA_WIDTH } from '../../sim/constants.js';
+import { ARENA_HEIGHT, ARENA_WIDTH, ATTACK_ANIM_TICKS } from '../../sim/constants.js';
 import type { CombatState, Vec2 } from '../../sim/types.js';
 import { PALETTE } from './palette.js';
-import { makeBush, makeEnemy, makeGround, makeMoveMarker, makePlayer, makeTree } from './meshes.js';
+import {
+  makeAttackCone,
+  makeBush,
+  makeEnemy,
+  makeGround,
+  makeHeadingArrow,
+  makeMoveMarker,
+  makePlayer,
+  makeTree,
+  sectorGeometry,
+} from './meshes.js';
 import { worldToIso, type IsoParams } from './projection.js';
 import { scatterProps } from './scatter.js';
 
@@ -35,6 +45,9 @@ export class IsoScene {
   private readonly camera: THREE.OrthographicCamera;
   private readonly player: THREE.Group;
   private readonly moveMarker: THREE.Mesh;
+  private readonly attackCone: THREE.Mesh;
+  // Arc the attack-cone geometry is currently built for, so it rebuilds only on change.
+  private coneArcHalf = -1;
   private readonly enemies = new Map<number, THREE.Group>();
   private readonly target = new THREE.Vector3(ARENA_WIDTH / 2, 0, ARENA_HEIGHT / 2);
   // Reused across cursor raycasts so screenToWorld allocates nothing per frame.
@@ -83,10 +96,13 @@ export class IsoScene {
     this.addScenery(seed);
 
     this.player = makePlayer();
+    this.player.add(makeHeadingArrow()); // parented: inherits the unit's facing
     this.scene.add(this.player);
     this.moveMarker = makeMoveMarker();
     this.moveMarker.visible = false;
     this.scene.add(this.moveMarker);
+    this.attackCone = makeAttackCone();
+    this.scene.add(this.attackCone);
   }
 
   /** Deterministic trees + bushes, kept clear of the arena centre / spawn. */
@@ -138,6 +154,7 @@ export class IsoScene {
       this.moveMarker.visible = false;
     }
 
+    this.updateAttackCone(state);
     this.syncEnemies(state);
 
     // Fixed-angle follow: keep the player centred without rotating the camera.
@@ -146,6 +163,36 @@ export class IsoScene {
     this.camera.lookAt(this.target);
 
     this.renderer.render(this.scene, this.camera);
+  }
+
+  /**
+   * The charging attack cone (spec 028): while an attack is pending, the unit
+   * turns to face the aim and then winds up. The wedge is oriented to the aim,
+   * grows and brightens as the animation nears its release, and vanishes on fire
+   * or when a move cancels it -- so the turn-to-attack and the cancel window read.
+   */
+  private updateAttackCone(state: CombatState): void {
+    const pa = state.player.pendingAttack;
+    if (!pa) {
+      this.attackCone.visible = false;
+      return;
+    }
+    const cone = pa.effect.spells.find((s) => s.kind === 'cone');
+    const range = cone && cone.kind === 'cone' ? cone.range : 90;
+    const arcHalf = cone && cone.kind === 'cone' ? Math.acos(Math.sqrt(cone.arcCosSq)) : Math.PI / 5;
+    if (arcHalf !== this.coneArcHalf) {
+      this.attackCone.geometry.dispose();
+      this.attackCone.geometry = sectorGeometry(arcHalf);
+      this.coneArcHalf = arcHalf;
+    }
+    // 0 while still turning (fireAtTick 0), then ramps 0..1 across the animation.
+    const charge = pa.fireAtTick === 0 ? 0 : 1 - Math.max(0, pa.fireAtTick - state.tick) / ATTACK_ANIM_TICKS;
+    const r = range * (0.4 + 0.6 * charge);
+    this.attackCone.visible = true;
+    this.attackCone.position.set(state.player.position.x, 2, state.player.position.y);
+    this.attackCone.rotation.y = -Math.atan2(pa.effect.aimY, pa.effect.aimX);
+    this.attackCone.scale.set(r, 1, r);
+    (this.attackCone.material as THREE.MeshBasicMaterial).opacity = 0.1 + 0.28 * charge;
   }
 
   private syncEnemies(state: CombatState): void {

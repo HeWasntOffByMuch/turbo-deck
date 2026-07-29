@@ -112,6 +112,50 @@ export function makeMoveMarker(): THREE.Mesh {
   return m;
 }
 
+/**
+ * A flat ground arrow pointing along the unit's heading (+x local). Parented to
+ * the player group -- which is rotated by the sim's `facing` -- so the turn-rate
+ * rotation (spec 028's "change direction before you can move") reads on screen.
+ */
+export function makeHeadingArrow(): THREE.Mesh {
+  const shape = new THREE.Shape();
+  shape.moveTo(30, 0);
+  shape.lineTo(12, 9);
+  shape.lineTo(12, -9);
+  shape.closePath();
+  const geo = new THREE.ShapeGeometry(shape);
+  geo.rotateX(-Math.PI / 2); // lay flat in the ground plane, tip toward +x
+  const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: PALETTE.heading }));
+  m.position.y = 3;
+  return m;
+}
+
+/**
+ * The charging attack cone (spec 028): a flat ground wedge, oriented to the
+ * attack's aim, that fills as the wind-up nears its release. The scene sets its
+ * geometry from the cone spec and scales/fades it by the animation progress.
+ */
+export function makeAttackCone(): THREE.Mesh {
+  const mat = new THREE.MeshBasicMaterial({
+    color: PALETTE.attack,
+    transparent: true,
+    opacity: 0.2,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const m = new THREE.Mesh(new THREE.BufferGeometry(), mat);
+  m.position.y = 2;
+  m.visible = false;
+  return m;
+}
+
+/** A unit-radius ground wedge centred on +x, spanning ±`arcHalf`, laid flat. */
+export function sectorGeometry(arcHalf: number): THREE.BufferGeometry {
+  const geo = new THREE.CircleGeometry(1, 24, -arcHalf, arcHalf * 2);
+  geo.rotateX(-Math.PI / 2);
+  return geo;
+}
+
 /** The ground plane, split into a flat two-tone check so scale reads without texture. */
 export function makeGround(width: number, height: number): THREE.Group {
   const g = new THREE.Group();

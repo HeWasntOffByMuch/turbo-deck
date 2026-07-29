@@ -29,6 +29,9 @@ export const PALETTE = {
   enemyEye: 0x1a1208,
   // Bright pip dropped at the click-to-move destination.
   marker: 0xffe08a,
+  // Heading arrow (unit facing) and the charging attack cone telegraph.
+  heading: 0xffe08a,
+  attack: 0xffd27a,
 } as const;
 
 /** Enemy body colour by sim type key, falling back to a neutral tone. */

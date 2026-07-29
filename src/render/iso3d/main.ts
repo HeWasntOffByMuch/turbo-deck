@@ -37,10 +37,17 @@ function main(): void {
   const setTitle = (): void => {
     const name = characterAt(state.combat.player.characterIndex).name;
     title.textContent =
-      `turbo-deck · isometric 3D (spec 031) — right-click to move (${name}: MOBA turn-rate movement), ` +
-      'C swaps character, Q summons a wave, 1-4 play cards. Flat-shaded, single-light, fixed iso camera.';
+      `turbo-deck · isometric 3D (spec 031) — right-click move, left-click attack toward cursor ` +
+      `(${name}: MOBA turn-rate movement — the unit turns before it moves/fires, and moving cancels an attack). ` +
+      'C swaps character, Q summons a wave, 1-4 play cards.';
   };
   setTitle();
+
+  // The hand slot holding a basic `attack` card, for left-click attacks (null if none).
+  const attackSlot = (): 0 | 1 | 2 | 3 | null => {
+    const i = state.deck.hand.findIndex((c) => c?.id === 'attack');
+    return i === 0 || i === 1 || i === 2 || i === 3 ? i : null;
+  };
 
   let accumulator = 0;
   let lastFrame: number | undefined;
@@ -52,7 +59,7 @@ function main(): void {
     while (accumulator >= TICK_MS) {
       const cursor = input.mouseCanvas();
       const worldCursor = scene.screenToWorld(cursor.x, cursor.y);
-      state = stepSpellGame(state, input.sample(worldCursor, state.combat.player.position)).state;
+      state = stepSpellGame(state, input.sample(worldCursor, state.combat.player.position, attackSlot())).state;
       accumulator -= TICK_MS;
     }
 

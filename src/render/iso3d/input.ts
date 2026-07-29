@@ -27,6 +27,8 @@ export class IsoInputCapture {
   private mouse: ScreenPoint = { x: 0, y: 0 };
   // A right-click move order is a discrete edge, consumed once by sample().
   private rightClicked = false;
+  // A left-click basic-attack edge (played toward the cursor), consumed once.
+  private leftClicked = false;
   private queuedCycleCharacter = false;
   private queuedPlay: 0 | 1 | 2 | 3 | null = null;
   private queuedWave = false;
@@ -45,6 +47,7 @@ export class IsoInputCapture {
 
   private readonly onMouseDown = (e: MouseEvent): void => {
     if (e.button === 2) this.rightClicked = true;
+    else if (e.button === 0) this.leftClicked = true;
   };
 
   // Right-click is the move command, so suppress the browser context menu.
@@ -66,13 +69,18 @@ export class IsoInputCapture {
     return this.mouse;
   }
 
-  /** Build one input frame from the world cursor (raycast by the scene) and player position. */
-  sample(worldCursor: Vec2, playerPos: Vec2): SpellInput {
+  /**
+   * Build one input frame from the world cursor (raycast by the scene) and
+   * player position. `attackSlot` is the hand slot holding a basic `attack` card
+   * (or null if none) so a left-click can fire a basic attack toward the cursor;
+   * a queued number-key card play takes precedence over the left-click.
+   */
+  sample(worldCursor: Vec2, playerPos: Vec2, attackSlot: 0 | 1 | 2 | 3 | null): SpellInput {
     let aimX = worldCursor.x - playerPos.x;
     const aimY = worldCursor.y - playerPos.y;
     if (aimX === 0 && aimY === 0) aimX = 1;
 
-    const play = this.queuedPlay;
+    const play = this.queuedPlay ?? (this.leftClicked ? attackSlot : null);
     const input: SpellInput = {
       aimX,
       aimY,
@@ -87,6 +95,7 @@ export class IsoInputCapture {
     this.queuedPlay = null;
     this.queuedWave = false;
     this.rightClicked = false;
+    this.leftClicked = false;
     this.queuedCycleCharacter = false;
     return input;
   }
