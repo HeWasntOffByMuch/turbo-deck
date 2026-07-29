@@ -32,6 +32,8 @@ export const PALETTE = {
   // Heading arrow (unit facing) and the charging attack cone telegraph.
   heading: 0xffe08a,
   attack: 0xffd27a,
+  // Pale dust puff kicked up under the hero's feet while walking.
+  poof: 0xf2efe4,
 } as const;
 
 /** Enemy body colour by sim type key, falling back to a neutral tone. */

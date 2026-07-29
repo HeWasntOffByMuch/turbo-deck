@@ -2,17 +2,8 @@ import * as THREE from 'three';
 import { ARENA_HEIGHT, ARENA_WIDTH, ATTACK_ANIM_TICKS } from '../../sim/constants.js';
 import type { CombatState, Vec2 } from '../../sim/types.js';
 import { PALETTE } from './palette.js';
-import {
-  makeAttackCone,
-  makeBush,
-  makeEnemy,
-  makeGround,
-  makeHeadingArrow,
-  makeMoveMarker,
-  makePlayer,
-  makeTree,
-  sectorGeometry,
-} from './meshes.js';
+import { makeAttackCone, makeBush, makeGround, makeMoveMarker, makeTree, sectorGeometry } from './meshes.js';
+import { MechRig, Poofs, PlayerRig } from './rigs.js';
 import { worldToIso, type IsoParams } from './projection.js';
 import { scatterProps } from './scatter.js';
 
@@ -43,13 +34,20 @@ export class IsoScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
-  private readonly player: THREE.Group;
+  private readonly playerRig = new PlayerRig();
+  private readonly poofs: Poofs;
   private readonly moveMarker: THREE.Mesh;
   private readonly attackCone: THREE.Mesh;
   // Arc the attack-cone geometry is currently built for, so it rebuilds only on change.
   private coneArcHalf = -1;
-  private readonly enemies = new Map<number, THREE.Group>();
+  private readonly enemies = new Map<number, MechRig>();
+  private readonly enemyPrev = new Map<number, Vec2>();
   private readonly target = new THREE.Vector3(ARENA_WIDTH / 2, 0, ARENA_HEIGHT / 2);
+  // Frame timing + player gait tracking for foot poofs (cosmetic, not sim state).
+  private lastNow = performance.now();
+  private prevPlayerPos: Vec2 | null = null;
+  private playerStride = 0;
+  private footfalls = 0;
   // Reused across cursor raycasts so screenToWorld allocates nothing per frame.
   private readonly raycaster = new THREE.Raycaster();
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -95,9 +93,8 @@ export class IsoScene {
     this.scene.add(ground);
     this.addScenery(seed);
 
-    this.player = makePlayer();
-    this.player.add(makeHeadingArrow()); // parented: inherits the unit's facing
-    this.scene.add(this.player);
+    this.scene.add(this.playerRig.group);
+    this.poofs = new Poofs(this.scene);
     this.moveMarker = makeMoveMarker();
     this.moveMarker.visible = false;
     this.scene.add(this.moveMarker);
@@ -141,11 +138,21 @@ export class IsoScene {
   }
 
   render(state: CombatState): void {
+    const now = performance.now();
+    const dt = Math.min(0.05, Math.max(0, (now - this.lastNow) / 1000));
+    this.lastNow = now;
+
     const p = state.player;
-    this.player.position.set(p.position.x, 0, p.position.y);
+    this.playerRig.group.position.set(p.position.x, 0, p.position.y);
     // Orient by the sim's heading (spec 028): a mesh built facing +x maps to
     // world facing `theta` at rotation.y = -theta.
-    this.player.rotation.y = -p.facing;
+    this.playerRig.group.rotation.y = -p.facing;
+
+    const moved = this.prevPlayerPos ? Math.hypot(p.position.x - this.prevPlayerPos.x, p.position.y - this.prevPlayerPos.y) : 0;
+    this.prevPlayerPos = { x: p.position.x, y: p.position.y };
+    this.playerRig.update(dt, moved);
+    this.spawnFootPoofs(p.position, p.facing, moved);
+    this.poofs.update(dt);
 
     if (p.moveTarget) {
       this.moveMarker.visible = true;
@@ -155,7 +162,7 @@ export class IsoScene {
     }
 
     this.updateAttackCone(state);
-    this.syncEnemies(state);
+    this.syncEnemies(state, dt);
 
     // Fixed-angle follow: keep the player centred without rotating the camera.
     this.target.set(p.position.x, 0, p.position.y);
@@ -163,6 +170,28 @@ export class IsoScene {
     this.camera.lookAt(this.target);
 
     this.renderer.render(this.scene, this.camera);
+  }
+
+  /**
+   * Drop a dust poof under whichever foot just planted. A footfall happens every
+   * half stride; the plant alternates feet, so the poof sits under that foot --
+   * a little behind the hero, offset to that side, rotated into world space by
+   * the heading. Capped per frame so a big jump (a dash) can't spew a burst.
+   */
+  private spawnFootPoofs(pos: Vec2, facing: number, moved: number): void {
+    if (moved <= 0.03) return;
+    const halfStride = PlayerRig.STRIDE / 2;
+    let guard = 0;
+    while (this.playerStride + moved >= (this.footfalls + 1) * halfStride && guard++ < 3) {
+      this.footfalls += 1;
+      const side = this.footfalls % 2 === 0 ? -1 : 1;
+      const lx = -4;
+      const lz = side * PlayerRig.FOOT_SPREAD;
+      const wx = pos.x + lx * Math.cos(facing) - lz * Math.sin(facing);
+      const wz = pos.y + lx * Math.sin(facing) + lz * Math.cos(facing);
+      this.poofs.spawn(wx, wz);
+    }
+    this.playerStride += moved;
   }
 
   /**
@@ -195,24 +224,28 @@ export class IsoScene {
     (this.attackCone.material as THREE.MeshBasicMaterial).opacity = 0.1 + 0.28 * charge;
   }
 
-  private syncEnemies(state: CombatState): void {
+  private syncEnemies(state: CombatState, dt: number): void {
     const live = new Set<number>();
     for (const enemy of state.enemies) {
       live.add(enemy.id);
-      let g = this.enemies.get(enemy.id);
-      if (!g) {
-        g = makeEnemy(enemy.type);
-        this.enemies.set(enemy.id, g);
-        this.scene.add(g);
+      let rig = this.enemies.get(enemy.id);
+      if (!rig) {
+        rig = new MechRig(enemy.type);
+        this.enemies.set(enemy.id, rig);
+        this.scene.add(rig.group);
       }
-      g.position.set(enemy.position.x, 0, enemy.position.y);
+      rig.group.position.set(enemy.position.x, 0, enemy.position.y);
       const dir = { x: state.player.position.x - enemy.position.x, y: state.player.position.y - enemy.position.y };
-      g.rotation.y = Math.atan2(-dir.y, dir.x);
+      rig.group.rotation.y = Math.atan2(-dir.y, dir.x);
+      const prev = this.enemyPrev.get(enemy.id) ?? enemy.position;
+      rig.update(dt, Math.hypot(enemy.position.x - prev.x, enemy.position.y - prev.y));
+      this.enemyPrev.set(enemy.id, { x: enemy.position.x, y: enemy.position.y });
     }
-    for (const [id, g] of this.enemies) {
+    for (const [id, rig] of this.enemies) {
       if (!live.has(id)) {
-        this.scene.remove(g);
+        this.scene.remove(rig.group);
         this.enemies.delete(id);
+        this.enemyPrev.delete(id);
       }
     }
   }

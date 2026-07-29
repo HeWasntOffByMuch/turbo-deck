@@ -24,8 +24,14 @@ driving the existing deterministic `spell-session` sim. The 2D sim plane
 - `scatter.ts` — pure, dependency-free deterministic placement of props
   (`scatterProps(seed, width, height, keepOut)`), same seed → identical list.
 - `meshes.ts` — flat-shaded blocky mesh factories (`makeTree`, `makeBush`,
-  `makePlayer`, `makeEnemy`, `makeGround`, `makeMoveMarker`) using
-  `MeshLambertMaterial` with `flatShading` and low-poly geometry.
+  `makeGround`, `makeMoveMarker`, the heading arrow / attack cone) plus shared
+  primitive helpers, all using `MeshLambertMaterial` with `flatShading`.
+- `rigs.ts` — animated unit rigs posed each frame from how far the unit moved:
+  `PlayerRig` (a bird with flapping wings and stepping feet), `MechRig` (a
+  rigid-chassis quadruped whose four legs trot, stepping to the front to carry
+  the body; body colour keys off the enemy type), and `Poofs` (small dust clouds
+  spawned under the hero's feet on each footfall that expand and fade). All
+  cosmetic — driven by observed position deltas, never by writing sim state.
 - `projection.ts` — the pure 2:1 iso world→screen mapping, kept for overlays and
   as a tested determinism surface.
 - `scene.ts` — owns the three.js `Scene`, a **fixed isometric**
