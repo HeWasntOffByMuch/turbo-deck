@@ -442,6 +442,15 @@ const SLIDER_GROUPS: readonly { readonly title: string; readonly rows: readonly 
         tip: "How much the hip joint carries the whole leg front-to-back, pivoting the entire limb at the hip so it reaches toward the target. 0 keeps the coxa pointing out to the side (all fore/aft in the knee); 1 makes the hip do all the reach; higher exaggerates it.",
       },
       {
+        label: 'Thigh length',
+        min: 0,
+        max: 3,
+        step: 0.05,
+        key: 'femurScale',
+        digits: 2,
+        tip: 'Length of the thigh (femur) — the middle leg segment from the shoulder up to the knee. 1 is natural; higher gives a longer, higher-kneed thigh; 0 removes the thigh entirely, so the shin runs straight from the hip to the foot.',
+      },
+      {
         label: 'Foot follow (smooth)',
         min: 4,
         max: 60,
