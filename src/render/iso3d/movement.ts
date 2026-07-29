@@ -232,6 +232,7 @@ const SLIDER_GROUPS: readonly { readonly title: string; readonly rows: readonly 
       { label: 'Roll gain', min: 0, max: 0.3, step: 0.01, key: 'rollGain', digits: 2 },
       { label: 'Knee sway', min: 0, max: 0.4, step: 0.02, key: 'kneeSway', digits: 2 },
       { label: 'Hip joint reach', min: 0, max: 3, step: 0.05, key: 'coxaReach', digits: 2 },
+      { label: 'Hip fore/aft swing', min: 0, max: 3, step: 0.05, key: 'coxaSwing', digits: 2 },
       { label: 'Foot follow (smooth)', min: 4, max: 60, step: 1, key: 'footSmooth' },
     ],
   },

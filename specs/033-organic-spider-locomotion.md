@@ -168,12 +168,19 @@ preserved). The only sim change is the two default-off input overrides above.
 
 ### Hip-joint reach
 
-`tuning.coxaReach` scales the coxa (the joint closest to the body): a multiplier
-on how far that segment extends the leg outward, i.e. how much of a leg's reach
-comes from moving the hip joint. 0 collapses it to a bare knee leg emanating
-straight from the body; higher throws the foot further out. It feeds the leg's
-reach box (so step lead and the safety clamp track it) and gets a "Hip joint
-reach" slider in the sandbox.
+Two knobs on the coxa (the joint closest to the body):
+
+- `tuning.coxaReach` scales how far that segment extends the leg **outward** —
+  how much of a leg's reach comes from moving the hip joint. 0 collapses it to a
+  bare knee leg emanating straight from the body; higher throws the foot further
+  out. It feeds the leg's reach box (so step lead and the safety clamp track it).
+- `tuning.coxaSwing` scales the **fore/aft (front-to-back)** part of the coxa's
+  aim — how much the hip joint swings the leg forward and back
+  (protraction/retraction). 1 aims the coxa straight at the foot; 0 keeps it
+  pointing out to the side so all fore/aft motion lives in the knee; higher
+  exaggerates the hip's front-to-back swing.
+
+Both get sliders ("Hip joint reach", "Hip fore/aft swing") in the sandbox.
 
 ### Robustness
 

@@ -281,7 +281,7 @@ class MechLeg {
    * joint variation. The coxa aims horizontally toward the foot; the IK solves
    * from the coxa's shoulder, so the body-corner joint visibly rotates.
    */
-  pose(hip: THREE.Vector3, foot: THREE.Vector3, kneeSway: number, coxaScale: number): void {
+  pose(hip: THREE.Vector3, foot: THREE.Vector3, kneeSway: number, coxaScale: number, coxaSwing: number): void {
     // Never solve from a non-finite hip/foot: leave the leg in its last good pose
     // rather than write NaN into the bones (which would fling them off-screen).
     if (
@@ -292,9 +292,11 @@ class MechLeg {
       return;
     }
     // Coxa: a level segment aimed out toward the foot's ground azimuth. Its length
-    // (the hip joint's reach) is scaled by `coxaScale` -- how much of the leg's
-    // reach comes from this joint closest to the body.
-    _horiz.set(foot.x - hip.x, 0, foot.z - hip.z);
+    // (the hip joint's reach) is scaled by `coxaScale`; the fore/aft (leg-frame x)
+    // part of its aim is scaled by `coxaSwing`, so the hip joint swings the leg
+    // more or less front-to-back (protraction/retraction) -- the rest of the
+    // fore/aft motion then lives in the knee.
+    _horiz.set((foot.x - hip.x) * finiteOr(coxaSwing, 1), 0, foot.z - hip.z);
     if (_horiz.lengthSq() < 1e-6) _horiz.copy(this.restAzimuth);
     else _horiz.normalize();
     _shoulder.copy(hip).addScaledVector(_horiz, this.coxaLen * finiteOr(coxaScale, 1));
@@ -457,6 +459,13 @@ export interface MechTuning {
    */
   coxaReach: number;
   /**
+   * Hip-joint (coxa) fore/aft swing: how much the hip joint swings the leg
+   * front-to-back (protraction/retraction). 1 aims the coxa straight at the foot
+   * (default); 0 keeps the coxa pointing out to the side so all fore/aft motion
+   * lives in the knee; higher exaggerates the front-to-back swing of the hip.
+   */
+  coxaSwing: number;
+  /**
    * Foot-follow rate: how fast the drawn foot may chase its target (1/s). Higher
    * snaps tighter to the gait; lower moves the limbs more slowly and smooths out
    * any twitch. This is the "restrict how fast a limb can move" knob.
@@ -488,6 +497,7 @@ export function defaultMechTuning(): MechTuning {
     rollGain: 0.09,
     kneeSway: 0.1,
     coxaReach: 1,
+    coxaSwing: 1,
     footSmooth: 26,
   };
 }
@@ -517,6 +527,7 @@ const TUNING_BOUNDS: Record<keyof MechTuning, readonly [number, number]> = {
   rollGain: [0, 4],
   kneeSway: [0, 4],
   coxaReach: [0, 4],
+  coxaSwing: [0, 4],
   footSmooth: [0.5, 1000],
 };
 
@@ -1169,7 +1180,7 @@ export class MechRig {
       _foot.set(fx, sclamp(p.dispY, -4 * S, footYMax, 0), fz);
       const kneeTarget = (vnoise(p.seed + 11, this.clock * 0.5) - 0.5) * t.kneeSway;
       p.kneeCur = sclamp(p.kneeCur + (kneeTarget - p.kneeCur) * aKnee, -2, 2, 0);
-      leg.pose(_hip, _foot, p.kneeCur, t.coxaReach);
+      leg.pose(_hip, _foot, p.kneeCur, t.coxaReach, t.coxaSwing);
     });
   }
 }
