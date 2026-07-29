@@ -19,12 +19,14 @@
   },
   "dependencies": {
     "pixi.js": "^8.6.6",
-    "pure-rand": "^6.1.0"
+    "pure-rand": "^6.1.0",
+    "three": "^0.160.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
     "@types/node": "^22.10.7",
     "@types/pngjs": "^6.0.5",
+    "@types/three": "^0.160.0",
     "eslint": "^9.18.0",
     "fast-check": "^3.23.2",
     "pngjs": "^7.0.0",
