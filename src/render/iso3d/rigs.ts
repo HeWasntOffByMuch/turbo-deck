@@ -323,12 +323,34 @@ class MechLeg {
     // across the body and back on a *planted* leg every time that sign flickers.
     // The leg's side is stable, so the hip segment stays outboard through the turn.
     const latSign = Math.sign(this.restAzimuth.z) || Math.sign(foot.z - hip.z) || 1;
-    _shoulder.set(
-      hip.x + (foot.x - hip.x) * finiteOr(coxaSwing, 1),
-      hip.y,
-      hip.z + latSign * this.coxaLen * finiteOr(coxaScale, 1),
-    );
-    orientSegment(this.coxa, hip, _shoulder);
+    // The coxa is a FIXED-LENGTH hip bone that YAWS toward the foot -- it must not
+    // telescope. Its length is `coxaLen * coxaScale`; `coxaSwing` sets how far it
+    // leans fore/aft toward the foot. Setting the shoulder's fore/aft directly to
+    // `foot.x` instead let the bone STRETCH: in a turn the world-locked feet swing
+    // wide, so `foot.x - hip.x` grew huge and the coxa ballooned to ~4x its length
+    // (a rubber-band hip that flails, worst on the leg reaching furthest fore/aft).
+    // Build the horizontal offset (fore/aft lean vs. lateral reach), then renormalise
+    // it back to the fixed coxa length so the joint rotates rather than extends.
+    const coxaReachLen = this.coxaLen * finiteOr(coxaScale, 1);
+    const hasCoxa = coxaReachLen >= 1e-3;
+    this.coxa.visible = hasCoxa;
+    if (hasCoxa) {
+      let ox = (foot.x - hip.x) * finiteOr(coxaSwing, 1); // fore/aft lean toward the foot
+      let oz = latSign * coxaReachLen; // lateral, out to the leg's own side
+      const olen = Math.hypot(ox, oz);
+      if (olen > 1e-4) {
+        const k = coxaReachLen / olen;
+        ox *= k;
+        oz *= k;
+      } else {
+        ox = 0;
+        oz = latSign * coxaReachLen;
+      }
+      _shoulder.set(hip.x + ox, hip.y, hip.z + oz);
+      orientSegment(this.coxa, hip, _shoulder);
+    } else {
+      _shoulder.set(hip.x, hip.y, hip.z); // no coxa: the femur hangs straight from the hip
+    }
 
     // Femur + tibia: 2-bone IK from the shoulder to the foot, knee on the up side.
     // The thigh (femur) length is live-tunable via `femurScale`; the IK reads the
@@ -1202,6 +1224,22 @@ export class MechRig {
     const fore = Math.sign(leg.rest.x);
     lx = fore > 0 ? Math.max(lx, MIN_FORE * S) : Math.min(lx, -MIN_FORE * S);
     lz = leg.side > 0 ? Math.max(lz, MIN_LAT * S) : Math.min(lz, -MIN_LAT * S);
+    // Keep the plant within the leg's reach FROM ITS HIP. `lead` alone is capped at
+    // `reach`, but the rest offset (rest.x = ±34) is added on top and turnStepBias
+    // lengthens the leading leg's stride, so a turn could plant the foot well past
+    // coxa+femur+tibia -- the leg then over-extends and the drawn foot strands at
+    // the reach cap (the "outside front leg reaching too far" in a turn). Clamp the
+    // target's distance from the hip to just inside that reach so it stays coverable.
+    const hipX = fore * HIP_INSET * S;
+    const hipZ = leg.side * HIP_INSET * S;
+    const rx = lx - hipX;
+    const rz = lz - hipZ;
+    const rlen = Math.hypot(rx, rz);
+    const maxPlant = reach * 0.9;
+    if (rlen > maxPlant) {
+      lx = hipX + (rx / rlen) * maxPlant;
+      lz = hipZ + (rz / rlen) * maxPlant;
+    }
     // Placement prediction: the leg frame rotates at `legYawRate` (0 for a mech
     // whose base doesn't turn), so over the swing it turns by ~legYawRate*dur.
     // Convert the target through that future frame so the foot lands ahead.
