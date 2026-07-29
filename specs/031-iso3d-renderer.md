@@ -36,10 +36,17 @@ driving the existing deterministic `spell-session` sim. The 2D sim plane
   click-to-move, **`screenToWorld(cssX, cssY): Vec2`** — a raycast from the
   fixed camera onto the ground plane so a screen click becomes a world point.
 - `input.ts` — MOBA capture matching `spells/input.ts`: **right-click issues one
-  move order** to the world point under the cursor; the cursor world point is
-  the aim/target; **C** cycles the movement character (Warden/Zephyr), **Q**
-  spawns a wave, **1-4** play cards (including `dash`, which fires toward the
-  cursor). No held-button movement.
+  move order** to the world point under the cursor; **left-click fires a basic
+  attack toward the cursor** (plays the hand's `attack` card); the cursor world
+  point is the aim/target; **C** cycles the movement character (Warden/Zephyr),
+  **Q** spawns a wave, **1-4** play cards (including `dash`, which fires toward
+  the cursor). No held-button movement.
+
+To make the spec 028 movement rules read, the scene draws a **heading arrow**
+(the unit's `facing`, so the turn-rate direction change is visible) and a
+**charging attack cone** driven by `player.pendingAttack` (it turns to face the
+aim, then the wedge fills through the wind-up and vanishes on fire or when a
+move cancels the attack).
 - `main.ts` — fixed-timestep loop wiring input → `screenToWorld` → `stepSpellGame`
   → `scene.render`. The page entry (`src/render/index.html`).
 
@@ -59,8 +66,10 @@ determinism surfaces are `scatterProps` and `worldToIso`, both pure and seeded.
 
 ## Out of scope
 
-- Spell telegraphs, cones/AOEs, reward pickers, the stats/character HUD panel,
-  health bars, popups, audio — the 2D `spells` renderer already covers those.
+- Spell AOEs beyond the basic-attack cone (meteor/aura/dash telegraphs), reward
+  pickers, the stats/character HUD panel, health bars, popups, audio — the 2D
+  `spells` renderer already covers those. (The heading arrow and the basic-attack
+  charging cone *are* drawn here, because they are how the movement rules read.)
 - Enemy facing/turn-rate; camera controls (rotate/zoom); shadows; lighting
   beyond one directional light + ambient fill.
 - Textured or organic art; only a few primitive-built shapes for now.
