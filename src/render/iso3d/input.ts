@@ -55,13 +55,27 @@ export class IsoInputCapture {
     e.preventDefault();
   };
 
+  private attached: Window | null = null;
+
   constructor(private readonly canvas: HTMLCanvasElement) {}
 
   attach(target: Window): void {
+    this.attached = target;
     target.addEventListener('keydown', this.onKeyDown);
     target.addEventListener('mousemove', this.onMouseMove);
     this.canvas.addEventListener('mousedown', this.onMouseDown);
     this.canvas.addEventListener('contextmenu', this.onContextMenu);
+  }
+
+  /** Release the listeners `attach` added, so a hidden view stops capturing input. */
+  detach(): void {
+    if (this.attached) {
+      this.attached.removeEventListener('keydown', this.onKeyDown);
+      this.attached.removeEventListener('mousemove', this.onMouseMove);
+      this.attached = null;
+    }
+    this.canvas.removeEventListener('mousedown', this.onMouseDown);
+    this.canvas.removeEventListener('contextmenu', this.onContextMenu);
   }
 
   /** Cursor position in canvas CSS pixels, for the scene's screen->world raycast. */

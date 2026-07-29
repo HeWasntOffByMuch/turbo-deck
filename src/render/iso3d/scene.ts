@@ -41,7 +41,6 @@ export class IsoScene {
   // Arc the attack-cone geometry is currently built for, so it rebuilds only on change.
   private coneArcHalf = -1;
   private readonly enemies = new Map<number, MechRig>();
-  private readonly enemyPrev = new Map<number, Vec2>();
   private readonly target = new THREE.Vector3(ARENA_WIDTH / 2, 0, ARENA_HEIGHT / 2);
   // Frame timing + player gait tracking for foot poofs (cosmetic, not sim state).
   private lastNow = performance.now();
@@ -236,16 +235,14 @@ export class IsoScene {
       }
       rig.group.position.set(enemy.position.x, 0, enemy.position.y);
       const dir = { x: state.player.position.x - enemy.position.x, y: state.player.position.y - enemy.position.y };
-      rig.group.rotation.y = Math.atan2(-dir.y, dir.x);
-      const prev = this.enemyPrev.get(enemy.id) ?? enemy.position;
-      rig.update(dt, Math.hypot(enemy.position.x - prev.x, enemy.position.y - prev.y));
-      this.enemyPrev.set(enemy.id, { x: enemy.position.x, y: enemy.position.y });
+      const ry = Math.atan2(-dir.y, dir.x);
+      rig.group.rotation.y = ry;
+      rig.update(dt, enemy.position, ry);
     }
     for (const [id, rig] of this.enemies) {
       if (!live.has(id)) {
         this.scene.remove(rig.group);
         this.enemies.delete(id);
-        this.enemyPrev.delete(id);
       }
     }
   }
