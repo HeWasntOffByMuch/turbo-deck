@@ -309,6 +309,13 @@ const BODY_SIZE = 22;
 const COUPLE_SLACK = 8; // a leg pulls its diagonal partner along if within this of triggering
 const PLACE_JITTER = 4; // per-step foot-placement noise (world units, x size)
 const STEP_COOLDOWN = 0.05; // min seconds a foot rests after a plant before it may step again
+// A foot must stay in its own quadrant relative to the body: front feet ahead of
+// MIN_FORE, back feet behind it, and each on its own side past MIN_LAT. A planted
+// foot that crosses these lines (e.g. left stranded behind the hip during a turn)
+// is forced to step, and fresh plants are clamped inside them -- so a leg never
+// reaches across or behind the body to a stranded foot.
+const MIN_FORE = 12; // min |fore/aft| offset of a foot from body centre (x size)
+const MIN_LAT = 14; // min |lateral| offset of a foot from body centre (x size)
 const HEIGHT_RUN_CROUCH = 6; // lower centre of gravity when running
 const AIRBORNE_DIP = 1.6; // body dips per airborne leg (weight over fewer feet)
 const LAND_IMPULSE = 2.0; // downward settle added when a foot plants
@@ -473,7 +480,6 @@ export class MechRig {
   private scale = 1; // size scale in effect this frame
   private prev: { x: number; z: number } | null = null;
   private prevRy = 0;
-  private moveDir = { x: 0, z: 0 };
 
   // Smoothed observed motion and the body-offset springs it drives.
   private speed = 0;
@@ -581,24 +587,11 @@ export class MechRig {
       this.prevRy = ry;
     }
 
-    // Observed motion, smoothed. The travel direction is low-passed and only
-    // updated on real movement, so it never flips as the unit settles at its
-    // target -- a big source of the earlier leg twitch.
-    const dx = wx - this.prev.x;
-    const dz = wz - this.prev.z;
-    const moved = Math.hypot(dx, dz);
+    // Observed motion, smoothed. Steps lead along the body's facing (below), not
+    // the raw travel vector, so a stale direction can't fling a foot in a turn.
+    const moved = Math.hypot(wx - this.prev.x, wz - this.prev.z);
     this.prev = { x: wx, z: wz };
     const rawSpeed = moved / dt;
-    if (rawSpeed > 8) {
-      const tx = dx / moved;
-      const tz = dz / moved;
-      const k = Math.min(1, dt * 9);
-      this.moveDir.x += (tx - this.moveDir.x) * k;
-      this.moveDir.z += (tz - this.moveDir.z) * k;
-      const m = Math.hypot(this.moveDir.x, this.moveDir.z) || 1;
-      this.moveDir.x /= m;
-      this.moveDir.z /= m;
-    }
     const prevSpeed = this.speed;
     this.speed += (rawSpeed - this.speed) * Math.min(1, dt * 8);
     const rawAccel = (this.speed - prevSpeed) / dt;
@@ -628,17 +621,29 @@ export class MechRig {
   private stepLegs(dt: number, wx: number, wz: number, ry: number, run01: number, turnBias: number): void {
     const S = this.scale;
     const cap = Math.round(clamp(this.tuning.maxStepping, 1, 2));
+    // During a turn the world-locked feet fall behind the yaw, so step a little
+    // more eagerly (a smaller trigger radius) to help them track the body.
+    const trigScale = 1 - 0.3 * Math.abs(turnBias);
     for (const leg of this.plants) leg.cooldown = Math.max(0, leg.cooldown - dt);
 
     // Rest world position and overstretch for every leg (used for triggering + coupling).
     // The trigger radius carries a fixed per-leg offset (no per-frame flicker) so
-    // legs break lockstep without chattering across the threshold.
+    // legs break lockstep without chattering across the threshold. `over` also
+    // spikes when the planted foot leaves the leg's quadrant (crosses behind its
+    // hip or over the body centreline, as happens mid-turn), so the leg re-homes
+    // before it can reach across the body.
     const info = this.plants.map((leg) => {
       const r = localToWorldXZ(leg.rest.x * S, leg.rest.z * S, ry);
       const restX = wx + r.x;
       const restZ = wz + r.z;
-      const trig = (this.tuning.stepTrigger + leg.triggerOffset) * S;
-      const over = Math.hypot(leg.world.x - restX, leg.world.z - restZ) - trig;
+      const trig = (this.tuning.stepTrigger + leg.triggerOffset) * S * trigScale;
+      const radial = Math.hypot(leg.world.x - restX, leg.world.z - restZ) - trig;
+      // Foot in the body's local frame: how far it has crossed its quadrant lines.
+      const lf = worldToLocalXZ(leg.world.x - wx, leg.world.z - wz, ry);
+      const fore = Math.sign(leg.rest.x);
+      const foreViol = MIN_FORE * S - fore * lf.x; // >0 when the foot is behind its fore line
+      const latViol = MIN_LAT * S - leg.side * lf.z; // >0 when the foot crosses the centreline
+      const over = Math.max(radial, foreViol, latViol);
       return { restX, restZ, over };
     });
 
@@ -663,7 +668,7 @@ export class MechRig {
       if (activePair !== -1 && pair !== activePair) continue; // keep the opposite diagonal planted
       const leg = this.plants[e.i];
       if (!leg || leg.stepping) continue;
-      this.beginStep(leg, e.restX, e.restZ, run01, turnBias);
+      this.beginStep(leg, wx, wz, ry, run01, turnBias);
       activePair = pair;
       stepping++;
       // Pull the diagonal partner along if it is nearly ready, for a trot-like pair.
@@ -671,7 +676,7 @@ export class MechRig {
       const partner = this.plants[j];
       const pInfo = info[j];
       if (partner && pInfo && !partner.stepping && partner.cooldown <= 0 && stepping < cap && pInfo.over > -COUPLE_SLACK * S) {
-        this.beginStep(partner, pInfo.restX, pInfo.restZ, run01, turnBias);
+        this.beginStep(partner, wx, wz, ry, run01, turnBias);
         stepping++;
       }
     }
@@ -702,26 +707,37 @@ export class MechRig {
     }
   }
 
-  /** Start a step for `leg`: pick a lead point ahead of rest, with turn + noise. */
-  private beginStep(leg: LegPlant, restX: number, restZ: number, run01: number, turnBias: number): void {
+  /**
+   * Start a step for `leg`. The plant is computed in the body's local frame,
+   * around the leg's (rotating) rest point and led *forward along the body's
+   * facing* -- not along the last travel direction, which goes stale in a turn
+   * and used to fling the foot sideways/backward. The target is then clamped into
+   * the leg's own quadrant, so a front leg can never plant behind the body nor a
+   * left leg across to the right. Shorter, quicker steps while turning let the
+   * feet re-home fast enough to keep up with the yaw.
+   */
+  private beginStep(leg: LegPlant, wx: number, wz: number, ry: number, run01: number, turnBias: number): void {
     const S = this.scale;
     const t = this.tuning;
-    leg.dur = Math.max(0.09, lerp(t.stepDurWalk, t.stepDurRun, run01) * (0.92 + vnoise(leg.seed + 3, this.clock) * 0.16));
-    // Lead ahead of rest, biased by the turn; but never less than the ground the
-    // body will cover during the swing, so the foot always lands ahead of drift
-    // (this stops the "always overstretched" re-stepping that read as twitch).
+    const turnHaste = 1 - 0.35 * Math.abs(turnBias); // quicker steps mid-turn
+    leg.dur = Math.max(0.09, lerp(t.stepDurWalk, t.stepDurRun, run01) * turnHaste * (0.92 + vnoise(leg.seed + 3, this.clock) * 0.16));
+    // Forward lead ahead of rest, biased by the turn; never less than the ground
+    // the body will cover during the swing, so the foot lands ahead of drift.
     const baseLead = lerp(t.stepLeadWalk, t.stepLeadRun, run01) * S * (1 + turnBias * leg.side * t.turnStepBias);
     const lead = Math.max(baseLead, this.speed * leg.dur * 0.75);
-    // Foot-placement variation: a little along and across the travel direction.
     const along = (vnoise(leg.seed + 7, this.clock) - 0.5) * PLACE_JITTER * S;
     const across = (vnoise(leg.seed + 31, this.clock) - 0.5) * PLACE_JITTER * S;
-    const px = -this.moveDir.z; // travel-perpendicular (ground plane)
-    const pz = this.moveDir.x;
+    // Target in body-local frame: +x is forward, z is lateral.
+    let lx = leg.rest.x * S + lead + along;
+    let lz = leg.rest.z * S + across;
+    // Clamp into the leg's quadrant so it stays in front of / behind and to the
+    // side of the body it belongs to (never reaching across or behind the hip).
+    const fore = Math.sign(leg.rest.x);
+    lx = fore > 0 ? Math.max(lx, MIN_FORE * S) : Math.min(lx, -MIN_FORE * S);
+    lz = leg.side > 0 ? Math.max(lz, MIN_LAT * S) : Math.min(lz, -MIN_LAT * S);
+    const w = localToWorldXZ(lx, lz, ry);
     leg.from = { x: leg.world.x, z: leg.world.z };
-    leg.to = {
-      x: restX + this.moveDir.x * (lead + along) + px * across,
-      z: restZ + this.moveDir.z * (lead + along) + pz * across,
-    };
+    leg.to = { x: wx + w.x, z: wz + w.z };
     leg.t = 0;
     leg.stepping = true;
     leg.arcH = lerp(t.stepHeightWalk, t.stepHeightRun, run01) * S * (0.85 + vnoise(leg.seed + 5, this.clock) * 0.3);
@@ -790,7 +806,14 @@ export class MechRig {
       const sz = p.side;
       _hip.set(sx * HIP_INSET * S, HIP_Y * S, sz * HIP_INSET * S).applyMatrix4(this.chassis.matrix);
       const local = worldToLocalXZ(p.disp.x - wx, p.disp.z - wz, ry);
-      _foot.set(local.x, p.dispY, local.z);
+      // Guarantee the *drawn* foot stays in the leg's quadrant even when a fast
+      // yaw has left the world-locked plant lagging behind or across the body:
+      // hold it at the quadrant boundary (a tiny slide) rather than render the leg
+      // reaching behind or across the hip. Normal-gait feet are well inside this,
+      // so the clamp only bites during the turn transient.
+      const fx = sx > 0 ? Math.max(local.x, MIN_FORE * S) : Math.min(local.x, -MIN_FORE * S);
+      const fz = sz > 0 ? Math.max(local.z, MIN_LAT * S) : Math.min(local.z, -MIN_LAT * S);
+      _foot.set(fx, p.dispY, fz);
       const kneeTarget = (vnoise(p.seed + 11, this.clock * 0.5) - 0.5) * t.kneeSway;
       p.kneeCur += (kneeTarget - p.kneeCur) * aKnee;
       leg.pose(_hip, _foot, p.kneeCur);

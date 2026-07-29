@@ -95,6 +95,15 @@ driving the mech.
   and a **C**-loaded archetype preset fills the speed/turn sliders. A reset
   button restores defaults.
 
+- **No cross-body / backward reach.** A world-locked foot left behind by a turn
+  could leave its leg reaching across or behind the body. Fixed three ways: steps
+  now lead *forward along the body's facing* (not the stale travel vector, which
+  flung feet sideways mid-turn) and are clamped into the leg's own quadrant; a
+  planted foot that crosses its quadrant lines (behind its hip or over the
+  centreline) is forced to re-home; and, as a hard guarantee, the *drawn* foot is
+  held at the quadrant boundary so a leg never renders reaching behind or across
+  the hip even during a fast pivot.
+
 - **Editable speed/turn rate.** Move speed and turn rate are sim-owned, so the
   sandbox feeds them through two new *optional* `InputFrame` fields
   (`moveSpeedOverride`, `turnRateOverride`) that `step` applies in place of the
