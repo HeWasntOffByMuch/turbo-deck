@@ -307,7 +307,15 @@ class MechLeg {
     // to the side (all fore/aft motion lives in the knee); 1 carries the shoulder
     // level with the foot so the hip does all the protraction/retraction; >1
     // exaggerates the swing past the foot.
-    const latSign = Math.sign(foot.z - hip.z) || Math.sign(this.restAzimuth.z) || 1;
+    // The coxa always reaches OUT to the leg's own fixed side (its rest azimuth),
+    // never to whichever side the foot momentarily sits on. Feet are clamped to
+    // their own quadrant so they never truly cross the centreline; but mid-turn a
+    // world-locked foot drifts in toward its (moving, swaying) hip until its
+    // lateral offset hovers around zero, and keying the shoulder side off
+    // `sign(foot.z - hip.z)` then chatters -- snapping the coxa ~180deg inboard
+    // across the body and back on a *planted* leg every time that sign flickers.
+    // The leg's side is stable, so the hip segment stays outboard through the turn.
+    const latSign = Math.sign(this.restAzimuth.z) || Math.sign(foot.z - hip.z) || 1;
     _shoulder.set(
       hip.x + (foot.x - hip.x) * finiteOr(coxaSwing, 1),
       hip.y,
