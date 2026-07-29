@@ -133,6 +133,17 @@ driving the mech.
   All of this keeps ≥2 feet grounded, never spins on a central axis, and the
   quadrant guarantee above still holds (verified headless + visually).
 
+- **Raised "recovery" leg + pointy legs.** Instead of every leg scrambling to
+  touch down during a turn, at most **one** leg may lift and tuck close to the
+  body — a held recovery leg. It rides tucked under the moving body (carrying no
+  weight) and only plants, as a deliberate secure step, when its support is
+  genuinely needed: the hold times out (~0.7–1.4 s), a supporting foot gets badly
+  overstretched, support would drop below two feet, or the mech settles. A hold is
+  only *started* from a fully-planted, in-motion stance, lifting whichever leg has
+  the most slack; while one is held only a single other leg may swing, so ≥2 feet
+  always stay down. The blocky foot boxes are gone — each shin now tapers to a
+  point (a spider's tarsus tip), so the legs end pointy.
+
 `scene.ts`, `main.ts`, `input.ts`, cards/game — unchanged (the rig signature is
 preserved). The only sim change is the two default-off input overrides above.
 

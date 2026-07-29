@@ -205,7 +205,6 @@ class MechLeg {
   private readonly coxa: THREE.Mesh;
   private readonly femur: THREE.Mesh;
   private readonly tibia: THREE.Mesh;
-  private readonly foot: THREE.Mesh;
   private readonly restAzimuth: THREE.Vector3;
   // Segment lengths in effect this frame (base length x the rig's size scale).
   private coxaLen: number;
@@ -222,9 +221,11 @@ class MechLeg {
   ) {
     this.coxa = box(6, 1, 6, darken(legColor, 0.85));
     this.femur = box(5.5, 1, 5.5, legColor);
-    this.tibia = box(4, 1, 4, legColor);
-    this.foot = box(9, 3.5, 12, darken(legColor, 0.7));
-    group.add(this.coxa, this.femur, this.tibia, this.foot);
+    // The shin tapers to a point -- a spider's tarsus tip -- instead of a blocky
+    // foot. It is a thin cone whose apex (its +Y) is aimed at the foot target by
+    // orientSegment, so the leg ends in a sharp point on the ground.
+    this.tibia = cone(2.6, 1, darken(legColor, 0.9), 5);
+    group.add(this.coxa, this.femur, this.tibia);
     this.coxaLen = baseCoxa;
     this.femurLen = baseFemur;
     this.tibiaLen = baseTibia;
@@ -234,8 +235,8 @@ class MechLeg {
 
   /**
    * Resize the leg to the rig's size scale: lengthen the bones (the IK reads the
-   * new lengths) and thicken their cross-section and the foot to match. Called
-   * only when the size changes, not every frame.
+   * new lengths) and thicken their cross-section to match. Called only when the
+   * size changes, not every frame.
    */
   setScale(s: number): void {
     this.coxaLen = this.baseCoxa * s;
@@ -246,7 +247,6 @@ class MechLeg {
       m.scale.x = s;
       m.scale.z = s;
     }
-    this.foot.scale.setScalar(s);
   }
 
   /**
@@ -287,8 +287,7 @@ class MechLeg {
     _knee.copy(_shoulder).addScaledVector(_dir, a).addScaledVector(_pole, h);
 
     orientSegment(this.femur, _shoulder, _knee);
-    orientSegment(this.tibia, _knee, _target);
-    this.foot.position.copy(_target);
+    orientSegment(this.tibia, _knee, _target); // cone apex lands on the foot point
   }
 }
 
@@ -316,6 +315,20 @@ const STEP_COOLDOWN = 0.05; // min seconds a foot rests after a plant before it 
 // reaches across or behind the body to a stranded foot.
 const MIN_FORE = 12; // min |fore/aft| offset of a foot from body centre (x size)
 const MIN_LAT = 14; // min |lateral| offset of a foot from body centre (x size)
+// One leg may lift and tuck close to the body (a "recovery" leg, like a spider
+// holding a leg raised) instead of every leg scrambling to touch down. It stays
+// up until its support is genuinely needed, then plants securely. HOLD_TUCK pulls
+// the tucked foot in toward the hip; HOLD_HEIGHT raises it; the hold ends on a
+// timeout, when two other legs need to step, or when the mech settles.
+const HOLD_TUCK_FORE = 0.5; // fraction of rest fore/aft the tucked foot keeps
+const HOLD_TUCK_LAT = 0.55; // fraction of rest lateral the tucked foot keeps
+const HOLD_HEIGHT = 26; // tucked foot height above ground (x size)
+const HOLD_COOLDOWN = 0.45; // min seconds between holds
+const HOLD_SECURE_STRETCH = 1.15; // a plant out of a hold is a touch slower (deliberate)
+// A supporting foot this far past its trigger ends the hold so the gait gets its
+// swing capacity back. Kept generous so a held leg visibly *stays* raised through
+// a turn (support is already guaranteed: only one other leg may swing while held).
+const HOLD_EXIT_OVER = 26; // x size
 const HEIGHT_RUN_CROUCH = 6; // lower centre of gravity when running
 const AIRBORNE_DIP = 1.6; // body dips per airborne leg (weight over fewer feet)
 const LAND_IMPULSE = 2.0; // downward settle added when a foot plants
@@ -468,6 +481,11 @@ interface LegPlant {
   kneeCur: number;
   /** Seconds until this foot is allowed to step again (hysteresis after a plant). */
   cooldown: number;
+  /** Raised-and-tucked "recovery" leg: lifted close to the body, not a support point. */
+  held: boolean;
+  /** How long this leg has been held, and the hold's (noised) max duration. */
+  holdT: number;
+  holdMax: number;
   stepping: boolean;
   from: { x: number; z: number };
   to: { x: number; z: number };
@@ -518,6 +536,7 @@ export class MechRig {
   private clock = 0;
   private phase = 0; // gait phase (accumulated stride distance / STRIDE_LEN)
   private landImpulse = 0;
+  private holdCooldown = 0; // seconds until another leg may enter a raised hold
   private state: LocomotionState = 'idle';
   // The rendered body yaw (in the group's ry-space) and its angular velocity: the
   // body follows its heading through this controller instead of snapping to it.
@@ -569,6 +588,9 @@ export class MechRig {
       dispY: 0,
       kneeCur: 0,
       cooldown: 0,
+      held: false,
+      holdT: 0,
+      holdMax: 0.7,
       stepping: false,
       from: { x: 0, z: 0 },
       to: { x: 0, z: 0 },
@@ -654,23 +676,27 @@ export class MechRig {
   /** Decide which legs re-plant this frame and advance any in-progress steps. */
   private stepLegs(dt: number, wx: number, wz: number, ry: number, run01: number, turnBias: number): void {
     const S = this.scale;
-    const cap = Math.round(clamp(this.tuning.maxStepping, 1, 2));
     // During a turn the world-locked feet fall behind the yaw, so step a little
     // more eagerly (a smaller trigger radius) to help them track the body.
     const turnMag = Math.abs(turnBias);
     const trigScale = 1 - 0.25 * turnMag;
-    for (const leg of this.plants) leg.cooldown = Math.max(0, leg.cooldown - dt);
+    this.holdCooldown = Math.max(0, this.holdCooldown - dt);
+    for (const leg of this.plants) {
+      leg.cooldown = Math.max(0, leg.cooldown - dt);
+      if (leg.held) leg.holdT += dt;
+    }
 
-    // Rest world position and overstretch for every leg (used for triggering + coupling).
-    // The trigger radius carries a fixed per-leg offset (no per-frame flicker) so
-    // legs break lockstep without chattering across the threshold. `over` also
-    // spikes when the planted foot leaves the leg's quadrant (crosses behind its
-    // hip or over the body centreline, as happens mid-turn), so the leg re-homes
-    // before it can reach across the body.
+    // Rest world position and overstretch for every planted leg (a held or
+    // swinging leg is not a step candidate, so its `over` is -Infinity). The
+    // trigger radius carries a fixed per-leg offset (no per-frame flicker) so legs
+    // break lockstep without chattering; `over` also spikes when the planted foot
+    // leaves its quadrant (crosses behind its hip or over the centreline mid-turn),
+    // so the leg re-homes before it can reach across the body.
     const info = this.plants.map((leg) => {
       const r = localToWorldXZ(leg.rest.x * S, leg.rest.z * S, ry);
       const restX = wx + r.x;
       const restZ = wz + r.z;
+      if (leg.stepping || leg.held) return { restX, restZ, over: -Infinity };
       // Inside legs (on the side the mech is turning toward) step more often: a
       // smaller trigger radius, so they take shorter, quicker strides while the
       // outside legs take longer ones -- the differential that drives the turn.
@@ -686,7 +712,13 @@ export class MechRig {
       return { restX, restZ, over };
     });
 
+    // Raised-leg recovery: maybe lift one leg and tuck it, or plant a held one.
+    this.manageHold(wx, wz, ry, run01, turnBias, info);
+
     let stepping = this.plants.reduce((n, l) => n + (l.stepping ? 1 : 0), 0);
+    const heldCount = this.plants.reduce((n, l) => n + (l.held ? 1 : 0), 0);
+    // While a leg is held only one other may swing, so at least two feet stay down.
+    const cap = heldCount > 0 ? 1 : Math.round(clamp(this.tuning.maxStepping, 1, 2));
     // Only one diagonal pair may be airborne at a time; find it if any.
     let activePair = -1;
     this.plants.forEach((l, i) => {
@@ -697,7 +729,7 @@ export class MechRig {
       .map((e, i) => ({ i, ...e }))
       .filter((e) => {
         const leg = this.plants[e.i];
-        return leg !== undefined && !leg.stepping && leg.cooldown <= 0 && e.over > 0;
+        return leg !== undefined && !leg.stepping && !leg.held && leg.cooldown <= 0 && e.over > 0;
       })
       .sort((a, b) => b.over - a.over);
 
@@ -743,6 +775,68 @@ export class MechRig {
         // Vertical: a skewed arc that peaks a touch before mid-step (a quick lift).
         leg.y = Math.sin(Math.pow(t, 0.7) * Math.PI) * leg.arcH;
       }
+    }
+  }
+
+  /**
+   * The raised-leg ("recovery") behaviour: at most one leg lifts and tucks close
+   * to the body instead of every leg scrambling to touch down. A held leg is not a
+   * support point; it rides tucked under the moving body and only plants -- a
+   * deliberate, secure step -- when its support is genuinely required: the hold
+   * times out, a supporting foot gets badly overstretched (so the gait needs the
+   * capacity back), support would otherwise drop below two feet, or the mech
+   * settles. A hold is only *started* from a fully-planted, stable stance while the
+   * mech is actually moving or turning, lifting whichever leg has the most slack.
+   */
+  private manageHold(
+    wx: number,
+    wz: number,
+    ry: number,
+    run01: number,
+    turnBias: number,
+    info: readonly { readonly over: number }[],
+  ): void {
+    const S = this.scale;
+    const heldIdx = this.plants.findIndex((l) => l.held);
+    const stepping = this.plants.reduce((n, l) => n + (l.stepping ? 1 : 0), 0);
+    const planted = this.plants.reduce((n, l) => n + (!l.stepping && !l.held ? 1 : 0), 0);
+    const maxOver = info.reduce((m, e) => Math.max(m, e.over), -Infinity);
+
+    if (heldIdx >= 0) {
+      const hleg = this.plants[heldIdx];
+      if (!hleg) return;
+      // Pin the tucked foot close under the body so it rides along as it moves/turns.
+      const tuck = localToWorldXZ(hleg.rest.x * S * HOLD_TUCK_FORE, hleg.rest.z * S * HOLD_TUCK_LAT, ry);
+      hleg.world = { x: wx + tuck.x, z: wz + tuck.z };
+      hleg.y = HOLD_HEIGHT * S;
+      const settling = this.speed < IDLE_SPEED && Math.abs(this.yawRate) < TURN_RATE * 0.3;
+      const needed = hleg.holdT > hleg.holdMax || maxOver > HOLD_EXIT_OVER * S || planted < 2 || settling;
+      if (needed) {
+        // Secure plant: swing down from the tuck to a fresh, solid foothold ahead.
+        hleg.held = false;
+        this.beginStep(hleg, wx, wz, ry, run01, turnBias);
+        hleg.dur *= HOLD_SECURE_STRETCH;
+        this.holdCooldown = HOLD_COOLDOWN;
+      }
+      return;
+    }
+
+    // Enter a hold only from a stable, fully-planted stance while in motion.
+    const moving = this.speed > IDLE_SPEED || Math.abs(this.yawRate) > TURN_RATE * 0.25;
+    if (this.holdCooldown > 0 || stepping > 0 || planted < 4 || run01 > 0.9 || !moving) return;
+    let best = -1;
+    let bestOver = Infinity;
+    info.forEach((e, i) => {
+      if (e.over < bestOver) {
+        bestOver = e.over;
+        best = i;
+      }
+    });
+    const leg = best >= 0 ? this.plants[best] : undefined;
+    if (leg) {
+      leg.held = true;
+      leg.holdT = 0;
+      leg.holdMax = 0.7 + vnoise(leg.seed + 13, this.clock) * 0.7;
     }
   }
 
@@ -852,8 +946,8 @@ export class MechRig {
     let grounded = 0;
     let airborne = 0;
     for (const leg of this.plants) {
-      if (leg.stepping) {
-        airborne++;
+      if (leg.stepping || leg.held) {
+        airborne++; // a swinging or tucked leg carries no weight
         continue;
       }
       const l = worldToLocalXZ(leg.world.x - wx, leg.world.z - wz, ry);
