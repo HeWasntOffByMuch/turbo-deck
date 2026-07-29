@@ -6,7 +6,7 @@ import type { CombatState, InputFrame, Vec2 } from '../../sim/types.js';
 import { IsoInputCapture } from './input.js';
 import { PALETTE } from './palette.js';
 import { makeBush, makeGround, makeHeadingArrow, makeMoveMarker, makeTree } from './meshes.js';
-import { defaultMechTuning, MechRig, WalkerRig, type MechTuning } from './rigs.js';
+import { defaultMechTuning, MechRig, type MechTuning } from './rigs.js';
 import { scatterProps } from './scatter.js';
 
 /**
@@ -40,9 +40,15 @@ class MovementScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
-  private readonly spider = new MechRig('ally', PALETTE.mechAlly);
-  private readonly walker = new WalkerRig(PALETTE.walkerBody);
-  private active: MechRig | WalkerRig = this.spider;
+  // Both units share one tuning object so the panel drives whichever is active;
+  // the grey mech only differs in colour and a non-turning lower body.
+  private readonly sharedTuning: MechTuning = defaultMechTuning();
+  private readonly spider = new MechRig('ally', PALETTE.mechAlly, { tuning: this.sharedTuning });
+  private readonly walker = new MechRig('ally', PALETTE.walkerBody, {
+    tuning: this.sharedTuning,
+    lowerBodyTurns: false,
+  });
+  private active: MechRig = this.spider;
   private readonly headingArrow = makeHeadingArrow();
   private readonly moveMarker: THREE.Mesh;
   private readonly target = new THREE.Vector3(ARENA_WIDTH / 2, 0, ARENA_HEIGHT / 2);
@@ -97,9 +103,9 @@ class MovementScene {
     this.scene.add(this.moveMarker);
   }
 
-  /** The spider's live-editable tuning (the panel binds to it; the walker ignores it). */
+  /** The shared live-editable tuning both units use (the panel binds to it). */
   get tuning(): MechTuning {
-    return this.spider.tuning;
+    return this.sharedTuning;
   }
 
   /** The active unit's locomotion state, for the status line. */
@@ -251,7 +257,8 @@ function buildPanel(
     '<b>Right-click</b> the ground to move. MOBA turn-rate: the unit turns to face ' +
     'the destination before it travels.<br>' +
     '<b>C</b> loads the next archetype preset into the sliders.<br>' +
-    'Pick a unit below; the sliders retune the <b>spider</b>.';
+    'Pick a unit below. The grey mech uses the same leg mechanics, but its lower ' +
+    'body never turns — only its upper body rotates to face.';
   panel.appendChild(help);
 
   // Unit picker: two chips choosing which unit the sandbox controls.

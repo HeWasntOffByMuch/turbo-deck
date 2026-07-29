@@ -519,11 +519,29 @@ const PARTNER_OF = [3, 2, 1, 0] as const;
  * + yaw), never by reading or writing sim state. Body colour keys off the enemy
  * type unless an explicit colour is given (e.g. the movement sandbox's ally mech).
  */
+export interface MechOptions {
+  /**
+   * When false, the lower body (leg platform) does NOT turn to the heading: the
+   * legs plant in a world-fixed frame and only the upper body (turret) rotates to
+   * face -- a grey-mech look. When true (default) the whole unit turns like a
+   * spider. All the leg mechanics are otherwise identical.
+   */
+  readonly lowerBodyTurns?: boolean;
+  /** Share an external tuning object (so two units can be tuned together). */
+  readonly tuning?: MechTuning;
+}
+
 export class MechRig {
   readonly group = new THREE.Group();
   /** Live-editable movement/appearance constants (the sandbox mutates this). */
-  readonly tuning: MechTuning = defaultMechTuning();
-  private readonly chassis = new THREE.Group();
+  readonly tuning: MechTuning;
+  /** Whether the scene should set group.rotation.y to the heading (spider) or 0 (mech). */
+  readonly orientsWithGroupYaw: boolean;
+  private readonly lowerBodyTurns: boolean;
+  // The lower body (carriage) carries the hips in the leg frame; the upper body
+  // (turret) holds the visible body and yaws to face the heading.
+  private readonly carriage = new THREE.Group();
+  private readonly turret = new THREE.Group();
   private readonly legs: readonly MechLeg[];
   private readonly plants: readonly LegPlant[];
   // Body meshes + their base (scale-1) positions, so a size change can resize them.
@@ -532,6 +550,10 @@ export class MechRig {
   private scale = 1; // size scale in effect this frame
   private prev: { x: number; z: number } | null = null;
   private prevRy = 0;
+  // The leg frame's turn rate this frame (0 for a mech whose base doesn't turn) and
+  // the unit-length travel direction expressed in the leg frame (drives step lead).
+  private legYawRate = 0;
+  private leadDir = { x: 1, z: 0 };
 
   // Smoothed observed motion and the body-offset springs it drives.
   private speed = 0;
@@ -542,8 +564,8 @@ export class MechRig {
   private landImpulse = 0;
   private holdCooldown = 0; // seconds until another leg may enter a raised hold
   private state: LocomotionState = 'idle';
-  // The rendered body yaw (in the group's ry-space) and its angular velocity: the
-  // body follows its heading through this controller instead of snapping to it.
+  // The rendered body yaw (world heading space) and its angular velocity: the body
+  // follows its heading through this controller instead of snapping to it.
   private bodyRy = 0;
   private bodyAngVel = 0;
   private readonly sHeight = new Spring(0, 3.2);
@@ -552,12 +574,16 @@ export class MechRig {
   private readonly sPitch = new Spring(0, 4.5);
   private readonly sRoll = new Spring(0, 4);
 
-  constructor(type: string, bodyColorOverride?: number) {
+  constructor(type: string, bodyColorOverride?: number, opts: MechOptions = {}) {
     const bodyColor = bodyColorOverride ?? enemyColor(type);
     const legColor = darken(bodyColor, 0.55);
+    this.tuning = opts.tuning ?? defaultMechTuning();
+    this.lowerBodyTurns = opts.lowerBodyTurns ?? true;
+    this.orientsWithGroupYaw = this.lowerBodyTurns;
 
-    // The chassis is offset by the body springs; the rig group holds world pose.
-    this.group.add(this.chassis);
+    // group -> carriage (lower body, leg frame) -> turret (upper body, faces heading).
+    this.group.add(this.carriage);
+    this.carriage.add(this.turret);
     const body = box(BODY_SIZE, BODY_SIZE, BODY_SIZE, bodyColor);
     body.position.y = BODY_Y;
     const plate = box(BODY_SIZE - 6, 4, BODY_SIZE - 6, darken(bodyColor, 0.8));
@@ -567,7 +593,7 @@ export class MechRig {
     const eye = box(3, 5, 10, PALETTE.enemyEye);
     eye.position.set(BODY_SIZE / 2 + 8, BODY_Y, 0);
     for (const mesh of [body, plate, head, eye]) {
-      this.chassis.add(mesh);
+      this.turret.add(mesh);
       this.bodyParts.push({ mesh, base: mesh.position.clone() });
     }
 
@@ -609,9 +635,6 @@ export class MechRig {
     return this.state;
   }
 
-  /** This rig turns its whole group to the heading; the scene sets group.rotation.y. */
-  readonly orientsWithGroupYaw = true;
-
   /** Resize the body meshes and leg bones to `s` (only when the size actually changes). */
   private applyScale(s: number): void {
     this.appliedScale = s;
@@ -638,10 +661,16 @@ export class MechRig {
     if (this.scale !== this.appliedScale) this.applyScale(this.scale);
     const S = this.scale;
 
+    // The leg frame follows the heading for a spider, but stays world-fixed for a
+    // mech (only its turret turns). `leadDir` is the travel/facing direction
+    // expressed in that frame, so steps always lead the way the body is going.
+    const legRy = this.lowerBodyTurns ? ry : 0;
+    this.leadDir = worldToLocalXZ(Math.cos(ry), -Math.sin(ry), legRy);
+
     if (this.prev === null) {
       // First frame: drop every foot onto its rest spot so nothing snaps.
       for (const leg of this.plants) {
-        const r = localToWorldXZ(leg.rest.x * S, leg.rest.z * S, ry);
+        const r = localToWorldXZ(leg.rest.x * S, leg.rest.z * S, legRy);
         leg.world = { x: wx + r.x, z: wz + r.z };
         leg.disp = { x: leg.world.x, z: leg.world.z };
       }
@@ -662,6 +691,7 @@ export class MechRig {
     const rawYaw = angleDelta(ry, this.prevRy) / dt;
     this.prevRy = ry;
     this.yawRate += (rawYaw - this.yawRate) * Math.min(1, dt * 6);
+    this.legYawRate = this.lowerBodyTurns ? this.yawRate : 0; // the leg frame's turn rate
     this.phase += (this.speed * dt) / (STRIDE_LEN * S);
 
     // Speed-derived gait: a continuous walk->run blend + a discrete state label.
@@ -676,11 +706,11 @@ export class MechRig {
     else this.state = 'walking';
     const turnBias = clamp(this.yawRate / TURN_RATE, -1, 1);
 
-    this.stepLegs(dt, wx, wz, ry, run01, turnBias);
-    this.stabilise(dt, wx, wz, ry, run01);
+    this.stepLegs(dt, wx, wz, legRy, run01, turnBias);
+    this.stabilise(dt, wx, wz, legRy, ry, run01);
   }
 
-  /** Decide which legs re-plant this frame and advance any in-progress steps. */
+  /** Decide which legs re-plant this frame and advance any in-progress steps. `ry` is the leg frame. */
   private stepLegs(dt: number, wx: number, wz: number, ry: number, run01: number, turnBias: number): void {
     const S = this.scale;
     // During a turn the world-locked feet fall behind the yaw, so step a little
@@ -868,18 +898,22 @@ export class MechRig {
     const lead = Math.max(baseLead, this.speed * leg.dur * 0.75);
     const along = (vnoise(leg.seed + 7, this.clock) - 0.5) * PLACE_JITTER * S;
     const across = (vnoise(leg.seed + 31, this.clock) - 0.5) * PLACE_JITTER * S;
-    // Target in body-local frame: +x is forward, z is lateral.
-    let lx = leg.rest.x * S + lead + along;
-    let lz = leg.rest.z * S + across;
+    // Lead along the travel direction expressed in the leg frame (`leadDir`), not
+    // a fixed +x: for a spider that is the facing, for a mech it is whatever way it
+    // is walking across its un-turning leg base. Jitter runs along/across it.
+    const dx = this.leadDir.x;
+    const dz = this.leadDir.z;
+    let lx = leg.rest.x * S + dx * (lead + along) - dz * across;
+    let lz = leg.rest.z * S + dz * (lead + along) + dx * across;
     // Clamp into the leg's quadrant so it stays in front of / behind and to the
     // side of the body it belongs to (never reaching across or behind the hip).
     const fore = Math.sign(leg.rest.x);
     lx = fore > 0 ? Math.max(lx, MIN_FORE * S) : Math.min(lx, -MIN_FORE * S);
     lz = leg.side > 0 ? Math.max(lz, MIN_LAT * S) : Math.min(lz, -MIN_LAT * S);
-    // Placement prediction: the body's frame rotates at `yawRate`, so over the
-    // swing it will turn by ~yawRate*dur. Convert the local target using that
-    // future heading, so the foot lands where the body will be, not where it is.
-    const predictRy = ry + this.yawRate * leg.dur * t.stepPredict;
+    // Placement prediction: the leg frame rotates at `legYawRate` (0 for a mech
+    // whose base doesn't turn), so over the swing it turns by ~legYawRate*dur.
+    // Convert the target through that future frame so the foot lands ahead.
+    const predictRy = ry + this.legYawRate * leg.dur * t.stepPredict;
     const w = localToWorldXZ(lx, lz, predictRy);
     leg.from = { x: leg.world.x, z: leg.world.z };
     leg.to = { x: wx + w.x, z: wz + w.z };
@@ -893,11 +927,12 @@ export class MechRig {
    * spring+inertia controller nudged by leg step torque, and return the resulting
    * trailing angle (chassis yaw relative to the group). This is the "drive body
    * yaw through accumulated leg forces, not a direct transform" step: the legs
-   * (posed in the group's ry-frame) reach the new heading first and the body
-   * follows, accelerating into the turn and settling after it -- never a rigid
-   * spin about the centre. Returns the offset to apply to `chassis.rotation.y`.
+   * (posed in the leg frame) reach the new heading first and the body follows,
+   * accelerating into the turn and settling after it -- never a rigid spin about
+   * the centre. Returns the turret yaw relative to the leg frame (`legRy`): a small
+   * trailing lag for a spider, or the full facing for a mech whose base is fixed.
    */
-  private driveBodyYaw(dt: number, wx: number, wz: number, ry: number): number {
+  private driveBodyYaw(dt: number, wx: number, wz: number, ry: number, legRy: number): number {
     const yawLag = clamp(this.tuning.yawLag, 0, 1);
     const omega = lerp(YAW_FREQ_MAX, YAW_FREQ_MIN, yawLag);
     const zeta = lerp(YAW_ZETA_MAX, YAW_ZETA_MIN, yawLag);
@@ -930,24 +965,24 @@ export class MechRig {
     this.bodyRy += this.bodyAngVel * dt;
 
     // Hard-cap the trailing angle so the body never falls far behind its heading.
-    let lag = angleDelta(this.bodyRy, ry); // body yaw minus heading (shortest)
+    const lag = angleDelta(this.bodyRy, ry); // body yaw minus heading (shortest)
     if (lag > maxLag) {
       this.bodyRy = ry + maxLag;
-      lag = maxLag;
       if (this.bodyAngVel > 0) this.bodyAngVel *= 0.4;
     } else if (lag < -maxLag) {
       this.bodyRy = ry - maxLag;
-      lag = -maxLag;
       if (this.bodyAngVel < 0) this.bodyAngVel *= 0.4;
     }
-    return lag;
+    // Turret yaw relative to the leg frame: for a spider legRy == ry so this is the
+    // small lag; for a mech legRy == 0 so this is the full facing (only it turns).
+    return angleDelta(this.bodyRy, legRy);
   }
 
-  /** Stabilise the chassis with springs off the planted-feet centroid, then pose legs. */
-  private stabilise(dt: number, wx: number, wz: number, ry: number, run01: number): void {
+  /** Stabilise the chassis with springs off the planted-feet centroid, then pose legs. `ry` is the leg frame. */
+  private stabilise(dt: number, wx: number, wz: number, ry: number, headingRy: number, run01: number): void {
     const S = this.scale;
     const t = this.tuning;
-    const yawLagOffset = this.driveBodyYaw(dt, wx, wz, ry);
+    const turretYaw = this.driveBodyYaw(dt, wx, wz, headingRy, ry);
     // Center-of-mass estimate: the centroid of the grounded feet, in rig space.
     let cx = 0;
     let cz = 0;
@@ -987,11 +1022,13 @@ export class MechRig {
     this.sPitch.track(clamp(this.accel * t.pitchGain, -0.22, 0.22), dt);
     this.sRoll.track(clamp(this.yawRate * t.rollGain, -0.2, 0.2) + cz * 0.0015, dt);
 
-    this.chassis.position.set(this.sSwayX.value, this.sHeight.value, this.sSwayZ.value);
-    // Yaw = the controller's trailing angle (body follows its heading); the group
-    // itself is already rotated to the authoritative heading by the scene.
-    this.chassis.rotation.set(this.sRoll.value, yawLagOffset, -this.sPitch.value);
-    this.chassis.updateMatrix();
+    // Lower body (carriage): bob/sway/height + roll/pitch, but NO facing yaw -- it
+    // stays in the leg frame and carries the hips, so the legs never spin with the
+    // turret. The upper body (turret) yaws to the heading relative to that frame.
+    this.carriage.position.set(this.sSwayX.value, this.sHeight.value, this.sSwayZ.value);
+    this.carriage.rotation.set(this.sRoll.value, 0, -this.sPitch.value);
+    this.carriage.updateMatrix();
+    this.turret.rotation.set(0, turretYaw, 0);
 
     // Draw each leg between its (chassis-borne) hip and its slew-limited foot. The
     // drawn foot chases the logical plant at a capped rate, so nothing snaps.
@@ -1006,7 +1043,7 @@ export class MechRig {
       p.dispY += (p.y - p.dispY) * aFootY;
       const sx = Math.sign(p.rest.x);
       const sz = p.side;
-      _hip.set(sx * HIP_INSET * S, HIP_Y * S, sz * HIP_INSET * S).applyMatrix4(this.chassis.matrix);
+      _hip.set(sx * HIP_INSET * S, HIP_Y * S, sz * HIP_INSET * S).applyMatrix4(this.carriage.matrix);
       const local = worldToLocalXZ(p.disp.x - wx, p.disp.z - wz, ry);
       // Guarantee the *drawn* foot stays in the leg's quadrant even when a fast
       // yaw has left the world-locked plant lagging behind or across the body:
@@ -1020,153 +1057,6 @@ export class MechRig {
       p.kneeCur += (kneeTarget - p.kneeCur) * aKnee;
       leg.pose(_hip, _foot, p.kneeCur);
     });
-  }
-}
-
-// --- The grey "mech" walker (spec 033) --------------------------------------
-// A second sandbox unit with a deliberately simpler, animation-only gait (the
-// pre-ground-lock style): a fixed quad-leg platform whose two-bone legs swing a
-// cosmetic walk cycle along the travel direction -- never ground-locked, so it
-// slides a little, on purpose. The platform does NOT yaw; only the turret rotates
-// to the heading (turn-rate applies to the upper body), so it reads like a mech
-// with a rotating top on a walking base. MOBA movement still comes from the sim.
-const WK_HIP_Y = 26; // leg hip height
-const WK_HIP_INSET = 15; // hip corner offset from centre
-const WK_REST_X = 26; // foot rest fore/aft (in the fixed leg frame)
-const WK_REST_Z = 30; // foot rest lateral
-const WK_THIGH = 20;
-const WK_SHIN = 24;
-const WK_BODY_Y = 32; // turret height
-const WK_STRIDE = 40; // travel distance per full leg cycle
-const WK_SWING = 15; // fore/aft foot swing amplitude along travel
-const WK_STEP_H = 11; // foot lift height
-
-/** A plain two-bone walker leg (thigh + shin), knee bowed up; purely animated. */
-class WalkerLeg {
-  private readonly thigh: THREE.Mesh;
-  private readonly shin: THREE.Mesh;
-  private readonly foot: THREE.Mesh;
-
-  constructor(
-    color: number,
-    private readonly thighLen: number,
-    private readonly shinLen: number,
-    group: THREE.Group,
-  ) {
-    this.thigh = box(4.5, 1, 4.5, color);
-    this.shin = box(3.5, 1, 3.5, color);
-    this.foot = box(7, 3, 9, darken(color, 0.8));
-    group.add(this.thigh, this.shin, this.foot);
-  }
-
-  /** Two-bone IK from `hip` to `foot` (both local to the leg group), knee up. */
-  pose(hip: THREE.Vector3, foot: THREE.Vector3): void {
-    _target.copy(foot);
-    _dir.copy(_target).sub(hip);
-    let d = _dir.length() || 1e-4;
-    const maxReach = this.thighLen + this.shinLen - 1e-3;
-    if (d > maxReach) {
-      _dir.multiplyScalar(maxReach / d);
-      _target.copy(hip).add(_dir);
-      d = maxReach;
-    }
-    _dir.multiplyScalar(1 / d);
-    const a = (this.thighLen * this.thighLen - this.shinLen * this.shinLen + d * d) / (2 * d);
-    const h = Math.sqrt(Math.max(0, this.thighLen * this.thighLen - a * a));
-    _pole.copy(UP).addScaledVector(_dir, -UP.dot(_dir));
-    if (_pole.lengthSq() < 1e-6) _pole.set(0, 0, 1);
-    _pole.normalize();
-    _knee.copy(hip).addScaledVector(_dir, a).addScaledVector(_pole, h);
-    orientSegment(this.thigh, hip, _knee);
-    orientSegment(this.shin, _knee, _target);
-    this.foot.position.copy(_target);
-  }
-}
-
-/**
- * The grey metal walker: a fixed four-leg platform carrying a turret that rotates
- * to the heading. The legs animate a simple cosmetic walk cycle (two-bone, not
- * ground-locked) whose stride swings along the actual travel direction, so it can
- * walk any direction without the base turning; only the turret follows the facing.
- * Driven, like the spider, purely from the observed world transform.
- */
-export class WalkerRig {
-  readonly group = new THREE.Group();
-  private readonly legsGroup = new THREE.Group();
-  private readonly turret = new THREE.Group();
-  private readonly legs: readonly WalkerLeg[];
-  private readonly corners: readonly [number, number][] = [
-    [1, -1],
-    [1, 1],
-    [-1, -1],
-    [-1, 1],
-  ];
-  private prev: { x: number; z: number } | null = null;
-  private dist = 0;
-  private amp = 0;
-  private dir = { x: 1, z: 0 };
-  private state: LocomotionState = 'idle';
-
-  constructor(bodyColor: number = PALETTE.walkerBody) {
-    const legColor = darken(bodyColor, 0.7);
-    this.group.add(this.legsGroup, this.turret);
-
-    // Upper body (turret): a boxy torso with a barrel + eye, built facing +x.
-    const torso = box(24, 15, 22, bodyColor);
-    torso.position.y = WK_BODY_Y;
-    const plate = box(20, 4, 18, darken(bodyColor, 0.85));
-    plate.position.y = WK_BODY_Y + 9;
-    const barrel = box(16, 5, 5, darken(bodyColor, 0.6));
-    barrel.position.set(16, WK_BODY_Y + 1, 0);
-    const eye = box(3, 5, 11, PALETTE.enemyEye);
-    eye.position.set(12, WK_BODY_Y + 4, 0);
-    this.turret.add(torso, plate, barrel, eye);
-
-    this.legs = this.corners.map(() => new WalkerLeg(legColor, WK_THIGH, WK_SHIN, this.legsGroup));
-  }
-
-  get locomotionState(): LocomotionState {
-    return this.state;
-  }
-
-  /** This rig keeps its group un-yawed; it turns only its turret to the heading. */
-  readonly orientsWithGroupYaw = false;
-
-  update(dt: number, worldPos: Vec2, ry: number): void {
-    dt = Math.max(1e-4, dt);
-    const wx = worldPos.x;
-    const wz = worldPos.y;
-    if (this.prev === null) this.prev = { x: wx, z: wz };
-    const dx = wx - this.prev.x;
-    const dz = wz - this.prev.z;
-    const moved = Math.hypot(dx, dz);
-    this.prev = { x: wx, z: wz };
-    const speed = moved / dt;
-    if (moved > 0.05) this.dir = { x: dx / moved, z: dz / moved };
-    this.dist += moved;
-    this.amp += ((speed > 6 ? 1 : 0) - this.amp) * Math.min(1, dt * 8);
-    this.state = speed < 6 ? 'idle' : speed > 120 ? 'running' : 'walking';
-
-    // The leg platform stays world-aligned; only the turret follows the heading.
-    this.legsGroup.rotation.y = 0;
-    this.turret.rotation.y = ry;
-
-    // Animated walk cycle: diagonal pairs a half-cycle apart, each foot swinging
-    // fore/aft along the travel direction and lifting on the recovery half.
-    const phase = (this.dist / WK_STRIDE) * TWO_PI;
-    this.legs.forEach((leg, i) => {
-      const corner = this.corners[i];
-      if (!corner) return;
-      const [sx, sz] = corner;
-      const legPhase = phase + (i === 0 || i === 3 ? 0 : Math.PI);
-      const swing = Math.cos(legPhase) * WK_SWING * this.amp;
-      const lift = Math.max(0, Math.sin(legPhase)) * WK_STEP_H * this.amp;
-      _hip.set(sx * WK_HIP_INSET, WK_HIP_Y, sz * WK_HIP_INSET);
-      _foot.set(sx * WK_REST_X + this.dir.x * swing, lift, sz * WK_REST_Z + this.dir.z * swing);
-      leg.pose(_hip, _foot);
-    });
-    // A little turret bob keeps the walk from feeling perfectly rigid.
-    this.turret.position.y = Math.max(0, Math.sin(phase)) * 1.5 * this.amp;
   }
 }
 

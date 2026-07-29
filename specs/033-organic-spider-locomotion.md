@@ -145,18 +145,23 @@ driving the mech.
   `tuning.raisedLegs` (0 or 1) caps how many legs may be raised, so 0 disables the
   behaviour entirely.
 
-- **Second unit: the grey metal walker + a unit picker.** The sandbox now offers
-  two units, chosen from a side-panel picker. Alongside the spider is a
-  deliberately simpler **`WalkerRig`** in the pre-ground-lock, animation-only
-  style: a *fixed* four-leg platform of two-bone legs that swing a cosmetic walk
-  cycle along the travel direction (not ground-locked — it slides a little, on
-  purpose), carrying a turret. The **leg base never yaws**; only the **turret**
-  rotates to the heading, so the turn-rate applies to the upper body only and it
-  reads like a mech with a rotating top on a walking base. It exposes
-  `orientsWithGroupYaw = false` so the sandbox leaves its group un-yawed and lets
-  the rig turn its turret internally; the heading arrow became a scene-managed
-  mesh so it shows facing for either unit. All MOBA movement still comes from the
-  sim; the spider is unchanged and the combat scene still uses `MechRig` only.
+- **Second unit: the grey mech (same mechanics, non-turning lower body) + a unit
+  picker.** The sandbox offers two units from a side-panel picker, and they share
+  one `MechTuning`. The grey mech is **the same `MechRig`** — identical ground-lock
+  IK, gait, holds and pointy legs — constructed with `lowerBodyTurns: false`. That
+  decouples the **leg-planting frame** from the body facing: the leg frame stays
+  world-fixed (`legRy = 0`) so the legs plant and step in place while the body
+  moves, and steps lead along the travel direction expressed in that fixed frame
+  (`leadDir`), so it walks any direction without the base turning. The body split
+  into a **carriage** (lower body: bob/sway/pitch/roll + the hips, no facing yaw)
+  and a **turret** (upper body) whose yaw is driven by the same spring+inertia
+  controller — a small trailing lag for the spider (`legRy = ry`), the full facing
+  for the mech (`legRy = 0`). So only the mech's upper body rotates to face; its
+  legs never spin with it (verified: feet barely move during an in-place turn).
+  `orientsWithGroupYaw` now follows `lowerBodyTurns`, the heading arrow is a
+  scene-managed mesh shared by both units, and the earlier animation-only
+  `WalkerRig` was removed. The combat scene still constructs a default `MechRig`
+  (spider), unchanged.
 
 `scene.ts`, `main.ts`, `input.ts`, cards/game — unchanged (the rig signature is
 preserved). The only sim change is the two default-off input overrides above.
