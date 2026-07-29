@@ -287,7 +287,14 @@ class MechLeg {
    * shoulder fore/aft toward the foot (`coxaSwing`); the IK then solves the
    * femur/tibia from that shoulder, so the hip joint carries the whole leg.
    */
-  pose(hip: THREE.Vector3, foot: THREE.Vector3, kneeSway: number, coxaScale: number, coxaSwing: number): void {
+  pose(
+    hip: THREE.Vector3,
+    foot: THREE.Vector3,
+    kneeSway: number,
+    coxaScale: number,
+    coxaSwing: number,
+    femurScale: number,
+  ): void {
     // Never solve from a non-finite hip/foot: leave the leg in its last good pose
     // rather than write NaN into the bones (which would fling them off-screen).
     if (
@@ -307,37 +314,92 @@ class MechLeg {
     // to the side (all fore/aft motion lives in the knee); 1 carries the shoulder
     // level with the foot so the hip does all the protraction/retraction; >1
     // exaggerates the swing past the foot.
-    const latSign = Math.sign(foot.z - hip.z) || Math.sign(this.restAzimuth.z) || 1;
-    _shoulder.set(
-      hip.x + (foot.x - hip.x) * finiteOr(coxaSwing, 1),
-      hip.y,
-      hip.z + latSign * this.coxaLen * finiteOr(coxaScale, 1),
-    );
-    orientSegment(this.coxa, hip, _shoulder);
+    // The coxa always reaches OUT to the leg's own fixed side (its rest azimuth),
+    // never to whichever side the foot momentarily sits on. Feet are clamped to
+    // their own quadrant so they never truly cross the centreline; but mid-turn a
+    // world-locked foot drifts in toward its (moving, swaying) hip until its
+    // lateral offset hovers around zero, and keying the shoulder side off
+    // `sign(foot.z - hip.z)` then chatters -- snapping the coxa ~180deg inboard
+    // across the body and back on a *planted* leg every time that sign flickers.
+    // The leg's side is stable, so the hip segment stays outboard through the turn.
+    const latSign = Math.sign(this.restAzimuth.z) || Math.sign(foot.z - hip.z) || 1;
+    // The coxa is a FIXED-LENGTH hip bone that YAWS toward the foot -- it must not
+    // telescope. Its length is `coxaLen * coxaScale`; `coxaSwing` sets how far it
+    // leans fore/aft toward the foot. Setting the shoulder's fore/aft directly to
+    // `foot.x` instead let the bone STRETCH: in a turn the world-locked feet swing
+    // wide, so `foot.x - hip.x` grew huge and the coxa ballooned to ~4x its length
+    // (a rubber-band hip that flails, worst on the leg reaching furthest fore/aft).
+    // Build the horizontal offset (fore/aft lean vs. lateral reach), then renormalise
+    // it back to the fixed coxa length so the joint rotates rather than extends.
+    const coxaReachLen = this.coxaLen * finiteOr(coxaScale, 1);
+    const hasCoxa = coxaReachLen >= 1e-3;
+    this.coxa.visible = hasCoxa;
+    if (hasCoxa) {
+      let ox = (foot.x - hip.x) * finiteOr(coxaSwing, 1); // fore/aft lean toward the foot
+      let oz = latSign * coxaReachLen; // lateral, out to the leg's own side
+      const olen = Math.hypot(ox, oz);
+      if (olen > 1e-4) {
+        const k = coxaReachLen / olen;
+        ox *= k;
+        oz *= k;
+      } else {
+        ox = 0;
+        oz = latSign * coxaReachLen;
+      }
+      _shoulder.set(hip.x + ox, hip.y, hip.z + oz);
+      orientSegment(this.coxa, hip, _shoulder);
+    } else {
+      _shoulder.set(hip.x, hip.y, hip.z); // no coxa: the femur hangs straight from the hip
+    }
 
     // Femur + tibia: 2-bone IK from the shoulder to the foot, knee on the up side.
+    // The thigh (femur) length is live-tunable via `femurScale`; the IK reads the
+    // scaled length so the reach and knee bow follow it.
+    const femurLen = this.femurLen * finiteOr(femurScale, 1);
     _target.copy(foot);
     _dir.copy(_target).sub(_shoulder);
     let d = _dir.length() || 1e-4;
-    const maxReach = this.femurLen + this.tibiaLen - 1e-3;
+    const maxReach = femurLen + this.tibiaLen - 1e-3;
     if (d > maxReach) {
       // Beyond reach the bones straighten; pull the target in so the solve holds.
       _dir.multiplyScalar(maxReach / d);
       _target.copy(_shoulder).add(_dir);
       d = maxReach;
     }
+    // ...and no closer than the bones can fold (|femur - tibia|): inside that the
+    // 2-bone solve has no solution and `a` swings hugely negative, throwing the
+    // knee out behind the shoulder and stretching the shin past its length. Natural
+    // proportions never hit this, but a short tuned thigh makes the fold limit large
+    // and easy to cross, so push the target back out to it. Not folded closer.
+    const minReach = Math.abs(femurLen - this.tibiaLen) + 1e-3;
+    if (d < minReach) {
+      _dir.multiplyScalar(minReach / d);
+      _target.copy(_shoulder).add(_dir);
+      d = minReach;
+    }
     _dir.multiplyScalar(1 / d); // shoulder -> foot unit direction
-    const a = (this.femurLen * this.femurLen - this.tibiaLen * this.tibiaLen + d * d) / (2 * d);
-    const h = Math.sqrt(Math.max(0, this.femurLen * this.femurLen - a * a));
-    _pole.copy(UP).addScaledVector(_dir, -UP.dot(_dir)); // up, perpendicular to the chord
-    if (_pole.lengthSq() < 1e-6) _pole.set(0, 0, 1); // vertical chord: any perpendicular
-    _pole.normalize();
-    // Nudge the knee sideways for joint-angle variation (a horizontal side vector).
-    _side.crossVectors(_dir, UP);
-    if (_side.lengthSq() > 1e-6) _pole.addScaledVector(_side.normalize(), kneeSway).normalize();
-    _knee.copy(_shoulder).addScaledVector(_dir, a).addScaledVector(_pole, h);
-
-    orientSegment(this.femur, _shoulder, _knee);
+    // A zero-length thigh has no bone to draw: collapse the knee onto the shoulder
+    // and hide the femur, so the shin runs straight from the hip to the foot. Left
+    // to the general solve, a ~0 femur yields a degenerate knee (offset by |a|) and
+    // orientSegment -- which bails on a zero-length segment -- would freeze the
+    // femur mesh at its last pose, leaving a stale bone floating where the thigh
+    // was. Hiding it and seating the knee at the shoulder removes that artifact.
+    const hasFemur = femurLen >= 1e-3;
+    this.femur.visible = hasFemur;
+    if (hasFemur) {
+      const a = (femurLen * femurLen - this.tibiaLen * this.tibiaLen + d * d) / (2 * d);
+      const h = Math.sqrt(Math.max(0, femurLen * femurLen - a * a));
+      _pole.copy(UP).addScaledVector(_dir, -UP.dot(_dir)); // up, perpendicular to the chord
+      if (_pole.lengthSq() < 1e-6) _pole.set(0, 0, 1); // vertical chord: any perpendicular
+      _pole.normalize();
+      // Nudge the knee sideways for joint-angle variation (a horizontal side vector).
+      _side.crossVectors(_dir, UP);
+      if (_side.lengthSq() > 1e-6) _pole.addScaledVector(_side.normalize(), kneeSway).normalize();
+      _knee.copy(_shoulder).addScaledVector(_dir, a).addScaledVector(_pole, h);
+      orientSegment(this.femur, _shoulder, _knee);
+    } else {
+      _knee.copy(_shoulder); // no thigh: knee sits at the shoulder, shin does all the reach
+    }
     orientSegment(this.tibia, _knee, _target); // cone apex lands on the foot point
 
     // Record the solved joints (rig-group frame) for the debug overlay (spec 035).
@@ -487,6 +549,14 @@ export interface MechTuning {
    */
   coxaSwing: number;
   /**
+   * Thigh (femur) length: a multiplier on the middle leg segment -- the bone that
+   * rises from the shoulder up to the knee. 1 is the natural length; higher gives a
+   * longer, higher-kneed thigh; 0 removes the thigh entirely, collapsing the knee
+   * onto the shoulder so the shin runs straight from the hip to the foot (no femur
+   * drawn, and none left frozen where it used to be).
+   */
+  femurScale: number;
+  /**
    * Foot-follow rate: how fast the drawn foot may chase its target (1/s). Higher
    * snaps tighter to the gait; lower moves the limbs more slowly and smooths out
    * any twitch. This is the "restrict how fast a limb can move" knob.
@@ -519,6 +589,7 @@ export function defaultMechTuning(): MechTuning {
     kneeSway: 0.1,
     coxaReach: 1,
     coxaSwing: 1,
+    femurScale: 1,
     footSmooth: 26,
   };
 }
@@ -549,6 +620,7 @@ const TUNING_BOUNDS: Record<keyof MechTuning, readonly [number, number]> = {
   kneeSway: [0, 4],
   coxaReach: [0, 4],
   coxaSwing: [0, 4],
+  femurScale: [0, 4],
   footSmooth: [0.5, 1000],
 };
 
@@ -1131,7 +1203,7 @@ export class MechRig {
   private beginStep(leg: LegPlant, wx: number, wz: number, ry: number, run01: number, turnBias: number): void {
     const S = this.scale;
     const t = this.tuning;
-    const reach = (COXA_LEN * t.coxaReach + FEMUR_LEN + TIBIA_LEN) * S;
+    const reach = (COXA_LEN * t.coxaReach + FEMUR_LEN * t.femurScale + TIBIA_LEN) * S;
     const turnHaste = 1 - 0.35 * Math.abs(turnBias); // quicker steps mid-turn
     leg.dur = sclamp(lerp(t.stepDurWalk, t.stepDurRun, run01) * turnHaste * (0.92 + vnoise(leg.seed + 3, this.clock) * 0.16), 0.06, 5, 0.2);
     // Forward lead ahead of rest, biased by the turn; never less than the ground
@@ -1152,6 +1224,22 @@ export class MechRig {
     const fore = Math.sign(leg.rest.x);
     lx = fore > 0 ? Math.max(lx, MIN_FORE * S) : Math.min(lx, -MIN_FORE * S);
     lz = leg.side > 0 ? Math.max(lz, MIN_LAT * S) : Math.min(lz, -MIN_LAT * S);
+    // Keep the plant within the leg's reach FROM ITS HIP. `lead` alone is capped at
+    // `reach`, but the rest offset (rest.x = ±34) is added on top and turnStepBias
+    // lengthens the leading leg's stride, so a turn could plant the foot well past
+    // coxa+femur+tibia -- the leg then over-extends and the drawn foot strands at
+    // the reach cap (the "outside front leg reaching too far" in a turn). Clamp the
+    // target's distance from the hip to just inside that reach so it stays coverable.
+    const hipX = fore * HIP_INSET * S;
+    const hipZ = leg.side * HIP_INSET * S;
+    const rx = lx - hipX;
+    const rz = lz - hipZ;
+    const rlen = Math.hypot(rx, rz);
+    const maxPlant = reach * 0.9;
+    if (rlen > maxPlant) {
+      lx = hipX + (rx / rlen) * maxPlant;
+      lz = hipZ + (rz / rlen) * maxPlant;
+    }
     // Placement prediction: the leg frame rotates at `legYawRate` (0 for a mech
     // whose base doesn't turn), so over the swing it turns by ~legYawRate*dur.
     // Convert the target through that future frame so the foot lands ahead.
@@ -1290,7 +1378,7 @@ export class MechRig {
     // Bounds for the drawn foot: it can never sit further than the leg can reach,
     // nor above roughly leg height -- a hard cap against "leg to the ceiling / far
     // away" no matter what upstream produced. Includes the tunable coxa reach.
-    const reach = (COXA_LEN * t.coxaReach + FEMUR_LEN + TIBIA_LEN) * S;
+    const reach = (COXA_LEN * t.coxaReach + FEMUR_LEN * t.femurScale + TIBIA_LEN) * S;
     const footYMax = (FEMUR_LEN + TIBIA_LEN) * S;
     this.legs.forEach((leg, i) => {
       const p = this.plants[i];
@@ -1324,7 +1412,7 @@ export class MechRig {
       _foot.set(fx, sclamp(p.dispY, -4 * S, footYMax, 0), fz);
       const kneeTarget = (vnoise(p.seed + 11, this.clock * 0.5) - 0.5) * t.kneeSway;
       p.kneeCur = sclamp(p.kneeCur + (kneeTarget - p.kneeCur) * aKnee, -2, 2, 0);
-      leg.pose(_hip, _foot, p.kneeCur, t.coxaReach, t.coxaSwing);
+      leg.pose(_hip, _foot, p.kneeCur, t.coxaReach, t.coxaSwing, t.femurScale);
     });
   }
 }
