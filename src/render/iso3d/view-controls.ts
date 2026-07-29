@@ -38,8 +38,17 @@ interface Slider {
 }
 
 /** A labelled range input that shows its live value; `reset()` restores `initial`. */
-function makeSlider(label: string, min: number, max: number, step: number, initial: number, unit: string): Slider {
+function makeSlider(
+  label: string,
+  min: number,
+  max: number,
+  step: number,
+  initial: number,
+  unit: string,
+  tip: string,
+): Slider {
   const row = document.createElement('label');
+  row.title = tip;
   row.style.cssText = 'display:flex;flex-direction:column;gap:3px;cursor:pointer;';
 
   const head = document.createElement('span');
@@ -82,8 +91,9 @@ interface Checkbox {
 }
 
 /** A labelled checkbox row; `reset()` restores `initial`. */
-function makeCheckbox(label: string, initial: boolean): Checkbox {
+function makeCheckbox(label: string, initial: boolean, tip: string): Checkbox {
   const row = document.createElement('label');
+  row.title = tip;
   row.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;';
   const input = document.createElement('input');
   input.type = 'checkbox';
@@ -125,15 +135,22 @@ export function createViewControls(): ViewControls {
     'position:absolute;top:38px;left:0;z-index:10;' +
     'background:#1c1c26;border:1px solid #2a2a3a;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.45);';
 
-  const camAz = makeSlider('Orbit', 0, 360, 1, wrapDeg(camOrbit.azimuth), '°');
-  const camEl = makeSlider('Height', 10, 85, 1, Math.round(camOrbit.elevation / DEG), '°');
-  const zoom = makeSlider('View span', 140, 600, 10, DEFAULT_VIEW_HALF_WIDTH, '');
-  const lightAz = makeSlider('Direction', 0, 360, 1, wrapDeg(lightOrbit.azimuth), '°');
-  const lightEl = makeSlider('Elevation', 10, 89, 1, Math.round(lightOrbit.elevation / DEG), '°');
-  const unwalkable = makeCheckbox('Unwalkable terrain', true);
+  const camAz = makeSlider('Orbit', 0, 360, 1, wrapDeg(camOrbit.azimuth), '°',
+    'Rotate the follow camera around the unit (compass azimuth, in degrees).');
+  const camEl = makeSlider('Height', 10, 85, 1, Math.round(camOrbit.elevation / DEG), '°',
+    'Camera elevation angle above the ground, in degrees — higher looks more top-down.');
+  const zoom = makeSlider('View span', 140, 600, 10, DEFAULT_VIEW_HALF_WIDTH, '',
+    'Orthographic zoom: the half-width of the area framed. Smaller zooms in tighter.');
+  const lightAz = makeSlider('Direction', 0, 360, 1, wrapDeg(lightOrbit.azimuth), '°',
+    'Compass direction the sunlight comes from, in degrees.');
+  const lightEl = makeSlider('Elevation', 10, 89, 1, Math.round(lightOrbit.elevation / DEG), '°',
+    'How high the sun sits above the horizon, in degrees — lower casts longer shadows.');
+  const unwalkable = makeCheckbox('Unwalkable terrain', true,
+    "Toggle the overlay marking tree and bush footprints the unit can't walk onto.");
 
   const reset = document.createElement('button');
   reset.textContent = 'Reset';
+  reset.title = 'Restore the camera, light, and terrain overlay to their defaults.';
   reset.style.cssText =
     "font-family:inherit;font-size:12px;margin-top:2px;padding:6px 10px;border-radius:6px;cursor:pointer;" +
     'border:1px solid #2a2a3a;background:#252533;color:#e8e8f2;';
