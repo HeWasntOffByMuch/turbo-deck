@@ -29,6 +29,8 @@ export const PALETTE = {
   enemyEye: 0x1a1208,
   // The player-controlled mech in the movement sandbox (a friendly steel blue).
   mechAlly: 0x4a7fb0,
+  // The grey metal walker unit in the movement sandbox (a rotating turret on legs).
+  walkerBody: 0x969ba4,
   // Bright pip dropped at the click-to-move destination.
   marker: 0xffe08a,
   // Heading arrow (unit facing) and the charging attack cone telegraph.
