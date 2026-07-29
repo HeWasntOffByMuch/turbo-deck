@@ -281,7 +281,7 @@ class MechLeg {
    * joint variation. The coxa aims horizontally toward the foot; the IK solves
    * from the coxa's shoulder, so the body-corner joint visibly rotates.
    */
-  pose(hip: THREE.Vector3, foot: THREE.Vector3, kneeSway: number): void {
+  pose(hip: THREE.Vector3, foot: THREE.Vector3, kneeSway: number, coxaScale: number): void {
     // Never solve from a non-finite hip/foot: leave the leg in its last good pose
     // rather than write NaN into the bones (which would fling them off-screen).
     if (
@@ -291,11 +291,13 @@ class MechLeg {
     ) {
       return;
     }
-    // Coxa: a short, level segment aimed out toward the foot's ground azimuth.
+    // Coxa: a level segment aimed out toward the foot's ground azimuth. Its length
+    // (the hip joint's reach) is scaled by `coxaScale` -- how much of the leg's
+    // reach comes from this joint closest to the body.
     _horiz.set(foot.x - hip.x, 0, foot.z - hip.z);
     if (_horiz.lengthSq() < 1e-6) _horiz.copy(this.restAzimuth);
     else _horiz.normalize();
-    _shoulder.copy(hip).addScaledVector(_horiz, this.coxaLen);
+    _shoulder.copy(hip).addScaledVector(_horiz, this.coxaLen * finiteOr(coxaScale, 1));
     _shoulder.y = hip.y;
     orientSegment(this.coxa, hip, _shoulder);
 
@@ -448,6 +450,13 @@ export interface MechTuning {
   /** Sideways knee-sway amplitude (organic joint variation). */
   kneeSway: number;
   /**
+   * Hip-joint (coxa) reach: a multiplier on how far the segment closest to the
+   * body extends the leg outward -- i.e. how much of a leg's reach comes from
+   * moving that joint. 0 collapses it (a bare knee leg); higher throws the foot
+   * further out from the hip.
+   */
+  coxaReach: number;
+  /**
    * Foot-follow rate: how fast the drawn foot may chase its target (1/s). Higher
    * snaps tighter to the gait; lower moves the limbs more slowly and smooths out
    * any twitch. This is the "restrict how fast a limb can move" knob.
@@ -478,6 +487,7 @@ export function defaultMechTuning(): MechTuning {
     pitchGain: 0.0016,
     rollGain: 0.09,
     kneeSway: 0.1,
+    coxaReach: 1,
     footSmooth: 26,
   };
 }
@@ -506,6 +516,7 @@ const TUNING_BOUNDS: Record<keyof MechTuning, readonly [number, number]> = {
   pitchGain: [0, 2],
   rollGain: [0, 4],
   kneeSway: [0, 4],
+  coxaReach: [0, 4],
   footSmooth: [0.5, 1000],
 };
 
@@ -965,7 +976,7 @@ export class MechRig {
   private beginStep(leg: LegPlant, wx: number, wz: number, ry: number, run01: number, turnBias: number): void {
     const S = this.scale;
     const t = this.tuning;
-    const reach = (COXA_LEN + FEMUR_LEN + TIBIA_LEN) * S;
+    const reach = (COXA_LEN * t.coxaReach + FEMUR_LEN + TIBIA_LEN) * S;
     const turnHaste = 1 - 0.35 * Math.abs(turnBias); // quicker steps mid-turn
     leg.dur = sclamp(lerp(t.stepDurWalk, t.stepDurRun, run01) * turnHaste * (0.92 + vnoise(leg.seed + 3, this.clock) * 0.16), 0.06, 5, 0.2);
     // Forward lead ahead of rest, biased by the turn; never less than the ground
@@ -1123,8 +1134,8 @@ export class MechRig {
     const aKnee = Math.min(1, dt * 6);
     // Bounds for the drawn foot: it can never sit further than the leg can reach,
     // nor above roughly leg height -- a hard cap against "leg to the ceiling / far
-    // away" no matter what upstream produced.
-    const reach = (COXA_LEN + FEMUR_LEN + TIBIA_LEN) * S;
+    // away" no matter what upstream produced. Includes the tunable coxa reach.
+    const reach = (COXA_LEN * t.coxaReach + FEMUR_LEN + TIBIA_LEN) * S;
     const footYMax = (FEMUR_LEN + TIBIA_LEN) * S;
     this.legs.forEach((leg, i) => {
       const p = this.plants[i];
@@ -1158,7 +1169,7 @@ export class MechRig {
       _foot.set(fx, sclamp(p.dispY, -4 * S, footYMax, 0), fz);
       const kneeTarget = (vnoise(p.seed + 11, this.clock * 0.5) - 0.5) * t.kneeSway;
       p.kneeCur = sclamp(p.kneeCur + (kneeTarget - p.kneeCur) * aKnee, -2, 2, 0);
-      leg.pose(_hip, _foot, p.kneeCur);
+      leg.pose(_hip, _foot, p.kneeCur, t.coxaReach);
     });
   }
 }

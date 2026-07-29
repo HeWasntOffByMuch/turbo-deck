@@ -166,6 +166,15 @@ driving the mech.
 `scene.ts`, `main.ts`, `input.ts`, cards/game — unchanged (the rig signature is
 preserved). The only sim change is the two default-off input overrides above.
 
+### Hip-joint reach
+
+`tuning.coxaReach` scales the coxa (the joint closest to the body): a multiplier
+on how far that segment extends the leg outward, i.e. how much of a leg's reach
+comes from moving the hip joint. 0 collapses it to a bare knee leg emanating
+straight from the body; higher throws the foot further out. It feeds the leg's
+reach box (so step lead and the safety clamp track it) and gets a "Hip joint
+reach" slider in the sandbox.
+
 ### Robustness
 
 Every value that can reach a mesh transform is sanitised so a stray NaN / ±∞ /
