@@ -262,6 +262,14 @@ const SLIDER_GROUPS: readonly { readonly title: string; readonly rows: readonly 
         key: 'turnRate',
         tip: 'How fast the unit rotates to face its destination, in degrees per second. MOBA movement turns to face before it travels.',
       },
+      {
+        label: 'Legs',
+        min: 3,
+        max: 8,
+        step: 1,
+        key: 'numLegs',
+        tip: 'Number of legs (3-8). Legs are arranged in a circle and step in alternating pairs.',
+      },
     ],
   },
   {

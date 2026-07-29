@@ -492,6 +492,8 @@ export interface MechTuning {
   moveSpeed: number;
   /** Sim: turn rate (degrees/s). */
   turnRate: number;
+  /** Number of legs (3-8). */
+  numLegs: number;
   /** How far a foot may drift from its rest spot before the leg re-plants. */
   stepTrigger: number;
   /** How far ahead of rest a step plants, walking / running. */
@@ -570,6 +572,7 @@ export function defaultMechTuning(): MechTuning {
     sizeScale: 1,
     moveSpeed: 147.5,
     turnRate: 180,
+    numLegs: 4,
     stepTrigger: 16,
     stepLeadWalk: 14,
     stepLeadRun: 30,
@@ -601,6 +604,7 @@ const TUNING_BOUNDS: Record<keyof MechTuning, readonly [number, number]> = {
   sizeScale: [0.1, 8],
   moveSpeed: [1, 5000],
   turnRate: [1, 5000],
+  numLegs: [3, 8],
   stepTrigger: [1, 500],
   stepLeadWalk: [0, 500],
   stepLeadRun: [0, 500],
@@ -685,9 +689,22 @@ interface LegPlant {
   arcH: number;
 }
 
-/** The two diagonal support pairs: FL+BR share pair 0, FR+BL share pair 1. */
-const PAIR_OF = [0, 1, 1, 0] as const;
-const PARTNER_OF = [3, 2, 1, 0] as const;
+/** Compute pair and partner indices for N legs arranged in a circle.
+ * Pairs alternate (0,2,4,... in pair 0; 1,3,5,... in pair 1) so one pair swings
+ * while the opposite stays planted. For 4 legs, this matches the original tetrapod gait.
+ */
+function pairOf(legIndex: number, numLegs: number): number {
+  // Even indices get pair 0, odd get pair 1.
+  void numLegs; // allow arbitrary leg counts
+  return legIndex % 2;
+}
+
+function partnerOf(legIndex: number, numLegs: number): number {
+  // The partner is the leg opposite across the circle (diagonal).
+  // For 4 legs: partner of 0 is 3 (opposite), partner of 1 is 2 (opposite).
+  // For 6 legs: partner of 0 is 3, partner of 1 is 4, partner of 2 is 5.
+  return (legIndex + Math.floor(numLegs / 2)) % numLegs;
+}
 
 /**
  * A four-legged mech that walks like a living alien spider. A small cube body
@@ -787,8 +804,11 @@ export class MechRig {
   // (turret) holds the visible body and yaws to face the heading.
   private readonly carriage = new THREE.Group();
   private readonly turret = new THREE.Group();
-  private readonly legs: readonly MechLeg[];
-  private readonly plants: readonly LegPlant[];
+  private legs: MechLeg[];
+  private plants: LegPlant[];
+  private lastNumLegs = -1;
+  private readonly bodyColor: number;
+  private readonly legColor: number;
   // Body meshes + their base (scale-1) positions, so a size change can resize them.
   private readonly bodyParts: { readonly mesh: THREE.Mesh; readonly base: THREE.Vector3 }[] = [];
   private appliedScale = -1; // last size applied to the meshes/bones (forces a first pass)
@@ -824,8 +844,8 @@ export class MechRig {
   private readonly sRoll = new Spring(0, 4);
 
   constructor(type: string, bodyColorOverride?: number, opts: MechOptions = {}) {
-    const bodyColor = bodyColorOverride ?? enemyColor(type);
-    const legColor = darken(bodyColor, 0.55);
+    this.bodyColor = bodyColorOverride ?? enemyColor(type);
+    this.legColor = darken(this.bodyColor, 0.55);
     this.tuning = opts.tuning ?? defaultMechTuning();
     this.lowerBodyTurns = opts.lowerBodyTurns ?? true;
     this.orientsWithGroupYaw = this.lowerBodyTurns;
@@ -833,11 +853,11 @@ export class MechRig {
     // group -> carriage (lower body, leg frame) -> turret (upper body, faces heading).
     this.group.add(this.carriage);
     this.carriage.add(this.turret);
-    const body = box(BODY_SIZE, BODY_SIZE, BODY_SIZE, bodyColor);
+    const body = box(BODY_SIZE, BODY_SIZE, BODY_SIZE, this.bodyColor);
     body.position.y = BODY_Y;
-    const plate = box(BODY_SIZE - 6, 4, BODY_SIZE - 6, darken(bodyColor, 0.8));
+    const plate = box(BODY_SIZE - 6, 4, BODY_SIZE - 6, darken(this.bodyColor, 0.8));
     plate.position.y = BODY_Y + BODY_SIZE / 2 + 1;
-    const head = box(10, 9, 12, bodyColor);
+    const head = box(10, 9, 12, this.bodyColor);
     head.position.set(BODY_SIZE / 2 + 3, BODY_Y - 1, 0);
     const eye = box(3, 5, 10, PALETTE.enemyEye);
     eye.position.set(BODY_SIZE / 2 + 8, BODY_Y, 0);
@@ -846,19 +866,34 @@ export class MechRig {
       this.bodyParts.push({ mesh, base: mesh.position.clone() });
     }
 
-    // Four corner legs: sx picks front/back, sz picks left/right.
-    const corners: readonly [number, number][] = [
-      [1, -1], // front-left  (pair 0)
-      [1, 1], // front-right (pair 1)
-      [-1, -1], // back-left   (pair 1)
-      [-1, 1], // back-right  (pair 0)
-    ];
+    this.legs = [];
+    this.plants = [];
+    this.recreateLegs();
+  }
+
+  private recreateLegs(): void {
+    const numLegs = Math.round(clamp(this.tuning.numLegs, 3, 8));
+    if (numLegs === this.lastNumLegs) return;
+    this.lastNumLegs = numLegs;
+
+    // Generate legs arranged in a circle around the body (3-8 legs).
+    const corners: { x: number; z: number; isLeft: boolean }[] = [];
+    for (let i = 0; i < numLegs; i++) {
+      const angle = (i / numLegs) * TWO_PI;
+      const isLeft = i < numLegs / 2;
+      corners.push({
+        x: Math.cos(angle) * REST_X,
+        z: Math.sin(angle) * REST_Z,
+        isLeft,
+      });
+    }
+
     this.legs = corners.map(
-      ([sx, sz]) => new MechLeg({ x: sx * REST_X, z: sz * REST_Z }, legColor, COXA_LEN, FEMUR_LEN, TIBIA_LEN, this.group),
+      (c) => new MechLeg({ x: c.x, z: c.z }, this.legColor, COXA_LEN, FEMUR_LEN, TIBIA_LEN, this.group),
     );
-    this.plants = corners.map(([sx, sz], i) => ({
-      rest: { x: sx * REST_X, z: sz * REST_Z },
-      side: Math.sign(sz),
+    this.plants = corners.map((c, i) => ({
+      rest: { x: c.x, z: c.z },
+      side: Math.sign(c.z) || (c.isLeft ? -1 : 1),
       seed: i * 1013 + 17,
       triggerOffset: (hash01(i * 1013 + 17) - 0.5) * 5,
       world: { x: 0, z: 0 },
@@ -877,7 +912,8 @@ export class MechRig {
       dur: this.tuning.stepDurWalk,
       arcH: this.tuning.stepHeightWalk,
     }));
-    // One reusable debug record per leg (spec 035), mutated by debugSnapshot.
+    // Update debug records (spec 035), one per leg.
+    (this.debug.legs as LegDebug[]).length = 0;
     (this.debug.legs as LegDebug[]).push(...this.plants.map(() => blankLegDebug()));
   }
 
@@ -965,6 +1001,7 @@ export class MechRig {
     // sends a leg to the ceiling or off to infinity, so nothing non-finite passes.
     dt = sclamp(dt, 1e-4, 0.1, 1 / 60);
     sanitizeTuning(this.tuning);
+    this.recreateLegs(); // recreate if numLegs changed
     const wx = finiteOr(worldPos.x, this.prev?.x ?? 0);
     const wz = finiteOr(worldPos.y, this.prev?.z ?? 0); // sim (x, y) -> world floor (x, z)
     ry = finiteOr(ry, this.prevRy);
@@ -1069,10 +1106,11 @@ export class MechRig {
     const heldCount = this.plants.reduce((n, l) => n + (l.held ? 1 : 0), 0);
     // While a leg is held only one other may swing, so at least two feet stay down.
     const cap = heldCount > 0 ? 1 : Math.round(clamp(this.tuning.maxStepping, 1, 2));
-    // Only one diagonal pair may be airborne at a time; find it if any.
+    const numLegs = this.plants.length;
+    // Only one pair may be airborne at a time; find it if any.
     let activePair = -1;
     this.plants.forEach((l, i) => {
-      if (l.stepping) activePair = PAIR_OF[i] ?? -1;
+      if (l.stepping) activePair = pairOf(i, numLegs);
     });
 
     const ranked = info
@@ -1085,15 +1123,15 @@ export class MechRig {
 
     for (const e of ranked) {
       if (stepping >= cap) break;
-      const pair = PAIR_OF[e.i] ?? 0;
-      if (activePair !== -1 && pair !== activePair) continue; // keep the opposite diagonal planted
+      const pair = pairOf(e.i, numLegs);
+      if (activePair !== -1 && pair !== activePair) continue; // keep the opposite pair planted
       const leg = this.plants[e.i];
       if (!leg || leg.stepping) continue;
       this.beginStep(leg, wx, wz, ry, run01, turnBias);
       activePair = pair;
       stepping++;
-      // Pull the diagonal partner along if it is nearly ready, for a trot-like pair.
-      const j = PARTNER_OF[e.i] ?? e.i;
+      // Pull the partner along if it is nearly ready, for a paired step.
+      const j = partnerOf(e.i, numLegs);
       const partner = this.plants[j];
       const pInfo = info[j];
       if (partner && pInfo && !partner.stepping && partner.cooldown <= 0 && stepping < cap && pInfo.over > -COUPLE_SLACK * S) {
@@ -1174,7 +1212,8 @@ export class MechRig {
 
     // Enter a hold only from a stable, fully-planted stance while in motion.
     const moving = this.speed > IDLE_SPEED || Math.abs(this.yawRate) > TURN_RATE * 0.25;
-    if (!allowHold || this.holdCooldown > 0 || stepping > 0 || planted < 4 || run01 > 0.9 || !moving) return;
+    const minPlanted = Math.max(2, this.plants.length - 2); // need all but max 2 legs planted
+    if (!allowHold || this.holdCooldown > 0 || stepping > 0 || planted < minPlanted || run01 > 0.9 || !moving) return;
     let best = -1;
     let bestOver = Infinity;
     info.forEach((e, i) => {
