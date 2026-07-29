@@ -55,7 +55,7 @@ function run(state: CombatState, inputs: readonly InputFrame[]): { state: Combat
 
 // An attack (cone/rect) turns to face its aim then plays the attack animation
 // before firing (spec 028); this casts it and advances past that windup.
-const ATTACK_SETTLE = 60; // covers a full 180-degree turn (slowest preset) + the animation
+const ATTACK_SETTLE = 60; // covers an aligned attack's window + animation (no turn)
 function fireCast(state: CombatState, first: InputFrame): { state: CombatState; events: SimEvent[] } {
   return run(state, [first, ...Array.from({ length: ATTACK_SETTLE }, () => NEUTRAL_INPUT)]);
 }
@@ -354,7 +354,9 @@ describe('attacks turn to the mouse then animate; dashes fire at once (spec 028)
     const first = step(s, cast([ATTACK], CENTER, { x: -1, y: 0 }));
     expect(first.events.some((e) => e.kind === 'enemyHit')).toBe(false); // not instant
     expect(first.state.player.pendingAttack).not.toBeNull();
-    const r = fireCast(s, cast([ATTACK], CENTER, { x: -1, y: 0 }));
+    // A full 180-degree turn at the slowest preset (180 deg/s) is 60 ticks, so
+    // give the cast a longer budget than the aligned-attack ATTACK_SETTLE.
+    const r = run(s, [cast([ATTACK], CENTER, { x: -1, y: 0 }), ...Array.from({ length: 110 }, () => NEUTRAL_INPUT)]);
     expect(r.state.enemies.find((e) => e.id === 1)?.health).toBe(200 - 10); // west enemy hit
     expect(Math.cos(r.state.player.facing)).toBeLessThan(-0.99); // turned to face west
   });
@@ -381,7 +383,7 @@ describe('attacks turn to the mouse then animate; dashes fire at once (spec 028)
       }
       return -1;
     };
-    expect(ticksToHit(0)).toBeGreaterThan(ticksToHit(1)); // Warden (360) slower than Zephyr (900)
+    expect(ticksToHit(0)).toBeGreaterThan(ticksToHit(1)); // Warden (180) slower than Zephyr (450)
   });
 
   it('a dash fires immediately in the mouse direction and re-points the unit that way', () => {

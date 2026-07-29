@@ -341,8 +341,8 @@ describe('character presets (spec 028)', () => {
       }
       return -1;
     };
-    const slow = ticksToMove(0); // 360 deg/s
-    const fast = ticksToMove(1); // 900 deg/s
+    const slow = ticksToMove(0); // 180 deg/s
+    const fast = ticksToMove(1); // 450 deg/s
     expect(fast).toBeGreaterThan(0);
     expect(slow).toBeGreaterThan(fast); // a slower turn rate spends more ticks rotating first
   });
@@ -355,8 +355,8 @@ describe('character presets (spec 028)', () => {
       const r = step(s, moveTo(start.x + 400, start.y));
       return r.state.player.position.x - start.x;
     };
-    expect(firstStepDist(0)).toBeCloseTo(295 / 60, 6); // Warden: 295 u/s
-    expect(firstStepDist(1)).toBeCloseTo(275 / 60, 6); // Zephyr: 275 u/s
+    expect(firstStepDist(0)).toBeCloseTo(148 / 60, 6); // Warden: 147.5 u/s (rounds to 148)
+    expect(firstStepDist(1)).toBeCloseTo(138 / 60, 6); // Zephyr: 137.5 u/s (rounds to 138)
   });
 });
 

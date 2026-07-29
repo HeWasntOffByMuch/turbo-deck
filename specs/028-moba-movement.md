@@ -40,8 +40,11 @@ Input (`InputFrame`, and the game-layer inputs `GameInput` / `SpellInput`):
 Movement speed and turn rate come from a selectable **character** preset
 (`sim/characters.ts`), so different archetypes feel distinct:
 
-- `CHARACTERS[0]` "Warden" — 295 u/s, 360°/s (ambles, pivots slowly).
-- `CHARACTERS[1]` "Zephyr" — 275 u/s, 900°/s (a touch slower, whips around).
+- `CHARACTERS[0]` "Warden" — 147.5 u/s, 180°/s (ambles, pivots slowly).
+- `CHARACTERS[1]` "Zephyr" — 137.5 u/s, 450°/s (a touch slower, whips around).
+
+(These are half the original HoN-tuned values — 295/275 u/s and 360/900°/s —
+halved in spec 031 because the faster pace read as too twitchy in the iso view.)
 
 `PlayerState.characterIndex` selects the active one; `InputFrame.cycleCharacter`
 advances to the next preset (wrapping), taking effect the same tick, so the two

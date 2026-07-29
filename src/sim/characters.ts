@@ -13,9 +13,11 @@ export interface Character {
   readonly turnRate: number;
 }
 
+// Speeds are half the original HoN-tuned values (spec 028): the faster pace read
+// as too twitchy for the isometric view, so both walk and turn rates were halved.
 export const CHARACTERS: readonly Character[] = [
-  { name: 'Warden', moveSpeed: 295, turnRate: 360 },
-  { name: 'Zephyr', moveSpeed: 275, turnRate: 900 },
+  { name: 'Warden', moveSpeed: 147.5, turnRate: 180 },
+  { name: 'Zephyr', moveSpeed: 137.5, turnRate: 450 },
 ];
 
 export const DEFAULT_CHARACTER_INDEX = 0;
