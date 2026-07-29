@@ -4,11 +4,14 @@ import { TICK_RATE } from '../../sim/constants.js';
 import { IsoInputCapture } from './input.js';
 import { IsoScene } from './scene.js';
 import { mountMovement, type ViewHandle } from './movement.js';
+import { mountDebug } from './debug-view.js';
 
 /**
  * Entry point for the isometric 3D view (spec 031/032). A small tab shell mounts
- * one of two views: the **combat** view (the MOBA spell game) and a game-free
- * **movement sandbox** (spec 032). Each view is a fixed-timestep loop where real
+ * one of three views: the **combat** view (the MOBA spell game), a game-free
+ * **movement sandbox** (spec 032), and a **rig debug** viewport (spec 035) that
+ * shows the unit from two angles with slow-mo and joint overlays. Each view is a
+ * fixed-timestep loop where real
  * elapsed time becomes a whole number of sim ticks, inputs are fed one tick at a
  * time, and the scene only ever reads the resulting state -- all game logic stays
  * in the sim/cards/game layers below. Switching tabs pauses the hidden view's
@@ -108,6 +111,7 @@ function main(): void {
   const tabs: readonly Tab[] = [
     { label: 'Combat (isometric 3D)', mount: mountCombat },
     { label: 'Movement sandbox', mount: mountMovement },
+    { label: 'Rig debug', mount: mountDebug },
   ];
 
   const bar = document.createElement('div');

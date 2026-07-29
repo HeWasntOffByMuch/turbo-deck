@@ -231,6 +231,12 @@ class MechLeg {
   private readonly femur: THREE.Mesh;
   private readonly tibia: THREE.Mesh;
   private readonly restAzimuth: THREE.Vector3;
+  // Last solved joints in the rig-group frame, recorded at the end of `pose` for
+  // the debug overlay (spec 035). Not read by the rig's own rendering.
+  readonly jHip = new THREE.Vector3();
+  readonly jShoulder = new THREE.Vector3();
+  readonly jKnee = new THREE.Vector3();
+  readonly jFoot = new THREE.Vector3();
   // Segment lengths in effect this frame (base length x the rig's size scale).
   private coxaLen: number;
   private femurLen: number;
@@ -333,6 +339,12 @@ class MechLeg {
 
     orientSegment(this.femur, _shoulder, _knee);
     orientSegment(this.tibia, _knee, _target); // cone apex lands on the foot point
+
+    // Record the solved joints (rig-group frame) for the debug overlay (spec 035).
+    this.jHip.copy(hip);
+    this.jShoulder.copy(_shoulder);
+    this.jKnee.copy(_knee);
+    this.jFoot.copy(_target);
   }
 }
 
@@ -633,6 +645,65 @@ export interface MechOptions {
   readonly tuning?: MechTuning;
 }
 
+const RAD2DEG = 180 / Math.PI;
+
+/**
+ * One leg's solved state for the debug viewport (spec 035): the four joints in
+ * the rig-group frame (so an overlay parented to `rig.group` lines up exactly
+ * with the drawn leg), the foot's logical plant vs its drawn position, the rest
+ * spot and step-trigger radius, plant flags, and the joint angles worth reading
+ * while tuning. All produced by {@link MechRig.debugSnapshot}.
+ */
+export interface LegDebug {
+  /** Solved joints in the rig-group frame: hip -> shoulder (coxa) -> knee -> foot. */
+  readonly hip: THREE.Vector3;
+  readonly shoulder: THREE.Vector3;
+  readonly knee: THREE.Vector3;
+  readonly foot: THREE.Vector3;
+  /** The logical foot plant (group-local); `y` is its current lift height. */
+  readonly target: THREE.Vector3;
+  /** The leg's rest spot (group-local, on the ground). */
+  readonly rest: THREE.Vector3;
+  /** Step-trigger radius around the rest spot (world units, size-scaled). */
+  triggerRadius: number;
+  stepping: boolean;
+  held: boolean;
+  /** Coxa fore/aft protraction: 0 = straight out to the side, +90 = full forward. */
+  coxaSwingDeg: number;
+  /** Femur elevation above horizontal (knee above the shoulder). */
+  femurPitchDeg: number;
+  /** Interior knee angle between femur and tibia. */
+  kneeDeg: number;
+  /** Tibia descent below horizontal (foot below the knee). */
+  tibiaPitchDeg: number;
+}
+
+/** The rig's whole solved state for the debug viewport (spec 035). */
+export interface MechDebug {
+  readonly legs: readonly LegDebug[];
+  state: LocomotionState;
+  /** How far the chassis yaw trails its heading, in degrees. */
+  bodyYawLagDeg: number;
+}
+
+function blankLegDebug(): LegDebug {
+  return {
+    hip: new THREE.Vector3(),
+    shoulder: new THREE.Vector3(),
+    knee: new THREE.Vector3(),
+    foot: new THREE.Vector3(),
+    target: new THREE.Vector3(),
+    rest: new THREE.Vector3(),
+    triggerRadius: 0,
+    stepping: false,
+    held: false,
+    coxaSwingDeg: 0,
+    femurPitchDeg: 0,
+    kneeDeg: 0,
+    tibiaPitchDeg: 0,
+  };
+}
+
 export class MechRig {
   readonly group = new THREE.Group();
   /** Live-editable movement/appearance constants (the sandbox mutates this). */
@@ -656,6 +727,10 @@ export class MechRig {
   // the unit-length travel direction expressed in the leg frame (drives step lead).
   private legYawRate = 0;
   private leadDir = { x: 1, z: 0 };
+  private lastLegRy = 0; // the leg frame's yaw this frame, for debugSnapshot
+  // Reused debug snapshot (spec 035): mutated in place so debugSnapshot allocates
+  // nothing per call. Legs added in the constructor once the plant count is known.
+  private readonly debug: MechDebug = { legs: [], state: 'idle', bodyYawLagDeg: 0 };
 
   // Smoothed observed motion and the body-offset springs it drives.
   private speed = 0;
@@ -730,11 +805,70 @@ export class MechRig {
       dur: this.tuning.stepDurWalk,
       arcH: this.tuning.stepHeightWalk,
     }));
+    // One reusable debug record per leg (spec 035), mutated by debugSnapshot.
+    (this.debug.legs as LegDebug[]).push(...this.plants.map(() => blankLegDebug()));
   }
 
   /** The mech's current locomotion state, for HUDs (e.g. the movement sandbox). */
   get locomotionState(): LocomotionState {
     return this.state;
+  }
+
+  /**
+   * A read-only snapshot of the rig's solved state for the debug viewport (spec
+   * 035): every leg's joints (in the rig-group frame), foot targets, rest spots,
+   * trigger radii, plant flags, and joint angles. The same object is reused and
+   * mutated each call, so this allocates nothing and is safe to call every frame.
+   * The rig already computes all of it; this only surfaces it.
+   */
+  debugSnapshot(): MechDebug {
+    const S = this.scale;
+    const legRy = this.lastLegRy;
+    const wx = this.prev?.x ?? 0;
+    const wz = this.prev?.z ?? 0;
+    this.debug.state = this.state;
+    this.debug.bodyYawLagDeg = angleDelta(this.bodyRy, this.prevRy) * RAD2DEG;
+    for (let i = 0; i < this.legs.length; i++) {
+      const leg = this.legs[i];
+      const p = this.plants[i];
+      const ld = this.debug.legs[i];
+      if (!leg || !p || !ld) continue;
+      ld.hip.copy(leg.jHip);
+      ld.shoulder.copy(leg.jShoulder);
+      ld.knee.copy(leg.jKnee);
+      ld.foot.copy(leg.jFoot);
+      // The logical foot plant, world -> group-local (matches the drawn frame).
+      const tl = worldToLocalXZ(p.world.x - wx, p.world.z - wz, legRy);
+      ld.target.set(tl.x, p.y, tl.z);
+      ld.rest.set(p.rest.x * S, 0, p.rest.z * S);
+      ld.triggerRadius = (this.tuning.stepTrigger + p.triggerOffset) * S;
+      ld.stepping = p.stepping;
+      ld.held = p.held;
+
+      // Joint angles (all in the group-local frame the joints already live in).
+      const side = Math.sign(p.rest.z) || 1;
+      // Coxa protraction: fore/aft component vs the outward (lateral) component.
+      ld.coxaSwingDeg = Math.atan2(leg.jShoulder.x - leg.jHip.x, side * (leg.jShoulder.z - leg.jHip.z)) * RAD2DEG;
+      // Femur elevation above the horizontal (knee lifted above the shoulder).
+      const fdx = leg.jKnee.x - leg.jShoulder.x;
+      const fdz = leg.jKnee.z - leg.jShoulder.z;
+      ld.femurPitchDeg = Math.atan2(leg.jKnee.y - leg.jShoulder.y, Math.hypot(fdx, fdz)) * RAD2DEG;
+      // Interior knee angle between femur (knee->shoulder) and tibia (knee->foot).
+      const ax = leg.jShoulder.x - leg.jKnee.x;
+      const ay = leg.jShoulder.y - leg.jKnee.y;
+      const az = leg.jShoulder.z - leg.jKnee.z;
+      const bx = leg.jFoot.x - leg.jKnee.x;
+      const by = leg.jFoot.y - leg.jKnee.y;
+      const bz = leg.jFoot.z - leg.jKnee.z;
+      const la = Math.hypot(ax, ay, az) || 1e-6;
+      const lb = Math.hypot(bx, by, bz) || 1e-6;
+      ld.kneeDeg = Math.acos(clamp((ax * bx + ay * by + az * bz) / (la * lb), -1, 1)) * RAD2DEG;
+      // Tibia descent below the horizontal (foot dropped below the knee).
+      const tdx = leg.jFoot.x - leg.jKnee.x;
+      const tdz = leg.jFoot.z - leg.jKnee.z;
+      ld.tibiaPitchDeg = Math.atan2(leg.jKnee.y - leg.jFoot.y, Math.hypot(tdx, tdz)) * RAD2DEG;
+    }
+    return this.debug;
   }
 
   /** Resize the body meshes and leg bones to `s` (only when the size actually changes). */
@@ -771,6 +905,7 @@ export class MechRig {
     // mech (only its turret turns). `leadDir` is the travel/facing direction
     // expressed in that frame, so steps always lead the way the body is going.
     const legRy = this.lowerBodyTurns ? ry : 0;
+    this.lastLegRy = legRy;
     this.leadDir = worldToLocalXZ(Math.cos(ry), -Math.sin(ry), legRy);
 
     if (this.prev === null) {

@@ -457,7 +457,7 @@ const PANEL_TEXT = '#c9c9d8';
 const LABEL_CSS = `font-family:'Segoe UI',system-ui,sans-serif;color:${PANEL_TEXT};`;
 
 /** Build the side control panel; returns the element and a fn to sync sliders to tuning. */
-function buildPanel(
+export function buildPanel(
   tuning: MechTuning,
   onReset: () => void,
   onUnit: (kind: UnitKind) => void,
