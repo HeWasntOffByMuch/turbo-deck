@@ -229,50 +229,226 @@ interface SliderSpec {
   readonly key: keyof MechTuning;
   /** Decimal places to show in the readout (0 => integer). */
   readonly digits?: number;
+  /** Hover explanation (native title tooltip) of what the knob does. */
+  readonly tip: string;
 }
 
 const SLIDER_GROUPS: readonly { readonly title: string; readonly rows: readonly SliderSpec[] }[] = [
   {
     title: 'Unit',
     rows: [
-      { label: 'Size', min: 0.4, max: 2.5, step: 0.05, key: 'sizeScale', digits: 2 },
-      { label: 'Move speed', min: 100, max: 400, step: 5, key: 'moveSpeed' },
-      { label: 'Turn rate (°/s)', min: 60, max: 720, step: 10, key: 'turnRate' },
+      {
+        label: 'Size',
+        min: 0.4,
+        max: 2.5,
+        step: 0.05,
+        key: 'sizeScale',
+        digits: 2,
+        tip: 'Overall creature size — scales every leg and body dimension and how far each step reaches.',
+      },
+      {
+        label: 'Move speed',
+        min: 100,
+        max: 400,
+        step: 5,
+        key: 'moveSpeed',
+        tip: 'Base travel speed in world units per second (the sim clamps it to 100–550). Fed to the movement sim as a live override.',
+      },
+      {
+        label: 'Turn rate (°/s)',
+        min: 60,
+        max: 720,
+        step: 10,
+        key: 'turnRate',
+        tip: 'How fast the unit rotates to face its destination, in degrees per second. MOBA movement turns to face before it travels.',
+      },
     ],
   },
   {
     title: 'Gait',
     rows: [
-      { label: 'Step trigger', min: 6, max: 40, step: 1, key: 'stepTrigger' },
-      { label: 'Step lead · walk', min: 0, max: 40, step: 1, key: 'stepLeadWalk' },
-      { label: 'Step lead · run', min: 0, max: 70, step: 1, key: 'stepLeadRun' },
-      { label: 'Step height · walk', min: 2, max: 40, step: 1, key: 'stepHeightWalk' },
-      { label: 'Step height · run', min: 2, max: 50, step: 1, key: 'stepHeightRun' },
-      { label: 'Step time · walk (s)', min: 0.08, max: 0.45, step: 0.01, key: 'stepDurWalk', digits: 2 },
-      { label: 'Step time · run (s)', min: 0.06, max: 0.35, step: 0.01, key: 'stepDurRun', digits: 2 },
-      { label: 'Legs airborne', min: 1, max: 2, step: 1, key: 'maxStepping' },
-      { label: 'Raised legs', min: 0, max: 1, step: 1, key: 'raisedLegs' },
+      {
+        label: 'Step trigger',
+        min: 6,
+        max: 40,
+        step: 1,
+        key: 'stepTrigger',
+        tip: 'How far a foot may drift from its resting spot before the leg picks up and re-plants. Lower means more, smaller steps.',
+      },
+      {
+        label: 'Step lead · walk',
+        min: 0,
+        max: 40,
+        step: 1,
+        key: 'stepLeadWalk',
+        tip: 'How far ahead of its resting spot a foot plants when walking — the stride length at walk pace.',
+      },
+      {
+        label: 'Step lead · run',
+        min: 0,
+        max: 70,
+        step: 1,
+        key: 'stepLeadRun',
+        tip: 'How far ahead of its resting spot a foot plants when running — the stride length at run pace.',
+      },
+      {
+        label: 'Step height · walk',
+        min: 2,
+        max: 40,
+        step: 1,
+        key: 'stepHeightWalk',
+        tip: "Peak height of the foot's arc during a walking step.",
+      },
+      {
+        label: 'Step height · run',
+        min: 2,
+        max: 50,
+        step: 1,
+        key: 'stepHeightRun',
+        tip: "Peak height of the foot's arc during a running step.",
+      },
+      {
+        label: 'Step time · walk (s)',
+        min: 0.08,
+        max: 0.45,
+        step: 0.01,
+        key: 'stepDurWalk',
+        digits: 2,
+        tip: "Time in seconds for one walking step's swing-and-plant. Lower is quicker footwork.",
+      },
+      {
+        label: 'Step time · run (s)',
+        min: 0.06,
+        max: 0.35,
+        step: 0.01,
+        key: 'stepDurRun',
+        digits: 2,
+        tip: "Time in seconds for one running step's swing-and-plant. Lower is quicker footwork.",
+      },
+      {
+        label: 'Legs airborne',
+        min: 1,
+        max: 2,
+        step: 1,
+        key: 'maxStepping',
+        tip: 'How many legs may be off the ground at once — 1 is a careful gait, 2 allows a diagonal trot.',
+      },
+      {
+        label: 'Raised legs',
+        min: 0,
+        max: 1,
+        step: 1,
+        key: 'raisedLegs',
+        tip: 'How many legs may lift into a slightly-raised "recovery" hold while waiting to step (0 or 1).',
+      },
     ],
   },
   {
     title: 'Turning',
     rows: [
-      { label: 'Body yaw lag', min: 0, max: 1, step: 0.05, key: 'yawLag', digits: 2 },
-      { label: 'Step prediction', min: 0, max: 1, step: 0.05, key: 'stepPredict', digits: 2 },
-      { label: 'Diff. step bias', min: 0, max: 1, step: 0.05, key: 'turnStepBias', digits: 2 },
+      {
+        label: 'Body yaw lag',
+        min: 0,
+        max: 1,
+        step: 0.05,
+        key: 'yawLag',
+        digits: 2,
+        tip: 'How much the body trails its heading through a turn. 0 is near-rigid tracking; 1 leans into the turn and settles afterwards (spring + inertia).',
+      },
+      {
+        label: 'Step prediction',
+        min: 0,
+        max: 1,
+        step: 0.05,
+        key: 'stepPredict',
+        digits: 2,
+        tip: 'How far a step anticipates the turn — planting where the body will be facing when the foot lands, not where it faces now.',
+      },
+      {
+        label: 'Diff. step bias',
+        min: 0,
+        max: 1,
+        step: 0.05,
+        key: 'turnStepBias',
+        digits: 2,
+        tip: 'How hard inside legs shorten and outside legs lengthen their steps while turning (differential stride).',
+      },
     ],
   },
   {
     title: 'Body',
     rows: [
-      { label: 'Center-of-mass lean', min: 0, max: 0.5, step: 0.01, key: 'comShift', digits: 2 },
-      { label: 'Bob amplitude', min: 0, max: 12, step: 0.5, key: 'bobAmp', digits: 1 },
-      { label: 'Pitch gain', min: 0, max: 0.005, step: 0.0002, key: 'pitchGain', digits: 4 },
-      { label: 'Roll gain', min: 0, max: 0.3, step: 0.01, key: 'rollGain', digits: 2 },
-      { label: 'Knee sway', min: 0, max: 0.4, step: 0.02, key: 'kneeSway', digits: 2 },
-      { label: 'Hip joint reach', min: 0, max: 3, step: 0.05, key: 'coxaReach', digits: 2 },
-      { label: 'Hip fore/aft swing', min: 0, max: 3, step: 0.05, key: 'coxaSwing', digits: 2 },
-      { label: 'Foot follow (smooth)', min: 4, max: 60, step: 1, key: 'footSmooth' },
+      {
+        label: 'Center-of-mass lean',
+        min: 0,
+        max: 0.5,
+        step: 0.01,
+        key: 'comShift',
+        digits: 2,
+        tip: 'How far the body leans toward the centre of its planted feet (center-of-mass shift).',
+      },
+      {
+        label: 'Bob amplitude',
+        min: 0,
+        max: 12,
+        step: 0.5,
+        key: 'bobAmp',
+        digits: 1,
+        tip: 'How much the body bobs up and down vertically at full run.',
+      },
+      {
+        label: 'Pitch gain',
+        min: 0,
+        max: 0.005,
+        step: 0.0002,
+        key: 'pitchGain',
+        digits: 4,
+        tip: 'How much the nose dips or lifts under acceleration — radians of pitch per unit/s² of acceleration.',
+      },
+      {
+        label: 'Roll gain',
+        min: 0,
+        max: 0.3,
+        step: 0.01,
+        key: 'rollGain',
+        digits: 2,
+        tip: 'How much the body banks into a turn — radians of roll per rad/s of turning.',
+      },
+      {
+        label: 'Knee sway',
+        min: 0,
+        max: 0.4,
+        step: 0.02,
+        key: 'kneeSway',
+        digits: 2,
+        tip: 'Sideways knee-sway amplitude, adding organic variation to the joints.',
+      },
+      {
+        label: 'Hip joint reach',
+        min: 0,
+        max: 3,
+        step: 0.05,
+        key: 'coxaReach',
+        digits: 2,
+        tip: "How much of a leg's outward reach comes from the hip joint (coxa). 0 collapses it to a bare knee leg; higher throws the foot further from the hip.",
+      },
+      {
+        label: 'Hip fore/aft swing',
+        min: 0,
+        max: 3,
+        step: 0.05,
+        key: 'coxaSwing',
+        digits: 2,
+        tip: 'How much the hip joint swings the leg front-to-back. 1 aims it straight at the foot; 0 keeps it pointing out to the side; higher exaggerates the swing.',
+      },
+      {
+        label: 'Foot follow (smooth)',
+        min: 4,
+        max: 60,
+        step: 1,
+        key: 'footSmooth',
+        tip: 'How fast the drawn foot may chase its target (per second). Higher snaps tighter to the gait; lower moves limbs slowly and smooths out twitch.',
+      },
     ],
   },
 ];
@@ -305,13 +481,22 @@ function buildPanel(
   // Unit picker: two chips choosing which unit the sandbox controls.
   const pickerLabel = document.createElement('div');
   pickerLabel.textContent = 'Unit';
+  pickerLabel.title = 'Choose which unit the sandbox controls; both share the sliders below.';
   pickerLabel.style.cssText = 'color:#f0f0f8;font-weight:600;margin:2px 0 4px;letter-spacing:.03em;';
   panel.appendChild(pickerLabel);
   const picker = document.createElement('div');
   picker.style.cssText = 'display:flex;gap:6px;margin:0 0 6px;';
-  const units: readonly { kind: UnitKind; label: string }[] = [
-    { kind: 'spider', label: 'Spider' },
-    { kind: 'walker', label: 'Mech (grey)' },
+  const units: readonly { kind: UnitKind; label: string; tip: string }[] = [
+    {
+      kind: 'spider',
+      label: 'Spider',
+      tip: 'Control the organic spider mech — its whole body turns to face where it moves.',
+    },
+    {
+      kind: 'walker',
+      label: 'Mech (grey)',
+      tip: 'Control the grey metal walker — same leg mechanics, but its lower body stays put while only the upper body rotates to face.',
+    },
   ];
   const chips: HTMLButtonElement[] = [];
   const styleChip = (btn: HTMLButtonElement, on: boolean): void => {
@@ -322,6 +507,7 @@ function buildPanel(
   units.forEach((u, i) => {
     const btn = document.createElement('button');
     btn.textContent = u.label;
+    btn.title = u.tip;
     styleChip(btn, i === 0);
     btn.addEventListener('click', () => {
       chips.forEach((c, j) => styleChip(c, j === i));
@@ -343,6 +529,9 @@ function buildPanel(
     for (const spec of group.rows) {
       const row = document.createElement('div');
       row.style.cssText = 'display:flex;align-items:center;gap:8px;margin:5px 0;';
+      // Native hover tooltip on the whole row (label, slider, and readout) so
+      // hovering anywhere on the setting explains what the knob does.
+      row.title = spec.tip;
       const label = document.createElement('label');
       label.textContent = spec.label;
       label.style.cssText = 'flex:0 0 44%;';
@@ -374,6 +563,7 @@ function buildPanel(
 
   const reset = document.createElement('button');
   reset.textContent = 'Reset to defaults';
+  reset.title = 'Restore every slider above to its default tuning.';
   reset.style.cssText =
     `${LABEL_CSS}margin-top:14px;width:100%;padding:7px;border-radius:6px;cursor:pointer;` +
     'border:1px solid #2a2a3a;background:#2a2a3a;color:#f0f0f8;font-size:12px;';
