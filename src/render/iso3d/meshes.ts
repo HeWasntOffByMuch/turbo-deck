@@ -105,6 +105,13 @@ export function makeEnemy(type: string): THREE.Group {
   return g;
 }
 
+/** A small flat marker dropped on the ground at the current move order. */
+export function makeMoveMarker(): THREE.Mesh {
+  const m = new THREE.Mesh(new THREE.OctahedronGeometry(9, 0), flatMaterial(PALETTE.marker));
+  m.scale.y = 0.35;
+  return m;
+}
+
 /** The ground plane, split into a flat two-tone check so scale reads without texture. */
 export function makeGround(width: number, height: number): THREE.Group {
   const g = new THREE.Group();

@@ -27,6 +27,8 @@ export const PALETTE = {
   enemySkitter: 0x5fb4d6,
   enemyBrute: 0x9a5ad0,
   enemyEye: 0x1a1208,
+  // Bright pip dropped at the click-to-move destination.
+  marker: 0xffe08a,
 } as const;
 
 /** Enemy body colour by sim type key, falling back to a neutral tone. */

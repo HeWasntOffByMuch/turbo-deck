@@ -1,87 +1,93 @@
-import type { ComboInput } from '../../game/combo-session.js';
+import type { SpellInput } from '../../game/spell-session.js';
+import type { Vec2 } from '../../sim/types.js';
 
 /**
- * Keyboard input for the isometric prototype (spec 018). Movement is WASD /
- * arrows over the sim's world axes; aim is simply the last direction you moved,
- * so attacks fire where the hero faces -- no mouse needed for this slice. It
- * reports intent only and decides no game outcome. Card-economy edges (play a
- * slot, activate, spawn a wave) are one-shot, matching the combo prototype.
+ * Input capture for the isometric renderer (spec 031), matching the 2D spell
+ * game's MOBA scheme (spec 028): movement is a right-click move order to the
+ * world point under the cursor -- no held-button movement. The cursor world
+ * point is the aim/target for cards (a dash fires toward it). C cycles the
+ * movement character, Q spawns a wave, 1-4 play cards. It reports intent only
+ * and decides no game outcome.
+ *
+ * Screen->world is not done here: the scene owns the fixed camera and raycasts
+ * the cursor onto the ground, so `sample` is handed the already-projected world
+ * cursor and the player's world position each tick.
  */
 
-const UP = new Set(['ArrowUp', 'KeyW']);
-const DOWN = new Set(['ArrowDown', 'KeyS']);
-const LEFT = new Set(['ArrowLeft', 'KeyA']);
-const RIGHT = new Set(['ArrowRight', 'KeyD']);
-const ATTACK = new Set(['Space']);
-const PARRY = new Set(['KeyK']);
-const DODGE = new Set(['KeyL']);
 const PLAY_KEYS: Record<string, 0 | 1 | 2 | 3> = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3 };
-const ACTIVATE_KEY = 'KeyE';
 const WAVE_KEY = 'KeyQ';
+const CYCLE_CHARACTER_KEY = 'KeyC';
+
+export interface ScreenPoint {
+  readonly x: number;
+  readonly y: number;
+}
 
 export class IsoInputCapture {
-  private readonly held = new Set<string>();
+  private mouse: ScreenPoint = { x: 0, y: 0 };
+  // A right-click move order is a discrete edge, consumed once by sample().
+  private rightClicked = false;
+  private queuedCycleCharacter = false;
   private queuedPlay: 0 | 1 | 2 | 3 | null = null;
-  private queuedActivate = false;
   private queuedWave = false;
-  // Persisted facing so a standing hero keeps aiming where they last moved.
-  private aimX = 1;
-  private aimY = 0;
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
-    if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
-    this.held.add(e.code);
     const play = PLAY_KEYS[e.code];
     if (play !== undefined) this.queuedPlay = play;
-    else if (e.code === ACTIVATE_KEY) this.queuedActivate = true;
     else if (e.code === WAVE_KEY) this.queuedWave = true;
+    else if (e.code === CYCLE_CHARACTER_KEY) this.queuedCycleCharacter = true;
   };
 
-  private readonly onKeyUp = (e: KeyboardEvent): void => {
-    this.held.delete(e.code);
+  private readonly onMouseMove = (e: MouseEvent): void => {
+    const rect = this.canvas.getBoundingClientRect();
+    this.mouse = { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
+
+  private readonly onMouseDown = (e: MouseEvent): void => {
+    if (e.button === 2) this.rightClicked = true;
+  };
+
+  // Right-click is the move command, so suppress the browser context menu.
+  private readonly onContextMenu = (e: MouseEvent): void => {
+    e.preventDefault();
+  };
+
+  constructor(private readonly canvas: HTMLCanvasElement) {}
 
   attach(target: Window): void {
     target.addEventListener('keydown', this.onKeyDown);
-    target.addEventListener('keyup', this.onKeyUp);
+    target.addEventListener('mousemove', this.onMouseMove);
+    this.canvas.addEventListener('mousedown', this.onMouseDown);
+    this.canvas.addEventListener('contextmenu', this.onContextMenu);
   }
 
-  sample(): ComboInput {
-    let moveX: -1 | 0 | 1 = 0;
-    if (this.heldAny(LEFT) && !this.heldAny(RIGHT)) moveX = -1;
-    else if (this.heldAny(RIGHT) && !this.heldAny(LEFT)) moveX = 1;
+  /** Cursor position in canvas CSS pixels, for the scene's screen->world raycast. */
+  mouseCanvas(): ScreenPoint {
+    return this.mouse;
+  }
 
-    let moveY: -1 | 0 | 1 = 0;
-    if (this.heldAny(UP) && !this.heldAny(DOWN)) moveY = -1;
-    else if (this.heldAny(DOWN) && !this.heldAny(UP)) moveY = 1;
-
-    if (moveX !== 0 || moveY !== 0) {
-      this.aimX = moveX;
-      this.aimY = moveY;
-    }
+  /** Build one input frame from the world cursor (raycast by the scene) and player position. */
+  sample(worldCursor: Vec2, playerPos: Vec2): SpellInput {
+    let aimX = worldCursor.x - playerPos.x;
+    const aimY = worldCursor.y - playerPos.y;
+    if (aimX === 0 && aimY === 0) aimX = 1;
 
     const play = this.queuedPlay;
-    const input: ComboInput = {
-      moveX,
-      moveY,
-      attack: this.heldAny(ATTACK),
-      aimX: this.aimX,
-      aimY: this.aimY,
-      parry: this.heldAny(PARRY),
-      dodge: this.heldAny(DODGE),
+    const input: SpellInput = {
+      aimX,
+      aimY,
+      targetX: worldCursor.x,
+      targetY: worldCursor.y,
+      ...(this.rightClicked ? { moveTarget: worldCursor } : {}),
+      ...(this.queuedCycleCharacter ? { cycleCharacter: true } : {}),
       ...(play !== null ? { playHandIndex: play } : {}),
-      ...(this.queuedActivate ? { activate: true } : {}),
       ...(this.queuedWave ? { spawnWave: true } : {}),
     };
 
     this.queuedPlay = null;
-    this.queuedActivate = false;
     this.queuedWave = false;
+    this.rightClicked = false;
+    this.queuedCycleCharacter = false;
     return input;
-  }
-
-  private heldAny(codes: ReadonlySet<string>): boolean {
-    for (const code of codes) if (this.held.has(code)) return true;
-    return false;
   }
 }

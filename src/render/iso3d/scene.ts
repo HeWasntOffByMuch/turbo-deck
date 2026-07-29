@@ -2,17 +2,20 @@ import * as THREE from 'three';
 import { ARENA_HEIGHT, ARENA_WIDTH } from '../../sim/constants.js';
 import type { CombatState, Vec2 } from '../../sim/types.js';
 import { PALETTE } from './palette.js';
-import { makeBush, makeEnemy, makeGround, makePlayer, makeTree } from './meshes.js';
+import { makeBush, makeEnemy, makeGround, makeMoveMarker, makePlayer, makeTree } from './meshes.js';
 import { worldToIso, type IsoParams } from './projection.js';
 import { scatterProps } from './scatter.js';
 
 /**
- * The isometric 3D view (spec 018): owns a three.js scene that draws the sim as
+ * The isometric 3D view (spec 031): owns a three.js scene that draws the sim as
  * flat-shaded, blocky geometry under a single directional light. It reads sim
  * state and moves meshes to match -- no game rules here. The look is forced
  * retro on purpose: the WebGL canvas renders at a low internal resolution and
- * is upscaled with `image-rendering: pixelated`, antialiasing is off, and
- * every material is single-colour flat-shaded.
+ * is upscaled with `image-rendering: pixelated`, antialiasing is off, and every
+ * material is single-colour flat-shaded.
+ *
+ * For the MOBA move order (spec 028) it also raycasts the cursor onto the ground
+ * so a screen right-click becomes a world point (`screenToWorld`).
  */
 
 // Low internal resolution, upscaled by CSS -> chunky pixels. 16:10 to suit iso.
@@ -31,9 +34,13 @@ export class IsoScene {
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
   private readonly player: THREE.Group;
+  private readonly moveMarker: THREE.Mesh;
   private readonly enemies = new Map<number, THREE.Group>();
   private readonly target = new THREE.Vector3(ARENA_WIDTH / 2, 0, ARENA_HEIGHT / 2);
-  private facing = 0;
+  // Reused across cursor raycasts so screenToWorld allocates nothing per frame.
+  private readonly raycaster = new THREE.Raycaster();
+  private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  private readonly hit = new THREE.Vector3();
 
   constructor(readonly canvas: HTMLCanvasElement, seed: number) {
     canvas.width = RENDER_W;
@@ -77,6 +84,9 @@ export class IsoScene {
 
     this.player = makePlayer();
     this.scene.add(this.player);
+    this.moveMarker = makeMoveMarker();
+    this.moveMarker.visible = false;
+    this.scene.add(this.moveMarker);
   }
 
   /** Deterministic trees + bushes, kept clear of the arena centre / spawn. */
@@ -93,6 +103,22 @@ export class IsoScene {
     }
   }
 
+  /**
+   * Raycast the cursor (in canvas CSS pixels) onto the ground plane, returning
+   * the world point for a MOBA move order / aim target. The fixed camera makes
+   * this a pure projection; the display size (not the low internal resolution)
+   * sets the NDC so upscaling doesn't skew the pick.
+   */
+  screenToWorld(cssX: number, cssY: number): Vec2 {
+    const rect = this.canvas.getBoundingClientRect();
+    const ndcX = (cssX / rect.width) * 2 - 1;
+    const ndcY = -((cssY / rect.height) * 2 - 1);
+    this.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
+    const point = this.raycaster.ray.intersectPlane(this.groundPlane, this.hit);
+    if (!point) return { x: this.target.x, y: this.target.z };
+    return { x: point.x, y: point.z };
+  }
+
   /** World ground position -> isometric screen point (for optional 2D overlays). */
   worldToScreen(pos: Vec2, params?: IsoParams): Vec2 {
     return worldToIso(pos, params);
@@ -101,10 +127,16 @@ export class IsoScene {
   render(state: CombatState): void {
     const p = state.player;
     this.player.position.set(p.position.x, 0, p.position.y);
-    if (p.attackAimX !== 0 || p.attackAimY !== 0) {
-      this.facing = Math.atan2(-p.attackAimY, p.attackAimX);
+    // Orient by the sim's heading (spec 028): a mesh built facing +x maps to
+    // world facing `theta` at rotation.y = -theta.
+    this.player.rotation.y = -p.facing;
+
+    if (p.moveTarget) {
+      this.moveMarker.visible = true;
+      this.moveMarker.position.set(p.moveTarget.x, 6, p.moveTarget.y);
+    } else {
+      this.moveMarker.visible = false;
     }
-    this.player.rotation.y = this.facing;
 
     this.syncEnemies(state);
 
