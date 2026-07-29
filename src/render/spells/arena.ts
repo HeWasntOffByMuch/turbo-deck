@@ -339,6 +339,13 @@ export class SpellArenaView {
       ctx.lineTo(p.x, p.y);
       ctx.stroke();
       ctx.lineCap = 'butt';
+      // Invulnerability shimmer: a pale, shifting halo marks the i-frames (spec 030),
+      // so a dash reads as "untouchable right now," not just a reposition.
+      ctx.strokeStyle = `rgba(200,240,255,${0.35 + 0.35 * Math.abs(Math.sin(this.frame * 0.4))})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r + 4, 0, Math.PI * 2);
+      ctx.stroke();
     }
 
     // Mis-timed window slow: a sluggish violet drag ring with sinking motes.

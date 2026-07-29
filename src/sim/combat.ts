@@ -1080,9 +1080,12 @@ export function step(
     if (enemy.phase === 'windup') {
       const aim = enemy.attackAim;
       const inZone = aim !== null && enemyConeHits(enemy.position, aim, player.position);
+      // I-frames: while a dash is active the unit phases through the slam entirely
+      // -- no damage taken, no shield spent (spec 030). Same window as dash movement.
+      const dashedThrough = inZone && tick < player.dashExpiresAtTick;
       const baseAttack = enemy.attackDamage ?? enemyTypeByKey(enemy.type).attackDamage;
       const fullDamage = Math.round(baseAttack * mods.enemyDamageMultiplier);
-      const baseDamage = inZone ? fullDamage : 0;
+      const baseDamage = inZone && !dashedThrough ? fullDamage : 0;
       const outcome = enemy.incomingAttackOutcome;
       const afterDefense = outcome === 'perfect' ? 0 : outcome === 'normal' ? Math.round(baseDamage / 2) : baseDamage;
       // Stack Agility armor, the held stance, and any brief guard -- capped -- against the hit.
@@ -1110,7 +1113,7 @@ export function step(
           events.push({ kind: 'playerHealed', amount: healed - playerHealth, tick });
           playerHealth = healed;
         }
-      } else if (!inZone && outcome !== 'perfect' && outcome !== 'normal') {
+      } else if (dashedThrough || (!inZone && outcome !== 'perfect' && outcome !== 'normal')) {
         events.push({ kind: 'enemyAttackAvoided', tick });
       }
       return { ...enemy, phase: 'recovery', phaseEndsAtTick: tick + scaleDuration(ENEMY_RECOVERY_TICKS, enemy.attackSpeedMult ?? 1), incomingAttackOutcome: 'none', attackAim: null };
