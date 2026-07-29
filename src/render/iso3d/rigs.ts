@@ -207,13 +207,17 @@ class MechLeg {
   private readonly tibia: THREE.Mesh;
   private readonly foot: THREE.Mesh;
   private readonly restAzimuth: THREE.Vector3;
+  // Segment lengths in effect this frame (base length x the rig's size scale).
+  private coxaLen: number;
+  private femurLen: number;
+  private tibiaLen: number;
 
   constructor(
     rest: { x: number; z: number },
     legColor: number,
-    private readonly coxaLen: number,
-    private readonly femurLen: number,
-    private readonly tibiaLen: number,
+    private readonly baseCoxa: number,
+    private readonly baseFemur: number,
+    private readonly baseTibia: number,
     group: THREE.Group,
   ) {
     this.coxa = box(6, 1, 6, darken(legColor, 0.85));
@@ -221,8 +225,28 @@ class MechLeg {
     this.tibia = box(4, 1, 4, legColor);
     this.foot = box(9, 3.5, 12, darken(legColor, 0.7));
     group.add(this.coxa, this.femur, this.tibia, this.foot);
+    this.coxaLen = baseCoxa;
+    this.femurLen = baseFemur;
+    this.tibiaLen = baseTibia;
     // Fallback outward direction when the foot sits directly under the hip.
     this.restAzimuth = new THREE.Vector3(rest.x, 0, rest.z).normalize();
+  }
+
+  /**
+   * Resize the leg to the rig's size scale: lengthen the bones (the IK reads the
+   * new lengths) and thicken their cross-section and the foot to match. Called
+   * only when the size changes, not every frame.
+   */
+  setScale(s: number): void {
+    this.coxaLen = this.baseCoxa * s;
+    this.femurLen = this.baseFemur * s;
+    this.tibiaLen = this.baseTibia * s;
+    for (const m of [this.coxa, this.femur, this.tibia]) {
+      // orientSegment writes scale.y (length) each frame; x/z (thickness) persist.
+      m.scale.x = s;
+      m.scale.z = s;
+    }
+    this.foot.scale.setScalar(s);
   }
 
   /**
@@ -268,52 +292,106 @@ class MechLeg {
   }
 }
 
-// Body/leg proportions of the mech (world units). A small cube body on four wide
-// spider legs; tuned so the resting stance has slack before a leg oversteps.
+// Base body/leg proportions of the mech at size scale 1 (world units). A small
+// cube body on four wide spider legs; the resting stance keeps slack before a
+// leg oversteps, and `tuning.sizeScale` multiplies all of these live.
 const HIP_Y = 30; // hip height on the chassis corner (before body offsets)
 const HIP_INSET = 11; // corner offset from the body centre
 const REST_X = 34; // rest foot fore/aft under the body
 const REST_Z = 42; // rest foot lateral under the body
 const COXA_LEN = 12;
-const FEMUR_LEN = 26;
-const TIBIA_LEN = 34;
+const FEMUR_LEN = 27;
+const TIBIA_LEN = 36;
 const BODY_Y = 40;
 const BODY_SIZE = 22;
 
-// Gait tuning. A foot may drift `STEP_TRIGGER` from rest before it re-plants; a
-// step leads ahead in the travel direction (more when running), arcs up
-// (`_HEIGHT`), and lasts `_DUR` seconds (shorter contact when running). At most
-// `MAX_STEPPING` legs are airborne, and never two from opposite diagonal pairs,
-// so a supporting diagonal always stays planted (alternating-tetrapod gait).
-const STEP_TRIGGER = 20;
-const STEP_LEAD_WALK = 14;
-const STEP_LEAD_RUN = 30;
-const STEP_HEIGHT_WALK = 12;
-const STEP_HEIGHT_RUN = 22;
-const STEP_DUR_WALK = 0.19;
-const STEP_DUR_RUN = 0.1;
-const MAX_STEPPING = 2;
-const COUPLE_SLACK = 8; // a leg pulls its diagonal partner along if it is within this of triggering
-const TURN_STEP_BIAS = 0.5; // inside legs shorten / outside lengthen their lead when turning
-const PLACE_JITTER = 5; // per-step foot-placement noise (world units)
+// Fixed feel constants (not exposed as sliders).
+const COUPLE_SLACK = 8; // a leg pulls its diagonal partner along if within this of triggering
+const PLACE_JITTER = 4; // per-step foot-placement noise (world units, x size)
+const STEP_COOLDOWN = 0.05; // min seconds a foot rests after a plant before it may step again
+const HEIGHT_RUN_CROUCH = 6; // lower centre of gravity when running
+const AIRBORNE_DIP = 1.6; // body dips per airborne leg (weight over fewer feet)
+const LAND_IMPULSE = 2.0; // downward settle added when a foot plants
+const BREATH_AMP = 1.3; // idle breathing vertical amplitude
+const STRIDE_LEN = 48; // world distance per gait half-cycle (drives bob phase)
 
-// Locomotion-state thresholds, all derived from the observed world transform.
+// Locomotion-state thresholds, derived from the observed world transform.
 const IDLE_SPEED = 5; // below this (units/s) the mech is standing
 const WALK_SPEED = 30; // walk baseline where the run blend starts
 const RUN_SPEED = 110; // full-run speed
 const DECEL_STOP = 160; // decel (units/s^2) sharper than this reads as stopping
 const TURN_RATE = 1.3; // yaw rate (rad/s) above which the mech reads as turning
 
-// Body stabilisation tuning (spring targets).
-const COM_SHIFT = 0.16; // fraction of the support-centroid offset the body leans toward
-const BOB_AMP = 3.5; // vertical bob amplitude at full run
-const HEIGHT_RUN_CROUCH = 6; // lower centre of gravity when running
-const AIRBORNE_DIP = 1.6; // body dips per airborne leg (weight over fewer feet)
-const LAND_IMPULSE = 2.2; // downward settle added when a foot plants
-const PITCH_ACCEL = 0.0016; // rad of pitch per unit/s^2 of acceleration
-const ROLL_TURN = 0.09; // rad of bank per rad/s of yaw
-const BREATH_AMP = 1.3; // idle breathing vertical amplitude
-const STRIDE_LEN = 46; // world distance per gait half-cycle (drives bob phase)
+/**
+ * Live-editable movement/appearance constants for a mech, tuned in the movement
+ * sandbox. Distances are in world units at size scale 1 and scale with
+ * `sizeScale`; `moveSpeed`/`turnRate` are sim inputs the sandbox feeds to the
+ * combat step (the rig itself never reads them). Mutating a field takes effect on
+ * the next frame -- there is one shared object per mech.
+ */
+export interface MechTuning {
+  /** Overall creature size; scales every leg/body dimension and step distance. */
+  sizeScale: number;
+  /** Sim: base move speed (world units/s, before the engine clamp of 100..550). */
+  moveSpeed: number;
+  /** Sim: turn rate (degrees/s). */
+  turnRate: number;
+  /** How far a foot may drift from its rest spot before the leg re-plants. */
+  stepTrigger: number;
+  /** How far ahead of rest a step plants, walking / running. */
+  stepLeadWalk: number;
+  stepLeadRun: number;
+  /** Peak foot-arc height of a step, walking / running. */
+  stepHeightWalk: number;
+  stepHeightRun: number;
+  /** Swing/contact time of a step in seconds, walking / running (lower = quicker). */
+  stepDurWalk: number;
+  stepDurRun: number;
+  /** Max legs airborne at once (1 = careful, 2 = a diagonal trot). */
+  maxStepping: number;
+  /** How hard inside legs shorten / outside legs lengthen their step when turning. */
+  turnStepBias: number;
+  /** Fraction of the support centroid the body leans toward (center-of-mass shift). */
+  comShift: number;
+  /** Vertical body-bob amplitude at full run. */
+  bobAmp: number;
+  /** Pitch gain: radians of nose-dip per unit/s^2 of acceleration. */
+  pitchGain: number;
+  /** Roll gain: radians of bank per rad/s of turn. */
+  rollGain: number;
+  /** Sideways knee-sway amplitude (organic joint variation). */
+  kneeSway: number;
+  /**
+   * Foot-follow rate: how fast the drawn foot may chase its target (1/s). Higher
+   * snaps tighter to the gait; lower moves the limbs more slowly and smooths out
+   * any twitch. This is the "restrict how fast a limb can move" knob.
+   */
+  footSmooth: number;
+}
+
+/** The default mech tuning; the sandbox clones this and edits the copy. */
+export function defaultMechTuning(): MechTuning {
+  return {
+    sizeScale: 1,
+    moveSpeed: 147.5,
+    turnRate: 180,
+    stepTrigger: 16,
+    stepLeadWalk: 14,
+    stepLeadRun: 30,
+    stepHeightWalk: 12,
+    stepHeightRun: 20,
+    stepDurWalk: 0.2,
+    stepDurRun: 0.13,
+    maxStepping: 2,
+    turnStepBias: 0.5,
+    comShift: 0.16,
+    bobAmp: 3.5,
+    pitchGain: 0.0016,
+    rollGain: 0.09,
+    kneeSway: 0.1,
+    footSmooth: 26,
+  };
+}
 
 /** Rotate a local (x, z) offset by the group's yaw into a world offset. */
 function localToWorldXZ(lx: number, lz: number, ry: number): { x: number; z: number } {
@@ -334,16 +412,25 @@ export type LocomotionState = 'idle' | 'walking' | 'running' | 'turning' | 'stop
 
 /** Per-leg ground-lock bookkeeping: the planted foot and any step in progress. */
 interface LegPlant {
-  /** The corner offset (fore/aft, lateral) of this leg's rest spot in local space. */
+  /** The corner offset (fore/aft, lateral) of this leg's rest spot, at size scale 1. */
   readonly rest: { readonly x: number; readonly z: number };
   /** Lateral side sign (from `rest.z`) for inside/outside turn-step biasing. */
   readonly side: number;
   /** A stable per-leg seed so its noise (timing/placement/knee) differs from the others. */
   readonly seed: number;
-  /** Where the foot is currently planted, in world (x, z). */
+  /** A fixed per-leg trigger offset (breaks lockstep without per-frame flicker). */
+  readonly triggerOffset: number;
+  /** The logical foot plant, in world (x, z): where the leg is anchored. */
   world: { x: number; z: number };
-  /** Foot height above ground: 0 when planted, arced up mid-step. */
+  /** Logical foot height above ground: 0 when planted, arced up mid-step. */
   y: number;
+  /** The drawn foot, slew-limited toward the logical one so motion never snaps. */
+  disp: { x: number; z: number };
+  dispY: number;
+  /** Smoothed knee-sway angle, eased toward its noise target. */
+  kneeCur: number;
+  /** Seconds until this foot is allowed to step again (hysteresis after a plant). */
+  cooldown: number;
   stepping: boolean;
   from: { x: number; z: number };
   to: { x: number; z: number };
@@ -375,9 +462,15 @@ const PARTNER_OF = [3, 2, 1, 0] as const;
  */
 export class MechRig {
   readonly group = new THREE.Group();
+  /** Live-editable movement/appearance constants (the sandbox mutates this). */
+  readonly tuning: MechTuning = defaultMechTuning();
   private readonly chassis = new THREE.Group();
   private readonly legs: readonly MechLeg[];
   private readonly plants: readonly LegPlant[];
+  // Body meshes + their base (scale-1) positions, so a size change can resize them.
+  private readonly bodyParts: { readonly mesh: THREE.Mesh; readonly base: THREE.Vector3 }[] = [];
+  private appliedScale = -1; // last size applied to the meshes/bones (forces a first pass)
+  private scale = 1; // size scale in effect this frame
   private prev: { x: number; z: number } | null = null;
   private prevRy = 0;
   private moveDir = { x: 0, z: 0 };
@@ -405,16 +498,16 @@ export class MechRig {
     this.group.add(this.chassis);
     const body = box(BODY_SIZE, BODY_SIZE, BODY_SIZE, bodyColor);
     body.position.y = BODY_Y;
-    this.chassis.add(body);
     const plate = box(BODY_SIZE - 6, 4, BODY_SIZE - 6, darken(bodyColor, 0.8));
     plate.position.y = BODY_Y + BODY_SIZE / 2 + 1;
-    this.chassis.add(plate);
     const head = box(10, 9, 12, bodyColor);
     head.position.set(BODY_SIZE / 2 + 3, BODY_Y - 1, 0);
-    this.chassis.add(head);
     const eye = box(3, 5, 10, PALETTE.enemyEye);
     eye.position.set(BODY_SIZE / 2 + 8, BODY_Y, 0);
-    this.chassis.add(eye);
+    for (const mesh of [body, plate, head, eye]) {
+      this.chassis.add(mesh);
+      this.bodyParts.push({ mesh, base: mesh.position.clone() });
+    }
 
     // Four corner legs: sx picks front/back, sz picks left/right.
     const corners: readonly [number, number][] = [
@@ -430,20 +523,35 @@ export class MechRig {
       rest: { x: sx * REST_X, z: sz * REST_Z },
       side: Math.sign(sz),
       seed: i * 1013 + 17,
+      triggerOffset: (hash01(i * 1013 + 17) - 0.5) * 5,
       world: { x: 0, z: 0 },
       y: 0,
+      disp: { x: 0, z: 0 },
+      dispY: 0,
+      kneeCur: 0,
+      cooldown: 0,
       stepping: false,
       from: { x: 0, z: 0 },
       to: { x: 0, z: 0 },
       t: 0,
-      dur: STEP_DUR_WALK,
-      arcH: STEP_HEIGHT_WALK,
+      dur: this.tuning.stepDurWalk,
+      arcH: this.tuning.stepHeightWalk,
     }));
   }
 
   /** The mech's current locomotion state, for HUDs (e.g. the movement sandbox). */
   get locomotionState(): LocomotionState {
     return this.state;
+  }
+
+  /** Resize the body meshes and leg bones to `s` (only when the size actually changes). */
+  private applyScale(s: number): void {
+    this.appliedScale = s;
+    for (const leg of this.legs) leg.setScale(s);
+    for (const part of this.bodyParts) {
+      part.mesh.position.copy(part.base).multiplyScalar(s);
+      part.mesh.scale.setScalar(s);
+    }
   }
 
   /**
@@ -458,33 +566,47 @@ export class MechRig {
     const wz = worldPos.y; // sim's (x, y) plane maps to the world floor (x, z)
     dt = Math.max(1e-4, dt);
     this.clock += dt;
+    this.scale = Math.max(0.2, this.tuning.sizeScale);
+    if (this.scale !== this.appliedScale) this.applyScale(this.scale);
+    const S = this.scale;
 
     if (this.prev === null) {
       // First frame: drop every foot onto its rest spot so nothing snaps.
       for (const leg of this.plants) {
-        const r = localToWorldXZ(leg.rest.x, leg.rest.z, ry);
+        const r = localToWorldXZ(leg.rest.x * S, leg.rest.z * S, ry);
         leg.world = { x: wx + r.x, z: wz + r.z };
+        leg.disp = { x: leg.world.x, z: leg.world.z };
       }
       this.prev = { x: wx, z: wz };
       this.prevRy = ry;
     }
 
-    // Observed motion, smoothed. Travel direction is kept from the last real move.
+    // Observed motion, smoothed. The travel direction is low-passed and only
+    // updated on real movement, so it never flips as the unit settles at its
+    // target -- a big source of the earlier leg twitch.
     const dx = wx - this.prev.x;
     const dz = wz - this.prev.z;
     const moved = Math.hypot(dx, dz);
-    if (moved > 0.05) this.moveDir = { x: dx / moved, z: dz / moved };
     this.prev = { x: wx, z: wz };
     const rawSpeed = moved / dt;
+    if (rawSpeed > 8) {
+      const tx = dx / moved;
+      const tz = dz / moved;
+      const k = Math.min(1, dt * 9);
+      this.moveDir.x += (tx - this.moveDir.x) * k;
+      this.moveDir.z += (tz - this.moveDir.z) * k;
+      const m = Math.hypot(this.moveDir.x, this.moveDir.z) || 1;
+      this.moveDir.x /= m;
+      this.moveDir.z /= m;
+    }
     const prevSpeed = this.speed;
-    const kSpeed = Math.min(1, dt * 8);
-    this.speed += (rawSpeed - this.speed) * kSpeed;
+    this.speed += (rawSpeed - this.speed) * Math.min(1, dt * 8);
     const rawAccel = (this.speed - prevSpeed) / dt;
     this.accel += (rawAccel - this.accel) * Math.min(1, dt * 6);
     const rawYaw = angleDelta(ry, this.prevRy) / dt;
     this.prevRy = ry;
     this.yawRate += (rawYaw - this.yawRate) * Math.min(1, dt * 6);
-    this.phase += (this.speed * dt) / STRIDE_LEN;
+    this.phase += (this.speed * dt) / (STRIDE_LEN * S);
 
     // Speed-derived gait: a continuous walk->run blend + a discrete state label.
     const run01 = clamp((this.speed - WALK_SPEED) / (RUN_SPEED - WALK_SPEED), 0, 1);
@@ -504,14 +626,19 @@ export class MechRig {
 
   /** Decide which legs re-plant this frame and advance any in-progress steps. */
   private stepLegs(dt: number, wx: number, wz: number, ry: number, run01: number, turnBias: number): void {
+    const S = this.scale;
+    const cap = Math.round(clamp(this.tuning.maxStepping, 1, 2));
+    for (const leg of this.plants) leg.cooldown = Math.max(0, leg.cooldown - dt);
+
     // Rest world position and overstretch for every leg (used for triggering + coupling).
+    // The trigger radius carries a fixed per-leg offset (no per-frame flicker) so
+    // legs break lockstep without chattering across the threshold.
     const info = this.plants.map((leg) => {
-      const r = localToWorldXZ(leg.rest.x, leg.rest.z, ry);
+      const r = localToWorldXZ(leg.rest.x * S, leg.rest.z * S, ry);
       const restX = wx + r.x;
       const restZ = wz + r.z;
-      // Per-leg timing jitter: a wandering trigger radius so legs never fire in lockstep.
-      const jitter = (vnoise(leg.seed, this.clock * 0.6) - 0.5) * 6;
-      const over = Math.hypot(leg.world.x - restX, leg.world.z - restZ) - (STEP_TRIGGER + jitter);
+      const trig = (this.tuning.stepTrigger + leg.triggerOffset) * S;
+      const over = Math.hypot(leg.world.x - restX, leg.world.z - restZ) - trig;
       return { restX, restZ, over };
     });
 
@@ -526,12 +653,12 @@ export class MechRig {
       .map((e, i) => ({ i, ...e }))
       .filter((e) => {
         const leg = this.plants[e.i];
-        return leg !== undefined && !leg.stepping && e.over > 0;
+        return leg !== undefined && !leg.stepping && leg.cooldown <= 0 && e.over > 0;
       })
       .sort((a, b) => b.over - a.over);
 
     for (const e of ranked) {
-      if (stepping >= MAX_STEPPING) break;
+      if (stepping >= cap) break;
       const pair = PAIR_OF[e.i] ?? 0;
       if (activePair !== -1 && pair !== activePair) continue; // keep the opposite diagonal planted
       const leg = this.plants[e.i];
@@ -543,7 +670,7 @@ export class MechRig {
       const j = PARTNER_OF[e.i] ?? e.i;
       const partner = this.plants[j];
       const pInfo = info[j];
-      if (partner && pInfo && !partner.stepping && stepping < MAX_STEPPING && pInfo.over > -COUPLE_SLACK) {
+      if (partner && pInfo && !partner.stepping && partner.cooldown <= 0 && stepping < cap && pInfo.over > -COUPLE_SLACK * S) {
         this.beginStep(partner, pInfo.restX, pInfo.restZ, run01, turnBias);
         stepping++;
       }
@@ -557,7 +684,8 @@ export class MechRig {
         leg.world = { x: leg.to.x, z: leg.to.z };
         leg.y = 0;
         leg.stepping = false;
-        this.landImpulse += LAND_IMPULSE; // weight settles onto the fresh plant
+        leg.cooldown = STEP_COOLDOWN; // must rest a beat before stepping again
+        this.landImpulse += LAND_IMPULSE * S; // weight settles onto the fresh plant
       } else {
         const t = leg.t;
         // Horizontal: hold briefly (anticipation lift), then smootherstep to the plant,
@@ -576,10 +704,17 @@ export class MechRig {
 
   /** Start a step for `leg`: pick a lead point ahead of rest, with turn + noise. */
   private beginStep(leg: LegPlant, restX: number, restZ: number, run01: number, turnBias: number): void {
-    const lead = lerp(STEP_LEAD_WALK, STEP_LEAD_RUN, run01) * (1 + turnBias * leg.side * TURN_STEP_BIAS);
+    const S = this.scale;
+    const t = this.tuning;
+    leg.dur = Math.max(0.09, lerp(t.stepDurWalk, t.stepDurRun, run01) * (0.92 + vnoise(leg.seed + 3, this.clock) * 0.16));
+    // Lead ahead of rest, biased by the turn; but never less than the ground the
+    // body will cover during the swing, so the foot always lands ahead of drift
+    // (this stops the "always overstretched" re-stepping that read as twitch).
+    const baseLead = lerp(t.stepLeadWalk, t.stepLeadRun, run01) * S * (1 + turnBias * leg.side * t.turnStepBias);
+    const lead = Math.max(baseLead, this.speed * leg.dur * 0.75);
     // Foot-placement variation: a little along and across the travel direction.
-    const along = (vnoise(leg.seed + 7, this.clock) - 0.5) * PLACE_JITTER;
-    const across = (vnoise(leg.seed + 31, this.clock) - 0.5) * PLACE_JITTER;
+    const along = (vnoise(leg.seed + 7, this.clock) - 0.5) * PLACE_JITTER * S;
+    const across = (vnoise(leg.seed + 31, this.clock) - 0.5) * PLACE_JITTER * S;
     const px = -this.moveDir.z; // travel-perpendicular (ground plane)
     const pz = this.moveDir.x;
     leg.from = { x: leg.world.x, z: leg.world.z };
@@ -589,12 +724,13 @@ export class MechRig {
     };
     leg.t = 0;
     leg.stepping = true;
-    leg.dur = lerp(STEP_DUR_WALK, STEP_DUR_RUN, run01) * (0.9 + vnoise(leg.seed + 3, this.clock) * 0.2);
-    leg.arcH = lerp(STEP_HEIGHT_WALK, STEP_HEIGHT_RUN, run01) * (0.85 + vnoise(leg.seed + 5, this.clock) * 0.3);
+    leg.arcH = lerp(t.stepHeightWalk, t.stepHeightRun, run01) * S * (0.85 + vnoise(leg.seed + 5, this.clock) * 0.3);
   }
 
   /** Stabilise the chassis with springs off the planted-feet centroid, then pose legs. */
   private stabilise(dt: number, wx: number, wz: number, ry: number, run01: number): void {
+    const S = this.scale;
+    const t = this.tuning;
     // Center-of-mass estimate: the centroid of the grounded feet, in rig space.
     let cx = 0;
     let cz = 0;
@@ -617,8 +753,8 @@ export class MechRig {
 
     this.landImpulse *= Math.exp(-dt * 9); // settle decays away
     const idle01 = clamp(1 - this.speed / IDLE_SPEED, 0, 1);
-    const breath = idle01 * BREATH_AMP * Math.sin(this.clock * 1.8);
-    const bob = -BOB_AMP * run01 * (0.5 + 0.5 * Math.sin(this.phase * TWO_PI));
+    const breath = idle01 * BREATH_AMP * S * Math.sin(this.clock * 1.8);
+    const bob = -t.bobAmp * S * run01 * (0.5 + 0.5 * Math.sin(this.phase * TWO_PI));
 
     // Stiffen the whole suspension when running (stronger body stabilisation).
     const stiffen = 1 + run01 * 0.8;
@@ -627,29 +763,37 @@ export class MechRig {
     this.sRoll.setFreq(4 * stiffen);
 
     // Lean the body toward its support, dip over airborne legs / at speed, bob, breathe.
-    this.sSwayX.track(cx * COM_SHIFT, dt);
-    this.sSwayZ.track(cz * COM_SHIFT, dt);
-    this.sHeight.track(bob + breath - HEIGHT_RUN_CROUCH * run01 - AIRBORNE_DIP * airborne - this.landImpulse, dt);
+    this.sSwayX.track(cx * t.comShift, dt);
+    this.sSwayZ.track(cz * t.comShift, dt);
+    this.sHeight.track(bob + breath - (HEIGHT_RUN_CROUCH * run01 + AIRBORNE_DIP * airborne) * S - this.landImpulse, dt);
     // Pitch nose-down under acceleration, nose-up when braking; bank into a turn.
-    this.sPitch.track(clamp(this.accel * PITCH_ACCEL, -0.22, 0.22), dt);
-    this.sRoll.track(clamp(this.yawRate * ROLL_TURN, -0.2, 0.2) + cz * 0.0015, dt);
+    this.sPitch.track(clamp(this.accel * t.pitchGain, -0.22, 0.22), dt);
+    this.sRoll.track(clamp(this.yawRate * t.rollGain, -0.2, 0.2) + cz * 0.0015, dt);
     this.sYaw.track(clamp(-this.yawRate * 0.03, -0.12, 0.12), dt);
 
     this.chassis.position.set(this.sSwayX.value, this.sHeight.value, this.sSwayZ.value);
     this.chassis.rotation.set(this.sRoll.value, this.sYaw.value, -this.sPitch.value);
     this.chassis.updateMatrix();
 
-    // Draw each leg between its (chassis-borne) hip and its (world-locked) foot.
+    // Draw each leg between its (chassis-borne) hip and its slew-limited foot. The
+    // drawn foot chases the logical plant at a capped rate, so nothing snaps.
+    const aFoot = 1 - Math.exp(-t.footSmooth * dt);
+    const aFootY = 1 - Math.exp(-t.footSmooth * 1.5 * dt);
+    const aKnee = Math.min(1, dt * 6);
     this.legs.forEach((leg, i) => {
       const p = this.plants[i];
       if (!p) return;
+      p.disp.x += (p.world.x - p.disp.x) * aFoot;
+      p.disp.z += (p.world.z - p.disp.z) * aFoot;
+      p.dispY += (p.y - p.dispY) * aFootY;
       const sx = Math.sign(p.rest.x);
       const sz = p.side;
-      _hip.set(sx * HIP_INSET, HIP_Y, sz * HIP_INSET).applyMatrix4(this.chassis.matrix);
-      const local = worldToLocalXZ(p.world.x - wx, p.world.z - wz, ry);
-      _foot.set(local.x, p.y, local.z);
-      const kneeSway = (vnoise(p.seed + 11, this.clock * 0.8) - 0.5) * 0.22;
-      leg.pose(_hip, _foot, kneeSway);
+      _hip.set(sx * HIP_INSET * S, HIP_Y * S, sz * HIP_INSET * S).applyMatrix4(this.chassis.matrix);
+      const local = worldToLocalXZ(p.disp.x - wx, p.disp.z - wz, ry);
+      _foot.set(local.x, p.dispY, local.z);
+      const kneeTarget = (vnoise(p.seed + 11, this.clock * 0.5) - 0.5) * t.kneeSway;
+      p.kneeCur += (kneeTarget - p.kneeCur) * aKnee;
+      leg.pose(_hip, _foot, p.kneeCur);
     });
   }
 }

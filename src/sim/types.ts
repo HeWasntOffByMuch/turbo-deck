@@ -300,6 +300,15 @@ export interface InputFrame {
   readonly allocateStat?: 'strength' | 'agility' | 'intelligence';
   /** Advance to the next character preset this tick (movement speed + turn rate). */
   readonly cycleCharacter?: boolean;
+  /**
+   * Override the active character's base move speed (world units/s) this tick,
+   * before the HoN speed clamp. Absent => use the character preset. Used only by
+   * the movement sandbox's live tuning; the game never sets it, so behaviour and
+   * determinism are unchanged when omitted.
+   */
+  readonly moveSpeedOverride?: number;
+  /** Override the active character's turn rate (deg/s) this tick; see {@link moveSpeedOverride}. */
+  readonly turnRateOverride?: number;
   readonly attack: boolean;
   /** Aim direction for the attack cone; need not be normalized. */
   readonly aimX: number;

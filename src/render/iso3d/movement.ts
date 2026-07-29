@@ -6,23 +6,25 @@ import type { CombatState, InputFrame, Vec2 } from '../../sim/types.js';
 import { IsoInputCapture } from './input.js';
 import { PALETTE } from './palette.js';
 import { makeBush, makeGround, makeHeadingArrow, makeMoveMarker, makeTree } from './meshes.js';
-import { MechRig } from './rigs.js';
+import { defaultMechTuning, MechRig, type MechTuning } from './rigs.js';
 import { scatterProps } from './scatter.js';
 
 /**
- * The movement sandbox tab (spec 032): no game -- just one controllable mech
+ * The movement sandbox tab (spec 032/033): no game -- just one controllable mech
  * driven through the sim's MOBA movement so the turn-rate rules and the mech's
- * ground-locking spider legs can be watched in isolation. It reuses the
+ * organic spider legs can be watched and *tuned* in isolation. It reuses the
  * deterministic combat sim (no enemies, no ambient spawner) and only ever feeds
- * it movement inputs: a right-click move order and C to cycle the movement
- * archetype. All game rules stay in the sim; this layer only reads state.
+ * it movement inputs: a right-click move order, C to cycle the movement
+ * archetype, and live speed/turn-rate overrides from the side panel. Every other
+ * knob on the panel edits the rig's cosmetic tuning directly. Game rules stay in
+ * the sim; this layer only reads state and poses the (cosmetic) rig.
  */
 
 // Same low-res, upscaled retro look and fixed iso follow-camera as the combat view.
 const RENDER_W = 480;
 const RENDER_H = 300;
-const DISPLAY_W = 960;
-const DISPLAY_H = 600;
+const DISPLAY_W = 640;
+const DISPLAY_H = 400;
 const VIEW_HALF_WIDTH = 320;
 const CAMERA_OFFSET = new THREE.Vector3(420, 520, 420);
 
@@ -142,36 +144,177 @@ export interface ViewHandle {
   stop(): void;
 }
 
+// One editable tuning field: label, range, and how to read/write it on the tuning.
+interface SliderSpec {
+  readonly label: string;
+  readonly min: number;
+  readonly max: number;
+  readonly step: number;
+  readonly key: keyof MechTuning;
+  /** Decimal places to show in the readout (0 => integer). */
+  readonly digits?: number;
+}
+
+const SLIDER_GROUPS: readonly { readonly title: string; readonly rows: readonly SliderSpec[] }[] = [
+  {
+    title: 'Unit',
+    rows: [
+      { label: 'Size', min: 0.4, max: 2.5, step: 0.05, key: 'sizeScale', digits: 2 },
+      { label: 'Move speed', min: 100, max: 400, step: 5, key: 'moveSpeed' },
+      { label: 'Turn rate (°/s)', min: 60, max: 720, step: 10, key: 'turnRate' },
+    ],
+  },
+  {
+    title: 'Gait',
+    rows: [
+      { label: 'Step trigger', min: 6, max: 40, step: 1, key: 'stepTrigger' },
+      { label: 'Step lead · walk', min: 0, max: 40, step: 1, key: 'stepLeadWalk' },
+      { label: 'Step lead · run', min: 0, max: 70, step: 1, key: 'stepLeadRun' },
+      { label: 'Step height · walk', min: 2, max: 40, step: 1, key: 'stepHeightWalk' },
+      { label: 'Step height · run', min: 2, max: 50, step: 1, key: 'stepHeightRun' },
+      { label: 'Step time · walk (s)', min: 0.08, max: 0.45, step: 0.01, key: 'stepDurWalk', digits: 2 },
+      { label: 'Step time · run (s)', min: 0.06, max: 0.35, step: 0.01, key: 'stepDurRun', digits: 2 },
+      { label: 'Legs airborne', min: 1, max: 2, step: 1, key: 'maxStepping' },
+      { label: 'Turn step bias', min: 0, max: 1, step: 0.05, key: 'turnStepBias', digits: 2 },
+    ],
+  },
+  {
+    title: 'Body',
+    rows: [
+      { label: 'Center-of-mass lean', min: 0, max: 0.5, step: 0.01, key: 'comShift', digits: 2 },
+      { label: 'Bob amplitude', min: 0, max: 12, step: 0.5, key: 'bobAmp', digits: 1 },
+      { label: 'Pitch gain', min: 0, max: 0.005, step: 0.0002, key: 'pitchGain', digits: 4 },
+      { label: 'Roll gain', min: 0, max: 0.3, step: 0.01, key: 'rollGain', digits: 2 },
+      { label: 'Knee sway', min: 0, max: 0.4, step: 0.02, key: 'kneeSway', digits: 2 },
+      { label: 'Foot follow (smooth)', min: 4, max: 60, step: 1, key: 'footSmooth' },
+    ],
+  },
+];
+
+const PANEL_TEXT = '#c9c9d8';
+const LABEL_CSS = `font-family:'Segoe UI',system-ui,sans-serif;color:${PANEL_TEXT};`;
+
+/** Build the side control panel; returns the element and a fn to sync sliders to tuning. */
+function buildPanel(tuning: MechTuning, onReset: () => void): { element: HTMLElement; sync: () => void } {
+  const panel = document.createElement('div');
+  panel.style.cssText =
+    `${LABEL_CSS}width:300px;max-height:${DISPLAY_H}px;overflow-y:auto;padding:4px 12px 12px;` +
+    'background:#16161e;border:1px solid #2a2a3a;border-radius:8px;font-size:12px;box-sizing:border-box;';
+
+  const help = document.createElement('div');
+  help.style.cssText = 'line-height:1.5;color:#9a9ab0;margin:6px 0 10px;';
+  help.innerHTML =
+    '<b style="color:#f0f0f8;">Movement sandbox</b><br>' +
+    '<b>Right-click</b> the ground to move. MOBA turn-rate: the mech turns to face ' +
+    'the destination before it travels.<br>' +
+    '<b>C</b> loads the next archetype preset into the sliders.<br>' +
+    'Everything below is live — drag to retune the walk.';
+  panel.appendChild(help);
+
+  const refreshers: (() => void)[] = [];
+
+  for (const group of SLIDER_GROUPS) {
+    const heading = document.createElement('div');
+    heading.textContent = group.title;
+    heading.style.cssText = 'color:#f0f0f8;font-weight:600;margin:12px 0 4px;letter-spacing:.03em;';
+    panel.appendChild(heading);
+
+    for (const spec of group.rows) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;margin:5px 0;';
+      const label = document.createElement('label');
+      label.textContent = spec.label;
+      label.style.cssText = 'flex:0 0 44%;';
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.min = String(spec.min);
+      input.max = String(spec.max);
+      input.step = String(spec.step);
+      input.style.cssText = 'flex:1;min-width:0;accent-color:#4a7fb0;';
+      const value = document.createElement('span');
+      value.style.cssText = 'flex:0 0 44px;text-align:right;font-variant-numeric:tabular-nums;color:#e0e0ee;';
+
+      const fmt = (v: number): string => (spec.digits ? v.toFixed(spec.digits) : String(Math.round(v)));
+      const refresh = (): void => {
+        const v = tuning[spec.key];
+        input.value = String(v);
+        value.textContent = fmt(v);
+      };
+      input.addEventListener('input', () => {
+        tuning[spec.key] = Number(input.value);
+        value.textContent = fmt(Number(input.value));
+      });
+      refresh();
+      refreshers.push(refresh);
+      row.append(label, input, value);
+      panel.appendChild(row);
+    }
+  }
+
+  const reset = document.createElement('button');
+  reset.textContent = 'Reset to defaults';
+  reset.style.cssText =
+    `${LABEL_CSS}margin-top:14px;width:100%;padding:7px;border-radius:6px;cursor:pointer;` +
+    'border:1px solid #2a2a3a;background:#2a2a3a;color:#f0f0f8;font-size:12px;';
+  reset.addEventListener('click', onReset);
+  panel.appendChild(reset);
+
+  return { element: panel, sync: () => refreshers.forEach((r) => r()) };
+}
+
 /**
  * Mount the movement sandbox into `container`, returning a start/stop handle. The
  * fixed-timestep loop is identical to the combat view's: real elapsed time
  * becomes whole ticks, inputs are fed one tick at a time, and the scene only
- * reads the resulting state.
+ * reads the resulting state. The side panel edits the rig tuning live and feeds
+ * the sim its move-speed / turn-rate overrides.
  */
 export function mountMovement(container: HTMLElement): ViewHandle {
+  // The tab shell toggles `root.style.display` (block/none), so the flex row lives
+  // in an inner wrapper it does not touch.
   const root = document.createElement('div');
-  const title = document.createElement('div');
-  title.style.cssText = "font-family:'Segoe UI',system-ui,sans-serif;color:#c9c9d8;margin:6px 2px 12px;font-size:13px;";
-  root.appendChild(title);
+  const layout = document.createElement('div');
+  layout.style.cssText = 'display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap;';
+  root.appendChild(layout);
+
+  const left = document.createElement('div');
+  const status = document.createElement('div');
+  status.style.cssText = `${LABEL_CSS}margin:6px 2px 8px;font-size:13px;`;
+  left.appendChild(status);
   const canvas = document.createElement('canvas');
-  root.appendChild(canvas);
+  left.appendChild(canvas);
+  layout.appendChild(left);
   container.appendChild(root);
 
   const seed = Date.now() >>> 0;
   const scene = new MovementScene(canvas, seed);
+  const tuning = scene.mech.tuning;
   const input = new IsoInputCapture(canvas);
   // No enemies and no ambient spawner: a pure movement sandbox.
   let state: CombatState = initCombat(seed, { ambientSpawner: false, initialEnemies: 0 });
 
-  const setTitle = (): void => {
+  const panel = buildPanel(tuning, () => {
+    Object.assign(tuning, defaultMechTuning());
+    panel.sync();
+  });
+  layout.appendChild(panel.element);
+
+  const setStatus = (): void => {
     const name = characterAt(state.player.characterIndex).name;
-    title.textContent =
-      `turbo-deck · movement sandbox (spec 032/033) — right-click to move a mech unit. ` +
-      `MOBA turn-rate movement: it turns to face the destination before it travels. ` +
-      `Watch the organic spider gait: diagonal stepping, body bob/sway/pitch, center-of-mass lean. ` +
-      `C swaps the movement archetype (${name}) · gait: ${scene.mech.locomotionState}.`;
+    status.textContent = `Archetype: ${name} (press C to load its preset)  ·  gait: ${scene.mech.locomotionState}`;
   };
-  setTitle();
+  setStatus();
+
+  // Load the active character's preset into the sliders when C cycles it.
+  let lastCharacter = state.player.characterIndex;
+  const syncCharacter = (): void => {
+    if (state.player.characterIndex === lastCharacter) return;
+    lastCharacter = state.player.characterIndex;
+    const c = characterAt(lastCharacter);
+    tuning.moveSpeed = c.moveSpeed;
+    tuning.turnRate = c.turnRate;
+    panel.sync();
+  };
 
   let running = false;
   let accumulator = 0;
@@ -192,15 +335,19 @@ export function mountMovement(container: HTMLElement): ViewHandle {
         aimY: s.aimY,
         parry: false,
         dodge: false,
+        // Live speed/turn-rate overrides from the panel (sandbox-only input).
+        moveSpeedOverride: tuning.moveSpeed,
+        turnRateOverride: tuning.turnRate,
         ...(s.moveTarget ? { moveTarget: s.moveTarget } : {}),
         ...(s.cycleCharacter ? { cycleCharacter: true } : {}),
       };
       state = step(state, combatInput).state;
+      syncCharacter();
       accumulator -= TICK_MS;
     }
 
     scene.render(state);
-    setTitle();
+    setStatus();
     requestAnimationFrame(frame);
   };
 

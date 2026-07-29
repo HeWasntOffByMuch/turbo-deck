@@ -527,9 +527,13 @@ export function step(
   // which take effect this same tick.
   const characterIndex = input.cycleCharacter ? state.player.characterIndex + 1 : state.player.characterIndex;
   const character = characterAt(characterIndex);
-  const speedPerTick = (computeMoveSpeed(character.moveSpeed) / TICK_RATE) * moveScale;
+  // The sandbox may override the preset's speed/turn rate live (spec 033); the
+  // game leaves these unset, so the preset stands and behaviour is unchanged.
+  const baseMoveSpeed = input.moveSpeedOverride ?? character.moveSpeed;
+  const baseTurnRate = input.turnRateOverride ?? character.turnRate;
+  const speedPerTick = (computeMoveSpeed(baseMoveSpeed) / TICK_RATE) * moveScale;
   // Agility adds to the character's turn rate (spec 029).
-  const maxTurnPerTick = ((character.turnRate + agility * TURN_RATE_PER_AGILITY) * DEG2RAD) / TICK_RATE;
+  const maxTurnPerTick = ((baseTurnRate + agility * TURN_RATE_PER_AGILITY) * DEG2RAD) / TICK_RATE;
 
   // An attack (cone/rect) turns to face its aim, winds up the attack animation,
   // then fires (spec 028). A fresh move command cancels it. Non-attack casts
