@@ -175,7 +175,14 @@ const SLIDER_GROUPS: readonly { readonly title: string; readonly rows: readonly 
       { label: 'Step time · walk (s)', min: 0.08, max: 0.45, step: 0.01, key: 'stepDurWalk', digits: 2 },
       { label: 'Step time · run (s)', min: 0.06, max: 0.35, step: 0.01, key: 'stepDurRun', digits: 2 },
       { label: 'Legs airborne', min: 1, max: 2, step: 1, key: 'maxStepping' },
-      { label: 'Turn step bias', min: 0, max: 1, step: 0.05, key: 'turnStepBias', digits: 2 },
+    ],
+  },
+  {
+    title: 'Turning',
+    rows: [
+      { label: 'Body yaw lag', min: 0, max: 1, step: 0.05, key: 'yawLag', digits: 2 },
+      { label: 'Step prediction', min: 0, max: 1, step: 0.05, key: 'stepPredict', digits: 2 },
+      { label: 'Diff. step bias', min: 0, max: 1, step: 0.05, key: 'turnStepBias', digits: 2 },
     ],
   },
   {
@@ -208,7 +215,8 @@ function buildPanel(tuning: MechTuning, onReset: () => void): { element: HTMLEle
     '<b>Right-click</b> the ground to move. MOBA turn-rate: the mech turns to face ' +
     'the destination before it travels.<br>' +
     '<b>C</b> loads the next archetype preset into the sliders.<br>' +
-    'Everything below is live — drag to retune the walk.';
+    'The legs turn first and the body follows; feet re-plant to steer, so it ' +
+    'never spins on a central axis. Everything below is live — drag to retune.';
   panel.appendChild(help);
 
   const refreshers: (() => void)[] = [];

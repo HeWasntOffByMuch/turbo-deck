@@ -110,6 +110,29 @@ driving the mech.
   character preset. They are a pure input, default-absent; the game never sets
   them, so behaviour and determinism are unchanged when omitted.
 
+- **Biologically-inspired turning (legs lead, body follows).** The body no longer
+  rigidly snaps to its heading. The authoritative heading + path still come from
+  the sim's turn-rate movement (unchanged, sim-owned); on top of it the rig now
+  turns like a creature, entirely cosmetically:
+  - *Body-yaw controller.* The scene still rotates the rig **group** (the leg-
+    planning frame + heading arrow) to the authoritative heading, so the legs
+    re-home to the new heading first. The **body chassis** yaw is driven
+    separately by a physics-style angular controller — `angAccel = k·err −
+    c·ω + legTorque`, integrated to a body yaw that *trails* the heading and
+    settles after the turn (rotational inertia, not a direct transform). The
+    torque term sums each swinging foot's step direction about the body centre,
+    so an asymmetric/pivot step pattern nudges the yaw; the spring keeps it
+    bounded and the trailing angle is hard-capped. `yawLag` (0..1) tunes it.
+  - *Differential stepping.* Inside legs (toward the turn) get a smaller trigger
+    radius (shorter, more frequent steps); outside legs lead farther — the
+    asymmetry that walks the body around, driven by `turnStepBias`.
+  - *Foot-placement prediction.* A step converts its plant through the heading the
+    body *will* have when the foot lands (`ry + yawRate·dur·stepPredict`), so feet
+    land where the body is going, not where it is.
+  - *Lean.* The existing roll banks the body toward the inside of the curve.
+  All of this keeps ≥2 feet grounded, never spins on a central axis, and the
+  quadrant guarantee above still holds (verified headless + visually).
+
 `scene.ts`, `main.ts`, `input.ts`, cards/game — unchanged (the rig signature is
 preserved). The only sim change is the two default-off input overrides above.
 

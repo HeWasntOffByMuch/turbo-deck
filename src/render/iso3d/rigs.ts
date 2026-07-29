@@ -328,6 +328,22 @@ const WALK_SPEED = 30; // walk baseline where the run blend starts
 const RUN_SPEED = 110; // full-run speed
 const DECEL_STOP = 160; // decel (units/s^2) sharper than this reads as stopping
 const TURN_RATE = 1.3; // yaw rate (rad/s) above which the mech reads as turning
+// Body-yaw controller: the rendered body yaw is a spring+inertia system pulled
+// toward the authoritative heading, nudged by leg step torque. Natural frequency
+// and damping interpolate with `yawLag` (softer + more overshoot at higher lag),
+// and the trailing angle is hard-capped so the body never falls too far behind.
+const YAW_FREQ_MIN = 6.5; // rad/s at yawLag = 1 (soft, laggy)
+const YAW_FREQ_MAX = 13; // rad/s at yawLag = 0 (stiff, near-rigid)
+const YAW_ZETA_MIN = 0.6; // damping ratio at yawLag = 1 (a little overshoot)
+const YAW_ZETA_MAX = 0.9; // damping ratio at yawLag = 0
+const YAW_MAX_LAG_MIN = 0.16; // rad cap at yawLag = 0
+const YAW_MAX_LAG_MAX = 0.5; // rad cap at yawLag = 1
+const YAW_TORQUE_GAIN = 0.9; // how strongly leg steps torque the body yaw
+
+/** 2D cross product (z of a x b) -- signed turning of b about a, in the ground plane. */
+function cross2(ax: number, az: number, bx: number, bz: number): number {
+  return ax * bz - az * bx;
+}
 
 /**
  * Live-editable movement/appearance constants for a mech, tuned in the movement
@@ -358,6 +374,18 @@ export interface MechTuning {
   maxStepping: number;
   /** How hard inside legs shorten / outside legs lengthen their step when turning. */
   turnStepBias: number;
+  /**
+   * Body-yaw lag (0..1): how much the body *trails* its heading in a turn. The
+   * legs re-home to the true heading first; the body yaw is then driven toward it
+   * by a spring+inertia controller (plus a nudge from leg step torque), so 0 is
+   * near-rigid tracking and 1 leans into the turn and settles afterwards.
+   */
+  yawLag: number;
+  /**
+   * Foot-placement prediction (0..1): how far a step anticipates the turn, planting
+   * where the body *will* be facing when the foot lands rather than where it is now.
+   */
+  stepPredict: number;
   /** Fraction of the support centroid the body leans toward (center-of-mass shift). */
   comShift: number;
   /** Vertical body-bob amplitude at full run. */
@@ -391,6 +419,8 @@ export function defaultMechTuning(): MechTuning {
     stepDurRun: 0.13,
     maxStepping: 2,
     turnStepBias: 0.5,
+    yawLag: 0.55,
+    stepPredict: 0.6,
     comShift: 0.16,
     bobAmp: 3.5,
     pitchGain: 0.0016,
@@ -489,12 +519,15 @@ export class MechRig {
   private phase = 0; // gait phase (accumulated stride distance / STRIDE_LEN)
   private landImpulse = 0;
   private state: LocomotionState = 'idle';
+  // The rendered body yaw (in the group's ry-space) and its angular velocity: the
+  // body follows its heading through this controller instead of snapping to it.
+  private bodyRy = 0;
+  private bodyAngVel = 0;
   private readonly sHeight = new Spring(0, 3.2);
   private readonly sSwayX = new Spring(0, 3);
   private readonly sSwayZ = new Spring(0, 3);
   private readonly sPitch = new Spring(0, 4.5);
   private readonly sRoll = new Spring(0, 4);
-  private readonly sYaw = new Spring(0, 5);
 
   constructor(type: string, bodyColorOverride?: number) {
     const bodyColor = bodyColorOverride ?? enemyColor(type);
@@ -585,6 +618,7 @@ export class MechRig {
       }
       this.prev = { x: wx, z: wz };
       this.prevRy = ry;
+      this.bodyRy = ry;
     }
 
     // Observed motion, smoothed. Steps lead along the body's facing (below), not
@@ -623,7 +657,8 @@ export class MechRig {
     const cap = Math.round(clamp(this.tuning.maxStepping, 1, 2));
     // During a turn the world-locked feet fall behind the yaw, so step a little
     // more eagerly (a smaller trigger radius) to help them track the body.
-    const trigScale = 1 - 0.3 * Math.abs(turnBias);
+    const turnMag = Math.abs(turnBias);
+    const trigScale = 1 - 0.25 * turnMag;
     for (const leg of this.plants) leg.cooldown = Math.max(0, leg.cooldown - dt);
 
     // Rest world position and overstretch for every leg (used for triggering + coupling).
@@ -636,7 +671,11 @@ export class MechRig {
       const r = localToWorldXZ(leg.rest.x * S, leg.rest.z * S, ry);
       const restX = wx + r.x;
       const restZ = wz + r.z;
-      const trig = (this.tuning.stepTrigger + leg.triggerOffset) * S * trigScale;
+      // Inside legs (on the side the mech is turning toward) step more often: a
+      // smaller trigger radius, so they take shorter, quicker strides while the
+      // outside legs take longer ones -- the differential that drives the turn.
+      const inside = clamp(-leg.side * turnBias, 0, 1);
+      const trig = (this.tuning.stepTrigger + leg.triggerOffset) * S * trigScale * (1 - 0.22 * inside);
       const radial = Math.hypot(leg.world.x - restX, leg.world.z - restZ) - trig;
       // Foot in the body's local frame: how far it has crossed its quadrant lines.
       const lf = worldToLocalXZ(leg.world.x - wx, leg.world.z - wz, ry);
@@ -735,7 +774,11 @@ export class MechRig {
     const fore = Math.sign(leg.rest.x);
     lx = fore > 0 ? Math.max(lx, MIN_FORE * S) : Math.min(lx, -MIN_FORE * S);
     lz = leg.side > 0 ? Math.max(lz, MIN_LAT * S) : Math.min(lz, -MIN_LAT * S);
-    const w = localToWorldXZ(lx, lz, ry);
+    // Placement prediction: the body's frame rotates at `yawRate`, so over the
+    // swing it will turn by ~yawRate*dur. Convert the local target using that
+    // future heading, so the foot lands where the body will be, not where it is.
+    const predictRy = ry + this.yawRate * leg.dur * t.stepPredict;
+    const w = localToWorldXZ(lx, lz, predictRy);
     leg.from = { x: leg.world.x, z: leg.world.z };
     leg.to = { x: wx + w.x, z: wz + w.z };
     leg.t = 0;
@@ -743,10 +786,66 @@ export class MechRig {
     leg.arcH = lerp(t.stepHeightWalk, t.stepHeightRun, run01) * S * (0.85 + vnoise(leg.seed + 5, this.clock) * 0.3);
   }
 
+  /**
+   * Advance the rendered body yaw toward the authoritative heading `ry` through a
+   * spring+inertia controller nudged by leg step torque, and return the resulting
+   * trailing angle (chassis yaw relative to the group). This is the "drive body
+   * yaw through accumulated leg forces, not a direct transform" step: the legs
+   * (posed in the group's ry-frame) reach the new heading first and the body
+   * follows, accelerating into the turn and settling after it -- never a rigid
+   * spin about the centre. Returns the offset to apply to `chassis.rotation.y`.
+   */
+  private driveBodyYaw(dt: number, wx: number, wz: number, ry: number): number {
+    const yawLag = clamp(this.tuning.yawLag, 0, 1);
+    const omega = lerp(YAW_FREQ_MAX, YAW_FREQ_MIN, yawLag);
+    const zeta = lerp(YAW_ZETA_MAX, YAW_ZETA_MIN, yawLag);
+    const maxLag = lerp(YAW_MAX_LAG_MIN, YAW_MAX_LAG_MAX, yawLag);
+    const stiff = omega * omega;
+    const damp = 2 * zeta * omega;
+
+    // Torque from the legs in motion: each swinging foot's step direction about the
+    // body centre sums to a net turning force on the body (normalised per leg, so
+    // an asymmetric/pivot step pattern nudges the yaw). The spring keeps it bounded.
+    let torque = 0;
+    for (const leg of this.plants) {
+      if (!leg.stepping) continue;
+      const rx = leg.world.x - wx;
+      const rz = leg.world.z - wz;
+      const rl = Math.hypot(rx, rz);
+      const sx = leg.to.x - leg.from.x;
+      const sz = leg.to.z - leg.from.z;
+      const sl = Math.hypot(sx, sz);
+      if (rl < 1e-3 || sl < 1e-3) continue;
+      torque += cross2(rx / rl, rz / rl, sx / sl, sz / sl);
+    }
+    torque *= YAW_TORQUE_GAIN;
+    const torqueCap = 0.5 * stiff * maxLag;
+    torque = clamp(torque, -torqueCap, torqueCap);
+
+    const err = angleDelta(ry, this.bodyRy); // heading minus current body yaw
+    const angAccel = stiff * err - damp * this.bodyAngVel + torque;
+    this.bodyAngVel = clamp(this.bodyAngVel + angAccel * dt, -14, 14);
+    this.bodyRy += this.bodyAngVel * dt;
+
+    // Hard-cap the trailing angle so the body never falls far behind its heading.
+    let lag = angleDelta(this.bodyRy, ry); // body yaw minus heading (shortest)
+    if (lag > maxLag) {
+      this.bodyRy = ry + maxLag;
+      lag = maxLag;
+      if (this.bodyAngVel > 0) this.bodyAngVel *= 0.4;
+    } else if (lag < -maxLag) {
+      this.bodyRy = ry - maxLag;
+      lag = -maxLag;
+      if (this.bodyAngVel < 0) this.bodyAngVel *= 0.4;
+    }
+    return lag;
+  }
+
   /** Stabilise the chassis with springs off the planted-feet centroid, then pose legs. */
   private stabilise(dt: number, wx: number, wz: number, ry: number, run01: number): void {
     const S = this.scale;
     const t = this.tuning;
+    const yawLagOffset = this.driveBodyYaw(dt, wx, wz, ry);
     // Center-of-mass estimate: the centroid of the grounded feet, in rig space.
     let cx = 0;
     let cz = 0;
@@ -785,10 +884,11 @@ export class MechRig {
     // Pitch nose-down under acceleration, nose-up when braking; bank into a turn.
     this.sPitch.track(clamp(this.accel * t.pitchGain, -0.22, 0.22), dt);
     this.sRoll.track(clamp(this.yawRate * t.rollGain, -0.2, 0.2) + cz * 0.0015, dt);
-    this.sYaw.track(clamp(-this.yawRate * 0.03, -0.12, 0.12), dt);
 
     this.chassis.position.set(this.sSwayX.value, this.sHeight.value, this.sSwayZ.value);
-    this.chassis.rotation.set(this.sRoll.value, this.sYaw.value, -this.sPitch.value);
+    // Yaw = the controller's trailing angle (body follows its heading); the group
+    // itself is already rotated to the authoritative heading by the scene.
+    this.chassis.rotation.set(this.sRoll.value, yawLagOffset, -this.sPitch.value);
     this.chassis.updateMatrix();
 
     // Draw each leg between its (chassis-borne) hip and its slew-limited foot. The
