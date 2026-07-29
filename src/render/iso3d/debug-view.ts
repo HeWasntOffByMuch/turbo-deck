@@ -5,9 +5,8 @@ import { ARENA_HEIGHT, ARENA_WIDTH, TICK_RATE } from '../../sim/constants.js';
 import type { CombatState, InputFrame, Vec2 } from '../../sim/types.js';
 import { IsoInputCapture } from './input.js';
 import { PALETTE } from './palette.js';
-import { makeBush, makeGround, makeHeadingArrow, makeMoveMarker, makeTree } from './meshes.js';
+import { flatMaterial, makeHeadingArrow, makeMoveMarker } from './meshes.js';
 import { defaultMechTuning, MechRig, type MechDebug, type MechTuning } from './rigs.js';
-import { scatterProps } from './scatter.js';
 import { buildPanel, type UnitKind, type ViewHandle } from './movement.js';
 
 /**
@@ -185,6 +184,47 @@ class DebugOverlay {
 }
 
 /**
+ * A plain, edgeless ground for the debug scene: a large solid plane kept centred
+ * under the unit (so no border is ever visible) plus a faint world-locked grid
+ * that re-snaps in whole cells, so the floor reads as infinite while the unit's
+ * motion across it still shows (planted feet visibly slide back as the body
+ * advances). No trees, bushes or markers -- a clean backdrop to watch the legs.
+ */
+class InfiniteGround {
+  private static readonly STEP = 100; // world units between grid lines
+  private static readonly GRID = 8000; // total grid extent (>> any viewport)
+  readonly group = new THREE.Group();
+  private readonly plane: THREE.Mesh;
+  private readonly grid: THREE.GridHelper;
+
+  constructor(scene: THREE.Scene) {
+    const geo = new THREE.PlaneGeometry(1, 1);
+    geo.rotateX(-Math.PI / 2); // face up
+    this.plane = new THREE.Mesh(geo, flatMaterial(PALETTE.grassDark));
+    this.plane.scale.set(20000, 1, 20000);
+    this.plane.position.y = -1;
+
+    const div = InfiniteGround.GRID / InfiniteGround.STEP;
+    this.grid = new THREE.GridHelper(InfiniteGround.GRID, div, PALETTE.grassLight, PALETTE.grassLight);
+    const gm = this.grid.material as THREE.Material;
+    gm.transparent = true;
+    gm.opacity = 0.3;
+    this.grid.position.y = 0.2;
+
+    this.group.add(this.plane, this.grid);
+    scene.add(this.group);
+  }
+
+  /** Keep the floor under the unit: the plane follows exactly, the grid snaps to
+   * whole cells so its lines stay world-locked (seamless as it recentres). */
+  recenter(x: number, z: number): void {
+    this.plane.position.set(x, -1, z);
+    const s = InfiniteGround.STEP;
+    this.grid.position.set(Math.round(x / s) * s, 0.2, Math.round(z / s) * s);
+  }
+}
+
+/**
  * The debug scene: one WebGL renderer drawing a shared scene twice via scissor
  * (top-down on the left, heading-locked side profile on the right), one
  * controllable unit (spider or grey walker) and its {@link DebugOverlay}. Follows
@@ -203,6 +243,7 @@ class DebugScene {
   });
   private active: MechRig = this.spider;
   private readonly overlays = new Map<MechRig, DebugOverlay>();
+  private readonly ground: InfiniteGround;
   private readonly headingArrow = makeHeadingArrow();
   private readonly sun = new THREE.DirectionalLight(0xfff4e0, 2.1);
   private readonly moveMarker: THREE.Mesh;
@@ -215,7 +256,7 @@ class DebugScene {
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private readonly hit = new THREE.Vector3();
 
-  constructor(readonly canvas: HTMLCanvasElement, seed: number) {
+  constructor(readonly canvas: HTMLCanvasElement) {
     canvas.width = CANVAS_W;
     canvas.height = CANVAS_H;
     canvas.style.width = `${CANVAS_W}px`;
@@ -240,11 +281,8 @@ class DebugScene {
     this.scene.add(this.sun);
     this.scene.add(new THREE.AmbientLight(0x8090a0, 1.1));
 
-    const bleed = 600;
-    const ground = makeGround(ARENA_WIDTH + bleed * 2, ARENA_HEIGHT + bleed * 2);
-    ground.position.set(-bleed, 0, -bleed);
-    this.scene.add(ground);
-    this.addScenery(seed);
+    // A plain, edgeless ground -- no trees or bushes -- so only the unit shows.
+    this.ground = new InfiniteGround(this.scene);
 
     this.scene.add(this.headingArrow);
     this.scene.add(this.active.group);
@@ -287,17 +325,6 @@ class DebugScene {
     this.overlays.get(this.active)?.setLayers(this.layers);
   }
 
-  private addScenery(seed: number): void {
-    const props = scatterProps(seed, ARENA_WIDTH, ARENA_HEIGHT, [{ x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 }]);
-    for (const prop of props) {
-      const g = prop.kind === 'tree' ? makeTree() : makeBush();
-      g.position.set(prop.x, 0, prop.y);
-      g.scale.setScalar(prop.scale);
-      g.rotation.y = prop.rotation;
-      this.scene.add(g);
-    }
-  }
-
   /** Raycast the cursor onto the ground through the top-down (left) viewport. */
   screenToWorld(cssX: number, cssY: number): Vec2 {
     const rect = this.canvas.getBoundingClientRect();
@@ -332,6 +359,7 @@ class DebugScene {
     this.overlays.get(this.active)?.update(snap);
 
     this.target.set(p.position.x, 0, p.position.y);
+    this.ground.recenter(p.position.x, p.position.y); // keep the floor edgeless
     this.updateCameras(ry);
     this.draw();
     return snap;
@@ -564,7 +592,7 @@ export function mountDebug(container: HTMLElement): ViewHandle {
   container.appendChild(root);
 
   const seed = Date.now() >>> 0;
-  const scene = new DebugScene(canvas, seed);
+  const scene = new DebugScene(canvas);
   const tuning = scene.tuning;
   const input = new IsoInputCapture(canvas);
   let state: CombatState = initCombat(seed, { ambientSpawner: false, initialEnemies: 0 });

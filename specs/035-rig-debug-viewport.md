@@ -56,7 +56,10 @@ class MechRig { debugSnapshot(): MechDebug /* mutated-in-place, no per-call allo
   via scissor: left = top-down ortho (world-aligned map view), right = side ortho
   that orbits so the unit's forward always faces screen-right (best for reading
   fore/aft leg swing and joint angles in profile). Both follow the unit; a zoom
-  slider sets the ortho half-width.
+  slider sets the ortho half-width. The floor is a **plain, edgeless ground** (no
+  trees/bushes) -- a large plane kept centred under the unit plus a faint
+  world-locked grid that re-snaps in whole cells, so it reads as infinite while
+  the unit's motion across it still shows.
 - **Slow motion / step.** A time-scale control (Pause · 0.1× · 0.25× · 0.5× ·
   1×) scales how real elapsed time maps to sim ticks; a **Step** button advances
   exactly one 60 Hz tick while paused. The fixed-timestep loop is otherwise the
