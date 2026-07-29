@@ -424,9 +424,10 @@ export function mountMovement(container: HTMLElement): ViewHandle {
         aimY: s.aimY,
         parry: false,
         dodge: false,
-        // Live speed/turn-rate overrides from the panel (sandbox-only input).
-        moveSpeedOverride: tuning.moveSpeed,
-        turnRateOverride: tuning.turnRate,
+        // Live speed/turn-rate overrides from the panel (sandbox-only input),
+        // finite-guarded so a bad value can never feed the sim a NaN heading.
+        moveSpeedOverride: Number.isFinite(tuning.moveSpeed) ? tuning.moveSpeed : 147.5,
+        turnRateOverride: Number.isFinite(tuning.turnRate) ? tuning.turnRate : 180,
         ...(s.moveTarget ? { moveTarget: s.moveTarget } : {}),
         ...(s.cycleCharacter ? { cycleCharacter: true } : {}),
       };

@@ -166,6 +166,20 @@ driving the mech.
 `scene.ts`, `main.ts`, `input.ts`, cards/game — unchanged (the rig signature is
 preserved). The only sim change is the two default-off input overrides above.
 
+### Robustness
+
+Every value that can reach a mesh transform is sanitised so a stray NaN / ±∞ /
+zero can never fling a leg to the ceiling or off to infinity (plain clamps let
+NaN through, since NaN comparisons are false — that was the failure mode). At the
+boundaries: `update` clamps `dt` and repairs non-finite position/heading; the
+whole `MechTuning` is clamped to safe ranges each frame; the body-yaw controller
+and per-leg foot state self-repair if they ever go non-finite; `orientSegment`
+and the IK `pose` bail on non-finite endpoints; and the drawn hip/foot are hard-
+clamped finite and inside the leg's reach box. A headless torture test injecting
+NaN/∞/0 into tuning, position, heading and `dt` every few frames produces zero
+non-finite and zero far-flung transforms on both units, and normal motion is
+unchanged.
+
 ## Invariants tested
 
 - The sim suite is unchanged and green: no sim/cards/game behavior is touched,

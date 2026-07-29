@@ -167,6 +167,23 @@ function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
+/**
+ * Clamp `v` to [lo, hi], but return `fallback` for a non-finite input (NaN/±∞).
+ * Plain {@link clamp} passes NaN straight through (NaN comparisons are false),
+ * which is exactly how a bad value reaches a mesh transform and flings a leg to
+ * the ceiling or off to infinity; this is the sanitising version used at the
+ * boundaries so no non-finite number ever survives into a pose.
+ */
+function sclamp(v: number, lo: number, hi: number, fallback: number): number {
+  if (!Number.isFinite(v)) return fallback;
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+/** `v` if finite, else `fallback`. */
+function finiteOr(v: number, fallback: number): number {
+  return Number.isFinite(v) ? v : fallback;
+}
+
 /** Linear blend from `a` to `b` by `t`. */
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
@@ -182,8 +199,17 @@ function angleDelta(to: number, from: number): number {
 
 /** Lay a unit-height box between two points: scale its length, aim its +Y at the segment. */
 function orientSegment(mesh: THREE.Mesh, from: THREE.Vector3, to: THREE.Vector3): void {
+  // Bail on any non-finite endpoint rather than write NaN into the transform
+  // (which would send the segment to the ceiling / infinity); keep the last pose.
+  if (
+    !Number.isFinite(from.x + from.y + from.z) ||
+    !Number.isFinite(to.x + to.y + to.z)
+  ) {
+    return;
+  }
   _seg.copy(to).sub(from);
-  const len = _seg.length() || 1e-4;
+  const len = _seg.length();
+  if (!(len > 1e-4)) return; // zero-length or NaN: leave the mesh as it was
   _mid.copy(from).add(to).multiplyScalar(0.5);
   mesh.position.copy(_mid);
   mesh.scale.y = len;
@@ -256,6 +282,15 @@ class MechLeg {
    * from the coxa's shoulder, so the body-corner joint visibly rotates.
    */
   pose(hip: THREE.Vector3, foot: THREE.Vector3, kneeSway: number): void {
+    // Never solve from a non-finite hip/foot: leave the leg in its last good pose
+    // rather than write NaN into the bones (which would fling them off-screen).
+    if (
+      !Number.isFinite(hip.x + hip.y + hip.z) ||
+      !Number.isFinite(foot.x + foot.y + foot.z) ||
+      !Number.isFinite(kneeSway)
+    ) {
+      return;
+    }
     // Coxa: a short, level segment aimed out toward the foot's ground azimuth.
     _horiz.set(foot.x - hip.x, 0, foot.z - hip.z);
     if (_horiz.lengthSq() < 1e-6) _horiz.copy(this.restAzimuth);
@@ -445,6 +480,42 @@ export function defaultMechTuning(): MechTuning {
     kneeSway: 0.1,
     footSmooth: 26,
   };
+}
+
+// Safe [min, max] bounds for every tuning field. Deliberately generous -- they
+// only exist to catch NaN / ±∞ / absurd values (from a stray edit) before they
+// reach the pose math, not to second-guess ordinary slider use.
+const TUNING_BOUNDS: Record<keyof MechTuning, readonly [number, number]> = {
+  sizeScale: [0.1, 8],
+  moveSpeed: [1, 5000],
+  turnRate: [1, 5000],
+  stepTrigger: [1, 500],
+  stepLeadWalk: [0, 500],
+  stepLeadRun: [0, 500],
+  stepHeightWalk: [0, 500],
+  stepHeightRun: [0, 500],
+  stepDurWalk: [0.03, 5],
+  stepDurRun: [0.03, 5],
+  maxStepping: [1, 2],
+  raisedLegs: [0, 1],
+  turnStepBias: [0, 8],
+  yawLag: [0, 1],
+  stepPredict: [0, 8],
+  comShift: [0, 4],
+  bobAmp: [0, 500],
+  pitchGain: [0, 2],
+  rollGain: [0, 4],
+  kneeSway: [0, 4],
+  footSmooth: [0.5, 1000],
+};
+
+/** Clamp every tuning field to its safe range in place, replacing NaN/∞ with the default. */
+function sanitizeTuning(t: MechTuning): void {
+  const def = defaultMechTuning();
+  for (const key of Object.keys(TUNING_BOUNDS) as (keyof MechTuning)[]) {
+    const [lo, hi] = TUNING_BOUNDS[key];
+    t[key] = sclamp(t[key], lo, hi, def[key]);
+  }
 }
 
 /** Rotate a local (x, z) offset by the group's yaw into a world offset. */
@@ -653,11 +724,15 @@ export class MechRig {
    * whole feel is chosen from the observed speed, acceleration and turn rate.
    */
   update(dt: number, worldPos: Vec2, ry: number): void {
-    const wx = worldPos.x;
-    const wz = worldPos.y; // sim's (x, y) plane maps to the world floor (x, z)
-    dt = Math.max(1e-4, dt);
+    // Sanitise everything that enters the pose math: a single NaN/∞ here is what
+    // sends a leg to the ceiling or off to infinity, so nothing non-finite passes.
+    dt = sclamp(dt, 1e-4, 0.1, 1 / 60);
+    sanitizeTuning(this.tuning);
+    const wx = finiteOr(worldPos.x, this.prev?.x ?? 0);
+    const wz = finiteOr(worldPos.y, this.prev?.z ?? 0); // sim (x, y) -> world floor (x, z)
+    ry = finiteOr(ry, this.prevRy);
     this.clock += dt;
-    this.scale = Math.max(0.2, this.tuning.sizeScale);
+    this.scale = sclamp(this.tuning.sizeScale, 0.2, 8, 1);
     if (this.scale !== this.appliedScale) this.applyScale(this.scale);
     const S = this.scale;
 
@@ -890,12 +965,13 @@ export class MechRig {
   private beginStep(leg: LegPlant, wx: number, wz: number, ry: number, run01: number, turnBias: number): void {
     const S = this.scale;
     const t = this.tuning;
+    const reach = (COXA_LEN + FEMUR_LEN + TIBIA_LEN) * S;
     const turnHaste = 1 - 0.35 * Math.abs(turnBias); // quicker steps mid-turn
-    leg.dur = Math.max(0.09, lerp(t.stepDurWalk, t.stepDurRun, run01) * turnHaste * (0.92 + vnoise(leg.seed + 3, this.clock) * 0.16));
+    leg.dur = sclamp(lerp(t.stepDurWalk, t.stepDurRun, run01) * turnHaste * (0.92 + vnoise(leg.seed + 3, this.clock) * 0.16), 0.06, 5, 0.2);
     // Forward lead ahead of rest, biased by the turn; never less than the ground
     // the body will cover during the swing, so the foot lands ahead of drift.
     const baseLead = lerp(t.stepLeadWalk, t.stepLeadRun, run01) * S * (1 + turnBias * leg.side * t.turnStepBias);
-    const lead = Math.max(baseLead, this.speed * leg.dur * 0.75);
+    const lead = sclamp(Math.max(baseLead, this.speed * leg.dur * 0.75), 0, reach, 0);
     const along = (vnoise(leg.seed + 7, this.clock) - 0.5) * PLACE_JITTER * S;
     const across = (vnoise(leg.seed + 31, this.clock) - 0.5) * PLACE_JITTER * S;
     // Lead along the travel direction expressed in the leg frame (`leadDir`), not
@@ -915,11 +991,12 @@ export class MechRig {
     // Convert the target through that future frame so the foot lands ahead.
     const predictRy = ry + this.legYawRate * leg.dur * t.stepPredict;
     const w = localToWorldXZ(lx, lz, predictRy);
-    leg.from = { x: leg.world.x, z: leg.world.z };
-    leg.to = { x: wx + w.x, z: wz + w.z };
+    const restW = localToWorldXZ(leg.rest.x * S, leg.rest.z * S, ry);
+    leg.from = Number.isFinite(leg.world.x + leg.world.z) ? { x: leg.world.x, z: leg.world.z } : { x: wx + restW.x, z: wz + restW.z };
+    leg.to = { x: finiteOr(wx + w.x, wx + restW.x), z: finiteOr(wz + w.z, wz + restW.z) };
     leg.t = 0;
     leg.stepping = true;
-    leg.arcH = lerp(t.stepHeightWalk, t.stepHeightRun, run01) * S * (0.85 + vnoise(leg.seed + 5, this.clock) * 0.3);
+    leg.arcH = sclamp(lerp(t.stepHeightWalk, t.stepHeightRun, run01) * S * (0.85 + vnoise(leg.seed + 5, this.clock) * 0.3), 0, (FEMUR_LEN + TIBIA_LEN) * S, 0);
   }
 
   /**
@@ -933,6 +1010,8 @@ export class MechRig {
    * trailing lag for a spider, or the full facing for a mech whose base is fixed.
    */
   private driveBodyYaw(dt: number, wx: number, wz: number, ry: number, legRy: number): number {
+    if (!Number.isFinite(this.bodyRy)) this.bodyRy = ry;
+    if (!Number.isFinite(this.bodyAngVel)) this.bodyAngVel = 0;
     const yawLag = clamp(this.tuning.yawLag, 0, 1);
     const omega = lerp(YAW_FREQ_MAX, YAW_FREQ_MIN, yawLag);
     const zeta = lerp(YAW_ZETA_MAX, YAW_ZETA_MIN, yawLag);
@@ -1025,36 +1104,60 @@ export class MechRig {
     // Lower body (carriage): bob/sway/height + roll/pitch, but NO facing yaw -- it
     // stays in the leg frame and carries the hips, so the legs never spin with the
     // turret. The upper body (turret) yaws to the heading relative to that frame.
-    this.carriage.position.set(this.sSwayX.value, this.sHeight.value, this.sSwayZ.value);
-    this.carriage.rotation.set(this.sRoll.value, 0, -this.sPitch.value);
+    // Finite-guard every value that feeds the body transform (and thus the hip
+    // matrix + body meshes), so a stray spring value can't launch the body.
+    const swayCap = 4 * S * REST_Z;
+    this.carriage.position.set(
+      sclamp(this.sSwayX.value, -swayCap, swayCap, 0),
+      sclamp(this.sHeight.value, -swayCap, swayCap, 0),
+      sclamp(this.sSwayZ.value, -swayCap, swayCap, 0),
+    );
+    this.carriage.rotation.set(sclamp(this.sRoll.value, -1.2, 1.2, 0), 0, sclamp(-this.sPitch.value, -1.2, 1.2, 0));
     this.carriage.updateMatrix();
-    this.turret.rotation.set(0, turretYaw, 0);
+    this.turret.rotation.set(0, finiteOr(turretYaw, 0), 0);
 
     // Draw each leg between its (chassis-borne) hip and its slew-limited foot. The
     // drawn foot chases the logical plant at a capped rate, so nothing snaps.
     const aFoot = 1 - Math.exp(-t.footSmooth * dt);
     const aFootY = 1 - Math.exp(-t.footSmooth * 1.5 * dt);
     const aKnee = Math.min(1, dt * 6);
+    // Bounds for the drawn foot: it can never sit further than the leg can reach,
+    // nor above roughly leg height -- a hard cap against "leg to the ceiling / far
+    // away" no matter what upstream produced.
+    const reach = (COXA_LEN + FEMUR_LEN + TIBIA_LEN) * S;
+    const footYMax = (FEMUR_LEN + TIBIA_LEN) * S;
     this.legs.forEach((leg, i) => {
       const p = this.plants[i];
       if (!p) return;
+      // Repair any non-finite per-leg state before it feeds the smoothing/pose.
+      if (!Number.isFinite(p.world.x + p.world.z)) {
+        const r = localToWorldXZ(p.rest.x * S, p.rest.z * S, ry);
+        p.world = { x: wx + r.x, z: wz + r.z };
+      }
+      if (!Number.isFinite(p.disp.x + p.disp.z)) p.disp = { x: p.world.x, z: p.world.z };
+      p.y = finiteOr(p.y, 0);
+      p.dispY = finiteOr(p.dispY, 0);
       p.disp.x += (p.world.x - p.disp.x) * aFoot;
       p.disp.z += (p.world.z - p.disp.z) * aFoot;
       p.dispY += (p.y - p.dispY) * aFootY;
       const sx = Math.sign(p.rest.x);
       const sz = p.side;
       _hip.set(sx * HIP_INSET * S, HIP_Y * S, sz * HIP_INSET * S).applyMatrix4(this.carriage.matrix);
+      // Fall back to the rest hip if the carriage matrix went bad.
+      if (!Number.isFinite(_hip.x + _hip.y + _hip.z)) _hip.set(sx * HIP_INSET * S, HIP_Y * S, sz * HIP_INSET * S);
       const local = worldToLocalXZ(p.disp.x - wx, p.disp.z - wz, ry);
       // Guarantee the *drawn* foot stays in the leg's quadrant even when a fast
       // yaw has left the world-locked plant lagging behind or across the body:
       // hold it at the quadrant boundary (a tiny slide) rather than render the leg
-      // reaching behind or across the hip. Normal-gait feet are well inside this,
-      // so the clamp only bites during the turn transient.
-      const fx = sx > 0 ? Math.max(local.x, MIN_FORE * S) : Math.min(local.x, -MIN_FORE * S);
-      const fz = sz > 0 ? Math.max(local.z, MIN_LAT * S) : Math.min(local.z, -MIN_LAT * S);
-      _foot.set(fx, p.dispY, fz);
+      // reaching behind or across the hip. Normal-gait feet are well inside this.
+      let fx = sx > 0 ? Math.max(local.x, MIN_FORE * S) : Math.min(local.x, -MIN_FORE * S);
+      let fz = sz > 0 ? Math.max(local.z, MIN_LAT * S) : Math.min(local.z, -MIN_LAT * S);
+      // Final clamp: finite and within the leg's reach box (no ceiling / infinity).
+      fx = sclamp(fx, -reach, reach, sx * REST_X * S);
+      fz = sclamp(fz, -reach, reach, sz * REST_Z * S);
+      _foot.set(fx, sclamp(p.dispY, -4 * S, footYMax, 0), fz);
       const kneeTarget = (vnoise(p.seed + 11, this.clock * 0.5) - 0.5) * t.kneeSway;
-      p.kneeCur += (kneeTarget - p.kneeCur) * aKnee;
+      p.kneeCur = sclamp(p.kneeCur + (kneeTarget - p.kneeCur) * aKnee, -2, 2, 0);
       leg.pose(_hip, _foot, p.kneeCur);
     });
   }
