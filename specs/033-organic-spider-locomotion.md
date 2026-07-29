@@ -74,8 +74,35 @@ the place to watch it in isolation and now surfaces the live locomotion state.
 caption, so the idle → walk → run → turn → stop transitions are visible while
 driving the mech.
 
-`scene.ts`, `main.ts`, `input.ts`, sim/cards/game — unchanged (the rig
-signature is preserved).
+### Follow-up refinements
+
+- **Anti-twitch.** The first cut chattered and over-reached. The trigger radius
+  now carries a *fixed* per-leg offset (not per-frame noise, which flickered
+  legs across the threshold); a planted foot takes a short cooldown before it may
+  step again; the travel direction is low-passed and only updated on real
+  movement, so it never flips as the unit settles at its target; a step's lead is
+  never shorter than the ground the body will cover during the swing, so feet
+  always land ahead of drift instead of re-stepping in place; the femur/tibia are
+  a touch longer for reach headroom; and the drawn foot and the knee-sway follow
+  their targets at a *capped rate* (`footSmooth`) so limb motion can never snap —
+  the "restrict how fast a joint moves" fix.
+
+- **Live tuning sandbox.** `MechRig` exposes a mutable `MechTuning` object
+  (`sizeScale`, `moveSpeed`, `turnRate`, and every gait/body constant) plus a
+  `defaultMechTuning()`. The sandbox moves its instructions/controls into a side
+  panel of grouped sliders (Unit / Gait / Body) that edit the tuning live;
+  `sizeScale` resizes the body meshes and leg bones (feet stay ground-locked),
+  and a **C**-loaded archetype preset fills the speed/turn sliders. A reset
+  button restores defaults.
+
+- **Editable speed/turn rate.** Move speed and turn rate are sim-owned, so the
+  sandbox feeds them through two new *optional* `InputFrame` fields
+  (`moveSpeedOverride`, `turnRateOverride`) that `step` applies in place of the
+  character preset. They are a pure input, default-absent; the game never sets
+  them, so behaviour and determinism are unchanged when omitted.
+
+`scene.ts`, `main.ts`, `input.ts`, cards/game — unchanged (the rig signature is
+preserved). The only sim change is the two default-off input overrides above.
 
 ## Invariants tested
 
@@ -93,6 +120,7 @@ signature is preserved).
   `y = 0` and feet plant on it (unchanged from spec 032). The stepping,
   center-of-mass, and IK code is structured so a future ground-height probe
   could feed foot `y`, but this spec does not add one.
-- Any change to movement rules, turn-rate, or speed (all still sim-owned), and
-  any new sim/cards/game determinism surface.
+- Any change to the movement *rules* themselves (turn-rate gating, the HoN speed
+  clamp, arrival handling): the two new input overrides only substitute the
+  speed/turn *values* the existing rules already read, and are default-off.
 - Reworking `PlayerRig` (the bird) or the 2D `spells` renderer.
