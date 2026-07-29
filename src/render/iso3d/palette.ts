@@ -27,6 +27,8 @@ export const PALETTE = {
   enemySkitter: 0x5fb4d6,
   enemyBrute: 0x9a5ad0,
   enemyEye: 0x1a1208,
+  // The player-controlled mech in the movement sandbox (a friendly steel blue).
+  mechAlly: 0x4a7fb0,
   // Bright pip dropped at the click-to-move destination.
   marker: 0xffe08a,
   // Heading arrow (unit facing) and the charging attack cone telegraph.
