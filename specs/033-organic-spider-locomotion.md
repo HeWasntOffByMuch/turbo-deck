@@ -174,11 +174,14 @@ Two knobs on the coxa (the joint closest to the body):
   how much of a leg's reach comes from moving the hip joint. 0 collapses it to a
   bare knee leg emanating straight from the body; higher throws the foot further
   out. It feeds the leg's reach box (so step lead and the safety clamp track it).
-- `tuning.coxaSwing` scales the **fore/aft (front-to-back)** part of the coxa's
-  aim — how much the hip joint swings the leg forward and back
-  (protraction/retraction). 1 aims the coxa straight at the foot; 0 keeps it
-  pointing out to the side so all fore/aft motion lives in the knee; higher
-  exaggerates the hip's front-to-back swing.
+- `tuning.coxaSwing` controls how much the hip joint carries the **whole leg**
+  **fore/aft (front-to-back)** — protraction/retraction. It swings the shoulder
+  the femur hangs from toward the foot's fore/aft, so the entire limb pivots at
+  the hip and reaches toward the target, instead of the knee absorbing the
+  fore/aft (the earlier version only rotated the short coxa's aim, so the hip
+  barely moved the leg). 0 keeps the coxa pointing out to the side so all fore/aft
+  motion lives in the knee; 1 carries the shoulder level with the foot so the hip
+  does all the reach; higher exaggerates the swing past the foot.
 
 Both get sliders ("Hip joint reach", "Hip fore/aft swing") in the sandbox.
 

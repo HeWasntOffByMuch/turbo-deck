@@ -439,7 +439,7 @@ const SLIDER_GROUPS: readonly { readonly title: string; readonly rows: readonly 
         step: 0.05,
         key: 'coxaSwing',
         digits: 2,
-        tip: 'How much the hip joint swings the leg front-to-back. 1 aims it straight at the foot; 0 keeps it pointing out to the side; higher exaggerates the swing.',
+        tip: "How much the hip joint carries the whole leg front-to-back, pivoting the entire limb at the hip so it reaches toward the target. 0 keeps the coxa pointing out to the side (all fore/aft in the knee); 1 makes the hip do all the reach; higher exaggerates it.",
       },
       {
         label: 'Foot follow (smooth)',
@@ -457,7 +457,7 @@ const PANEL_TEXT = '#c9c9d8';
 const LABEL_CSS = `font-family:'Segoe UI',system-ui,sans-serif;color:${PANEL_TEXT};`;
 
 /** Build the side control panel; returns the element and a fn to sync sliders to tuning. */
-function buildPanel(
+export function buildPanel(
   tuning: MechTuning,
   onReset: () => void,
   onUnit: (kind: UnitKind) => void,
