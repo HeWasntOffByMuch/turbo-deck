@@ -40,6 +40,20 @@ export const SANDBOX_VIEW_HALF_WIDTH = 320;
 /** Zoom slider bounds, wide enough to reach both a tight duel and the whole arena. */
 export const MIN_VIEW_HALF_WIDTH = 200;
 export const MAX_VIEW_HALF_WIDTH = 1400;
+/** How long the follow camera takes to close most of the gap to the unit (spec 039). */
+export const DEFAULT_FOLLOW_LAG_MS = 130;
+
+/**
+ * The fraction of the remaining gap a trailing follow camera closes in a frame
+ * of `dtSeconds` (spec 039). `lagMs` is the time constant -- the time to close
+ * ~63% of a gap -- so the lag is measured in time and two machines at different
+ * frame rates trail by the same distance. A lag of zero snaps, which is the
+ * hard-pinned camera this replaced.
+ */
+export function followAlpha(dtSeconds: number, lagMs: number): number {
+  if (lagMs <= 0) return 1;
+  return 1 - Math.exp((-dtSeconds * 1000) / lagMs);
+}
 
 /** Spherical orbit -> Cartesian offset from the pivot. Pure. */
 export function orbitToOffset({ azimuth, elevation, distance }: Orbit): Vec3 {
