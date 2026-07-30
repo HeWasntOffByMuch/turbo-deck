@@ -1,6 +1,7 @@
 import { RETRO_DEFAULTS, type BayerSize, type RetroSettings } from './retro.js';
 import {
   DEFAULT_CAMERA_OFFSET,
+  DEFAULT_FOLLOW_LAG_MS,
   DEFAULT_LIGHT_OFFSET,
   DEFAULT_VIEW_HALF_WIDTH,
   offsetToOrbit,
@@ -27,6 +28,8 @@ export interface ViewControls {
   cameraOffset(): Vec3;
   /** Orthographic half-width (zoom); smaller frames a tighter region. */
   viewHalfWidth(): number;
+  /** How long the camera takes to catch up to the unit it follows, ms (spec 039). */
+  followLagMs(): number;
   /** Directional-light position/direction, world units. */
   lightOffset(): Vec3;
   /** Whether the unwalkable-terrain footprint overlay is shown. */
@@ -186,6 +189,9 @@ export function createViewControls(): ViewControls {
     'Camera elevation angle above the ground, in degrees — higher looks more top-down.');
   const zoom = makeSlider('View span', 140, 600, 10, DEFAULT_VIEW_HALF_WIDTH, '',
     'Orthographic zoom: the half-width of the area framed. Smaller zooms in tighter.');
+  const followLag = makeSlider('Follow lag', 0, 500, 10, DEFAULT_FOLLOW_LAG_MS, 'ms',
+    'How long the camera takes to catch up to the unit — it trails a little as the unit ' +
+    'starts moving and settles when it stops. 0 pins the camera to the unit.');
   const lightAz = makeSlider('Direction', 0, 360, 1, wrapDeg(lightOrbit.azimuth), '°',
     'Compass direction the sunlight comes from, in degrees.');
   const lightEl = makeSlider('Elevation', 10, 89, 1, Math.round(lightOrbit.elevation / DEG), '°',
@@ -214,7 +220,8 @@ export function createViewControls(): ViewControls {
     "font-family:inherit;font-size:12px;margin-top:2px;padding:6px 10px;border-radius:6px;cursor:pointer;" +
     'border:1px solid #2a2a3a;background:#252533;color:#e8e8f2;';
   reset.addEventListener('click', () => {
-    const widgets = [camAz, camEl, zoom, lightAz, lightEl, unwalkable, retroOn, levels, dither, weave, weaveScale, pixelSize];
+    const widgets = [camAz, camEl, zoom, followLag, lightAz, lightEl, unwalkable,
+      retroOn, levels, dither, weave, weaveScale, pixelSize];
     for (const w of widgets) w.reset();
   });
 
@@ -223,6 +230,7 @@ export function createViewControls(): ViewControls {
     camAz.row,
     camEl.row,
     zoom.row,
+    followLag.row,
     section('Light'),
     lightAz.row,
     lightEl.row,
@@ -266,6 +274,7 @@ export function createViewControls(): ViewControls {
     cameraOffset: () =>
       orbitToOffset({ azimuth: camAz.value() * DEG, elevation: camEl.value() * DEG, distance: camOrbit.distance }),
     viewHalfWidth: () => zoom.value(),
+    followLagMs: () => followLag.value(),
     lightOffset: () =>
       orbitToOffset({ azimuth: lightAz.value() * DEG, elevation: lightEl.value() * DEG, distance: lightOrbit.distance }),
     showUnwalkable: () => unwalkable.checked(),
