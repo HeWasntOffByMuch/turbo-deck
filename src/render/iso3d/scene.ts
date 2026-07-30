@@ -7,7 +7,8 @@ import { MechRig, Poofs, PlayerRig } from './rigs.js';
 import { worldToIso, type IsoParams } from './projection.js';
 import { footprintRadius, scatterProps } from './scatter.js';
 import { createViewControls, type ViewControls } from './view-controls.js';
-import { DEFAULT_CAMERA_OFFSET, DEFAULT_VIEW_HALF_WIDTH } from './view-settings.js';
+import { DEFAULT_CAMERA_OFFSET, DEFAULT_VIEW_HALF_WIDTH, followAlpha } from './view-settings.js';
+import { RetroPass } from './retro-pass.js';
 
 // Fraction of the gap to the target camera framing closed each rendered frame,
 // so orbit/zoom slider changes glide instead of snapping (spec 034).
@@ -18,8 +19,9 @@ const CAMERA_SMOOTH = 0.15;
  * flat-shaded, blocky geometry under a single directional light. It reads sim
  * state and moves meshes to match -- no game rules here. The look is forced
  * retro on purpose: the WebGL canvas renders at a low internal resolution and
- * is upscaled with `image-rendering: pixelated`, antialiasing is off, and every
- * material is single-colour flat-shaded.
+ * is upscaled with `image-rendering: pixelated`, antialiasing is off, every
+ * material is single-colour flat-shaded, and the finished image goes through the
+ * dither/quantization post filter (spec 038) that gives flat colours their weave.
  *
  * For the MOBA move order (spec 028) it also raycasts the cursor onto the ground
  * so a screen right-click becomes a world point (`screenToWorld`).
@@ -35,6 +37,8 @@ export class IsoScene {
   /** Camera/light control panel (spec 033); mount `.controls.element` beside the canvas. */
   readonly controls: ViewControls = createViewControls();
   private readonly renderer: THREE.WebGLRenderer;
+  // The retro dither/quantization post filter the finished frame goes through.
+  private readonly retro = new RetroPass(RENDER_W, RENDER_H);
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
   private readonly sun = new THREE.DirectionalLight(0xfff4e0, 2.1);
@@ -56,7 +60,10 @@ export class IsoScene {
   // Arc the attack-cone geometry is currently built for, so it rebuilds only on change.
   private coneArcHalf = -1;
   private readonly enemies = new Map<number, MechRig>();
+  // The camera's look-at point: it trails the player rather than being pinned to
+  // them (spec 039), and starts pinned so the first frame doesn't glide in.
   private readonly target = new THREE.Vector3(ARENA_WIDTH / 2, 0, ARENA_HEIGHT / 2);
+  private targetPlaced = false;
   // Frame timing + player gait tracking for foot poofs (cosmetic, not sim state).
   private lastNow = performance.now();
   private prevPlayerPos: Vec2 | null = null;
@@ -188,12 +195,32 @@ export class IsoScene {
     this.updateAttackCone(state);
     this.syncEnemies(state, dt);
 
-    // Follow the player, framed by the current camera/light controls (spec 033).
-    this.target.set(p.position.x, 0, p.position.y);
+    // Trail the player (spec 039), framed by the camera/light controls (spec 033).
+    this.followPlayer(p.position, dt);
     this.applyControls();
     this.camera.lookAt(this.target);
 
-    this.renderer.render(this.scene, this.camera);
+    this.retro.set(this.controls.retro());
+    this.retro.render(this.renderer, this.scene, this.camera);
+  }
+
+  /**
+   * Ease the camera's look-at point toward the unit instead of pinning it there
+   * (spec 039), so the unit pulls ahead of the frame as it starts moving and
+   * settles back when it stops. The easing is derived from the frame's elapsed
+   * time, so the trailing distance is the same at any frame rate. The first
+   * frame snaps -- otherwise the view would open by gliding in from the arena
+   * centre.
+   */
+  private followPlayer(position: Vec2, dt: number): void {
+    if (!this.targetPlaced) {
+      this.target.set(position.x, 0, position.y);
+      this.targetPlaced = true;
+      return;
+    }
+    const alpha = followAlpha(dt, this.controls.followLagMs());
+    this.target.x += (position.x - this.target.x) * alpha;
+    this.target.z += (position.y - this.target.z) * alpha;
   }
 
   /**
