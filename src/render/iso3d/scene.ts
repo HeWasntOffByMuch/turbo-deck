@@ -1,13 +1,25 @@
 import * as THREE from 'three';
-import { ARENA_HEIGHT, ARENA_OBSTACLES, ARENA_WIDTH, ATTACK_ANIM_TICKS } from '../../sim/constants.js';
+import { ARENA_HEIGHT, ARENA_OBSTACLES, ARENA_WIDTH, ATTACK_ANIM_TICKS, ENEMY_RADIUS, PLAYER_RADIUS } from '../../sim/constants.js';
 import type { CombatState, Vec2 } from '../../sim/types.js';
 import { PALETTE } from './palette.js';
-import { makeAttackCone, makeBush, makeGround, makeMoveMarker, makeTree, makeUnwalkableMarker, makeWall, sectorGeometry } from './meshes.js';
+import {
+  makeAttackCone,
+  makeBush,
+  makeGround,
+  makeMoveMarker,
+  makeQueuedMoveMarker,
+  makeTree,
+  makeUnwalkableMarker,
+  makeWall,
+  sectorGeometry,
+} from './meshes.js';
+import { attachOutline, type OutlineHandle } from './outline.js';
 import { MechRig, Poofs, PlayerRig } from './rigs.js';
 import { worldToIso, type IsoParams } from './projection.js';
 import { footprintRadius, scatterProps } from './scatter.js';
 import { createViewControls, type ViewControls } from './view-controls.js';
 import { DEFAULT_CAMERA_OFFSET, DEFAULT_VIEW_HALF_WIDTH } from './view-settings.js';
+import { cameraFrustum, HOVER_PLAYER_ID, internalRenderSize, pickHovered, type HoverCandidate } from './view-frame.js';
 
 // Fraction of the gap to the target camera framing closed each rendered frame,
 // so orbit/zoom slider changes glide instead of snapping (spec 034).
@@ -23,16 +35,15 @@ const CAMERA_SMOOTH = 0.15;
  *
  * For the MOBA move order (spec 028) it also raycasts the cursor onto the ground
  * so a screen right-click becomes a world point (`screenToWorld`).
+ *
+ * The canvas fills the game window (spec 039) and re-sizes with it: the internal
+ * buffer keeps a fixed pixel height and takes the window's aspect, so the chunky
+ * pixels stay the same size on any window shape and a wider window simply frames
+ * more ground to the sides.
  */
 
-// Low internal resolution, upscaled by CSS -> chunky pixels. 16:10 to suit iso.
-const RENDER_W = 480;
-const RENDER_H = 300;
-const DISPLAY_W = 960;
-const DISPLAY_H = 600;
-
 export class IsoScene {
-  /** Camera/light control panel (spec 033); mount `.controls.element` beside the canvas. */
+  /** Camera/light control panel (spec 033); mount `.controls.element` over the canvas. */
   readonly controls: ViewControls = createViewControls();
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
@@ -49,13 +60,22 @@ export class IsoScene {
   private readonly camOffsetTarget = new THREE.Vector3();
   private halfWidth = DEFAULT_VIEW_HALF_WIDTH;
   private lastHalfWidth = -1;
+  // Internal buffer the canvas was last sized for, so a resize is detected cheaply.
+  private renderW = 0;
+  private renderH = 0;
+  private aspect = 1;
   private readonly playerRig = new PlayerRig();
+  private readonly playerOutline: OutlineHandle;
   private readonly poofs: Poofs;
   private readonly moveMarker: THREE.Mesh;
+  // Ground markers for the destinations stacked behind the standing order (spec 038).
+  private readonly queuedMarkers: THREE.Mesh[] = [];
   private readonly attackCone: THREE.Mesh;
   // Arc the attack-cone geometry is currently built for, so it rebuilds only on change.
   private coneArcHalf = -1;
-  private readonly enemies = new Map<number, MechRig>();
+  private readonly enemies = new Map<number, { rig: MechRig; outline: OutlineHandle }>();
+  // Ground point under the cursor, for the hover outlines; null when unknown.
+  private cursorWorld: Vec2 | null = null;
   private readonly target = new THREE.Vector3(ARENA_WIDTH / 2, 0, ARENA_HEIGHT / 2);
   // Frame timing + player gait tracking for foot poofs (cosmetic, not sim state).
   private lastNow = performance.now();
@@ -68,23 +88,27 @@ export class IsoScene {
   private readonly hit = new THREE.Vector3();
 
   constructor(readonly canvas: HTMLCanvasElement, seed: number) {
-    canvas.width = RENDER_W;
-    canvas.height = RENDER_H;
-    canvas.style.width = `${DISPLAY_W}px`;
-    canvas.style.height = `${DISPLAY_H}px`;
+    // The canvas fills whatever box the game window gives it; the internal buffer
+    // is set by `resize` from that box (spec 039).
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
     canvas.style.imageRendering = 'pixelated';
     canvas.style.display = 'block';
-    canvas.style.borderRadius = '8px';
-    canvas.style.boxShadow = '0 6px 24px rgba(0,0,0,.5)';
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
     this.renderer.setPixelRatio(1);
-    this.renderer.setSize(RENDER_W, RENDER_H, false);
     this.scene.background = new THREE.Color(PALETTE.sky);
 
-    const aspect = RENDER_W / RENDER_H;
-    const hw = DEFAULT_VIEW_HALF_WIDTH;
-    this.camera = new THREE.OrthographicCamera(-hw, hw, hw / aspect, -hw / aspect, 1, 4000);
+    const frustum = cameraFrustum(DEFAULT_VIEW_HALF_WIDTH, 1);
+    this.camera = new THREE.OrthographicCamera(
+      -frustum.halfWidth,
+      frustum.halfWidth,
+      frustum.halfHeight,
+      -frustum.halfHeight,
+      1,
+      4000,
+    );
+    this.resize();
 
     // A single directional light (movable via the controls, spec 033), plus a
     // soft ambient fill so shadowed faces stay in-palette (not black).
@@ -102,12 +126,32 @@ export class IsoScene {
     this.scene.add(this.unwalkable);
 
     this.scene.add(this.playerRig.group);
+    this.playerOutline = attachOutline(this.playerRig.group);
     this.poofs = new Poofs(this.scene);
     this.moveMarker = makeMoveMarker();
     this.moveMarker.visible = false;
     this.scene.add(this.moveMarker);
     this.attackCone = makeAttackCone();
     this.scene.add(this.attackCone);
+  }
+
+  /**
+   * Match the internal buffer to the canvas's CSS box (spec 039). The buffer
+   * keeps a fixed pixel height, so growing the window enlarges the framed area
+   * rather than the pixels; the camera's vertical span is held constant and its
+   * width follows the aspect. Cheap to call every frame: it early-outs unless
+   * the box actually changed.
+   */
+  private resize(): void {
+    const cssWidth = this.canvas.clientWidth || this.canvas.width || 1;
+    const cssHeight = this.canvas.clientHeight || this.canvas.height || 1;
+    const size = internalRenderSize(cssWidth, cssHeight);
+    if (size.width === this.renderW && size.height === this.renderH) return;
+    this.renderW = size.width;
+    this.renderH = size.height;
+    this.aspect = size.width / size.height;
+    this.renderer.setSize(size.width, size.height, false);
+    this.lastHalfWidth = -1; // force the frustum to be rebuilt for the new aspect
   }
 
   /** The arena's static walls (spec 037), straight from the sim's obstacle list. */
@@ -161,7 +205,17 @@ export class IsoScene {
     return worldToIso(pos, params);
   }
 
+  /**
+   * Tell the scene where the cursor is standing on the ground, so the unit under
+   * it gets its white outline (spec 039). Pass null when the cursor is off the
+   * game window. Cosmetic only -- hovering changes nothing in the sim.
+   */
+  setCursorWorld(point: Vec2 | null): void {
+    this.cursorWorld = point;
+  }
+
   render(state: CombatState): void {
+    this.resize();
     const now = performance.now();
     const dt = Math.min(0.05, Math.max(0, (now - this.lastNow) / 1000));
     this.lastNow = now;
@@ -184,9 +238,11 @@ export class IsoScene {
     } else {
       this.moveMarker.visible = false;
     }
+    this.updateQueuedMarkers(p.moveQueue);
 
     this.updateAttackCone(state);
     this.syncEnemies(state, dt);
+    this.updateHover(state);
 
     // Follow the player, framed by the current camera/light controls (spec 033).
     this.target.set(p.position.x, 0, p.position.y);
@@ -212,14 +268,13 @@ export class IsoScene {
     const targetHalfWidth = this.controls.viewHalfWidth();
     this.halfWidth += (targetHalfWidth - this.halfWidth) * CAMERA_SMOOTH;
     if (Math.abs(this.halfWidth - this.lastHalfWidth) > 0.05) {
-      const aspect = RENDER_W / RENDER_H;
-      const hw = this.halfWidth;
-      this.camera.left = -hw;
-      this.camera.right = hw;
-      this.camera.top = hw / aspect;
-      this.camera.bottom = -hw / aspect;
+      const frustum = cameraFrustum(this.halfWidth, this.aspect);
+      this.camera.left = -frustum.halfWidth;
+      this.camera.right = frustum.halfWidth;
+      this.camera.top = frustum.halfHeight;
+      this.camera.bottom = -frustum.halfHeight;
       this.camera.updateProjectionMatrix();
-      this.lastHalfWidth = hw;
+      this.lastHalfWidth = this.halfWidth;
     }
 
     const light = this.controls.lightOffset();
@@ -284,23 +339,58 @@ export class IsoScene {
     const live = new Set<number>();
     for (const enemy of state.enemies) {
       live.add(enemy.id);
-      let rig = this.enemies.get(enemy.id);
-      if (!rig) {
-        rig = new MechRig(enemy.type);
-        this.enemies.set(enemy.id, rig);
+      let entry = this.enemies.get(enemy.id);
+      if (!entry) {
+        const rig = new MechRig(enemy.type);
+        entry = { rig, outline: attachOutline(rig.group) };
+        this.enemies.set(enemy.id, entry);
         this.scene.add(rig.group);
       }
+      const rig = entry.rig;
       rig.group.position.set(enemy.position.x, 0, enemy.position.y);
       const dir = { x: state.player.position.x - enemy.position.x, y: state.player.position.y - enemy.position.y };
       const ry = Math.atan2(-dir.y, dir.x);
       rig.group.rotation.y = ry;
       rig.update(dt, enemy.position, ry);
     }
-    for (const [id, rig] of this.enemies) {
+    for (const [id, entry] of this.enemies) {
       if (!live.has(id)) {
-        this.scene.remove(rig.group);
+        this.scene.remove(entry.rig.group);
         this.enemies.delete(id);
       }
     }
+  }
+
+  /**
+   * Light the white outline on whichever unit the cursor is standing on (spec
+   * 039). The pick is the ground point the cursor already raycasts to, against
+   * each unit's own footprint, so exactly one unit is ever outlined.
+   */
+  private updateHover(state: CombatState): void {
+    const candidates: HoverCandidate[] = [
+      { id: HOVER_PLAYER_ID, position: state.player.position, radius: PLAYER_RADIUS },
+      ...state.enemies.map((e) => ({ id: e.id, position: e.position, radius: ENEMY_RADIUS })),
+    ];
+    const hovered = pickHovered(this.cursorWorld, candidates);
+    this.playerOutline.setVisible(hovered === HOVER_PLAYER_ID);
+    for (const [id, entry] of this.enemies) entry.outline.setVisible(hovered === id);
+  }
+
+  /**
+   * Drop a dimmer marker on each destination stacked behind the standing order
+   * (spec 038), so a shift-clicked plan is visible. Markers are pooled: the list
+   * only ever grows to the sim's queue cap.
+   */
+  private updateQueuedMarkers(queue: readonly Vec2[]): void {
+    while (this.queuedMarkers.length < queue.length) {
+      const marker = makeQueuedMoveMarker();
+      this.queuedMarkers.push(marker);
+      this.scene.add(marker);
+    }
+    this.queuedMarkers.forEach((marker, i) => {
+      const point = queue[i];
+      marker.visible = point !== undefined;
+      if (point) marker.position.set(point.x, 5, point.y);
+    });
   }
 }
