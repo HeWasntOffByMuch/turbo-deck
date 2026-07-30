@@ -14,12 +14,14 @@ import {
   sectorGeometry,
 } from './meshes.js';
 import { attachOutline, type OutlineHandle } from './outline.js';
+import { HOVER_PLAYER_ID, pickHoveredUnit, type HoverTarget } from './hover.js';
+import type { ScreenPoint } from './input.js';
 import { MechRig, Poofs, PlayerRig } from './rigs.js';
 import { worldToIso, type IsoParams } from './projection.js';
 import { footprintRadius, scatterProps } from './scatter.js';
 import { createViewControls, type ViewControls } from './view-controls.js';
 import { DEFAULT_CAMERA_OFFSET, DEFAULT_VIEW_HALF_WIDTH } from './view-settings.js';
-import { cameraFrustum, HOVER_PLAYER_ID, internalRenderSize, pickHovered, type HoverCandidate } from './view-frame.js';
+import { cameraFrustum, cursorToNdc, internalRenderSize } from './view-frame.js';
 
 // Fraction of the gap to the target camera framing closed each rendered frame,
 // so orbit/zoom slider changes glide instead of snapping (spec 034).
@@ -74,8 +76,12 @@ export class IsoScene {
   // Arc the attack-cone geometry is currently built for, so it rebuilds only on change.
   private coneArcHalf = -1;
   private readonly enemies = new Map<number, { rig: MechRig; outline: OutlineHandle }>();
-  // Ground point under the cursor, for the hover outlines; null when unknown.
-  private cursorWorld: Vec2 | null = null;
+  // Cursor in canvas CSS pixels, for the hover raycast; null when off the window.
+  private cursorScreen: ScreenPoint | null = null;
+  // Reused by the hover raycast so it allocates nothing per frame.
+  private readonly hoverRaycaster = new THREE.Raycaster();
+  private readonly hoverNdc = new THREE.Vector2();
+  private readonly hoverTargets: HoverTarget[] = [];
   private readonly target = new THREE.Vector3(ARENA_WIDTH / 2, 0, ARENA_HEIGHT / 2);
   // Frame timing + player gait tracking for foot poofs (cosmetic, not sim state).
   private lastNow = performance.now();
@@ -84,6 +90,7 @@ export class IsoScene {
   private footfalls = 0;
   // Reused across cursor raycasts so screenToWorld allocates nothing per frame.
   private readonly raycaster = new THREE.Raycaster();
+  private readonly groundNdc = new THREE.Vector2();
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private readonly hit = new THREE.Vector3();
 
@@ -116,8 +123,10 @@ export class IsoScene {
     this.scene.add(new THREE.AmbientLight(0x8090a0, 1.1));
 
     // Bleed the ground well past the play bounds so the camera never frames the
-    // void beyond the arena edge while following the player.
-    const bleed = 600;
+    // void beyond the arena edge while following the player. Sized for the
+    // widest zoom: at the far end of the slider the view reaches over a thousand
+    // units past a player standing on the arena's edge.
+    const bleed = 1600;
     const ground = makeGround(ARENA_WIDTH + bleed * 2, ARENA_HEIGHT + bleed * 2);
     ground.position.set(-bleed, 0, -bleed);
     this.scene.add(ground);
@@ -192,9 +201,8 @@ export class IsoScene {
    */
   screenToWorld(cssX: number, cssY: number): Vec2 {
     const rect = this.canvas.getBoundingClientRect();
-    const ndcX = (cssX / rect.width) * 2 - 1;
-    const ndcY = -((cssY / rect.height) * 2 - 1);
-    this.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
+    const ndc = cursorToNdc(cssX, cssY, rect.width, rect.height);
+    this.raycaster.setFromCamera(this.groundNdc.set(ndc.x, ndc.y), this.camera);
     const point = this.raycaster.ray.intersectPlane(this.groundPlane, this.hit);
     if (!point) return { x: this.target.x, y: this.target.z };
     return { x: point.x, y: point.z };
@@ -206,12 +214,14 @@ export class IsoScene {
   }
 
   /**
-   * Tell the scene where the cursor is standing on the ground, so the unit under
-   * it gets its white outline (spec 039). Pass null when the cursor is off the
-   * game window. Cosmetic only -- hovering changes nothing in the sim.
+   * Tell the scene where the cursor is, in canvas CSS pixels, so the unit under
+   * it gets its white outline (spec 039). The pick is a raycast against the
+   * models, so pointing at a unit's *body* hovers it, not only its feet. Pass
+   * null when the cursor is off the game window. Cosmetic only -- hovering
+   * changes nothing in the sim.
    */
-  setCursorWorld(point: Vec2 | null): void {
-    this.cursorWorld = point;
+  setCursorScreen(point: ScreenPoint | null): void {
+    this.cursorScreen = point;
   }
 
   render(state: CombatState): void {
@@ -242,12 +252,17 @@ export class IsoScene {
 
     this.updateAttackCone(state);
     this.syncEnemies(state, dt);
-    this.updateHover(state);
 
     // Follow the player, framed by the current camera/light controls (spec 033).
     this.target.set(p.position.x, 0, p.position.y);
     this.applyControls();
     this.camera.lookAt(this.target);
+
+    // Hovering is picked against this frame's camera and posed rigs, so the
+    // outline tracks the models exactly as they are about to be drawn.
+    this.camera.updateMatrixWorld();
+    this.scene.updateMatrixWorld();
+    this.updateHover(state);
 
     this.renderer.render(this.scene, this.camera);
   }
@@ -362,16 +377,33 @@ export class IsoScene {
   }
 
   /**
-   * Light the white outline on whichever unit the cursor is standing on (spec
-   * 039). The pick is the ground point the cursor already raycasts to, against
-   * each unit's own footprint, so exactly one unit is ever outlined.
+   * Light the white outline on whichever unit's model the cursor is over (spec
+   * 039), and only that one -- the frontmost model wins, so two overlapping
+   * units never both light up.
    */
   private updateHover(state: CombatState): void {
-    const candidates: HoverCandidate[] = [
-      { id: HOVER_PLAYER_ID, position: state.player.position, radius: PLAYER_RADIUS },
-      ...state.enemies.map((e) => ({ id: e.id, position: e.position, radius: ENEMY_RADIUS })),
-    ];
-    const hovered = pickHovered(this.cursorWorld, candidates);
+    let hovered: number | null = null;
+    if (this.cursorScreen) {
+      const cursor = this.cursorScreen;
+      const ndc = cursorToNdc(cursor.x, cursor.y, this.canvas.clientWidth, this.canvas.clientHeight);
+      this.hoverNdc.set(ndc.x, ndc.y);
+      this.hoverRaycaster.setFromCamera(this.hoverNdc, this.camera);
+
+      this.hoverTargets.length = 0;
+      this.hoverTargets.push({
+        id: HOVER_PLAYER_ID,
+        object: this.playerRig.group,
+        position: state.player.position,
+        radius: PLAYER_RADIUS,
+      });
+      for (const enemy of state.enemies) {
+        const entry = this.enemies.get(enemy.id);
+        if (entry) {
+          this.hoverTargets.push({ id: enemy.id, object: entry.rig.group, position: enemy.position, radius: ENEMY_RADIUS });
+        }
+      }
+      hovered = pickHoveredUnit(this.hoverRaycaster, this.hoverTargets, this.screenToWorld(cursor.x, cursor.y));
+    }
     this.playerOutline.setVisible(hovered === HOVER_PLAYER_ID);
     for (const [id, entry] of this.enemies) entry.outline.setVisible(hovered === id);
   }

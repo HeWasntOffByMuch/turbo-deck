@@ -75,7 +75,7 @@ function mountCombat(container: HTMLElement): ViewHandle {
     }
 
     // Hovering is presentation only, so it is read per frame, not per tick.
-    scene.setCursorWorld(worldCursor);
+    scene.setCursorScreen(cursor);
     scene.render(state.combat);
     hud.render(state);
     requestAnimationFrame(frame);

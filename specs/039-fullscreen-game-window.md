@@ -31,6 +31,12 @@ meaning: `viewHalfWidth()` is the framed half-width at the reference 16:10
 aspect, and the vertical span it implies is what stays fixed as the window
 widens.
 
+A window this size wants a wider shot, so the default zoom doubles
+(`DEFAULT_VIEW_HALF_WIDTH` 320 -> 640) and the slider's range widens to match.
+With an orthographic camera the zoom — not the camera's distance — is what
+decides how much world is on screen; the ground plane is bled further past the
+arena so the widest zoom still never frames the void.
+
 **Icon HUD** (`src/render/iso3d/hud.ts`), all overlaid on the canvas, retro
 styling only (monospace, hard 2px borders, no rounded corners or blur), and
 `pointer-events: none` except on the controls themselves, so clicking the world
@@ -62,13 +68,23 @@ in order, behind the standing one.
 
 **Hover outlines** (`src/render/iso3d/outline.ts`): every unit rig gets a white
 backface-hull outline, hidden by default and shown while the cursor hovers that
-unit. Hover is decided from the cursor's ground point (the scene already
-raycasts it for move orders) against the unit's radius — the renderer's own
-business, and it changes no game outcome.
+unit. Each lit mesh carries its own shell, inflated by a fixed world thickness
+per axis (so a long thin bone gets an even border) up to a ratio cap (so a foot
+is rimmed rather than blown up into a blob).
+
+Hover is a **raycast against the unit models** (`src/render/iso3d/hover.ts`), not
+a ground-plane test: a unit is drawn above the ground point it stands on, so a
+footprint test only lights up when the cursor is on the unit's feet, and pointing
+at its body — the thing you are actually pointing at — misses. The raycast also
+settles overlap: the frontmost model wins. The outline shells and the rigs' flat
+ground decals (heading arrows) are excluded from the hover shape, so an outline
+can never enlarge the thing that lit it. Renderer's own business either way; it
+changes no game outcome.
 
 ```ts
 export function attachOutline(root: THREE.Object3D, thickness?: number): OutlineHandle;
 export interface OutlineHandle { setVisible(on: boolean): void; }
+export function pickHoveredUnit(raycaster: THREE.Raycaster, targets: readonly HoverTarget[]): number | null;
 ```
 
 ## Invariants tested
@@ -80,12 +96,15 @@ pieces this spec adds:
   skips unlit (flat overlay) meshes such as the heading arrow, and its meshes
   start hidden; `setVisible` toggles all of them together.
 - Outline scale is per-axis, so a long thin bone gets an even border rather than
-  one that scales with the bone's length.
-- The hover test picks the unit whose centre is nearest the cursor within its
-  radius, and picks nothing when the cursor is on empty ground.
+  one that scales with the bone's length, and is capped for small parts.
+- Hovering a unit's **body** (not just the ground under its feet) picks it;
+  empty ground picks nothing; the frontmost of two overlapping units wins; and
+  neither the outline shells nor a rig's ground decals are part of the shape.
 - The internal render size keeps a fixed pixel height and the window's aspect
   (within the width cap), and the camera's vertical span does not change as the
   window widens.
+- The default zoom frames twice what the letterboxed view did, and sits inside
+  the slider's range.
 - The key map binds Q/W/E/R (and 1-4) to hand slots 0-3 and no longer binds Q to
   the wave.
 

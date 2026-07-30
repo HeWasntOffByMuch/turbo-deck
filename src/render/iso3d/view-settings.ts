@@ -25,8 +25,21 @@ export interface Orbit {
 export const DEFAULT_CAMERA_OFFSET: Vec3 = { x: 420, y: 520, z: 420 };
 /** The directional sun's position/direction the view shipped with. */
 export const DEFAULT_LIGHT_OFFSET: Vec3 = { x: -0.6, y: 1.4, z: -0.5 };
-/** The orthographic camera's half-width the view shipped with (zoom). */
-export const DEFAULT_VIEW_HALF_WIDTH = 320;
+/**
+ * The orthographic camera's half-width (zoom) the fullscreen game window opens
+ * at. Doubled from the 320 the letterboxed view shipped with, so the game frames
+ * twice as much ground in each direction. With an orthographic camera this -- not
+ * the camera's distance -- is what decides how much of the world is on screen.
+ */
+export const DEFAULT_VIEW_HALF_WIDTH = 640;
+/**
+ * The zoom the rig sandboxes open at. They exist to inspect one unit's legs, so
+ * they keep the original close framing rather than the game's wide shot.
+ */
+export const SANDBOX_VIEW_HALF_WIDTH = 320;
+/** Zoom slider bounds, wide enough to reach both a tight duel and the whole arena. */
+export const MIN_VIEW_HALF_WIDTH = 200;
+export const MAX_VIEW_HALF_WIDTH = 1400;
 
 /** Spherical orbit -> Cartesian offset from the pivot. Pure. */
 export function orbitToOffset({ azimuth, elevation, distance }: Orbit): Vec3 {

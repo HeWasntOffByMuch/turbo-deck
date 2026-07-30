@@ -2,6 +2,8 @@ import {
   DEFAULT_CAMERA_OFFSET,
   DEFAULT_LIGHT_OFFSET,
   DEFAULT_VIEW_HALF_WIDTH,
+  MAX_VIEW_HALF_WIDTH,
+  MIN_VIEW_HALF_WIDTH,
   offsetToOrbit,
   orbitToOffset,
   type Vec3,
@@ -123,8 +125,13 @@ function wrapDeg(radians: number): number {
   return ((Math.round(radians / DEG) % 360) + 360) % 360;
 }
 
+export interface ViewControlOptions {
+  /** Zoom the panel opens at (and resets to); defaults to the game's wide shot. */
+  readonly zoom?: number;
+}
+
 /** Build the slider panel; the returned getters reflect the live slider state. */
-export function createViewControls(): ViewControls {
+export function createViewControls(opts: ViewControlOptions = {}): ViewControls {
   const camOrbit = offsetToOrbit(DEFAULT_CAMERA_OFFSET);
   const lightOrbit = offsetToOrbit(DEFAULT_LIGHT_OFFSET);
 
@@ -132,14 +139,18 @@ export function createViewControls(): ViewControls {
   panel.style.cssText =
     "font-family:'Segoe UI',system-ui,sans-serif;color:#c9c9d8;font-size:12px;" +
     'display:none;flex-direction:column;gap:10px;width:210px;padding:14px;box-sizing:border-box;' +
-    'position:absolute;top:38px;left:0;z-index:10;' +
+    // Anchored to the cog's right edge so it opens *inward*: the cog sits in the
+    // game window's top-right corner, and a left-anchored panel would open off
+    // the viewport. Capped in height (and scrollable) so a short window can't
+    // push its lower sliders off the bottom either.
+    'position:absolute;top:38px;right:0;z-index:10;max-height:calc(100vh - 90px);overflow-y:auto;' +
     'background:#1c1c26;border:1px solid #2a2a3a;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.45);';
 
   const camAz = makeSlider('Orbit', 0, 360, 1, wrapDeg(camOrbit.azimuth), '°',
     'Rotate the follow camera around the unit (compass azimuth, in degrees).');
   const camEl = makeSlider('Height', 10, 85, 1, Math.round(camOrbit.elevation / DEG), '°',
     'Camera elevation angle above the ground, in degrees — higher looks more top-down.');
-  const zoom = makeSlider('View span', 140, 600, 10, DEFAULT_VIEW_HALF_WIDTH, '',
+  const zoom = makeSlider('View span', MIN_VIEW_HALF_WIDTH, MAX_VIEW_HALF_WIDTH, 20, opts.zoom ?? DEFAULT_VIEW_HALF_WIDTH, '',
     'Orthographic zoom: the half-width of the area framed. Smaller zooms in tighter.');
   const lightAz = makeSlider('Direction', 0, 360, 1, wrapDeg(lightOrbit.azimuth), '°',
     'Compass direction the sunlight comes from, in degrees.');

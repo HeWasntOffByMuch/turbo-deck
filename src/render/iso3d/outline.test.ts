@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { attachOutline, outlineScale } from './outline.js';
+import { attachOutline, MAX_OUTLINE_RATIO, outlineScale } from './outline.js';
 import { box, makeHeadingArrow } from './meshes.js';
 import { PlayerRig } from './rigs.js';
 
@@ -54,11 +54,20 @@ describe('unit hover outlines (spec 039)', () => {
 
   it('inflates each axis by the same absolute amount, so a long bone gets an even border', () => {
     const thickness = 2;
-    const scale = outlineScale(new THREE.Vector3(4, 40, 4), thickness);
-    // A uniform scale would give the long axis a border 10x the short axes'.
-    expect((scale.x - 1) * 4).toBeCloseTo(2 * thickness, 6);
-    expect((scale.y - 1) * 40).toBeCloseTo(2 * thickness, 6);
+    const scale = outlineScale(new THREE.Vector3(30, 90, 30), thickness);
+    // A uniform scale would give the long axis a border 3x the short axes'.
+    expect((scale.x - 1) * 30).toBeCloseTo(2 * thickness, 6);
+    expect((scale.y - 1) * 90).toBeCloseTo(2 * thickness, 6);
     expect(scale.y).toBeLessThan(scale.x);
+  });
+
+  it('caps the inflation, so a tiny part is rimmed rather than blown up into a blob', () => {
+    // A 4-unit foot would otherwise be scaled to 2x by the body's thickness, and
+    // the swollen shell would cover the model instead of tracing it.
+    const scale = outlineScale(new THREE.Vector3(4, 4, 4), 2);
+    expect(scale.x).toBe(MAX_OUTLINE_RATIO);
+    expect(scale.y).toBe(MAX_OUTLINE_RATIO);
+    expect(scale.z).toBe(MAX_OUTLINE_RATIO);
   });
 
   it('leaves a degenerate (flat) axis unscaled instead of blowing it up', () => {

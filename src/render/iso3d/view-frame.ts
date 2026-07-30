@@ -1,11 +1,9 @@
-import type { Vec2 } from '../../sim/types.js';
-
 /**
  * Framing maths for the fullscreen game window (spec 039): how big the canvas's
- * *internal* (chunky) buffer should be for a given CSS box, what the camera's
- * orthographic box is at that aspect, and which unit the cursor is hovering.
- * Pure functions -- no three.js, no DOM, no sim state -- so they can be tested
- * headlessly; the scene applies whatever they return.
+ * *internal* (chunky) buffer should be for a given CSS box, and what the camera's
+ * orthographic box is at that aspect. Pure functions -- no three.js, no DOM, no
+ * sim state -- so they can be tested headlessly; the scene applies whatever they
+ * return. (Hover picking lives in `hover.ts`; it needs the actual meshes.)
  */
 
 /**
@@ -51,34 +49,9 @@ export function cameraFrustum(zoomHalfWidth: number, aspect: number): Frustum {
   return { halfWidth: halfHeight * Math.max(0.01, aspect), halfHeight };
 }
 
-/** A unit the cursor may be hovering: where it stands and how wide it is. */
-export interface HoverCandidate {
-  /** Stable identity; the scene uses the enemy id, and a sentinel for the player. */
-  readonly id: number;
-  readonly position: Vec2;
-  readonly radius: number;
-}
-
-/** The player's id in a hover pick (enemy ids are non-negative). */
-export const HOVER_PLAYER_ID = -1;
-
-/**
- * Which unit the cursor is over, or null for empty ground. The cursor is the
- * ground point the scene already raycasts for move orders, so a hover is simply
- * the nearest unit whose footprint contains it -- ties broken by distance, so
- * two overlapping units never both light up.
- */
-export function pickHovered(cursor: Vec2 | null, candidates: readonly HoverCandidate[]): number | null {
-  if (!cursor) return null;
-  let bestId: number | null = null;
-  let bestDistSq = Infinity;
-  for (const candidate of candidates) {
-    const dx = candidate.position.x - cursor.x;
-    const dy = candidate.position.y - cursor.y;
-    const distSq = dx * dx + dy * dy;
-    if (distSq > candidate.radius * candidate.radius || distSq >= bestDistSq) continue;
-    bestId = candidate.id;
-    bestDistSq = distSq;
-  }
-  return bestId;
+/** Cursor position in a canvas's CSS box -> normalized device coordinates. */
+export function cursorToNdc(cssX: number, cssY: number, cssWidth: number, cssHeight: number): { x: number; y: number } {
+  const width = cssWidth > 0 ? cssWidth : 1;
+  const height = cssHeight > 0 ? cssHeight : 1;
+  return { x: (cssX / width) * 2 - 1, y: -((cssY / height) * 2 - 1) };
 }

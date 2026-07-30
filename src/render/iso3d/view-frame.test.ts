@@ -1,14 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import {
-  cameraFrustum,
-  HOVER_PLAYER_ID,
-  internalRenderSize,
-  MAX_RENDER_W,
-  pickHovered,
-  REFERENCE_ASPECT,
-  RENDER_H,
-} from './view-frame.js';
+import { cameraFrustum, cursorToNdc, internalRenderSize, MAX_RENDER_W, REFERENCE_ASPECT, RENDER_H } from './view-frame.js';
 import { HAND_KEYS, WAVE_KEY } from './input.js';
+import { DEFAULT_VIEW_HALF_WIDTH, MAX_VIEW_HALF_WIDTH, MIN_VIEW_HALF_WIDTH } from './view-settings.js';
 
 describe('internal render size (spec 039)', () => {
   it('keeps a fixed pixel height and takes the window aspect', () => {
@@ -42,31 +35,31 @@ describe('camera frustum (spec 039)', () => {
     expect(frustum.halfWidth).toBeCloseTo(320, 6);
     expect(frustum.halfHeight).toBeCloseTo(320 / REFERENCE_ASPECT, 6);
   });
+
+  it('opens framing twice as much ground as the letterboxed view did', () => {
+    const before = cameraFrustum(320, REFERENCE_ASPECT);
+    const now = cameraFrustum(DEFAULT_VIEW_HALF_WIDTH, REFERENCE_ASPECT);
+    expect(now.halfWidth / before.halfWidth).toBeCloseTo(2, 6);
+    expect(now.halfHeight / before.halfHeight).toBeCloseTo(2, 6);
+  });
+
+  it('leaves the default zoom inside the slider it is driven by', () => {
+    expect(DEFAULT_VIEW_HALF_WIDTH).toBeGreaterThanOrEqual(MIN_VIEW_HALF_WIDTH);
+    expect(DEFAULT_VIEW_HALF_WIDTH).toBeLessThanOrEqual(MAX_VIEW_HALF_WIDTH);
+  });
 });
 
-describe('hover picking (spec 039)', () => {
-  const player = { id: HOVER_PLAYER_ID, position: { x: 100, y: 100 }, radius: 16 };
-  const enemy = { id: 7, position: { x: 140, y: 100 }, radius: 22 };
-
-  it('picks nothing on empty ground, and nothing at all without a cursor', () => {
-    expect(pickHovered({ x: 400, y: 400 }, [player, enemy])).toBeNull();
-    expect(pickHovered(null, [player, enemy])).toBeNull();
+describe('cursor to NDC (spec 039)', () => {
+  it('maps the corners and centre of the canvas box', () => {
+    expect(cursorToNdc(0, 0, 800, 400)).toEqual({ x: -1, y: 1 });
+    expect(cursorToNdc(800, 400, 800, 400)).toEqual({ x: 1, y: -1 });
+    const centre = cursorToNdc(400, 200, 800, 400);
+    expect(centre.x).toBeCloseTo(0, 12);
+    expect(centre.y).toBeCloseTo(0, 12); // -0 at the exact centre, which is still centre
   });
 
-  it('picks the unit whose footprint holds the cursor', () => {
-    expect(pickHovered({ x: 104, y: 103 }, [player, enemy])).toBe(HOVER_PLAYER_ID);
-    expect(pickHovered({ x: 150, y: 100 }, [player, enemy])).toBe(7);
-  });
-
-  it('picks the nearer of two overlapping units, so only one is ever outlined', () => {
-    const overlapping = { id: 9, position: { x: 108, y: 100 }, radius: 22 };
-    expect(pickHovered({ x: 107, y: 100 }, [player, overlapping])).toBe(9);
-    expect(pickHovered({ x: 101, y: 100 }, [player, overlapping])).toBe(HOVER_PLAYER_ID);
-  });
-
-  it('stops at the footprint: on the rim it hovers, a hair outside it does not', () => {
-    expect(pickHovered({ x: 100 + player.radius, y: 100 }, [player])).toBe(HOVER_PLAYER_ID);
-    expect(pickHovered({ x: 100 + player.radius + 0.5, y: 100 }, [player])).toBeNull();
+  it('does not divide by a zero-sized box', () => {
+    expect(Number.isFinite(cursorToNdc(10, 10, 0, 0).x)).toBe(true);
   });
 });
 

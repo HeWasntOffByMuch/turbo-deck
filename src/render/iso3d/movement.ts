@@ -9,7 +9,7 @@ import { makeBush, makeGround, makeHeadingArrow, makeMoveMarker, makeTree, makeU
 import { defaultMechTuning, MechRig, type MechTuning } from './rigs.js';
 import { footprintRadius, scatterProps } from './scatter.js';
 import { createViewControls, type ViewControls } from './view-controls.js';
-import { DEFAULT_CAMERA_OFFSET, DEFAULT_VIEW_HALF_WIDTH } from './view-settings.js';
+import { DEFAULT_CAMERA_OFFSET, SANDBOX_VIEW_HALF_WIDTH } from './view-settings.js';
 
 // Per-frame easing fraction for camera framing changes (spec 034), matching IsoScene.
 const CAMERA_SMOOTH = 0.15;
@@ -40,7 +40,7 @@ const MAX_CATCH_UP = 8;
 /** A minimal three.js scene: ground + scenery + one controllable mech. */
 class MovementScene {
   /** Camera/light control panel (spec 033); mount `.controls.element` beside the canvas. */
-  readonly controls: ViewControls = createViewControls();
+  readonly controls: ViewControls = createViewControls({ zoom: SANDBOX_VIEW_HALF_WIDTH });
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
@@ -62,7 +62,7 @@ class MovementScene {
     DEFAULT_CAMERA_OFFSET.z,
   );
   private readonly camOffsetTarget = new THREE.Vector3();
-  private halfWidth = DEFAULT_VIEW_HALF_WIDTH;
+  private halfWidth = SANDBOX_VIEW_HALF_WIDTH;
   private lastHalfWidth = -1;
   private readonly moveMarker: THREE.Mesh;
   private readonly target = new THREE.Vector3(ARENA_WIDTH / 2, 0, ARENA_HEIGHT / 2);
@@ -88,7 +88,7 @@ class MovementScene {
     this.scene.background = new THREE.Color(PALETTE.sky);
 
     const aspect = RENDER_W / RENDER_H;
-    const hw = DEFAULT_VIEW_HALF_WIDTH;
+    const hw = SANDBOX_VIEW_HALF_WIDTH;
     this.camera = new THREE.OrthographicCamera(-hw, hw, hw / aspect, -hw / aspect, 1, 4000);
 
     this.scene.add(this.sun);
