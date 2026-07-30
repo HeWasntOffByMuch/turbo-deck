@@ -1,5 +1,5 @@
 /**
- * Framing maths for the fullscreen game window (spec 039): how big the canvas's
+ * Framing maths for the fullscreen game window (spec 041): how big the canvas's
  * *internal* (chunky) buffer should be for a given CSS box, and what the camera's
  * orthographic box is at that aspect. Pure functions -- no three.js, no DOM, no
  * sim state -- so they can be tested headlessly; the scene applies whatever they

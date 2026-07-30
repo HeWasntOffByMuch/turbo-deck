@@ -680,7 +680,7 @@ export function step(
   // then fires (spec 028). A fresh move command cancels it. Non-attack casts
   // (dash, AOEs, buffs) resolve immediately and never enter this state.
   const incomingAttack = input.externalEffect?.kind === 'castSpells' && castIsAttack(input.externalEffect) ? input.externalEffect : null;
-  // Only a plain order commits the unit to moving; a queued one (spec 038) is a
+  // Only a plain order commits the unit to moving; a queued one (spec 040) is a
   // plan for later and leaves the attack alone.
   const moveCommanded = input.moveTarget != null && !input.queueMove;
   let pendingAttack: PendingAttack | null = state.player.pendingAttack;
@@ -719,7 +719,7 @@ export function step(
       : rooted
         ? { position: state.player.position, facing: state.player.facing, moveTarget: orderedTarget, movePath: orderedPath }
         : stepPlayerMovement(state.player.position, state.player.facing, orderedTarget, orderedPath, speedPerTick, maxTurnPerTick);
-  // Destination reached with more of the plan left (spec 038): promote the head
+  // Destination reached with more of the plan left (spec 040): promote the head
   // of the queue on this same tick and route it from where the unit now stands,
   // so a queued leg around a wall gets its own path.
   const nextQueued = moved.moveTarget === null ? order.queue[0] : undefined;

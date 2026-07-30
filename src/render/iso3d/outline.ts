@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 /**
- * White hover outlines for unit models (spec 039). Every lit mesh in a rig gets
+ * White hover outlines for unit models (spec 041). Every lit mesh in a rig gets
  * a slightly inflated copy of itself drawn back-faces-only, which reads as a
  * crisp white border around the silhouette -- the cheapest outline there is, and
  * it follows the rig's animation for free because each copy is parented to the

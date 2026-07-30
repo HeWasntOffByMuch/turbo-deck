@@ -1,4 +1,4 @@
-# 039 — Fullscreen game window with an overlaid retro HUD
+# 041 — Fullscreen game window with an overlaid retro HUD
 
 ## Problem
 
@@ -62,7 +62,7 @@ export class IsoHud {
 with `1`-`4` kept as aliases. Summoning a wave moves off `Q` to `Space`. `C`
 still swaps character.
 
-**Shift-click queueing** (spec 038): a right-click with shift held reports
+**Shift-click queueing** (spec 040): a right-click with shift held reports
 `queueMove`, and the scene draws the queued destinations as dimmer markers,
 in order, behind the standing one.
 
@@ -110,7 +110,7 @@ pieces this spec adds:
 
 ## Out of scope
 
-- Any change to the sim: this is presentation only. Queueing itself is spec 038.
+- Any change to the sim: this is presentation only. Queueing itself is spec 040.
 - The 2D spell view (`src/render/spells/`) and its DOM HUD keep their own layout.
 - Sound for the iso view, and animated card draw/play flourishes.
 - Outlines on scenery (trees, bushes, walls) — units only.

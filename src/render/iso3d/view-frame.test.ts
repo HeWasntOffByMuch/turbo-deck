@@ -3,7 +3,7 @@ import { cameraFrustum, cursorToNdc, internalRenderSize, MAX_RENDER_W, REFERENCE
 import { HAND_KEYS, WAVE_KEY } from './input.js';
 import { DEFAULT_VIEW_HALF_WIDTH, MAX_VIEW_HALF_WIDTH, MIN_VIEW_HALF_WIDTH } from './view-settings.js';
 
-describe('internal render size (spec 039)', () => {
+describe('internal render size (spec 041)', () => {
   it('keeps a fixed pixel height and takes the window aspect', () => {
     const size = internalRenderSize(1600, 900);
     expect(size.height).toBe(RENDER_H);
@@ -22,7 +22,7 @@ describe('internal render size (spec 039)', () => {
   });
 });
 
-describe('camera frustum (spec 039)', () => {
+describe('camera frustum (spec 041)', () => {
   it('holds the vertical span constant as the window widens', () => {
     const narrow = cameraFrustum(320, 1.6);
     const wide = cameraFrustum(320, 2.4);
@@ -49,7 +49,7 @@ describe('camera frustum (spec 039)', () => {
   });
 });
 
-describe('cursor to NDC (spec 039)', () => {
+describe('cursor to NDC (spec 041)', () => {
   it('maps the corners and centre of the canvas box', () => {
     expect(cursorToNdc(0, 0, 800, 400)).toEqual({ x: -1, y: 1 });
     expect(cursorToNdc(800, 400, 800, 400)).toEqual({ x: 1, y: -1 });
@@ -63,7 +63,7 @@ describe('cursor to NDC (spec 039)', () => {
   });
 });
 
-describe('key bindings (spec 039)', () => {
+describe('key bindings (spec 041)', () => {
   it('plays the hand with Q/W/E/R, keeping the digits as aliases', () => {
     expect([HAND_KEYS.KeyQ, HAND_KEYS.KeyW, HAND_KEYS.KeyE, HAND_KEYS.KeyR]).toEqual([0, 1, 2, 3]);
     expect([HAND_KEYS.Digit1, HAND_KEYS.Digit2, HAND_KEYS.Digit3, HAND_KEYS.Digit4]).toEqual([0, 1, 2, 3]);

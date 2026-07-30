@@ -10,7 +10,7 @@ import { PLAYER_RADIUS } from '../../sim/constants.js';
 import type { Vec2 } from '../../sim/types.js';
 
 /**
- * Hover picking (spec 039) is a raycast against the unit models, so these run
+ * Hover picking (spec 041) is a raycast against the unit models, so these run
  * headlessly: three.js raycasting needs no WebGL. The camera mirrors the scene's
  * -- same iso offset, same zoom -- so "point at the body" means the same thing
  * here as on screen.
@@ -47,7 +47,7 @@ function aimAt(camera: THREE.OrthographicCamera, world: THREE.Vector3, cssW = 14
   return raycaster;
 }
 
-describe('hover picking (spec 039)', () => {
+describe('hover picking (spec 041)', () => {
   const stand = new THREE.Vector3(600, 0, 450);
 
   /** The ground point under a unit standing at `position`, for the footprint test. */

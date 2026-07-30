@@ -15,7 +15,7 @@ function shells(root: THREE.Object3D): THREE.Mesh[] {
   return found;
 }
 
-describe('unit hover outlines (spec 039)', () => {
+describe('unit hover outlines (spec 041)', () => {
   it('outlines every lit mesh in a rig, and starts hidden', () => {
     const rig = new PlayerRig();
     const lit: THREE.Mesh[] = [];

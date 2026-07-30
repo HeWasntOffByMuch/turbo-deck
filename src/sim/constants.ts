@@ -25,7 +25,7 @@ export const MOVE_FACING_THRESHOLD_DEG = 135;
 // A move order is considered fulfilled once the unit is within this distance of
 // the destination, at which point the standing order is cleared.
 export const MOVE_ARRIVE_EPS = 2;
-// Most destinations a shift-click may stack behind the standing order (spec 038).
+// Most destinations a shift-click may stack behind the standing order (spec 040).
 // Past the cap the extra click is dropped, so a mashed shift can't grow the plan
 // without bound.
 export const MOVE_QUEUE_MAX = 8;

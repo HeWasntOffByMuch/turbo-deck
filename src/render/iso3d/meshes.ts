@@ -86,7 +86,7 @@ export function makeMoveMarker(): THREE.Mesh {
 }
 
 /**
- * A marker for a destination stacked behind the standing order (spec 038):
+ * A marker for a destination stacked behind the standing order (spec 040):
  * the same shape, smaller and translucent, so the plan reads as pending rather
  * than current. Its material is per-marker (not the shared cache) so it can
  * fade without tinting every other marker.

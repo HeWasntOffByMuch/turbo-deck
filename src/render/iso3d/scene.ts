@@ -40,7 +40,7 @@ const CAMERA_SMOOTH = 0.15;
  * For the MOBA move order (spec 028) it also raycasts the cursor onto the ground
  * so a screen right-click becomes a world point (`screenToWorld`).
  *
- * The canvas fills the game window (spec 039) and re-sizes with it: the internal
+ * The canvas fills the game window (spec 041) and re-sizes with it: the internal
  * buffer keeps a fixed pixel height and takes the window's aspect, so the chunky
  * pixels stay the same size on any window shape and a wider window simply frames
  * more ground to the sides.
@@ -75,7 +75,7 @@ export class IsoScene {
   private readonly playerOutline: OutlineHandle;
   private readonly poofs: Poofs;
   private readonly moveMarker: THREE.Mesh;
-  // Ground markers for the destinations stacked behind the standing order (spec 038).
+  // Ground markers for the destinations stacked behind the standing order (spec 040).
   private readonly queuedMarkers: THREE.Mesh[] = [];
   private readonly attackCone: THREE.Mesh;
   // Arc the attack-cone geometry is currently built for, so it rebuilds only on change.
@@ -104,7 +104,7 @@ export class IsoScene {
 
   constructor(readonly canvas: HTMLCanvasElement, seed: number) {
     // The canvas fills whatever box the game window gives it; the internal buffer
-    // is set by `resize` from that box (spec 039).
+    // is set by `resize` from that box (spec 041).
     canvas.style.width = '100%';
     canvas.style.height = '100%';
     canvas.style.imageRendering = 'pixelated';
@@ -153,7 +153,7 @@ export class IsoScene {
   }
 
   /**
-   * Match the internal buffer to the canvas's CSS box (spec 039). The buffer
+   * Match the internal buffer to the canvas's CSS box (spec 041). The buffer
    * keeps a fixed pixel height, so growing the window enlarges the framed area
    * rather than the pixels; the camera's vertical span is held constant and its
    * width follows the aspect. Cheap to call every frame: it early-outs unless
@@ -224,7 +224,7 @@ export class IsoScene {
 
   /**
    * Tell the scene where the cursor is, in canvas CSS pixels, so the unit under
-   * it gets its white outline (spec 039). The pick is a raycast against the
+   * it gets its white outline (spec 041). The pick is a raycast against the
    * models, so pointing at a unit's *body* hovers it, not only its feet. Pass
    * null when the cursor is off the game window. Cosmetic only -- hovering
    * changes nothing in the sim.
@@ -439,7 +439,7 @@ export class IsoScene {
 
   /**
    * Drop a dimmer marker on each destination stacked behind the standing order
-   * (spec 038), so a shift-clicked plan is visible. Markers are pooled: the list
+   * (spec 040), so a shift-clicked plan is visible. Markers are pooled: the list
    * only ever grows to the sim's queue cap.
    */
   private updateQueuedMarkers(queue: readonly Vec2[]): void {

@@ -6,7 +6,7 @@ import { initCombat, runSim, step } from './combat.js';
 import { NEUTRAL_INPUT, type CombatState, type InputFrame, type Vec2 } from './types.js';
 
 /**
- * Queued move orders (spec 038): a shift-click stacks a destination behind the
+ * Queued move orders (spec 040): a shift-click stacks a destination behind the
  * standing order instead of replacing it, and the queue is walked one leg at a
  * time. These are sim-level assertions -- the renderer only reports the shift.
  */
@@ -37,7 +37,7 @@ function walkOut(state: CombatState, max = 900): CombatState {
   return s;
 }
 
-describe('queued move orders (spec 038)', () => {
+describe('queued move orders (spec 040)', () => {
   it('starts with an empty queue', () => {
     expect(arena().player.moveQueue).toEqual([]);
   });

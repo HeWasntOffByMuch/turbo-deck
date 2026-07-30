@@ -82,7 +82,7 @@ export interface PlayerState {
    */
   readonly movePath: readonly Vec2[];
   /**
-   * Destinations to walk after `moveTarget` (spec 038), in order; empty when
+   * Destinations to walk after `moveTarget` (spec 040), in order; empty when
    * none are queued. The head is promoted to the standing order -- and routed
    * from where the unit stands -- on the tick the current one is reached.
    */
@@ -321,7 +321,7 @@ export interface InputFrame {
   readonly moveTarget?: Vec2;
   /**
    * Append this tick's `moveTarget` to the move queue instead of replacing the
-   * standing order (spec 038) -- the shift-click plan-ahead. Ignored without a
+   * standing order (spec 040) -- the shift-click plan-ahead. Ignored without a
    * `moveTarget`. With no standing order there is nothing to queue behind, so the
    * destination simply becomes the standing order.
    */

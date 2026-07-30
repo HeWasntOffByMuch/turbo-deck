@@ -19,7 +19,7 @@ import { mountDebug } from './debug-view.js';
  *
  * The combat view is the *game window*: it fills the viewport, and every piece of
  * UI -- the tab bar, the settings cog, the HUD and its tooltips -- floats on top
- * of it (spec 039). The two sandbox tabs keep their ordinary scrolling layout.
+ * of it (spec 041). The two sandbox tabs keep their ordinary scrolling layout.
  */
 
 const TICK_MS = 1000 / TICK_RATE;
@@ -28,7 +28,7 @@ const MAX_CATCH_UP = 8;
 /**
  * Mount the combat view (spec 031/039): a fullscreen game window with the HUD
  * overlaid. The MOBA move order raycasts the cursor onto the ground each tick, a
- * right-click issues a move order (shift-click queues one, spec 038), and a
+ * right-click issues a move order (shift-click queues one, spec 040), and a
  * left-click fires a basic attack toward the cursor. Returns a start/stop handle.
  */
 function mountCombat(container: HTMLElement): ViewHandle {
@@ -113,7 +113,7 @@ function main(): void {
     { label: 'Rig debug', mount: mountDebug },
   ];
 
-  // The bar floats over the game window rather than pushing it down (spec 039);
+  // The bar floats over the game window rather than pushing it down (spec 041);
   // the container beneath it is the full viewport, and the sandbox tabs scroll
   // inside it with enough headroom to clear the bar.
   const bar = document.createElement('div');

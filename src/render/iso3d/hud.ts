@@ -5,7 +5,7 @@ import { MAX_ADRENALINE, TICK_RATE, WAVE_BASE_COUNT } from '../../sim/constants.
 import type { IsoInputCapture } from './input.js';
 
 /**
- * The heads-up display for the fullscreen iso game window (spec 039). Every
+ * The heads-up display for the fullscreen iso game window (spec 041). Every
  * piece of it floats *over* the canvas: the game window is the whole viewport,
  * and status, hand, wave controls and reward pickers are overlays on top of it.
  *

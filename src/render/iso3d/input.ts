@@ -6,8 +6,8 @@ import type { Vec2 } from '../../sim/types.js';
  * game's MOBA scheme (spec 028): movement is a right-click move order to the
  * world point under the cursor -- no held-button movement -- and holding shift
  * while right-clicking queues the destination behind the standing order instead
- * of replacing it (spec 038). The cursor world point is the aim/target for cards
- * (a dash fires toward it). The hand is played with Q/W/E/R (spec 039), C cycles
+ * of replacing it (spec 040). The cursor world point is the aim/target for cards
+ * (a dash fires toward it). The hand is played with Q/W/E/R (spec 041), C cycles
  * the movement character, and Space summons a wave. It reports intent only and
  * decides no game outcome.
  *
@@ -17,7 +17,7 @@ import type { Vec2 } from '../../sim/types.js';
  */
 
 /**
- * Hand slot per key (spec 039): the four slots sit under the left hand on
+ * Hand slot per key (spec 041): the four slots sit under the left hand on
  * Q/W/E/R, with the digits kept as aliases for anyone used to them.
  */
 export const HAND_KEYS: Record<string, 0 | 1 | 2 | 3> = {
@@ -30,7 +30,7 @@ export const HAND_KEYS: Record<string, 0 | 1 | 2 | 3> = {
   Digit3: 2,
   Digit4: 3,
 };
-/** Summon the next wave. Moved off Q when the hand took it (spec 039). */
+/** Summon the next wave. Moved off Q when the hand took it (spec 041). */
 export const WAVE_KEY = 'Space';
 export const CYCLE_CHARACTER_KEY = 'KeyC';
 
@@ -108,7 +108,7 @@ export class IsoInputCapture {
     return this.mouse;
   }
 
-  // --- Queued from the HUD's buttons (spec 039); each is consumed by one sample. ---
+  // --- Queued from the HUD's buttons (spec 041); each is consumed by one sample. ---
   queuePlay(slot: 0 | 1 | 2 | 3): void {
     this.queuedPlay = slot;
   }

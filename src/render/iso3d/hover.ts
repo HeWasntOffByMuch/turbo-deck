@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { Vec2 } from '../../sim/types.js';
 
 /**
- * Which unit the cursor is over (spec 039).
+ * Which unit the cursor is over (spec 041).
  *
  * A unit is hovered by pointing at either half of what you see of it:
  *

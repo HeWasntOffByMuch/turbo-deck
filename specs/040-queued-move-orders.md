@@ -1,4 +1,4 @@
-# 038 — Queued move orders
+# 040 — Queued move orders
 
 ## Problem
 
@@ -66,4 +66,4 @@ Rules:
 - Queuing anything other than movement (no queued casts or attack-moves).
 - Reordering, removing, or clearing individual queue entries.
 - Enemy pathing: enemies keep chasing the player and never queue orders.
-- Rendering the queued waypoints — spec 039 covers the view.
+- Rendering the queued waypoints — spec 041 covers the view.
