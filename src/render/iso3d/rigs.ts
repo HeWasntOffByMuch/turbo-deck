@@ -700,10 +700,11 @@ function pairOf(legIndex: number, numLegs: number): number {
 }
 
 function partnerOf(legIndex: number, numLegs: number): number {
-  // The partner is the leg opposite across the circle (diagonal).
-  // For 4 legs: partner of 0 is 3 (opposite), partner of 1 is 2 (opposite).
-  // For 6 legs: partner of 0 is 3, partner of 1 is 4, partner of 2 is 5.
-  return (legIndex + Math.floor(numLegs / 2)) % numLegs;
+  // The partner in the same pair (same pairOf value).
+  // For 4 legs with alternating pairs: partner of 0 is 2, of 1 is 3, of 2 is 0, of 3 is 1.
+  // This keeps the diagonal pairs [0,2] and [1,3] stepping together.
+  // For N legs: partner is 2 steps away in the pair cycle.
+  return (legIndex + 2) % numLegs;
 }
 
 /**
@@ -807,6 +808,7 @@ export class MechRig {
   private legs: MechLeg[];
   private plants: LegPlant[];
   private lastNumLegs = -1;
+  private legJustRecreated = false;
   private readonly bodyColor: number;
   private readonly legColor: number;
   // Body meshes + their base (scale-1) positions, so a size change can resize them.
@@ -875,17 +877,34 @@ export class MechRig {
     const numLegs = Math.round(clamp(this.tuning.numLegs, 3, 8));
     if (numLegs === this.lastNumLegs) return;
     this.lastNumLegs = numLegs;
+    this.legJustRecreated = true;
 
     // Generate legs arranged in a circle around the body (3-8 legs).
+    // For 4 legs: positions match the original corners.
+    // For other counts: evenly spaced around 360°.
     const corners: { x: number; z: number; isLeft: boolean }[] = [];
-    for (let i = 0; i < numLegs; i++) {
-      const angle = (i / numLegs) * TWO_PI;
-      const isLeft = i < numLegs / 2;
-      corners.push({
-        x: Math.cos(angle) * REST_X,
-        z: Math.sin(angle) * REST_Z,
-        isLeft,
-      });
+
+    if (numLegs === 4) {
+      // Preserve the original 4-leg arrangement
+      corners.push(
+        { x: REST_X, z: -REST_Z, isLeft: true },  // front-left
+        { x: REST_X, z: REST_Z, isLeft: false },   // front-right
+        { x: -REST_X, z: -REST_Z, isLeft: true },  // back-left
+        { x: -REST_X, z: REST_Z, isLeft: false },  // back-right
+      );
+    } else {
+      // For other leg counts, arrange in a circle
+      for (let i = 0; i < numLegs; i++) {
+        const angle = (i / numLegs) * TWO_PI;
+        const sx = Math.cos(angle);
+        const sz = Math.sin(angle);
+        const isLeft = sz < 0;
+        corners.push({
+          x: sx * REST_X,
+          z: sz * REST_Z,
+          isLeft,
+        });
+      }
     }
 
     this.legs = corners.map(
@@ -1017,8 +1036,8 @@ export class MechRig {
     this.lastLegRy = legRy;
     this.leadDir = worldToLocalXZ(Math.cos(ry), -Math.sin(ry), legRy);
 
-    if (this.prev === null) {
-      // First frame: drop every foot onto its rest spot so nothing snaps.
+    if (this.prev === null || this.legJustRecreated) {
+      // First frame or after leg recreation: drop every foot onto its rest spot so nothing snaps.
       for (const leg of this.plants) {
         const r = localToWorldXZ(leg.rest.x * S, leg.rest.z * S, legRy);
         leg.world = { x: wx + r.x, z: wz + r.z };
@@ -1027,6 +1046,7 @@ export class MechRig {
       this.prev = { x: wx, z: wz };
       this.prevRy = ry;
       this.bodyRy = ry;
+      this.legJustRecreated = false;
     }
 
     // Observed motion, smoothed. Steps lead along the body's facing (below), not
