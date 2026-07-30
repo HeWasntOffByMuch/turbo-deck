@@ -1,16 +1,8 @@
 import * as THREE from 'three';
-import { ARENA_HEIGHT, ARENA_WIDTH, ATTACK_ANIM_TICKS } from '../../sim/constants.js';
+import { ARENA_HEIGHT, ARENA_OBSTACLES, ARENA_WIDTH, ATTACK_ANIM_TICKS } from '../../sim/constants.js';
 import type { CombatState, Vec2 } from '../../sim/types.js';
 import { PALETTE } from './palette.js';
-import {
-  makeAttackCone,
-  makeBush,
-  makeGround,
-  makeMoveMarker,
-  makeTree,
-  makeUnwalkableMarker,
-  sectorGeometry,
-} from './meshes.js';
+import { makeAttackCone, makeBush, makeGround, makeMoveMarker, makeTree, makeUnwalkableMarker, makeWall, sectorGeometry } from './meshes.js';
 import { MechRig, Poofs, PlayerRig } from './rigs.js';
 import { worldToIso, type IsoParams } from './projection.js';
 import { footprintRadius, scatterProps } from './scatter.js';
@@ -106,6 +98,7 @@ export class IsoScene {
     ground.position.set(-bleed, 0, -bleed);
     this.scene.add(ground);
     this.addScenery(seed);
+    this.addWalls();
     this.scene.add(this.unwalkable);
 
     this.scene.add(this.playerRig.group);
@@ -115,6 +108,15 @@ export class IsoScene {
     this.scene.add(this.moveMarker);
     this.attackCone = makeAttackCone();
     this.scene.add(this.attackCone);
+  }
+
+  /** The arena's static walls (spec 037), straight from the sim's obstacle list. */
+  private addWalls(): void {
+    for (const rect of ARENA_OBSTACLES) {
+      const wall = makeWall(rect.w, rect.h);
+      wall.position.set(rect.x, 0, rect.y);
+      this.scene.add(wall);
+    }
   }
 
   /** Deterministic trees + bushes, kept clear of the arena centre / spawn. */

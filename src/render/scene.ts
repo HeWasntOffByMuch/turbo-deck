@@ -4,6 +4,7 @@ import type { CardInstance } from '../cards/types.js';
 import type { GameEvent, GameState } from '../game/session.js';
 import {
   ARENA_HEIGHT,
+  ARENA_OBSTACLES,
   ARENA_WIDTH,
   ENEMY_ATTACK_ARC_COS_SQ,
   ENEMY_ATTACK_RANGE,
@@ -362,6 +363,17 @@ export class Scene {
     const tl = this.worldToScreen({ x: 0, y: 0 });
     const br = this.worldToScreen({ x: ARENA_WIDTH, y: ARENA_HEIGHT });
     this.mapGfx.rect(tl.x, tl.y, br.x - tl.x, br.y - tl.y).stroke({ color: '#274d24', width: 5 });
+
+    // Static walls (spec 037): stone blocks with a lit top face and a shadow.
+    for (const rect of ARENA_OBSTACLES) {
+      const at = this.worldToScreen({ x: rect.x, y: rect.y });
+      const w = rect.w * ARENA_SCALE;
+      const h = rect.h * ARENA_SCALE;
+      this.mapGfx.rect(at.x + 4, at.y + 6, w, h).fill({ color: '#12200c', alpha: 0.45 });
+      this.mapGfx.rect(at.x, at.y, w, h).fill({ color: '#4a4a56' });
+      this.mapGfx.rect(at.x, at.y, w, Math.min(8, h * 0.25)).fill({ color: '#5d5d6b' });
+      this.mapGfx.rect(at.x, at.y, w, h).stroke({ color: '#2b2b33', width: 2 });
+    }
   }
 
   private drawTelegraph(state: GameState): void {

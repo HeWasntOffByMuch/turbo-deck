@@ -1,5 +1,6 @@
 import {
   ARENA_HEIGHT,
+  ARENA_OBSTACLES,
   ARENA_WIDTH,
   ATTACK_ANIM_TICKS,
   ENEMY_ATTACK_ARC_COS_SQ,
@@ -84,6 +85,8 @@ export class SpellArenaView {
     this.ingestEvents(combat.player, events);
 
     this.drawField();
+    this.drawObstacles();
+    this.drawRoutes(combat);
     this.drawGroundFires(combat.player);
     this.drawPendingAoes(combat.player, combat.tick);
     for (const enemy of combat.enemies) this.drawTelegraph(enemy, combat.tick);
@@ -142,6 +145,49 @@ export class SpellArenaView {
     ctx.strokeStyle = '#12121c';
     ctx.lineWidth = 4;
     ctx.strokeRect(2, 2, CANVAS_W - 4, CANVAS_H - 4);
+  }
+
+  /** The arena's static walls (spec 037): stone blocks with a lit top face. */
+  private drawObstacles(): void {
+    const { ctx } = this;
+    for (const rect of ARENA_OBSTACLES) {
+      const at = this.worldToScreen({ x: rect.x, y: rect.y });
+      const w = rect.w * SCALE;
+      const h = rect.h * SCALE;
+      ctx.fillStyle = 'rgba(0,0,0,0.28)'; // grounding shadow
+      ctx.fillRect(at.x + 3, at.y + 5, w, h);
+      ctx.fillStyle = '#4a4a56';
+      ctx.fillRect(at.x, at.y, w, h);
+      ctx.fillStyle = '#5d5d6b';
+      ctx.fillRect(at.x, at.y, w, Math.min(6, h * 0.25));
+      ctx.strokeStyle = '#2b2b33';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(at.x, at.y, w, h);
+    }
+  }
+
+  /**
+   * Routes around the walls (spec 037): the player's ordered detour and any
+   * blocked hunter's approach, faint enough to read as a hint.
+   */
+  private drawRoutes(combat: SpellGameState['combat']): void {
+    this.strokeRoute(combat.player.position, combat.player.movePath, 'rgba(255,224,138,0.30)');
+    for (const enemy of combat.enemies) this.strokeRoute(enemy.position, enemy.path, 'rgba(255,180,120,0.18)');
+  }
+
+  private strokeRoute(from: Vec2, path: readonly Vec2[], color: string): void {
+    if (path.length === 0) return;
+    const { ctx } = this;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    const start = this.worldToScreen(from);
+    ctx.moveTo(start.x, start.y);
+    for (const waypoint of path) {
+      const to = this.worldToScreen(waypoint);
+      ctx.lineTo(to.x, to.y);
+    }
+    ctx.stroke();
   }
 
   private drawPendingAoes(player: PlayerState, tick: number): void {
