@@ -40,6 +40,9 @@ export const PALETTE = {
   poof: 0xf2efe4,
   // Warning red marking an unwalkable terrain footprint (toggleable overlay).
   blocked: 0xd6483f,
+  // The arena's walls (spec 037): grey stone, with a lighter lit cap on top.
+  wall: 0x6b6b78,
+  wallTop: 0x84848f,
 } as const;
 
 /** Enemy body colour by sim type key, falling back to a neutral tone. */

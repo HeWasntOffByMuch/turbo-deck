@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 import { initCombat, step } from '../../sim/combat.js';
 import { characterAt } from '../../sim/characters.js';
-import { ARENA_HEIGHT, ARENA_WIDTH, TICK_RATE } from '../../sim/constants.js';
+import { ARENA_HEIGHT, ARENA_OBSTACLES, ARENA_WIDTH, TICK_RATE } from '../../sim/constants.js';
 import type { CombatState, InputFrame, Vec2 } from '../../sim/types.js';
 import { IsoInputCapture } from './input.js';
 import { PALETTE } from './palette.js';
-import { makeBush, makeGround, makeHeadingArrow, makeMoveMarker, makeTree, makeUnwalkableMarker } from './meshes.js';
+import { makeBush, makeGround, makeHeadingArrow, makeMoveMarker, makeTree, makeUnwalkableMarker, makeWall } from './meshes.js';
 import { defaultMechTuning, MechRig, type MechTuning } from './rigs.js';
 import { footprintRadius, scatterProps } from './scatter.js';
 import { createViewControls, type ViewControls } from './view-controls.js';
@@ -99,6 +99,7 @@ class MovementScene {
     ground.position.set(-bleed, 0, -bleed);
     this.scene.add(ground);
     this.addScenery(seed);
+    this.addWalls();
     this.scene.add(this.unwalkable);
 
     // A scene-managed heading arrow shows the facing for either unit (the walker
@@ -127,6 +128,15 @@ class MovementScene {
     this.scene.remove(this.active.group);
     this.active = next;
     this.scene.add(this.active.group);
+  }
+
+  /** The arena's static walls (spec 037), straight from the sim's obstacle list. */
+  private addWalls(): void {
+    for (const rect of ARENA_OBSTACLES) {
+      const wall = makeWall(rect.w, rect.h);
+      wall.position.set(rect.x, 0, rect.y);
+      this.scene.add(wall);
+    }
   }
 
   private addScenery(seed: number): void {

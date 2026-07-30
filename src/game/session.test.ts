@@ -34,6 +34,8 @@ function huntingGame(seed: number, deck: readonly string[]): GameState {
     attackAim: null,
     grazeTarget: null,
     grazeResumeTick: 0,
+    path: [],
+    repathAtTick: 0,
   };
   return { ...g, combat: { ...g.combat, enemies: [enemy], nextSpawnTick: Number.MAX_SAFE_INTEGER } };
 }

@@ -1,3 +1,5 @@
+import type { Rect } from './types.js';
+
 export const TICK_RATE = 60;
 
 // Top-down rectangular arena, in world units. Roomy so a small population and
@@ -118,6 +120,43 @@ export const WAVE_ATTACK_SPEED_GROWTH = 0.15;
 export const WAVE_MAX_ENEMIES = 40;
 // Cap on stacked incoming-damage reduction (stance + guard), so nothing is fully immune.
 export const MAX_DAMAGE_REDUCTION = 0.85;
+
+// --- Arena obstacles (spec 037) ---
+// A fixed, hand-authored layout: not seeded, so every run has the same walls.
+// Two barricades per flank with a central gap, plus a bar above and below the
+// spawn, which sits at the arena's centre. The outer ring is deliberately left
+// clear (>= 90 units) so travel along the border is never blocked, and the
+// horizontal band through the middle is an open lane between the gaps.
+export const ARENA_OBSTACLES: readonly Rect[] = [
+  { x: 300, y: 90, w: 36, h: 250 },
+  { x: 300, y: 560, w: 36, h: 250 },
+  { x: 864, y: 90, w: 36, h: 250 },
+  { x: 864, y: 560, w: 36, h: 250 },
+  { x: 500, y: 200, w: 200, h: 40 },
+  { x: 500, y: 660, w: 200, h: 40 },
+];
+
+// --- Collision resolution ---
+// Pairwise separation passes run after every unit has moved. Separation is an
+// iterative solver -- fixing one pair can nudge another back together -- and
+// four passes keep a whole wave pressing on the player under a unit of residual
+// overlap, which is invisible on a 44-unit body. Cost is trivial: the arena
+// holds a few dozen units at most.
+export const SEPARATION_ITERATIONS = 4;
+
+// --- Pathfinding (spec 037) ---
+// Nav-grid cell size. Small enough that the gaps between obstacles survive
+// being inflated by a body radius, large enough to keep the grid tiny.
+export const NAV_CELL_SIZE = 30;
+// Extra margin beyond the body radius when marking a cell blocked, so a path
+// never hugs a wall closely enough for separation to shove a unit into it.
+export const NAV_CLEARANCE = 4;
+// A hunter whose line to the player is blocked re-runs the search this often.
+export const PATH_REPLAN_TICKS = 20;
+// Distance at which a waypoint counts as reached and is consumed.
+export const PATH_WAYPOINT_EPS = 14;
+// Hard ceiling on cells expanded per search, so an unreachable goal is cheap.
+export const PATH_MAX_NODES = 1600;
 
 // --- Grazing behaviour (passive enemies) ---
 // Grazing amble speed, slower than a hunting enemy's homing speed.

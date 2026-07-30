@@ -53,6 +53,8 @@ function enemyAt(id: number, position: Vec2, overrides: Partial<EnemyState> = {}
     attackAim: null,
     grazeTarget: null,
     grazeResumeTick: Number.MAX_SAFE_INTEGER,
+    path: [],
+    repathAtTick: 0,
     ...overrides,
   };
 }
@@ -253,10 +255,11 @@ describe('MOBA movement: speed, turn rate, facing gate', () => {
   it('travels in a straight line to the target — no arc even when it must turn', () => {
     // Order due south from a unit facing east: it should move straight down the
     // x=start.x line the entire way (perpendicular offset stays ~0), never bowing
-    // east along its lagging facing.
+    // east along its lagging facing. The leg is kept short of the wall south of
+    // the spawn so this stays a test of arcing, not of routing (spec 037).
     let s = initCombat(1);
     const start = s.player.position;
-    const target = { x: start.x, y: start.y + 300 };
+    const target = { x: start.x, y: start.y + 170 };
     let maxOffset = 0;
     for (let i = 0; i < 120; i++) {
       s = step(s, moveTo(target.x, target.y)).state;

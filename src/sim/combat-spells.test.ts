@@ -33,6 +33,8 @@ function withEnemy(state: CombatState, partial: Partial<EnemyState> & { position
     attackAim: null,
     grazeTarget: null,
     grazeResumeTick: Number.MAX_SAFE_INTEGER, // stands still forever
+    path: [],
+    repathAtTick: 0,
     ...partial,
   };
   return { ...state, enemies: [...state.enemies, enemy], nextEnemyId: state.nextEnemyId + 1 };

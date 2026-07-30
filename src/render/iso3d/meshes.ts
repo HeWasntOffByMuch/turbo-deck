@@ -150,6 +150,24 @@ export function makeUnwalkableMarker(): THREE.Group {
   return g;
 }
 
+/**
+ * One of the arena's walls (spec 037): a stone block spanning the obstacle's
+ * footprint with a lighter cap so the top face reads under the iso light. Sized
+ * from the sim's rectangle, positioned by the caller at the rect's origin.
+ */
+export function makeWall(width: number, depth: number): THREE.Group {
+  const g = new THREE.Group();
+  const body = box(width, WALL_HEIGHT, depth, PALETTE.wall);
+  body.position.set(width / 2, WALL_HEIGHT / 2, depth / 2);
+  const cap = box(width, 4, depth, PALETTE.wallTop);
+  cap.position.set(width / 2, WALL_HEIGHT + 2, depth / 2);
+  g.add(body, cap);
+  return g;
+}
+
+/** Wall height: tall enough to read as solid, low enough not to hide the fight. */
+const WALL_HEIGHT = 46;
+
 /** A unit-radius ground wedge centred on +x, spanning ±`arcHalf`, laid flat. */
 export function sectorGeometry(arcHalf: number): THREE.BufferGeometry {
   const geo = new THREE.CircleGeometry(1, 24, -arcHalf, arcHalf * 2);
