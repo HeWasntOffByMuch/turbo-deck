@@ -86,6 +86,25 @@ export function makeMoveMarker(): THREE.Mesh {
 }
 
 /**
+ * A marker for a destination stacked behind the standing order (spec 040):
+ * the same shape, smaller and translucent, so the plan reads as pending rather
+ * than current. Its material is per-marker (not the shared cache) so it can
+ * fade without tinting every other marker.
+ */
+export function makeQueuedMoveMarker(): THREE.Mesh {
+  const material = new THREE.MeshBasicMaterial({
+    color: PALETTE.marker,
+    transparent: true,
+    opacity: 0.45,
+    depthWrite: false,
+  });
+  const m = new THREE.Mesh(new THREE.OctahedronGeometry(6, 0), material);
+  m.scale.y = 0.35;
+  m.visible = false;
+  return m;
+}
+
+/**
  * A flat ground arrow pointing along the unit's heading (+x local). Parented to
  * the player group -- which is rotated by the sim's `facing` -- so the turn-rate
  * rotation (spec 028's "change direction before you can move") reads on screen.

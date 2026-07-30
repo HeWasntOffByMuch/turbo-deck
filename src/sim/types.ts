@@ -81,6 +81,12 @@ export interface PlayerState {
    * so the route is computed once, when the order is issued.
    */
   readonly movePath: readonly Vec2[];
+  /**
+   * Destinations to walk after `moveTarget` (spec 040), in order; empty when
+   * none are queued. The head is promoted to the standing order -- and routed
+   * from where the unit stands -- on the tick the current one is reached.
+   */
+  readonly moveQueue: readonly Vec2[];
   /** Index into CHARACTERS: the active movement archetype (speed + turn rate). */
   readonly characterIndex: number;
   // --- RPG progression (spec 029): level up per wave, spend points on stats. ---
@@ -313,7 +319,14 @@ export interface InputFrame {
    * press, never while a button is held.
    */
   readonly moveTarget?: Vec2;
-  /** Cancel the standing move order this tick (e.g. on using a card), halting the unit (spec 028). */
+  /**
+   * Append this tick's `moveTarget` to the move queue instead of replacing the
+   * standing order (spec 040) -- the shift-click plan-ahead. Ignored without a
+   * `moveTarget`. With no standing order there is nothing to queue behind, so the
+   * destination simply becomes the standing order.
+   */
+  readonly queueMove?: boolean;
+  /** Cancel the standing move order and its queue this tick (e.g. on using a card), halting the unit (spec 028). */
   readonly cancelMove?: boolean;
   /** Spend one stat point on this stat this tick, if any are unspent (spec 029). */
   readonly allocateStat?: 'strength' | 'agility' | 'intelligence';
