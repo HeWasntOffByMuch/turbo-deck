@@ -1,3 +1,4 @@
+import { RETRO_DEFAULTS, type BayerSize, type RetroSettings } from './retro.js';
 import {
   DEFAULT_CAMERA_OFFSET,
   DEFAULT_LIGHT_OFFSET,
@@ -9,11 +10,12 @@ import {
 
 /**
  * The camera/light control panel (spec 033/034): the viewer orbits the follow
- * camera, zooms, swings the sun, and toggles the unwalkable-terrain overlay. The
- * sliders live in a popover tucked behind a cog button (spec 034) so they stay
- * out of the way until opened. It owns only the mutable widget state and derives
- * the values the scene asks for each frame; it holds no three.js and decides no
- * game rules -- the scene reads these and moves its camera/light to match.
+ * camera, zooms, swings the sun, toggles the unwalkable-terrain overlay, and
+ * dials in the retro post filter (spec 038). The sliders live in a popover
+ * tucked behind a cog button (spec 034) so they stay out of the way until
+ * opened. It owns only the mutable widget state and derives the values the scene
+ * asks for each frame; it holds no three.js and decides no game rules -- the
+ * scene reads these and moves its camera/light to match.
  */
 
 const DEG = Math.PI / 180;
@@ -29,6 +31,8 @@ export interface ViewControls {
   lightOffset(): Vec3;
   /** Whether the unwalkable-terrain footprint overlay is shown. */
   showUnwalkable(): boolean;
+  /** The retro dither/quantization filter's current settings (spec 038). */
+  retro(): RetroSettings;
 }
 
 interface Slider {
@@ -111,6 +115,47 @@ function makeCheckbox(label: string, initial: boolean, tip: string): Checkbox {
   };
 }
 
+interface Choice {
+  readonly row: HTMLElement;
+  value(): number;
+  reset(): void;
+}
+
+/** A labelled dropdown over a fixed set of numeric options; `reset()` restores `initial`. */
+function makeChoice(
+  label: string,
+  options: readonly (readonly [number, string])[],
+  initial: number,
+  tip: string,
+): Choice {
+  const row = document.createElement('label');
+  row.title = tip;
+  row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer;';
+  const name = document.createElement('span');
+  name.textContent = label;
+
+  const select = document.createElement('select');
+  select.style.cssText =
+    'font-family:inherit;font-size:12px;padding:2px 4px;border-radius:4px;' +
+    'border:1px solid #2a2a3a;background:#252533;color:#e8e8f2;';
+  for (const [value, text] of options) {
+    const option = document.createElement('option');
+    option.value = String(value);
+    option.textContent = text;
+    select.appendChild(option);
+  }
+  select.value = String(initial);
+  row.append(name, select);
+
+  return {
+    row,
+    value: () => Number(select.value),
+    reset: () => {
+      select.value = String(initial);
+    },
+  };
+}
+
 function section(text: string): HTMLElement {
   const el = document.createElement('div');
   el.textContent = text;
@@ -148,6 +193,20 @@ export function createViewControls(): ViewControls {
   const unwalkable = makeCheckbox('Unwalkable terrain', true,
     "Toggle the overlay marking tree and bush footprints the unit can't walk onto.");
 
+  const retroOn = makeCheckbox('Retro filter', RETRO_DEFAULTS.enabled,
+    'Quantize the image to a few colours per channel and dither across the bands, ' +
+    'the way a machine with too few colours would.');
+  const levels = makeSlider('Colour steps', 2, 16, 1, RETRO_DEFAULTS.levels, '',
+    'How many shades each colour channel is allowed. Fewer means harsher bands and a stronger weave.');
+  const dither = makeSlider('Dither', 0, 150, 5, Math.round(RETRO_DEFAULTS.ditherStrength * 100), '%',
+    'How far a pixel may be pushed across a band edge. 0 is flat banding; 100 fakes the shades in between.');
+  const weave = makeChoice('Weave', [[2, '2×2'], [4, '4×4'], [8, '8×8']], RETRO_DEFAULTS.matrixSize,
+    'Size of the repeating dither pattern. Smaller is a coarse checker; larger fakes more shades, more finely.');
+  const weaveScale = makeSlider('Weave size', 1, 4, 1, RETRO_DEFAULTS.ditherScale, 'px',
+    'How many pixels wide one dither cell is — bigger makes the pattern itself chunky.');
+  const pixelSize = makeSlider('Pixel size', 1, 4, 1, RETRO_DEFAULTS.pixelSize, '×',
+    'Divides the internal render resolution: bigger pixels, fewer of them.');
+
   const reset = document.createElement('button');
   reset.textContent = 'Reset';
   reset.title = 'Restore the camera, light, and terrain overlay to their defaults.';
@@ -155,7 +214,8 @@ export function createViewControls(): ViewControls {
     "font-family:inherit;font-size:12px;margin-top:2px;padding:6px 10px;border-radius:6px;cursor:pointer;" +
     'border:1px solid #2a2a3a;background:#252533;color:#e8e8f2;';
   reset.addEventListener('click', () => {
-    for (const w of [camAz, camEl, zoom, lightAz, lightEl, unwalkable]) w.reset();
+    const widgets = [camAz, camEl, zoom, lightAz, lightEl, unwalkable, retroOn, levels, dither, weave, weaveScale, pixelSize];
+    for (const w of widgets) w.reset();
   });
 
   panel.append(
@@ -168,6 +228,13 @@ export function createViewControls(): ViewControls {
     lightEl.row,
     section('Terrain'),
     unwalkable.row,
+    section('Retro'),
+    retroOn.row,
+    levels.row,
+    dither.row,
+    weave.row,
+    weaveScale.row,
+    pixelSize.row,
     reset,
   );
 
@@ -202,5 +269,13 @@ export function createViewControls(): ViewControls {
     lightOffset: () =>
       orbitToOffset({ azimuth: lightAz.value() * DEG, elevation: lightEl.value() * DEG, distance: lightOrbit.distance }),
     showUnwalkable: () => unwalkable.checked(),
+    retro: () => ({
+      enabled: retroOn.checked(),
+      levels: levels.value(),
+      ditherStrength: dither.value() / 100,
+      matrixSize: weave.value() as BayerSize,
+      ditherScale: weaveScale.value(),
+      pixelSize: pixelSize.value(),
+    }),
   };
 }

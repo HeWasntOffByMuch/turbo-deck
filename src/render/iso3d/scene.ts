@@ -8,6 +8,7 @@ import { worldToIso, type IsoParams } from './projection.js';
 import { footprintRadius, scatterProps } from './scatter.js';
 import { createViewControls, type ViewControls } from './view-controls.js';
 import { DEFAULT_CAMERA_OFFSET, DEFAULT_VIEW_HALF_WIDTH } from './view-settings.js';
+import { RetroPass } from './retro-pass.js';
 
 // Fraction of the gap to the target camera framing closed each rendered frame,
 // so orbit/zoom slider changes glide instead of snapping (spec 034).
@@ -18,8 +19,9 @@ const CAMERA_SMOOTH = 0.15;
  * flat-shaded, blocky geometry under a single directional light. It reads sim
  * state and moves meshes to match -- no game rules here. The look is forced
  * retro on purpose: the WebGL canvas renders at a low internal resolution and
- * is upscaled with `image-rendering: pixelated`, antialiasing is off, and every
- * material is single-colour flat-shaded.
+ * is upscaled with `image-rendering: pixelated`, antialiasing is off, every
+ * material is single-colour flat-shaded, and the finished image goes through the
+ * dither/quantization post filter (spec 038) that gives flat colours their weave.
  *
  * For the MOBA move order (spec 028) it also raycasts the cursor onto the ground
  * so a screen right-click becomes a world point (`screenToWorld`).
@@ -35,6 +37,8 @@ export class IsoScene {
   /** Camera/light control panel (spec 033); mount `.controls.element` beside the canvas. */
   readonly controls: ViewControls = createViewControls();
   private readonly renderer: THREE.WebGLRenderer;
+  // The retro dither/quantization post filter the finished frame goes through.
+  private readonly retro = new RetroPass(RENDER_W, RENDER_H);
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
   private readonly sun = new THREE.DirectionalLight(0xfff4e0, 2.1);
@@ -193,7 +197,8 @@ export class IsoScene {
     this.applyControls();
     this.camera.lookAt(this.target);
 
-    this.renderer.render(this.scene, this.camera);
+    this.retro.set(this.controls.retro());
+    this.retro.render(this.renderer, this.scene, this.camera);
   }
 
   /**
