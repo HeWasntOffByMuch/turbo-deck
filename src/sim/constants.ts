@@ -25,6 +25,10 @@ export const MOVE_FACING_THRESHOLD_DEG = 135;
 // A move order is considered fulfilled once the unit is within this distance of
 // the destination, at which point the standing order is cleared.
 export const MOVE_ARRIVE_EPS = 2;
+// Most destinations a shift-click may stack behind the standing order (spec 038).
+// Past the cap the extra click is dropped, so a mashed shift can't grow the plan
+// without bound.
+export const MOVE_QUEUE_MAX = 8;
 // Attack animation (spec 028): once the unit has turned to face the attack aim,
 // it winds up for this long before the attack actually fires. Moving during this
 // window (or the turn before it) cancels the attack. ~0.2s at 60Hz.

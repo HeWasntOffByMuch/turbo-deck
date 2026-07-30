@@ -170,6 +170,8 @@ export interface SpellGameState {
 export interface SpellInput {
   /** MOBA move order to a world point this tick; absent keeps the standing order (spec 028). */
   readonly moveTarget?: Vec2;
+  /** Stack this tick's `moveTarget` behind the standing order instead of replacing it (spec 038). */
+  readonly queueMove?: boolean;
   /** Swap to the next movement character preset this tick (spec 028). */
   readonly cycleCharacter?: boolean;
   /** Spend one stat point this tick (spec 029). */
@@ -320,7 +322,8 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
 
   // --- Move-cancel during the open window: hand the reserved cards back ---
   // (An in-flight attack is cancelled inside the sim; handled after combatStep.)
-  if (input.moveTarget != null && reserved.length > 0 && windowClosesAtTick !== null) {
+  // A queued order (spec 038) is a plan for later, so it cancels nothing.
+  if (input.moveTarget != null && !input.queueMove && reserved.length > 0 && windowClosesAtTick !== null) {
     for (const r of reserved) deck = restoreToHand(deck, r.slot, r.card);
     reserved = [];
     windowClosesAtTick = null;
@@ -369,6 +372,7 @@ export function stepSpellGame(state: SpellGameState, input: SpellInput): { state
     parry: false,
     dodge: false,
     ...(input.moveTarget ? { moveTarget: input.moveTarget } : {}),
+    ...(input.moveTarget && input.queueMove ? { queueMove: true } : {}),
     ...(cancelMove ? { cancelMove: true } : {}),
     ...(input.cycleCharacter ? { cycleCharacter: true } : {}),
     ...(input.allocateStat ? { allocateStat: input.allocateStat } : {}),

@@ -37,6 +37,7 @@ import {
   MAX_ENEMIES,
   MOVE_ARRIVE_EPS,
   MOVE_FACING_THRESHOLD_DEG,
+  MOVE_QUEUE_MAX,
   MOVE_SPEED_HARD_MAX,
   MOVE_SPEED_HARD_MIN,
   NORMAL_WINDOW_TICKS,
@@ -226,6 +227,52 @@ function stepPlayerMovement(
 function routeMoveOrder(from: Vec2, to: Vec2): readonly Vec2[] {
   if (segmentClear(from, to, PLAYER_RADIUS)) return [];
   return findPath(navGridFor(PLAYER_RADIUS), from, to);
+}
+
+/** The player's standing order, its route, and the destinations stacked behind it. */
+interface MoveOrder {
+  readonly target: Vec2 | null;
+  readonly path: readonly Vec2[];
+  readonly queue: readonly Vec2[];
+}
+
+/**
+ * Apply this tick's move input to the standing order (spec 028/037/038).
+ *
+ * A plain order replaces the destination and wipes the queue -- an un-shifted
+ * click is a fresh plan. A queued order (shift-click) leaves the unit walking
+ * where it was going and stacks the new destination behind it, up to
+ * MOVE_QUEUE_MAX; with nothing to queue behind it just becomes the order. No
+ * order at all keeps the standing one (cancelMove clears it and the queue).
+ *
+ * Routing runs once per order, here: re-issuing the destination the unit is
+ * already walking to (callers that resend their order every tick) keeps the
+ * route it is on rather than re-running the search, and a queued destination is
+ * not routed until it is promoted, since the route depends on where the unit
+ * will be standing then.
+ */
+function applyMoveOrder(player: PlayerState, input: InputFrame): MoveOrder {
+  const ordered = input.moveTarget;
+  if (ordered == null) {
+    if (input.cancelMove) return { target: null, path: [], queue: [] };
+    return { target: player.moveTarget, path: player.movePath, queue: player.moveQueue };
+  }
+
+  if (input.queueMove && player.moveTarget !== null) {
+    const queue =
+      player.moveQueue.length >= MOVE_QUEUE_MAX ? player.moveQueue : [...player.moveQueue, ordered];
+    return { target: player.moveTarget, path: player.movePath, queue };
+  }
+
+  const reissued =
+    player.moveTarget !== null && ordered.x === player.moveTarget.x && ordered.y === player.moveTarget.y;
+  return {
+    target: ordered,
+    path: reissued ? player.movePath : routeMoveOrder(player.position, ordered),
+    // A queued order only lands here when there was nothing to queue behind, so
+    // the (empty) queue is preserved either way; a plain order wipes it.
+    queue: input.queueMove ? player.moveQueue : [],
+  };
 }
 
 /** Step `position` toward `target` at `speed`, stopping `stopDist` short; walls block and slide. */
@@ -495,6 +542,7 @@ export function initCombat(seed: number, opts: CombatOptions = {}): CombatState 
     facing: 0,
     moveTarget: null,
     movePath: [],
+    moveQueue: [],
     characterIndex: opts.characterIndex ?? DEFAULT_CHARACTER_INDEX,
     level: 1,
     statPoints: 0,
@@ -632,7 +680,9 @@ export function step(
   // then fires (spec 028). A fresh move command cancels it. Non-attack casts
   // (dash, AOEs, buffs) resolve immediately and never enter this state.
   const incomingAttack = input.externalEffect?.kind === 'castSpells' && castIsAttack(input.externalEffect) ? input.externalEffect : null;
-  const moveCommanded = input.moveTarget != null;
+  // Only a plain order commits the unit to moving; a queued one (spec 038) is a
+  // plan for later and leaves the attack alone.
+  const moveCommanded = input.moveTarget != null && !input.queueMove;
   let pendingAttack: PendingAttack | null = state.player.pendingAttack;
   if (incomingAttack !== null && pendingAttack === null) pendingAttack = { effect: incomingAttack, fireAtTick: 0 };
   let attackCancelled = false;
@@ -642,27 +692,14 @@ export function step(
   }
   const attackAimAngle = pendingAttack !== null ? Math.atan2(pendingAttack.effect.aimY, pendingAttack.effect.aimX) : 0;
 
-  // A move order issued this tick (re)sets the standing destination; otherwise
-  // the previous order stands (cancelMove clears it -- using a card halts the
-  // unit, MOBA-style). It persists across dash/rooted ticks so movement resumes
-  // once the override ends. Off-map orders are honoured as-is: the per-tick
-  // position clamp walks the unit to the nearest edge and holds it.
-  const orderedTarget = input.moveTarget ?? (input.cancelMove ? null : state.player.moveTarget);
-  // A fresh order is routed around the walls once, here (spec 037); a standing
-  // one keeps the route it was given, and no order has none. Re-issuing the same
-  // destination (callers that pass their order every tick rather than on the
-  // click) keeps the route it is already walking instead of re-running the search.
-  const reissued =
-    input.moveTarget != null &&
-    state.player.moveTarget !== null &&
-    input.moveTarget.x === state.player.moveTarget.x &&
-    input.moveTarget.y === state.player.moveTarget.y;
-  const orderedPath =
-    input.moveTarget != null && !reissued
-      ? routeMoveOrder(state.player.position, input.moveTarget)
-      : orderedTarget === null
-        ? []
-        : state.player.movePath;
+  // This tick's order (spec 028/037/038): a plain order (re)sets the destination
+  // and clears the queue, a shift-click stacks behind it, and no order keeps the
+  // standing one. It persists across dash/rooted ticks so movement resumes once
+  // the override ends. Off-map orders are honoured as-is: the per-tick position
+  // clamp walks the unit to the nearest edge and holds it.
+  const order = applyMoveOrder(state.player, input);
+  const orderedTarget = order.target;
+  const orderedPath = order.path;
   const moved = dashing
     ? {
         // A dash cannot cross a wall: it slides along whatever it runs into.
@@ -682,12 +719,20 @@ export function step(
       : rooted
         ? { position: state.player.position, facing: state.player.facing, moveTarget: orderedTarget, movePath: orderedPath }
         : stepPlayerMovement(state.player.position, state.player.facing, orderedTarget, orderedPath, speedPerTick, maxTurnPerTick);
+  // Destination reached with more of the plan left (spec 038): promote the head
+  // of the queue on this same tick and route it from where the unit now stands,
+  // so a queued leg around a wall gets its own path.
+  const nextQueued = moved.moveTarget === null ? order.queue[0] : undefined;
+  const moveQueue = nextQueued !== undefined ? order.queue.slice(1) : order.queue;
+  const moveTarget = nextQueued ?? moved.moveTarget;
+  const movePath = nextQueued !== undefined ? routeMoveOrder(moved.position, nextQueued) : moved.movePath;
   let player: PlayerState = {
     ...state.player,
     position: moved.position,
     facing: moved.facing,
-    moveTarget: moved.moveTarget,
-    movePath: moved.movePath,
+    moveTarget,
+    movePath,
+    moveQueue,
     // Store the normalized index so it stays in range as it cycles.
     characterIndex: ((characterIndex % CHARACTERS.length) + CHARACTERS.length) % CHARACTERS.length,
     // Applied RPG stat allocation (spec 029); a Strength point also heals.
