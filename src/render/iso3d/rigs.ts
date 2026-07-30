@@ -188,6 +188,11 @@ function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
 
+/** Normalise an angle into (-pi, pi]. */
+function angleWrap(a: number): number {
+  return angleDelta(a, 0);
+}
+
 /** Shortest signed difference between two angles, in (-pi, pi]. */
 function angleDelta(to: number, from: number): number {
   let d = (to - from) % TWO_PI;
@@ -230,7 +235,6 @@ class MechLeg {
   private readonly coxa: THREE.Mesh;
   private readonly femur: THREE.Mesh;
   private readonly tibia: THREE.Mesh;
-  private readonly restAzimuth: THREE.Vector3;
   // Last solved joints in the rig-group frame, recorded at the end of `pose` for
   // the debug overlay (spec 035). Not read by the rig's own rendering.
   readonly jHip = new THREE.Vector3();
@@ -243,12 +247,20 @@ class MechLeg {
   private tibiaLen: number;
 
   constructor(
-    rest: { x: number; z: number },
     legColor: number,
     private readonly baseCoxa: number,
     private readonly baseFemur: number,
     private readonly baseTibia: number,
-    group: THREE.Group,
+    private readonly group: THREE.Group,
+    /**
+     * A stable, always-nonzero lateral sign for this leg. The coxa reaches out to
+     * this side for the leg's whole life. It must be passed in rather than derived
+     * from `rest.z`, because a leg resting on the centreline (dead ahead or behind,
+     * which happens for odd leg counts) has `rest.z == 0` and would otherwise fall
+     * back to `sign(foot.z - hip.z)` -- the flickering term that snapped the coxa
+     * ~180 degrees across the body mid-turn (fixed once in ea59a2d).
+     */
+    private readonly latSign: number,
   ) {
     this.coxa = box(6, 1, 6, darken(legColor, 0.85));
     this.femur = box(5.5, 1, 5.5, legColor);
@@ -260,8 +272,19 @@ class MechLeg {
     this.coxaLen = baseCoxa;
     this.femurLen = baseFemur;
     this.tibiaLen = baseTibia;
-    // Fallback outward direction when the foot sits directly under the hip.
-    this.restAzimuth = new THREE.Vector3(rest.x, 0, rest.z).normalize();
+  }
+
+  /**
+   * Detach this leg's three bones from the rig group and release their geometries.
+   * Required when the leg count changes: the bones are parented to the rig group,
+   * so dropping the `MechLeg` reference alone leaves them in the scene forever,
+   * frozen in their last pose (orientSegment only ever rewrites a live transform).
+   */
+  dispose(): void {
+    for (const mesh of [this.coxa, this.femur, this.tibia]) {
+      this.group.remove(mesh);
+      mesh.geometry.dispose();
+    }
   }
 
   /**
@@ -322,7 +345,9 @@ class MechLeg {
     // `sign(foot.z - hip.z)` then chatters -- snapping the coxa ~180deg inboard
     // across the body and back on a *planted* leg every time that sign flickers.
     // The leg's side is stable, so the hip segment stays outboard through the turn.
-    const latSign = Math.sign(this.restAzimuth.z) || Math.sign(foot.z - hip.z) || 1;
+    // The leg's own fixed lateral side, passed in at construction and never derived
+    // from the (moving) foot -- see the `latSign` constructor note.
+    const latSign = this.latSign;
     // The coxa is a FIXED-LENGTH hip bone that YAWS toward the foot -- it must not
     // telescope. Its length is `coxaLen * coxaScale`; `coxaSwing` sets how far it
     // leans fore/aft toward the foot. Setting the shoulder's fore/aft directly to
@@ -427,13 +452,23 @@ const BODY_SIZE = 22;
 const COUPLE_SLACK = 8; // a leg pulls its diagonal partner along if within this of triggering
 const PLACE_JITTER = 4; // per-step foot-placement noise (world units, x size)
 const STEP_COOLDOWN = 0.05; // min seconds a foot rests after a plant before it may step again
-// A foot must stay in its own quadrant relative to the body: front feet ahead of
-// MIN_FORE, back feet behind it, and each on its own side past MIN_LAT. A planted
-// foot that crosses these lines (e.g. left stranded behind the hip during a turn)
-// is forced to step, and fresh plants are clamped inside them -- so a leg never
-// reaches across or behind the body to a stranded foot.
-const MIN_FORE = 12; // min |fore/aft| offset of a foot from body centre (x size)
-const MIN_LAT = 14; // min |lateral| offset of a foot from body centre (x size)
+// A foot must stay in its own angular wedge around the body: within
+// WEDGE_MARGIN of its leg's own rest azimuth, and at least MIN_RADIUS out from the
+// body centre. A planted foot that leaves its wedge (e.g. left stranded behind the
+// hip during a turn) is forced to step, and fresh plants are clamped inside it --
+// so a leg never reaches across a neighbour or in under the body.
+//
+// This replaces the original four-quadrant sign test (front/back x left/right).
+// That test only described a leg's territory when there were exactly four legs at
+// the corners; with N legs spaced around a circle, a leg resting dead ahead has
+// `rest.z == 0` and no meaningful "side", so the quadrant clamp shoved its foot
+// sideways off its own axis and held it there -- permanently splayed, permanently
+// past its step trigger. The wedge is the same idea expressed in polar terms, and
+// reduces to roughly the old quadrant for four legs.
+const MIN_RADIUS = 13; // min distance of a foot from the body centre (x size)
+// Half-width of a leg's wedge is (pi / N) shrunk by this, so adjacent legs always
+// keep a gap between their territories and can never plant on top of each other.
+const WEDGE_MARGIN = 0.78;
 // A leg may lift into a "recovery" hold (like a spider briefly holding a leg up)
 // instead of every leg scrambling to touch down. The held foot stays over its
 // rest spot and is only *slightly* raised -- not tucked in toward the body -- and
@@ -651,6 +686,52 @@ function worldToLocalXZ(wx: number, wz: number, ry: number): { x: number; z: num
   return { x: wx * c - wz * s, z: wx * s + wz * c };
 }
 
+/**
+ * How far a body-local point (`lx`, `lz`) sits outside a leg's territory: the
+ * greater of how far it has swung past the edge of the leg's angular wedge (as an
+ * arc length, so it is comparable to the radial overstretch in world units) and
+ * how far it has crept inside `MIN_RADIUS`. Zero or negative means "inside".
+ * The polar replacement for the old `foreViol`/`latViol` quadrant tests.
+ */
+function wedgeViolation(lx: number, lz: number, leg: LegPlant, S: number): number {
+  const radius = Math.hypot(lx, lz);
+  const inward = MIN_RADIUS * S - radius;
+  // Angular deviation from the leg's own azimuth, as an arc length at this radius.
+  const dev = Math.abs(angleDelta(Math.atan2(lz, lx), leg.azimuth));
+  const past = (dev - leg.halfWedge) * Math.max(radius, 1);
+  return Math.max(inward, past);
+}
+
+/**
+ * Pull a body-local point back inside a leg's territory: rotate it onto the nearest
+ * edge of the leg's wedge if it has swung past, and push it out to `MIN_RADIUS` if
+ * it has crept in under the body. Returns the corrected point.
+ */
+function clampToWedge(lx: number, lz: number, leg: LegPlant, S: number): { x: number; z: number } {
+  let radius = Math.hypot(lx, lz);
+  let angle = Math.atan2(lz, lx);
+  if (!(radius > 1e-4)) {
+    // Degenerate: the point is at the body centre and has no direction. Put it on
+    // the leg's own axis rather than letting atan2(0, 0) pick one arbitrarily.
+    radius = MIN_RADIUS * S;
+    angle = leg.azimuth;
+  }
+  const dev = angleDelta(angle, leg.azimuth);
+  if (Math.abs(dev) > leg.halfWedge) {
+    // Outside the wedge, ease the held position from the wedge edge back to the
+    // leg's own axis as the point swings further off (weight 1 at the edge, 0 at a
+    // half turn). This has to be *continuous*, including through the +-180 degree
+    // seam where `angleDelta` flips sign: a plain "clamp to the nearer edge" is
+    // bistable out there and snaps a stranded foot between the two edges frame to
+    // frame, wrenching the hip segment from full-aft to full-fore. Here the weight
+    // reaches 0 exactly at the seam, so the sign flip moves the foot not at all.
+    const w = (Math.PI - Math.abs(dev)) / (Math.PI - leg.halfWedge);
+    angle = leg.azimuth + Math.sign(dev) * leg.halfWedge * w;
+  }
+  if (radius < MIN_RADIUS * S) radius = MIN_RADIUS * S;
+  return { x: Math.cos(angle) * radius, z: Math.sin(angle) * radius };
+}
+
 /** The mech's current gait, chosen from observed speed / accel / turn rate. */
 export type LocomotionState = 'idle' | 'walking' | 'running' | 'turning' | 'stopping';
 
@@ -658,8 +739,28 @@ export type LocomotionState = 'idle' | 'walking' | 'running' | 'turning' | 'stop
 interface LegPlant {
   /** The corner offset (fore/aft, lateral) of this leg's rest spot, at size scale 1. */
   readonly rest: { readonly x: number; readonly z: number };
-  /** Lateral side sign (from `rest.z`) for inside/outside turn-step biasing. */
+  /** Lateral weight in -1..1 (the rest azimuth's sine) for inside/outside turn bias. */
   readonly side: number;
+  /**
+   * The fixed side the coxa reaches out to: always exactly -1 or +1, chosen once.
+   * Odd leg counts put one leg on the fore/aft centreline (mirror symmetry with an
+   * odd count forces it), where `sin(azimuth)` is a denormal ~1e-16 and its sign is
+   * floating-point noise. Deciding the side up front keeps that leg's hip segment
+   * from picking a direction out of rounding error.
+   */
+  readonly latSign: number;
+  /**
+   * Direction of this leg's rest spot as seen from the body centre: its azimuth,
+   * and the matching unit vector. This is the leg's territory -- its hip sits along
+   * it, its foot is kept inside a wedge around it, and its steps lead out from it.
+   * Replaces reading front/back and left/right off `sign(rest.x)`/`sign(rest.z)`,
+   * which only distinguished legs when there were exactly four of them.
+   */
+  readonly azimuth: number;
+  readonly ux: number;
+  readonly uz: number;
+  /** Half-width of this leg's angular territory, in radians (from the leg count). */
+  readonly halfWedge: number;
   /** A stable per-leg seed so its noise (timing/placement/knee) differs from the others. */
   readonly seed: number;
   /** A fixed per-leg trigger offset (breaks lockstep without per-frame flicker). */
@@ -689,16 +790,11 @@ interface LegPlant {
   arcH: number;
 }
 
-/** Compute pair and partner indices for N legs arranged in a circle.
- * Pairs alternate (0,2,4,... in pair 0; 1,3,5,... in pair 1) so one pair swings
- * while the opposite stays planted. For 4 legs, this matches the original tetrapod gait.
+/**
+ * The leg on the far side of the ring, pulled along with `legIndex` when it is
+ * nearly ready to step so opposite legs tend to swing together. For four legs this
+ * is the diagonal partner.
  */
-function pairOf(legIndex: number, numLegs: number): number {
-  // Even indices get pair 0, odd get pair 1.
-  void numLegs; // allow arbitrary leg counts
-  return legIndex % 2;
-}
-
 function partnerOf(legIndex: number, numLegs: number): number {
   // The partner in the same pair (same pairOf value).
   // For 4 legs with alternating pairs: partner of 0 is 2, of 1 is 3, of 2 is 0, of 3 is 1.
@@ -873,46 +969,84 @@ export class MechRig {
     this.recreateLegs();
   }
 
+  /**
+   * Build (or rebuild) the leg set for `tuning.numLegs`, a no-op unless the count
+   * actually changed. Legs are spaced evenly around the body on an ellipse of
+   * REST_X x REST_Z, each owning an angular wedge of the ground around it. The
+   * classic four-leg mech is just the N=4 case of this, with its legs falling at
+   * the same corners as before.
+   *
+   * Old legs are disposed, not dropped: their bones are parented to the rig group,
+   * so letting them go without detaching leaves them in the scene forever, frozen
+   * in their last pose.
+   */
   private recreateLegs(): void {
     const numLegs = Math.round(clamp(this.tuning.numLegs, 3, 8));
     if (numLegs === this.lastNumLegs) return;
     this.lastNumLegs = numLegs;
     this.legJustRecreated = true;
 
-    // Generate legs arranged in a circle around the body (3-8 legs).
-    // For 4 legs: positions match the original corners.
-    // For other counts: evenly spaced around 360°.
-    const corners: { x: number; z: number; isLeft: boolean }[] = [];
+    for (const leg of this.legs) leg.dispose();
 
-    if (numLegs === 4) {
-      // Preserve the original 4-leg arrangement
-      corners.push(
-        { x: REST_X, z: -REST_Z, isLeft: true },  // front-left
-        { x: REST_X, z: REST_Z, isLeft: false },   // front-right
-        { x: -REST_X, z: -REST_Z, isLeft: true },  // back-left
-        { x: -REST_X, z: REST_Z, isLeft: false },  // back-right
+    // Rest spots, ordered by azimuth *going around the body*. That ordering is what
+    // makes the alternating-pair gait work: `pairOf` is `i % 2`, so consecutive legs
+    // land in opposite pairs and each pair is a set of every-other leg around the
+    // ring -- the diagonal for four legs, the classic insect tripod for six. (The
+    // legacy corner list was ordered FL, FR, BL, BR, which is *not* circular: taking
+    // every other one from it would lift both left legs at once and fall over.)
+    const rests = Array.from({ length: numLegs }, (_, i) => {
+      // Offset by half a step so no leg sits on the centreline at even counts and
+      // the set stays mirror-symmetric front-to-back.
+      const azimuth = angleWrap(((i + 0.5) / numLegs) * TWO_PI);
+      const ux = Math.cos(azimuth);
+      const uz = Math.sin(azimuth);
+      // Rest on the outline of the REST_X x REST_Z box, in polar form, so the stance
+      // keeps the body's oval footprint at any leg count. At N=4 the azimuths are
+      // +-45/135 degrees and this puts the feet on the box's corners -- the same
+      // four rest spots the mech has always used.
+      const r = Math.min(REST_X / Math.max(Math.abs(ux), 1e-6), REST_Z / Math.max(Math.abs(uz), 1e-6));
+      // Snap a centreline leg's lateral component to a clean zero so `side` is 0
+      // (no inside/outside role in a turn) rather than a denormal, and pick its coxa
+      // side from the index so it is stable instead of rounding-dependent.
+      const lateral = Math.abs(uz) < 1e-9 ? 0 : uz;
+      const latSign = lateral !== 0 ? Math.sign(lateral) : i % 2 === 0 ? 1 : -1;
+      return { azimuth, ux, uz: lateral, x: ux * r, z: lateral * r, latSign };
+    });
+    // Each leg's wedge is half the angular gap to its nearest neighbour, shrunk by
+    // WEDGE_MARGIN so adjacent territories never touch. Derived from the actual
+    // azimuths rather than assuming even spacing, so it stays correct if the layout
+    // is ever changed to an uneven one.
+    const halfWedges = rests.map((r, i) => {
+      const prev = rests[(i - 1 + numLegs) % numLegs] as (typeof rests)[number];
+      const next = rests[(i + 1) % numLegs] as (typeof rests)[number];
+      const gap = Math.min(
+        Math.abs(angleDelta(r.azimuth, prev.azimuth)),
+        Math.abs(angleDelta(next.azimuth, r.azimuth)),
       );
-    } else {
-      // For other leg counts, arrange in a circle
-      for (let i = 0; i < numLegs; i++) {
-        const angle = (i / numLegs) * TWO_PI;
-        const sx = Math.cos(angle);
-        const sz = Math.sin(angle);
-        const isLeft = sz < 0;
-        corners.push({
-          x: sx * REST_X,
-          z: sz * REST_Z,
-          isLeft,
-        });
-      }
-    }
+      return (gap / 2) * WEDGE_MARGIN;
+    });
 
-    this.legs = corners.map(
-      (c) => new MechLeg({ x: c.x, z: c.z }, this.legColor, COXA_LEN, FEMUR_LEN, TIBIA_LEN, this.group),
+    this.legs = rests.map(
+      (r) =>
+        new MechLeg(
+          this.legColor,
+          COXA_LEN,
+          FEMUR_LEN,
+          TIBIA_LEN,
+          this.group,
+          r.latSign,
+        ),
     );
-    this.plants = corners.map((c, i) => ({
-      rest: { x: c.x, z: c.z },
-      side: Math.sign(c.z) || (c.isLeft ? -1 : 1),
+    this.plants = rests.map((r, i) => ({
+      rest: { x: r.x, z: r.z },
+      azimuth: r.azimuth,
+      ux: r.ux,
+      uz: r.uz,
+      halfWedge: halfWedges[i] as number,
+      // Inside/outside turn biasing. A centreline leg gets 0 here, which is right:
+      // it has no inside/outside role in a turn.
+      side: r.uz,
+      latSign: r.latSign,
       seed: i * 1013 + 17,
       triggerOffset: (hash01(i * 1013 + 17) - 0.5) * 5,
       world: { x: 0, z: 0 },
@@ -973,7 +1107,9 @@ export class MechRig {
       ld.held = p.held;
 
       // Joint angles (all in the group-local frame the joints already live in).
-      const side = Math.sign(p.rest.z) || 1;
+      // Use the leg's fixed coxa side, not one re-derived from `rest.z` -- a
+      // centreline leg's `rest.z` is a denormal and would flip the reported angle.
+      const side = p.latSign;
       // Coxa protraction: fore/aft component vs the outward (lateral) component.
       ld.coxaSwingDeg = Math.atan2(leg.jShoulder.x - leg.jHip.x, side * (leg.jShoulder.z - leg.jHip.z)) * RAD2DEG;
       // Femur elevation above the horizontal (knee lifted above the shoulder).
@@ -1110,12 +1246,9 @@ export class MechRig {
       const inside = clamp(-leg.side * turnBias, 0, 1);
       const trig = (this.tuning.stepTrigger + leg.triggerOffset) * S * trigScale * (1 - 0.22 * inside);
       const radial = Math.hypot(leg.world.x - restX, leg.world.z - restZ) - trig;
-      // Foot in the body's local frame: how far it has crossed its quadrant lines.
+      // Foot in the body's local frame: how far it has left its angular wedge.
       const lf = worldToLocalXZ(leg.world.x - wx, leg.world.z - wz, ry);
-      const fore = Math.sign(leg.rest.x);
-      const foreViol = MIN_FORE * S - fore * lf.x; // >0 when the foot is behind its fore line
-      const latViol = MIN_LAT * S - leg.side * lf.z; // >0 when the foot crosses the centreline
-      const over = Math.max(radial, foreViol, latViol);
+      const over = Math.max(radial, wedgeViolation(lf.x, lf.z, leg, S));
       return { restX, restZ, over };
     });
 
@@ -1124,14 +1257,33 @@ export class MechRig {
 
     let stepping = this.plants.reduce((n, l) => n + (l.stepping ? 1 : 0), 0);
     const heldCount = this.plants.reduce((n, l) => n + (l.held ? 1 : 0), 0);
-    // While a leg is held only one other may swing, so at least two feet stay down.
-    const cap = heldCount > 0 ? 1 : Math.round(clamp(this.tuning.maxStepping, 1, 2));
     const numLegs = this.plants.length;
-    // Only one pair may be airborne at a time; find it if any.
-    let activePair = -1;
-    this.plants.forEach((l, i) => {
-      if (l.stepping) activePair = pairOf(i, numLegs);
-    });
+    // How many legs may swing at once. `maxStepping` is expressed for a four-legged
+    // mech, so scale it with the leg count: the swing budget has to grow with N or
+    // each leg waits N/4 as long for its turn and its foot drifts far past the step
+    // trigger while queued -- which is exactly what stranded the feet of the 6- and
+    // 8-legged rigs (measured: ~1.8 plants/leg/s at N=8 against 3.4 at N=4).
+    // Never more than half the legs, so at least ceil(N/2) stay planted.
+    const swingBudget = clamp(
+      Math.round(clamp(this.tuning.maxStepping, 1, 2) * (numLegs / 4)),
+      1,
+      Math.floor(numLegs / 2),
+    );
+    // While a leg is held, give up one slot so the extra support is not spent.
+    const cap = heldCount > 0 ? Math.max(1, swingBudget - 1) : swingBudget;
+    // A leg may only swing while both of its neighbours around the ring are down.
+    // This is the invariant the old "only one diagonal pair may be airborne" rule
+    // was standing in for: with four legs, the non-adjacent legs are exactly the
+    // diagonal, so this reproduces the alternating tetrapod. Unlike a two-colouring
+    // (`i % 2`) it also holds for odd leg counts, where the colours come out unequal
+    // *and* legs 0 and N-1 share a colour despite being neighbours -- which left the
+    // odd-legged rigs stepping at two thirds the rate of the even ones.
+    const neighboursDown = (i: number): boolean => {
+      const prev = this.plants[(i - 1 + numLegs) % numLegs];
+      const next = this.plants[(i + 1) % numLegs];
+      const free = (l: LegPlant | undefined): boolean => l === undefined || (!l.stepping && !l.held);
+      return free(prev) && free(next);
+    };
 
     const ranked = info
       .map((e, i) => ({ i, ...e }))
@@ -1143,18 +1295,24 @@ export class MechRig {
 
     for (const e of ranked) {
       if (stepping >= cap) break;
-      const pair = pairOf(e.i, numLegs);
-      if (activePair !== -1 && pair !== activePair) continue; // keep the opposite pair planted
       const leg = this.plants[e.i];
-      if (!leg || leg.stepping) continue;
+      if (!leg || leg.stepping || !neighboursDown(e.i)) continue;
       this.beginStep(leg, wx, wz, ry, run01, turnBias);
-      activePair = pair;
       stepping++;
-      // Pull the partner along if it is nearly ready, for a paired step.
+      // Pull the opposite leg along if it is nearly ready, for a paired step.
       const j = partnerOf(e.i, numLegs);
       const partner = this.plants[j];
       const pInfo = info[j];
-      if (partner && pInfo && !partner.stepping && partner.cooldown <= 0 && stepping < cap && pInfo.over > -COUPLE_SLACK * S) {
+      if (
+        partner &&
+        pInfo &&
+        !partner.stepping &&
+        !partner.held &&
+        partner.cooldown <= 0 &&
+        stepping < cap &&
+        neighboursDown(j) &&
+        pInfo.over > -COUPLE_SLACK * S
+      ) {
         this.beginStep(partner, wx, wz, ry, run01, turnBias);
         stepping++;
       }
@@ -1219,7 +1377,10 @@ export class MechRig {
       hleg.world = { x: wx + rest.x, z: wz + rest.z };
       hleg.y = HOLD_HEIGHT * S;
       const settling = this.speed < IDLE_SPEED && Math.abs(this.yawRate) < TURN_RATE * 0.3;
-      const needed = !allowHold || hleg.holdT > hleg.holdMax || maxOver > HOLD_EXIT_OVER * S || planted < 2 || settling;
+      // Support floor scales with the leg count: half the legs, never below two.
+      const minSupport = Math.max(2, Math.floor(this.plants.length / 2));
+      const needed =
+        !allowHold || hleg.holdT > hleg.holdMax || maxOver > HOLD_EXIT_OVER * S || planted < minSupport || settling;
       if (needed) {
         // Secure plant: swing down from the tuck to a fresh, solid foothold ahead.
         hleg.held = false;
@@ -1232,7 +1393,8 @@ export class MechRig {
 
     // Enter a hold only from a stable, fully-planted stance while in motion.
     const moving = this.speed > IDLE_SPEED || Math.abs(this.yawRate) > TURN_RATE * 0.25;
-    const minPlanted = Math.max(2, this.plants.length - 2); // need all but max 2 legs planted
+    // Enter a hold only from a fully-planted stance (every leg down).
+    const minPlanted = this.plants.length;
     if (!allowHold || this.holdCooldown > 0 || stepping > 0 || planted < minPlanted || run01 > 0.9 || !moving) return;
     let best = -1;
     let bestOver = Infinity;
@@ -1278,19 +1440,19 @@ export class MechRig {
     const dz = this.leadDir.z;
     let lx = leg.rest.x * S + dx * (lead + along) - dz * across;
     let lz = leg.rest.z * S + dz * (lead + along) + dx * across;
-    // Clamp into the leg's quadrant so it stays in front of / behind and to the
-    // side of the body it belongs to (never reaching across or behind the hip).
-    const fore = Math.sign(leg.rest.x);
-    lx = fore > 0 ? Math.max(lx, MIN_FORE * S) : Math.min(lx, -MIN_FORE * S);
-    lz = leg.side > 0 ? Math.max(lz, MIN_LAT * S) : Math.min(lz, -MIN_LAT * S);
+    // Clamp into the leg's own angular wedge so it never plants across a neighbour's
+    // territory or in under the body.
+    const wedged = clampToWedge(lx, lz, leg, S);
+    lx = wedged.x;
+    lz = wedged.z;
     // Keep the plant within the leg's reach FROM ITS HIP. `lead` alone is capped at
-    // `reach`, but the rest offset (rest.x = ±34) is added on top and turnStepBias
+    // `reach`, but the rest offset (|rest| ~ 34-42) is added on top and turnStepBias
     // lengthens the leading leg's stride, so a turn could plant the foot well past
     // coxa+femur+tibia -- the leg then over-extends and the drawn foot strands at
     // the reach cap (the "outside front leg reaching too far" in a turn). Clamp the
     // target's distance from the hip to just inside that reach so it stays coverable.
-    const hipX = fore * HIP_INSET * S;
-    const hipZ = leg.side * HIP_INSET * S;
+    const hipX = leg.ux * HIP_INSET * S;
+    const hipZ = leg.uz * HIP_INSET * S;
     const rx = lx - hipX;
     const rz = lz - hipZ;
     const rlen = Math.hypot(rx, rz);
@@ -1453,21 +1615,23 @@ export class MechRig {
       p.disp.x += (p.world.x - p.disp.x) * aFoot;
       p.disp.z += (p.world.z - p.disp.z) * aFoot;
       p.dispY += (p.y - p.dispY) * aFootY;
-      const sx = Math.sign(p.rest.x);
-      const sz = p.side;
-      _hip.set(sx * HIP_INSET * S, HIP_Y * S, sz * HIP_INSET * S).applyMatrix4(this.carriage.matrix);
+      // The hip sits along the leg's own azimuth, so every leg's shoulder is under
+      // its own territory. (The original placed all hips on four fixed body corners,
+      // which only lined up with the legs when there were exactly four of them.)
+      const hx = p.ux * HIP_INSET * S;
+      const hz = p.uz * HIP_INSET * S;
+      _hip.set(hx, HIP_Y * S, hz).applyMatrix4(this.carriage.matrix);
       // Fall back to the rest hip if the carriage matrix went bad.
-      if (!Number.isFinite(_hip.x + _hip.y + _hip.z)) _hip.set(sx * HIP_INSET * S, HIP_Y * S, sz * HIP_INSET * S);
+      if (!Number.isFinite(_hip.x + _hip.y + _hip.z)) _hip.set(hx, HIP_Y * S, hz);
       const local = worldToLocalXZ(p.disp.x - wx, p.disp.z - wz, ry);
-      // Guarantee the *drawn* foot stays in the leg's quadrant even when a fast
-      // yaw has left the world-locked plant lagging behind or across the body:
-      // hold it at the quadrant boundary (a tiny slide) rather than render the leg
-      // reaching behind or across the hip. Normal-gait feet are well inside this.
-      let fx = sx > 0 ? Math.max(local.x, MIN_FORE * S) : Math.min(local.x, -MIN_FORE * S);
-      let fz = sz > 0 ? Math.max(local.z, MIN_LAT * S) : Math.min(local.z, -MIN_LAT * S);
+      // Guarantee the *drawn* foot stays in the leg's wedge even when a fast yaw has
+      // left the world-locked plant lagging behind or across the body: hold it at the
+      // wedge boundary (a tiny slide) rather than render the leg reaching across a
+      // neighbour or in under the hip. Normal-gait feet are well inside this.
+      const wedged = clampToWedge(local.x, local.z, p, S);
       // Final clamp: finite and within the leg's reach box (no ceiling / infinity).
-      fx = sclamp(fx, -reach, reach, sx * REST_X * S);
-      fz = sclamp(fz, -reach, reach, sz * REST_Z * S);
+      const fx = sclamp(wedged.x, -reach, reach, p.rest.x * S);
+      const fz = sclamp(wedged.z, -reach, reach, p.rest.z * S);
       _foot.set(fx, sclamp(p.dispY, -4 * S, footYMax, 0), fz);
       const kneeTarget = (vnoise(p.seed + 11, this.clock * 0.5) - 0.5) * t.kneeSway;
       p.kneeCur = sclamp(p.kneeCur + (kneeTarget - p.kneeCur) * aKnee, -2, 2, 0);

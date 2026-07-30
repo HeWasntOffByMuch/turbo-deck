@@ -268,7 +268,11 @@ const SLIDER_GROUPS: readonly { readonly title: string; readonly rows: readonly 
         max: 8,
         step: 1,
         key: 'numLegs',
-        tip: 'Number of legs (3-8). Legs are arranged in a circle and step in alternating pairs.',
+        tip:
+          'How many legs the unit walks on (3–8). They are spaced evenly around the body on its oval footprint, ' +
+          'and a leg only swings while both of its neighbours are planted — so four legs walk on alternating ' +
+          'diagonals, six fall into an insect tripod, and three can only ever lift one leg at a time. ' +
+          'Changing this rebuilds the legs and re-plants the feet.',
       },
     ],
   },
@@ -339,7 +343,10 @@ const SLIDER_GROUPS: readonly { readonly title: string; readonly rows: readonly 
         max: 2,
         step: 1,
         key: 'maxStepping',
-        tip: 'How many legs may be off the ground at once — 1 is a careful gait, 2 allows a diagonal trot.',
+        tip:
+          'How many legs may be off the ground at once on a four-legged unit — 1 is a careful gait, 2 allows a ' +
+          'diagonal trot. With more legs this scales up in proportion (a 6-legged unit gets 3), never lifting ' +
+          'more than half of them, so extra legs do not each have to wait longer for a turn to step.',
       },
       {
         label: 'Raised legs',
