@@ -52,6 +52,8 @@ function almostClearedWave(seed: number): { state: SpellGameState; attackSlot: 0
     attackAim: null,
     grazeTarget: null,
     grazeResumeTick: Number.MAX_SAFE_INTEGER,
+    path: [],
+    repathAtTick: 0,
   };
   return {
     state: { ...s, combat: { ...s.combat, enemies: [enemy], waveNumber: 1, nextEnemyId: 2 } },

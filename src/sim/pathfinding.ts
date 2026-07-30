@@ -3,7 +3,7 @@ import { ARENA_HEIGHT, ARENA_OBSTACLES, ARENA_WIDTH, NAV_CELL_SIZE, NAV_CLEARANC
 import type { Rect, Vec2 } from './types.js';
 
 /**
- * Grid pathfinding for units that cannot see their target (spec 018).
+ * Grid pathfinding for units that cannot see their target (spec 037).
  *
  * A* over a uniform grid of the arena, 8-connected with no corner cutting, and
  * an octile heuristic. Cells are marked blocked by inflating every obstacle by

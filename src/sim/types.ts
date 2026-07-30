@@ -6,6 +6,14 @@ export interface Vec2 {
   readonly y: number;
 }
 
+/** Axis-aligned rectangle; the arena's only static collision shape (spec 037). */
+export interface Rect {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
 export interface DamageBuff {
   readonly amount: number;
   readonly expiresAtTick: number;
@@ -67,6 +75,12 @@ export interface PlayerState {
   readonly facing: number;
   /** Standing move-to destination in world units; null when idle / arrived. */
   readonly moveTarget: Vec2 | null;
+  /**
+   * Waypoints routing the standing order around the walls (spec 037). Empty when
+   * the destination is in plain sight, which is the common case; walls are static
+   * so the route is computed once, when the order is issued.
+   */
+  readonly movePath: readonly Vec2[];
   /** Index into CHARACTERS: the active movement archetype (speed + turn rate). */
   readonly characterIndex: number;
   // --- RPG progression (spec 029): level up per wave, spend points on stats. ---
@@ -208,6 +222,11 @@ export interface EnemyState {
   readonly grazeTarget: Vec2 | null;
   /** Tick at which a standing grazer picks its next target. */
   readonly grazeResumeTick: number;
+  // --- navigation (spec 037; meaningful only while hunting a player it can't see) ---
+  /** Remaining waypoints toward the player; empty when homing straight at them. */
+  readonly path: readonly Vec2[];
+  /** Earliest tick this enemy may re-run the path search. */
+  readonly repathAtTick: number;
   /** Bury-Feet stun: while `tick < stunnedUntilTick` the enemy neither moves nor attacks. Absent = 0. */
   readonly stunnedUntilTick?: number;
   /** Burning condition (spec 022): loses `burningDps` hp/second until this tick. Absent = not burning. */

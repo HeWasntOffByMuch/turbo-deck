@@ -1,4 +1,6 @@
 import { Rng } from '../shared/prng.js';
+import { circleBlocked, clampCircleToArena, resolveOverlaps, segmentClear, slideCircle, type Collider } from './collision.js';
+import { findPath, navGridFor } from './pathfinding.js';
 import {
   ADRENALINE_SPEED_PER_POINT,
   ARENA_HEIGHT,
@@ -38,6 +40,8 @@ import {
   MOVE_SPEED_HARD_MAX,
   MOVE_SPEED_HARD_MIN,
   NORMAL_WINDOW_TICKS,
+  PATH_REPLAN_TICKS,
+  PATH_WAYPOINT_EPS,
   PERFECT_WINDOW_TICKS,
   PLAYER_ATTACK_COOLDOWN_TICKS,
   PLAYER_ATTACK_DAMAGE,
@@ -94,10 +98,7 @@ function activeDamageBuffTotal(buffs: readonly DamageBuff[], tick: number): numb
   return buffs.reduce((sum, buff) => (buff.expiresAtTick > tick ? sum + buff.amount : sum), 0);
 }
 
-const clampToArena = (x: number, y: number): Vec2 => ({
-  x: clamp(x, ENEMY_RADIUS, ARENA_WIDTH - ENEMY_RADIUS),
-  y: clamp(y, ENEMY_RADIUS, ARENA_HEIGHT - ENEMY_RADIUS),
-});
+const clampToArena = (x: number, y: number): Vec2 => clampCircleToArena(x, y, ENEMY_RADIUS);
 
 const DEG2RAD = Math.PI / 180;
 const TWO_PI = Math.PI * 2;
@@ -173,30 +174,61 @@ function stepPlayerMovement(
   position: Vec2,
   facing: number,
   moveTarget: Vec2 | null,
+  movePath: readonly Vec2[],
   speedPerTick: number,
   maxTurn: number,
-): { position: Vec2; facing: number; moveTarget: Vec2 | null } {
-  if (moveTarget === null) return { position, facing, moveTarget: null };
+): { position: Vec2; facing: number; moveTarget: Vec2 | null; movePath: readonly Vec2[] } {
+  if (moveTarget === null) return { position, facing, moveTarget: null, movePath: [] };
 
-  const dx = moveTarget.x - position.x;
-  const dy = moveTarget.y - position.y;
+  // Walk the route's waypoints when the order had to go around a wall (spec 037),
+  // dropping each as it is reached; with no route this steers at the destination
+  // itself, which is the unchanged straight-line case.
+  let path = movePath;
+  while (path.length > 1) {
+    const head = path[0];
+    if (!head || Math.hypot(head.x - position.x, head.y - position.y) > PATH_WAYPOINT_EPS) break;
+    path = path.slice(1);
+  }
+  const leg = path[0] ?? moveTarget;
+
+  const dx = leg.x - position.x;
+  const dy = leg.y - position.y;
   const dist = Math.hypot(dx, dy);
-  if (dist <= MOVE_ARRIVE_EPS) return { position, facing, moveTarget: null };
+  const toTarget = Math.hypot(moveTarget.x - position.x, moveTarget.y - position.y);
+  if (toTarget <= MOVE_ARRIVE_EPS) return { position, facing, moveTarget: null, movePath: [] };
+  if (dist <= MOVE_ARRIVE_EPS) return { position, facing, moveTarget, movePath: path };
 
   const desired = Math.atan2(dy, dx);
   const nextFacing = turnToward(facing, desired, maxTurn);
   // Gate closed: still facing too far off, so rotate in place and don't move yet.
   if (Math.abs(normalizeAngle(desired - nextFacing)) > MOVE_FACING_THRESHOLD) {
-    return { position, facing: nextFacing, moveTarget };
+    return { position, facing: nextFacing, moveTarget, movePath: path };
   }
-  // Gate open: travel straight toward the target (no arcing along the lagging facing).
+  // Gate open: travel straight toward this leg (no arcing along the lagging facing).
   const step = Math.min(speedPerTick, dist);
-  const nextPos = clampPlayerPos(position.x + (dx / dist) * step, position.y + (dy / dist) * step);
+  const nextPos = slideCircle(position, (dx / dist) * step, (dy / dist) * step, PLAYER_RADIUS);
   const arrived = Math.hypot(moveTarget.x - nextPos.x, moveTarget.y - nextPos.y) <= MOVE_ARRIVE_EPS;
-  return { position: nextPos, facing: nextFacing, moveTarget: arrived ? null : moveTarget };
+  return {
+    position: nextPos,
+    facing: nextFacing,
+    moveTarget: arrived ? null : moveTarget,
+    movePath: arrived ? [] : path,
+  };
 }
 
-/** Step `position` toward `target` at `speed`, stopping `stopDist` short, clamped to the arena. */
+/**
+ * Route a fresh move order (spec 037). A destination in plain sight needs no
+ * route -- the empty path means "steer straight at it", the behaviour that
+ * predates this spec. One behind a wall is routed once, here: walls are static,
+ * so there is nothing to replan. An unreachable destination also yields no
+ * route, and the unit walks at it and presses against the wall as it used to.
+ */
+function routeMoveOrder(from: Vec2, to: Vec2): readonly Vec2[] {
+  if (segmentClear(from, to, PLAYER_RADIUS)) return [];
+  return findPath(navGridFor(PLAYER_RADIUS), from, to);
+}
+
+/** Step `position` toward `target` at `speed`, stopping `stopDist` short; walls block and slide. */
 function moveToward(position: Vec2, target: Vec2, speed: number, stopDist: number): Vec2 {
   const dx = target.x - position.x;
   const dy = target.y - position.y;
@@ -204,7 +236,41 @@ function moveToward(position: Vec2, target: Vec2, speed: number, stopDist: numbe
   if (distSq <= stopDist * stopDist) return position;
   const dist = Math.sqrt(distSq);
   const step = Math.min(speed, dist - stopDist);
-  return clampToArena(position.x + (dx / dist) * step, position.y + (dy / dist) * step);
+  return slideCircle(position, (dx / dist) * step, (dy / dist) * step, ENEMY_RADIUS);
+}
+
+/**
+ * Close on the player, going around walls when it cannot see them (spec 037).
+ * With a clear line the enemy homes straight in, exactly as it did before this
+ * spec; otherwise it follows a path, replanning at most every
+ * PATH_REPLAN_TICKS and consuming waypoints as it reaches them.
+ */
+function huntMove(enemy: EnemyState, playerPos: Vec2, speed: number, tick: number): EnemyState {
+  if (segmentClear(enemy.position, playerPos, ENEMY_RADIUS)) {
+    const position = moveToward(enemy.position, playerPos, speed, ENEMY_STANDOFF);
+    return enemy.path.length === 0 ? { ...enemy, position } : { ...enemy, position, path: [] };
+  }
+
+  let path = enemy.path;
+  let repathAtTick = enemy.repathAtTick;
+  if (tick >= repathAtTick) {
+    path = findPath(navGridFor(ENEMY_RADIUS), enemy.position, playerPos);
+    repathAtTick = tick + PATH_REPLAN_TICKS;
+  }
+  // Drop waypoints already reached (the last one is the player: stop short of them).
+  while (path.length > 0) {
+    const head = path[0];
+    if (!head) break;
+    const eps = path.length === 1 ? ENEMY_STANDOFF : PATH_WAYPOINT_EPS;
+    if (distanceSq(enemy.position, head) > eps * eps) break;
+    path = path.slice(1);
+  }
+  const waypoint = path[0];
+  // No route: fall back to homing, which at least presses toward the player.
+  const position = waypoint
+    ? moveToward(enemy.position, waypoint, speed, 0)
+    : moveToward(enemy.position, playerPos, speed, ENEMY_STANDOFF);
+  return { ...enemy, position, path, repathAtTick };
 }
 
 /** True if `enemy` is within reach and inside the aim cone (pure dot-product, no trig). */
@@ -218,14 +284,6 @@ function attackConnects(player: Vec2, enemy: Vec2, aimX: number, aimY: number): 
   if (dot <= 0) return false;
   const lenSqAim = aimX * aimX + aimY * aimY;
   return dot * dot >= ATTACK_ARC_COS_SQ * lenSqD * lenSqAim;
-}
-
-/** Clamp a point to the player's movable bounds. */
-function clampPlayerPos(x: number, y: number): Vec2 {
-  return {
-    x: clamp(x, PLAYER_RADIUS, ARENA_WIDTH - PLAYER_RADIUS),
-    y: clamp(y, PLAYER_RADIUS, ARENA_HEIGHT - PLAYER_RADIUS),
-  };
 }
 
 /** Parameterized cone hit (spec 018 spell casts); `aim` need not be normalized. */
@@ -315,14 +373,32 @@ interface SpawnOpts {
 
 const GRAZE_SPAWN: SpawnOpts = { healthMult: 1, damageMult: 1, speedMult: 1, attackSpeedMult: 1, hunting: false };
 
-/** Spawn a fresh enemy of a random type, placed away from the player. */
-function spawnEnemy(id: number, playerPos: Vec2, tick: number, draw: Draw, opts: SpawnOpts = GRAZE_SPAWN): EnemyState {
+/** True when a fresh enemy could stand at `position` without overlapping anything. */
+function spawnSpotIsFree(position: Vec2, others: readonly EnemyState[]): boolean {
+  if (circleBlocked(position, ENEMY_RADIUS)) return false;
+  const minGap = ENEMY_RADIUS * 2;
+  for (const other of others) if (distanceSq(position, other.position) < minGap * minGap) return false;
+  return true;
+}
+
+/**
+ * Spawn a fresh enemy of a random type, placed away from the player and clear of
+ * both the walls and the enemies already standing there.
+ */
+function spawnEnemy(
+  id: number,
+  playerPos: Vec2,
+  tick: number,
+  draw: Draw,
+  others: readonly EnemyState[] = [],
+  opts: SpawnOpts = GRAZE_SPAWN,
+): EnemyState {
   const type = ENEMY_TYPES[draw(0, ENEMY_TYPES.length - 1)] as EnemyType;
   let position = clampToArena(ARENA_WIDTH / 2, ARENA_HEIGHT / 2);
   const minSq = SPAWN_MIN_PLAYER_DIST * SPAWN_MIN_PLAYER_DIST;
-  for (let attempt = 0; attempt < 8; attempt++) {
+  for (let attempt = 0; attempt < 12; attempt++) {
     position = clampToArena(draw(0, ARENA_WIDTH), draw(0, ARENA_HEIGHT));
-    if (distanceSq(position, playerPos) >= minSq) break;
+    if (distanceSq(position, playerPos) >= minSq && spawnSpotIsFree(position, others)) break;
   }
   const maxHealth = Math.round(type.maxHealth * opts.healthMult);
   return {
@@ -342,10 +418,15 @@ function spawnEnemy(id: number, playerPos: Vec2, tick: number, draw: Draw, opts:
     grazeTarget: null,
     // Stagger initial wander so a fresh herd doesn't all move on the same tick.
     grazeResumeTick: tick + draw(0, GRAZE_PAUSE_MAX_TICKS),
+    path: [],
+    repathAtTick: 0,
   };
 }
 
-/** A grazing enemy: amble to a random spot, stand and "eat", repeat. Never attacks. */
+/**
+ * A grazing enemy: amble to a random spot, stand and "eat", repeat. Never
+ * attacks, and never paths -- it just gives up on a spot it can't walk to.
+ */
 function grazeStep(enemy: EnemyState, tick: number, draw: Draw): EnemyState {
   if (enemy.grazeTarget === null) {
     if (tick < enemy.grazeResumeTick) return enemy; // standing, eating
@@ -353,13 +434,22 @@ function grazeStep(enemy: EnemyState, tick: number, draw: Draw): EnemyState {
       enemy.position.x + draw(-GRAZE_WANDER_RADIUS, GRAZE_WANDER_RADIUS),
       enemy.position.y + draw(-GRAZE_WANDER_RADIUS, GRAZE_WANDER_RADIUS),
     );
+    // Don't set out for a spot inside a wall; wait and draw another one.
+    if (circleBlocked(target, ENEMY_RADIUS)) {
+      return { ...enemy, grazeResumeTick: tick + draw(GRAZE_PAUSE_MIN_TICKS, GRAZE_PAUSE_MAX_TICKS) };
+    }
     return { ...enemy, grazeTarget: target };
   }
   if (distanceSq(enemy.position, enemy.grazeTarget) <= GRAZE_ARRIVE_EPS_SQ) {
     const pause = draw(GRAZE_PAUSE_MIN_TICKS, GRAZE_PAUSE_MAX_TICKS);
     return { ...enemy, position: enemy.grazeTarget, grazeTarget: null, grazeResumeTick: tick + pause };
   }
-  return { ...enemy, position: moveToward(enemy.position, enemy.grazeTarget, GRAZE_MOVE_SPEED_PER_TICK, 0) };
+  const position = moveToward(enemy.position, enemy.grazeTarget, GRAZE_MOVE_SPEED_PER_TICK, 0);
+  // Wedged against a wall (or another unit's push): abandon this spot.
+  if (position === enemy.position) {
+    return { ...enemy, grazeTarget: null, grazeResumeTick: tick + draw(GRAZE_PAUSE_MIN_TICKS, GRAZE_PAUSE_MAX_TICKS) };
+  }
+  return { ...enemy, position };
 }
 
 /** Flip a grazing enemy to hunting; a no-op if it is already hunting. */
@@ -373,6 +463,8 @@ function aggro(enemy: EnemyState, tick: number): EnemyState {
     grazeTarget: null,
     incomingAttackOutcome: 'none',
     attackAim: null,
+    path: [],
+    repathAtTick: tick, // plan on the first tick it can't see the player
   };
 }
 
@@ -402,6 +494,7 @@ export function initCombat(seed: number, opts: CombatOptions = {}): CombatState 
     position: { x: ARENA_WIDTH * 0.5, y: ARENA_HEIGHT * 0.5 },
     facing: 0,
     moveTarget: null,
+    movePath: [],
     characterIndex: opts.characterIndex ?? DEFAULT_CHARACTER_INDEX,
     level: 1,
     statPoints: 0,
@@ -448,7 +541,7 @@ export function initCombat(seed: number, opts: CombatOptions = {}): CombatState 
   const enemies: EnemyState[] = [];
   let nextEnemyId = 1;
   for (let i = 0; i < initialEnemies; i++) {
-    enemies.push(spawnEnemy(nextEnemyId, player.position, 0, draw));
+    enemies.push(spawnEnemy(nextEnemyId, player.position, 0, draw, enemies));
     nextEnemyId++;
   }
   return {
@@ -555,23 +648,46 @@ export function step(
   // once the override ends. Off-map orders are honoured as-is: the per-tick
   // position clamp walks the unit to the nearest edge and holds it.
   const orderedTarget = input.moveTarget ?? (input.cancelMove ? null : state.player.moveTarget);
+  // A fresh order is routed around the walls once, here (spec 037); a standing
+  // one keeps the route it was given, and no order has none. Re-issuing the same
+  // destination (callers that pass their order every tick rather than on the
+  // click) keeps the route it is already walking instead of re-running the search.
+  const reissued =
+    input.moveTarget != null &&
+    state.player.moveTarget !== null &&
+    input.moveTarget.x === state.player.moveTarget.x &&
+    input.moveTarget.y === state.player.moveTarget.y;
+  const orderedPath =
+    input.moveTarget != null && !reissued
+      ? routeMoveOrder(state.player.position, input.moveTarget)
+      : orderedTarget === null
+        ? []
+        : state.player.movePath;
   const moved = dashing
     ? {
-        position: clampPlayerPos(state.player.position.x + state.player.dashDx, state.player.position.y + state.player.dashDy),
+        // A dash cannot cross a wall: it slides along whatever it runs into.
+        position: slideCircle(state.player.position, state.player.dashDx, state.player.dashDy, PLAYER_RADIUS),
         facing: state.player.facing,
         moveTarget: orderedTarget,
+        movePath: orderedPath,
       }
     : pendingAttack !== null
       ? // Aiming an attack: stationary, turning to face the mouse aim.
-        { position: state.player.position, facing: turnToward(state.player.facing, attackAimAngle, maxTurnPerTick), moveTarget: orderedTarget }
+        {
+          position: state.player.position,
+          facing: turnToward(state.player.facing, attackAimAngle, maxTurnPerTick),
+          moveTarget: orderedTarget,
+          movePath: orderedPath,
+        }
       : rooted
-        ? { position: state.player.position, facing: state.player.facing, moveTarget: orderedTarget }
-        : stepPlayerMovement(state.player.position, state.player.facing, orderedTarget, speedPerTick, maxTurnPerTick);
+        ? { position: state.player.position, facing: state.player.facing, moveTarget: orderedTarget, movePath: orderedPath }
+        : stepPlayerMovement(state.player.position, state.player.facing, orderedTarget, orderedPath, speedPerTick, maxTurnPerTick);
   let player: PlayerState = {
     ...state.player,
     position: moved.position,
     facing: moved.facing,
     moveTarget: moved.moveTarget,
+    movePath: moved.movePath,
     // Store the normalized index so it stays in range as it cycles.
     characterIndex: ((characterIndex % CHARACTERS.length) + CHARACTERS.length) % CHARACTERS.length,
     // Applied RPG stat allocation (spec 029); a Strength point also heals.
@@ -600,16 +716,40 @@ export function step(
   if (attackCancelled) events.push({ kind: 'attackCancelled', tick });
   player = { ...player, pendingAttack };
 
-  // --- Enemy movement: grazers wander, hunters home while idle ---
+  // --- Enemy movement: grazers wander, hunters close in (around walls) while idle ---
   let enemies: EnemyState[] = state.enemies.map((enemy) => {
     if (enemy.stunnedUntilTick && tick < enemy.stunnedUntilTick) return enemy; // frozen by a bury-feet stun
     if (enemy.behavior === 'grazing') return grazeStep(enemy, tick, draw);
     if (enemy.phase === 'idle') {
       const speed = enemyTypeByKey(enemy.type).moveSpeed * (enemy.speedMult ?? 1) * slowMult;
-      return { ...enemy, position: moveToward(enemy.position, player.position, speed, ENEMY_STANDOFF) };
+      return huntMove(enemy, player.position, speed, tick);
     }
     return enemy; // hunting but planted for windup/recovery
   });
+
+  // --- Hitboxes: everyone who moved gets separated, then pushed out of walls.
+  // Pinned bodies shove others aside but are never displaced: the player (so a
+  // crowd can't push them out of a telegraph they chose to stand in, and their
+  // position stays a pure function of their own orders) and any enemy planted for
+  // a wind-up or recovery (so its cone apex, and therefore its telegraph, cannot
+  // drift once committed).
+  {
+    const colliders: Collider[] = [
+      { position: player.position, radius: PLAYER_RADIUS, pinned: true },
+      ...enemies.map((enemy) => ({
+        position: enemy.position,
+        radius: ENEMY_RADIUS,
+        pinned: enemy.behavior === 'hunting' && enemy.phase !== 'idle',
+      })),
+    ];
+    const resolved = resolveOverlaps(colliders);
+    enemies = enemies.map((enemy, i) => {
+      const position = resolved[i + 1];
+      return position === undefined || (position.x === enemy.position.x && position.y === enemy.position.y)
+        ? enemy
+        : { ...enemy, position };
+    });
+  }
 
   // --- Damaging dash (three-dash fusion): strike each body it passes, once per dash ---
   if (dashing && state.player.dashDamage > 0) {
@@ -1138,7 +1278,7 @@ export function step(
   let nextSpawnTick = state.nextSpawnTick;
   let nextEnemyId = state.nextEnemyId;
   if (state.ambientSpawner && !over && tick >= nextSpawnTick && enemies.length < MAX_ENEMIES) {
-    enemies = [...enemies, spawnEnemy(nextEnemyId, player.position, tick, draw)];
+    enemies = [...enemies, spawnEnemy(nextEnemyId, player.position, tick, draw, enemies)];
     nextEnemyId++;
     nextSpawnTick = tick + ENEMY_SPAWN_INTERVAL_TICKS;
   }
@@ -1157,7 +1297,7 @@ export function step(
     };
     const spawned: EnemyState[] = [];
     for (let i = 0; i < count; i++) {
-      spawned.push(spawnEnemy(nextEnemyId, player.position, tick, draw, opts));
+      spawned.push(spawnEnemy(nextEnemyId, player.position, tick, draw, [...enemies, ...spawned], opts));
       nextEnemyId++;
     }
     enemies = [...enemies, ...spawned];

@@ -2,7 +2,7 @@ import { ARENA_HEIGHT, ARENA_OBSTACLES, ARENA_WIDTH, SEPARATION_ITERATIONS } fro
 import type { Rect, Vec2 } from './types.js';
 
 /**
- * Circle-vs-rectangle collision for the sim's units (spec 018). Every unit is
+ * Circle-vs-rectangle collision for the sim's units (spec 037). Every unit is
  * the circle it is already drawn as -- that circle is its hitbox -- and the
  * arena's obstacles are axis-aligned rectangles.
  *

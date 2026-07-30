@@ -25,6 +25,8 @@ function plant(state: CombatState, enemy: Partial<EnemyState>): CombatState {
     attackAim: null,
     grazeTarget: null,
     grazeResumeTick: 0,
+    path: [],
+    repathAtTick: 0,
     ...enemy,
   };
   return { ...state, enemies: [base] };
