@@ -39,7 +39,10 @@ function mountCombat(container: HTMLElement): ViewHandle {
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'position:absolute;inset:0;';
   const scene = new IsoScene(canvas, seed);
-  const input = new IsoInputCapture(canvas);
+  // The game window is the whole viewport and the HUD floats over the play area,
+  // so right-click belongs to the game everywhere on screen -- not just where the
+  // canvas happens to be the topmost element.
+  const input = new IsoInputCapture(canvas, { contextMenuRoot: document.documentElement });
   const hud = new IsoHud(input);
 
   // The camera/light cog floats over the top-right corner of the game window.

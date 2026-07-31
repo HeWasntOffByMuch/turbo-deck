@@ -14,6 +14,10 @@ import type { Vec2 } from '../../sim/types.js';
  * Screen->world is not done here: the scene owns the fixed camera and raycasts
  * the cursor onto the ground, so `sample` is handed the already-projected world
  * cursor and the player's world position each tick.
+ *
+ * Because right-click is a game command, the browser's context menu is suppressed
+ * across `contextMenuRoot` -- the whole game window, not merely the canvas, once
+ * a HUD floats over the play area.
  */
 
 /**
@@ -37,6 +41,24 @@ export const CYCLE_CHARACTER_KEY = 'KeyC';
 export interface ScreenPoint {
   readonly x: number;
   readonly y: number;
+}
+
+export interface IsoInputOptions {
+  /**
+   * Element across whose subtree the browser's context menu is suppressed.
+   * Defaults to the canvas, which is right for the sandbox tabs: their panels
+   * sit *beside* the view and keep an ordinary right-click.
+   *
+   * The fullscreen game window passes the document element instead. There the
+   * game is the whole viewport and every control -- the hand, the wave button,
+   * the stat buttons, the settings cog, the tab bar -- floats *on top of* the
+   * play area, so a right-click that lands on one never reaches the canvas and
+   * the browser menu opens over the game. Queueing a route with shift+right-click
+   * (spec 040) walks the cursor across exactly those corners, which is where it
+   * bites. Suppression is released again on `detach()`, so switching to a
+   * sandbox tab gives the page its right-click back.
+   */
+  readonly contextMenuRoot?: HTMLElement;
 }
 
 export class IsoInputCapture {
@@ -81,15 +103,19 @@ export class IsoInputCapture {
   };
 
   private attached: Window | null = null;
+  /** Subtree the context menu is suppressed across; see {@link IsoInputOptions}. */
+  private readonly contextMenuRoot: HTMLElement;
 
-  constructor(private readonly canvas: HTMLCanvasElement) {}
+  constructor(private readonly canvas: HTMLCanvasElement, opts: IsoInputOptions = {}) {
+    this.contextMenuRoot = opts.contextMenuRoot ?? canvas;
+  }
 
   attach(target: Window): void {
     this.attached = target;
     target.addEventListener('keydown', this.onKeyDown);
     target.addEventListener('mousemove', this.onMouseMove);
     this.canvas.addEventListener('mousedown', this.onMouseDown);
-    this.canvas.addEventListener('contextmenu', this.onContextMenu);
+    this.contextMenuRoot.addEventListener('contextmenu', this.onContextMenu);
   }
 
   /** Release the listeners `attach` added, so a hidden view stops capturing input. */
@@ -100,7 +126,7 @@ export class IsoInputCapture {
       this.attached = null;
     }
     this.canvas.removeEventListener('mousedown', this.onMouseDown);
-    this.canvas.removeEventListener('contextmenu', this.onContextMenu);
+    this.contextMenuRoot.removeEventListener('contextmenu', this.onContextMenu);
   }
 
   /** Cursor position in canvas CSS pixels, for the scene's screen->world raycast. */
