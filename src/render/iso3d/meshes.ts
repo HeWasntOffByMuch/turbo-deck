@@ -193,29 +193,3 @@ export function sectorGeometry(arcHalf: number): THREE.BufferGeometry {
   geo.rotateX(-Math.PI / 2);
   return geo;
 }
-
-/** The ground plane, split into a flat two-tone check so scale reads without texture. */
-export function makeGround(width: number, height: number): THREE.Group {
-  const g = new THREE.Group();
-  const base = new THREE.Mesh(
-    new THREE.BoxGeometry(width, 12, height),
-    flatMaterial(PALETTE.grassDark),
-  );
-  base.position.set(width / 2, -6, height / 2);
-  g.add(base);
-
-  // A sparse raised check of the lighter grass for depth cues under the iso light.
-  const cell = 150;
-  const lightMat = flatMaterial(PALETTE.grassLight);
-  for (let gy = 0; gy < height; gy += cell) {
-    for (let gx = 0; gx < width; gx += cell) {
-      if (((gx / cell) + (gy / cell)) % 2 !== 0) continue;
-      const w = Math.min(cell, width - gx);
-      const d = Math.min(cell, height - gy);
-      const patch = new THREE.Mesh(new THREE.BoxGeometry(w, 1.5, d), lightMat);
-      patch.position.set(gx + w / 2, 0.4, gy + d / 2);
-      g.add(patch);
-    }
-  }
-  return g;
-}

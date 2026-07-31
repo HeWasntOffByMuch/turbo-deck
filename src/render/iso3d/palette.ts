@@ -1,3 +1,5 @@
+import type { TerrainMaterial } from '../../terrain/types.js';
+
 /**
  * The fixed, deliberately limited colour palette for the isometric 3D scene
  * (spec 018). Flat blocks of these colours only -- no gradients, no textures.
@@ -44,6 +46,35 @@ export const PALETTE = {
   wall: 0x6b6b78,
   wallTop: 0x84848f,
 } as const;
+
+/**
+ * Terrain material colours (spec 043), two tones each. A cell takes one of the
+ * pair from a smooth noise field, so a wide expanse of one material is mottled
+ * into soft organic patches -- break-up without a texture, and without softening
+ * the boundary *between* materials, which stays hard.
+ *
+ * Tuned warm: a sunlit yellow-green meadow, orange trodden earth, weathered
+ * limestone. Cool greens and grey slate read as overcast; these read as a place
+ * you would want to walk around in.
+ */
+export const TERRAIN_COLORS: Record<TerrainMaterial, readonly [number, number]> = {
+  water: [0x4ec3d4, 0x3bacc0],
+  sand: [0xe8d49c, 0xdcc487],
+  // Sunlit meadow: yellow-olive rather than a cool lawn green.
+  grass: [0x9dbd4e, 0x86a740],
+  // Warm trodden earth -- the orange of a worn path, not brown mud.
+  dirt: [0xc8823f, 0xb37034],
+  // Warm pale stone, closer to weathered limestone than to grey slate.
+  rock: [0xc6bda9, 0xafa693],
+  snow: [0xf5f5f0, 0xe3e9e5],
+};
+
+/**
+ * The stratified stone of a terrain edge: the wall dropped wherever solid ground
+ * meets open air, so a coastline or a floating island reads as a solid mass and
+ * not a paper cut-out.
+ */
+export const TERRAIN_CLIFF_COLORS: readonly [number, number] = [0xa89a84, 0x8f8371];
 
 /** Enemy body colour by sim type key, falling back to a neutral tone. */
 export function enemyColor(type: string): number {

@@ -5,14 +5,20 @@ import { ARENA_HEIGHT, ARENA_OBSTACLES, ARENA_WIDTH, TICK_RATE } from '../../sim
 import type { CombatState, InputFrame, Vec2 } from '../../sim/types.js';
 import { IsoInputCapture } from './input.js';
 import { PALETTE } from './palette.js';
-import { makeBush, makeGround, makeHeadingArrow, makeMoveMarker, makeTree, makeUnwalkableMarker, makeWall } from './meshes.js';
+import { makeHeadingArrow, makeMoveMarker, makeUnwalkableMarker, makeWall } from './meshes.js';
+import { arenaBounds, createArenaWorld, worldMaterialAt, type TerrainWorld } from '../../terrain/index.js';
+import { buildTerrainMesh } from './terrain-mesh.js';
 import { defaultMechTuning, MechRig, type MechTuning } from './rigs.js';
-import { footprintRadius, scatterProps } from './scatter.js';
+import { footprintRadius, scatterInBounds, scatterProps } from './scatter.js';
+import { buildPropField } from './props.js';
 import { createViewControls, type ViewControls } from './view-controls.js';
 import { DEFAULT_CAMERA_OFFSET, SANDBOX_VIEW_HALF_WIDTH } from './view-settings.js';
 
 // Per-frame easing fraction for camera framing changes (spec 034), matching IsoScene.
 const CAMERA_SMOOTH = 0.15;
+
+// Vegetation stays this far clear of the play bounds, matching the game view.
+const PLANT_ARENA_MARGIN = 90;
 
 /**
  * The movement sandbox tab (spec 032/033): no game -- just one controllable unit
@@ -71,6 +77,10 @@ class MovementScene {
   private readonly raycaster = new THREE.Raycaster();
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private readonly hit = new THREE.Vector3();
+  // The sandbox stands on the same terrain the game does (spec 043).
+  private readonly terrain: TerrainWorld;
+  private readonly terrainPick: THREE.Object3D[];
+  private readonly terrainHits: THREE.Intersection[] = [];
 
   constructor(readonly canvas: HTMLCanvasElement, seed: number) {
     canvas.width = RENDER_W;
@@ -94,10 +104,10 @@ class MovementScene {
     this.scene.add(this.sun);
     this.scene.add(new THREE.AmbientLight(0x8090a0, 1.1));
 
-    const bleed = 600;
-    const ground = makeGround(ARENA_WIDTH + bleed * 2, ARENA_HEIGHT + bleed * 2);
-    ground.position.set(-bleed, 0, -bleed);
-    this.scene.add(ground);
+    this.terrain = createArenaWorld(seed);
+    const terrainMesh = buildTerrainMesh(this.terrain);
+    this.terrainPick = terrainMesh.pickTargets;
+    this.scene.add(terrainMesh.group);
     this.addScenery(seed);
     this.addWalls();
     this.scene.add(this.unwalkable);
@@ -133,38 +143,66 @@ class MovementScene {
     this.scene.add(this.active.group);
   }
 
-  /** The arena's static walls (spec 037), straight from the sim's obstacle list. */
+  /**
+   * The arena's static walls (spec 037), sunk to the lowest terrain under each
+   * footprint so a wall on a slope still meets the ground (spec 043).
+   */
   private addWalls(): void {
     for (const rect of ARENA_OBSTACLES) {
       const wall = makeWall(rect.w, rect.h);
-      wall.position.set(rect.x, 0, rect.y);
+      const low = Math.min(
+        this.terrain.heightAt(rect.x, rect.y),
+        this.terrain.heightAt(rect.x + rect.w, rect.y),
+        this.terrain.heightAt(rect.x, rect.y + rect.h),
+        this.terrain.heightAt(rect.x + rect.w, rect.y + rect.h),
+        this.terrain.heightAt(rect.x + rect.w / 2, rect.y + rect.h / 2),
+      );
+      wall.position.set(rect.x, low, rect.y);
       this.scene.add(wall);
     }
   }
 
+  /** The same two scatters the game view uses: sparse in the arena, dense outside (spec 043). */
   private addScenery(seed: number): void {
-    const props = scatterProps(seed, ARENA_WIDTH, ARENA_HEIGHT, [{ x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 }]);
-    for (const prop of props) {
-      const g = prop.kind === 'tree' ? makeTree() : makeBush();
-      g.position.set(prop.x, 0, prop.y);
-      g.scale.setScalar(prop.scale);
-      g.rotation.y = prop.rotation;
-      this.scene.add(g);
+    const arenaProps = scatterProps(seed, ARENA_WIDTH, ARENA_HEIGHT, [{ x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 }]);
+    const bounds = arenaBounds();
+    const worldProps = scatterInBounds(
+      seed ^ 0x9e3779b1,
+      bounds.minX,
+      bounds.minZ,
+      bounds.maxX,
+      bounds.maxZ,
+      (x, z) => {
+        if (x > -PLANT_ARENA_MARGIN && x < ARENA_WIDTH + PLANT_ARENA_MARGIN &&
+            z > -PLANT_ARENA_MARGIN && z < ARENA_HEIGHT + PLANT_ARENA_MARGIN) {
+          return false;
+        }
+        const material = worldMaterialAt(this.terrain, x, z);
+        return material === 'grass' || material === 'dirt';
+      },
+    );
+    const field = buildPropField([...arenaProps, ...worldProps], (x, z) => this.terrain.heightAt(x, z));
+    this.scene.add(field.group);
 
+    for (const prop of arenaProps) {
       const r = footprintRadius(prop);
       const marker = makeUnwalkableMarker();
-      marker.position.set(prop.x, 0, prop.y);
+      marker.position.set(prop.x, this.terrain.heightAt(prop.x, prop.y), prop.y);
       marker.scale.set(r, 1, r);
       this.unwalkable.add(marker);
     }
   }
 
-  /** Raycast the cursor (canvas CSS pixels) onto the ground for a move order. */
+  /** Raycast the cursor (canvas CSS pixels) onto the terrain for a move order (spec 043). */
   screenToWorld(cssX: number, cssY: number): Vec2 {
     const rect = this.canvas.getBoundingClientRect();
     const ndcX = (cssX / rect.width) * 2 - 1;
     const ndcY = -((cssY / rect.height) * 2 - 1);
     this.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
+    this.terrainHits.length = 0;
+    this.raycaster.intersectObjects(this.terrainPick, false, this.terrainHits);
+    const ground = this.terrainHits[0];
+    if (ground) return { x: ground.point.x, y: ground.point.z };
     const point = this.raycaster.ray.intersectPlane(this.groundPlane, this.hit);
     if (!point) return { x: this.target.x, y: this.target.z };
     return { x: point.x, y: point.z };
@@ -178,22 +216,28 @@ class MovementScene {
     const p = state.player;
     // A mesh built facing +x maps to world facing `theta` at rotation.y = -theta.
     const ry = -p.facing;
-    this.active.group.position.set(p.position.x, 0, p.position.y);
+    // Terrain sets only how high the unit is drawn; the sim stays flat (spec 043).
+    const groundY = this.terrain.heightAt(p.position.x, p.position.y);
+    this.active.group.position.set(p.position.x, groundY, p.position.y);
     // The spider turns its whole group to face; the walker keeps its base
     // un-yawed and turns only its turret internally.
     this.active.group.rotation.y = this.active.orientsWithGroupYaw ? ry : 0;
     this.active.update(dt, p.position, ry);
-    this.headingArrow.position.set(p.position.x, 3, p.position.y);
+    this.headingArrow.position.set(p.position.x, groundY + 3, p.position.y);
     this.headingArrow.rotation.y = ry;
 
     if (p.moveTarget) {
       this.moveMarker.visible = true;
-      this.moveMarker.position.set(p.moveTarget.x, 6, p.moveTarget.y);
+      this.moveMarker.position.set(
+        p.moveTarget.x,
+        this.terrain.heightAt(p.moveTarget.x, p.moveTarget.y) + 6,
+        p.moveTarget.y,
+      );
     } else {
       this.moveMarker.visible = false;
     }
 
-    this.target.set(p.position.x, 0, p.position.y);
+    this.target.set(p.position.x, groundY, p.position.y);
     this.applyControls();
     this.camera.lookAt(this.target);
     this.renderer.render(this.scene, this.camera);

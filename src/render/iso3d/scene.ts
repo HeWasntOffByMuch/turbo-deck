@@ -4,21 +4,21 @@ import type { CombatState, Vec2 } from '../../sim/types.js';
 import { PALETTE } from './palette.js';
 import {
   makeAttackCone,
-  makeBush,
-  makeGround,
   makeMoveMarker,
   makeQueuedMoveMarker,
-  makeTree,
   makeUnwalkableMarker,
   makeWall,
   sectorGeometry,
 } from './meshes.js';
+import { arenaBounds, createArenaWorld, worldMaterialAt, type TerrainWorld } from '../../terrain/index.js';
+import { buildTerrainMesh } from './terrain-mesh.js';
 import { attachOutline, type OutlineHandle } from './outline.js';
 import { HOVER_PLAYER_ID, pickHoveredUnit, type HoverTarget } from './hover.js';
 import type { ScreenPoint } from './input.js';
 import { MechRig, Poofs, PlayerRig } from './rigs.js';
 import { worldToIso, type IsoParams } from './projection.js';
-import { footprintRadius, scatterProps } from './scatter.js';
+import { footprintRadius, scatterInBounds, scatterProps } from './scatter.js';
+import { buildPropField } from './props.js';
 import { createViewControls, type ViewControls } from './view-controls.js';
 import { DEFAULT_CAMERA_OFFSET, DEFAULT_VIEW_HALF_WIDTH, followAlpha } from './view-settings.js';
 import { cameraFrustum, cursorToNdc, internalRenderSize } from './view-frame.js';
@@ -27,6 +27,10 @@ import { RetroPass } from './retro-pass.js';
 // Fraction of the gap to the target camera framing closed each rendered frame,
 // so orbit/zoom slider changes glide instead of snapping (spec 034).
 const CAMERA_SMOOTH = 0.15;
+
+// Vegetation is kept this far clear of the play bounds, so the world's dense
+// scatter never crowds the fight -- the arena keeps its own sparser one.
+const PLANT_ARENA_MARGIN = 90;
 
 /**
  * The isometric 3D view (spec 031): owns a three.js scene that draws the sim as
@@ -96,11 +100,22 @@ export class IsoScene {
   private prevPlayerPos: Vec2 | null = null;
   private playerStride = 0;
   private footfalls = 0;
+  // The terrain the scene stands on (spec 043): pure data, meshed once here.
+  private readonly terrain: TerrainWorld;
+  private readonly terrainPick: THREE.Object3D[];
   // Reused across cursor raycasts so screenToWorld allocates nothing per frame.
   private readonly raycaster = new THREE.Raycaster();
   private readonly groundNdc = new THREE.Vector2();
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private readonly hit = new THREE.Vector3();
+  private readonly terrainHits: THREE.Intersection[] = [];
+  // Last ground pick, keyed by everything it depends on. The fixed-timestep loop
+  // asks for the cursor's world point once per *tick* -- up to eight times in one
+  // frame -- with the cursor and camera unchanged between them, so without this
+  // the terrain gets raycast eight times over for one answer.
+  private readonly pickCache = {
+    cssX: NaN, cssY: NaN, camX: NaN, camY: NaN, camZ: NaN, hw: NaN, w: NaN, h: NaN, x: 0, y: 0,
+  };
 
   constructor(readonly canvas: HTMLCanvasElement, seed: number) {
     // The canvas fills whatever box the game window gives it; the internal buffer
@@ -130,14 +145,13 @@ export class IsoScene {
     this.scene.add(this.sun);
     this.scene.add(new THREE.AmbientLight(0x8090a0, 1.1));
 
-    // Bleed the ground well past the play bounds so the camera never frames the
-    // void beyond the arena edge while following the player. Sized for the
-    // widest zoom: at the far end of the slider the view reaches over a thousand
-    // units past a player standing on the arena's edge.
-    const bleed = 1600;
-    const ground = makeGround(ARENA_WIDTH + bleed * 2, ARENA_HEIGHT + bleed * 2);
-    ground.position.set(-bleed, 0, -bleed);
-    this.scene.add(ground);
+    // The world's terrain (spec 043). Its bounds bleed well past the play area
+    // so the camera never frames the void beyond the arena edge while following
+    // the player, even at the widest zoom.
+    this.terrain = createArenaWorld(seed);
+    const terrainMesh = buildTerrainMesh(this.terrain);
+    this.terrainPick = terrainMesh.pickTargets;
+    this.scene.add(terrainMesh.group);
     this.addScenery(seed);
     this.addWalls();
     this.scene.add(this.unwalkable);
@@ -175,49 +189,124 @@ export class IsoScene {
     this.lastHalfWidth = -1; // force the frustum to be rebuilt for the new aspect
   }
 
-  /** The arena's static walls (spec 037), straight from the sim's obstacle list. */
+  /**
+   * The arena's static walls (spec 037), straight from the sim's obstacle list.
+   * Each is sunk to the lowest terrain under its footprint so a wall crossing a
+   * slope still meets the ground along its whole length (spec 043).
+   */
   private addWalls(): void {
     for (const rect of ARENA_OBSTACLES) {
       const wall = makeWall(rect.w, rect.h);
-      wall.position.set(rect.x, 0, rect.y);
+      wall.position.set(rect.x, this.lowestGroundIn(rect.x, rect.y, rect.w, rect.h), rect.y);
       this.scene.add(wall);
     }
   }
 
-  /** Deterministic trees + bushes, kept clear of the arena centre / spawn. */
+  /** The lowest terrain height sampled over a footprint's corners and centre. */
+  private lowestGroundIn(x: number, z: number, w: number, d: number): number {
+    let low = Infinity;
+    for (const [sx, sz] of [
+      [x, z],
+      [x + w, z],
+      [x, z + d],
+      [x + w, z + d],
+      [x + w / 2, z + d / 2],
+    ] as const) {
+      low = Math.min(low, this.terrain.heightAt(sx, sz));
+    }
+    return low;
+  }
+
+  /**
+   * Scenery. Two scatters, for two different jobs: the arena's own trees and
+   * bushes (which also drive the unwalkable-footprint overlay), and a much
+   * denser spread across the surrounding world, filtered to the ground that
+   * would actually grow something -- meadow and low slopes, never a cliff face,
+   * a snowfield or the water. Both go into one instanced field, so the whole
+   * world's vegetation costs a handful of draw calls (spec 043).
+   */
   private addScenery(seed: number): void {
-    const props = scatterProps(seed, ARENA_WIDTH, ARENA_HEIGHT, [
+    const arenaProps = scatterProps(seed, ARENA_WIDTH, ARENA_HEIGHT, [
       { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
     ]);
-    for (const prop of props) {
-      const g = prop.kind === 'tree' ? makeTree() : makeBush();
-      g.position.set(prop.x, 0, prop.y);
-      g.scale.setScalar(prop.scale);
-      g.rotation.y = prop.rotation;
-      this.scene.add(g);
+    const bounds = arenaBounds();
+    const worldProps = scatterInBounds(
+      seed ^ 0x9e3779b1,
+      bounds.minX,
+      bounds.minZ,
+      bounds.maxX,
+      bounds.maxZ,
+      (x, z) => this.canPlant(x, z),
+    );
+    const field = buildPropField([...arenaProps, ...worldProps], (x, z) => this.terrain.heightAt(x, z));
+    this.scene.add(field.group);
 
+    for (const prop of arenaProps) {
       // A ground footprint marking this prop as unwalkable terrain (spec 034).
       const r = footprintRadius(prop);
       const marker = makeUnwalkableMarker();
-      marker.position.set(prop.x, 0, prop.y);
+      marker.position.set(prop.x, this.terrain.heightAt(prop.x, prop.y), prop.y);
       marker.scale.set(r, 1, r);
       this.unwalkable.add(marker);
     }
   }
 
+  /** Would anything grow here? Meadow and worn earth outside the arena floor. */
+  private canPlant(x: number, z: number): boolean {
+    if (x > -PLANT_ARENA_MARGIN && x < ARENA_WIDTH + PLANT_ARENA_MARGIN &&
+        z > -PLANT_ARENA_MARGIN && z < ARENA_HEIGHT + PLANT_ARENA_MARGIN) {
+      return false; // the arena has its own, sparser scatter
+    }
+    const material = worldMaterialAt(this.terrain, x, z);
+    return material === 'grass' || material === 'dirt';
+  }
+
   /**
-   * Raycast the cursor (in canvas CSS pixels) onto the ground plane, returning
-   * the world point for a MOBA move order / aim target. The fixed camera makes
-   * this a pure projection; the display size (not the low internal resolution)
-   * sets the NDC so upscaling doesn't skew the pick.
+   * Raycast the cursor (in canvas CSS pixels) onto the ground, returning the
+   * world point for a MOBA move order / aim target. The pick is against the
+   * terrain mesh itself (spec 043), so clicking the side of a hill orders a move
+   * to the spot the cursor is actually over rather than to where the y=0 plane
+   * happens to be behind it; the flat plane stays the fallback for a ray that
+   * misses the world entirely. The display size (not the low internal
+   * resolution) sets the NDC so upscaling doesn't skew the pick.
    */
   screenToWorld(cssX: number, cssY: number): Vec2 {
+    const cache = this.pickCache;
+    const cam = this.camera.position;
+    if (
+      cache.cssX === cssX &&
+      cache.cssY === cssY &&
+      cache.camX === cam.x &&
+      cache.camY === cam.y &&
+      cache.camZ === cam.z &&
+      cache.hw === this.halfWidth &&
+      cache.w === this.renderW &&
+      cache.h === this.renderH
+    ) {
+      return { x: cache.x, y: cache.y };
+    }
+
     const rect = this.canvas.getBoundingClientRect();
     const ndc = cursorToNdc(cssX, cssY, rect.width, rect.height);
     this.raycaster.setFromCamera(this.groundNdc.set(ndc.x, ndc.y), this.camera);
-    const point = this.raycaster.ray.intersectPlane(this.groundPlane, this.hit);
-    if (!point) return { x: this.target.x, y: this.target.z };
-    return { x: point.x, y: point.z };
+
+    this.terrainHits.length = 0;
+    this.raycaster.intersectObjects(this.terrainPick, false, this.terrainHits);
+    const ground = this.terrainHits[0];
+    const point = ground ? ground.point : this.raycaster.ray.intersectPlane(this.groundPlane, this.hit);
+    const world = point ? { x: point.x, y: point.z } : { x: this.target.x, y: this.target.z };
+
+    cache.cssX = cssX;
+    cache.cssY = cssY;
+    cache.camX = cam.x;
+    cache.camY = cam.y;
+    cache.camZ = cam.z;
+    cache.hw = this.halfWidth;
+    cache.w = this.renderW;
+    cache.h = this.renderH;
+    cache.x = world.x;
+    cache.y = world.y;
+    return world;
   }
 
   /** World ground position -> isometric screen point (for optional 2D overlays). */
@@ -243,7 +332,10 @@ export class IsoScene {
     this.lastNow = now;
 
     const p = state.player;
-    this.playerRig.group.position.set(p.position.x, 0, p.position.y);
+    // The sim is still flat (spec 043): terrain decides only how high a unit is
+    // *drawn*, never where it is. Sim positions stay 2D and terrain-unaware.
+    const playerY = this.terrain.heightAt(p.position.x, p.position.y);
+    this.playerRig.group.position.set(p.position.x, playerY, p.position.y);
     // Orient by the sim's heading (spec 028): a mesh built facing +x maps to
     // world facing `theta` at rotation.y = -theta.
     this.playerRig.group.rotation.y = -p.facing;
@@ -251,12 +343,16 @@ export class IsoScene {
     const moved = this.prevPlayerPos ? Math.hypot(p.position.x - this.prevPlayerPos.x, p.position.y - this.prevPlayerPos.y) : 0;
     this.prevPlayerPos = { x: p.position.x, y: p.position.y };
     this.playerRig.update(dt, moved);
-    this.spawnFootPoofs(p.position, p.facing, moved);
+    this.spawnFootPoofs(p.position, p.facing, moved, playerY);
     this.poofs.update(dt);
 
     if (p.moveTarget) {
       this.moveMarker.visible = true;
-      this.moveMarker.position.set(p.moveTarget.x, 6, p.moveTarget.y);
+      this.moveMarker.position.set(
+        p.moveTarget.x,
+        this.terrain.heightAt(p.moveTarget.x, p.moveTarget.y) + 6,
+        p.moveTarget.y,
+      );
     } else {
       this.moveMarker.visible = false;
     }
@@ -266,7 +362,7 @@ export class IsoScene {
     this.syncEnemies(state, dt);
 
     // Trail the player (spec 039), framed by the camera/light controls (spec 033).
-    this.followPlayer(p.position, dt);
+    this.followPlayer(p.position, playerY, dt);
     this.applyControls();
     this.camera.lookAt(this.target);
 
@@ -287,15 +383,20 @@ export class IsoScene {
    * time, so the trailing distance is the same at any frame rate. The first
    * frame snaps -- otherwise the view would open by gliding in from the arena
    * centre.
+   *
+   * The look-at point tracks the unit's terrain height too (spec 043), so
+   * walking up a hill moves the world under the unit rather than sliding the
+   * unit up the screen.
    */
-  private followPlayer(position: Vec2, dt: number): void {
+  private followPlayer(position: Vec2, groundY: number, dt: number): void {
     if (!this.targetPlaced) {
-      this.target.set(position.x, 0, position.y);
+      this.target.set(position.x, groundY, position.y);
       this.targetPlaced = true;
       return;
     }
     const alpha = followAlpha(dt, this.controls.followLagMs());
     this.target.x += (position.x - this.target.x) * alpha;
+    this.target.y += (groundY - this.target.y) * alpha;
     this.target.z += (position.y - this.target.z) * alpha;
   }
 
@@ -336,7 +437,7 @@ export class IsoScene {
    * a little behind the hero, offset to that side, rotated into world space by
    * the heading. Capped per frame so a big jump (a dash) can't spew a burst.
    */
-  private spawnFootPoofs(pos: Vec2, facing: number, moved: number): void {
+  private spawnFootPoofs(pos: Vec2, facing: number, moved: number, groundY: number): void {
     if (moved <= 0.03) return;
     const halfStride = PlayerRig.STRIDE / 2;
     let guard = 0;
@@ -347,7 +448,7 @@ export class IsoScene {
       const lz = side * PlayerRig.FOOT_SPREAD;
       const wx = pos.x + lx * Math.cos(facing) - lz * Math.sin(facing);
       const wz = pos.y + lx * Math.sin(facing) + lz * Math.cos(facing);
-      this.poofs.spawn(wx, wz);
+      this.poofs.spawn(wx, wz, groundY);
     }
     this.playerStride += moved;
   }
@@ -375,8 +476,9 @@ export class IsoScene {
     // 0 while still turning (fireAtTick 0), then ramps 0..1 across the animation.
     const charge = pa.fireAtTick === 0 ? 0 : 1 - Math.max(0, pa.fireAtTick - state.tick) / ATTACK_ANIM_TICKS;
     const r = range * (0.4 + 0.6 * charge);
+    const { x, y } = state.player.position;
     this.attackCone.visible = true;
-    this.attackCone.position.set(state.player.position.x, 2, state.player.position.y);
+    this.attackCone.position.set(x, this.terrain.heightAt(x, y) + 2, y);
     this.attackCone.rotation.y = -Math.atan2(pa.effect.aimY, pa.effect.aimX);
     this.attackCone.scale.set(r, 1, r);
     (this.attackCone.material as THREE.MeshBasicMaterial).opacity = 0.1 + 0.28 * charge;
@@ -394,7 +496,11 @@ export class IsoScene {
         this.scene.add(rig.group);
       }
       const rig = entry.rig;
-      rig.group.position.set(enemy.position.x, 0, enemy.position.y);
+      rig.group.position.set(
+        enemy.position.x,
+        this.terrain.heightAt(enemy.position.x, enemy.position.y),
+        enemy.position.y,
+      );
       const dir = { x: state.player.position.x - enemy.position.x, y: state.player.position.y - enemy.position.y };
       const ry = Math.atan2(-dir.y, dir.x);
       rig.group.rotation.y = ry;
@@ -454,7 +560,7 @@ export class IsoScene {
     this.queuedMarkers.forEach((marker, i) => {
       const point = queue[i];
       marker.visible = point !== undefined;
-      if (point) marker.position.set(point.x, 5, point.y);
+      if (point) marker.position.set(point.x, this.terrain.heightAt(point.x, point.y) + 5, point.y);
     });
   }
 }
