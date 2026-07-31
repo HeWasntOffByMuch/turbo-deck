@@ -8,9 +8,9 @@ import {
   followAlpha,
   MAX_VIEW_HALF_WIDTH,
   MIN_VIEW_HALF_WIDTH,
+  DEFAULT_CAMERA_ORBIT,
   offsetToOrbit,
   orbitToOffset,
-  SANDBOX_VIEW_HALF_WIDTH,
   zoomViewHalfWidth,
   type Vec3,
 } from './view-settings.js';
@@ -104,11 +104,9 @@ describe('clampViewHalfWidth', () => {
     expect(clampViewHalfWidth(Infinity)).toBe(DEFAULT_VIEW_HALF_WIDTH);
   });
 
-  it('keeps every opening framing reachable', () => {
-    for (const opening of [DEFAULT_VIEW_HALF_WIDTH, SANDBOX_VIEW_HALF_WIDTH]) {
-      expect(opening).toBeGreaterThanOrEqual(MIN_VIEW_HALF_WIDTH);
-      expect(opening).toBeLessThanOrEqual(MAX_VIEW_HALF_WIDTH);
-    }
+  it('keeps the opening framing reachable', () => {
+    expect(DEFAULT_VIEW_HALF_WIDTH).toBeGreaterThanOrEqual(MIN_VIEW_HALF_WIDTH);
+    expect(DEFAULT_VIEW_HALF_WIDTH).toBeLessThanOrEqual(MAX_VIEW_HALF_WIDTH);
   });
 });
 
@@ -177,5 +175,17 @@ describe('zoomViewHalfWidth', () => {
 
   it('is pure', () => {
     expect(zoomViewHalfWidth(640, -100)).toBe(zoomViewHalfWidth(640, -100));
+  });
+});
+
+describe('the defaults the view opens at (spec 044)', () => {
+  it('frames a 320-unit half-width', () => {
+    expect(DEFAULT_VIEW_HALF_WIDTH).toBe(320);
+  });
+
+  it('sits the camera 45 degrees above the ground', () => {
+    expect((DEFAULT_CAMERA_ORBIT.elevation * 180) / Math.PI).toBeCloseTo(45, 9);
+    // ...and the offset the scene actually uses agrees with the orbit.
+    expect((offsetToOrbit(DEFAULT_CAMERA_OFFSET).elevation * 180) / Math.PI).toBeCloseTo(45, 9);
   });
 });

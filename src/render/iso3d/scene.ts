@@ -1,23 +1,29 @@
 import * as THREE from 'three';
 import { ARENA_HEIGHT, ARENA_OBSTACLES, ARENA_WIDTH, ATTACK_ANIM_TICKS, ENEMY_RADIUS, PLAYER_RADIUS } from '../../sim/constants.js';
-import type { CombatState, Vec2 } from '../../sim/types.js';
+import type { CombatState, Vec2, WorldColliders } from '../../sim/types.js';
+import { createWorldColliders } from '../../sim/collision.js';
 import { PALETTE } from './palette.js';
 import {
   makeAttackCone,
   makeMoveMarker,
   makeQueuedMoveMarker,
-  makeUnwalkableMarker,
+  makeUnwalkableField,
   makeWall,
   sectorGeometry,
 } from './meshes.js';
-import { arenaBounds, createArenaWorld, worldMaterialAt, type TerrainWorld } from '../../terrain/index.js';
+import {
+  createArenaWorld,
+  vegetationColliders,
+  worldVegetation,
+  type Prop,
+  type TerrainWorld,
+} from '../../terrain/index.js';
 import { buildTerrainMesh } from './terrain-mesh.js';
 import { attachOutline, type OutlineHandle } from './outline.js';
 import { HOVER_PLAYER_ID, pickHoveredUnit, type HoverTarget } from './hover.js';
 import type { ScreenPoint } from './input.js';
 import { MechRig, Poofs, PlayerRig } from './rigs.js';
 import { worldToIso, type IsoParams } from './projection.js';
-import { footprintRadius, scatterInBounds, scatterProps } from './scatter.js';
 import { buildPropField } from './props.js';
 import { createViewControls, type ViewControls } from './view-controls.js';
 import { DEFAULT_CAMERA_OFFSET, DEFAULT_VIEW_HALF_WIDTH, followAlpha } from './view-settings.js';
@@ -27,10 +33,6 @@ import { RetroPass } from './retro-pass.js';
 // Fraction of the gap to the target camera framing closed each rendered frame,
 // so orbit/zoom slider changes glide instead of snapping (spec 034).
 const CAMERA_SMOOTH = 0.15;
-
-// Vegetation is kept this far clear of the play bounds, so the world's dense
-// scatter never crowds the fight -- the arena keeps its own sparser one.
-const PLANT_ARENA_MARGIN = 90;
 
 /**
  * The isometric 3D view (spec 031): owns a three.js scene that draws the sim as
@@ -102,6 +104,9 @@ export class IsoScene {
   private footfalls = 0;
   // The terrain the scene stands on (spec 043): pure data, meshed once here.
   private readonly terrain: TerrainWorld;
+  // Every tree and bush in the world (spec 044). The sim collides against this
+  // same list -- `worldColliders` hands it over -- so what is drawn is what blocks.
+  private readonly vegetation: readonly Prop[];
   private readonly terrainPick: THREE.Object3D[];
   // Reused across cursor raycasts so screenToWorld allocates nothing per frame.
   private readonly raycaster = new THREE.Raycaster();
@@ -149,10 +154,11 @@ export class IsoScene {
     // so the camera never frames the void beyond the arena edge while following
     // the player, even at the widest zoom.
     this.terrain = createArenaWorld(seed);
+    this.vegetation = worldVegetation(seed, this.terrain);
     const terrainMesh = buildTerrainMesh(this.terrain);
     this.terrainPick = terrainMesh.pickTargets;
     this.scene.add(terrainMesh.group);
-    this.addScenery(seed);
+    this.addScenery();
     this.addWalls();
     this.scene.add(this.unwalkable);
 
@@ -190,6 +196,15 @@ export class IsoScene {
   }
 
   /**
+   * The static world the sim should collide against (spec 044): the arena's
+   * walls plus every tree and bush this scene drew. Handed to `initCombat` so
+   * the sim blocks on exactly the scenery the player can see.
+   */
+  worldColliders(): WorldColliders {
+    return createWorldColliders(ARENA_OBSTACLES, vegetationColliders(this.vegetation));
+  }
+
+  /**
    * The arena's static walls (spec 037), straight from the sim's obstacle list.
    * Each is sunk to the lowest terrain under its footprint so a wall crossing a
    * slope still meets the ground along its whole length (spec 043).
@@ -218,47 +233,18 @@ export class IsoScene {
   }
 
   /**
-   * Scenery. Two scatters, for two different jobs: the arena's own trees and
-   * bushes (which also drive the unwalkable-footprint overlay), and a much
-   * denser spread across the surrounding world, filtered to the ground that
-   * would actually grow something -- meadow and low slopes, never a cliff face,
-   * a snowfield or the water. Both go into one instanced field, so the whole
-   * world's vegetation costs a handful of draw calls (spec 043).
+   * Draw the world's vegetation (spec 043/044). The list itself comes from
+   * `worldVegetation` -- the same list the sim is colliding against, since a
+   * tree drawn here blocks the way a wall does -- and goes into one instanced
+   * field, so the whole world's trees and bushes cost a handful of draw calls.
+   * The unwalkable overlay marks every one of them.
    */
-  private addScenery(seed: number): void {
-    const arenaProps = scatterProps(seed, ARENA_WIDTH, ARENA_HEIGHT, [
-      { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
-    ]);
-    const bounds = arenaBounds();
-    const worldProps = scatterInBounds(
-      seed ^ 0x9e3779b1,
-      bounds.minX,
-      bounds.minZ,
-      bounds.maxX,
-      bounds.maxZ,
-      (x, z) => this.canPlant(x, z),
-    );
-    const field = buildPropField([...arenaProps, ...worldProps], (x, z) => this.terrain.heightAt(x, z));
+  private addScenery(): void {
+    const field = buildPropField(this.vegetation, (x, z) => this.terrain.heightAt(x, z));
     this.scene.add(field.group);
-
-    for (const prop of arenaProps) {
-      // A ground footprint marking this prop as unwalkable terrain (spec 034).
-      const r = footprintRadius(prop);
-      const marker = makeUnwalkableMarker();
-      marker.position.set(prop.x, this.terrain.heightAt(prop.x, prop.y), prop.y);
-      marker.scale.set(r, 1, r);
-      this.unwalkable.add(marker);
-    }
-  }
-
-  /** Would anything grow here? Meadow and worn earth outside the arena floor. */
-  private canPlant(x: number, z: number): boolean {
-    if (x > -PLANT_ARENA_MARGIN && x < ARENA_WIDTH + PLANT_ARENA_MARGIN &&
-        z > -PLANT_ARENA_MARGIN && z < ARENA_HEIGHT + PLANT_ARENA_MARGIN) {
-      return false; // the arena has its own, sparser scatter
-    }
-    const material = worldMaterialAt(this.terrain, x, z);
-    return material === 'grass' || material === 'dirt';
+    this.unwalkable.add(
+      makeUnwalkableField(vegetationColliders(this.vegetation), (x, z) => this.terrain.heightAt(x, z)),
+    );
   }
 
   /**

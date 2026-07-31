@@ -6,12 +6,36 @@ export interface Vec2 {
   readonly y: number;
 }
 
-/** Axis-aligned rectangle; the arena's only static collision shape (spec 037). */
+/** Axis-aligned rectangle; the arena's hand-authored barricades (spec 037). */
 export interface Rect {
   readonly x: number;
   readonly y: number;
   readonly w: number;
   readonly h: number;
+}
+
+/** Circular footprint; what a tree or a bush blocks on the ground (spec 044). */
+export interface Circle {
+  readonly x: number;
+  readonly y: number;
+  readonly r: number;
+}
+
+/**
+ * Everything static a unit can run into, and how far out the world goes (spec
+ * 044). Built once per run and carried on {@link CombatState}, never read from a
+ * module-level singleton, so a run stays a pure function of its inputs.
+ */
+export interface WorldColliders {
+  /**
+   * The outer edge of the walkable world -- the extent of the ground that
+   * exists. This is not the play area: units may walk right out of it.
+   */
+  readonly bounds: Rect;
+  /** The arena's static walls. */
+  readonly rects: readonly Rect[];
+  /** Vegetation footprints (spec 044): trees and bushes block like walls do. */
+  readonly circles: readonly Circle[];
 }
 
 export interface DamageBuff {
@@ -257,6 +281,11 @@ export interface CombatState {
   readonly enemySlowMultiplier: number;
   /** True once the player is defeated; the sim then freezes. */
   readonly over: boolean;
+  /**
+   * The static world this run collides against (spec 044): its bounds, the
+   * arena's walls, and every tree and bush footprint. Fixed at init.
+   */
+  readonly world: WorldColliders;
   readonly rng: Rng;
 }
 

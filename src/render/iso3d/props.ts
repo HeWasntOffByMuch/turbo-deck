@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
-import type { Prop } from './scatter.js';
+import type { Prop } from '../../terrain/vegetation.js';
 
 /**
  * Batched scenery for the whole world (spec 043). The scatter puts hundreds of

@@ -170,6 +170,50 @@ export function makeUnwalkableMarker(): THREE.Group {
 }
 
 /**
+ * The whole world's unwalkable footprints in two draw calls (spec 044). Since
+ * vegetation became a sim obstacle the overlay covers every tree and bush in the
+ * world -- hundreds of them -- so the disc and the ring each become one
+ * `InstancedMesh` rather than a `Group` per prop.
+ *
+ * `groundY` supplies the terrain height under each footprint, so a marker on a
+ * slope still sits on the ground.
+ */
+export function makeUnwalkableField(
+  footprints: readonly { readonly x: number; readonly y: number; readonly r: number }[],
+  groundY: (x: number, z: number) => number,
+): THREE.Group {
+  const group = new THREE.Group();
+  if (footprints.length === 0) return group;
+
+  const fillGeo = new THREE.CircleGeometry(1, 20);
+  fillGeo.rotateX(-Math.PI / 2);
+  const ringGeo = new THREE.RingGeometry(0.82, 1, 20);
+  ringGeo.rotateX(-Math.PI / 2);
+
+  const layers: readonly [THREE.BufferGeometry, number, number][] = [
+    [fillGeo, 0.16, 1.5],
+    [ringGeo, 0.55, 1.6],
+  ];
+  const matrix = new THREE.Matrix4();
+  for (const [geometry, opacity, lift] of layers) {
+    const mesh = new THREE.InstancedMesh(
+      geometry,
+      new THREE.MeshBasicMaterial({ color: PALETTE.blocked, transparent: true, opacity, depthWrite: false }),
+      footprints.length,
+    );
+    footprints.forEach((spot, i) => {
+      // Flat discs: scale in x/z by the footprint radius, leave y alone.
+      matrix.makeScale(spot.r, 1, spot.r);
+      matrix.setPosition(spot.x, groundY(spot.x, spot.y) + lift, spot.y);
+      mesh.setMatrixAt(i, matrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    group.add(mesh);
+  }
+  return group;
+}
+
+/**
  * One of the arena's walls (spec 037): a stone block spanning the obstacle's
  * footprint with a lighter cap so the top face reads under the iso light. Sized
  * from the sim's rectangle, positioned by the caller at the rect's origin.

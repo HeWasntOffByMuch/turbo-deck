@@ -1,5 +1,12 @@
 import { Rng } from '../shared/prng.js';
-import { circleBlocked, clampCircleToArena, resolveOverlaps, segmentClear, slideCircle, type Collider } from './collision.js';
+import {
+  circleBlocked,
+  DEFAULT_WORLD,
+  resolveOverlaps,
+  segmentClear,
+  slideCircle,
+  type Collider,
+} from './collision.js';
 import { findPath, navGridFor } from './pathfinding.js';
 import {
   ADRENALINE_SPEED_PER_POINT,
@@ -80,6 +87,7 @@ import {
   type PlayerState,
   type SimEvent,
   type Vec2,
+  type WorldColliders,
 } from './types.js';
 
 /** Advances an immutable Rng through a closure so draws read as plain calls. */
@@ -99,7 +107,17 @@ function activeDamageBuffTotal(buffs: readonly DamageBuff[], tick: number): numb
   return buffs.reduce((sum, buff) => (buff.expiresAtTick > tick ? sum + buff.amount : sum), 0);
 }
 
-const clampToArena = (x: number, y: number): Vec2 => clampCircleToArena(x, y, ENEMY_RADIUS);
+/**
+ * Hold an enemy placement inside the play area. This is where the fight is
+ * staged -- where enemies spawn and where the herd grazes -- not a wall: since
+ * spec 044 nothing stops a unit walking out of this rectangle, and only the
+ * world's own edge bounds movement. Kept so a spawn or a graze target lands in
+ * the arena rather than a thousand units out in the hills.
+ */
+const clampToPlayArea = (x: number, y: number): Vec2 => ({
+  x: Math.min(ARENA_WIDTH - ENEMY_RADIUS, Math.max(ENEMY_RADIUS, x)),
+  y: Math.min(ARENA_HEIGHT - ENEMY_RADIUS, Math.max(ENEMY_RADIUS, y)),
+});
 
 const DEG2RAD = Math.PI / 180;
 const TWO_PI = Math.PI * 2;
@@ -178,6 +196,7 @@ function stepPlayerMovement(
   movePath: readonly Vec2[],
   speedPerTick: number,
   maxTurn: number,
+  world: WorldColliders,
 ): { position: Vec2; facing: number; moveTarget: Vec2 | null; movePath: readonly Vec2[] } {
   if (moveTarget === null) return { position, facing, moveTarget: null, movePath: [] };
 
@@ -207,7 +226,7 @@ function stepPlayerMovement(
   }
   // Gate open: travel straight toward this leg (no arcing along the lagging facing).
   const step = Math.min(speedPerTick, dist);
-  const nextPos = slideCircle(position, (dx / dist) * step, (dy / dist) * step, PLAYER_RADIUS);
+  const nextPos = slideCircle(position, (dx / dist) * step, (dy / dist) * step, PLAYER_RADIUS, world);
   const arrived = Math.hypot(moveTarget.x - nextPos.x, moveTarget.y - nextPos.y) <= MOVE_ARRIVE_EPS;
   return {
     position: nextPos,
@@ -224,9 +243,9 @@ function stepPlayerMovement(
  * so there is nothing to replan. An unreachable destination also yields no
  * route, and the unit walks at it and presses against the wall as it used to.
  */
-function routeMoveOrder(from: Vec2, to: Vec2): readonly Vec2[] {
-  if (segmentClear(from, to, PLAYER_RADIUS)) return [];
-  return findPath(navGridFor(PLAYER_RADIUS), from, to);
+function routeMoveOrder(from: Vec2, to: Vec2, world: WorldColliders): readonly Vec2[] {
+  if (segmentClear(from, to, PLAYER_RADIUS, world)) return [];
+  return findPath(navGridFor(PLAYER_RADIUS, world), from, to);
 }
 
 /** The player's standing order, its route, and the destinations stacked behind it. */
@@ -251,7 +270,7 @@ interface MoveOrder {
  * not routed until it is promoted, since the route depends on where the unit
  * will be standing then.
  */
-function applyMoveOrder(player: PlayerState, input: InputFrame): MoveOrder {
+function applyMoveOrder(player: PlayerState, input: InputFrame, world: WorldColliders): MoveOrder {
   const ordered = input.moveTarget;
   if (ordered == null) {
     if (input.cancelMove) return { target: null, path: [], queue: [] };
@@ -268,7 +287,7 @@ function applyMoveOrder(player: PlayerState, input: InputFrame): MoveOrder {
     player.moveTarget !== null && ordered.x === player.moveTarget.x && ordered.y === player.moveTarget.y;
   return {
     target: ordered,
-    path: reissued ? player.movePath : routeMoveOrder(player.position, ordered),
+    path: reissued ? player.movePath : routeMoveOrder(player.position, ordered, world),
     // A queued order only lands here when there was nothing to queue behind, so
     // the (empty) queue is preserved either way; a plain order wipes it.
     queue: input.queueMove ? player.moveQueue : [],
@@ -276,14 +295,14 @@ function applyMoveOrder(player: PlayerState, input: InputFrame): MoveOrder {
 }
 
 /** Step `position` toward `target` at `speed`, stopping `stopDist` short; walls block and slide. */
-function moveToward(position: Vec2, target: Vec2, speed: number, stopDist: number): Vec2 {
+function moveToward(position: Vec2, target: Vec2, speed: number, stopDist: number, world: WorldColliders): Vec2 {
   const dx = target.x - position.x;
   const dy = target.y - position.y;
   const distSq = dx * dx + dy * dy;
   if (distSq <= stopDist * stopDist) return position;
   const dist = Math.sqrt(distSq);
   const step = Math.min(speed, dist - stopDist);
-  return slideCircle(position, (dx / dist) * step, (dy / dist) * step, ENEMY_RADIUS);
+  return slideCircle(position, (dx / dist) * step, (dy / dist) * step, ENEMY_RADIUS, world);
 }
 
 /**
@@ -292,16 +311,22 @@ function moveToward(position: Vec2, target: Vec2, speed: number, stopDist: numbe
  * spec; otherwise it follows a path, replanning at most every
  * PATH_REPLAN_TICKS and consuming waypoints as it reaches them.
  */
-function huntMove(enemy: EnemyState, playerPos: Vec2, speed: number, tick: number): EnemyState {
-  if (segmentClear(enemy.position, playerPos, ENEMY_RADIUS)) {
-    const position = moveToward(enemy.position, playerPos, speed, ENEMY_STANDOFF);
+function huntMove(
+  enemy: EnemyState,
+  playerPos: Vec2,
+  speed: number,
+  tick: number,
+  world: WorldColliders,
+): EnemyState {
+  if (segmentClear(enemy.position, playerPos, ENEMY_RADIUS, world)) {
+    const position = moveToward(enemy.position, playerPos, speed, ENEMY_STANDOFF, world);
     return enemy.path.length === 0 ? { ...enemy, position } : { ...enemy, position, path: [] };
   }
 
   let path = enemy.path;
   let repathAtTick = enemy.repathAtTick;
   if (tick >= repathAtTick) {
-    path = findPath(navGridFor(ENEMY_RADIUS), enemy.position, playerPos);
+    path = findPath(navGridFor(ENEMY_RADIUS, world), enemy.position, playerPos);
     repathAtTick = tick + PATH_REPLAN_TICKS;
   }
   // Drop waypoints already reached (the last one is the player: stop short of them).
@@ -315,8 +340,8 @@ function huntMove(enemy: EnemyState, playerPos: Vec2, speed: number, tick: numbe
   const waypoint = path[0];
   // No route: fall back to homing, which at least presses toward the player.
   const position = waypoint
-    ? moveToward(enemy.position, waypoint, speed, 0)
-    : moveToward(enemy.position, playerPos, speed, ENEMY_STANDOFF);
+    ? moveToward(enemy.position, waypoint, speed, 0, world)
+    : moveToward(enemy.position, playerPos, speed, ENEMY_STANDOFF, world);
   return { ...enemy, position, path, repathAtTick };
 }
 
@@ -421,8 +446,8 @@ interface SpawnOpts {
 const GRAZE_SPAWN: SpawnOpts = { healthMult: 1, damageMult: 1, speedMult: 1, attackSpeedMult: 1, hunting: false };
 
 /** True when a fresh enemy could stand at `position` without overlapping anything. */
-function spawnSpotIsFree(position: Vec2, others: readonly EnemyState[]): boolean {
-  if (circleBlocked(position, ENEMY_RADIUS)) return false;
+function spawnSpotIsFree(position: Vec2, others: readonly EnemyState[], world: WorldColliders): boolean {
+  if (circleBlocked(position, ENEMY_RADIUS, world)) return false;
   const minGap = ENEMY_RADIUS * 2;
   for (const other of others) if (distanceSq(position, other.position) < minGap * minGap) return false;
   return true;
@@ -437,15 +462,16 @@ function spawnEnemy(
   playerPos: Vec2,
   tick: number,
   draw: Draw,
+  world: WorldColliders,
   others: readonly EnemyState[] = [],
   opts: SpawnOpts = GRAZE_SPAWN,
 ): EnemyState {
   const type = ENEMY_TYPES[draw(0, ENEMY_TYPES.length - 1)] as EnemyType;
-  let position = clampToArena(ARENA_WIDTH / 2, ARENA_HEIGHT / 2);
+  let position = clampToPlayArea(ARENA_WIDTH / 2, ARENA_HEIGHT / 2);
   const minSq = SPAWN_MIN_PLAYER_DIST * SPAWN_MIN_PLAYER_DIST;
   for (let attempt = 0; attempt < 12; attempt++) {
-    position = clampToArena(draw(0, ARENA_WIDTH), draw(0, ARENA_HEIGHT));
-    if (distanceSq(position, playerPos) >= minSq && spawnSpotIsFree(position, others)) break;
+    position = clampToPlayArea(draw(0, ARENA_WIDTH), draw(0, ARENA_HEIGHT));
+    if (distanceSq(position, playerPos) >= minSq && spawnSpotIsFree(position, others, world)) break;
   }
   const maxHealth = Math.round(type.maxHealth * opts.healthMult);
   return {
@@ -474,15 +500,15 @@ function spawnEnemy(
  * A grazing enemy: amble to a random spot, stand and "eat", repeat. Never
  * attacks, and never paths -- it just gives up on a spot it can't walk to.
  */
-function grazeStep(enemy: EnemyState, tick: number, draw: Draw): EnemyState {
+function grazeStep(enemy: EnemyState, tick: number, draw: Draw, world: WorldColliders): EnemyState {
   if (enemy.grazeTarget === null) {
     if (tick < enemy.grazeResumeTick) return enemy; // standing, eating
-    const target = clampToArena(
+    const target = clampToPlayArea(
       enemy.position.x + draw(-GRAZE_WANDER_RADIUS, GRAZE_WANDER_RADIUS),
       enemy.position.y + draw(-GRAZE_WANDER_RADIUS, GRAZE_WANDER_RADIUS),
     );
     // Don't set out for a spot inside a wall; wait and draw another one.
-    if (circleBlocked(target, ENEMY_RADIUS)) {
+    if (circleBlocked(target, ENEMY_RADIUS, world)) {
       return { ...enemy, grazeResumeTick: tick + draw(GRAZE_PAUSE_MIN_TICKS, GRAZE_PAUSE_MAX_TICKS) };
     }
     return { ...enemy, grazeTarget: target };
@@ -491,7 +517,7 @@ function grazeStep(enemy: EnemyState, tick: number, draw: Draw): EnemyState {
     const pause = draw(GRAZE_PAUSE_MIN_TICKS, GRAZE_PAUSE_MAX_TICKS);
     return { ...enemy, position: enemy.grazeTarget, grazeTarget: null, grazeResumeTick: tick + pause };
   }
-  const position = moveToward(enemy.position, enemy.grazeTarget, GRAZE_MOVE_SPEED_PER_TICK, 0);
+  const position = moveToward(enemy.position, enemy.grazeTarget, GRAZE_MOVE_SPEED_PER_TICK, 0, world);
   // Wedged against a wall (or another unit's push): abandon this spot.
   if (position === enemy.position) {
     return { ...enemy, grazeTarget: null, grazeResumeTick: tick + draw(GRAZE_PAUSE_MIN_TICKS, GRAZE_PAUSE_MAX_TICKS) };
@@ -522,9 +548,17 @@ export interface CombatOptions {
   readonly ambientSpawner?: boolean;
   /** Starting movement character (index into CHARACTERS); defaults to the first. */
   readonly characterIndex?: number;
+  /**
+   * The static world to collide against (spec 044): bounds, walls and
+   * vegetation. Defaults to the arena's walls in an otherwise empty world; the
+   * iso views pass the one they built their terrain and scenery from, so what is
+   * drawn and what blocks are the same list.
+   */
+  readonly world?: WorldColliders;
 }
 
 export function initCombat(seed: number, opts: CombatOptions = {}): CombatState {
+  const world = opts.world ?? DEFAULT_WORLD;
   const ambientSpawner = opts.ambientSpawner ?? true;
   const initialEnemies = opts.initialEnemies ?? INITIAL_ENEMIES;
   let rng = Rng.fromSeed(seed);
@@ -589,7 +623,7 @@ export function initCombat(seed: number, opts: CombatOptions = {}): CombatState 
   const enemies: EnemyState[] = [];
   let nextEnemyId = 1;
   for (let i = 0; i < initialEnemies; i++) {
-    enemies.push(spawnEnemy(nextEnemyId, player.position, 0, draw, enemies));
+    enemies.push(spawnEnemy(nextEnemyId, player.position, 0, draw, world, enemies));
     nextEnemyId++;
   }
   return {
@@ -603,6 +637,7 @@ export function initCombat(seed: number, opts: CombatOptions = {}): CombatState 
     enemySlowExpiresAtTick: 0,
     enemySlowMultiplier: 1,
     over: false,
+    world,
     rng,
   };
 }
@@ -617,6 +652,9 @@ export function step(
   if (state.over) return { state, events };
 
   const tick = state.tick + 1;
+  // The static world this run collides against: walls, vegetation and the
+  // world's edge, fixed at init (spec 044).
+  const world = state.world;
   let rng = state.rng;
   const draw: Draw = (min, max) => {
     const [value, next] = rng.nextInt(min, max);
@@ -697,13 +735,13 @@ export function step(
   // standing one. It persists across dash/rooted ticks so movement resumes once
   // the override ends. Off-map orders are honoured as-is: the per-tick position
   // clamp walks the unit to the nearest edge and holds it.
-  const order = applyMoveOrder(state.player, input);
+  const order = applyMoveOrder(state.player, input, world);
   const orderedTarget = order.target;
   const orderedPath = order.path;
   const moved = dashing
     ? {
         // A dash cannot cross a wall: it slides along whatever it runs into.
-        position: slideCircle(state.player.position, state.player.dashDx, state.player.dashDy, PLAYER_RADIUS),
+        position: slideCircle(state.player.position, state.player.dashDx, state.player.dashDy, PLAYER_RADIUS, world),
         facing: state.player.facing,
         moveTarget: orderedTarget,
         movePath: orderedPath,
@@ -718,14 +756,22 @@ export function step(
         }
       : rooted
         ? { position: state.player.position, facing: state.player.facing, moveTarget: orderedTarget, movePath: orderedPath }
-        : stepPlayerMovement(state.player.position, state.player.facing, orderedTarget, orderedPath, speedPerTick, maxTurnPerTick);
+        : stepPlayerMovement(
+            state.player.position,
+            state.player.facing,
+            orderedTarget,
+            orderedPath,
+            speedPerTick,
+            maxTurnPerTick,
+            world,
+          );
   // Destination reached with more of the plan left (spec 040): promote the head
   // of the queue on this same tick and route it from where the unit now stands,
   // so a queued leg around a wall gets its own path.
   const nextQueued = moved.moveTarget === null ? order.queue[0] : undefined;
   const moveQueue = nextQueued !== undefined ? order.queue.slice(1) : order.queue;
   const moveTarget = nextQueued ?? moved.moveTarget;
-  const movePath = nextQueued !== undefined ? routeMoveOrder(moved.position, nextQueued) : moved.movePath;
+  const movePath = nextQueued !== undefined ? routeMoveOrder(moved.position, nextQueued, world) : moved.movePath;
   let player: PlayerState = {
     ...state.player,
     position: moved.position,
@@ -764,10 +810,10 @@ export function step(
   // --- Enemy movement: grazers wander, hunters close in (around walls) while idle ---
   let enemies: EnemyState[] = state.enemies.map((enemy) => {
     if (enemy.stunnedUntilTick && tick < enemy.stunnedUntilTick) return enemy; // frozen by a bury-feet stun
-    if (enemy.behavior === 'grazing') return grazeStep(enemy, tick, draw);
+    if (enemy.behavior === 'grazing') return grazeStep(enemy, tick, draw, world);
     if (enemy.phase === 'idle') {
       const speed = enemyTypeByKey(enemy.type).moveSpeed * (enemy.speedMult ?? 1) * slowMult;
-      return huntMove(enemy, player.position, speed, tick);
+      return huntMove(enemy, player.position, speed, tick, world);
     }
     return enemy; // hunting but planted for windup/recovery
   });
@@ -787,7 +833,7 @@ export function step(
         pinned: enemy.behavior === 'hunting' && enemy.phase !== 'idle',
       })),
     ];
-    const resolved = resolveOverlaps(colliders);
+    const resolved = resolveOverlaps(colliders, world);
     enemies = enemies.map((enemy, i) => {
       const position = resolved[i + 1];
       return position === undefined || (position.x === enemy.position.x && position.y === enemy.position.y)
@@ -1323,7 +1369,7 @@ export function step(
   let nextSpawnTick = state.nextSpawnTick;
   let nextEnemyId = state.nextEnemyId;
   if (state.ambientSpawner && !over && tick >= nextSpawnTick && enemies.length < MAX_ENEMIES) {
-    enemies = [...enemies, spawnEnemy(nextEnemyId, player.position, tick, draw, enemies)];
+    enemies = [...enemies, spawnEnemy(nextEnemyId, player.position, tick, draw, world, enemies)];
     nextEnemyId++;
     nextSpawnTick = tick + ENEMY_SPAWN_INTERVAL_TICKS;
   }
@@ -1342,7 +1388,7 @@ export function step(
     };
     const spawned: EnemyState[] = [];
     for (let i = 0; i < count; i++) {
-      spawned.push(spawnEnemy(nextEnemyId, player.position, tick, draw, [...enemies, ...spawned], opts));
+      spawned.push(spawnEnemy(nextEnemyId, player.position, tick, draw, world, [...enemies, ...spawned], opts));
       nextEnemyId++;
     }
     enemies = [...enemies, ...spawned];
@@ -1372,6 +1418,7 @@ export function step(
       enemySlowExpiresAtTick,
       enemySlowMultiplier,
       over,
+      world,
       rng,
     },
     events,

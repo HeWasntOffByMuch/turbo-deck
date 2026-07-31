@@ -53,7 +53,9 @@ function mountCombat(container: HTMLElement): ViewHandle {
   root.append(canvas, hud.element, cog);
   container.appendChild(root);
 
-  let state: SpellGameState = initSpellGame(seed);
+  // The sim collides against the world the scene built (spec 044): the arena's
+  // walls plus every tree and bush that got drawn.
+  let state: SpellGameState = initSpellGame(seed, { world: scene.worldColliders() });
 
   // The hand slot holding a basic `attack` card, for left-click attacks (null if none).
   const attackSlot = (): 0 | 1 | 2 | 3 | null => {

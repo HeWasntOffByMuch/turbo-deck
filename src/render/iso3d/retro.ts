@@ -37,13 +37,15 @@ export interface RetroSettings {
 }
 
 /**
- * The tuning that matches the reference screenshot: few enough colours that the
- * weave is unmistakable, a full-strength 4x4 dither at one cell per pixel.
+ * The tuning the view opens at: twelve steps per channel, and a dither turned
+ * right down to 5%. Enough colours that shading reads as shading rather than as
+ * posterization, with the weave only just breaking up the band edges -- the
+ * retro texture without the crosshatch swallowing the palette.
  */
 export const RETRO_DEFAULTS: RetroSettings = {
   enabled: true,
-  levels: 6,
-  ditherStrength: 1,
+  levels: 12,
+  ditherStrength: 0.05,
   matrixSize: 4,
   ditherScale: 1,
   pixelSize: 1,

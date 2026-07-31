@@ -2,23 +2,26 @@ import * as THREE from 'three';
 import { initCombat, step } from '../../sim/combat.js';
 import { characterAt } from '../../sim/characters.js';
 import { ARENA_HEIGHT, ARENA_OBSTACLES, ARENA_WIDTH, TICK_RATE } from '../../sim/constants.js';
-import type { CombatState, InputFrame, Vec2 } from '../../sim/types.js';
+import type { CombatState, InputFrame, Vec2, WorldColliders } from '../../sim/types.js';
+import { createWorldColliders } from '../../sim/collision.js';
 import { IsoInputCapture } from './input.js';
 import { PALETTE } from './palette.js';
-import { makeHeadingArrow, makeMoveMarker, makeUnwalkableMarker, makeWall } from './meshes.js';
-import { arenaBounds, createArenaWorld, worldMaterialAt, type TerrainWorld } from '../../terrain/index.js';
+import { makeHeadingArrow, makeMoveMarker, makeUnwalkableField, makeWall } from './meshes.js';
+import {
+  createArenaWorld,
+  vegetationColliders,
+  worldVegetation,
+  type Prop,
+  type TerrainWorld,
+} from '../../terrain/index.js';
 import { buildTerrainMesh } from './terrain-mesh.js';
 import { defaultMechTuning, MechRig, type MechTuning } from './rigs.js';
-import { footprintRadius, scatterInBounds, scatterProps } from './scatter.js';
 import { buildPropField } from './props.js';
 import { createViewControls, type ViewControls } from './view-controls.js';
-import { DEFAULT_CAMERA_OFFSET, SANDBOX_VIEW_HALF_WIDTH } from './view-settings.js';
+import { DEFAULT_CAMERA_OFFSET, DEFAULT_VIEW_HALF_WIDTH } from './view-settings.js';
 
 // Per-frame easing fraction for camera framing changes (spec 034), matching IsoScene.
 const CAMERA_SMOOTH = 0.15;
-
-// Vegetation stays this far clear of the play bounds, matching the game view.
-const PLANT_ARENA_MARGIN = 90;
 
 /**
  * The movement sandbox tab (spec 032/033): no game -- just one controllable unit
@@ -46,7 +49,7 @@ const MAX_CATCH_UP = 8;
 /** A minimal three.js scene: ground + scenery + one controllable mech. */
 class MovementScene {
   /** Camera/light control panel (spec 033); mount `.controls.element` beside the canvas. */
-  readonly controls: ViewControls = createViewControls({ zoom: SANDBOX_VIEW_HALF_WIDTH });
+  readonly controls: ViewControls = createViewControls({ zoom: DEFAULT_VIEW_HALF_WIDTH });
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
@@ -68,7 +71,7 @@ class MovementScene {
     DEFAULT_CAMERA_OFFSET.z,
   );
   private readonly camOffsetTarget = new THREE.Vector3();
-  private halfWidth = SANDBOX_VIEW_HALF_WIDTH;
+  private halfWidth = DEFAULT_VIEW_HALF_WIDTH;
   private lastHalfWidth = -1;
   private readonly moveMarker: THREE.Mesh;
   private readonly target = new THREE.Vector3(ARENA_WIDTH / 2, 0, ARENA_HEIGHT / 2);
@@ -77,8 +80,10 @@ class MovementScene {
   private readonly raycaster = new THREE.Raycaster();
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private readonly hit = new THREE.Vector3();
-  // The sandbox stands on the same terrain the game does (spec 043).
+  // The sandbox stands on the same terrain the game does (spec 043), and walks
+  // around the same trees and bushes (spec 044).
   private readonly terrain: TerrainWorld;
+  private readonly vegetation: readonly Prop[];
   private readonly terrainPick: THREE.Object3D[];
   private readonly terrainHits: THREE.Intersection[] = [];
 
@@ -98,17 +103,18 @@ class MovementScene {
     this.scene.background = new THREE.Color(PALETTE.sky);
 
     const aspect = RENDER_W / RENDER_H;
-    const hw = SANDBOX_VIEW_HALF_WIDTH;
+    const hw = DEFAULT_VIEW_HALF_WIDTH;
     this.camera = new THREE.OrthographicCamera(-hw, hw, hw / aspect, -hw / aspect, 1, 4000);
 
     this.scene.add(this.sun);
     this.scene.add(new THREE.AmbientLight(0x8090a0, 1.1));
 
     this.terrain = createArenaWorld(seed);
+    this.vegetation = worldVegetation(seed, this.terrain);
     const terrainMesh = buildTerrainMesh(this.terrain);
     this.terrainPick = terrainMesh.pickTargets;
     this.scene.add(terrainMesh.group);
-    this.addScenery(seed);
+    this.addScenery();
     this.addWalls();
     this.scene.add(this.unwalkable);
 
@@ -122,6 +128,11 @@ class MovementScene {
 
     // The wheel over the view is the zoom, alongside the panel's slider (spec 042).
     this.controls.attachWheelZoom(canvas);
+  }
+
+  /** The static world the sim collides against here: walls plus vegetation (spec 044). */
+  worldColliders(): WorldColliders {
+    return createWorldColliders(ARENA_OBSTACLES, vegetationColliders(this.vegetation));
   }
 
   /** The shared live-editable tuning both units use (the panel binds to it). */
@@ -162,35 +173,13 @@ class MovementScene {
     }
   }
 
-  /** The same two scatters the game view uses: sparse in the arena, dense outside (spec 043). */
-  private addScenery(seed: number): void {
-    const arenaProps = scatterProps(seed, ARENA_WIDTH, ARENA_HEIGHT, [{ x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 }]);
-    const bounds = arenaBounds();
-    const worldProps = scatterInBounds(
-      seed ^ 0x9e3779b1,
-      bounds.minX,
-      bounds.minZ,
-      bounds.maxX,
-      bounds.maxZ,
-      (x, z) => {
-        if (x > -PLANT_ARENA_MARGIN && x < ARENA_WIDTH + PLANT_ARENA_MARGIN &&
-            z > -PLANT_ARENA_MARGIN && z < ARENA_HEIGHT + PLANT_ARENA_MARGIN) {
-          return false;
-        }
-        const material = worldMaterialAt(this.terrain, x, z);
-        return material === 'grass' || material === 'dirt';
-      },
-    );
-    const field = buildPropField([...arenaProps, ...worldProps], (x, z) => this.terrain.heightAt(x, z));
+  /** The same vegetation the game view draws -- and the same the sim blocks on (spec 044). */
+  private addScenery(): void {
+    const field = buildPropField(this.vegetation, (x, z) => this.terrain.heightAt(x, z));
     this.scene.add(field.group);
-
-    for (const prop of arenaProps) {
-      const r = footprintRadius(prop);
-      const marker = makeUnwalkableMarker();
-      marker.position.set(prop.x, this.terrain.heightAt(prop.x, prop.y), prop.y);
-      marker.scale.set(r, 1, r);
-      this.unwalkable.add(marker);
-    }
+    this.unwalkable.add(
+      makeUnwalkableField(vegetationColliders(this.vegetation), (x, z) => this.terrain.heightAt(x, z)),
+    );
   }
 
   /** Raycast the cursor (canvas CSS pixels) onto the terrain for a move order (spec 043). */
@@ -683,7 +672,11 @@ export function mountMovement(container: HTMLElement): ViewHandle {
   const tuning = scene.tuning;
   const input = new IsoInputCapture(canvas);
   // No enemies and no ambient spawner: a pure movement sandbox.
-  let state: CombatState = initCombat(seed, { ambientSpawner: false, initialEnemies: 0 });
+  let state: CombatState = initCombat(seed, {
+    ambientSpawner: false,
+    initialEnemies: 0,
+    world: scene.worldColliders(),
+  });
 
   let unit: UnitKind = 'spider';
   const panel = buildPanel(

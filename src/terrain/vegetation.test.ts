@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import type { Vec2 } from '../../sim/types.js';
-import { footprintRadius, scatterProps, type Prop } from './scatter.js';
+import type { Vec2 } from '../sim/types.js';
+import { circleBlocked, createWorldColliders } from '../sim/collision.js';
+import { PLAY_HEIGHT, PLAY_WIDTH } from '../shared/world.js';
+import { PLAYER_RADIUS } from '../sim/constants.js';
+import { createArenaWorld } from './world.js';
+import {
+  footprintRadius,
+  vegetationColliders,
+  worldVegetation,
+  scatterProps,
+  type Prop,
+} from './vegetation.js';
 
 const W = 1200;
 const H = 900;
@@ -70,5 +80,44 @@ describe('footprintRadius', () => {
 
   it('scales linearly with the prop scale', () => {
     expect(footprintRadius(prop('tree', 2))).toBeCloseTo(footprintRadius(prop('tree', 1)) * 2, 5);
+  });
+});
+
+
+describe('worldVegetation (spec 044)', () => {
+  const terrain = createArenaWorld(99);
+
+  it('is deterministic: the same (seed, world) replays an identical list', () => {
+    expect(worldVegetation(99, terrain)).toEqual(worldVegetation(99, createArenaWorld(99)));
+  });
+
+  it('produces a different arrangement for a different seed', () => {
+    expect(worldVegetation(99, terrain)).not.toEqual(worldVegetation(100, createArenaWorld(100)));
+  });
+
+  it('plants the play area sparsely and the surrounding world densely', () => {
+    const props = worldVegetation(99, terrain);
+    const inPlayArea = props.filter((p) => p.x >= 0 && p.x <= PLAY_WIDTH && p.y >= 0 && p.y <= PLAY_HEIGHT);
+    expect(inPlayArea.length).toBeGreaterThan(0);
+    expect(props.length).toBeGreaterThan(inPlayArea.length * 5);
+  });
+
+  it('leaves the spawn at the play area\'s centre walkable', () => {
+    const world = createWorldColliders([], vegetationColliders(worldVegetation(99, terrain)));
+    expect(circleBlocked({ x: PLAY_WIDTH / 2, y: PLAY_HEIGHT / 2 }, PLAYER_RADIUS, world)).toBe(false);
+  });
+
+  it('turns every footprint into a blocking circle of the same radius', () => {
+    const props = worldVegetation(99, terrain);
+    const circles = vegetationColliders(props);
+    expect(circles).toHaveLength(props.length);
+    const world = createWorldColliders([], circles);
+    for (const prop of props.slice(0, 40)) {
+      expect(circleBlocked({ x: prop.x, y: prop.y }, 1, world)).toBe(true);
+    }
+    circles.forEach((circle, i) => {
+      const prop = props[i] as Prop;
+      expect(circle).toEqual({ x: prop.x, y: prop.y, r: footprintRadius(prop) });
+    });
   });
 });

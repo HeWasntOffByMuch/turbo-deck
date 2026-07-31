@@ -1,79 +1,179 @@
-import { circleBlocked, segmentClear } from './collision.js';
-import { ARENA_HEIGHT, ARENA_OBSTACLES, ARENA_WIDTH, NAV_CELL_SIZE, NAV_CLEARANCE, PATH_MAX_NODES } from './constants.js';
-import type { Rect, Vec2 } from './types.js';
+import { circleHitsCircle, circleHitsRect, DEFAULT_WORLD, segmentClear } from './collision.js';
+import { NAV_CELL_SIZE, NAV_CLEARANCE, PATH_MAX_NODES } from './constants.js';
+import type { Vec2, WorldColliders } from './types.js';
 
 /**
- * Grid pathfinding for units that cannot see their target (spec 037).
+ * Grid pathfinding for units that cannot see their target (spec 037/044).
  *
- * A* over a uniform grid of the arena, 8-connected with no corner cutting, and
- * an octile heuristic. Cells are marked blocked by inflating every obstacle by
- * the body's radius plus a clearance margin, so a path returned for a radius
- * always has room for that body to walk it. The grid path is then string-pulled
- * against the real obstacles, so callers get a handful of world-space waypoints
- * rather than a staircase of cell centres.
+ * A* over a uniform grid of the whole world, 8-connected with no corner cutting,
+ * and an octile heuristic. Cells are marked blocked by inflating every obstacle
+ * -- the arena's walls and every tree and bush -- by the body's radius plus a
+ * clearance margin, so a path returned for a radius always has room for that
+ * body to walk it. The grid path is then string-pulled against the real
+ * obstacles, so callers get a handful of world-space waypoints rather than a
+ * staircase of cell centres.
  *
  * Pure: a search reads nothing but its arguments, ties break on cell index, and
- * there is no randomness or clock anywhere in here. The same
- * `(grid, from, to)` always yields the same path.
+ * there is no randomness or clock anywhere in here. The same `(grid, from, to)`
+ * always yields the same path.
  */
+
+/** Reusable working set for a search, so `findPath` allocates nothing per call. */
+interface NavScratch {
+  readonly gScore: Float64Array;
+  readonly cameFrom: Int32Array;
+  readonly closed: Uint8Array;
+  readonly open: CellHeap;
+}
 
 export interface NavGrid {
   readonly cellSize: number;
   readonly cols: number;
   readonly rows: number;
+  /** World coordinates of the grid's (0, 0) corner. */
+  readonly originX: number;
+  readonly originY: number;
   /** Body radius this grid was built for. */
   readonly radius: number;
-  readonly obstacles: readonly Rect[];
+  readonly world: WorldColliders;
   /** 1 = a body of `radius` cannot stand at this cell's centre. */
   readonly blocked: Uint8Array;
+  /**
+   * Search buffers, reused across calls. A grid covering the world holds ~20k
+   * cells, and allocating a megabyte of typed arrays per search -- several a
+   * second, once hunters start replanning -- is pure garbage. `findPath` resets
+   * them on entry and never yields mid-search, so reuse is invisible.
+   */
+  readonly scratch: NavScratch;
 }
 
 /** How far (in cells) to look for a stand-in when a start/goal cell is blocked. */
 const RELOCATE_RINGS = 4;
 const DIAGONAL_COST = Math.SQRT2;
 
-export function createNavGrid(
-  obstacles: readonly Rect[],
-  radius: number,
-  cellSize: number = NAV_CELL_SIZE,
-): NavGrid {
-  const cols = Math.ceil(ARENA_WIDTH / cellSize);
-  const rows = Math.ceil(ARENA_HEIGHT / cellSize);
-  const blocked = new Uint8Array(cols * rows);
-  const clearance = radius + NAV_CLEARANCE;
-  for (let row = 0; row < rows; row++) {
-    for (let col = 0; col < cols; col++) {
-      const centre = { x: (col + 0.5) * cellSize, y: (row + 0.5) * cellSize };
-      const outsideArena =
-        centre.x < radius || centre.y < radius || centre.x > ARENA_WIDTH - radius || centre.y > ARENA_HEIGHT - radius;
-      const hitsWall = circleBlocked(centre, clearance, obstacles);
-      blocked[row * cols + col] = outsideArena || hitsWall ? 1 : 0;
+/**
+ * Mark every cell whose centre is within `clearance` of `hits`, over the cells
+ * the shape's inflated bounding box covers.
+ *
+ * Rasterizing each obstacle into the grid, rather than testing every cell
+ * against every obstacle, is what keeps the build cheap now that the grid spans
+ * the world and carries hundreds of trees (spec 044): the naive loop is
+ * cells x obstacles, this one is obstacles x (the few cells each one touches).
+ */
+function markBlocked(
+  grid: { cellSize: number; cols: number; rows: number; originX: number; originY: number; blocked: Uint8Array },
+  minX: number,
+  minY: number,
+  maxX: number,
+  maxY: number,
+  hits: (centre: Vec2) => boolean,
+): void {
+  const { cellSize, cols, rows, originX, originY, blocked } = grid;
+  const firstCol = Math.max(0, Math.floor((minX - originX) / cellSize));
+  const lastCol = Math.min(cols - 1, Math.floor((maxX - originX) / cellSize));
+  const firstRow = Math.max(0, Math.floor((minY - originY) / cellSize));
+  const lastRow = Math.min(rows - 1, Math.floor((maxY - originY) / cellSize));
+  for (let row = firstRow; row <= lastRow; row++) {
+    for (let col = firstCol; col <= lastCol; col++) {
+      const index = row * cols + col;
+      if (blocked[index] !== 0) continue;
+      if (hits({ x: originX + (col + 0.5) * cellSize, y: originY + (row + 0.5) * cellSize })) blocked[index] = 1;
     }
   }
-  return { cellSize, cols, rows, radius, obstacles, blocked };
 }
 
-const GRID_CACHE = new Map<number, NavGrid>();
+export function createNavGrid(world: WorldColliders, radius: number, cellSize: number = NAV_CELL_SIZE): NavGrid {
+  const bounds = world.bounds;
+  const cols = Math.ceil(bounds.w / cellSize);
+  const rows = Math.ceil(bounds.h / cellSize);
+  const blocked = new Uint8Array(cols * rows);
+  const clearance = radius + NAV_CLEARANCE;
+  const shape = { cellSize, cols, rows, originX: bounds.x, originY: bounds.y, blocked };
 
-/** The arena's nav grid for a body radius, built once and reused. */
-export function navGridFor(radius: number): NavGrid {
-  const cached = GRID_CACHE.get(radius);
+  // The world's rim: a body of `radius` cannot stand within `radius` of the edge.
+  const inset = (centre: Vec2): boolean =>
+    centre.x < bounds.x + radius ||
+    centre.y < bounds.y + radius ||
+    centre.x > bounds.x + bounds.w - radius ||
+    centre.y > bounds.y + bounds.h - radius;
+  markBlocked(shape, bounds.x, bounds.y, bounds.x + bounds.w, bounds.y + bounds.h, inset);
+
+  for (const rect of world.rects) {
+    markBlocked(
+      shape,
+      rect.x - clearance,
+      rect.y - clearance,
+      rect.x + rect.w + clearance,
+      rect.y + rect.h + clearance,
+      (centre) => circleHitsRect(centre, clearance, rect),
+    );
+  }
+  for (const circle of world.circles) {
+    const reach = circle.r + clearance;
+    markBlocked(
+      shape,
+      circle.x - reach,
+      circle.y - reach,
+      circle.x + reach,
+      circle.y + reach,
+      (centre) => circleHitsCircle(centre, clearance, circle),
+    );
+  }
+
+  const cellCount = cols * rows;
+  return {
+    cellSize,
+    cols,
+    rows,
+    originX: bounds.x,
+    originY: bounds.y,
+    radius,
+    world,
+    blocked,
+    scratch: {
+      gScore: new Float64Array(cellCount),
+      cameFrom: new Int32Array(cellCount),
+      closed: new Uint8Array(cellCount),
+      // A search closes at most PATH_MAX_NODES cells and each pushes at most its
+      // eight neighbours, so that -- not the cell count -- bounds the heap.
+      open: new CellHeap(Math.min(cellCount * 4, PATH_MAX_NODES * 8 + 64)),
+    },
+  };
+}
+
+/**
+ * Nav grids are memoized per (world, body radius): building one walks the whole
+ * grid, and both the world and the radii in play are fixed for a run.
+ */
+const GRID_CACHE = new WeakMap<WorldColliders, Map<number, NavGrid>>();
+
+/** The nav grid for a body radius in `world`, built once and reused. */
+export function navGridFor(radius: number, world: WorldColliders = DEFAULT_WORLD): NavGrid {
+  let byRadius = GRID_CACHE.get(world);
+  if (!byRadius) {
+    byRadius = new Map();
+    GRID_CACHE.set(world, byRadius);
+  }
+  const cached = byRadius.get(radius);
   if (cached) return cached;
-  const grid = createNavGrid(ARENA_OBSTACLES, radius);
-  GRID_CACHE.set(radius, grid);
+  const grid = createNavGrid(world, radius);
+  byRadius.set(radius, grid);
   return grid;
 }
 
 function cellOf(grid: NavGrid, point: Vec2): number {
-  const col = Math.min(grid.cols - 1, Math.max(0, Math.floor(point.x / grid.cellSize)));
-  const row = Math.min(grid.rows - 1, Math.max(0, Math.floor(point.y / grid.cellSize)));
+  const col = Math.min(grid.cols - 1, Math.max(0, Math.floor((point.x - grid.originX) / grid.cellSize)));
+  const row = Math.min(grid.rows - 1, Math.max(0, Math.floor((point.y - grid.originY) / grid.cellSize)));
   return row * grid.cols + col;
 }
 
 function centreOf(grid: NavGrid, cell: number): Vec2 {
   const col = cell % grid.cols;
   const row = (cell - col) / grid.cols;
-  return { x: (col + 0.5) * grid.cellSize, y: (row + 0.5) * grid.cellSize };
+  return {
+    x: grid.originX + (col + 0.5) * grid.cellSize,
+    y: grid.originY + (row + 0.5) * grid.cellSize,
+  };
 }
 
 /**
@@ -140,6 +240,11 @@ class CellHeap {
 
   get length(): number {
     return this.size;
+  }
+
+  /** Drop everything without touching the backing arrays; stale slots are unread. */
+  clear(): void {
+    this.size = 0;
   }
 
   /** Ignores the push when full; the node budget makes that a bounded loss. */
@@ -212,7 +317,7 @@ function stringPull(from: Vec2, points: readonly Vec2[], grid: NavGrid): Vec2[] 
     let furthest = i;
     for (let j = i; j < points.length; j++) {
       const candidate = points[j];
-      if (!candidate || !segmentClear(anchor, candidate, grid.radius, grid.obstacles)) break;
+      if (!candidate || !segmentClear(anchor, candidate, grid.radius, grid.world)) break;
       furthest = j;
     }
     const keep = points[furthest];
@@ -230,18 +335,18 @@ function stringPull(from: Vec2, points: readonly Vec2[], grid: NavGrid): Vec2[] 
  * waypoint when the straight line is already clear.
  */
 export function findPath(grid: NavGrid, from: Vec2, to: Vec2): readonly Vec2[] {
-  if (segmentClear(from, to, grid.radius, grid.obstacles)) return [to];
+  if (segmentClear(from, to, grid.radius, grid.world)) return [to];
 
   const start = freeCellNear(grid, from);
   const goal = freeCellNear(grid, to);
   if (start === -1 || goal === -1) return [];
   if (start === goal) return [to];
 
-  const cellCount = grid.cols * grid.rows;
-  const gScore = new Float64Array(cellCount).fill(Infinity);
-  const cameFrom = new Int32Array(cellCount).fill(-1);
-  const closed = new Uint8Array(cellCount);
-  const open = new CellHeap(cellCount * 4);
+  const { gScore, cameFrom, closed, open } = grid.scratch;
+  gScore.fill(Infinity);
+  cameFrom.fill(-1);
+  closed.fill(0);
+  open.clear();
 
   gScore[start] = 0;
   open.push(start, octile(grid, start, goal));

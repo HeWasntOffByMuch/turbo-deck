@@ -9,3 +9,4 @@ export * from './features.js';
 export * from './classify.js';
 export * from './chunk.js';
 export * from './world.js';
+export * from './vegetation.js';

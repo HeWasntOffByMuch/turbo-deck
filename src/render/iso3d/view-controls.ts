@@ -222,7 +222,9 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     'Compass direction the sunlight comes from, in degrees.');
   const lightEl = makeSlider('Elevation', 10, 89, 1, Math.round(lightOrbit.elevation / DEG), '°',
     'How high the sun sits above the horizon, in degrees — lower casts longer shadows.');
-  const unwalkable = makeCheckbox('Unwalkable terrain', true,
+  // Off by default: since spec 044 this marks every tree and bush in the world,
+  // not the play area's few dozen, so opening with it on would carpet the ground.
+  const unwalkable = makeCheckbox('Unwalkable terrain', false,
     "Toggle the overlay marking tree and bush footprints the unit can't walk onto.");
 
   const retroOn = makeCheckbox('Retro filter', RETRO_DEFAULTS.enabled,

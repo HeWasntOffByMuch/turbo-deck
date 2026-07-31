@@ -1,11 +1,31 @@
+import {
+  PLAY_HEIGHT,
+  PLAY_WIDTH,
+  WORLD_MAX_X,
+  WORLD_MAX_Y,
+  WORLD_MIN_X,
+  WORLD_MIN_Y,
+} from '../shared/world.js';
 import type { Rect } from './types.js';
 
 export const TICK_RATE = 60;
 
-// Top-down rectangular arena, in world units. Roomy so a small population and
-// their grazing read; the camera follows the player across it.
-export const ARENA_WIDTH = 1200;
-export const ARENA_HEIGHT = 900;
+// The play area, in world units: where the fight is staged, where enemies spawn
+// and where the herd grazes. It is NOT a wall -- since spec 044 a unit may walk
+// straight out of it and off across the rest of the world.
+export const ARENA_WIDTH = PLAY_WIDTH;
+export const ARENA_HEIGHT = PLAY_HEIGHT;
+
+// The only bound left on movement (spec 044): the outer edge of the ground that
+// exists. Past it there is nothing to stand on, which is the whole reason it is
+// a bound -- the arena border it replaced was an invisible wall around a
+// rectangle the world had long since grown past.
+export const WORLD_BOUNDS: Rect = {
+  x: WORLD_MIN_X,
+  y: WORLD_MIN_Y,
+  w: WORLD_MAX_X - WORLD_MIN_X,
+  h: WORLD_MAX_Y - WORLD_MIN_Y,
+};
 
 export const PLAYER_RADIUS = 16;
 export const ENEMY_RADIUS = 22;
@@ -160,7 +180,10 @@ export const PATH_REPLAN_TICKS = 20;
 // Distance at which a waypoint counts as reached and is consumed.
 export const PATH_WAYPOINT_EPS = 14;
 // Hard ceiling on cells expanded per search, so an unreachable goal is cheap.
-export const PATH_MAX_NODES = 1600;
+// Sized for the whole world rather than the play area (spec 044): the grid grew
+// from ~1.3k cells to ~20k when the border came down, and a budget that could
+// only ever expand a tenth of it would give up mid-route.
+export const PATH_MAX_NODES = 8000;
 
 // --- Grazing behaviour (passive enemies) ---
 // Grazing amble speed, slower than a hunting enemy's homing speed.
