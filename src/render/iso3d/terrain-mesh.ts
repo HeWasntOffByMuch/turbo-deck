@@ -19,22 +19,25 @@ import { TERRAIN_CLIFF_COLORS, TERRAIN_COLORS } from './palette.js';
  * There are no terrain *rules* in this file -- it never decides what the ground
  * is, only how to draw what it was told.
  *
- * Per chunk it emits two flat-shaded, vertex-coloured geometries:
+ * Per chunk it emits two vertex-coloured geometries:
  *
  * - the **surface**, one quad per solid cell, all six vertices sharing that
- *   cell's single colour. Corner heights are shared between neighbouring cells,
- *   so the surface is continuous while the colours stay hard-edged -- which is
- *   the whole art direction: readable bands, not blended texture.
+ *   cell's single colour. The quads are irregular four-sided patches, because
+ *   the sampler jitters every corner off the lattice, and they are shaded from
+ *   the corners' *smooth* normals rather than per triangle. Between them those
+ *   two things dissolve the grid: the ground reads as one continuous surface
+ *   with hard-edged colour bands, instead of a quilt of shaded diamonds.
  * - the **walls**, a vertical skirt dropped from every edge where a solid cell
  *   meets open air or the layer's boundary. This is what gives a coastline, a
  *   cliff, or (later) a floating island a solid side instead of a paper edge.
+ *   These *are* flat-shaded: a cliff face should read as stone slabs.
  *
  * Plus one translucent plane per layer that declares a water level. It sits at
  * that height across the whole layer and is simply hidden by any ground above
  * it, so a lake, a sea and a flooded crater all come out of the same quad.
  */
 
-const surfaceMaterial = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+const surfaceMaterial = new THREE.MeshLambertMaterial({ vertexColors: true });
 // Walls are double-sided so a skirt reads correctly whichever way its edge runs;
 // with `flatShading` the shader flips the normal for back faces, so lighting holds.
 const wallMaterial = new THREE.MeshLambertMaterial({
@@ -62,38 +65,42 @@ function linearColor(hex: number): THREE.Color {
   return c;
 }
 
+/**
+ * A corner of a quad: its world position, plus the smooth normal the surface has
+ * there. Walls pass no normal and get flat ones computed for them.
+ */
+type Corner = readonly [x: number, y: number, z: number, nx?: number, ny?: number, nz?: number];
+
 /** Accumulates triangles for one geometry. */
 class MeshBuffer {
   readonly positions: number[] = [];
   readonly colors: number[] = [];
+  readonly normals: number[] = [];
 
-  vertex(x: number, y: number, z: number, c: THREE.Color): void {
-    this.positions.push(x, y, z);
+  private vertex(v: Corner, c: THREE.Color): void {
+    this.positions.push(v[0], v[1], v[2]);
     this.colors.push(c.r, c.g, c.b);
+    this.normals.push(v[3] ?? 0, v[4] ?? 0, v[5] ?? 0);
   }
 
   /** A quad as two triangles, wound a-b-c / a-c-d. */
-  quad(
-    a: readonly [number, number, number],
-    b: readonly [number, number, number],
-    c: readonly [number, number, number],
-    d: readonly [number, number, number],
-    color: THREE.Color,
-  ): void {
-    this.vertex(a[0], a[1], a[2], color);
-    this.vertex(b[0], b[1], b[2], color);
-    this.vertex(c[0], c[1], c[2], color);
-    this.vertex(a[0], a[1], a[2], color);
-    this.vertex(c[0], c[1], c[2], color);
-    this.vertex(d[0], d[1], d[2], color);
+  quad(a: Corner, b: Corner, c: Corner, d: Corner, color: THREE.Color): void {
+    this.vertex(a, color);
+    this.vertex(b, color);
+    this.vertex(c, color);
+    this.vertex(a, color);
+    this.vertex(c, color);
+    this.vertex(d, color);
   }
 
-  build(): THREE.BufferGeometry | null {
+  /** `smooth` geometries carry the normals they were given; the rest derive flat ones. */
+  build(smooth: boolean): THREE.BufferGeometry | null {
     if (this.positions.length === 0) return null;
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(this.positions, 3));
     geo.setAttribute('color', new THREE.Float32BufferAttribute(this.colors, 3));
-    geo.computeVertexNormals();
+    if (smooth) geo.setAttribute('normal', new THREE.Float32BufferAttribute(this.normals, 3));
+    else geo.computeVertexNormals();
     return geo;
   }
 }
@@ -110,8 +117,21 @@ function buildChunk(
 ): { surface: THREE.BufferGeometry | null; walls: THREE.BufferGeometry | null } {
   const surface = new MeshBuffer();
   const walls = new MeshBuffer();
-  const { cols, rows, cellSize: size, heights, solid, materials, tones, originX, originZ, baseY } = chunk;
+  const { cols, rows, heights, cornerX, cornerZ, normals, solid, materials, tones, baseY } = chunk;
   const stride = cols + 1;
+
+  /** The jittered corner (i, j), carrying the surface normal the field has there. */
+  const corner = (i: number, j: number): Corner => {
+    const k = j * stride + i;
+    return [
+      cornerX[k] ?? 0,
+      heights[k] ?? 0,
+      cornerZ[k] ?? 0,
+      normals[k * 3] ?? 0,
+      normals[k * 3 + 1] ?? 1,
+      normals[k * 3 + 2] ?? 0,
+    ];
+  };
 
   const solidAt = (i: number, j: number): boolean =>
     i >= 0 && j >= 0 && i < cols && j < rows
@@ -128,31 +148,27 @@ function buildChunk(
       const tone = tones[k] === 1 ? 1 : 0;
       const color = linearColor(pair[tone] ?? pair[0]);
 
-      const x0 = originX + i * size;
-      const x1 = x0 + size;
-      const z0 = originZ + j * size;
-      const z1 = z0 + size;
-      const h00 = heights[j * stride + i] ?? 0;
-      const h10 = heights[j * stride + i + 1] ?? 0;
-      const h01 = heights[(j + 1) * stride + i] ?? 0;
-      const h11 = heights[(j + 1) * stride + i + 1] ?? 0;
+      const c00 = corner(i, j);
+      const c10 = corner(i + 1, j);
+      const c01 = corner(i, j + 1);
+      const c11 = corner(i + 1, j + 1);
 
       // Wound so the face normal points +Y (up) for the flat case.
-      surface.quad([x0, h00, z0], [x0, h01, z1], [x1, h11, z1], [x1, h10, z0], color);
+      surface.quad(c00, c01, c11, c10, color);
 
       // Skirt every edge that faces open air, dropped to the layer's underside.
       const cliff = linearColor(TERRAIN_CLIFF_COLORS[tone] ?? TERRAIN_CLIFF_COLORS[0]);
-      const wall = (ax: number, ay: number, az: number, bx: number, by: number, bz: number): void => {
-        walls.quad([ax, ay, az], [bx, by, bz], [bx, baseY, bz], [ax, baseY, az], cliff);
+      const wall = (a: Corner, b: Corner): void => {
+        walls.quad(a, b, [b[0], baseY, b[2]], [a[0], baseY, a[2]], cliff);
       };
-      if (!solidAt(i - 1, j)) wall(x0, h00, z0, x0, h01, z1);
-      if (!solidAt(i + 1, j)) wall(x1, h10, z0, x1, h11, z1);
-      if (!solidAt(i, j - 1)) wall(x0, h00, z0, x1, h10, z0);
-      if (!solidAt(i, j + 1)) wall(x0, h01, z1, x1, h11, z1);
+      if (!solidAt(i - 1, j)) wall(c00, c01);
+      if (!solidAt(i + 1, j)) wall(c10, c11);
+      if (!solidAt(i, j - 1)) wall(c00, c10);
+      if (!solidAt(i, j + 1)) wall(c01, c11);
     }
   }
 
-  return { surface: surface.build(), walls: walls.build() };
+  return { surface: surface.build(true), walls: walls.build(false) };
 }
 
 /** The layer's water surface: one flat translucent quad at its flood level. */

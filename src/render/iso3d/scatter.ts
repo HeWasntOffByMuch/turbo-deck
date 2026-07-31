@@ -118,3 +118,64 @@ const FOOTPRINT_BASE: Record<PropKind, number> = { tree: 24, bush: 16 };
 export function footprintRadius(prop: Prop): number {
   return FOOTPRINT_BASE[prop.kind] * prop.scale;
 }
+
+export interface BoundsScatterOptions {
+  readonly trees: number;
+  readonly bushes: number;
+  /** No prop is placed within this radius of any already-placed prop. */
+  readonly spacing: number;
+  /** Placement attempts per prop before giving up on it. */
+  readonly attempts: number;
+}
+
+const BOUNDS_DEFAULTS: BoundsScatterOptions = { trees: 460, bushes: 340, spacing: 76, attempts: 14 };
+
+/**
+ * Scatter decoration over an arbitrary rectangle, keeping only the points a
+ * caller-supplied predicate accepts -- which is how vegetation ends up on the
+ * meadows and the low slopes and stays off cliffs, water and the arena floor,
+ * without this module knowing anything about terrain.
+ *
+ * Same rejection sampling as {@link scatterProps}, with a bounded attempt budget
+ * so a hostile predicate makes it place fewer props rather than loop forever.
+ */
+export function scatterInBounds(
+  seed: number,
+  minX: number,
+  minZ: number,
+  maxX: number,
+  maxZ: number,
+  canPlace: (x: number, z: number) => boolean,
+  options: Partial<BoundsScatterOptions> = {},
+): Prop[] {
+  const opt = { ...BOUNDS_DEFAULTS, ...options };
+  let rng = Rng.fromSeed(seed);
+  const props: Prop[] = [];
+  const placed: Vec2[] = [];
+  const width = maxX - minX;
+  const depth = maxZ - minZ;
+
+  const place = (kind: PropKind, count: number): void => {
+    for (let i = 0; i < count; i++) {
+      for (let attempt = 0; attempt < opt.attempts; attempt++) {
+        let ux: number, uz: number, us: number, ur: number, ut: number;
+        [ux, rng] = nextUnit(rng);
+        [uz, rng] = nextUnit(rng);
+        [us, rng] = nextUnit(rng);
+        [ur, rng] = nextUnit(rng);
+        [ut, rng] = nextUnit(rng);
+        const x = minX + ux * width;
+        const z = minZ + uz * depth;
+        if (!canPlace(x, z)) continue;
+        if (!farEnough(x, z, placed, opt.spacing)) continue;
+        props.push({ kind, x, y: z, scale: 0.75 + us * 0.75, rotation: ur * Math.PI * 2, tint: ut * 2 - 1 });
+        placed.push({ x, y: z });
+        break;
+      }
+    }
+  };
+
+  place('tree', opt.trees);
+  place('bush', opt.bushes);
+  return props;
+}

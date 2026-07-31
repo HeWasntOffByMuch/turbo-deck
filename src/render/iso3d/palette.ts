@@ -48,18 +48,25 @@ export const PALETTE = {
 } as const;
 
 /**
- * Terrain material colours (spec 043), two tones each. A cell picks one of the
- * pair from a hash of its grid position, which gives large flat expanses the
- * same two-tone break-up the old checkerboard ground had -- without a texture,
- * and without softening the boundary *between* materials, which stays hard.
+ * Terrain material colours (spec 043), two tones each. A cell takes one of the
+ * pair from a smooth noise field, so a wide expanse of one material is mottled
+ * into soft organic patches -- break-up without a texture, and without softening
+ * the boundary *between* materials, which stays hard.
+ *
+ * Tuned warm: a sunlit yellow-green meadow, orange trodden earth, weathered
+ * limestone. Cool greens and grey slate read as overcast; these read as a place
+ * you would want to walk around in.
  */
 export const TERRAIN_COLORS: Record<TerrainMaterial, readonly [number, number]> = {
-  water: [0x3fb6c8, 0x35a3b8],
-  sand: [0xe0cb92, 0xd2bb7e],
-  grass: [0x8cb84a, 0x77a33c],
-  dirt: [0xb5763c, 0xa26630],
-  rock: [0xb8b1a4, 0xa39c8e],
-  snow: [0xf2f4f2, 0xdfe7e6],
+  water: [0x4ec3d4, 0x3bacc0],
+  sand: [0xe8d49c, 0xdcc487],
+  // Sunlit meadow: yellow-olive rather than a cool lawn green.
+  grass: [0x9dbd4e, 0x86a740],
+  // Warm trodden earth -- the orange of a worn path, not brown mud.
+  dirt: [0xc8823f, 0xb37034],
+  // Warm pale stone, closer to weathered limestone than to grey slate.
+  rock: [0xc6bda9, 0xafa693],
+  snow: [0xf5f5f0, 0xe3e9e5],
 };
 
 /**
@@ -67,7 +74,7 @@ export const TERRAIN_COLORS: Record<TerrainMaterial, readonly [number, number]> 
  * meets open air, so a coastline or a floating island reads as a solid mass and
  * not a paper cut-out.
  */
-export const TERRAIN_CLIFF_COLORS: readonly [number, number] = [0x8f8578, 0x7d7466];
+export const TERRAIN_CLIFF_COLORS: readonly [number, number] = [0xa89a84, 0x8f8371];
 
 /** Enemy body colour by sim type key, falling back to a neutral tone. */
 export function enemyColor(type: string): number {

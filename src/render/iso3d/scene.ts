@@ -4,22 +4,21 @@ import type { CombatState, Vec2 } from '../../sim/types.js';
 import { PALETTE } from './palette.js';
 import {
   makeAttackCone,
-  makeBush,
   makeMoveMarker,
   makeQueuedMoveMarker,
-  makeTree,
   makeUnwalkableMarker,
   makeWall,
   sectorGeometry,
 } from './meshes.js';
-import { createArenaWorld, type TerrainWorld } from '../../terrain/index.js';
+import { arenaBounds, createArenaWorld, worldMaterialAt, type TerrainWorld } from '../../terrain/index.js';
 import { buildTerrainMesh } from './terrain-mesh.js';
 import { attachOutline, type OutlineHandle } from './outline.js';
 import { HOVER_PLAYER_ID, pickHoveredUnit, type HoverTarget } from './hover.js';
 import type { ScreenPoint } from './input.js';
 import { MechRig, Poofs, PlayerRig } from './rigs.js';
 import { worldToIso, type IsoParams } from './projection.js';
-import { footprintRadius, scatterProps } from './scatter.js';
+import { footprintRadius, scatterInBounds, scatterProps } from './scatter.js';
+import { buildPropField } from './props.js';
 import { createViewControls, type ViewControls } from './view-controls.js';
 import { DEFAULT_CAMERA_OFFSET, DEFAULT_VIEW_HALF_WIDTH, followAlpha } from './view-settings.js';
 import { cameraFrustum, cursorToNdc, internalRenderSize } from './view-frame.js';
@@ -28,6 +27,10 @@ import { RetroPass } from './retro-pass.js';
 // Fraction of the gap to the target camera framing closed each rendered frame,
 // so orbit/zoom slider changes glide instead of snapping (spec 034).
 const CAMERA_SMOOTH = 0.15;
+
+// Vegetation is kept this far clear of the play bounds, so the world's dense
+// scatter never crowds the fight -- the arena keeps its own sparser one.
+const PLANT_ARENA_MARGIN = 90;
 
 /**
  * The isometric 3D view (spec 031): owns a three.js scene that draws the sim as
@@ -214,26 +217,48 @@ export class IsoScene {
     return low;
   }
 
-  /** Deterministic trees + bushes, kept clear of the arena centre / spawn. */
+  /**
+   * Scenery. Two scatters, for two different jobs: the arena's own trees and
+   * bushes (which also drive the unwalkable-footprint overlay), and a much
+   * denser spread across the surrounding world, filtered to the ground that
+   * would actually grow something -- meadow and low slopes, never a cliff face,
+   * a snowfield or the water. Both go into one instanced field, so the whole
+   * world's vegetation costs a handful of draw calls (spec 043).
+   */
   private addScenery(seed: number): void {
-    const props = scatterProps(seed, ARENA_WIDTH, ARENA_HEIGHT, [
+    const arenaProps = scatterProps(seed, ARENA_WIDTH, ARENA_HEIGHT, [
       { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 },
     ]);
-    for (const prop of props) {
-      const g = prop.kind === 'tree' ? makeTree() : makeBush();
-      const groundY = this.terrain.heightAt(prop.x, prop.y);
-      g.position.set(prop.x, groundY, prop.y);
-      g.scale.setScalar(prop.scale);
-      g.rotation.y = prop.rotation;
-      this.scene.add(g);
+    const bounds = arenaBounds();
+    const worldProps = scatterInBounds(
+      seed ^ 0x9e3779b1,
+      bounds.minX,
+      bounds.minZ,
+      bounds.maxX,
+      bounds.maxZ,
+      (x, z) => this.canPlant(x, z),
+    );
+    const field = buildPropField([...arenaProps, ...worldProps], (x, z) => this.terrain.heightAt(x, z));
+    this.scene.add(field.group);
 
+    for (const prop of arenaProps) {
       // A ground footprint marking this prop as unwalkable terrain (spec 034).
       const r = footprintRadius(prop);
       const marker = makeUnwalkableMarker();
-      marker.position.set(prop.x, groundY, prop.y);
+      marker.position.set(prop.x, this.terrain.heightAt(prop.x, prop.y), prop.y);
       marker.scale.set(r, 1, r);
       this.unwalkable.add(marker);
     }
+  }
+
+  /** Would anything grow here? Meadow and worn earth outside the arena floor. */
+  private canPlant(x: number, z: number): boolean {
+    if (x > -PLANT_ARENA_MARGIN && x < ARENA_WIDTH + PLANT_ARENA_MARGIN &&
+        z > -PLANT_ARENA_MARGIN && z < ARENA_HEIGHT + PLANT_ARENA_MARGIN) {
+      return false; // the arena has its own, sparser scatter
+    }
+    const material = worldMaterialAt(this.terrain, x, z);
+    return material === 'grass' || material === 'dirt';
   }
 
   /**

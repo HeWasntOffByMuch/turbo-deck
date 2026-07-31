@@ -5,16 +5,20 @@ import { ARENA_HEIGHT, ARENA_OBSTACLES, ARENA_WIDTH, TICK_RATE } from '../../sim
 import type { CombatState, InputFrame, Vec2 } from '../../sim/types.js';
 import { IsoInputCapture } from './input.js';
 import { PALETTE } from './palette.js';
-import { makeBush, makeHeadingArrow, makeMoveMarker, makeTree, makeUnwalkableMarker, makeWall } from './meshes.js';
-import { createArenaWorld, type TerrainWorld } from '../../terrain/index.js';
+import { makeHeadingArrow, makeMoveMarker, makeUnwalkableMarker, makeWall } from './meshes.js';
+import { arenaBounds, createArenaWorld, worldMaterialAt, type TerrainWorld } from '../../terrain/index.js';
 import { buildTerrainMesh } from './terrain-mesh.js';
 import { defaultMechTuning, MechRig, type MechTuning } from './rigs.js';
-import { footprintRadius, scatterProps } from './scatter.js';
+import { footprintRadius, scatterInBounds, scatterProps } from './scatter.js';
+import { buildPropField } from './props.js';
 import { createViewControls, type ViewControls } from './view-controls.js';
 import { DEFAULT_CAMERA_OFFSET, SANDBOX_VIEW_HALF_WIDTH } from './view-settings.js';
 
 // Per-frame easing fraction for camera framing changes (spec 034), matching IsoScene.
 const CAMERA_SMOOTH = 0.15;
+
+// Vegetation stays this far clear of the play bounds, matching the game view.
+const PLANT_ARENA_MARGIN = 90;
 
 /**
  * The movement sandbox tab (spec 032/033): no game -- just one controllable unit
@@ -158,19 +162,32 @@ class MovementScene {
     }
   }
 
+  /** The same two scatters the game view uses: sparse in the arena, dense outside (spec 043). */
   private addScenery(seed: number): void {
-    const props = scatterProps(seed, ARENA_WIDTH, ARENA_HEIGHT, [{ x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 }]);
-    for (const prop of props) {
-      const g = prop.kind === 'tree' ? makeTree() : makeBush();
-      const groundY = this.terrain.heightAt(prop.x, prop.y);
-      g.position.set(prop.x, groundY, prop.y);
-      g.scale.setScalar(prop.scale);
-      g.rotation.y = prop.rotation;
-      this.scene.add(g);
+    const arenaProps = scatterProps(seed, ARENA_WIDTH, ARENA_HEIGHT, [{ x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 }]);
+    const bounds = arenaBounds();
+    const worldProps = scatterInBounds(
+      seed ^ 0x9e3779b1,
+      bounds.minX,
+      bounds.minZ,
+      bounds.maxX,
+      bounds.maxZ,
+      (x, z) => {
+        if (x > -PLANT_ARENA_MARGIN && x < ARENA_WIDTH + PLANT_ARENA_MARGIN &&
+            z > -PLANT_ARENA_MARGIN && z < ARENA_HEIGHT + PLANT_ARENA_MARGIN) {
+          return false;
+        }
+        const material = worldMaterialAt(this.terrain, x, z);
+        return material === 'grass' || material === 'dirt';
+      },
+    );
+    const field = buildPropField([...arenaProps, ...worldProps], (x, z) => this.terrain.heightAt(x, z));
+    this.scene.add(field.group);
 
+    for (const prop of arenaProps) {
       const r = footprintRadius(prop);
       const marker = makeUnwalkableMarker();
-      marker.position.set(prop.x, groundY, prop.y);
+      marker.position.set(prop.x, this.terrain.heightAt(prop.x, prop.y), prop.y);
       marker.scale.set(r, 1, r);
       this.unwalkable.add(marker);
     }
