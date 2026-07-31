@@ -1,3 +1,5 @@
+import type { TerrainMaterial } from '../../terrain/types.js';
+
 /**
  * The fixed, deliberately limited colour palette for the isometric 3D scene
  * (spec 018). Flat blocks of these colours only -- no gradients, no textures.
@@ -44,6 +46,28 @@ export const PALETTE = {
   wall: 0x6b6b78,
   wallTop: 0x84848f,
 } as const;
+
+/**
+ * Terrain material colours (spec 043), two tones each. A cell picks one of the
+ * pair from a hash of its grid position, which gives large flat expanses the
+ * same two-tone break-up the old checkerboard ground had -- without a texture,
+ * and without softening the boundary *between* materials, which stays hard.
+ */
+export const TERRAIN_COLORS: Record<TerrainMaterial, readonly [number, number]> = {
+  water: [0x3fb6c8, 0x35a3b8],
+  sand: [0xe0cb92, 0xd2bb7e],
+  grass: [0x8cb84a, 0x77a33c],
+  dirt: [0xb5763c, 0xa26630],
+  rock: [0xb8b1a4, 0xa39c8e],
+  snow: [0xf2f4f2, 0xdfe7e6],
+};
+
+/**
+ * The stratified stone of a terrain edge: the wall dropped wherever solid ground
+ * meets open air, so a coastline or a floating island reads as a solid mass and
+ * not a paper cut-out.
+ */
+export const TERRAIN_CLIFF_COLORS: readonly [number, number] = [0x8f8578, 0x7d7466];
 
 /** Enemy body colour by sim type key, falling back to a neutral tone. */
 export function enemyColor(type: string): number {

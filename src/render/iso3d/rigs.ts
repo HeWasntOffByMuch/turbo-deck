@@ -1660,9 +1660,10 @@ export class Poofs {
 
   constructor(private readonly scene: THREE.Scene) {}
 
-  spawn(x: number, z: number): void {
+  /** `groundY` is the terrain height under the footfall (spec 043), 0 on flat ground. */
+  spawn(x: number, z: number, groundY = 0): void {
     const group = new THREE.Group();
-    group.position.set(x, 3, z);
+    group.position.set(x, groundY + 3, z);
     const mats: THREE.MeshBasicMaterial[] = [];
     for (let i = 0; i < 3; i++) {
       const mat = new THREE.MeshBasicMaterial({ color: PALETTE.poof, transparent: true, opacity: 0.7, depthWrite: false });
