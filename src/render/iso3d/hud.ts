@@ -283,7 +283,7 @@ export class IsoHud {
     this.waveBtn.addEventListener('click', () => input.queueWave());
     const hint = el('div', 'iso-hint iso-panel');
     hint.textContent =
-      'right-click move · shift+right-click queues the next move · left-click attack · Q W E R cards · SPACE wave · C character';
+      'right-click move · shift+right-click queues the next move · left-click attack · Q W E R cards · SPACE wave · C character · wheel zoom';
     controls.append(this.waveBtn, hint);
     this.element.appendChild(controls);
 

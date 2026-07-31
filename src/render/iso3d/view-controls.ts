@@ -8,6 +8,7 @@ import {
   MIN_VIEW_HALF_WIDTH,
   offsetToOrbit,
   orbitToOffset,
+  zoomViewHalfWidth,
   type Vec3,
 } from './view-settings.js';
 
@@ -30,6 +31,8 @@ export interface ViewControls {
   cameraOffset(): Vec3;
   /** Orthographic half-width (zoom); smaller frames a tighter region. */
   viewHalfWidth(): number;
+  /** Let the wheel over `target` zoom the view span, as well as the slider (spec 042). */
+  attachWheelZoom(target: HTMLElement): void;
   /** How long the camera takes to catch up to the unit it follows, ms (spec 039). */
   followLagMs(): number;
   /** Directional-light position/direction, world units. */
@@ -43,15 +46,20 @@ export interface ViewControls {
 interface Slider {
   readonly row: HTMLElement;
   value(): number;
+  setValue(v: number): void;
   reset(): void;
 }
 
-/** A labelled range input that shows its live value; `reset()` restores `initial`. */
+/**
+ * A labelled range input that shows its live value; `reset()` restores `initial`.
+ * A `step` of `'any'` makes the track continuous, so the slider can also carry
+ * the fractional values a wheel gesture produces (spec 042).
+ */
 function makeSlider(
   label: string,
   min: number,
   max: number,
-  step: number,
+  step: number | 'any',
   initial: number,
   unit: string,
   tip: string,
@@ -86,6 +94,10 @@ function makeSlider(
   return {
     row,
     value: () => Number(input.value),
+    setValue: (v: number) => {
+      input.value = String(v);
+      show();
+    },
     reset: () => {
       input.value = String(initial);
       show();
@@ -198,8 +210,11 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     'Rotate the follow camera around the unit (compass azimuth, in degrees).');
   const camEl = makeSlider('Height', 10, 85, 1, Math.round(camOrbit.elevation / DEG), '°',
     'Camera elevation angle above the ground, in degrees — higher looks more top-down.');
-  const zoom = makeSlider('View span', MIN_VIEW_HALF_WIDTH, MAX_VIEW_HALF_WIDTH, 20, opts.zoom ?? DEFAULT_VIEW_HALF_WIDTH, '',
-    'Orthographic zoom: the half-width of the area framed. Smaller zooms in tighter.');
+  // Continuous ('any'), so the wheel's fractional spans survive the round trip
+  // through the slider instead of snapping to a step (spec 042).
+  const zoom = makeSlider('View span', MIN_VIEW_HALF_WIDTH, MAX_VIEW_HALF_WIDTH, 'any', opts.zoom ?? DEFAULT_VIEW_HALF_WIDTH, '',
+    'Orthographic zoom: the half-width of the area framed. Smaller zooms in tighter. ' +
+    'Scroll the wheel over the view to zoom.');
   const followLag = makeSlider('Follow lag', 0, 500, 10, DEFAULT_FOLLOW_LAG_MS, 'ms',
     'How long the camera takes to catch up to the unit — it trails a little as the unit ' +
     'starts moving and settles when it stops. 0 pins the camera to the unit.');
@@ -282,6 +297,17 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
 
   return {
     element,
+    // Non-passive: the wheel is the zoom here, so it must not also scroll the page.
+    attachWheelZoom: (target: HTMLElement) => {
+      target.addEventListener(
+        'wheel',
+        (e: WheelEvent) => {
+          e.preventDefault();
+          zoom.setValue(zoomViewHalfWidth(zoom.value(), e.deltaY, e.deltaMode));
+        },
+        { passive: false },
+      );
+    },
     cameraOffset: () =>
       orbitToOffset({ azimuth: camAz.value() * DEG, elevation: camEl.value() * DEG, distance: camOrbit.distance }),
     viewHalfWidth: () => zoom.value(),

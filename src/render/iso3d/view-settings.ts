@@ -37,11 +37,47 @@ export const DEFAULT_VIEW_HALF_WIDTH = 640;
  * they keep the original close framing rather than the game's wide shot.
  */
 export const SANDBOX_VIEW_HALF_WIDTH = 320;
-/** Zoom slider bounds, wide enough to reach both a tight duel and the whole arena. */
+/**
+ * The band the view span is held within, world units: wide enough to reach both
+ * a tight duel and the whole arena. Every path to the zoom -- the slider and the
+ * wheel (spec 042) -- goes through {@link clampViewHalfWidth}, so nothing can
+ * frame outside it.
+ */
 export const MIN_VIEW_HALF_WIDTH = 200;
 export const MAX_VIEW_HALF_WIDTH = 1400;
 /** How long the follow camera takes to close most of the gap to the unit (spec 039). */
 export const DEFAULT_FOLLOW_LAG_MS = 130;
+
+/** How much one wheel notch scales the view span. */
+const ZOOM_PER_NOTCH = 1.1;
+/** Wheel delta that counts as one notch, by `WheelEvent.deltaMode` (px/lines/pages). */
+const DELTA_PER_NOTCH = [100, 3, 1] as const;
+
+/** Hold a view span inside the usable band; a non-finite span falls back to the default. */
+export function clampViewHalfWidth(halfWidth: number): number {
+  if (!Number.isFinite(halfWidth)) return DEFAULT_VIEW_HALF_WIDTH;
+  return Math.min(MAX_VIEW_HALF_WIDTH, Math.max(MIN_VIEW_HALF_WIDTH, halfWidth));
+}
+
+/**
+ * The view span a wheel gesture lands on, given the span it started at (spec
+ * 042). Scrolling up (negative `deltaY`) narrows the span -- zooms in. The step
+ * is multiplicative, so the same gesture changes the framing by the same
+ * proportion anywhere in the band -- which matters over a range this wide, where
+ * a fixed step would crawl at 1400 and lurch at 200 -- and a trackpad's small
+ * deltas move it a correspondingly small amount instead of a fixed notch.
+ * Always clamped.
+ */
+export function zoomViewHalfWidth(current: number, deltaY: number, deltaMode = 0): number {
+  const start = clampViewHalfWidth(current);
+  const perNotch = DELTA_PER_NOTCH[deltaMode] ?? DELTA_PER_NOTCH[0];
+  const notches = deltaY / perNotch;
+  if (Number.isNaN(notches)) return start;
+  const scaled = start * Math.pow(ZOOM_PER_NOTCH, notches);
+  // A wild delta overflows the multiply; saturate on the bound it was headed for.
+  if (!Number.isFinite(scaled)) return notches > 0 ? MAX_VIEW_HALF_WIDTH : MIN_VIEW_HALF_WIDTH;
+  return clampViewHalfWidth(scaled);
+}
 
 /**
  * The fraction of the remaining gap a trailing follow camera closes in a frame
