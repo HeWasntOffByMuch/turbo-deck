@@ -125,6 +125,8 @@ function arenaFeatures(opt: ArenaWorldOptions): TerrainFeature[] {
     { kind: 'hill', x: 1720, z: 2150, radius: 160, edge: 115, height: 260 },
 
     // Worn routes across the play area, carved shallow and tagged as dirt.
+    // Narrow: a trail someone walks, not a road -- two wide ones meeting at the
+    // arena's centre read as one big clearing rather than as routes.
     {
       kind: 'path',
       points: [
@@ -134,7 +136,7 @@ function arenaFeatures(opt: ArenaWorldOptions): TerrainFeature[] {
         [900, 600],
         [1120, 780],
       ],
-      width: 50,
+      width: 38,
       depth: 7,
     },
     {
@@ -145,7 +147,7 @@ function arenaFeatures(opt: ArenaWorldOptions): TerrainFeature[] {
         [880, 60],
         [980, -160],
       ],
-      width: 42,
+      width: 30,
       depth: 6,
     },
   ];

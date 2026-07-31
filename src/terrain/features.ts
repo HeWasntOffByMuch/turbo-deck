@@ -1,4 +1,3 @@
-import { hashUnit2 } from '../shared/hash.js';
 import {
   distToPolyline,
   distToSegment,
@@ -216,6 +215,7 @@ export function createLayer(def: LayerDef): TerrainLayer {
   return {
     id: def.id,
     bounds: def.bounds,
+    seed: def.seed,
     baseY: def.baseY,
     waterLevel: def.waterLevel,
     sample(x: number, z: number): TerrainSample {
@@ -225,13 +225,4 @@ export function createLayer(def: LayerDef): TerrainLayer {
       return { height, solid: acc.hasMask ? acc.mask >= 0.5 : true, region: acc.region };
     },
   };
-}
-
-/**
- * A stable 0/1 tone variant for a cell, so large flat areas of one material get
- * the two-tone break-up the old checkerboard ground gave, without a texture.
- * Hashed from the cell's grid coordinates: no state, no draw order dependence.
- */
-export function toneVariant(cellX: number, cellZ: number, seed: number): number {
-  return hashUnit2(cellX, cellZ, seed ^ 0x5bf03635) < 0.42 ? 1 : 0;
 }

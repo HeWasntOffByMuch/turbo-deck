@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { chunkCoords, layerCellSolid, sampleChunk, sampleLayer, type ChunkOptions } from './chunk.js';
+import {
+  chunkCoords,
+  layerCellSolid,
+  sampleChunk,
+  sampleLayer,
+  toneVariant,
+  type ChunkOptions,
+} from './chunk.js';
 import { createLayer } from './features.js';
 import { rectDepth, rectWidth, TERRAIN_MATERIALS, type Rect, type TerrainLayer } from './types.js';
 
@@ -56,28 +63,80 @@ describe('chunk grid', () => {
     expect(covered.size).toBe(cellsX * cellsZ);
   });
 
-  it('places corner heights exactly where the field says', () => {
+  it('places every corner height where that corner actually sits', () => {
     const layer = hillyLayer();
     for (const chunk of sampleLayer(layer, OPT)) {
-      for (let j = 0; j <= chunk.rows; j++) {
-        for (let i = 0; i <= chunk.cols; i++) {
-          const x = chunk.originX + i * chunk.cellSize;
-          const z = chunk.originZ + j * chunk.cellSize;
-          expect(chunk.heights[j * (chunk.cols + 1) + i]).toBeCloseTo(layer.sample(x, z).height, 4);
-        }
+      for (let k = 0; k < chunk.heights.length; k++) {
+        const x = chunk.cornerX[k] ?? 0;
+        const z = chunk.cornerZ[k] ?? 0;
+        expect(chunk.heights[k]).toBeCloseTo(layer.sample(x, z).height, 4);
       }
     }
   });
 
-  it('shares corner heights across a chunk seam, so the surface is continuous', () => {
+  it('jitters corners off the lattice, but never far enough to fold a quad', () => {
+    const layer = hillyLayer();
+    let moved = 0;
+    for (const chunk of sampleLayer(layer, OPT)) {
+      for (let j = 0; j <= chunk.rows; j++) {
+        for (let i = 0; i <= chunk.cols; i++) {
+          const k = j * (chunk.cols + 1) + i;
+          const dx = (chunk.cornerX[k] ?? 0) - (chunk.originX + i * chunk.cellSize);
+          const dz = (chunk.cornerZ[k] ?? 0) - (chunk.originZ + j * chunk.cellSize);
+          // Under half a cell each way, so corners cannot cross their neighbours.
+          expect(Math.abs(dx)).toBeLessThan(chunk.cellSize / 2);
+          expect(Math.abs(dz)).toBeLessThan(chunk.cellSize / 2);
+          if (Math.abs(dx) > 0.5 || Math.abs(dz) > 0.5) moved++;
+        }
+      }
+    }
+    // Nearly every corner should actually have moved -- an unjittered grid is
+    // exactly the "made of squares" look this exists to break.
+    expect(moved).toBeGreaterThan(100);
+  });
+
+  it('shares corners across a chunk seam, so the surface is continuous', () => {
     const layer = hillyLayer();
     const a = sampleChunk(layer, { cx: 0, cz: 0 }, OPT);
     const b = sampleChunk(layer, { cx: 1, cz: 0 }, OPT);
     for (let j = 0; j <= a.rows; j++) {
-      const right = a.heights[j * (a.cols + 1) + a.cols];
-      const left = b.heights[j * (b.cols + 1)];
-      expect(right).toBe(left);
+      const right = j * (a.cols + 1) + a.cols;
+      const left = j * (b.cols + 1);
+      // Position, height and normal all agree, so neither a gap nor a shading
+      // crease can appear along the join.
+      expect(a.cornerX[right]).toBe(b.cornerX[left]);
+      expect(a.cornerZ[right]).toBe(b.cornerZ[left]);
+      expect(a.heights[right]).toBe(b.heights[left]);
+      for (let c = 0; c < 3; c++) {
+        expect(a.normals[right * 3 + c]).toBeCloseTo(b.normals[left * 3 + c] ?? 0, 6);
+      }
     }
+  });
+
+  it('gives every corner a unit normal that points out of the ground', () => {
+    for (const chunk of sampleLayer(hillyLayer(), OPT)) {
+      for (let k = 0; k < chunk.heights.length; k++) {
+        const nx = chunk.normals[k * 3] ?? 0;
+        const ny = chunk.normals[k * 3 + 1] ?? 0;
+        const nz = chunk.normals[k * 3 + 2] ?? 0;
+        expect(Math.hypot(nx, ny, nz)).toBeCloseTo(1, 5);
+        expect(ny).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('mottles tone in patches rather than per cell, so no checkerboard forms', () => {
+    // Walk a straight line and count how often the tone flips. A per-cell coin
+    // flip alternates constantly; a noise field holds a value for a while.
+    let flips = 0;
+    let previous = toneVariant(0, 0, 5);
+    const steps = 200;
+    for (let i = 1; i <= steps; i++) {
+      const t = toneVariant(i * OPT.cellSize, 0, 5);
+      if (t !== previous) flips++;
+      previous = t;
+    }
+    expect(flips).toBeLessThan(steps / 8);
   });
 
   it('classifies every solid cell to a real material', () => {
@@ -100,6 +159,8 @@ describe('chunk grid', () => {
       expect(Array.from(chunk.materials)).toEqual(Array.from(other?.materials ?? []));
       expect(Array.from(chunk.solid)).toEqual(Array.from(other?.solid ?? []));
       expect(Array.from(chunk.tones)).toEqual(Array.from(other?.tones ?? []));
+      expect(Array.from(chunk.cornerX)).toEqual(Array.from(other?.cornerX ?? []));
+      expect(Array.from(chunk.normals)).toEqual(Array.from(other?.normals ?? []));
     });
   });
 

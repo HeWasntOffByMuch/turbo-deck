@@ -1,4 +1,5 @@
-import type { TerrainMaterial, TerrainRegion } from './types.js';
+import type { TerrainLayer, TerrainMaterial, TerrainRegion, TerrainWorld } from './types.js';
+import { rectContains } from './types.js';
 
 /**
  * Terrain material classification (spec 043): what a patch of ground is *made
@@ -66,4 +67,43 @@ export function classify(input: ClassifyInput, bands: TerrainBands = DEFAULT_BAN
   if (region === 'rocky') return 'rock';
   if (slope >= bands.dirtSlope) return 'dirt';
   return 'grass';
+}
+
+/**
+ * Classify the ground at an arbitrary world point, deriving the slope from the
+ * field itself rather than from a chunk. Useful anywhere outside the mesher that
+ * needs to know what it is standing on -- scattering vegetation only where it
+ * would grow, and later footstep sounds, movement cost, or spawn rules.
+ */
+export function materialAtPoint(
+  layer: TerrainLayer,
+  x: number,
+  z: number,
+  bands: TerrainBands = DEFAULT_BANDS,
+  step = 8,
+): TerrainMaterial {
+  const here = layer.sample(x, z);
+  const dx = (layer.sample(x + step, z).height - layer.sample(x - step, z).height) / (2 * step);
+  const dz = (layer.sample(x, z + step).height - layer.sample(x, z - step).height) / (2 * step);
+  return classify(
+    { height: here.height, slope: Math.hypot(dx, dz), region: here.region, waterLevel: layer.waterLevel },
+    bands,
+  );
+}
+
+/** The material of the topmost layer that has ground at this point, if any. */
+export function worldMaterialAt(
+  world: TerrainWorld,
+  x: number,
+  z: number,
+  bands?: TerrainBands,
+): TerrainMaterial | null {
+  let best: { height: number; layer: TerrainLayer } | null = null;
+  for (const layer of world.layers) {
+    if (!rectContains(layer.bounds, x, z)) continue;
+    const s = layer.sample(x, z);
+    if (!s.solid) continue;
+    if (!best || s.height > best.height) best = { height: s.height, layer };
+  }
+  return best ? materialAtPoint(best.layer, x, z, bands) : null;
 }

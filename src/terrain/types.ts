@@ -75,6 +75,8 @@ export function rectContains(r: Rect, x: number, z: number): boolean {
 export interface TerrainLayer {
   readonly id: string;
   readonly bounds: Rect;
+  /** Seed for everything sampled off this layer — the field, and the mesh jitter. */
+  readonly seed: number;
   /** World Y of the layer's underside; open edges skirt down to it. */
   readonly baseY: number;
   /** Flood level for this layer; cells at or below it are water. `null` = dry. */
