@@ -25,19 +25,21 @@ export default tseslint.config(
     },
   },
   {
-    files: ['src/sim/**/*.ts', 'src/cards/**/*.ts'],
+    // Terrain (spec 043) is world data, not rendering: it carries the same
+    // determinism guarantee as the sim, so it gets the same guard rails.
+    files: ['src/sim/**/*.ts', 'src/cards/**/*.ts', 'src/terrain/**/*.ts'],
     rules: {
       'no-restricted-properties': [
         'error',
         {
           object: 'Math',
           property: 'random',
-          message: 'Sim/card code must use the seeded PRNG passed in explicitly, not Math.random.',
+          message: 'Sim/card/terrain code must use the seeded PRNG or spatial hash passed in explicitly, not Math.random.',
         },
       ],
       'no-restricted-globals': [
         'error',
-        { name: 'Date', message: 'Sim/card code must not read wall-clock time; it must be a pure function of (state, inputs).' },
+        { name: 'Date', message: 'Sim/card/terrain code must not read wall-clock time; it must be a pure function of its inputs.' },
       ],
     },
   },
