@@ -6,6 +6,7 @@ import {
   bayerThresholds,
   ditherChannel,
   quantizeChannel,
+  RETRO_DEFAULTS,
   type BayerSize,
 } from './retro.js';
 
@@ -130,5 +131,12 @@ describe('ditherChannel', () => {
 
   it('is pure', () => {
     expect(ditherChannel(0.37, 0.28, 6, 1)).toBe(ditherChannel(0.37, 0.28, 6, 1));
+  });
+});
+
+describe('the retro defaults the view opens at (spec 044)', () => {
+  it('quantizes to 12 colour steps with a 5% dither', () => {
+    expect(RETRO_DEFAULTS.levels).toBe(12);
+    expect(RETRO_DEFAULTS.ditherStrength).toBeCloseTo(0.05, 9);
   });
 });

@@ -36,11 +36,12 @@ describe('camera frustum (spec 041)', () => {
     expect(frustum.halfHeight).toBeCloseTo(320 / REFERENCE_ASPECT, 6);
   });
 
-  it('opens framing twice as much ground as the letterboxed view did', () => {
-    const before = cameraFrustum(320, REFERENCE_ASPECT);
-    const now = cameraFrustum(DEFAULT_VIEW_HALF_WIDTH, REFERENCE_ASPECT);
-    expect(now.halfWidth / before.halfWidth).toBeCloseTo(2, 6);
-    expect(now.halfHeight / before.halfHeight).toBeCloseTo(2, 6);
+  it('opens on the 320-unit framing (spec 044)', () => {
+    // Spec 041 doubled the opening span to 640; spec 044 puts it back to 320,
+    // which is the framing this describe block's reference case is built on.
+    const frustum = cameraFrustum(DEFAULT_VIEW_HALF_WIDTH, REFERENCE_ASPECT);
+    expect(frustum.halfWidth).toBeCloseTo(320, 6);
+    expect(frustum.halfHeight).toBeCloseTo(320 / REFERENCE_ASPECT, 6);
   });
 
   it('leaves the default zoom inside the slider it is driven by', () => {

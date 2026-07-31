@@ -21,22 +21,30 @@ export interface Orbit {
   readonly distance: number;
 }
 
-/** The isometric follow camera's offset the view shipped with (spec 031). */
-export const DEFAULT_CAMERA_OFFSET: Vec3 = { x: 420, y: 520, z: 420 };
+/**
+ * The isometric follow camera's opening orbit. Stated as an orbit rather than a
+ * vector because the pitch is the part anyone tunes: 45 degrees of elevation is
+ * the classic isometric three-quarter view. With an orthographic camera the
+ * distance decides only what stays inside the near/far planes, never the framing.
+ */
+export const DEFAULT_CAMERA_ORBIT: Orbit = {
+  azimuth: (45 * Math.PI) / 180,
+  elevation: (45 * Math.PI) / 180,
+  distance: 800,
+};
+
+/** The isometric follow camera's offset the view opens at (spec 031). */
+export const DEFAULT_CAMERA_OFFSET: Vec3 = orbitToOffset(DEFAULT_CAMERA_ORBIT);
 /** The directional sun's position/direction the view shipped with. */
 export const DEFAULT_LIGHT_OFFSET: Vec3 = { x: -0.6, y: 1.4, z: -0.5 };
 /**
- * The orthographic camera's half-width (zoom) the fullscreen game window opens
- * at. Doubled from the 320 the letterboxed view shipped with, so the game frames
- * twice as much ground in each direction. With an orthographic camera this -- not
- * the camera's distance -- is what decides how much of the world is on screen.
+ * The orthographic camera's half-width (zoom) every view opens at. With an
+ * orthographic camera this -- not the camera's distance -- is what decides how
+ * much of the world is on screen. The game and the sandboxes share it: this is
+ * close enough to read a unit's legs and wide enough to fight in, and the wheel
+ * or the slider takes it anywhere in the band below.
  */
-export const DEFAULT_VIEW_HALF_WIDTH = 640;
-/**
- * The zoom the rig sandboxes open at. They exist to inspect one unit's legs, so
- * they keep the original close framing rather than the game's wide shot.
- */
-export const SANDBOX_VIEW_HALF_WIDTH = 320;
+export const DEFAULT_VIEW_HALF_WIDTH = 320;
 /**
  * The band the view span is held within, world units: wide enough to reach both
  * a tight duel and the whole arena. Every path to the zoom -- the slider and the
