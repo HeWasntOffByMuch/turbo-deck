@@ -61,41 +61,6 @@ export function faceted(radius: number, color: number, detail = 0): THREE.Mesh {
   return new THREE.Mesh(new THREE.IcosahedronGeometry(radius, detail), flatMaterial(color));
 }
 
-/** A blocky conifer: a short trunk under three stacked, tapering foliage tiers. */
-export function makeTree(): THREE.Group {
-  const g = new THREE.Group();
-  const trunk = box(10, 26, 10, PALETTE.trunk);
-  trunk.position.y = 13;
-  g.add(trunk);
-
-  const tiers: readonly [number, number, number, number][] = [
-    // radius, height, baseY, color
-    [34, 34, 26, PALETTE.leafDeep],
-    [26, 30, 44, PALETTE.leafMid],
-    [17, 26, 60, PALETTE.leafBright],
-  ];
-  for (const [radius, height, baseY, color] of tiers) {
-    const tier = cone(radius, height, color);
-    tier.position.y = baseY + height / 2;
-    g.add(tier);
-  }
-  return g;
-}
-
-/** A low rounded shrub: two overlapping faceted blobs. */
-export function makeBush(): THREE.Group {
-  const g = new THREE.Group();
-  const big = faceted(20, PALETTE.bush);
-  big.position.set(0, 14, 0);
-  big.scale.y = 0.7;
-  g.add(big);
-  const small = faceted(13, PALETTE.bushBright);
-  small.position.set(9, 20, -4);
-  small.scale.y = 0.7;
-  g.add(small);
-  return g;
-}
-
 /** A small flat marker dropped on the ground at the current move order. */
 export function makeMoveMarker(): THREE.Mesh {
   const m = new THREE.Mesh(new THREE.OctahedronGeometry(9, 0), flatMaterial(PALETTE.marker));
