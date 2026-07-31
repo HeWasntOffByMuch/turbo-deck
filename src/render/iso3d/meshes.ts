@@ -21,6 +21,24 @@ export function flatMaterial(color: number): THREE.MeshLambertMaterial {
   return mat;
 }
 
+/**
+ * Mark everything under `root` as taking part in the shadow pass (spec 045):
+ * casting onto the world, and taking the shadows other things cast onto it.
+ *
+ * Applied to whole subtrees rather than at each mesh's construction because the
+ * rigs assemble dozens of small parts and every one of them belongs in the same
+ * silhouette. A no-op in a scene whose renderer has no shadow map, which is how
+ * the sandbox views keep their single unshadowed light.
+ */
+export function castsShadows(root: THREE.Object3D): void {
+  root.traverse((node) => {
+    if ((node as THREE.Mesh).isMesh) {
+      node.castShadow = true;
+      node.receiveShadow = true;
+    }
+  });
+}
+
 /** Darken a hex colour by `factor` (0..1), for e.g. a mech's legs vs its chassis. */
 export function darken(color: number, factor: number): number {
   const r = Math.round(((color >> 16) & 0xff) * factor);

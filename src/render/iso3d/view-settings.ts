@@ -66,8 +66,26 @@ export const CAMERA_FAR = 12000;
 
 /** The isometric follow camera's offset the view opens at (spec 031). */
 export const DEFAULT_CAMERA_OFFSET: Vec3 = orbitToOffset(DEFAULT_CAMERA_ORBIT);
-/** The directional sun's position/direction the view shipped with. */
-export const DEFAULT_LIGHT_OFFSET: Vec3 = { x: -0.6, y: 1.4, z: -0.5 };
+/**
+ * The directional sun's direction (its length says nothing -- the scene places
+ * the light along it, spec 045).
+ *
+ * 40 degrees above the horizon, down from the 61 it shipped with. With nothing
+ * casting a shadow, the sun's elevation only decided how faces were shaded and
+ * a high one kept everything evenly lit; now that it throws shadows, it decides
+ * how long they are, and a near-overhead sun leaves each tree sitting on a dot
+ * of its own shade. Down here the shade stretches into strokes across the
+ * ground, which is what makes a canopy read as a canopy.
+ *
+ * The bearing swings round to about a quarter turn off the camera's own. The
+ * sun used to sit almost directly behind the scene, which was fine while it
+ * only shaded faces and is wrong now that it casts: every surface turned toward
+ * the viewer was the surface facing away from the light, so trees came out as
+ * dark blobs with a lit rim. Side-on, the same tree gets a lit flank and a
+ * shaded one -- and the shadow still falls across the frame rather than hiding
+ * behind the thing that threw it.
+ */
+export const DEFAULT_LIGHT_OFFSET: Vec3 = { x: 0.569, y: 0.669, z: -0.478 };
 /**
  * The orthographic camera's half-width (zoom) every view opens at. With an
  * orthographic camera this -- not the camera's distance -- is what decides how

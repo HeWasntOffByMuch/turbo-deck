@@ -119,6 +119,10 @@ export function buildPropField(props: readonly Prop[], heightAt: (x: number, z: 
       const material = new THREE.MeshLambertMaterial({ flatShading: true });
       const mesh = new THREE.InstancedMesh(part.geometry, material, of.length);
       mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+      // Scenery is the bulk of the shadow pass (spec 045): a canopy that throws
+      // dappled shade onto the ground is what stops props reading as decals.
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
       const matrix = new THREE.Matrix4();
       const position = new THREE.Vector3();
       const quaternion = new THREE.Quaternion();

@@ -213,12 +213,21 @@ export function buildTerrainMesh(
       const { surface, walls } = buildChunk(layer, chunk, opt);
       if (surface) {
         const mesh = new THREE.Mesh(surface, surfaceMaterial);
+        // Ground both takes shadows and throws them (spec 045): a cliff casting
+        // its own shape onto the shelf below is most of what makes a terrace
+        // read as a step rather than a stripe. Water does neither -- a shadow
+        // on a translucent plane reads as dirt floating on it.
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
         group.add(mesh);
         pickTargets.push(mesh);
         geometries.push(surface);
       }
       if (walls) {
-        group.add(new THREE.Mesh(walls, wallMaterial));
+        const mesh = new THREE.Mesh(walls, wallMaterial);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        group.add(mesh);
         geometries.push(walls);
       }
     }
