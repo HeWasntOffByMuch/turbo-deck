@@ -21,7 +21,14 @@ import type { SpellSpec } from '../shared/spell-spec.js';
 import { Rng } from '../shared/prng.js';
 import { initCombat, step as combatStep } from '../sim/combat.js';
 import { TICK_RATE } from '../sim/constants.js';
-import { type CombatState, type ExternalEffect, type InputFrame, type SimEvent, type Vec2 } from '../sim/types.js';
+import {
+  type CombatState,
+  type ExternalEffect,
+  type InputFrame,
+  type SimEvent,
+  type Vec2,
+  type WorldColliders,
+} from '../sim/types.js';
 
 /**
  * Composition root for the spell-card game (spec 018/019): the only place a
@@ -207,11 +214,26 @@ export type SpellGameEvent =
   | { readonly kind: 'rewardChosen'; readonly offer: RewardOffer }
   | SimEvent;
 
-export function initSpellGame(seed: number, ids?: readonly SpellId[]): SpellGameState {
+/** What the composition root may hand the spell game beyond its seed. */
+export interface SpellGameOptions {
+  /** Starting spell ids; defaults to the standard opening deck. */
+  readonly ids?: readonly SpellId[];
+  /**
+   * The static world the sim collides against (spec 044) -- walls plus the
+   * vegetation the view drew. Defaults to an empty world with the arena's walls.
+   */
+  readonly world?: WorldColliders;
+}
+
+export function initSpellGame(seed: number, opts: SpellGameOptions = {}): SpellGameState {
   return {
     // Wave mode: the arena starts empty; the Spawn Wave control populates it.
-    combat: initCombat(seed, { ambientSpawner: false, initialEnemies: 0 }),
-    deck: initSpellDeck(Rng.fromSeed(seed), ids),
+    combat: initCombat(seed, {
+      ambientSpawner: false,
+      initialEnemies: 0,
+      ...(opts.world ? { world: opts.world } : {}),
+    }),
+    deck: initSpellDeck(Rng.fromSeed(seed), opts.ids),
     refillAtTick: Array.from({ length: HAND_SIZE }, () => null),
     reserved: [],
     windowClosesAtTick: null,

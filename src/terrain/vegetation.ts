@@ -1,12 +1,20 @@
-import { Rng } from '../../shared/prng.js';
-import type { Vec2 } from '../../sim/types.js';
+import { Rng } from '../shared/prng.js';
+import { PLAY_HEIGHT, PLAY_WIDTH } from '../shared/world.js';
+import type { Circle, Vec2 } from '../sim/types.js';
+import { worldMaterialAt } from './classify.js';
+import type { TerrainWorld } from './types.js';
+import { arenaBounds } from './world.js';
 
 /**
- * Deterministic scenery placement for the isometric scene (spec 018). This is
- * pure decoration -- trees and bushes have no effect on the sim -- but it still
- * goes through the seeded PRNG so the same (seed, bounds) always yields the same
- * arrangement. That keeps the renderer reproducible and testable, and keeps this
- * module free of any DOM/three dependency so it can be unit-tested in Node.
+ * Where the world's trees and bushes stand (spec 018/043/044).
+ *
+ * This used to be renderer-side decoration. It is world data now: since spec 044
+ * a trunk blocks a unit and turns a hunter's path, so the sim and the renderer
+ * have to be looking at the *same* list -- a tree that is drawn but not blocked
+ * (or blocked but not drawn) is a bug either way. It lives here, beside the
+ * terrain it grows on, and stays pure: seeded PRNG only, no DOM and no three.js,
+ * so the same (seed, world) always yields the same arrangement and the whole
+ * thing is unit-testable in Node.
  */
 
 export type PropKind = 'tree' | 'bush';
@@ -113,10 +121,18 @@ export function scatterProps(
   return props;
 }
 
-/** Ground-footprint radius a prop blocks, for the unwalkable-terrain overlay (spec 034). */
+/**
+ * Ground-footprint radius a prop blocks: what the unwalkable overlay draws
+ * (spec 034) and, since spec 044, what the sim collides against.
+ */
 const FOOTPRINT_BASE: Record<PropKind, number> = { tree: 24, bush: 16 };
 export function footprintRadius(prop: Prop): number {
   return FOOTPRINT_BASE[prop.kind] * prop.scale;
+}
+
+/** The props as sim obstacles: one circle per footprint (spec 044). */
+export function vegetationColliders(props: readonly Prop[]): Circle[] {
+  return props.map((prop) => ({ x: prop.x, y: prop.y, r: footprintRadius(prop) }));
 }
 
 export interface BoundsScatterOptions {
@@ -178,4 +194,47 @@ export function scatterInBounds(
   place('tree', opt.trees);
   place('bush', opt.bushes);
   return props;
+}
+
+/**
+ * How far vegetation stays clear of the play area. The world's dense scatter
+ * would otherwise crowd right up to the fight; the play area keeps its own,
+ * much sparser one.
+ */
+export const PLANT_PLAY_AREA_MARGIN = 90;
+
+/**
+ * Every tree and bush in the world, for a seed and the terrain they grow on.
+ *
+ * Two scatters, for two jobs: the play area's own sparse stand, kept clear of
+ * the spawn at its centre, and a much denser spread across the surrounding
+ * world, filtered to ground that would actually grow something -- meadow and
+ * worn earth, never a cliff face, a snowfield or open water.
+ *
+ * One function, because there is now one answer: the renderer batches this list
+ * into its instanced field and the sim takes the same list as obstacles.
+ */
+export function worldVegetation(seed: number, world: TerrainWorld): Prop[] {
+  const playArea = scatterProps(seed, PLAY_WIDTH, PLAY_HEIGHT, [{ x: PLAY_WIDTH / 2, y: PLAY_HEIGHT / 2 }]);
+  const bounds = arenaBounds();
+  const surrounding = scatterInBounds(
+    seed ^ 0x9e3779b1,
+    bounds.minX,
+    bounds.minZ,
+    bounds.maxX,
+    bounds.maxZ,
+    (x, z) => {
+      if (
+        x > -PLANT_PLAY_AREA_MARGIN &&
+        x < PLAY_WIDTH + PLANT_PLAY_AREA_MARGIN &&
+        z > -PLANT_PLAY_AREA_MARGIN &&
+        z < PLAY_HEIGHT + PLANT_PLAY_AREA_MARGIN
+      ) {
+        return false;
+      }
+      const material = worldMaterialAt(world, x, z);
+      return material === 'grass' || material === 'dirt';
+    },
+  );
+  return [...playArea, ...surrounding];
 }
