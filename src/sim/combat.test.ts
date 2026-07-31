@@ -22,6 +22,7 @@ import {
   PLAYER_ATTACK_WINDUP_TICKS,
   PLAYER_MAX_HEALTH,
   PLAYER_RADIUS,
+  WORLD_BOUNDS,
 } from './constants.js';
 import { computeMoveSpeed, initCombat, runSim, step } from './combat.js';
 import { enemyTypeByKey } from './enemies.js';
@@ -210,17 +211,32 @@ describe('mana gating for external effects', () => {
 });
 
 describe('movement bounds', () => {
-  it('clamps player position to the arena rectangle regardless of how long a move order stands', () => {
-    // Order past the top-left corner: the unit walks to the edge and clamps there.
-    const topLeft = Array.from({ length: 1000 }, () => moveTo(-500, -500));
-    const { state } = runSim(3, topLeft);
-    expect(state.player.position.x).toBe(PLAYER_RADIUS);
-    expect(state.player.position.y).toBe(PLAYER_RADIUS);
+  it('walks out of the play area: only the world clamps the player (spec 044)', () => {
+    // A destination a few hundred units past the old arena border is simply
+    // reached -- the border that used to hold the unit at PLAYER_RADIUS is gone.
+    const outside = Array.from({ length: 1000 }, () => moveTo(-500, -500));
+    const { state } = runSim(3, outside);
+    expect(Math.hypot(state.player.position.x + 500, state.player.position.y + 500)).toBeLessThanOrEqual(
+      MOVE_ARRIVE_EPS,
+    );
 
-    const bottomRight = Array.from({ length: 1000 }, () => moveTo(ARENA_WIDTH + 500, ARENA_HEIGHT + 500));
-    const { state: br } = runSim(3, bottomRight);
-    expect(br.player.position.x).toBe(ARENA_WIDTH - PLAYER_RADIUS);
-    expect(br.player.position.y).toBe(ARENA_HEIGHT - PLAYER_RADIUS);
+    const farOut = Array.from({ length: 1000 }, () => moveTo(ARENA_WIDTH + 500, ARENA_HEIGHT + 500));
+    const { state: br } = runSim(3, farOut);
+    expect(
+      Math.hypot(br.player.position.x - (ARENA_WIDTH + 500), br.player.position.y - (ARENA_HEIGHT + 500)),
+    ).toBeLessThanOrEqual(MOVE_ARRIVE_EPS);
+  });
+
+  it('clamps player position to the world rectangle regardless of how long a move order stands', () => {
+    const offMap = Array.from({ length: 4000 }, () => moveTo(-1e6, -1e6));
+    const { state } = runSim(3, offMap);
+    expect(state.player.position.x).toBe(WORLD_BOUNDS.x + PLAYER_RADIUS);
+    expect(state.player.position.y).toBe(WORLD_BOUNDS.y + PLAYER_RADIUS);
+
+    const farSide = Array.from({ length: 4000 }, () => moveTo(1e6, 1e6));
+    const { state: br } = runSim(3, farSide);
+    expect(br.player.position.x).toBe(WORLD_BOUNDS.x + WORLD_BOUNDS.w - PLAYER_RADIUS);
+    expect(br.player.position.y).toBe(WORLD_BOUNDS.y + WORLD_BOUNDS.h - PLAYER_RADIUS);
   });
 });
 

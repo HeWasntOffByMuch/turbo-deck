@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { initCombat, step } from './combat.js';
-import { segmentClear } from './collision.js';
+import { createWorldColliders, DEFAULT_WORLD, segmentClear } from './collision.js';
 import {
   ARENA_HEIGHT,
   ARENA_OBSTACLES,
@@ -10,40 +10,60 @@ import {
   MOVE_ARRIVE_EPS,
   NAV_CELL_SIZE,
   PLAYER_RADIUS,
+  WORLD_BOUNDS,
 } from './constants.js';
 import { enemyTypeByKey } from './enemies.js';
 import { createNavGrid, findPath, navGridFor } from './pathfinding.js';
-import { NEUTRAL_INPUT, type CombatState, type EnemyState, type Rect, type Vec2 } from './types.js';
+import {
+  NEUTRAL_INPUT,
+  type Circle,
+  type CombatState,
+  type EnemyState,
+  type Rect,
+  type Vec2,
+  type WorldColliders,
+} from './types.js';
 
 const ARENA_GRID = navGridFor(ENEMY_RADIUS);
+const WORLD_GRID_COLS = Math.ceil(WORLD_BOUNDS.w / NAV_CELL_SIZE);
+const WORLD_GRID_ROWS = Math.ceil(WORLD_BOUNDS.h / NAV_CELL_SIZE);
 const CENTRE: Vec2 = { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 };
 
 /** A room with one doorway on its left side, for layout-independent tests. */
-const ROOM: readonly Rect[] = [
+const ROOM_WALLS: readonly Rect[] = [
   { x: 200, y: 200, w: 400, h: 30 }, // north
   { x: 200, y: 500, w: 400, h: 30 }, // south
   { x: 570, y: 200, w: 30, h: 330 }, // east
   { x: 200, y: 200, w: 30, h: 100 }, // west, upper -- gap below it
   { x: 200, y: 420, w: 30, h: 110 }, // west, lower
 ];
+const ROOM = createWorldColliders(ROOM_WALLS);
 
 /** A fully sealed box: nothing can get in or out. */
-const SEALED: readonly Rect[] = [
+const SEALED = createWorldColliders([
   { x: 200, y: 200, w: 400, h: 30 },
   { x: 200, y: 500, w: 400, h: 30 },
   { x: 570, y: 200, w: 30, h: 330 },
   { x: 200, y: 200, w: 30, h: 330 },
-];
+]);
+
+/**
+ * A palisade of tree trunks across the corridor east of the play area, close
+ * enough together that nothing fits between them: vegetation has to be routed
+ * around, not through (spec 044).
+ */
+const TREE_LINE: Circle[] = Array.from({ length: 14 }, (_, i) => ({ x: 1600, y: 100 + i * 55, r: 34 }));
+const FOREST = createWorldColliders([], TREE_LINE);
 
 function distance(a: Vec2, b: Vec2): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
 /** Assert every leg of the path, starting from `from`, is walkable in a straight line. */
-function expectWalkable(from: Vec2, path: readonly Vec2[], radius: number, obstacles: readonly Rect[]): void {
+function expectWalkable(from: Vec2, path: readonly Vec2[], radius: number, world: WorldColliders): void {
   let at = from;
   for (const waypoint of path) {
-    expect(segmentClear(at, waypoint, radius, obstacles)).toBe(true);
+    expect(segmentClear(at, waypoint, radius, world)).toBe(true);
     at = waypoint;
   }
 }
@@ -93,9 +113,11 @@ function ticksToReachPlayer(state: CombatState, maxTicks: number): number {
 }
 
 describe('nav grid', () => {
-  it('covers the arena and marks the walls (but not the open middle) blocked', () => {
-    expect(ARENA_GRID.cols).toBe(Math.ceil(ARENA_WIDTH / NAV_CELL_SIZE));
-    expect(ARENA_GRID.rows).toBe(Math.ceil(ARENA_HEIGHT / NAV_CELL_SIZE));
+  it('covers the whole world, not just the play area, and marks the walls blocked', () => {
+    expect(ARENA_GRID.cols).toBe(WORLD_GRID_COLS);
+    expect(ARENA_GRID.rows).toBe(WORLD_GRID_ROWS);
+    expect(ARENA_GRID.originX).toBe(WORLD_BOUNDS.x);
+    expect(ARENA_GRID.originY).toBe(WORLD_BOUNDS.y);
     const blockedCount = ARENA_GRID.blocked.reduce<number>((sum, cell) => sum + cell, 0);
     expect(blockedCount).toBeGreaterThan(0);
     expect(blockedCount).toBeLessThan(ARENA_GRID.blocked.length / 2); // mostly open ground
@@ -120,7 +142,7 @@ describe('findPath', () => {
     const path = findPath(ARENA_GRID, from, CENTRE);
     expect(path.length).toBeGreaterThan(1);
     expect(path[path.length - 1]).toEqual(CENTRE);
-    expectWalkable(from, path, ENEMY_RADIUS, ARENA_OBSTACLES);
+    expectWalkable(from, path, ENEMY_RADIUS, DEFAULT_WORLD);
   });
 
   it('finds the doorway into a walled room', () => {
@@ -154,9 +176,23 @@ describe('findPath', () => {
     expect(path[path.length - 1]).toEqual(CENTRE);
   });
 
-  it('handles goals outside the arena by clamping them into it', () => {
-    const path = findPath(ARENA_GRID, CENTRE, { x: ARENA_WIDTH + 500, y: ARENA_HEIGHT + 500 });
+  it('handles goals outside the world by clamping them into it', () => {
+    const path = findPath(ARENA_GRID, CENTRE, { x: WORLD_BOUNDS.x + WORLD_BOUNDS.w + 5000, y: CENTRE.y });
     expect(path.length).toBeGreaterThan(0);
+  });
+
+  it('routes around a line of trees rather than through it (spec 044)', () => {
+    const grid = navGridFor(PLAYER_RADIUS, FOREST);
+    const from: Vec2 = { x: 1400, y: 480 };
+    const to: Vec2 = { x: 1800, y: 480 };
+    expect(segmentClear(from, to, PLAYER_RADIUS, FOREST)).toBe(false);
+    const path = findPath(grid, from, to);
+    expect(path.length).toBeGreaterThan(1);
+    expect(path[path.length - 1]).toEqual(to);
+    expectWalkable(from, path, PLAYER_RADIUS, FOREST);
+    // The only ways round are past either end of the line.
+    const ys = path.map((p) => p.y);
+    expect(Math.min(...ys) < 100 || Math.max(...ys) > 815).toBe(true);
   });
 });
 

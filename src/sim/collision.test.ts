@@ -3,20 +3,44 @@ import fc from 'fast-check';
 import { initCombat, step } from './combat.js';
 import {
   circleBlocked,
+  circleHitsCircle,
   circleHitsRect,
-  clampCircleToArena,
+  clampCircleToBounds,
+  createWorldColliders,
   resolveOverlaps,
   segmentClear,
   slideCircle,
   type Collider,
 } from './collision.js';
-import { ARENA_HEIGHT, ARENA_OBSTACLES, ARENA_WIDTH, ENEMY_RADIUS, PLAYER_RADIUS } from './constants.js';
+import { ARENA_HEIGHT, ARENA_OBSTACLES, ARENA_WIDTH, ENEMY_RADIUS, PLAYER_RADIUS, WORLD_BOUNDS } from './constants.js';
 import { enemyTypeByKey } from './enemies.js';
-import { NEUTRAL_INPUT, type CombatState, type EnemyState, type InputFrame, type Rect, type Vec2 } from './types.js';
+import {
+  NEUTRAL_INPUT,
+  type Circle,
+  type CombatState,
+  type EnemyState,
+  type InputFrame,
+  type Rect,
+  type Vec2,
+} from './types.js';
 
-// A single test wall, away from the arena edges so clamping never interferes.
+// A single test wall, away from the world edges so clamping never interferes.
 const WALL: Rect = { x: 400, y: 400, w: 100, h: 100 };
-const WALLS: readonly Rect[] = [WALL];
+const WALLS = createWorldColliders([WALL]);
+
+/** One tree, out in the open, for the vegetation-collider tests (spec 044). */
+const TREE: Circle = { x: 700, y: 300, r: 30 };
+const GROVE = createWorldColliders([], [TREE]);
+
+/** True when `position` is inside the world's bounds, allowing for the body radius. */
+function insideWorld(position: Vec2, radius: number): boolean {
+  return (
+    position.x >= WORLD_BOUNDS.x + radius &&
+    position.y >= WORLD_BOUNDS.y + radius &&
+    position.x <= WORLD_BOUNDS.x + WORLD_BOUNDS.w - radius &&
+    position.y <= WORLD_BOUNDS.y + WORLD_BOUNDS.h - radius
+  );
+}
 
 /** The first barricade of the real layout, used for player-vs-wall tests. */
 const BARRICADE = ARENA_OBSTACLES[0] as Rect;
@@ -124,9 +148,72 @@ describe('hitbox geometry', () => {
     expect(slideCircle({ x: 100, y: 100 }, 5, 5, 20, WALLS)).toEqual({ x: 105, y: 105 });
   });
 
-  it('keeps a circle inside the arena rectangle', () => {
-    expect(clampCircleToArena(-50, -50, 16)).toEqual({ x: 16, y: 16 });
-    expect(clampCircleToArena(9999, 9999, 16)).toEqual({ x: ARENA_WIDTH - 16, y: ARENA_HEIGHT - 16 });
+  it('keeps a circle inside the world, not inside the play area (spec 044)', () => {
+    expect(clampCircleToBounds(-1e6, -1e6, 16)).toEqual({ x: WORLD_BOUNDS.x + 16, y: WORLD_BOUNDS.y + 16 });
+    expect(clampCircleToBounds(1e6, 1e6, 16)).toEqual({
+      x: WORLD_BOUNDS.x + WORLD_BOUNDS.w - 16,
+      y: WORLD_BOUNDS.y + WORLD_BOUNDS.h - 16,
+    });
+    // A point well past the old arena border is left exactly where it is.
+    expect(clampCircleToBounds(ARENA_WIDTH + 900, ARENA_HEIGHT + 900, 16)).toEqual({
+      x: ARENA_WIDTH + 900,
+      y: ARENA_HEIGHT + 900,
+    });
+  });
+});
+
+describe('vegetation footprints block like walls (spec 044)', () => {
+  it('detects circle/circle overlap, and treats exact touching as clear', () => {
+    expect(circleHitsCircle({ x: TREE.x, y: TREE.y }, 5, TREE)).toBe(true);
+    expect(circleHitsCircle({ x: TREE.x + 45, y: TREE.y }, 20, TREE)).toBe(true);
+    expect(circleHitsCircle({ x: TREE.x + 50, y: TREE.y }, 20, TREE)).toBe(false); // touching
+    expect(circleHitsCircle({ x: TREE.x + 60, y: TREE.y }, 20, TREE)).toBe(false);
+  });
+
+  it('cannot stand inside a tree', () => {
+    expect(circleBlocked({ x: TREE.x, y: TREE.y }, PLAYER_RADIUS, GROVE)).toBe(true);
+    expect(circleBlocked({ x: TREE.x + 40, y: TREE.y }, PLAYER_RADIUS, GROVE)).toBe(true);
+    expect(circleBlocked({ x: TREE.x + 60, y: TREE.y }, PLAYER_RADIUS, GROVE)).toBe(false);
+  });
+
+  it('blocks a line of sight through a tree and passes one beside it', () => {
+    const left = { x: TREE.x - 200, y: TREE.y };
+    const right = { x: TREE.x + 200, y: TREE.y };
+    expect(segmentClear(left, right, 10, GROVE)).toBe(false);
+    expect(segmentClear({ ...left, y: TREE.y - 39 }, { ...right, y: TREE.y - 39 }, 10, GROVE)).toBe(false);
+    expect(segmentClear({ ...left, y: TREE.y - 41 }, { ...right, y: TREE.y - 41 }, 10, GROVE)).toBe(true);
+  });
+
+  it('slides around a tree instead of walking into it', () => {
+    // Just short of the trunk, pushing right and down: the x half is refused.
+    const from = { x: TREE.x - (TREE.r + 20) - 2, y: TREE.y };
+    const slid = slideCircle(from, 5, 5, 20, GROVE);
+    expect(slid.x).toBe(from.x);
+    expect(slid.y).toBe(from.y + 5);
+    expect(slideCircle(from, 5, 0, 20, GROVE)).toEqual(from);
+  });
+
+  it('pushes a body that ends up inside a trunk back out of it', () => {
+    const bodies: Collider[] = [
+      { position: { x: TREE.x + 2, y: TREE.y }, radius: ENEMY_RADIUS, pinned: false },
+      { position: { x: TREE.x + 3, y: TREE.y }, radius: ENEMY_RADIUS, pinned: false },
+    ];
+    for (const spot of resolveOverlaps(bodies, GROVE)) {
+      expect(circleBlocked(spot, ENEMY_RADIUS, GROVE)).toBe(false);
+    }
+  });
+
+  it('walks a move order that runs straight through a tree without ever overlapping it', () => {
+    const start = { x: TREE.x - 260, y: TREE.y };
+    const beyond = { x: TREE.x + 260, y: TREE.y };
+    const base = initCombat(11, { ambientSpawner: false, initialEnemies: 0, world: GROVE });
+    let s = playerAt(base, start);
+    s = step(s, { ...NEUTRAL_INPUT, moveTarget: beyond }).state;
+    for (let t = 1; t < 600; t++) {
+      s = step(s, NEUTRAL_INPUT).state;
+      expect(circleBlocked(s.player.position, PLAYER_RADIUS, GROVE)).toBe(false);
+    }
+    expect(distance(s.player.position, beyond)).toBeLessThan(PLAYER_RADIUS);
   });
 });
 
@@ -153,7 +240,7 @@ describe('separation pass', () => {
     expect(distance(pinned, pushed)).toBeCloseTo(PLAYER_RADIUS + ENEMY_RADIUS, 6);
   });
 
-  it('leaves bodies out of the walls and inside the arena even when the push aims into one', () => {
+  it('leaves bodies out of the walls and inside the world even when the push aims into one', () => {
     // Two bodies stacked hard against the wall's left face: they must part along
     // the face rather than end up inside it.
     const bodies: Collider[] = [
@@ -162,10 +249,7 @@ describe('separation pass', () => {
     ];
     for (const spot of resolveOverlaps(bodies, WALLS)) {
       expect(circleBlocked(spot, ENEMY_RADIUS, WALLS)).toBe(false);
-      expect(spot.x).toBeGreaterThanOrEqual(ENEMY_RADIUS);
-      expect(spot.y).toBeGreaterThanOrEqual(ENEMY_RADIUS);
-      expect(spot.x).toBeLessThanOrEqual(ARENA_WIDTH - ENEMY_RADIUS);
-      expect(spot.y).toBeLessThanOrEqual(ARENA_HEIGHT - ENEMY_RADIUS);
+      expect(insideWorld(spot, ENEMY_RADIUS)).toBe(true);
     }
   });
 });
@@ -185,7 +269,7 @@ describe('units collide in the sim', () => {
     expect(distance(a.position, b.position)).toBeGreaterThanOrEqual(ENEMY_RADIUS * 2 - 1e-9);
   });
 
-  it('keeps a grazing herd from stacking, walking through walls, or leaving the arena', () => {
+  it('keeps a grazing herd from stacking, walking through walls, or leaving the world', () => {
     for (const seed of [31, 37, 5]) {
       let s = initCombat(seed);
       for (let t = 0; t < 1500; t++) {
@@ -193,10 +277,26 @@ describe('units collide in the sim', () => {
         expect(worstEnemyOverlap(s)).toBeLessThan(CROWD_TOLERANCE);
         for (const enemy of s.enemies) {
           expect(circleBlocked(enemy.position, ENEMY_RADIUS)).toBe(false);
-          expect(enemy.position.x).toBeGreaterThanOrEqual(ENEMY_RADIUS);
-          expect(enemy.position.y).toBeGreaterThanOrEqual(ENEMY_RADIUS);
-          expect(enemy.position.x).toBeLessThanOrEqual(ARENA_WIDTH - ENEMY_RADIUS);
-          expect(enemy.position.y).toBeLessThanOrEqual(ARENA_HEIGHT - ENEMY_RADIUS);
+          expect(insideWorld(enemy.position, ENEMY_RADIUS)).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('grazes the play area: the herd stays put even with the border gone (spec 044)', () => {
+    // Graze targets are drawn inside the play rectangle, so the herd ambles
+    // around the arena rather than diffusing off into the hills. Separation can
+    // nudge a body a little past the edge; it cannot walk away.
+    const slack = ENEMY_RADIUS * 3;
+    for (const seed of [31, 37, 5]) {
+      let s = initCombat(seed);
+      for (let t = 0; t < 1500; t++) {
+        s = step(s, NEUTRAL_INPUT).state;
+        for (const enemy of s.enemies) {
+          expect(enemy.position.x).toBeGreaterThan(-slack);
+          expect(enemy.position.y).toBeGreaterThan(-slack);
+          expect(enemy.position.x).toBeLessThan(ARENA_WIDTH + slack);
+          expect(enemy.position.y).toBeLessThan(ARENA_HEIGHT + slack);
         }
       }
     }
@@ -269,5 +369,25 @@ describe('the player collides with walls', () => {
     for (let t = 0; t < 20; t++) s = step(s, NEUTRAL_INPUT).state;
     expect(s.player.position.x).toBeLessThanOrEqual(BARRICADE.x - PLAYER_RADIUS);
     expect(circleBlocked(s.player.position, PLAYER_RADIUS)).toBe(false);
+  });
+});
+
+describe('the play area no longer walls the player in (spec 044)', () => {
+  it('walks straight out past the old arena border and keeps going', () => {
+    const start = { x: ARENA_WIDTH - 100, y: ARENA_HEIGHT / 2 };
+    const outside = { x: ARENA_WIDTH + 800, y: ARENA_HEIGHT / 2 };
+    const s = orderTo(playerAt(initCombat(12), start), outside, 900);
+    expect(s.player.position.x).toBeGreaterThan(ARENA_WIDTH);
+    expect(distance(s.player.position, outside)).toBeLessThan(PLAYER_RADIUS);
+    // The order was fulfilled, not abandoned against an invisible wall.
+    expect(s.player.moveTarget).toBeNull();
+  });
+
+  it("still stops at the world's edge, where the ground runs out", () => {
+    const start = { x: 200, y: ARENA_HEIGHT / 2 };
+    const offMap = { x: WORLD_BOUNDS.x - 5000, y: ARENA_HEIGHT / 2 };
+    const s = orderTo(playerAt(initCombat(13), start), offMap, 3000);
+    expect(s.player.position.x).toBeLessThan(0); // it really did leave the play area
+    expect(insideWorld(s.player.position, PLAYER_RADIUS)).toBe(true);
   });
 });

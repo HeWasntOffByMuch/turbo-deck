@@ -1,13 +1,16 @@
-import { ARENA_HEIGHT, ARENA_OBSTACLES, ARENA_WIDTH, SEPARATION_ITERATIONS } from './constants.js';
-import type { Rect, Vec2 } from './types.js';
+import { ARENA_OBSTACLES, SEPARATION_ITERATIONS, WORLD_BOUNDS } from './constants.js';
+import type { Circle, Rect, Vec2, WorldColliders } from './types.js';
 
 /**
- * Circle-vs-rectangle collision for the sim's units (spec 037). Every unit is
- * the circle it is already drawn as -- that circle is its hitbox -- and the
- * arena's obstacles are axis-aligned rectangles.
+ * Collision for the sim's units (spec 037/044). Every unit is the circle it is
+ * already drawn as -- that circle is its hitbox -- and it runs into two kinds of
+ * static shape: the arena's axis-aligned walls, and the circular ground
+ * footprints of the world's trees and bushes (spec 044).
  *
  * Pure geometry: no state, no randomness, no time. Everything here is a
- * function of its arguments, so it replays identically.
+ * function of its arguments, so it replays identically. The world it collides
+ * against is passed in rather than imported, so a run's outcome depends only on
+ * what it was given.
  */
 
 /** A unit taking part in the separation pass. */
@@ -18,15 +21,36 @@ export interface Collider {
   readonly pinned: boolean;
 }
 
+/**
+ * The world a caller gets when it does not name one: the arena's walls inside
+ * the world's bounds, with no vegetation. Headless callers (tests, the balance
+ * harness) fight in an empty world; the iso views build the real one from the
+ * terrain and hand it to `initCombat`.
+ */
+export const DEFAULT_WORLD: WorldColliders = { bounds: WORLD_BOUNDS, rects: ARENA_OBSTACLES, circles: [] };
+
+/** A world of walls and vegetation; bounds default to the whole world. */
+export function createWorldColliders(
+  rects: readonly Rect[] = ARENA_OBSTACLES,
+  circles: readonly Circle[] = [],
+  bounds: Rect = WORLD_BOUNDS,
+): WorldColliders {
+  return { bounds, rects, circles };
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-/** Keep a circle of `radius` fully inside the arena rectangle. */
-export function clampCircleToArena(x: number, y: number, radius: number): Vec2 {
+/**
+ * Keep a circle of `radius` fully inside the world's bounds. This is the only
+ * hard limit left on where a body may be (spec 044): the play area no longer
+ * walls anything in, and the world's edge is where the ground runs out.
+ */
+export function clampCircleToBounds(x: number, y: number, radius: number, bounds: Rect = WORLD_BOUNDS): Vec2 {
   return {
-    x: clamp(x, radius, ARENA_WIDTH - radius),
-    y: clamp(y, radius, ARENA_HEIGHT - radius),
+    x: clamp(x, bounds.x + radius, bounds.x + bounds.w - radius),
+    y: clamp(y, bounds.y + radius, bounds.y + bounds.h - radius),
   };
 }
 
@@ -37,9 +61,18 @@ export function circleHitsRect(centre: Vec2, radius: number, rect: Rect): boolea
   return dx * dx + dy * dy < radius * radius;
 }
 
+/** True when the body circle and an obstacle circle overlap. */
+export function circleHitsCircle(centre: Vec2, radius: number, circle: Circle): boolean {
+  const dx = centre.x - circle.x;
+  const dy = centre.y - circle.y;
+  const reach = radius + circle.r;
+  return dx * dx + dy * dy < reach * reach;
+}
+
 /** True when a body of `radius` cannot stand at `centre`. */
-export function circleBlocked(centre: Vec2, radius: number, obstacles: readonly Rect[] = ARENA_OBSTACLES): boolean {
-  for (const rect of obstacles) if (circleHitsRect(centre, radius, rect)) return true;
+export function circleBlocked(centre: Vec2, radius: number, world: WorldColliders = DEFAULT_WORLD): boolean {
+  for (const rect of world.rects) if (circleHitsRect(centre, radius, rect)) return true;
+  for (const circle of world.circles) if (circleHitsCircle(centre, radius, circle)) return true;
   return false;
 }
 
@@ -81,22 +114,44 @@ function pushOutOfRect(centre: Vec2, radius: number, rect: Rect): Vec2 {
   return { x: centre.x, y: bottom + clear };
 }
 
+/** Shortest displacement that gets the body circle out of one obstacle circle. */
+function pushOutOfCircle(centre: Vec2, radius: number, circle: Circle): Vec2 {
+  const dx = centre.x - circle.x;
+  const dy = centre.y - circle.y;
+  const reach = radius + circle.r;
+  const distSq = dx * dx + dy * dy;
+  if (distSq >= reach * reach) return centre;
+  const clear = reach + WALL_CLEARANCE_EPSILON;
+  // Dead centre on the trunk: no normal to escape along, so pick +x, as the
+  // coincident case in `resolveOverlaps` does, and stay deterministic.
+  if (distSq <= 1e-12) return { x: circle.x + clear, y: circle.y };
+  const dist = Math.sqrt(distSq);
+  return { x: circle.x + (dx / dist) * clear, y: circle.y + (dy / dist) * clear };
+}
+
 /**
- * Move a circle out of every obstacle it overlaps and back inside the arena.
- * Two passes, because escaping one rectangle can push into a neighbouring one.
+ * Move a circle out of every obstacle it overlaps and back inside the world.
+ * Two passes, because escaping one shape can push into a neighbouring one.
  */
-export function pushOutOfObstacles(centre: Vec2, radius: number, obstacles: readonly Rect[] = ARENA_OBSTACLES): Vec2 {
+export function pushOutOfObstacles(centre: Vec2, radius: number, world: WorldColliders = DEFAULT_WORLD): Vec2 {
   let at = centre;
   for (let pass = 0; pass < 2; pass++) {
     let moved = false;
-    for (const rect of obstacles) {
+    for (const rect of world.rects) {
       const next = pushOutOfRect(at, radius, rect);
       if (next !== at) {
         at = next;
         moved = true;
       }
     }
-    at = clampCircleToArena(at.x, at.y, radius);
+    for (const circle of world.circles) {
+      const next = pushOutOfCircle(at, radius, circle);
+      if (next !== at) {
+        at = next;
+        moved = true;
+      }
+    }
+    at = clampCircleToBounds(at.x, at.y, radius, world.bounds);
     if (!moved) break;
   }
   return at;
@@ -113,17 +168,17 @@ export function slideCircle(
   dx: number,
   dy: number,
   radius: number,
-  obstacles: readonly Rect[] = ARENA_OBSTACLES,
+  world: WorldColliders = DEFAULT_WORLD,
 ): Vec2 {
-  const full = clampCircleToArena(from.x + dx, from.y + dy, radius);
-  if (!circleBlocked(full, radius, obstacles)) return full;
+  const full = clampCircleToBounds(from.x + dx, from.y + dy, radius, world.bounds);
+  if (!circleBlocked(full, radius, world)) return full;
   if (dx !== 0) {
-    const alongX = clampCircleToArena(from.x + dx, from.y, radius);
-    if (!circleBlocked(alongX, radius, obstacles)) return alongX;
+    const alongX = clampCircleToBounds(from.x + dx, from.y, radius, world.bounds);
+    if (!circleBlocked(alongX, radius, world)) return alongX;
   }
   if (dy !== 0) {
-    const alongY = clampCircleToArena(from.x, from.y + dy, radius);
-    if (!circleBlocked(alongY, radius, obstacles)) return alongY;
+    const alongY = clampCircleToBounds(from.x, from.y + dy, radius, world.bounds);
+    if (!circleBlocked(alongY, radius, world)) return alongY;
   }
   return from;
 }
@@ -151,23 +206,35 @@ function segmentHitsBox(a: Vec2, b: Vec2, minX: number, minY: number, maxX: numb
   return true;
 }
 
+/** Segment-vs-circle overlap: closest point on the segment against the radius. */
+function segmentHitsCircle(a: Vec2, b: Vec2, radius: number, circle: Circle): boolean {
+  const abx = b.x - a.x;
+  const aby = b.y - a.y;
+  const lenSq = abx * abx + aby * aby;
+  // Where along ab the circle's centre projects, held inside the segment.
+  const t = lenSq < 1e-12 ? 0 : clamp(((circle.x - a.x) * abx + (circle.y - a.y) * aby) / lenSq, 0, 1);
+  const dx = a.x + abx * t - circle.x;
+  const dy = a.y + aby * t - circle.y;
+  const reach = radius + circle.r;
+  return dx * dx + dy * dy < reach * reach;
+}
+
 /**
  * True when a body of `radius` can travel the straight line from `a` to `b`
- * without touching an obstacle. Obstacles are inflated by the radius, which is
- * slightly conservative at their corners -- it can reject a hair-thin corner
- * graze -- and conservative is the safe direction for both sight checks and
- * path smoothing.
+ * without touching an obstacle. Obstacles are inflated by the radius -- for
+ * rectangles that is slightly conservative at their corners, since it can reject
+ * a hair-thin corner graze, and conservative is the safe direction for both
+ * sight checks and path smoothing. For a circular footprint the inflation is
+ * exact.
  */
-export function segmentClear(
-  a: Vec2,
-  b: Vec2,
-  radius: number,
-  obstacles: readonly Rect[] = ARENA_OBSTACLES,
-): boolean {
-  for (const rect of obstacles) {
+export function segmentClear(a: Vec2, b: Vec2, radius: number, world: WorldColliders = DEFAULT_WORLD): boolean {
+  for (const rect of world.rects) {
     if (segmentHitsBox(a, b, rect.x - radius, rect.y - radius, rect.x + rect.w + radius, rect.y + rect.h + radius)) {
       return false;
     }
+  }
+  for (const circle of world.circles) {
+    if (segmentHitsCircle(a, b, radius, circle)) return false;
   }
   return true;
 }
@@ -180,7 +247,7 @@ export function segmentClear(
  */
 export function resolveOverlaps(
   colliders: readonly Collider[],
-  obstacles: readonly Rect[] = ARENA_OBSTACLES,
+  world: WorldColliders = DEFAULT_WORLD,
   iterations: number = SEPARATION_ITERATIONS,
 ): Vec2[] {
   const count = colliders.length;
@@ -226,7 +293,7 @@ export function resolveOverlaps(
       const body = colliders[i];
       const spot = spots[i];
       if (!body || !spot || body.pinned) continue;
-      const fixed = pushOutOfObstacles(spot, body.radius, obstacles);
+      const fixed = pushOutOfObstacles(spot, body.radius, world);
       spot.x = fixed.x;
       spot.y = fixed.y;
     }
