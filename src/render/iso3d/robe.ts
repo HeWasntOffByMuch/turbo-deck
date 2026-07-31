@@ -224,9 +224,12 @@ export class RobeRig implements SandboxUnit {
     geometry.setIndex(new THREE.BufferAttribute(geo.index, 1));
 
     // Flat-shaded and double-sided: it matches the scene's faceted look, and
-    // cloth is a surface with no inside, so back faces must light too.
+    // cloth is a surface with no inside, so back faces must light too. The outer
+    // layers are a shade darker than the inner ones, which is the only cue that
+    // separates them in silhouette -- there is no cloth-vs-cloth collision, so
+    // the layering has to read tonally rather than geometrically.
     const material = new THREE.MeshLambertMaterial({
-      color: geo.name === 'cape' ? PALETTE.robeDeep : PALETTE.robeCloth,
+      color: geo.name === 'cape' || geo.name.startsWith('sleeve') ? PALETTE.robeDeep : PALETTE.robeCloth,
       flatShading: true,
       side: THREE.DoubleSide,
     });

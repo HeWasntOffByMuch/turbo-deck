@@ -50,6 +50,20 @@ export interface RobeTuning {
    * the fabric resists *folding*. This is the knob that separates limp silk
    * (near 0, many small folds) from stiff felt (high, few broad folds). Keep it
    * well below `stiffness` -- real cloth stretches far less easily than it bends.
+   *
+   * **Do not lower this without re-checking a hard landing.** A hanging tube has
+   * two failure modes that cost nothing in distance-constraint terms, so the
+   * solver settles happily into either and never comes out:
+   *  - *buckling*: the vertical chains fold into a wave that shortens the drop,
+   *    leaving the robe permanently hitched up;
+   *  - *hem inversion*: the bottom ring curls up inside the tube and stays there.
+   *
+   * Bend resistance is the only thing that prevents both, and it is cheap.
+   * Measured across 0.14..0.65 against drops of 46/120/200 units: 0.14 buckled
+   * on every landing, 0.28 still inverted the hem on a 200-unit fall, and 0.45
+   * was clean at every height. The cost of 0.14 -> 0.45 is about 10% of the hem's
+   * wind sway and 3% of its trail behind a run -- worth it for a default, and
+   * the slider is right there for anyone who wants limper cloth and no falling.
    */
   bendStiffness: number;
   /**
@@ -187,7 +201,7 @@ export function defaultRobeTuning(): RobeTuning {
     // Fabric
     fabricWeight: 1,
     stiffness: 0.92,
-    bendStiffness: 0.14,
+    bendStiffness: 0.45,
     damping: 1.4,
     maxStretch: 1.12,
     springStrength: 2.2,
@@ -195,7 +209,7 @@ export function defaultRobeTuning(): RobeTuning {
     // Forces
     gravityMultiplier: 1,
     airResistance: 1.1,
-    windInfluence: 2.6,
+    windInfluence: 2.9,
     inertiaMultiplier: 1,
     movementInfluence: 0.35,
     jumpImpulse: 55,

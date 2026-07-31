@@ -284,6 +284,10 @@ function hemWeight(u: number, top: number, hem: number): number {
 export function buildSkirt(f: FigureMetrics): ClothGeometry {
   const rows = 8;
   const cols = 12;
+  // Gathered just clear of the hips, so the waist ring is not born inside the
+  // pelvis capsule (see the invariant note in `figure.ts`).
+  const waistX = f.hipRadius + f.drapeClearance;
+  const waistZ = waistX + 0.8;
   return buildGrid({
     name: 'robe',
     rows,
@@ -293,10 +297,11 @@ export function buildSkirt(f: FigureMetrics): ClothGeometry {
     seed: 11,
     point(u, v, out) {
       const a = v * Math.PI * 2;
-      // Flare with u^1.4 so the taper stays close to the hips and opens late.
-      const t = Math.pow(u, 1.4);
-      const rx = lerp(8.5, 15, t);
-      const rz = lerp(9.5, 16.5, t);
+      // Flare with u^1.15: close to the hips at the waist, opening steadily.
+      // Any later and the upper rows are born inside the thigh capsules.
+      const t = Math.pow(u, 1.15);
+      const rx = lerp(waistX, 13, t);
+      const rz = lerp(waistZ, 14.5, t);
       out.x = Math.cos(a) * rx;
       out.y = lerp(f.waistY, 2.5, u);
       out.z = Math.sin(a) * rz;
@@ -316,6 +321,9 @@ export function buildSkirt(f: FigureMetrics): ClothGeometry {
 export function buildCape(f: FigureMetrics): ClothGeometry {
   const rows = 9;
   const cols = 6;
+  // Pinned just clear of the torso capsule, and standing progressively further
+  // off the back as it falls.
+  const backX = -(f.torsoRadius + f.drapeClearance);
   return buildGrid({
     name: 'cape',
     rows,
@@ -324,8 +332,8 @@ export function buildCape(f: FigureMetrics): ClothGeometry {
     colliderMask: MASK.torso | MASK.legs,
     seed: 23,
     point(u, v, out) {
-      const halfWidth = lerp(f.shoulderHalf + 2, f.shoulderHalf + 6, u);
-      out.x = lerp(-f.chestDepth - 0.5, -f.chestDepth - 7, u * u);
+      const halfWidth = lerp(f.shoulderHalf + 0.5, f.shoulderHalf + 4.5, u);
+      out.x = lerp(backX, backX - 6, u * u);
       out.y = lerp(f.shoulderY + 2, 6, u);
       out.z = lerp(-halfWidth, halfWidth, v);
     },
@@ -337,20 +345,29 @@ export function buildCape(f: FigureMetrics): ClothGeometry {
 
 /**
  * The **hood**: an open cowl swept along a curved path that starts as a rim in
- * front of the face, arcs back over the crown and trails down the upper back.
- * Only the face rim is pinned (to the head), so the whole cowl is free to lift,
- * fold back off the crown and settle again -- the head capsule is what keeps it
- * from collapsing into the skull.
+ * front of the face, arcs back over the crown and ends in a short tail on the
+ * shoulders. Only the face rim is pinned (to the head), so the whole cowl is
+ * free to lift, fold back off the crown and settle again -- the head capsule is
+ * what keeps it from collapsing into the skull.
  *
  * The cross-section is built perpendicular to the sweep path rather than in a
  * fixed plane, so the tail lies *along* the back instead of standing out from it.
+ *
+ * Everything here is sized off the skull rather than written as constants,
+ * because a hood that does not track the head reads instantly as wrong: too wide
+ * and it floats like a shell with daylight under it, too narrow and the skull
+ * pushes through it. It also stops at the shoulders on purpose -- below that is
+ * the cape's job, and the hood tail sits just outside the cape so the two always
+ * layer the same way round (there is no cloth-vs-cloth collision to sort it out).
  */
 export function buildHood(f: FigureMetrics): ClothGeometry {
   const rows = 7;
   const cols = 9;
+  // Just enough to clear the skull capsule: the cowl should hug the head.
+  const rimRadius = f.headRadius + f.drapeClearance;
   // The sweep path: forward of the face, then back and down behind the skull.
-  const pathX = (u: number): number => 5 - 19 * u;
-  const pathY = (u: number): number => f.headY + 1 + 3 * Math.sin(Math.PI * u) - 20 * u * u;
+  const pathX = (u: number): number => 4 - 11.8 * u;
+  const pathY = (u: number): number => f.headY - 1 + 1.5 * Math.sin(Math.PI * u) - 15 * u * u;
   return buildGrid({
     name: 'hood',
     rows,
@@ -368,8 +385,11 @@ export function buildHood(f: FigureMetrics): ClothGeometry {
       const nx = ty / tl;
       const ny = -tx / tl;
 
-      const radius = 11.5 + 1.5 * Math.sin(Math.PI * u) - 4.5 * u * u;
-      const halfArc = 1.85 + 0.35 * u; // radians each side of straight-up
+      const radius = rimRadius + 1 * Math.sin(Math.PI * u) - 4.8 * u * u;
+      // Radians each side of straight-up. It narrows slightly toward the tail:
+      // a real hood opens at the neck rather than wrapping further under, and
+      // wrapping further is also what drove its lower lip into the torso.
+      const halfArc = 1.9 - 0.12 * u;
       const phi = lerp(-halfArc, halfArc, v);
       const cp = Math.cos(phi);
       out.x = pathX(u) + nx * radius * cp;
@@ -399,16 +419,18 @@ export function buildSleeve(f: FigureMetrics, side: -1 | 1): ClothGeometry {
   const upper = side < 0 ? BONE.upperArmL : BONE.upperArmR;
   const fore = side < 0 ? BONE.forearmL : BONE.forearmR;
   const wristY = f.shoulderY - f.upperArmLen - f.forearmLen;
+  const shoulderRadius = f.upperArmRadius + f.drapeClearance;
   return buildGrid({
     name: side < 0 ? 'sleeveL' : 'sleeveR',
     rows,
     cols,
+    // Its own arm only, never the torso: see the note on `buildCapsuleDefs`.
     closed: true,
-    colliderMask: (side < 0 ? MASK.armL : MASK.armR) | MASK.torso,
+    colliderMask: side < 0 ? MASK.armL : MASK.armR,
     seed: side < 0 ? 51 : 67,
     point(u, v, out) {
       const a = v * Math.PI * 2;
-      const radius = lerp(6.5, 10, Math.pow(u, 1.3));
+      const radius = lerp(shoulderRadius, 9.5, Math.pow(u, 1.3));
       out.x = Math.cos(a) * radius;
       // Hangs a little past the wrist, so the cuff is free fabric, not skin.
       out.y = lerp(f.shoulderY, wristY - 3, u);

@@ -36,10 +36,10 @@ export const PALETTE = {
   // The hooded robe character (spec 037): a muted indigo wool over near-black.
   // `robeVoid` is the shadow inside the hood where a face would be -- the figure
   // deliberately has none.
-  robeCloth: 0x453f63,
-  robeDeep: 0x2f2b47,
-  robeLining: 0x6b5f8f,
-  robeVoid: 0x14121c,
+  robeCloth: 0x615a8c,
+  robeDeep: 0x453f68,
+  robeLining: 0x8d81bd,
+  robeVoid: 0x181523,
   // Bright pip dropped at the click-to-move destination.
   marker: 0xffe08a,
   // Heading arrow (unit facing) and the charging attack cone telegraph.

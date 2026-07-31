@@ -1,6 +1,14 @@
 import * as THREE from 'three';
-import { CapsuleSet, MASK } from '../cloth/colliders.js';
-import { BONE, BONE_COUNT, FIGURE, type FigureMetrics } from '../cloth/figure.js';
+import { CapsuleSet } from '../cloth/colliders.js';
+import {
+  BONE,
+  BONE_COUNT,
+  boneRestLayout,
+  buildCapsuleDefs,
+  FIGURE,
+  type CapsuleDef,
+  type FigureMetrics,
+} from '../cloth/figure.js';
 import { GRAVITY, type RobeTuning } from '../cloth/params.js';
 import { Spring } from '../spring.js';
 import { box, faceted, flatMaterial } from './meshes.js';
@@ -62,6 +70,12 @@ const BREATH_AMP = 0.7;
 const BREATH_HZ = 0.22;
 /** How far the pelvis drops at a full landing crouch, in world units. */
 const CROUCH_DROP = 13;
+/**
+ * How far the visible solid body is drawn *inside* its collision capsule. The
+ * cloth is pushed out to `capsule radius + collisionRadius`, so as long as the
+ * mesh stays within the capsule itself it can never poke through its garment.
+ */
+const SOLID_INSET = 0.6;
 
 export type GaitState = 'idle' | 'walking' | 'running' | 'turning' | 'airborne' | 'landing';
 
@@ -90,19 +104,6 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   if (!(edge1 > edge0)) return x >= edge1 ? 1 : 0;
   const t = clamp((x - edge0) / (edge1 - edge0), 0, 1);
   return t * t * (3 - 2 * t);
-}
-
-/** One capsule's definition: a bone plus two local endpoints and a radius. */
-interface CapsuleDef {
-  readonly bone: number;
-  readonly ax: number;
-  readonly ay: number;
-  readonly az: number;
-  readonly bx: number;
-  readonly by: number;
-  readonly bz: number;
-  readonly radius: number;
-  readonly mask: number;
 }
 
 /** Reused scratch so refreshing the colliders allocates nothing per frame. */
@@ -185,33 +186,22 @@ export class Humanoid {
    * overhead.
    */
   private buildSkeleton(f: FigureMetrics): { pelvis: THREE.Object3D; chest: THREE.Object3D } {
-    const make = (index: number, parent: THREE.Object3D, x: number, y: number, z: number): THREE.Object3D => {
+    // Parented in layout order, which lists every parent before its children.
+    for (const rest of boneRestLayout(f)) {
       const bone = new THREE.Object3D();
-      bone.position.set(x, y, z);
+      bone.position.set(rest.x, rest.y, rest.z);
+      const parent = rest.parent < 0 ? this.group : this.bones[rest.parent];
+      if (!parent) throw new Error(`bone ${rest.bone} has no parent ${rest.parent}`);
       parent.add(bone);
-      this.bones[index] = bone;
-      return bone;
-    };
-
-    const pelvis = make(BONE.pelvis, this.group, 0, f.hipY, 0);
-    const chest = make(BONE.chest, pelvis, 0, f.chestY - f.hipY, 0);
-    make(BONE.head, chest, 0, f.neckY - f.chestY, 0);
-
-    const shoulderY = f.shoulderY - f.chestY;
-    const armL = make(BONE.upperArmL, chest, 0, shoulderY, -f.shoulderHalf);
-    make(BONE.forearmL, armL, 0, -f.upperArmLen, 0);
-    const armR = make(BONE.upperArmR, chest, 0, shoulderY, f.shoulderHalf);
-    make(BONE.forearmR, armR, 0, -f.upperArmLen, 0);
-
-    const thighL = make(BONE.thighL, pelvis, 0, 0, -f.hipHalf);
-    make(BONE.shinL, thighL, 0, -f.thighLen, 0);
-    const thighR = make(BONE.thighR, pelvis, 0, 0, f.hipHalf);
-    make(BONE.shinR, thighR, 0, -f.thighLen, 0);
-
+      this.bones[rest.bone] = bone;
+    }
     if (this.bones.length !== BONE_COUNT) {
       throw new Error(`skeleton built ${this.bones.length} bones, expected ${BONE_COUNT}`);
     }
-    return { pelvis, chest };
+    return {
+      pelvis: this.bones[BONE.pelvis] as THREE.Object3D,
+      chest: this.bones[BONE.chest] as THREE.Object3D,
+    };
   }
 
   /**
@@ -224,25 +214,28 @@ export class Humanoid {
   private dressSkeleton(f: FigureMetrics): void {
     const at = (index: number): THREE.Object3D => this.bones[index] as THREE.Object3D;
 
-    // Torso: a tapered low-poly cylinder under the cloth, plus a shoulder mantle
-    // that gives the cape and hood a solid-looking seam to hang from.
+    // Every solid part has to fit *inside* where the cloth is pushed to
+    // (capsule radius + collisionRadius), or it pokes through its own garment.
+    // `SOLID_INSET` is the slack that guarantees it.
     const torso = new THREE.Mesh(
-      new THREE.CylinderGeometry(11, 10, 22, 8, 1, false),
+      new THREE.CylinderGeometry(f.torsoRadius + SOLID_INSET, f.torsoRadius + SOLID_INSET - 0.4, 22, 8, 1, false),
       flatMaterial(PALETTE.robeCloth),
     );
     torso.position.y = f.waistY + 11 - f.chestY;
     at(BONE.chest).add(torso);
 
-    const mantle = new THREE.Mesh(
-      new THREE.CylinderGeometry(8.5, 14.5, 10, 8, 1, true),
+    // A raised collar, not a flared mantle: anything wider than the torso
+    // capsule would stand outside the cape and the hood that cover it.
+    const collar = new THREE.Mesh(
+      new THREE.CylinderGeometry(f.torsoRadius - 0.8, f.torsoRadius + SOLID_INSET, 10, 8, 1, true),
       flatMaterial(PALETTE.robeDeep),
     );
-    mantle.position.y = f.shoulderY - 1 - f.chestY;
-    at(BONE.chest).add(mantle);
+    collar.position.y = f.shoulderY - 1 - f.chestY;
+    at(BONE.chest).add(collar);
 
     // The head is a dark void: no face, and it reads as shadow inside the hood.
-    const head = faceted(f.headRadius, PALETTE.robeVoid);
-    head.scale.set(0.95, 1.1, 0.95);
+    const head = faceted(f.headRadius - SOLID_INSET, PALETTE.robeVoid);
+    head.scale.set(0.95, 1.12, 0.95);
     head.position.y = f.headY - f.neckY;
     at(BONE.head).add(head);
 
@@ -257,8 +250,8 @@ export class Humanoid {
       [BONE.upperArmL, BONE.forearmL],
       [BONE.upperArmR, BONE.forearmR],
     ] as const) {
-      limb(upper, f.upperArmLen, 5.5, PALETTE.robeDeep);
-      limb(fore, f.forearmLen, 4.5, PALETTE.robeDeep);
+      limb(upper, f.upperArmLen, f.upperArmRadius * 1.4, PALETTE.robeDeep);
+      limb(fore, f.forearmLen, f.forearmRadius * 1.4, PALETTE.robeDeep);
       const hand = box(4.5, 5, 4, PALETTE.robeVoid);
       hand.position.y = -f.forearmLen - 1.5;
       at(fore).add(hand);
@@ -267,8 +260,8 @@ export class Humanoid {
       [BONE.thighL, BONE.shinL],
       [BONE.thighR, BONE.shinR],
     ] as const) {
-      limb(thigh, f.thighLen, 7, PALETTE.robeVoid);
-      limb(shin, f.shinLen, 6, PALETTE.robeVoid);
+      limb(thigh, f.thighLen, f.thighRadius * 1.4, PALETTE.robeVoid);
+      limb(shin, f.shinLen, f.shinRadius * 1.4, PALETTE.robeVoid);
       const boot = box(10, 4.5, 6.5, PALETTE.robeDeep);
       boot.position.set(1.5, -f.shinLen - 1.2, 0);
       at(shin).add(boot);
@@ -447,30 +440,4 @@ export class Humanoid {
   triggerDrop(height: number): boolean {
     return this.jump.drop(height);
   }
-}
-
-/**
- * The body's collision capsules, in bone-local coordinates at scale 1. The masks
- * are what keep this cheap: the lower robe never tests the arms, and a sleeve
- * only tests its own arm plus the torso.
- */
-function buildCapsuleDefs(f: FigureMetrics): readonly CapsuleDef[] {
-  const headLocal = f.headY - f.neckY;
-  return [
-    // Skull: what the hood drapes over.
-    { bone: BONE.head, ax: 0, ay: headLocal - 3, az: 0, bx: 0, by: headLocal + 2, bz: 0, radius: f.headRadius, mask: MASK.head },
-    // Chest and hips: what the cape, hood tail and lower robe rest against.
-    { bone: BONE.chest, ax: 0, ay: f.waistY - f.chestY, az: 0, bx: 0, by: f.shoulderY - f.chestY, bz: 0, radius: 10, mask: MASK.torso },
-    { bone: BONE.pelvis, ax: 0, ay: -1, az: -f.hipHalf, bx: 0, by: -1, bz: f.hipHalf, radius: 8.5, mask: MASK.torso | MASK.legs },
-    // Arms: each sleeve only sees its own side.
-    { bone: BONE.upperArmL, ax: 0, ay: 0, az: 0, bx: 0, by: -f.upperArmLen, bz: 0, radius: 4.6, mask: MASK.armL },
-    { bone: BONE.forearmL, ax: 0, ay: 0, az: 0, bx: 0, by: -f.forearmLen, bz: 0, radius: 4, mask: MASK.armL },
-    { bone: BONE.upperArmR, ax: 0, ay: 0, az: 0, bx: 0, by: -f.upperArmLen, bz: 0, radius: 4.6, mask: MASK.armR },
-    { bone: BONE.forearmR, ax: 0, ay: 0, az: 0, bx: 0, by: -f.forearmLen, bz: 0, radius: 4, mask: MASK.armR },
-    // Legs: what sweeps the lower robe aside as the figure walks.
-    { bone: BONE.thighL, ax: 0, ay: -1, az: 0, bx: 0, by: -f.thighLen, bz: 0, radius: 6.4, mask: MASK.legs },
-    { bone: BONE.shinL, ax: 0, ay: 0, az: 0, bx: 0, by: -f.shinLen, bz: 0, radius: 5.2, mask: MASK.legs },
-    { bone: BONE.thighR, ax: 0, ay: -1, az: 0, bx: 0, by: -f.thighLen, bz: 0, radius: 6.4, mask: MASK.legs },
-    { bone: BONE.shinR, ax: 0, ay: 0, az: 0, bx: 0, by: -f.shinLen, bz: 0, radius: 5.2, mask: MASK.legs },
-  ];
 }
