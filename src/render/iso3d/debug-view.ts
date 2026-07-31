@@ -8,6 +8,7 @@ import { PALETTE } from './palette.js';
 import { flatMaterial, makeHeadingArrow, makeMoveMarker } from './meshes.js';
 import { defaultMechTuning, MechRig, type MechDebug, type MechTuning } from './rigs.js';
 import { buildPanel, type UnitKind, type ViewHandle } from './movement.js';
+import { viewSeed } from './seed.js';
 
 /**
  * The rig debug viewport (spec 035): a third sandbox tab that shows the same
@@ -591,7 +592,7 @@ export function mountDebug(container: HTMLElement): ViewHandle {
   layout.appendChild(left);
   container.appendChild(root);
 
-  const seed = Date.now() >>> 0;
+  const seed = viewSeed();
   const scene = new DebugScene(canvas);
   const tuning = scene.tuning;
   const input = new IsoInputCapture(canvas);

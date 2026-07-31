@@ -18,7 +18,8 @@ import { buildTerrainMesh } from './terrain-mesh.js';
 import { defaultMechTuning, MechRig, type MechTuning } from './rigs.js';
 import { buildPropField } from './props.js';
 import { createViewControls, type ViewControls } from './view-controls.js';
-import { DEFAULT_CAMERA_OFFSET, DEFAULT_VIEW_HALF_WIDTH } from './view-settings.js';
+import { CAMERA_FAR, CAMERA_NEAR, DEFAULT_CAMERA_OFFSET, DEFAULT_VIEW_HALF_WIDTH } from './view-settings.js';
+import { viewSeed } from './seed.js';
 
 // Per-frame easing fraction for camera framing changes (spec 034), matching IsoScene.
 const CAMERA_SMOOTH = 0.15;
@@ -104,7 +105,7 @@ class MovementScene {
 
     const aspect = RENDER_W / RENDER_H;
     const hw = DEFAULT_VIEW_HALF_WIDTH;
-    this.camera = new THREE.OrthographicCamera(-hw, hw, hw / aspect, -hw / aspect, 1, 4000);
+    this.camera = new THREE.OrthographicCamera(-hw, hw, hw / aspect, -hw / aspect, CAMERA_NEAR, CAMERA_FAR);
 
     this.scene.add(this.sun);
     this.scene.add(new THREE.AmbientLight(0x8090a0, 1.1));
@@ -667,7 +668,7 @@ export function mountMovement(container: HTMLElement): ViewHandle {
   layout.appendChild(left);
   container.appendChild(root);
 
-  const seed = Date.now() >>> 0;
+  const seed = viewSeed();
   const scene = new MovementScene(canvas, seed);
   const tuning = scene.tuning;
   const input = new IsoInputCapture(canvas);

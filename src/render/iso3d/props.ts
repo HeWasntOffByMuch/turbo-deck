@@ -1,13 +1,14 @@
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
+import { hashUnit2 } from '../../shared/hash.js';
 import type { Prop } from '../../terrain/vegetation.js';
 
 /**
- * Batched scenery for the whole world (spec 043). The scatter puts hundreds of
- * trees and bushes across the terrain, which is what turns a heightfield into a
- * place worth walking around in -- but as individual `Group`s that would be
- * thousands of draw calls. Each part of a tree or bush therefore becomes an
- * `InstancedMesh` carrying many copies of it.
+ * Batched scenery for the whole world (spec 043/045). The scatter puts a
+ * thousand-odd trees and bushes across the terrain, which is what turns a
+ * heightfield into a place worth walking around in -- but as individual
+ * `Group`s that would be thousands of draw calls. Each part of a tree or bush
+ * therefore becomes an `InstancedMesh` carrying many copies of it.
  *
  * Those instanced meshes are **bucketed by region** rather than one per part for
  * the whole world. A single world-spanning batch has a world-spanning bounding
@@ -16,9 +17,11 @@ import type { Prop } from '../../terrain/vegetation.js';
  * the view, that is nearly all of them wasted. Per-region batches each get a
  * tight bounding sphere, so the ones behind the camera drop out for free.
  *
- * Instancing also buys the variety cheaply: every instance gets its own colour,
+ * Instancing also buys the variety cheaply. Every instance gets its own colour,
  * so foliage drifts in shade across the world and the occasional tree turns
- * autumn -- the same silhouette repeated, never the same colour twice in a row.
+ * autumn; and every instance gets its own *shape* within its species, because
+ * the matrix that places a part can also lean it, slide it off the trunk's axis,
+ * or leave it out of that tree entirely.
  */
 
 /**
@@ -27,6 +30,17 @@ import type { Prop } from '../../terrain/vegetation.js';
  * a meaningful fraction of what is on screen (so culling actually bites).
  */
 const REGION_SIZE = 1100;
+
+/** Seeds for the per-instance variation hashes, so the draws stay independent. */
+const HASH_SPECIES = 0x5eed01;
+const HASH_TIERS = 0x5eed02;
+const HASH_ASYMMETRY = 0x5eed03;
+const HASH_LEAN = 0x5eed04;
+
+/** Fraction of trees that are pines rather than firs. */
+const PINE_SHARE = 0.38;
+
+export type TreeSpecies = 'fir' | 'pine';
 
 /** One part of a prop: a shared geometry plus where it sits in the prop's local space. */
 interface PropPart {
@@ -39,28 +53,93 @@ interface PropPart {
   /** Base colour, tinted per instance. `foliage` parts also take the autumn turn. */
   readonly color: number;
   readonly foliage: boolean;
+  /**
+   * Which foliage tier this is, counted from the bottom. A tree only grows the
+   * part if its tier count reaches it, which is how one species covers saplings
+   * and full-grown spires out of the same geometry.
+   */
+  readonly tier?: number;
+  /** How far this part may slide off the trunk's axis, at full asymmetry. */
+  readonly driftMax?: number;
+  /** How far this part may lean over, radians, at full asymmetry. */
+  readonly leanMax?: number;
 }
 
-// The tree's three tapering tiers, matching `makeTree` exactly so a batched tree
-// and a standalone one are the same object.
-const TREE_TIERS: readonly [radius: number, height: number, baseY: number, color: number][] = [
-  [34, 34, 26, PALETTE.leafDeep],
-  [26, 30, 44, PALETTE.leafMid],
-  [17, 26, 60, PALETTE.leafBright],
+/**
+ * The two conifers, as (radius, height, baseY) per tier.
+ *
+ * Both are built to leave the trunk *showing*. The tree this replaces stacked
+ * three cones flush onto a 26-high trunk box the bottom cone hid outright, so a
+ * whole world of forest never showed one trunk. Here the lowest tier lifts clear
+ * of the ground and each tier stops short of the next, so a dark column reads
+ * under the canopy and again in the gaps between the fronds -- which is what
+ * makes a conifer read as a tree rather than as a green triangle.
+ *
+ * The crowns are also much wider than the 34 they were. The scatter cannot pack
+ * trunks closer than a body's width apart without walling the world off, so the
+ * canopy has to close *across* that gap rather than by crowding the trunks: at
+ * the separation a saturated grove settles at, crowns this wide overlap and the
+ * ones they replaced did not.
+ */
+const FIR_TIERS: readonly (readonly [radius: number, height: number, baseY: number])[] = [
+  [44, 34, 22],
+  [34, 30, 59],
+  [24, 25, 92],
+  [15, 20, 108],
 ];
 
-function treeParts(): PropPart[] {
+/** A bare column for the lower half, then fewer, wider, floppier fronds. */
+const PINE_TIERS: readonly (readonly [radius: number, height: number, baseY: number])[] = [
+  [41, 32, 44],
+  [30, 28, 72],
+  [19, 22, 96],
+];
+
+/** Tier ramp, dark at the base to bright at the crown, however many tiers there are. */
+const TIER_COLORS = [PALETTE.leafDeep, PALETTE.leafMid, PALETTE.leafBright, PALETTE.leafBright] as const;
+
+interface SpeciesShape {
+  /** Trunk box: width, then height. */
+  readonly trunk: readonly [width: number, height: number];
+  readonly tiers: readonly (readonly [radius: number, height: number, baseY: number])[];
+  /** The tier counts an instance may take; the hash picks one, so repeats weight it. */
+  readonly tierCounts: readonly number[];
+  readonly driftMax: number;
+  readonly leanMax: number;
+}
+
+const SPECIES: Record<TreeSpecies, SpeciesShape> = {
+  fir: { trunk: [12, 86], tiers: FIR_TIERS, tierCounts: [2, 3, 3, 4], driftMax: 5, leanMax: 0.1 },
+  // Fewer, wider, floppier fronds on a long bare trunk -- and leaning harder,
+  // since a drooping frond is most of what tells the two apart at this size.
+  pine: { trunk: [12, 92], tiers: PINE_TIERS, tierCounts: [2, 2, 3], driftMax: 9, leanMax: 0.19 },
+};
+
+function treeParts(species: TreeSpecies): PropPart[] {
+  const shape = SPECIES[species];
+  const [trunkWidth, trunkHeight] = shape.trunk;
   const parts: PropPart[] = [
-    { geometry: new THREE.BoxGeometry(10, 26, 10), offsetY: 13, color: PALETTE.trunk, foliage: false },
+    {
+      geometry: new THREE.BoxGeometry(trunkWidth, trunkHeight, trunkWidth),
+      offsetY: trunkHeight / 2,
+      color: PALETTE.trunk,
+      foliage: false,
+    },
   ];
-  for (const [radius, height, baseY, color] of TREE_TIERS) {
+  const top = Math.max(1, shape.tiers.length - 1);
+  shape.tiers.forEach(([radius, height, baseY], tier) => {
     parts.push({
       geometry: new THREE.ConeGeometry(radius, height, 7),
       offsetY: baseY + height / 2,
-      color,
+      color: TIER_COLORS[Math.min(tier, TIER_COLORS.length - 1)] ?? PALETTE.leafMid,
       foliage: true,
+      tier,
+      // The higher the frond, the further it may swing: a tier down at trunk
+      // height that slid sideways would tear the tree in half, a crown tip flops.
+      driftMax: shape.driftMax * (0.35 + 0.65 * (tier / top)),
+      leanMax: shape.leanMax * (0.4 + 0.6 * (tier / top)),
     });
-  }
+  });
   return parts;
 }
 
@@ -98,6 +177,61 @@ function foliageColor(base: number, tier: number, tint: number): number {
   return (r << 16) | (g << 8) | b;
 }
 
+/** How one tree differs from the rest of its species. */
+export interface TreeVariant {
+  readonly species: TreeSpecies;
+  readonly tierCount: number;
+  /** Which way and how hard the fronds lean, in [-1, 1]. */
+  readonly asymmetry: number;
+  /** Compass direction of the lean, radians. */
+  readonly leanAngle: number;
+}
+
+/**
+ * Pick a tree's variant from a spatial hash of where it stands -- not from the
+ * `Prop`'s own fields, because `tint` already drives the autumn turn and keying
+ * the species off it too would make every autumn tree the same shape.
+ *
+ * Pure in the position, so the same world always grows the same forest, the
+ * batching can ask twice and get the same answer, and the terrain module stays
+ * unaware that species exist at all.
+ */
+export function treeVariant(prop: Prop): TreeVariant {
+  // A lattice coarse enough to be cheap and fine enough that two props never
+  // collide on it: the scatter keeps trunks much further apart than this.
+  const x = Math.round(prop.x / 8);
+  const z = Math.round(prop.y / 8);
+  const species: TreeSpecies = hashUnit2(x, z, HASH_SPECIES) < PINE_SHARE ? 'pine' : 'fir';
+  const counts = SPECIES[species].tierCounts;
+  const pick = Math.min(counts.length - 1, Math.floor(hashUnit2(x, z, HASH_TIERS) * counts.length));
+  return {
+    species,
+    tierCount: counts[pick] ?? counts.length,
+    asymmetry: hashUnit2(x, z, HASH_ASYMMETRY) * 2 - 1,
+    leanAngle: hashUnit2(x, z, HASH_LEAN) * Math.PI * 2,
+  };
+}
+
+/** The tallest a tree of a species can stand, in prop-local units (before scale). */
+export function speciesHeight(species: TreeSpecies): number {
+  const shape = SPECIES[species];
+  const crown = shape.tiers.reduce((high, [, height, baseY]) => Math.max(high, baseY + height), 0);
+  return Math.max(crown, shape.trunk[1]);
+}
+
+/**
+ * How much bare trunk stands below the lowest foliage, in prop-local units.
+ * The number this whole reshape is about: it used to be zero.
+ */
+export function bareTrunkHeight(species: TreeSpecies): number {
+  return SPECIES[species].tiers[0]?.[2] ?? 0;
+}
+
+/** The widest a species' crown gets, for reasoning about canopy overlap. */
+export function crownRadius(species: TreeSpecies): number {
+  return SPECIES[species].tiers.reduce((wide, [radius]) => Math.max(wide, radius), 0);
+}
+
 export interface PropFieldHandle {
   readonly group: THREE.Group;
   dispose(): void;
@@ -113,22 +247,51 @@ export function buildPropField(props: readonly Prop[], heightAt: (x: number, z: 
   const geometries: THREE.BufferGeometry[] = [];
   const materials: THREE.Material[] = [];
 
-  const build = (parts: readonly PropPart[], of: readonly Prop[]): void => {
-    if (of.length === 0) return;
-    parts.forEach((part, tier) => {
-      const material = new THREE.MeshLambertMaterial({ flatShading: true });
-      const mesh = new THREE.InstancedMesh(part.geometry, material, of.length);
-      mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-      const matrix = new THREE.Matrix4();
-      const position = new THREE.Vector3();
-      const quaternion = new THREE.Quaternion();
-      const scale = new THREE.Vector3();
-      const color = new THREE.Color();
+  // Reused across every instance of every part.
+  const matrix = new THREE.Matrix4();
+  const position = new THREE.Vector3();
+  const quaternion = new THREE.Quaternion();
+  const tilt = new THREE.Quaternion();
+  const leanAxis = new THREE.Vector3();
+  const up = new THREE.Vector3(0, 1, 0);
+  const scale = new THREE.Vector3();
+  const color = new THREE.Color();
 
-      of.forEach((prop, i) => {
+  /**
+   * One `InstancedMesh` per part, over the props that actually grow it. A tier
+   * above a tree's count is left out of that batch rather than written at zero
+   * scale, so a stand of saplings costs a small batch instead of a full-size one
+   * padded with degenerate triangles.
+   */
+  const build = (
+    parts: readonly PropPart[],
+    of: readonly Prop[],
+    variants?: ReadonlyMap<Prop, TreeVariant>,
+  ): void => {
+    if (of.length === 0) return;
+    for (const part of parts) {
+      const tier = part.tier;
+      const grown =
+        tier === undefined || !variants ? of : of.filter((prop) => (variants.get(prop)?.tierCount ?? 0) > tier);
+      if (grown.length === 0) continue;
+
+      const material = new THREE.MeshLambertMaterial({ flatShading: true });
+      const mesh = new THREE.InstancedMesh(part.geometry, material, grown.length);
+      mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+      // Scenery is the bulk of the shadow pass (spec 045): a canopy that throws
+      // dappled shade onto the ground is what stops props reading as decals.
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+
+      grown.forEach((prop, i) => {
         const s = prop.scale;
-        // Local offset, scaled with the prop and spun by its rotation.
-        const lx = (part.offsetX ?? 0) * s;
+        const variant = variants?.get(prop);
+        const asymmetry = variant?.asymmetry ?? 0;
+
+        // Local offset, scaled with the prop and spun by its rotation. The
+        // per-instance drift rides in that same local frame, so a leaning tree
+        // leans consistently however it happens to be turned.
+        const lx = ((part.offsetX ?? 0) + (part.driftMax ?? 0) * asymmetry) * s;
         const lz = (part.offsetZ ?? 0) * s;
         const cos = Math.cos(prop.rotation);
         const sin = Math.sin(prop.rotation);
@@ -137,10 +300,17 @@ export function buildPropField(props: readonly Prop[], heightAt: (x: number, z: 
           heightAt(prop.x, prop.y) + part.offsetY * s,
           prop.y + lx * sin + lz * cos,
         );
-        quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), prop.rotation);
+
+        quaternion.setFromAxisAngle(up, prop.rotation);
+        const lean = (part.leanMax ?? 0) * asymmetry;
+        if (lean !== 0 && variant) {
+          leanAxis.set(Math.cos(variant.leanAngle), 0, Math.sin(variant.leanAngle));
+          quaternion.multiply(tilt.setFromAxisAngle(leanAxis, lean));
+        }
+
         scale.set(s, s * (part.scaleY ?? 1), s);
         mesh.setMatrixAt(i, matrix.compose(position, quaternion, scale));
-        color.setHex(part.foliage ? foliageColor(part.color, tier - 1, prop.tint) : part.color);
+        color.setHex(part.foliage ? foliageColor(part.color, tier ?? 0, prop.tint) : part.color);
         mesh.setColorAt(i, color);
       });
 
@@ -149,11 +319,13 @@ export function buildPropField(props: readonly Prop[], heightAt: (x: number, z: 
       group.add(mesh);
       geometries.push(part.geometry);
       materials.push(material);
-    });
+    }
   };
 
-  // Group props into square regions, then batch each region's trees and bushes
-  // separately, so each batch's bounds are small enough for the camera to cull.
+  // Group props into square regions, then batch each region's trees (split by
+  // species) and bushes separately, so each batch's bounds stay small enough for
+  // the camera to cull. Two species is two more batches per region, not two more
+  // per tree: the count is set by (region x species x part), never by the props.
   const regions = new Map<string, Prop[]>();
   for (const prop of props) {
     const key = `${Math.floor(prop.x / REGION_SIZE)},${Math.floor(prop.y / REGION_SIZE)}`;
@@ -164,7 +336,13 @@ export function buildPropField(props: readonly Prop[], heightAt: (x: number, z: 
   // Sorted, so the scene graph is built in the same order for the same input.
   for (const key of [...regions.keys()].sort()) {
     const bucket = regions.get(key) ?? [];
-    build(treeParts(), bucket.filter((p) => p.kind === 'tree'));
+    // Hashed once per tree rather than once per part per tree.
+    const variants = new Map<Prop, TreeVariant>();
+    const trees = bucket.filter((p) => p.kind === 'tree');
+    for (const tree of trees) variants.set(tree, treeVariant(tree));
+    for (const species of ['fir', 'pine'] as const) {
+      build(treeParts(species), trees.filter((p) => variants.get(p)?.species === species), variants);
+    }
     build(bushParts(), bucket.filter((p) => p.kind === 'bush'));
   }
 

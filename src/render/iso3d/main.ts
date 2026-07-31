@@ -5,6 +5,7 @@ import { IsoHud } from './hud.js';
 import { IsoScene } from './scene.js';
 import { mountMovement, type ViewHandle } from './movement.js';
 import { mountDebug } from './debug-view.js';
+import { viewSeed } from './seed.js';
 
 /**
  * Entry point for the isometric 3D view (spec 031/032). A small tab shell mounts
@@ -35,7 +36,7 @@ function mountCombat(container: HTMLElement): ViewHandle {
   const root = document.createElement('div');
   root.style.cssText = 'position:absolute;inset:0;overflow:hidden;background:#0b0b12;';
 
-  const seed = Date.now() >>> 0;
+  const seed = viewSeed();
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'position:absolute;inset:0;';
   const scene = new IsoScene(canvas, seed);

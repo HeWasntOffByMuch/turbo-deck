@@ -1,5 +1,7 @@
 import { RETRO_DEFAULTS, type BayerSize, type RetroSettings } from './retro.js';
 import {
+  CAMERA_ELEVATION_MAX_DEG,
+  CAMERA_ELEVATION_MIN_DEG,
   DEFAULT_CAMERA_OFFSET,
   DEFAULT_FOLLOW_LAG_MS,
   DEFAULT_LIGHT_OFFSET,
@@ -208,7 +210,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
 
   const camAz = makeSlider('Orbit', 0, 360, 1, wrapDeg(camOrbit.azimuth), '°',
     'Rotate the follow camera around the unit (compass azimuth, in degrees).');
-  const camEl = makeSlider('Height', 10, 85, 1, Math.round(camOrbit.elevation / DEG), '°',
+  const camEl = makeSlider('Height', CAMERA_ELEVATION_MIN_DEG, CAMERA_ELEVATION_MAX_DEG, 1, Math.round(camOrbit.elevation / DEG), '°',
     'Camera elevation angle above the ground, in degrees — higher looks more top-down.');
   // Continuous ('any'), so the wheel's fractional spans survive the round trip
   // through the slider instead of snapping to a step (spec 042).

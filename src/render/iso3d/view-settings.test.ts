@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CAMERA_ELEVATION_MAX_DEG,
+  CAMERA_ELEVATION_MIN_DEG,
+  CAMERA_FAR,
+  CAMERA_NEAR,
   clampViewHalfWidth,
   DEFAULT_CAMERA_OFFSET,
   DEFAULT_FOLLOW_LAG_MS,
@@ -14,6 +18,7 @@ import {
   zoomViewHalfWidth,
   type Vec3,
 } from './view-settings.js';
+import { REFERENCE_ASPECT } from './view-frame.js';
 
 const expectClose = (a: Vec3, b: Vec3): void => {
   expect(a.x).toBeCloseTo(b.x, 5);
@@ -183,9 +188,47 @@ describe('the defaults the view opens at (spec 044)', () => {
     expect(DEFAULT_VIEW_HALF_WIDTH).toBe(320);
   });
 
-  it('sits the camera 45 degrees above the ground', () => {
-    expect((DEFAULT_CAMERA_ORBIT.elevation * 180) / Math.PI).toBeCloseTo(45, 9);
+  it('opens on a low three-quarter pitch, not a top-down one (spec 045)', () => {
+    const degrees = (DEFAULT_CAMERA_ORBIT.elevation * 180) / Math.PI;
+    expect(degrees).toBeGreaterThanOrEqual(25);
+    expect(degrees).toBeLessThanOrEqual(30);
     // ...and the offset the scene actually uses agrees with the orbit.
-    expect((offsetToOrbit(DEFAULT_CAMERA_OFFSET).elevation * 180) / Math.PI).toBeCloseTo(45, 9);
+    expect((offsetToOrbit(DEFAULT_CAMERA_OFFSET).elevation * 180) / Math.PI).toBeCloseTo(degrees, 9);
+  });
+
+  it('opens at a pitch the Height slider can reach', () => {
+    const degrees = (DEFAULT_CAMERA_ORBIT.elevation * 180) / Math.PI;
+    expect(degrees).toBeGreaterThanOrEqual(CAMERA_ELEVATION_MIN_DEG);
+    expect(degrees).toBeLessThanOrEqual(CAMERA_ELEVATION_MAX_DEG);
+  });
+
+  /**
+   * The clip planes have to hold the world at the worst framing the controls
+   * can ask for: the widest zoom at the shallowest pitch, where the ground the
+   * view frames runs furthest along the view axis. Depth along that axis for a
+   * ground point `d` either side of the target is `distance -/+ d*cos(pitch)`,
+   * and terrain reaching `h` above the target pulls the near end in by
+   * `h*sin(pitch)` on top of that.
+   */
+  it('keeps the world between the near and far planes at every framing', () => {
+    const { distance } = DEFAULT_CAMERA_ORBIT;
+    // The tallest thing in the authored world (the northern range) and the
+    // depth its underside is skirted to.
+    const PEAK = 480;
+    const UNDERSIDE = 260;
+
+    for (const degrees of [CAMERA_ELEVATION_MIN_DEG, 27, CAMERA_ELEVATION_MAX_DEG]) {
+      const pitch = (degrees * Math.PI) / 180;
+      // The camera itself must clear the terrain, or it ends up inside a hill.
+      expect(distance * Math.sin(pitch)).toBeGreaterThan(PEAK);
+
+      const halfHeight = MAX_VIEW_HALF_WIDTH / REFERENCE_ASPECT;
+      const groundReach = halfHeight / Math.sin(pitch);
+      const nearest = distance - groundReach * Math.cos(pitch) - PEAK * Math.sin(pitch);
+      const furthest = distance + groundReach * Math.cos(pitch) + UNDERSIDE * Math.sin(pitch);
+
+      expect(nearest).toBeGreaterThan(CAMERA_NEAR);
+      expect(furthest).toBeLessThan(CAMERA_FAR);
+    }
   });
 });

@@ -21,6 +21,24 @@ export function flatMaterial(color: number): THREE.MeshLambertMaterial {
   return mat;
 }
 
+/**
+ * Mark everything under `root` as taking part in the shadow pass (spec 045):
+ * casting onto the world, and taking the shadows other things cast onto it.
+ *
+ * Applied to whole subtrees rather than at each mesh's construction because the
+ * rigs assemble dozens of small parts and every one of them belongs in the same
+ * silhouette. A no-op in a scene whose renderer has no shadow map, which is how
+ * the sandbox views keep their single unshadowed light.
+ */
+export function castsShadows(root: THREE.Object3D): void {
+  root.traverse((node) => {
+    if ((node as THREE.Mesh).isMesh) {
+      node.castShadow = true;
+      node.receiveShadow = true;
+    }
+  });
+}
+
 /** Darken a hex colour by `factor` (0..1), for e.g. a mech's legs vs its chassis. */
 export function darken(color: number, factor: number): number {
   const r = Math.round(((color >> 16) & 0xff) * factor);
@@ -41,41 +59,6 @@ export function cone(radius: number, height: number, color: number, segments = 7
 export function faceted(radius: number, color: number, detail = 0): THREE.Mesh {
   // detail 0 == a 20-face icosahedron: rounded but unmistakably faceted.
   return new THREE.Mesh(new THREE.IcosahedronGeometry(radius, detail), flatMaterial(color));
-}
-
-/** A blocky conifer: a short trunk under three stacked, tapering foliage tiers. */
-export function makeTree(): THREE.Group {
-  const g = new THREE.Group();
-  const trunk = box(10, 26, 10, PALETTE.trunk);
-  trunk.position.y = 13;
-  g.add(trunk);
-
-  const tiers: readonly [number, number, number, number][] = [
-    // radius, height, baseY, color
-    [34, 34, 26, PALETTE.leafDeep],
-    [26, 30, 44, PALETTE.leafMid],
-    [17, 26, 60, PALETTE.leafBright],
-  ];
-  for (const [radius, height, baseY, color] of tiers) {
-    const tier = cone(radius, height, color);
-    tier.position.y = baseY + height / 2;
-    g.add(tier);
-  }
-  return g;
-}
-
-/** A low rounded shrub: two overlapping faceted blobs. */
-export function makeBush(): THREE.Group {
-  const g = new THREE.Group();
-  const big = faceted(20, PALETTE.bush);
-  big.position.set(0, 14, 0);
-  big.scale.y = 0.7;
-  g.add(big);
-  const small = faceted(13, PALETTE.bushBright);
-  small.position.set(9, 20, -4);
-  small.scale.y = 0.7;
-  g.add(small);
-  return g;
 }
 
 /** A small flat marker dropped on the ground at the current move order. */

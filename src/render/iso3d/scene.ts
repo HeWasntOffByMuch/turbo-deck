@@ -7,6 +7,7 @@ import {
   makeAttackCone,
   makeMoveMarker,
   makeQueuedMoveMarker,
+  castsShadows,
   makeUnwalkableField,
   makeWall,
   sectorGeometry,
@@ -26,8 +27,15 @@ import { MechRig, Poofs, PlayerRig } from './rigs.js';
 import { worldToIso, type IsoParams } from './projection.js';
 import { buildPropField } from './props.js';
 import { createViewControls, type ViewControls } from './view-controls.js';
-import { DEFAULT_CAMERA_OFFSET, DEFAULT_VIEW_HALF_WIDTH, followAlpha } from './view-settings.js';
+import {
+  CAMERA_FAR,
+  CAMERA_NEAR,
+  DEFAULT_CAMERA_OFFSET,
+  DEFAULT_VIEW_HALF_WIDTH,
+  followAlpha,
+} from './view-settings.js';
 import { cameraFrustum, cursorToNdc, internalRenderSize } from './view-frame.js';
+import { shadowFrame, shadowFrameStale, SHADOW_MAP_SIZE } from './shadow.js';
 import { RetroPass } from './retro-pass.js';
 
 // Fraction of the gap to the target camera framing closed each rendered frame,
@@ -73,6 +81,11 @@ export class IsoScene {
   private readonly camOffsetTarget = new THREE.Vector3();
   private halfWidth = DEFAULT_VIEW_HALF_WIDTH;
   private lastHalfWidth = -1;
+  // View span the sun's shadow camera was last sized for (spec 045); it is
+  // resized only when the zoom has actually moved, not every eased frame.
+  private shadowHalfWidth = -1;
+  // Reused each frame to aim the sun without allocating.
+  private readonly sunDirection = new THREE.Vector3();
   // Internal buffer the canvas was last sized for, so a resize is detected cheaply.
   private renderW = 0;
   private renderH = 0;
@@ -132,6 +145,11 @@ export class IsoScene {
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
     this.renderer.setPixelRatio(1);
+    // Hard, unfiltered shadows (spec 045): `BasicShadowMap` does one depth
+    // comparison per pixel, so an edge is a step between lit and unlit rather
+    // than a gradient -- the only kind that belongs in a posterized frame.
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.BasicShadowMap;
     this.scene.background = new THREE.Color(PALETTE.sky);
 
     const frustum = cameraFrustum(DEFAULT_VIEW_HALF_WIDTH, 1);
@@ -140,15 +158,25 @@ export class IsoScene {
       frustum.halfWidth,
       frustum.halfHeight,
       -frustum.halfHeight,
-      1,
-      4000,
+      CAMERA_NEAR,
+      CAMERA_FAR,
     );
     this.resize();
 
     // A single directional light (movable via the controls, spec 033), plus a
     // soft ambient fill so shadowed faces stay in-palette (not black).
+    this.sun.castShadow = true;
+    this.sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+    // A directional light points from its position at its target, and the target
+    // has to be in the graph for its world matrix to be kept up to date.
     this.scene.add(this.sun);
-    this.scene.add(new THREE.AmbientLight(0x8090a0, 1.1));
+    this.scene.add(this.sun.target);
+    // Cool sky fill. Stronger here than in the sandboxes (spec 045): with the
+    // sun casting, a shadowed surface is lit by this and nothing else, and at
+    // the intensity tuned for an unshadowed scene the shade crushed to a
+    // near-black that swallowed the palette. Cool rather than warm on purpose,
+    // so shade reads as sky bouncing into it and holds against the warm sun.
+    this.scene.add(new THREE.AmbientLight(0x8090a0, 1.55));
 
     // The world's terrain (spec 043). Its bounds bleed well past the play area
     // so the camera never frames the void beyond the arena edge while following
@@ -163,6 +191,7 @@ export class IsoScene {
     this.scene.add(this.unwalkable);
 
     this.scene.add(this.playerRig.group);
+    castsShadows(this.playerRig.group);
     this.playerOutline = attachOutline(this.playerRig.group);
     this.poofs = new Poofs(this.scene);
     this.moveMarker = makeMoveMarker();
@@ -213,6 +242,7 @@ export class IsoScene {
     for (const rect of ARENA_OBSTACLES) {
       const wall = makeWall(rect.w, rect.h);
       wall.position.set(rect.x, this.lowestGroundIn(rect.x, rect.y, rect.w, rect.h), rect.y);
+      castsShadows(wall);
       this.scene.add(wall);
     }
   }
@@ -411,10 +441,40 @@ export class IsoScene {
       this.lastHalfWidth = this.halfWidth;
     }
 
-    const light = this.controls.lightOffset();
-    this.sun.position.set(light.x, light.y, light.z);
-
+    this.applySun();
     this.unwalkable.visible = this.controls.showUnwalkable();
+  }
+
+  /**
+   * Aim the sun and drag its shadow camera along with the view (spec 045).
+   *
+   * The controls give a *direction* -- a unit-ish offset whose length says
+   * nothing -- so the sun is placed that far up the direction from the point
+   * the camera is looking at, and aimed back at it. Both have to follow the
+   * target: an orthographic shadow camera only covers the box it is given, and
+   * one pinned to the arena centre would drop every shadow the moment the
+   * player walked out of it.
+   */
+  private applySun(): void {
+    const light = this.controls.lightOffset();
+    const frame = shadowFrame(this.halfWidth);
+    this.sunDirection.set(light.x, light.y, light.z).normalize();
+
+    this.sun.target.position.copy(this.target);
+    this.sun.position.copy(this.target).addScaledVector(this.sunDirection, frame.distance);
+
+    if (shadowFrameStale(this.shadowHalfWidth, this.halfWidth)) {
+      const cam = this.sun.shadow.camera;
+      cam.left = -frame.radius;
+      cam.right = frame.radius;
+      cam.top = frame.radius;
+      cam.bottom = -frame.radius;
+      cam.near = frame.near;
+      cam.far = frame.far;
+      cam.updateProjectionMatrix();
+      this.sun.shadow.normalBias = frame.normalBias;
+      this.shadowHalfWidth = this.halfWidth;
+    }
   }
 
   /**
@@ -480,6 +540,7 @@ export class IsoScene {
         entry = { rig, outline: attachOutline(rig.group) };
         this.enemies.set(enemy.id, entry);
         this.scene.add(rig.group);
+        castsShadows(rig.group);
       }
       const rig = entry.rig;
       rig.group.position.set(
