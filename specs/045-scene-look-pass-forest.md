@@ -40,7 +40,9 @@ under "What this costs the sim" below.
 ### Camera (`view-settings.ts`)
 
 `DEFAULT_CAMERA_ORBIT` drops to 27° of elevation. The `Height` slider already
-spans 10-85°, so this is a default, not a new control.
+spans 10-85°, so this is a default, not a new control -- but that band moves
+out of the panel and into `view-settings.ts` beside the clip planes, since the
+planes are sized against its shallow end and the two must not drift apart.
 
 The orbit's `distance` and the camera's near/far planes have to move with it.
 Orthographic framing is set by the zoom, never by the distance, so distance
@@ -55,7 +57,7 @@ At the widest zoom (`MAX_VIEW_HALF_WIDTH` 1400, `halfHeight` 875) that is
 ±1237 units at 45° and ±1927 at 27°. The near plane already clips slightly at
 45°; at 27° it would cut a visible band out of the foreground. So:
 
-- `DEFAULT_CAMERA_ORBIT.distance`: 800 → 5000. Costs nothing to framing, and
+- `DEFAULT_CAMERA_ORBIT.distance`: 800 → 6000. Costs nothing to framing, and
   lifts the camera clear of the 460-unit northern range at any slider pitch.
 - Ortho `near`/`far`: `1 / 4000` → `1 / 12000`, sized to hold the world at the
   widest zoom and the shallowest pitch the slider allows.
@@ -102,6 +104,14 @@ Deliberate choices:
 - **Terrain both casts and receives.** A cliff throwing its shape onto the
   ground below is most of the point; without it the mesa still reads flat.
   Water does neither.
+- **`DEFAULT_LIGHT_OFFSET` moves too.** It sat at 61° of elevation and almost
+  directly behind the scene, which is invisible while a light only shades
+  faces and wrong the moment it casts: every surface turned toward the viewer
+  was the surface turned away from the sun, so trees came out as dark blobs
+  with lit rims. It swings to a quarter turn off the camera's bearing and down
+  to 40°, giving each tree a lit flank, a shaded flank, and a shadow that
+  lands on open ground instead of behind itself. The ambient fill rises with
+  it, since a shadowed surface is now lit by that alone.
 
 ### Canopy (`terrain/vegetation.ts`)
 
@@ -109,7 +119,8 @@ Deliberate choices:
 drawn across the bounds, and each prop picks a centre and a jittered radial
 offset biased toward it, so the world comes out as groves with meadows between
 them. A stray fraction is still placed uniformly, so single trees stand in the
-open. Counts rise to fill the groves (trees 460 → 1400, bushes 340 → 700).
+open. The counts asked for rise to fill the groves (trees 460 → 2200, bushes
+340 → 600); how many actually land is capped by the gap rule below.
 
 The flat `spacing: 76` rejection becomes footprint-aware:
 
@@ -123,6 +134,21 @@ today: a flat 76 lets two full-size trees (footprint 36 each) stand with 4
 units between them, which no body can pass. Scaling the rule to the props
 being placed lets small trees pack tightly into a grove while guaranteeing
 every gap in the world is walkable.
+
+Two consequences found while building it, both kept:
+
+- **The gap rule, not the count, is what binds.** Asking for more trees than
+  it allows just spends attempts, so the counts are set where the world
+  saturates (~820 trees, ~330 bushes placed on the authored world) rather
+  than at a number the scatter cannot reach. Closing the canopy the rest of
+  the way is the crown width's job, below.
+- **Trees and bushes are placed interleaved.** Run in sequence the trees claim
+  every grove and the undergrowth is left with only the clearings, which is
+  backwards; alternating in proportion lets both claim room in one pass.
+
+The pairwise test goes through a bucketed grid rather than a sweep over
+everything placed so far -- fine at 800 props, tens of millions of distance
+tests at this density.
 
 The module stays what it is: pure, seeded-PRNG only, no `Math.random`, no DOM,
 no three.js, same seed → same arrangement.
@@ -164,7 +190,8 @@ denser world scatter *is* visible to the sim, and "renderer-only" cannot be
 literally true for change 3. What is preserved instead:
 
 - The **play area is untouched** — `scatterProps` and its defaults are
-  unchanged, so the staged fight has exactly the trees it has today.
+  unchanged, so the staged fight has exactly the trees it has today. Asserted
+  prop-for-prop against `scatterProps`, not just by count.
 - **No sim code changes.** No rule, constant or module under `src/sim/` or
   `src/cards/` is edited.
 - **Traversability improves rather than degrades.** The footprint-aware gap
@@ -172,7 +199,8 @@ literally true for change 3. What is preserved instead:
   spacing did not.
 
 The denser surrounding world does mean more circles for the nav grid to
-rasterize (~2100 vs ~800), once per body radius per world, cached thereafter.
+rasterize (~1150 vs ~800), once per body radius per world, cached thereafter,
+and roughly 380ms of one-time scatter at scene construction.
 
 ## Invariants tested
 
@@ -188,13 +216,25 @@ rasterize (~2100 vs ~800), once per body radius per world, cached thereafter.
 - `scatterInBounds` is deterministic: same seed and bounds → identical props.
 - `scatterInBounds` respects the footprint-aware gap for **every** pair, and
   never places a prop the predicate rejected.
-- `scatterInBounds` clusters: the mean nearest-neighbour distance is
-  materially below the uniform-Poisson expectation for the same count and
-  area.
+- `scatterInBounds` clusters: the spread of per-cell counts (variance over
+  mean) is materially above that of the same scatter with clustering switched
+  off, which is the control that isolates the placement rule. Nearest-
+  neighbour distance is *not* the measure to use here -- a hard-core exclusion
+  rule pushes it above the Poisson expectation whatever the large-scale
+  pattern is.
+- `scatterInBounds` plants a real share of bushes rather than filling every
+  grove with trees first.
 - `scatterProps` output is byte-identical to what it produces today (the play
   area is unchanged).
 - `viewSeed` returns the parsed value for `?seed=N`, and a clock-derived
   32-bit value when the parameter is absent or unparseable.
+- `treeVariant` is pure in the prop's *position*, grows both species in
+  quantity, varies the tier count within each, leans trees both ways about a
+  roughly upright mean, and decides species independently of `tint`.
+- Both species leave bare trunk standing under the canopy, the pine much more
+  of it than the fir, and both crowns are wide enough to overlap at the trunk
+  separation a saturated grove settles at -- where the 34-radius crown they
+  replace is not.
 
 ## Out of scope
 
