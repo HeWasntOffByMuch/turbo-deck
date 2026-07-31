@@ -21,7 +21,14 @@ Three layers, split so the physics is testable in Node with no browser:
 ### `src/render/cloth/` — pure simulation (no three.js, no DOM)
 
 ```ts
-// noise.ts is shared with rigs.ts (src/render/noise.ts)
+// figure.ts — the figure's proportions, bone layout and collision capsules.
+// Shared by the skeleton, the patterns and the clearance test, so there is one
+// description of where the body is.
+export const BONE: Record<string, number>;
+export interface FigureMetrics { /* joint heights, collider radii, drapeClearance */ }
+export const FIGURE: FigureMetrics;
+export function boneRestLayout(f): readonly BoneRest[];
+export function buildCapsuleDefs(f): readonly CapsuleDef[];
 
 // params.ts — every tunable in one documented, flat, numeric record.
 export interface RobeTuning {
@@ -44,56 +51,37 @@ export function sanitizeRobeTuning(t: RobeTuning): void;   // clamps NaN/±∞ i
 
 // wind.ts — procedural wind, smooth transitions, gusts, disable.
 export class WindField {
-  readonly vx: number; readonly vy: number; readonly vz: number;
-  readonly turbulence: number;   // 0..1, per-particle variation the solver applies
+  readonly vx, vy, vz, turbulence: number;
   update(dt: number, t: RobeTuning): void;
   gust(strength: number): void;  // one-shot burst, for the sandbox button
 }
 
 // geometry.ts — parametric cloth pieces as particle grids.
 export interface ClothGeometry {
-  count; bind: Float64Array; bone: Int32Array; pinned: Uint8Array;
-  refWeight: Float64Array; link: Int32Array; linkRest: Float64Array;
-  linkKind: Uint8Array; anchor: Int32Array; anchorRest: Float64Array;
-  index: Uint16Array; seed: Int32Array; colliderMask: number;
+  count; bind; bone; pinned; refWeight; link; linkRest; linkKind; linkCount;
+  anchor; anchorRest; index; seed; colliderMask;
 }
-export function buildHood(f: FigureMetrics): ClothGeometry;
-export function buildCape(f: FigureMetrics): ClothGeometry;
-export function buildSkirt(f: FigureMetrics): ClothGeometry;
-export function buildSleeve(f: FigureMetrics, side: -1 | 1): ClothGeometry;
+export function buildRobePieces(f): readonly ClothGeometry[];  // robe, cape, hood, 2 sleeves
 
 // colliders.ts — capsule set the rig refreshes from bone world matrices.
-export class CapsuleSet { count; a: Float64Array; b: Float64Array;
-  radius: Float64Array; mask: Int32Array; set(i, ...): void; }
+export const MASK: { head; torso; armL; armR; legs };
+export class CapsuleSet { count; a; b; radius; mask; set(...): void; }
 
 // solver.ts — position-based dynamics over the geometry above.
 export class ClothSolver {
-  readonly pos: Float64Array; readonly vel: Float64Array;
-  readonly normal: Float64Array;
+  readonly pos, vel, normal, invMass: Float64Array;
   reset(ref: Float64Array): void;
   addImpulse(x, y, z): void;
   step(dt, t: RobeTuning, ctx: ClothStepContext): void;
-  maxStretchRatio(): number;   // diagnostics for the debug readout
+  maxStretchRatio(): number;
+  kineticEnergy(): number;
 }
 ```
 
-### `src/render/iso3d/` — three.js binding
-
-- `jump.ts` — `JumpMotion`, a pure ballistic hop (launch / airborne / land /
-  recover) plus a `drop(height)` for testing falls. Cosmetic only: it never
-  touches sim state, so no game outcome depends on it.
-- `humanoid.ts` — `Humanoid`, a bone hierarchy (pelvis, chest, head, upper
-  arms, forearms, thighs, shins, feet) with a distance-driven biped walk/run
-  cycle, bob, lean, bank, breathing and a landing crouch. Owns the visible
-  solid geometry (torso robe, head, hands, boots) and the collider capsules.
-- `robe.ts` — `RobeRig`, the composition root: skeleton + wind + five cloth
-  pieces, `update(dt, worldPos, ry)` matching the `SandboxUnit` shape the
-  sandbox/debug scenes already drive `MechRig` with.
-- `robe-debug.ts` — `ClothDebugOverlay`: toggleable particle dots, link lines
-  (coloured by strain), pinned attachment points, collider capsule wireframes
-  and a wind arrow.
-- `tuning-panel.ts` — the generic slider/toggle panel extracted from
-  `movement.ts`, so mech tuning and robe tuning share one implementation.
+Two pure helpers are lifted out of `iso3d/rigs.ts` so the robe does not have to
+depend on the mech rig for them: `src/render/noise.ts` (hashed value noise) and
+`src/render/spring.ts` (the critically damped spring). `rigs.ts` re-exports
+`Spring` so nothing downstream changes.
 
 ### Cloth model
 
@@ -108,6 +96,11 @@ export class ClothSolver {
 - A **skinned reference pose** (each particle bound to one bone) gives both the
   pose-retention spring (`springStrength`) and the idle settle
   (`recoverySpeed`), and is the recovery state for any non-finite particle.
+- Every garment is **cut outside every capsule it can collide with**, at
+  `<body radius> + drapeClearance`. A garment born inside a capsule is pushed
+  out against its own constraints forever, and the symptom -- permanently
+  inflated, permanently strained fabric -- is nearly invisible in a shaded
+  render. This is the invariant `figure.test.ts` exists to hold.
 - Aerodynamics per particle: isotropic drag plus normal-projected wind pressure
   from the vertex normal, so panels billow when broadside and slice when edge-on.
 - Capsule collision against the body, filtered per piece by a collider mask.
@@ -127,6 +120,23 @@ export class ClothSolver {
   - Identical `(geometry, tuning, input sequence)` produces identical positions
     across runs — the solver reads no ambient state.
   - `step` allocates no arrays (verified by a scratch-buffer identity check).
+- **Figure**
+  - Every garment's bind pose clears every capsule it can collide with, by at
+    least the default `collisionRadius`.
+  - `drapeClearance` exceeds the default `collisionRadius`.
+  - The bone layout names every bone once, parents before children.
+- **The whole rig** (`iso3d/robe.test.ts`, driving a real `RobeRig` headlessly)
+  - It settles into a finite, unstretched hang and stays there -- moving only as
+    much as the figure's breathing drives it.
+  - Fabric trails behind a run and returns to rest when it stops; peak lag grows
+    with `inertiaMultiplier`.
+  - No particle sits inside a body capsule during a walk cycle.
+  - The tether cap holds through a turn far faster than the sim can produce.
+  - A jump lifts and lands; a fall flares the hem and it comes **all the way
+    back down** (the regression guard for buckling and hem inversion).
+  - Wind blows it downwind and it settles when the wind drops.
+  - A teleport re-seats the cloth instead of stretching it.
+  - Identical inputs replay identically.
 - **Wind**
   - Disabling wind ramps the vector to zero smoothly instead of snapping, and
     stays at zero.
