@@ -74,7 +74,10 @@ spec they implement.
 
 ```
 specs/           spec markdown, one file per system, written before its code
-src/shared/      PRNG and other dependency-free helpers shared by sim and cards
+src/shared/      PRNG, spatial hash, world extent — dependency-free helpers
+                 shared by sim, cards and terrain
+src/terrain/     pure, deterministic world data: heightfields, materials, chunks
+                 and where the vegetation stands. No three.js, no DOM.
 src/cards/       card/deck engine — pure data and pure functions, no sim/render deps
 src/sim/         deterministic fixed-timestep combat sim, no rendering/DOM deps
 src/game/        composition root wiring cards to the sim (stepGame) — the only
