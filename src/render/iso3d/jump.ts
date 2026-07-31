@@ -31,8 +31,15 @@ export class JumpMotion {
   /** 0..1 landing crouch, spiking on touchdown and easing back out. */
   crouch = 0;
 
+  /**
+   * What the last {@link update} reported. The same object is returned by
+   * `update` and reused every frame, so a caller that drives the motion
+   * indirectly (the rig steps it inside the humanoid's pose pass) can still read
+   * this frame's events -- but only until the next `update`.
+   */
+  readonly lastEvents: JumpEvents = { launched: false, landingSpeed: 0 };
+
   private phase: JumpPhase = 'grounded';
-  private readonly events: JumpEvents = { launched: false, landingSpeed: 0 };
 
   /** Whether the figure is off the ground (the rig tucks the legs when it is). */
   get airborne(): boolean {
@@ -71,7 +78,7 @@ export class JumpMotion {
 
   /** Advance one frame. The returned object is reused; read it before the next call. */
   update(dt: number, gravity: number): JumpEvents {
-    const e = this.events;
+    const e = this.lastEvents;
     e.launched = false;
     e.landingSpeed = 0;
     if (!Number.isFinite(dt) || dt <= 0) return e;
