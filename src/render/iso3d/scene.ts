@@ -150,6 +150,9 @@ export class IsoScene {
     this.scene.add(this.moveMarker);
     this.attackCone = makeAttackCone();
     this.scene.add(this.attackCone);
+
+    // The wheel over the view is the zoom, alongside the panel's slider (spec 042).
+    this.controls.attachWheelZoom(canvas);
   }
 
   /**

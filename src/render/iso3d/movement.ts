@@ -109,6 +109,9 @@ class MovementScene {
     this.moveMarker = makeMoveMarker();
     this.moveMarker.visible = false;
     this.scene.add(this.moveMarker);
+
+    // The wheel over the view is the zoom, alongside the panel's slider (spec 042).
+    this.controls.attachWheelZoom(canvas);
   }
 
   /** The shared live-editable tuning both units use (the panel binds to it). */

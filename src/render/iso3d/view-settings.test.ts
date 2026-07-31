@@ -1,11 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
+  clampViewHalfWidth,
   DEFAULT_CAMERA_OFFSET,
   DEFAULT_FOLLOW_LAG_MS,
   DEFAULT_LIGHT_OFFSET,
+  DEFAULT_VIEW_HALF_WIDTH,
   followAlpha,
+  MAX_VIEW_HALF_WIDTH,
+  MIN_VIEW_HALF_WIDTH,
   offsetToOrbit,
   orbitToOffset,
+  SANDBOX_VIEW_HALF_WIDTH,
+  zoomViewHalfWidth,
   type Vec3,
 } from './view-settings.js';
 
@@ -73,5 +79,103 @@ describe('followAlpha', () => {
 
   it('is pure', () => {
     expect(followAlpha(1 / 60, 130)).toBe(followAlpha(1 / 60, 130));
+  });
+});
+
+describe('clampViewHalfWidth', () => {
+  it('holds every span inside the usable band', () => {
+    for (const hw of [-1000, 0, 1, 140, 199, 200, 320, 640, 1400, 1401, 5000, 1e6]) {
+      const clamped = clampViewHalfWidth(hw);
+      expect(clamped).toBeGreaterThanOrEqual(MIN_VIEW_HALF_WIDTH);
+      expect(clamped).toBeLessThanOrEqual(MAX_VIEW_HALF_WIDTH);
+    }
+    expect(clampViewHalfWidth(MIN_VIEW_HALF_WIDTH - 60)).toBe(MIN_VIEW_HALF_WIDTH);
+    expect(clampViewHalfWidth(MAX_VIEW_HALF_WIDTH + 600)).toBe(MAX_VIEW_HALF_WIDTH);
+  });
+
+  it('leaves spans already in the band untouched', () => {
+    for (const hw of [MIN_VIEW_HALF_WIDTH, 260.5, 320, 639.9, 1399, MAX_VIEW_HALF_WIDTH]) {
+      expect(clampViewHalfWidth(hw)).toBe(hw);
+    }
+  });
+
+  it('falls back to the default for a non-finite span', () => {
+    expect(clampViewHalfWidth(NaN)).toBe(DEFAULT_VIEW_HALF_WIDTH);
+    expect(clampViewHalfWidth(Infinity)).toBe(DEFAULT_VIEW_HALF_WIDTH);
+  });
+
+  it('keeps every opening framing reachable', () => {
+    for (const opening of [DEFAULT_VIEW_HALF_WIDTH, SANDBOX_VIEW_HALF_WIDTH]) {
+      expect(opening).toBeGreaterThanOrEqual(MIN_VIEW_HALF_WIDTH);
+      expect(opening).toBeLessThanOrEqual(MAX_VIEW_HALF_WIDTH);
+    }
+  });
+});
+
+describe('zoomViewHalfWidth', () => {
+  it('narrows the span scrolling up and widens it scrolling down', () => {
+    expect(zoomViewHalfWidth(640, -100)).toBeLessThan(640);
+    expect(zoomViewHalfWidth(640, 100)).toBeGreaterThan(640);
+    expect(zoomViewHalfWidth(640, 0)).toBe(640);
+  });
+
+  it('changes the span by the same ratio wherever the gesture starts', () => {
+    // The point of a multiplicative step over a 200..1400 range: one notch is
+    // the same *proportion* at the tight end and the wide end.
+    const a = 240;
+    const b = 1200;
+    expect(zoomViewHalfWidth(a, -100) / a).toBeCloseTo(zoomViewHalfWidth(b, -100) / b, 10);
+  });
+
+  it('is continuous: a tenth of the delta moves a tenth as far in log terms', () => {
+    const small = Math.log(zoomViewHalfWidth(640, 10) / 640);
+    const full = Math.log(zoomViewHalfWidth(640, 100) / 640);
+    expect(small * 10).toBeCloseTo(full, 10);
+    // A trackpad's fine delta nudges the span rather than jumping a whole notch.
+    expect(Math.abs(zoomViewHalfWidth(640, 4) - 640)).toBeLessThan(4);
+  });
+
+  it('returns to the starting span when a gesture is exactly undone', () => {
+    for (const delta of [-240, -100, -13, 37, 100, 250]) {
+      expect(zoomViewHalfWidth(zoomViewHalfWidth(640, delta), -delta)).toBeCloseTo(640, 8);
+    }
+  });
+
+  it('zooms at the same rate in line and page delta modes as in pixels', () => {
+    expect(zoomViewHalfWidth(640, 3, 1)).toBeCloseTo(zoomViewHalfWidth(640, 100, 0), 10);
+    expect(zoomViewHalfWidth(640, 1, 2)).toBeCloseTo(zoomViewHalfWidth(640, 100, 0), 10);
+    expect(zoomViewHalfWidth(640, 100, 99)).toBe(zoomViewHalfWidth(640, 100, 0)); // unknown mode -> pixels
+  });
+
+  it('crosses the whole band in a reasonable number of notches', () => {
+    // Neither end should be an unreachable grind: a couple of dozen notches.
+    let span = MAX_VIEW_HALF_WIDTH;
+    let notches = 0;
+    while (span > MIN_VIEW_HALF_WIDTH && notches < 1000) {
+      span = zoomViewHalfWidth(span, -100);
+      notches++;
+    }
+    expect(span).toBe(MIN_VIEW_HALF_WIDTH);
+    expect(notches).toBeLessThan(30);
+  });
+
+  it('settles on the bounds instead of overshooting, however hard you scroll', () => {
+    let span = DEFAULT_VIEW_HALF_WIDTH;
+    for (let i = 0; i < 60; i++) span = zoomViewHalfWidth(span, -100);
+    expect(span).toBe(MIN_VIEW_HALF_WIDTH);
+    for (let i = 0; i < 60; i++) span = zoomViewHalfWidth(span, 100);
+    expect(span).toBe(MAX_VIEW_HALF_WIDTH);
+    expect(zoomViewHalfWidth(640, -1e6)).toBe(MIN_VIEW_HALF_WIDTH);
+    expect(zoomViewHalfWidth(640, 1e6)).toBe(MAX_VIEW_HALF_WIDTH);
+  });
+
+  it('leaves the span alone for a garbage delta, and pulls a wild span into the band', () => {
+    expect(zoomViewHalfWidth(640, NaN)).toBe(640);
+    expect(zoomViewHalfWidth(4000, 0)).toBe(MAX_VIEW_HALF_WIDTH);
+    expect(zoomViewHalfWidth(10, 0)).toBe(MIN_VIEW_HALF_WIDTH);
+  });
+
+  it('is pure', () => {
+    expect(zoomViewHalfWidth(640, -100)).toBe(zoomViewHalfWidth(640, -100));
   });
 });
