@@ -23,15 +23,46 @@ export interface Orbit {
 
 /**
  * The isometric follow camera's opening orbit. Stated as an orbit rather than a
- * vector because the pitch is the part anyone tunes: 45 degrees of elevation is
- * the classic isometric three-quarter view. With an orthographic camera the
- * distance decides only what stays inside the near/far planes, never the framing.
+ * vector because the pitch is the part anyone tunes.
+ *
+ * 27 degrees, not the textbook 45 (spec 045). At 45 the view is effectively
+ * top-down: a tree is a green disc, and the terraced mesa the terrain system
+ * exists to produce is edge-on and reads as a pattern on the floor. Down here
+ * the vertical faces -- cliff risers, tree flanks, the side of a wall -- are
+ * most of what is on screen, which is what a painted three-quarter scene is
+ * made of.
+ *
+ * With an orthographic camera the distance decides only what stays inside the
+ * near/far planes, never the framing -- so it is set for clearance, not look:
+ * far enough back that the shallowest pitch the slider allows still has the
+ * foreground in front of the near plane, and high enough that the camera never
+ * ends up inside the 460-unit northern range.
  */
 export const DEFAULT_CAMERA_ORBIT: Orbit = {
   azimuth: (45 * Math.PI) / 180,
-  elevation: (45 * Math.PI) / 180,
-  distance: 800,
+  elevation: (27 * Math.PI) / 180,
+  distance: 6000,
 };
+
+/**
+ * The band the camera's pitch is held within, degrees -- what the `Height`
+ * slider spans. It lives here rather than in the panel because the clip planes
+ * below are sized against its shallow end: the two cannot drift apart without
+ * the foreground clipping at the extreme of the slider.
+ */
+export const CAMERA_ELEVATION_MIN_DEG = 10;
+export const CAMERA_ELEVATION_MAX_DEG = 85;
+
+/**
+ * The orthographic camera's clip planes. Sized against the worst framing the
+ * controls can ask for -- the widest zoom at the shallowest pitch -- where the
+ * ground the view frames runs `halfHeight / sin(elevation)` either side of the
+ * target, five thousand units at 10 degrees. Depth is linear in an orthographic
+ * projection, so a far plane this generous costs no precision; the whole
+ * envelope is asserted in `view-settings.test.ts`.
+ */
+export const CAMERA_NEAR = 1;
+export const CAMERA_FAR = 12000;
 
 /** The isometric follow camera's offset the view opens at (spec 031). */
 export const DEFAULT_CAMERA_OFFSET: Vec3 = orbitToOffset(DEFAULT_CAMERA_ORBIT);

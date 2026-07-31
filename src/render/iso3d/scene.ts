@@ -26,7 +26,13 @@ import { MechRig, Poofs, PlayerRig } from './rigs.js';
 import { worldToIso, type IsoParams } from './projection.js';
 import { buildPropField } from './props.js';
 import { createViewControls, type ViewControls } from './view-controls.js';
-import { DEFAULT_CAMERA_OFFSET, DEFAULT_VIEW_HALF_WIDTH, followAlpha } from './view-settings.js';
+import {
+  CAMERA_FAR,
+  CAMERA_NEAR,
+  DEFAULT_CAMERA_OFFSET,
+  DEFAULT_VIEW_HALF_WIDTH,
+  followAlpha,
+} from './view-settings.js';
 import { cameraFrustum, cursorToNdc, internalRenderSize } from './view-frame.js';
 import { RetroPass } from './retro-pass.js';
 
@@ -140,8 +146,8 @@ export class IsoScene {
       frustum.halfWidth,
       frustum.halfHeight,
       -frustum.halfHeight,
-      1,
-      4000,
+      CAMERA_NEAR,
+      CAMERA_FAR,
     );
     this.resize();
 
