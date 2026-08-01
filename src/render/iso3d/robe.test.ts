@@ -3,7 +3,7 @@ import { defaultRobeTuning, type RobeTuning } from '../cloth/params.js';
 import { RobeRig } from './robe.js';
 
 /**
- * The whole robed character, end to end (spec 037).
+ * The whole robed character, end to end (spec 046).
  *
  * `cloth/solver.test.ts` proves the physics in isolation; this proves the
  * *binding* -- the skinned reference pose, the collider refresh, the motion
@@ -267,6 +267,27 @@ describe('RobeRig', () => {
     expect(hemCentre(rig, 'robe').z).toBeCloseTo(rest.z, 0);
   });
 
+  it('rests on raised terrain rather than a flat y=0 world', () => {
+    // Since spec 043 the world is a heightfield and the scene places each unit's
+    // group at the terrain height under it. The rig reads that off its own world
+    // transform, so the hem must settle on the hill, not sink to absolute zero.
+    const rig = new RobeRig({ tuning: quietTuning() });
+    const hillY = 140;
+    rig.group.position.y = hillY;
+    stand(rig, { x: 500, y: 500 }, 8);
+
+    for (const piece of rig.clothPieces) {
+      for (let i = 1; i < piece.solver.pos.length; i += 3) {
+        expect(piece.solver.pos[i] as number).toBeGreaterThanOrEqual(hillY);
+      }
+    }
+    // And the hem is still just above the ground in the figure's own frame,
+    // exactly as it is on flat ground.
+    const hem = hemCentre(rig, 'robe');
+    expect(hem.y).toBeGreaterThan(0);
+    expect(hem.y).toBeLessThan(12);
+  });
+
   it('re-seats the cloth on a teleport instead of stretching it', () => {
     const rig = new RobeRig({ tuning: quietTuning() });
     stand(rig, { x: 500, y: 500 }, 4);
@@ -319,6 +340,20 @@ describe('RobeRig', () => {
       return allLocal(rig);
     };
     expect(run()).toEqual(run());
+  });
+
+  it('exposes every garment mesh to a scene-applied shadow pass', () => {
+    // `scene.ts` opts a unit into shadows with one `castsShadows(rig.group)`,
+    // which traverses for `isMesh`. If a garment were parented anywhere else --
+    // or the cloth root swapped for something that is not an Object3D child --
+    // the robe would silently stop casting. This is that contract.
+    const rig = new RobeRig({ tuning: quietTuning() });
+    const meshes: string[] = [];
+    rig.group.traverse((node) => {
+      if ((node as { isMesh?: boolean }).isMesh) meshes.push(node.type);
+    });
+    // Five garments plus the solid figure's parts.
+    expect(meshes.length).toBeGreaterThanOrEqual(5 + 10);
   });
 
   it('reports a debug snapshot covering every piece', () => {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { defaultRobeTuning, ROBE_BOUNDS, sanitizeRobeTuning, type RobeTuning } from './params.js';
 
 /**
- * The robe's tuning record (spec 037). It is edited live by sliders and read by
+ * The robe's tuning record (spec 046). It is edited live by sliders and read by
  * the solver hundreds of times per particle per frame, so the one thing it must
  * guarantee is that nothing non-finite or absurd ever leaves it.
  */

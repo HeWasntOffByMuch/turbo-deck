@@ -3,7 +3,7 @@ import { LINK_BEND } from '../cloth/geometry.js';
 import type { RobeRig } from './robe.js';
 
 /**
- * Debug rendering for the robe's cloth (spec 037).
+ * Debug rendering for the robe's cloth (spec 046).
  *
  * The cloth solver is invisible by construction -- what you see is a shaded
  * surface, and every reason it moved the way it did (which particles are pinned,

@@ -1,5 +1,5 @@
 /**
- * The robed figure's vertical motion (spec 037): a small ballistic hop plus a
+ * The robed figure's vertical motion (spec 046): a small ballistic hop plus a
  * landing recovery, used to exercise the cloth against jumping, falling and
  * landing.
  *

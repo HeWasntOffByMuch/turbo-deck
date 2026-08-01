@@ -33,7 +33,7 @@ export const PALETTE = {
   mechAlly: 0x4a7fb0,
   // The grey metal walker unit in the movement sandbox (a rotating turret on legs).
   walkerBody: 0x969ba4,
-  // The hooded robe character (spec 037): a muted indigo wool over near-black.
+  // The hooded robe character (spec 046): a muted indigo wool over near-black.
   // `robeVoid` is the shadow inside the hood where a face would be -- the figure
   // deliberately has none.
   robeCloth: 0x615a8c,

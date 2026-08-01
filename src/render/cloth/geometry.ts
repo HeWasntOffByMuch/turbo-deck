@@ -2,7 +2,7 @@ import { BONE, type FigureMetrics } from './figure.js';
 import { MASK } from './colliders.js';
 
 /**
- * The robe's **patterns** (spec 037): each garment piece is cut as a parametric
+ * The robe's **patterns** (spec 046): each garment piece is cut as a parametric
  * particle grid in the figure's bind pose, together with the constraint graph,
  * skinning bones and triangle list the solver and the renderer need.
  *

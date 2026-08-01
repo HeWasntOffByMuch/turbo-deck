@@ -15,7 +15,7 @@ import type { SandboxUnit, UnitKind } from './unit.js';
 import { viewSeed } from './seed.js';
 
 /**
- * The rig debug viewport (spec 035/037): a third sandbox tab that shows the same
+ * The rig debug viewport (spec 035/046): a third sandbox tab that shows the same
  * controllable unit from two orthographic angles at once -- a world-aligned
  * top-down view and a heading-locked side profile -- with slow-motion /
  * single-step time control and toggleable debug overlays plus a live numeric
@@ -810,7 +810,7 @@ export function mountDebug(container: HTMLElement): ViewHandle {
       ...(s.cycleCharacter ? { cycleCharacter: true } : {}),
     };
     state = step(state, combatInput).state;
-    // Cosmetic hop (spec 037): never enters the sim's input frame.
+    // Cosmetic hop (spec 046): never enters the sim's input frame.
     if (input.takeJump()) scene.robeUnit?.jump();
     syncCharacter();
   };

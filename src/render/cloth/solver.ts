@@ -5,7 +5,7 @@ import { LINK_BEND } from './geometry.js';
 import { GRAVITY, type RobeTuning } from './params.js';
 
 /**
- * The cloth solver (spec 037): position-based dynamics over one {@link ClothGeometry}.
+ * The cloth solver (spec 046): position-based dynamics over one {@link ClothGeometry}.
  *
  * Pure TypeScript over flat `Float64Array`s -- no three.js, no DOM, no clock, no
  * `Math.random`. Everything time-varying comes in through `step`'s arguments, so

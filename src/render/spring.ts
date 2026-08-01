@@ -6,7 +6,7 @@
  * at low frame rates -- which matters because the render loop's `dt` is variable.
  *
  * Pure numeric helper: no three.js, no sim state, no clock. Shared by the mech
- * rigs (spec 033) and the robed figure (spec 037); unit-tested in
+ * rigs (spec 033) and the robed figure (spec 046); unit-tested in
  * `src/render/spring.test.ts`.
  */
 const TWO_PI = Math.PI * 2;

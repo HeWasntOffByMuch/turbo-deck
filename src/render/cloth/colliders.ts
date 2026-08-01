@@ -1,5 +1,5 @@
 /**
- * The body colliders the cloth is pushed out of (spec 037): a fixed-size set of
+ * The body colliders the cloth is pushed out of (spec 046): a fixed-size set of
  * capsules (a segment plus a radius), stored in flat arrays and rewritten in
  * place every frame from the skeleton's bone transforms. Pure and three.js-free
  * so the solver stays testable in Node; the rig is what knows about bones.

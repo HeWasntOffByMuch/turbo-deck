@@ -10,7 +10,7 @@ import { PALETTE } from './palette.js';
 import type { SandboxUnit } from './unit.js';
 
 /**
- * The hooded robe character (spec 037): the composition root that binds the
+ * The hooded robe character (spec 046): the composition root that binds the
  * cloth simulation to the skeleton.
  *
  * Everything hard already lives elsewhere -- the solver in `cloth/solver.ts`
@@ -29,6 +29,13 @@ import type { SandboxUnit } from './unit.js';
  *
  * Adding a garment means adding a `build*` in `cloth/geometry.ts`; this file
  * does not change. Nothing here reads or writes sim state.
+ *
+ * **Shadows (spec 045) are the scene's call, not the rig's**, matching how
+ * `scene.ts` treats the player rig, the enemy rigs and the walls: it applies
+ * `castsShadows` to whatever it adds. Every garment mesh is built in this
+ * constructor and parented under `group`, so a single `castsShadows(rig.group)`
+ * from a shadowed scene reaches all of them. Neither sandbox view has a shadow
+ * map today, so nothing calls it yet.
  */
 
 /** Speed thresholds for the idle blend, matching the humanoid's gait ramp. */
@@ -97,6 +104,18 @@ export class RobeRig implements SandboxUnit {
   /** Cloth meshes live here at identity: their vertices are written in rig-group space. */
   private readonly clothRoot = new THREE.Group();
 
+  /**
+   * The ground under the figure, in world units. Since spec 043 the world is a
+   * heightfield rather than a flat slab, and the scene positions each unit's
+   * group *at* the terrain height -- so the rig can just read its own world y
+   * rather than taking a terrain dependency or growing its `update` signature.
+   *
+   * One value for the whole robe, sampled under the character's centre. The hem
+   * reaches ~15 units out, so on a steep slope it can clip a little; sampling
+   * per particle would mean handing the pure solver a height callback, which is
+   * not worth the coupling for a hem.
+   */
+  private groundY = 0;
   private prevX: number | null = null;
   private prevZ = 0;
   private prevRy = 0;
@@ -273,6 +292,9 @@ export class RobeRig implements SandboxUnit {
     // The scene has already set position/rotation on `group`; refresh the world
     // matrices before anything reads a bone's world transform.
     this.group.updateMatrixWorld(true);
+    // Element 13 of a column-major 4x4 is the world y translation: the terrain
+    // height the scene placed this unit at.
+    this.groundY = this.group.matrixWorld.elements[13] as number;
     this.humanoid.update(h, this.gait, t);
 
     this.wind.update(h, t);
@@ -386,7 +408,7 @@ export class RobeRig implements SandboxUnit {
       ctx.bodyAccY = 0;
       ctx.bodyAccZ = this.accZ;
       ctx.idle = this.idle;
-      ctx.groundY = 0;
+      ctx.groundY = this.groundY;
       ctx.time = this.clock;
       ctx.scale = t.bodyScale;
       p.solver.step(h, t, ctx);

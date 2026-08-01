@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { JumpMotion } from './jump.js';
 
 /**
- * The figure's cosmetic hop (spec 037). It exists so the cloth can be driven
+ * The figure's cosmetic hop (spec 046). It exists so the cloth can be driven
  * against jumping, falling and landing, so what has to hold is that a hop is a
  * clean, single, repeatable event: it comes back down, it reports exactly one
  * landing, and it cannot be stacked mid-air into a rocket.

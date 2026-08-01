@@ -1,5 +1,5 @@
 /**
- * Every tunable of the hooded-robe character in one place (spec 037).
+ * Every tunable of the hooded-robe character in one place (spec 046).
  *
  * This is deliberately a **flat record of plain numbers**: it is the single
  * object the sandbox's slider panel binds to, the single object the solver and

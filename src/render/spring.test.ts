@@ -3,7 +3,7 @@ import { Spring } from './spring.js';
 
 /**
  * The critically damped spring that smooths the mech's body offsets (spec 033) and
- * the robed figure's lean and bank (spec 037). Pure and headless-testable, unlike
+ * the robed figure's lean and bank (spec 046). Pure and headless-testable, unlike
  * the three.js rigs that use it: from any state it must ease toward its target, and once settled there with no
  * velocity it must stay put -- and it must stay stable for large `dt`, since the
  * render loop feeds a variable timestep.

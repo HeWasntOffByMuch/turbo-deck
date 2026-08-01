@@ -11,7 +11,7 @@ import { buildRobePieces } from './geometry.js';
 import { defaultRobeTuning } from './params.js';
 
 /**
- * The figure's proportions against its garments (spec 037).
+ * The figure's proportions against its garments (spec 046).
  *
  * The test that earns its keep here is the **bind-pose clearance** one. A
  * garment cut inside a body capsule is pushed out on every frame of its life,

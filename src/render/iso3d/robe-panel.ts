@@ -2,7 +2,7 @@ import type { RobeTuning } from '../cloth/params.js';
 import type { TuningGroup } from './tuning-panel.js';
 
 /**
- * The robe's tuning rows for the sandbox panel (spec 037).
+ * The robe's tuning rows for the sandbox panel (spec 046).
  *
  * The *documentation* of what each knob means lives on the fields in
  * `cloth/params.ts`; this file is the UI surface for them -- practical slider

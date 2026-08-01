@@ -36,14 +36,14 @@ import { viewSeed } from './seed.js';
 const CAMERA_SMOOTH = 0.15;
 
 /**
- * The movement sandbox tab (spec 032/033/037): no game -- just one controllable
+ * The movement sandbox tab (spec 032/033/046): no game -- just one controllable
  * unit driven through the sim's MOBA movement so the turn-rate rules, the units'
  * legs and the robed figure's cloth can be watched and *tuned* in isolation. A
  * unit picker switches between the organic spider mech, a grey metal walker (a
  * rotating turret on a fixed animated leg base) and the hooded robe character. It
  * reuses the deterministic combat sim (no enemies, no ambient spawner) and only
  * ever feeds it movement inputs: a right-click move order, C to cycle the
- * movement archetype, Space to hop, and live speed/turn-rate overrides from the
+ * movement archetype, J to hop the robed figure, and live speed/turn-rate overrides from the
  * side panel. Every other knob edits the active unit's cosmetic tuning. Game
  * rules stay in the sim; this layer only reads state and poses the (cosmetic) rig.
  */
@@ -73,7 +73,7 @@ class MovementScene {
     tuning: this.sharedTuning,
     lowerBodyTurns: false,
   });
-  /** The robed figure (spec 037), built lazily so its cloth costs nothing unless picked. */
+  /** The robed figure (spec 046), built lazily so its cloth costs nothing unless picked. */
   private robeRig: RobeRig | null = null;
   private readonly robeTuning: RobeTuning = defaultRobeTuning();
   private active: SandboxUnit = this.spider;
@@ -177,6 +177,12 @@ class MovementScene {
     this.scene.remove(this.active.group);
     this.active = next;
     this.scene.add(this.active.group);
+  }
+
+  /** Build the robed figure on first use; its cloth is not free to construct. */
+  private ensureRobe(): RobeRig {
+    this.robeRig ??= new RobeRig({ tuning: this.robeTuning });
+    return this.robeRig;
   }
 
   /**
@@ -607,7 +613,7 @@ export function buildPanel(opts: SandboxPanelOptions): SandboxPanel {
     '<b>Right-click</b> the ground to move. MOBA turn-rate: the unit turns to face ' +
     'the destination before it travels.<br>' +
     '<b>C</b> loads the next archetype preset into the sliders. ' +
-    '<b>Space</b> makes the robed figure hop.<br>' +
+    '<b>J</b> makes the robed figure hop.<br>' +
     'Pick a unit below.';
   panel.appendChild(help);
 
@@ -635,7 +641,7 @@ export function buildPanel(opts: SandboxPanelOptions): SandboxPanel {
   const robeActions = document.createElement('div');
   robeActions.appendChild(
     panelButtonRow(
-      panelButton('Jump', 'Hop the figure (or press Space) and watch the robe trail, then flare on landing.', opts.onJump),
+      panelButton('Jump', 'Hop the figure (or press J) and watch the robe trail, then flare on landing.', opts.onJump),
       panelButton('Drop', 'Drop the figure from a height, to watch the robe billow through a long fall.', opts.onDrop),
     ),
   );

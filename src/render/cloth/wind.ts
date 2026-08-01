@@ -2,7 +2,7 @@ import { snoise, snoise2 } from '../noise.js';
 import type { RobeTuning } from './params.js';
 
 /**
- * The procedural wind field driving the robe (spec 037).
+ * The procedural wind field driving the robe (spec 046).
  *
  * Pure and dependency-free: it owns a clock and a smoothed wind vector, and is
  * advanced with `update(dt, tuning)`. Everything the tuning asks for -- a change

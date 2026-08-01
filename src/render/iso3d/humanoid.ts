@@ -16,7 +16,7 @@ import { PALETTE } from './palette.js';
 import { JumpMotion } from './jump.js';
 
 /**
- * The robed figure's skeleton and locomotion (spec 037).
+ * The robed figure's skeleton and locomotion (spec 046).
  *
  * This is the *kinematic* half of the character: a bone hierarchy, a
  * distance-driven biped walk/run cycle, the lean and bank that come off

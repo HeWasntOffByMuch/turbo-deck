@@ -1,8 +1,8 @@
-# 037 — Hooded robe character with physics-driven cloth
+# 046 — Hooded robe character with physics-driven cloth
 
 ## Problem
 
-The isometric 3D views (specs 031–036) only have mechs: a spider and a grey
+The isometric 3D views (specs 031–045) only have mechs: a spider and a grey
 walker, both rigid boxes on IK legs. There is no humanoid player character, and
 nothing in the renderer simulates soft materials. This spec adds the first
 playable-looking character — a faceless humanoid almost entirely covered by a
@@ -137,6 +137,9 @@ depend on the mech rig for them: `src/render/noise.ts` (hashed value noise) and
   - Wind blows it downwind and it settles when the wind drops.
   - A teleport re-seats the cloth instead of stretching it.
   - Identical inputs replay identically.
+  - The hem rests on raised terrain, not on an absolute y=0 plane.
+  - Every garment mesh sits under `group`, so a scene-applied `castsShadows`
+    reaches all of them.
 - **Wind**
   - Disabling wind ramps the vector to zero smoothly instead of snapping, and
     stays at zero.
@@ -160,7 +163,15 @@ depend on the mech rig for them: `src/render/noise.ts` (hashed value noise) and
   interpenetrate at the back; they are offset apart instead).
 - Tearing, wrinkle maps, or any texturing — the look stays flat-shaded.
 - Putting the character in the combat view or giving it sim-side stats,
-  attacks, or a jump the sim knows about. The hop is renderer-cosmetic.
+  attacks, or a jump the sim knows about. The hop is renderer-cosmetic, and
+  bound to **J** because Space is the wave key (spec 041).
+- Casting shadows *today*. Shadow participation is the scene's call (spec 045
+  applies `castsShadows` from `scene.ts`), and neither sandbox view has a shadow
+  map; the rig just keeps every garment mesh under `group` so one call reaches
+  them when the robe reaches a shadowed scene.
+- Per-particle terrain sampling. The solver takes one ground height for the
+  whole robe, read off the rig group's world y (spec 043 places units at terrain
+  height), so a hem can clip slightly on a steep slope.
 - GPU/compute solving, and multiple fabric materials per character.
 - Equipment attachment; the bone/mask structure is designed to allow it later,
   but nothing is wired up.

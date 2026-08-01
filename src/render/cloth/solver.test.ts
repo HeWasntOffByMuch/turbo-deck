@@ -6,7 +6,7 @@ import { defaultRobeTuning, sanitizeRobeTuning, type RobeTuning } from './params
 import { ClothSolver, createStepContext, type ClothStepContext } from './solver.js';
 
 /**
- * The cloth solver (spec 037). Everything here runs headless: the solver is pure
+ * The cloth solver (spec 046). Everything here runs headless: the solver is pure
  * TypeScript over typed arrays, so the properties that actually keep the robe on
  * the character -- it never stretches past its cap, never ends up inside the
  * body, never goes non-finite, and replays identically -- are all assertable in

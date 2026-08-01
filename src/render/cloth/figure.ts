@@ -1,5 +1,5 @@
 /**
- * The robed figure's proportions, bone layout and collision capsules (spec 037),
+ * The robed figure's proportions, bone layout and collision capsules (spec 046),
  * kept pure and three.js-free because three very different consumers need the
  * same numbers: the skeleton in `iso3d/humanoid.ts` builds its bone hierarchy
  * and colliders from them, the cloth patterns in `geometry.ts` cut the garments

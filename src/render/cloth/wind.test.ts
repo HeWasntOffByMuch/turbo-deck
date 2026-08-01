@@ -3,7 +3,7 @@ import { defaultRobeTuning, type RobeTuning } from './params.js';
 import { WindField } from './wind.js';
 
 /**
- * The procedural wind (spec 037). The properties that matter are all about
+ * The procedural wind (spec 046). The properties that matter are all about
  * *continuity*: a wind that snaps to a new direction or strength yanks the whole
  * robe in one frame, which reads as a bug rather than weather. Disabling it must
  * also die away rather than stop dead.

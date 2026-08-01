@@ -3,7 +3,7 @@ import { BONE_COUNT, FIGURE } from './figure.js';
 import { buildRobePieces, type ClothGeometry } from './geometry.js';
 
 /**
- * The robe's patterns (spec 037). These are built once at startup and then
+ * The robe's patterns (spec 046). These are built once at startup and then
  * indexed blindly by the solver at ~500 constraint reads per particle per frame,
  * so a single out-of-range index would not be a wrong-looking robe -- it would
  * be silent garbage propagating through the whole constraint graph. Everything
