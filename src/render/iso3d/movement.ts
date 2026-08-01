@@ -61,7 +61,13 @@ const MAX_CATCH_UP = 8;
 /** A minimal three.js scene: ground + scenery + one controllable mech. */
 class MovementScene {
   /** Camera/light control panel (spec 033); mount `.controls.element` beside the canvas. */
-  readonly controls: ViewControls = createViewControls({ zoom: DEFAULT_VIEW_HALF_WIDTH });
+  // No day/night, player lights or colour filter here (spec 047): the sandbox
+  // keeps the single unshadowed light it has had since spec 045 and runs no
+  // post pass, so those rows would be controls that visibly do nothing.
+  readonly controls: ViewControls = createViewControls({
+    zoom: DEFAULT_VIEW_HALF_WIDTH,
+    lighting: false,
+  });
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;

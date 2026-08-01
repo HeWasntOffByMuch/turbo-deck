@@ -47,6 +47,14 @@ export const PALETTE = {
   attack: 0xffd27a,
   // Pale dust puff kicked up under the hero's feet while walking.
   poof: 0xf2efe4,
+  // The two lights the player carries (spec 047). Warm flame against cool
+  // conjured light, so which one is lit reads at a glance; the `core` tones are
+  // the unlit meshes at each light's centre, near-white so they hold their glow
+  // against a night sky the rest of the palette has gone dim against.
+  torchFlame: 0xffa542,
+  torchCore: 0xffe9a8,
+  magicOrb: 0x9fd8ff,
+  magicCore: 0xe8f6ff,
   // Warning red marking an unwalkable terrain footprint (toggleable overlay).
   blocked: 0xd6483f,
   // The arena's walls (spec 037): grey stone, with a lighter lit cap on top.

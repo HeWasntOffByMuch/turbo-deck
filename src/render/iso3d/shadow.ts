@@ -57,6 +57,99 @@ const DEPTH_MARGIN = 1200;
 /** How many shadow texels of slack the normal-offset bias is worth. */
 const BIAS_TEXELS = 1.6;
 
+/**
+ * The lowest the sun's *casting* direction is allowed to fall, radians (spec
+ * 047). Shadow length on flat ground is `casterHeight / tan(elevation)`, which
+ * diverges as the sun reaches the horizon: at 2 degrees a 300-unit tree throws
+ * an 8600-unit streak, well outside the shadow camera's reach, so it is also
+ * clipped -- it crosses the frame and stops in mid-air.
+ *
+ * 8 degrees caps that at `1 / tan(8°)` = 7.1 times the caster's own height,
+ * which is a long evening shadow rather than an infinite one. It is the
+ * *direction* that is clamped, not the shadow: the sun goes on setting in
+ * colour and brightness through the day/night ramp -- which is what the eye
+ * actually reads a sunset from -- while the geometry quietly stops stretching.
+ *
+ * It also keeps `shadowFrame`'s own assumptions intact. At 8 degrees the
+ * shadow camera still sits `LIGHT_DISTANCE * sin(8°)` = 1250 units up, clear of
+ * the 480-unit northern range.
+ */
+const SHADOW_FLOOR = (8 * Math.PI) / 180;
+
+/**
+ * The band above the horizon over which shadow contrast fades out, radians.
+ * Bounding the length is not enough on its own -- a hard black bar seven times
+ * a tree's height is still wrong at dusk, because real shadows lose contrast as
+ * the sun reddens and the sky takes over as the dominant source.
+ */
+const SHADOW_FADE_BAND = (15 * Math.PI) / 180;
+
+/**
+ * How much ambient fill a fully faded shadow is worth. Sized against the
+ * ambient intensities in `daynight.ts`: enough to visibly lift the shade at
+ * dusk, not so much that the scene brightens overall as the sun goes down.
+ */
+const SHADOW_FILL = 0.55;
+
+/** Smoothstep on [0, 1]: eases in and out rather than ramping linearly. */
+function smoothstep(t: number): number {
+  const c = Math.min(1, Math.max(0, t));
+  return c * c * (3 - 2 * c);
+}
+
+/** What the sun's elevation leaves of its shadow (spec 047). */
+export interface HorizonShadow {
+  /** Elevation the light is actually placed at, radians -- never below the floor. */
+  readonly castElevation: number;
+  /** How much shadow contrast is left, 1 well up and 0 at the horizon. */
+  readonly strength: number;
+  /** Whether the light casts at all; false at or below the horizon. */
+  readonly casting: boolean;
+}
+
+/**
+ * The horizon effect (spec 047): how a sun at `sunElevation` radians above the
+ * horizon is allowed to cast. Pure, and total -- a negative elevation (the sun
+ * is down, and the scene's key light is the moon) is answered rather than
+ * rejected.
+ *
+ * `strength` is deliberately *not* applied to the shadow map. three's
+ * `LightShadow.intensity` is the dial for exactly this and does not exist until
+ * r165; the repo is on 0.160.1. The scene spends it on the ambient fill instead
+ * (see {@link shadowFillBoost}), which is what losing shadow contrast
+ * physically is: the shaded side lifting toward the lit one.
+ */
+export function horizonShadow(sunElevation: number): HorizonShadow {
+  if (!(sunElevation > 0)) {
+    // Below the horizon -- or NaN, which must not fall through as "casting".
+    return { castElevation: SHADOW_FLOOR, strength: 0, casting: false };
+  }
+  return {
+    castElevation: Math.max(SHADOW_FLOOR, sunElevation),
+    strength: smoothstep(sunElevation / SHADOW_FADE_BAND),
+    casting: true,
+  };
+}
+
+/**
+ * How far a caster of `height` throws its shadow across flat ground at a given
+ * elevation. Exists to be asserted against: it is the quantity the floor above
+ * is there to bound, and stating it as a function is what lets a test say
+ * "finite at every elevation, including zero and below".
+ */
+export function shadowReach(height: number, elevation: number): number {
+  return height / Math.tan(Math.max(SHADOW_FLOOR, elevation));
+}
+
+/**
+ * Extra ambient fill to add as shadow contrast fades, given a
+ * {@link HorizonShadow} strength. Full strength adds nothing; a sun on the
+ * horizon adds the lot, flattening dusk into a shadowless, evenly lit scene.
+ */
+export function shadowFillBoost(strength: number): number {
+  return SHADOW_FILL * (1 - Math.min(1, Math.max(0, strength)));
+}
+
 export interface ShadowFrame {
   /** Orthographic half-extent of the shadow camera, world units. */
   readonly radius: number;

@@ -33,14 +33,64 @@ import {
   DEFAULT_CAMERA_OFFSET,
   DEFAULT_VIEW_HALF_WIDTH,
   followAlpha,
+  offsetToOrbit,
+  orbitToOffset,
 } from './view-settings.js';
 import { cameraFrustum, cursorToNdc, internalRenderSize } from './view-frame.js';
-import { shadowFrame, shadowFrameStale, SHADOW_MAP_SIZE } from './shadow.js';
+import {
+  horizonShadow,
+  shadowFillBoost,
+  shadowFrame,
+  shadowFrameStale,
+  SHADOW_MAP_SIZE,
+  type HorizonShadow,
+} from './shadow.js';
 import { RetroPass } from './retro-pass.js';
+import { FIXED_DAYLIGHT } from './daynight.js';
+import {
+  MAGIC_COLOR,
+  MAX_LIGHT_RANGE,
+  TORCH_ANCHOR,
+  TORCH_COLOR,
+  TORCH_DEFAULTS,
+  orbState,
+  pointIntensity,
+  torchFlicker,
+} from './player-lights.js';
 
 // Fraction of the gap to the target camera framing closed each rendered frame,
 // so orbit/zoom slider changes glide instead of snapping (spec 034).
 const CAMERA_SMOOTH = 0.15;
+
+/**
+ * Resolution of the torch's shadow map, per cube face (spec 047). Half the
+ * sun's, and for a reason beyond cost: this is a *cube* map, so it is six
+ * renders of the scene per frame rather than one, and it only ever covers the
+ * few hundred units around the player. At 512 a texel near the edge of the
+ * torch's reach is a couple of world units -- the same chunky register as the
+ * sun's shadows land in.
+ */
+const TORCH_SHADOW_MAP_SIZE = 512;
+
+/**
+ * Near/far planes of the torch's shadow cube. `far` is the widest the range
+ * slider goes rather than the current range, so widening the torch never needs
+ * the projection rebuilt mid-frame; the depth range is short enough that
+ * spending it this way costs nothing visible.
+ */
+const TORCH_SHADOW_NEAR = 8;
+
+/**
+ * Offset along the surface normal before the torch's depth lookup. The torch is
+ * a metre from a body it is lighting from the side, which is the worst case for
+ * shadow acne -- grazing angles everywhere -- and this is sized against a cube
+ * texel at the far end of the light's reach.
+ */
+const TORCH_SHADOW_NORMAL_BIAS = 2.5;
+
+/** Radius of the unlit meshes that mark each light's source. */
+const FLAME_RADIUS = 5;
+const ORB_RADIUS = 7;
 
 /**
  * The isometric 3D view (spec 031): owns a three.js scene that draws the sim as
@@ -69,7 +119,42 @@ export class IsoScene {
   private readonly retro = new RetroPass(1, 1);
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
-  private readonly sun = new THREE.DirectionalLight(0xfff4e0, 2.1);
+  private readonly sun = new THREE.DirectionalLight(FIXED_DAYLIGHT.lightColor, FIXED_DAYLIGHT.lightIntensity);
+  // The sky fill. A field, not an inline `add`, because the day/night cycle
+  // retunes its colour and intensity every frame (spec 047).
+  private readonly ambient = new THREE.AmbientLight(
+    FIXED_DAYLIGHT.ambientColor,
+    FIXED_DAYLIGHT.ambientIntensity,
+  );
+  // The background colour, likewise driven by the clock.
+  private readonly background = new THREE.Color(PALETTE.sky);
+  /**
+   * The player's torch (spec 047): a point light parented to the rig, so it
+   * travels and turns with them. It casts -- that is what separates it from the
+   * orb below, and the swinging shadows are most of the reason to carry one.
+   */
+  private readonly torch = new THREE.PointLight(TORCH_COLOR, 0, TORCH_DEFAULTS.range);
+  private readonly torchFlame: THREE.Mesh;
+  // Whether the torch's cube shadow map is currently switched on. Tracked so
+  // the flag is only written when it changes: three allocates the cube map on
+  // the first frame `castShadow` is true, and rewriting it every frame would
+  // keep asking for that work.
+  private torchShadowsOn = true;
+  /**
+   * The floating magic light (spec 047): the deliberate opposite of the torch.
+   * `castShadow` stays false for the whole life of the scene -- it only raises
+   * the light level within its range, which is what makes it read as conjured
+   * fill rather than as a second lantern. Positioned in world space rather than
+   * parented to the rig, so its orbit is its own and does not spin when the
+   * player turns on the spot.
+   */
+  private readonly orb = new THREE.PointLight(MAGIC_COLOR, 0, 0);
+  private readonly orbMesh: THREE.Mesh;
+  // Real seconds since the scene opened, driving the flame and the orb. Purely
+  // cosmetic, like the rest of this class -- the sim keeps its own tick count.
+  private elapsed = 0;
+  // Seeds the flame, so two scenes on different seeds gutter differently.
+  private readonly lightSeed: number;
   // Overlay marking scenery footprints as unwalkable; toggled via the controls (spec 034).
   private readonly unwalkable = new THREE.Group();
   // Eased camera framing: the current offset/zoom glide toward the control values.
@@ -150,7 +235,7 @@ export class IsoScene {
     // than a gradient -- the only kind that belongs in a posterized frame.
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.BasicShadowMap;
-    this.scene.background = new THREE.Color(PALETTE.sky);
+    this.scene.background = this.background;
 
     const frustum = cameraFrustum(DEFAULT_VIEW_HALF_WIDTH, 1);
     this.camera = new THREE.OrthographicCamera(
@@ -176,7 +261,8 @@ export class IsoScene {
     // the intensity tuned for an unshadowed scene the shade crushed to a
     // near-black that swallowed the palette. Cool rather than warm on purpose,
     // so shade reads as sky bouncing into it and holds against the warm sun.
-    this.scene.add(new THREE.AmbientLight(0x8090a0, 1.55));
+    // The day/night cycle moves both its colour and its level (spec 047).
+    this.scene.add(this.ambient);
 
     // The world's terrain (spec 043). Its bounds bleed well past the play area
     // so the camera never frames the void beyond the arena edge while following
@@ -193,6 +279,14 @@ export class IsoScene {
     this.scene.add(this.playerRig.group);
     castsShadows(this.playerRig.group);
     this.playerOutline = attachOutline(this.playerRig.group);
+
+    // The player's lights go on after `castsShadows` and `attachOutline`, so
+    // neither touches them: a light source that cast its own shadow onto the
+    // world, or wore a white hover outline, would be wrong on both counts.
+    this.lightSeed = seed;
+    this.torchFlame = this.buildTorch();
+    this.orbMesh = this.buildOrb();
+
     this.poofs = new Poofs(this.scene);
     this.moveMarker = makeMoveMarker();
     this.moveMarker.visible = false;
@@ -202,6 +296,46 @@ export class IsoScene {
 
     // The wheel over the view is the zoom, alongside the panel's slider (spec 042).
     this.controls.attachWheelZoom(canvas);
+  }
+
+  /**
+   * Build the torch (spec 047) and hang it off the player rig, so it inherits
+   * their position and heading for free -- the flame is carried, not followed.
+   * Returns the unlit flame mesh that marks where the light is coming from.
+   */
+  private buildTorch(): THREE.Mesh {
+    this.torch.castShadow = true;
+    this.torch.shadow.mapSize.set(TORCH_SHADOW_MAP_SIZE, TORCH_SHADOW_MAP_SIZE);
+    this.torch.shadow.camera.near = TORCH_SHADOW_NEAR;
+    this.torch.shadow.camera.far = MAX_LIGHT_RANGE;
+    this.torch.shadow.normalBias = TORCH_SHADOW_NORMAL_BIAS;
+    this.torch.position.set(TORCH_ANCHOR.x, TORCH_ANCHOR.y, TORCH_ANCHOR.z);
+    this.playerRig.group.add(this.torch);
+
+    // Unlit, so the flame stays the brightest thing in frame at midnight
+    // instead of being shaded by the very light it is emitting.
+    const flame = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(FLAME_RADIUS, 0),
+      new THREE.MeshBasicMaterial({ color: PALETTE.torchCore }),
+    );
+    flame.position.copy(this.torch.position);
+    this.playerRig.group.add(flame);
+    return flame;
+  }
+
+  /** Build the magic orb (spec 047). It lives in world space, not on the rig. */
+  private buildOrb(): THREE.Mesh {
+    // Never set to true anywhere, on purpose: casting no shadow is the whole
+    // point of this light.
+    this.orb.castShadow = false;
+    this.scene.add(this.orb);
+
+    const mesh = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(ORB_RADIUS, 0),
+      new THREE.MeshBasicMaterial({ color: PALETTE.magicCore }),
+    );
+    this.scene.add(mesh);
+    return mesh;
   }
 
   /**
@@ -346,6 +480,10 @@ export class IsoScene {
     const now = performance.now();
     const dt = Math.min(0.05, Math.max(0, (now - this.lastNow) / 1000));
     this.lastNow = now;
+    // Cosmetic clocks: the flame's own time, and the day/night cycle's hour
+    // (spec 047). Both run on real elapsed time, never on sim ticks.
+    this.elapsed += dt;
+    this.controls.advanceClock(dt);
 
     const p = state.player;
     // The sim is still flat (spec 043): terrain decides only how high a unit is
@@ -376,6 +514,7 @@ export class IsoScene {
 
     this.updateAttackCone(state);
     this.syncEnemies(state, dt);
+    this.applyPlayerLights(p.position, playerY);
 
     // Trail the player (spec 039), framed by the camera/light controls (spec 033).
     this.followPlayer(p.position, playerY, dt);
@@ -389,6 +528,7 @@ export class IsoScene {
     this.updateHover(state);
 
     this.retro.set(this.controls.retro());
+    this.retro.setGrade(this.controls.grade());
     this.retro.render(this.renderer, this.scene, this.camera);
   }
 
@@ -446,20 +586,27 @@ export class IsoScene {
   }
 
   /**
-   * Aim the sun and drag its shadow camera along with the view (spec 045).
+   * Aim the sun and drag its shadow camera along with the view (spec 045),
+   * taking its direction, colour and level from whichever source owns it: the
+   * day/night clock, or the panel's manual sliders when the cycle is off
+   * (spec 047).
    *
-   * The controls give a *direction* -- a unit-ish offset whose length says
-   * nothing -- so the sun is placed that far up the direction from the point
-   * the camera is looking at, and aimed back at it. Both have to follow the
-   * target: an orthographic shadow camera only covers the box it is given, and
-   * one pinned to the arena centre would drop every shadow the moment the
-   * player walked out of it.
+   * The direction is a *direction* -- a unit-ish offset whose length says
+   * nothing -- so the sun is placed that far up it from the point the camera is
+   * looking at, and aimed back at it. Both have to follow the target: an
+   * orthographic shadow camera only covers the box it is given, and one pinned
+   * to the arena centre would drop every shadow the moment the player walked
+   * out of it.
    */
   private applySun(): void {
-    const light = this.controls.lightOffset();
-    const frame = shadowFrame(this.halfWidth);
-    this.sunDirection.set(light.x, light.y, light.z).normalize();
+    const shadow = this.controls.dayNightEnabled() ? this.applyCycleSun() : this.applyManualSun();
 
+    // The horizon effect's last say (spec 047): below the horizon nothing casts
+    // at all, which is also what keeps the moon from throwing hard black
+    // shadows across a scene the torch is supposed to be lighting.
+    this.sun.castShadow = shadow.casting;
+
+    const frame = shadowFrame(this.halfWidth);
     this.sun.target.position.copy(this.target);
     this.sun.position.copy(this.target).addScaledVector(this.sunDirection, frame.distance);
 
@@ -474,6 +621,103 @@ export class IsoScene {
       cam.updateProjectionMatrix();
       this.sun.shadow.normalBias = frame.normalBias;
       this.shadowHalfWidth = this.halfWidth;
+    }
+  }
+
+  /**
+   * The sun as the day/night clock has it (spec 047): direction, colour, level
+   * and sky all read off the hour. The direction already carries the horizon
+   * effect's elevation clamp, so a sunset lengthens shadows only up to the
+   * bound and then stops.
+   */
+  private applyCycleSun(): HorizonShadow {
+    const sky = this.controls.sky();
+    if (!sky) return this.applyManualSun();
+
+    const d = sky.lightDirection;
+    this.sunDirection.set(d.x, d.y, d.z).normalize();
+    this.sun.color.setHex(sky.lightColor);
+    this.sun.intensity = sky.lightIntensity;
+    this.ambient.color.setHex(sky.ambientColor);
+    this.ambient.intensity = sky.ambientIntensity;
+    this.background.setHex(sky.skyColor);
+    return sky.shadow;
+  }
+
+  /**
+   * The sun where the panel's `Direction`/`Elevation` sliders put it (spec
+   * 033), at the fixed daylight the view had before the clock existed. Colour
+   * and level are restored explicitly rather than left wherever the cycle last
+   * set them -- otherwise unticking the cycle at midnight would leave a
+   * moon-blue "sun" pointing wherever the sliders happen to be.
+   *
+   * The horizon effect applies here too. The `Elevation` slider bottoms out at
+   * 10 degrees, above the 8-degree floor, so this changes no direction the
+   * slider can reach; what it does add is the contrast fade at the shallow end,
+   * where a hand-placed sun has the same over-long shadows a setting one does.
+   */
+  private applyManualSun(): HorizonShadow {
+    const light = this.controls.lightOffset();
+    const orbit = offsetToOrbit(light);
+    const shadow = horizonShadow(orbit.elevation);
+    const aimed = orbitToOffset({ azimuth: orbit.azimuth, elevation: shadow.castElevation, distance: 1 });
+
+    this.sunDirection.set(aimed.x, aimed.y, aimed.z).normalize();
+    this.sun.color.setHex(FIXED_DAYLIGHT.lightColor);
+    this.sun.intensity = FIXED_DAYLIGHT.lightIntensity;
+    this.ambient.color.setHex(FIXED_DAYLIGHT.ambientColor);
+    this.ambient.intensity = FIXED_DAYLIGHT.ambientIntensity + shadowFillBoost(shadow.strength);
+    this.background.setHex(PALETTE.sky);
+    return shadow;
+  }
+
+  /**
+   * Pose and burn the player's two lights (spec 047).
+   *
+   * The torch is parented to the rig, so only its flicker offset is written
+   * here; the orb is in world space and is placed against the player's feet. An
+   * invisible light is skipped by the renderer entirely, so switching either
+   * off costs nothing -- which matters most for the torch, whose shadow is a
+   * cube map and therefore six extra passes over the scene.
+   */
+  private applyPlayerLights(position: Vec2, groundY: number): void {
+    const settings = this.controls.playerLights();
+
+    this.torch.visible = settings.torchOn;
+    this.torchFlame.visible = settings.torchOn;
+    if (settings.torchOn) {
+      const flame = torchFlicker(this.elapsed, this.lightSeed, settings.torchFlicker);
+      this.torch.distance = settings.torchRange;
+      this.torch.intensity = pointIntensity(settings.torchBrightness, settings.torchRange) * flame.intensity;
+      this.torch.position.set(
+        TORCH_ANCHOR.x + flame.sway.x,
+        TORCH_ANCHOR.y + flame.sway.y,
+        TORCH_ANCHOR.z + flame.sway.z,
+      );
+      // The flame mesh rides with the light and swells with it, so the thing
+      // you can see and the thing doing the lighting are never out of step.
+      this.torchFlame.position.copy(this.torch.position);
+      const swell = 0.75 + 0.35 * flame.intensity;
+      this.torchFlame.scale.set(swell, swell * 1.3, swell);
+
+      if (settings.torchShadows !== this.torchShadowsOn) {
+        this.torch.castShadow = settings.torchShadows;
+        this.torchShadowsOn = settings.torchShadows;
+      }
+    }
+
+    this.orb.visible = settings.magicOn;
+    this.orbMesh.visible = settings.magicOn;
+    if (settings.magicOn) {
+      const orb = orbState(this.elapsed);
+      this.orb.distance = settings.magicRange;
+      this.orb.intensity = pointIntensity(settings.magicBrightness, settings.magicRange) * orb.intensity;
+      this.orb.position.set(
+        position.x + orb.offset.x,
+        groundY + orb.offset.y,
+        position.y + orb.offset.z,
+      );
+      this.orbMesh.position.copy(this.orb.position);
     }
   }
 
