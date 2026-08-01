@@ -1,4 +1,5 @@
 import { hashUnit2 } from '../../shared/hash.js';
+import { PALETTE } from './palette.js';
 import type { Vec3 } from './view-settings.js';
 
 /**
@@ -20,8 +21,8 @@ import type { Vec3 } from './view-settings.js';
  */
 
 /** The colours the two lights burn at. Warm flame against cool magic, on purpose. */
-export const TORCH_COLOR = 0xffa542;
-export const MAGIC_COLOR = 0x9fd8ff;
+export const TORCH_COLOR = PALETTE.torchFlame;
+export const MAGIC_COLOR = PALETTE.magicOrb;
 
 /** Torch defaults: reach in world units, and brightness at half that reach. */
 export const TORCH_DEFAULTS = {

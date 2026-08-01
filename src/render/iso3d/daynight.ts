@@ -58,6 +58,23 @@ export const DEFAULT_DAY_LENGTH_MINUTES = 8;
 export const MIN_DAY_LENGTH_MINUTES = 1;
 export const MAX_DAY_LENGTH_MINUTES = 30;
 
+/**
+ * The fixed daylight the scene had before there was a clock (spec 045): the
+ * warm sun and the cool sky fill, at the intensities that pass tuned them to.
+ *
+ * Named here rather than left as literals because two places need to agree on
+ * them -- the ramp's noon keyframe below, and the scene's manual light mode,
+ * which is what the `Direction`/`Elevation` sliders drive when the cycle is
+ * switched off. If those two drifted apart, unticking the cycle would change
+ * the light's colour as well as its direction.
+ */
+export const FIXED_DAYLIGHT = {
+  lightColor: 0xfff4e0,
+  lightIntensity: 2.1,
+  ambientColor: 0x8090a0,
+  ambientIntensity: 1.55,
+} as const;
+
 /** Everything the scene's global lighting needs for one instant of the clock. */
 export interface SkyState {
   /** The hour this state was sampled at, wrapped into [0, 24). */
@@ -114,7 +131,7 @@ const SKY_KEYS: readonly SkyKey[] = [
   { hours: 4.5, skyColor: 0x1d2542, lightColor: 0x9fb0d8, lightIntensity: 0.36, ambientColor: 0x3a4468, ambientIntensity: 0.72 },
   { hours: 6, skyColor: 0xd98a63, lightColor: 0xff9a5a, lightIntensity: 1.1, ambientColor: 0x6a6a90, ambientIntensity: 1.15 },
   { hours: 7.5, skyColor: 0x9fd0d8, lightColor: 0xffd9a8, lightIntensity: 1.85, ambientColor: 0x8090a0, ambientIntensity: 1.4 },
-  { hours: 12, skyColor: 0x8fd6c8, lightColor: 0xfff4e0, lightIntensity: 2.1, ambientColor: 0x8090a0, ambientIntensity: 1.55 },
+  { hours: 12, skyColor: 0x8fd6c8, ...FIXED_DAYLIGHT },
   { hours: 16.5, skyColor: 0xa8d2c0, lightColor: 0xffdba0, lightIntensity: 2.0, ambientColor: 0x8a90a8, ambientIntensity: 1.5 },
   { hours: 18.5, skyColor: 0xe08a55, lightColor: 0xff7f45, lightIntensity: 1.15, ambientColor: 0x70648c, ambientIntensity: 1.2 },
   { hours: 19.8, skyColor: 0x4a3a62, lightColor: 0xb08098, lightIntensity: 0.45, ambientColor: 0x4a4a75, ambientIntensity: 0.85 },
