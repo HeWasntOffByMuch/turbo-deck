@@ -64,6 +64,20 @@ export interface RobeTuning {
    * was clean at every height. The cost of 0.14 -> 0.45 is about 10% of the hem's
    * wind sway and 3% of its trail behind a run -- worth it for a default, and
    * the slider is right there for anyone who wants limper cloth and no falling.
+   *
+   * **This number is calibrated to the current particle spacing, and is not a
+   * material property.** Production cloth measures bending as the dihedral angle
+   * between adjacent triangles, which is resolution-independent; this uses the
+   * real-time shortcut of a distance constraint between particles two apart, so
+   * its effect scales with how far apart they are. Change any piece's `rows` or
+   * `cols` in `geometry.ts` and this needs re-sweeping against the drop test in
+   * `iso3d/robe.test.ts`, even though the fabric is meant to be "the same cloth".
+   *
+   * The same shortcut is also why the number above is a slight overstatement of
+   * what bending alone buys: a skip-one distance link resists in-plane
+   * *compression* as well as folding, and some of what stopped the tube
+   * collapsing was that, not bend resistance. The measurements are real; the
+   * mechanism is muddier than the parameter name suggests.
    */
   bendStiffness: number;
   /**

@@ -101,9 +101,17 @@ interface GridSpec {
  * The three constraint families are what make this behave like woven cloth
  * rather than a net: structural links along the weave resist stretch, shear
  * links across each quad stop it collapsing into a parallelogram, and bend links
- * skipping one particle resist *folding* independently of stretching -- the
- * separation that lets limp silk and stiff felt be the same mesh with two
+ * skipping one particle resist *folding* largely independently of stretching --
+ * the separation that lets limp silk and stiff felt be the same mesh with two
  * different numbers.
+ *
+ * **Changing a piece's `rows` or `cols` changes how stiff it bends.** The bend
+ * links are distance constraints between particles two apart rather than a true
+ * dihedral-angle term, so their effect scales with particle spacing: the same
+ * `bendStiffness` on a finer grid is a limper fabric. It is not just a cosmetic
+ * resolution knob -- `bendStiffness` is what stops a hanging tube buckling and
+ * its hem inverting, so a resolution change needs re-sweeping against the drop
+ * test in `iso3d/robe.test.ts`. See the field's note in `params.ts`.
  */
 function buildGrid(spec: GridSpec): ClothGeometry {
   const { rows, cols, closed } = spec;
