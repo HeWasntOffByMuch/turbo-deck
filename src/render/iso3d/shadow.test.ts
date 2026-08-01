@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { framedGroundRadius, shadowFrame, shadowFrameStale, SHADOW_MAP_SIZE } from './shadow.js';
+import {
+  framedGroundRadius,
+  horizonShadow,
+  shadowFillBoost,
+  shadowFrame,
+  shadowFrameStale,
+  shadowReach,
+  SHADOW_MAP_SIZE,
+} from './shadow.js';
 import {
   DEFAULT_CAMERA_ORBIT,
   DEFAULT_VIEW_HALF_WIDTH,
@@ -85,6 +93,88 @@ describe('framedGroundRadius', () => {
 
   it('scales linearly with the view span', () => {
     expect(framedGroundRadius(640)).toBeCloseTo(2 * framedGroundRadius(320), 9);
+  });
+});
+
+describe('horizonShadow (spec 047)', () => {
+  const DEG = Math.PI / 180;
+  /** The tallest thing in the world that casts: the northern range's relief. */
+  const TALL_CASTER = 480;
+
+  it('bounds the shadow at every elevation, including the horizon and below', () => {
+    // The headline invariant. Unclamped, `height / tan(elevation)` diverges: at
+    // 0 it is infinite, and at 0.5 degrees a tree is already streaking 100x its
+    // own height across a world 4400 units wide.
+    for (const deg of [-30, -5, -0.01, 0, 0.01, 0.5, 2, 5, 8, 20, 45, 80]) {
+      const reach = shadowReach(TALL_CASTER, deg * DEG);
+      expect(Number.isFinite(reach)).toBe(true);
+      expect(reach).toBeGreaterThan(0);
+      // 1 / tan(8 degrees) = 7.1, so nothing exceeds ~7.2x its own height.
+      expect(reach).toBeLessThan(TALL_CASTER * 7.2);
+    }
+  });
+
+  it('never places the light below the floor, however low the sun is', () => {
+    for (const deg of [-90, -1, 0, 1, 4, 7.9]) {
+      expect(horizonShadow(deg * DEG).castElevation).toBeCloseTo(8 * DEG, 9);
+    }
+  });
+
+  it('leaves a sun above the floor exactly where it is', () => {
+    for (const deg of [8.1, 15, 30, 42, 59]) {
+      expect(horizonShadow(deg * DEG).castElevation).toBeCloseTo(deg * DEG, 9);
+    }
+  });
+
+  it('fades contrast to nothing at the horizon and to full well above it', () => {
+    expect(horizonShadow(0)).toMatchObject({ strength: 0, casting: false });
+    expect(horizonShadow(-10 * DEG).strength).toBe(0);
+    expect(horizonShadow(15 * DEG).strength).toBeCloseTo(1, 9);
+    expect(horizonShadow(45 * DEG).strength).toBe(1);
+  });
+
+  it('fades monotonically through the band rather than switching', () => {
+    let previous = 0;
+    for (let deg = 0; deg <= 15; deg += 0.5) {
+      const strength = horizonShadow(deg * DEG).strength;
+      expect(strength).toBeGreaterThanOrEqual(previous);
+      previous = strength;
+    }
+    expect(previous).toBeCloseTo(1, 9);
+  });
+
+  it('stops casting at or below the horizon, and casts above it', () => {
+    expect(horizonShadow(0).casting).toBe(false);
+    expect(horizonShadow(-0.001).casting).toBe(false);
+    expect(horizonShadow(0.001).casting).toBe(true);
+  });
+
+  it('treats a non-finite elevation as no sun rather than casting from NaN', () => {
+    expect(horizonShadow(Number.NaN)).toMatchObject({ strength: 0, casting: false });
+    expect(Number.isFinite(horizonShadow(Number.NaN).castElevation)).toBe(true);
+  });
+
+  it('is pure', () => {
+    expect(horizonShadow(0.3)).toEqual(horizonShadow(0.3));
+  });
+});
+
+describe('shadowFillBoost (spec 047)', () => {
+  it('adds nothing while shadows are at full contrast', () => {
+    expect(shadowFillBoost(1)).toBe(0);
+  });
+
+  it('adds the most when shadows have faded out entirely', () => {
+    expect(shadowFillBoost(0)).toBeGreaterThan(0);
+  });
+
+  it('rises as contrast falls, so the shade lifts as the shadow leaves it', () => {
+    expect(shadowFillBoost(0.25)).toBeGreaterThan(shadowFillBoost(0.75));
+  });
+
+  it('clamps a strength outside 0..1 instead of over- or under-filling', () => {
+    expect(shadowFillBoost(2)).toBe(0);
+    expect(shadowFillBoost(-1)).toBe(shadowFillBoost(0));
   });
 });
 
