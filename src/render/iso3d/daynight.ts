@@ -252,6 +252,57 @@ export function advanceTimeOfDay(hours: number, dtSeconds: number, dayLengthMinu
   return wrapHours(hours + (dtSeconds / (minutes * 60)) * 24);
 }
 
+/**
+ * How much real time one step of the day/night cycle covers. The sky advances
+ * in whole ticks of this and never between them.
+ *
+ * Stepping rather than sliding, for the same reason everything else in this
+ * view is stepped: the frame is posterized, dithered and drawn at
+ * `image-rendering: pixelated`, and a sky that eases continuously is the one
+ * smooth thing in the picture. At 10Hz the colour ramp lands on ~4800 distinct
+ * skies across an 8-minute day -- far too fine to see as stepping -- while the
+ * sun's direction, the shadow camera and the ambient fill are all recomputed a
+ * tenth as often as they were per frame.
+ *
+ * It also decouples the sky from the frame rate outright. Advancing per frame
+ * meant a machine running at 30fps and one at 144 took different-sized steps
+ * through the ramp; now both take the same 1/10s ones and simply differ in how
+ * many frames show each.
+ */
+export const DAY_TICK_SECONDS = 0.1;
+
+/**
+ * The cycle's clock: the hour it is showing, plus the real time banked toward
+ * the next tick. The carry is the whole reason this is a struct rather than a
+ * number -- dropping the remainder each frame would lose most of it at any
+ * frame rate faster than 10fps, and the day would crawl.
+ */
+export interface DayClock {
+  readonly hours: number;
+  /** Real seconds banked toward the next tick; always less than one tick. */
+  readonly carry: number;
+}
+
+/**
+ * Bank `dtSeconds` of real time and emit whatever whole ticks it completes.
+ * Pure: the caller owns the clock, this only says what it becomes.
+ *
+ * A long stall (a backgrounded tab) is applied in one jump rather than looped,
+ * so catching up costs the same as any other call.
+ */
+export function stepDayClock(clock: DayClock, dtSeconds: number, dayLengthMinutes: number): DayClock {
+  if (!Number.isFinite(dtSeconds) || dtSeconds <= 0) return clock;
+
+  const banked = clock.carry + dtSeconds;
+  const ticks = Math.floor(banked / DAY_TICK_SECONDS);
+  if (ticks <= 0) return { hours: clock.hours, carry: banked };
+
+  return {
+    hours: advanceTimeOfDay(clock.hours, ticks * DAY_TICK_SECONDS, dayLengthMinutes),
+    carry: banked - ticks * DAY_TICK_SECONDS,
+  };
+}
+
 /** An hour as `HH:MM`, for the panel's readout. */
 export function formatClock(hours: number): string {
   const h = wrapHours(hours);

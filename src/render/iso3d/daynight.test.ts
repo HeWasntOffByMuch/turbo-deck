@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DAY_TICK_SECONDS,
   DEFAULT_DAY_LENGTH_MINUTES,
   DEFAULT_TIME_OF_DAY,
   advanceTimeOfDay,
+  stepDayClock,
   formatClock,
   skyAt,
   sunPosition,
@@ -191,6 +193,86 @@ describe('advanceTimeOfDay', () => {
 
   it('runs faster with a shorter day', () => {
     expect(advanceTimeOfDay(0, 10, 2)).toBeGreaterThan(advanceTimeOfDay(0, 10, 20));
+  });
+});
+
+describe('stepDayClock: the 1/10s tick', () => {
+  it('does not move at all until a whole tick has been banked', () => {
+    // A 60fps frame is well under a tick, so most frames must change nothing.
+    const start = { hours: 12, carry: 0 };
+    const frame = stepDayClock(start, 1 / 60, 8);
+    expect(frame.hours).toBe(12);
+    expect(frame.carry).toBeCloseTo(1 / 60, 9);
+  });
+
+  it('moves exactly once a tick completes, and banks the remainder', () => {
+    const stepped = stepDayClock({ hours: 12, carry: 0.09 }, 1 / 60, 8);
+    expect(stepped.hours).not.toBe(12);
+    expect(stepped.carry).toBeCloseTo(0.09 + 1 / 60 - DAY_TICK_SECONDS, 9);
+    expect(stepped.carry).toBeLessThan(DAY_TICK_SECONDS);
+  });
+
+  it('never banks a whole tick without spending it', () => {
+    let clock = { hours: 0, carry: 0 };
+    for (let i = 0; i < 3000; i++) {
+      clock = stepDayClock(clock, 1 / 60, 8);
+      expect(clock.carry).toBeGreaterThanOrEqual(0);
+      expect(clock.carry).toBeLessThan(DAY_TICK_SECONDS);
+    }
+  });
+
+  it('keeps the same pace at any frame rate, which is the point of the carry', () => {
+    // Dropping the sub-tick remainder each frame would lose most of it above
+    // 10fps and the day would crawl on a fast machine. These must agree.
+    const run = (fps: number, seconds: number): number => {
+      let clock = { hours: 6, carry: 0 };
+      for (let i = 0; i < fps * seconds; i++) clock = stepDayClock(clock, 1 / fps, 8);
+      return clock.hours;
+    };
+    const at30 = run(30, 60);
+    const at144 = run(144, 60);
+    expect(at144).toBeCloseTo(at30, 6);
+    // ...and both match the continuous answer over a whole number of ticks.
+    expect(at30).toBeCloseTo(advanceTimeOfDay(6, 60, 8), 6);
+  });
+
+  it('completes a full day in the day length, tick by tick', () => {
+    let clock = { hours: 0, carry: 0 };
+    const frames = 8 * 60 * 60; // an 8-minute day at 60fps
+    for (let i = 0; i < frames; i++) clock = stepDayClock(clock, 1 / 60, 8);
+    // Measured across the wrap, since a full day lands either side of midnight.
+    // Not asserted exact: 28800 floating-point additions of 1/60 drift enough
+    // to leave the last tick of 4800 unspent, which is 0.02% of a day.
+    expect(Math.min(clock.hours, 24 - clock.hours)).toBeLessThan(0.02);
+  });
+
+  it('applies a long stall in one jump rather than crawling through it', () => {
+    // A backgrounded tab hands back a huge dt; catching up must cost the same
+    // as any other call, and land where the continuous clock would.
+    const stalled = stepDayClock({ hours: 6, carry: 0 }, 240, 8);
+    expect(stalled.hours).toBeCloseTo(advanceTimeOfDay(6, 240, 8), 6);
+  });
+
+  it('quantizes: every reachable hour sits on a tick boundary', () => {
+    let clock = { hours: 0, carry: 0 };
+    const perTick = (DAY_TICK_SECONDS / (8 * 60)) * 24;
+    for (let i = 0; i < 200; i++) {
+      clock = stepDayClock(clock, 1 / 60, 8);
+      expect(Math.abs(clock.hours / perTick - Math.round(clock.hours / perTick))).toBeLessThan(1e-6);
+    }
+  });
+
+  it('holds still for a non-finite or non-positive frame time', () => {
+    const clock = { hours: 9, carry: 0.04 };
+    expect(stepDayClock(clock, Number.NaN, 8)).toEqual(clock);
+    expect(stepDayClock(clock, 0, 8)).toEqual(clock);
+    expect(stepDayClock(clock, -1, 8)).toEqual(clock);
+  });
+
+  it('is pure', () => {
+    const clock = { hours: 3, carry: 0.05 };
+    expect(stepDayClock(clock, 0.06, 8)).toEqual(stepDayClock(clock, 0.06, 8));
+    expect(clock).toEqual({ hours: 3, carry: 0.05 });
   });
 });
 

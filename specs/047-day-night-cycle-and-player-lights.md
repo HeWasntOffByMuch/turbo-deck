@@ -42,7 +42,23 @@ Pure, three.js-free and DOM-free, so the whole cycle is asserted headlessly:
 ```ts
 export function skyAt(hours: number): SkyState;
 export function advanceTimeOfDay(hours: number, dt: number, dayLengthMinutes: number): number;
+export function stepDayClock(clock: DayClock, dt: number, dayLengthMinutes: number): DayClock;
 ```
+
+**The clock ticks at 10Hz, it does not slide.** `DAY_TICK_SECONDS` is 0.1, and
+the sky only ever advances in whole ticks of it. Stepping rather than easing is
+in register with the rest of this view — the frame is posterized, dithered and
+drawn at `image-rendering: pixelated`, so a continuously sliding sky would be
+the one smooth thing in the picture — and it takes the sun's direction, the
+shadow camera and the ambient fill off the per-frame path. At 10Hz an
+8-minute day still passes through ~4800 distinct skies, which is far too fine
+to read as stepping.
+
+It also decouples the cycle from the frame rate outright: advancing per frame
+meant 30fps and 144fps machines took different-sized steps through the ramp.
+`DayClock` therefore carries a `carry` — the real time banked toward the next
+tick — because dropping the sub-tick remainder each frame would discard most of
+it at any rate above 10fps and the day would visibly crawl on a fast machine.
 
 `hours` is a wall clock in `[0, 24)`. `SkyState` carries the key light's
 direction, colour and intensity, the ambient fill's colour and intensity, the
@@ -224,6 +240,13 @@ string-valued choice widget is added beside the numeric one.
   night and the sun by day.
 - `advanceTimeOfDay` wraps at 24, is linear in `dt`, and completes exactly one
   day per `dayLengthMinutes`.
+- `stepDayClock` does not move at all until a whole tick is banked, never holds
+  a whole unspent tick, and lands every reachable hour on a tick boundary.
+- `stepDayClock` reaches the same hour after a minute of 30fps frames as after
+  a minute of 144fps ones — the invariant the `carry` exists for — and both
+  agree with the continuous `advanceTimeOfDay` over a whole number of ticks.
+- A long stall (a backgrounded tab handing back a huge `dt`) is applied in one
+  jump rather than looped.
 - `horizonShadow` never lets the cast elevation fall below the floor, so the
   shadow reach implied by any sun elevation — including 0 and negative — is
   **finite and bounded** by `1 / tan(floor)`. This is the spec's headline

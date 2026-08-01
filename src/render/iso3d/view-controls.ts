@@ -4,9 +4,9 @@ import {
   DEFAULT_TIME_OF_DAY,
   MAX_DAY_LENGTH_MINUTES,
   MIN_DAY_LENGTH_MINUTES,
-  advanceTimeOfDay,
   formatClock,
   skyAt,
+  stepDayClock,
   type SkyState,
 } from './daynight.js';
 import {
@@ -307,6 +307,8 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   const camOrbit = offsetToOrbit(DEFAULT_CAMERA_OFFSET);
   const lightOrbit = offsetToOrbit(DEFAULT_LIGHT_OFFSET);
   const lighting = opts.lighting ?? true;
+  // Real time banked toward the day/night cycle's next 1/10s tick (spec 047).
+  let clockCarry = 0;
 
   const panel = document.createElement('div');
   panel.style.cssText =
@@ -510,7 +512,17 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     // that hour and carries on from there.
     advanceClock: (dtSeconds: number) => {
       if (!dayNight.checked() || !clockRunning.checked()) return;
-      timeOfDay.setValue(advanceTimeOfDay(timeOfDay.value(), dtSeconds, dayLength.value()));
+      // The clock steps in whole 1/10s ticks, so most frames bank their time
+      // and change nothing. The hour is read back off the slider each call
+      // rather than carried here, so dragging it still jumps the sky; only the
+      // sub-tick remainder is state this closure owns.
+      const stepped = stepDayClock(
+        { hours: timeOfDay.value(), carry: clockCarry },
+        dtSeconds,
+        dayLength.value(),
+      );
+      clockCarry = stepped.carry;
+      if (stepped.hours !== timeOfDay.value()) timeOfDay.setValue(stepped.hours);
     },
     playerLights: () => ({
       torchOn: torchOn.checked(),
