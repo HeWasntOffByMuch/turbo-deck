@@ -37,6 +37,11 @@ export const HAND_KEYS: Record<string, 0 | 1 | 2 | 3> = {
 /** Summon the next wave. Moved off Q when the hand took it (spec 041). */
 export const WAVE_KEY = 'Space';
 export const CYCLE_CHARACTER_KEY = 'KeyC';
+/**
+ * Hop the robed figure in the sandbox (spec 046). Not Space -- that is the wave
+ * key -- and not a hand slot, so J is what is left that still reads as "jump".
+ */
+export const JUMP_KEY = 'KeyJ';
 
 export interface ScreenPoint {
   readonly x: number;
@@ -75,6 +80,10 @@ export class IsoInputCapture {
   private queuedStat: 'strength' | 'agility' | 'intelligence' | null = null;
   private queuedReward: 0 | 1 | 2 | null = null;
   private queuedPick: number | null = null;
+  // A cosmetic-only jump edge (spec 046). Deliberately *not* part of the input
+  // frame: the sim has no notion of height, so this reaches the renderer's robed
+  // figure and nothing else, and can decide no game outcome.
+  private queuedJump = false;
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     const play = HAND_KEYS[e.code];
@@ -83,6 +92,7 @@ export class IsoInputCapture {
       this.queuedWave = true;
       e.preventDefault(); // Space would otherwise scroll the page
     } else if (e.code === CYCLE_CHARACTER_KEY) this.queuedCycleCharacter = true;
+    else if (e.code === JUMP_KEY) this.queuedJump = true;
   };
 
   private readonly onMouseMove = (e: MouseEvent): void => {
@@ -127,6 +137,17 @@ export class IsoInputCapture {
     }
     this.canvas.removeEventListener('mousedown', this.onMouseDown);
     this.contextMenuRoot.removeEventListener('contextmenu', this.onContextMenu);
+  }
+
+  /**
+   * Consume a queued jump edge (Space). Renderer-only and separate from
+   * {@link sample} so the cosmetic hop never travels through the sim's input
+   * frame; a view that has no jumping simply never calls this.
+   */
+  takeJump(): boolean {
+    const jumped = this.queuedJump;
+    this.queuedJump = false;
+    return jumped;
   }
 
   /** Cursor position in canvas CSS pixels, for the scene's screen->world raycast. */

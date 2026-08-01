@@ -4,6 +4,7 @@ import { characterAt } from '../../sim/characters.js';
 import { ARENA_HEIGHT, ARENA_OBSTACLES, ARENA_WIDTH, TICK_RATE } from '../../sim/constants.js';
 import type { CombatState, InputFrame, Vec2, WorldColliders } from '../../sim/types.js';
 import { createWorldColliders } from '../../sim/collision.js';
+import { defaultRobeTuning, type RobeTuning } from '../cloth/params.js';
 import { IsoInputCapture } from './input.js';
 import { PALETTE } from './palette.js';
 import { makeHeadingArrow, makeMoveMarker, makeUnwalkableField, makeWall } from './meshes.js';
@@ -17,6 +18,16 @@ import {
 import { buildTerrainMesh } from './terrain-mesh.js';
 import { defaultMechTuning, MechRig, type MechTuning } from './rigs.js';
 import { buildPropField } from './props.js';
+import { RobeRig } from './robe.js';
+import { ROBE_TUNING_GROUPS } from './robe-panel.js';
+import {
+  buildTuningSection,
+  LABEL_CSS,
+  panelButton,
+  panelButtonRow,
+  type TuningGroup,
+} from './tuning-panel.js';
+import type { SandboxUnit, UnitKind } from './unit.js';
 import { createViewControls, type ViewControls } from './view-controls.js';
 import { CAMERA_FAR, CAMERA_NEAR, DEFAULT_CAMERA_OFFSET, DEFAULT_VIEW_HALF_WIDTH } from './view-settings.js';
 import { viewSeed } from './seed.js';
@@ -25,19 +36,19 @@ import { viewSeed } from './seed.js';
 const CAMERA_SMOOTH = 0.15;
 
 /**
- * The movement sandbox tab (spec 032/033): no game -- just one controllable unit
- * driven through the sim's MOBA movement so the turn-rate rules and the units'
- * legs can be watched and *tuned* in isolation. A unit picker switches between the
- * organic spider mech and a grey metal walker (a rotating turret on a fixed
- * animated leg base). It reuses the deterministic combat sim (no enemies, no
- * ambient spawner) and only ever feeds it movement inputs: a right-click move
- * order, C to cycle the movement archetype, and live speed/turn-rate overrides
- * from the side panel. Every other knob edits the spider's cosmetic tuning. Game
+ * The movement sandbox tab (spec 032/033/046): no game -- just one controllable
+ * unit driven through the sim's MOBA movement so the turn-rate rules, the units'
+ * legs and the robed figure's cloth can be watched and *tuned* in isolation. A
+ * unit picker switches between the organic spider mech, a grey metal walker (a
+ * rotating turret on a fixed animated leg base) and the hooded robe character. It
+ * reuses the deterministic combat sim (no enemies, no ambient spawner) and only
+ * ever feeds it movement inputs: a right-click move order, C to cycle the
+ * movement archetype, J to hop the robed figure, and live speed/turn-rate overrides from the
+ * side panel. Every other knob edits the active unit's cosmetic tuning. Game
  * rules stay in the sim; this layer only reads state and poses the (cosmetic) rig.
  */
 
-/** The selectable sandbox units. */
-export type UnitKind = 'spider' | 'walker';
+export type { UnitKind } from './unit.js';
 
 // Same low-res, upscaled retro look and fixed iso follow-camera as the combat view.
 const RENDER_W = 480;
@@ -54,7 +65,7 @@ class MovementScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
-  // Both units share one tuning object so the panel drives whichever is active;
+  // Both mechs share one tuning object so the panel drives whichever is active;
   // the grey mech only differs in colour and a non-turning lower body.
   private readonly sharedTuning: MechTuning = defaultMechTuning();
   private readonly spider = new MechRig('ally', PALETTE.mechAlly, { tuning: this.sharedTuning });
@@ -62,7 +73,10 @@ class MovementScene {
     tuning: this.sharedTuning,
     lowerBodyTurns: false,
   });
-  private active: MechRig = this.spider;
+  /** The robed figure (spec 046), built lazily so its cloth costs nothing unless picked. */
+  private robeRig: RobeRig | null = null;
+  private readonly robeTuning: RobeTuning = defaultRobeTuning();
+  private active: SandboxUnit = this.spider;
   private readonly headingArrow = makeHeadingArrow();
   private readonly sun = new THREE.DirectionalLight(0xfff4e0, 2.1);
   private readonly unwalkable = new THREE.Group();
@@ -136,9 +150,19 @@ class MovementScene {
     return createWorldColliders(ARENA_OBSTACLES, vegetationColliders(this.vegetation));
   }
 
-  /** The shared live-editable tuning both units use (the panel binds to it). */
+  /** The shared live-editable tuning both mechs use (the panel binds to it). */
   get tuning(): MechTuning {
     return this.sharedTuning;
+  }
+
+  /** The robe's live-editable tuning (the panel binds to it). */
+  get robe(): RobeTuning {
+    return this.robeTuning;
+  }
+
+  /** The robed figure, once it has been picked at least once. */
+  get robeUnit(): RobeRig | null {
+    return this.robeRig;
   }
 
   /** The active unit's locomotion state, for the status line. */
@@ -148,11 +172,17 @@ class MovementScene {
 
   /** Swap the controllable unit, keeping the sim (position/heading) running. */
   setUnit(kind: UnitKind): void {
-    const next = kind === 'walker' ? this.walker : this.spider;
+    const next = kind === 'walker' ? this.walker : kind === 'robe' ? this.ensureRobe() : this.spider;
     if (next === this.active) return;
     this.scene.remove(this.active.group);
     this.active = next;
     this.scene.add(this.active.group);
+  }
+
+  /** Build the robed figure on first use; its cloth is not free to construct. */
+  private ensureRobe(): RobeRig {
+    this.robeRig ??= new RobeRig({ tuning: this.robeTuning });
+    return this.robeRig;
   }
 
   /**
@@ -267,20 +297,35 @@ export interface ViewHandle {
   stop(): void;
 }
 
-// One editable tuning field: label, range, and how to read/write it on the tuning.
-interface SliderSpec {
-  readonly label: string;
-  readonly min: number;
-  readonly max: number;
-  readonly step: number;
-  readonly key: keyof MechTuning;
-  /** Decimal places to show in the readout (0 => integer). */
-  readonly digits?: number;
-  /** Hover explanation (native title tooltip) of what the knob does. */
-  readonly tip: string;
-}
+/**
+ * Movement knobs that are *sim inputs* rather than cosmetics, so they apply to
+ * whichever unit is active and stay visible in the panel at all times. They live
+ * on the mech tuning purely because that is the object the sandbox already feeds
+ * to the combat step as its per-tick overrides.
+ */
+const MOVEMENT_GROUP: TuningGroup<MechTuning> = {
+  title: 'Movement (sim)',
+  rows: [
+    {
+      label: 'Move speed',
+      min: 100,
+      max: 400,
+      step: 5,
+      key: 'moveSpeed',
+      tip: 'Base travel speed in world units per second (the sim clamps it to 100–550). Fed to the movement sim as a live override.',
+    },
+    {
+      label: 'Turn rate (°/s)',
+      min: 60,
+      max: 720,
+      step: 10,
+      key: 'turnRate',
+      tip: 'How fast the unit rotates to face its destination, in degrees per second. MOBA movement turns to face before it travels.',
+    },
+  ],
+};
 
-const SLIDER_GROUPS: readonly { readonly title: string; readonly rows: readonly SliderSpec[] }[] = [
+const MECH_TUNING_GROUPS: readonly TuningGroup<MechTuning>[] = [
   {
     title: 'Unit',
     rows: [
@@ -292,22 +337,6 @@ const SLIDER_GROUPS: readonly { readonly title: string; readonly rows: readonly 
         key: 'sizeScale',
         digits: 2,
         tip: 'Overall creature size — scales every leg and body dimension and how far each step reaches.',
-      },
-      {
-        label: 'Move speed',
-        min: 100,
-        max: 400,
-        step: 5,
-        key: 'moveSpeed',
-        tip: 'Base travel speed in world units per second (the sim clamps it to 100–550). Fed to the movement sim as a live override.',
-      },
-      {
-        label: 'Turn rate (°/s)',
-        min: 60,
-        max: 720,
-        step: 10,
-        key: 'turnRate',
-        tip: 'How fast the unit rotates to face its destination, in degrees per second. MOBA movement turns to face before it travels.',
       },
       {
         label: 'Legs',
@@ -524,15 +553,54 @@ const SLIDER_GROUPS: readonly { readonly title: string; readonly rows: readonly 
   },
 ];
 
-const PANEL_TEXT = '#c9c9d8';
-const LABEL_CSS = `font-family:'Segoe UI',system-ui,sans-serif;color:${PANEL_TEXT};`;
+/** Everything the sandbox panel needs to drive: two tunings and a set of actions. */
+export interface SandboxPanelOptions {
+  /** The mech tuning (also the holder of the sim move-speed/turn-rate overrides). */
+  readonly mech: MechTuning;
+  /** The robed figure's cloth/figure/wind tuning. */
+  readonly robe: RobeTuning;
+  /** Restore the active unit's tuning to its defaults. */
+  readonly onReset: () => void;
+  readonly onUnit: (kind: UnitKind) => void;
+  /** Robe-only actions, exposed as buttons alongside its sliders. */
+  readonly onJump: () => void;
+  readonly onDrop: () => void;
+  readonly onGust: () => void;
+  readonly onResettle: () => void;
+}
 
-/** Build the side control panel; returns the element and a fn to sync sliders to tuning. */
-export function buildPanel(
-  tuning: MechTuning,
-  onReset: () => void,
-  onUnit: (kind: UnitKind) => void,
-): { element: HTMLElement; sync: () => void } {
+export interface SandboxPanel {
+  readonly element: HTMLElement;
+  /** Push both tunings' current values back into the controls (after a reset). */
+  sync(): void;
+}
+
+/** The units the picker offers, in order. */
+const UNIT_CHIPS: readonly { kind: UnitKind; label: string; tip: string }[] = [
+  {
+    kind: 'spider',
+    label: 'Spider',
+    tip: 'Control the organic spider mech — its whole body turns to face where it moves.',
+  },
+  {
+    kind: 'walker',
+    label: 'Mech (grey)',
+    tip: 'Control the grey metal walker — same leg mechanics, but its lower body stays put while only the upper body rotates to face.',
+  },
+  {
+    kind: 'robe',
+    label: 'Hooded robe',
+    tip: 'Control the hooded robe character — a humanoid whose hood, cape, lower robe and sleeves are driven by a cloth simulation.',
+  },
+];
+
+/**
+ * Build the side control panel. The unit picker swaps which tuning section is
+ * shown -- the mech's leg/gait knobs or the robe's fabric, force and wind knobs
+ * -- while the sim movement group stays visible for both, since it drives the
+ * combat step rather than either rig.
+ */
+export function buildPanel(opts: SandboxPanelOptions): SandboxPanel {
   const panel = document.createElement('div');
   panel.style.cssText =
     `${LABEL_CSS}width:300px;max-height:${DISPLAY_H}px;overflow-y:auto;padding:4px 12px 12px;` +
@@ -544,104 +612,82 @@ export function buildPanel(
     '<b style="color:#f0f0f8;">Movement sandbox</b><br>' +
     '<b>Right-click</b> the ground to move. MOBA turn-rate: the unit turns to face ' +
     'the destination before it travels.<br>' +
-    '<b>C</b> loads the next archetype preset into the sliders.<br>' +
-    'Pick a unit below. The grey mech uses the same leg mechanics, but its lower ' +
-    'body never turns — only its upper body rotates to face.';
+    '<b>C</b> loads the next archetype preset into the sliders. ' +
+    '<b>J</b> makes the robed figure hop.<br>' +
+    'Pick a unit below.';
   panel.appendChild(help);
 
-  // Unit picker: two chips choosing which unit the sandbox controls.
+  // Unit picker: one chip per controllable unit.
   const pickerLabel = document.createElement('div');
   pickerLabel.textContent = 'Unit';
-  pickerLabel.title = 'Choose which unit the sandbox controls; both share the sliders below.';
+  pickerLabel.title = "Choose which unit the sandbox controls; the sliders below follow the choice.";
   pickerLabel.style.cssText = 'color:#f0f0f8;font-weight:600;margin:2px 0 4px;letter-spacing:.03em;';
   panel.appendChild(pickerLabel);
   const picker = document.createElement('div');
   picker.style.cssText = 'display:flex;gap:6px;margin:0 0 6px;';
-  const units: readonly { kind: UnitKind; label: string; tip: string }[] = [
-    {
-      kind: 'spider',
-      label: 'Spider',
-      tip: 'Control the organic spider mech — its whole body turns to face where it moves.',
-    },
-    {
-      kind: 'walker',
-      label: 'Mech (grey)',
-      tip: 'Control the grey metal walker — same leg mechanics, but its lower body stays put while only the upper body rotates to face.',
-    },
-  ];
   const chips: HTMLButtonElement[] = [];
   const styleChip = (btn: HTMLButtonElement, on: boolean): void => {
     btn.style.cssText =
-      `${LABEL_CSS}flex:1;padding:6px;border-radius:6px;cursor:pointer;font-size:12px;border:1px solid #2a2a3a;` +
+      `${LABEL_CSS}flex:1;padding:6px 2px;border-radius:6px;cursor:pointer;font-size:11px;border:1px solid #2a2a3a;` +
       (on ? 'background:#3a5c7a;color:#f0f0f8;' : 'background:#20202c;color:#9a9ab0;');
   };
-  units.forEach((u, i) => {
+
+  const movement = buildTuningSection([MOVEMENT_GROUP], opts.mech);
+  const mech = buildTuningSection(MECH_TUNING_GROUPS, opts.mech);
+  const robe = buildTuningSection(ROBE_TUNING_GROUPS, opts.robe);
+
+  // Robe-only actions: the discrete events the cloth reacts to, which cannot be
+  // produced by dragging a slider.
+  const robeActions = document.createElement('div');
+  robeActions.appendChild(
+    panelButtonRow(
+      panelButton('Jump', 'Hop the figure (or press J) and watch the robe trail, then flare on landing.', opts.onJump),
+      panelButton('Drop', 'Drop the figure from a height, to watch the robe billow through a long fall.', opts.onDrop),
+    ),
+  );
+  robeActions.appendChild(
+    panelButtonRow(
+      panelButton('Gust', 'Fire a one-shot gust of wind on top of the sustained wind.', opts.onGust),
+      panelButton('Re-settle', 'Drop every garment back onto its rest pose at rest. Useful after a big retune.', opts.onResettle),
+    ),
+  );
+
+  panel.append(picker, movement.element, mech.element, robe.element, robeActions);
+
+  const showUnit = (kind: UnitKind): void => {
+    const isRobe = kind === 'robe';
+    mech.setVisible(!isRobe);
+    robe.setVisible(isRobe);
+    robeActions.style.display = isRobe ? 'block' : 'none';
+  };
+
+  UNIT_CHIPS.forEach((u, i) => {
     const btn = document.createElement('button');
     btn.textContent = u.label;
     btn.title = u.tip;
     styleChip(btn, i === 0);
     btn.addEventListener('click', () => {
       chips.forEach((c, j) => styleChip(c, j === i));
-      onUnit(u.kind);
+      showUnit(u.kind);
+      opts.onUnit(u.kind);
     });
     picker.appendChild(btn);
     chips.push(btn);
   });
-  panel.appendChild(picker);
+  showUnit('spider');
 
-  const refreshers: (() => void)[] = [];
+  const reset = panelButton('Reset to defaults', "Restore every slider above to the active unit's default tuning.", opts.onReset);
+  reset.style.marginTop = '14px';
+  panel.appendChild(panelButtonRow(reset));
 
-  for (const group of SLIDER_GROUPS) {
-    const heading = document.createElement('div');
-    heading.textContent = group.title;
-    heading.style.cssText = 'color:#f0f0f8;font-weight:600;margin:12px 0 4px;letter-spacing:.03em;';
-    panel.appendChild(heading);
-
-    for (const spec of group.rows) {
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex;align-items:center;gap:8px;margin:5px 0;';
-      // Native hover tooltip on the whole row (label, slider, and readout) so
-      // hovering anywhere on the setting explains what the knob does.
-      row.title = spec.tip;
-      const label = document.createElement('label');
-      label.textContent = spec.label;
-      label.style.cssText = 'flex:0 0 44%;';
-      const input = document.createElement('input');
-      input.type = 'range';
-      input.min = String(spec.min);
-      input.max = String(spec.max);
-      input.step = String(spec.step);
-      input.style.cssText = 'flex:1;min-width:0;accent-color:#4a7fb0;';
-      const value = document.createElement('span');
-      value.style.cssText = 'flex:0 0 44px;text-align:right;font-variant-numeric:tabular-nums;color:#e0e0ee;';
-
-      const fmt = (v: number): string => (spec.digits ? v.toFixed(spec.digits) : String(Math.round(v)));
-      const refresh = (): void => {
-        const v = tuning[spec.key];
-        input.value = String(v);
-        value.textContent = fmt(v);
-      };
-      input.addEventListener('input', () => {
-        tuning[spec.key] = Number(input.value);
-        value.textContent = fmt(Number(input.value));
-      });
-      refresh();
-      refreshers.push(refresh);
-      row.append(label, input, value);
-      panel.appendChild(row);
-    }
-  }
-
-  const reset = document.createElement('button');
-  reset.textContent = 'Reset to defaults';
-  reset.title = 'Restore every slider above to its default tuning.';
-  reset.style.cssText =
-    `${LABEL_CSS}margin-top:14px;width:100%;padding:7px;border-radius:6px;cursor:pointer;` +
-    'border:1px solid #2a2a3a;background:#2a2a3a;color:#f0f0f8;font-size:12px;';
-  reset.addEventListener('click', onReset);
-  panel.appendChild(reset);
-
-  return { element: panel, sync: () => refreshers.forEach((r) => r()) };
+  return {
+    element: panel,
+    sync: () => {
+      movement.sync();
+      mech.sync();
+      robe.sync();
+    },
+  };
 }
 
 /**
@@ -680,24 +726,30 @@ export function mountMovement(container: HTMLElement): ViewHandle {
   });
 
   let unit: UnitKind = 'spider';
-  const panel = buildPanel(
-    tuning,
-    () => {
-      Object.assign(tuning, defaultMechTuning());
+  const panel = buildPanel({
+    mech: tuning,
+    robe: scene.robe,
+    onReset: () => {
+      if (unit === 'robe') Object.assign(scene.robe, defaultRobeTuning());
+      else Object.assign(tuning, defaultMechTuning());
       panel.sync();
     },
-    (kind) => {
+    onUnit: (kind) => {
       unit = kind;
       scene.setUnit(kind);
     },
-  );
+    onJump: () => scene.robeUnit?.jump(),
+    onDrop: () => scene.robeUnit?.drop(),
+    onGust: () => scene.robeUnit?.gust(),
+    onResettle: () => scene.robeUnit?.resettle(),
+  });
   layout.appendChild(panel.element);
   // The camera/light control panel (spec 033/034) sits alongside the tuning panel.
   layout.appendChild(scene.controls.element);
 
   const setStatus = (): void => {
     const name = characterAt(state.player.characterIndex).name;
-    const unitName = unit === 'walker' ? 'Mech (grey)' : 'Spider';
+    const unitName = UNIT_CHIPS.find((u) => u.kind === unit)?.label ?? 'Spider';
     status.textContent = `Unit: ${unitName}  ·  Archetype: ${name} (C to cycle)  ·  gait: ${scene.unitState}`;
   };
   setStatus();
@@ -740,6 +792,9 @@ export function mountMovement(container: HTMLElement): ViewHandle {
         ...(s.cycleCharacter ? { cycleCharacter: true } : {}),
       };
       state = step(state, combatInput).state;
+      // A cosmetic hop: the sim has no notion of height, so this never enters
+      // the input frame above and can decide no game outcome.
+      if (input.takeJump()) scene.robeUnit?.jump();
       syncCharacter();
       accumulator -= TICK_MS;
     }

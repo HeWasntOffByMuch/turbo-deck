@@ -6,20 +6,26 @@ import type { CombatState, InputFrame, Vec2 } from '../../sim/types.js';
 import { IsoInputCapture } from './input.js';
 import { PALETTE } from './palette.js';
 import { flatMaterial, makeHeadingArrow, makeMoveMarker } from './meshes.js';
+import { defaultRobeTuning, type RobeTuning } from '../cloth/params.js';
 import { defaultMechTuning, MechRig, type MechDebug, type MechTuning } from './rigs.js';
-import { buildPanel, type UnitKind, type ViewHandle } from './movement.js';
+import { RobeRig, type RobeDebug } from './robe.js';
+import { ClothDebugOverlay, defaultClothLayers, type ClothLayers } from './robe-debug.js';
+import { buildPanel, type ViewHandle } from './movement.js';
+import type { SandboxUnit, UnitKind } from './unit.js';
 import { viewSeed } from './seed.js';
 
 /**
- * The rig debug viewport (spec 035): a third sandbox tab that shows the same
+ * The rig debug viewport (spec 035/046): a third sandbox tab that shows the same
  * controllable unit from two orthographic angles at once -- a world-aligned
  * top-down view and a heading-locked side profile -- with slow-motion /
- * single-step time control and toggleable debug overlays (leg skeleton, joint
- * dots, foot targets, rest spots + step-trigger rings) plus a live joint-angle
- * readout. It reuses the deterministic sim movement and the movement sandbox's
- * tuning panel, so the exact rig can be driven, tuned, slowed down and inspected.
- * Entirely cosmetic/renderer-only: it reads sim state and `rig.debugSnapshot()`
- * and never writes game state.
+ * single-step time control and toggleable debug overlays plus a live numeric
+ * readout. For the mechs that means the leg skeleton, joint dots, foot targets
+ * and step-trigger rings; for the robed figure it means the cloth's particles,
+ * strained links, body capsules, reference pose and wind vector. It reuses the
+ * deterministic sim movement and the movement sandbox's tuning panel, so the
+ * exact rig can be driven, tuned, slowed right down and inspected -- which is
+ * how the cloth was tuned in the first place. Entirely cosmetic/renderer-only:
+ * it reads sim state and each rig's debug snapshot and never writes game state.
  */
 
 const TICK_MS = 1000 / TICK_RATE;
@@ -242,7 +248,12 @@ class DebugScene {
     tuning: this.sharedTuning,
     lowerBodyTurns: false,
   });
-  private active: MechRig = this.spider;
+  /** The robed figure, built lazily -- its cloth is not free to construct. */
+  private robeRig: RobeRig | null = null;
+  private robeOverlay: ClothDebugOverlay | null = null;
+  private readonly robeTuning: RobeTuning = defaultRobeTuning();
+  private active: SandboxUnit = this.spider;
+  private activeKind: UnitKind = 'spider';
   private readonly overlays = new Map<MechRig, DebugOverlay>();
   private readonly ground: InfiniteGround;
   private readonly headingArrow = makeHeadingArrow();
@@ -252,6 +263,7 @@ class DebugScene {
   private halfWidth = 120;
   private drawnHalfWidth = -1;
   private layers: DebugLayers = { skeleton: true, joints: true, targets: true, rings: true };
+  private clothLayers: ClothLayers = defaultClothLayers();
   // Reused across cursor raycasts so screenToWorld allocates nothing per frame.
   private readonly raycaster = new THREE.Raycaster();
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -300,17 +312,43 @@ class DebugScene {
     return this.sharedTuning;
   }
 
+  /** The robe's live-editable tuning (the panel binds to it). */
+  get robe(): RobeTuning {
+    return this.robeTuning;
+  }
+
+  /** The robed figure, once it has been picked at least once. */
+  get robeUnit(): RobeRig | null {
+    return this.robeRig;
+  }
+
   get unitState(): string {
     return this.active.locomotionState;
   }
 
   setUnit(kind: UnitKind): void {
-    const next = kind === 'walker' ? this.walker : this.spider;
+    const next = kind === 'walker' ? this.walker : kind === 'robe' ? this.ensureRobe() : this.spider;
     if (next === this.active) return;
     this.scene.remove(this.active.group);
     this.active = next;
+    this.activeKind = kind;
     this.scene.add(this.active.group);
     this.applyLayers();
+  }
+
+  /** Build the robed figure and its cloth overlay on first use. */
+  private ensureRobe(): RobeRig {
+    if (!this.robeRig) {
+      this.robeRig = new RobeRig({ tuning: this.robeTuning });
+      this.robeOverlay = new ClothDebugOverlay(this.robeRig);
+      this.robeOverlay.setLayers(this.clothLayers);
+    }
+    return this.robeRig;
+  }
+
+  setClothLayers(layers: ClothLayers): void {
+    this.clothLayers = layers;
+    this.robeOverlay?.setLayers(layers);
   }
 
   setZoom(hw: number): void {
@@ -323,7 +361,8 @@ class DebugScene {
   }
 
   private applyLayers(): void {
-    this.overlays.get(this.active)?.setLayers(this.layers);
+    if (this.active instanceof MechRig) this.overlays.get(this.active)?.setLayers(this.layers);
+    else this.robeOverlay?.setLayers(this.clothLayers);
   }
 
   /** Raycast the cursor onto the ground through the top-down (left) viewport. */
@@ -339,8 +378,12 @@ class DebugScene {
     return { x: point.x, y: point.z };
   }
 
-  /** Pose the rig from sim state (`dt` is sim time this frame, so slow-mo slows the rig too). */
-  render(state: CombatState, dt: number): MechDebug {
+  /**
+   * Pose the rig from sim state (`dt` is sim time this frame, so slow-mo slows
+   * the rig -- and the cloth -- too) and return the formatted numeric readout for
+   * whichever unit is active.
+   */
+  render(state: CombatState, dt: number): string {
     const p = state.player;
     const ry = -p.facing;
     this.active.group.position.set(p.position.x, 0, p.position.y);
@@ -356,14 +399,22 @@ class DebugScene {
       this.moveMarker.visible = false;
     }
 
-    const snap = this.active.debugSnapshot();
-    this.overlays.get(this.active)?.update(snap);
+    let readout: string;
+    if (this.active instanceof MechRig) {
+      const snap = this.active.debugSnapshot();
+      this.overlays.get(this.active)?.update(snap);
+      readout = formatMechReadout(snap);
+    } else {
+      const rig = this.robeRig as RobeRig;
+      this.robeOverlay?.update();
+      readout = formatRobeReadout(rig.debugSnapshot());
+    }
 
     this.target.set(p.position.x, 0, p.position.y);
     this.ground.recenter(p.position.x, p.position.y); // keep the floor edgeless
     this.updateCameras(ry);
     this.draw();
-    return snap;
+    return readout;
   }
 
   /** Follow the unit with both cameras; the side cam orbits so forward faces right. */
@@ -390,7 +441,9 @@ class DebugScene {
     // screen-right and height runs up -- the profile view for reading leg swing.
     const latX = Math.sin(ry);
     const latZ = Math.cos(ry);
-    const midY = 30;
+    // Centre the side view on the unit's mass: the humanoid stands far taller
+    // than the mechs, and framing it on their body height cuts its head off.
+    const midY = this.activeKind === 'robe' ? 48 * this.robeTuning.bodyScale : 30;
     this.sideCam.position.set(tx + latX * 1500, midY, tz + latZ * 1500);
     this.sideCam.up.set(0, 1, 0);
     this.sideCam.lookAt(tx, midY, tz);
@@ -426,7 +479,10 @@ function buildDebugControls(opts: {
   onStep: () => void;
   onZoom: (hw: number) => void;
   onLayers: (l: DebugLayers) => void;
-}): { element: HTMLElement; setReadout: (text: string) => void } {
+  onClothLayers: (l: ClothLayers) => void;
+  onClothVisible: (v: boolean) => void;
+  onBodyVisible: (v: boolean) => void;
+}): { element: HTMLElement; setReadout: (text: string) => void; setUnit: (kind: UnitKind) => void } {
   const panel = document.createElement('div');
   panel.style.cssText =
     `${LABEL_CSS}width:280px;max-height:${CANVAS_H}px;overflow-y:auto;padding:10px 12px 12px;box-sizing:border-box;` +
@@ -497,34 +553,81 @@ function buildDebugControls(opts: {
   panel.appendChild(zoomRow);
 
   // --- Layers -------------------------------------------------------------
-  panel.appendChild(heading('Overlays'));
+  // Two independent overlay sets: the mechs' leg diagnostics and the robe's
+  // cloth diagnostics. Only the active unit's set is shown, so the column stays
+  // short and no checkbox toggles something you cannot see.
+  const mechOverlays = document.createElement('div');
+  const clothOverlays = document.createElement('div');
+
+  /** A labelled checkbox row that writes `key` on `flags` and reports the change. */
+  const checkbox = (
+    label: string,
+    tip: string,
+    checked: boolean,
+    onChange: (value: boolean) => void,
+  ): HTMLElement => {
+    const row = document.createElement('label');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;margin:4px 0;cursor:pointer;';
+    row.title = tip;
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = checked;
+    cb.style.accentColor = '#4a7fb0';
+    cb.addEventListener('change', () => onChange(cb.checked));
+    const span = document.createElement('span');
+    span.textContent = label;
+    row.append(cb, span);
+    return row;
+  };
+
+  mechOverlays.appendChild(heading('Overlays'));
   const layers: DebugLayers = { skeleton: true, joints: true, targets: true, rings: true };
   const layerDefs: readonly { key: keyof DebugLayers; label: string; tip: string }[] = [
     { key: 'skeleton', label: 'Leg skeleton', tip: 'The hip → shoulder → knee → foot bone chain per leg.' },
     { key: 'joints', label: 'Joint dots', tip: 'A coloured dot at every joint (hip/shoulder/knee/foot).' },
     { key: 'targets', label: 'Foot targets', tip: 'Where each foot is planted / heading (ground ring) + the drawn foot.' },
-    { key: 'rings', label: 'Rest + trigger', tip: 'Each leg\'s rest spot and its step-trigger radius ring.' },
+    { key: 'rings', label: 'Rest + trigger', tip: "Each leg's rest spot and its step-trigger radius ring." },
   ];
   for (const def of layerDefs) {
-    const row = document.createElement('label');
-    row.style.cssText = 'display:flex;align-items:center;gap:8px;margin:4px 0;cursor:pointer;';
-    row.title = def.tip;
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = true;
-    cb.style.accentColor = '#4a7fb0';
-    cb.addEventListener('change', () => {
-      layers[def.key] = cb.checked;
-      opts.onLayers({ ...layers });
-    });
-    const span = document.createElement('span');
-    span.textContent = def.label;
-    row.append(cb, span);
-    panel.appendChild(row);
+    mechOverlays.appendChild(
+      checkbox(def.label, def.tip, true, (v) => {
+        layers[def.key] = v;
+        opts.onLayers({ ...layers });
+      }),
+    );
   }
 
-  // --- Joint-angle readout ------------------------------------------------
-  panel.appendChild(heading('Joint angles'));
+  clothOverlays.appendChild(heading('Cloth overlays'));
+  const cloth = defaultClothLayers();
+  const clothDefs: readonly { key: keyof ClothLayers; label: string; tip: string }[] = [
+    { key: 'particles', label: 'Particles', tip: 'Every cloth particle: cyan where pinned to a bone, pale where simulated.' },
+    { key: 'links', label: 'Links (strain)', tip: 'Structural and shear constraints, coloured green → yellow → red by how far they are strained toward the Max stretch cap.' },
+    { key: 'bend', label: 'Bend links', tip: 'The second-order constraints that resist folding. Drawn separately because they clutter the mesh.' },
+    { key: 'colliders', label: 'Body capsules', tip: 'The capsules the cloth is pushed out of. If fabric is clipping the body, check these first.' },
+    { key: 'reference', label: 'Reference pose', tip: 'The skinned rest pose the pose-retention spring pulls toward — where the garment would hang if it were rigid.' },
+    { key: 'skeleton', label: 'Bone chain', tip: "The figure's skeleton under the robe." },
+    { key: 'wind', label: 'Wind vector', tip: 'An arrow above the figure showing the current wind direction; its length is the wind strength.' },
+  ];
+  for (const def of clothDefs) {
+    clothOverlays.appendChild(
+      checkbox(def.label, def.tip, cloth[def.key], (v) => {
+        cloth[def.key] = v;
+        opts.onClothLayers({ ...cloth });
+      }),
+    );
+  }
+  clothOverlays.appendChild(
+    checkbox('Draw garments', 'Hide the shaded cloth to see the simulation overlays unobstructed.', true, opts.onClothVisible),
+  );
+  clothOverlays.appendChild(
+    checkbox('Draw figure', 'Hide the solid body under the robe, to check what the garments alone cover.', true, opts.onBodyVisible),
+  );
+
+  panel.append(mechOverlays, clothOverlays);
+
+  // --- Numeric readout ----------------------------------------------------
+  const readoutHeading = heading('Joint angles');
+  panel.appendChild(readoutHeading);
   const readout = document.createElement('pre');
   readout.style.cssText =
     `${MONO_CSS}margin:0;font-size:11px;line-height:1.45;color:#d0d6e6;white-space:pre;` +
@@ -532,7 +635,15 @@ function buildDebugControls(opts: {
   readout.textContent = '—';
   panel.appendChild(readout);
 
-  return { element: panel, setReadout: (t) => (readout.textContent = t) };
+  const setUnit = (kind: UnitKind): void => {
+    const isRobe = kind === 'robe';
+    mechOverlays.style.display = isRobe ? 'none' : 'block';
+    clothOverlays.style.display = isRobe ? 'block' : 'none';
+    readoutHeading.textContent = isRobe ? 'Cloth state' : 'Joint angles';
+  };
+  setUnit('spider');
+
+  return { element: panel, setReadout: (t) => (readout.textContent = t), setUnit };
 }
 
 const LEG_NAMES = ['FL', 'FR', 'BL', 'BR'] as const;
@@ -542,8 +653,8 @@ function deg(v: number): string {
   return `${v >= 0 ? '+' : '-'}${Math.abs(v).toFixed(0).padStart(3, ' ')}`;
 }
 
-/** Render the per-leg angle table + summary line for the readout. */
-function formatReadout(snap: MechDebug): string {
+/** Render the per-leg angle table + summary line for the mech readout. */
+function formatMechReadout(snap: MechDebug): string {
   const rows = [' leg  swing femur knee  tibia  state'];
   snap.legs.forEach((d, i) => {
     const name = (LEG_NAMES[i] ?? '??').padEnd(3, ' ');
@@ -554,6 +665,31 @@ function formatReadout(snap: MechDebug): string {
   });
   rows.push('');
   rows.push(` state: ${snap.state}   yaw-lag: ${deg(snap.bodyYawLagDeg)}°`);
+  return rows.join('\n');
+}
+
+/**
+ * Render the robe's cloth readout: per-piece particle/link counts and the worst
+ * strain in each, then the motion the forces are derived from, the wind, and
+ * what the solve actually cost. The strain column is the one to watch while
+ * tuning -- anything creeping toward the Max stretch setting means the fabric is
+ * being asked for more than the constraint solve can deliver.
+ */
+function formatRobeReadout(snap: RobeDebug): string {
+  const rows = [' piece     parts links  strain'];
+  for (const p of snap.pieces) {
+    rows.push(
+      ` ${p.name.padEnd(8, ' ')} ${String(p.count).padStart(5, ' ')} ${String(p.links).padStart(5, ' ')}  ${p.stretch.toFixed(3)}`,
+    );
+  }
+  rows.push('');
+  rows.push(` gait:   ${snap.gait.padEnd(9, ' ')} stride: ${snap.stridePhase.toFixed(2)}`);
+  rows.push(` speed:  ${snap.speed.toFixed(0).padStart(4, ' ')} u/s     accel: ${deg(snap.accel)}`);
+  rows.push(` turn:   ${snap.turnRate.toFixed(2).padStart(5, ' ')} rad/s  idle:  ${snap.idle.toFixed(2)}`);
+  rows.push(` lift:   ${snap.liftY.toFixed(1).padStart(5, ' ')}        jump:  ${snap.jumpState}`);
+  rows.push(` wind:   ${snap.windSpeed.toFixed(0).padStart(4, ' ')} u/s     dir:   ${deg(snap.windHeadingDeg)}°`);
+  rows.push('');
+  rows.push(` solve:  ${snap.solveMs.toFixed(2)} ms  ·  ${snap.particles} particles, ${snap.links} links`);
   return rows.join('\n');
 }
 
@@ -602,31 +738,45 @@ export function mountDebug(container: HTMLElement): ViewHandle {
   let pendingSteps = 0;
 
   const controls = buildDebugControls({
-    onScale: (s) => (timeScale = s),
-    onStep: () => (pendingSteps += 1),
+    onScale: (s) => {
+      timeScale = s;
+    },
+    onStep: () => {
+      pendingSteps += 1;
+    },
     onZoom: (hw) => scene.setZoom(hw),
     onLayers: (l) => scene.setLayers(l),
+    onClothLayers: (l) => scene.setClothLayers(l),
+    onClothVisible: (v) => scene.robeUnit?.setClothVisible(v),
+    onBodyVisible: (v) => scene.robeUnit?.setBodyVisible(v),
   });
 
   let unit: UnitKind = 'spider';
-  const panel = buildPanel(
-    tuning,
-    () => {
-      Object.assign(tuning, defaultMechTuning());
+  const panel = buildPanel({
+    mech: tuning,
+    robe: scene.robe,
+    onReset: () => {
+      if (unit === 'robe') Object.assign(scene.robe, defaultRobeTuning());
+      else Object.assign(tuning, defaultMechTuning());
       panel.sync();
     },
-    (kind) => {
+    onUnit: (kind) => {
       unit = kind;
       scene.setUnit(kind);
+      controls.setUnit(kind);
     },
-  );
+    onJump: () => scene.robeUnit?.jump(),
+    onDrop: () => scene.robeUnit?.drop(),
+    onGust: () => scene.robeUnit?.gust(),
+    onResettle: () => scene.robeUnit?.resettle(),
+  });
 
   layout.appendChild(controls.element);
   layout.appendChild(panel.element);
 
   const setStatus = (): void => {
     const name = characterAt(state.player.characterIndex).name;
-    const unitName = unit === 'walker' ? 'Mech (grey)' : 'Spider';
+    const unitName = unit === 'walker' ? 'Mech (grey)' : unit === 'robe' ? 'Hooded robe' : 'Spider';
     const t = timeScale === 0 ? 'paused' : `${timeScale}×`;
     status.textContent =
       `Rig debug · Unit: ${unitName} · Archetype: ${name} (C to cycle) · gait: ${scene.unitState} · time: ${t}` +
@@ -660,6 +810,8 @@ export function mountDebug(container: HTMLElement): ViewHandle {
       ...(s.cycleCharacter ? { cycleCharacter: true } : {}),
     };
     state = step(state, combatInput).state;
+    // Cosmetic hop (spec 046): never enters the sim's input frame.
+    if (input.takeJump()) scene.robeUnit?.jump();
     syncCharacter();
   };
 
@@ -689,9 +841,9 @@ export function mountDebug(container: HTMLElement): ViewHandle {
     }
 
     // Feed the rig the sim time that actually elapsed, so slow-mo slows the legs
-    // (and a paused frame poses the rig at dt≈0 -- it holds its last state).
-    const snap = scene.render(state, ticks / TICK_RATE);
-    controls.setReadout(formatReadout(snap));
+    // and the cloth (and a paused frame poses the rig at dt≈0 -- it holds its
+    // last state, which is exactly what makes single-stepping the solver useful).
+    controls.setReadout(scene.render(state, ticks / TICK_RATE));
     setStatus();
     requestAnimationFrame(frame);
   };

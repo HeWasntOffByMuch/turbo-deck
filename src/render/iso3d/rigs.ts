@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import type { Vec2 } from '../../sim/types.js';
 import { PALETTE, enemyColor } from './palette.js';
 import { box, cone, darken, faceted, flatMaterial, makeHeadingArrow } from './meshes.js';
+import { hash01, vnoise } from '../noise.js';
+import { Spring } from '../spring.js';
 
 /**
  * Animated unit rigs for the isometric scene (spec 031). Each rig owns a
@@ -9,6 +11,10 @@ import { box, cone, darken, faceted, flatMaterial, makeHeadingArrow } from './me
  * from how far the unit travelled this frame -- the scene handles world position
  * and facing. Purely cosmetic: nothing here reads or changes sim state.
  */
+
+// Re-exported so existing importers of the rig module keep working; the spring
+// itself now lives in `src/render/spring.ts`, shared with the robe character.
+export { Spring };
 
 const TWO_PI = Math.PI * 2;
 /** Ease a value toward a target by a frame-rate-independent factor. */
@@ -106,61 +112,6 @@ const _shoulder = new THREE.Vector3();
 const _side = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
-
-/**
- * A critically damped spring, in closed form. Given a target each frame it eases
- * `value` toward it while carrying velocity, so body offsets (bob, sway, pitch,
- * roll, height) settle smoothly and never snap. The analytic solution is
- * unconditionally stable for any `dt` -- no sub-stepping, no blow-up at low
- * frame rates -- which matters because the render loop's `dt` is variable. Pure
- * numeric helper (no three.js, no sim state); unit-tested in `rigs-spring.test.ts`.
- */
-export class Spring {
-  private vel = 0;
-  constructor(
-    public value = 0,
-    private freq = 4,
-  ) {}
-
-  /** Retune stiffness (natural frequency in Hz); higher = snappier settling. */
-  setFreq(freq: number): void {
-    this.freq = freq;
-  }
-
-  /** Advance one step of `dt` seconds toward `target`. */
-  track(target: number, dt: number): void {
-    const omega = TWO_PI * this.freq;
-    const c1 = this.value - target;
-    const c2 = this.vel + omega * c1;
-    const e = Math.exp(-omega * dt);
-    this.value = target + (c1 + c2 * dt) * e;
-    this.vel = (c2 - omega * (c1 + c2 * dt)) * e;
-  }
-}
-
-/** Hash a 32-bit integer to a well-mixed value in [0, 1). Deterministic, no state. */
-function hash01(n: number): number {
-  let h = Math.imul(n ^ 0x9e3779b9, 0x85ebca6b);
-  h ^= h >>> 13;
-  h = Math.imul(h, 0xc2b2ae35);
-  h ^= h >>> 16;
-  return (h >>> 0) / 4294967296;
-}
-
-/**
- * Smooth value noise in [0, 1) along `t`, per `seed`. Hashed lattice points with
- * smoothstep interpolation -- a cheap continuous wiggle used for the mech's
- * per-leg micro-motion (step-timing, foot-placement, joint-angle variation), so
- * no two legs move identically and a standing mech is never perfectly still.
- */
-function vnoise(seed: number, t: number): number {
-  const i = Math.floor(t);
-  const f = t - i;
-  const u = f * f * (3 - 2 * f);
-  const a = hash01(seed * 374761393 + i);
-  const b = hash01(seed * 374761393 + i + 1);
-  return a + (b - a) * u;
-}
 
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
