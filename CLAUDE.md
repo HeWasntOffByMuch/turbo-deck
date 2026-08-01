@@ -62,6 +62,24 @@ invariants that will be tested, and explicit out-of-scope notes. Specs are
 numbered in build order; implementation PRs/commits should reference the
 spec they implement.
 
+## Branching
+
+**The default branch is `main`. Branch from it, and merge back into it.**
+
+`master` also exists on the remote and is badly out of date — it is an
+abandoned ref, not a second line of development. Nothing should ever be based
+on it. A fresh clone will not have `main` locally until you fetch, and
+`git branch -a` will happily show you `master` and no `main`, so:
+
+```sh
+git fetch origin
+git rev-parse --verify origin/main   # check the ref directly, not by scanning a list
+git checkout -b <branch> origin/main
+```
+
+This has bitten real work: a feature branch cut from `master` landed 42 commits
+behind, against a flat world that had since become a heightfield.
+
 ## Commit conventions
 
 - Small commits, one system per commit (e.g. "add deck/hand engine", not
