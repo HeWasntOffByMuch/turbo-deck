@@ -1,5 +1,5 @@
 import { orbitToOffset, type Vec3 } from './view-settings.js';
-import { horizonShadow, shadowFillBoost, type HorizonShadow } from './shadow.js';
+import { horizonShadow, shadowFillBoost, terminatorFade, type HorizonShadow } from './shadow.js';
 
 /**
  * The day/night cycle (spec 047): a wall clock in hours, turned into everything
@@ -75,6 +75,36 @@ export const FIXED_DAYLIGHT = {
   ambientIntensity: 1.55,
 } as const;
 
+/**
+ * A colour as three channels in [0, 1], sRGB -- the same space the `0xrrggbb`
+ * literals below are written in, just not rounded to bytes.
+ *
+ * The ramp blends in this rather than in packed hex, and that is the whole
+ * reason the type exists. Rounding each blended channel back to a byte was the
+ * coarsest step in the entire pipeline: at the default 8-minute day the sky
+ * colour only changed every ~0.3 seconds, the ambient fill could hold still for
+ * 95 seconds at a stretch, and every change then arrived as a whole 1/255 step
+ * at once. In floats each of them moves on every frame, by an amount far below
+ * what the retro pass's 12 steps per channel can resolve.
+ *
+ * `scene.ts` applies these with `Color.setRGB(r, g, b, SRGBColorSpace)`, which
+ * is precisely what `setHex` did with the packed form.
+ */
+export interface Rgb {
+  readonly r: number;
+  readonly g: number;
+  readonly b: number;
+}
+
+/** Unpack a `0xrrggbb` literal into channels. */
+export function rgbFromHex(hex: number): Rgb {
+  return {
+    r: ((hex >> 16) & 0xff) / 255,
+    g: ((hex >> 8) & 0xff) / 255,
+    b: (hex & 0xff) / 255,
+  };
+}
+
 /** Everything the scene's global lighting needs for one instant of the clock. */
 export interface SkyState {
   /** The hour this state was sampled at, wrapped into [0, 24). */
@@ -91,13 +121,18 @@ export interface SkyState {
    * effect); by night it is the moon, opposite the sun.
    */
   readonly lightDirection: Vec3;
-  readonly lightColor: number;
+  readonly lightColor: Rgb;
+  /**
+   * Key light level, already faded out across the terminator (spec 047). The
+   * quantity that has to stay continuous is this times
+   * {@link SkyState.lightDirection}, not either on its own.
+   */
   readonly lightIntensity: number;
-  readonly ambientColor: number;
+  readonly ambientColor: Rgb;
   /** Ambient intensity, already including the dusk fill that replaces lost shadow contrast. */
   readonly ambientIntensity: number;
   /** Background/sky colour. */
-  readonly skyColor: number;
+  readonly skyColor: Rgb;
   /** How the sun is allowed to cast at this hour. */
   readonly shadow: HorizonShadow;
 }
@@ -105,10 +140,10 @@ export interface SkyState {
 /** One point on the colour ramp: the sky at a named hour. */
 interface SkyKey {
   readonly hours: number;
-  readonly skyColor: number;
-  readonly lightColor: number;
+  readonly skyColor: Rgb;
+  readonly lightColor: Rgb;
   readonly lightIntensity: number;
-  readonly ambientColor: number;
+  readonly ambientColor: Rgb;
   readonly ambientIntensity: number;
 }
 
@@ -125,17 +160,27 @@ interface SkyKey {
  * sliding along the floor. Night is cool, an order of magnitude down, and
  * carries a relatively strong ambient -- the scene has to stay legible, and
  * with the moon barred from casting (spec 047) the fill is what holds it up.
+ *
+ * Authored as hex because hex is what a palette reads as; unpacked to {@link
+ * Rgb} once, here, because blending bytes is what made the cycle step.
  */
 const SKY_KEYS: readonly SkyKey[] = [
-  { hours: 0, skyColor: 0x0b1226, lightColor: 0x8fa8d8, lightIntensity: 0.3, ambientColor: 0x2a3a5c, ambientIntensity: 0.55 },
-  { hours: 4.5, skyColor: 0x1d2542, lightColor: 0x9fb0d8, lightIntensity: 0.36, ambientColor: 0x3a4468, ambientIntensity: 0.72 },
-  { hours: 6, skyColor: 0xd98a63, lightColor: 0xff9a5a, lightIntensity: 1.1, ambientColor: 0x6a6a90, ambientIntensity: 1.15 },
-  { hours: 7.5, skyColor: 0x9fd0d8, lightColor: 0xffd9a8, lightIntensity: 1.85, ambientColor: 0x8090a0, ambientIntensity: 1.4 },
-  { hours: 12, skyColor: 0x8fd6c8, ...FIXED_DAYLIGHT },
-  { hours: 16.5, skyColor: 0xa8d2c0, lightColor: 0xffdba0, lightIntensity: 2.0, ambientColor: 0x8a90a8, ambientIntensity: 1.5 },
-  { hours: 18.5, skyColor: 0xe08a55, lightColor: 0xff7f45, lightIntensity: 1.15, ambientColor: 0x70648c, ambientIntensity: 1.2 },
-  { hours: 19.8, skyColor: 0x4a3a62, lightColor: 0xb08098, lightIntensity: 0.45, ambientColor: 0x4a4a75, ambientIntensity: 0.85 },
-  { hours: 21, skyColor: 0x0b1226, lightColor: 0x8fa8d8, lightIntensity: 0.3, ambientColor: 0x2a3a5c, ambientIntensity: 0.55 },
+  { hours: 0, skyColor: rgbFromHex(0x0b1226), lightColor: rgbFromHex(0x8fa8d8), lightIntensity: 0.3, ambientColor: rgbFromHex(0x2a3a5c), ambientIntensity: 0.55 },
+  { hours: 4.5, skyColor: rgbFromHex(0x1d2542), lightColor: rgbFromHex(0x9fb0d8), lightIntensity: 0.36, ambientColor: rgbFromHex(0x3a4468), ambientIntensity: 0.72 },
+  { hours: 6, skyColor: rgbFromHex(0xd98a63), lightColor: rgbFromHex(0xff9a5a), lightIntensity: 1.1, ambientColor: rgbFromHex(0x6a6a90), ambientIntensity: 1.15 },
+  { hours: 7.5, skyColor: rgbFromHex(0x9fd0d8), lightColor: rgbFromHex(0xffd9a8), lightIntensity: 1.85, ambientColor: rgbFromHex(0x8090a0), ambientIntensity: 1.4 },
+  {
+    hours: 12,
+    skyColor: rgbFromHex(0x8fd6c8),
+    lightColor: rgbFromHex(FIXED_DAYLIGHT.lightColor),
+    lightIntensity: FIXED_DAYLIGHT.lightIntensity,
+    ambientColor: rgbFromHex(FIXED_DAYLIGHT.ambientColor),
+    ambientIntensity: FIXED_DAYLIGHT.ambientIntensity,
+  },
+  { hours: 16.5, skyColor: rgbFromHex(0xa8d2c0), lightColor: rgbFromHex(0xffdba0), lightIntensity: 2.0, ambientColor: rgbFromHex(0x8a90a8), ambientIntensity: 1.5 },
+  { hours: 18.5, skyColor: rgbFromHex(0xe08a55), lightColor: rgbFromHex(0xff7f45), lightIntensity: 1.15, ambientColor: rgbFromHex(0x70648c), ambientIntensity: 1.2 },
+  { hours: 19.8, skyColor: rgbFromHex(0x4a3a62), lightColor: rgbFromHex(0xb08098), lightIntensity: 0.45, ambientColor: rgbFromHex(0x4a4a75), ambientIntensity: 0.85 },
+  { hours: 21, skyColor: rgbFromHex(0x0b1226), lightColor: rgbFromHex(0x8fa8d8), lightIntensity: 0.3, ambientColor: rgbFromHex(0x2a3a5c), ambientIntensity: 0.55 },
 ];
 
 /** Bring any hour onto the clock face, including negatives. */
@@ -144,16 +189,16 @@ export function wrapHours(hours: number): number {
   return ((hours % 24) + 24) % 24;
 }
 
-/** Blend two packed RGB colours per channel. */
-function lerpHex(a: number, b: number, t: number): number {
-  const r = Math.round(((a >> 16) & 0xff) + (((b >> 16) & 0xff) - ((a >> 16) & 0xff)) * t);
-  const g = Math.round(((a >> 8) & 0xff) + (((b >> 8) & 0xff) - ((a >> 8) & 0xff)) * t);
-  const bl = Math.round((a & 0xff) + ((b & 0xff) - (a & 0xff)) * t);
-  return (r << 16) | (g << 8) | bl;
-}
-
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
+}
+
+/**
+ * Blend two colours per channel. Deliberately not rounded to bytes on the way
+ * out -- see {@link Rgb}; the rounding is what the cycle used to step on.
+ */
+function lerpRgb(a: Rgb, b: Rgb, t: number): Rgb {
+  return { r: lerp(a.r, b.r, t), g: lerp(a.g, b.g, t), b: lerp(a.b, b.b, t) };
 }
 
 /**
@@ -203,6 +248,12 @@ export function sunPosition(hours: number): { readonly elevation: number; readon
  * of the ramp -- because a second `DirectionalLight` would cost a second shadow
  * map for a light that is barred from casting anyway, and the scene never wants
  * both at once.
+ *
+ * That flip is a genuine discontinuity in `lightDirection` and always will be:
+ * the sun and the moon are opposite each other, so there is no way to ease from
+ * one to the other. What is continuous is `lightDirection * lightIntensity`,
+ * because {@link terminatorFade} takes the level to zero at the crossing. The
+ * light turns round while nothing is lit by it.
  */
 export function skyAt(hours: number): SkyState {
   const h = wrapHours(hours);
@@ -228,14 +279,16 @@ export function skyAt(hours: number): SkyState {
     sunAzimuth: sun.azimuth,
     isDay,
     lightDirection,
-    lightColor: lerpHex(from.lightColor, to.lightColor, t),
-    lightIntensity: lerp(from.lightIntensity, to.lightIntensity, t),
-    ambientColor: lerpHex(from.ambientColor, to.ambientColor, t),
+    lightColor: lerpRgb(from.lightColor, to.lightColor, t),
+    // Faded out across the terminator, so the sun/moon direction flip above
+    // lands on a light that is worth nothing at the instant it happens.
+    lightIntensity: lerp(from.lightIntensity, to.lightIntensity, t) * terminatorFade(sun.elevation),
+    ambientColor: lerpRgb(from.ambientColor, to.ambientColor, t),
     // The dusk fill replaces the shadow contrast the horizon effect takes away,
     // so shade lifts toward the lit side as the sun goes down instead of the
     // scene simply going dark with hard bars still in it.
     ambientIntensity: lerp(from.ambientIntensity, to.ambientIntensity, t) + shadowFillBoost(shadow.strength),
-    skyColor: lerpHex(from.skyColor, to.skyColor, t),
+    skyColor: lerpRgb(from.skyColor, to.skyColor, t),
     shadow,
   };
 }
@@ -245,62 +298,18 @@ export function skyAt(hours: number): SkyState {
  * minutes per in-game day. Wraps. Pure -- the caller owns the hour, this only
  * says what it becomes -- so the cycle can be stepped in a test without a
  * timer.
+ *
+ * Called once per rendered frame, with that frame's elapsed time. Being linear
+ * in `dtSeconds` is what makes that frame-rate independent: 30fps and 144fps
+ * reach the same hour after the same real minute, taking different numbers of
+ * proportionally different steps. There is deliberately no tick rate here --
+ * one would only put a floor under how large a step the lighting can take, and
+ * the sky is sampled fresh for whatever hour this returns.
  */
 export function advanceTimeOfDay(hours: number, dtSeconds: number, dayLengthMinutes: number): number {
   const minutes = Math.max(MIN_DAY_LENGTH_MINUTES, dayLengthMinutes);
   if (!Number.isFinite(dtSeconds)) return wrapHours(hours);
   return wrapHours(hours + (dtSeconds / (minutes * 60)) * 24);
-}
-
-/**
- * How much real time one step of the day/night cycle covers. The sky advances
- * in whole ticks of this and never between them.
- *
- * Stepping rather than sliding, for the same reason everything else in this
- * view is stepped: the frame is posterized, dithered and drawn at
- * `image-rendering: pixelated`, and a sky that eases continuously is the one
- * smooth thing in the picture. At 10Hz the colour ramp lands on ~4800 distinct
- * skies across an 8-minute day -- far too fine to see as stepping -- while the
- * sun's direction, the shadow camera and the ambient fill are all recomputed a
- * tenth as often as they were per frame.
- *
- * It also decouples the sky from the frame rate outright. Advancing per frame
- * meant a machine running at 30fps and one at 144 took different-sized steps
- * through the ramp; now both take the same 1/10s ones and simply differ in how
- * many frames show each.
- */
-export const DAY_TICK_SECONDS = 0.1;
-
-/**
- * The cycle's clock: the hour it is showing, plus the real time banked toward
- * the next tick. The carry is the whole reason this is a struct rather than a
- * number -- dropping the remainder each frame would lose most of it at any
- * frame rate faster than 10fps, and the day would crawl.
- */
-export interface DayClock {
-  readonly hours: number;
-  /** Real seconds banked toward the next tick; always less than one tick. */
-  readonly carry: number;
-}
-
-/**
- * Bank `dtSeconds` of real time and emit whatever whole ticks it completes.
- * Pure: the caller owns the clock, this only says what it becomes.
- *
- * A long stall (a backgrounded tab) is applied in one jump rather than looped,
- * so catching up costs the same as any other call.
- */
-export function stepDayClock(clock: DayClock, dtSeconds: number, dayLengthMinutes: number): DayClock {
-  if (!Number.isFinite(dtSeconds) || dtSeconds <= 0) return clock;
-
-  const banked = clock.carry + dtSeconds;
-  const ticks = Math.floor(banked / DAY_TICK_SECONDS);
-  if (ticks <= 0) return { hours: clock.hours, carry: banked };
-
-  return {
-    hours: advanceTimeOfDay(clock.hours, ticks * DAY_TICK_SECONDS, dayLengthMinutes),
-    carry: banked - ticks * DAY_TICK_SECONDS,
-  };
 }
 
 /** An hour as `HH:MM`, for the panel's readout. */

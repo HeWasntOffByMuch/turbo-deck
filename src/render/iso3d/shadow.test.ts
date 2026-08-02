@@ -6,6 +6,7 @@ import {
   shadowFrame,
   shadowFrameStale,
   shadowReach,
+  terminatorFade,
   SHADOW_MAP_SIZE,
 } from './shadow.js';
 import {
@@ -175,6 +176,50 @@ describe('shadowFillBoost (spec 047)', () => {
   it('clamps a strength outside 0..1 instead of over- or under-filling', () => {
     expect(shadowFillBoost(2)).toBe(0);
     expect(shadowFillBoost(-1)).toBe(shadowFillBoost(0));
+  });
+});
+
+describe('terminatorFade (spec 047)', () => {
+  const DEG = Math.PI / 180;
+
+  it('is exactly nothing at the horizon, where the light changes places', () => {
+    // The one value that matters: the scene carries a single directional light,
+    // so at this instant it reverses. Zero here is what makes that invisible.
+    expect(terminatorFade(0)).toBe(0);
+  });
+
+  it('is full well above the horizon, so daylight is untouched', () => {
+    for (const elevation of [10, 20, 40, 59]) {
+      expect(terminatorFade(elevation * DEG)).toBe(1);
+    }
+  });
+
+  it('is already full by the shadow floor, so the longest shadow is a lit one', () => {
+    // The band sits under SHADOW_FLOOR (8 degrees) deliberately: a sun at the
+    // floor throws the longest bounded shadow of the day and must be at full
+    // strength to throw it.
+    expect(terminatorFade(8 * DEG)).toBe(1);
+  });
+
+  it('mirrors below the horizon, so the moon arrives as the sun left', () => {
+    for (const elevation of [1, 3, 5, 12]) {
+      expect(terminatorFade(-elevation * DEG)).toBe(terminatorFade(elevation * DEG));
+    }
+  });
+
+  it('climbs monotonically out of the horizon', () => {
+    let previous = terminatorFade(0);
+    for (let deg = 0.5; deg <= 8; deg += 0.5) {
+      const fade = terminatorFade(deg * DEG);
+      expect(fade).toBeGreaterThanOrEqual(previous);
+      previous = fade;
+    }
+    expect(previous).toBe(1);
+  });
+
+  it('answers a non-finite elevation with darkness rather than a NaN', () => {
+    // A NaN intensity blacks the whole frame out; "no light" is recoverable.
+    expect(terminatorFade(Number.NaN)).toBe(0);
   });
 });
 

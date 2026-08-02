@@ -629,6 +629,11 @@ export class IsoScene {
    * and sky all read off the hour. The direction already carries the horizon
    * effect's elevation clamp, so a sunset lengthens shadows only up to the
    * bound and then stops.
+   *
+   * The clock's colours arrive as unrounded sRGB channels rather than packed
+   * hex (spec 047), so they are applied with `setRGB` and the colour space
+   * named explicitly -- `setHex` assumes sRGB, `setRGB` assumes the working
+   * space, and the two would differ silently otherwise.
    */
   private applyCycleSun(): HorizonShadow {
     const sky = this.controls.sky();
@@ -636,11 +641,11 @@ export class IsoScene {
 
     const d = sky.lightDirection;
     this.sunDirection.set(d.x, d.y, d.z).normalize();
-    this.sun.color.setHex(sky.lightColor);
+    this.sun.color.setRGB(sky.lightColor.r, sky.lightColor.g, sky.lightColor.b, THREE.SRGBColorSpace);
     this.sun.intensity = sky.lightIntensity;
-    this.ambient.color.setHex(sky.ambientColor);
+    this.ambient.color.setRGB(sky.ambientColor.r, sky.ambientColor.g, sky.ambientColor.b, THREE.SRGBColorSpace);
     this.ambient.intensity = sky.ambientIntensity;
-    this.background.setHex(sky.skyColor);
+    this.background.setRGB(sky.skyColor.r, sky.skyColor.g, sky.skyColor.b, THREE.SRGBColorSpace);
     return sky.shadow;
   }
 

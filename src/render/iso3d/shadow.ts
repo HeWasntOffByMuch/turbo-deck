@@ -91,6 +91,25 @@ const SHADOW_FADE_BAND = (15 * Math.PI) / 180;
  */
 const SHADOW_FILL = 0.55;
 
+/**
+ * The band either side of the horizon over which the key light fades out and
+ * back in, radians (spec 047).
+ *
+ * The scene carries *one* directional light, and below the horizon it becomes
+ * the moon -- which is the sun's antipode, so its direction is the opposite
+ * one. That flip is instantaneous and cannot be smoothed: a blend between two
+ * opposite directions passes through nothing. What can be smoothed is how much
+ * the light is worth while it turns round, and at zero it is worth nothing and
+ * the flip is invisible.
+ *
+ * 6 degrees, sized against {@link SHADOW_FLOOR}: the sun reaches its longest
+ * bounded shadow at 8 degrees with the light still at full level, and only then
+ * begins to go. It is also the same thing {@link horizonShadow}'s `strength`
+ * already describes -- the sky taking over from the sun as the dominant source
+ * -- applied to the light rather than to the shade.
+ */
+const TWILIGHT_BAND = (6 * Math.PI) / 180;
+
 /** Smoothstep on [0, 1]: eases in and out rather than ramping linearly. */
 function smoothstep(t: number): number {
   const c = Math.min(1, Math.max(0, t));
@@ -148,6 +167,22 @@ export function shadowReach(height: number, elevation: number): number {
  */
 export function shadowFillBoost(strength: number): number {
   return SHADOW_FILL * (1 - Math.min(1, Math.max(0, strength)));
+}
+
+/**
+ * How much of the key light survives at a given sun elevation, in [0, 1] (spec
+ * 047). 1 above {@link TWILIGHT_BAND}, smoothly 0 at the horizon, and symmetric
+ * below it -- the moon fades in over exactly the band the sun faded out over.
+ *
+ * This is what makes the sun/moon handover invisible. `skyAt` multiplies the
+ * ramp's level by it, so the quantity the scene actually lights with --
+ * direction times intensity -- passes through zero at the terminator instead of
+ * reversing at full strength. Total: a non-finite elevation is answered with
+ * "no light" rather than a NaN that would black the frame out.
+ */
+export function terminatorFade(sunElevation: number): number {
+  if (!Number.isFinite(sunElevation)) return 0;
+  return smoothstep(Math.abs(sunElevation) / TWILIGHT_BAND);
 }
 
 export interface ShadowFrame {

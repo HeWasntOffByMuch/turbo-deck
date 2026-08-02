@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DAY_TICK_SECONDS,
   DEFAULT_DAY_LENGTH_MINUTES,
   DEFAULT_TIME_OF_DAY,
   advanceTimeOfDay,
-  stepDayClock,
   formatClock,
+  rgbFromHex,
   skyAt,
   sunPosition,
   wrapHours,
+  type SkyState,
 } from './daynight.js';
 import { DEFAULT_LIGHT_OFFSET, type Vec3 } from './view-settings.js';
 import { PALETTE } from './palette.js';
@@ -20,6 +20,36 @@ function angleBetween(a: Vec3, b: Vec3): number {
   const dot = a.x * b.x + a.y * b.y + a.z * b.z;
   const mag = Math.hypot(a.x, a.y, a.z) * Math.hypot(b.x, b.y, b.z);
   return Math.acos(Math.min(1, Math.max(-1, dot / mag))) / DEG;
+}
+
+/**
+ * The key light as the scene actually applies it: direction scaled by level.
+ * Neither half is continuous on its own at a terminator -- the direction flips
+ * to the anti-sun, and it is allowed to -- so this is the quantity every
+ * continuity assertion below is written against.
+ */
+function keyLight(hours: number): Vec3 {
+  const sky = skyAt(hours);
+  const d = sky.lightDirection;
+  const len = Math.hypot(d.x, d.y, d.z) || 1;
+  const k = sky.lightIntensity / len;
+  return { x: d.x * k, y: d.y * k, z: d.z * k };
+}
+
+function distance(a: Vec3, b: Vec3): number {
+  return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+/** One frame's worth of clock at 60fps and the default day length, in hours. */
+const FRAME_HOURS = ((1 / 60) / (DEFAULT_DAY_LENGTH_MINUTES * 60)) * 24;
+
+/** Every colour channel and level in a sky, flattened for a per-frame sweep. */
+function channels(sky: SkyState): readonly number[] {
+  return [
+    sky.skyColor.r, sky.skyColor.g, sky.skyColor.b,
+    sky.lightColor.r, sky.lightColor.g, sky.lightColor.b,
+    sky.ambientColor.r, sky.ambientColor.g, sky.ambientColor.b,
+  ];
 }
 
 describe('sunPosition (spec 047)', () => {
@@ -63,10 +93,11 @@ describe('skyAt: continuity with the tuned daylight (spec 045)', () => {
 
   it('keeps the noon keyframe identical to what the scene shipped with', () => {
     const noon = skyAt(12);
-    expect(noon.skyColor).toBe(PALETTE.sky);
-    expect(noon.lightColor).toBe(0xfff4e0);
+    expect(noon.skyColor).toEqual(rgbFromHex(PALETTE.sky));
+    expect(noon.lightColor).toEqual(rgbFromHex(0xfff4e0));
+    // The sun is far above the twilight band at noon, so it is at full level.
     expect(noon.lightIntensity).toBeCloseTo(2.1, 9);
-    expect(noon.ambientColor).toBe(0x8090a0);
+    expect(noon.ambientColor).toEqual(rgbFromHex(0x8090a0));
     // The sun is high at noon, so the horizon effect adds no fill at all.
     expect(noon.ambientIntensity).toBeCloseTo(1.55, 9);
   });
@@ -99,15 +130,72 @@ describe('skyAt: the shape of a day', () => {
     const after = skyAt(0.01);
     expect(Math.abs(before.lightIntensity - after.lightIntensity)).toBeLessThan(0.05);
     expect(Math.abs(before.ambientIntensity - after.ambientIntensity)).toBeLessThan(0.05);
-    expect(before.skyColor).toBe(after.skyColor);
+    // Close, not identical: the ramp blends in floats now, so two minutes
+    // either side of midnight land two minutes apart rather than on the same
+    // rounded byte.
+    expect(Math.abs(before.skyColor.r - after.skyColor.r)).toBeLessThan(0.01);
+    expect(Math.abs(before.skyColor.g - after.skyColor.g)).toBeLessThan(0.01);
+    expect(Math.abs(before.skyColor.b - after.skyColor.b)).toBeLessThan(0.01);
   });
 
   it('is continuous through every hour, with no jump between ramp keys', () => {
+    // A coarse sweep, three minutes of clock at a time, which is what catches a
+    // ramp key wired up wrong. The tolerance is set by the twilight fade -- the
+    // fastest thing in the day by design, peaking at 0.29 around 17:48 as the
+    // sun hands over -- and nowhere else comes close. Continuity at the
+    // resolution anyone actually sees is asserted a frame at a time below.
     let previous = skyAt(0);
     for (let h = 0.05; h < 24; h += 0.05) {
       const sky = skyAt(h);
-      expect(Math.abs(sky.lightIntensity - previous.lightIntensity)).toBeLessThan(0.15);
+      expect(Math.abs(sky.lightIntensity - previous.lightIntensity)).toBeLessThan(0.35);
       expect(Math.abs(sky.ambientIntensity - previous.ambientIntensity)).toBeLessThan(0.15);
+      previous = sky;
+    }
+  });
+
+  it('never steps visibly between two frames, anywhere in the day', () => {
+    // The property the whole cycle exists to have, stated at the resolution it
+    // is actually watched at: one 60fps frame of an 8-minute day. The retro
+    // pass resolves 12 steps per channel, so 1/12 is the coarsest a channel
+    // could move and still be invisible; nothing here comes near it.
+    let previous = skyAt(0);
+    let worstChannel = 0;
+    let worstLevel = 0;
+    let worstKey = 0;
+    for (let h = FRAME_HOURS; h < 24; h += FRAME_HOURS) {
+      const sky = skyAt(h);
+      const before = channels(previous);
+      const after = channels(sky);
+      for (let i = 0; i < after.length; i++) {
+        worstChannel = Math.max(worstChannel, Math.abs((after[i] as number) - (before[i] as number)));
+      }
+      worstLevel = Math.max(
+        worstLevel,
+        Math.abs(sky.lightIntensity - previous.lightIntensity),
+        Math.abs(sky.ambientIntensity - previous.ambientIntensity),
+      );
+      worstKey = Math.max(worstKey, distance(keyLight(h), keyLight(h - FRAME_HOURS)));
+      previous = sky;
+    }
+    expect(worstChannel).toBeLessThan(1 / 12 / 10);
+    expect(worstLevel).toBeLessThan(0.01);
+    // Noon's key light is 2.1, so this is well under a percent of it.
+    expect(worstKey).toBeLessThan(0.02);
+  });
+
+  it('moves every colour on every frame instead of holding and jumping', () => {
+    // The regression this guards: blending the ramp in packed bytes rounded
+    // each channel back to 1/255, so the sky held still for ~0.3s at a time and
+    // the ambient fill for as long as 95s before moving as a whole step. Over a
+    // minute of dusk -- the fastest stretch of the ramp -- nothing may repeat.
+    let hours = 17;
+    let previous = skyAt(hours);
+    for (let frame = 0; frame < 60 * 60; frame++) {
+      hours += FRAME_HOURS;
+      const sky = skyAt(hours);
+      expect(sky.skyColor).not.toEqual(previous.skyColor);
+      expect(sky.lightColor).not.toEqual(previous.lightColor);
+      expect(sky.ambientColor).not.toEqual(previous.ambientColor);
       previous = sky;
     }
   });
@@ -196,83 +284,55 @@ describe('advanceTimeOfDay', () => {
   });
 });
 
-describe('stepDayClock: the 1/10s tick', () => {
-  it('does not move at all until a whole tick has been banked', () => {
-    // A 60fps frame is well under a tick, so most frames must change nothing.
-    const start = { hours: 12, carry: 0 };
-    const frame = stepDayClock(start, 1 / 60, 8);
-    expect(frame.hours).toBe(12);
-    expect(frame.carry).toBeCloseTo(1 / 60, 9);
-  });
-
-  it('moves exactly once a tick completes, and banks the remainder', () => {
-    const stepped = stepDayClock({ hours: 12, carry: 0.09 }, 1 / 60, 8);
-    expect(stepped.hours).not.toBe(12);
-    expect(stepped.carry).toBeCloseTo(0.09 + 1 / 60 - DAY_TICK_SECONDS, 9);
-    expect(stepped.carry).toBeLessThan(DAY_TICK_SECONDS);
-  });
-
-  it('never banks a whole tick without spending it', () => {
-    let clock = { hours: 0, carry: 0 };
-    for (let i = 0; i < 3000; i++) {
-      clock = stepDayClock(clock, 1 / 60, 8);
-      expect(clock.carry).toBeGreaterThanOrEqual(0);
-      expect(clock.carry).toBeLessThan(DAY_TICK_SECONDS);
+describe('skyAt: the terminator (spec 047)', () => {
+  it('carries no light at the instant the sun and moon change places', () => {
+    // The direction genuinely reverses here. It is only allowed to because
+    // there is nothing lit by it at that moment.
+    for (const h of [6, 18]) {
+      expect(skyAt(h).lightIntensity).toBeCloseTo(0, 9);
     }
   });
 
-  it('keeps the same pace at any frame rate, which is the point of the carry', () => {
-    // Dropping the sub-tick remainder each frame would lose most of it above
-    // 10fps and the day would crawl on a fast machine. These must agree.
-    const run = (fps: number, seconds: number): number => {
-      let clock = { hours: 6, carry: 0 };
-      for (let i = 0; i < fps * seconds; i++) clock = stepDayClock(clock, 1 / fps, 8);
-      return clock.hours;
-    };
-    const at30 = run(30, 60);
-    const at144 = run(144, 60);
-    expect(at144).toBeCloseTo(at30, 6);
-    // ...and both match the continuous answer over a whole number of ticks.
-    expect(at30).toBeCloseTo(advanceTimeOfDay(6, 60, 8), 6);
-  });
-
-  it('completes a full day in the day length, tick by tick', () => {
-    let clock = { hours: 0, carry: 0 };
-    const frames = 8 * 60 * 60; // an 8-minute day at 60fps
-    for (let i = 0; i < frames; i++) clock = stepDayClock(clock, 1 / 60, 8);
-    // Measured across the wrap, since a full day lands either side of midnight.
-    // Not asserted exact: 28800 floating-point additions of 1/60 drift enough
-    // to leave the last tick of 4800 unspent, which is 0.02% of a day.
-    expect(Math.min(clock.hours, 24 - clock.hours)).toBeLessThan(0.02);
-  });
-
-  it('applies a long stall in one jump rather than crawling through it', () => {
-    // A backgrounded tab hands back a huge dt; catching up must cost the same
-    // as any other call, and land where the continuous clock would.
-    const stalled = stepDayClock({ hours: 6, carry: 0 }, 240, 8);
-    expect(stalled.hours).toBeCloseTo(advanceTimeOfDay(6, 240, 8), 6);
-  });
-
-  it('quantizes: every reachable hour sits on a tick boundary', () => {
-    let clock = { hours: 0, carry: 0 };
-    const perTick = (DAY_TICK_SECONDS / (8 * 60)) * 24;
-    for (let i = 0; i < 200; i++) {
-      clock = stepDayClock(clock, 1 / 60, 8);
-      expect(Math.abs(clock.hours / perTick - Math.round(clock.hours / perTick))).toBeLessThan(1e-6);
+  it('does not jump the key light across sunset, which is the bug this fixes', () => {
+    // Before the fade, 17:59 lit from (0.99, 0.14, 0.07) at level 1.36 and
+    // 18:01 lit from (-1.00, 0.00, -0.09) at the same level: a 172 degree flip
+    // of a light at two thirds of noon's strength, in one frame, every dusk.
+    for (const terminator of [6, 18]) {
+      let worst = 0;
+      for (let h = terminator - 1; h < terminator + 1; h += FRAME_HOURS) {
+        worst = Math.max(worst, distance(keyLight(h), keyLight(h + FRAME_HOURS)));
+      }
+      expect(worst).toBeLessThan(0.02);
     }
   });
 
-  it('holds still for a non-finite or non-positive frame time', () => {
-    const clock = { hours: 9, carry: 0.04 };
-    expect(stepDayClock(clock, Number.NaN, 8)).toEqual(clock);
-    expect(stepDayClock(clock, 0, 8)).toEqual(clock);
-    expect(stepDayClock(clock, -1, 8)).toEqual(clock);
+  it('still lights the scene either side of the handover', () => {
+    // The fade is a handover, not an hour of darkness: half an hour of clock
+    // out from the terminator the key light is back to a working level.
+    for (const h of [5, 7, 17, 19]) {
+      expect(skyAt(h).lightIntensity).toBeGreaterThan(0.4);
+    }
   });
 
-  it('is pure', () => {
-    const clock = { hours: 3, carry: 0.05 };
-    expect(stepDayClock(clock, 0.06, 8)).toEqual(stepDayClock(clock, 0.06, 8));
-    expect(clock).toEqual({ hours: 3, carry: 0.05 });
+  it('leaves the sun at full strength while it still casts its longest shadow', () => {
+    // The twilight band is sized under the 8 degree shadow floor on purpose:
+    // the longest bounded shadow of the day is thrown by a sun at full level,
+    // and only then does the light start to go.
+    const stillHigh = [8, 10, 12, 14, 16].map((h) => skyAt(h).lightIntensity);
+    for (const level of stillHigh) expect(level).toBeGreaterThan(1.5);
+  });
+
+  it('climbs away from zero on both sides of the crossing', () => {
+    // Monotone out of the terminator in each direction, so the handover reads
+    // as one light turning over rather than a flicker.
+    for (const direction of [-1, 1]) {
+      let previous = skyAt(18);
+      for (let delta = 0.05; delta <= 0.4; delta += 0.05) {
+        const sky = skyAt(18 + direction * delta);
+        expect(sky.lightIntensity).toBeGreaterThan(previous.lightIntensity);
+        previous = sky;
+      }
+    }
   });
 });
 
