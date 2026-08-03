@@ -42,23 +42,14 @@ Pure, three.js-free and DOM-free, so the whole cycle is asserted headlessly:
 ```ts
 export function skyAt(hours: number): SkyState;
 export function advanceTimeOfDay(hours: number, dt: number, dayLengthMinutes: number): number;
-export function stepDayClock(clock: DayClock, dt: number, dayLengthMinutes: number): DayClock;
 ```
 
-**The clock ticks at 10Hz, it does not slide.** `DAY_TICK_SECONDS` is 0.1, and
-the sky only ever advances in whole ticks of it. Stepping rather than easing is
-in register with the rest of this view — the frame is posterized, dithered and
-drawn at `image-rendering: pixelated`, so a continuously sliding sky would be
-the one smooth thing in the picture — and it takes the sun's direction, the
-shadow camera and the ambient fill off the per-frame path. At 10Hz an
-8-minute day still passes through ~4800 distinct skies, which is far too fine
-to read as stepping.
-
-It also decouples the cycle from the frame rate outright: advancing per frame
-meant 30fps and 144fps machines took different-sized steps through the ramp.
-`DayClock` therefore carries a `carry` — the real time banked toward the next
-tick — because dropping the sub-tick remainder each frame would discard most of
-it at any rate above 10fps and the day would visibly crawl on a fast machine.
+**The clock slides; it is sampled once per rendered frame.** `advanceTimeOfDay`
+is linear in `dt`, so advancing it per frame is already frame-rate independent —
+30fps and 144fps reach the same hour after the same real minute — and every
+field of the sky is then recomputed for that hour. There is no tick rate and
+nothing is held between frames: a quantized clock buys nothing here and only
+sets a floor on how large a step the lighting can take.
 
 `hours` is a wall clock in `[0, 24)`. `SkyState` carries the key light's
 direction, colour and intensity, the ambient fill's colour and intensity, the
@@ -86,10 +77,45 @@ the moon: direction flips to the anti-sun (elevation `-sunElevation`, azimuth
 `DirectionalLight` would cost a second shadow map for a light that is not
 allowed to cast anyway (see below), and the scene never wants both at once.
 
+**...which means the handover has to be invisible, and that is what
+`terminatorFade` is for.** Sun and moon are antipodal, so at the instant the
+sun's elevation crosses zero the key light's direction flips by ~180° — the lit
+flank of every object in the scene swaps sides in a single frame. That flip is
+inherent to carrying one light and cannot be interpolated away: the two
+directions are opposite, so a blend between them passes through nothing.
+
+The fix is to make the light contribute nothing at the moment it turns round:
+
+```ts
+export function terminatorFade(sunElevation: number): number;  // smoothstep(|elevation| / TWILIGHT_BAND)
+```
+
+`lightIntensity` is multiplied by it, so the key light fades out over the last
+`TWILIGHT_BAND` (6°) before the horizon, is exactly 0 at the crossing, and fades
+back in as the moon over the first 6° below. What is continuous — and what the
+tests assert — is not the direction but `direction × intensity`, the vector the
+scene actually lights with.
+
+6° is chosen against `SHADOW_FLOOR` (8°, below): the sun still reaches its
+longest bounded shadow at full strength, and only then starts to go. Dusk
+losing its directional light is also the same thing `strength` already says is
+happening — the sky taking over as the dominant source — so this and the
+ambient fill below are two halves of one effect.
+
 **Colours come from a keyframe ramp** over the clock — night, pre-dawn,
 sunrise, morning, noon, golden hour, sunset, dusk, night — interpolated per
 channel and wrapping at midnight. The noon keyframe is `PALETTE.sky` and the
 existing sun/ambient values exactly, so the ramp is a superset of what ships.
+
+**The ramp interpolates in floats, not in packed 8-bit hex.** The keyframes are
+authored as `0xrrggbb` because that is readable, but they are unpacked to an
+`Rgb` of three `[0, 1]` channels and blended there; `SkyState` carries `Rgb` and
+the scene applies it with `Color.setRGB(r, g, b, SRGBColorSpace)`, which is
+exactly what `setHex` did. Rounding each blended channel back to a byte
+quantized the whole cycle: at the default 8-minute day the sky colour changed
+only every ~0.3s, the ambient fill held still for up to 95s at a stretch, and
+each change then arrived as a whole 1/255 step at once. It is the coarsest
+thing in the pipeline and the reason the cycle read as stepping.
 
 ### The horizon effect (`shadow.ts`)
 
@@ -239,14 +265,23 @@ string-valued choice widget is added beside the numeric one.
 - Night is dimmer than day at every keyframe; the key light is the anti-sun at
   night and the sun by day.
 - `advanceTimeOfDay` wraps at 24, is linear in `dt`, and completes exactly one
-  day per `dayLengthMinutes`.
-- `stepDayClock` does not move at all until a whole tick is banked, never holds
-  a whole unspent tick, and lands every reachable hour on a tick boundary.
-- `stepDayClock` reaches the same hour after a minute of 30fps frames as after
-  a minute of 144fps ones — the invariant the `carry` exists for — and both
-  agree with the continuous `advanceTimeOfDay` over a whole number of ticks.
-- A long stall (a backgrounded tab handing back a huge `dt`) is applied in one
-  jump rather than looped.
+  day per `dayLengthMinutes`; a minute of 30fps frames and a minute of 144fps
+  ones reach the same hour.
+- **The key light's contribution — `lightDirection × lightIntensity` — is
+  continuous across both terminators.** This is the spec's second headline
+  assertion, and the one that pins the sunset: sampled a frame apart at the
+  default day length, it never steps by more than a small fraction of noon's
+  level, at 06:00 and 18:00 as anywhere else. Asserting the *direction* is
+  continuous would be wrong — it genuinely flips, and is allowed to, precisely
+  because nothing is lit by it at that instant.
+- `terminatorFade` is 0 at the horizon, 1 above the band, symmetric about the
+  horizon (the moon fades in as the sun faded out), and total for a non-finite
+  elevation.
+- **Nothing in the sky steps visibly between two frames.** Swept a frame apart
+  across a whole day at the default day length, every colour channel, both
+  intensities and the light direction change by an amount far below what the
+  12-step posterize can resolve — and every one of them changes on *every*
+  frame rather than holding and jumping.
 - `horizonShadow` never lets the cast elevation fall below the floor, so the
   shadow reach implied by any sun elevation — including 0 and negative — is
   **finite and bounded** by `1 / tan(floor)`. This is the spec's headline
