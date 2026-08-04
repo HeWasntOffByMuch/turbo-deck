@@ -164,12 +164,29 @@ function loftHull(
   smooth: number,
 ): THREE.BufferGeometry {
   if (declared.length < 2) throw new Error('a hull needs at least two rings');
-  const rings = subdivideRings(declared, smooth);
+  // Normalise to ascending `along` before anything else. A species is free to
+  // write a limb's rings from the joint downward (which reads better next to the
+  // bone it hangs off) and a torso's from the belly upward, and the two orders
+  // wind their triangles opposite ways -- so one of them would come out
+  // inside-out and be culled. Ordering here means the winding below is stated
+  // once and is always right.
+  const ordered =
+    (declared[declared.length - 1] as HullRing).along < (declared[0] as HullRing).along
+      ? [...declared].reverse()
+      : declared;
+  const rings = subdivideRings(ordered, smooth);
   const verts: number[] = [];
+
+  // Which way round the ring is swept. `(x, z, y)` and `(y, z, x)` have opposite
+  // handedness, so an identical sweep winds a y loft and an x loft opposite ways
+  // -- one of the two comes out inside-out. Reversing the sweep for the x loft
+  // keeps the single winding rule below correct for both, and an ellipse swept
+  // backwards is the same ellipse.
+  const spin = axis === 'y' ? 1 : -1;
 
   /** A point on `ring` at angle `t` (0..1 around it), in part-local space. */
   const at = (ring: HullRing, t: number): [number, number, number] => {
-    const a = t * Math.PI * 2;
+    const a = spin * t * Math.PI * 2;
     const u = (ring.dx ?? 0) + Math.cos(a) * ring.rx;
     const v = (ring.dz ?? 0) + Math.sin(a) * ring.rz;
     // For a y loft, the ring lies in the xz plane; for an x loft, in the yz.
@@ -211,8 +228,11 @@ function loftHull(
       const b = at(lo, t1);
       const c = at(hi, t1);
       const d = at(hi, t0);
-      tri(a, b, c);
-      tri(a, c, d);
+      // Wound so the normal points *away* from the axis. Get this backwards and
+      // the whole body is inside-out: three.js culls front faces by default, so
+      // the near surface vanishes and you see the inside of the far one.
+      tri(a, c, b);
+      tri(a, d, c);
       face += 1;
     }
   }
@@ -226,9 +246,11 @@ function loftHull(
   for (let s = 0; s < sides; s++) {
     const t0 = s / sides;
     const t1 = (s + 1) / sides;
-    tri(firstCentre, at(first, t1), at(first, t0));
+    // Caps face outward along the axis: the first away from +along, the last
+    // toward it.
+    tri(firstCentre, at(first, t0), at(first, t1));
     face += 1;
-    tri(lastCentre, at(last, t0), at(last, t1));
+    tri(lastCentre, at(last, t1), at(last, t0));
     face += 1;
   }
 

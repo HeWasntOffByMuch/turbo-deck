@@ -153,8 +153,12 @@ function render(tris: readonly Tri[], size: number): Uint8ClampedArray {
     e1.subVectors(t.b, t.a);
     e2.subVectors(t.c, t.a);
     normal.crossVectors(e1, e2).normalize();
-    // Face whichever way the camera sees, so back faces are not black.
-    if (normal.dot(forward) > 0) normal.negate();
+    // Cull back faces, exactly as `MeshLambertMaterial`'s default `FrontSide`
+    // does. This preview used to flip every normal toward the camera instead,
+    // which is a friendlier picture and a *worse* preview: it drew inside-out
+    // geometry as though it were fine, and hid a torso whose front the real
+    // renderer was culling away entirely.
+    if (normal.dot(forward) > 0) continue;
     const lambert = AMBIENT + (1 - AMBIENT) * Math.max(0, normal.dot(LIGHT));
     // `THREE.Color` holds linear-sRGB, so light it in linear and encode once at
     // the end -- writing its channels straight out darkens and over-saturates
