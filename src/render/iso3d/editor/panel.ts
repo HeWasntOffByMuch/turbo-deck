@@ -99,6 +99,9 @@ export interface EditorPanelOptions {
   readonly onNavChange: () => void;
   /** The walk limit moved, so the whole layer needs re-baking. */
   readonly onNavRebake: () => void;
+  readonly onSave: () => void;
+  readonly onLoad: () => void;
+  readonly onDiscardAutosave: () => void;
 }
 
 export interface EditorPanel {
@@ -145,6 +148,11 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
 
   const edit = gui.addFolder('Edit');
   edit.add({ undo: opts.onUndo }, 'undo').name('Undo (Ctrl+Z)');
+
+  const file = gui.addFolder('File');
+  file.add({ save: opts.onSave }, 'save').name('Save to file');
+  file.add({ load: opts.onLoad }, 'load').name('Load file (or drop one)');
+  file.add({ discard: opts.onDiscardAutosave }, 'discard').name('Discard autosave');
 
   return {
     element: gui.domElement,

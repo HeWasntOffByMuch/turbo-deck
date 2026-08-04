@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { arenaBounds, type LoadedMap, type MapDocument } from '../../../terrain/index.js';
+import { arenaBounds, loadMap, parseMap, type LoadedMap, type MapDocument } from '../../../terrain/index.js';
 import { PLAY_HEIGHT, PLAY_WIDTH } from '../../../shared/world.js';
 import type { ViewHandle } from '../movement.js';
 import { PALETTE } from '../palette.js';
@@ -24,6 +24,15 @@ import { createArenaOutline, createMarkerView } from './marker-view.js';
 import { eraseMarkers, placeMarker } from './markers.js';
 import { bakeLayerNav, rebakeNav } from './nav.js';
 import { createNavView } from './nav-view.js';
+import {
+  AUTOSAVE_INTERVAL_MS,
+  clearAutosave,
+  mapFilename,
+  mapText,
+  readAutosave,
+  RevisionTracker,
+  writeAutosave,
+} from './persistence.js';
 import { bakeEditorMap } from './map-source.js';
 import { buildEditorPanel, createEditorSettings, cursorColor } from './panel.js';
 import { eraseStroke, scatterStroke, terrainNormalAt } from './scatter.js';
@@ -67,7 +76,7 @@ class EditorScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
-  private readonly terrainMesh: TerrainMeshHandle;
+  private terrainMesh: TerrainMeshHandle;
   private propField: PropFieldHandle;
   private renderW = 0;
   private renderH = 0;
@@ -80,13 +89,14 @@ class EditorScene {
   private readonly hits: THREE.Intersection[] = [];
 
   /** The loaded document everything in this scene was built from. */
-  readonly map: LoadedMap;
-  readonly document: MapDocument;
+  map: LoadedMap;
+  document: MapDocument;
   camera3: EditorCameraState;
 
   constructor(
     readonly canvas: HTMLCanvasElement,
     seed: number,
+    opened?: { document: MapDocument; map: LoadedMap },
   ) {
     canvas.style.width = '100%';
     canvas.style.height = '100%';
@@ -98,8 +108,10 @@ class EditorScene {
     this.renderer.setPixelRatio(Math.min(2, globalThis.devicePixelRatio || 1));
     this.scene.background = new THREE.Color(PALETTE.sky);
 
-    // Bake the generated world, then forget it. Everything below reads `map`.
-    const baked = bakeEditorMap(seed);
+    // Bake the generated world unless a document was handed in -- a restored
+    // autosave, or a file dropped before the first frame. Everything below
+    // reads `map` either way.
+    const baked = opened ?? bakeEditorMap(seed);
     this.document = baked.document;
     this.map = baked.map;
 
@@ -157,6 +169,25 @@ class EditorScene {
    * and unnoticeable once per mouse-up.
    */
   refreshProps(): void {
+    this.scene.remove(this.propField.group);
+    this.propField.dispose();
+    this.propField = this.buildProps();
+  }
+
+  /**
+   * Swap in a different map: a loaded file, or a restored autosave.
+   *
+   * Everything derived is rebuilt, because everything derived belongs to the map
+   * that produced it -- a terrain mesh from one document over a store from
+   * another is not a state worth having a name for.
+   */
+  replaceMap(document: MapDocument): void {
+    this.document = document;
+    this.map = loadMap(document);
+    this.scene.remove(this.terrainMesh.group);
+    this.terrainMesh.dispose();
+    this.terrainMesh = buildTerrainMeshFromChunks(this.map.meshLayers, this.map.chunks);
+    this.scene.add(this.terrainMesh.group);
     this.scene.remove(this.propField.group);
     this.propField.dispose();
     this.propField = this.buildProps();
@@ -276,7 +307,26 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   root.append(canvas, help, readout, panelHost);
   container.appendChild(root);
 
-  const scene = new EditorScene(canvas, viewSeed());
+  // A refresh must not lose work, so an autosave that still parses is restored
+  // rather than offered. The panel's "Discard autosave" button is how you get a
+  // fresh generated world back, which is one click rather than a trip through
+  // devtools.
+  const storage: Storage | null = (() => {
+    try {
+      return globalThis.localStorage ?? null;
+    } catch {
+      // Some browsers throw on the *property* when storage is disabled.
+      return null;
+    }
+  })();
+  const restored = storage ? readAutosave(storage) : null;
+  const scene = new EditorScene(
+    canvas,
+    viewSeed(),
+    restored ? { document: restored, map: loadMap(restored) } : undefined,
+  );
+  const revision = new RevisionTracker();
+  let status = restored ? 'restored autosave' : '';
   const input = new EditorInputCapture(canvas);
   const history = new EditHistory();
   const settings = createEditorSettings();
@@ -331,6 +381,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   const undo = (): void => {
     const restored = history.undo(scene.map.store);
     if (restored.length === 0) return;
+    revision.touch();
     for (const c of restored) scene.rebuildChunk(c.layerId, c.cx, c.cz);
     // Nav describes the ground, so undoing the ground has to undo nav with it.
     rebakeNav(scene.map.store, layerId, restored, settings.walkSlope);
@@ -340,9 +391,94 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     refreshNav();
   };
 
+  /** Everything derived from the map, rebuilt after a load or a restore. */
+  const rebuildAll = (): void => {
+    bakeLayerNav(scene.map.store, layerId, settings.walkSlope);
+    scene.refreshProps();
+    refreshMarkers();
+    refreshNav();
+  };
+
+  const saveToFile = (): void => {
+    const text = mapText(scene.map.store.toDocument());
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = mapFilename(scene.document);
+    // In the document rather than detached: some browsers ignore a click on an
+    // anchor that was never in the tree.
+    anchor.style.display = 'none';
+    root.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    status = `saved ${anchor.download}`;
+  };
+
+  /**
+   * Take a document from a file or a slot. A parse failure changes nothing at
+   * all -- the whole-document parse is what makes a half-loaded map impossible.
+   */
+  const openText = (text: string, from: string): void => {
+    let doc;
+    try {
+      doc = parseMap(text);
+    } catch (error) {
+      status = `${from} rejected: ${error instanceof Error ? error.message : String(error)}`;
+      return;
+    }
+    scene.replaceMap(doc);
+    // History belongs to the map that produced it: one Ctrl+Z restoring a chunk
+    // from a map that is no longer open is the one genuinely corrupt state here.
+    history.clear();
+    rebuildAll();
+    revision.reset();
+    status = `loaded ${from}`;
+  };
+
+  const openFile = (file: File): void => {
+    file
+      .text()
+      .then((text) => openText(text, file.name))
+      .catch((error: unknown) => {
+        status = `could not read ${file.name}: ${error instanceof Error ? error.message : String(error)}`;
+      });
+  };
+
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = 'application/json,.json';
+  fileInput.style.display = 'none';
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files?.[0];
+    if (file) openFile(file);
+    // Cleared so re-opening the same file fires `change` again.
+    fileInput.value = '';
+  });
+  root.appendChild(fileInput);
+
+  // Drag-and-drop anywhere on the view, since that is the other habit.
+  const onDragOver = (e: DragEvent): void => {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  };
+  const onDrop = (e: DragEvent): void => {
+    e.preventDefault();
+    const file = e.dataTransfer?.files?.[0];
+    if (file) openFile(file);
+  };
+  root.addEventListener('dragover', onDragOver);
+  root.addEventListener('drop', onDrop);
+
   const panel = buildEditorPanel({
     settings,
     onUndo: undo,
+    onSave: saveToFile,
+    onLoad: () => fileInput.click(),
+    onDiscardAutosave: () => {
+      if (storage) clearAutosave(storage);
+      status = 'autosave cleared -- reload for a fresh world';
+    },
     onArmChange: () => {
       cursor.setColor(cursorColor(settings));
       arenaOutline.object.visible = settings.showArena;
@@ -395,6 +531,22 @@ export function mountEditor(container: HTMLElement): ViewHandle {
 
   let running = false;
   let lastFrame: number | undefined;
+  let lastAutosaveAt = 0;
+
+  const autosave = (time: number): void => {
+    if (!storage || time - lastAutosaveAt < AUTOSAVE_INTERVAL_MS) return;
+    lastAutosaveAt = time;
+    // An idle editor writes nothing: the slot is not rewritten a hundred times
+    // while someone reads the panel.
+    if (!revision.isDirty) return;
+    const result = writeAutosave(storage, mapText(scene.map.store.toDocument()));
+    if (result.ok) {
+      revision.markSaved();
+      status = 'autosaved';
+    } else {
+      status = `autosave failed: ${result.reason ?? 'unknown'}`;
+    }
+  };
 
   const frame = (time: number): void => {
     if (!running) return;
@@ -501,10 +653,13 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       // overlay never describes ground that has since moved.
       if (strokeMovedGround) rebakeNav(scene.map.store, layerId, strokeDirty, settings.walkSlope);
       if (strokeMovedGround || strokeChangedProps) refreshNav();
+      if (strokeMovedGround || strokeChangedProps || strokeChangedMarkers) revision.touch();
       strokeMovedGround = false;
       strokeChangedProps = false;
       strokeChangedMarkers = false;
     }
+
+    autosave(time);
 
     canvas.style.cursor = input.isOrbiting ? 'grabbing' : input.isPainting ? 'crosshair' : 'default';
     scene.render();
@@ -516,7 +671,8 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       `pitch <b>${Math.round((c.elevation * 180) / Math.PI)}&deg;</b><br>` +
       `<span style="color:#7a7a90;">${chunks} chunks &middot; ` +
       `${scene.map.store.props(layerId).length} props &middot; ` +
-      `${scene.map.store.markers(layerId).length} markers &middot; ${history.depth} undo</span>`;
+      `${scene.map.store.markers(layerId).length} markers &middot; ${history.depth} undo` +
+      `${status ? ` &middot; ${status}` : ''}</span>`;
 
     requestAnimationFrame(frame);
   };
@@ -538,6 +694,8 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       running = false;
       input.detach();
       window.removeEventListener('keydown', onKeyDown, true);
+      root.removeEventListener('dragover', onDragOver);
+      root.removeEventListener('drop', onDrop);
       // A stroke interrupted by a tab switch still closes its undo entry.
       history.endStroke();
     },
