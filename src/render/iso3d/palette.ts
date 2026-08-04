@@ -60,6 +60,13 @@ export const PALETTE = {
   // The arena's walls (spec 037): grey stone, with a lighter lit cap on top.
   wall: 0x6b6b78,
   wallTop: 0x84848f,
+  // Fences (spec 056). Sawn timber sits a shade lighter and greyer than a living
+  // trunk, so a paddock rail reads as built rather than grown; the drystone
+  // courses borrow the terrain's warm limestone so a wall belongs to its ground.
+  post: 0x8f6438,
+  plank: 0xb0854c,
+  drystone: 0xbdb4a1,
+  drystoneDark: 0x9d9483,
 } as const;
 
 /**

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import * as THREE from 'three';
 import {
   bareTrunkHeight,
+  buildPropField,
   crownRadius,
   speciesHeight,
   speciesTierCounts,
@@ -9,7 +11,9 @@ import {
   trunkTopCover,
   type TreeSpecies,
 } from './props.js';
+import { fenceRotation } from './editor/fence.js';
 import { PLAYER_RADIUS } from '../../sim/constants.js';
+import { FENCE_TILE_LENGTH } from '../../terrain/vegetation.js';
 import { worldVegetation } from '../../terrain/vegetation.js';
 import { createArenaWorld } from '../../terrain/world.js';
 import type { Prop } from '../../terrain/vegetation.js';
@@ -135,5 +139,121 @@ describe('the trunk ends inside the canopy, not through it', () => {
     }
     // ...and the pine's is still the longer of the two, as its silhouette wants.
     expect(trunkHeight('pine')).toBeGreaterThan(trunkHeight('fir'));
+  });
+});
+
+/**
+ * Spec 056. A fence tile is the first prop whose *parts* have to line up with
+ * the world -- a tree can be turned any way at all and nobody can tell, but a
+ * tile's uprights sit along its own local +X and have to come out along the run.
+ *
+ * So these read the built instance matrices rather than any number in
+ * isolation: the contract that matters is between `fenceRotation`, the part
+ * offsets and three.js's rotation convention, and only a real field exercises
+ * all three at once.
+ */
+describe('fence tiles as they are actually built', () => {
+  const flat = (): number => 0;
+
+  /** Every instance position in a built field, world space. */
+  function instancePositions(props: readonly Prop[]): THREE.Vector3[] {
+    const field = buildPropField(props, flat);
+    const out: THREE.Vector3[] = [];
+    const matrix = new THREE.Matrix4();
+    const at = new THREE.Vector3();
+    field.group.traverse((object) => {
+      if (!(object instanceof THREE.InstancedMesh)) return;
+      for (let i = 0; i < object.count; i++) {
+        object.getMatrixAt(i, matrix);
+        out.push(at.setFromMatrixPosition(matrix).clone());
+      }
+    });
+    field.dispose();
+    return out;
+  }
+
+  const fenceProp = (rotation: number): Prop => ({
+    kind: 'fence-wood',
+    x: 0,
+    y: 0,
+    scale: 1,
+    rotation,
+    tint: 0,
+  });
+
+  it('lays a tile\'s parts along the run', () => {
+    // A tile pointed down +x: every part sits on the x axis, none off it.
+    const along = instancePositions([fenceProp(fenceRotation(1, 0))]);
+    expect(along.length).toBeGreaterThan(3);
+    for (const p of along) expect(Math.abs(p.z)).toBeLessThan(8);
+    expect(Math.max(...along.map((p) => Math.abs(p.x)))).toBeGreaterThan(10);
+
+    // ...and a quarter turn later, the same parts sit on the z axis instead.
+    const across = instancePositions([fenceProp(fenceRotation(0, 1))]);
+    for (const p of across) expect(Math.abs(p.x)).toBeLessThan(8);
+    expect(Math.max(...across.map((p) => Math.abs(p.z)))).toBeGreaterThan(10);
+  });
+
+  it('puts the post at the end of the tile the run comes from, at any bearing', () => {
+    // The assertion that pins the rotation *convention* rather than just the
+    // axis. A tile is not symmetric along its run -- the post sits at local
+    // -L/2 and the pickets at -L/6 and +L/6 -- so turning the part offsets the
+    // opposite way to the mesh (which is what the code used to do) builds a
+    // mirrored tile: post at the far end, rails on the wrong face. Along an
+    // axis that still looks like a fence; on a diagonal the whole tile is
+    // reflected off the line being drawn.
+    const half = FENCE_TILE_LENGTH / 2;
+    for (const [dx, dz] of [[1, 0], [0, 1], [-1, 0], [0.6, 0.8]] as const) {
+      const at = instancePositions([fenceProp(fenceRotation(dx, dz))]);
+      // Distance along the run, signed: the post is the one at -half.
+      const along = at.map((p) => p.x * dx + p.z * dz);
+      expect(Math.min(...along)).toBeCloseTo(-half, 4);
+      // ...and nothing reaches the far end, because there is no post there.
+      expect(Math.max(...along)).toBeCloseTo(FENCE_TILE_LENGTH / 6, 4);
+    }
+  });
+
+  it('draws a tile no longer than the step the fence tool lays it at', () => {
+    // The whole seamless-tiling argument rests on this: parts inside
+    // [-L/2, +L/2] meet the neighbour's and nothing overhangs into it.
+    const reach = Math.max(...instancePositions([fenceProp(0)]).map((p) => Math.abs(p.x)));
+    expect(reach).toBeLessThanOrEqual(FENCE_TILE_LENGTH / 2 + 1e-6);
+  });
+
+  it('builds both styles, and keeps them in separate batches from the plants', () => {
+    const props: Prop[] = [
+      { kind: 'fence-wood', x: 0, y: 0, scale: 1, rotation: 0, tint: 0 },
+      { kind: 'fence-stone', x: 60, y: 0, scale: 1, rotation: 0, tint: 0.3 },
+      { kind: 'bush', x: 120, y: 0, scale: 1, rotation: 0, tint: 0 },
+    ];
+    const field = buildPropField(props, flat);
+    const meshes: THREE.InstancedMesh[] = [];
+    field.group.traverse((o) => {
+      if (o instanceof THREE.InstancedMesh) meshes.push(o);
+    });
+    // One instance per part per kind: no batch mixes two props.
+    expect(meshes.length).toBeGreaterThan(6);
+    for (const mesh of meshes) expect(mesh.count).toBe(1);
+    field.dispose();
+  });
+
+  it('varies one tile from the next without moving where it stands', () => {
+    // A run of identical tiles reads as one extruded ribbon, so the parts jitter
+    // -- but hashed from the position, so a rebuild mid-stroke does not reshuffle
+    // the wall someone is looking at.
+    const run: Prop[] = [0, 1, 2, 3, 4].map((i) => ({
+      kind: 'fence-stone' as const,
+      x: i * FENCE_TILE_LENGTH,
+      y: 0,
+      scale: 1,
+      rotation: 0,
+      tint: i / 5,
+    }));
+    const once = instancePositions(run).map((p) => `${p.x.toFixed(6)},${p.z.toFixed(6)}`);
+    const twice = instancePositions(run).map((p) => `${p.x.toFixed(6)},${p.z.toFixed(6)}`);
+    expect(twice).toEqual(once);
+    // Tiles differ from each other: the same part is not at the same offset on
+    // every one of them.
+    expect(new Set(once.map((key) => key.split(',')[1])).size).toBeGreaterThan(1);
   });
 });

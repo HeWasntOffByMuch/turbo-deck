@@ -18,7 +18,31 @@ import { arenaBounds } from './world.js';
  * thing is unit-testable in Node.
  */
 
-export type PropKind = 'tree' | 'bush';
+/**
+ * What a prop is. Trees and bushes are scattered over an area; the two fences
+ * are laid along a path, one tile per prop (spec 056).
+ */
+export type PropKind = 'tree' | 'bush' | 'fence-wood' | 'fence-stone';
+
+/** The kinds that are a length of fence rather than a plant. */
+export const FENCE_KINDS = ['fence-wood', 'fence-stone'] as const;
+export type FenceKind = (typeof FENCE_KINDS)[number];
+
+export function isFenceKind(kind: PropKind): kind is FenceKind {
+  return kind === 'fence-wood' || kind === 'fence-stone';
+}
+
+/**
+ * How long one fence tile runs, in world units at scale 1.
+ *
+ * The load-bearing number of the whole fence design, which is why it lives here
+ * beside the kinds rather than in either of the two modules that need it. A tile
+ * is drawn spanning exactly this much along its own +X, and the fence tool lays
+ * tiles exactly this far apart -- so a run butts up seamlessly and the renderer
+ * never has to know that a tile has neighbours. If the geometry and the spacing
+ * ever disagree, a fence grows either gaps or overlaps at every junction.
+ */
+export const FENCE_TILE_LENGTH = 48;
 
 export interface Prop {
   readonly kind: PropKind;
@@ -141,7 +165,16 @@ export function scatterProps(
  * Ground-footprint radius a prop blocks: what the unwalkable overlay draws
  * (spec 034) and, since spec 044, what the sim collides against.
  */
-const FOOTPRINT_BASE: Record<PropKind, number> = { tree: 24, bush: 16 };
+const FOOTPRINT_BASE: Record<PropKind, number> = {
+  tree: 24,
+  bush: 16,
+  // Half a tile, so the circles of a run overlap into one continuous barrier
+  // rather than leaving a walkable gap between every pair of posts. A fence is
+  // thinner than it is long and a circle cannot say so; erring wide is the side
+  // that keeps a wall a wall.
+  'fence-wood': FENCE_TILE_LENGTH / 2,
+  'fence-stone': FENCE_TILE_LENGTH / 2,
+};
 export function footprintRadius(prop: Prop): number {
   return FOOTPRINT_BASE[prop.kind] * prop.scale;
 }

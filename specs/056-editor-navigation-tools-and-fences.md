@@ -132,10 +132,12 @@ slightly — otherwise a wall is one tile stamped fifty times.
 
 One bug is fixed on the way: `buildPropField` rotated a part's *local offset* by
 `(cos, -sin)` while rotating the part's *mesh* by three.js's `+Y` convention,
-which is the opposite direction. Nothing noticed while the only offset part was
-a bush's second blob (offset in a random direction anyway); a fence whose
-pickets sit at `x = ±L/3` notices immediately, because they end up across the
-run instead of along it.
+which is the mirror of it — so a part's geometry and the point it was placed at
+turned opposite ways. Nothing noticed while the only offset part was a bush's
+second blob (offset in a random direction anyway). A fence tile is not
+symmetric along its run, so it notices at once: mirrored, its post lands at the
+far end and its rails on the wrong face of the pickets, and on a diagonal run
+the whole tile is reflected off the line being drawn.
 
 ## Invariants tested
 

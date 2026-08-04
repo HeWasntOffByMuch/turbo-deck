@@ -598,7 +598,7 @@ export function parseMap(text: string): MapDocument {
 }
 
 /** The prop kinds the renderer knows how to build, for validating a species id. */
-const KNOWN_PROP_KINDS: readonly string[] = ['tree', 'bush'];
+const KNOWN_PROP_KINDS: readonly string[] = ['tree', 'bush', 'fence-wood', 'fence-stone'];
 
 /** True when a species id maps onto a `PropKind` the prop field can draw. */
 export function isKnownPropKind(species: string): species is PropKind {

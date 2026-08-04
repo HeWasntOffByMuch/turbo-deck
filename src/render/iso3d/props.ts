@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 import { hashUnit2 } from '../../shared/hash.js';
-import type { Prop } from '../../terrain/vegetation.js';
+import { FENCE_KINDS, FENCE_TILE_LENGTH, type FenceKind, type Prop } from '../../terrain/vegetation.js';
 
 /**
  * Batched scenery for the whole world (spec 043/045). The scatter puts a
@@ -36,6 +36,8 @@ const HASH_SPECIES = 0x5eed01;
 const HASH_TIERS = 0x5eed02;
 const HASH_ASYMMETRY = 0x5eed03;
 const HASH_LEAN = 0x5eed04;
+/** Base seed for a part's own jitter; the part's index is mixed in (spec 056). */
+const HASH_PART_JITTER = 0x5eed05;
 
 /** Fraction of trees that are pines rather than firs. */
 const PINE_SHARE = 0.38;
@@ -63,6 +65,24 @@ interface PropPart {
   readonly driftMax?: number;
   /** How far this part may lean over, radians, at full asymmetry. */
   readonly leanMax?: number;
+  /**
+   * How far this instance's own colour may drift from `color`, for parts that
+   * are not foliage (foliage has its own richer ramp). Driven by the prop's
+   * `tint`, so one weathered plank differs from the next.
+   */
+  readonly tintAmount?: number;
+  /**
+   * Per-instance jitter, hashed from where the prop stands (spec 056).
+   *
+   * The variation a *repeated* part needs. A tree gets its variety from its
+   * species, its tier count and its lean; a fence tile is the same tile stamped
+   * fifty times down a run, and without this a drystone wall is fifty identical
+   * boxes reading as one extruded ribbon. Hashed rather than drawn, so it is
+   * stable across the rebuilds a stroke causes.
+   */
+  readonly jitterZ?: number;
+  readonly jitterYaw?: number;
+  readonly jitterScaleY?: number;
 }
 
 /**
@@ -279,6 +299,114 @@ function bushParts(): PropPart[] {
   ];
 }
 
+/**
+ * One tile of fence, in the prop's local space (spec 056).
+ *
+ * The tile runs along local **+X**, spanning exactly `[-L/2, +L/2]` and no
+ * further, where `L` is `FENCE_TILE_LENGTH`. That is the contract with
+ * `fence.ts`, which lays tiles exactly `L` apart along the drag: parts drawn
+ * inside that span meet their neighbours' and nothing has to know a junction
+ * from an end.
+ *
+ * The uprights are spaced `L/3` apart and inset by half of that, so the spacing
+ * carries *across* a tile boundary too -- posts at the tile edges would double
+ * up at every junction and read as a stutter.
+ *
+ * Everything sinks a little below y=0. A tile stands upright on ground sampled
+ * at its centre, so on a slope one end is above the ground it should be standing
+ * on; the buried skirt is what stops daylight showing under a hillside run.
+ */
+const FENCE_SPAN = FENCE_TILE_LENGTH / 3;
+const FENCE_SINK = 7;
+
+function woodFenceParts(): PropPart[] {
+  const half = FENCE_TILE_LENGTH / 2;
+  const postHeight = 56 + FENCE_SINK;
+  const picketHeight = 44 + FENCE_SINK;
+  const parts: PropPart[] = [
+    {
+      // The post: one per tile, at the tile's leading edge, so a run gets a
+      // heavier upright every L and lighter pickets between.
+      geometry: new THREE.BoxGeometry(9, postHeight, 9),
+      offsetX: -half,
+      offsetY: postHeight / 2 - FENCE_SINK,
+      color: PALETTE.post,
+      foliage: false,
+      tintAmount: 0.1,
+    },
+  ];
+  for (const at of [-half + FENCE_SPAN, -half + 2 * FENCE_SPAN]) {
+    parts.push({
+      geometry: new THREE.BoxGeometry(6.5, picketHeight, 4),
+      offsetX: at,
+      offsetY: picketHeight / 2 - FENCE_SINK,
+      color: PALETTE.plank,
+      foliage: false,
+      tintAmount: 0.12,
+      // A hand-nailed picket is never quite square to the run.
+      jitterYaw: 0.05,
+      jitterScaleY: 0.04,
+    });
+  }
+  // Two rails, spanning the tile end to end so they continue through a junction.
+  for (const y of [16, 36]) {
+    parts.push({
+      geometry: new THREE.BoxGeometry(FENCE_TILE_LENGTH, 5.5, 3),
+      offsetY: y,
+      // Behind the pickets rather than through them, so the two read apart.
+      offsetZ: 3.5,
+      color: PALETTE.plank,
+      foliage: false,
+      tintAmount: 0.12,
+    });
+  }
+  return parts;
+}
+
+function stoneFenceParts(): PropPart[] {
+  const parts: PropPart[] = [];
+  // Three courses, each narrower and shorter than the one below: a drystone wall
+  // is batter, not a slab. Each spans the whole tile, so a run is continuous.
+  const courses: readonly (readonly [height: number, depth: number, baseY: number])[] = [
+    [18, 23, -FENCE_SINK],
+    [14, 19, 11],
+    [11, 15, 25],
+  ];
+  courses.forEach(([height, depth, baseY], i) => {
+    parts.push({
+      geometry: new THREE.BoxGeometry(FENCE_TILE_LENGTH, height, depth),
+      offsetY: baseY + height / 2,
+      color: i === 1 ? PALETTE.drystoneDark : PALETTE.drystone,
+      foliage: false,
+      tintAmount: 0.14,
+      // Courses that shift and skew a little are what stop a run of tiles
+      // reading as one long extruded box.
+      jitterZ: 1.6,
+      jitterYaw: 0.035,
+    });
+  });
+  // Capstones: rubble along the top, the part that says "stacked" at a glance.
+  for (const at of [-FENCE_SPAN, 0, FENCE_SPAN]) {
+    parts.push({
+      geometry: new THREE.IcosahedronGeometry(9, 0),
+      offsetX: at,
+      offsetY: 38,
+      color: PALETTE.drystone,
+      foliage: false,
+      tintAmount: 0.16,
+      scaleY: 0.62,
+      jitterZ: 2.2,
+      jitterYaw: 0.9,
+      jitterScaleY: 0.22,
+    });
+  }
+  return parts;
+}
+
+function fenceParts(kind: FenceKind): PropPart[] {
+  return kind === 'fence-stone' ? stoneFenceParts() : woodFenceParts();
+}
+
 /** Warm autumn foliage, for the fraction of trees that turn. */
 const AUTUMN = [0xb8502a, 0xd0722c, 0xe0a334] as const;
 /** Tint above which a prop goes autumn. ~18% of them, so it stays an accent. */
@@ -289,13 +417,21 @@ const AUTUMN_ABOVE = 0.64;
  * little either side of the base green; the ones past the autumn threshold swap
  * to the warm ramp instead, keeping the same dark-to-bright tier ordering.
  */
-function foliageColor(base: number, tier: number, tint: number): number {
-  if (tint > AUTUMN_ABOVE) return AUTUMN[Math.min(tier, AUTUMN.length - 1)] ?? base;
-  const scale = 0.88 + 0.24 * ((tint + 1) / 2);
+function scaleColor(base: number, scale: number): number {
   const r = Math.min(255, Math.round(((base >> 16) & 0xff) * scale));
   const g = Math.min(255, Math.round(((base >> 8) & 0xff) * scale));
   const b = Math.min(255, Math.round((base & 0xff) * scale));
   return (r << 16) | (g << 8) | b;
+}
+
+function foliageColor(base: number, tier: number, tint: number): number {
+  if (tint > AUTUMN_ABOVE) return AUTUMN[Math.min(tier, AUTUMN.length - 1)] ?? base;
+  return scaleColor(base, 0.88 + 0.24 * ((tint + 1) / 2));
+}
+
+/** The colour a non-foliage part takes, drifting `amount` either side of `base`. */
+function shadedColor(base: number, tint: number, amount: number): number {
+  return amount === 0 ? base : scaleColor(base, 1 + amount * Math.max(-1, Math.min(1, tint)));
 }
 
 /** How one tree differs from the rest of its species. */
@@ -405,11 +541,12 @@ export function buildPropField(
     variants?: ReadonlyMap<Prop, TreeVariant>,
   ): void => {
     if (of.length === 0) return;
-    for (const part of parts) {
+    parts.forEach((part, partIndex) => {
       const tier = part.tier;
       const grown =
         tier === undefined || !variants ? of : of.filter((prop) => (variants.get(prop)?.tierCount ?? 0) > tier);
-      if (grown.length === 0) continue;
+      if (grown.length === 0) return;
+      const jittered = part.jitterZ !== undefined || part.jitterYaw !== undefined || part.jitterScaleY !== undefined;
 
       const material = new THREE.MeshLambertMaterial({ flatShading: true });
       const mesh = new THREE.InstancedMesh(part.geometry, material, grown.length);
@@ -423,21 +560,37 @@ export function buildPropField(
         const s = prop.scale;
         const variant = variants?.get(prop);
         const asymmetry = variant?.asymmetry ?? 0;
+        // This part's own wobble on this instance, in [-1, 1]. Keyed off where
+        // the prop stands, on a lattice fine enough that no two props share a
+        // cell, plus the part's index so a tile's courses wobble independently.
+        const wobble = jittered
+          ? hashUnit2(Math.round(prop.x / 4), Math.round(prop.y / 4), HASH_PART_JITTER + partIndex * 0x9e37) * 2 - 1
+          : 0;
 
         // Local offset, scaled with the prop and spun by its rotation. The
         // per-instance drift rides in that same local frame, so a leaning tree
         // leans consistently however it happens to be turned.
+        //
+        // Rotated by three.js's own +Y convention (`x' = x cos + z sin`,
+        // `z' = -x sin + z cos`) -- the same one the quaternion below turns the
+        // *mesh* by. It used to be the mirror of that, so a part's mesh and the
+        // point it was placed at turned opposite ways. Nothing noticed while the
+        // only offset part was a bush's second blob sitting in an arbitrary
+        // direction anyway; a fence tile notices at once, because it is not
+        // symmetric along its run -- a mirrored tile puts the post at the far
+        // end and the rails on the wrong face, and on a diagonal run reflects
+        // the whole tile off the line being drawn.
         const lx = ((part.offsetX ?? 0) + (part.driftMax ?? 0) * asymmetry) * s;
-        const lz = (part.offsetZ ?? 0) * s;
+        const lz = ((part.offsetZ ?? 0) + (part.jitterZ ?? 0) * wobble) * s;
         const cos = Math.cos(prop.rotation);
         const sin = Math.sin(prop.rotation);
         position.set(
-          prop.x + lx * cos - lz * sin,
+          prop.x + lx * cos + lz * sin,
           heightAt(prop.x, prop.y) + part.offsetY * s,
-          prop.y + lx * sin + lz * cos,
+          prop.y - lx * sin + lz * cos,
         );
 
-        quaternion.setFromAxisAngle(up, prop.rotation);
+        quaternion.setFromAxisAngle(up, prop.rotation + (part.jitterYaw ?? 0) * wobble);
         const lean = (part.leanMax ?? 0) * asymmetry;
         if (lean !== 0 && variant) {
           leanAxis.set(Math.cos(variant.leanAngle), 0, Math.sin(variant.leanAngle));
@@ -453,14 +606,18 @@ export function buildPropField(
             quaternion.premultiply(align);
             // The part's local offset has to ride the same tilt, or a bush's
             // second blob floats off the side of the slope it is lying on.
-            offset.set(lx * cos - lz * sin, part.offsetY * s, lx * sin + lz * cos).applyQuaternion(align);
+            offset.set(lx * cos + lz * sin, part.offsetY * s, -lx * sin + lz * cos).applyQuaternion(align);
             position.set(prop.x + offset.x, heightAt(prop.x, prop.y) + offset.y, prop.y + offset.z);
           }
         }
 
-        scale.set(s, s * (part.scaleY ?? 1), s);
+        scale.set(s, s * (part.scaleY ?? 1) * (1 + (part.jitterScaleY ?? 0) * wobble), s);
         mesh.setMatrixAt(i, matrix.compose(position, quaternion, scale));
-        color.setHex(part.foliage ? foliageColor(part.color, tier ?? 0, prop.tint) : part.color);
+        color.setHex(
+          part.foliage
+            ? foliageColor(part.color, tier ?? 0, prop.tint)
+            : shadedColor(part.color, prop.tint, part.tintAmount ?? 0),
+        );
         mesh.setColorAt(i, color);
       });
 
@@ -469,7 +626,7 @@ export function buildPropField(
       group.add(mesh);
       geometries.push(part.geometry);
       materials.push(material);
-    }
+    });
   };
 
   // Group props into square regions, then batch each region's trees (split by
@@ -494,6 +651,12 @@ export function buildPropField(
       build(treeParts(species), trees.filter((p) => variants.get(p)?.species === species), variants);
     }
     build(bushParts(), bucket.filter((p) => p.kind === 'bush'));
+    // Fences batch per region and per style like everything else. A tile carries
+    // no variant: what makes one differ from the next is its own tint and the
+    // per-part jitter hashed from where it stands.
+    for (const kind of FENCE_KINDS) {
+      build(fenceParts(kind), bucket.filter((p) => p.kind === kind));
+    }
   }
 
   return {
