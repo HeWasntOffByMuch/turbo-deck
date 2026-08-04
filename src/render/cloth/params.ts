@@ -26,8 +26,31 @@ export const UNITS_PER_METRE = 43;
 /** Earth gravity in world units/s^2 (9.81 m/s^2). `gravityMultiplier` scales it. */
 export const GRAVITY = 9.81 * UNITS_PER_METRE;
 
+/**
+ * The cosmetic locomotion knobs, and *only* those: exactly the fields the
+ * skeleton in `iso3d/humanoid.ts` reads to pose itself.
+ *
+ * Split out of {@link RobeTuning} because the skeleton and its walk cycle are
+ * shared with characters that wear no cloth at all (spec 049's critters). A rig
+ * that wants a walk should not have to invent a fabric weight and a wind
+ * direction to get one, and `Humanoid` should not be able to reach a solver
+ * field it has no business reading.
+ */
+export interface FigureTuning {
+  /** Overall figure size; scales the skeleton and every distance hung off it. */
+  bodyScale: number;
+  /** Stride length multiplier: lower means quicker, shorter steps at a given speed. */
+  strideScale: number;
+  /** Arm-swing amplitude (radians at a full run). */
+  armSwing: number;
+  /** Hop height in world units, for the sandbox's jump/land/fall testing. */
+  jumpHeight: number;
+  /** Scales gravity for the hop (and, for the robe, for the cloth). */
+  gravityMultiplier: number;
+}
+
 /** The full tuning surface of the robe: fabric, forces, collision, wind, figure. */
-export interface RobeTuning {
+export interface RobeTuning extends FigureTuning {
   // --- Fabric -------------------------------------------------------------
   /**
    * Mass of one patch of fabric (arbitrary units; 1 is a mid-weight wool).
@@ -114,8 +137,8 @@ export interface RobeTuning {
   recoverySpeed: number;
 
   // --- Forces -------------------------------------------------------------
-  /** Multiplier on {@link GRAVITY}. Below 1 reads as lighter/floatier fabric. */
-  gravityMultiplier: number;
+  // `gravityMultiplier` is inherited from FigureTuning: below 1 reads as
+  // lighter/floatier fabric, and lifts the hop by the same factor.
   /**
    * Isotropic air drag coefficient: force per unit of relative air velocity,
    * divided by `fabricWeight`. Resists motion in every direction and is the
@@ -199,14 +222,9 @@ export interface RobeTuning {
   windTransition: number;
 
   // --- Figure (cosmetic locomotion) ---------------------------------------
-  /** Overall figure size; scales the skeleton, the cloth and every distance above. */
-  bodyScale: number;
-  /** Stride length multiplier: lower means quicker, shorter steps at a given speed. */
-  strideScale: number;
-  /** Arm-swing amplitude (radians at a full run). Drives the sleeves. */
-  armSwing: number;
-  /** Hop height in world units, for the sandbox's jump/land/fall testing. */
-  jumpHeight: number;
+  // `bodyScale`, `strideScale`, `armSwing` and `jumpHeight` are inherited from
+  // FigureTuning. For the robe, `bodyScale` scales the cloth too, and
+  // `armSwing` *is* the sleeve motion.
 }
 
 /** The default robe tuning: a mid-weight wool robe in a light breeze. */
