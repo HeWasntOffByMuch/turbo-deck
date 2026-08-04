@@ -1,5 +1,5 @@
 /**
- * What a critter species *is* (spec 049): proportions, a list of rigid blocks,
+ * What a critter species *is* (spec 055): proportions, a list of rigid blocks,
  * a few animated sockets, and a colour scheme. Pure data -- no three.js, no DOM
  * -- so a species can be validated, measured and previewed headlessly, and so
  * adding an animal never means writing rendering code.

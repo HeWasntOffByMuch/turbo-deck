@@ -254,7 +254,7 @@ class DebugScene {
   private robeRig: RobeRig | null = null;
   private robeOverlay: ClothDebugOverlay | null = null;
   private readonly robeTuning: RobeTuning = defaultRobeTuning();
-  /** The critters (spec 049), built lazily and keeping their picked coats. */
+  /** The critters (spec 055), built lazily and keeping their picked coats. */
   private readonly critterRigs = new Map<CritterId, CritterRig>();
   private readonly critterTuning: CritterTuning = defaultCritterTuning();
   private activeCritter: CritterRig | null = null;

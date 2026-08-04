@@ -1,4 +1,4 @@
-# 049 — Critter characters: bipedal farm animals as player units
+# 055 — Critter characters: bipedal farm animals as player units
 
 ## Problem
 

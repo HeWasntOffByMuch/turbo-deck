@@ -1,5 +1,5 @@
 /**
- * Turning a species' declaration into a flat, fully-resolved part list (spec 049).
+ * Turning a species' declaration into a flat, fully-resolved part list (spec 055).
  *
  * Mirroring, socket parenting and bind-pose placement are all pure arithmetic on
  * the species data, so they live here rather than in the three.js rig. Two very

@@ -1,5 +1,5 @@
 /**
- * Colour arithmetic for critter coats (spec 049): pure integer-RGB helpers with
+ * Colour arithmetic for critter coats (spec 055): pure integer-RGB helpers with
  * no three.js and no DOM, so the palette derivation and the contrast test that
  * guards 64 px legibility both run in Node.
  *

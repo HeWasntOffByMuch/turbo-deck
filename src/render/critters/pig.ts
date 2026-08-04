@@ -1,5 +1,5 @@
 /**
- * The pig (spec 049).
+ * The pig (spec 055).
  *
  * A teardrop body on short legs -- narrow at the shoulders, widest low and
  * forward where the belly hangs, tucking back in above the knees -- a big round

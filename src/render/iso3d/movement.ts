@@ -86,7 +86,7 @@ class MovementScene {
   private robeRig: RobeRig | null = null;
   private readonly robeTuning: RobeTuning = defaultRobeTuning();
   /**
-   * The critters (spec 049), also built lazily, and each remembering its own
+   * The critters (spec 055), also built lazily, and each remembering its own
    * coat -- so switching pig -> cow -> pig comes back to the colour that was
    * picked rather than resetting to the species default.
    */

@@ -16,7 +16,7 @@ import { PALETTE } from './palette.js';
 import { JumpMotion } from './jump.js';
 
 /**
- * A biped's skeleton and locomotion (spec 046, generalised by spec 049).
+ * A biped's skeleton and locomotion (spec 046, generalised by spec 055).
  *
  * This is the *kinematic* half of a character: a bone hierarchy, a
  * distance-driven biped walk/run cycle, the lean and bank that come off

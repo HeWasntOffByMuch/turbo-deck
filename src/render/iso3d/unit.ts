@@ -34,7 +34,7 @@ export interface SandboxUnit {
 /**
  * The units the sandbox and debug views can control.
  *
- * Every critter species (spec 049) is a unit kind by construction, so adding an
+ * Every critter species (spec 055) is a unit kind by construction, so adding an
  * animal puts it in both pickers without either view learning its name.
  */
 export type UnitKind = 'spider' | 'walker' | 'robe' | CritterId;

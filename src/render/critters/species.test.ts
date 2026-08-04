@@ -14,7 +14,7 @@ import {
 import { COAT_ROLES, MIN_FEATURE_UNITS, type CoatRole, type CritterSpecies } from './types.js';
 
 /**
- * Invariants of the critter species data (spec 049).
+ * Invariants of the critter species data (spec 055).
  *
  * The species files are the whole character system -- proportions, blocks and
  * colours, with no rendering code -- so *this* is where the interesting

@@ -1,5 +1,5 @@
 /**
- * The shared anatomy vocabulary every critter is assembled from (spec 049).
+ * The shared anatomy vocabulary every critter is assembled from (spec 055).
  *
  * A species file should read like a description of an animal, not like a list of
  * boxes. These builders are where the geometry lives: given a profile and a few

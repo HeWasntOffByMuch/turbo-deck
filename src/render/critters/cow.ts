@@ -1,5 +1,5 @@
 /**
- * The cow (spec 049).
+ * The cow (spec 055).
  *
  * Taller and longer in the face than the pig, with stubby horns, ears held out
  * sideways rather than up, and -- the thing that actually does the work at 64 px

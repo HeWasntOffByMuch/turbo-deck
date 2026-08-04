@@ -3,7 +3,7 @@ import type { CritterTuning } from './critter.js';
 import { LABEL_CSS, type TuningGroup } from './tuning-panel.js';
 
 /**
- * The critter's side of the sandbox panel (spec 049): a coat picker and the
+ * The critter's side of the sandbox panel (spec 055): a coat picker and the
  * cosmetic knobs that are not the shared figure ones.
  *
  * The coat picker is the whole customisation surface a player ever sees. It is a

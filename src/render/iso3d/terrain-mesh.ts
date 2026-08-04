@@ -7,8 +7,8 @@ import {
   rectDepth,
   rectWidth,
   type ChunkOptions,
+  type MeshLayer,
   type TerrainChunk,
-  type TerrainLayer,
   type TerrainWorld,
 } from '../../terrain/index.js';
 import { TERRAIN_CLIFF_COLORS, TERRAIN_COLORS } from './palette.js';
@@ -49,8 +49,17 @@ const wallMaterial = new THREE.MeshLambertMaterial({
 export interface TerrainMeshHandle {
   /** Add this to the scene. Positioned in world space; do not move it. */
   readonly group: THREE.Group;
-  /** The land surfaces, for raycasting the cursor onto the ground. */
+  /**
+   * The land surfaces, for raycasting the cursor onto the ground. A stable array
+   * instance: `rebuild` edits it in place, so a caller may capture it once.
+   */
   readonly pickTargets: THREE.Object3D[];
+  /**
+   * Replace one chunk's geometry, disposing what it replaces (spec 050). This is
+   * what makes a brush stroke affordable: a drag re-meshes the handful of chunks
+   * under it, not all 56.
+   */
+  rebuild(chunk: TerrainChunk): void;
   dispose(): void;
 }
 
@@ -111,9 +120,8 @@ class MeshBuffer {
  * would grow a wall down the middle of open ground.
  */
 function buildChunk(
-  layer: TerrainLayer,
+  layer: MeshLayer,
   chunk: TerrainChunk,
-  opt: ChunkOptions,
 ): { surface: THREE.BufferGeometry | null; walls: THREE.BufferGeometry | null } {
   const surface = new MeshBuffer();
   const walls = new MeshBuffer();
@@ -136,7 +144,7 @@ function buildChunk(
   const solidAt = (i: number, j: number): boolean =>
     i >= 0 && j >= 0 && i < cols && j < rows
       ? solid[j * cols + i] === 1
-      : layerCellSolid(layer, chunk.startCol + i, chunk.startRow + j, opt);
+      : layer.solidAt(chunk.startCol + i, chunk.startRow + j);
 
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
@@ -172,7 +180,7 @@ function buildChunk(
 }
 
 /** The layer's water surface: one flat translucent quad at its flood level. */
-function buildWater(layer: TerrainLayer): THREE.Mesh | null {
+function buildWater(layer: MeshLayer): THREE.Mesh | null {
   if (layer.waterLevel === null) return null;
   const geo = new THREE.PlaneGeometry(rectWidth(layer.bounds), rectDepth(layer.bounds));
   geo.rotateX(-Math.PI / 2);
@@ -194,47 +202,74 @@ function buildWater(layer: TerrainLayer): THREE.Mesh | null {
 }
 
 /**
- * Sample and mesh every layer of a world. One-shot: the world is meshed at
- * startup and never edited, so there is no streaming or rebuild path yet --
- * chunks exist so that adding one later is a change of *when* `buildChunk` is
- * called, not of what it produces.
+ * Mesh a set of already-sampled chunks. This is the seam the map editor enters
+ * through (spec 048): the mesher no longer decides *when* chunks are produced,
+ * only how to draw the ones it is handed -- so the same code path draws a world
+ * sampled from a feature list and one loaded out of a map document, and one day
+ * a single chunk rebuilt under a brush.
+ *
+ * Chunks are matched to their layer by `layerId`; a chunk naming a layer that
+ * was not supplied is skipped rather than guessed at.
  */
-export function buildTerrainMesh(
-  world: TerrainWorld,
-  opt: ChunkOptions = DEFAULT_CHUNK_OPTIONS,
+export function buildTerrainMeshFromChunks(
+  layers: readonly MeshLayer[],
+  chunks: readonly TerrainChunk[],
 ): TerrainMeshHandle {
   const group = new THREE.Group();
+  // Captured once by callers and then held, so `rebuild` must mutate this exact
+  // array rather than replace it -- a swapped array leaves a scene raycasting
+  // against geometry that has since been disposed.
   const pickTargets: THREE.Object3D[] = [];
-  const geometries: THREE.BufferGeometry[] = [];
   const materials: THREE.Material[] = [];
+  const byId = new Map(layers.map((layer) => [layer.id, layer]));
+  /** The meshes currently drawn for each chunk, so one can be replaced. */
+  const drawn = new Map<string, { surface: THREE.Mesh | null; walls: THREE.Mesh | null }>();
+  const slotKey = (chunk: TerrainChunk): string => `${chunk.layerId}:${chunk.coord.cx},${chunk.coord.cz}`;
 
-  for (const layer of world.layers) {
-    for (const chunk of sampleLayer(layer, opt)) {
-      const { surface, walls } = buildChunk(layer, chunk, opt);
-      if (surface) {
-        const mesh = new THREE.Mesh(surface, surfaceMaterial);
-        // Ground both takes shadows and throws them (spec 045): a cliff casting
-        // its own shape onto the shelf below is most of what makes a terrace
-        // read as a step rather than a stripe. Water does neither -- a shadow
-        // on a translucent plane reads as dirt floating on it.
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        group.add(mesh);
-        pickTargets.push(mesh);
-        geometries.push(surface);
+  /** Build (or rebuild) one chunk's meshes into the group. */
+  const draw = (layer: MeshLayer, chunk: TerrainChunk): void => {
+    const key = slotKey(chunk);
+    const previous = drawn.get(key);
+    if (previous) {
+      for (const mesh of [previous.surface, previous.walls]) {
+        if (!mesh) continue;
+        group.remove(mesh);
+        mesh.geometry.dispose();
       }
-      if (walls) {
-        const mesh = new THREE.Mesh(walls, wallMaterial);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        group.add(mesh);
-        geometries.push(walls);
-      }
+      const stale = previous.surface ? pickTargets.indexOf(previous.surface) : -1;
+      if (stale >= 0) pickTargets.splice(stale, 1);
+    }
+
+    const { surface, walls } = buildChunk(layer, chunk);
+    const slot: { surface: THREE.Mesh | null; walls: THREE.Mesh | null } = { surface: null, walls: null };
+    if (surface) {
+      // Ground both takes shadows and throws them (spec 045): a cliff casting
+      // its own shape onto the shelf below is most of what makes a terrace
+      // read as a step rather than a stripe. Water does neither -- a shadow
+      // on a translucent plane reads as dirt floating on it.
+      slot.surface = new THREE.Mesh(surface, surfaceMaterial);
+      slot.surface.castShadow = true;
+      slot.surface.receiveShadow = true;
+      group.add(slot.surface);
+      pickTargets.push(slot.surface);
+    }
+    if (walls) {
+      slot.walls = new THREE.Mesh(walls, wallMaterial);
+      slot.walls.castShadow = true;
+      slot.walls.receiveShadow = true;
+      group.add(slot.walls);
+    }
+    drawn.set(key, slot);
+  };
+
+  for (const layer of layers) {
+    for (const chunk of chunks) {
+      if (byId.get(chunk.layerId) !== layer) continue;
+      draw(layer, chunk);
     }
     const water = buildWater(layer);
     if (water) {
       group.add(water);
-      geometries.push(water.geometry);
       materials.push(water.material as THREE.Material);
     }
   }
@@ -242,10 +277,38 @@ export function buildTerrainMesh(
   return {
     group,
     pickTargets,
+    rebuild(chunk: TerrainChunk): void {
+      const layer = byId.get(chunk.layerId);
+      if (layer) draw(layer, chunk);
+    },
     dispose(): void {
-      for (const geo of geometries) geo.dispose();
+      for (const child of group.children) {
+        if (child instanceof THREE.Mesh) child.geometry.dispose();
+      }
       for (const mat of materials) mat.dispose();
+      drawn.clear();
+      pickTargets.length = 0;
       group.clear();
     },
   };
+}
+
+/**
+ * Sample and mesh every layer of a world -- the procedural path, unchanged in
+ * what it produces. It now goes through `buildTerrainMeshFromChunks`, so the
+ * generated world and a loaded document are drawn by exactly the same code.
+ */
+export function buildTerrainMesh(
+  world: TerrainWorld,
+  opt: ChunkOptions = DEFAULT_CHUNK_OPTIONS,
+): TerrainMeshHandle {
+  return buildTerrainMeshFromChunks(
+    world.layers.map((layer) => ({
+      id: layer.id,
+      bounds: layer.bounds,
+      waterLevel: layer.waterLevel,
+      solidAt: (col: number, row: number): boolean => layerCellSolid(layer, col, row, opt),
+    })),
+    world.layers.flatMap((layer) => sampleLayer(layer, opt)),
+  );
 }

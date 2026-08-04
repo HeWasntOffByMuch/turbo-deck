@@ -1,4 +1,4 @@
-// Dev-only: render the critter rigs (spec 049) to a PNG contact sheet so a human
+// Dev-only: render the critter rigs (spec 055) to a PNG contact sheet so a human
 // -- or an agent with no screen -- can check the characters actually read.
 // Not part of the app. `tsx scripts/preview-critters.ts`
 //

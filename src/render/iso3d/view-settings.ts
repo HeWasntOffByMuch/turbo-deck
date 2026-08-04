@@ -126,14 +126,33 @@ export function clampViewHalfWidth(halfWidth: number): number {
  * Always clamped.
  */
 export function zoomViewHalfWidth(current: number, deltaY: number, deltaMode = 0): number {
-  const start = clampViewHalfWidth(current);
+  return zoomSpan(current, deltaY, deltaMode, MIN_VIEW_HALF_WIDTH, MAX_VIEW_HALF_WIDTH);
+}
+
+/**
+ * The same wheel step over an arbitrary band. The editor frames a different
+ * range of the world than the game does -- close enough to work on one cell, wide
+ * enough to hold all of it -- and gets its own bounds rather than a second copy
+ * of this arithmetic. `fallback` is what a non-finite span resolves to.
+ */
+export function zoomSpan(
+  current: number,
+  deltaY: number,
+  deltaMode: number,
+  min: number,
+  max: number,
+  fallback = DEFAULT_VIEW_HALF_WIDTH,
+): number {
+  const clamp = (value: number): number =>
+    Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : Math.min(max, Math.max(min, fallback));
+  const start = clamp(current);
   const perNotch = DELTA_PER_NOTCH[deltaMode] ?? DELTA_PER_NOTCH[0];
   const notches = deltaY / perNotch;
   if (Number.isNaN(notches)) return start;
   const scaled = start * Math.pow(ZOOM_PER_NOTCH, notches);
   // A wild delta overflows the multiply; saturate on the bound it was headed for.
-  if (!Number.isFinite(scaled)) return notches > 0 ? MAX_VIEW_HALF_WIDTH : MIN_VIEW_HALF_WIDTH;
-  return clampViewHalfWidth(scaled);
+  if (!Number.isFinite(scaled)) return notches > 0 ? max : min;
+  return clamp(scaled);
 }
 
 /**

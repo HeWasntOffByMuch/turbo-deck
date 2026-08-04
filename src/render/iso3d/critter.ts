@@ -18,7 +18,7 @@ import { MotionObserver } from './motion.js';
 import type { SandboxUnit } from './unit.js';
 
 /**
- * The three.js half of a critter (spec 049): it builds a species' declared
+ * The three.js half of a critter (spec 055): it builds a species' declared
  * blocks, hangs them off the shared skeleton, and drives the bits of it the
  * walk cycle does not know about -- ears, tails, anything on a socket.
  *

@@ -1,6 +1,6 @@
 /**
  * Player coat colours and the derivation from one picked colour to a full
- * critter colour scheme (spec 049).
+ * critter colour scheme (spec 055).
  *
  * The player picks **one** colour. Everything else -- the shaded underside, the
  * lit belly, the snout, the patches, the hooves -- is derived from it, which is

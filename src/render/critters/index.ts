@@ -1,5 +1,5 @@
 /**
- * The critter registry (spec 049): every playable animal, keyed by id.
+ * The critter registry (spec 055): every playable animal, keyed by id.
  *
  * Adding a species is a new data file plus one line here. Nothing downstream --
  * the rig, the unit picker, the coat swatches, the tests -- enumerates species

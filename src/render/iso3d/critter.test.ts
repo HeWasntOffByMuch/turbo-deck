@@ -9,7 +9,7 @@ import { flatMaterial } from './meshes.js';
 import { PALETTE } from './palette.js';
 
 /**
- * Invariants of the critter rig (spec 049). Like the mech rig's tests, this is
+ * Invariants of the critter rig (spec 055). Like the mech rig's tests, this is
  * cosmetic code but it is still pure maths over three.js objects, so it runs
  * headlessly in Node with no canvas and no GL context -- which is what lets it
  * run in CI, and what lets an agent verify a character change without a screen.

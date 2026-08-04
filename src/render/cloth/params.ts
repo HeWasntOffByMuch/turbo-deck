@@ -31,7 +31,7 @@ export const GRAVITY = 9.81 * UNITS_PER_METRE;
  * skeleton in `iso3d/humanoid.ts` reads to pose itself.
  *
  * Split out of {@link RobeTuning} because the skeleton and its walk cycle are
- * shared with characters that wear no cloth at all (spec 049's critters). A rig
+ * shared with characters that wear no cloth at all (spec 055's critters). A rig
  * that wants a walk should not have to invent a fabric weight and a wind
  * direction to get one, and `Humanoid` should not be able to reach a solver
  * field it has no business reading.
