@@ -5,6 +5,7 @@ import { IsoHud } from './hud.js';
 import { IsoScene } from './scene.js';
 import { mountMovement, type ViewHandle } from './movement.js';
 import { mountDebug } from './debug-view.js';
+import { mountEditor } from './editor/view.js';
 import { viewSeed } from './seed.js';
 
 /**
@@ -107,6 +108,13 @@ function mountCombat(container: HTMLElement): ViewHandle {
 interface Tab {
   readonly label: string;
   readonly mount: (container: HTMLElement) => ViewHandle;
+  /**
+   * Whether the view owns the whole window (spec 041), with its own UI floating
+   * over it, rather than laying out normally below the tab bar. A property
+   * rather than an index check: the editor is the second such view, and which
+   * ones they are is a fact about the views, not about their order in the bar.
+   */
+  readonly fullscreen?: boolean;
 }
 
 function main(): void {
@@ -114,9 +122,10 @@ function main(): void {
   if (!app) throw new Error('missing #app');
 
   const tabs: readonly Tab[] = [
-    { label: 'Combat (isometric 3D)', mount: mountCombat },
+    { label: 'Combat (isometric 3D)', mount: mountCombat, fullscreen: true },
     { label: 'Movement sandbox', mount: mountMovement },
     { label: 'Rig debug', mount: mountDebug },
+    { label: 'Map editor', mount: mountEditor, fullscreen: true },
   ];
 
   // The bar floats over the game window rather than pushing it down (spec 041);
@@ -152,9 +161,9 @@ function main(): void {
     let handle = handles[i];
     if (!handle) {
       handle = tab.mount(container);
-      // The combat view owns the whole window; the sandbox tabs lay out normally
-      // and just need headroom so the floating tab bar doesn't cover them.
-      if (i !== 0) handle.element.style.padding = '44px 16px 16px';
+      // A fullscreen view owns the whole window; the sandbox tabs lay out
+      // normally and just need headroom so the floating tab bar doesn't cover them.
+      if (!tab.fullscreen) handle.element.style.padding = '44px 16px 16px';
       handles[i] = handle;
     }
     handle.element.style.display = 'block';
