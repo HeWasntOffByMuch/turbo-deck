@@ -1,5 +1,6 @@
 import type * as THREE from 'three';
 import type { Vec2 } from '../../sim/types.js';
+import type { CritterId } from '../critters/types.js';
 
 /**
  * The contract the sandbox and rig-debug scenes drive a controllable unit
@@ -30,5 +31,10 @@ export interface SandboxUnit {
   update(dt: number, worldPos: Vec2, ry: number): void;
 }
 
-/** The units the sandbox and debug views can control. */
-export type UnitKind = 'spider' | 'walker' | 'robe';
+/**
+ * The units the sandbox and debug views can control.
+ *
+ * Every critter species (spec 049) is a unit kind by construction, so adding an
+ * animal puts it in both pickers without either view learning its name.
+ */
+export type UnitKind = 'spider' | 'walker' | 'robe' | CritterId;

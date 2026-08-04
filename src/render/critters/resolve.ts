@@ -14,7 +14,7 @@
  */
 
 import { BONE_COUNT, boneRestLayout, type FigureMetrics } from '../cloth/figure.js';
-import type { CritterSpecies, PartSpec, SocketSpec, WobbleSpec } from './types.js';
+import type { CritterSpecies, PartSpec, WobbleSpec } from './types.js';
 
 /** A socket after mirroring: a concrete node with a resolved parent bone. */
 export interface ResolvedSocket {
@@ -56,14 +56,15 @@ export function resolveSockets(species: CritterSpecies): ResolvedSocket[] {
   const out: ResolvedSocket[] = [];
   for (const s of species.sockets) {
     const rot = s.rot ?? NO_ROT;
-    out.push({ name: s.socket, parentBone: s.parentBone, pos: s.pos, rot, wobble: s.wobble, flip: 1 });
+    const wobble = s.wobble ? { wobble: s.wobble } : {};
+    out.push({ name: s.socket, parentBone: s.parentBone, pos: s.pos, rot, ...wobble, flip: 1 });
     if (s.mirror) {
       out.push({
         name: `${s.socket}R`,
         parentBone: s.parentBone,
         pos: [s.pos[0], s.pos[1], -s.pos[2]],
         rot: mirrorRot(rot),
-        wobble: s.wobble,
+        ...wobble,
         flip: -1,
       });
     }

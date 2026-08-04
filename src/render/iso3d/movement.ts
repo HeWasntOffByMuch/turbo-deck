@@ -20,6 +20,9 @@ import { defaultMechTuning, MechRig, type MechTuning } from './rigs.js';
 import { buildPropField } from './props.js';
 import { RobeRig } from './robe.js';
 import { ROBE_TUNING_GROUPS } from './robe-panel.js';
+import { CritterRig, defaultCritterTuning, type CritterTuning } from './critter.js';
+import { buildCoatPicker, CRITTER_TUNING_GROUPS } from './critter-panel.js';
+import { CRITTERS, CRITTER_IDS, isCritterId, type CritterId } from '../critters/index.js';
 import {
   buildTuningSection,
   LABEL_CSS,
@@ -82,7 +85,15 @@ class MovementScene {
   /** The robed figure (spec 046), built lazily so its cloth costs nothing unless picked. */
   private robeRig: RobeRig | null = null;
   private readonly robeTuning: RobeTuning = defaultRobeTuning();
+  /**
+   * The critters (spec 049), also built lazily, and each remembering its own
+   * coat -- so switching pig -> cow -> pig comes back to the colour that was
+   * picked rather than resetting to the species default.
+   */
+  private readonly critterRigs = new Map<CritterId, CritterRig>();
+  private readonly critterTuning: CritterTuning = defaultCritterTuning();
   private active: SandboxUnit = this.spider;
+  private activeCritter: CritterRig | null = null;
   private readonly headingArrow = makeHeadingArrow();
   private readonly sun = new THREE.DirectionalLight(0xfff4e0, 2.1);
   private readonly unwalkable = new THREE.Group();
@@ -171,6 +182,16 @@ class MovementScene {
     return this.robeRig;
   }
 
+  /** The critters' shared live-editable tuning (the panel binds to it). */
+  get critter(): CritterTuning {
+    return this.critterTuning;
+  }
+
+  /** The critter currently being controlled, if the active unit is one. */
+  get critterUnit(): CritterRig | null {
+    return this.activeCritter;
+  }
+
   /** The active unit's locomotion state, for the status line. */
   get unitState(): string {
     return this.active.locomotionState;
@@ -178,7 +199,10 @@ class MovementScene {
 
   /** Swap the controllable unit, keeping the sim (position/heading) running. */
   setUnit(kind: UnitKind): void {
-    const next = kind === 'walker' ? this.walker : kind === 'robe' ? this.ensureRobe() : this.spider;
+    const critter = isCritterId(kind) ? this.ensureCritter(kind) : null;
+    this.activeCritter = critter;
+    const next =
+      critter ?? (kind === 'walker' ? this.walker : kind === 'robe' ? this.ensureRobe() : this.spider);
     if (next === this.active) return;
     this.scene.remove(this.active.group);
     this.active = next;
@@ -189,6 +213,16 @@ class MovementScene {
   private ensureRobe(): RobeRig {
     this.robeRig ??= new RobeRig({ tuning: this.robeTuning });
     return this.robeRig;
+  }
+
+  /** Build a critter on first use, sharing the one tuning object the panel edits. */
+  private ensureCritter(id: CritterId): CritterRig {
+    let rig = this.critterRigs.get(id);
+    if (!rig) {
+      rig = new CritterRig(CRITTERS[id], { tuning: this.critterTuning });
+      this.critterRigs.set(id, rig);
+    }
+    return rig;
   }
 
   /**
@@ -559,15 +593,21 @@ const MECH_TUNING_GROUPS: readonly TuningGroup<MechTuning>[] = [
   },
 ];
 
-/** Everything the sandbox panel needs to drive: two tunings and a set of actions. */
+/** Everything the sandbox panel needs to drive: the tunings and a set of actions. */
 export interface SandboxPanelOptions {
   /** The mech tuning (also the holder of the sim move-speed/turn-rate overrides). */
   readonly mech: MechTuning;
   /** The robed figure's cloth/figure/wind tuning. */
   readonly robe: RobeTuning;
+  /** The critters' shared cosmetic tuning. */
+  readonly critter: CritterTuning;
   /** Restore the active unit's tuning to its defaults. */
   readonly onReset: () => void;
   readonly onUnit: (kind: UnitKind) => void;
+  /** Recolour the active critter. */
+  readonly onCoat: (hex: number) => void;
+  /** The coat the active critter is wearing, so the picker can show it. */
+  readonly coatOf: (kind: UnitKind) => number | null;
   /** Robe-only actions, exposed as buttons alongside its sliders. */
   readonly onJump: () => void;
   readonly onDrop: () => void;
@@ -577,11 +617,15 @@ export interface SandboxPanelOptions {
 
 export interface SandboxPanel {
   readonly element: HTMLElement;
-  /** Push both tunings' current values back into the controls (after a reset). */
+  /** Push every tuning's current values back into the controls (after a reset). */
   sync(): void;
 }
 
-/** The units the picker offers, in order. */
+/**
+ * The units the picker offers, in order: the three hand-built rigs, then one
+ * chip per critter species, generated from the registry -- so a new animal
+ * appears here without this file changing.
+ */
 const UNIT_CHIPS: readonly { kind: UnitKind; label: string; tip: string }[] = [
   {
     kind: 'spider',
@@ -598,6 +642,11 @@ const UNIT_CHIPS: readonly { kind: UnitKind; label: string; tip: string }[] = [
     label: 'Hooded robe',
     tip: 'Control the hooded robe character — a humanoid whose hood, cape, lower robe and sleeves are driven by a cloth simulation.',
   },
+  ...CRITTER_IDS.map((id) => ({
+    kind: id as UnitKind,
+    label: CRITTERS[id].name,
+    tip: `${CRITTERS[id].blurb} Pick a coat below to recolour it.`,
+  })),
 ];
 
 /**
@@ -619,7 +668,7 @@ export function buildPanel(opts: SandboxPanelOptions): SandboxPanel {
     '<b>Right-click</b> the ground to move. MOBA turn-rate: the unit turns to face ' +
     'the destination before it travels.<br>' +
     '<b>C</b> loads the next archetype preset into the sliders. ' +
-    '<b>J</b> makes the robed figure hop.<br>' +
+    '<b>J</b> makes the robed figure or the critter hop.<br>' +
     'Pick a unit below.';
   panel.appendChild(help);
 
@@ -641,6 +690,8 @@ export function buildPanel(opts: SandboxPanelOptions): SandboxPanel {
   const movement = buildTuningSection([MOVEMENT_GROUP], opts.mech);
   const mech = buildTuningSection(MECH_TUNING_GROUPS, opts.mech);
   const robe = buildTuningSection(ROBE_TUNING_GROUPS, opts.robe);
+  const critter = buildTuningSection(CRITTER_TUNING_GROUPS, opts.critter);
+  const coats = buildCoatPicker((swatch) => opts.onCoat(swatch.hex));
 
   // Robe-only actions: the discrete events the cloth reacts to, which cannot be
   // produced by dragging a slider.
@@ -658,13 +709,18 @@ export function buildPanel(opts: SandboxPanelOptions): SandboxPanel {
     ),
   );
 
-  panel.append(picker, movement.element, mech.element, robe.element, robeActions);
+  panel.append(picker, movement.element, mech.element, robe.element, robeActions, coats.element, critter.element);
 
   const showUnit = (kind: UnitKind): void => {
     const isRobe = kind === 'robe';
-    mech.setVisible(!isRobe);
+    const isCritter = isCritterId(kind);
+    mech.setVisible(!isRobe && !isCritter);
     robe.setVisible(isRobe);
     robeActions.style.display = isRobe ? 'block' : 'none';
+    critter.setVisible(isCritter);
+    coats.setVisible(isCritter);
+    const coat = opts.coatOf(kind);
+    if (coat !== null) coats.setActive(coat);
   };
 
   UNIT_CHIPS.forEach((u, i) => {
@@ -674,8 +730,10 @@ export function buildPanel(opts: SandboxPanelOptions): SandboxPanel {
     styleChip(btn, i === 0);
     btn.addEventListener('click', () => {
       chips.forEach((c, j) => styleChip(c, j === i));
-      showUnit(u.kind);
+      // Swap the unit *before* refreshing the panel: `showUnit` reads the new
+      // unit's coat, which does not exist until the rig has been built.
       opts.onUnit(u.kind);
+      showUnit(u.kind);
     });
     picker.appendChild(btn);
     chips.push(btn);
@@ -692,6 +750,7 @@ export function buildPanel(opts: SandboxPanelOptions): SandboxPanel {
       movement.sync();
       mech.sync();
       robe.sync();
+      critter.sync();
     },
   };
 }
@@ -735,8 +794,10 @@ export function mountMovement(container: HTMLElement): ViewHandle {
   const panel = buildPanel({
     mech: tuning,
     robe: scene.robe,
+    critter: scene.critter,
     onReset: () => {
       if (unit === 'robe') Object.assign(scene.robe, defaultRobeTuning());
+      else if (isCritterId(unit)) Object.assign(scene.critter, defaultCritterTuning());
       else Object.assign(tuning, defaultMechTuning());
       panel.sync();
     },
@@ -744,6 +805,8 @@ export function mountMovement(container: HTMLElement): ViewHandle {
       unit = kind;
       scene.setUnit(kind);
     },
+    onCoat: (hex) => scene.critterUnit?.setCoat(hex),
+    coatOf: (kind) => (isCritterId(kind) ? scene.critterUnit?.coat ?? null : null),
     onJump: () => scene.robeUnit?.jump(),
     onDrop: () => scene.robeUnit?.drop(),
     onGust: () => scene.robeUnit?.gust(),
@@ -800,7 +863,10 @@ export function mountMovement(container: HTMLElement): ViewHandle {
       state = step(state, combatInput).state;
       // A cosmetic hop: the sim has no notion of height, so this never enters
       // the input frame above and can decide no game outcome.
-      if (input.takeJump()) scene.robeUnit?.jump();
+      if (input.takeJump()) {
+        scene.robeUnit?.jump();
+        scene.critterUnit?.jump();
+      }
       syncCharacter();
       accumulator -= TICK_MS;
     }
