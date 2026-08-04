@@ -174,6 +174,36 @@ function noise(index: number, channel: number): number {
   return (h >>> 0) / 0x7fffffff - 1;
 }
 
+/**
+ * Whether splitting a quad leaves its shared edge convex: the other triangle's
+ * far corner must sit on or below the plane of `(p, q, r)`, taken with that
+ * triangle's outward winding. Above it means the pair folds into a valley.
+ */
+function foldsConvex(
+  p: readonly [number, number, number],
+  q: readonly [number, number, number],
+  r: readonly [number, number, number],
+  apex: readonly [number, number, number],
+): boolean {
+  const e1 = [q[0] - p[0], q[1] - p[1], q[2] - p[2]] as const;
+  const e2 = [r[0] - p[0], r[1] - p[1], r[2] - p[2]] as const;
+  const nx = e1[1] * e2[2] - e1[2] * e2[1];
+  const ny = e1[2] * e2[0] - e1[0] * e2[2];
+  const nz = e1[0] * e2[1] - e1[1] * e2[0];
+  const dx = apex[0] - p[0];
+  const dy = apex[1] - p[1];
+  const dz = apex[2] - p[2];
+  return nx * dx + ny * dy + nz * dz <= 0;
+}
+
+/** Squared distance, for choosing a quad's shorter diagonal. */
+function dist2(a: readonly [number, number, number], b: readonly [number, number, number]): number {
+  const dx = a[0] - b[0];
+  const dy = a[1] - b[1];
+  const dz = a[2] - b[2];
+  return dx * dx + dy * dy + dz * dz;
+}
+
 function loftHull(
   declared: readonly HullRing[],
   axis: 'x' | 'y',
@@ -203,24 +233,79 @@ function loftHull(
   const spin = axis === 'y' ? 1 : -1;
 
   /**
-   * A point on `ring` at angle `t` (0..1 around it), in part-local space.
-   *
-   * `jitter` nudges it, deterministically from the part's own hash: a surface
-   * whose vertices sit on a perfect grid reads as a lathe however low-poly it is,
-   * because every facet is the same size and every edge lines up with its
-   * neighbours. Real low-poly models are decimated meshes, so their facets vary.
-   * A few percent of irregularity is the whole difference.
+   * The profile at an arbitrary position along the axis, interpolated between
+   * the subdivided rings. This is what keeps a jittered vertex **on the surface**
+   * -- see {@link at}.
    */
-  const at = (ring: HullRing, t: number, index: number): [number, number, number] => {
-    const a = spin * t * Math.PI * 2;
-    const wobbleR = 1 + jitter * noise(index, 0);
-    const wobbleA = (jitter * noise(index, 1) * Math.PI) / sides;
-    const u = (ring.dx ?? 0) + Math.cos(a + wobbleA) * ring.rx * wobbleR;
-    const v = (ring.dz ?? 0) + Math.sin(a + wobbleA) * ring.rz * wobbleR;
-    const along = ring.along + jitter * noise(index, 2) * ring.rx * 0.35;
-    // For a y loft, the ring lies in the xz plane; for an x loft, in the yz.
-    return axis === 'y' ? [u, along, v] : [along, u, v];
+  const sampleAt = (along: number): HullRing => {
+    if (along <= (rings[0] as HullRing).along) return rings[0] as HullRing;
+    const last = rings[rings.length - 1] as HullRing;
+    if (along >= last.along) return last;
+    for (let i = 0; i < rings.length - 1; i++) {
+      const lo = rings[i] as HullRing;
+      const hi = rings[i + 1] as HullRing;
+      if (along < lo.along || along > hi.along) continue;
+      const span = hi.along - lo.along;
+      const t = span === 0 ? 0 : (along - lo.along) / span;
+      const mix = (a: number, b: number): number => a + (b - a) * t;
+      return {
+        along,
+        rx: mix(lo.rx, hi.rx),
+        rz: mix(lo.rz, hi.rz),
+        dx: mix(lo.dx ?? 0, hi.dx ?? 0),
+        dz: mix(lo.dz ?? 0, hi.dz ?? 0),
+      };
+    }
+    return last;
   };
+
+  /**
+   * A vertex: ring `i`, column `s`, in part-local space.
+   *
+   * `jitter` varies the facet sizes so the surface is not a perfect grid -- a
+   * grid reads as a lathe however low-poly it is. Two rules make that safe, and
+   * both were arrived at by measuring concave edges rather than by looking:
+   *
+   * 1. **The nudge is tangential, never radial.** It moves the vertex along the
+   *    surface and re-evaluates the profile there, so it still lies exactly on
+   *    the smooth body. Displace a vertex radially and it sits proud of or below
+   *    its neighbours, the two faces sharing an edge fold into a valley, and
+   *    flat shading draws that valley as a hard dark crease.
+   *
+   * 2. **Each nudge is shared along the axis it must not vary on.** The angular
+   *    nudge depends on the *column* alone, so every ring is rotated the same
+   *    way and no two rings are offset relative to each other; the axial nudge
+   *    depends on the *ring* alone, so a ring stays planar. Vary either
+   *    per-vertex and neighbouring rings end up mutually staggered -- a ring's
+   *    edges are chords sitting inside the surface its neighbour's vertices sit
+   *    on, and the band folds inward where they meet. That is the same defect
+   *    the deliberate half-segment stagger had, arrived at by accident.
+   *
+   * What survives is columns at uneven angles and rings at uneven heights: facet
+   * sizes vary, the polyhedron stays inscribed in a convex surface, and a convex
+   * surface cannot crease.
+   */
+  const at = (i: number, s: number): [number, number, number] => {
+    const ring = rings[i] as HullRing;
+    let along = ring.along;
+    if (jitter > 0 && i > 0 && i < rings.length - 1) {
+      // Bounded well inside the gap to each neighbour, so two rings can never
+      // cross over and fold the surface back through itself.
+      const below = ring.along - (rings[i - 1] as HullRing).along;
+      const above = (rings[i + 1] as HullRing).along - ring.along;
+      along += jitter * noise(i, 2) * Math.min(below, above) * 0.4;
+    }
+    const p = sampleAt(along);
+    // Capped at a fraction of a segment, so columns keep their order and the
+    // surface cannot self-intersect.
+    const swirl = jitter * noise(s, 1) * (0.45 / sides);
+    const a = spin * (s / sides + swirl) * Math.PI * 2;
+    const u = (p.dx ?? 0) + Math.cos(a) * p.rx;
+    const v = (p.dz ?? 0) + Math.sin(a) * p.rz;
+    // For a y loft, the ring lies in the xz plane; for an x loft, in the yz.
+    return axis === 'y' ? [u, p.along, v] : [p.along, u, v];
+  };
+
   const centre = (ring: HullRing): [number, number, number] =>
     axis === 'y'
       ? [ring.dx ?? 0, ring.along, ring.dz ?? 0]
@@ -248,27 +333,30 @@ function loftHull(
   };
 
   /**
-   * The surface between the rings, as a **staggered triangle strip**.
+   * Every ring's vertices, computed **once here**; the bands below only index
+   * into them. Not an optimisation: with `jitter` on, recomputing a vertex gives
+   * it a different nudge, so a vertex shared by two bands would land in two
+   * places and tear the surface into ridges along every ring. Likewise the wrap
+   * below is `(s + 1) % sides`, or the seam where the ring closes parts the same
+   * way.
    *
-   * Alternate rings are rotated half a segment, so a vertex on one ring sits
-   * over the *middle* of the gap on the next rather than directly above its
-   * neighbour. That turns what would be a grid of quads -- every diagonal
-   * parallel, every facet the same size and shape, unmistakably a lathe -- into
-   * an interlocking band of triangles, which is what a decimated low-poly model
-   * actually looks like and what the reference art is.
+   * ## Rings are *not* staggered, and that was a deliberate reversal
    *
-   * Every ring's vertices are computed **once, here**, and the bands below only
-   * index into them. That is not an optimisation: with `jitter` on, recomputing
-   * a vertex gives it a different nudge, so a vertex shared by two bands would
-   * land in two places and tear the surface into ridges along every ring.
-   * Likewise the wrap is `(s + 1) % sides` rather than `sides`, or the seam
-   * where the ring closes would part the same way.
+   * Rotating alternate rings half a segment -- an antiprism strip -- is the
+   * obvious way to make a lofted tube read as triangles rather than as a quad
+   * grid, and it does. It also puts a **concave crease on every ring**, because
+   * a ring's edges are chords that sit inside the surface its neighbours'
+   * vertices sit on, so the band folds inward where they meet. Flat-shaded that
+   * is a hard dark line at every ring, and a belly wearing a dozen of them looks
+   * hammered. Measured: staggering was the sole source of concavity in the
+   * whole model -- 8 concave edges on a forearm with it, 0 without.
+   *
+   * The irregularity comes from the two mechanisms that cost nothing instead:
+   * tangential `jitter` (see {@link at}) and the shorter-diagonal split below.
    */
-  const offsetOf = (i: number): number => (i % 2 === 0 ? 0 : 0.5 / sides);
-  const ringVerts: [number, number, number][][] = rings.map((ring, i) => {
-    const off = offsetOf(i);
-    return Array.from({ length: sides }, (_, s) => at(ring, s / sides + off, i * sides + s));
-  });
+  const ringVerts: [number, number, number][][] = rings.map((_ring, i) =>
+    Array.from({ length: sides }, (_, s) => at(i, s)),
+  );
 
   for (let i = 0; i < rings.length - 1; i++) {
     const lo = ringVerts[i] as [number, number, number][];
@@ -279,11 +367,33 @@ function loftHull(
       const b = lo[n] as [number, number, number];
       const c = hi[n] as [number, number, number];
       const d = hi[s] as [number, number, number];
-      // Wound so the normal points *away* from the axis. Get this backwards and
-      // the whole body is inside-out: three.js culls front faces by default, so
-      // the near surface vanishes and you see the inside of the far one.
-      tri(a, c, b);
-      tri(a, d, c);
+
+      // These four corners are **not coplanar** -- uneven column angles and ring
+      // heights see to that -- and a non-planar quad folds one of two ways
+      // depending on which diagonal it is cut along: over the hump into a convex
+      // roof, or under it into a concave valley. Flat-shaded, a valley is a hard
+      // dark crease, which is what makes a belly look beaten rather than round.
+      // So the diagonal is not a free choice.
+      //
+      // Tested rather than guessed. "Take the shorter diagonal" is the usual
+      // heuristic and it holds for near-square quads, but these are strongly
+      // trapezoidal wherever the profile flares -- at the base of the belly the
+      // radius half-doubles over four units -- and there it picks wrong. Folding
+      // each candidate and asking whether it is convex costs two dot products at
+      // build time and is exact.
+      //
+      // Both windings run the quad's outward cycle a -> d -> c -> b, so the
+      // normals point away from the axis whichever split is taken.
+      const acConvex = foldsConvex(a, c, b, d);
+      const bdConvex = foldsConvex(a, d, b, c);
+      const useAC = acConvex === bdConvex ? dist2(a, c) <= dist2(b, d) : acConvex;
+      if (useAC) {
+        tri(a, c, b);
+        tri(a, d, c);
+      } else {
+        tri(a, d, b);
+        tri(b, d, c);
+      }
       face += 1;
     }
   }

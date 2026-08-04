@@ -24,6 +24,12 @@
  */
 
 import { BONE, type FigureMetrics } from '../cloth/figure.js';
+
+/**
+ * Facet irregularity on limbs and ears. Lower than a body's: a limb is only a
+ * few units across, so the same fraction reads as a much bigger wobble.
+ */
+const LIMB_JITTER = 0.07;
 import { hullExtent } from './resolve.js';
 import type { CoatRole, HullRing, PaintBlob, PartSpec } from './types.js';
 
@@ -340,6 +346,7 @@ export function bipedArms(
         role: 'coat',
         facets: 8,
         smooth: 2,
+        jitter: LIMB_JITTER,
         rings: [
           { along: 0.5, rx: shoulder, rz: shoulder },
           { along: -f.upperArmLen * 0.5, rx: (shoulder + elbow) / 2, rz: (shoulder + elbow) / 2 },
@@ -355,6 +362,7 @@ export function bipedArms(
         role: 'coat',
         facets: 8,
         smooth: 2,
+        jitter: LIMB_JITTER,
         rings: [
           { along: 0.5, rx: elbow, rz: elbow },
           { along: -f.forearmLen, rx: wrist, rz: wrist },
@@ -405,6 +413,7 @@ export function bipedLegs(
         role: 'coat',
         facets: 9,
         smooth: 2,
+        jitter: LIMB_JITTER,
         rings: [
           { along: 1, rx: hip * 0.86, rz: hip * 0.86 },
           { along: -f.thighLen * 0.35, rx: hip, rz: hip },
@@ -420,6 +429,7 @@ export function bipedLegs(
         role: 'coat',
         facets: 9,
         smooth: 2,
+        jitter: LIMB_JITTER,
         rings: [
           { along: 0.5, rx: knee, rz: knee },
           { along: -f.shinLen * 0.6, rx: (knee + ankle) / 2, rz: (knee + ankle) / 2 },
@@ -475,6 +485,7 @@ export function earPair(
       role: opts.shellRole ?? 'coat',
       facets: 8,
       smooth: 2,
+      jitter: LIMB_JITTER,
       rings: [
         { along: 0, rx: w * 0.72, rz: t * 0.8 },
         { along: L * 0.22, rx: w, rz: t },

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { Vec2 } from '../../sim/types.js';
 import { CRITTERS, CRITTER_IDS } from '../critters/index.js';
 import { resolveParts } from '../critters/resolve.js';
-import type { CritterSpecies } from '../critters/types.js';
+import type { CritterSpecies, HullRing } from '../critters/types.js';
 import { CritterRig, defaultCritterTuning } from './critter.js';
 import { flatMaterial } from './meshes.js';
 import { PALETTE } from './palette.js';
@@ -51,6 +51,128 @@ function meshesByName(rig: CritterRig): Map<string, THREE.Mesh[]> {
     const list = out.get(mesh.name) ?? [];
     list.push(mesh);
     out.set(mesh.name, list);
+  });
+  return out;
+}
+
+/**
+ * Ranges along a hull's axis where the surface is *allowed* to be concave.
+ *
+ * A lofted surface is convex exactly where its radius profile curves **downward**
+ * -- radius falling away faster and faster, or rising ever more slowly. Where the
+ * profile curves upward (a waist, or a taper that flattens out into a flare) the
+ * surface genuinely bulges inward, and a crease there is the shape working as
+ * declared, not a defect. Local minima are the obvious case, but a snout that
+ * narrows and then widens at the nose, or a tail that thins toward a tuft, curve
+ * upward without ever having a minimum.
+ *
+ * The two end caps are included as well. A cap is a flat disc, so wherever the
+ * wall flares out toward it the rim folds inward -- unavoidable for any capped
+ * surface not narrowing at its end, and in practice always buried inside another
+ * part (a torso's base in the hips, a limb's ends in their joint balls).
+ */
+function concaveBands(rings: readonly HullRing[]): [number, number][] {
+  const sorted = [...rings].sort((a, b) => a.along - b.along);
+  const bands: [number, number][] = [];
+
+  const first = sorted[0] as HullRing;
+  const last = sorted[sorted.length - 1] as HullRing;
+  const rim = 0.6;
+  bands.push([first.along - rim, first.along + rim], [last.along - rim, last.along + rim]);
+
+  for (let i = 1; i < sorted.length - 1; i++) {
+    const prev = sorted[i - 1] as HullRing;
+    const here = sorted[i] as HullRing;
+    const next = sorted[i + 1] as HullRing;
+    const before = (here.rx - prev.rx) / (here.along - prev.along);
+    const after = (next.rx - here.rx) / (next.along - here.along);
+    if (after - before > 0) bands.push([prev.along, next.along]);
+  }
+  return bands;
+}
+
+/**
+ * Concave edges per hull mesh, with where along the axis each one sits.
+ *
+ * An edge is concave when the far vertex of one triangle lies on the outward
+ * side of the other triangle's plane -- the pair opens away from the body rather
+ * than wrapping around it.
+ */
+function concaveEdges(rig: CritterRig): Map<string, { along: number }[]> {
+  const out = new Map<string, { along: number }[]>();
+  const key = (x: number, y: number, z: number): string =>
+    `${x.toFixed(4)},${y.toFixed(4)},${z.toFixed(4)}`;
+
+  const axisOfHull = new Map<string, 'x' | 'y'>();
+  for (const part of resolveParts(rig.species)) {
+    if (part.shape === 'hull') axisOfHull.set(part.name, part.axis ?? 'y');
+  }
+
+  rig.group.traverse((node) => {
+    const mesh = node as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const pos = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
+    // Only the lofted bodies; a box or an icosahedron is not this test's business.
+    if (!(mesh.geometry.userData.faceOf as Int32Array | undefined)) return;
+
+    const tris: { v: THREE.Vector3[]; n: THREE.Vector3 }[] = [];
+    const edges = new Map<string, number[]>();
+    for (let i = 0; i < pos.count; i += 3) {
+      const v = [0, 1, 2].map((k) => new THREE.Vector3(pos.getX(i + k), pos.getY(i + k), pos.getZ(i + k)));
+      const n = new THREE.Vector3()
+        .crossVectors(
+          new THREE.Vector3().subVectors(v[1] as THREE.Vector3, v[0] as THREE.Vector3),
+          new THREE.Vector3().subVectors(v[2] as THREE.Vector3, v[0] as THREE.Vector3),
+        )
+        .normalize();
+      const t = tris.length;
+      tris.push({ v: v as THREE.Vector3[], n });
+      for (let e = 0; e < 3; e++) {
+        const a = v[e] as THREE.Vector3;
+        const b = v[(e + 1) % 3] as THREE.Vector3;
+        const ka = key(a.x, a.y, a.z);
+        const kb = key(b.x, b.y, b.z);
+        if (ka === kb) continue;
+        const id = ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
+        const list = edges.get(id) ?? [];
+        list.push(t);
+        edges.set(id, list);
+      }
+    }
+
+    const axis = axisOfHull.get(mesh.name) ?? 'y';
+    const found: { along: number }[] = [];
+    for (const [id, pair] of edges) {
+      if (pair.length !== 2) continue;
+      const t0 = tris[pair[0] as number];
+      const t1 = tris[pair[1] as number];
+      if (!t0 || !t1) continue;
+      // Any vertex of t1 not on the shared edge, tested against t0's plane.
+      const shared = new Set(t0.v.map((p) => key(p.x, p.y, p.z)));
+      const apex = t1.v.find((p) => !shared.has(key(p.x, p.y, p.z)));
+      if (!apex) continue;
+      const height = t0.n.dot(new THREE.Vector3().subVectors(apex, t0.v[0] as THREE.Vector3));
+      // Positive means the neighbour rises above this face's plane: a valley.
+      //
+      // The threshold is *relative* to the edge, not absolute. Height over edge
+      // length is the tangent of the fold angle, and what makes a crease visible
+      // is the angle -- flat shading turns a fold into a tone step in proportion
+      // to it. 0.02 is about 1.1 degrees: below that a band is numerically flat,
+      // which is all that is left on a section of body that is nearly a straight
+      // cone. For comparison, the staggered rings this test was written against
+      // folded by more than 10 degrees.
+      const ends = id.split('|').map((k) => k.split(',').map(Number));
+      const [p0, p1] = ends as [number[], number[]];
+      const edgeLen = Math.hypot(
+        (p0[0] ?? 0) - (p1[0] ?? 0),
+        (p0[1] ?? 0) - (p1[1] ?? 0),
+        (p0[2] ?? 0) - (p1[2] ?? 0),
+      );
+      if (edgeLen < 1e-6 || height / edgeLen <= 0.02) continue;
+      const along = ends.reduce((sum, e) => sum + ((axis === 'y' ? e[1] : e[0]) ?? 0), 0) / ends.length;
+      found.push({ along });
+    }
+    out.set(mesh.name, found);
   });
   return out;
 }
@@ -210,6 +332,42 @@ describe.each(SPECIES.map((s) => [s.name, s] as const))('%s rig: construction', 
       expect(open, `${part.name} has ${open} unpaired edges`).toBe(0);
     }
     expect(hulls, `${species.id} declares no hulls`).toBeGreaterThan(0);
+  });
+
+  it('creases only where the profile is meant to dip', () => {
+    // The failure this exists for: two faces meeting along an edge folded into a
+    // valley instead of a roof. Flat-shaded that is a hard dark line, and a
+    // belly wearing a dozen of them looks hammered rather than round. Three
+    // separate things caused it and each was found here rather than by eye:
+    // radial jitter, staggered rings, and a quad cut along its long diagonal.
+    //
+    // A lofted surface can only be concave where its own radius profile curves
+    // upward -- the pig's neck, the flare at the end of a snout -- or at an end
+    // cap the wall flares out toward. So the assertion is not "zero concave
+    // edges", which would forbid the neck, but "every crease is somewhere the
+    // declared shape asks for one". A hull whose profile curves downward all the
+    // way -- every limb, every ear -- gets zero across its whole surface by the
+    // same rule.
+    const rig = rigFor(species);
+    const concave = concaveEdges(rig);
+    let checked = 0;
+
+    for (const part of resolveParts(species)) {
+      if (part.shape !== 'hull' || !part.rings) continue;
+      const found = concave.get(part.name);
+      if (!found) continue;
+      checked += 1;
+      const bands = concaveBands(part.rings);
+      for (const edge of found) {
+        const inside = bands.some(([lo, hi]) => edge.along >= lo && edge.along <= hi);
+        expect(
+          inside,
+          `${part.name}: crease at ${edge.along.toFixed(1)} is outside every dip ` +
+            `(allowed: ${bands.map(([l, h]) => `${l.toFixed(1)}..${h.toFixed(1)}`).join(', ') || 'none'})`,
+        ).toBe(true);
+      }
+    }
+    expect(checked, `${species.id} declares no hulls`).toBeGreaterThan(0);
   });
 
   it('lofts a hull the same way whichever order its rings are written', () => {

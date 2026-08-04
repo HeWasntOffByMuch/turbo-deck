@@ -74,10 +74,10 @@ const PIG_FIGURE: FigureMetrics = {
  * Thirteen sides rather than twelve or fourteen: an odd count means the stagger
  * never lines up into a mirrored seam down the front.
  */
-const BODY_SIDES = 13;
+const BODY_SIDES = 12;
 const BODY_SMOOTH = 1;
 /** How irregular the facets are. See `PartSpec.jitter`. */
-const BODY_JITTER = 0.1;
+const BODY_JITTER = 0.14;
 
 /**
  * The whole pig, as one silhouette in world height at rest -- crotch to crown,
@@ -131,9 +131,9 @@ const BODY = splitBodyProfile(BODY_RINGS, { cutAt: NECK_CUT, overlap: NECK_OVERL
  */
 const MUZZLE_RINGS: readonly HullRing[] = [
   { along: 1, rx: 5.8, rz: 6.4, dx: 0 },
-  { along: 6, rx: 4.8, rz: 5.4, dx: -0.5 },
-  { along: 12, rx: 4.2, rz: 4.8, dx: -1.1 },
-  { along: 16.5, rx: 4.4, rz: 5.2, dx: -1.5 },
+  { along: 6.5, rx: 4.7, rz: 5.3, dx: -0.6 },
+  { along: 13, rx: 4.1, rz: 4.7, dx: -1.3 },
+  { along: 18.5, rx: 4.4, rz: 5.2, dx: -1.8 },
 ];
 
 const SOCKETS: readonly SocketSpec[] = [
@@ -199,7 +199,9 @@ const PARTS: readonly PartSpec[] = [
   // Out on the cheeks rather than close over the snout: two dark squares set
   // close together stop reading as a pair of eyes and start reading as one
   // bandit mask, which is the shape the whole face then loses to.
-  eyes({ f: PIG_FIGURE, at: [8.6, 67, -7], size: [2.4, 3, 2.4] }),
+  // Small: at 256 px a 3-unit eye dominates the face, and at 64 px 2.2 units is
+  // still nearly two pixels of solid dark, which is all an eye needs to be.
+  eyes({ f: PIG_FIGURE, at: [8.5, 67, -7.1], size: [2.2, 2.8, 2.2] }),
   ...earPair('ear', { length: 10.5, width: 12, thickness: 3.5 }),
 
   // --- Tail ---------------------------------------------------------------

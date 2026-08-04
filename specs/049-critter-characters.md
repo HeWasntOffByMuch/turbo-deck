@@ -135,21 +135,32 @@ number readable straight off a reference image — and the builder rebases it on
 the right joint. Adding a sheep is a new data file that calls the same builders
 and adds its own head furniture; it touches no rendering code.
 
-**Getting the low-poly look, rather than a lathe.** Two things separate a
-faceted low-poly model from a revolved surface, and neither is polygon count:
+**Getting the low-poly look, rather than a lathe** — while keeping the surface
+**convex**. These pull against each other, and the constraint wins: a body has to
+read as round, and a flat-shaded fold into a valley is a hard dark crease, so a
+belly wearing a dozen of them looks hammered.
 
-- The tessellation is a **staggered triangle strip**, not a quad grid. Alternate
-  rings are rotated half a segment so a vertex sits over the middle of the gap
-  on the next ring rather than directly above its neighbour. A quad grid has
-  every diagonal parallel and every facet identical, which the eye reads as
-  machined however few triangles there are.
 - Facets are near **equilateral**. A facet's width is the circumference over the
   segment count; its height is the ring spacing. Subdivide much finer than the
   segment width and every facet comes out three times wider than tall, which
   reads as corrugation. So rings are spaced about a segment-width apart.
-- `jitter` nudges each vertex a few percent off the grid, hashed from its index
-  so it is identical on every build. Real low-poly art is a decimated mesh, so
-  its facets vary in size; a perfect grid never does.
+- `jitter` varies facet sizes so the surface is not a perfect grid, under two
+  rules that keep it convex. It is **tangential, never radial** — it moves a
+  vertex along the surface and re-evaluates the profile there, so the vertex
+  stays on the smooth body; displaced radially it sits proud of its neighbours
+  and the faces fold. And each nudge is **shared along the axis it must not vary
+  on**: angular by column, axial by ring. Vary either per-vertex and neighbouring
+  rings end up mutually staggered, which is the same defect by accident.
+- Each quad is cut along the diagonal that **folds convex**, tested rather than
+  guessed. "Shorter diagonal" is the usual heuristic and it holds for near-square
+  quads, but these are strongly trapezoidal where the profile flares and there it
+  picks wrong.
+- **Rings are deliberately not staggered.** Rotating alternate rings half a
+  segment is the obvious way to make a lofted tube read as triangles, and it does
+  — but a ring's edges are chords sitting inside the surface its neighbours'
+  vertices sit on, so the band folds inward at every ring. Measured, it was the
+  sole source of concavity in the model: 8 concave edges on a forearm with it,
+  0 without.
 
 **The neckline.** On these animals the head is a swelling at the top of the
 shoulders, not a ball on a stalk — the narrowest point between them is still
@@ -261,6 +272,16 @@ Rig (three.js, headless, no canvas):
   is what catches *tearing* — with `jitter` on, a vertex recomputed instead of
   reused gets a different nudge, and the surface splits along every ring. It
   barely moves the enclosed volume and no orientation check sees it.
+- **Creases only where the profile asks for one.** A lofted surface can be
+  concave exactly where its radius profile curves *upward* (the pig's neck; the
+  flare at the end of a snout) or at an end cap the wall flares toward. Every
+  concave edge must fall in one of those bands, which means a hull whose profile
+  curves downward throughout — every limb, every ear — has none at all. The fold
+  threshold is relative (height over edge length ≈ the fold angle, at about
+  1.1°), because what makes a crease visible is the angle, not an absolute
+  distance. Four separate things caused creases during this work — radial
+  jitter, staggered rings, per-vertex angular jitter, and a quad cut along its
+  long diagonal — and each was found by this test rather than by eye.
 - Every articulated joint carries a ball on its pivot at least as wide as the
   limb segments meeting there, and the head and torso overlap rather than butting
   together. These are the two masking rules above, asserted.

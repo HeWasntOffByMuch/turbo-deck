@@ -53,10 +53,10 @@ const COW_FIGURE: FigureMetrics = {
  * marking's edge can only follow the facets it is cut from, and too few sides
  * turns a round patch into a chevron.
  */
-const BODY_SIDES = 13;
+const BODY_SIDES = 12;
 const BODY_SMOOTH = 1;
 /** How irregular the facets are. See `PartSpec.jitter`. */
-const BODY_JITTER = 0.1;
+const BODY_JITTER = 0.14;
 
 /**
  * The whole cow as one silhouette, crotch to crown -- see the pig for why this
