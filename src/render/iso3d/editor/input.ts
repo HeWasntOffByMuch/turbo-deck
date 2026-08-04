@@ -34,6 +34,9 @@ const PAN_KEYS: Record<string, readonly [forward: number, right: number]> = {
  */
 const ORBIT_BUTTONS = new Set([1, 2]);
 
+/** The button that paints. Reserved in spec 049, claimed by the brush in 050. */
+const PAINT_BUTTON = 0;
+
 export interface DragDelta {
   readonly dx: number;
   readonly dy: number;
@@ -48,6 +51,11 @@ export class EditorInputCapture {
   private readonly held = new Set<string>();
   private mouse: ScreenPoint = { x: 0, y: 0 };
   private orbiting = false;
+  private painting = false;
+  // Edges, so the view can open and close an undo entry exactly once per stroke
+  // however the gesture ends.
+  private paintStarted = false;
+  private paintEnded = false;
   // Accumulated between frames rather than sampled, so a fast drag that produced
   // several pointer events in one frame turns the whole gesture and not its tail.
   private dragX = 0;
@@ -73,6 +81,10 @@ export class EditorInputCapture {
   private readonly onBlur = (): void => {
     this.held.clear();
     this.orbiting = false;
+    // A stroke interrupted by losing focus still has to be closed, or its undo
+    // entry stays open and the next stroke joins it.
+    if (this.painting) this.paintEnded = true;
+    this.painting = false;
   };
 
   private readonly onPointerMove = (e: PointerEvent): void => {
@@ -84,6 +96,13 @@ export class EditorInputCapture {
   };
 
   private readonly onPointerDown = (e: PointerEvent): void => {
+    if (e.button === PAINT_BUTTON) {
+      this.painting = true;
+      this.paintStarted = true;
+      this.canvas.setPointerCapture?.(e.pointerId);
+      e.preventDefault();
+      return;
+    }
     if (!ORBIT_BUTTONS.has(e.button)) return;
     this.orbiting = true;
     // Keeps the drag alive when the cursor leaves the canvas mid-gesture, which
@@ -93,6 +112,12 @@ export class EditorInputCapture {
   };
 
   private readonly onPointerUp = (e: PointerEvent): void => {
+    if (e.button === PAINT_BUTTON) {
+      if (this.painting) this.paintEnded = true;
+      this.painting = false;
+      this.canvas.releasePointerCapture?.(e.pointerId);
+      return;
+    }
     if (!ORBIT_BUTTONS.has(e.button)) return;
     this.orbiting = false;
     this.canvas.releasePointerCapture?.(e.pointerId);
@@ -184,5 +209,24 @@ export class EditorInputCapture {
   /** Whether an orbit drag is in progress, for the cursor style. */
   get isOrbiting(): boolean {
     return this.orbiting;
+  }
+
+  /** Whether the paint button is held, i.e. whether a stroke should be applied. */
+  get isPainting(): boolean {
+    return this.painting;
+  }
+
+  /** Consume a "a stroke just began" edge. */
+  takePaintStart(): boolean {
+    const started = this.paintStarted;
+    this.paintStarted = false;
+    return started;
+  }
+
+  /** Consume a "a stroke just ended" edge, however it ended. */
+  takePaintEnd(): boolean {
+    const ended = this.paintEnded;
+    this.paintEnded = false;
+    return ended;
   }
 }

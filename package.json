@@ -18,6 +18,7 @@
     "bake:sprites": "tsx scripts/bake-dude-atlas.ts"
   },
   "dependencies": {
+    "lil-gui": "^0.21.0",
     "pixi.js": "^8.6.6",
     "pure-rand": "^6.1.0",
     "three": "^0.160.1"

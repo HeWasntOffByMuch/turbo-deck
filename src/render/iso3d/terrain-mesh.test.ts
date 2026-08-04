@@ -182,3 +182,105 @@ describe('a reloaded map draws the same scene', () => {
     expect(to?.position.toArray()).toEqual(from?.position.toArray());
   });
 });
+
+describe('rebuilding one chunk', () => {
+  const world = testWorld();
+  const doc = exportMap({ world, props: [], seed: 7, arena: ARENA, options: OPT });
+
+  /** Vertex positions of every mesh under a group, in order. */
+  const shape = (group: THREE.Object3D): number[][] =>
+    meshes(group).map((m) => [...(attribute(m, 'position') ?? new Float32Array())]);
+
+  it('leaves every other chunk\'s mesh untouched', () => {
+    const map = loadMap(doc);
+    const handle = buildTerrainMeshFromChunks(map.meshLayers, map.chunks);
+    const target = map.chunks[0] as (typeof map.chunks)[number];
+    // The meshes that belong to the *target* are the only ones allowed to be
+    // replaced; every other mesh must come through as the same object, not as an
+    // equal copy -- a rebuild that quietly re-created the world would pass a
+    // value comparison and still leak 55 chunks of geometry per stroke.
+    const survivors = new Set(meshes(handle.group));
+    const before = shape(handle.group).map((v) => v.join(',')).sort();
+
+    handle.rebuild(target);
+
+    const after = meshes(handle.group);
+    const replaced = after.filter((m) => !survivors.has(m));
+    // A chunk is at most a surface and a skirt.
+    expect(replaced.length).toBeGreaterThan(0);
+    expect(replaced.length).toBeLessThanOrEqual(2);
+    // Rebuilt from an unedited store, so the geometry itself is unchanged --
+    // compared as a multiset, since a rebuild appends rather than splicing.
+    expect(shape(handle.group).map((v) => v.join(',')).sort()).toEqual(before);
+    handle.dispose();
+  });
+
+  it('picks up an edit to that chunk and nothing else', () => {
+    const map = loadMap(doc);
+    const handle = buildTerrainMeshFromChunks(map.meshLayers, map.chunks);
+    const target = map.chunks[0] as (typeof map.chunks)[number];
+    const meshCount = meshes(handle.group).length;
+
+    map.store.setCornerHeight(target.layerId, target.startCol + 3, target.startRow + 3, 555);
+    const rebuilt = map.store.buildChunk(target.layerId, target.coord.cx, target.coord.cz);
+    expect(rebuilt).not.toBeNull();
+    if (!rebuilt) return;
+    handle.rebuild(rebuilt);
+
+    // The raised corner is in the buffer now...
+    const heights = shape(handle.group).flat().filter((_, i) => i % 3 === 1);
+    expect(heights.some((y) => Math.abs(y - 555) < 1e-3)).toBe(true);
+    // ...and no mesh was leaked or lost doing it.
+    expect(meshes(handle.group)).toHaveLength(meshCount);
+    handle.dispose();
+  });
+
+  it('keeps pickTargets the same array instance, with the stale mesh gone', () => {
+    // Callers capture this array once at construction; swapping it would leave
+    // them raycasting against geometry that has been disposed.
+    const map = loadMap(doc);
+    const handle = buildTerrainMeshFromChunks(map.meshLayers, map.chunks);
+    const targets = handle.pickTargets;
+    const target = map.chunks[0] as (typeof map.chunks)[number];
+    const stale = targets.find((o) => o instanceof THREE.Mesh);
+    const count = targets.length;
+
+    const rebuilt = map.store.buildChunk(target.layerId, target.coord.cx, target.coord.cz);
+    if (!rebuilt) return;
+    handle.rebuild(rebuilt);
+
+    expect(handle.pickTargets).toBe(targets);
+    expect(targets).toHaveLength(count);
+    expect(targets).not.toContain(stale);
+    for (const t of targets) expect(handle.group.children).toContain(t);
+    handle.dispose();
+  });
+
+  it('matches what a full rebuild would have produced', () => {
+    const map = loadMap(doc);
+    const handle = buildTerrainMeshFromChunks(map.meshLayers, map.chunks);
+    const target = map.chunks[0] as (typeof map.chunks)[number];
+    map.store.setCornerHeight(target.layerId, target.startCol + 2, target.startRow + 4, 77);
+
+    const patched = map.store.buildChunk(target.layerId, target.coord.cx, target.coord.cz);
+    if (!patched) return;
+    handle.rebuild(patched);
+
+    // The same store, meshed from scratch.
+    const fresh = buildTerrainMeshFromChunks(map.meshLayers, map.store.buildChunks());
+    const sortRows = (g: THREE.Object3D): string[] => shape(g).map((v) => v.join(',')).sort();
+    expect(sortRows(handle.group)).toEqual(sortRows(fresh.group));
+    handle.dispose();
+    fresh.dispose();
+  });
+
+  it('ignores a chunk naming a layer it does not have', () => {
+    const map = loadMap(doc);
+    const handle = buildTerrainMeshFromChunks(map.meshLayers, map.chunks);
+    const before = meshes(handle.group).length;
+    const target = map.chunks[0] as (typeof map.chunks)[number];
+    expect(() => handle.rebuild({ ...target, layerId: 'nope' })).not.toThrow();
+    expect(meshes(handle.group)).toHaveLength(before);
+    handle.dispose();
+  });
+});

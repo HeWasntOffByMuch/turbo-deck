@@ -49,8 +49,17 @@ const wallMaterial = new THREE.MeshLambertMaterial({
 export interface TerrainMeshHandle {
   /** Add this to the scene. Positioned in world space; do not move it. */
   readonly group: THREE.Group;
-  /** The land surfaces, for raycasting the cursor onto the ground. */
+  /**
+   * The land surfaces, for raycasting the cursor onto the ground. A stable array
+   * instance: `rebuild` edits it in place, so a caller may capture it once.
+   */
   readonly pickTargets: THREE.Object3D[];
+  /**
+   * Replace one chunk's geometry, disposing what it replaces (spec 050). This is
+   * what makes a brush stroke affordable: a drag re-meshes the handful of chunks
+   * under it, not all 56.
+   */
+  rebuild(chunk: TerrainChunk): void;
   dispose(): void;
 }
 
@@ -207,39 +216,60 @@ export function buildTerrainMeshFromChunks(
   chunks: readonly TerrainChunk[],
 ): TerrainMeshHandle {
   const group = new THREE.Group();
+  // Captured once by callers and then held, so `rebuild` must mutate this exact
+  // array rather than replace it -- a swapped array leaves a scene raycasting
+  // against geometry that has since been disposed.
   const pickTargets: THREE.Object3D[] = [];
-  const geometries: THREE.BufferGeometry[] = [];
   const materials: THREE.Material[] = [];
   const byId = new Map(layers.map((layer) => [layer.id, layer]));
+  /** The meshes currently drawn for each chunk, so one can be replaced. */
+  const drawn = new Map<string, { surface: THREE.Mesh | null; walls: THREE.Mesh | null }>();
+  const slotKey = (chunk: TerrainChunk): string => `${chunk.layerId}:${chunk.coord.cx},${chunk.coord.cz}`;
+
+  /** Build (or rebuild) one chunk's meshes into the group. */
+  const draw = (layer: MeshLayer, chunk: TerrainChunk): void => {
+    const key = slotKey(chunk);
+    const previous = drawn.get(key);
+    if (previous) {
+      for (const mesh of [previous.surface, previous.walls]) {
+        if (!mesh) continue;
+        group.remove(mesh);
+        mesh.geometry.dispose();
+      }
+      const stale = previous.surface ? pickTargets.indexOf(previous.surface) : -1;
+      if (stale >= 0) pickTargets.splice(stale, 1);
+    }
+
+    const { surface, walls } = buildChunk(layer, chunk);
+    const slot: { surface: THREE.Mesh | null; walls: THREE.Mesh | null } = { surface: null, walls: null };
+    if (surface) {
+      // Ground both takes shadows and throws them (spec 045): a cliff casting
+      // its own shape onto the shelf below is most of what makes a terrace
+      // read as a step rather than a stripe. Water does neither -- a shadow
+      // on a translucent plane reads as dirt floating on it.
+      slot.surface = new THREE.Mesh(surface, surfaceMaterial);
+      slot.surface.castShadow = true;
+      slot.surface.receiveShadow = true;
+      group.add(slot.surface);
+      pickTargets.push(slot.surface);
+    }
+    if (walls) {
+      slot.walls = new THREE.Mesh(walls, wallMaterial);
+      slot.walls.castShadow = true;
+      slot.walls.receiveShadow = true;
+      group.add(slot.walls);
+    }
+    drawn.set(key, slot);
+  };
 
   for (const layer of layers) {
     for (const chunk of chunks) {
       if (byId.get(chunk.layerId) !== layer) continue;
-      const { surface, walls } = buildChunk(layer, chunk);
-      if (surface) {
-        const mesh = new THREE.Mesh(surface, surfaceMaterial);
-        // Ground both takes shadows and throws them (spec 045): a cliff casting
-        // its own shape onto the shelf below is most of what makes a terrace
-        // read as a step rather than a stripe. Water does neither -- a shadow
-        // on a translucent plane reads as dirt floating on it.
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        group.add(mesh);
-        pickTargets.push(mesh);
-        geometries.push(surface);
-      }
-      if (walls) {
-        const mesh = new THREE.Mesh(walls, wallMaterial);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        group.add(mesh);
-        geometries.push(walls);
-      }
+      draw(layer, chunk);
     }
     const water = buildWater(layer);
     if (water) {
       group.add(water);
-      geometries.push(water.geometry);
       materials.push(water.material as THREE.Material);
     }
   }
@@ -247,9 +277,17 @@ export function buildTerrainMeshFromChunks(
   return {
     group,
     pickTargets,
+    rebuild(chunk: TerrainChunk): void {
+      const layer = byId.get(chunk.layerId);
+      if (layer) draw(layer, chunk);
+    },
     dispose(): void {
-      for (const geo of geometries) geo.dispose();
+      for (const child of group.children) {
+        if (child instanceof THREE.Mesh) child.geometry.dispose();
+      }
       for (const mat of materials) mat.dispose();
+      drawn.clear();
+      pickTargets.length = 0;
       group.clear();
     },
   };

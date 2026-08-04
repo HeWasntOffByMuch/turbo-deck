@@ -167,8 +167,14 @@ camera keeps right/middle drag, so sculpting and framing never fight.
 - Height change scales with `dtSeconds` and with `strength`.
 - `flatten` moves ground toward its target from both above and below, and never
   past it.
-- `smooth` reduces the variance of the heights under it, and preserves their mean
-  to within float error — it must not sink or inflate the ground it tidies.
+- `smooth` reduces the **roughness** under it — each corner's distance from the
+  average of its neighbours, summed — which is what a smoothing tool is for. A
+  slope is not rough; a plateau meeting a cliff is.
+- `smooth` obeys the maximum principle: a corner never lands outside the range its
+  own neighbourhood already spanned, so the tool cannot spike or pit terrain.
+  It deliberately does *not* preserve the mean under its footprint — with the
+  ground outside the brush pinned, height diffuses across the edge, which is how
+  smoothing a shelf pulls it toward its shoulders instead of merely rippling it.
 - Applying a stroke centred on a chunk seam leaves every copy of every shared
   corner in agreement (no crack).
 - The dirty set contains every chunk holding a moved corner, plus the ring

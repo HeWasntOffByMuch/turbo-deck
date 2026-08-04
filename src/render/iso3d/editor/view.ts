@@ -3,7 +3,7 @@ import { arenaBounds, type LoadedMap, type MapDocument } from '../../../terrain/
 import { PLAY_HEIGHT, PLAY_WIDTH } from '../../../shared/world.js';
 import type { ViewHandle } from '../movement.js';
 import { PALETTE } from '../palette.js';
-import { buildPropField } from '../props.js';
+import { buildPropField, type PropFieldHandle } from '../props.js';
 import { viewSeed } from '../seed.js';
 import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-mesh.js';
 import { CAMERA_FAR, CAMERA_NEAR, DEFAULT_LIGHT_OFFSET } from '../view-settings.js';
@@ -15,8 +15,12 @@ import {
   zoomEditorCamera,
   type EditorCameraState,
 } from './camera.js';
+import { applyTerrainBrush } from './brush.js';
+import { createBrushCursor, type BrushCursorHandle } from './cursor.js';
+import { EditHistory } from './history.js';
 import { EditorInputCapture } from './input.js';
 import { bakeEditorMap } from './map-source.js';
+import { buildEditorPanel, createBrushSettings, TOOL_COLORS } from './panel.js';
 
 /**
  * The map editor tab (spec 049).
@@ -58,11 +62,16 @@ class EditorScene {
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
   private readonly terrainMesh: TerrainMeshHandle;
+  private propField: PropFieldHandle;
   private renderW = 0;
   private renderH = 0;
   private lastHalfWidth = -1;
   private lastAspect = -1;
   private readonly lookTarget = new THREE.Vector3();
+  // Reused across cursor raycasts so a frame of painting allocates nothing.
+  private readonly raycaster = new THREE.Raycaster();
+  private readonly ndc = new THREE.Vector2();
+  private readonly hits: THREE.Intersection[] = [];
 
   /** The loaded document everything in this scene was built from. */
   readonly map: LoadedMap;
@@ -111,12 +120,60 @@ class EditorScene {
 
     this.terrainMesh = buildTerrainMeshFromChunks(this.map.meshLayers, this.map.chunks);
     this.scene.add(this.terrainMesh.group);
-    this.scene.add(buildPropField(this.map.props, (x, z) => this.map.world.heightAt(x, z)).group);
+    this.propField = this.buildProps();
   }
 
-  /** The surfaces a cursor raycast should hit. The brush enters here in step 4. */
+  private buildProps(): PropFieldHandle {
+    const field = buildPropField(this.map.props, (x, z) => this.map.world.heightAt(x, z));
+    this.scene.add(field.group);
+    return field;
+  }
+
+  /**
+   * Re-stand every prop on the ground as it is now.
+   *
+   * A prop's height is baked into its instance matrix, so sculpting under a
+   * forest leaves the trees hanging in the air or buried to the crown. Rebuilt
+   * whole rather than per-instance, and only when a stroke *ends*: the field is
+   * one pass over ~1150 props, which is far too much to do sixty times a second
+   * and unnoticeable once per mouse-up.
+   */
+  refreshProps(): void {
+    this.scene.remove(this.propField.group);
+    this.propField.dispose();
+    this.propField = this.buildProps();
+  }
+
+  /** The surfaces the cursor raycast hits. A stable array across patch rebuilds. */
   get pickTargets(): THREE.Object3D[] {
     return this.terrainMesh.pickTargets;
+  }
+
+  /**
+   * The world point under the cursor, in canvas CSS pixels, or null if the ray
+   * missed the ground. Raycast against the terrain itself rather than a flat
+   * plane, so aiming at a hillside targets the hillside.
+   */
+  pick(cssX: number, cssY: number): { x: number; z: number } | null {
+    const rect = this.canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return null;
+    this.ndc.set((cssX / rect.width) * 2 - 1, -((cssY / rect.height) * 2 - 1));
+    this.raycaster.setFromCamera(this.ndc, this.camera);
+    this.hits.length = 0;
+    this.raycaster.intersectObjects(this.terrainMesh.pickTargets, false, this.hits);
+    const ground = this.hits[0];
+    return ground ? { x: ground.point.x, z: ground.point.z } : null;
+  }
+
+  /** Re-mesh one chunk after an edit -- the whole point of the patch rebuild. */
+  rebuildChunk(layerId: string, cx: number, cz: number): void {
+    const chunk = this.map.store.buildChunk(layerId, cx, cz);
+    if (chunk) this.terrainMesh.rebuild(chunk);
+  }
+
+  /** Add an overlay (the brush cursor) above the terrain. */
+  addOverlay(object: THREE.Object3D): void {
+    this.scene.add(object);
   }
 
   /** Match the drawing buffer to the canvas's box. Cheap to call every frame. */
@@ -156,6 +213,7 @@ class EditorScene {
 
   dispose(): void {
     this.terrainMesh.dispose();
+    this.propField.dispose();
     this.renderer.dispose();
   }
 }
@@ -184,20 +242,72 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   help.style.cssText = `${OVERLAY_CSS}position:absolute;left:10px;bottom:10px;z-index:20;`;
   help.innerHTML =
     '<b style="color:#f0f0f8;">Map editor</b> &mdash; rendering from a baked map document<br>' +
-    '<b>WASD</b> / arrows pan &middot; <b>right-drag</b> or <b>middle-drag</b> orbits &middot; <b>wheel</b> zooms<br>' +
-    '<span style="color:#7a7a90;">left-click is reserved for the tools</span>';
+    '<b>left-drag</b> sculpts &middot; <b>WASD</b> / arrows pan &middot; ' +
+    '<b>right-drag</b> or <b>middle-drag</b> orbits &middot; <b>wheel</b> zooms<br>' +
+    '<span style="color:#7a7a90;">Ctrl+Z undoes a stroke</span>';
 
   const readout = document.createElement('div');
   readout.style.cssText = `${OVERLAY_CSS}position:absolute;right:10px;bottom:10px;z-index:20;text-align:right;`;
 
-  root.append(canvas, help, readout);
+  const panelHost = document.createElement('div');
+  panelHost.style.cssText = 'position:absolute;top:44px;right:10px;z-index:30;';
+
+  root.append(canvas, help, readout, panelHost);
   container.appendChild(root);
 
   const scene = new EditorScene(canvas, viewSeed());
   const input = new EditorInputCapture(canvas);
+  const history = new EditHistory();
+  const brush = createBrushSettings();
+
+  const cursor: BrushCursorHandle = createBrushCursor(TOOL_COLORS[brush.tool]);
+  scene.addOverlay(cursor.object);
+
+  // The layer the brush edits. One ground layer today; when there are more, this
+  // becomes a picker rather than a different mechanism.
+  const layerId = scene.document.layers[0]?.id ?? 'ground';
+
+  /** Re-mesh a set of chunks, skipping the duplicates a drag produces. */
+  const remesh = (dirty: readonly { cx: number; cz: number }[]): void => {
+    const seen = new Set<string>();
+    for (const c of dirty) {
+      const key = `${c.cx},${c.cz}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      scene.rebuildChunk(layerId, c.cx, c.cz);
+    }
+  };
+
+  const undo = (): void => {
+    const restored = history.undo(scene.map.store);
+    if (restored.length === 0) return;
+    for (const c of restored) scene.rebuildChunk(c.layerId, c.cx, c.cz);
+    scene.refreshProps();
+  };
+
+  const panel = buildEditorPanel({
+    brush,
+    onUndo: undo,
+    onToolChange: (tool) => cursor.setColor(TOOL_COLORS[tool]),
+  });
+  panelHost.appendChild(panel.element);
+
+  const onKeyDown = (e: KeyboardEvent): void => {
+    if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') {
+      undo();
+      e.preventDefault();
+    }
+  };
 
   const chunks = scene.document.layers.reduce((n, layer) => n + layer.chunks.length, 0);
   const props = scene.map.props.length;
+
+  // Sampled once when a stroke begins, so `flatten` levels to the ground it was
+  // aimed at rather than chasing the surface it is changing.
+  let flattenTo = 0;
+  // Whether the stroke in progress actually moved ground, so a click that hit
+  // nothing does not pay for a prop-field rebuild.
+  let strokeMovedGround = false;
 
   let running = false;
   let lastFrame: number | undefined;
@@ -218,7 +328,44 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       scene.camera3 = panEditorCamera(scene.camera3, pan.forward, pan.right, dt);
     }
 
-    canvas.style.cursor = input.isOrbiting ? 'grabbing' : 'default';
+    // The cursor goes where the ray lands, and the brush follows it. Both read
+    // the same pick, so the ring always marks the ground that is about to move.
+    const at = scene.pick(input.mouseCanvas().x, input.mouseCanvas().y);
+    if (at) {
+      cursor.moveTo(at.x, at.z, brush.radius, (x, z) => scene.map.world.heightAt(x, z));
+      cursor.setVisible(true);
+    } else {
+      cursor.setVisible(false);
+    }
+
+    if (input.takePaintStart()) {
+      history.beginStroke();
+      strokeMovedGround = false;
+      // The height under the first press is the level `flatten` works toward.
+      if (at) flattenTo = scene.map.world.heightAt(at.x, at.z);
+    }
+    if (input.isPainting && at) {
+      const dirty = applyTerrainBrush(scene.map.store, brush, {
+        layerId,
+        x: at.x,
+        z: at.z,
+        dtSeconds: dt,
+        flattenTo,
+        onTouchChunk: (cx, cz) => history.captureChunk(scene.map.store, layerId, cx, cz),
+      });
+      remesh(dirty);
+      if (dirty.length > 0) strokeMovedGround = true;
+      // The ring reads the surface it just moved, so it has to be redrawn after.
+      cursor.moveTo(at.x, at.z, brush.radius, (x, z) => scene.map.world.heightAt(x, z));
+    }
+    if (input.takePaintEnd()) {
+      history.endStroke();
+      // Trees stand on the ground, and the ground just moved.
+      if (strokeMovedGround) scene.refreshProps();
+      strokeMovedGround = false;
+    }
+
+    canvas.style.cursor = input.isOrbiting ? 'grabbing' : input.isPainting ? 'crosshair' : 'default';
     scene.render();
 
     const c = scene.camera3;
@@ -226,7 +373,8 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       `at <b>${Math.round(c.target.x)}, ${Math.round(c.target.z)}</b> &middot; ` +
       `span <b>${Math.round(c.halfWidth)}</b> &middot; ` +
       `pitch <b>${Math.round((c.elevation * 180) / Math.PI)}&deg;</b><br>` +
-      `<span style="color:#7a7a90;">${chunks} chunks &middot; ${props} props</span>`;
+      `<span style="color:#7a7a90;">${chunks} chunks &middot; ${props} props &middot; ` +
+      `${history.depth} undo</span>`;
 
     requestAnimationFrame(frame);
   };
@@ -238,11 +386,15 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       running = true;
       lastFrame = undefined;
       input.attach(window);
+      window.addEventListener('keydown', onKeyDown);
       requestAnimationFrame(frame);
     },
     stop(): void {
       running = false;
       input.detach();
+      window.removeEventListener('keydown', onKeyDown);
+      // A stroke interrupted by a tab switch still closes its undo entry.
+      history.endStroke();
     },
   };
 }

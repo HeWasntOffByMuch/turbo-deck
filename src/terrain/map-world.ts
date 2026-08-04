@@ -87,6 +87,17 @@ function grid(bounds: MapRect, cellSize: number, chunkCells: number): LayerGrid 
   };
 }
 
+/** One chunk's mutable arrays, copied out so an edit can be undone (spec 050). */
+export interface ChunkSnapshot {
+  readonly layerId: string;
+  readonly cx: number;
+  readonly cz: number;
+  readonly heights: Float32Array;
+  readonly solid: Uint8Array;
+  readonly materials: Uint8Array;
+  readonly tones: Uint8Array;
+}
+
 /** A cell of terrain, as the editor sees it. */
 export interface CellData {
   readonly solid: boolean;
@@ -268,6 +279,46 @@ export class MapChunkStore {
   /** Is the layer's global cell solid? What the mesher asks to find real coastlines. */
   cellSolid(layerId: string, col: number, row: number): boolean {
     return this.cellAt(layerId, col, row)?.solid === true;
+  }
+
+  /** Set a global cell's material index. Leaves solidity and tone alone. */
+  setCellMaterial(layerId: string, col: number, row: number, material: number): void {
+    const layer = this.layers.get(layerId);
+    if (!layer) return;
+    const slot = this.cellSlot(layer, col, row);
+    if (!slot) return;
+    slot.chunk.materials[slot.index] = material;
+  }
+
+  /**
+   * A copy of one chunk's mutable arrays, for the undo stack (spec 050).
+   *
+   * Everything an edit can change, and nothing derived: `cornerX`, `cornerZ` and
+   * the normals are rebuilt from these on the way back out, so snapshotting them
+   * would only create a second thing that could disagree.
+   */
+  snapshotChunk(layerId: string, cx: number, cz: number): ChunkSnapshot | null {
+    const chunk = this.layers.get(layerId)?.chunks.get(key(cx, cz));
+    if (!chunk) return null;
+    return {
+      layerId,
+      cx,
+      cz,
+      heights: Float32Array.from(chunk.heights),
+      solid: Uint8Array.from(chunk.solid),
+      materials: Uint8Array.from(chunk.materials),
+      tones: Uint8Array.from(chunk.tones),
+    };
+  }
+
+  /** Put a snapshot back. Silently does nothing if the chunk has gone. */
+  restoreChunk(snapshot: ChunkSnapshot): void {
+    const chunk = this.layers.get(snapshot.layerId)?.chunks.get(key(snapshot.cx, snapshot.cz));
+    if (!chunk) return;
+    chunk.heights.set(snapshot.heights);
+    chunk.solid.set(snapshot.solid);
+    chunk.materials.set(snapshot.materials);
+    chunk.tones.set(snapshot.tones);
   }
 
   /** Every prop in the layer, in world space and in chunk order. */
