@@ -19,7 +19,7 @@ import { PLAYER_COATS, type CoatSwatch } from '../src/render/critters/palette.js
 import { CritterRig, defaultCritterTuning } from '../src/render/iso3d/critter.js';
 import type { CritterSpecies } from '../src/render/critters/types.js';
 
-const BIG = 256;
+const BIG = Number(process.env.BIG ?? 256);
 const SMALL = 64;
 const SMALL_SCALE = 3;
 const GAP = 8;
@@ -27,7 +27,10 @@ const BG: readonly [number, number, number] = [58, 60, 68];
 const SHEET_BG: readonly [number, number, number] = [30, 31, 36];
 
 /** The scene's isometric view direction, and a light roughly where its sun is. */
-const VIEW_DIR = new THREE.Vector3(-1, -0.82, -1).normalize();
+const VIEW_YAW = Number(process.env.YAW ?? 0);
+const VIEW_DIR = new THREE.Vector3(-1, -0.82, -1)
+  .applyAxisAngle(new THREE.Vector3(0, 1, 0), (VIEW_YAW * Math.PI) / 180)
+  .normalize();
 const LIGHT = new THREE.Vector3(0.45, 0.8, 0.38).normalize();
 // The scene lights with one directional light over a strong blue ambient, so
 // even the faces turned away from the sun keep most of their colour.
@@ -231,6 +234,8 @@ function posedTriangles(species: CritterSpecies, coat: number, speed = WALK_SPEE
 }
 
 const COAT_IDS = (process.env.COATS ?? 'rose,sage,blue,cream,plum').split(',');
+/** `ONLY=pig` renders a single species, for locking one animal in at a time. */
+const ONLY = process.env.ONLY?.split(',');
 const swatches = COAT_IDS.map((id) => PLAYER_COATS.find((c) => c.id === id)).filter(
   (c): c is CoatSwatch => c !== undefined,
 );
@@ -238,7 +243,8 @@ const swatches = COAT_IDS.map((id) => PLAYER_COATS.find((c) => c.id === id)).fil
 const cellW = BIG + GAP;
 const rowH = BIG + GAP;
 const sheetW = (swatches.length + 1) * cellW + SMALL * SMALL_SCALE + GAP;
-const sheetH = CRITTER_IDS.length * rowH;
+const SPECIES_IDS = ONLY ? CRITTER_IDS.filter((id) => ONLY.includes(id)) : CRITTER_IDS;
+const sheetH = SPECIES_IDS.length * rowH;
 const img = new PNG({ width: sheetW, height: sheetH, colorType: 6 });
 for (let i = 0; i < img.data.length; i += 4) {
   img.data[i] = SHEET_BG[0];
@@ -267,7 +273,7 @@ function blit(rgba: Uint8ClampedArray, w: number, gx: number, gy: number, scale 
   }
 }
 
-CRITTER_IDS.forEach((id, row) => {
+SPECIES_IDS.forEach((id, row) => {
   const species = CRITTERS[id];
   swatches.forEach((swatch, col) => {
     blit(render(posedTriangles(species, swatch.hex), BIG), BIG, col * cellW, row * rowH);

@@ -88,6 +88,7 @@ export function hull(opts: {
   readonly mirror?: boolean;
   readonly facets?: number;
   readonly smooth?: number;
+  readonly jitter?: number;
   readonly paint?: readonly PaintBlob[];
 }): PartSpec {
   const axis = opts.axis ?? 'y';
@@ -104,8 +105,68 @@ export function hull(opts: {
     ...(opts.mirror ? { mirror: true } : {}),
     ...(opts.facets ? { facets: opts.facets } : {}),
     ...(opts.smooth ? { smooth: opts.smooth } : {}),
+    ...(opts.jitter ? { jitter: opts.jitter } : {}),
     ...(opts.paint ? { paint: opts.paint } : {}),
   };
+}
+
+/**
+ * Split one continuous body silhouette into the torso and head hulls.
+ *
+ * ## Why the profile is written as one curve
+ *
+ * On these animals there is barely a neck: the head is a swelling at the top of
+ * the shoulders, and the narrowest point between them is still most of the
+ * head's width. Describing the torso and the head as two separate profiles makes
+ * that shape almost impossible to hit -- each one gets its own end taper, and the
+ * union reads as a head sat *on* a body rather than growing out of it, however
+ * carefully the two are overlapped.
+ *
+ * So a species writes the whole silhouette once, crotch to crown, and this cuts
+ * it in two. Both halves are sampled from the *same* ring list with a band of
+ * overlap either side of the cut, so the union is exactly the declared curve and
+ * the two hulls cannot drift apart. Where the cut falls is invisible: it is in
+ * the middle of a region both meshes occupy.
+ *
+ * They stay two meshes on two bones rather than becoming one, so a head that
+ * later needs to turn still can.
+ */
+export function splitBodyProfile(
+  rings: readonly HullRing[],
+  opts: { readonly cutAt: number; readonly overlap: number },
+): { torso: HullRing[]; head: HullRing[] } {
+  const { cutAt, overlap } = opts;
+  const sample = (along: number): HullRing => {
+    // Linear between the two declared rings that bracket it. The loft's own
+    // Catmull-Rom smooths the result, so this only has to land on the curve.
+    let lo = rings[0] as HullRing;
+    let hi = rings[rings.length - 1] as HullRing;
+    for (let i = 0; i < rings.length - 1; i++) {
+      const a = rings[i] as HullRing;
+      const b = rings[i + 1] as HullRing;
+      if (along >= a.along && along <= b.along) {
+        lo = a;
+        hi = b;
+        break;
+      }
+    }
+    const span = hi.along - lo.along;
+    const t = span === 0 ? 0 : (along - lo.along) / span;
+    const mix = (a: number, b: number): number => a + (b - a) * t;
+    return {
+      along,
+      rx: mix(lo.rx, hi.rx),
+      rz: mix(lo.rz, hi.rz),
+      dx: mix(lo.dx ?? 0, hi.dx ?? 0),
+      dz: mix(lo.dz ?? 0, hi.dz ?? 0),
+    };
+  };
+
+  const torsoTop = cutAt + overlap;
+  const headBottom = cutAt - overlap;
+  const torso = [...rings.filter((r) => r.along < torsoTop), sample(torsoTop)];
+  const head = [sample(headBottom), ...rings.filter((r) => r.along > headBottom)];
+  return { torso, head };
 }
 
 /**
@@ -127,7 +188,12 @@ export function hull(opts: {
 export function torso(
   f: FigureMetrics,
   rings: readonly HullRing[],
-  opts: { readonly paint?: readonly PaintBlob[]; readonly sides?: number; readonly smooth?: number } = {},
+  opts: {
+    readonly paint?: readonly PaintBlob[];
+    readonly sides?: number;
+    readonly smooth?: number;
+    readonly jitter?: number;
+  } = {},
 ): PartSpec {
   return hull({
     name: 'torso',
@@ -137,6 +203,7 @@ export function torso(
     pos: [0, 0, 0],
     ...(opts.sides ? { facets: opts.sides } : {}),
     ...(opts.smooth ? { smooth: opts.smooth } : {}),
+    ...(opts.jitter ? { jitter: opts.jitter } : {}),
     ...(opts.paint
       ? { paint: opts.paint.map((b) => ({ ...b, at: [b.at[0], b.at[1] - f.chestY, b.at[2]] as const })) }
       : {}),
@@ -151,7 +218,12 @@ export function torso(
 export function head(
   f: FigureMetrics,
   rings: readonly HullRing[],
-  opts: { readonly paint?: readonly PaintBlob[]; readonly sides?: number; readonly smooth?: number } = {},
+  opts: {
+    readonly paint?: readonly PaintBlob[];
+    readonly sides?: number;
+    readonly smooth?: number;
+    readonly jitter?: number;
+  } = {},
 ): PartSpec {
   return hull({
     name: 'head',
@@ -161,6 +233,7 @@ export function head(
     pos: [0, 0, 0],
     ...(opts.sides ? { facets: opts.sides } : {}),
     ...(opts.smooth ? { smooth: opts.smooth } : {}),
+    ...(opts.jitter ? { jitter: opts.jitter } : {}),
     ...(opts.paint
       ? { paint: opts.paint.map((b) => ({ ...b, at: [b.at[0], b.at[1] - f.neckY, b.at[2]] as const })) }
       : {}),

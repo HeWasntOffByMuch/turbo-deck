@@ -133,17 +133,21 @@ describe.each(SPECIES.map((s) => [s.name, s] as const))('%s rig: construction', 
     // and you see the inside of its far one. Both loft axes are checked, because
     // (x, z, y) and (y, z, x) have opposite handedness and an identical sweep
     // winds them opposite ways -- which is exactly how this shipped broken.
+    //
+    // Measured as **signed volume** -- the divergence theorem: a closed mesh
+    // wound outward encloses positive volume, one wound inward encloses the
+    // negative of it. Comparing each face's normal against the direction from
+    // the mesh's centroid is the obvious alternative and it is wrong here, since
+    // it assumes a convex body: the moment a profile has a real concavity (the
+    // pig's neck) the faces inside the dip legitimately face "inward" by that
+    // measure, and the test starts failing on correct geometry.
     const rig = rigFor(species);
-    const centre = new THREE.Vector3();
+    const byName = meshesByName(rig);
     const a = new THREE.Vector3();
     const b = new THREE.Vector3();
     const c = new THREE.Vector3();
-    const e1 = new THREE.Vector3();
-    const e2 = new THREE.Vector3();
-    const normal = new THREE.Vector3();
-    const radial = new THREE.Vector3();
+    const cross = new THREE.Vector3();
 
-    const byName = meshesByName(rig);
     let hulls = 0;
     for (const part of resolveParts(species)) {
       if (part.shape !== 'hull') continue;
@@ -151,25 +155,59 @@ describe.each(SPECIES.map((s) => [s.name, s] as const))('%s rig: construction', 
       if (!mesh) continue;
       hulls += 1;
       const pos = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
-      centre.set(0, 0, 0);
-      for (let i = 0; i < pos.count; i++) centre.add(a.set(pos.getX(i), pos.getY(i), pos.getZ(i)));
-      centre.divideScalar(pos.count);
-
-      let outward = 0;
-      let inward = 0;
+      let volume = 0;
       for (let i = 0; i < pos.count; i += 3) {
         a.set(pos.getX(i), pos.getY(i), pos.getZ(i));
         b.set(pos.getX(i + 1), pos.getY(i + 1), pos.getZ(i + 1));
         c.set(pos.getX(i + 2), pos.getY(i + 2), pos.getZ(i + 2));
-        normal.crossVectors(e1.subVectors(b, a), e2.subVectors(c, a));
-        if (normal.lengthSq() < 1e-12) continue;
-        radial.copy(a).add(b).add(c).divideScalar(3).sub(centre);
-        if (radial.lengthSq() < 1e-9) continue;
-        if (normal.normalize().dot(radial.normalize()) > 0) outward += 1;
-        else inward += 1;
+        volume += a.dot(cross.crossVectors(b, c)) / 6;
       }
-      expect(inward, `${part.name} has ${inward} inward-facing faces`).toBe(0);
-      expect(outward, `${part.name} has no faces`).toBeGreaterThan(0);
+      expect(volume, `${part.name} encloses ${volume.toFixed(1)} -- inside out`).toBeGreaterThan(0);
+
+      // And a plausible amount of it: a mesh that has torn or folded through
+      // itself still has a sign, but its volume collapses well under what its
+      // own bounding box allows.
+      const box = new THREE.Box3().setFromBufferAttribute(pos);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      const boxVolume = size.x * size.y * size.z;
+      expect(volume, `${part.name} volume vs box`).toBeGreaterThan(boxVolume * 0.15);
+    }
+    expect(hulls, `${species.id} declares no hulls`).toBeGreaterThan(0);
+  });
+
+  it('lofts every hull watertight', () => {
+    // Every edge shared by exactly two triangles. This is the one that catches
+    // *tearing*: with `jitter` on, a vertex recomputed rather than reused gets a
+    // different nudge, so two triangles that should meet along an edge end up a
+    // fraction apart. The result is a split running along every ring -- which
+    // reads as corrugation, barely moves the enclosed volume, and is invisible
+    // to any test that only checks orientation.
+    const rig = rigFor(species);
+    const byName = meshesByName(rig);
+    const key = (x: number, y: number, z: number): string =>
+      `${x.toFixed(4)},${y.toFixed(4)},${z.toFixed(4)}`;
+
+    let hulls = 0;
+    for (const part of resolveParts(species)) {
+      if (part.shape !== 'hull') continue;
+      const mesh = byName.get(part.name)?.[0];
+      if (!mesh) continue;
+      hulls += 1;
+      const pos = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
+      const edges = new Map<string, number>();
+      for (let i = 0; i < pos.count; i += 3) {
+        const v = [0, 1, 2].map((k) => key(pos.getX(i + k), pos.getY(i + k), pos.getZ(i + k)));
+        for (let e = 0; e < 3; e++) {
+          const a = v[e] as string;
+          const b = v[(e + 1) % 3] as string;
+          if (a === b) continue; // a degenerate cap triangle contributes no edge
+          const id = a < b ? `${a}|${b}` : `${b}|${a}`;
+          edges.set(id, (edges.get(id) ?? 0) + 1);
+        }
+      }
+      const open = [...edges.values()].filter((n) => n !== 2).length;
+      expect(open, `${part.name} has ${open} unpaired edges`).toBe(0);
     }
     expect(hulls, `${species.id} declares no hulls`).toBeGreaterThan(0);
   });

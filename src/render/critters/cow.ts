@@ -17,7 +17,7 @@
  */
 
 import { BONE, type FigureMetrics } from '../cloth/figure.js';
-import { bipedArms, bipedLegs, earPair, eyes, head, hull, muzzle, torso } from './body.js';
+import { bipedArms, bipedLegs, earPair, eyes, head, hull, muzzle, splitBodyProfile, torso } from './body.js';
 import type { CritterSpecies, HullRing, PaintBlob, PartSpec, SocketSpec } from './types.js';
 
 /** Cow proportions: longer in the leg and the face than the pig, ~86 to the horns. */
@@ -48,27 +48,41 @@ const COW_FIGURE: FigureMetrics = {
 };
 
 /**
- * Radial segments around the body and head. The cow needs these more than the
- * pig does: a painted marking's edge can only follow the facets it is cut from,
- * and at ten sides a round patch comes out as a chevron.
+ * Facet shape around and along the body -- see the pig for why these two are one
+ * decision. The cow cares about the segment count for a second reason: a painted
+ * marking's edge can only follow the facets it is cut from, and too few sides
+ * turns a round patch into a chevron.
  */
-const BODY_SIDES = 14;
-/** Lofted sections between each declared ring. See `PartSpec.smooth`. */
-const BODY_SMOOTH = 3;
+const BODY_SIDES = 13;
+const BODY_SMOOTH = 1;
+/** How irregular the facets are. See `PartSpec.jitter`. */
+const BODY_JITTER = 0.1;
 
-/** Much the same teardrop as the pig's, carried a little higher and longer. */
-const TORSO_RINGS: readonly HullRing[] = [
+/**
+ * The whole cow as one silhouette, crotch to crown -- see the pig for why this
+ * is written as a single curve and cut in two rather than as two profiles. The
+ * cow carries a little more neck than the pig does, but not much: the dip at
+ * y = 59 is still three quarters of the skull's width.
+ */
+const BODY_RINGS: readonly HullRing[] = [
   { along: 24, rx: 6.5, rz: 6.5, dx: 2 },
   { along: 28, rx: 10.5, rz: 11, dx: 3 },
   { along: 33, rx: 12.4, rz: 13, dx: 3 },
   { along: 39, rx: 12.6, rz: 13, dx: 2.4 },
   { along: 45, rx: 11.6, rz: 12.2, dx: 1.4 },
-  { along: 50, rx: 10, rz: 10.6, dx: 0.6 },
-  { along: 55, rx: 8.6, rz: 9.2, dx: 0 },
-  // Buried inside the skull -- see the pig's profile for why.
-  { along: 60, rx: 6.6, rz: 7.2, dx: 0 },
-  { along: 63, rx: 5.4, rz: 6, dx: 0.4 },
+  { along: 50, rx: 10.2, rz: 10.8, dx: 0.6 },
+  { along: 54, rx: 8.8, rz: 9.4, dx: 0.2 },
+  { along: 59, rx: 6.6, rz: 7.2, dx: 0.6 },
+  { along: 63, rx: 8.6, rz: 9.2, dx: 1.2 },
+  { along: 67, rx: 9.6, rz: 10.2, dx: 1.2 },
+  { along: 71, rx: 9.2, rz: 9.6, dx: 0.8 },
+  { along: 74.5, rx: 7, rz: 7.4, dx: 0.2 },
+  { along: 77.5, rx: 3.6, rz: 4, dx: 0 },
 ];
+
+const NECK_CUT = 57;
+const NECK_OVERLAP = 4;
+const BODY = splitBodyProfile(BODY_RINGS, { cutAt: NECK_CUT, overlap: NECK_OVERLAP });
 
 /**
  * The markings, in world height at rest. Deliberately asymmetric -- a symmetric
@@ -81,18 +95,6 @@ const TORSO_PATCHES: readonly PaintBlob[] = [
   { role: 'marking', at: [12, 30, 6], r: [6, 7, 7] },
   { role: 'marking', at: [-9, 41, -3], r: [6, 8, 7] },
   { role: 'marking', at: [1, 50, 10], r: [6, 6, 6] },
-];
-
-/** A longer, narrower skull than the pig's. */
-const HEAD_RINGS: readonly HullRing[] = [
-  // Starts inside the torso, for the same reason.
-  { along: 55.5, rx: 4.4, rz: 4.8, dx: 0.6 },
-  { along: 59, rx: 6.6, rz: 7.2, dx: 1 },
-  { along: 63, rx: 8.4, rz: 9, dx: 1.2 },
-  { along: 67, rx: 9.6, rz: 10.2, dx: 1.2 },
-  { along: 71, rx: 9.2, rz: 9.6, dx: 0.8 },
-  { along: 74.5, rx: 7, rz: 7.4, dx: 0.2 },
-  { along: 77.5, rx: 3.6, rz: 4, dx: 0 },
 ];
 
 /**
@@ -149,8 +151,8 @@ const SOCKETS: readonly SocketSpec[] = [
 ];
 
 const PARTS: readonly PartSpec[] = [
-  torso(COW_FIGURE, TORSO_RINGS, { paint: TORSO_PATCHES, sides: BODY_SIDES, smooth: BODY_SMOOTH }),
-  head(COW_FIGURE, HEAD_RINGS, { paint: HEAD_PATCHES, sides: BODY_SIDES, smooth: BODY_SMOOTH }),
+  torso(COW_FIGURE, BODY.torso, { paint: TORSO_PATCHES, sides: BODY_SIDES, smooth: BODY_SMOOTH, jitter: BODY_JITTER }),
+  head(COW_FIGURE, BODY.head, { paint: HEAD_PATCHES, sides: BODY_SIDES, smooth: BODY_SMOOTH, jitter: BODY_JITTER }),
   ...bipedArms(COW_FIGURE, { taper: [3.6, 3.1, 2.7], hand: [4.4, 4.6, 4.4], handRole: 'hoof' }),
   ...bipedLegs(COW_FIGURE, { taper: [6, 4.4, 3.6], hoof: [6.6, 4.2, 5.8] }),
   ...muzzle({

@@ -27,6 +27,7 @@ export function isCritterId(kind: string): kind is CritterId {
 
 export { COW, PIG };
 export * from './types.js';
+export { splitBodyProfile } from './body.js';
 export { deriveCoat, PLAYER_COATS, swatchFor, MIN_ACCENT_CONTRAST, type CoatSwatch } from './palette.js';
 export { contrastRatio, luminance, mix, shade, tint } from './color.js';
 export {

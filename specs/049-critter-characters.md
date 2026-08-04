@@ -135,6 +135,31 @@ number readable straight off a reference image — and the builder rebases it on
 the right joint. Adding a sheep is a new data file that calls the same builders
 and adds its own head furniture; it touches no rendering code.
 
+**Getting the low-poly look, rather than a lathe.** Two things separate a
+faceted low-poly model from a revolved surface, and neither is polygon count:
+
+- The tessellation is a **staggered triangle strip**, not a quad grid. Alternate
+  rings are rotated half a segment so a vertex sits over the middle of the gap
+  on the next ring rather than directly above its neighbour. A quad grid has
+  every diagonal parallel and every facet identical, which the eye reads as
+  machined however few triangles there are.
+- Facets are near **equilateral**. A facet's width is the circumference over the
+  segment count; its height is the ring spacing. Subdivide much finer than the
+  segment width and every facet comes out three times wider than tall, which
+  reads as corrugation. So rings are spaced about a segment-width apart.
+- `jitter` nudges each vertex a few percent off the grid, hashed from its index
+  so it is identical on every build. Real low-poly art is a decimated mesh, so
+  its facets vary in size; a perfect grid never does.
+
+**The neckline.** On these animals the head is a swelling at the top of the
+shoulders, not a ball on a stalk — the narrowest point between them is still
+three quarters of the head's width. Two separate profiles cannot hit that: each
+gets its own end taper and the union reads as a head sat *on* a body. So a
+species declares **one silhouette, crotch to crown**, and `splitBodyProfile()`
+cuts it into the torso and head hulls with a band of overlap, both sampled from
+the same curve. They stay two meshes on two bones, so a head that later needs to
+turn still can.
+
 **Masking the joins between parts.** Two kinds, needing opposite fixes:
 
 - *Rigid* joins (muzzle into skull, head into torso) are masked by **overlap**:
@@ -226,10 +251,16 @@ Rig (three.js, headless, no canvas):
 
 - Each species builds without throwing, produces one mesh per part (two per
   mirrored part), and every mirrored pair is a genuine z-mirror of its twin.
-- **Every hull face winds outward, on both loft axes.** Inside-out geometry is
-  invisible rather than wrong-looking — three.js culls back faces, so a flipped
-  hull loses its near surface and shows the inside of its far one — and the two
-  loft axes have opposite handedness, so each needs checking separately.
+- **Every hull encloses positive signed volume, on both loft axes.** Inside-out
+  geometry is invisible rather than wrong-looking — three.js culls back faces, so
+  a flipped hull loses its near surface and shows the inside of its far one — and
+  the two loft axes have opposite handedness, so each needs checking separately.
+  Signed volume rather than normals-versus-centroid, which assumes a convex body
+  and fails on a real concavity like the pig's neck.
+- **Every hull is watertight**: each edge shared by exactly two triangles. This
+  is what catches *tearing* — with `jitter` on, a vertex recomputed instead of
+  reused gets a different nudge, and the surface splits along every ring. It
+  barely moves the enclosed volume and no orientation check sees it.
 - Every articulated joint carries a ball on its pivot at least as wide as the
   limb segments meeting there, and the head and torso overlap rather than butting
   together. These are the two masking rules above, asserted.

@@ -16,7 +16,7 @@
  */
 
 import { BONE, type FigureMetrics } from '../cloth/figure.js';
-import { bipedArms, bipedLegs, earPair, eyes, head, muzzle, torso } from './body.js';
+import { bipedArms, bipedLegs, earPair, eyes, head, muzzle, splitBodyProfile, torso } from './body.js';
 import type { CritterSpecies, HullRing, PartSpec, SocketSpec } from './types.js';
 
 /**
@@ -57,43 +57,57 @@ const PIG_FIGURE: FigureMetrics = {
 };
 
 /**
- * The body profile, in world height at rest, read straight off the reference:
- * the silhouette swells from the crotch to its widest point low and forward,
- * holds that through the belly, then narrows steadily into the shoulders. `dx`
- * leans each ring forward, so the back stays near-vertical while the belly
- * bulges -- which is what makes it read as a full stomach and not a barrel.
- */
-/**
  * Radial segments around the body and head. Fourteen rather than the default
  * ten: a painted marking's edge can only follow the facets it is cut from, and
  * at ten sides a round patch comes out as a chevron.
  */
-const BODY_SIDES = 14;
-/** Lofted sections between each declared ring. See `PartSpec.smooth`. */
-const BODY_SMOOTH = 3;
+/**
+ * Facet shape around and along the body.
+ *
+ * These two are one decision, not two. A facet's width is the circumference over
+ * `BODY_SIDES` (~6 units here); its height is the gap between lofted rings. Make
+ * the rings much closer than that and every facet comes out three times wider
+ * than it is tall, which reads as corrugation -- a ribbed jumper, not a low-poly
+ * animal. The reference's facets are roughly equilateral, so the declared rings
+ * are spaced about a segment-width apart and left unsubdivided.
+ *
+ * Thirteen sides rather than twelve or fourteen: an odd count means the stagger
+ * never lines up into a mirrored seam down the front.
+ */
+const BODY_SIDES = 13;
+const BODY_SMOOTH = 1;
+/** How irregular the facets are. See `PartSpec.jitter`. */
+const BODY_JITTER = 0.1;
 
-const TORSO_RINGS: readonly HullRing[] = [
+/**
+ * The whole pig, as one silhouette in world height at rest -- crotch to crown,
+ * written the way you would trace it off the reference.
+ *
+ * The shape of the reference pig is almost entirely in three places:
+ *
+ *  - the **teardrop**: widest low and forward at y ~30, tucking back in above
+ *    the knees and narrowing steadily into the shoulders;
+ *  - the **neck, which barely exists**: the waist at y = 56 is 7.2 units wide
+ *    against a 10.4-unit skull, so the head is a swelling on the shoulders
+ *    rather than a ball on a stalk. Anything under about 0.65 of the head's
+ *    width there and it stops being a pig;
+ *  - `dx`, leaning each ring forward so the back stays near-vertical while the
+ *    belly bulges -- which is what reads as a full stomach and not a barrel.
+ *
+ * {@link splitBodyProfile} cuts this into the torso and head hulls with a band
+ * of overlap, so the neck is one continuous surface and the join is invisible.
+ */
+const BODY_RINGS: readonly HullRing[] = [
   { along: 21, rx: 6.5, rz: 6.5, dx: 2 },
   { along: 25, rx: 10.5, rz: 11, dx: 3 },
   { along: 30, rx: 12.6, rz: 13.2, dx: 3.2 },
   { along: 36, rx: 12.8, rz: 13.2, dx: 2.6 },
   { along: 42, rx: 11.6, rz: 12.2, dx: 1.6 },
-  { along: 47, rx: 10, rz: 10.6, dx: 0.8 },
-  { along: 52, rx: 8.4, rz: 9, dx: 0.2 },
-  // Runs past the neck and up inside the skull. A torso that stops exactly
-  // where the head starts shows the seam as a ledge however well the radii
-  // match; buried, there is nothing to see.
-  { along: 57, rx: 6.6, rz: 7.2, dx: 0 },
-  { along: 60, rx: 5.6, rz: 6.2, dx: 0.4 },
-];
-
-/** The skull, again in world height: a broad ball flattening toward the crown. */
-const HEAD_RINGS: readonly HullRing[] = [
-  // Starts below the neck, inside the torso, for the same reason the torso runs
-  // up inside the skull: the join is masked by overlap, not by a shared plane.
-  { along: 52.5, rx: 4.4, rz: 4.8, dx: 0.6 },
-  { along: 56, rx: 6.6, rz: 7.2, dx: 1 },
-  { along: 60, rx: 9, rz: 9.6, dx: 1.4 },
+  { along: 47, rx: 10.2, rz: 10.8, dx: 0.9 },
+  { along: 51, rx: 9, rz: 9.6, dx: 0.5 },
+  // The neck. A shallow dip, not a stalk.
+  { along: 56, rx: 6.8, rz: 7.2, dx: 0.6 },
+  { along: 60, rx: 9.2, rz: 9.8, dx: 1.4 },
   { along: 64, rx: 10.4, rz: 11, dx: 1.4 },
   { along: 68, rx: 10.2, rz: 10.6, dx: 1 },
   { along: 72, rx: 8, rz: 8.4, dx: 0.4 },
@@ -101,15 +115,25 @@ const HEAD_RINGS: readonly HullRing[] = [
 ];
 
 /**
+ * Where the torso hull hands over to the head hull, and how far each runs past
+ * it. The cut sits just below the neck's narrowest point, where both meshes are
+ * at their smallest and the overlap costs least.
+ */
+const NECK_CUT = 54;
+const NECK_OVERLAP = 4;
+
+const BODY = splitBodyProfile(BODY_RINGS, { cutAt: NECK_CUT, overlap: NECK_OVERLAP });
+
+/**
  * The snout, lofted forward out of the skull. `along` is how far forward, `rx`
  * the half-height, `rz` the half-width, `dx` the droop. It barely tapers and
  * then flares a touch at the tip, which is the whole shape of a pig's nose.
  */
 const MUZZLE_RINGS: readonly HullRing[] = [
-  { along: 2, rx: 5.6, rz: 6.2, dx: 0 },
-  { along: 7, rx: 5, rz: 5.6, dx: -0.6 },
-  { along: 12, rx: 4.6, rz: 5.2, dx: -1.2 },
-  { along: 15.5, rx: 4.9, rz: 5.6, dx: -1.5 },
+  { along: 1, rx: 5.8, rz: 6.4, dx: 0 },
+  { along: 6, rx: 4.8, rz: 5.4, dx: -0.5 },
+  { along: 12, rx: 4.2, rz: 4.8, dx: -1.1 },
+  { along: 16.5, rx: 4.4, rz: 5.2, dx: -1.5 },
 ];
 
 const SOCKETS: readonly SocketSpec[] = [
@@ -117,10 +141,16 @@ const SOCKETS: readonly SocketSpec[] = [
     // High and well back on the skull, splayed hard out to the sides.
     socket: 'ear',
     parentBone: BONE.head,
-    pos: [-1, 14.5, -7],
+    pos: [-1, 14, -6.5],
     // rx splays the ear outward (mirrored on the right); rz tips it forward
     // (shared, so both ears lean the same way).
-    rot: [-1.0, 0, -0.5],
+    // Three rotations, and the middle one is the one that matters. `rx` splays
+    // the ear outward and `rz` tips it forward, but on their own they leave the
+    // flap's broad face pointing up and out, so from the game's camera you see
+    // it edge-on and it reads as a fin. `ry` swings the plane round to face
+    // forward-and-outward, which is how a pig actually wears its ears; it is
+    // mirrored, so the pair opens symmetrically.
+    rot: [-0.5, 0.65, -0.25],
     mirror: true,
     wobble: {
       axis: 'x',
@@ -150,15 +180,15 @@ const SOCKETS: readonly SocketSpec[] = [
 ];
 
 const PARTS: readonly PartSpec[] = [
-  torso(PIG_FIGURE, TORSO_RINGS, { sides: BODY_SIDES, smooth: BODY_SMOOTH }),
-  head(PIG_FIGURE, HEAD_RINGS, { sides: BODY_SIDES, smooth: BODY_SMOOTH }),
-  ...bipedArms(PIG_FIGURE, { taper: [3.4, 2.9, 2.5], hand: [4.2, 4.4, 4.2], handRole: 'hoof' }),
+  torso(PIG_FIGURE, BODY.torso, { sides: BODY_SIDES, smooth: BODY_SMOOTH, jitter: BODY_JITTER }),
+  head(PIG_FIGURE, BODY.head, { sides: BODY_SIDES, smooth: BODY_SMOOTH, jitter: BODY_JITTER }),
+  ...bipedArms(PIG_FIGURE, { taper: [3.9, 3.3, 2.8], hand: [4.4, 4.6, 4.4], handRole: 'hoof' }),
   ...bipedLegs(PIG_FIGURE, { taper: [5.8, 4.2, 3.4], hoof: [6.4, 4, 5.6] }),
   ...muzzle({
     f: PIG_FIGURE,
     atY: 64.5,
     rings: MUZZLE_RINGS,
-    padDepth: 2.4,
+    padDepth: 1.9,
     // Small and set well apart: at 2.6 units apart they merge into one black
     // blot that reads as the whole nose, which is worse than having none.
     nostril: [2.2, 3, 2.2],
@@ -169,8 +199,8 @@ const PARTS: readonly PartSpec[] = [
   // Out on the cheeks rather than close over the snout: two dark squares set
   // close together stop reading as a pair of eyes and start reading as one
   // bandit mask, which is the shape the whole face then loses to.
-  eyes({ f: PIG_FIGURE, at: [8.7, 67.5, -7], size: [2.8, 3.6, 2.8] }),
-  ...earPair('ear', { length: 9.5, width: 13, thickness: 4 }),
+  eyes({ f: PIG_FIGURE, at: [8.6, 67, -7], size: [2.4, 3, 2.4] }),
+  ...earPair('ear', { length: 10.5, width: 12, thickness: 3.5 }),
 
   // --- Tail ---------------------------------------------------------------
   // Two stubby segments angled against each other read as a curl from any

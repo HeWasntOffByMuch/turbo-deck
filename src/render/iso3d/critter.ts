@@ -157,11 +157,29 @@ function subdivideRings(rings: readonly HullRing[], steps: number): HullRing[] {
  * `axis` picks which local axis the rings stack along -- `y` for a torso, `x`
  * for a muzzle running forward out of the skull.
  */
+/**
+ * Deterministic value noise in [-1, 1], from an integer index and a channel.
+ *
+ * Deliberately a hash rather than the shared {@link Rng}: the loft needs the
+ * *same* nudge for the same vertex every time it is built, in any order, without
+ * threading a generator through the geometry code -- and a critter that rebuilt
+ * itself into a slightly different shape between two runs would break every
+ * determinism test in the suite.
+ */
+function noise(index: number, channel: number): number {
+  let h = Math.imul(index * 2 + channel + 0x9e3779b9, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return (h >>> 0) / 0x7fffffff - 1;
+}
+
 function loftHull(
   declared: readonly HullRing[],
   axis: 'x' | 'y',
   sides: number,
   smooth: number,
+  jitter: number,
 ): THREE.BufferGeometry {
   if (declared.length < 2) throw new Error('a hull needs at least two rings');
   // Normalise to ascending `along` before anything else. A species is free to
@@ -184,13 +202,24 @@ function loftHull(
   // backwards is the same ellipse.
   const spin = axis === 'y' ? 1 : -1;
 
-  /** A point on `ring` at angle `t` (0..1 around it), in part-local space. */
-  const at = (ring: HullRing, t: number): [number, number, number] => {
+  /**
+   * A point on `ring` at angle `t` (0..1 around it), in part-local space.
+   *
+   * `jitter` nudges it, deterministically from the part's own hash: a surface
+   * whose vertices sit on a perfect grid reads as a lathe however low-poly it is,
+   * because every facet is the same size and every edge lines up with its
+   * neighbours. Real low-poly models are decimated meshes, so their facets vary.
+   * A few percent of irregularity is the whole difference.
+   */
+  const at = (ring: HullRing, t: number, index: number): [number, number, number] => {
     const a = spin * t * Math.PI * 2;
-    const u = (ring.dx ?? 0) + Math.cos(a) * ring.rx;
-    const v = (ring.dz ?? 0) + Math.sin(a) * ring.rz;
+    const wobbleR = 1 + jitter * noise(index, 0);
+    const wobbleA = (jitter * noise(index, 1) * Math.PI) / sides;
+    const u = (ring.dx ?? 0) + Math.cos(a + wobbleA) * ring.rx * wobbleR;
+    const v = (ring.dz ?? 0) + Math.sin(a + wobbleA) * ring.rz * wobbleR;
+    const along = ring.along + jitter * noise(index, 2) * ring.rx * 0.35;
     // For a y loft, the ring lies in the xz plane; for an x loft, in the yz.
-    return axis === 'y' ? [u, ring.along, v] : [ring.along, u, v];
+    return axis === 'y' ? [u, along, v] : [along, u, v];
   };
   const centre = (ring: HullRing): [number, number, number] =>
     axis === 'y'
@@ -218,16 +247,38 @@ function loftHull(
     faceOf.push(face);
   };
 
+  /**
+   * The surface between the rings, as a **staggered triangle strip**.
+   *
+   * Alternate rings are rotated half a segment, so a vertex on one ring sits
+   * over the *middle* of the gap on the next rather than directly above its
+   * neighbour. That turns what would be a grid of quads -- every diagonal
+   * parallel, every facet the same size and shape, unmistakably a lathe -- into
+   * an interlocking band of triangles, which is what a decimated low-poly model
+   * actually looks like and what the reference art is.
+   *
+   * Every ring's vertices are computed **once, here**, and the bands below only
+   * index into them. That is not an optimisation: with `jitter` on, recomputing
+   * a vertex gives it a different nudge, so a vertex shared by two bands would
+   * land in two places and tear the surface into ridges along every ring.
+   * Likewise the wrap is `(s + 1) % sides` rather than `sides`, or the seam
+   * where the ring closes would part the same way.
+   */
+  const offsetOf = (i: number): number => (i % 2 === 0 ? 0 : 0.5 / sides);
+  const ringVerts: [number, number, number][][] = rings.map((ring, i) => {
+    const off = offsetOf(i);
+    return Array.from({ length: sides }, (_, s) => at(ring, s / sides + off, i * sides + s));
+  });
+
   for (let i = 0; i < rings.length - 1; i++) {
-    const lo = rings[i] as HullRing;
-    const hi = rings[i + 1] as HullRing;
+    const lo = ringVerts[i] as [number, number, number][];
+    const hi = ringVerts[i + 1] as [number, number, number][];
     for (let s = 0; s < sides; s++) {
-      const t0 = s / sides;
-      const t1 = (s + 1) / sides;
-      const a = at(lo, t0);
-      const b = at(lo, t1);
-      const c = at(hi, t1);
-      const d = at(hi, t0);
+      const n = (s + 1) % sides;
+      const a = lo[s] as [number, number, number];
+      const b = lo[n] as [number, number, number];
+      const c = hi[n] as [number, number, number];
+      const d = hi[s] as [number, number, number];
       // Wound so the normal points *away* from the axis. Get this backwards and
       // the whole body is inside-out: three.js culls front faces by default, so
       // the near surface vanishes and you see the inside of the far one.
@@ -239,18 +290,18 @@ function loftHull(
 
   // Caps. A fan to the ring's centre, which for a ring that has closed to
   // nothing degenerates harmlessly into zero-area triangles.
-  const first = rings[0] as HullRing;
-  const last = rings[rings.length - 1] as HullRing;
-  const firstCentre = centre(first);
-  const lastCentre = centre(last);
+  const firstCentre = centre(rings[0] as HullRing);
+  const lastCentre = centre(rings[rings.length - 1] as HullRing);
+  const firstVerts = ringVerts[0] as [number, number, number][];
+  const lastVerts = ringVerts[rings.length - 1] as [number, number, number][];
   for (let s = 0; s < sides; s++) {
-    const t0 = s / sides;
-    const t1 = (s + 1) / sides;
+    const n = (s + 1) % sides;
     // Caps face outward along the axis: the first away from +along, the last
-    // toward it.
-    tri(firstCentre, at(first, t0), at(first, t1));
+    // toward it. They reuse the precomputed ring vertices, so a jittered cap
+    // cannot part from the surface it closes.
+    tri(firstCentre, firstVerts[s] as [number, number, number], firstVerts[n] as [number, number, number]);
     face += 1;
-    tri(lastCentre, at(last, t1), at(last, t0));
+    tri(lastCentre, lastVerts[n] as [number, number, number], lastVerts[s] as [number, number, number]);
     face += 1;
   }
 
@@ -365,7 +416,7 @@ function partGeometry(part: ResolvedPart): { geo: THREE.BufferGeometry; roles: C
   const [w, h, d] = part.size;
   const facets = part.facets;
   const key =
-    `${part.shape}|${w},${h},${d}|${part.taper ?? 0}|${facets ?? -1}|${part.axis ?? 'y'}|${part.smooth ?? 1}` +
+    `${part.shape}|${w},${h},${d}|${part.taper ?? 0}|${facets ?? -1}|${part.axis ?? 'y'}|${part.smooth ?? 1}|${part.jitter ?? 0}` +
     `|${part.role}|${JSON.stringify(part.rings ?? null)}|${JSON.stringify(part.paint ?? null)}`;
   const hit = geometryCache.get(key);
   if (hit) return hit;
@@ -373,7 +424,7 @@ function partGeometry(part: ResolvedPart): { geo: THREE.BufferGeometry; roles: C
   let geo: THREE.BufferGeometry;
   if (part.shape === 'hull') {
     if (!part.rings) throw new Error(`hull ${part.name} has no rings`);
-    geo = loftHull(part.rings, part.axis ?? 'y', facets ?? HULL_SIDES, part.smooth ?? 1);
+    geo = loftHull(part.rings, part.axis ?? 'y', facets ?? HULL_SIDES, part.smooth ?? 1, part.jitter ?? 0);
   } else if (part.shape === 'box') {
     geo = new THREE.BoxGeometry(w, h, d).toNonIndexed();
   } else if (part.shape === 'ball') {

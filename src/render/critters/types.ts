@@ -150,6 +150,18 @@ export interface PartSpec {
    */
   readonly smooth?: number;
   /**
+   * `hull` only: how far vertices are nudged off the lofted grid, as a fraction
+   * of the local radius. 0 is a perfect lathe.
+   *
+   * A small amount (0.05-0.12) is what separates a low-poly *look* from a
+   * revolved surface: on a perfect grid every facet is the same size and every
+   * edge lines up with its neighbours, which the eye reads as machined however
+   * few triangles there are. Real low-poly art is a decimated mesh, so its
+   * facets vary. The nudge is hashed from the vertex index, so it is identical
+   * on every build.
+   */
+  readonly jitter?: number;
+  /**
    * Surface regions painted in another role. Applies to any shape, though it is
    * a hull that usually has enough surface to be worth painting.
    */
