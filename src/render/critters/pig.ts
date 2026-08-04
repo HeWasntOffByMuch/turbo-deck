@@ -1,66 +1,119 @@
 /**
  * The pig (spec 049).
  *
- * A pear-shaped body on short legs, a big round head that is nearly a third of
- * the silhouette, a blunt forward snout and two triangular ears that flop with
- * the walk. At 64 px what survives is exactly three things -- the round mass,
- * the ears, and the pale disc of the snout -- so those three carry the whole
- * read and everything else is there to support them.
+ * A teardrop body on short legs -- narrow at the shoulders, widest low and
+ * forward where the belly hangs, tucking back in above the knees -- a big round
+ * head sitting straight on the shoulders with no neck to speak of, a blunt
+ * forward snout, and two broad ears that flop with the walk.
+ *
+ * At 64 px what survives is exactly three things: the round mass, the ears, and
+ * the pale disc of the snout. Those three carry the whole read; everything else
+ * exists to support them.
  *
  * This file is *only* numbers. There is no pig-specific rendering code anywhere:
- * the blocks come from `body.ts`, the walk comes from the shared skeleton, and
+ * the shapes come from `body.ts`, the walk comes from the shared skeleton, and
  * the colours come from whichever coat the player picked.
  */
 
 import { BONE, type FigureMetrics } from '../cloth/figure.js';
-import { barrelTorso, bipedArms, bipedLegs, earPair, eyes, muzzle, neck } from './body.js';
-import type { CritterSpecies, PartSpec, SocketSpec } from './types.js';
+import { bipedArms, bipedLegs, earPair, eyes, head, muzzle, torso } from './body.js';
+import type { CritterSpecies, HullRing, PartSpec, SocketSpec } from './types.js';
 
 /**
- * Pig proportions. Stands ~86 units to the ear tips, matching the scene's trees
- * and standing a little shorter and a lot rounder than the 82-unit robed figure.
+ * Pig proportions. Stands ~82 units to the ear tips, a little shorter and a lot
+ * rounder than the robed figure, against the scene's 86-unit trees.
  *
  * `hipY` is the sum of `ankleY + shinLen + thighLen`: the skeleton hangs the legs
  * off the pelvis, so if those disagree the feet float or sink.
+ *
+ * `shoulderHalf` is deliberately narrow -- narrower than the belly. The arms have
+ * to hang *against* the body the way they do on the reference; set out at the
+ * widest point they stand off the barrel like a scarecrow's.
  */
 const PIG_FIGURE: FigureMetrics = {
-  hipY: 26,
-  hipHalf: 9,
-  waistY: 33,
-  chestY: 43,
-  shoulderY: 49,
-  // Wide, so the arms hang *outside* the barrel rather than sinking into it.
-  shoulderHalf: 15,
-  neckY: 53,
-  headY: 64,
-  upperArmLen: 11,
-  forearmLen: 10,
-  thighLen: 12.5,
-  shinLen: 10.5,
+  hipY: 28,
+  hipHalf: 6.6,
+  waistY: 38,
+  chestY: 46,
+  shoulderY: 53,
+  shoulderHalf: 10.5,
+  neckY: 56,
+  headY: 66,
+  upperArmLen: 11.5,
+  forearmLen: 10.5,
+  thighLen: 13,
+  shinLen: 12,
   ankleY: 3,
 
-  headRadius: 12,
-  torsoRadius: 16,
-  hipRadius: 12,
+  headRadius: 11,
+  torsoRadius: 13,
+  hipRadius: 10,
   thighRadius: 5.5,
-  shinRadius: 4.6,
-  upperArmRadius: 2.8,
-  forearmRadius: 2.5,
+  shinRadius: 4.2,
+  upperArmRadius: 3.2,
+  forearmRadius: 2.8,
 
   drapeClearance: 2.6,
 };
 
+/**
+ * The body profile, in world height at rest, read straight off the reference:
+ * the silhouette swells from the crotch to its widest point low and forward,
+ * holds that through the belly, then narrows steadily into the shoulders. `dx`
+ * leans each ring forward, so the back stays near-vertical while the belly
+ * bulges -- which is what makes it read as a full stomach and not a barrel.
+ */
+/**
+ * Radial segments around the body and head. Fourteen rather than the default
+ * ten: a painted marking's edge can only follow the facets it is cut from, and
+ * at ten sides a round patch comes out as a chevron.
+ */
+const BODY_SIDES = 14;
+/** Lofted sections between each declared ring. See `PartSpec.smooth`. */
+const BODY_SMOOTH = 3;
+
+const TORSO_RINGS: readonly HullRing[] = [
+  { along: 21, rx: 6.5, rz: 6.5, dx: 2 },
+  { along: 25, rx: 10.5, rz: 11, dx: 3 },
+  { along: 30, rx: 12.6, rz: 13.2, dx: 3.2 },
+  { along: 36, rx: 12.8, rz: 13.2, dx: 2.6 },
+  { along: 42, rx: 11.6, rz: 12.2, dx: 1.6 },
+  { along: 47, rx: 10, rz: 10.6, dx: 0.8 },
+  { along: 52, rx: 8.4, rz: 9, dx: 0.2 },
+  { along: 56, rx: 6.4, rz: 7, dx: 0 },
+];
+
+/** The skull, again in world height: a broad ball flattening toward the crown. */
+const HEAD_RINGS: readonly HullRing[] = [
+  { along: 56, rx: 5.4, rz: 6, dx: 1 },
+  { along: 60, rx: 9, rz: 9.6, dx: 1.4 },
+  { along: 64, rx: 10.4, rz: 11, dx: 1.4 },
+  { along: 68, rx: 10.2, rz: 10.6, dx: 1 },
+  { along: 72, rx: 8, rz: 8.4, dx: 0.4 },
+  { along: 75.5, rx: 4.2, rz: 4.6, dx: 0 },
+];
+
+/**
+ * The snout, lofted forward out of the skull. `along` is how far forward, `rx`
+ * the half-height, `rz` the half-width, `dx` the droop. It barely tapers and
+ * then flares a touch at the tip, which is the whole shape of a pig's nose.
+ */
+const MUZZLE_RINGS: readonly HullRing[] = [
+  { along: 2, rx: 5.6, rz: 6.2, dx: 0 },
+  { along: 7, rx: 5, rz: 5.6, dx: -0.6 },
+  { along: 12, rx: 4.6, rz: 5.2, dx: -1.2 },
+  { along: 15.5, rx: 4.9, rz: 5.6, dx: -1.5 },
+];
+
 const SOCKETS: readonly SocketSpec[] = [
   {
-    // Set high and well back on the skull, tipped out and slightly forward.
+    // High and well back on the skull, splayed hard out to the sides.
     socket: 'ear',
     parentBone: BONE.head,
-    pos: [-2, 13.5, -8.5],
+    pos: [-1, 14.5, -7],
     // rx splays the ear outward (mirrored on the right); rz tips it forward
-    // (shared, so both ears lean the same way -- a negative z tips them forward
-    // over the eyes). Splayed hard: a pig's ears are broad flaps held out to the
-    // sides, and anything closer to vertical reads as a horn at 64 px.
-    rot: [-1.05, 0, -0.25],
+    // (shared, so both ears lean the same way).
+    rot: [-1.0, 0, -0.5],
     mirror: true,
     wobble: {
       axis: 'x',
@@ -75,8 +128,8 @@ const SOCKETS: readonly SocketSpec[] = [
     // The curly tail, held high off the rump.
     socket: 'tail',
     parentBone: BONE.pelvis,
-    pos: [-9, 5, 0],
-    rot: [0, 0, 0.85],
+    pos: [-8, 6, 0],
+    rot: [0, 0, 0.9],
     wobble: {
       axis: 'y',
       strideAmp: 0.42,
@@ -90,50 +143,27 @@ const SOCKETS: readonly SocketSpec[] = [
 ];
 
 const PARTS: readonly PartSpec[] = [
-  ...barrelTorso(PIG_FIGURE, {
-    belly: [34, 30, 29],
-    chest: [23, 20, 22],
-    bellyDrop: 7,
-    chestRise: 5,
-  }),
-  neck(PIG_FIGURE, 17, 16),
-  ...bipedArms(PIG_FIGURE, { thickness: 5.6, hand: [4.6, 4.6, 4.6], handRole: 'coatShade' }),
-  ...bipedLegs(PIG_FIGURE, { thigh: 11, shin: 9, foot: [7.5, 4, 6] }),
-
-  // --- Head ---------------------------------------------------------------
-  {
-    name: 'skull',
-    attach: BONE.head,
-    shape: 'ball',
-    role: 'coat',
-    size: [23, 24, 25],
-    pos: [0, 11, 0],
-  },
-  // The cheeks: what makes it read as a pig's head rather than a sphere.
-  {
-    name: 'cheek',
-    attach: BONE.head,
-    shape: 'ball',
-    role: 'coatLight',
-    size: [15, 12, 10],
-    pos: [4, 8, -7],
-    mirror: true,
-  },
-  // Short and broad, blending into the cheeks rather than jutting: a long
-  // snout on a head this round reads as a snout held in front of the face.
+  torso(PIG_FIGURE, TORSO_RINGS, { sides: BODY_SIDES, smooth: BODY_SMOOTH }),
+  head(PIG_FIGURE, HEAD_RINGS, { sides: BODY_SIDES, smooth: BODY_SMOOTH }),
+  ...bipedArms(PIG_FIGURE, { taper: [3.4, 2.9, 2.5], hand: [4.2, 4.4, 4.2], handRole: 'hoof' }),
+  ...bipedLegs(PIG_FIGURE, { taper: [5.8, 4.2, 3.4], hoof: [6.4, 4, 5.6] }),
   ...muzzle({
-    at: [5, 7, 0],
-    length: 8,
-    width: 11,
-    height: 9,
-    padDepth: 3.6,
-    padFlare: 1.28,
-    nostril: [3, 3.6, 3],
-    nostrilSpread: 3,
-    taper: 0.9,
+    f: PIG_FIGURE,
+    atY: 64.5,
+    rings: MUZZLE_RINGS,
+    padDepth: 2.4,
+    // Small and set well apart: at 2.6 units apart they merge into one black
+    // blot that reads as the whole nose, which is worse than having none.
+    nostril: [2.2, 3, 2.2],
+    nostrilSpread: 3.2,
   }),
-  eyes({ at: [8.5, 14.5, -6], size: [3.2, 4.4, 3.2] }),
-  ...earPair('ear', { length: 9, width: 16, thickness: 5 }),
+  // Pushed out to where the skull's surface actually is: an eye sunk inside the
+  // head is an eye nobody sees.
+  // Out on the cheeks rather than close over the snout: two dark squares set
+  // close together stop reading as a pair of eyes and start reading as one
+  // bandit mask, which is the shape the whole face then loses to.
+  eyes({ f: PIG_FIGURE, at: [8.7, 67.5, -7], size: [2.8, 3.6, 2.8] }),
+  ...earPair('ear', { length: 9.5, width: 13, thickness: 4 }),
 
   // --- Tail ---------------------------------------------------------------
   // Two stubby segments angled against each other read as a curl from any
@@ -145,18 +175,18 @@ const PARTS: readonly PartSpec[] = [
     role: 'coat',
     taper: 0.55,
     facets: 5,
-    size: [4.5, 7, 4.5],
-    pos: [0, 3.5, 0],
+    size: [4, 6.5, 4],
+    pos: [0, 3.2, 0],
   },
   {
     name: 'tailCurl',
     attach: 'tail',
     shape: 'cone',
-    role: 'coatShade',
+    role: 'coat',
     taper: 0.3,
     facets: 5,
-    size: [3.6, 6.5, 3.6],
-    pos: [-2.6, 8.4, 0],
+    size: [3.2, 6, 3.2],
+    pos: [-2.4, 7.8, 0],
     rot: [0, 0, -1.15],
   },
 ];
@@ -174,7 +204,7 @@ export const PIG: CritterSpecies = {
     skin: 0xe8a9a0,
     skinDeep: 0x7a4a4c,
     marking: 0x6b4a52,
-    hoof: 0x6b4a44,
+    hoof: 0x8a6156,
     eye: 0x14121a,
   },
 };

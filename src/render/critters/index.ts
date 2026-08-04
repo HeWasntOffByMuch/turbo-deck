@@ -37,6 +37,7 @@ export {
   partOrigin,
   resolveParts,
   resolveSockets,
+  hullExtent,
   socketOrigins,
   speciesBounds,
   type Bounds,

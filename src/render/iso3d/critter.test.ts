@@ -36,6 +36,12 @@ function walk(rig: CritterRig, frames: number, speedPerFrame: number): void {
   }
 }
 
+/** A mesh's materials, whether it draws with one or with a painted group set. */
+function materialsOf(mesh: THREE.Mesh): THREE.MeshLambertMaterial[] {
+  const m = mesh.material;
+  return (Array.isArray(m) ? m : [m]) as THREE.MeshLambertMaterial[];
+}
+
 /** Every mesh under a rig, keyed by the part name it was built from. */
 function meshesByName(rig: CritterRig): Map<string, THREE.Mesh[]> {
   const out = new Map<string, THREE.Mesh[]>();
@@ -96,6 +102,46 @@ describe.each(SPECIES.map((s) => [s.name, s] as const))('%s rig: construction', 
     }
   });
 
+  it('lofts every hull to the extent its own rings declare', () => {
+    // A hull's `size` is derived from its rings rather than stated, and the
+    // legibility tests measure the silhouette through it. If the loft and the
+    // derivation ever disagree, those tests quietly start measuring a body that
+    // is not the one on screen.
+    const rig = rigFor(species);
+    const byName = meshesByName(rig);
+    const box = new THREE.Box3();
+    for (const part of resolveParts(species)) {
+      if (part.shape !== 'hull') continue;
+      const mesh = byName.get(part.name)?.[0];
+      expect(mesh, part.name).toBeDefined();
+      if (!mesh) continue;
+      box.setFromBufferAttribute(mesh.geometry.getAttribute('position') as THREE.BufferAttribute);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      // The loft smooths through the rings with a Catmull-Rom, which can bulge a
+      // little past the control points, so this is a "no wild disagreement"
+      // check rather than an equality.
+      expect(size.x, `${part.name} x`).toBeLessThanOrEqual(part.size[0] * 1.3 + 0.01);
+      expect(size.y, `${part.name} y`).toBeLessThanOrEqual(part.size[1] * 1.3 + 0.01);
+      expect(size.z, `${part.name} z`).toBeLessThanOrEqual(part.size[2] * 1.3 + 0.01);
+    }
+  });
+
+  it('emits no degenerate vertices', () => {
+    // The loft's spline can be pushed to overshoot; a NaN or an infinity in a
+    // position buffer takes the whole mesh off screen with no error anywhere.
+    const rig = rigFor(species);
+    rig.group.traverse((n) => {
+      const mesh = n as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const pos = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
+      const array = pos.array as ArrayLike<number>;
+      for (let i = 0; i < array.length; i++) {
+        expect(Number.isFinite(array[i] as number), `${mesh.name}[${i}]`).toBe(true);
+      }
+    });
+  });
+
   it('stands with its feet on the rig origin plane', () => {
     // The scene places `group` *at* the terrain height, so a rig whose lowest
     // geometry is not near y = 0 either floats or sinks on every slope.
@@ -120,11 +166,11 @@ describe.each(SPECIES.map((s) => [s.name, s] as const))('%s rig: colour', (_name
     expect(after.size).toBe(before.size);
     expect([...after.values()].flat().map((m) => m.geometry)).toEqual(geometryBefore);
 
-    // The coat itself must actually have reached the materials.
-    const coatMesh = [...after.values()].flat().find((m) => {
-      const material = m.material as THREE.MeshLambertMaterial;
-      return material.color.getHex() === 0x849ba8;
-    });
+    // The coat itself must actually have reached the materials -- including on
+    // the painted meshes, which draw through an array rather than one material.
+    const coatMesh = [...after.values()]
+      .flat()
+      .find((m) => materialsOf(m).some((mat) => mat.color.getHex() === 0x849ba8));
     expect(coatMesh, 'no mesh wears the new coat').toBeDefined();
   });
 
@@ -139,7 +185,7 @@ describe.each(SPECIES.map((s) => [s.name, s] as const))('%s rig: colour', (_name
     const owned = new Set<THREE.Material>();
     rig.group.traverse((n) => {
       const mesh = n as THREE.Mesh;
-      if (mesh.isMesh) owned.add(mesh.material as THREE.Material);
+      if (mesh.isMesh) for (const mat of materialsOf(mesh)) owned.add(mat);
     });
     expect(owned.has(shared)).toBe(false);
 
@@ -152,6 +198,79 @@ describe.each(SPECIES.map((s) => [s.name, s] as const))('%s rig: colour', (_name
     const b = rigFor(species, 0x9ba58a);
     a.setCoat(0xc99a6b);
     expect(b.coat).toBe(0x9ba58a);
+  });
+});
+
+describe.each(SPECIES.map((s) => [s.name, s] as const))('%s rig: markings', (_name, species) => {
+  const painted = species.parts.filter((p) => p.paint?.length);
+
+  it('draws painted parts through material groups covering every triangle', () => {
+    if (painted.length === 0) return;
+    const rig = rigFor(species);
+    const byName = meshesByName(rig);
+    for (const part of painted) {
+      const mesh = byName.get(part.name)?.[0];
+      expect(mesh, part.name).toBeDefined();
+      if (!mesh) continue;
+      const groups = mesh.geometry.groups;
+      expect(groups.length, `${part.name} has no groups`).toBeGreaterThan(1);
+      // Groups must tile the mesh: no triangle left undrawn, none drawn twice.
+      const total = (mesh.geometry.getAttribute('position') as THREE.BufferAttribute).count;
+      const covered = groups.reduce((n, g) => n + g.count, 0);
+      expect(covered, part.name).toBe(total);
+      const materials = materialsOf(mesh);
+      for (const g of groups) {
+        expect(materials[g.materialIndex ?? 0], `${part.name} group material`).toBeDefined();
+      }
+    }
+  });
+
+  it('paints whole faces, never half a quad', () => {
+    // Both triangles of a quad must land in the same group. Splitting them gives
+    // a marking a sawtooth edge, and -- where a blob straddles a ring of the
+    // loft -- alternating stripes, which is exactly what this looked like when
+    // the decision was made per triangle.
+    if (painted.length === 0) return;
+    const rig = rigFor(species);
+    const byName = meshesByName(rig);
+    let checked = 0;
+    for (const part of painted) {
+      if (part.shape !== 'hull') continue;
+      const mesh = byName.get(part.name)?.[0];
+      if (!mesh) continue;
+      const faceOf = mesh.geometry.userData.faceOf as Int32Array | undefined;
+      expect(faceOf, `${part.name} lost its face map`).toBeDefined();
+      if (!faceOf) continue;
+
+      const rolesPerFace = new Map<number, Set<number>>();
+      for (const g of mesh.geometry.groups) {
+        for (let t = g.start / 3; t < (g.start + g.count) / 3; t++) {
+          const face = faceOf[t] as number;
+          const seen = rolesPerFace.get(face) ?? new Set<number>();
+          seen.add(g.materialIndex ?? 0);
+          rolesPerFace.set(face, seen);
+        }
+      }
+      expect(rolesPerFace.size, `${part.name} has no faces`).toBeGreaterThan(0);
+      for (const [face, seen] of rolesPerFace) {
+        expect(seen.size, `${part.name} face ${face} split across materials`).toBe(1);
+      }
+      checked += 1;
+    }
+    expect(checked, `${species.id} painted no hulls`).toBeGreaterThan(0);
+  });
+
+  it('recolours its markings with the coat', () => {
+    if (painted.length === 0) return;
+    const rig = rigFor(species, 0xd8b69a);
+    const before = materialsOf(
+      meshesByName(rig).get(painted[0]?.name ?? '')?.[0] as THREE.Mesh,
+    ).map((m) => m.color.getHex());
+    rig.setCoat(0x849ba8);
+    const after = materialsOf(
+      meshesByName(rig).get(painted[0]?.name ?? '')?.[0] as THREE.Mesh,
+    ).map((m) => m.color.getHex());
+    expect(after).not.toEqual(before);
   });
 });
 

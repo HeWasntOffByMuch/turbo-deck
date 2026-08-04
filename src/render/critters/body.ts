@@ -2,10 +2,21 @@
  * The shared anatomy vocabulary every critter is assembled from (spec 049).
  *
  * A species file should read like a description of an animal, not like a list of
- * boxes. These builders are where the boxes live: given a few numbers they
- * return the {@link PartSpec}s for a barrel torso, a pair of arms, a pair of
- * legs, a muzzle, a set of ears. A pig and a cow differ in about a dozen numbers
- * and four extra parts, and that is exactly how much a species file should be.
+ * boxes. These builders are where the geometry lives: given a profile and a few
+ * numbers they return the {@link PartSpec}s for a torso, a head, a pair of arms,
+ * a pair of legs, a muzzle, a set of ears. A pig and a cow differ in their
+ * profiles and about six extra parts, and that is exactly how much a species
+ * file should be.
+ *
+ * ## Why almost everything here is a hull
+ *
+ * The first version of this file built bodies out of intersecting ellipsoids and
+ * cones, and the result looked like intersecting ellipsoids and cones: a lump at
+ * every join, a silhouette that stepped instead of tapering, and markings that
+ * had to *protrude* through the skin to be visible. A body is one surface. So
+ * the torso, head, muzzle and limbs are each a single `hull` lofted through a
+ * profile, and markings are painted onto the faces of that surface instead of
+ * being more geometry stuck to it.
  *
  * Everything is expressed relative to the {@link FigureMetrics} it is handed, so
  * changing a species' proportions moves its geometry with it instead of stranding
@@ -13,257 +24,144 @@
  */
 
 import { BONE, type FigureMetrics } from '../cloth/figure.js';
-import type { PartSpec } from './types.js';
+import { hullExtent } from './resolve.js';
+import type { CoatRole, HullRing, PaintBlob, PartSpec } from './types.js';
 
-/**
- * The rounded, pear-shaped body these characters are built on: a heavy low belly
- * under a narrower chest, with a lit front panel so the mass reads even when the
- * silhouette is flat against the ground.
- *
- * Both balls hang off the chest bone rather than being split between chest and
- * pelvis. The gait counter-twists chest against pelvis, and a torso split across
- * that joint shears visibly at a run.
- */
-export function barrelTorso(
-  f: FigureMetrics,
-  opts: {
-    /** Belly width, height and depth. */
-    readonly belly: readonly [number, number, number];
-    /** Chest width, height and depth. */
-    readonly chest: readonly [number, number, number];
-    /** How far below the chest bone the belly's centre sits. */
-    readonly bellyDrop: number;
-    /** How far above it the chest's centre sits. */
-    readonly chestRise: number;
-    /** Colour of the lit front panel. A species with markings may darken it. */
-    readonly frontRole?: 'coatLight' | 'marking';
-    /** Colour of the rump. Same idea from behind. */
-    readonly rumpRole?: 'coatShade' | 'marking';
-  },
-): PartSpec[] {
-  const [bw, bh, bd] = opts.belly;
-  const [cw, ch, cd] = opts.chest;
-  return [
-    {
-      name: 'belly',
-      attach: BONE.chest,
-      shape: 'ball',
-      role: 'coat',
-      size: [bw, bh, bd],
-      pos: [0, -opts.bellyDrop, 0],
-    },
-    {
-      name: 'chest',
-      attach: BONE.chest,
-      shape: 'ball',
-      role: 'coat',
-      size: [cw, ch, cd],
-      pos: [0, opts.chestRise, 0],
-    },
-    // A lighter panel proud of the lower front of the belly. Cheaper than a
-    // gradient and it survives the flat-shaded look: from the iso camera the
-    // character shows its front-top, so this is the face that catches the eye.
-    // Kept well under the belly's own size -- a large one reads as a bib.
-    {
-      name: 'bellyFront',
-      attach: BONE.chest,
-      shape: 'ball',
-      role: opts.frontRole ?? 'coatLight',
-      size: [bw * 0.6, bh * 0.56, bd * 0.58],
-      pos: [bd * 0.26, -opts.bellyDrop - bh * 0.14, 0],
-    },
-    // The rump: keeps the profile from tapering to nothing behind the hips.
-    {
-      name: 'rump',
-      attach: BONE.pelvis,
-      shape: 'ball',
-      role: opts.rumpRole ?? 'coatShade',
-      size: [bw * 0.62, bh * 0.44, bd * 0.82],
-      pos: [-bd * 0.18, f.waistY - f.hipY - bh * 0.08, 0],
-    },
-  ];
-}
-
-/**
- * The neck block that stops the head reading as a balloon on a string. Short and
- * broad by default: these are heavy-set animals whose heads sit on their
- * shoulders, and a visible neck immediately makes them read as people in suits.
- */
-export function neck(f: FigureMetrics, width: number, depth: number): PartSpec {
-  const len = Math.max(4, f.neckY - f.shoulderY + 4);
+/** Assemble a lofted-hull part, deriving its extent from its own rings. */
+export function hull(opts: {
+  readonly name: string;
+  readonly attach: number | string;
+  readonly role: CoatRole;
+  readonly rings: readonly HullRing[];
+  readonly pos: readonly [number, number, number];
+  readonly axis?: 'x' | 'y';
+  readonly rot?: readonly [number, number, number];
+  readonly mirror?: boolean;
+  readonly facets?: number;
+  readonly smooth?: number;
+  readonly paint?: readonly PaintBlob[];
+}): PartSpec {
+  const axis = opts.axis ?? 'y';
   return {
-    name: 'neck',
-    attach: BONE.chest,
-    shape: 'cone',
-    role: 'coat',
-    taper: 0.78,
-    facets: 6,
-    size: [width, len, depth],
-    pos: [1.5, f.shoulderY - f.chestY + len * 0.4, 0],
+    name: opts.name,
+    attach: opts.attach,
+    shape: 'hull',
+    role: opts.role,
+    size: hullExtent(opts.rings, axis),
+    pos: opts.pos,
+    rings: opts.rings,
+    axis,
+    ...(opts.rot ? { rot: opts.rot } : {}),
+    ...(opts.mirror ? { mirror: true } : {}),
+    ...(opts.facets ? { facets: opts.facets } : {}),
+    ...(opts.smooth ? { smooth: opts.smooth } : {}),
+    ...(opts.paint ? { paint: opts.paint } : {}),
   };
 }
 
 /**
- * Both arms, as tapered upper/fore segments with a hand at the wrist. Emitted
- * per bone rather than mirrored, because the skeleton already has a left and a
- * right arm and the gait swings them in opposition.
+ * The body: one skin from the hang of the belly up to the base of the neck.
+ *
+ * Rings are given in **world height at rest** and rebased onto the chest bone
+ * here, so a species writes "the belly is widest at y = 32" -- a number it can
+ * read straight off a reference image -- rather than an offset from a joint.
+ *
+ * It hangs off the chest rather than being split between chest and pelvis
+ * because the gait counter-twists those two against each other, and a torso
+ * split across that joint visibly shears at a run. Riding the chest instead
+ * gives the whole barrel a gentle sway, which is what you want anyway.
  */
-export function bipedArms(
+export function torso(
   f: FigureMetrics,
-  opts: { readonly thickness: number; readonly hand: readonly [number, number, number]; readonly handRole?: 'hoof' | 'coatShade' },
-): PartSpec[] {
-  const t = opts.thickness;
-  const [hw, hh, hd] = opts.hand;
-  const out: PartSpec[] = [];
-  const sides: readonly [string, number, number][] = [
-    ['L', BONE.upperArmL, BONE.forearmL],
-    ['R', BONE.upperArmR, BONE.forearmR],
-  ];
-  for (const [tag, upper, fore] of sides) {
-    out.push({
-      name: `upperArm${tag}`,
-      attach: upper,
-      shape: 'cone',
-      role: 'coat',
-      taper: 0.82,
-      facets: 6,
-      size: [t, f.upperArmLen, t],
-      pos: [0, -f.upperArmLen / 2, 0],
-      rot: [0, 0, Math.PI],
-    });
-    out.push({
-      name: `forearm${tag}`,
-      attach: fore,
-      shape: 'cone',
-      role: 'coatShade',
-      taper: 0.8,
-      facets: 6,
-      size: [t * 0.86, f.forearmLen, t * 0.86],
-      pos: [0, -f.forearmLen / 2, 0],
-      rot: [0, 0, Math.PI],
-    });
-    out.push({
-      name: `hand${tag}`,
-      attach: fore,
-      shape: 'box',
-      role: opts.handRole ?? 'hoof',
-      size: [hw, hh, hd],
-      pos: [0, -f.forearmLen - hh * 0.4, 0],
-    });
-  }
-  return out;
+  rings: readonly HullRing[],
+  opts: { readonly paint?: readonly PaintBlob[]; readonly sides?: number; readonly smooth?: number } = {},
+): PartSpec {
+  return hull({
+    name: 'torso',
+    attach: BONE.chest,
+    role: 'coat',
+    rings: rings.map((r) => ({ ...r, along: r.along - f.chestY })),
+    pos: [0, 0, 0],
+    ...(opts.sides ? { facets: opts.sides } : {}),
+    ...(opts.smooth ? { smooth: opts.smooth } : {}),
+    ...(opts.paint
+      ? { paint: opts.paint.map((b) => ({ ...b, at: [b.at[0], b.at[1] - f.chestY, b.at[2]] as const })) }
+      : {}),
+  });
 }
 
 /**
- * Both legs: heavy thighs, narrower shins, and a foot that sticks *forward*.
- * The forward foot is doing real work at 64 px -- it is what tells a viewer the
- * character is standing on the ground rather than floating over it, and it is
- * the first thing a walk cycle reads through.
+ * The head: one skin from the neck to the crown, again in world height at rest.
+ * The muzzle is a separate hull because it runs forward rather than up, but its
+ * base ring sits inside the skull so the two read as one form.
  */
-export function bipedLegs(
+export function head(
   f: FigureMetrics,
-  opts: {
-    readonly thigh: number;
-    readonly shin: number;
-    readonly foot: readonly [number, number, number];
-    /** Shin colour. Defaults to the coat -- a darker shin reads as a boot. */
-    readonly shinRole?: 'coat' | 'coatShade';
-  },
-): PartSpec[] {
-  const [fw, fh, fd] = opts.foot;
-  const out: PartSpec[] = [];
-  const sides: readonly [string, number, number][] = [
-    ['L', BONE.thighL, BONE.shinL],
-    ['R', BONE.thighR, BONE.shinR],
-  ];
-  for (const [tag, thigh, shin] of sides) {
-    out.push({
-      name: `thigh${tag}`,
-      attach: thigh,
-      shape: 'cone',
-      role: 'coat',
-      taper: 0.66,
-      facets: 6,
-      size: [opts.thigh, f.thighLen, opts.thigh],
-      pos: [0, -f.thighLen / 2, 0],
-      rot: [0, 0, Math.PI],
-    });
-    out.push({
-      name: `shin${tag}`,
-      attach: shin,
-      shape: 'cone',
-      role: opts.shinRole ?? 'coat',
-      taper: 0.78,
-      facets: 6,
-      size: [opts.shin, f.shinLen, opts.shin],
-      pos: [0, -f.shinLen / 2, 0],
-      rot: [0, 0, Math.PI],
-    });
-    out.push({
-      name: `hoof${tag}`,
-      attach: shin,
-      shape: 'box',
-      role: 'hoof',
-      // Sunk half a unit into the shin so no gap opens when the ankle swings.
-      size: [fw, fh, fd],
-      pos: [fd * 0.18, -f.shinLen - fh * 0.36, 0],
-    });
-  }
-  return out;
+  rings: readonly HullRing[],
+  opts: { readonly paint?: readonly PaintBlob[]; readonly sides?: number; readonly smooth?: number } = {},
+): PartSpec {
+  return hull({
+    name: 'head',
+    attach: BONE.head,
+    role: 'coat',
+    rings: rings.map((r) => ({ ...r, along: r.along - f.neckY })),
+    pos: [0, 0, 0],
+    ...(opts.sides ? { facets: opts.sides } : {}),
+    ...(opts.smooth ? { smooth: opts.smooth } : {}),
+    ...(opts.paint
+      ? { paint: opts.paint.map((b) => ({ ...b, at: [b.at[0], b.at[1] - f.neckY, b.at[2]] as const })) }
+      : {}),
+  });
 }
 
 /**
- * A muzzle projecting from the skull along +x, ending in a nose pad with
- * nostrils. The single most species-defining feature on the model, and the one
- * that survives being 12 px wide.
+ * A muzzle lofted forward out of the skull, with its tip painted as the nose
+ * pad. Painting the pad rather than adding a ball for it is what keeps the snout
+ * one continuous form -- and the pad is the highest-contrast thing on the face,
+ * so it is worth getting flush rather than bolted on.
  */
 export function muzzle(opts: {
-  /** Where the muzzle's root sits in the head bone's frame. */
-  readonly at: readonly [number, number, number];
-  readonly length: number;
-  readonly width: number;
-  readonly height: number;
-  /** Nose pad thickness along +x, and how much wider/taller than the muzzle it is. */
+  /** Height of the muzzle's axis, in world height at rest. */
+  readonly atY: number;
+  readonly f: FigureMetrics;
+  /** Rings along +x: `along` is how far forward, `rx` is half-height, `rz` half-width. */
+  readonly rings: readonly HullRing[];
+  /** How far back from the tip the nose pad reaches. */
   readonly padDepth: number;
-  readonly padFlare: number;
   /** Nostril block size and their lateral spacing. */
   readonly nostril: readonly [number, number, number];
   readonly nostrilSpread: number;
-  /** Taper of the muzzle block toward the pad (1 is a straight snout). */
-  readonly taper?: number;
 }): PartSpec[] {
-  const [ax, ay, az] = opts.at;
-  const tipX = ax + opts.length;
-  const [nw, nh, nd] = opts.nostril;
+  const last = opts.rings[opts.rings.length - 1] as HullRing;
+  const tipX = last.along;
+  const tipY = last.dx ?? 0;
+  const y = opts.atY - opts.f.neckY;
   return [
-    {
+    hull({
       name: 'muzzle',
       attach: BONE.head,
-      shape: 'cone',
       role: 'coat',
-      taper: opts.taper ?? 0.92,
-      facets: 6,
-      // Cones are built along +y; rotating -90° about z lays the axis along +x,
-      // which maps local (x, y, z) onto world (height, length, width).
-      size: [opts.height, opts.length, opts.width],
-      pos: [ax + opts.length / 2, ay, az],
-      rot: [0, 0, -Math.PI / 2],
-    },
-    {
-      name: 'nosePad',
-      attach: BONE.head,
-      shape: 'ball',
-      role: 'skin',
-      size: [opts.padDepth, opts.height * opts.padFlare, opts.width * opts.padFlare],
-      pos: [tipX, ay, az],
-    },
+      axis: 'x',
+      rings: opts.rings,
+      smooth: 3,
+      pos: [0, y, 0],
+      paint: [
+        {
+          role: 'skin',
+          at: [tipX, tipY, 0],
+          // Generous in y/z so the whole end cap is caught, tight in x so the
+          // pad stops where the snout does.
+          r: [opts.padDepth, last.rx * 2.4, last.rz * 2.4],
+        },
+      ],
+    }),
     {
       name: 'nostril',
       attach: BONE.head,
       shape: 'box',
       role: 'skinDeep',
-      size: [nw, nh, nd],
-      pos: [tipX + opts.padDepth * 0.34, ay, az - opts.nostrilSpread],
+      size: opts.nostril,
+      pos: [tipX + y * 0, y + tipY, -opts.nostrilSpread],
       mirror: true,
     },
   ];
@@ -273,24 +171,157 @@ export function muzzle(opts: {
 export function eyes(opts: {
   readonly at: readonly [number, number, number];
   readonly size: readonly [number, number, number];
+  readonly f: FigureMetrics;
 }): PartSpec {
   const [x, y, z] = opts.at;
-  const [w, h, d] = opts.size;
   return {
     name: 'eye',
     attach: BONE.head,
     shape: 'box',
     role: 'eye',
-    size: [w, h, d],
-    pos: [x, y, z],
+    size: opts.size,
+    pos: [x, y - opts.f.neckY, z],
     mirror: true,
   };
 }
 
 /**
- * An ear as two cones -- an outer shell in the coat colour and a lining in skin
- * -- built on a socket so it can flap. Returned parts attach to `socket` and its
- * mirrored twin `${socket}R`, so a species declares one ear and gets a pair.
+ * Both arms, as tapered hulls with a hand at the wrist. Emitted per bone rather
+ * than mirrored, because the skeleton already has a left and a right arm and the
+ * gait swings them in opposition.
+ */
+export function bipedArms(
+  f: FigureMetrics,
+  opts: {
+    /** Half-widths at shoulder, elbow and wrist. */
+    readonly taper: readonly [number, number, number];
+    readonly hand: readonly [number, number, number];
+    readonly handRole?: CoatRole;
+  },
+): PartSpec[] {
+  const [shoulder, elbow, wrist] = opts.taper;
+  const [hw, hh, hd] = opts.hand;
+  const out: PartSpec[] = [];
+  const sides: readonly [string, number, number][] = [
+    ['L', BONE.upperArmL, BONE.forearmL],
+    ['R', BONE.upperArmR, BONE.forearmR],
+  ];
+  for (const [tag, upper, fore] of sides) {
+    out.push(
+      hull({
+        name: `upperArm${tag}`,
+        attach: upper,
+        role: 'coat',
+        facets: 8,
+        smooth: 2,
+        rings: [
+          { along: 0.5, rx: shoulder, rz: shoulder },
+          { along: -f.upperArmLen * 0.5, rx: (shoulder + elbow) / 2, rz: (shoulder + elbow) / 2 },
+          { along: -f.upperArmLen, rx: elbow, rz: elbow },
+        ],
+        pos: [0, 0, 0],
+      }),
+    );
+    out.push(
+      hull({
+        name: `forearm${tag}`,
+        attach: fore,
+        role: 'coat',
+        facets: 8,
+        smooth: 2,
+        rings: [
+          { along: 0.5, rx: elbow, rz: elbow },
+          { along: -f.forearmLen, rx: wrist, rz: wrist },
+        ],
+        pos: [0, 0, 0],
+      }),
+    );
+    out.push({
+      name: `hand${tag}`,
+      attach: fore,
+      shape: 'box',
+      role: opts.handRole ?? 'hoof',
+      size: [hw, hh, hd],
+      pos: [0, -f.forearmLen - hh * 0.3, 0],
+    });
+  }
+  return out;
+}
+
+/**
+ * Both legs: heavy thighs tapering to narrow ankles, with a hoof that sticks
+ * *forward*. The forward hoof is doing real work at 64 px -- it is what tells a
+ * viewer the character is standing on the ground rather than floating over it,
+ * and it is the first thing a walk cycle reads through.
+ */
+export function bipedLegs(
+  f: FigureMetrics,
+  opts: {
+    /** Half-widths at hip, knee and ankle. */
+    readonly taper: readonly [number, number, number];
+    readonly hoof: readonly [number, number, number];
+  },
+): PartSpec[] {
+  const [hip, knee, ankle] = opts.taper;
+  const [fw, fh, fd] = opts.hoof;
+  const out: PartSpec[] = [];
+  const sides: readonly [string, number, number][] = [
+    ['L', BONE.thighL, BONE.shinL],
+    ['R', BONE.thighR, BONE.shinR],
+  ];
+  for (const [tag, thigh, shin] of sides) {
+    out.push(
+      hull({
+        name: `thigh${tag}`,
+        attach: thigh,
+        role: 'coat',
+        facets: 9,
+        smooth: 2,
+        rings: [
+          { along: 1, rx: hip * 0.86, rz: hip * 0.86 },
+          { along: -f.thighLen * 0.35, rx: hip, rz: hip },
+          { along: -f.thighLen, rx: knee, rz: knee },
+        ],
+        pos: [0, 0, 0],
+      }),
+    );
+    out.push(
+      hull({
+        name: `shin${tag}`,
+        attach: shin,
+        role: 'coat',
+        facets: 9,
+        smooth: 2,
+        rings: [
+          { along: 0.5, rx: knee, rz: knee },
+          { along: -f.shinLen * 0.6, rx: (knee + ankle) / 2, rz: (knee + ankle) / 2 },
+          { along: -f.shinLen, rx: ankle, rz: ankle },
+        ],
+        pos: [0, 0, 0],
+      }),
+    );
+    out.push({
+      name: `hoof${tag}`,
+      attach: shin,
+      shape: 'box',
+      // Sunk into the ankle so no gap opens when it swings.
+      role: 'hoof',
+      size: [fw, fh, fd],
+      pos: [fd * 0.2, -f.shinLen - fh * 0.3, 0],
+    });
+  }
+  return out;
+}
+
+/**
+ * An ear as a flat lofted flap: wide fore-and-aft, thin across, tapering to a
+ * rounded tip, with the inner surface painted as its lining.
+ *
+ * A flap rather than a cone on purpose. The socket's splay is a rotation about
+ * x, which leaves the ear's local x pointing fore-and-aft -- so `rx` is the
+ * ear's width and `rz` its thickness, whatever angle it is held at. A five-sided
+ * cone in the same place reads as a horn, which is a problem when the animal
+ * next to it has actual horns.
  */
 export function earPair(
   socket: string,
@@ -298,32 +329,37 @@ export function earPair(
     readonly length: number;
     readonly width: number;
     readonly thickness: number;
-    readonly liningRole?: 'skin' | 'marking';
-    readonly shellRole?: 'coat' | 'coatShade' | 'marking';
+    readonly liningRole?: CoatRole;
+    readonly shellRole?: CoatRole;
   },
 ): PartSpec[] {
-  // Tapered to a broad tip rather than a point: with only five facets, a cone
-  // that closes to nothing reads as a horn at unit size, whichever animal it is
-  // meant to be on.
-  const shell = (target: string): PartSpec => ({
-    name: `${target}Shell`,
-    attach: target,
-    shape: 'cone',
-    role: opts.shellRole ?? 'coat',
-    taper: 0.34,
-    facets: 5,
-    size: [opts.width, opts.length, opts.thickness],
-    pos: [0, opts.length / 2, 0],
-  });
-  const lining = (target: string): PartSpec => ({
-    name: `${target}Lining`,
-    attach: target,
-    shape: 'cone',
-    role: opts.liningRole ?? 'skin',
-    taper: 0.3,
-    facets: 5,
-    size: [opts.width * 0.6, opts.length * 0.74, opts.thickness * 0.5],
-    pos: [opts.thickness * 0.45, opts.length * 0.42, 0],
-  });
-  return [shell(socket), lining(socket), shell(`${socket}R`), lining(`${socket}R`)];
+  const w = opts.width / 2;
+  const t = opts.thickness / 2;
+  const L = opts.length;
+  const build = (target: string): PartSpec =>
+    hull({
+      name: `${target}Flap`,
+      attach: target,
+      role: opts.shellRole ?? 'coat',
+      facets: 8,
+      smooth: 2,
+      rings: [
+        { along: 0, rx: w * 0.72, rz: t * 0.8 },
+        { along: L * 0.22, rx: w, rz: t },
+        { along: L * 0.62, rx: w * 0.72, rz: t * 0.78 },
+        { along: L * 0.88, rx: w * 0.34, rz: t * 0.42 },
+        { along: L, rx: w * 0.1, rz: t * 0.16 },
+      ],
+      pos: [0, 0, 0],
+      paint: [
+        {
+          role: opts.liningRole ?? 'skin',
+          // The forward-facing half of the flap, which is the side a viewer
+          // above and in front of the character actually sees.
+          at: [w * 0.9, L * 0.34, 0],
+          r: [w * 1.1, L * 0.62, t * 3],
+        },
+      ],
+    });
+  return [build(socket), build(`${socket}R`)];
 }

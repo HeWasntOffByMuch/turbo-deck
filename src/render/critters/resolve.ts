@@ -14,7 +14,7 @@
  */
 
 import { BONE_COUNT, boneRestLayout, type FigureMetrics } from '../cloth/figure.js';
-import type { CritterSpecies, PartSpec, WobbleSpec } from './types.js';
+import type { CritterSpecies, HullRing, PartSpec, WobbleSpec } from './types.js';
 
 /** A socket after mirroring: a concrete node with a resolved parent bone. */
 export interface ResolvedSocket {
@@ -80,15 +80,46 @@ export function resolveParts(species: CritterSpecies): ResolvedPart[] {
     const { mirror, ...rest } = p;
     out.push({ ...rest, rot });
     if (mirror) {
+      // A mirrored part's *interior* mirrors too: a ring pushed to one side and
+      // a marking painted on one cheek both have to cross the body with it.
       out.push({
         ...rest,
         name: `${p.name}R`,
         pos: [p.pos[0], p.pos[1], -p.pos[2]],
         rot: mirrorRot(rot),
+        ...(p.rings ? { rings: p.rings.map((r) => ({ ...r, dz: -(r.dz ?? 0) })) } : {}),
+        ...(p.paint
+          ? { paint: p.paint.map((b) => ({ ...b, at: [b.at[0], b.at[1], -b.at[2]] as const })) }
+          : {}),
       });
     }
   }
   return out;
+}
+
+/**
+ * A hull's full extent along local x, y and z, from its rings.
+ *
+ * Kept next to the loft itself so a species never states a hull's size twice
+ * (and so the two can never disagree, which is the sort of thing that silently
+ * weakens a bounds-based legibility test).
+ */
+export function hullExtent(
+  rings: readonly HullRing[],
+  axis: 'x' | 'y' = 'y',
+): [number, number, number] {
+  let alongMin = Infinity;
+  let alongMax = -Infinity;
+  let rxMax = 0;
+  let rzMax = 0;
+  for (const ring of rings) {
+    alongMin = Math.min(alongMin, ring.along);
+    alongMax = Math.max(alongMax, ring.along);
+    rxMax = Math.max(rxMax, Math.abs(ring.dx ?? 0) + ring.rx);
+    rzMax = Math.max(rzMax, Math.abs(ring.dz ?? 0) + ring.rz);
+  }
+  const span = alongMax - alongMin;
+  return axis === 'y' ? [rxMax * 2, span, rzMax * 2] : [span, rxMax * 2, rzMax * 2];
 }
 
 /**

@@ -60,16 +60,55 @@ export interface WobbleSpec {
   readonly leanAmp?: number;    // radians per rad/s of turn (a tail swings out)
 }
 
-/** One rigid block of a body. Attached to a bone index or a socket name. */
+/**
+ * One piece of a body. Attached to a bone index or a socket name.
+ *
+ * The important shape is `hull`: a **skin lofted through a stack of profile
+ * rings**, smoothed with a Catmull-Rom. The torso, head, muzzle and limbs are
+ * each one of these. The first cut of this spec built bodies from intersecting
+ * balls and cones and the result looked like intersecting balls and cones -- a
+ * lump at every join, a silhouette that stepped instead of tapering. A body is
+ * one surface, so it is modelled as one surface.
+ */
 export interface PartSpec {
   readonly name: string;
   readonly attach: number | string;     // BONE index, or socket name
-  readonly shape: 'box' | 'ball' | 'cone' | 'wedge';
+  readonly shape: 'hull' | 'box' | 'ball' | 'cone';
   readonly role: CoatRole;
   readonly size: readonly [number, number, number];   // full extents, world units
   readonly pos: readonly [number, number, number];
   readonly rot?: readonly [number, number, number];
   readonly mirror?: boolean;            // duplicate with z negated
+  readonly rings?: readonly HullRing[]; // hull: the profile, along `axis`
+  readonly axis?: 'x' | 'y';            // hull: which way the loft runs
+  readonly smooth?: number;             // hull: sections per declared ring
+  readonly paint?: readonly PaintBlob[];// surface regions in another role
+}
+
+/** One cross-section of a loft. `dx`/`dz` offset it, so a belly can bulge forward. */
+export interface HullRing {
+  readonly along: number;
+  readonly rx: number;
+  readonly rz: number;
+  readonly dx?: number;
+  readonly dz?: number;
+}
+
+/**
+ * A region of a part's surface drawn in another role: every *face* whose centre
+ * falls inside the ellipsoid takes `role` instead of the part's own.
+ *
+ * This is how a cow gets patches that lie *on* its skin. Modelled as another
+ * ball pushed through the surface, a patch has to protrude to be visible, and
+ * anything that protrudes is a lump rather than a marking. Painting costs no
+ * geometry -- it splits the mesh into material groups -- and it is decided per
+ * face rather than per triangle, or a marking's edge saws along the quad
+ * diagonals and stripes where it crosses a ring.
+ */
+export interface PaintBlob {
+  readonly role: CoatRole;
+  readonly at: readonly [number, number, number];
+  readonly r: readonly [number, number, number];
 }
 
 export interface CritterSpecies {
@@ -169,6 +208,14 @@ Rig (three.js, headless, no canvas):
 
 - Each species builds without throwing, produces one mesh per part (two per
   mirrored part), and every mirrored pair is a genuine z-mirror of its twin.
+- Every hull lofts to within a bounded factor of the extent its own rings
+  declare, so the derived `size` the legibility tests measure through cannot
+  drift from the body actually on screen.
+- No position buffer contains a non-finite value: the loft's spline can overshoot
+  its control points, and one NaN takes a whole mesh off screen silently.
+- A painted part's material groups tile its triangles exactly -- none undrawn,
+  none drawn twice -- and every face's triangles land in the *same* group.
+- `setCoat` retints painted (multi-material) meshes as well as plain ones.
 - `setCoat` retints an existing rig in place — same mesh count, changed
   material colours — and never mutates the shared `flatMaterial` cache, so a
   recoloured pig cannot repaint the terrain.

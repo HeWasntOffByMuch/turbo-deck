@@ -56,8 +56,20 @@ function collectTriangles(root: THREE.Object3D): Tri[] {
     const geo = mesh.geometry;
     const pos = geo.getAttribute('position');
     const index = geo.getIndex();
-    const color = (mesh.material as THREE.MeshLambertMaterial).color;
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     const count = index ? index.count : pos.count;
+    // A painted part draws through geometry groups, so which material a triangle
+    // belongs to is a range lookup rather than a property of the mesh.
+    const groups = geo.groups.length > 0 ? geo.groups : [{ start: 0, count, materialIndex: 0 }];
+    const materialFor = (i: number): THREE.Color => {
+      for (const g of groups) {
+        if (i >= g.start && i < g.start + g.count) {
+          const m = materials[Math.min(g.materialIndex ?? 0, materials.length - 1)];
+          return (m as THREE.MeshLambertMaterial).color;
+        }
+      }
+      return (materials[0] as THREE.MeshLambertMaterial).color;
+    };
     for (let i = 0; i < count; i += 3) {
       const corners = [0, 1, 2].map((k) => {
         const vi = index ? index.getX(i + k) : i + k;
@@ -67,7 +79,7 @@ function collectTriangles(root: THREE.Object3D): Tri[] {
         a: corners[0] as THREE.Vector3,
         b: corners[1] as THREE.Vector3,
         c: corners[2] as THREE.Vector3,
-        color,
+        color: materialFor(i),
       });
     }
   });
@@ -206,7 +218,7 @@ function posedTriangles(species: CritterSpecies, coat: number): Tri[] {
   return collectTriangles(rig.group);
 }
 
-const COAT_IDS = ['rose', 'sage', 'blue', 'cream', 'plum'];
+const COAT_IDS = (process.env.COATS ?? 'rose,sage,blue,cream,plum').split(',');
 const swatches = COAT_IDS.map((id) => PLAYER_COATS.find((c) => c.id === id)).filter(
   (c): c is CoatSwatch => c !== undefined,
 );

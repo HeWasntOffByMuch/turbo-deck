@@ -1,57 +1,119 @@
 /**
  * The cow (spec 049).
  *
- * Taller and squarer than the pig, with a long muzzle, horns, ears that stick
- * out sideways rather than up, and -- the thing that actually does the work at
- * 64 px -- big dark patches. The patches are flattened balls set proud of the
- * body surface, so they read as markings from every angle without a texture, and
- * they are contrast-corrected against whatever coat the player picked, so a cow
- * in Plum is as legible as a cow in Cream.
+ * Taller and longer in the face than the pig, with stubby horns, ears held out
+ * sideways rather than up, and -- the thing that actually does the work at 64 px
+ * -- big dark patches.
+ *
+ * The patches are **painted onto the body's own skin**, not modelled: each is an
+ * ellipsoid in the torso's local space, and every triangle of the hull whose
+ * centre falls inside it draws in the marking colour instead of the coat. So a
+ * patch lies flat on the curve of the belly from every angle, costs no geometry,
+ * and -- because the marking colour is contrast-corrected against whatever coat
+ * the player picked -- is as legible on Cream as it is on Plum.
  *
  * Same skeleton, same walk cycle, same builders as the pig. The whole difference
  * between the two animals lives in this file.
  */
 
 import { BONE, type FigureMetrics } from '../cloth/figure.js';
-import { barrelTorso, bipedArms, bipedLegs, earPair, eyes, muzzle, neck } from './body.js';
-import type { CritterSpecies, PartSpec, SocketSpec } from './types.js';
+import { bipedArms, bipedLegs, earPair, eyes, head, hull, muzzle, torso } from './body.js';
+import type { CritterSpecies, HullRing, PaintBlob, PartSpec, SocketSpec } from './types.js';
 
-/** Cow proportions: longer in the leg and the face than the pig, ~90 to the horns. */
+/** Cow proportions: longer in the leg and the face than the pig, ~86 to the horns. */
 const COW_FIGURE: FigureMetrics = {
-  hipY: 30,
-  hipHalf: 9,
-  waistY: 37,
-  chestY: 47,
-  shoulderY: 54,
-  shoulderHalf: 15.5,
-  neckY: 58,
+  hipY: 31,
+  hipHalf: 7,
+  waistY: 40,
+  chestY: 49,
+  shoulderY: 56,
+  shoulderHalf: 11,
+  neckY: 59,
   headY: 69,
-  upperArmLen: 12,
-  forearmLen: 11,
-  thighLen: 14.5,
-  shinLen: 12.5,
+  upperArmLen: 12.5,
+  forearmLen: 11.5,
+  thighLen: 14,
+  shinLen: 14,
   ankleY: 3,
 
-  headRadius: 11.5,
-  torsoRadius: 16,
-  hipRadius: 12,
-  thighRadius: 5.5,
-  shinRadius: 4.6,
-  upperArmRadius: 3,
-  forearmRadius: 2.6,
+  headRadius: 10.5,
+  torsoRadius: 13,
+  hipRadius: 10,
+  thighRadius: 5.6,
+  shinRadius: 4.4,
+  upperArmRadius: 3.4,
+  forearmRadius: 3,
 
   drapeClearance: 2.6,
 };
+
+/**
+ * Radial segments around the body and head. The cow needs these more than the
+ * pig does: a painted marking's edge can only follow the facets it is cut from,
+ * and at ten sides a round patch comes out as a chevron.
+ */
+const BODY_SIDES = 14;
+/** Lofted sections between each declared ring. See `PartSpec.smooth`. */
+const BODY_SMOOTH = 3;
+
+/** Much the same teardrop as the pig's, carried a little higher and longer. */
+const TORSO_RINGS: readonly HullRing[] = [
+  { along: 24, rx: 6.5, rz: 6.5, dx: 2 },
+  { along: 28, rx: 10.5, rz: 11, dx: 3 },
+  { along: 33, rx: 12.4, rz: 13, dx: 3 },
+  { along: 39, rx: 12.6, rz: 13, dx: 2.4 },
+  { along: 45, rx: 11.6, rz: 12.2, dx: 1.4 },
+  { along: 50, rx: 10, rz: 10.6, dx: 0.6 },
+  { along: 55, rx: 8.6, rz: 9.2, dx: 0 },
+  { along: 59, rx: 6.6, rz: 7.2, dx: 0 },
+];
+
+/**
+ * The markings, in world height at rest. Deliberately asymmetric -- a symmetric
+ * cow reads as a pattern, an asymmetric one reads as an animal -- and spread
+ * across all four quarters, because the camera orbits with the unit's facing and
+ * every side has to carry the read on its own.
+ */
+const TORSO_PATCHES: readonly PaintBlob[] = [
+  { role: 'marking', at: [3, 34, -13], r: [7, 8, 6] },
+  { role: 'marking', at: [12, 30, 6], r: [6, 7, 7] },
+  { role: 'marking', at: [-9, 41, -3], r: [6, 8, 7] },
+  { role: 'marking', at: [1, 50, 10], r: [6, 6, 6] },
+];
+
+/** A longer, narrower skull than the pig's. */
+const HEAD_RINGS: readonly HullRing[] = [
+  { along: 59, rx: 5.2, rz: 5.8, dx: 1 },
+  { along: 63, rx: 8.4, rz: 9, dx: 1.2 },
+  { along: 67, rx: 9.6, rz: 10.2, dx: 1.2 },
+  { along: 71, rx: 9.2, rz: 9.6, dx: 0.8 },
+  { along: 74.5, rx: 7, rz: 7.4, dx: 0.2 },
+  { along: 77.5, rx: 3.6, rz: 4, dx: 0 },
+];
+
+/**
+ * One dark blot over one eye: the single most recognisable thing on the model at
+ * 64 px, and painted on it costs nothing at all.
+ */
+const HEAD_PATCHES: readonly PaintBlob[] = [{ role: 'marking', at: [3, 68, -7.5], r: [8, 7.5, 6] }];
+
+/** Longer and squarer than the pig's -- most of what says "cow" up close. */
+const MUZZLE_RINGS: readonly HullRing[] = [
+  { along: 2, rx: 5.2, rz: 5.8, dx: 0 },
+  { along: 8, rx: 4.8, rz: 5.2, dx: -0.8 },
+  { along: 14, rx: 4.6, rz: 5, dx: -1.6 },
+  { along: 18, rx: 5, rz: 5.6, dx: -2 },
+];
 
 const SOCKETS: readonly SocketSpec[] = [
   {
     // Cow ears sit low and stick straight out to the sides, below the horns.
     socket: 'ear',
     parentBone: BONE.head,
-    pos: [-2.5, 10.5, -9],
-    // Nearly horizontal: rx of -1.35 lays the left ear out along -z, which is
-    // the single cue that separates a cow's head from the pig's at a glance.
-    rot: [-1.35, 0, 0.06],
+    pos: [-2.5, 9, -8],
+    // Nearly horizontal: rx of -1.3 lays the left ear out along -z, which is the
+    // single cue that separates a cow's head from the pig's at a glance.
+    rot: [-1.3, 0, -0.1],
     mirror: true,
     wobble: {
       axis: 'x',
@@ -66,10 +128,10 @@ const SOCKETS: readonly SocketSpec[] = [
     // A long tail with a weighted tuft, so it trails and swings hard on a turn.
     socket: 'tail',
     parentBone: BONE.pelvis,
-    pos: [-8, 6, 0],
+    pos: [-8.5, 7, 0],
     // The tail hangs along the socket's -y, so a negative z rotation is what
     // swings it backward rather than forward under the rump.
-    rot: [0, 0, -0.42],
+    rot: [0, 0, -0.4],
     wobble: {
       axis: 'y',
       strideAmp: 0.5,
@@ -83,94 +145,24 @@ const SOCKETS: readonly SocketSpec[] = [
 ];
 
 const PARTS: readonly PartSpec[] = [
-  // The rump is a marking rather than a shade: from behind, the dark rear *is*
-  // the cow's pattern, and reusing the torso's own block for it costs nothing.
-  ...barrelTorso(COW_FIGURE, {
-    belly: [33, 31, 28],
-    chest: [27, 22, 25],
-    bellyDrop: 7.5,
-    chestRise: 5.5,
-    rumpRole: 'marking',
-  }),
-  neck(COW_FIGURE, 17, 16),
-  ...bipedArms(COW_FIGURE, { thickness: 6, hand: [5, 5, 5] }),
-  ...bipedLegs(COW_FIGURE, { thigh: 11.5, shin: 9.4, foot: [8, 4.6, 6.6] }),
-
-  // --- Markings -----------------------------------------------------------
-  // Balls pushed *through* the body surface, so only the cap shows: a flat spot
-  // of colour that follows the curve, from any angle, with no texture and no
-  // extra draw state. Two rules govern where they can go, and both were learned
-  // the hard way from a render:
-  //
-  //  1. A patch centred inside the belly is a patch nobody ever sees. It has to
-  //     protrude past the surface it sits on.
-  //  2. The arms hang at `shoulderHalf` (±15.5) and the torso is only 28 deep,
-  //     so there is almost no room on the flanks -- a lateral patch ends up
-  //     painted across the upper arm and reads as shoulder armour. So the
-  //     markings live front and back, where the arms are not.
-  //
-  // Deliberately asymmetric: a symmetric cow reads as a pattern, an asymmetric
-  // one reads as an animal.
-  {
-    name: 'patchChest',
-    attach: BONE.chest,
-    shape: 'ball',
-    role: 'marking',
-    size: [9, 16, 13],
-    pos: [12, -2, -5],
-  },
-  {
-    name: 'patchHip',
-    attach: BONE.pelvis,
-    shape: 'ball',
-    role: 'marking',
-    size: [9, 13, 10],
-    pos: [6, 3, -9],
-  },
-
-  // --- Head ---------------------------------------------------------------
-  {
-    name: 'skull',
-    attach: BONE.head,
-    shape: 'ball',
-    role: 'coat',
-    size: [21, 21, 22],
-    pos: [0, 11, 0],
-  },
-  // The eye patch: one dark blot over one eye. The single most recognisable
-  // thing on the model at 64 px, and it costs one part.
-  {
-    name: 'patchEye',
-    attach: BONE.head,
-    shape: 'ball',
-    role: 'marking',
-    size: [12, 13, 7],
-    pos: [3, 12.5, -9],
-  },
-  // A pale blaze down the front of the face, opposite the patch.
-  {
-    name: 'blaze',
-    attach: BONE.head,
-    shape: 'ball',
-    role: 'coatLight',
-    size: [9, 13, 7],
-    pos: [6, 11, 4],
-  },
-  // Longer and squarer than the pig's: the muzzle is most of what says "cow"
-  // once the patches have done their work.
+  torso(COW_FIGURE, TORSO_RINGS, { paint: TORSO_PATCHES, sides: BODY_SIDES, smooth: BODY_SMOOTH }),
+  head(COW_FIGURE, HEAD_RINGS, { paint: HEAD_PATCHES, sides: BODY_SIDES, smooth: BODY_SMOOTH }),
+  ...bipedArms(COW_FIGURE, { taper: [3.6, 3.1, 2.7], hand: [4.4, 4.6, 4.4], handRole: 'hoof' }),
+  ...bipedLegs(COW_FIGURE, { taper: [6, 4.4, 3.6], hoof: [6.6, 4.2, 5.8] }),
   ...muzzle({
-    at: [5, 6, 0],
-    length: 11,
-    width: 11,
-    height: 9,
-    padDepth: 4,
-    padFlare: 1.22,
-    nostril: [3, 3.8, 3.2],
-    nostrilSpread: 3,
-    taper: 0.94,
+    f: COW_FIGURE,
+    atY: 67,
+    rings: MUZZLE_RINGS,
+    padDepth: 2.6,
+    nostril: [2.4, 3.2, 2.4],
+    nostrilSpread: 3.2,
   }),
-  eyes({ at: [7.5, 13.5, -5.6], size: [3.2, 4.2, 3.2] }),
-  // Horns: short, forward-curving nubs on the crown. Kept stubby -- long horns
+  eyes({ f: COW_FIGURE, at: [8.4, 69, -6.4], size: [2.8, 3.6, 2.8] }),
+  // Coat-shaded rather than marking: the eye patch already carries the dark on
+  // this head, and a third black shape up there turns the face into a smudge.
+  ...earPair('ear', { length: 10, width: 8.5, thickness: 3.4, shellRole: 'coatShade', liningRole: 'skin' }),
+
+  // Horns: short forward-curving nubs on the crown. Kept stubby -- long horns
   // read as antlers at this size, and they widen the silhouette past the point
   // where a unit fits its selection ring.
   {
@@ -180,55 +172,53 @@ const PARTS: readonly PartSpec[] = [
     role: 'horn',
     taper: 0.2,
     facets: 5,
-    size: [5.5, 11, 5.5],
-    pos: [0, 18, -6],
-    rot: [-0.5, 0, -0.15],
+    size: [5, 11, 5],
+    pos: [0, 15.5, -5],
+    rot: [-0.45, 0, -0.22],
     mirror: true,
   },
-  ...earPair('ear', { length: 11, width: 9, thickness: 4, shellRole: 'coatShade' }),
 
-  // --- Udder --------------------------------------------------------------
-  {
+  // The udder, low and forward under the belly. Small: it is in the reference
+  // and it distinguishes the silhouette from behind, but at 64 px anything
+  // bigger reads as a third leg.
+  hull({
     name: 'udder',
     attach: BONE.pelvis,
-    shape: 'ball',
     role: 'skin',
-    size: [12, 9, 12],
-    pos: [4, -2.5, 0],
-  },
-  {
-    name: 'teat',
-    attach: BONE.pelvis,
-    shape: 'cone',
-    role: 'skin',
-    taper: 0.5,
-    facets: 4,
-    size: [3, 4.6, 3],
-    pos: [5, -7.5, -2.8],
-    rot: [0, 0, Math.PI],
-    mirror: true,
-  },
+    facets: 7,
+    rings: [
+      { along: -4, rx: 2.6, rz: 3.4 },
+      { along: -7.5, rx: 4, rz: 4.8 },
+      { along: -11, rx: 3, rz: 3.6 },
+    ],
+    pos: [8, 0, 0],
+  }),
 
   // --- Tail ---------------------------------------------------------------
-  {
-    name: 'tailBase',
+  hull({
+    name: 'tailRope',
     attach: 'tail',
-    shape: 'cone',
-    role: 'coatShade',
-    taper: 0.6,
-    facets: 5,
-    size: [3.8, 13, 3.8],
-    pos: [0, -6.5, 0],
-    rot: [0, 0, Math.PI],
-  },
-  {
+    role: 'coat',
+    facets: 6,
+    rings: [
+      { along: 0, rx: 2, rz: 2 },
+      { along: -8, rx: 1.6, rz: 1.6 },
+      { along: -15, rx: 1.4, rz: 1.4 },
+    ],
+    pos: [0, 0, 0],
+  }),
+  hull({
     name: 'tailTuft',
     attach: 'tail',
-    shape: 'ball',
     role: 'marking',
-    size: [4.6, 7, 4.6],
-    pos: [0, -14.5, 0],
-  },
+    facets: 6,
+    rings: [
+      { along: -14, rx: 1.6, rz: 1.6 },
+      { along: -17, rx: 2.8, rz: 2.8 },
+      { along: -21, rx: 1.2, rz: 1.2 },
+    ],
+    pos: [0, 0, 0],
+  }),
 ];
 
 export const COW: CritterSpecies = {

@@ -55,12 +55,57 @@ export type CoatColors = Record<CoatRole, number>;
  * far, and each is a handful of faces so the whole cast stays flat-shaded and
  * low-poly:
  *
- *  - `box`  — an axis-aligned block: torsos, limbs, muzzles.
- *  - `ball` — a faceted ellipsoid (icosahedron): skulls, bellies, cheeks.
+ *  - `hull` — a **lofted skin** through a stack of profile rings. This is what
+ *             every major body form is: torso, head, muzzle, limbs.
+ *  - `box`  — an axis-aligned block: hooves, eyes, teeth.
+ *  - `ball` — a faceted ellipsoid (icosahedron).
  *  - `cone` — a low-segment cone, optionally truncated by {@link PartSpec.taper}:
- *             ears, horns, tails, tapered limbs.
+ *             horns and tail tips.
+ *
+ * **`hull` exists because the others cannot make a body.** A torso assembled
+ * from intersecting balls and cones is a torso with a visible seam at every
+ * join: the eye reads the lumps, not the animal. One skin lofted through rings
+ * gives a continuous silhouette that tapers where it should, and flat-shaded it
+ * produces exactly the faceted look the reference models have. Markings go on
+ * with {@link PaintBlob} rather than as more geometry, for the same reason -- a
+ * patch bolted on as another ball is a lump, a painted face is a marking.
  */
-export type PartShape = 'box' | 'ball' | 'cone';
+export type PartShape = 'hull' | 'box' | 'ball' | 'cone';
+
+/**
+ * One cross-section of a {@link PartSpec.rings} loft, perpendicular to the
+ * part's {@link PartSpec.axis}.
+ *
+ * `along` is the position on that axis; `rx`/`rz` are the half-widths of the
+ * ellipse (interpreted in the two axes the loft is *not* running along); `dx`
+ * and `dz` offset the ring's centre, which is what lets a belly bulge forward
+ * while the back stays straight.
+ */
+export interface HullRing {
+  readonly along: number;
+  readonly rx: number;
+  readonly rz: number;
+  readonly dx?: number;
+  readonly dz?: number;
+}
+
+/**
+ * A region of a part's surface painted in a different colour role: an ellipsoid
+ * in part-local space, where every triangle whose centre falls inside takes
+ * `role` instead of the part's own.
+ *
+ * This is how a cow gets patches that *lie on* its skin. The alternative --
+ * another ball pushed through the surface -- has to protrude to be visible, and
+ * anything that protrudes is a lump rather than a marking. Painting costs no
+ * geometry at all; it splits the mesh into material groups.
+ */
+export interface PaintBlob {
+  readonly role: CoatRole;
+  /** Centre, in the part's local frame. */
+  readonly at: readonly [number, number, number];
+  /** Half-extents of the ellipsoid. */
+  readonly r: readonly [number, number, number];
+}
 
 /**
  * One rigid block of an animal, in the local frame of whatever it hangs off.
@@ -91,8 +136,24 @@ export interface PartSpec {
    * with `rot: [0, 0, Math.PI]`, so `size` is always the part's full extent.
    */
   readonly taper?: number;
-  /** Facet count. `ball`: icosahedron detail (0 = 20 faces). `cone`: sides. */
+  /** Facet count. `ball`: icosahedron detail (0 = 20 faces). `cone`/`hull`: sides. */
   readonly facets?: number;
+  /** `hull` only: the profile rings, in order along {@link PartSpec.axis}. */
+  readonly rings?: readonly HullRing[];
+  /** `hull` only: which local axis the loft runs along. Defaults to `y`. */
+  readonly axis?: 'x' | 'y';
+  /**
+   * `hull` only: how many lofted sections to generate between each pair of
+   * declared rings, smoothed with a Catmull-Rom. 1 (the default) lofts the rings
+   * exactly as given. Higher rounds the silhouette and -- the reason it usually
+   * matters -- gives a painted marking enough facets to have a curved edge.
+   */
+  readonly smooth?: number;
+  /**
+   * Surface regions painted in another role. Applies to any shape, though it is
+   * a hull that usually has enough surface to be worth painting.
+   */
+  readonly paint?: readonly PaintBlob[];
 }
 
 /**

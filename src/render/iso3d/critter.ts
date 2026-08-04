@@ -8,6 +8,8 @@ import {
   type CoatColors,
   type CoatRole,
   type CritterSpecies,
+  type HullRing,
+  type PaintBlob,
   type ResolvedPart,
   type ResolvedSocket,
 } from '../critters/index.js';
@@ -94,36 +96,288 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
+/** Default radial segment count for a lofted hull. Low enough to stay faceted. */
+const HULL_SIDES = 10;
+
+/** One-dimensional Catmull-Rom through four control values. */
+function spline(p0: number, p1: number, p2: number, p3: number, t: number): number {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return (
+    0.5 *
+    (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3)
+  );
+}
+
+/**
+ * Subdivide a profile with a Catmull-Rom through the declared rings.
+ *
+ * Two things need this, and the second is the surprising one. It rounds the
+ * silhouette, so a species can describe a body with eight rings read off a
+ * reference instead of thirty tuned by hand. And it gives the surface enough
+ * resolution *along* the body for a painted marking to have a curved edge --
+ * a patch can only follow the facets it is cut from, so on a coarse loft a
+ * round blob comes out as a chevron no matter how round the blob is.
+ */
+function subdivideRings(rings: readonly HullRing[], steps: number): HullRing[] {
+  if (steps <= 1 || rings.length < 2) return [...rings];
+  const get = (i: number): HullRing => rings[Math.max(0, Math.min(rings.length - 1, i))] as HullRing;
+  const out: HullRing[] = [];
+  for (let i = 0; i < rings.length - 1; i++) {
+    const a = get(i - 1);
+    const b = get(i);
+    const c = get(i + 1);
+    const d = get(i + 2);
+    for (let s = 0; s < steps; s++) {
+      const t = s / steps;
+      out.push({
+        along: spline(a.along, b.along, c.along, d.along, t),
+        // Radii are clamped at zero: a Catmull-Rom can overshoot below its
+        // control points, and a negative radius turns the ring inside out.
+        rx: Math.max(0, spline(a.rx, b.rx, c.rx, d.rx, t)),
+        rz: Math.max(0, spline(a.rz, b.rz, c.rz, d.rz, t)),
+        dx: spline(a.dx ?? 0, b.dx ?? 0, c.dx ?? 0, d.dx ?? 0, t),
+        dz: spline(a.dz ?? 0, b.dz ?? 0, c.dz ?? 0, d.dz ?? 0, t),
+      });
+    }
+  }
+  out.push(rings[rings.length - 1] as HullRing);
+  return out;
+}
+
+/**
+ * Loft a closed skin through a part's profile rings.
+ *
+ * This is the shape that makes a critter look like an animal instead of a pile
+ * of primitives: one continuous surface whose silhouette tapers where the rings
+ * taper, capped at both ends. Built **non-indexed**, one triangle at a time,
+ * because flat shading wants unshared vertices anyway and because face painting
+ * needs to be able to hand any single triangle to a different material.
+ *
+ * `axis` picks which local axis the rings stack along -- `y` for a torso, `x`
+ * for a muzzle running forward out of the skull.
+ */
+function loftHull(
+  declared: readonly HullRing[],
+  axis: 'x' | 'y',
+  sides: number,
+  smooth: number,
+): THREE.BufferGeometry {
+  if (declared.length < 2) throw new Error('a hull needs at least two rings');
+  const rings = subdivideRings(declared, smooth);
+  const verts: number[] = [];
+
+  /** A point on `ring` at angle `t` (0..1 around it), in part-local space. */
+  const at = (ring: HullRing, t: number): [number, number, number] => {
+    const a = t * Math.PI * 2;
+    const u = (ring.dx ?? 0) + Math.cos(a) * ring.rx;
+    const v = (ring.dz ?? 0) + Math.sin(a) * ring.rz;
+    // For a y loft, the ring lies in the xz plane; for an x loft, in the yz.
+    return axis === 'y' ? [u, ring.along, v] : [ring.along, u, v];
+  };
+  const centre = (ring: HullRing): [number, number, number] =>
+    axis === 'y'
+      ? [ring.dx ?? 0, ring.along, ring.dz ?? 0]
+      : [ring.along, ring.dx ?? 0, ring.dz ?? 0];
+
+  // Which face each triangle belongs to. A quad's two triangles share an id, so
+  // face painting can decide once per *face* rather than once per triangle --
+  // otherwise a marking's edge saws along the diagonals and, where a blob
+  // straddles a ring, comes out as stripes.
+  const faceOf: number[] = [];
+  let face = 0;
+
+  const push = (p: readonly [number, number, number]): void => {
+    verts.push(p[0], p[1], p[2]);
+  };
+  const tri = (
+    a: readonly [number, number, number],
+    b: readonly [number, number, number],
+    c: readonly [number, number, number],
+  ): void => {
+    push(a);
+    push(b);
+    push(c);
+    faceOf.push(face);
+  };
+
+  for (let i = 0; i < rings.length - 1; i++) {
+    const lo = rings[i] as HullRing;
+    const hi = rings[i + 1] as HullRing;
+    for (let s = 0; s < sides; s++) {
+      const t0 = s / sides;
+      const t1 = (s + 1) / sides;
+      const a = at(lo, t0);
+      const b = at(lo, t1);
+      const c = at(hi, t1);
+      const d = at(hi, t0);
+      tri(a, b, c);
+      tri(a, c, d);
+      face += 1;
+    }
+  }
+
+  // Caps. A fan to the ring's centre, which for a ring that has closed to
+  // nothing degenerates harmlessly into zero-area triangles.
+  const first = rings[0] as HullRing;
+  const last = rings[rings.length - 1] as HullRing;
+  const firstCentre = centre(first);
+  const lastCentre = centre(last);
+  for (let s = 0; s < sides; s++) {
+    const t0 = s / sides;
+    const t1 = (s + 1) / sides;
+    tri(firstCentre, at(first, t1), at(first, t0));
+    face += 1;
+    tri(lastCentre, at(last, t0), at(last, t1));
+    face += 1;
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.userData.faceOf = Int32Array.from(faceOf);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/**
+ * Split `geo` into material groups by which {@link PaintBlob} each *face* falls
+ * into, and return the role each group draws with.
+ *
+ * Per face, not per triangle. A quad split down its diagonal has two triangles
+ * whose centres sit either side of the split, so testing them independently
+ * gives a marking a sawtooth edge -- and where a blob straddles a ring of the
+ * loft, alternating stripes. `geo.userData.faceOf` (written by the loft) maps
+ * each triangle to the face it came from; a geometry without it degrades to one
+ * face per triangle, which is correct for a box or a cone.
+ *
+ * The mesh is then reordered so every group is one contiguous run, which is what
+ * three.js wants and what keeps this to one draw call per colour rather than one
+ * per triangle. Faces inside no blob keep the part's own role.
+ */
+function paintGroups(
+  geo: THREE.BufferGeometry,
+  baseRole: CoatRole,
+  blobs: readonly PaintBlob[],
+): CoatRole[] {
+  const pos = geo.getAttribute('position') as THREE.BufferAttribute;
+  const triCount = pos.count / 3;
+  const roles: CoatRole[] = [baseRole];
+  const roleIndex = new Map<CoatRole, number>([[baseRole, 0]]);
+  const assignment = new Int32Array(triCount);
+
+  const faceOf = (geo.userData.faceOf as Int32Array | undefined) ?? null;
+  const faceCount = faceOf ? (faceOf[faceOf.length - 1] ?? -1) + 1 : triCount;
+  // Accumulate each face's centre from the triangles that make it up.
+  const sums = new Float64Array(faceCount * 3);
+  const counts = new Int32Array(faceCount);
+  for (let t = 0; t < triCount; t++) {
+    const i = t * 3;
+    const f = faceOf ? (faceOf[t] as number) : t;
+    sums[f * 3] = (sums[f * 3] as number) + (pos.getX(i) + pos.getX(i + 1) + pos.getX(i + 2)) / 3;
+    sums[f * 3 + 1] = (sums[f * 3 + 1] as number) + (pos.getY(i) + pos.getY(i + 1) + pos.getY(i + 2)) / 3;
+    sums[f * 3 + 2] = (sums[f * 3 + 2] as number) + (pos.getZ(i) + pos.getZ(i + 1) + pos.getZ(i + 2)) / 3;
+    counts[f] = (counts[f] as number) + 1;
+  }
+
+  const faceRole = new Int32Array(faceCount);
+  for (let f = 0; f < faceCount; f++) {
+    const n = counts[f] as number;
+    if (n === 0) continue;
+    const cx = (sums[f * 3] as number) / n;
+    const cy = (sums[f * 3 + 1] as number) / n;
+    const cz = (sums[f * 3 + 2] as number) / n;
+    for (const blob of blobs) {
+      const dx = (cx - blob.at[0]) / blob.r[0];
+      const dy = (cy - blob.at[1]) / blob.r[1];
+      const dz = (cz - blob.at[2]) / blob.r[2];
+      if (dx * dx + dy * dy + dz * dz > 1) continue;
+      let index = roleIndex.get(blob.role);
+      if (index === undefined) {
+        index = roles.length;
+        roles.push(blob.role);
+        roleIndex.set(blob.role, index);
+      }
+      faceRole[f] = index;
+      break;
+    }
+  }
+  for (let t = 0; t < triCount; t++) {
+    assignment[t] = faceRole[faceOf ? (faceOf[t] as number) : t] as number;
+  }
+
+  // Reorder the triangles so each material's are contiguous. The face map is
+  // permuted with them: leaving it in the pre-sort order would make it silently
+  // describe a mesh that no longer exists.
+  const src = pos.array as Float32Array;
+  const sorted = new Float32Array(src.length);
+  const sortedFaces = faceOf ? new Int32Array(triCount) : null;
+  let write = 0;
+  let writeTri = 0;
+  geo.clearGroups();
+  for (let r = 0; r < roles.length; r++) {
+    const start = write / 3;
+    for (let t = 0; t < triCount; t++) {
+      if (assignment[t] !== r) continue;
+      sorted.set(src.subarray(t * 9, t * 9 + 9), write);
+      if (sortedFaces && faceOf) sortedFaces[writeTri] = faceOf[t] as number;
+      write += 9;
+      writeTri += 1;
+    }
+    const count = write / 3 - start;
+    if (count > 0) geo.addGroup(start, count, r);
+  }
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(sorted, 3));
+  if (sortedFaces) geo.userData.faceOf = sortedFaces;
+  geo.computeVertexNormals();
+  return roles;
+}
+
 /**
  * Geometry for one part. Shared across every rig of the same shape via a cache
  * keyed on the primitive's parameters: two pigs in different colours are two
  * material sets over one set of buffers.
  */
-const geometryCache = new Map<string, THREE.BufferGeometry>();
+const geometryCache = new Map<string, { geo: THREE.BufferGeometry; roles: CoatRole[] }>();
 
-function partGeometry(part: ResolvedPart): THREE.BufferGeometry {
+function partGeometry(part: ResolvedPart): { geo: THREE.BufferGeometry; roles: CoatRole[] } {
   const [w, h, d] = part.size;
   const facets = part.facets;
-  const key = `${part.shape}|${w},${h},${d}|${part.taper ?? 0}|${facets ?? -1}`;
+  const key =
+    `${part.shape}|${w},${h},${d}|${part.taper ?? 0}|${facets ?? -1}|${part.axis ?? 'y'}|${part.smooth ?? 1}` +
+    `|${part.role}|${JSON.stringify(part.rings ?? null)}|${JSON.stringify(part.paint ?? null)}`;
   const hit = geometryCache.get(key);
   if (hit) return hit;
 
   let geo: THREE.BufferGeometry;
-  if (part.shape === 'box') {
-    geo = new THREE.BoxGeometry(w, h, d);
+  if (part.shape === 'hull') {
+    if (!part.rings) throw new Error(`hull ${part.name} has no rings`);
+    geo = loftHull(part.rings, part.axis ?? 'y', facets ?? HULL_SIDES, part.smooth ?? 1);
+  } else if (part.shape === 'box') {
+    geo = new THREE.BoxGeometry(w, h, d).toNonIndexed();
   } else if (part.shape === 'ball') {
     // A unit icosahedron scaled to the part's extents: faceted, and elliptical
     // without needing a separate sphere per axis ratio.
     geo = new THREE.IcosahedronGeometry(0.5, facets ?? 0);
     geo.scale(w, h, d);
+    geo = geo.toNonIndexed();
   } else {
     // `taper` is the +y radius over the -y base, matching the spec's convention.
     const taper = part.taper ?? 0;
     geo = new THREE.CylinderGeometry(0.5 * taper, 0.5, 1, facets ?? 5, 1, false);
     geo.scale(w, h, d);
+    geo = geo.toNonIndexed();
   }
-  geometryCache.set(key, geo);
-  return geo;
+
+  // `BoxGeometry` ships six per-face groups that survive `toNonIndexed`. They
+  // are meaningless here and actively misleading -- an unpainted part draws with
+  // one material, so groups pointing at indices 1..5 describe a mesh that does
+  // not exist. Clear them, then let the paint pass author the only groups a
+  // critter mesh ever has.
+  geo.clearGroups();
+  const roles = part.paint?.length ? paintGroups(geo, part.role, part.paint) : [part.role];
+  const entry = { geo, roles };
+  geometryCache.set(key, entry);
+  return entry;
 }
 
 export class CritterRig implements SandboxUnit {
@@ -174,7 +428,11 @@ export class CritterRig implements SandboxUnit {
         const parent =
           typeof part.attach === 'number' ? bones[part.attach] : socketNodes.get(part.attach);
         if (!parent) throw new Error(`${species.id}: part ${part.name} has no attachment ${String(part.attach)}`);
-        const mesh = new THREE.Mesh(partGeometry(part), this.material(part.role));
+        const { geo, roles } = partGeometry(part);
+        // A painted part draws one material per colour region; an unpainted one
+        // is the single-material case of the same thing.
+        const material = roles.length === 1 ? this.material(roles[0] as CoatRole) : roles.map((r) => this.material(r));
+        const mesh = new THREE.Mesh(geo, material);
         mesh.position.set(part.pos[0], part.pos[1], part.pos[2]);
         mesh.rotation.set(part.rot[0], part.rot[1], part.rot[2]);
         mesh.name = part.name;
