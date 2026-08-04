@@ -67,6 +67,8 @@ export interface MapProp {
   readonly rotation: number;
   readonly scale: number;
   readonly tint: number;
+  /** Lie the prop along the ground rather than standing it up (spec 051). */
+  readonly align?: boolean;
 }
 
 export type MapMarkerKind = 'spawn' | 'objective' | 'campfire' | 'trigger';
@@ -276,6 +278,8 @@ export function exportMap(input: ExportMapInput): MapDocument {
           rotation: quantize(prop.rotation),
           scale: quantize(prop.scale),
           tint: quantize(prop.tint),
+          // Omitted when upright, so the generated forest's JSON is unchanged.
+          ...(prop.alignToNormal ? { align: true } : {}),
         })),
         markers: (markersByChunk.get(key) ?? []).map((m) => ({
           kind: m.kind,
@@ -369,7 +373,8 @@ function writeRect(rect: MapRect): string {
 function writeProp(prop: MapProp): string {
   return (
     `{ "species": ${writeScalar(prop.species)}, "x": ${prop.x}, "z": ${prop.z}, ` +
-    `"rotation": ${prop.rotation}, "scale": ${prop.scale}, "tint": ${prop.tint} }`
+    `"rotation": ${prop.rotation}, "scale": ${prop.scale}, "tint": ${prop.tint}` +
+    `${prop.align ? ', "align": true' : ''} }`
   );
 }
 
@@ -493,6 +498,8 @@ function parseMarker(value: unknown, what: string): MapMarker {
 
 function parseProp(value: unknown, what: string): MapProp {
   const r = asRecord(value, what);
+  const align = r['align'];
+  if (align !== undefined && typeof align !== 'boolean') fail(`${what}.align must be a boolean`);
   return {
     species: asString(r['species'], `${what}.species`),
     x: asNumber(r['x'], `${what}.x`),
@@ -500,6 +507,7 @@ function parseProp(value: unknown, what: string): MapProp {
     rotation: asNumber(r['rotation'], `${what}.rotation`),
     scale: asNumber(r['scale'], `${what}.scale`),
     tint: asNumber(r['tint'], `${what}.tint`),
+    ...(align === true ? { align: true } : {}),
   };
 }
 

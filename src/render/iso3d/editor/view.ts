@@ -15,12 +15,14 @@ import {
   zoomEditorCamera,
   type EditorCameraState,
 } from './camera.js';
+import { Rng } from '../../../shared/prng.js';
 import { applyTerrainBrush } from './brush.js';
 import { createBrushCursor, type BrushCursorHandle } from './cursor.js';
 import { EditHistory } from './history.js';
 import { EditorInputCapture } from './input.js';
 import { bakeEditorMap } from './map-source.js';
-import { buildEditorPanel, createBrushSettings, TOOL_COLORS } from './panel.js';
+import { buildEditorPanel, createEditorSettings, cursorColor } from './panel.js';
+import { eraseStroke, scatterStroke, terrainNormalAt } from './scatter.js';
 
 /**
  * The map editor tab (spec 049).
@@ -124,9 +126,21 @@ class EditorScene {
   }
 
   private buildProps(): PropFieldHandle {
-    const field = buildPropField(this.map.props, (x, z) => this.map.world.heightAt(x, z));
+    const layer = this.map.store.layerInfo(this.layerId);
+    const field = buildPropField(
+      this.map.store.props(this.layerId),
+      (x, z) => this.map.world.heightAt(x, z),
+      // Resolved at build time, not stored: a prop that asked to lie on the
+      // ground re-settles whenever the ground under it is sculpted.
+      layer ? (x, z) => terrainNormalAt(this.map.store, layer, x, z) : undefined,
+    );
     this.scene.add(field.group);
     return field;
+  }
+
+  /** The layer the tools edit. One ground layer today. */
+  get layerId(): string {
+    return this.document.layers[0]?.id ?? 'ground';
   }
 
   /**
@@ -218,6 +232,9 @@ class EditorScene {
   }
 }
 
+/** How often the prop field may be rebuilt while a stroke is running, in ms. */
+const PROP_REBUILD_MS = 120;
+
 const OVERLAY_CSS =
   "font-family:'Courier New',ui-monospace,monospace;font-size:11px;line-height:1.6;letter-spacing:.04em;" +
   'color:#c8c8d8;background:rgba(12,12,18,.82);border:1px solid #2a2a3a;padding:7px 10px;' +
@@ -242,7 +259,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   help.style.cssText = `${OVERLAY_CSS}position:absolute;left:10px;bottom:10px;z-index:20;`;
   help.innerHTML =
     '<b style="color:#f0f0f8;">Map editor</b> &mdash; rendering from a baked map document<br>' +
-    '<b>left-drag</b> sculpts &middot; <b>WASD</b> / arrows pan &middot; ' +
+    '<b>left-drag</b> applies the armed tool &middot; <b>WASD</b> / arrows pan &middot; ' +
     '<b>right-drag</b> or <b>middle-drag</b> orbits &middot; <b>wheel</b> zooms<br>' +
     '<span style="color:#7a7a90;">Ctrl+Z undoes a stroke</span>';
 
@@ -258,14 +275,17 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   const scene = new EditorScene(canvas, viewSeed());
   const input = new EditorInputCapture(canvas);
   const history = new EditHistory();
-  const brush = createBrushSettings();
+  const settings = createEditorSettings();
 
-  const cursor: BrushCursorHandle = createBrushCursor(TOOL_COLORS[brush.tool]);
+  const cursor: BrushCursorHandle = createBrushCursor(cursorColor(settings));
   scene.addOverlay(cursor.object);
 
-  // The layer the brush edits. One ground layer today; when there are more, this
-  // becomes a picker rather than a different mechanism.
-  const layerId = scene.document.layers[0]?.id ?? 'ground';
+  const layerId = scene.layerId;
+  // Seeded from the map, so a session's scatters are reproducible from a seed
+  // rather than from whatever `Math.random` happened to be doing.
+  let rng = Rng.fromSeed(scene.document.seed ^ 0x5ca77e5);
+  // Fractional props owed to the next frame; see `scatterStroke`.
+  let scatterCarry = 0;
 
   /** Re-mesh a set of chunks, skipping the duplicates a drag produces. */
   const remesh = (dirty: readonly { cx: number; cz: number }[]): void => {
@@ -286,9 +306,9 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   };
 
   const panel = buildEditorPanel({
-    brush,
+    settings,
     onUndo: undo,
-    onToolChange: (tool) => cursor.setColor(TOOL_COLORS[tool]),
+    onArmChange: () => cursor.setColor(cursorColor(settings)),
   });
   panelHost.appendChild(panel.element);
 
@@ -300,14 +320,18 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   };
 
   const chunks = scene.document.layers.reduce((n, layer) => n + layer.chunks.length, 0);
-  const props = scene.map.props.length;
 
   // Sampled once when a stroke begins, so `flatten` levels to the ground it was
   // aimed at rather than chasing the surface it is changing.
   let flattenTo = 0;
-  // Whether the stroke in progress actually moved ground, so a click that hit
-  // nothing does not pay for a prop-field rebuild.
+  // Whether the stroke in progress changed anything, so a click that hit nothing
+  // does not pay for a prop-field rebuild.
+  let strokeChangedProps = false;
   let strokeMovedGround = false;
+  // The prop field is rebuilt whole, which is far too much to do every frame --
+  // but a scatter you cannot see until you let go is unusable. So it is rebuilt
+  // a few times a second while a stroke runs, and once more when it ends.
+  let propsRebuiltAt = 0;
 
   let running = false;
   let lastFrame: number | undefined;
@@ -332,37 +356,63 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     // the same pick, so the ring always marks the ground that is about to move.
     const at = scene.pick(input.mouseCanvas().x, input.mouseCanvas().y);
     if (at) {
-      cursor.moveTo(at.x, at.z, brush.radius, (x, z) => scene.map.world.heightAt(x, z));
+      cursor.moveTo(at.x, at.z, settings.radius, (x, z) => scene.map.world.heightAt(x, z));
       cursor.setVisible(true);
     } else {
       cursor.setVisible(false);
     }
 
+    const capture = (cx: number, cz: number): void => history.captureChunk(scene.map.store, layerId, cx, cz);
+
     if (input.takePaintStart()) {
       history.beginStroke();
       strokeMovedGround = false;
+      strokeChangedProps = false;
+      scatterCarry = 0;
+      propsRebuiltAt = time;
       // The height under the first press is the level `flatten` works toward.
       if (at) flattenTo = scene.map.world.heightAt(at.x, at.z);
     }
+
     if (input.isPainting && at) {
-      const dirty = applyTerrainBrush(scene.map.store, brush, {
-        layerId,
-        x: at.x,
-        z: at.z,
-        dtSeconds: dt,
-        flattenTo,
-        onTouchChunk: (cx, cz) => history.captureChunk(scene.map.store, layerId, cx, cz),
-      });
-      remesh(dirty);
-      if (dirty.length > 0) strokeMovedGround = true;
-      // The ring reads the surface it just moved, so it has to be redrawn after.
-      cursor.moveTo(at.x, at.z, brush.radius, (x, z) => scene.map.world.heightAt(x, z));
+      if (settings.mode === 'terrain') {
+        const dirty = applyTerrainBrush(
+          scene.map.store,
+          { tool: settings.tool, radius: settings.radius, strength: settings.strength, falloff: settings.falloff },
+          { layerId, x: at.x, z: at.z, dtSeconds: dt, flattenTo, onTouchChunk: capture },
+        );
+        remesh(dirty);
+        if (dirty.length > 0) strokeMovedGround = true;
+      } else if (settings.mode === 'scatter') {
+        const out = scatterStroke(
+          scene.map.store,
+          layerId,
+          settings,
+          { x: at.x, z: at.z, radius: settings.radius, dtSeconds: dt, carry: scatterCarry, onTouchChunk: capture },
+          rng,
+        );
+        rng = out.rng;
+        scatterCarry = out.carry;
+        if (out.added.length > 0) strokeChangedProps = true;
+      } else {
+        const out = eraseStroke(scene.map.store, layerId, { x: at.x, z: at.z, radius: settings.radius }, capture);
+        if (out.removed.length > 0) strokeChangedProps = true;
+      }
+
+      if (strokeChangedProps && time - propsRebuiltAt > PROP_REBUILD_MS) {
+        scene.refreshProps();
+        propsRebuiltAt = time;
+      }
+      // The ring reads the surface it may just have moved, so redraw it after.
+      cursor.moveTo(at.x, at.z, settings.radius, (x, z) => scene.map.world.heightAt(x, z));
     }
+
     if (input.takePaintEnd()) {
       history.endStroke();
-      // Trees stand on the ground, and the ground just moved.
-      if (strokeMovedGround) scene.refreshProps();
+      // Trees stand on the ground, and either the ground or the trees just moved.
+      if (strokeMovedGround || strokeChangedProps) scene.refreshProps();
       strokeMovedGround = false;
+      strokeChangedProps = false;
     }
 
     canvas.style.cursor = input.isOrbiting ? 'grabbing' : input.isPainting ? 'crosshair' : 'default';
@@ -373,8 +423,8 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       `at <b>${Math.round(c.target.x)}, ${Math.round(c.target.z)}</b> &middot; ` +
       `span <b>${Math.round(c.halfWidth)}</b> &middot; ` +
       `pitch <b>${Math.round((c.elevation * 180) / Math.PI)}&deg;</b><br>` +
-      `<span style="color:#7a7a90;">${chunks} chunks &middot; ${props} props &middot; ` +
-      `${history.depth} undo</span>`;
+      `<span style="color:#7a7a90;">${chunks} chunks &middot; ` +
+      `${scene.map.store.props(layerId).length} props &middot; ${history.depth} undo</span>`;
 
     requestAnimationFrame(frame);
   };

@@ -31,6 +31,16 @@ export interface Prop {
   readonly rotation: number;
   /** Small per-instance foliage tint offset, in [-1, 1]. */
   readonly tint: number;
+  /**
+   * Lie the prop along the ground instead of standing it upright (spec 051).
+   *
+   * The *intent*, not the resulting tilt. A stored normal would go stale the
+   * moment the ground under the prop is sculpted, so the renderer re-resolves
+   * this against the terrain every time it builds the field -- exactly as a
+   * prop's height already is. Absent means upright, so the generated forest is
+   * unaffected.
+   */
+  readonly alignToNormal?: boolean;
 }
 
 export interface ScatterOptions {

@@ -1,4 +1,4 @@
-import { cornerJitter, type TerrainChunk } from './chunk.js';
+import { cornerJitter, type ChunkCoord, type TerrainChunk } from './chunk.js';
 import {
   decodeRuns,
   encodeRuns,
@@ -96,6 +96,8 @@ export interface ChunkSnapshot {
   readonly solid: Uint8Array;
   readonly materials: Uint8Array;
   readonly tones: Uint8Array;
+  /** The props standing on this chunk, in world space (spec 051). */
+  readonly props: readonly Prop[];
 }
 
 /** A cell of terrain, as the editor sees it. */
@@ -162,6 +164,7 @@ export class MapChunkStore {
         scale: p.scale,
         rotation: p.rotation,
         tint: p.tint,
+        ...(p.align ? { alignToNormal: true } : {}),
       })),
       markers: chunk.markers.map((m) => ({ ...m })),
       nav: chunk.nav === null ? null : Uint8Array.from(chunk.nav),
@@ -308,6 +311,8 @@ export class MapChunkStore {
       solid: Uint8Array.from(chunk.solid),
       materials: Uint8Array.from(chunk.materials),
       tones: Uint8Array.from(chunk.tones),
+      // Props are immutable records, so the list is copied but not its entries.
+      props: [...chunk.props],
     };
   }
 
@@ -319,6 +324,105 @@ export class MapChunkStore {
     chunk.solid.set(snapshot.solid);
     chunk.materials.set(snapshot.materials);
     chunk.tones.set(snapshot.tones);
+    chunk.props.length = 0;
+    chunk.props.push(...snapshot.props);
+  }
+
+  /** The chunk that owns a world point, clamped to the layer's grid. */
+  private chunkAtPoint(layer: StoredLayer, x: number, z: number): StoredChunk | undefined {
+    const col = Math.floor((x - layer.bounds.minX) / this.cellSize);
+    const row = Math.floor((z - layer.bounds.minZ) / this.cellSize);
+    const cx = Math.min(layer.grid.chunksX - 1, Math.max(0, Math.floor(col / this.chunkCells)));
+    const cz = Math.min(layer.grid.chunksZ - 1, Math.max(0, Math.floor(row / this.chunkCells)));
+    return layer.chunks.get(key(cx, cz));
+  }
+
+  /**
+   * File a prop into the chunk that contains it (spec 051). Returns that chunk's
+   * coordinate so the caller knows what to snapshot and re-mesh, or null if the
+   * point lies outside every layer.
+   */
+  addProp(layerId: string, prop: Prop): ChunkCoord | null {
+    const layer = this.layers.get(layerId);
+    if (!layer || !Number.isFinite(prop.x) || !Number.isFinite(prop.y)) return null;
+    const chunk = this.chunkAtPoint(layer, prop.x, prop.y);
+    if (!chunk) return null;
+    chunk.props.push(prop);
+    return { cx: chunk.cx, cz: chunk.cz };
+  }
+
+  /**
+   * Props whose **centre** lies within `radius` of (x, z).
+   *
+   * Centre rather than footprint overlap, because that is what the eraser wants:
+   * a footprint test makes a big tree vanish while the cursor is nowhere near its
+   * trunk, which reads as the tool having a mind of its own.
+   */
+  propsWithin(layerId: string, x: number, z: number, radius: number): Prop[] {
+    const layer = this.layers.get(layerId);
+    if (!layer || !(radius > 0)) return [];
+    const r2 = radius * radius;
+    const out: Prop[] = [];
+    for (const chunk of this.chunksOverlapping(layer, x, z, radius)) {
+      for (const prop of chunk.props) {
+        if ((prop.x - x) ** 2 + (prop.y - z) ** 2 <= r2) out.push(prop);
+      }
+    }
+    return out;
+  }
+
+  /** Remove those props, returning them and the chunks that changed. */
+  removePropsWithin(
+    layerId: string,
+    x: number,
+    z: number,
+    radius: number,
+  ): { removed: Prop[]; dirty: ChunkCoord[] } {
+    const layer = this.layers.get(layerId);
+    if (!layer || !(radius > 0)) return { removed: [], dirty: [] };
+    const r2 = radius * radius;
+    const removed: Prop[] = [];
+    const dirty: ChunkCoord[] = [];
+    for (const chunk of this.chunksOverlapping(layer, x, z, radius)) {
+      const kept = chunk.props.filter((prop) => {
+        const inside = (prop.x - x) ** 2 + (prop.y - z) ** 2 <= r2;
+        if (inside) removed.push(prop);
+        return !inside;
+      });
+      if (kept.length === chunk.props.length) continue;
+      chunk.props.length = 0;
+      chunk.props.push(...kept);
+      dirty.push({ cx: chunk.cx, cz: chunk.cz });
+    }
+    return { removed, dirty };
+  }
+
+  /**
+   * Every chunk a circle can reach, in coordinates.
+   *
+   * Exists so an editing tool can snapshot for undo *before* it mutates. A tool
+   * that discovers its dirty chunks as it goes -- as a random scatter naturally
+   * does -- would otherwise capture each chunk one prop too late.
+   */
+  chunksWithin(layerId: string, x: number, z: number, radius: number): ChunkCoord[] {
+    const layer = this.layers.get(layerId);
+    if (!layer || !(radius > 0)) return [];
+    return this.chunksOverlapping(layer, x, z, radius).map((c) => ({ cx: c.cx, cz: c.cz }));
+  }
+
+  /** Every chunk a circle can reach, so a radius spanning a seam finds both. */
+  private chunksOverlapping(layer: StoredLayer, x: number, z: number, radius: number): StoredChunk[] {
+    const span = this.cellSize * this.chunkCells;
+    const lo = (world: number, min: number): number => Math.floor((world - radius - min) / span);
+    const hi = (world: number, min: number): number => Math.floor((world + radius - min) / span);
+    const out: StoredChunk[] = [];
+    for (let cz = Math.max(0, lo(z, layer.bounds.minZ)); cz <= Math.min(layer.grid.chunksZ - 1, hi(z, layer.bounds.minZ)); cz++) {
+      for (let cx = Math.max(0, lo(x, layer.bounds.minX)); cx <= Math.min(layer.grid.chunksX - 1, hi(x, layer.bounds.minX)); cx++) {
+        const chunk = layer.chunks.get(key(cx, cz));
+        if (chunk) out.push(chunk);
+      }
+    }
+    return out;
   }
 
   /** Every prop in the layer, in world space and in chunk order. */
@@ -487,6 +591,7 @@ export class MapChunkStore {
                 rotation: quantize(p.rotation),
                 scale: quantize(p.scale),
                 tint: quantize(p.tint),
+                ...(p.alignToNormal ? { align: true } : {}),
               })),
               markers: chunk.markers.map((m) => ({ ...m, x: quantize(m.x), z: quantize(m.z) })),
               nav: chunk.nav === null ? null : Array.from(chunk.nav),
