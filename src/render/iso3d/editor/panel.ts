@@ -1,6 +1,7 @@
 import GUI from 'lil-gui';
-import type { PropKind } from '../../../terrain/index.js';
+import type { MapMarkerKind, PropKind } from '../../../terrain/index.js';
 import { DEFAULT_BRUSH, TERRAIN_TOOLS, type TerrainTool } from './brush.js';
+import { MARKER_KINDS } from './markers.js';
 import { DEFAULT_SCATTER } from './scatter.js';
 
 /**
@@ -12,14 +13,15 @@ import { DEFAULT_SCATTER } from './scatter.js';
  */
 
 /** What left-drag does. The radius and the cursor are shared by all three. */
-export type EditorMode = 'terrain' | 'scatter' | 'erase';
+export type EditorMode = 'terrain' | 'scatter' | 'marker' | 'erase';
 
-export const EDITOR_MODES: readonly EditorMode[] = ['terrain', 'scatter', 'erase'];
+export const EDITOR_MODES: readonly EditorMode[] = ['terrain', 'scatter', 'marker', 'erase'];
 
 /** Ring colour per mode and tool, so the cursor says what is about to happen. */
 export const MODE_COLORS: Record<EditorMode, number> = {
   terrain: 0xffe27a,
   scatter: 0x8fe0b4,
+  marker: 0xd0d0e8,
   erase: 0xe08f8f,
 };
 export const TOOL_COLORS: Record<TerrainTool, number> = {
@@ -52,6 +54,9 @@ export interface EditorSettings {
   scaleMax: number;
   spacing: number;
   alignToNormal: boolean;
+  // Markers
+  markerKind: MapMarkerKind;
+  showArena: boolean;
 }
 
 export function createEditorSettings(): EditorSettings {
@@ -68,6 +73,8 @@ export function createEditorSettings(): EditorSettings {
     scaleMax: DEFAULT_SCATTER.scaleMax,
     spacing: DEFAULT_SCATTER.spacing,
     alignToNormal: DEFAULT_SCATTER.alignToNormal,
+    markerKind: 'spawn',
+    showArena: true,
   };
 }
 
@@ -116,6 +123,10 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   scatter.add(s, 'scaleMin', 0.2, 3, 0.05).name('Scale min');
   scatter.add(s, 'scaleMax', 0.2, 3, 0.05).name('Scale max');
   scatter.add(s, 'alignToNormal').name('Lie on slope');
+
+  const markers = gui.addFolder('Markers');
+  markers.add(s, 'markerKind', [...MARKER_KINDS]).name('Kind').onChange(opts.onArmChange);
+  markers.add(s, 'showArena').name('Show arena bounds').onChange(opts.onArmChange);
 
   const edit = gui.addFolder('Edit');
   edit.add({ undo: opts.onUndo }, 'undo').name('Undo (Ctrl+Z)');

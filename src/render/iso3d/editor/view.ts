@@ -20,6 +20,8 @@ import { applyTerrainBrush } from './brush.js';
 import { createBrushCursor, type BrushCursorHandle } from './cursor.js';
 import { EditHistory } from './history.js';
 import { EditorInputCapture } from './input.js';
+import { createArenaOutline, createMarkerView } from './marker-view.js';
+import { eraseMarkers, placeMarker } from './markers.js';
 import { bakeEditorMap } from './map-source.js';
 import { buildEditorPanel, createEditorSettings, cursorColor } from './panel.js';
 import { eraseStroke, scatterStroke, terrainNormalAt } from './scatter.js';
@@ -185,7 +187,7 @@ class EditorScene {
     if (chunk) this.terrainMesh.rebuild(chunk);
   }
 
-  /** Add an overlay (the brush cursor) above the terrain. */
+  /** Add an overlay (the brush cursor, markers) above the terrain. */
   addOverlay(object: THREE.Object3D): void {
     this.scene.add(object);
   }
@@ -280,6 +282,11 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   const cursor: BrushCursorHandle = createBrushCursor(cursorColor(settings));
   scene.addOverlay(cursor.object);
 
+  const markerView = createMarkerView();
+  scene.addOverlay(markerView.group);
+  const arenaOutline = createArenaOutline();
+  scene.addOverlay(arenaOutline.object);
+
   const layerId = scene.layerId;
   // Seeded from the map, so a session's scatters are reproducible from a seed
   // rather than from whatever `Math.random` happened to be doing.
@@ -298,17 +305,30 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     }
   };
 
+  const groundAt = (x: number, z: number): number => scene.map.world.heightAt(x, z);
+
+  /** Redraw the markers and the arena box from whatever the store now holds. */
+  const refreshMarkers = (): void => {
+    markerView.render(scene.map.store.markers(layerId), groundAt);
+    arenaOutline.object.visible = settings.showArena;
+    arenaOutline.refresh(scene.document.arena, groundAt);
+  };
+
   const undo = (): void => {
     const restored = history.undo(scene.map.store);
     if (restored.length === 0) return;
     for (const c of restored) scene.rebuildChunk(c.layerId, c.cx, c.cz);
     scene.refreshProps();
+    refreshMarkers();
   };
 
   const panel = buildEditorPanel({
     settings,
     onUndo: undo,
-    onArmChange: () => cursor.setColor(cursorColor(settings)),
+    onArmChange: () => {
+      cursor.setColor(cursorColor(settings));
+      arenaOutline.object.visible = settings.showArena;
+    },
   });
   panelHost.appendChild(panel.element);
 
@@ -328,10 +348,13 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   // does not pay for a prop-field rebuild.
   let strokeChangedProps = false;
   let strokeMovedGround = false;
+  let strokeChangedMarkers = false;
   // The prop field is rebuilt whole, which is far too much to do every frame --
   // but a scatter you cannot see until you let go is unusable. So it is rebuilt
   // a few times a second while a stroke runs, and once more when it ends.
   let propsRebuiltAt = 0;
+
+  refreshMarkers();
 
   let running = false;
   let lastFrame: number | undefined;
@@ -368,10 +391,20 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       history.beginStroke();
       strokeMovedGround = false;
       strokeChangedProps = false;
+      strokeChangedMarkers = false;
       scatterCarry = 0;
       propsRebuiltAt = time;
       // The height under the first press is the level `flatten` works toward.
       if (at) flattenTo = scene.map.world.heightAt(at.x, at.z);
+      // A marker is placed on the press, not the drag: a spawn point is not a
+      // bulk thing, and dragging would leave a trail of forty of them.
+      if (at && settings.mode === 'marker') {
+        const placed = placeMarker(scene.map.store, layerId, settings.markerKind, at.x, at.z, capture);
+        if (placed.marker) {
+          strokeChangedMarkers = true;
+          refreshMarkers();
+        }
+      }
     }
 
     if (input.isPainting && at) {
@@ -394,9 +427,17 @@ export function mountEditor(container: HTMLElement): ViewHandle {
         rng = out.rng;
         scatterCarry = out.carry;
         if (out.added.length > 0) strokeChangedProps = true;
-      } else {
-        const out = eraseStroke(scene.map.store, layerId, { x: at.x, z: at.z, radius: settings.radius }, capture);
-        if (out.removed.length > 0) strokeChangedProps = true;
+      } else if (settings.mode === 'erase') {
+        const circle = { x: at.x, z: at.z, radius: settings.radius };
+        const props = eraseStroke(scene.map.store, layerId, circle, capture);
+        if (props.removed.length > 0) strokeChangedProps = true;
+        // One eraser that takes everything under it, rather than two erasers and
+        // a mode switch to choose between them.
+        const markers = eraseMarkers(scene.map.store, layerId, circle, capture);
+        if (markers.removed.length > 0) {
+          strokeChangedMarkers = true;
+          refreshMarkers();
+        }
       }
 
       if (strokeChangedProps && time - propsRebuiltAt > PROP_REBUILD_MS) {
@@ -411,8 +452,11 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       history.endStroke();
       // Trees stand on the ground, and either the ground or the trees just moved.
       if (strokeMovedGround || strokeChangedProps) scene.refreshProps();
+      // Markers and the arena outline sit on the ground too.
+      if (strokeMovedGround || strokeChangedMarkers) refreshMarkers();
       strokeMovedGround = false;
       strokeChangedProps = false;
+      strokeChangedMarkers = false;
     }
 
     canvas.style.cursor = input.isOrbiting ? 'grabbing' : input.isPainting ? 'crosshair' : 'default';
@@ -424,7 +468,8 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       `span <b>${Math.round(c.halfWidth)}</b> &middot; ` +
       `pitch <b>${Math.round((c.elevation * 180) / Math.PI)}&deg;</b><br>` +
       `<span style="color:#7a7a90;">${chunks} chunks &middot; ` +
-      `${scene.map.store.props(layerId).length} props &middot; ${history.depth} undo</span>`;
+      `${scene.map.store.props(layerId).length} props &middot; ` +
+      `${scene.map.store.markers(layerId).length} markers &middot; ${history.depth} undo</span>`;
 
     requestAnimationFrame(frame);
   };

@@ -106,10 +106,11 @@ src/render/      PixiJS renderer + keyboard input capture, no game rules
 src/render/cloth/ pure cloth simulation for the robed character (spec 046) --
                  solver, wind, patterns, colliders and figure metrics. No
                  three.js and no DOM, so it runs and is tested headlessly.
-src/render/iso3d/editor/  the map editor tab (spec 049). Renders only from a
-                 loaded map document, never from the world generator. camera.ts
-                 and input.ts are pure/DOM-only and tested headlessly; view.ts is
-                 the three.js scene.
+src/render/iso3d/editor/  the map editor tab (specs 049-052). Renders only from
+                 a loaded map document, never from the world generator. camera.ts,
+                 brush.ts, scatter.ts, markers.ts and history.ts are pure and
+                 tested headlessly; view.ts, cursor.ts and marker-view.ts are the
+                 three.js scene; panel.ts is the lil-gui surface.
 src/balance/     Monte Carlo balance harness logic (seeded bot policy + runner),
                  pure and testable; scripts/balance-harness.ts is its thin CLI
 scripts/         standalone scripts (e.g. the balance harness), run via tsx

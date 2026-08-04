@@ -98,6 +98,8 @@ export interface ChunkSnapshot {
   readonly tones: Uint8Array;
   /** The props standing on this chunk, in world space (spec 051). */
   readonly props: readonly Prop[];
+  /** The markers placed on this chunk, in world space (spec 052). */
+  readonly markers: readonly MapMarker[];
 }
 
 /** A cell of terrain, as the editor sees it. */
@@ -166,7 +168,10 @@ export class MapChunkStore {
         tint: p.tint,
         ...(p.align ? { alignToNormal: true } : {}),
       })),
-      markers: chunk.markers.map((m) => ({ ...m })),
+      // World space inside the store, chunk-local in the document -- the same
+      // convention props use. Holding the two differently is how a world
+      // coordinate ends up written into a local field and lands a chunk away.
+      markers: chunk.markers.map((m) => ({ ...m, x: originX + m.x, z: originZ + m.z })),
       nav: chunk.nav === null ? null : Uint8Array.from(chunk.nav),
     };
   }
@@ -311,8 +316,10 @@ export class MapChunkStore {
       solid: Uint8Array.from(chunk.solid),
       materials: Uint8Array.from(chunk.materials),
       tones: Uint8Array.from(chunk.tones),
-      // Props are immutable records, so the list is copied but not its entries.
+      // Props and markers are immutable records, so the lists are copied but
+      // not their entries.
       props: [...chunk.props],
+      markers: [...chunk.markers],
     };
   }
 
@@ -326,6 +333,8 @@ export class MapChunkStore {
     chunk.tones.set(snapshot.tones);
     chunk.props.length = 0;
     chunk.props.push(...snapshot.props);
+    chunk.markers.length = 0;
+    chunk.markers.push(...snapshot.markers);
   }
 
   /** The chunk that owns a world point, clamped to the layer's grid. */
@@ -434,15 +443,72 @@ export class MapChunkStore {
       .flatMap((chunk) => chunk.props);
   }
 
-  /** Every marker in the layer, converted back to world space. */
+  /** Every marker in the layer, in world space and in chunk order. */
   markers(layerId: string): (MapMarker & { readonly layerId: string })[] {
     const layer = this.layers.get(layerId);
     if (!layer) return [];
     return [...layer.chunks.values()]
       .sort((a, b) => a.cz - b.cz || a.cx - b.cx)
-      .flatMap((chunk) =>
-        chunk.markers.map((m) => ({ ...m, layerId, x: chunk.originX + m.x, z: chunk.originZ + m.z })),
-      );
+      .flatMap((chunk) => chunk.markers.map((m) => ({ ...m, layerId })));
+  }
+
+  /**
+   * File a marker into the chunk that contains it (spec 052). Returns that
+   * chunk's coordinate, or null if the point lies outside the layer.
+   */
+  addMarker(layerId: string, marker: MapMarker): ChunkCoord | null {
+    const layer = this.layers.get(layerId);
+    if (!layer || !Number.isFinite(marker.x) || !Number.isFinite(marker.z)) return null;
+    const inside =
+      marker.x >= layer.bounds.minX &&
+      marker.x <= layer.bounds.maxX &&
+      marker.z >= layer.bounds.minZ &&
+      marker.z <= layer.bounds.maxZ;
+    if (!inside) return null;
+    const chunk = this.chunkAtPoint(layer, marker.x, marker.z);
+    if (!chunk) return null;
+    chunk.markers.push(marker);
+    return { cx: chunk.cx, cz: chunk.cz };
+  }
+
+  /** Markers whose centre lies within `radius` of (x, z), in world space. */
+  markersWithin(layerId: string, x: number, z: number, radius: number): MapMarker[] {
+    const layer = this.layers.get(layerId);
+    if (!layer || !(radius > 0)) return [];
+    const r2 = radius * radius;
+    const out: MapMarker[] = [];
+    for (const chunk of this.chunksOverlapping(layer, x, z, radius)) {
+      for (const marker of chunk.markers) {
+        if ((marker.x - x) ** 2 + (marker.z - z) ** 2 <= r2) out.push(marker);
+      }
+    }
+    return out;
+  }
+
+  /** Remove those markers, returning them and the chunks that changed. */
+  removeMarkersWithin(
+    layerId: string,
+    x: number,
+    z: number,
+    radius: number,
+  ): { removed: MapMarker[]; dirty: ChunkCoord[] } {
+    const layer = this.layers.get(layerId);
+    if (!layer || !(radius > 0)) return { removed: [], dirty: [] };
+    const r2 = radius * radius;
+    const removed: MapMarker[] = [];
+    const dirty: ChunkCoord[] = [];
+    for (const chunk of this.chunksOverlapping(layer, x, z, radius)) {
+      const kept = chunk.markers.filter((m) => {
+        const inside = (m.x - x) ** 2 + (m.z - z) ** 2 <= r2;
+        if (inside) removed.push(m);
+        return !inside;
+      });
+      if (kept.length === chunk.markers.length) continue;
+      chunk.markers.length = 0;
+      chunk.markers.push(...kept);
+      dirty.push({ cx: chunk.cx, cz: chunk.cz });
+    }
+    return { removed, dirty };
   }
 
   /**
@@ -593,7 +659,11 @@ export class MapChunkStore {
                 tint: quantize(p.tint),
                 ...(p.alignToNormal ? { align: true } : {}),
               })),
-              markers: chunk.markers.map((m) => ({ ...m, x: quantize(m.x), z: quantize(m.z) })),
+              markers: chunk.markers.map((m) => ({
+                ...m,
+                x: quantize(m.x - chunk.originX),
+                z: quantize(m.z - chunk.originZ),
+              })),
               nav: chunk.nav === null ? null : Array.from(chunk.nav),
             };
           }),
