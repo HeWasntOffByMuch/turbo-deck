@@ -5,6 +5,7 @@ import { CRITTERS, CRITTER_IDS } from './index.js';
 import { deriveCoat, MIN_ACCENT_CONTRAST, PLAYER_COATS } from './palette.js';
 import {
   attachmentNames,
+  boneOrigins,
   boundsOf,
   resolveParts,
   resolveSockets,
@@ -143,6 +144,71 @@ describe.each(SPECIES.map((s) => [s.name, s] as const))('%s: legibility at 64px'
     const right = boundsOf(species, (p) => p.name.startsWith('hoofR'));
     expect(left.maxZ).toBeLessThan(right.minZ);
     expect(right.minZ - left.maxZ).toBeGreaterThan(2);
+  });
+});
+
+describe.each(SPECIES.map((s) => [s.name, s] as const))('%s: joins', (_name, species) => {
+  /** Bones the gait rotates, and which the limb hulls hang off. */
+  const ARTICULATED = [
+    BONE.upperArmL,
+    BONE.forearmL,
+    BONE.upperArmR,
+    BONE.forearmR,
+    BONE.thighL,
+    BONE.shinL,
+    BONE.thighR,
+    BONE.shinR,
+  ] as const;
+
+  it('covers every articulated joint with a ball on its pivot', () => {
+    // How the seam between two limb segments is masked, and the only way that
+    // survives the joint bending: a sphere centred exactly on the pivot. The
+    // pivot is the one point a rotation about it leaves fixed, so the sphere
+    // does not move however far the limb swings, and while its radius covers the
+    // thicker of the two segments no angle can open a gap.
+    //
+    // Overlap -- which is what masks the *rigid* joins -- cannot do this job. An
+    // overlap tuned to close at rest pulls apart on the outside of the bend, and
+    // a walk cycle takes these knees past a radian at a run.
+    const parts = resolveParts(species);
+    for (const bone of ARTICULATED) {
+      const hulls = parts.filter((p) => p.attach === bone && p.shape === 'hull');
+      if (hulls.length === 0) continue;
+
+      const balls = parts.filter(
+        (p) =>
+          p.attach === bone &&
+          p.shape === 'ball' &&
+          Math.hypot(p.pos[0], p.pos[1], p.pos[2]) < 1e-6,
+      );
+      expect(balls.length, `bone ${bone} has no joint ball on its pivot`).toBeGreaterThan(0);
+
+      // The ball has to be at least as fat as the segment leaving the joint.
+      const widest = Math.max(...hulls.map((h) => Math.max(h.size[0], h.size[2])));
+      const ball = Math.max(...balls.map((b) => Math.max(b.size[0], b.size[2])));
+      expect(ball, `bone ${bone}: joint ${ball} vs limb ${widest}`).toBeGreaterThanOrEqual(
+        widest * 0.9,
+      );
+    }
+  });
+
+  it('overlaps the head and torso rather than butting them together', () => {
+    // The rigid joins are masked the other way round: neither end cap may sit on
+    // the silhouette, so the torso runs up inside the skull and the head starts
+    // back down inside the torso. Two surfaces meeting at a shared plane show
+    // the seam as a ledge however well their radii match.
+    const parts = resolveParts(species);
+    const torso = parts.find((p) => p.name === 'torso');
+    const head = parts.find((p) => p.name === 'head');
+    expect(torso?.rings, 'no torso hull').toBeDefined();
+    expect(head?.rings, 'no head hull').toBeDefined();
+    if (!torso?.rings || !head?.rings) return;
+
+    // Both are attached to different bones, so compare in world height at rest.
+    const bones = boneOrigins(species.metrics);
+    const torsoTop = Math.max(...torso.rings.map((r) => r.along)) + (bones[BONE.chest]?.y ?? 0);
+    const headBottom = Math.min(...head.rings.map((r) => r.along)) + (bones[BONE.head]?.y ?? 0);
+    expect(torsoTop, 'torso stops before the head starts').toBeGreaterThan(headBottom + 2);
   });
 });
 

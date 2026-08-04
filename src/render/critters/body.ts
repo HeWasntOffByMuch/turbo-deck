@@ -27,6 +27,55 @@ import { BONE, type FigureMetrics } from '../cloth/figure.js';
 import { hullExtent } from './resolve.js';
 import type { CoatRole, HullRing, PaintBlob, PartSpec } from './types.js';
 
+/**
+ * A ball centred exactly on a joint's pivot, filling the wedge that opens
+ * between two limb segments when the joint bends.
+ *
+ * ## How body-part transitions are masked
+ *
+ * There are two kinds of join on these characters and they need opposite fixes.
+ *
+ * **Rigid joins** -- muzzle into skull, head into torso -- never move relative
+ * to each other, so they are masked by *overlap*: the child's first ring is
+ * pushed inside the parent's surface and the parent's last ring inside the
+ * child's, so neither end cap is ever on the silhouette. Two surfaces that meet
+ * exactly at a shared plane always show the seam as a ledge, however well the
+ * radii match.
+ *
+ * **Articulated joins** -- shoulder, elbow, hip, knee -- cannot be masked that
+ * way, because overlap that closes at rest opens into a visible wedge the moment
+ * the joint bends: the outside of the bend pulls the two segments apart. What
+ * works is a volume that *rotation cannot move*. A sphere centred on the pivot
+ * is exactly that: the joint rotates about its centre, so the sphere sits still
+ * however far the limb swings, and as long as its radius covers the thicker of
+ * the two segments there is no angle at which a gap can appear.
+ *
+ * This is why it is a ball and not, say, a longer overlap or a bridging cone --
+ * only a shape centred on the axis of rotation is angle-independent. It is also
+ * why these are cheap: 20 faces each, in the coat colour, and the ones buried
+ * inside the torso cost nothing on screen.
+ */
+export function joint(opts: {
+  readonly name: string;
+  /** The bone whose *origin* is the pivot. */
+  readonly bone: number;
+  /** Must be at least the larger of the two segments' radii at this joint. */
+  readonly radius: number;
+  readonly role?: CoatRole;
+}): PartSpec {
+  const d = opts.radius * 2;
+  return {
+    name: opts.name,
+    attach: opts.bone,
+    shape: 'ball',
+    role: opts.role ?? 'coat',
+    size: [d, d, d],
+    // The bone's own origin: the one point a rotation about this joint leaves
+    // fixed. Offsetting it at all reintroduces the gap it exists to close.
+    pos: [0, 0, 0],
+  };
+}
+
 /** Assemble a lofted-hull part, deriving its extent from its own rings. */
 export function hull(opts: {
   readonly name: string;
@@ -70,6 +119,10 @@ export function hull(opts: {
  * because the gait counter-twists those two against each other, and a torso
  * split across that joint visibly shears at a run. Riding the chest instead
  * gives the whole barrel a gentle sway, which is what you want anyway.
+ *
+ * The top ring should run *past* the neck and inside the head, and the head's
+ * bottom ring back down inside the torso -- see {@link joint} for why a rigid
+ * join wants overlap rather than a shared plane.
  */
 export function torso(
   f: FigureMetrics,
@@ -236,6 +289,8 @@ export function bipedArms(
         pos: [0, 0, 0],
       }),
     );
+    out.push(joint({ name: `shoulder${tag}`, bone: upper, radius: shoulder }));
+    out.push(joint({ name: `elbow${tag}`, bone: fore, radius: elbow }));
     out.push({
       name: `hand${tag}`,
       attach: fore,
@@ -300,6 +355,10 @@ export function bipedLegs(
         pos: [0, 0, 0],
       }),
     );
+    out.push(joint({ name: `hip${tag}`, bone: thigh, radius: hip * 0.9 }));
+    // The knee is the one joint on these characters that bends far enough to
+    // matter -- a walk cycle takes it past a radian at a run.
+    out.push(joint({ name: `knee${tag}`, bone: shin, radius: knee }));
     out.push({
       name: `hoof${tag}`,
       attach: shin,

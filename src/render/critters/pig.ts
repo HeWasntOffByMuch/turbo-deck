@@ -80,12 +80,19 @@ const TORSO_RINGS: readonly HullRing[] = [
   { along: 42, rx: 11.6, rz: 12.2, dx: 1.6 },
   { along: 47, rx: 10, rz: 10.6, dx: 0.8 },
   { along: 52, rx: 8.4, rz: 9, dx: 0.2 },
-  { along: 56, rx: 6.4, rz: 7, dx: 0 },
+  // Runs past the neck and up inside the skull. A torso that stops exactly
+  // where the head starts shows the seam as a ledge however well the radii
+  // match; buried, there is nothing to see.
+  { along: 57, rx: 6.6, rz: 7.2, dx: 0 },
+  { along: 60, rx: 5.6, rz: 6.2, dx: 0.4 },
 ];
 
 /** The skull, again in world height: a broad ball flattening toward the crown. */
 const HEAD_RINGS: readonly HullRing[] = [
-  { along: 56, rx: 5.4, rz: 6, dx: 1 },
+  // Starts below the neck, inside the torso, for the same reason the torso runs
+  // up inside the skull: the join is masked by overlap, not by a shared plane.
+  { along: 52.5, rx: 4.4, rz: 4.8, dx: 0.6 },
+  { along: 56, rx: 6.6, rz: 7.2, dx: 1 },
   { along: 60, rx: 9, rz: 9.6, dx: 1.4 },
   { along: 64, rx: 10.4, rz: 11, dx: 1.4 },
   { along: 68, rx: 10.2, rz: 10.6, dx: 1 },

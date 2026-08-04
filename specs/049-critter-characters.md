@@ -135,6 +135,22 @@ number readable straight off a reference image — and the builder rebases it on
 the right joint. Adding a sheep is a new data file that calls the same builders
 and adds its own head furniture; it touches no rendering code.
 
+**Masking the joins between parts.** Two kinds, needing opposite fixes:
+
+- *Rigid* joins (muzzle into skull, head into torso) are masked by **overlap**:
+  the child's first ring goes inside the parent's surface and the parent's last
+  ring inside the child's, so neither end cap is ever on the silhouette. Two
+  surfaces meeting at a shared plane show the seam as a ledge however well their
+  radii match.
+- *Articulated* joins (shoulder, elbow, hip, knee) cannot be overlapped, because
+  an overlap tuned to close at rest opens into a wedge on the outside of the bend
+  — and a walk cycle takes these knees past a radian at a run. They are masked by
+  a **ball centred exactly on the pivot** (`joint()`): the pivot is the one point
+  a rotation about it leaves fixed, so the ball does not move however far the
+  limb swings, and while its radius covers the thicker of the two segments no
+  angle can open a gap. Only a shape centred on the axis of rotation is
+  angle-independent, which is why it is a ball and not a longer overlap.
+
 `palette.ts` holds the player coat swatches and the derivation from one picked
 colour to the full role map:
 
@@ -210,6 +226,13 @@ Rig (three.js, headless, no canvas):
 
 - Each species builds without throwing, produces one mesh per part (two per
   mirrored part), and every mirrored pair is a genuine z-mirror of its twin.
+- **Every hull face winds outward, on both loft axes.** Inside-out geometry is
+  invisible rather than wrong-looking — three.js culls back faces, so a flipped
+  hull loses its near surface and shows the inside of its far one — and the two
+  loft axes have opposite handedness, so each needs checking separately.
+- Every articulated joint carries a ball on its pivot at least as wide as the
+  limb segments meeting there, and the head and torso overlap rather than butting
+  together. These are the two masking rules above, asserted.
 - Every hull lofts to within a bounded factor of the extent its own rings
   declare, so the derived `size` the legibility tests measure through cannot
   drift from the body actually on screen.

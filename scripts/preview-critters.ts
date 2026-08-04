@@ -36,6 +36,14 @@ const AMBIENT = 0.6;
 /** How far the rig is walked before it is drawn, so the pose is mid-stride. */
 const WARMUP_FRAMES = 96;
 const WALK_SPEED_PER_FRAME = 1.1;
+/**
+ * A hard run, drawn alongside the walk. Not decoration: it is the pose that
+ * shows whether the joints hold. Limbs are separate hulls, so at a walk almost
+ * any construction looks fine, and it is only past a radian of knee bend that a
+ * gap opens between two segments -- which is precisely the pose nobody looks at
+ * while modelling.
+ */
+const RUN_SPEED_PER_FRAME = 3.4;
 
 // --- Triangle collection --------------------------------------------------
 
@@ -208,12 +216,12 @@ function render(tris: readonly Tri[], size: number): Uint8ClampedArray {
 
 // --- Sheet ----------------------------------------------------------------
 
-/** Build a rig, walk it into a mid-stride pose, and hand back its triangles. */
-function posedTriangles(species: CritterSpecies, coat: number): Tri[] {
+/** Build a rig, drive it into a mid-stride pose, and hand back its triangles. */
+function posedTriangles(species: CritterSpecies, coat: number, speed = WALK_SPEED_PER_FRAME): Tri[] {
   const rig = new CritterRig(species, { tuning: defaultCritterTuning(), coat });
   let x = 0;
   for (let i = 0; i < WARMUP_FRAMES; i++) {
-    x += WALK_SPEED_PER_FRAME;
+    x += speed;
     rig.update(1 / 60, { x, y: 0 }, 0);
   }
   // Draw at the origin: the walk only ever moves the rig's *group*, which the
@@ -229,7 +237,7 @@ const swatches = COAT_IDS.map((id) => PLAYER_COATS.find((c) => c.id === id)).fil
 
 const cellW = BIG + GAP;
 const rowH = BIG + GAP;
-const sheetW = swatches.length * cellW + SMALL * SMALL_SCALE + GAP;
+const sheetW = (swatches.length + 1) * cellW + SMALL * SMALL_SCALE + GAP;
 const sheetH = CRITTER_IDS.length * rowH;
 const img = new PNG({ width: sheetW, height: sheetH, colorType: 6 });
 for (let i = 0; i < img.data.length; i += 4) {
@@ -264,9 +272,16 @@ CRITTER_IDS.forEach((id, row) => {
   swatches.forEach((swatch, col) => {
     blit(render(posedTriangles(species, swatch.hex), BIG), BIG, col * cellW, row * rowH);
   });
-  // The rightmost cell is the same rig at the size it actually ships at.
+  // Then the same animal at a hard run, where the joints are actually tested.
+  blit(
+    render(posedTriangles(species, species.defaultCoat, RUN_SPEED_PER_FRAME), BIG),
+    BIG,
+    swatches.length * cellW,
+    row * rowH,
+  );
+  // And last, at the size it actually ships at.
   const small = posedTriangles(species, species.defaultCoat);
-  blit(render(small, SMALL), SMALL, swatches.length * cellW, row * rowH, SMALL_SCALE);
+  blit(render(small, SMALL), SMALL, (swatches.length + 1) * cellW, row * rowH, SMALL_SCALE);
   process.stdout.write(`${species.name}: ${species.parts.length} declared parts, ${small.length} triangles\n`);
 });
 

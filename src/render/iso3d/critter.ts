@@ -378,10 +378,10 @@ function partGeometry(part: ResolvedPart): { geo: THREE.BufferGeometry; roles: C
     geo = new THREE.BoxGeometry(w, h, d).toNonIndexed();
   } else if (part.shape === 'ball') {
     // A unit icosahedron scaled to the part's extents: faceted, and elliptical
-    // without needing a separate sphere per axis ratio.
+    // without needing a separate sphere per axis ratio. Already non-indexed, so
+    // calling `toNonIndexed` on it would only earn a console warning.
     geo = new THREE.IcosahedronGeometry(0.5, facets ?? 0);
     geo.scale(w, h, d);
-    geo = geo.toNonIndexed();
   } else {
     // `taper` is the +y radius over the -y base, matching the spec's convention.
     const taper = part.taper ?? 0;

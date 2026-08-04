@@ -65,7 +65,9 @@ const TORSO_RINGS: readonly HullRing[] = [
   { along: 45, rx: 11.6, rz: 12.2, dx: 1.4 },
   { along: 50, rx: 10, rz: 10.6, dx: 0.6 },
   { along: 55, rx: 8.6, rz: 9.2, dx: 0 },
-  { along: 59, rx: 6.6, rz: 7.2, dx: 0 },
+  // Buried inside the skull -- see the pig's profile for why.
+  { along: 60, rx: 6.6, rz: 7.2, dx: 0 },
+  { along: 63, rx: 5.4, rz: 6, dx: 0.4 },
 ];
 
 /**
@@ -83,7 +85,9 @@ const TORSO_PATCHES: readonly PaintBlob[] = [
 
 /** A longer, narrower skull than the pig's. */
 const HEAD_RINGS: readonly HullRing[] = [
-  { along: 59, rx: 5.2, rz: 5.8, dx: 1 },
+  // Starts inside the torso, for the same reason.
+  { along: 55.5, rx: 4.4, rz: 4.8, dx: 0.6 },
+  { along: 59, rx: 6.6, rz: 7.2, dx: 1 },
   { along: 63, rx: 8.4, rz: 9, dx: 1.2 },
   { along: 67, rx: 9.6, rz: 10.2, dx: 1.2 },
   { along: 71, rx: 9.2, rz: 9.6, dx: 0.8 },
