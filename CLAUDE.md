@@ -118,6 +118,13 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052). Renders only from
                  brush.ts, scatter.ts, markers.ts and history.ts are pure and
                  tested headlessly; view.ts, cursor.ts and marker-view.ts are the
                  three.js scene; panel.ts is the lil-gui surface.
+src/server/      authoritative multiplayer server (spec 056), a separate 20Hz sim
+                 beside the 60Hz single-player one -- it shares the pure helpers
+                 (prng, collision, terrain, world extent) but not CombatState.
+                 net/ is the binary wire format (see net/PROTOCOL.md), sim/ is the
+                 deterministic tick, world/ is chunking and zones, player/ derives
+                 stats from ids and levels, state/ is the swappable DataStore,
+                 admin/ is the token-gated admin namespace. `npm run server`.
 src/balance/     Monte Carlo balance harness logic (seeded bot policy + runner),
                  pure and testable; scripts/balance-harness.ts is its thin CLI
 scripts/         standalone scripts (e.g. the balance harness), run via tsx
