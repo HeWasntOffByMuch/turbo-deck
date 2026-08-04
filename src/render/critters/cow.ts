@@ -83,56 +83,49 @@ const SOCKETS: readonly SocketSpec[] = [
 ];
 
 const PARTS: readonly PartSpec[] = [
+  // The rump is a marking rather than a shade: from behind, the dark rear *is*
+  // the cow's pattern, and reusing the torso's own block for it costs nothing.
   ...barrelTorso(COW_FIGURE, {
     belly: [33, 31, 28],
     chest: [27, 22, 25],
     bellyDrop: 7.5,
     chestRise: 5.5,
+    rumpRole: 'marking',
   }),
   neck(COW_FIGURE, 17, 16),
   ...bipedArms(COW_FIGURE, { thickness: 6, hand: [5, 5, 5] }),
   ...bipedLegs(COW_FIGURE, { thigh: 11.5, shin: 9.4, foot: [8, 4.6, 6.6] }),
 
   // --- Markings -----------------------------------------------------------
-  // Flattened balls pushed *through* the body surface, so only the cap shows:
-  // a flat spot of colour that follows the curve, from any angle, with no
-  // texture and no extra draw state. They have to sit proud -- a patch centred
-  // inside the belly is a patch nobody ever sees.
+  // Balls pushed *through* the body surface, so only the cap shows: a flat spot
+  // of colour that follows the curve, from any angle, with no texture and no
+  // extra draw state. Two rules govern where they can go, and both were learned
+  // the hard way from a render:
   //
-  // Spread around all four quarters, and deliberately asymmetric: a symmetric
-  // cow reads as a pattern, an asymmetric one reads as an animal. Because the
-  // camera orbits with the unit's facing, every side needs one.
+  //  1. A patch centred inside the belly is a patch nobody ever sees. It has to
+  //     protrude past the surface it sits on.
+  //  2. The arms hang at `shoulderHalf` (±15.5) and the torso is only 28 deep,
+  //     so there is almost no room on the flanks -- a lateral patch ends up
+  //     painted across the upper arm and reads as shoulder armour. So the
+  //     markings live front and back, where the arms are not.
+  //
+  // Deliberately asymmetric: a symmetric cow reads as a pattern, an asymmetric
+  // one reads as an animal.
   {
-    name: 'patchFlank',
+    name: 'patchChest',
     attach: BONE.chest,
     shape: 'ball',
     role: 'marking',
-    size: [15, 18, 8],
-    pos: [2, -8, -13],
+    size: [9, 16, 13],
+    pos: [12, -2, -5],
   },
   {
-    name: 'patchBelly',
-    attach: BONE.chest,
-    shape: 'ball',
-    role: 'marking',
-    size: [9, 13, 12],
-    pos: [12, -11, 6],
-  },
-  {
-    name: 'patchShoulder',
-    attach: BONE.chest,
-    shape: 'ball',
-    role: 'marking',
-    size: [11, 13, 7],
-    pos: [-3, 3, 12],
-  },
-  {
-    name: 'patchRump',
+    name: 'patchHip',
     attach: BONE.pelvis,
     shape: 'ball',
     role: 'marking',
-    size: [8, 12, 14],
-    pos: [-11, 7, 2],
+    size: [9, 13, 10],
+    pos: [6, 3, -9],
   },
 
   // --- Head ---------------------------------------------------------------

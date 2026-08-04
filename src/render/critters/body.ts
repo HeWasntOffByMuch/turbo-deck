@@ -35,6 +35,10 @@ export function barrelTorso(
     readonly bellyDrop: number;
     /** How far above it the chest's centre sits. */
     readonly chestRise: number;
+    /** Colour of the lit front panel. A species with markings may darken it. */
+    readonly frontRole?: 'coatLight' | 'marking';
+    /** Colour of the rump. Same idea from behind. */
+    readonly rumpRole?: 'coatShade' | 'marking';
   },
 ): PartSpec[] {
   const [bw, bh, bd] = opts.belly;
@@ -64,7 +68,7 @@ export function barrelTorso(
       name: 'bellyFront',
       attach: BONE.chest,
       shape: 'ball',
-      role: 'coatLight',
+      role: opts.frontRole ?? 'coatLight',
       size: [bw * 0.6, bh * 0.56, bd * 0.58],
       pos: [bd * 0.26, -opts.bellyDrop - bh * 0.14, 0],
     },
@@ -73,7 +77,7 @@ export function barrelTorso(
       name: 'rump',
       attach: BONE.pelvis,
       shape: 'ball',
-      role: 'coatShade',
+      role: opts.rumpRole ?? 'coatShade',
       size: [bw * 0.62, bh * 0.44, bd * 0.82],
       pos: [-bd * 0.18, f.waistY - f.hipY - bh * 0.08, 0],
     },
@@ -298,12 +302,15 @@ export function earPair(
     readonly shellRole?: 'coat' | 'coatShade' | 'marking';
   },
 ): PartSpec[] {
+  // Tapered to a broad tip rather than a point: with only five facets, a cone
+  // that closes to nothing reads as a horn at unit size, whichever animal it is
+  // meant to be on.
   const shell = (target: string): PartSpec => ({
     name: `${target}Shell`,
     attach: target,
     shape: 'cone',
     role: opts.shellRole ?? 'coat',
-    taper: 0.14,
+    taper: 0.34,
     facets: 5,
     size: [opts.width, opts.length, opts.thickness],
     pos: [0, opts.length / 2, 0],
@@ -313,7 +320,7 @@ export function earPair(
     attach: target,
     shape: 'cone',
     role: opts.liningRole ?? 'skin',
-    taper: 0.12,
+    taper: 0.3,
     facets: 5,
     size: [opts.width * 0.6, opts.length * 0.74, opts.thickness * 0.5],
     pos: [opts.thickness * 0.45, opts.length * 0.42, 0],

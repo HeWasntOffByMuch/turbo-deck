@@ -1,0 +1,195 @@
+import { describe, expect, it } from 'vitest';
+import { BONE, BONE_COUNT } from '../cloth/figure.js';
+import { contrastRatio, luminance } from './color.js';
+import { CRITTERS, CRITTER_IDS } from './index.js';
+import { deriveCoat, MIN_ACCENT_CONTRAST, PLAYER_COATS } from './palette.js';
+import {
+  attachmentNames,
+  boundsOf,
+  resolveParts,
+  resolveSockets,
+  speciesBounds,
+} from './resolve.js';
+import { COAT_ROLES, MIN_FEATURE_UNITS, type CoatRole, type CritterSpecies } from './types.js';
+
+/**
+ * Invariants of the critter species data (spec 049).
+ *
+ * The species files are the whole character system -- proportions, blocks and
+ * colours, with no rendering code -- so *this* is where the interesting
+ * properties live, and they can all be checked with no GL context and no canvas.
+ *
+ * The legibility cases deserve a word, because they are the ones that will fire
+ * on somebody later. A unit is drawn about 64 px tall, which is ~1.33 world
+ * units per pixel, and two things go wrong at that size in ways that are
+ * invisible while you are modelling at 400 px: detail thinner than a couple of
+ * pixels stops existing, and two flat colours close in value stop being two
+ * shapes. Both are cheap to assert and impossible to eyeball across 2 species x
+ * 12 coats, which is exactly the shape of a test.
+ *
+ * Every case runs over the registry, so a new animal is covered the moment it is
+ * added -- no per-species test to remember to write.
+ */
+
+const SPECIES: readonly CritterSpecies[] = CRITTER_IDS.map((id) => CRITTERS[id]);
+
+/** The coat roles follow the player's pick; only the rest are "accents". */
+const COAT_TONES: ReadonlySet<CoatRole> = new Set<CoatRole>(['coat', 'coatShade', 'coatLight']);
+
+/** Roles a species actually draws with, accents only. */
+function accentRoles(species: CritterSpecies): CoatRole[] {
+  const used = new Set(resolveParts(species).map((p) => p.role));
+  return [...used].filter((r) => !COAT_TONES.has(r));
+}
+
+/** Parts belonging to the head: on the head bone, or on a socket hung off it. */
+function isHeadPart(species: CritterSpecies): (p: { attach: number | string }) => boolean {
+  const headSockets = new Set(
+    resolveSockets(species)
+      .filter((s) => s.parentBone === BONE.head)
+      .map((s) => s.name),
+  );
+  return (p) => p.attach === BONE.head || (typeof p.attach === 'string' && headSockets.has(p.attach));
+}
+
+describe.each(SPECIES.map((s) => [s.name, s] as const))('%s: structure', (_name, species) => {
+  it('attaches every part to a bone or a declared socket', () => {
+    const legal = attachmentNames(species);
+    for (const part of resolveParts(species)) {
+      expect(legal.has(part.attach), `${part.name} -> ${String(part.attach)}`).toBe(true);
+    }
+  });
+
+  it('hangs every socket off a real bone', () => {
+    for (const socket of resolveSockets(species)) {
+      expect(socket.parentBone, socket.name).toBeGreaterThanOrEqual(0);
+      expect(socket.parentBone, socket.name).toBeLessThan(BONE_COUNT);
+    }
+  });
+
+  it('mirrors sockets and parts into matched pairs', () => {
+    for (const spec of species.sockets) {
+      if (!spec.mirror) continue;
+      const resolved = resolveSockets(species);
+      const left = resolved.find((s) => s.name === spec.socket);
+      const right = resolved.find((s) => s.name === `${spec.socket}R`);
+      expect(left, spec.socket).toBeDefined();
+      expect(right, `${spec.socket}R`).toBeDefined();
+      // Mirrored across z: position negated in z, x/y rotations opposed, and the
+      // flip sign opposed so the pair wobbles outward rather than in parallel.
+      expect(right?.pos[2]).toBeCloseTo(-(left?.pos[2] ?? 0), 10);
+      expect(right?.rot[0]).toBeCloseTo(-(left?.rot[0] ?? 0), 10);
+      expect(right?.rot[2]).toBeCloseTo(left?.rot[2] ?? 0, 10);
+      expect((left?.flip ?? 0) * (right?.flip ?? 0)).toBe(-1);
+    }
+  });
+
+  it('puts the feet exactly on the ground', () => {
+    // The skeleton hangs the legs off the pelvis by these three lengths, so if
+    // they disagree with the hip height the character floats or sinks -- and it
+    // is not obvious in a still render, only in a walk.
+    const m = species.metrics;
+    expect(m.ankleY + m.shinLen + m.thighLen).toBeCloseTo(m.hipY, 6);
+  });
+});
+
+describe.each(SPECIES.map((s) => [s.name, s] as const))('%s: legibility at 64px', (_name, species) => {
+  it('has no sub-pixel detail', () => {
+    for (const part of resolveParts(species)) {
+      const largest = Math.max(...part.size);
+      expect(largest, `${part.name} is ${largest.toFixed(2)} units at its longest`).toBeGreaterThanOrEqual(
+        MIN_FEATURE_UNITS,
+      );
+    }
+  });
+
+  it('keeps every accent readable against all twelve coats', () => {
+    const roles = accentRoles(species);
+    expect(roles.length).toBeGreaterThan(0);
+    for (const swatch of PLAYER_COATS) {
+      const colors = deriveCoat(species, swatch.hex);
+      for (const role of roles) {
+        const ratio = contrastRatio(colors[role], swatch.hex);
+        expect(ratio, `${role} on ${swatch.name}`).toBeGreaterThanOrEqual(MIN_ACCENT_CONTRAST);
+      }
+    }
+  });
+
+  it('gives the head a third of the silhouette', () => {
+    // A small head is the single fastest way to lose a character at unit size:
+    // it is the part carrying the species, the facing and the expression.
+    const whole = speciesBounds(species);
+    const head = boundsOf(species, isHeadPart(species));
+    const bodyWidth = whole.maxZ - whole.minZ;
+    const headWidth = head.maxZ - head.minZ;
+    const totalHeight = whole.maxY - whole.minY;
+    expect(headWidth / bodyWidth).toBeGreaterThan(0.3);
+    expect((head.maxY - head.minY) / totalHeight).toBeGreaterThan(0.22);
+  });
+
+  it('stands at unit scale, feet on the floor', () => {
+    // Between the robed figure (82) and the scene's trees (86): tall enough to
+    // read as a character, short enough not to dwarf the world.
+    const b = speciesBounds(species);
+    expect(b.maxY).toBeGreaterThan(70);
+    expect(b.maxY).toBeLessThan(95);
+    // Nothing may hang more than a hair below the ground plane the sim puts the
+    // unit on, or the character reads as sunk into the terrain.
+    expect(b.minY).toBeGreaterThan(-2);
+  });
+
+  it('separates the feet, so a stride reads', () => {
+    const left = boundsOf(species, (p) => p.name.startsWith('hoofL'));
+    const right = boundsOf(species, (p) => p.name.startsWith('hoofR'));
+    expect(left.maxZ).toBeLessThan(right.minZ);
+    expect(right.minZ - left.maxZ).toBeGreaterThan(2);
+  });
+});
+
+describe('coat derivation', () => {
+  it('resolves every role for every species and every coat', () => {
+    for (const species of SPECIES) {
+      for (const swatch of PLAYER_COATS) {
+        const colors = deriveCoat(species, swatch.hex);
+        for (const role of COAT_ROLES) {
+          const value = colors[role];
+          expect(Number.isInteger(value), `${species.id}.${role}`).toBe(true);
+          expect(value, `${species.id}.${role}`).toBeGreaterThanOrEqual(0);
+          expect(value, `${species.id}.${role}`).toBeLessThanOrEqual(0xffffff);
+        }
+      }
+    }
+  });
+
+  it('orders the coat tones dark to light', () => {
+    for (const species of SPECIES) {
+      for (const swatch of PLAYER_COATS) {
+        const c = deriveCoat(species, swatch.hex);
+        expect(c.coat).toBe(swatch.hex);
+        expect(luminance(c.coatShade), `shade on ${swatch.name}`).toBeLessThan(luminance(c.coat));
+        expect(luminance(c.coatLight), `light on ${swatch.name}`).toBeGreaterThan(luminance(c.coat));
+      }
+    }
+  });
+
+  it('is a pure function of species and coat', () => {
+    for (const species of SPECIES) {
+      const a = deriveCoat(species, 0x9ba58a);
+      const b = deriveCoat(species, 0x9ba58a);
+      expect(a).toEqual(b);
+    }
+  });
+
+  it('offers coats that are distinct and mid-value', () => {
+    const seen = new Set<number>();
+    for (const swatch of PLAYER_COATS) {
+      expect(seen.has(swatch.hex), swatch.name).toBe(false);
+      seen.add(swatch.hex);
+      // Room to shade *and* to tint. A near-black or near-white coat would
+      // collapse one end of every derived scheme.
+      const l = luminance(swatch.hex);
+      expect(l, `${swatch.name} is too dark`).toBeGreaterThan(0.1);
+      expect(l, `${swatch.name} is too light`).toBeLessThan(0.6);
+    }
+  });
+});
