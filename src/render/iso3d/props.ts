@@ -99,8 +99,8 @@ const PINE_TIERS: readonly (readonly [radius: number, height: number, baseY: num
 const TIER_COLORS = [PALETTE.leafDeep, PALETTE.leafMid, PALETTE.leafBright, PALETTE.leafBright] as const;
 
 interface SpeciesShape {
-  /** Trunk box: width, then height. */
-  readonly trunk: readonly [width: number, height: number];
+  /** Trunk box: a square column this wide. Its height is derived, below. */
+  readonly trunkWidth: number;
   readonly tiers: readonly (readonly [radius: number, height: number, baseY: number])[];
   /** The tier counts an instance may take; the hash picks one, so repeats weight it. */
   readonly tierCounts: readonly number[];
@@ -109,35 +109,156 @@ interface SpeciesShape {
 }
 
 const SPECIES: Record<TreeSpecies, SpeciesShape> = {
-  fir: { trunk: [12, 86], tiers: FIR_TIERS, tierCounts: [2, 3, 3, 4], driftMax: 5, leanMax: 0.1 },
+  fir: { trunkWidth: 12, tiers: FIR_TIERS, tierCounts: [2, 3, 3, 4], driftMax: 5, leanMax: 0.1 },
   // Fewer, wider, floppier fronds on a long bare trunk -- and leaning harder,
   // since a drooping frond is most of what tells the two apart at this size.
-  pine: { trunk: [12, 92], tiers: PINE_TIERS, tierCounts: [2, 2, 3], driftMax: 9, leanMax: 0.19 },
+  pine: { trunkWidth: 12, tiers: PINE_TIERS, tierCounts: [2, 2, 3], driftMax: 9, leanMax: 0.19 },
 };
+
+/** Sides on a tier's cone. */
+const CONE_SEGMENTS = 7;
+/**
+ * A cone's `radius` is the circumradius of that heptagon, so over a flat face
+ * the foliage only reaches this fraction of it from the axis -- and a flat face
+ * is what the trunk has to hide behind.
+ */
+const CONE_COVER = Math.cos(Math.PI / CONE_SEGMENTS);
+
+/** Slack on the band edges, so a cone's own base does not round its way out of it. */
+const EPSILON = 1e-6;
+
+/** How far a tier may swing off the trunk's axis at full asymmetry. */
+function tierSway(shape: SpeciesShape, tier: number): { drift: number; lean: number } {
+  // The higher the frond, the further it may swing: a tier down at trunk height
+  // that slid sideways would tear the tree in half, a crown tip flops.
+  const top = Math.max(1, shape.tiers.length - 1);
+  return {
+    drift: shape.driftMax * (0.35 + 0.65 * (tier / top)),
+    lean: shape.leanMax * (0.4 + 0.6 * (tier / top)),
+  };
+}
+
+/**
+ * How deep inside one tier's cone the trunk's corner sits at height `y`, in
+ * prop-local units. Negative means the trunk is poking out through the frond;
+ * `-Infinity` means this tier does not reach that height at all.
+ *
+ * The trunk box spins with the prop and the cone does too, so their relative
+ * bearing is arbitrary and it is the box's *corner* against the cone's *flat
+ * face* that has to clear. The tier's own drift and lean count against it: the
+ * cone leans about its own centre, which both slides the axis sideways by
+ * `dy * tan(lean)` and tips the slice being cut at `y` further up the cone.
+ */
+function tierCover(shape: SpeciesShape, tier: number, y: number, asymmetry: number): number {
+  const tierSpec = shape.tiers[tier];
+  if (!tierSpec) return -Infinity;
+  const [radius, height, baseY] = tierSpec;
+  const centre = baseY + height / 2;
+  const sway = tierSway(shape, tier);
+  const lean = sway.lean * asymmetry;
+  const dy = y - centre;
+  const along = height / 2 + dy / Math.cos(lean);
+  if (along < -EPSILON || along > height + EPSILON) return -Infinity;
+  const reach = radius * (1 - Math.min(Math.max(along, 0), height) / height) * CONE_COVER;
+  const offAxis = Math.abs(sway.drift * asymmetry) + Math.abs(dy * Math.tan(lean));
+  return reach - offAxis - (shape.trunkWidth / 2) * Math.SQRT2;
+}
+
+/** Foliage left to spare around the trunk's buried top, in prop-local units. */
+const TRUNK_BURIAL = 2;
+
+/**
+ * How tall the trunk stands -- derived, not authored, because where it *ends*
+ * is not a free choice. A trunk is a solid column that stops in mid-air, so
+ * unless its top is buried inside a frond the cap and its corners hang out
+ * through the cone's sloped side: the bug this replaces stood the fir's trunk
+ * up to 86, where the frond around it has narrowed to a 3-unit radius, and the
+ * top 5 units of column stuck out into open air on every fir in the world.
+ *
+ * So the trunk grows to the highest point its own species still covers: the
+ * last height where a tier's cone clears the trunk's corner with room to spare,
+ * at the worst lean and drift an instance can take (|asymmetry| = 1, which is
+ * the worst case -- both terms only grow with it). Only the tiers *every*
+ * instance grows count, since a two-tier sapling has no crown to hide in.
+ */
+function buriedTrunkHeight(shape: SpeciesShape): number {
+  const guaranteed = Math.min(...shape.tierCounts);
+  let best = 0;
+  for (let tier = 0; tier < guaranteed; tier++) {
+    const [, height, baseY] = shape.tiers[tier] ?? [0, 0, 0];
+    // The tier leans about its own centre, so its base sits here rather than at
+    // `baseY`. A cone narrows with height far faster than leaning slides it
+    // sideways, so cover falls off monotonically from that base to the tip: a
+    // tier covers the trunk at all only if it covers it down there, and one
+    // bisection then finds the height where it stops.
+    const centre = baseY + height / 2;
+    let lo = centre - (height / 2) * Math.cos(tierSway(shape, tier).lean);
+    let hi = baseY + height;
+    if (tierCover(shape, tier, lo, 1) < TRUNK_BURIAL) continue;
+    for (let i = 0; i < 48; i++) {
+      const mid = (lo + hi) / 2;
+      if (tierCover(shape, tier, mid, 1) >= TRUNK_BURIAL) lo = mid;
+      else hi = mid;
+    }
+    best = Math.max(best, lo);
+  }
+  return best;
+}
+
+const TRUNK_HEIGHT: Record<TreeSpecies, number> = {
+  fir: buriedTrunkHeight(SPECIES.fir),
+  pine: buriedTrunkHeight(SPECIES.pine),
+};
+
+/** How tall a species' trunk box stands, in prop-local units (before scale). */
+export function trunkHeight(species: TreeSpecies): number {
+  return TRUNK_HEIGHT[species];
+}
+
+/**
+ * How deep inside the canopy the top of this tree's trunk sits, in prop-local
+ * units. Positive means the foliage hides it; negative means the trunk clips
+ * out through a frond. Scale-free: the trunk, the tiers and the drift all scale
+ * with the prop together, so one number answers for every size it can grow to.
+ */
+export function trunkTopCover(variant: TreeVariant): number {
+  const shape = SPECIES[variant.species];
+  const y = TRUNK_HEIGHT[variant.species];
+  let best = -Infinity;
+  const grown = Math.min(variant.tierCount, shape.tiers.length);
+  for (let tier = 0; tier < grown; tier++) {
+    best = Math.max(best, tierCover(shape, tier, y, variant.asymmetry));
+  }
+  return best;
+}
+
+/** The tier counts an instance of a species may grow. */
+export function speciesTierCounts(species: TreeSpecies): readonly number[] {
+  return SPECIES[species].tierCounts;
+}
 
 function treeParts(species: TreeSpecies): PropPart[] {
   const shape = SPECIES[species];
-  const [trunkWidth, trunkHeight] = shape.trunk;
+  const trunkWidth = shape.trunkWidth;
+  const height = trunkHeight(species);
   const parts: PropPart[] = [
     {
-      geometry: new THREE.BoxGeometry(trunkWidth, trunkHeight, trunkWidth),
-      offsetY: trunkHeight / 2,
+      geometry: new THREE.BoxGeometry(trunkWidth, height, trunkWidth),
+      offsetY: height / 2,
       color: PALETTE.trunk,
       foliage: false,
     },
   ];
-  const top = Math.max(1, shape.tiers.length - 1);
-  shape.tiers.forEach(([radius, height, baseY], tier) => {
+  shape.tiers.forEach(([radius, tierHeight, baseY], tier) => {
+    const sway = tierSway(shape, tier);
     parts.push({
-      geometry: new THREE.ConeGeometry(radius, height, 7),
-      offsetY: baseY + height / 2,
+      geometry: new THREE.ConeGeometry(radius, tierHeight, CONE_SEGMENTS),
+      offsetY: baseY + tierHeight / 2,
       color: TIER_COLORS[Math.min(tier, TIER_COLORS.length - 1)] ?? PALETTE.leafMid,
       foliage: true,
       tier,
-      // The higher the frond, the further it may swing: a tier down at trunk
-      // height that slid sideways would tear the tree in half, a crown tip flops.
-      driftMax: shape.driftMax * (0.35 + 0.65 * (tier / top)),
-      leanMax: shape.leanMax * (0.4 + 0.6 * (tier / top)),
+      driftMax: sway.drift,
+      leanMax: sway.lean,
     });
   });
   return parts;
@@ -216,7 +337,7 @@ export function treeVariant(prop: Prop): TreeVariant {
 export function speciesHeight(species: TreeSpecies): number {
   const shape = SPECIES[species];
   const crown = shape.tiers.reduce((high, [, height, baseY]) => Math.max(high, baseY + height), 0);
-  return Math.max(crown, shape.trunk[1]);
+  return Math.max(crown, trunkHeight(species));
 }
 
 /**
