@@ -128,10 +128,12 @@ export const CRITTER_IDS: readonly CritterId[];
 ```
 
 `body.ts` holds the shared anatomy builders every species composes from —
-`barrelTorso()`, `bipedLimbs()`, `hoofFeet()`, `snout()`, `floppyEars()` — each
-returning `PartSpec[]` from a few numbers. Adding a sheep is a new data file that
-calls the same builders and adds its own head furniture; it touches no rendering
-code.
+`torso()`, `head()`, `muzzle()`, `bipedArms()`, `bipedLegs()`, `earPair()` — each
+returning `PartSpec[]` from a profile and a few numbers. Profiles are given in
+**world height at rest**, so a species writes "the belly is widest at y = 30" — a
+number readable straight off a reference image — and the builder rebases it onto
+the right joint. Adding a sheep is a new data file that calls the same builders
+and adds its own head furniture; it touches no rendering code.
 
 `palette.ts` holds the player coat swatches and the derivation from one picked
 colour to the full role map:
