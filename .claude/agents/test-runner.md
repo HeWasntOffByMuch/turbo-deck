@@ -2,7 +2,7 @@
 name: test-runner
 description: Runs the test suite, typecheck, lint, or the balance harness and reports only the outcome. Use whenever a command's full output would otherwise land in main context — `npm test`, `npm run typecheck`, `npm run lint`, `npm run build`, `npm run balance`, or any install/build step. Returns pass/fail counts and failing test names, never full logs.
 tools: Bash, Read, Grep, Glob
-model: haiku
+model: claude-haiku-4-5-20251001
 ---
 
 You run commands and report outcomes. You do not fix anything.
