@@ -12,6 +12,8 @@ import { RobeRig, type RobeDebug } from './robe.js';
 import { ClothDebugOverlay, defaultClothLayers, type ClothLayers } from './robe-debug.js';
 import { buildPanel, type ViewHandle } from './movement.js';
 import type { SandboxUnit, UnitKind } from './unit.js';
+import { CritterRig, defaultCritterTuning, type CritterTuning } from './critter.js';
+import { CRITTERS, isCritterId, type CritterId } from '../critters/index.js';
 import { viewSeed } from './seed.js';
 
 /**
@@ -252,6 +254,10 @@ class DebugScene {
   private robeRig: RobeRig | null = null;
   private robeOverlay: ClothDebugOverlay | null = null;
   private readonly robeTuning: RobeTuning = defaultRobeTuning();
+  /** The critters (spec 055), built lazily and keeping their picked coats. */
+  private readonly critterRigs = new Map<CritterId, CritterRig>();
+  private readonly critterTuning: CritterTuning = defaultCritterTuning();
+  private activeCritter: CritterRig | null = null;
   private active: SandboxUnit = this.spider;
   private activeKind: UnitKind = 'spider';
   private readonly overlays = new Map<MechRig, DebugOverlay>();
@@ -322,18 +328,41 @@ class DebugScene {
     return this.robeRig;
   }
 
+  /** The critters' shared cosmetic tuning (the panel binds to it). */
+  get critter(): CritterTuning {
+    return this.critterTuning;
+  }
+
+  /** The critter currently being controlled, if the active unit is one. */
+  get critterUnit(): CritterRig | null {
+    return this.activeCritter;
+  }
+
   get unitState(): string {
     return this.active.locomotionState;
   }
 
   setUnit(kind: UnitKind): void {
-    const next = kind === 'walker' ? this.walker : kind === 'robe' ? this.ensureRobe() : this.spider;
+    const critter = isCritterId(kind) ? this.ensureCritter(kind) : null;
+    this.activeCritter = critter;
+    const next =
+      critter ?? (kind === 'walker' ? this.walker : kind === 'robe' ? this.ensureRobe() : this.spider);
+    this.activeKind = kind;
     if (next === this.active) return;
     this.scene.remove(this.active.group);
     this.active = next;
-    this.activeKind = kind;
     this.scene.add(this.active.group);
     this.applyLayers();
+  }
+
+  /** Build a critter on first use, sharing the one tuning object the panel edits. */
+  private ensureCritter(id: CritterId): CritterRig {
+    let rig = this.critterRigs.get(id);
+    if (!rig) {
+      rig = new CritterRig(CRITTERS[id], { tuning: this.critterTuning });
+      this.critterRigs.set(id, rig);
+    }
+    return rig;
   }
 
   /** Build the robed figure and its cloth overlay on first use. */
@@ -404,6 +433,8 @@ class DebugScene {
       const snap = this.active.debugSnapshot();
       this.overlays.get(this.active)?.update(snap);
       readout = formatMechReadout(snap);
+    } else if (this.active instanceof CritterRig) {
+      readout = formatCritterReadout(this.active);
     } else {
       const rig = this.robeRig as RobeRig;
       this.robeOverlay?.update();
@@ -441,9 +472,15 @@ class DebugScene {
     // screen-right and height runs up -- the profile view for reading leg swing.
     const latX = Math.sin(ry);
     const latZ = Math.cos(ry);
-    // Centre the side view on the unit's mass: the humanoid stands far taller
-    // than the mechs, and framing it on their body height cuts its head off.
-    const midY = this.activeKind === 'robe' ? 48 * this.robeTuning.bodyScale : 30;
+    // Centre the side view on the unit's mass: the humanoid and the critters
+    // stand far taller than the mechs, and framing them on the mechs' body
+    // height cuts their heads off.
+    const midY =
+      this.activeKind === 'robe'
+        ? 48 * this.robeTuning.bodyScale
+        : this.activeCritter
+          ? 42 * this.critterTuning.bodyScale
+          : 30;
     this.sideCam.position.set(tx + latX * 1500, midY, tz + latZ * 1500);
     this.sideCam.up.set(0, 1, 0);
     this.sideCam.lookAt(tx, midY, tz);
@@ -637,9 +674,12 @@ function buildDebugControls(opts: {
 
   const setUnit = (kind: UnitKind): void => {
     const isRobe = kind === 'robe';
-    mechOverlays.style.display = isRobe ? 'none' : 'block';
+    // The critters have neither leg-IK targets nor cloth, so both overlay
+    // groups are hidden for them and the readout falls back to the gait line.
+    const isCritter = isCritterId(kind);
+    mechOverlays.style.display = isRobe || isCritter ? 'none' : 'block';
     clothOverlays.style.display = isRobe ? 'block' : 'none';
-    readoutHeading.textContent = isRobe ? 'Cloth state' : 'Joint angles';
+    readoutHeading.textContent = isRobe ? 'Cloth state' : isCritter ? 'Gait' : 'Joint angles';
   };
   setUnit('spider');
 
@@ -651,6 +691,23 @@ const LEG_NAMES = ['FL', 'FR', 'BL', 'BR'] as const;
 /** Format a signed fixed-width degree value. */
 function deg(v: number): string {
   return `${v >= 0 ? '+' : '-'}${Math.abs(v).toFixed(0).padStart(3, ' ')}`;
+}
+
+/**
+ * The critter readout. There is no per-joint table to show -- a critter has no
+ * IK targets and no cloth -- so this is the gait state, the stride phase and how
+ * far off the ground the hop currently has it.
+ */
+function formatCritterReadout(rig: CritterRig): string {
+  const pct = (v: number): string => `${(v * 100).toFixed(0)}%`.padStart(4, ' ');
+  return [
+    `species  ${rig.species.name}`,
+    `coat     #${rig.coat.toString(16).padStart(6, '0')}`,
+    `gait     ${rig.locomotionState}`,
+    `stride   ${pct(rig.humanoid.stridePhase)}`,
+    `lift     ${rig.humanoid.liftY.toFixed(1)}`,
+    `parts    ${rig.species.parts.length} declared`,
+  ].join('\n');
 }
 
 /** Render the per-leg angle table + summary line for the mech readout. */
@@ -755,8 +812,10 @@ export function mountDebug(container: HTMLElement): ViewHandle {
   const panel = buildPanel({
     mech: tuning,
     robe: scene.robe,
+    critter: scene.critter,
     onReset: () => {
       if (unit === 'robe') Object.assign(scene.robe, defaultRobeTuning());
+      else if (isCritterId(unit)) Object.assign(scene.critter, defaultCritterTuning());
       else Object.assign(tuning, defaultMechTuning());
       panel.sync();
     },
@@ -765,6 +824,8 @@ export function mountDebug(container: HTMLElement): ViewHandle {
       scene.setUnit(kind);
       controls.setUnit(kind);
     },
+    onCoat: (hex) => scene.critterUnit?.setCoat(hex),
+    coatOf: (kind) => (isCritterId(kind) ? scene.critterUnit?.coat ?? null : null),
     onJump: () => scene.robeUnit?.jump(),
     onDrop: () => scene.robeUnit?.drop(),
     onGust: () => scene.robeUnit?.gust(),
@@ -776,7 +837,13 @@ export function mountDebug(container: HTMLElement): ViewHandle {
 
   const setStatus = (): void => {
     const name = characterAt(state.player.characterIndex).name;
-    const unitName = unit === 'walker' ? 'Mech (grey)' : unit === 'robe' ? 'Hooded robe' : 'Spider';
+    const unitName = isCritterId(unit)
+      ? CRITTERS[unit].name
+      : unit === 'walker'
+        ? 'Mech (grey)'
+        : unit === 'robe'
+          ? 'Hooded robe'
+          : 'Spider';
     const t = timeScale === 0 ? 'paused' : `${timeScale}×`;
     status.textContent =
       `Rig debug · Unit: ${unitName} · Archetype: ${name} (C to cycle) · gait: ${scene.unitState} · time: ${t}` +

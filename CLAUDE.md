@@ -106,6 +106,13 @@ src/render/      PixiJS renderer + keyboard input capture, no game rules
 src/render/cloth/ pure cloth simulation for the robed character (spec 046) --
                  solver, wind, patterns, colliders and figure metrics. No
                  three.js and no DOM, so it runs and is tested headlessly.
+src/render/critters/ playable animal characters as pure data (spec 055): one
+                 file per species (proportions, blocks, sockets, colours) over
+                 the shared skeleton, plus the player coat palette. No three.js.
+                 Adding an animal is a data file + one line in index.ts;
+                 `src/render/iso3d/critter.ts` already knows how to build it.
+                 `npx tsx scripts/preview-critters.ts` renders the real rig to
+                 .claude/screenshots/critters.png to check it reads at 64px.
 src/render/iso3d/editor/  the map editor tab (specs 049-052). Renders only from
                  a loaded map document, never from the world generator. camera.ts,
                  brush.ts, scatter.ts, markers.ts and history.ts are pure and

@@ -9,16 +9,16 @@ import {
   type CapsuleDef,
   type FigureMetrics,
 } from '../cloth/figure.js';
-import { GRAVITY, type RobeTuning } from '../cloth/params.js';
+import { GRAVITY, type FigureTuning } from '../cloth/params.js';
 import { Spring } from '../spring.js';
 import { box, faceted, flatMaterial } from './meshes.js';
 import { PALETTE } from './palette.js';
 import { JumpMotion } from './jump.js';
 
 /**
- * The robed figure's skeleton and locomotion (spec 046).
+ * A biped's skeleton and locomotion (spec 046, generalised by spec 055).
  *
- * This is the *kinematic* half of the character: a bone hierarchy, a
+ * This is the *kinematic* half of a character: a bone hierarchy, a
  * distance-driven biped walk/run cycle, the lean and bank that come off
  * acceleration and turning, idle breathing, and a landing crouch. It knows
  * nothing about cloth. What it publishes is exactly what the cloth needs:
@@ -31,6 +31,13 @@ import { JumpMotion } from './jump.js';
  * Splitting it this way is what makes the garment list independent of the
  * animation: a new cape or a set of armour skirts binds to the same bones and
  * needs no change here, and retuning the walk needs no change in the cloth.
+ *
+ * **Two things vary between characters, and both are arguments.** The
+ * {@link FigureMetrics} set the proportions, and the {@link BodyDresser} hangs
+ * the visible solid geometry off the bones. A hooded robe (the default,
+ * {@link dressRobe}) and a bipedal pig walk on the same skeleton and differ only
+ * in those two — which is what stops each new character from becoming another
+ * copy of this walk cycle.
  *
  * Built facing **+x** with up **+y**, matching every other rig in the scene, so
  * the scene can drive it with the same `group.rotation.y = -facing` it uses for
@@ -78,6 +85,16 @@ const CROUCH_DROP = 13;
 const SOLID_INSET = 0.6;
 
 export type GaitState = 'idle' | 'walking' | 'running' | 'turning' | 'airborne' | 'landing';
+
+/**
+ * Hangs a character's visible geometry off a freshly built skeleton. Called once
+ * from the constructor, with the bones in their rest pose and indexed by
+ * {@link BONE}; whatever it parents to them is animated for free thereafter.
+ *
+ * It must not move the bones themselves — the bind pose is captured immediately
+ * afterwards, and the cloth is cut against it.
+ */
+export type BodyDresser = (bones: readonly THREE.Object3D[], f: FigureMetrics) => void;
 
 /** What the rig observed about the character's motion this frame. */
 export interface GaitInput {
@@ -144,13 +161,13 @@ export class Humanoid {
   private readonly sMove = new Spring(0, 3.2);
   private readonly sRun = new Spring(0, 2.2);
 
-  constructor(f: FigureMetrics = FIGURE) {
+  constructor(f: FigureMetrics = FIGURE, dress: BodyDresser = dressRobe) {
     this.f = f;
     const { pelvis, chest } = this.buildSkeleton(f);
     this.pelvis = pelvis;
     this.chest = chest;
     this.chestBaseY = chest.position.y;
-    this.dressSkeleton(f);
+    dress(this.bones, f);
 
     // Capture the bind pose *before* anything animates it. Everything the cloth
     // is cut to assumes this exact rest configuration.
@@ -204,69 +221,6 @@ export class Humanoid {
     };
   }
 
-  /**
-   * Hang the visible solid geometry off the bones: the parts of the figure that
-   * are tight to the body and gain nothing from being simulated. Everything that
-   * hangs loose -- hood, cape, lower robe, sleeves -- is cloth instead, and is
-   * added separately by the rig. Deliberately minimal and faceless: the brief is
-   * a robe simulation, not a character.
-   */
-  private dressSkeleton(f: FigureMetrics): void {
-    const at = (index: number): THREE.Object3D => this.bones[index] as THREE.Object3D;
-
-    // Every solid part has to fit *inside* where the cloth is pushed to
-    // (capsule radius + collisionRadius), or it pokes through its own garment.
-    // `SOLID_INSET` is the slack that guarantees it.
-    const torso = new THREE.Mesh(
-      new THREE.CylinderGeometry(f.torsoRadius + SOLID_INSET, f.torsoRadius + SOLID_INSET - 0.4, 22, 8, 1, false),
-      flatMaterial(PALETTE.robeCloth),
-    );
-    torso.position.y = f.waistY + 11 - f.chestY;
-    at(BONE.chest).add(torso);
-
-    // A raised collar, not a flared mantle: anything wider than the torso
-    // capsule would stand outside the cape and the hood that cover it.
-    const collar = new THREE.Mesh(
-      new THREE.CylinderGeometry(f.torsoRadius - 0.8, f.torsoRadius + SOLID_INSET, 10, 8, 1, true),
-      flatMaterial(PALETTE.robeDeep),
-    );
-    collar.position.y = f.shoulderY - 1 - f.chestY;
-    at(BONE.chest).add(collar);
-
-    // The head is a dark void: no face, and it reads as shadow inside the hood.
-    const head = faceted(f.headRadius - SOLID_INSET, PALETTE.robeVoid);
-    head.scale.set(0.95, 1.12, 0.95);
-    head.position.y = f.headY - f.neckY;
-    at(BONE.head).add(head);
-
-    // Limbs: thin blocks, almost entirely hidden by the sleeves and lower robe,
-    // but they stop a gap opening up if the cloth swings wide.
-    const limb = (bone: number, len: number, w: number, color: number): void => {
-      const m = box(w, len, w, color);
-      m.position.y = -len / 2;
-      at(bone).add(m);
-    };
-    for (const [upper, fore] of [
-      [BONE.upperArmL, BONE.forearmL],
-      [BONE.upperArmR, BONE.forearmR],
-    ] as const) {
-      limb(upper, f.upperArmLen, f.upperArmRadius * 1.4, PALETTE.robeDeep);
-      limb(fore, f.forearmLen, f.forearmRadius * 1.4, PALETTE.robeDeep);
-      const hand = box(4.5, 5, 4, PALETTE.robeVoid);
-      hand.position.y = -f.forearmLen - 1.5;
-      at(fore).add(hand);
-    }
-    for (const [thigh, shin] of [
-      [BONE.thighL, BONE.shinL],
-      [BONE.thighR, BONE.shinR],
-    ] as const) {
-      limb(thigh, f.thighLen, f.thighRadius * 1.4, PALETTE.robeVoid);
-      limb(shin, f.shinLen, f.shinRadius * 1.4, PALETTE.robeVoid);
-      const boot = box(10, 4.5, 6.5, PALETTE.robeDeep);
-      boot.position.set(1.5, -f.shinLen - 1.2, 0);
-      at(shin).add(boot);
-    }
-  }
 
   // --- per-frame ----------------------------------------------------------
 
@@ -275,7 +229,7 @@ export class Humanoid {
    * `dt` is render time (the debug view slows it down); `gait` is what the rig
    * observed of the character's motion.
    */
-  update(dt: number, gait: GaitInput, t: RobeTuning): void {
+  update(dt: number, gait: GaitInput, t: FigureTuning): void {
     const h = clamp(dt, 0, 0.1);
     this.clock += h;
     this.scale = t.bodyScale;
@@ -351,7 +305,7 @@ export class Humanoid {
    * off the ribs so the sleeves have somewhere to hang. These bones are what the
    * sleeves are pinned to, so their swing *is* the sleeve motion.
    */
-  private poseArms(p: number, move: number, run: number, t: RobeTuning): void {
+  private poseArms(p: number, move: number, run: number, t: FigureTuning): void {
     const amp = t.armSwing * lerp(0.55, 1, run) * move;
     const arms: readonly [number, number, number, number][] = [
       [BONE.upperArmL, BONE.forearmL, 0, 1],
@@ -420,7 +374,7 @@ export class Humanoid {
    * run after `updateMatrixWorld`; called from `update`, and exposed only because
    * the debug overlay wants to draw exactly what the solver tested against.
    */
-  refreshColliders(t: RobeTuning): void {
+  refreshColliders(t: FigureTuning): void {
     const scale = Math.max(0, t.bodyScale);
     for (let i = 0; i < this.capsuleDefs.length; i++) {
       const d = this.capsuleDefs[i] as CapsuleDef;
@@ -432,7 +386,7 @@ export class Humanoid {
   }
 
   /** Trigger the cosmetic hop. Returns false if it is already off the ground. */
-  triggerJump(t: RobeTuning): boolean {
+  triggerJump(t: FigureTuning): boolean {
     return this.jump.trigger(t.jumpHeight, GRAVITY * Math.max(0.05, t.gravityMultiplier));
   }
 
@@ -441,3 +395,69 @@ export class Humanoid {
     return this.jump.drop(height);
   }
 }
+
+/**
+ * The hooded robe's body (spec 046): the parts of the figure that are tight to
+ * it and gain nothing from being simulated. Everything that hangs loose -- hood,
+ * cape, lower robe, sleeves -- is cloth instead, and is added separately by
+ * `RobeRig`. Deliberately minimal and faceless: the brief was a robe simulation,
+ * not a character.
+ *
+ * This is `Humanoid`'s default {@link BodyDresser}, and the reference for what a
+ * dresser does: parent meshes to bones, move nothing.
+ */
+export const dressRobe: BodyDresser = (bones, f) => {
+  const at = (index: number): THREE.Object3D => bones[index] as THREE.Object3D;
+  // Every solid part has to fit *inside* where the cloth is pushed to
+  // (capsule radius + collisionRadius), or it pokes through its own garment.
+  // `SOLID_INSET` is the slack that guarantees it.
+  const torso = new THREE.Mesh(
+    new THREE.CylinderGeometry(f.torsoRadius + SOLID_INSET, f.torsoRadius + SOLID_INSET - 0.4, 22, 8, 1, false),
+    flatMaterial(PALETTE.robeCloth),
+  );
+  torso.position.y = f.waistY + 11 - f.chestY;
+  at(BONE.chest).add(torso);
+
+  // A raised collar, not a flared mantle: anything wider than the torso
+  // capsule would stand outside the cape and the hood that cover it.
+  const collar = new THREE.Mesh(
+    new THREE.CylinderGeometry(f.torsoRadius - 0.8, f.torsoRadius + SOLID_INSET, 10, 8, 1, true),
+    flatMaterial(PALETTE.robeDeep),
+  );
+  collar.position.y = f.shoulderY - 1 - f.chestY;
+  at(BONE.chest).add(collar);
+
+  // The head is a dark void: no face, and it reads as shadow inside the hood.
+  const head = faceted(f.headRadius - SOLID_INSET, PALETTE.robeVoid);
+  head.scale.set(0.95, 1.12, 0.95);
+  head.position.y = f.headY - f.neckY;
+  at(BONE.head).add(head);
+
+  // Limbs: thin blocks, almost entirely hidden by the sleeves and lower robe,
+  // but they stop a gap opening up if the cloth swings wide.
+  const limb = (bone: number, len: number, w: number, color: number): void => {
+    const m = box(w, len, w, color);
+    m.position.y = -len / 2;
+    at(bone).add(m);
+  };
+  for (const [upper, fore] of [
+    [BONE.upperArmL, BONE.forearmL],
+    [BONE.upperArmR, BONE.forearmR],
+  ] as const) {
+    limb(upper, f.upperArmLen, f.upperArmRadius * 1.4, PALETTE.robeDeep);
+    limb(fore, f.forearmLen, f.forearmRadius * 1.4, PALETTE.robeDeep);
+    const hand = box(4.5, 5, 4, PALETTE.robeVoid);
+    hand.position.y = -f.forearmLen - 1.5;
+    at(fore).add(hand);
+  }
+  for (const [thigh, shin] of [
+    [BONE.thighL, BONE.shinL],
+    [BONE.thighR, BONE.shinR],
+  ] as const) {
+    limb(thigh, f.thighLen, f.thighRadius * 1.4, PALETTE.robeVoid);
+    limb(shin, f.shinLen, f.shinRadius * 1.4, PALETTE.robeVoid);
+    const boot = box(10, 4.5, 6.5, PALETTE.robeDeep);
+    boot.position.set(1.5, -f.shinLen - 1.2, 0);
+    at(shin).add(boot);
+  }
+};
