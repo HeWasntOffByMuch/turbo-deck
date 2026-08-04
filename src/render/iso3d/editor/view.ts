@@ -11,7 +11,7 @@ import {
   createEditorCamera,
   editorCameraPosition,
   orbitEditorCamera,
-  panEditorCamera,
+  trackEditorCamera,
   zoomEditorCamera,
   type EditorCameraState,
 } from './camera.js';
@@ -294,8 +294,8 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   help.style.cssText = `${OVERLAY_CSS}position:absolute;left:10px;bottom:10px;z-index:20;`;
   help.innerHTML =
     '<b style="color:#f0f0f8;">Map editor</b> &mdash; rendering from a baked map document<br>' +
-    '<b>left-drag</b> applies the armed tool &middot; <b>WASD</b> / arrows pan &middot; ' +
-    '<b>right-drag</b> or <b>middle-drag</b> orbits &middot; <b>wheel</b> zooms<br>' +
+    '<b>left-drag</b> applies the armed tool &middot; <b>middle-drag</b> tracks &amp; dollies &middot; ' +
+    '<b>right-drag</b> orbits &middot; <b>wheel</b> zooms<br>' +
     '<span style="color:#7a7a90;">Ctrl+Z undoes a stroke</span>';
 
   const readout = document.createElement('div');
@@ -555,13 +555,14 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     const dt = lastFrame === undefined ? 0 : Math.min(0.1, (time - lastFrame) / 1000);
     lastFrame = time;
 
-    const drag = input.takeDrag();
-    if (drag.dx !== 0 || drag.dy !== 0) scene.camera3 = orbitEditorCamera(scene.camera3, drag.dx, drag.dy);
+    const orbit = input.takeOrbit();
+    if (orbit.dx !== 0 || orbit.dy !== 0) scene.camera3 = orbitEditorCamera(scene.camera3, orbit.dx, orbit.dy);
     const wheel = input.takeWheel();
     if (wheel.deltaY !== 0) scene.camera3 = zoomEditorCamera(scene.camera3, wheel.deltaY, wheel.deltaMode);
-    const pan = input.panAxes();
-    if (pan.forward !== 0 || pan.right !== 0) {
-      scene.camera3 = panEditorCamera(scene.camera3, pan.forward, pan.right, dt);
+    // The grip is in pixels, so it needs the width those pixels are spread over.
+    const track = input.takeTrack();
+    if (track.dx !== 0 || track.dy !== 0) {
+      scene.camera3 = trackEditorCamera(scene.camera3, track.dx, track.dy, canvas.clientWidth);
     }
 
     // The cursor goes where the ray lands, and the brush follows it. Both read
@@ -661,7 +662,13 @@ export function mountEditor(container: HTMLElement): ViewHandle {
 
     autosave(time);
 
-    canvas.style.cursor = input.isOrbiting ? 'grabbing' : input.isPainting ? 'crosshair' : 'default';
+    canvas.style.cursor = input.isTracking
+      ? 'move'
+      : input.isOrbiting
+        ? 'grabbing'
+        : input.isPainting
+          ? 'crosshair'
+          : 'default';
     scene.render();
 
     const c = scene.camera3;

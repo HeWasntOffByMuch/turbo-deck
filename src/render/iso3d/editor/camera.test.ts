@@ -10,7 +10,7 @@ import {
   EDITOR_MIN_HALF_WIDTH,
   lookAtEditorCamera,
   orbitEditorCamera,
-  panEditorCamera,
+  trackEditorCamera,
   wrapAngle,
   zoomEditorCamera,
   type EditorCameraState,
@@ -94,77 +94,105 @@ describe('orbit', () => {
   });
 });
 
-describe('pan', () => {
-  it('is reversible: a pan and its opposite return to the start', () => {
+describe('track and dolly (spec 056)', () => {
+  /** A viewport wide enough that a pixel is a round number of world units. */
+  const WIDTH = 1000;
+
+  it('is a grip: one pixel of drag is one pixel of world, across the screen', () => {
+    const s = { ...fresh(), halfWidth: 500, azimuth: 0, elevation: Math.PI / 2 };
+    // 2 * 500 world units spread over 1000 pixels: one world unit per pixel.
+    const after = trackEditorCamera(s, 100, 0, WIDTH);
+    expect(Math.hypot(after.target.x - s.target.x, after.target.z - s.target.z)).toBeCloseTo(100, 6);
+  });
+
+  it('covers ground in proportion to the zoom, so the grip holds at any span', () => {
+    const moved = (halfWidth: number): number => {
+      const s = { ...fresh(), halfWidth };
+      const after = trackEditorCamera(s, 40, 0, WIDTH);
+      return Math.hypot(after.target.x - s.target.x, after.target.z - s.target.z);
+    };
+    expect(moved(400)).toBeCloseTo(moved(100) * 4, 6);
+  });
+
+  it('grabs the world: dragging right moves the pivot left, dragging down moves it away', () => {
+    // At azimuth 0 the camera stands along +x and looks back along -x, so its
+    // ground heading is -x and its screen-right is -z.
+    const s = { ...fresh(), azimuth: 0, elevation: Math.PI / 2 };
+    const right = trackEditorCamera(s, 60, 0, WIDTH);
+    expect(right.target.z).toBeGreaterThan(s.target.z);
+    expect(right.target.x).toBeCloseTo(s.target.x, 6);
+
+    const down = trackEditorCamera(s, 0, 60, WIDTH);
+    expect(down.target.x).toBeLessThan(s.target.x);
+    expect(down.target.z).toBeCloseTo(s.target.z, 6);
+  });
+
+  it('moves in the camera\'s own frame, not the world\'s', () => {
+    const straight = trackEditorCamera({ ...fresh(), azimuth: 0, elevation: Math.PI / 2 }, 0, 50, WIDTH);
+    const turned = trackEditorCamera({ ...fresh(), azimuth: Math.PI / 2, elevation: Math.PI / 2 }, 0, 50, WIDTH);
+    const base = fresh();
+    // A quarter turn of the camera turns the same drag a quarter turn.
+    expect(straight.target.x - base.target.x).toBeCloseTo(-(50 * 2 * base.halfWidth) / WIDTH, 6);
+    expect(turned.target.z - base.target.z).toBeCloseTo(-(50 * 2 * base.halfWidth) / WIDTH, 6);
+  });
+
+  it('tracks perpendicular to the dolly, and both cover the same ground overhead', () => {
+    const start = { ...fresh(), azimuth: 0.9, elevation: Math.PI / 2 };
+    const across = trackEditorCamera(start, 30, 0, WIDTH);
+    const along = trackEditorCamera(start, 0, 30, WIDTH);
+    const ax = across.target.x - start.target.x;
+    const az = across.target.z - start.target.z;
+    const lx = along.target.x - start.target.x;
+    const lz = along.target.z - start.target.z;
+    expect(ax * lx + az * lz).toBeCloseTo(0, 6);
+    // Looking straight down there is no foreshortening, so the two match.
+    expect(Math.hypot(lx, lz)).toBeCloseTo(Math.hypot(ax, az), 6);
+  });
+
+  it('undoes the ground\'s foreshortening when dollying, and stops doing so at the horizon', () => {
+    const dolly = (elevation: number): number => {
+      const s = { ...fresh(), elevation };
+      const after = trackEditorCamera(s, 0, 50, WIDTH);
+      return Math.hypot(after.target.x - s.target.x, after.target.z - s.target.z);
+    };
+    const flat = dolly(Math.PI / 2);
+    // A 30-degree pitch squashes the ground to half, so the pivot moves twice as
+    // far to keep the same patch of ground under the cursor.
+    expect(dolly(Math.PI / 6)).toBeCloseTo(flat * 2, 6);
+    // ...but the divisor is floored, so a near-horizon view does not fling it.
+    expect(dolly(EDITOR_ELEVATION_MIN)).toBeCloseTo(flat * 4, 6);
+  });
+
+  it('is reversible: a drag and its opposite return to the start', () => {
     for (const azimuth of [0, 0.7, 2.4, -1.9, Math.PI / 2]) {
       const start = { ...fresh(), azimuth };
-      const there = panEditorCamera(start, 1, 0.6, 0.4);
-      const back = panEditorCamera(there, -1, -0.6, 0.4);
+      const there = trackEditorCamera(start, 37, -22, WIDTH);
+      const back = trackEditorCamera(there, -37, 22, WIDTH);
       expect(back.target.x).toBeCloseTo(start.target.x, 6);
       expect(back.target.z).toBeCloseTo(start.target.z, 6);
     }
   });
 
-  it('moves along the camera\'s own ground heading, not the world\'s', () => {
-    // At azimuth 0 the camera stands along +x and looks back along -x, so
-    // "forward" walks the pivot toward -x with no z component at all.
-    const east = panEditorCamera({ ...fresh(), azimuth: 0 }, 1, 0, 1);
-    expect(east.target.x).toBeLessThan(fresh().target.x);
-    expect(east.target.z).toBeCloseTo(fresh().target.z, 6);
-
-    // A quarter turn later the same input moves along the perpendicular axis.
-    const turned = panEditorCamera({ ...fresh(), azimuth: Math.PI / 2 }, 1, 0, 1);
-    expect(turned.target.z).toBeLessThan(fresh().target.z);
-    expect(turned.target.x).toBeCloseTo(fresh().target.x, 6);
-  });
-
-  it('strafes perpendicular to forward', () => {
-    const start = { ...fresh(), azimuth: 0.9 };
-    const ahead = panEditorCamera(start, 1, 0, 1);
-    const across = panEditorCamera(start, 0, 1, 1);
-    const fx = ahead.target.x - start.target.x;
-    const fz = ahead.target.z - start.target.z;
-    const rx = across.target.x - start.target.x;
-    const rz = across.target.z - start.target.z;
-    expect(fx * rx + fz * rz).toBeCloseTo(0, 6);
-    // ...and covers the same ground.
-    expect(Math.hypot(rx, rz)).toBeCloseTo(Math.hypot(fx, fz), 6);
-  });
-
-  it('covers ground in proportion to the zoom', () => {
-    const near = { ...fresh(), halfWidth: 100 };
-    const far = { ...fresh(), halfWidth: 400 };
-    const moved = (s: EditorCameraState): number => {
-      const after = panEditorCamera(s, 1, 0, 0.5);
-      return Math.hypot(after.target.x - s.target.x, after.target.z - s.target.z);
-    };
-    expect(moved(far)).toBeCloseTo(moved(near) * 4, 6);
-  });
-
-  it('scales with elapsed time, and a zero-length frame moves nothing', () => {
-    const s = fresh();
-    const short = panEditorCamera(s, 1, 0, 0.1);
-    const long = panEditorCamera(s, 1, 0, 0.2);
-    expect(Math.abs(long.target.x - s.target.x)).toBeCloseTo(Math.abs(short.target.x - s.target.x) * 2, 6);
-    expect(panEditorCamera(s, 1, 0, 0)).toBe(s);
-    expect(panEditorCamera(s, 0, 0, 1)).toBe(s);
-  });
-
   it('does not change the angles or the zoom', () => {
     const before = fresh();
-    const after = panEditorCamera(before, 1, -1, 0.3);
+    const after = trackEditorCamera(before, 40, -30, WIDTH);
     expect(after.azimuth).toBe(before.azimuth);
     expect(after.elevation).toBe(before.elevation);
     expect(after.halfWidth).toBe(before.halfWidth);
   });
 
-  it('holds the pivot over the map however long the pan runs', () => {
-    let s = fresh();
-    // Twenty seconds of holding a direction, at the widest zoom.
-    s = { ...s, halfWidth: EDITOR_MAX_HALF_WIDTH };
-    for (const [f, r] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1]] as const) {
+  it('moves nothing on a zero drag or a zero-width viewport', () => {
+    const s = fresh();
+    expect(trackEditorCamera(s, 0, 0, WIDTH)).toBe(s);
+    // A canvas that has not been laid out yet must not divide by nothing.
+    expect(trackEditorCamera(s, 50, 50, 0)).toBe(s);
+  });
+
+  it('holds the pivot over the map however far the drag runs', () => {
+    const s = { ...fresh(), halfWidth: EDITOR_MAX_HALF_WIDTH };
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1]] as const) {
       let run = s;
-      for (let i = 0; i < 1200; i++) run = panEditorCamera(run, f, r, 1 / 60);
+      for (let i = 0; i < 400; i++) run = trackEditorCamera(run, dx * 60, dy * 60, WIDTH);
       expect(run.target.x).toBeGreaterThan(BOUNDS.minX - 1000);
       expect(run.target.x).toBeLessThan(BOUNDS.maxX + 1000);
       expect(run.target.z).toBeGreaterThan(BOUNDS.minZ - 1000);
@@ -174,12 +202,12 @@ describe('pan', () => {
 
   it('lets the pivot roam when no bounds were given', () => {
     let s = createEditorCamera({ halfWidth: 1000 });
-    for (let i = 0; i < 600; i++) s = panEditorCamera(s, 1, 0, 1 / 60);
+    for (let i = 0; i < 200; i++) s = trackEditorCamera(s, 100, 0, WIDTH);
     expect(Math.hypot(s.target.x, s.target.z)).toBeGreaterThan(5000);
   });
 
   it('survives a non-finite input', () => {
-    const s = panEditorCamera(fresh(), NaN, 1, Infinity);
+    const s = trackEditorCamera(fresh(), NaN, 30, Infinity);
     expect(Number.isFinite(s.target.x)).toBe(true);
     expect(Number.isFinite(s.target.z)).toBe(true);
   });
