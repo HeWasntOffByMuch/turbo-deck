@@ -2,6 +2,7 @@ import GUI from 'lil-gui';
 import type { MapMarkerKind, PropKind } from '../../../terrain/index.js';
 import { DEFAULT_BRUSH, TERRAIN_TOOLS, type TerrainTool } from './brush.js';
 import { MARKER_KINDS } from './markers.js';
+import { DEFAULT_WALK_SLOPE } from './nav.js';
 import { DEFAULT_SCATTER } from './scatter.js';
 
 /**
@@ -57,6 +58,9 @@ export interface EditorSettings {
   // Markers
   markerKind: MapMarkerKind;
   showArena: boolean;
+  // Nav
+  showNav: boolean;
+  walkSlope: number;
 }
 
 export function createEditorSettings(): EditorSettings {
@@ -75,6 +79,8 @@ export function createEditorSettings(): EditorSettings {
     alignToNormal: DEFAULT_SCATTER.alignToNormal,
     markerKind: 'spawn',
     showArena: true,
+    showNav: false,
+    walkSlope: DEFAULT_WALK_SLOPE,
   };
 }
 
@@ -89,6 +95,10 @@ export interface EditorPanelOptions {
   readonly onUndo: () => void;
   /** Called whenever the armed tool changes, so the cursor can retint. */
   readonly onArmChange: () => void;
+  /** The nav overlay was toggled. */
+  readonly onNavChange: () => void;
+  /** The walk limit moved, so the whole layer needs re-baking. */
+  readonly onNavRebake: () => void;
 }
 
 export interface EditorPanel {
@@ -127,6 +137,11 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   const markers = gui.addFolder('Markers');
   markers.add(s, 'markerKind', [...MARKER_KINDS]).name('Kind').onChange(opts.onArmChange);
   markers.add(s, 'showArena').name('Show arena bounds').onChange(opts.onArmChange);
+
+  const nav = gui.addFolder('Navigation');
+  // Off by default: a diagnostic, not a view mode.
+  nav.add(s, 'showNav').name('Show walkability').onChange(opts.onNavChange);
+  nav.add(s, 'walkSlope', 0.05, 1.5, 0.05).name('Walk slope').onChange(opts.onNavRebake);
 
   const edit = gui.addFolder('Edit');
   edit.add({ undo: opts.onUndo }, 'undo').name('Undo (Ctrl+Z)');

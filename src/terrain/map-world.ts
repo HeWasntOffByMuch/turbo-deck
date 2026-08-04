@@ -289,6 +289,20 @@ export class MapChunkStore {
     return this.cellAt(layerId, col, row)?.solid === true;
   }
 
+  /** A chunk's baked walkability, or null if it has not been baked (spec 053). */
+  chunkNav(layerId: string, cx: number, cz: number): Uint8Array | null {
+    return this.layers.get(layerId)?.chunks.get(key(cx, cz))?.nav ?? null;
+  }
+
+  /** Store a chunk's baked walkability. Rejects an array of the wrong size. */
+  setChunkNav(layerId: string, cx: number, cz: number, nav: Uint8Array | null): boolean {
+    const chunk = this.layers.get(layerId)?.chunks.get(key(cx, cz));
+    if (!chunk) return false;
+    if (nav !== null && nav.length !== chunk.cols * chunk.rows) return false;
+    chunk.nav = nav;
+    return true;
+  }
+
   /** Set a global cell's material index. Leaves solidity and tone alone. */
   setCellMaterial(layerId: string, col: number, row: number, material: number): void {
     const layer = this.layers.get(layerId);

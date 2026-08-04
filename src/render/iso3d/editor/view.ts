@@ -22,6 +22,8 @@ import { EditHistory } from './history.js';
 import { EditorInputCapture } from './input.js';
 import { createArenaOutline, createMarkerView } from './marker-view.js';
 import { eraseMarkers, placeMarker } from './markers.js';
+import { bakeLayerNav, rebakeNav } from './nav.js';
+import { createNavView } from './nav-view.js';
 import { bakeEditorMap } from './map-source.js';
 import { buildEditorPanel, createEditorSettings, cursorColor } from './panel.js';
 import { eraseStroke, scatterStroke, terrainNormalAt } from './scatter.js';
@@ -286,6 +288,8 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   scene.addOverlay(markerView.group);
   const arenaOutline = createArenaOutline();
   scene.addOverlay(arenaOutline.object);
+  const navView = createNavView();
+  scene.addOverlay(navView.object);
 
   const layerId = scene.layerId;
   // Seeded from the map, so a session's scatters are reproducible from a seed
@@ -307,6 +311,16 @@ export function mountEditor(container: HTMLElement): ViewHandle {
 
   const groundAt = (x: number, z: number): number => scene.map.world.heightAt(x, z);
 
+  // Baked once at mount, so the overlay has something to show the moment it is
+  // switched on and the document carries nav from the first save.
+  bakeLayerNav(scene.map.store, layerId, settings.walkSlope);
+
+  /** Redraw the walkability overlay, but only while it is being looked at. */
+  const refreshNav = (): void => {
+    navView.setVisible(settings.showNav);
+    if (settings.showNav) navView.refresh(scene.map.store, layerId, groundAt);
+  };
+
   /** Redraw the markers and the arena box from whatever the store now holds. */
   const refreshMarkers = (): void => {
     markerView.render(scene.map.store.markers(layerId), groundAt);
@@ -318,8 +332,12 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     const restored = history.undo(scene.map.store);
     if (restored.length === 0) return;
     for (const c of restored) scene.rebuildChunk(c.layerId, c.cx, c.cz);
+    // Nav describes the ground, so undoing the ground has to undo nav with it.
+    rebakeNav(scene.map.store, layerId, restored, settings.walkSlope);
     scene.refreshProps();
     refreshMarkers();
+  refreshNav();
+    refreshNav();
   };
 
   const panel = buildEditorPanel({
@@ -329,14 +347,30 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       cursor.setColor(cursorColor(settings));
       arenaOutline.object.visible = settings.showArena;
     },
+    onNavChange: refreshNav,
+    onNavRebake: () => {
+      bakeLayerNav(scene.map.store, layerId, settings.walkSlope);
+      refreshNav();
+    },
   });
   panelHost.appendChild(panel.element);
 
+  /** Whether the focused element is somewhere a person is typing. */
+  const isTextEntry = (element: Element | null): boolean => {
+    if (!(element instanceof HTMLElement)) return false;
+    if (element.isContentEditable) return true;
+    if (element.tagName === 'TEXTAREA') return true;
+    if (element.tagName !== 'INPUT') return false;
+    const type = (element as HTMLInputElement).type;
+    return type === 'text' || type === 'number' || type === 'search';
+  };
+
   const onKeyDown = (e: KeyboardEvent): void => {
-    if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') {
-      undo();
-      e.preventDefault();
-    }
+    if (!((e.ctrlKey || e.metaKey) && e.code === 'KeyZ')) return;
+    // A field being typed into keeps its own undo; the map's is for the map.
+    if (isTextEntry(document.activeElement)) return;
+    undo();
+    e.preventDefault();
   };
 
   const chunks = scene.document.layers.reduce((n, layer) => n + layer.chunks.length, 0);
@@ -349,12 +383,15 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   let strokeChangedProps = false;
   let strokeMovedGround = false;
   let strokeChangedMarkers = false;
+  /** Chunks this stroke has dirtied, for the nav re-bake when it ends. */
+  const strokeDirty: { cx: number; cz: number }[] = [];
   // The prop field is rebuilt whole, which is far too much to do every frame --
   // but a scatter you cannot see until you let go is unusable. So it is rebuilt
   // a few times a second while a stroke runs, and once more when it ends.
   let propsRebuiltAt = 0;
 
   refreshMarkers();
+  refreshNav();
 
   let running = false;
   let lastFrame: number | undefined;
@@ -385,13 +422,17 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       cursor.setVisible(false);
     }
 
-    const capture = (cx: number, cz: number): void => history.captureChunk(scene.map.store, layerId, cx, cz);
+    const capture = (cx: number, cz: number): void => {
+      history.captureChunk(scene.map.store, layerId, cx, cz);
+      strokeDirty.push({ cx, cz });
+    };
 
     if (input.takePaintStart()) {
       history.beginStroke();
       strokeMovedGround = false;
       strokeChangedProps = false;
       strokeChangedMarkers = false;
+      strokeDirty.length = 0;
       scatterCarry = 0;
       propsRebuiltAt = time;
       // The height under the first press is the level `flatten` works toward.
@@ -403,6 +444,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
         if (placed.marker) {
           strokeChangedMarkers = true;
           refreshMarkers();
+  refreshNav();
         }
       }
     }
@@ -437,6 +479,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
         if (markers.removed.length > 0) {
           strokeChangedMarkers = true;
           refreshMarkers();
+  refreshNav();
         }
       }
 
@@ -454,6 +497,10 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       if (strokeMovedGround || strokeChangedProps) scene.refreshProps();
       // Markers and the arena outline sit on the ground too.
       if (strokeMovedGround || strokeChangedMarkers) refreshMarkers();
+      // Nav is re-baked for exactly the chunks the stroke dirtied, so the
+      // overlay never describes ground that has since moved.
+      if (strokeMovedGround) rebakeNav(scene.map.store, layerId, strokeDirty, settings.walkSlope);
+      if (strokeMovedGround || strokeChangedProps) refreshNav();
       strokeMovedGround = false;
       strokeChangedProps = false;
       strokeChangedMarkers = false;
@@ -481,13 +528,16 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       running = true;
       lastFrame = undefined;
       input.attach(window);
-      window.addEventListener('keydown', onKeyDown);
+      // Capture phase, so a focused panel widget cannot swallow it first.
+      // lil-gui's checkbox does exactly that on the bubble path: click one and
+      // Ctrl+Z silently stops undoing until you click somewhere else.
+      window.addEventListener('keydown', onKeyDown, true);
       requestAnimationFrame(frame);
     },
     stop(): void {
       running = false;
       input.detach();
-      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keydown', onKeyDown, true);
       // A stroke interrupted by a tab switch still closes its undo entry.
       history.endStroke();
     },
