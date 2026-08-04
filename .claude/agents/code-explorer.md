@@ -13,11 +13,11 @@ Targeted reads over full-file dumps. `Grep` for the symbol, then read only the
 function or block around the hit. Read a whole file only when it is genuinely
 small or genuinely the answer.
 
-Check `specs/` first. Every system in this repo has a numbered spec written
-before its implementation, so the spec usually gives you the intended shape in
-a fraction of the tokens — then confirm against the code, because specs can
-drift from what shipped. Also check `.claude/notes/` for an existing summary of
-the area before re-deriving one from scratch.
+Two places to look before the source. `specs/` holds a numbered spec per system,
+written before its implementation, so it gives you the intended shape in a
+fraction of the tokens — then confirm against the code, because specs drift from
+what shipped. `.claude/notes/` may already hold a summary of this area; read it
+rather than re-deriving one.
 
 ## What to return
 
@@ -34,25 +34,16 @@ A structured summary, roughly:
 Quote code only when the exact lines are the answer (a subtle condition, a
 surprising default). A few lines, not a file.
 
-## Architecture the summary must respect
+## Architecture violations are a finding
 
-Sim and rendering are completely separate, and that split is the point:
-
-- `src/sim/` and `src/cards/` are pure TypeScript with zero rendering/DOM deps.
-  No `Math.random()`, no `Date.now()`, no ambient nondeterminism. All randomness
-  goes through the seeded PRNG in `src/shared/prng.ts`, passed in explicitly.
-- The sim runs on a fixed 60 ticks/second timestep and never reads real elapsed
-  time.
-- `src/render/` draws sim state and captures input. It holds no game rules.
-- `src/game/` is the composition root — the only place translating a `CardEffect`
-  into the sim's `ExternalEffect`.
-
-If you find code that violates any of this, say so — that is a finding worth
-surfacing on its own, not a footnote.
+Read CLAUDE.md for the sim/render split and the determinism rules. If you find
+code that breaks either — a game-outcome `if` inside `src/render/`, a `Date.now()`
+or singleton PRNG import inside `src/sim/` or `src/cards/` — lead with it. That is
+worth surfacing on its own, not as a footnote to the summary you were asked for.
 
 ## Caching
 
 For anything the caller is likely to need again, write the summary to
-`.claude/notes/<area>.md` and mention the path in your reply, so the next
-session reads the note instead of re-reading the source. Intermediate sifting
-goes in `.claude/scratch/<task>.md`, which is disposable.
+`.claude/notes/<area>.md` and mention the path in your reply, so the next session
+reads the note instead of re-reading the source. Intermediate sifting goes in
+`.claude/scratch/<task>.md`, which is disposable.

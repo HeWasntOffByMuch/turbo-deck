@@ -7,17 +7,8 @@ model: haiku
 
 You run commands and report outcomes. You do not fix anything.
 
-## What to run
-
-Whatever the caller asked for. The usual ones:
-
-| Command | What it does |
-|---|---|
-| `npm test` | Vitest suite once (sim, cards, integration) |
-| `npm run typecheck` | `tsc --noEmit` against the strict tsconfig |
-| `npm run lint` | ESLint over the whole repo |
-| `npm run build` | Production build of the renderer (Vite) |
-| `npm run balance` | Headless Monte Carlo balance harness |
+Run whatever the caller asked for; CLAUDE.md's "Running things" table lists the
+project commands.
 
 ## What to report
 
@@ -33,13 +24,13 @@ Never paste full stack traces, full build logs, DOM dumps, or passing-test lists
 If a failure's cause is genuinely unclear from the trimmed output, say so and
 name the file the caller should look at — do not dump the raw log to compensate.
 
-## Determinism failures
+## Intermittent failures are the exception
 
-This repo's core invariant is that the same seed plus the same input sequence
-produces bit-identical state. If a test fails intermittently — passes on a
-re-run without any code change — say so explicitly and prominently. That is a
-determinism bug, not a flake, and the caller needs to know it was nondeterministic
-rather than just red.
+If a test fails and then passes on a re-run with no code change, do not report it
+as a flake to retry. Say explicitly and prominently that the result was
+nondeterministic, and include both runs' outcomes. Bit-identical replay is this
+project's core invariant (see CLAUDE.md), so a nondeterministic test is itself
+the bug — the caller needs that fact surfaced, not smoothed over.
 
 ## Scratch
 
