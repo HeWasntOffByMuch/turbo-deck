@@ -10,3 +10,5 @@ export * from './classify.js';
 export * from './chunk.js';
 export * from './world.js';
 export * from './vegetation.js';
+export * from './map.js';
+export * from './map-world.js';

@@ -1,0 +1,99 @@
+import type { ChunkCoord, MapChunkStore, MapMarker, MapMarkerKind } from '../../../terrain/index.js';
+
+/**
+ * Placing and clearing markers (spec 052). Pure: no three.js, no DOM.
+ *
+ * `marker-view.ts` draws what this decides. The split matters here more than it
+ * looks: a marker's id is the thing whatever reads the map later keys off, so
+ * how ids are chosen is a rule about the *document*, not about the editor's
+ * chrome, and it belongs somewhere a test can reach.
+ */
+
+export const MARKER_KINDS: readonly MapMarkerKind[] = ['spawn', 'objective', 'campfire', 'trigger'];
+
+/** Billboard colour per kind. */
+export const MARKER_COLORS: Record<MapMarkerKind, number> = {
+  spawn: 0x6fd48a,
+  objective: 0xf0c65a,
+  campfire: 0xe8843c,
+  trigger: 0xb98ce0,
+};
+
+/** The letter drawn on the billboard. */
+export const MARKER_GLYPHS: Record<MapMarkerKind, string> = {
+  spawn: 'S',
+  objective: 'O',
+  campfire: 'C',
+  trigger: 'T',
+};
+
+/**
+ * The next free id for a kind: `spawn-1`, `spawn-2`, and so on.
+ *
+ * The **lowest** free number, not one past the highest, so deleting `spawn-2`
+ * and placing again reuses it instead of climbing forever. Ids are generated
+ * rather than typed because a marker with no id is useless to whatever reads the
+ * map, and a text field in the middle of a placement flow is a worse experience
+ * than a name you can simply never change.
+ */
+export function nextMarkerId(existing: readonly MapMarker[], kind: MapMarkerKind): string {
+  const taken = new Set<number>();
+  for (const marker of existing) {
+    if (marker.kind !== kind) continue;
+    const match = /^(.+)-(\d+)$/.exec(marker.id);
+    if (match && match[1] === kind) taken.add(Number(match[2]));
+  }
+  let n = 1;
+  while (taken.has(n)) n++;
+  return `${kind}-${n}`;
+}
+
+export interface PlaceMarkerResult {
+  readonly marker: MapMarker | null;
+  readonly dirty: readonly ChunkCoord[];
+}
+
+/**
+ * Place one marker at a world point.
+ *
+ * On a click, never on a drag: ground and vegetation are bulk things and a
+ * spawn point is not, so dragging would leave a trail of forty of them.
+ */
+export function placeMarker(
+  store: MapChunkStore,
+  layerId: string,
+  kind: MapMarkerKind,
+  x: number,
+  z: number,
+  onTouchChunk?: (cx: number, cz: number) => void,
+): PlaceMarkerResult {
+  if (!Number.isFinite(x) || !Number.isFinite(z)) return { marker: null, dirty: [] };
+  const marker: MapMarker = { kind, id: nextMarkerId(store.markers(layerId), kind), x, z };
+
+  // Announce the chunk before writing to it, so an undo entry captures the
+  // state the placement is about to replace rather than the placement itself.
+  if (onTouchChunk) {
+    for (const c of store.chunksWithin(layerId, x, z, Math.max(1, store.cellSize))) onTouchChunk(c.cx, c.cz);
+  }
+
+  const at = store.addMarker(layerId, marker);
+  return at ? { marker, dirty: [at] } : { marker: null, dirty: [] };
+}
+
+/**
+ * Clear markers under the eraser, on the same terms as props: by centre, inside
+ * the shared radius. One eraser that takes everything, rather than two erasers
+ * and a mode switch to choose between them.
+ */
+export function eraseMarkers(
+  store: MapChunkStore,
+  layerId: string,
+  at: { readonly x: number; readonly z: number; readonly radius: number },
+  onTouchChunk?: (cx: number, cz: number) => void,
+): { removed: readonly MapMarker[]; dirty: readonly ChunkCoord[] } {
+  if (!(at.radius > 0) || !Number.isFinite(at.x) || !Number.isFinite(at.z)) return { removed: [], dirty: [] };
+  if (onTouchChunk) {
+    for (const c of store.chunksWithin(layerId, at.x, at.z, at.radius)) onTouchChunk(c.cx, c.cz);
+  }
+  return store.removeMarkersWithin(layerId, at.x, at.z, at.radius);
+}

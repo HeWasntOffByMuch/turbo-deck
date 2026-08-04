@@ -358,12 +358,24 @@ export interface PropFieldHandle {
   dispose(): void;
 }
 
+/** The unit surface normal of the ground, for props that lie along it. */
+export type NormalAt = (x: number, z: number) => readonly [number, number, number];
+
 /**
  * Build the instanced meshes for a list of scattered props, standing each one on
  * the terrain via `heightAt`. Static: instance matrices are written once, since
  * scenery never moves.
+ *
+ * `normalAt` is optional and only consulted for props that ask to be aligned to
+ * the ground (spec 051). Without it every prop stands upright, whatever it asked
+ * for -- so a caller that has no terrain normals to offer degrades to the
+ * behaviour that existed before the flag did.
  */
-export function buildPropField(props: readonly Prop[], heightAt: (x: number, z: number) => number): PropFieldHandle {
+export function buildPropField(
+  props: readonly Prop[],
+  heightAt: (x: number, z: number) => number,
+  normalAt?: NormalAt,
+): PropFieldHandle {
   const group = new THREE.Group();
   const geometries: THREE.BufferGeometry[] = [];
   const materials: THREE.Material[] = [];
@@ -375,6 +387,9 @@ export function buildPropField(props: readonly Prop[], heightAt: (x: number, z: 
   const tilt = new THREE.Quaternion();
   const leanAxis = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0);
+  const groundUp = new THREE.Vector3();
+  const align = new THREE.Quaternion();
+  const offset = new THREE.Vector3();
   const scale = new THREE.Vector3();
   const color = new THREE.Color();
 
@@ -427,6 +442,20 @@ export function buildPropField(props: readonly Prop[], heightAt: (x: number, z: 
         if (lean !== 0 && variant) {
           leanAxis.set(Math.cos(variant.leanAngle), 0, Math.sin(variant.leanAngle));
           quaternion.multiply(tilt.setFromAxisAngle(leanAxis, lean));
+        }
+        if (prop.alignToNormal && normalAt) {
+          const [nx, ny, nz] = normalAt(prop.x, prop.y);
+          groundUp.set(nx, ny, nz);
+          if (groundUp.lengthSq() > 0) {
+            // Tip world-up onto the ground's normal, applied *before* the yaw so
+            // the prop still spins about its own new axis rather than the world's.
+            align.setFromUnitVectors(up, groundUp.normalize());
+            quaternion.premultiply(align);
+            // The part's local offset has to ride the same tilt, or a bush's
+            // second blob floats off the side of the slope it is lying on.
+            offset.set(lx * cos - lz * sin, part.offsetY * s, lx * sin + lz * cos).applyQuaternion(align);
+            position.set(prop.x + offset.x, heightAt(prop.x, prop.y) + offset.y, prop.y + offset.z);
+          }
         }
 
         scale.set(s, s * (part.scaleY ?? 1), s);

@@ -95,7 +95,9 @@ specs/           spec markdown, one file per system, written before its code
 src/shared/      PRNG, spatial hash, world extent — dependency-free helpers
                  shared by sim, cards and terrain
 src/terrain/     pure, deterministic world data: heightfields, materials, chunks
-                 and where the vegetation stands. No three.js, no DOM.
+                 and where the vegetation stands. No three.js, no DOM. Also the
+                 map document (spec 048): map.ts bakes a world to JSON,
+                 map-world.ts loads one back as array-backed terrain.
 src/cards/       card/deck engine — pure data and pure functions, no sim/render deps
 src/sim/         deterministic fixed-timestep combat sim, no rendering/DOM deps
 src/game/        composition root wiring cards to the sim (stepGame) — the only
@@ -104,6 +106,11 @@ src/render/      PixiJS renderer + keyboard input capture, no game rules
 src/render/cloth/ pure cloth simulation for the robed character (spec 046) --
                  solver, wind, patterns, colliders and figure metrics. No
                  three.js and no DOM, so it runs and is tested headlessly.
+src/render/iso3d/editor/  the map editor tab (specs 049-052). Renders only from
+                 a loaded map document, never from the world generator. camera.ts,
+                 brush.ts, scatter.ts, markers.ts and history.ts are pure and
+                 tested headlessly; view.ts, cursor.ts and marker-view.ts are the
+                 three.js scene; panel.ts is the lil-gui surface.
 src/balance/     Monte Carlo balance harness logic (seeded bot policy + runner),
                  pure and testable; scripts/balance-harness.ts is its thin CLI
 scripts/         standalone scripts (e.g. the balance harness), run via tsx
