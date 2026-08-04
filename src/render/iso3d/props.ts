@@ -349,9 +349,11 @@ function woodFenceParts(): PropPart[] {
     });
   }
   // Two rails, spanning the tile end to end so they continue through a junction.
+  // Deep enough to read between the pickets at the zoom the game plays at --
+  // thinner and a fence is a row of unconnected stakes.
   for (const y of [16, 36]) {
     parts.push({
-      geometry: new THREE.BoxGeometry(FENCE_TILE_LENGTH, 5.5, 3),
+      geometry: new THREE.BoxGeometry(FENCE_TILE_LENGTH, 7.5, 3.5),
       offsetY: y,
       // Behind the pickets rather than through them, so the two read apart.
       offsetZ: 3.5,

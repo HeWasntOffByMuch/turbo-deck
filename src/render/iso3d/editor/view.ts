@@ -34,7 +34,9 @@ import {
   writeAutosave,
 } from './persistence.js';
 import { bakeEditorMap } from './map-source.js';
-import { buildEditorPanel, createEditorSettings, cursorColor } from './panel.js';
+import { buildEditorPanel } from './panel.js';
+import { createEditorSettings, cursorColor, cursorRadius } from './tools.js';
+import { fenceStroke, NO_FENCE_PATH, type FencePath } from './fence.js';
 import { eraseStroke, scatterStroke, terrainNormalAt } from './scatter.js';
 
 /**
@@ -347,6 +349,9 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   let rng = Rng.fromSeed(scene.document.seed ^ 0x5ca77e5);
   // Fractional props owed to the next frame; see `scatterStroke`.
   let scatterCarry = 0;
+  // Where the fence run has got to; see `fenceStroke`. Reset on every press, so
+  // one stroke is one run rather than a line drawn from the last one's end.
+  let fencePath: FencePath = NO_FENCE_PATH;
 
   /** Re-mesh a set of chunks, skipping the duplicates a drag produces. */
   const remesh = (dirty: readonly { cx: number; cz: number }[]): void => {
@@ -387,7 +392,6 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     rebakeNav(scene.map.store, layerId, restored, settings.walkSlope);
     scene.refreshProps();
     refreshMarkers();
-  refreshNav();
     refreshNav();
   };
 
@@ -569,7 +573,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     // the same pick, so the ring always marks the ground that is about to move.
     const at = scene.pick(input.mouseCanvas().x, input.mouseCanvas().y);
     if (at) {
-      cursor.moveTo(at.x, at.z, settings.radius, (x, z) => scene.map.world.heightAt(x, z));
+      cursor.moveTo(at.x, at.z, cursorRadius(settings), (x, z) => scene.map.world.heightAt(x, z));
       cursor.setVisible(true);
     } else {
       cursor.setVisible(false);
@@ -587,6 +591,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       strokeChangedMarkers = false;
       strokeDirty.length = 0;
       scatterCarry = 0;
+      fencePath = NO_FENCE_PATH;
       propsRebuiltAt = time;
       // The height under the first press is the level `flatten` works toward.
       if (at) flattenTo = scene.map.world.heightAt(at.x, at.z);
@@ -597,7 +602,6 @@ export function mountEditor(container: HTMLElement): ViewHandle {
         if (placed.marker) {
           strokeChangedMarkers = true;
           refreshMarkers();
-  refreshNav();
         }
       }
     }
@@ -622,6 +626,18 @@ export function mountEditor(container: HTMLElement): ViewHandle {
         rng = out.rng;
         scatterCarry = out.carry;
         if (out.added.length > 0) strokeChangedProps = true;
+      } else if (settings.mode === 'fence') {
+        const out = fenceStroke(
+          scene.map.store,
+          layerId,
+          settings,
+          { x: at.x, z: at.z, onTouchChunk: capture },
+          fencePath,
+          rng,
+        );
+        rng = out.rng;
+        fencePath = out.path;
+        if (out.added.length > 0) strokeChangedProps = true;
       } else if (settings.mode === 'erase') {
         const circle = { x: at.x, z: at.z, radius: settings.radius };
         const props = eraseStroke(scene.map.store, layerId, circle, capture);
@@ -632,7 +648,6 @@ export function mountEditor(container: HTMLElement): ViewHandle {
         if (markers.removed.length > 0) {
           strokeChangedMarkers = true;
           refreshMarkers();
-  refreshNav();
         }
       }
 
@@ -641,7 +656,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
         propsRebuiltAt = time;
       }
       // The ring reads the surface it may just have moved, so redraw it after.
-      cursor.moveTo(at.x, at.z, settings.radius, (x, z) => scene.map.world.heightAt(x, z));
+      cursor.moveTo(at.x, at.z, cursorRadius(settings), (x, z) => scene.map.world.heightAt(x, z));
     }
 
     if (input.takePaintEnd()) {
