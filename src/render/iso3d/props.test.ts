@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { bareTrunkHeight, crownRadius, speciesHeight, treeVariant, type TreeSpecies } from './props.js';
+import {
+  bareTrunkHeight,
+  crownRadius,
+  speciesHeight,
+  speciesTierCounts,
+  treeVariant,
+  trunkHeight,
+  trunkTopCover,
+  type TreeSpecies,
+} from './props.js';
 import { PLAYER_RADIUS } from '../../sim/constants.js';
 import { worldVegetation } from '../../terrain/vegetation.js';
 import { createArenaWorld } from '../../terrain/world.js';
@@ -83,5 +92,48 @@ describe('the tree shapes themselves (spec 045)', () => {
     }
     // ...which the 34-radius crown it replaced did not.
     expect(2 * 34 * meanScale).toBeLessThan(meanTrunkGap);
+  });
+});
+
+describe('the trunk ends inside the canopy, not through it', () => {
+  const species = ['fir', 'pine'] as const satisfies readonly TreeSpecies[];
+
+  it('buries the trunk top in a frond for every shape a tree can take', () => {
+    // The trunk is a solid column that stops in mid-air: wherever it ends, the
+    // cap and its corners are either inside a cone or hanging out through the
+    // cone's sloped side. The fir used to stand its trunk up to 86, where the
+    // frond around it has narrowed to a ~3-unit radius -- 5 units of bare
+    // column stuck out into open air, on every fir in the world.
+    for (const s of species) {
+      for (const tierCount of speciesTierCounts(s)) {
+        // The lean and the drift are what pull the frond off the trunk's axis,
+        // so sweep the whole band rather than trusting the upright case.
+        for (let i = -20; i <= 20; i++) {
+          const asymmetry = i / 20;
+          const cover = trunkTopCover({ species: s, tierCount, asymmetry, leanAngle: 0 });
+          expect(cover).toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+
+  it('buries it on every tree the world actually grows', () => {
+    const forest = worldVegetation(20260731, createArenaWorld(20260731)).filter((p) => p.kind === 'tree');
+    expect(forest.length).toBeGreaterThan(200);
+    const worst = Math.min(...forest.map((p) => trunkTopCover(treeVariant(p))));
+    expect(worst).toBeGreaterThan(0);
+  });
+
+  it('still runs the trunk up through the canopy rather than stopping under it', () => {
+    // The cover is bought by ending the trunk lower, so the obvious wrong fix
+    // is to end it below the foliage entirely -- which hides the trunk's top by
+    // leaving the crown floating over a stump.
+    for (const s of species) {
+      expect(trunkHeight(s)).toBeGreaterThan(bareTrunkHeight(s));
+      // Well up into the crown, not just past the lowest frond's base.
+      expect(trunkHeight(s)).toBeGreaterThan(0.5 * speciesHeight(s));
+    }
+    // ...and the pine's is still the longer of the two, as its silhouette wants.
+    expect(trunkHeight('pine')).toBeGreaterThan(trunkHeight('fir'));
   });
 });
