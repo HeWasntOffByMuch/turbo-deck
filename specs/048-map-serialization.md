@@ -1,0 +1,205 @@
+# 048 — Map serialization
+
+## Problem
+
+The world is not data. `createArenaWorld(seed)` builds one `TerrainLayer` whose
+`sample(x, z)` evaluates a hard-coded feature list on demand, `sampleChunk`
+re-derives corner heights and per-cell materials from it every time the renderer
+asks, and `worldVegetation(seed, world)` re-runs the scatter. Nothing is stored:
+the "map" is the tuple `(seed, the literal in world.ts)`, and the only way to
+change it is to edit TypeScript and rebuild.
+
+An editor cannot exist on top of that. Before any brush, any UI, or any tab, the
+world has to be expressible as a document that can be written out, read back, and
+meshed into a visually identical scene. This spec is that document and the two
+functions that cross between it and the live scene — nothing else. It is step 1
+of the map editor, and it deliberately ships no UI.
+
+The core move is a change of authority. Today the *field* is authoritative and
+chunks are a cache of it. After this spec a **baked chunk is authoritative** —
+its height array, its per-cell material, its props — and the feature list is
+demoted to a generator that produces the first bake. That is the inversion an
+editor needs: a brush edits arrays, not a closure.
+
+## Shape
+
+### The document
+
+One JSON object per map, plain arrays, no binary blobs, no embedded code.
+
+```ts
+interface MapDocument {
+  readonly version: 1;
+  /** The seed the map was baked from. Kept for provenance and corner jitter. */
+  readonly seed: number;
+  readonly grid: { readonly cellSize: number; readonly chunkCells: number };
+  readonly layers: readonly MapLayer[];
+  /**
+   * The sim's play rectangle, in WORLD space. The one documented exception to
+   * the chunk-local rule: a rect spanning many chunks has no chunk to be local
+   * to. Everything placed at a *point* is chunk-local.
+   */
+  readonly arena: MapRect;
+}
+
+interface MapLayer {
+  readonly id: string;
+  /** Seeds the corner jitter, which is why it must survive the round trip. */
+  readonly seed: number;
+  readonly bounds: MapRect;
+  readonly baseY: number;
+  readonly waterLevel: number | null;
+  readonly chunks: readonly MapChunk[];
+}
+
+interface MapChunk {
+  readonly cx: number;
+  readonly cz: number;
+  readonly cols: number;
+  readonly rows: number;
+  /** `(cols + 1) * (rows + 1)` corner heights, row-major in z, 3 decimals. */
+  readonly heights: readonly number[];
+  /** `cols * rows` cell values, run-length encoded as flat `value, count` pairs. */
+  readonly solid: readonly number[];
+  readonly materials: readonly number[];
+  readonly tones: readonly number[];
+  readonly props: readonly MapProp[];
+  readonly markers: readonly MapMarker[];
+  /** Baked walkability. Null until spec 048's step 8; the field exists from v1. */
+  readonly nav: readonly number[] | null;
+}
+
+/** Chunk-LOCAL position: world = chunk.originX + x, chunk.originZ + z. */
+interface MapProp {
+  readonly species: string;   // 'tree' | 'bush' today; open for the editor's palette
+  readonly x: number;
+  readonly z: number;
+  readonly rotation: number;
+  readonly scale: number;
+  readonly tint: number;
+}
+
+interface MapMarker {
+  readonly kind: 'spawn' | 'objective' | 'campfire' | 'trigger';
+  readonly id: string;
+  readonly x: number;         // chunk-local
+  readonly z: number;
+  readonly label?: string;
+}
+```
+
+### The two functions
+
+```ts
+/** Bake a live world + its props into a document. */
+function exportMap(input: {
+  world: TerrainWorld;
+  props: readonly Prop[];
+  seed: number;
+  arena: MapRect;
+  options?: ChunkOptions;
+}): MapDocument;
+
+/** Rebuild a world from a document. The returned world is array-backed. */
+function loadMap(doc: MapDocument): LoadedMap;
+
+interface LoadedMap {
+  readonly doc: MapDocument;
+  /** Implements TerrainWorld, so every existing consumer works unchanged. */
+  readonly world: TerrainWorld;
+  /** Ready-to-mesh chunks, identical in shape to `sampleChunk`'s output. */
+  readonly chunks: readonly TerrainChunk[];
+  /** Props back in world space, in document order. */
+  readonly props: readonly Prop[];
+}
+
+function serializeMap(doc: MapDocument): string;   // stable key order, diffable
+function parseMap(text: string): MapDocument;      // validates version + shape
+```
+
+### What is stored and what is recomputed
+
+Stored: heights, solidity, material index, tone, props, markers, and the handful
+of layer scalars. Recomputed on load from `(seed, cellSize, global corner index)`:
+the corner **jitter** and therefore `cornerX`/`cornerZ`, and the smooth corner
+**normals**. Those are pure functions of data already in the document, so storing
+them would triple the file for nothing and let it contradict itself.
+
+`TerrainRegion` is deliberately *not* stored. It exists only to feed `classify`,
+and a baked map's materials are authoritative — nothing re-classifies them.
+
+### The mesher
+
+`buildTerrainMesh(world)` currently samples the layer itself. It splits:
+
+```ts
+function buildTerrainMeshFromChunks(
+  chunks: readonly TerrainChunk[],
+  solidAt: (layerId: string, col: number, row: number) => boolean,
+  layers: readonly LayerSurface[],
+): TerrainMeshHandle;
+```
+
+with the existing signature kept as a wrapper that samples then delegates. The
+mesher gains no rules; it stops being the thing that decides *when* chunks are
+produced. That seam is what step 4's "rebuild just this patch" will re-enter.
+
+### Height reconstruction
+
+A baked layer has no continuous field, so `sample(x, z)` bilinearly interpolates
+the stored corner heights on the **nominal** lattice (ignoring jitter, which is
+bounded at 0.34 cells) and reads solidity from the containing cell. `heightAt`
+follows from that, unchanged.
+
+This means a loaded world's `heightAt` differs from the procedural world's by the
+interpolation error over one cell — visible nowhere, but real. The fix is not to
+chase exactness against the field; it is that after this spec the *bake* is what
+the scene stands on, so procedural and loaded agree because they are the same
+arrays.
+
+### Seam ownership
+
+A chunk stores `(cols+1)*(rows+1)` corners, so the corners along a shared edge
+exist in both neighbours — the same duplication `sampleChunk` already produces.
+The document does not de-duplicate them; instead a single writer owns the
+invariant: `MapChunkStore.setHeight(layerId, globalCol, globalRow, y)` writes
+every chunk that holds that corner. A brush that goes through the store cannot
+open a seam.
+
+## Invariants tested
+
+- **Round trip is stable.** `serializeMap(exportMap(x))` is byte-identical to
+  `serializeMap(loadMap(serializeMap(exportMap(x))).doc)`. Exporting an imported
+  map is a fixed point.
+- **Arrays survive exactly.** For every chunk, loaded `heights`, `solid`,
+  `materials` and `tones` equal the exported ones element for element (heights at
+  the document's 3-decimal quantum).
+- **Geometry survives.** Loaded chunks' `cornerX`/`cornerZ` equal a freshly
+  sampled chunk's exactly (same jitter inputs), and interior corner `normals`
+  match to 1e-6. Perimeter corners of the whole layer are exempt and asserted to
+  be unit-length only — they have no apron to reconstruct from.
+- **Props are chunk-local and reversible.** Every stored prop's `x`/`z` lie in
+  `[0, cols*cellSize]`, the prop is stored in the chunk that contains it, and
+  reloading returns the same world positions to 1e-3.
+- **Prop count is conserved.** No prop is dropped or duplicated by the bake, at
+  any chunk boundary.
+- **The bake is deterministic.** Two `exportMap` calls on the same seed produce
+  identical strings; two different seeds do not.
+- **Seams stay closed.** `setHeight` on a corner shared by up to four chunks
+  leaves all of them agreeing.
+- **RLE is lossless** for uniform, alternating and single-cell runs.
+- **`parseMap` rejects** a missing/unknown `version`, and a chunk whose array
+  lengths disagree with its `cols`/`rows`.
+- **A loaded world is a `TerrainWorld`.** `heightAt` over the play area is within
+  one cell's interpolation error of the procedural world it was baked from.
+
+## Out of scope
+
+- Every UI element: the editor tab, lil-gui, brushes, the cursor ring, markers'
+  visuals, save/load buttons, autosave, undo. Steps 2-8.
+- Nav baking. The `nav` field is reserved and written `null`.
+- Streaming or partial loading — a document is read whole.
+- Compression. The file is meant to be read and diffed by a human; if it needs to
+  shrink later, RLE already covers the repetitive half of it.
+- Changing what the shipped world looks like. `IsoScene` keeps building its world
+  procedurally; this spec only makes that world expressible as a document.
