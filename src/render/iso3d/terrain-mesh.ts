@@ -7,8 +7,8 @@ import {
   rectDepth,
   rectWidth,
   type ChunkOptions,
+  type MeshLayer,
   type TerrainChunk,
-  type TerrainLayer,
   type TerrainWorld,
 } from '../../terrain/index.js';
 import { TERRAIN_CLIFF_COLORS, TERRAIN_COLORS } from './palette.js';
@@ -111,9 +111,8 @@ class MeshBuffer {
  * would grow a wall down the middle of open ground.
  */
 function buildChunk(
-  layer: TerrainLayer,
+  layer: MeshLayer,
   chunk: TerrainChunk,
-  opt: ChunkOptions,
 ): { surface: THREE.BufferGeometry | null; walls: THREE.BufferGeometry | null } {
   const surface = new MeshBuffer();
   const walls = new MeshBuffer();
@@ -136,7 +135,7 @@ function buildChunk(
   const solidAt = (i: number, j: number): boolean =>
     i >= 0 && j >= 0 && i < cols && j < rows
       ? solid[j * cols + i] === 1
-      : layerCellSolid(layer, chunk.startCol + i, chunk.startRow + j, opt);
+      : layer.solidAt(chunk.startCol + i, chunk.startRow + j);
 
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
@@ -172,7 +171,7 @@ function buildChunk(
 }
 
 /** The layer's water surface: one flat translucent quad at its flood level. */
-function buildWater(layer: TerrainLayer): THREE.Mesh | null {
+function buildWater(layer: MeshLayer): THREE.Mesh | null {
   if (layer.waterLevel === null) return null;
   const geo = new THREE.PlaneGeometry(rectWidth(layer.bounds), rectDepth(layer.bounds));
   geo.rotateX(-Math.PI / 2);
@@ -194,23 +193,29 @@ function buildWater(layer: TerrainLayer): THREE.Mesh | null {
 }
 
 /**
- * Sample and mesh every layer of a world. One-shot: the world is meshed at
- * startup and never edited, so there is no streaming or rebuild path yet --
- * chunks exist so that adding one later is a change of *when* `buildChunk` is
- * called, not of what it produces.
+ * Mesh a set of already-sampled chunks. This is the seam the map editor enters
+ * through (spec 048): the mesher no longer decides *when* chunks are produced,
+ * only how to draw the ones it is handed -- so the same code path draws a world
+ * sampled from a feature list and one loaded out of a map document, and one day
+ * a single chunk rebuilt under a brush.
+ *
+ * Chunks are matched to their layer by `layerId`; a chunk naming a layer that
+ * was not supplied is skipped rather than guessed at.
  */
-export function buildTerrainMesh(
-  world: TerrainWorld,
-  opt: ChunkOptions = DEFAULT_CHUNK_OPTIONS,
+export function buildTerrainMeshFromChunks(
+  layers: readonly MeshLayer[],
+  chunks: readonly TerrainChunk[],
 ): TerrainMeshHandle {
   const group = new THREE.Group();
   const pickTargets: THREE.Object3D[] = [];
   const geometries: THREE.BufferGeometry[] = [];
   const materials: THREE.Material[] = [];
+  const byId = new Map(layers.map((layer) => [layer.id, layer]));
 
-  for (const layer of world.layers) {
-    for (const chunk of sampleLayer(layer, opt)) {
-      const { surface, walls } = buildChunk(layer, chunk, opt);
+  for (const layer of layers) {
+    for (const chunk of chunks) {
+      if (byId.get(chunk.layerId) !== layer) continue;
+      const { surface, walls } = buildChunk(layer, chunk);
       if (surface) {
         const mesh = new THREE.Mesh(surface, surfaceMaterial);
         // Ground both takes shadows and throws them (spec 045): a cliff casting
@@ -248,4 +253,24 @@ export function buildTerrainMesh(
       group.clear();
     },
   };
+}
+
+/**
+ * Sample and mesh every layer of a world -- the procedural path, unchanged in
+ * what it produces. It now goes through `buildTerrainMeshFromChunks`, so the
+ * generated world and a loaded document are drawn by exactly the same code.
+ */
+export function buildTerrainMesh(
+  world: TerrainWorld,
+  opt: ChunkOptions = DEFAULT_CHUNK_OPTIONS,
+): TerrainMeshHandle {
+  return buildTerrainMeshFromChunks(
+    world.layers.map((layer) => ({
+      id: layer.id,
+      bounds: layer.bounds,
+      waterLevel: layer.waterLevel,
+      solidAt: (col: number, row: number): boolean => layerCellSolid(layer, col, row, opt),
+    })),
+    world.layers.flatMap((layer) => sampleLayer(layer, opt)),
+  );
 }
