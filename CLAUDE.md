@@ -108,3 +108,36 @@ src/balance/     Monte Carlo balance harness logic (seeded bot policy + runner),
                  pure and testable; scripts/balance-harness.ts is its thin CLI
 scripts/         standalone scripts (e.g. the balance harness), run via tsx
 ```
+
+## Token Efficiency & Delegation
+
+**Delegate to cheaper/subagent models:**
+- Any output not needed in main context (log dumps, file listings, build output, dependency trees) → run via subagent, return only a distilled summary or pass/fail status.
+- Playwright/E2E test runs → execute via subagent, return only: pass/fail count, failing test names, and a 1-3 line failure reason. Never paste full stack traces or DOM dumps into main context unless a test fails and root cause is unclear — then request only the relevant excerpt.
+- Codebase/architecture exploration (reading through existing systems, tracing how a feature works) → delegate to a subagent using a lighter model (e.g. Sonnet), have it return a structured summary (files touched, key functions, data flow) instead of raw file contents.
+- Large refactors across many files → delegate per-file or per-module summaries, then synthesize.
+
+**Model tiering by task type:**
+- Cheap/fast model: search, grep, file listing, formatting/lint checks, summarizing logs, running test suites and reporting pass/fail.
+- Mid-tier model: straightforward implementation, boilerplate, routine bug fixes, writing tests, reading/summarizing architecture.
+- Top-tier model (main context): design decisions, cross-system changes, tricky/non-obvious bugs, anything requiring full project context or judgment calls.
+- Default to the cheapest model capable of the task; escalate only when a subagent's output is ambiguous, low-confidence, or the task spans multiple systems.
+
+**Screenshots & visual artifacts:**
+- Save Playwright/manual test screenshots to the working branch (e.g. `test-results/` or `.claude/screenshots/`), do not embed them in context.
+- Only load a screenshot into context if a test fails and visual inspection is required to debug — load just that one image, not the batch.
+
+**Ephemeral scratch files:**
+- Subagents doing exploration, multi-step reasoning, or trial-and-error should write intermediate work to a temp file (e.g. `.claude/scratch/<task>.md`) instead of streaming it into context.
+- Only the final summary/result gets pulled into main context; scratch files stay on disk for reference if needed later.
+- Clear or gitignore `.claude/scratch/` periodically — treat it as disposable, not part of the permanent record.
+
+**General token discipline:**
+- Prefer `grep`/targeted reads over full-file dumps when only a function or section is relevant.
+- When summarizing multi-file changes, report diffs/deltas, not full file contents.
+- Cache/reuse architecture summaries from subagents instead of re-reading the same files each session — write them to a `docs/` or `.claude/notes/` file and reference that first.
+- Batch related subagent calls instead of issuing them one at a time when the tasks are independent.
+- Truncate long tool outputs (build logs, package installs) to last N lines + error lines unless full output is explicitly requested.
+- For iterative work (e.g. fixing a failing test loop), keep only the current failure state in context — don't accumulate prior failed attempts' full output.
+
+Apply these by default without asking for confirmation, unless the task explicitly requires full detail in-context.
