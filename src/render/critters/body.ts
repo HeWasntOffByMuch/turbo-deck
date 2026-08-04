@@ -24,14 +24,14 @@
  */
 
 import { BONE, type FigureMetrics } from '../cloth/figure.js';
+import { hullExtent } from './resolve.js';
+import type { CoatRole, HullRing, PaintBlob, PartSpec } from './types.js';
 
 /**
  * Facet irregularity on limbs and ears. Lower than a body's: a limb is only a
  * few units across, so the same fraction reads as a much bigger wobble.
  */
 const LIMB_JITTER = 0.07;
-import { hullExtent } from './resolve.js';
-import type { CoatRole, HullRing, PaintBlob, PartSpec } from './types.js';
 
 /**
  * A ball centred exactly on a joint's pivot, filling the wedge that opens
