@@ -15,6 +15,7 @@
     "build": "vite build",
     "dev": "vite",
     "server": "tsx src/server/index.ts",
+    "server:bots": "tsx scripts/server-bot.ts",
     "balance": "tsx scripts/balance-harness.ts",
     "bake:sprites": "tsx scripts/bake-dude-atlas.ts"
   },
