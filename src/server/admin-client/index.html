@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>turbo-deck admin</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0; padding: 16px;
+        font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: #14161a; color: #d6dae0;
+      }
+      h1 { font-size: 15px; margin: 0 0 12px; letter-spacing: 0.04em; text-transform: uppercase; color: #8fa5c0; }
+      h2 { font-size: 12px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.06em; color: #6f7d8f; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+      fieldset { border: 1px solid #2b313a; border-radius: 6px; padding: 10px 12px 12px; margin: 0; }
+      legend { padding: 0 6px; color: #8fa5c0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+      input, select, button, textarea {
+        font: inherit; background: #1c2028; color: #d6dae0;
+        border: 1px solid #333a45; border-radius: 4px; padding: 4px 6px;
+      }
+      input, select { width: 100%; box-sizing: border-box; margin-bottom: 6px; }
+      button { cursor: pointer; background: #223047; border-color: #35507a; }
+      button:hover { background: #2c3f5e; }
+      button.wide { width: 100%; }
+      table { border-collapse: collapse; width: 100%; font-size: 12px; }
+      th, td { text-align: left; padding: 3px 8px 3px 0; border-bottom: 1px solid #23272e; white-space: nowrap; }
+      th { color: #6f7d8f; font-weight: normal; }
+      #log { height: 180px; overflow: auto; background: #0f1114; border: 1px solid #23272e; border-radius: 6px; padding: 8px; margin-top: 12px; }
+      .ok { color: #7fce8c; } .err { color: #e2757b; } .dim { color: #6f7d8f; }
+      .row { display: flex; gap: 6px; }
+      .row > * { flex: 1; }
+      #status { float: right; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>turbo-deck admin <span id="status" class="dim">disconnected</span></h1>
+
+    <fieldset>
+      <legend>connection</legend>
+      <div class="row">
+        <input id="url" placeholder="ws://localhost:8787" />
+        <input id="token" placeholder="admin JWT (printed by the server on boot)" />
+      </div>
+      <button id="connect" class="wide">connect &amp; authenticate</button>
+    </fieldset>
+
+    <div class="grid" style="margin-top: 12px">
+      <fieldset>
+        <legend>players</legend>
+        <button id="refresh" class="wide">list connected players</button>
+        <div style="overflow-x: auto; margin-top: 8px"><table id="players"></table></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>moderation</legend>
+        <input id="modPlayer" placeholder="player id" />
+        <input id="modReason" placeholder="reason" />
+        <input id="modSeconds" type="number" value="300" placeholder="seconds (0 = permanent)" />
+        <div class="row">
+          <button data-act="kick">kick</button>
+          <button data-act="ban">ban</button>
+          <button data-act="mute">mute</button>
+          <button data-act="unmute">unmute</button>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>teleport</legend>
+        <input id="tpPlayer" placeholder="player id" />
+        <div class="row"><input id="tpX" type="number" value="600" /><input id="tpY" type="number" value="450" /></div>
+        <button data-act="teleport" class="wide">teleport</button>
+      </fieldset>
+
+      <fieldset>
+        <legend>entities</legend>
+        <select id="spawnType">
+          <option value="grazer">grazer</option>
+          <option value="stalker">stalker</option>
+          <option value="ravager">ravager</option>
+        </select>
+        <div class="row"><input id="spawnX" type="number" value="600" /><input id="spawnY" type="number" value="450" /><input id="spawnCount" type="number" value="3" /></div>
+        <div class="row">
+          <button data-act="spawn">spawn</button>
+          <button data-act="despawn">despawn id</button>
+        </div>
+        <input id="despawnId" type="number" placeholder="entity id" />
+      </fieldset>
+
+      <fieldset>
+        <legend>world events</legend>
+        <select id="eventName">
+          <option value="raid">raid (magnitude = count)</option>
+          <option value="clear">clear (magnitude = radius)</option>
+          <option value="heal">heal all players</option>
+        </select>
+        <div class="row"><input id="evX" type="number" value="600" /><input id="evY" type="number" value="450" /><input id="evMag" type="number" value="5" /></div>
+        <button data-act="event" class="wide">trigger</button>
+      </fieldset>
+
+      <fieldset>
+        <legend>broadcast</legend>
+        <input id="bcText" placeholder="message to every player" />
+        <button data-act="broadcast" class="wide">send</button>
+      </fieldset>
+
+      <fieldset>
+        <legend>live config</legend>
+        <button id="getConfig" class="wide">read current config</button>
+        <div class="row" style="margin-top: 6px">
+          <input id="cfgKey" placeholder="key" />
+          <input id="cfgValue" type="number" step="any" placeholder="value" />
+        </div>
+        <button data-act="setConfig" class="wide">set (no restart)</button>
+        <table id="config" style="margin-top: 8px"></table>
+      </fieldset>
+
+      <fieldset>
+        <legend>audit log</legend>
+        <button id="getAudit" class="wide">last 50 admin actions</button>
+        <div style="overflow-x: auto; margin-top: 8px"><table id="audit"></table></div>
+      </fieldset>
+    </div>
+
+    <div id="log"></div>
+
+    <script>
+      // --- the same binary protocol the server speaks, by hand -------------
+      const T = {
+        Auth: 0x80, ListPlayers: 0x81, Kick: 0x82, Ban: 0x83, Mute: 0x84,
+        Teleport: 0x85, Spawn: 0x86, Despawn: 0x87, Event: 0x88,
+        Broadcast: 0x89, SetConfig: 0x8a, GetConfig: 0x8b, GetAudit: 0x8c,
+      };
+      const R = { Ok: 0xa0, Error: 0xa1, PlayerList: 0xa2, Config: 0xa3, Audit: 0xa4 };
+      const NAMES = Object.fromEntries(Object.entries(T).map(([k, v]) => [v, k]));
+
+      class W {
+        constructor() { this.bytes = []; }
+        u8(v) { this.bytes.push(v & 0xff); return this; }
+        u16(v) { this.bytes.push(v & 0xff, (v >> 8) & 0xff); return this; }
+        u32(v) { for (let i = 0; i < 4; i++) this.bytes.push((v >>> (i * 8)) & 0xff); return this; }
+        f32(v) { const b = new Uint8Array(4); new DataView(b.buffer).setFloat32(0, v, true); this.bytes.push(...b); return this; }
+        f64(v) { const b = new Uint8Array(8); new DataView(b.buffer).setFloat64(0, v, true); this.bytes.push(...b); return this; }
+        varuint(v) { let n = Math.max(0, Math.floor(v)); do { const s = n & 0x7f; n = Math.floor(n / 128); this.u8(n > 0 ? s | 0x80 : s); } while (n > 0); return this; }
+        str(s) { const e = new TextEncoder().encode(String(s ?? '')); this.varuint(e.length); this.bytes.push(...e); return this; }
+        out() { return new Uint8Array(this.bytes); }
+      }
+
+      class Rd {
+        constructor(buf) { this.b = new Uint8Array(buf); this.v = new DataView(this.b.buffer); this.o = 0; }
+        u8() { return this.v.getUint8(this.o++); }
+        u32() { const x = this.v.getUint32(this.o, true); this.o += 4; return x; }
+        f32() { const x = this.v.getFloat32(this.o, true); this.o += 4; return x; }
+        f64() { const x = this.v.getFloat64(this.o, true); this.o += 8; return x; }
+        bool() { return this.u8() !== 0; }
+        varuint() { let r = 0, s = 1; for (;;) { const b = this.u8(); r += (b & 0x7f) * s; if (!(b & 0x80)) return r; s *= 128; } }
+        str() { const n = this.varuint(); const s = new TextDecoder().decode(this.b.subarray(this.o, this.o + n)); this.o += n; return s; }
+      }
+
+      let socket = null;
+      const $ = (id) => document.getElementById(id);
+      const val = (id) => $(id).value.trim();
+      const num = (id) => Number($(id).value);
+
+      function log(text, cls) {
+        const line = document.createElement('div');
+        if (cls) line.className = cls;
+        line.textContent = new Date().toLocaleTimeString() + '  ' + text;
+        $('log').prepend(line);
+      }
+
+      function send(bytes) {
+        if (!socket || socket.readyState !== WebSocket.OPEN) { log('not connected', 'err'); return; }
+        socket.send(bytes);
+      }
+
+      $('url').value = location.protocol === 'https:' ? 'wss://' + location.host : 'ws://' + (location.host || 'localhost:8787');
+
+      $('connect').onclick = () => {
+        if (socket) socket.close();
+        socket = new WebSocket(val('url'));
+        socket.binaryType = 'arraybuffer';
+        socket.onopen = () => {
+          $('status').textContent = 'connected';
+          $('status').className = 'ok';
+          send(new W().u8(T.Auth).str(val('token')).out());
+        };
+        socket.onclose = () => { $('status').textContent = 'disconnected'; $('status').className = 'dim'; };
+        socket.onerror = () => log('socket error', 'err');
+        socket.onmessage = (event) => handle(new Rd(event.data));
+      };
+
+      function handle(r) {
+        const type = r.u8();
+        if (type === R.Ok) { const req = r.u8(); log((NAMES[req] || req) + ': ' + r.str(), 'ok'); return; }
+        if (type === R.Error) { const req = r.u8(); log((NAMES[req] || req) + ': ' + r.str(), 'err'); return; }
+        if (type === R.PlayerList) {
+          const count = r.varuint();
+          const rows = [];
+          for (let i = 0; i < count; i++) {
+            rows.push({
+              playerId: r.str(), displayName: r.str(), entityId: r.varuint(),
+              x: r.f32(), y: r.f32(), z: r.f32(), zone: r.str(), chunk: r.str(),
+              health: r.f32(), maxHealth: r.f32(), level: r.varuint(),
+              attackDamage: r.f32(), moveSpeed: r.f32(), muted: r.bool(),
+            });
+          }
+          renderTable('players',
+            ['player', 'name', 'ent', 'x', 'y', 'zone', 'chunk', 'hp', 'lvl', 'dmg', 'spd', 'muted'],
+            rows.map((p) => [p.playerId, p.displayName, p.entityId, p.x.toFixed(0), p.y.toFixed(0),
+              p.zone, p.chunk, p.health.toFixed(0) + '/' + p.maxHealth.toFixed(0),
+              p.level, p.attackDamage.toFixed(1), p.moveSpeed.toFixed(0), p.muted ? 'yes' : '']));
+          log(count + ' player(s) online', 'dim');
+          return;
+        }
+        if (type === R.Config) {
+          const count = r.varuint();
+          const rows = [];
+          for (let i = 0; i < count; i++) rows.push([r.str(), r.f64()]);
+          renderTable('config', ['key', 'value'], rows);
+          return;
+        }
+        if (type === R.Audit) {
+          const count = r.varuint();
+          const rows = [];
+          for (let i = 0; i < count; i++) {
+            const at = r.f64(), actor = r.str(), action = r.str(), target = r.str(), detail = r.str(), accepted = r.bool();
+            rows.push([new Date(at).toLocaleTimeString(), actor, action, target, detail, accepted ? 'ok' : 'REFUSED']);
+          }
+          renderTable('audit', ['when', 'who', 'what', 'target', 'detail', ''], rows);
+          return;
+        }
+        log('unhandled reply type 0x' + type.toString(16), 'dim');
+      }
+
+      function renderTable(id, headers, rows) {
+        const table = $(id);
+        table.innerHTML = '';
+        const head = table.insertRow();
+        for (const h of headers) { const th = document.createElement('th'); th.textContent = h; head.append(th); }
+        for (const row of rows) {
+          const tr = table.insertRow();
+          for (const cell of row) tr.insertCell().textContent = String(cell);
+        }
+      }
+
+      const actions = {
+        kick: () => new W().u8(T.Kick).str(val('modPlayer')).str(val('modReason')).out(),
+        ban: () => new W().u8(T.Ban).str(val('modPlayer')).u32(num('modSeconds')).str(val('modReason')).out(),
+        mute: () => new W().u8(T.Mute).str(val('modPlayer')).u32(num('modSeconds')).out(),
+        unmute: () => new W().u8(T.Mute).str(val('modPlayer')).u32(0).out(),
+        teleport: () => new W().u8(T.Teleport).str(val('tpPlayer')).f32(num('tpX')).f32(num('tpY')).out(),
+        spawn: () => new W().u8(T.Spawn).str(val('spawnType')).f32(num('spawnX')).f32(num('spawnY')).u16(num('spawnCount')).out(),
+        despawn: () => new W().u8(T.Despawn).varuint(num('despawnId')).out(),
+        event: () => new W().u8(T.Event).str(val('eventName')).f32(num('evX')).f32(num('evY')).f32(num('evMag')).out(),
+        broadcast: () => new W().u8(T.Broadcast).str(val('bcText')).out(),
+        setConfig: () => new W().u8(T.SetConfig).str(val('cfgKey')).f64(num('cfgValue')).out(),
+      };
+
+      for (const button of document.querySelectorAll('button[data-act]')) {
+        button.onclick = () => send(actions[button.dataset.act]());
+      }
+      $('refresh').onclick = () => send(new W().u8(T.ListPlayers).out());
+      $('getConfig').onclick = () => send(new W().u8(T.GetConfig).out());
+      $('getAudit').onclick = () => send(new W().u8(T.GetAudit).u16(50).out());
+    </script>
+  </body>
+</html>
