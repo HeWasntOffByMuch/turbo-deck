@@ -342,6 +342,23 @@ export interface CastRejectedMessage {
   readonly reason: string;
 }
 
+/**
+ * What the owner may not do yet, and until when (spec 065).
+ *
+ * Sent to one connection: its own entity's cooldown map, whole, whenever it
+ * changes. Whole rather than as a diff because it is a handful of entries and a
+ * diff would need its own removal encoding to express a refund -- which is the
+ * case that matters, since cancelling clears a cooldown.
+ *
+ * The client subtracts `readyAtTick` from the tick it is drawing to get the
+ * remaining sweep. It never computes a cooldown's *length*; that stays a server
+ * fact read from the ability table.
+ */
+export interface CooldownsMessage {
+  readonly type: typeof ServerMessageType.Cooldowns;
+  readonly entries: readonly { readonly abilityId: string; readonly readyAtTick: number }[];
+}
+
 export type ServerMessage =
   | WelcomeMessage
   | DeltaMessage
@@ -355,7 +372,8 @@ export type ServerMessage =
   | CastStateMessage
   | CastEndedMessage
   | EffectMessage
-  | CastRejectedMessage;
+  | CastRejectedMessage
+  | CooldownsMessage;
 
 // Field bits, duplicated here as plain numbers so the hot encode path is a
 // bitmask test rather than a property lookup. Kept in sync with protocol.ts.
@@ -474,6 +492,10 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
         .f32(message.correctionThreshold)
         .u32(message.worldSeed);
       break;
+    case ServerMessageType.Cooldowns:
+      writer.varuint(message.entries.length);
+      for (const entry of message.entries) writer.str(entry.abilityId).u32(entry.readyAtTick);
+      break;
     case ServerMessageType.Delta:
       writer.u32(message.tick).varuint(message.ackInputSeq).varuint(message.removed.length);
       for (const id of message.removed) writer.varuint(id);
@@ -563,6 +585,14 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         correctionThreshold: reader.f32(),
         worldSeed: reader.u32(),
       };
+    case ServerMessageType.Cooldowns: {
+      const count = reader.varuint();
+      const entries: { abilityId: string; readyAtTick: number }[] = [];
+      for (let i = 0; i < count; i++) {
+        entries.push({ abilityId: reader.str(), readyAtTick: reader.u32() });
+      }
+      return { type: ServerMessageType.Cooldowns, entries };
+    }
     case ServerMessageType.Delta: {
       const tick = reader.u32();
       const ackInputSeq = reader.varuint();

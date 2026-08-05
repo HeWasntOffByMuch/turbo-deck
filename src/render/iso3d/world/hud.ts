@@ -19,6 +19,7 @@ import type { ClientView } from '../../../server/client/game-client.js';
 import type { ScreenAnchor } from './scene.js';
 import { abilityById, type AbilityDefinition } from '../../../server/data/abilities.js';
 import { EntityKind } from '../../../server/net/protocol.js';
+import { SERVER_TICK_RATE } from '../../../server/config.js';
 import { castBar } from './cast.js';
 import { appearanceOf } from './appearance.js';
 
@@ -94,11 +95,30 @@ export function createHud(): HudHandle {
     button.style.cssText =
       'width:92px;padding:6px 4px;border-radius:6px;border:1px solid #33405a;background:#182130;' +
       'color:#cfd6e0;cursor:pointer;font:inherit;text-align:center;line-height:1.5;';
+    button.style.position = 'relative';
+    button.style.overflow = 'hidden';
     button.innerHTML = `<b>${index + 1}</b><br>${ability?.name ?? abilityId}`;
     button.title = ability?.description ?? '';
     button.addEventListener('click', () => useHandler(abilityId));
+
+    // The cooldown sweep: a shade that drains off the bottom as the ability
+    // comes back. Drawn under the label rather than over it, so a greyed button
+    // is still readable.
+    const sweep = document.createElement('div');
+    sweep.style.cssText =
+      'position:absolute;left:0;right:0;bottom:0;height:0;background:rgba(8,12,20,.72);' +
+      'pointer-events:none;';
+    button.append(sweep);
+
+    const remaining = document.createElement('span');
+    remaining.style.cssText =
+      'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;' +
+      'font:700 15px ui-monospace,Menlo,monospace;color:#e8eef6;text-shadow:0 1px 2px #000;' +
+      'pointer-events:none;';
+    button.append(remaining);
+
     bar.append(button);
-    return { abilityId, ability, button };
+    return { abilityId, ability, button, sweep, remaining };
   });
 
   const bars = new Map<number, Bar>();
@@ -215,6 +235,20 @@ export function createHud(): HudHandle {
       const requested = view.requestedAbilityId === slot.abilityId;
       slot.button.style.borderColor = casting ? '#ffcf6b' : requested ? '#5c7ba6' : '#33405a';
       slot.button.style.opacity = affordable(view, slot.ability) ? '1' : '0.45';
+
+      // The sweep is the server's cooldown, played back (spec 065). Its *length*
+      // comes from the ability table so the shade shrinks proportionally; the
+      // client never decides when something is ready.
+      const readyAt = view.cooldowns[slot.abilityId] ?? 0;
+      const left = readyAt - tick;
+      const total = Math.max(1, slot.ability?.cooldownTicks ?? 1);
+      if (left > 0) {
+        slot.sweep.style.height = `${Math.min(1, left / total) * 100}%`;
+        slot.remaining.textContent = formatSeconds(left / SERVER_TICK_RATE);
+      } else {
+        slot.sweep.style.height = '0';
+        slot.remaining.textContent = '';
+      }
     }
 
     const self = view.entities.find((entity) => entity.id === view.selfEntityId);
@@ -254,6 +288,13 @@ export function createHud(): HudHandle {
       useHandler = handler;
     },
   };
+}
+
+/** A cooldown countdown: whole seconds while there are several, tenths at the end. */
+function formatSeconds(seconds: number): string {
+  if (seconds >= 10) return String(Math.ceil(seconds));
+  if (seconds >= 1) return seconds.toFixed(1);
+  return seconds.toFixed(1);
 }
 
 /** Whether the player could pay for an ability right now. Cosmetic dimming only. */

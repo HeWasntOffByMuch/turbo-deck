@@ -446,6 +446,83 @@ describe('calling off a cast', () => {
 });
 
 /**
+ * Cooldowns on the wire (spec 065). Before this the client could not know an
+ * ability was unavailable until it asked and was refused, so a hotbar button had
+ * nothing to draw.
+ */
+describe('cooldowns', () => {
+  it('start empty, and are announced when a cast spends one', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+    expect(client.view().cooldowns).toEqual({});
+
+    client.useAbility('melee.heavy', 900, 500);
+    await settle();
+    test.server.tick();
+    await settle();
+
+    const readyAt = client.view().cooldowns['melee.heavy'];
+    expect(readyAt).toBeGreaterThan(0);
+    // And it is the server's number, not one the client worked out.
+    const entityId = client.view().selfEntityId;
+    expect(readyAt).toBe(test.server.world.entities.get(entityId)?.cooldowns['melee.heavy']);
+  });
+
+  it('are withdrawn again when a cancel refunds them', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+
+    client.useAbility('melee.heavy', 900, 500);
+    await settle();
+    test.server.tick();
+    await settle();
+    expect(client.view().cooldowns['melee.heavy']).toBeGreaterThan(0);
+
+    client.cancelCast();
+    await settle();
+    test.server.tick();
+    await settle();
+    expect(client.view().cooldowns['melee.heavy']).toBeUndefined();
+  });
+
+  /**
+   * An entry the client already holds goes stale on its own: nothing needs to be
+   * sent, because `readyAtTick` is in the past and the client's own subtraction
+   * comes out negative. What must not happen is a *fresh* frame carrying it.
+   */
+  it('leaves an expired entry inert, and never re-sends it', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+
+    const slash = abilityById('melee.slash');
+    expect(slash).toBeDefined();
+    if (!slash) return;
+
+    client.useAbility('melee.slash', 900, 500);
+    await settle();
+    for (let i = 0; i < slash.cooldownTicks + slash.windupTicks + 10; i++) {
+      test.server.tick();
+      await settle();
+    }
+
+    // Held, but in the past -- the button draws no sweep.
+    const readyAt = client.view().cooldowns['melee.slash'] ?? 0;
+    expect(readyAt).toBeLessThan(test.server.world.tick);
+
+    // Casting something else re-sends the map, and the dead entry is not in it.
+    client.useAbility('melee.heavy', 900, 500);
+    await settle();
+    test.server.tick();
+    await settle();
+    expect(client.view().cooldowns['melee.slash']).toBeUndefined();
+    expect(client.view().cooldowns['melee.heavy']).toBeGreaterThan(0);
+  });
+});
+
+/**
  * Turning (spec 064). The client asks for a heading; the server decides how much
  * of that turn actually happens this tick.
  */

@@ -46,6 +46,12 @@ export const ServerMessageType = {
   Effect: 0x4b,
   /** An ability the server refused, and why. */
   CastRejected: 0x4c,
+  /**
+   * The owner's live cooldowns (spec 065). Sent only to the player they belong
+   * to, and only when they change -- a cooldown nobody can act on is nobody
+   * else's business.
+   */
+  Cooldowns: 0x4d,
 } as const;
 
 export const AdminMessageType = {

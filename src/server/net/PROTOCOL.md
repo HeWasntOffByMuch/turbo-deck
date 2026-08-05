@@ -164,6 +164,22 @@ Every one of these is derived server-side from base stats, skill levels and
 equipped item ids. None is ever persisted, and none is ever accepted from a
 client.
 
+### `0x4d Cooldowns`
+`varuint count` · then per entry: `str abilityId` · `u32 readyAtTick`
+
+The owner's live cooldowns (spec 065). Sent only to the connection they belong
+to, and only when the map changes — a cooldown nobody else can act on is nobody
+else's business.
+
+Whole rather than as a diff: it is a handful of entries, and a diff would need
+its own removal encoding to express a refund, which is precisely the case that
+matters since cancelling a wind-up clears a cooldown.
+
+Entries already expired when the frame is built are omitted. One that expires
+later, with no cast in between, is simply left with the client: `readyAtTick` is
+in the past, so the client's own `readyAtTick - tick` is negative and it draws
+nothing.
+
 ### `0x45 Chat` — `u8 channel` · `str from` · `str text`
 `channel`: `0` say, `1` system, `2` admin broadcast.
 

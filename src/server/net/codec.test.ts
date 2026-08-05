@@ -173,6 +173,14 @@ describe('game message round-trip', () => {
       stats: STATS,
     },
     { type: ServerMessageType.Chat, channel: 2, from: 'Server', text: 'be nice' },
+    {
+      type: ServerMessageType.Cooldowns,
+      entries: [
+        { abilityId: 'melee.heavy', readyAtTick: 1800 },
+        { abilityId: 'ground.quake', readyAtTick: 2400 },
+      ],
+    },
+    { type: ServerMessageType.Cooldowns, entries: [] },
     { type: ServerMessageType.Pong, nonce: 88, serverTick: 1000 },
     { type: ServerMessageType.Error, code: 7, message: 'rejected' },
     { type: ServerMessageType.Disconnect, reason: 'kicked' },

@@ -81,6 +81,12 @@ export interface ClientView {
    * local "the button was pressed" hint: the server decides, and clears it.
    */
   readonly requestedAbilityId: string | null;
+  /**
+   * Ability id -> the tick it may next be used (spec 065). Straight from the
+   * server; the client subtracts the tick it is drawing to get the sweep, and
+   * never works out how long a cooldown is for itself.
+   */
+  readonly cooldowns: Readonly<Record<string, number>>;
 }
 
 type CombatListener = (result: CombatResultMessage) => void;
@@ -123,6 +129,7 @@ export class GameClient {
   private readonly castRejectedListeners: CastRejectedListener[] = [];
   private readonly casts = new Map<number, KnownCast>();
   private requestedAbilityId: string | null = null;
+  private cooldowns: Readonly<Record<string, number>> = {};
 
   constructor(
     private readonly channel: Channel,
@@ -258,6 +265,7 @@ export class GameClient {
       connected: this.connected,
       casts: [...this.casts.values()],
       requestedAbilityId: this.requestedAbilityId,
+      cooldowns: this.cooldowns,
     };
   }
 
@@ -358,6 +366,12 @@ export class GameClient {
         for (const listener of this.castRejectedListeners) {
           listener(message.abilityId, message.reason);
         }
+        break;
+
+      case ServerMessageType.Cooldowns:
+        this.cooldowns = Object.fromEntries(
+          message.entries.map((entry) => [entry.abilityId, entry.readyAtTick]),
+        );
         break;
 
       case ServerMessageType.Pong:

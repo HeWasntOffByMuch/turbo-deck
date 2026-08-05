@@ -128,6 +128,12 @@ interface Connection {
   /** Tick this player is put back on their feet; 0 when they are alive. */
   respawnAtTick: number;
   /**
+   * The cooldown map last sent to this client. Compared by *identity*: entities
+   * are immutable and the map is only rebuilt when it actually changes, so this
+   * is a pointer compare per connection per tick rather than a walk.
+   */
+  sentCooldowns: Readonly<Record<string, number>> | null;
+  /**
    * An ability asked for since the last tick, and whether a cancel was asked
    * for. Held here rather than on the input frame because a client sends them
    * as their own messages, and they must not be lost if no movement input
@@ -213,6 +219,7 @@ export class GameServer implements AdminHost {
       respawnAtTick: 0,
       pendingCast: null,
       pendingCancel: false,
+      sentCooldowns: null,
     };
     this.connections.add(connection);
     channel.onMessage((bytes) => {
@@ -487,6 +494,32 @@ export class GameServer implements AdminHost {
     }
   }
 
+  /**
+   * Tells a client what it may not use yet (spec 065). Only on change, and only
+   * to the owner -- a cooldown is not something another player can act on.
+   *
+   * Entries already expired at send time are stripped -- the sim never prunes
+   * its own map, keeping it a pure function of what has been cast rather than of
+   * when it was last swept. An entry that expires *later*, with no cast in
+   * between, is simply left with the client: its `readyAtTick` is in the past, so
+   * the client's own `readyAtTick - tick` is negative and it draws nothing. The
+   * map is keyed by ability id, so it is bounded by the ability table either way.
+   */
+  private sendCooldowns(connection: Connection, tick: number): void {
+    if (connection.entityId < 0) return;
+    const entity = this.state.entities.get(connection.entityId);
+    if (!entity) return;
+    if (entity.cooldowns === connection.sentCooldowns) return;
+    connection.sentCooldowns = entity.cooldowns;
+
+    this.send(connection, {
+      type: ServerMessageType.Cooldowns,
+      entries: Object.entries(entity.cooldowns)
+        .filter(([, readyAtTick]) => readyAtTick > tick)
+        .map(([abilityId, readyAtTick]) => ({ abilityId, readyAtTick })),
+    });
+  }
+
   private sendStats(connection: Connection): void {
     if (connection.playerId === null) return;
     const session = this.players.get(connection.playerId);
@@ -589,6 +622,9 @@ export class GameServer implements AdminHost {
     // and ride the broadcast divisor instead (spec 057): the world advances at
     // 60Hz, clients hear about it at 20.
     this.dispatchEvents(result.events);
+    // Cooldowns ride the same reasoning as corrections: rare, owner-only, and
+    // the point of them is that the button greys out the moment it is spent.
+    for (const connection of this.connections) this.sendCooldowns(connection, this.state.tick);
     if (this.state.tick % BROADCAST_EVERY_N_TICKS === 0) this.broadcastDeltas();
   }
 
