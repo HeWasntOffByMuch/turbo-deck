@@ -21,6 +21,11 @@
  * character being yanked backwards.
  */
 
+import { pushOutOfObstacles, slideCircle } from '../../sim/collision.js';
+import type { WorldColliders } from '../../sim/types.js';
+import { isWalkable } from '../sim/movement.js';
+import type { TerrainSampler } from '../world/terrain.js';
+
 export interface PredictedInput {
   readonly seq: number;
   readonly moveX: number;
@@ -54,6 +59,59 @@ export function createFlatPredictor(speed: number, tickRate: number): PredictSte
     if (length <= 1e-6) return from;
     const scale = (length > 1 ? 1 / length : 1) * perTick;
     return { x: from.x + input.moveX * scale, y: from.y + input.moveY * scale };
+  };
+}
+
+/**
+ * Prediction against the world the server is actually colliding against
+ * (spec 063).
+ *
+ * The flat predictor above walks through walls and off cliffs and lets the
+ * server put it back, which is fine at 100 units of open ground and terrible in
+ * a forest -- and the iso renderer draws the forest. Every tree is a place the
+ * flat guess keeps walking and the server does not, so the correction threshold
+ * is crossed and the player is snapped backwards out of a trunk they can see.
+ *
+ * This runs the same three steps the server's `resolveMovement` does, against
+ * the same colliders and the same heightfield, from `buildWorld`. It is not
+ * exact -- it does not know about knockback, hitstop or another body pressing on
+ * it, all of which are the server's alone -- but it agrees everywhere terrain
+ * and vegetation are the only thing in the way, which is where the corrections
+ * were coming from.
+ */
+export function createWorldPredictor(options: {
+  readonly world: WorldColliders;
+  readonly terrain: TerrainSampler;
+  readonly radius: number;
+  readonly speed: number;
+  readonly tickRate: number;
+}): PredictStep {
+  const perTick = options.speed / options.tickRate;
+  return (from, input) => {
+    const length = Math.hypot(input.moveX, input.moveY);
+    if (length <= 1e-6) return from;
+    const scale = (length > 1 ? 1 / length : 1) * perTick;
+    const dx = input.moveX * scale;
+    const dy = input.moveY * scale;
+
+    let landed = slideCircle(from, dx, dy, options.radius, options.world);
+
+    // The heightfield half, mirroring the server: try each axis alone before
+    // refusing, so running along a shoreline slides instead of sticking.
+    const standingOn = { x: from.x, y: from.y, z: options.terrain.heightAt(from.x, from.y) };
+    if ((landed.x !== from.x || landed.y !== from.y) && !isWalkable(standingOn, landed.x, landed.y, options.terrain)) {
+      const alongX = { x: landed.x, y: from.y };
+      const alongY = { x: from.x, y: landed.y };
+      if (alongX.x !== from.x && isWalkable(standingOn, alongX.x, alongX.y, options.terrain)) {
+        landed = alongX;
+      } else if (alongY.y !== from.y && isWalkable(standingOn, alongY.x, alongY.y, options.terrain)) {
+        landed = alongY;
+      } else {
+        landed = from;
+      }
+    }
+
+    return pushOutOfObstacles(landed, options.radius, options.world);
   };
 }
 

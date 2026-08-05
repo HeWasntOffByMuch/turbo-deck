@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { buildWorld } from '../world/build.js';
+import { circleBlocked } from '../../sim/collision.js';
 import { SERVER_TICK_RATE } from '../config.js';
-import { createFlatPredictor, PredictionBuffer, type PredictedInput } from './prediction.js';
+import {
+  createFlatPredictor,
+  createWorldPredictor,
+  PredictionBuffer,
+  type PredictedInput,
+} from './prediction.js';
 
 const SPEED = 200;
 const PER_TICK = SPEED / SERVER_TICK_RATE;
@@ -102,5 +109,95 @@ describe('reconciliation', () => {
     local.apply(input(1));
     expect(local.divergenceFrom({ x: PER_TICK, y: 0 })).toBeCloseTo(0, 9);
     expect(local.divergenceFrom({ x: PER_TICK + 3, y: 4 })).toBeCloseTo(5, 9);
+  });
+});
+
+/**
+ * Spec 063. The flat predictor walks through walls and lets the server put it
+ * back, which is invisible on empty ground and unacceptable once the renderer
+ * draws the forest the server is colliding against.
+ */
+describe('predicting against the real world', () => {
+  const world = buildWorld(9);
+  const RADIUS = 16;
+
+  const aware = createWorldPredictor({
+    world: world.colliders,
+    terrain: world.sampler,
+    radius: RADIUS,
+    speed: SPEED,
+    tickRate: SERVER_TICK_RATE,
+  });
+  const flat = createFlatPredictor(SPEED, SERVER_TICK_RATE);
+
+  /** How far the open-ground walks below travel, and the clearance they need. */
+  const WALK_TICKS = 20;
+  const WALK_LENGTH = (WALK_TICKS * SPEED) / SERVER_TICK_RATE;
+
+  /** A spot with room to walk `WALK_LENGTH` in any direction and hit nothing. */
+  function openGround(): { x: number; y: number } {
+    for (let x = -1200; x < 2400; x += 20) {
+      for (let y = -1200; y < 2100; y += 20) {
+        const at = { x, y };
+        if (circleBlocked(at, RADIUS + WALK_LENGTH + 8, world.colliders)) continue;
+        // Flat enough that the heightfield half never refuses a step either.
+        let walkable = true;
+        for (let d = 0; d <= WALK_LENGTH + 8 && walkable; d += 8) {
+          walkable =
+            Math.abs(world.sampler.heightAt(x + d, y) - world.sampler.heightAt(x, y)) < 4 &&
+            Math.abs(world.sampler.heightAt(x, y + d) - world.sampler.heightAt(x, y)) < 4;
+        }
+        if (walkable) return at;
+      }
+    }
+    throw new Error('the world has nowhere open to walk');
+  }
+
+  it('agrees with the flat predictor step for step on open ground', () => {
+    const open = openGround();
+    let flatAt = open;
+    let awareAt = open;
+    for (let seq = 1; seq <= WALK_TICKS; seq++) {
+      flatAt = flat(flatAt, input(seq, 1, 0));
+      awareAt = aware(awareAt, input(seq, 1, 0));
+      // Silence is the whole point: where nothing is in the way, the extra
+      // knowledge must change nothing at all.
+      expect(awareAt.x).toBeCloseTo(flatAt.x, 9);
+      expect(awareAt.y).toBeCloseTo(flatAt.y, 9);
+    }
+  });
+
+  it('refuses to walk into a tree the server would stop it at', () => {
+    const tree = world.props[0];
+    expect(tree).toBeDefined();
+    if (!tree) return;
+
+    // Start clear of the trunk and walk straight at it, stopping when a flat
+    // guess would be standing in its centre.
+    const distance = 120;
+    const start = { x: tree.x - distance, y: tree.y };
+    const ticks = Math.round(distance / (SPEED / SERVER_TICK_RATE));
+
+    let flatAt = start;
+    let awareAt = start;
+    for (let seq = 1; seq <= ticks; seq++) {
+      flatAt = flat(flatAt, input(seq, 1, 0));
+      awareAt = aware(awareAt, input(seq, 1, 0));
+    }
+
+    expect(circleBlocked(flatAt, RADIUS, world.colliders)).toBe(true);
+    expect(circleBlocked(awareAt, RADIUS, world.colliders)).toBe(false);
+    // It got somewhere -- stopping at the trunk, not refusing to set off.
+    expect(awareAt.x).toBeGreaterThan(start.x);
+    expect(awareAt.x).toBeLessThan(flatAt.x);
+  });
+
+  it('never predicts a position the colliders forbid', () => {
+    let at = openGround();
+    for (let seq = 1; seq <= 600; seq++) {
+      const angle = seq * 0.11;
+      at = aware(at, { seq, moveX: Math.cos(angle), moveY: Math.sin(angle), facing: 0, buttons: 0 });
+      expect(circleBlocked(at, RADIUS, world.colliders)).toBe(false);
+    }
   });
 });
