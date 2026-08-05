@@ -201,14 +201,16 @@ describe('scatter placement', () => {
     for (const prop of added) expect(prop.kind).toBe('bush');
   });
 
+  // "Does not spin" is the runner's timeout to enforce, not something to measure
+  // with Date.now() from inside the test: a clock read here asserts against how
+  // loaded the machine is, and an intermittent failure would be indistinguishable
+  // from a real regression.
   it('stops accepting props in a saturated patch rather than looping', () => {
     const map = loaded();
-    const start = Date.now();
     // An absurd density into a tiny radius: it must give up, not spin.
     const { added } = paint(map, { density: 5000, spacing: 60 }, { dt: 1, radius: 40 });
-    expect(Date.now() - start).toBeLessThan(4000);
     expect(added.length).toBeLessThan(20);
-  });
+  }, 4000);
 });
 
 describe('scatter rate', () => {
