@@ -1,11 +1,13 @@
 /**
- * The play view (spec 062): a deliberately plain top-down canvas, driven
- * entirely by {@link GameClient}.
+ * The flat debug view (spec 062, kept by 063): a deliberately plain top-down
+ * canvas, driven entirely by {@link GameClient}.
  *
- * This is not the iso3d renderer. Repointing that at the server is spec 057's
- * stage 3 and a much larger job; this exists so the new combat is *playable and
- * testable now* -- you can watch a wind-up, cancel it, and see a projectile arc
- * land -- without waiting for the art path.
+ * It was the stopgap that made spec 062's combat playable before the art path
+ * caught up. Spec 063 repointed the iso3d renderer at the server, so this is no
+ * longer the way the game is played -- and it earned its keep anyway. It draws
+ * the same client session with no terrain, no rigs and no post filter between
+ * you and the numbers, which makes it the quickest way to tell whether something
+ * wrong is wrong on the wire or wrong in the scene.
  *
  * It holds the sim/render line the same way the old renderer did: every number
  * it draws came off the wire, and there is no `if` in here that changes a game
@@ -20,7 +22,9 @@
 import { GameClient } from '../../server/client/game-client.js';
 import { LoopbackTransport } from '../../server/net/transport-loop.js';
 import { GameServer } from '../../server/server.js';
+import { buildWorld } from '../../server/world/build.js';
 import { SERVER_TICK_RATE } from '../../server/config.js';
+import { viewSeed } from '../iso3d/seed.js';
 import { ALL_ABILITIES, abilityById } from '../../server/data/abilities.js';
 import { CastPhaseValue, EntityKind } from '../../server/net/protocol.js';
 import type { ViewHandle } from '../iso3d/view-handle.js';
@@ -88,7 +92,10 @@ export function mountPlay(container: HTMLElement): ViewHandle {
 
   // --- the server this view talks to ----------------------------------
   const transport = new LoopbackTransport();
-  const server = new GameServer({ seed: 7, transport });
+  // The same generated world the iso view runs (spec 063), so a difference
+  // between the two tabs is never a difference in the ground they are standing
+  // on -- which is the entire reason this tab is worth keeping.
+  const server = new GameServer({ built: buildWorld(viewSeed()), transport });
   // Wired by hand rather than through `server.start()`: that would also spin up
   // the server's own clock, and this view already drives the tick from its
   // animation frame. Registering the handler is the half we want.

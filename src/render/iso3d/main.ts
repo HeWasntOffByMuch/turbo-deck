@@ -1,10 +1,15 @@
 /**
- * Entry point and tab shell (specs 031, 062).
+ * Entry point and tab shell (specs 031, 062, 063).
  *
  * The combat, movement and rig-debug tabs went with the card game they existed
- * to exercise. What is left is the play view -- a plain canvas over a real
- * server session, so the ability system is testable now -- and the map editor,
- * which never depended on any of it.
+ * to exercise. Since spec 063 the first tab is the isometric world again --
+ * terrain, props, rigs and shadows -- but reading a replicated server view
+ * rather than a sim in this tab.
+ *
+ * The flat canvas 062 stood up as a stopgap stays, as the second tab. It draws
+ * the same `GameClient` with no art in the way, which makes it the fastest way
+ * to tell a wire bug from a rendering one. Two *views* over one client breaks
+ * nothing; it was two *sims* that CLAUDE.md's one rule was ever about.
  *
  * The shell makes no game decisions. It mounts a view, starts it when shown and
  * stops it when hidden; every rule lives on the server and every pixel is a
@@ -13,6 +18,7 @@
 
 import { mountPlay } from '../play/view.js';
 import { mountEditor } from './editor/view.js';
+import { mountWorld } from './world/view.js';
 import type { ViewHandle } from './view-handle.js';
 
 interface Tab {
@@ -32,7 +38,8 @@ function main(): void {
   if (!app) throw new Error('missing #app');
 
   const tabs: readonly Tab[] = [
-    { label: 'Play', mount: mountPlay, fullscreen: true },
+    { label: 'Play', mount: mountWorld, fullscreen: true },
+    { label: 'Flat (debug)', mount: mountPlay, fullscreen: true },
     { label: 'Map editor', mount: mountEditor, fullscreen: true },
   ];
 

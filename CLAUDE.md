@@ -143,9 +143,15 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
                  `npm run server`, and `npm run server:bots` for load.
-src/render/play/ the play view (spec 062): a plain top-down canvas driven entirely
-                 by GameClient, so the ability system is testable before the
-                 iso3d renderer is repointed at the server (spec 057 stage 3)
+src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometric
+                 world drawn from GameClient.view() and nothing else. interpolate.ts
+                 (20Hz deltas to a pose per frame), intent.ts, cast.ts and
+                 appearance.ts are pure and tested headlessly; scene.ts, hud.ts and
+                 view.ts are the three.js/DOM half. `npx tsx scripts/preview-world.ts`
+                 photographs the real page into .claude/screenshots/world-*.png.
+src/render/play/ the flat debug tab (spec 062, kept by 063): a plain top-down canvas
+                 over the same GameClient, with no terrain, rigs or post filter in
+                 the way -- the quickest way to tell a wire bug from a scene bug
 scripts/         standalone scripts (e.g. the balance harness), run via tsx
 .claude/         harness config: agents/ (the delegation policy, see below),
                  hooks/session-start.sh (branch-base check + dependency install),
