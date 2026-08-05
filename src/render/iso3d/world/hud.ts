@@ -222,7 +222,7 @@ export function createHud(): HudHandle {
       `lvl ${view.level}   xp ${view.experience}\n` +
       `monsters ${monsters}   corrections ${corrections}` +
       (view.connected ? '' : '   (disconnected)') +
-      '\nWASD move · mouse aim · 1-7 abilities · Esc cancel';
+      '\nright-click move · left-click swing · WASD · 1-7 abilities · Esc cancel';
   }
 
   return {

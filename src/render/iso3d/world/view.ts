@@ -36,8 +36,9 @@ import {
 import { abilityById } from '../../../server/data/abilities.js';
 import { viewSeed } from '../seed.js';
 import type { ViewHandle } from '../view-handle.js';
+import { turnToward } from '../../../server/sim/movement.js';
 import { createHud, HOTBAR } from './hud.js';
-import { moveIntent } from './intent.js';
+import { moveIntent, MOVE_KEYS } from './intent.js';
 import { WorldScene } from './scene.js';
 
 const TICK_MS = 1000 / SERVER_TICK_RATE;
@@ -66,10 +67,12 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   transport.onConnection((channel) => server.accept(channel));
   // The ambient spawner runs per *active chunk*, and a player's interest window
   // is 49 of them -- at the default rate the field is fifty deep inside half a
-  // minute and there is nothing to read in any direction. This is the tab
-  // choosing how busy its own single-player server is, the way it chooses the
-  // seed; the rule it turns down lives on the server and is unchanged.
-  server.liveConfig.set('spawnRateMultiplier', 0.12);
+  // minute and there is nothing to read in any direction. Off entirely for now:
+  // this tab places a handful of monsters by hand below, and a field you can
+  // count is what makes a wind-up, a cancel or a correction observable at all.
+  // The tab choosing how busy its own single-player server is, the way it
+  // chooses the seed; the rule it turns down lives on the server, unchanged.
+  server.liveConfig.set('spawnRateMultiplier', 0);
 
   const client = new GameClient(transport.connect(), {
     playerId: 'you',
@@ -110,6 +113,17 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   const held = new Set<string>();
   let cursor: { x: number; y: number } | null = null;
   let aim = { x: 0, y: 0 };
+  /** The standing move order from the last right-click, in world units. */
+  let destination: { x: number; y: number } | null = null;
+  /**
+   * The heading we believe we have, turned at the server's own rate.
+   *
+   * Predicted for the same reason position is: facing is replicated at 20Hz, and
+   * drawing our own body's heading from that puts a visible interval of lag on
+   * the one turn the player is making themselves. `turnToward` is the server's
+   * function, imported rather than reimplemented -- there is one turn rule.
+   */
+  let facing = 0;
 
   function selfPosition(): { x: number; y: number } {
     return client.view().self ?? { x: 0, y: 0 };
@@ -134,7 +148,13 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       useAbility(slot);
       event.preventDefault();
     }
+    // Escape calls off a wind-up. Cancelling refunds the cost and the cooldown,
+    // so what a called-off cast spends is exactly the time it took -- which is
+    // why the key is worth having somewhere that is not also the move button.
     if (event.code === 'Escape') client.cancelCast();
+    // Any manual step also drops a standing order, for the same reason held
+    // keys outrank one in `moveIntent`: taking the keys is taking control.
+    if (MOVE_KEYS[event.code]) destination = null;
   };
   const onKeyUp = (event: KeyboardEvent): void => {
     held.delete(event.code);
@@ -147,9 +167,20 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     cursor = null;
   };
   const onMouseDown = (event: MouseEvent): void => {
-    const first = HOTBAR[0];
-    if (event.button === 0 && first) useAbility(first);
-    if (event.button === 2) client.cancelCast();
+    const rect = canvas.getBoundingClientRect();
+    cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+
+    // Left click swings; right click walks. The MOBA split the game had before
+    // the server existed, and the one the wind-up design was written against:
+    // you commit to a blow with one hand and reposition with the other.
+    const melee = HOTBAR[0];
+    if (event.button === 0 && melee) {
+      useAbility(melee);
+      return;
+    }
+    if (event.button === 2) {
+      destination = scene.screenToWorld(cursor.x, cursor.y);
+    }
   };
   const onContextMenu = (event: Event): void => event.preventDefault();
   const onBlur = (): void => held.clear();
@@ -161,11 +192,43 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   /** Ms since the last delta landed, for the interpolation alpha. */
   let sinceDelta = 0;
   let lastDeltaTick = 0;
+  /** Whether the opening monsters have been placed; see {@link seedTheField}. */
+  let seeded = false;
+
+  /**
+   * Put a few monsters near the player, once.
+   *
+   * Waits for `view.self` rather than firing when `connect()` resolves. The
+   * welcome only says which entity we are; the *position* arrives with the first
+   * delta, and prediction does not start until that and the stats have both
+   * landed. Spawning on the welcome put every monster at the world origin --
+   * several hundred units from a player who spawns mid-map, so they fell outside
+   * the interest radius and the field came up empty.
+   */
+  function seedTheField(view: ReturnType<typeof client.view>): void {
+    if (seeded || !view.self) return;
+    seeded = true;
+    facing = view.entities.find((entity) => entity.id === view.selfEntityId)?.facing ?? 0;
+    server.spawnEntities('grazer', view.self.x + 200, view.self.y - 70, 2);
+    server.spawnEntities('stalker', view.self.x - 240, view.self.y + 110, 1);
+  }
 
   function sendInput(): void {
+    const view = client.view();
     const me = selfPosition();
-    const intent = moveIntent(held, me, worldAim());
-    client.sendInput({ ...intent, buttons: 0 });
+    const intent = moveIntent({
+      held,
+      self: me,
+      destination,
+      facing,
+      casting: view.casts.some((cast) => cast.entityId === view.selfEntityId),
+    });
+    if (intent.arrived) destination = null;
+
+    // Turn toward what was asked for at our own rate, so the drawn heading is
+    // the one the server is about to arrive at rather than the one it left.
+    facing = turnToward(facing, intent.facing, view.stats?.turnRate ?? 0, SERVER_TICK_RATE);
+    client.sendInput({ moveX: intent.moveX, moveY: intent.moveY, facing: intent.facing, buttons: 0 });
   }
 
   function frame(now: number): void {
@@ -183,6 +246,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     }
 
     const view = client.view();
+    seedTheField(view);
     // A new delta resets the interpolation window. Measuring it from the delta's
     // own tick rather than from a wall-clock guess keeps the alpha honest when
     // frames are dropped.
@@ -195,7 +259,13 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // casting it rather than in 20Hz jumps beside it.
     const drawnTick = view.tick + alpha * BROADCAST_EVERY_N_TICKS;
 
-    scene.render(view, { dt: elapsed / 1000, alpha, tick: drawnTick });
+    scene.render(view, {
+      dt: elapsed / 1000,
+      alpha,
+      tick: drawnTick,
+      selfFacing: facing,
+      destination,
+    });
     hud.update(view, scene.screenAnchors(), drawnTick, client.correctionCount);
 
     raf = requestAnimationFrame(frame);
@@ -214,12 +284,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       canvas.addEventListener('mousedown', onMouseDown);
       document.documentElement.addEventListener('contextmenu', onContextMenu);
 
-      // Something to fight, so the first frame is not an empty field.
-      void client.connect().then(() => {
-        const me = selfPosition();
-        server.spawnEntities('grazer', me.x + 220, me.y - 60, 3);
-        server.spawnEntities('stalker', me.x - 260, me.y + 120, 2);
-      });
+      void client.connect();
 
       last = 0;
       accumulator = 0;

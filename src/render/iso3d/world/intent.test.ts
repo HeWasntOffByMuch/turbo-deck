@@ -1,62 +1,147 @@
 import { describe, expect, it } from 'vitest';
-import { moveIntent } from './intent.js';
+import { ARRIVE_EPS, moveIntent, steerTo, type IntentInput } from './intent.js';
 
 const ORIGIN = { x: 0, y: 0 };
 
+function intent(over: Partial<IntentInput> = {}): ReturnType<typeof moveIntent> {
+  return moveIntent({
+    held: new Set(),
+    self: ORIGIN,
+    destination: null,
+    facing: 0,
+    casting: false,
+    ...over,
+  });
+}
+
 describe('moveIntent', () => {
-  it('is still when nothing is held', () => {
-    const intent = moveIntent(new Set(), ORIGIN, { x: 10, y: 0 });
-    expect(intent.moveX).toBe(0);
-    expect(intent.moveY).toBe(0);
+  it('is still when nothing is held and nothing is ordered', () => {
+    const result = intent();
+    expect(result.moveX).toBe(0);
+    expect(result.moveY).toBe(0);
   });
 
   it('walks the cardinals at unit speed', () => {
-    expect(moveIntent(new Set(['KeyW']), ORIGIN, { x: 1, y: 0 }).moveY).toBe(-1);
-    expect(moveIntent(new Set(['KeyS']), ORIGIN, { x: 1, y: 0 }).moveY).toBe(1);
-    expect(moveIntent(new Set(['KeyA']), ORIGIN, { x: 1, y: 0 }).moveX).toBe(-1);
-    expect(moveIntent(new Set(['KeyD']), ORIGIN, { x: 1, y: 0 }).moveX).toBe(1);
+    expect(intent({ held: new Set(['KeyW']) }).moveY).toBe(-1);
+    expect(intent({ held: new Set(['KeyS']) }).moveY).toBe(1);
+    expect(intent({ held: new Set(['KeyA']) }).moveX).toBe(-1);
+    expect(intent({ held: new Set(['KeyD']) }).moveX).toBe(1);
   });
 
   it('normalises the diagonal, so W+D is not a sprint', () => {
-    const intent = moveIntent(new Set(['KeyW', 'KeyD']), ORIGIN, { x: 1, y: 0 });
-    expect(Math.hypot(intent.moveX, intent.moveY)).toBeCloseTo(1, 9);
-    expect(intent.moveX).toBeCloseTo(Math.SQRT1_2, 9);
-    expect(intent.moveY).toBeCloseTo(-Math.SQRT1_2, 9);
+    const result = intent({ held: new Set(['KeyW', 'KeyD']) });
+    expect(Math.hypot(result.moveX, result.moveY)).toBeCloseTo(1, 9);
+    expect(result.moveX).toBeCloseTo(Math.SQRT1_2, 9);
+    expect(result.moveY).toBeCloseTo(-Math.SQRT1_2, 9);
   });
 
   it('cancels opposed keys', () => {
-    const intent = moveIntent(new Set(['KeyW', 'KeyS', 'KeyA', 'KeyD']), ORIGIN, { x: 1, y: 0 });
-    expect(intent.moveX).toBe(0);
-    expect(intent.moveY).toBe(0);
+    const result = intent({ held: new Set(['KeyW', 'KeyS', 'KeyA', 'KeyD']) });
+    expect(result.moveX).toBe(0);
+    expect(result.moveY).toBe(0);
   });
 
   it('treats the arrows as the same keys', () => {
-    const wasd = moveIntent(new Set(['KeyW', 'KeyD']), ORIGIN, { x: 1, y: 0 });
-    const arrows = moveIntent(new Set(['ArrowUp', 'ArrowRight']), ORIGIN, { x: 1, y: 0 });
-    expect(arrows).toEqual(wasd);
+    expect(intent({ held: new Set(['ArrowUp', 'ArrowRight']) })).toEqual(
+      intent({ held: new Set(['KeyW', 'KeyD']) }),
+    );
   });
 
   it('ignores keys that are not movement', () => {
-    const intent = moveIntent(new Set(['ShiftLeft', 'Digit1', 'KeyD']), ORIGIN, { x: 1, y: 0 });
-    expect(intent.moveX).toBe(1);
-    expect(intent.moveY).toBe(0);
+    const result = intent({ held: new Set(['ShiftLeft', 'Digit1', 'KeyD']) });
+    expect(result.moveX).toBe(1);
   });
 
-  it('faces the cursor, and nothing else does', () => {
-    // Held keys point west; the cursor is due south. Facing follows the cursor.
-    const intent = moveIntent(new Set(['KeyA']), ORIGIN, { x: 0, y: 100 });
-    expect(intent.facing).toBeCloseTo(Math.PI / 2, 9);
-    expect(intent.moveX).toBe(-1);
+  it('faces where it is going', () => {
+    expect(intent({ held: new Set(['KeyA']) }).facing).toBeCloseTo(Math.PI, 9);
+    expect(intent({ held: new Set(['KeyS']) }).facing).toBeCloseTo(Math.PI / 2, 9);
   });
 
-  it('measures facing from the body, not from the origin', () => {
-    const intent = moveIntent(new Set(), { x: 500, y: 500 }, { x: 500, y: 400 });
-    expect(intent.facing).toBeCloseTo(-Math.PI / 2, 9);
+  it('keeps its heading when it is standing still', () => {
+    expect(intent({ facing: 1.25 }).facing).toBe(1.25);
+  });
+});
+
+describe('a standing move order', () => {
+  it('walks toward the destination', () => {
+    const result = intent({ self: ORIGIN, destination: { x: 0, y: 100 } });
+    expect(result.moveX).toBeCloseTo(0, 9);
+    expect(result.moveY).toBeCloseTo(1, 9);
+    expect(result.facing).toBeCloseTo(Math.PI / 2, 9);
+    expect(result.arrived).toBe(false);
   });
 
-  it('does not snap east when the cursor sits on the body', () => {
-    const intent = moveIntent(new Set(), { x: 42, y: 42 }, { x: 42, y: 42 });
-    expect(intent.facing).toBe(0);
-    expect(Number.isFinite(intent.facing)).toBe(true);
+  it('reports arrival once it is close enough, and asks for nothing', () => {
+    const result = intent({ self: ORIGIN, destination: { x: ARRIVE_EPS - 1, y: 0 } });
+    expect(result.arrived).toBe(true);
+    expect(result.moveX).toBe(0);
+    expect(result.moveY).toBe(0);
+  });
+
+  it('does not claim arrival when there is no order to arrive at', () => {
+    expect(intent({ destination: null }).arrived).toBe(false);
+  });
+
+  /**
+   * Grabbing the keys is how manual control is taken back. Having to cancel a
+   * standing order first reads exactly like a stuck key.
+   */
+  it('lets held keys override the order', () => {
+    const result = intent({ held: new Set(['KeyW']), destination: { x: 0, y: 900 } });
+    expect(result.moveY).toBe(-1);
+    expect(result.arrived).toBe(false);
+  });
+
+  it('does not report arrival while keys are steering', () => {
+    const result = intent({
+      held: new Set(['KeyW']),
+      self: ORIGIN,
+      destination: { x: 0, y: 0 },
+    });
+    expect(result.arrived).toBe(false);
+  });
+});
+
+describe('while casting', () => {
+  /**
+   * The server roots a caster outright, so predicting a walk here diverges on
+   * every tick of every wind-up -- a correction per tick, on the one action the
+   * player is watching most closely.
+   */
+  it('asks for no movement, whatever is held', () => {
+    const result = intent({ held: new Set(['KeyW', 'KeyD']), casting: true });
+    expect(result.moveX).toBe(0);
+    expect(result.moveY).toBe(0);
+  });
+
+  it('asks for no movement toward a standing order either', () => {
+    const result = intent({ destination: { x: 500, y: 500 }, casting: true });
+    expect(result.moveX).toBe(0);
+    expect(result.moveY).toBe(0);
+  });
+
+  it('leaves the heading alone -- turning into the blow is the server\'s', () => {
+    const result = intent({ held: new Set(['KeyW']), casting: true, facing: 2 });
+    expect(result.facing).toBe(2);
+  });
+});
+
+describe('steerTo', () => {
+  it('is null without a destination', () => {
+    expect(steerTo(ORIGIN, null)).toBeNull();
+  });
+
+  it('is null once inside the arrival radius', () => {
+    expect(steerTo(ORIGIN, { x: 0, y: ARRIVE_EPS })).toBeNull();
+    expect(steerTo(ORIGIN, { x: 0, y: ARRIVE_EPS + 1 })).not.toBeNull();
+  });
+
+  it('returns a unit vector at any distance', () => {
+    for (const far of [10, 100, 10_000]) {
+      const direction = steerTo(ORIGIN, { x: far, y: far });
+      expect(direction).not.toBeNull();
+      if (!direction) return;
+      expect(Math.hypot(direction.x, direction.y)).toBeCloseTo(1, 9);
+    }
   });
 });

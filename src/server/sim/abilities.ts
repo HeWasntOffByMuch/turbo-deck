@@ -114,9 +114,14 @@ export function startCast(
       cooldowns: { ...entity.cooldowns, [ability.id]: tick + ability.cooldownTicks },
       activity: ActivityValue.Casting,
       activityUntilTick: endTick,
-      // Aim is captured now and never re-read, so turning during a wind-up
-      // cannot re-point a blow that was already committed.
-      facing: Math.atan2(aim.y - entity.position.y, aim.x - entity.position.x),
+      // Aim is captured here in `cast.targetX/Y` and never re-read, so turning
+      // during a wind-up cannot re-point a blow that was already committed.
+      //
+      // Facing is deliberately *not* snapped to it (spec 064). The body turns
+      // into the blow at its own turn rate -- see `resolveFacing` in
+      // movement.ts -- which is visible, and which changes nothing, because
+      // every cone and every projectile is measured from the captured aim
+      // rather than from where the body happens to be looking.
     },
     events: [
       {

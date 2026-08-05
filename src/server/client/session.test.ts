@@ -14,6 +14,7 @@ import { EntityKind } from '../net/protocol.js';
 import { LoopbackTransport } from '../net/transport-loop.js';
 import { GameServer } from '../server.js';
 import { GameClient } from './game-client.js';
+import { abilityById } from '../data/abilities.js';
 
 /** Lets the loopback's queued microtasks drain. */
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -355,5 +356,123 @@ describe('dying', () => {
     }
     expect(client.correctionCount).toBe(afterRespawn);
     expect(afterRespawn).toBeGreaterThan(before);
+  });
+});
+
+/**
+ * Cancelling, over the wire (spec 064).
+ *
+ * The rule itself is pinned in `sim/abilities.test.ts`. What is pinned here is
+ * that a player pressing the key actually reaches it: `cancelCast()` travels as
+ * its own message, on a tick that may carry no movement input at all, and if it
+ * is dropped anywhere along that path the wind-up simply runs to release and the
+ * player is charged for a blow they called off.
+ */
+describe('calling off a cast', () => {
+  it('refunds the cost and the cooldown from the client side', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+
+    const entityId = client.view().selfEntityId;
+    const heavy = abilityById('melee.heavy');
+    expect(heavy).toBeDefined();
+    if (!heavy) return;
+    expect(heavy.cost).toBeGreaterThan(0);
+
+    const before = test.server.world.entities.get(entityId)?.resource ?? 0;
+
+    client.useAbility('melee.heavy', 900, 500);
+    await settle();
+    test.server.tick();
+    await settle();
+
+    const casting = test.server.world.entities.get(entityId);
+    expect(casting?.cast?.abilityId).toBe('melee.heavy');
+    expect(casting?.resource ?? 0).toBeCloseTo(before - heavy.cost, 6);
+    expect(casting?.cooldowns['melee.heavy']).toBeGreaterThan(0);
+
+    // Call it off partway through the wind-up, deliberately on a tick with no
+    // movement input behind it.
+    for (let i = 0; i < 5; i++) test.server.tick();
+    client.cancelCast();
+    await settle();
+    test.server.tick();
+    await settle();
+
+    const after = test.server.world.entities.get(entityId);
+    expect(after?.cast).toBeNull();
+    expect(after?.resource ?? 0).toBeGreaterThanOrEqual(before);
+    expect(after?.cooldowns['melee.heavy']).toBeUndefined();
+
+    // And it can be committed to again at once, because nothing was spent.
+    client.useAbility('melee.heavy', 900, 500);
+    await settle();
+    test.server.tick();
+    await settle();
+    expect(test.server.world.entities.get(entityId)?.cast?.abilityId).toBe('melee.heavy');
+  });
+
+  it('tells the client the cast is over, so the bar clears', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+
+    client.useAbility('melee.heavy', 900, 500);
+    await settle();
+    test.server.tick();
+    await settle();
+    expect(client.view().casts).toHaveLength(1);
+
+    client.cancelCast();
+    await settle();
+    test.server.tick();
+    await settle();
+    expect(client.view().casts).toHaveLength(0);
+    expect(client.view().requestedAbilityId).toBeNull();
+  });
+});
+
+/**
+ * Turning (spec 064). The client asks for a heading; the server decides how much
+ * of that turn actually happens this tick.
+ */
+describe('turn rate', () => {
+  it('turns toward the requested heading rather than snapping to it', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+
+    const entityId = client.view().selfEntityId;
+    const turnRate = client.view().stats?.turnRate ?? 0;
+    expect(turnRate).toBeGreaterThan(0);
+
+    const start = test.server.world.entities.get(entityId)?.facing ?? 0;
+    // Ask for a full reversal in one tick.
+    await inputTick(test, client, { moveX: 0, moveY: 0, facing: start + Math.PI, buttons: 0 });
+
+    const after = test.server.world.entities.get(entityId)?.facing ?? 0;
+    const moved = Math.abs(after - start);
+    expect(moved).toBeGreaterThan(0);
+    // One tick of turn, not half a revolution.
+    expect(moved).toBeLessThanOrEqual((turnRate * Math.PI) / 180 / SERVER_TICK_RATE + 1e-9);
+  });
+
+  it('gets there eventually, at the rate its stats allow', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+
+    const entityId = client.view().selfEntityId;
+    const turnRate = client.view().stats?.turnRate ?? 0;
+    const target = (test.server.world.entities.get(entityId)?.facing ?? 0) + Math.PI / 2;
+
+    // A quarter turn takes 90/turnRate seconds; give it that many ticks plus one.
+    const ticks = Math.ceil((90 / turnRate) * SERVER_TICK_RATE) + 1;
+    for (let i = 0; i < ticks; i++) {
+      await inputTick(test, client, { moveX: 0, moveY: 0, facing: target, buttons: 0 });
+    }
+
+    expect(test.server.world.entities.get(entityId)?.facing ?? 0).toBeCloseTo(target, 6);
   });
 });

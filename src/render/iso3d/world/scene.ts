@@ -28,7 +28,7 @@ import type { ClientView } from '../../../server/client/game-client.js';
 import { EntityKind } from '../../../server/net/protocol.js';
 import { abilityById } from '../../../server/data/abilities.js';
 import { PALETTE } from '../palette.js';
-import { castsShadows, makeUnwalkableField, makeWall } from '../meshes.js';
+import { castsShadows, makeMoveMarker, makeUnwalkableField, makeWall } from '../meshes.js';
 import { ARENA_OBSTACLES } from '../../../sim/constants.js';
 import { vegetationColliders } from '../../../terrain/vegetation.js';
 import { buildTerrainMesh, type TerrainMeshHandle } from '../terrain-mesh.js';
@@ -93,6 +93,14 @@ export interface FrameInfo {
    * way positions are, so a wind-up fills smoothly rather than in 20Hz steps.
    */
   readonly tick: number;
+  /**
+   * The local player's predicted heading (spec 064). Drawn instead of the
+   * replicated one for the same reason its position is: facing arrives at 20Hz,
+   * and a turn the player is making themselves must not lag by an interval.
+   */
+  readonly selfFacing: number;
+  /** The standing move order to mark on the ground, or null (spec 064). */
+  readonly destination: { readonly x: number; readonly y: number } | null;
 }
 
 /** A body on screen, pooled by entity id. */
@@ -150,6 +158,8 @@ export class WorldScene {
   private readonly terrainMesh: TerrainMeshHandle;
   private readonly propField: PropFieldHandle;
   private readonly poofs: Poofs;
+  /** Marks the standing move order on the ground (spec 064). */
+  private readonly moveMarker = makeMoveMarker();
 
   private readonly motion = new EntityMotion();
   private readonly bodies = new Map<number, Body>();
@@ -229,6 +239,8 @@ export class WorldScene {
     this.torchFlame = this.buildTorch();
     this.orbMesh = this.buildOrb();
     this.poofs = new Poofs(this.scene);
+    this.moveMarker.visible = false;
+    this.scene.add(this.moveMarker);
 
     this.controls = createViewControls();
     this.controls.attachWheelZoom(canvas);
@@ -282,6 +294,14 @@ export class WorldScene {
     this.observe(view);
     this.syncBodies(view, frame, dt);
     this.carryTorch(view.selfEntityId);
+
+    // Where the last right-click landed. A move order you cannot see is an
+    // order you cannot tell from a missed click.
+    this.moveMarker.visible = frame.destination !== null;
+    if (frame.destination) {
+      const { x, y } = frame.destination;
+      this.moveMarker.position.set(x, this.world.terrain.heightAt(x, y) + 6, y);
+    }
     this.syncTelegraphs(view, frame);
     this.ageEffects();
     this.poofs.update(dt);
@@ -400,7 +420,7 @@ export class WorldScene {
       const pose = this.motion.sample(entity.id, frame.alpha);
       const x = isSelf && view.self ? view.self.x : (pose?.x ?? entity.x);
       const y = isSelf && view.self ? view.self.y : (pose?.y ?? entity.y);
-      const facing = pose?.facing ?? entity.facing;
+      const facing = isSelf ? frame.selfFacing : (pose?.facing ?? entity.facing);
 
       const ground =
         entity.kind === EntityKind.Projectile

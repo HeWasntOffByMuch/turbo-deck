@@ -53,6 +53,19 @@ async function waitForServer(url: string, timeoutMs = 30_000): Promise<void> {
   throw new Error(`server at ${url} never came up`);
 }
 
+/** Waits until the sim has actually run `ticks` ticks, and says so if it never does. */
+async function waitForTick(page: Page, ticks: number, timeoutMs = 90_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let last = -1;
+  while (Date.now() < deadline) {
+    const text = (await page.textContent('body')) ?? '';
+    last = Number(/tick (\d+)/.exec(text)?.[1] ?? -1);
+    if (last >= ticks) return;
+    await page.waitForTimeout(250);
+  }
+  throw new Error(`sim never reached tick ${ticks} (last seen: ${last})`);
+}
+
 async function shoot(page: Page, name: string): Promise<void> {
   await page.screenshot({ path: join(outDir, `${name}.png`) });
   console.log(`  wrote ${name}.png`);
@@ -83,28 +96,41 @@ async function main(): Promise<void> {
 
     await page.goto(`http://localhost:${PORT}/`, { waitUntil: 'load' });
     await page.waitForSelector('canvas');
-    // Long enough for the welcome to land, the world to build and the ambient
-    // spawner to put something in frame.
-    await page.waitForTimeout(4000);
+    // Building the world, meshing the terrain and batching the prop field all
+    // happen before the first frame, and under software WebGL that is seconds
+    // rather than milliseconds -- and it varies enough run to run that a fixed
+    // delay photographs a world still starting up. Poll the HUD's own tick
+    // counter instead, from here rather than in-page: it is the same fact the
+    // player reads, and a failure says which tick it got stuck at.
+    await waitForTick(page, 150);
+
     await shoot(page, 'world-play');
 
-    // Walk first, while the field is still quiet: the camera trails, the gait
-    // runs, and the wind-up shots below want an emptier frame anyway.
-    await page.keyboard.down('KeyD');
-    await page.keyboard.down('KeyS');
+    // Right-click a point on the ground: the move order the game had before the
+    // server existed (spec 064). The marker should appear and the figure walk to it.
+    await page.mouse.click(420, 560, { button: 'right' });
+    await page.waitForTimeout(500);
+    await shoot(page, 'world-move-order');
     await page.waitForTimeout(1400);
-    await page.keyboard.up('KeyD');
-    await page.keyboard.up('KeyS');
-    await page.waitForTimeout(150);
     await shoot(page, 'world-walking');
 
-    // Point at open ground away from the figure and commit to a heavy blow, then
-    // catch the frame mid-wind-up: the bar, and the moment it means something.
+    // Commit to a heavy blow and catch the frame mid-wind-up: the bar, and the
+    // body turning into the blow at its own turn rate rather than snapping.
     await page.mouse.move(820, 330);
     await page.waitForTimeout(200);
     await page.keyboard.press('Digit2');
     await page.waitForTimeout(220);
     await shoot(page, 'world-windup');
+
+    // ...then call it off. Nothing should be spent: no cooldown, no resource.
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    await shoot(page, 'world-cancelled');
+
+    // Left click is the melee swing (spec 064).
+    await page.mouse.click(760, 380);
+    await page.waitForTimeout(140);
+    await shoot(page, 'world-melee');
 
     // A ground-targeted blast, for the telegraph ring on the terrain.
     await page.keyboard.press('Digit5');

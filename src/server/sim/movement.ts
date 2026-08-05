@@ -50,6 +50,45 @@ export interface MovementOutcome {
 /** Knockback bleeds off by this fraction per tick, so it eases rather than stops dead. */
 const KNOCKBACK_DECAY = 0.6;
 
+const TAU = Math.PI * 2;
+const DEG = Math.PI / 180;
+
+/** The signed turn from `from` to `to`, in (-PI, PI]. */
+function shortestTurn(from: number, to: number): number {
+  let delta = (to - from) % TAU;
+  if (delta > Math.PI) delta -= TAU;
+  if (delta <= -Math.PI) delta += TAU;
+  return delta;
+}
+
+/**
+ * Rotate `from` toward `to` by at most one tick of `turnRateDegPerSecond`.
+ *
+ * A body turns; it does not teleport its heading. Until spec 064 this was
+ * derived from stats, replicated on the wire, and then never read -- facing was
+ * whatever the client's last input said it was, so a unit could reverse
+ * instantly and a 240-degree-per-second stat meant nothing.
+ *
+ * Exported because the client predicts facing with it too. There is one turn
+ * rule and it lives here; a second implementation on the client is how the drawn
+ * heading and the authoritative one drift apart.
+ */
+export function turnToward(
+  from: number,
+  to: number,
+  turnRateDegPerSecond: number,
+  tickRate: number,
+): number {
+  if (!Number.isFinite(to)) return from;
+  if (!Number.isFinite(from)) return to;
+  const delta = shortestTurn(from, to);
+  // A turn rate of zero is a body that cannot turn at all (a training dummy),
+  // not a body that turns instantly.
+  const step = Math.max(0, turnRateDegPerSecond) * DEG / tickRate;
+  if (Math.abs(delta) <= step) return to;
+  return from + Math.sign(delta) * step;
+}
+
 function distance(ax: number, ay: number, bx: number, by: number): number {
   return Math.hypot(ax - bx, ay - by);
 }
@@ -136,7 +175,7 @@ export function resolveMovement(
     z: terrain.heightAt(settled.x, settled.y),
   };
 
-  const facing = !frozen && input && Number.isFinite(input.facing) ? input.facing : entity.facing;
+  const facing = resolveFacing(entity, input, frozen);
 
   const nextKnockbackX = knocked ? entity.knockbackX * KNOCKBACK_DECAY : 0;
   const nextKnockbackY = knocked ? entity.knockbackY * KNOCKBACK_DECAY : 0;
@@ -151,6 +190,31 @@ export function resolveMovement(
     knockbackX: nextKnockbackX,
     knockbackY: nextKnockbackY,
   };
+}
+
+/**
+ * Where the body wants to be looking, and how far it gets this tick.
+ *
+ * A cast in progress outranks the input: the aim was captured when the blow was
+ * committed, so the body turns *into* the blow over its wind-up rather than
+ * snapping to it the instant the key went down. That turn is visible and it is
+ * the readable half of committing -- and it changes no outcome, because a melee
+ * cone is measured from `cast.targetX/Y`, not from where the body is looking.
+ *
+ * Frozen bodies do not turn. Being stunned and still able to pivot on the spot
+ * is how a hitstop stops reading as a hit.
+ */
+function resolveFacing(entity: ServerEntity, input: ServerInput | null, frozen: boolean): number {
+  if (frozen) return entity.facing;
+
+  const cast = entity.cast;
+  const wanted = cast
+    ? Math.atan2(cast.targetY - entity.position.y, cast.targetX - entity.position.x)
+    : input && Number.isFinite(input.facing)
+      ? input.facing
+      : entity.facing;
+
+  return turnToward(entity.facing, wanted, entity.stats.turnRate, SERVER_TICK_RATE);
 }
 
 /**
