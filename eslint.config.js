@@ -2,6 +2,77 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
+// CLAUDE.md states the sim/render split and the determinism rules as project
+// law, but until now only `Math.random` had a rule behind it and the rest was
+// "on you". Everything below puts the remaining rules where CI already looks:
+// a violation fails `npm run lint` instead of waiting for a reviewer to spot it.
+
+/**
+ * The deterministic core. Nothing outside `src/render/` may reach for a
+ * rendering library, the DOM, the wall clock, or ambient randomness — given a
+ * seed and a sequence of timed inputs it has to produce bit-identical state.
+ */
+const DETERMINISTIC_CORE = [
+  'src/shared/**/*.ts',
+  'src/cards/**/*.ts',
+  'src/sim/**/*.ts',
+  'src/game/**/*.ts',
+  'src/terrain/**/*.ts',
+  'src/balance/**/*.ts',
+];
+
+/**
+ * Subtrees that sit under `src/render/` for organisational reasons but carry the
+ * same guarantee, because the whole point of them is that they run and are
+ * tested headlessly: the cloth solver (spec 046), the critter data (spec 055),
+ * and the pure half of the map editor (specs 049-052).
+ */
+const PURE_RENDER = [
+  'src/render/cloth/**/*.ts',
+  'src/render/critters/**/*.ts',
+  'src/render/iso3d/editor/brush.ts',
+  'src/render/iso3d/editor/camera.ts',
+  'src/render/iso3d/editor/history.ts',
+  'src/render/iso3d/editor/markers.ts',
+  'src/render/iso3d/editor/scatter.ts',
+  'src/render/iso3d/editor/*.test.ts',
+];
+
+const NO_AMBIENT_RANDOMNESS = [
+  /** @type {const} */ ({
+    object: 'Math',
+    property: 'random',
+    message:
+      'Pure code must use the seeded PRNG (src/shared/prng.ts) passed in explicitly, not Math.random.',
+  }),
+];
+
+const NO_WALL_CLOCK_OR_DOM = [
+  { name: 'Date', message: 'Pure code must not read wall-clock time; it is a function of its inputs.' },
+  { name: 'performance', message: 'Pure code must not read wall-clock time; the sim advances on a fixed 60Hz tick.' },
+  { name: 'window', message: 'Pure code has no DOM. Take what you need as an argument and let src/render/ supply it.' },
+  { name: 'document', message: 'Pure code has no DOM. Take what you need as an argument and let src/render/ supply it.' },
+  { name: 'navigator', message: 'Pure code has no DOM. Take what you need as an argument and let src/render/ supply it.' },
+  { name: 'localStorage', message: 'Pure code has no DOM. Persistence belongs in src/render/, which passes the loaded data in.' },
+  { name: 'sessionStorage', message: 'Pure code has no DOM. Persistence belongs in src/render/, which passes the loaded data in.' },
+  { name: 'requestAnimationFrame', message: 'Pure code never drives its own clock; the render loop decides how many ticks to advance.' },
+  { name: 'cancelAnimationFrame', message: 'Pure code never drives its own clock; the render loop decides how many ticks to advance.' },
+];
+
+const NO_RENDERING_LIBRARIES = {
+  paths: [
+    { name: 'three', message: 'This module must run headlessly in Node. three.js belongs in src/render/.' },
+    { name: 'pixi.js', message: 'This module must run headlessly in Node. PixiJS belongs in src/render/.' },
+    { name: 'lil-gui', message: 'This module must run headlessly in Node. lil-gui belongs in src/render/.' },
+  ],
+  patterns: [
+    {
+      group: ['three/*', 'three/**'],
+      message: 'This module must run headlessly in Node. three.js belongs in src/render/.',
+    },
+  ],
+};
+
 export default tseslint.config(
   {
     // tools/ holds vendored third-party code (the pixeldudesmaker generator and
@@ -27,20 +98,54 @@ export default tseslint.config(
   {
     // Terrain (spec 043) is world data, not rendering: it carries the same
     // determinism guarantee as the sim, so it gets the same guard rails.
-    files: ['src/sim/**/*.ts', 'src/cards/**/*.ts', 'src/terrain/**/*.ts'],
+    files: DETERMINISTIC_CORE,
     rules: {
-      'no-restricted-properties': [
+      'no-restricted-properties': ['error', ...NO_AMBIENT_RANDOMNESS],
+      'no-restricted-globals': ['error', ...NO_WALL_CLOCK_OR_DOM],
+      'no-restricted-imports': [
         'error',
         {
-          object: 'Math',
-          property: 'random',
-          message: 'Sim/card/terrain code must use the seeded PRNG or spatial hash passed in explicitly, not Math.random.',
+          ...NO_RENDERING_LIBRARIES,
+          patterns: [
+            ...NO_RENDERING_LIBRARIES.patterns,
+            {
+              // The dependency arrow points one way: src/render/ reads sim state,
+              // never the reverse. An import back into the renderer is the sim
+              // acquiring a rendering dependency by the back door.
+              group: ['**/render', '**/render/**'],
+              message: 'The sim never imports the renderer. src/render/ reads sim state, not the other way round.',
+            },
+          ],
         },
       ],
-      'no-restricted-globals': [
+    },
+  },
+  {
+    // src/shared/ is the bottom of the stack: PRNG, spatial hash, world extent.
+    // It is imported by sim, cards and terrain, so it may not import them back.
+    files: ['src/shared/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
         'error',
-        { name: 'Date', message: 'Sim/card/terrain code must not read wall-clock time; it must be a pure function of its inputs.' },
+        {
+          ...NO_RENDERING_LIBRARIES,
+          patterns: [
+            ...NO_RENDERING_LIBRARIES.patterns,
+            {
+              group: ['..', '../*', '../**'],
+              message: 'src/shared/ is dependency-free — it is imported by sim, cards and terrain, and imports none of them.',
+            },
+          ],
+        },
       ],
+    },
+  },
+  {
+    files: PURE_RENDER,
+    rules: {
+      'no-restricted-properties': ['error', ...NO_AMBIENT_RANDOMNESS],
+      'no-restricted-globals': ['error', ...NO_WALL_CLOCK_OR_DOM],
+      'no-restricted-imports': ['error', NO_RENDERING_LIBRARIES],
     },
   },
 );
