@@ -239,6 +239,24 @@ describe('fence tiles as they are actually built', () => {
     field.dispose();
   });
 
+  it('says so when it has no geometry for a kind, rather than drawing nothing', () => {
+    // The failure this exists for: a map written by a newer build, or a dev
+    // server serving a half-updated module graph. The prop is placed, saved and
+    // reloaded correctly and simply never appears, which reads as the tool
+    // being broken -- and there is nothing on screen or in the log to say
+    // otherwise. `undrawn` is what the editor's readout reports.
+    const unknown = { kind: 'fence-wattle' as Prop['kind'], x: 0, y: 0, scale: 1, rotation: 0, tint: 0 };
+    const field = buildPropField([unknown, tree(200, 0)], () => 0);
+    expect(field.undrawn).toBe(1);
+    field.dispose();
+
+    const known = buildPropField(FENCE_KINDS.map((kind, i) => ({
+      kind, x: i * 200, y: 0, scale: 1, rotation: 0, tint: 0,
+    })), () => 0);
+    expect(known.undrawn).toBe(0);
+    known.dispose();
+  });
+
   it('varies one tile from the next without moving where it stands', () => {
     // A run of identical tiles reads as one extruded ribbon, so the parts jitter
     // -- but hashed from the position, so a rebuild mid-stroke does not reshuffle

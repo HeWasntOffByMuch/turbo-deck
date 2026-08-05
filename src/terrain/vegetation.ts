@@ -186,8 +186,21 @@ const FOOTPRINT_BASE: Record<PropKind, number> = {
   'fence-stone': FENCE_TILE_LENGTH / 2,
   'fence-rubble': FENCE_TILE_LENGTH / 2,
 };
+/**
+ * Fallback for a kind this build has no footprint for -- a map written by a
+ * newer build, or a half-updated module graph in a dev server.
+ *
+ * The number matters less than it not being `undefined`: unguarded, the lookup
+ * makes the radius **NaN**, and NaN spreads. A NaN footprint disc gives the
+ * walkability overlay NaN vertices, which takes the whole overlay off screen; a
+ * NaN collider radius makes every distance test against it false. Both fail by
+ * showing nothing, which reads as "the prop was never placed" and sends you
+ * looking in the wrong place entirely.
+ */
+const FALLBACK_FOOTPRINT = 16;
+
 export function footprintRadius(prop: Prop): number {
-  return FOOTPRINT_BASE[prop.kind] * prop.scale;
+  return (FOOTPRINT_BASE[prop.kind] ?? FALLBACK_FOOTPRINT) * (Number.isFinite(prop.scale) ? prop.scale : 1);
 }
 
 /** The props as sim obstacles: one circle per footprint (spec 044). */

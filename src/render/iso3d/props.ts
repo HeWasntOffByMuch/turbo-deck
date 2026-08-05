@@ -752,8 +752,22 @@ export function crownRadius(species: TreeSpecies): number {
 
 export interface PropFieldHandle {
   readonly group: THREE.Group;
+  /**
+   * Props this build has no geometry for, and so did not draw.
+   *
+   * Zero in a consistent build -- every `PropKind` has parts. It is not zero
+   * when a map written by a newer build is opened in an older one, or when a dev
+   * server hands the page a half-updated module graph, and in both cases the
+   * symptom without this is a tool that appears to do nothing at all: the props
+   * are placed, saved and reloaded correctly and simply never appear. Surfaced
+   * so the editor can say so rather than leaving you to guess.
+   */
+  readonly undrawn: number;
   dispose(): void;
 }
+
+/** The kinds `buildPropField` knows how to draw. */
+const DRAWN_KINDS: ReadonlySet<string> = new Set<string>(['tree', 'bush', ...FENCE_KINDS]);
 
 /** The unit surface normal of the ground, for props that lie along it. */
 export type NormalAt = (x: number, z: number) => readonly [number, number, number];
@@ -938,8 +952,16 @@ export function buildPropField(
     }
   }
 
+  const undrawn = props.filter((prop) => !DRAWN_KINDS.has(prop.kind)).length;
+  if (undrawn > 0) {
+    const kinds = [...new Set(props.filter((p) => !DRAWN_KINDS.has(p.kind)).map((p) => p.kind))];
+    // Loud, because the alternative is silence: nothing on screen and no error.
+    console.warn(`buildPropField: no geometry for ${kinds.join(', ')} -- ${undrawn} props not drawn`);
+  }
+
   return {
     group,
+    undrawn,
     dispose(): void {
       for (const geo of geometries) geo.dispose();
       for (const mat of materials) mat.dispose();

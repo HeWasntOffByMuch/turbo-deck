@@ -5,6 +5,7 @@ import { PLAY_HEIGHT, PLAY_WIDTH } from '../shared/world.js';
 import { PLAYER_RADIUS } from '../sim/constants.js';
 import { createArenaWorld } from './world.js';
 import {
+  FENCE_KINDS,
   footprintRadius,
   vegetationColliders,
   worldVegetation,
@@ -230,5 +231,20 @@ describe('worldVegetation (spec 044)', () => {
       const prop = props[i] as Prop;
       expect(circle).toEqual({ x: prop.x, y: prop.y, r: footprintRadius(prop) });
     });
+  });
+});
+
+describe('footprintRadius is total', () => {
+  it('never returns NaN, whatever kind or scale it is handed', () => {
+    // NaN spreads: a NaN footprint gives the walkability overlay NaN vertices,
+    // which takes the *whole overlay* off screen, and makes every collider
+    // distance test against the prop false. Both fail silently and by showing
+    // nothing, which reads as "the prop was never placed at all".
+    const odd = { kind: 'fence-wattle', x: 0, y: 0, rotation: 0, tint: 0 } as unknown as Prop;
+    expect(Number.isFinite(footprintRadius({ ...odd, scale: 1 }))).toBe(true);
+    expect(Number.isFinite(footprintRadius({ ...odd, scale: NaN }))).toBe(true);
+    for (const kind of FENCE_KINDS) {
+      expect(footprintRadius({ kind, x: 0, y: 0, scale: 1, rotation: 0, tint: 0 })).toBeGreaterThan(0);
+    }
   });
 });

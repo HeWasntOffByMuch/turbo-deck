@@ -156,6 +156,15 @@ class EditorScene {
     return field;
   }
 
+  /**
+   * Props the renderer had no geometry for. Always zero in a consistent build;
+   * see `PropFieldHandle.undrawn` for when it is not, and why saying so out loud
+   * beats leaving a tool looking broken.
+   */
+  get undrawnProps(): number {
+    return this.propField.undrawn;
+  }
+
   /** The layer the tools edit. One ground layer today. */
   get layerId(): string {
     return this.document.layers[0]?.id ?? 'ground';
@@ -692,7 +701,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       `span <b>${Math.round(c.halfWidth)}</b> &middot; ` +
       `pitch <b>${Math.round((c.elevation * 180) / Math.PI)}&deg;</b><br>` +
       `<span style="color:#7a7a90;">${chunks} chunks &middot; ` +
-      `${scene.map.store.props(layerId).length} props &middot; ` +
+      `${scene.map.store.props(layerId).length} props${scene.undrawnProps > 0 ? ` (<b style="color:#e08f8f;">${scene.undrawnProps} not drawn</b>)` : ''} &middot; ` +
       `${scene.map.store.markers(layerId).length} markers &middot; ${history.depth} undo` +
       `${status ? ` &middot; ${status}` : ''}</span>`;
 
