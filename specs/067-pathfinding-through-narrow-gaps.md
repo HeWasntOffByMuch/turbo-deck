@@ -1,4 +1,4 @@
-# 066 — Pathfinding through narrow gaps
+# 067 — Pathfinding through narrow gaps
 
 ## Problem
 

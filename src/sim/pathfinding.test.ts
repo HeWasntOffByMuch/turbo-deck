@@ -136,7 +136,7 @@ describe('nav grid', () => {
     expect(blockedCount).toBeLessThan(ARENA_GRID.cells.length / 2); // mostly open ground
   });
 
-  it('grades ground by how much room it has, monotonically away from a wall (spec 066)', () => {
+  it('grades ground by how much room it has, monotonically away from a wall (spec 067)', () => {
     const wall = ARENA_OBSTACLES[0] as Rect;
     const y = wall.y + wall.h / 2;
     const row = Math.floor((y - ARENA_GRID.originY) / ARENA_GRID.cellSize);
@@ -156,7 +156,7 @@ describe('nav grid', () => {
     expect(ARENA_GRID.cells.some((cell) => cell === NAV_TIGHT)).toBe(true);
   });
 
-  it('calls a cell blocked exactly when a body cannot stand at its centre (spec 066)', () => {
+  it('calls a cell blocked exactly when a body cannot stand at its centre (spec 067)', () => {
     // The grid used to demand radius + NAV_CLEARANCE, which is what made it
     // refuse gaps that walking threads. NAV_BLOCKED must now be circleBlocked.
     const grid = navGridFor(PLAYER_RADIUS, GROVE);
@@ -252,7 +252,7 @@ describe('findPath', () => {
   });
 });
 
-describe('narrow gaps (spec 066)', () => {
+describe('narrow gaps (spec 067)', () => {
   /** How wide a gap has to be before centre sampling is guaranteed to see it. */
   const RESOLVED_GAP = 2 * PLAYER_RADIUS + NAV_CELL_SIZE;
   const WEST: Vec2 = { x: 500, y: 450 };
@@ -411,7 +411,7 @@ describe('narrow gaps (spec 066)', () => {
   });
 });
 
-describe('search bookkeeping (spec 066)', () => {
+describe('search bookkeeping (spec 067)', () => {
   it('shares scratch between grids without letting one search corrupt another', () => {
     // Every radius over a world shares one working set, so interleaved searches
     // on two grids of the same size have to stay independent of each other.

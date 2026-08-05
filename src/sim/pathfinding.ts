@@ -9,14 +9,14 @@ import {
 import type { Vec2, WorldColliders } from './types.js';
 
 /**
- * Grid pathfinding for units that cannot see their target (spec 037/044/066).
+ * Grid pathfinding for units that cannot see their target (spec 037/044/067).
  *
  * A* over a uniform grid of the whole world, 8-connected with no corner cutting,
  * and an octile heuristic. The grid path is then string-pulled against the real
  * obstacles, so callers get a handful of world-space waypoints rather than a
  * staircase of cell centres.
  *
- * A cell is graded rather than merely blocked (spec 066). `NAV_BLOCKED` is
+ * A cell is graded rather than merely blocked (spec 067). `NAV_BLOCKED` is
  * exactly `circleBlocked`'s answer for the body radius, so the router and the
  * collision system agree on what a body fits through; `NAV_TIGHT` is ground the
  * body fits but the `NAV_CLEARANCE` margin does not, passable at `NAV_TIGHT_COST`
@@ -276,7 +276,7 @@ const POCKET_CELLS = 128;
  * everywhere else, like the nook between three trunks.
  *
  * Standing room and reachable are different questions, and conflating them is
- * the second half of why clicking a tree found no path (spec 066). The ground
+ * the second half of why clicking a tree found no path (spec 067). The ground
  * immediately beside a trunk is standable, so it is where a blocked goal
  * relocates to -- and in a grove it is very often boxed in by the neighbouring
  * trunks, so the search then spends its whole budget failing to arrive.

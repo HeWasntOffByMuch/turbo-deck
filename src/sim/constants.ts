@@ -174,12 +174,12 @@ export const SEPARATION_ITERATIONS = 4;
 // resolved: a corridor is only found when a cell centre lands in the band of
 // standable positions across it, and that band is (gap width - 2 * radius)
 // wide. At the 30 this used to be, the 32-to-40-unit gaps the scatter actually
-// produces were found or missed on alignment alone (spec 066).
+// produces were found or missed on alignment alone (spec 067).
 export const NAV_CELL_SIZE = 10;
 // Elbow room a route prefers to keep beyond the body radius, so it does not hug
 // a wall closely enough for separation to shove a unit into one.
 //
-// A preference, not a requirement (spec 066). Cells where the body fits but this
+// A preference, not a requirement (spec 067). Cells where the body fits but this
 // margin does not are NAV_TIGHT: passable, at NAV_TIGHT_COST per step. Making it
 // a requirement is what stopped the router from using gaps the world was
 // deliberately scattered to leave open.
@@ -198,7 +198,7 @@ export const PATH_REPLAN_TICKS = 20;
 export const PATH_WAYPOINT_EPS = 14;
 // Hard ceiling on cells expanded per search, so an unreachable goal is cheap.
 // Sized for the whole world rather than the play area (spec 044), and raised
-// with the cell size in spec 066 to keep the same reach in world units: a
+// with the cell size in spec 067 to keep the same reach in world units: a
 // 2000-unit route over the real world expands ~6k cells at the 90th percentile,
 // so this leaves room for the hard ones without letting a sealed box run away.
 export const PATH_MAX_NODES = 40000;
