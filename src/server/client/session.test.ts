@@ -684,6 +684,101 @@ describe('cooldowns', () => {
 });
 
 /**
+ * The predicted root (spec 066). The server roots a caster and only says so a
+ * round trip later; the client stops asking to move the moment it commits.
+ */
+describe('committing before the server has answered', () => {
+  it('roots the client the moment the button is pressed', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+    expect(client.view().selfRoot).toBeNull();
+
+    client.useAbility('melee.slash', 900, 500);
+    // No settle, no tick: nothing has been anywhere near the server.
+    expect(client.view().selfRoot).toEqual({ x: 900, y: 500 });
+  });
+
+  it('gives the legs back when the server refuses', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+
+    client.useAbility('melee.slash', 900, 500);
+    await settle();
+    test.server.tick();
+    await settle();
+    // Accepted, so the confirmed cast is what roots us now.
+    expect(client.view().selfRoot).not.toBeNull();
+
+    // A second press while that one runs is refused.
+    client.useAbility('melee.slash', 900, 500);
+    await settle();
+    test.server.tick();
+    await settle();
+
+    const slash = abilityById('melee.slash');
+    expect(slash).toBeDefined();
+    if (!slash) return;
+    // Run past the end of the cast and its cooldown; nothing may still root us.
+    for (let i = 0; i < slash.cooldownTicks + slash.windupTicks + 10; i++) {
+      test.server.tick();
+      await settle();
+    }
+    expect(client.view().selfRoot).toBeNull();
+  });
+
+  it('does not predict a root for an ability it knows is on cooldown', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+
+    client.useAbility('melee.heavy', 900, 500);
+    await settle();
+    test.server.tick();
+    await settle();
+    // Let the cast finish, leaving only the cooldown standing.
+    const heavy = abilityById('melee.heavy');
+    expect(heavy).toBeDefined();
+    if (!heavy) return;
+    for (let i = 0; i < heavy.windupTicks + heavy.recoveryTicks + 4; i++) {
+      test.server.tick();
+      await settle();
+    }
+    expect(client.view().selfRoot).toBeNull();
+    expect(client.view().cooldowns['melee.heavy']).toBeGreaterThan(client.view().estimatedTick);
+
+    // Pressing it again is refused by the server, and the client knows enough
+    // not to stand still waiting to be told.
+    client.useAbility('melee.heavy', 900, 500);
+    expect(client.view().selfRoot).toBeNull();
+  });
+
+  it('lets go of a request nobody ever answered', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+
+    // Ask, then lose the connection's ear: the server never sees it.
+    client.useAbility('melee.slash', 900, 500);
+    expect(client.view().selfRoot).not.toBeNull();
+    for (let i = 0; i < 200; i++) client.advanceTick();
+    expect(client.view().selfRoot).toBeNull();
+  });
+
+  it('withdraws the root when the cast is called off', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+
+    client.useAbility('melee.heavy', 900, 500);
+    expect(client.view().selfRoot).not.toBeNull();
+    client.cancelCast();
+    expect(client.view().selfRoot).toBeNull();
+  });
+});
+
+/**
  * Turning (spec 064). The client asks for a heading; the server decides how much
  * of that turn actually happens this tick.
  */

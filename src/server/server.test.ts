@@ -366,6 +366,7 @@ describe('combat over the wire', () => {
         abilityId: 'melee.slash',
         targetX: at.x + 40,
         targetY: at.y,
+        afterInputSeq: 0,
       }),
     );
     // Run out the wind-up: nothing lands on the tick the button is pressed.
@@ -376,6 +377,91 @@ describe('combat over the wire', () => {
     expect(result?.attackerId).toBe(entityId);
     expect(result?.damage).toBeGreaterThan(0);
     expect(result?.targetHealth).toBeGreaterThanOrEqual(0);
+  });
+});
+
+/**
+ * Spec 066: an ability request names the input it was made on, and waits for it.
+ *
+ * The two are different ticks whenever anything is buffered, and the difference
+ * is exactly what the client predicted its root from.
+ */
+describe('a cast commits on the input it was asked for', () => {
+  it('waits for the stamped input rather than firing on arrival', async () => {
+    const game = server();
+    const client = new Client(game);
+    await client.hello('alice');
+    const entityId = client.of(ServerMessageType.Welcome)[0]?.entityId ?? -1;
+
+    // Five inputs queued, so the stream is well behind what has arrived.
+    for (let seq = 1; seq <= 5; seq++) await client.input(seq, { moveX: 1 });
+    // ...and a request made after the fifth of them.
+    await game.receive(
+      client.connection,
+      encodeClientMessage({
+        type: ClientMessageType.UseAbility,
+        abilityId: 'melee.slash',
+        targetX: 900,
+        targetY: 500,
+        afterInputSeq: 5,
+      }),
+    );
+
+    // The first four ticks apply inputs 1-4; the commit is not due yet.
+    for (let i = 0; i < 4; i++) {
+      game.tick();
+      expect(game.world.entities.get(entityId)?.cast).toBeNull();
+    }
+    // The fifth applies input 5, which is what the request was stamped to.
+    game.tick();
+    expect(game.world.entities.get(entityId)?.cast?.abilityId).toBe('melee.slash');
+  });
+
+  it('still fires for a client that sends no movement at all', async () => {
+    const game = server();
+    const client = new Client(game);
+    await client.hello('alice');
+    const entityId = client.of(ServerMessageType.Welcome)[0]?.entityId ?? -1;
+
+    await game.receive(
+      client.connection,
+      encodeClientMessage({
+        type: ClientMessageType.UseAbility,
+        abilityId: 'melee.slash',
+        targetX: 900,
+        targetY: 500,
+        afterInputSeq: 0,
+      }),
+    );
+    game.tick();
+    expect(game.world.entities.get(entityId)?.cast?.abilityId).toBe('melee.slash');
+  });
+
+  it('keeps two requests rather than letting the second overwrite the first', async () => {
+    const game = server();
+    const client = new Client(game);
+    await client.hello('alice');
+    const entityId = client.of(ServerMessageType.Welcome)[0]?.entityId ?? -1;
+
+    for (const abilityId of ['melee.slash', 'melee.heavy']) {
+      await game.receive(
+        client.connection,
+        encodeClientMessage({
+          type: ClientMessageType.UseAbility,
+          abilityId,
+          targetX: 900,
+          targetY: 500,
+          afterInputSeq: 0,
+        }),
+      );
+    }
+
+    // The first is taken; the second is answered rather than swallowed, which is
+    // what lets the client match replies to requests.
+    game.tick();
+    expect(game.world.entities.get(entityId)?.cast?.abilityId).toBe('melee.slash');
+    game.tick();
+    expect(client.of(ServerMessageType.CastRejected)[0]?.abilityId).toBe('melee.heavy');
   });
 });
 
