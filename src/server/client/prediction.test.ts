@@ -201,3 +201,63 @@ describe('predicting against the real world', () => {
     }
   });
 });
+
+describe('easing a drift correction (spec 067)', () => {
+  it('adopts the server\'s answer exactly, and only the drawing lags', () => {
+    const local = buffer();
+    for (let seq = 1; seq <= 4; seq++) local.apply(input(seq));
+
+    // The server says input 2 ended a whole step short of where we had it.
+    local.reconcile(2, { x: PER_TICK, y: 0 }, { eased: true });
+
+    // State: authoritative, plus the two inputs it has not acknowledged.
+    expect(local.position.x).toBeCloseTo(PER_TICK * 3, 9);
+    // Picture: still where the body was, so nothing jumps.
+    expect(local.drawn.x).toBeCloseTo(PER_TICK * 4, 9);
+  });
+
+  it('converges the drawn position onto the predicted one', () => {
+    const local = buffer();
+    for (let seq = 1; seq <= 4; seq++) local.apply(input(seq));
+    local.reconcile(2, { x: PER_TICK, y: 0 }, { eased: true });
+
+    let previous = local.easing;
+    expect(previous).toBeGreaterThan(0);
+    for (let tick = 0; tick < 40; tick++) {
+      local.decay();
+      expect(local.easing).toBeLessThanOrEqual(previous);
+      previous = local.easing;
+    }
+    expect(local.easing).toBe(0);
+    expect(local.drawn).toEqual(local.position);
+  });
+
+  it('snaps rather than eases when the correction is a hard one', () => {
+    const local = buffer();
+    for (let seq = 1; seq <= 4; seq++) local.apply(input(seq));
+    local.reconcile(2, { x: PER_TICK, y: 0 });
+    expect(local.easing).toBe(0);
+    expect(local.drawn).toEqual(local.position);
+  });
+
+  it('refuses to ease a correction too large to be drift', () => {
+    const local = buffer();
+    for (let seq = 1; seq <= 4; seq++) local.apply(input(seq));
+    // Somewhere else entirely: a teleport should look like one.
+    local.reconcile(2, { x: 5000, y: 5000 }, { eased: true });
+    expect(local.easing).toBe(0);
+  });
+
+  it('keeps a second correction from restarting the glide', () => {
+    const local = buffer();
+    for (let seq = 1; seq <= 4; seq++) local.apply(input(seq));
+    local.reconcile(2, { x: PER_TICK, y: 0 }, { eased: true });
+    const drawnBefore = local.drawn;
+    local.decay();
+    // A second correction for the same disagreement, describing the same place.
+    local.reconcile(3, { x: PER_TICK * 2, y: 0 }, { eased: true });
+    // The picture carries on from where it was rather than jumping back.
+    expect(local.drawn.x).toBeLessThanOrEqual(drawnBefore.x + 1e-9);
+    expect(local.position.x).toBeCloseTo(PER_TICK * 3, 9);
+  });
+});

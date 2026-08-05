@@ -229,11 +229,6 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   function sendInput(): void {
     const view = client.view();
     const me = selfPosition();
-    // The cast the *server* says we are in, which is what roots us and what we
-    // are turning into. Read from `view.casts` rather than from the button that
-    // was pressed: a cast only exists once the server has confirmed it, and it
-    // can end without us asking -- being hit interrupts one.
-    const selfCast = view.casts.find((cast) => cast.entityId === view.selfEntityId) ?? null;
     const intent = moveIntent({
       held,
       self: me,
@@ -242,7 +237,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // for as long as an order stands is what the first cut did.
       route: planner.next(me, destination, pathWorld, view.estimatedTick),
       facing,
-      castAim: selfCast ? { x: selfCast.targetX, y: selfCast.targetY } : null,
+      // What roots us and what we are turning into, from the client session
+      // rather than from the button that was pressed. It covers both a cast the
+      // server has confirmed and one we have only asked for (spec 067) -- and it
+      // can end without us asking, because being hit interrupts one.
+      castAim: view.selfRoot,
     });
     if (intent.arrived) {
       destination = null;

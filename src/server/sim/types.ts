@@ -155,6 +155,29 @@ export interface ServerEntity {
    * immune to a constant lead.
    */
   readonly claimedPosition: { readonly x: number; readonly y: number } | null;
+  /**
+   * The sequence number {@link claimedPosition} came from, or 0 before the
+   * first input (spec 067).
+   *
+   * The speed check is per *input*, not per tick, and the two stop being the
+   * same thing the moment an input is dropped -- from a full queue, or by a
+   * client that skipped ticks catching up after a stall. Measuring the gap lets
+   * a claim that spans k inputs be allowed k ticks of travel instead of being
+   * accused of covering them all in one.
+   */
+  readonly claimedSeq: number;
+  /**
+   * The last correction sent to this entity's client, or null (spec 067).
+   *
+   * A client that has been corrected makes its next claims from *there* -- it
+   * snaps to this position and replays every input it had not heard back about
+   * yet, so by input N it is legitimately this many ticks past it. The jump
+   * between its old claim and its new one is exactly the error the correction
+   * existed to remove, and reading that as a speed hack is how one nudge became
+   * two snaps. Pardoning it, with the seq so the allowance grows with the
+   * replay, is what stops that.
+   */
+  readonly pardon: { readonly x: number; readonly y: number; readonly seq: number } | null;
 }
 
 export interface ServerWorldState {
@@ -190,6 +213,15 @@ export interface ServerInput {
    * nowhere, and answered with a correction on every cast.
    */
   readonly hasPrediction: boolean;
+  /**
+   * How many sequence numbers this input covers, normally 1 (spec 067).
+   *
+   * More than that means inputs between the last applied one and this one never
+   * reached the sim, so the claim it carries has had that many ticks to travel.
+   * The sim only uses it to size the speed allowance; it never moves the body
+   * further for it.
+   */
+  readonly seqSpan: number;
   /** An ability the client is asking to commit to this tick; '' for none. */
   readonly castAbilityId: string;
   readonly castTargetX: number;

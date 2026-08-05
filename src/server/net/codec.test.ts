@@ -120,6 +120,16 @@ describe('game message round-trip', () => {
     { type: ClientMessageType.Unequip, slot: 'offHand' },
     { type: ClientMessageType.SpendSkillPoint, skillId: 'might.toughness' },
     { type: ClientMessageType.Chat, text: 'hello world' },
+    {
+      type: ClientMessageType.UseAbility,
+      abilityId: 'melee.slash',
+      targetX: 612.5,
+      targetY: -48.25,
+      // The input this request was made on (spec 067), not decoration: the
+      // server commits on that input rather than on arrival.
+      afterInputSeq: 9001,
+    },
+    { type: ClientMessageType.CancelCast, afterInputSeq: 9002 },
   ];
 
   it.each(clientMessages.map((m) => [m.type, m] as const))(

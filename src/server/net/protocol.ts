@@ -167,6 +167,13 @@ export const CorrectionReason = {
   Collision: 2,
   /** An admin moved them. */
   Teleport: 3,
+  /**
+   * The prediction is slightly wrong and the client should ease onto the
+   * server's answer rather than snap to it (spec 067). Everything above is a
+   * client that cannot be believed; this one is a client that is trying and
+   * missing, which is the ordinary case on a real connection.
+   */
+  Drift: 4,
 } as const;
 
 export const ErrorCode = {

@@ -78,10 +78,22 @@ export interface UseAbilityMessage {
   readonly abilityId: string;
   readonly targetX: number;
   readonly targetY: number;
+  /**
+   * The last input sequence number the client had sent when it asked (spec 067).
+   *
+   * The server applies one input per tick from a queue, so the tick a request
+   * *arrives* on and the tick the input it was made on is *applied* on are
+   * different ticks whenever anything is buffered. Committing on the stamped
+   * input instead of on arrival is what makes the client's own predicted root
+   * line up with the server's exactly, rather than approximately.
+   */
+  readonly afterInputSeq: number;
 }
 
 export interface CancelCastMessage {
   readonly type: typeof ClientMessageType.CancelCast;
+  /** As {@link UseAbilityMessage.afterInputSeq}: withdrawing is timed too. */
+  readonly afterInputSeq: number;
 }
 
 export type ClientMessage =
@@ -128,9 +140,14 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
       writer.str(message.text);
       break;
     case ClientMessageType.UseAbility:
-      writer.str(message.abilityId).f32(message.targetX).f32(message.targetY);
+      writer
+        .str(message.abilityId)
+        .f32(message.targetX)
+        .f32(message.targetY)
+        .varuint(message.afterInputSeq);
       break;
     case ClientMessageType.CancelCast:
+      writer.varuint(message.afterInputSeq);
       break;
   }
   return writer.toBytes();
@@ -175,9 +192,10 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
         abilityId: reader.str(),
         targetX: reader.f32(),
         targetY: reader.f32(),
+        afterInputSeq: reader.varuint(),
       };
     case ClientMessageType.CancelCast:
-      return { type: ClientMessageType.CancelCast };
+      return { type: ClientMessageType.CancelCast, afterInputSeq: reader.varuint() };
     default:
       throw new CodecError(`unknown client message type 0x${type.toString(16)}`);
   }

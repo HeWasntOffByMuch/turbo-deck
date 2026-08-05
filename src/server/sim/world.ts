@@ -98,6 +98,8 @@ function blankEntity(id: number): ServerEntity {
     repathAtTick: 0,
     pathGoal: null,
     claimedPosition: null,
+    claimedSeq: 0,
+    pardon: null,
     resource: 0,
     cast: null,
     cooldowns: {},
@@ -165,6 +167,8 @@ export function spawnEntity(
     repathAtTick: 0,
     pathGoal: null,
     claimedPosition: null,
+    claimedSeq: 0,
+    pardon: null,
     resource: spec.stats.maxResource,
     cast: null,
     cooldowns: {},
@@ -286,6 +290,28 @@ export function step(
         input && input.hasPrediction
           ? { x: input.predictedX, y: input.predictedY }
           : steered.claimedPosition,
+      claimedSeq: input && input.hasPrediction ? input.seq : steered.claimedSeq,
+      // A correction tells the client to be here, so its next claim will start
+      // from here rather than from where it was. Pardoning that position is what
+      // stops the snap we just asked for from being read as a speed hack
+      // (spec 067).
+      //
+      // The *seq* is the one the disagreement started at, not the latest: our
+      // corrections take a one-way trip to arrive, so the client is reconciling
+      // to something several inputs old, and refreshing the seq every tick would
+      // shrink its allowance to a single step exactly while it is catching up.
+      // It lives only as long as the disagreement -- one input the server agrees
+      // with clears it -- so the allowance can never grow without something
+      // being wrong every tick it grows.
+      pardon: input
+        ? outcome.correctionReason !== null
+          ? {
+              x: outcome.position.x,
+              y: outcome.position.y,
+              seq: steered.pardon?.seq ?? input.seq,
+            }
+          : null
+        : steered.pardon,
     };
     next = expireActivity(next, tick, moved ? ActivityValue.Moving : ActivityValue.Idle);
     working.set(next.id, next);
@@ -596,6 +622,7 @@ function monsterIntent(
       predictedX: monster.position.x,
       predictedY: monster.position.y,
       hasPrediction: false,
+      seqSpan: 1,
       castAbilityId: wantsToSwing && swing ? swing.id : '',
       castTargetX: target.position.x,
       castTargetY: target.position.y,
@@ -791,6 +818,8 @@ function runSpawner(
       repathAtTick: 0,
       pathGoal: null,
       claimedPosition: null,
+    claimedSeq: 0,
+    pardon: null,
       resource: definition.stats.maxResource,
       cast: null,
       cooldowns: {},

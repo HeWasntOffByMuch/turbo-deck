@@ -108,6 +108,7 @@ function input(entityId: number, seq: number, overrides: Partial<ServerInput> = 
     predictedX: 0,
     predictedY: 0,
     hasPrediction: true,
+    seqSpan: 1,
     castAbilityId: '',
     castTargetX: 0,
     castTargetY: 0,
@@ -241,20 +242,21 @@ describe('movement validation', () => {
 
   it('does not flag a client that is simply running ahead of the server', () => {
     // The regression this exists for: a client predicts ahead of the server by
-    // its one-way latency, so its claim is always a few ticks in front of where
-    // the server has it. Measured against the server's position that reads as a
-    // speed hack on every input; measured against the client's own previous
-    // claim -- which is what the check does -- it reads as walking.
+    // its one-way latency, so at any instant its body is several ticks in front
+    // of where the server has it. That lead is in *time*, not in the input
+    // stream -- a correctly predicting client's claim for input N is exactly
+    // where the server will put it when it gets round to applying input N, and
+    // both checks are per input. So a hundred milliseconds of ping is invisible
+    // here, which is the whole point: it must cost nothing.
     let state = createWorldState(1);
     const player = withPlayer(state, 600, 450);
     state = player.state;
     const ctx = context();
     const perTick = PLAYER_STATS.moveSpeed / SERVER_TICK_RATE;
-    const LEAD_TICKS = 6; // ~100ms of one-way latency at 60Hz
 
     let corrections = 0;
     for (let tick = 1; tick <= 40; tick++) {
-      const claimedX = 600 + perTick * (tick + LEAD_TICKS);
+      const claimedX = 600 + perTick * tick;
       const result = step(
         state,
         [input(player.id, tick, { moveX: 1, moveY: 0, predictedX: claimedX, predictedY: 450 })],
@@ -264,6 +266,144 @@ describe('movement validation', () => {
       corrections += result.events.filter((event) => event.kind === 'correction').length;
     }
     expect(corrections).toBe(0);
+  });
+
+  it('nudges a client that is drifting, long before it is worth a snap', () => {
+    // The gap this closes (spec 067): under the 48-unit threshold, nothing used
+    // to be sent and nothing was fixed, so a tick of error was permanent and
+    // every swing banked another one.
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const perTick = PLAYER_STATS.moveSpeed / SERVER_TICK_RATE;
+
+    // Claims a legal distance, in the wrong direction: one tick of drift.
+    const result = step(
+      state,
+      [input(player.id, 1, { moveX: 1, moveY: 0, predictedX: 600, predictedY: 450 + perTick })],
+      context(),
+    );
+    expect(result.events.find((event) => event.kind === 'correction')).toMatchObject({
+      reason: CorrectionReason.Drift,
+      inputSeq: 1,
+    });
+  });
+
+  it('does not answer a claim that is merely rounded', () => {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const perTick = PLAYER_STATS.moveSpeed / SERVER_TICK_RATE;
+
+    // A hundredth of a unit out -- float noise on the wire, not a disagreement.
+    const result = step(
+      state,
+      [input(player.id, 1, { moveX: 1, moveY: 0, predictedX: 600 + perTick + 0.01, predictedY: 450 })],
+      context(),
+    );
+    expect(result.events.filter((event) => event.kind === 'correction')).toEqual([]);
+  });
+
+  it('does not read a client snapping to a correction as a speed hack', () => {
+    // The feedback loop this closes: a correction moves the client, and its next
+    // claim starts from where it was moved to. Measured against its own previous
+    // claim that is a teleport, so the nudge earned a second, larger snap.
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const ctx = context();
+    const perTick = PLAYER_STATS.moveSpeed / SERVER_TICK_RATE;
+
+    // Walk off in the wrong direction until the server has had enough.
+    let corrected = false;
+    for (let seq = 1; seq <= 30 && !corrected; seq++) {
+      const result = step(
+        state,
+        [
+          input(player.id, seq, {
+            moveX: 0,
+            moveY: 0,
+            predictedX: 600 + perTick * seq,
+            predictedY: 450,
+          }),
+        ],
+        ctx,
+      );
+      state = result.state;
+      corrected = result.events.some(
+        (event) => event.kind === 'correction' && event.reason === CorrectionReason.Divergence,
+      );
+    }
+    expect(corrected).toBe(true);
+
+    // Now do what a client does with a correction: snap to it.
+    const after = step(
+      state,
+      [input(player.id, 31, { moveX: 0, moveY: 0, predictedX: 600, predictedY: 450 })],
+      ctx,
+    );
+    const speedViolation = after.events.find(
+      (event) => event.kind === 'correction' && event.reason === CorrectionReason.SpeedViolation,
+    );
+    expect(speedViolation).toBeUndefined();
+  });
+
+  it('allows a claim the travel its gap in sequence numbers earned', () => {
+    // Inputs 2 to 9 never reached the sim -- dropped from a full queue, or lost
+    // with the connection. The claim that arrives has had eight ticks to travel
+    // and is not a hack.
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const ctx = context();
+    const perTick = PLAYER_STATS.moveSpeed / SERVER_TICK_RATE;
+
+    state = step(
+      state,
+      [input(player.id, 1, { moveX: 1, moveY: 0, predictedX: 600 + perTick, predictedY: 450 })],
+      ctx,
+    ).state;
+
+    const result = step(
+      state,
+      [
+        input(player.id, 10, {
+          moveX: 1,
+          moveY: 0,
+          seqSpan: 9,
+          predictedX: 600 + perTick * 10,
+          predictedY: 450,
+        }),
+      ],
+      ctx,
+    );
+    const violation = result.events.find(
+      (event) => event.kind === 'correction' && event.reason === CorrectionReason.SpeedViolation,
+    );
+    expect(violation).toBeUndefined();
+  });
+
+  it('still flags the same claim when nothing was dropped', () => {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const ctx = context();
+    const perTick = PLAYER_STATS.moveSpeed / SERVER_TICK_RATE;
+
+    state = step(
+      state,
+      [input(player.id, 1, { moveX: 1, moveY: 0, predictedX: 600 + perTick, predictedY: 450 })],
+      ctx,
+    ).state;
+
+    const result = step(
+      state,
+      [input(player.id, 2, { moveX: 1, moveY: 0, predictedX: 600 + perTick * 10, predictedY: 450 })],
+      ctx,
+    );
+    expect(result.events.find((event) => event.kind === 'correction')).toMatchObject({
+      reason: CorrectionReason.SpeedViolation,
+    });
   });
 
   it('says nothing at all when the prediction is close enough', () => {

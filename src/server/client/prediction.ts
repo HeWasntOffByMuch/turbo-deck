@@ -19,6 +19,15 @@
  * a correction describes the world several ticks ago, and naively snapping to it
  * would throw away every input the player has made since, which reads as the
  * character being yanked backwards.
+ *
+ * Spec 067 splits step 3 in two. A correction is still adopted *exactly* -- the
+ * position this buffer reports to the server is always authoritative-plus-replay
+ * and never a compromise -- but a **drift** correction, the small kind the server
+ * now sends as soon as it notices any disagreement at all, keeps the difference
+ * as a visual offset and eases it to nothing over a few ticks. So the state is
+ * right immediately and the *picture* catches up smoothly, which is what lets
+ * error be corrected continuously instead of being allowed to pile up until it
+ * is worth a snap.
  */
 
 import { pushOutOfObstacles, slideCircle } from '../../sim/collision.js';
@@ -114,11 +123,38 @@ export function createWorldPredictor(options: {
   };
 }
 
+/**
+ * How much of the visual offset survives one tick. 0.82 halves it in about four
+ * ticks and leaves under a percent after a quarter of a second: fast enough that
+ * a correction is over before the player has read it, slow enough that it is a
+ * glide rather than the snap it replaces.
+ */
+const OFFSET_DECAY = 0.82;
+
+/** Below this the offset is spent; keeping it alive is float noise in the draw. */
+const OFFSET_EPSILON = 0.02;
+
+/**
+ * Past this, easing is a lie: a body that far from where the server says it is
+ * has been teleported, killed and respawned, or is cheating, and all three
+ * should look like what they are.
+ */
+const MAX_EASED_OFFSET = 48;
+
 export class PredictionBuffer {
   private pendingInputs: PredictedInput[] = [];
   private local: Point;
   /** Counts corrections, so a client can surface how badly it is mispredicting. */
   private corrections = 0;
+  /**
+   * What to add to {@link position} to get what should be *drawn* -- the
+   * remainder of the last eased correction, decaying toward nothing.
+   *
+   * Never sent, never predicted from. Prediction continues from the server's
+   * answer the instant it arrives; this is only the picture catching up.
+   */
+  private offsetX = 0;
+  private offsetY = 0;
 
   constructor(
     start: Point,
@@ -127,8 +163,20 @@ export class PredictionBuffer {
     this.local = start;
   }
 
+  /** The predicted position: what the server is told, and what replays from. */
   get position(): Point {
     return this.local;
+  }
+
+  /** The position to draw: {@link position} plus whatever is left to ease in. */
+  get drawn(): Point {
+    if (this.offsetX === 0 && this.offsetY === 0) return this.local;
+    return { x: this.local.x + this.offsetX, y: this.local.y + this.offsetY };
+  }
+
+  /** How far the drawn body still lags the predicted one. Diagnostics. */
+  get easing(): number {
+    return Math.hypot(this.offsetX, this.offsetY);
   }
 
   get pending(): readonly PredictedInput[] {
@@ -160,14 +208,53 @@ export class PredictionBuffer {
    * Snaps to the server's position as of `seq`, then replays everything after
    * it. The replayed inputs stay pending: the server has not acknowledged them,
    * so a second correction must be able to replay them again.
+   *
+   * `eased` keeps the difference the correction made as a visual offset instead
+   * of moving the drawn body -- see {@link drawn}. The corrected state is
+   * adopted either way; the flag only decides whether the player watches it
+   * happen.
    */
-  reconcile(seq: number, authoritative: Point): Point {
+  reconcile(seq: number, authoritative: Point, options?: { readonly eased?: boolean }): Point {
     this.corrections += 1;
     this.pendingInputs = this.pendingInputs.filter((input) => input.seq > seq);
     let position = authoritative;
     for (const input of this.pendingInputs) position = this.step(position, input);
+
+    if (options?.eased) {
+      // Where we were, relative to where we now know we are. Added to the
+      // previous offset rather than replacing it, so a second correction
+      // arriving mid-ease does not restart the glide from a stale position.
+      const carriedX = this.local.x + this.offsetX - position.x;
+      const carriedY = this.local.y + this.offsetY - position.y;
+      if (Math.hypot(carriedX, carriedY) <= MAX_EASED_OFFSET) {
+        this.offsetX = carriedX;
+        this.offsetY = carriedY;
+      } else {
+        this.offsetX = 0;
+        this.offsetY = 0;
+      }
+    } else {
+      this.offsetX = 0;
+      this.offsetY = 0;
+    }
+
     this.local = position;
     return this.local;
+  }
+
+  /**
+   * One tick of easing. Driven from the same fixed-timestep loop that produces
+   * inputs, so the glide is measured in ticks rather than in frames -- a client
+   * drawing at 30fps and one at 144 converge at the same rate.
+   */
+  decay(): void {
+    if (this.offsetX === 0 && this.offsetY === 0) return;
+    this.offsetX *= OFFSET_DECAY;
+    this.offsetY *= OFFSET_DECAY;
+    if (Math.hypot(this.offsetX, this.offsetY) < OFFSET_EPSILON) {
+      this.offsetX = 0;
+      this.offsetY = 0;
+    }
   }
 
   /** Distance between the local guess and a position the server reported. */

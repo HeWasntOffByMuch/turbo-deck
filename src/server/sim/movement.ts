@@ -9,17 +9,25 @@
  * water.
  *
  * The client's own predicted position rides along in the input purely so this
- * function can measure it. Two things can be wrong with it:
+ * function can measure it. Three things can be wrong with it:
  *
- *  - it is further from the last authoritative position than one tick of
- *    movement could possibly carry it -- a speed hack, and the correction is
- *    unconditional;
- *  - it merely disagrees with the server by more than the threshold -- ordinary
- *    drift, and the correction is a nudge.
+ *  - it is further from the last claim than the inputs it spans could possibly
+ *    carry it -- a speed hack, and the correction is unconditional;
+ *  - it disagrees with the server by more than the threshold -- the prediction
+ *    is badly wrong, and the correction is a snap;
+ *  - it disagrees at all, by more than {@link DRIFT_EPSILON} -- ordinary drift,
+ *    and the correction is a nudge the client eases in (spec 067).
  *
- * Under the threshold nothing is sent at all. That silence is the entire point
- * of client-side prediction: a correct prediction should cost no bandwidth and
- * produce no visible snap.
+ * That last tier is new, and it is the one that keeps the other two rare. Before
+ * it, anything under 48 units was neither reported nor fixed, so every tick the
+ * client guessed wrong banked error that could only ever grow -- invisible until
+ * it crossed the threshold, and then a 48-unit jump. Correcting drift as it
+ * happens costs one small message per delta at worst and nothing at all in the
+ * common case.
+ *
+ * Because when the prediction is exact nothing is sent, silence still means the
+ * client was right: a correct prediction costs no bandwidth and produces no
+ * visible snap.
  */
 
 import { slideCircle, pushOutOfObstacles } from '../../sim/collision.js';
@@ -46,6 +54,16 @@ export interface MovementOutcome {
 
 const TAU = Math.PI * 2;
 const DEG = Math.PI / 180;
+
+/**
+ * How far a client's claim may sit from the server's answer before it is worth
+ * saying so (spec 067).
+ *
+ * A tenth of a tick's walk at the default speed, and four orders of magnitude
+ * above the f32 rounding the wire puts on a position, so an agreeing client is
+ * silent and a disagreeing one is heard on the tick it disagrees.
+ */
+export const DRIFT_EPSILON = 0.25;
 
 /** The signed turn from `from` to `to`, in (-PI, PI]. */
 function shortestTurn(from: number, to: number): number {
@@ -166,7 +184,7 @@ export function resolveMovement(
     facing,
     correctionReason:
       input && input.hasPrediction
-        ? correctionFor(input, entity.claimedPosition, position, maxStep, blockedByTerrain, config)
+        ? correctionFor(input, entity, position, maxStep, blockedByTerrain, config)
         : null,
   };
 }
@@ -196,14 +214,17 @@ function resolveFacing(entity: ServerEntity, input: ServerInput | null): number 
  * impossible move is reported as a speed violation rather than as drift that
  * happens to be large.
  *
- * `previousClaim` is the client's own last predicted position, not the server's
- * last authoritative one -- see {@link ServerEntity.claimedPosition} for why
- * that distinction is the difference between a working speed check and one that
- * flags every player with a ping.
+ * The claim is measured against the entity's own last claim, not against the
+ * server's last authoritative position -- see {@link ServerEntity.claimedPosition}
+ * for why that distinction is the difference between a working speed check and
+ * one that flags every player with a ping. Two things widen it (spec 067):
+ * an input that spans several sequence numbers gets that many ticks of
+ * allowance, and the position of the last correction is pardoned, because a
+ * client that has just been snapped is *supposed* to be there.
  */
 function correctionFor(
   input: ServerInput,
-  previousClaim: { readonly x: number; readonly y: number } | null,
+  entity: ServerEntity,
   authoritative: Vec3,
   maxStep: number,
   blockedByTerrain: boolean,
@@ -216,14 +237,37 @@ function correctionFor(
   }
 
   // The first input has nothing to compare against; one free tick of movement
-  // is not worth a correction, and the divergence check below still applies.
+  // is not worth a correction, and the checks below still apply.
+  const previousClaim = entity.claimedPosition;
   if (previousClaim !== null) {
-    const claimedTravel = distance(predictedX, predictedY, previousClaim.x, previousClaim.y);
-    if (claimedTravel > maxStep * config.speedTolerance) return CorrectionReason.SpeedViolation;
+    const allowanceFor = (span: number): number =>
+      maxStep * config.speedTolerance * Math.max(1, Math.min(MAX_SEQ_SPAN, Math.floor(span)));
+
+    const travelled = distance(predictedX, predictedY, previousClaim.x, previousClaim.y);
+    let legal = travelled <= allowanceFor(input.seqSpan);
+
+    // The other legal place to be: wherever we last corrected them to, plus the
+    // inputs they have replayed since. A reconciling client walks away from that
+    // position at exactly walking speed, which is what this measures.
+    const pardon = entity.pardon;
+    if (!legal && pardon !== null) {
+      const sincePardon = distance(predictedX, predictedY, pardon.x, pardon.y);
+      legal = sincePardon <= allowanceFor(input.seq - pardon.seq);
+    }
+    if (!legal) return CorrectionReason.SpeedViolation;
   }
 
   const drift = distance(predictedX, predictedY, authoritative.x, authoritative.y);
   if (blockedByTerrain && drift > 1) return CorrectionReason.Collision;
   if (drift > config.correctionThreshold) return CorrectionReason.Divergence;
+  if (drift > DRIFT_EPSILON) return CorrectionReason.Drift;
   return null;
 }
+
+/**
+ * Ceiling on the allowance a gap in sequence numbers can buy. A second of
+ * missing inputs is a connection problem, not a licence to cross the map: past
+ * this the claim is measured as if only this many ticks had passed, and a client
+ * that really was away that long is corrected rather than believed.
+ */
+const MAX_SEQ_SPAN = SERVER_TICK_RATE;

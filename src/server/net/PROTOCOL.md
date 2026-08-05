@@ -1,4 +1,4 @@
-# turbo-deck wire protocol v1
+# turbo-deck wire protocol v4
 
 Binary, not JSON. Every frame is a WebSocket **binary** message whose first byte
 is the message type; the rest is a type-specific payload. All multi-byte numbers
@@ -57,23 +57,34 @@ The server applies **one input per tick**, so sending faster buys nothing.
 whether a `Correction` is owed.
 
 ### `0x08 UseAbility`
-`str abilityId` · `f32 targetX` · `f32 targetY`
+`str abilityId` · `f32 targetX` · `f32 targetY` · `varuint afterInputSeq`
 
 Asks to commit to an ability (spec 062). The server decides: cooldown, cost,
 range, and whether something is already winding up. It answers with `CastState`
-or `CastRejected`, and the client assumes nothing in between.
+or `CastRejected` — exactly one of them, per request, in the order the requests
+arrived, which is how a client with several in flight tells the answers apart.
+
+`afterInputSeq` is the last input `seq` the client had sent when it asked
+(spec 067). The server holds the request until it applies *that* input, rather
+than acting on the tick the frame arrived: inputs are queued, so those are
+different ticks, and committing on the stamped one is what makes the client's
+own predicted root land in the same place as the server's.
 
 `targetX/Y` is a world point. A `direction`-targeted ability treats it as where
 to aim; a `point`-targeted one as where to land, and refuses it past its range;
 a `self` one ignores it.
 
-### `0x09 CancelCast` — no payload
+### `0x09 CancelCast` — `varuint afterInputSeq`
 Withdraws from whatever is winding up. Legal only during the wind-up (and for
 the duration of a channel); past the release tick the effect has happened and
 there is nothing to call off. A cancelled cast refunds its cost and clears its
 cooldown, so the only thing it spent is time.
 
 ### `0x03 Ping` — `u32 nonce`
+Answered with `Pong` carrying the same nonce and the server's tick. The client
+sends one every half second and counts its own ticks until the answer: that is
+the only clock it has, and half of it is how far behind the server a delta is by
+the time it lands (spec 067).
 ### `0x04 Equip` — `str slot` · `str itemId`
 ### `0x05 Unequip` — `str slot`
 ### `0x06 SpendSkillPoint` — `str skillId`
@@ -131,11 +142,18 @@ falling with a shadow underneath it.
 ### `0x42 Correction`
 `varuint inputSeq` · `f32 x` · `f32 y` · `f32 z` · `f32 facing` · `u8 reason`
 
-Sent only when the client's prediction is wrong enough to matter. The client
-should snap to this position and replay every input after `inputSeq`.
+Sent when the client's prediction disagrees with the server. The client adopts
+this position as of `inputSeq` and **replays** every input after it.
 
 `reason`: `0` divergence past the threshold, `1` speed violation, `2` collision
-or terrain, `3` admin teleport.
+or terrain, `3` admin teleport, `4` drift.
+
+`4` is the ordinary one and the others are not (spec 067). Drift means the
+prediction is merely a little wrong: adopt it exactly, but *ease* the difference
+into the drawn position over a few ticks rather than snapping the body. It is
+throttled to the broadcast cadence, so a wrong client costs at most one small
+message per delta and a right one costs nothing at all. Every other reason is a
+client that cannot be believed, and snaps.
 
 ### `0x43 CombatResult`
 `varuint attackerId` · `varuint targetId` · `f32 damage` · `f32 targetHealth` ·
@@ -266,11 +284,18 @@ non-finite value is refused rather than silently ignored.
    produced, and keeps every unacknowledged input in a buffer keyed by `seq`.
 2. Each `Delta` carries `ackInputSeq`. The client discards buffered inputs at or
    below it.
-3. If a `Correction` arrives, the client snaps its own entity to the given
-   position and **replays** every buffered input after `inputSeq` through the
-   same local movement code.
-4. If no `Correction` arrives, the prediction was within
-   `correctionThreshold` and the client keeps its own position untouched — no
+3. If a `Correction` arrives, the client adopts the given position as of
+   `inputSeq` and **replays** every buffered input after it through the same
+   local movement code. A `drift` correction is adopted the same way but drawn
+   with a decaying offset, so the state is right at once and the picture catches
+   up without a snap.
+4. If no `Correction` arrives, the prediction agreed with the server to within
+   a quarter of a unit and the client keeps its own position untouched — no
    snap, no bandwidth. That silence is the point.
+5. A client also predicts the *root* a commit puts on it: from the moment it
+   asks for an ability until the server answers, it sends no movement
+   (spec 067). This costs nothing when the guess is wrong, because being rooted
+   is expressed as `moveX = moveY = 0` in the input, and a server that refused
+   the cast honours that zero like any other.
 
 Other entities are not predicted; they are interpolated between deltas.
