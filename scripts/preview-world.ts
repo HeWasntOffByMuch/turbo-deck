@@ -137,6 +137,11 @@ async function main(): Promise<void> {
     await page.waitForTimeout(320);
     await shoot(page, 'world-telegraph');
 
+    // Let the fight run a little, then photograph the hotbar: cooldown sweeps
+    // (spec 065) and the pixel damage numbers over the bodies.
+    await page.waitForTimeout(900);
+    await shoot(page, 'world-cooldowns');
+
     const status = await page.textContent('body');
     console.log('\nHUD read back:', status?.slice(0, 200).replace(/\s+/g, ' '));
 

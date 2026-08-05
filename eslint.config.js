@@ -46,6 +46,7 @@ const PURE_RENDER = [
   'src/render/iso3d/world/cast.ts',
   'src/render/iso3d/world/intent.ts',
   'src/render/iso3d/world/interpolate.ts',
+  'src/render/iso3d/world/pixel-font.ts',
   'src/render/iso3d/world/*.test.ts',
   'src/render/iso3d/editor/brush.ts',
   'src/render/iso3d/editor/camera.ts',

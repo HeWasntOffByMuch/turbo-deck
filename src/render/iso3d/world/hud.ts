@@ -22,9 +22,27 @@ import { EntityKind } from '../../../server/net/protocol.js';
 import { SERVER_TICK_RATE } from '../../../server/config.js';
 import { castBar } from './cast.js';
 import { appearanceOf } from './appearance.js';
+import { pixelTextSvg } from './pixel-font.js';
 
 /** How long a damage number floats, in frames. */
 const NUMBER_LIFE = 48;
+/** How far one rises over its life, in CSS pixels. */
+const NUMBER_RISE = 46;
+/**
+ * Sideways lanes for numbers landing on the same body in quick succession.
+ *
+ * Without this they stack on one anchor, and once each carries a hard outline
+ * the pile reads as a solid dark block with a couple of legible digits at the
+ * bottom -- which is exactly what it looked like. Cycling lanes fans them out so
+ * three hits in half a second are three numbers.
+ */
+const NUMBER_LANES: readonly { readonly x: number; readonly y: number }[] = [
+  { x: 0, y: 0 },
+  { x: -46, y: -12 },
+  { x: 46, y: -12 },
+  { x: -24, y: -26 },
+  { x: 24, y: -26 },
+];
 
 /** Which abilities the hotbar offers, in order. Keys 1..n. */
 export const HOTBAR: readonly string[] = [
@@ -43,6 +61,13 @@ interface FloatingNumber {
   readonly crit: boolean;
   readonly heal: boolean;
   age: number;
+  /**
+   * Offset from the body's anchor. Wider than a number is, so two in the same
+   * lane cycle never touch, and stepped upward so a burst separates on the frame
+   * it lands rather than after it has drifted.
+   */
+  readonly offsetX: number;
+  readonly offsetY: number;
   readonly element: HTMLElement;
 }
 
@@ -123,6 +148,8 @@ export function createHud(): HudHandle {
 
   const bars = new Map<number, Bar>();
   const numbers: FloatingNumber[] = [];
+  /** How many numbers each body has been given, for lane assignment. */
+  const numberCount = new Map<number, number>();
   let notice = '';
   let noticeAge = 999;
 
@@ -219,8 +246,8 @@ export function createHud(): HudHandle {
       }
       const anchor = anchorById.get(number.entityId);
       if (anchor) {
-        number.element.style.left = `${anchor.x}px`;
-        number.element.style.top = `${anchor.y - (1 - life) * 34}px`;
+        number.element.style.left = `${anchor.x + number.offsetX}px`;
+        number.element.style.top = `${anchor.y + number.offsetY - (1 - life) * NUMBER_RISE}px`;
       }
       number.element.style.opacity = life.toFixed(3);
     }
@@ -268,15 +295,31 @@ export function createHud(): HudHandle {
     update,
     addDamage(entityId, damage, crit) {
       const heal = damage < 0;
+      const text = (heal ? '+' : '') + Math.round(Math.abs(damage)).toString();
       const element = document.createElement('div');
-      element.style.cssText =
-        'position:absolute;transform:translate(-50%,-100%);font:600 ' +
-        `${crit ? 17 : 13}px ui-monospace,Menlo,monospace;text-shadow:0 1px 2px #000;color:` +
-        (heal ? '#8ce696' : crit ? '#ffdc78' : '#f0f0f0') +
-        ';';
-      element.textContent = (heal ? '+' : '') + Math.round(Math.abs(damage)).toString();
+      element.style.cssText = 'position:absolute;transform:translate(-50%,-100%);';
+      // The pixel font (spec 065) rather than the browser's UI face: these float
+      // over a posterized, low-resolution world, and system text over it read
+      // like a debug overlay that had been left switched on.
+      element.innerHTML = pixelTextSvg(text, {
+        scale: crit ? 4 : 3,
+        fill: heal ? '#8ce696' : crit ? '#ffdc78' : '#f4f4f4',
+        outline: '#0a0d14',
+      });
       root.append(element);
-      numbers.push({ entityId, text: element.textContent, crit, heal, age: 0, element });
+      const index = numberCount.get(entityId) ?? 0;
+      numberCount.set(entityId, index + 1);
+      const lane = NUMBER_LANES[index % NUMBER_LANES.length] ?? { x: 0, y: 0 };
+      numbers.push({
+        entityId,
+        text,
+        crit,
+        heal,
+        age: 0,
+        offsetX: lane.x,
+        offsetY: lane.y,
+        element,
+      });
       // A long fight should not grow the DOM without bound.
       while (numbers.length > 40) numbers.shift()?.element.remove();
     },
