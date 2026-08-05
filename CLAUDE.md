@@ -24,8 +24,7 @@ parries/dodges drawing bonus cards.
 
 - Never call `Math.random()`, read `Date.now()`, or otherwise touch
   wall-clock time or ambient nondeterminism inside `src/sim/` or
-  `src/cards/`. ESLint enforces the `Math.random` ban in those directories;
-  the rest is on you.
+  `src/cards/`.
 - All randomness (shuffles, drawn RNG for effects, etc.) goes through a
   seeded PRNG (`src/shared/prng.ts`) that is passed into the sim explicitly
   as part of its constructor/init, never imported as a singleton.
@@ -37,6 +36,16 @@ parries/dodges drawing bonus cards.
   the same resulting state, every time, forever. This is the property that
   makes regressions detectable — treat any test that can't make this
   assertion as insufficient.
+
+Most of this is mechanical, not honour-system. `eslint.config.js` fails the
+build on `Math.random`, on `Date`/`performance`/DOM globals, and on importing
+three.js, PixiJS, lil-gui or anything under `src/render/` — across the whole
+deterministic core (`shared`, `cards`, `sim`, `game`, `terrain`, `balance`) and
+the pure subtrees that live under `src/render/` anyway (`cloth/`, `critters/`,
+and the headless half of the editor). `src/shared/` additionally may not import
+its own siblings. Two rules a linter can't see are still on you: the PRNG must
+be *passed in*, never imported as a singleton, and no `if` in `src/render/` may
+change a game outcome.
 
 ## Running things
 
@@ -66,19 +75,18 @@ spec they implement.
 
 **The default branch is `main`. Branch from it, and merge back into it.**
 
-`master` also exists on the remote and is badly out of date — it is an
-abandoned ref, not a second line of development. Nothing should ever be based
-on it. A fresh clone will not have `main` locally until you fetch, and
-`git branch -a` will happily show you `master` and no `main`, so:
+A fresh clone will not have `main` locally until you fetch, so:
 
 ```sh
 git fetch origin
-git rev-parse --verify origin/main   # check the ref directly, not by scanning a list
 git checkout -b <branch> origin/main
 ```
 
-This has bitten real work: a feature branch cut from `master` landed 42 commits
-behind, against a flat world that had since become a heightfield.
+Basing a branch on stale history has bitten real work here before: one feature
+branch landed 42 commits behind, against a flat world that had since become a
+heightfield. The `SessionStart` hook reports how far behind `origin/main` the
+current branch is, so that shows up at the top of the session rather than at
+merge time.
 
 ## Commit conventions
 
@@ -128,37 +136,34 @@ src/server/      authoritative multiplayer server (spec 056), a separate 20Hz si
 src/balance/     Monte Carlo balance harness logic (seeded bot policy + runner),
                  pure and testable; scripts/balance-harness.ts is its thin CLI
 scripts/         standalone scripts (e.g. the balance harness), run via tsx
+.claude/         harness config: agents/ (the delegation policy, see below),
+                 hooks/session-start.sh (branch-base check + dependency install),
+                 settings.json, notes/ and screenshots/
 ```
 
-## Token Efficiency & Delegation
+## Delegation
 
-**Delegate to cheaper/subagent models:**
-- Any output not needed in main context (log dumps, file listings, build output, dependency trees) → run via subagent, return only a distilled summary or pass/fail status.
-- Playwright/E2E test runs → execute via subagent, return only: pass/fail count, failing test names, and a 1-3 line failure reason. Never paste full stack traces or DOM dumps into main context unless a test fails and root cause is unclear — then request only the relevant excerpt.
-- Codebase/architecture exploration (reading through existing systems, tracing how a feature works) → delegate to a subagent using a lighter model (e.g. Sonnet), have it return a structured summary (files touched, key functions, data flow) instead of raw file contents.
-- Large refactors across many files → delegate per-file or per-module summaries, then synthesize.
+The delegation policy lives in `.claude/agents/`, not here: each agent's
+`description` decides when it gets reached for and its `model:` line picks the
+tier, so the harness acts on it instead of hoping this file gets re-read.
 
-**Model tiering by task type:**
-- Cheap/fast model: search, grep, file listing, formatting/lint checks, summarizing logs, running test suites and reporting pass/fail.
-- Mid-tier model: straightforward implementation, boilerplate, routine bug fixes, writing tests, reading/summarizing architecture.
-- Top-tier model (main context): design decisions, cross-system changes, tricky/non-obvious bugs, anything requiring full project context or judgment calls.
-- Default to the cheapest model capable of the task; escalate only when a subagent's output is ambiguous, low-confidence, or the task spans multiple systems.
+| Agent | Reach for it when |
+|---|---|
+| `test-runner` | running `npm test`, `typecheck`, `lint`, `build` or `balance` — anything whose full output would otherwise land in context |
+| `code-explorer` | tracing how an existing system works, or any question answered by reading across several files |
+| `implementer` | the design is already settled and the work is "make it so" inside one module |
+| `architect` | the change crosses sim/cards/game/render/terrain, touches the deterministic core, or needs a `specs/` entry written first |
 
-**Screenshots & visual artifacts:**
-- Save Playwright/manual test screenshots to the working branch (e.g. `test-results/` or `.claude/screenshots/`), do not embed them in context.
-- Only load a screenshot into context if a test fails and visual inspection is required to debug — load just that one image, not the batch.
+Main context keeps the judgement calls: design decisions, cross-system changes,
+and bugs whose cause is not yet located. Batch independent agent calls into a
+single message so they run concurrently.
 
-**Ephemeral scratch files:**
-- Subagents doing exploration, multi-step reasoning, or trial-and-error should write intermediate work to a temp file (e.g. `.claude/scratch/<task>.md`) instead of streaming it into context.
-- Only the final summary/result gets pulled into main context; scratch files stay on disk for reference if needed later.
-- Clear or gitignore `.claude/scratch/` periodically — treat it as disposable, not part of the permanent record.
+Where the output goes matters as much as who does the work:
 
-**General token discipline:**
-- Prefer `grep`/targeted reads over full-file dumps when only a function or section is relevant.
-- When summarizing multi-file changes, report diffs/deltas, not full file contents.
-- Cache/reuse architecture summaries from subagents instead of re-reading the same files each session — write them to a `docs/` or `.claude/notes/` file and reference that first.
-- Batch related subagent calls instead of issuing them one at a time when the tasks are independent.
-- Truncate long tool outputs (build logs, package installs) to last N lines + error lines unless full output is explicitly requested.
-- For iterative work (e.g. fixing a failing test loop), keep only the current failure state in context — don't accumulate prior failed attempts' full output.
-
-Apply these by default without asking for confirmation, unless the task explicitly requires full detail in-context.
+- `.claude/notes/<area>.md` — cached architecture summaries. Read one before
+  sending an agent to re-derive it. Tracked.
+- `.claude/screenshots/` — visual checks (`npx tsx scripts/preview-critters.ts`
+  writes here). Tracked, so they can be reviewed on the branch; pull an image
+  into context only when something has actually gone wrong.
+- `.claude/scratch/<task>.md` — disposable sifting and long reasoning.
+  Gitignored, and not part of the record.
