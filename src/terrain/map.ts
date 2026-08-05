@@ -5,7 +5,7 @@ import {
   type TerrainChunk,
 } from './chunk.js';
 import { TERRAIN_MATERIALS, rectContains, type Rect, type TerrainWorld } from './types.js';
-import type { Prop, PropKind } from './vegetation.js';
+import { FENCE_KINDS, type Prop, type PropKind } from './vegetation.js';
 
 /**
  * The map document (spec 048): a world written down.
@@ -69,6 +69,8 @@ export interface MapProp {
   readonly tint: number;
   /** Lie the prop along the ground rather than standing it up (spec 051). */
   readonly align?: boolean;
+  /** Draw it in one flat colour per material rather than varied (spec 061). */
+  readonly uniform?: boolean;
 }
 
 export type MapMarkerKind = 'spawn' | 'objective' | 'campfire' | 'trigger';
@@ -280,6 +282,7 @@ export function exportMap(input: ExportMapInput): MapDocument {
           tint: quantize(prop.tint),
           // Omitted when upright, so the generated forest's JSON is unchanged.
           ...(prop.alignToNormal ? { align: true } : {}),
+          ...(prop.uniform ? { uniform: true } : {}),
         })),
         markers: (markersByChunk.get(key) ?? []).map((m) => ({
           kind: m.kind,
@@ -374,7 +377,7 @@ function writeProp(prop: MapProp): string {
   return (
     `{ "species": ${writeScalar(prop.species)}, "x": ${prop.x}, "z": ${prop.z}, ` +
     `"rotation": ${prop.rotation}, "scale": ${prop.scale}, "tint": ${prop.tint}` +
-    `${prop.align ? ', "align": true' : ''} }`
+    `${prop.align ? ', "align": true' : ''}${prop.uniform ? ', "uniform": true' : ''} }`
   );
 }
 
@@ -500,6 +503,8 @@ function parseProp(value: unknown, what: string): MapProp {
   const r = asRecord(value, what);
   const align = r['align'];
   if (align !== undefined && typeof align !== 'boolean') fail(`${what}.align must be a boolean`);
+  const uniform = r['uniform'];
+  if (uniform !== undefined && typeof uniform !== 'boolean') fail(`${what}.uniform must be a boolean`);
   return {
     species: asString(r['species'], `${what}.species`),
     x: asNumber(r['x'], `${what}.x`),
@@ -508,6 +513,7 @@ function parseProp(value: unknown, what: string): MapProp {
     scale: asNumber(r['scale'], `${what}.scale`),
     tint: asNumber(r['tint'], `${what}.tint`),
     ...(align === true ? { align: true } : {}),
+    ...(uniform === true ? { uniform: true } : {}),
   };
 }
 
@@ -598,7 +604,7 @@ export function parseMap(text: string): MapDocument {
 }
 
 /** The prop kinds the renderer knows how to build, for validating a species id. */
-const KNOWN_PROP_KINDS: readonly string[] = ['tree', 'bush'];
+const KNOWN_PROP_KINDS: readonly string[] = ['tree', 'bush', ...FENCE_KINDS];
 
 /** True when a species id maps onto a `PropKind` the prop field can draw. */
 export function isKnownPropKind(species: string): species is PropKind {

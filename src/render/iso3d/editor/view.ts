@@ -11,7 +11,7 @@ import {
   createEditorCamera,
   editorCameraPosition,
   orbitEditorCamera,
-  panEditorCamera,
+  trackEditorCamera,
   zoomEditorCamera,
   type EditorCameraState,
 } from './camera.js';
@@ -34,7 +34,9 @@ import {
   writeAutosave,
 } from './persistence.js';
 import { bakeEditorMap } from './map-source.js';
-import { buildEditorPanel, createEditorSettings, cursorColor } from './panel.js';
+import { buildEditorPanel } from './panel.js';
+import { createEditorSettings, cursorColor, cursorRadius } from './tools.js';
+import { fenceStroke, NO_FENCE_PATH, type FencePath } from './fence.js';
 import { eraseStroke, scatterStroke, terrainNormalAt } from './scatter.js';
 
 /**
@@ -152,6 +154,15 @@ class EditorScene {
     );
     this.scene.add(field.group);
     return field;
+  }
+
+  /**
+   * Props the renderer had no geometry for. Always zero in a consistent build;
+   * see `PropFieldHandle.undrawn` for when it is not, and why saying so out loud
+   * beats leaving a tool looking broken.
+   */
+  get undrawnProps(): number {
+    return this.propField.undrawn;
   }
 
   /** The layer the tools edit. One ground layer today. */
@@ -294,8 +305,8 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   help.style.cssText = `${OVERLAY_CSS}position:absolute;left:10px;bottom:10px;z-index:20;`;
   help.innerHTML =
     '<b style="color:#f0f0f8;">Map editor</b> &mdash; rendering from a baked map document<br>' +
-    '<b>left-drag</b> applies the armed tool &middot; <b>WASD</b> / arrows pan &middot; ' +
-    '<b>right-drag</b> or <b>middle-drag</b> orbits &middot; <b>wheel</b> zooms<br>' +
+    '<b>left-drag</b> applies the armed tool &middot; <b>middle-drag</b> tracks &amp; dollies &middot; ' +
+    '<b>right-drag</b> orbits &middot; <b>wheel</b> zooms<br>' +
     '<span style="color:#7a7a90;">Ctrl+Z undoes a stroke</span>';
 
   const readout = document.createElement('div');
@@ -347,6 +358,9 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   let rng = Rng.fromSeed(scene.document.seed ^ 0x5ca77e5);
   // Fractional props owed to the next frame; see `scatterStroke`.
   let scatterCarry = 0;
+  // Where the fence run has got to; see `fenceStroke`. Reset on every press, so
+  // one stroke is one run rather than a line drawn from the last one's end.
+  let fencePath: FencePath = NO_FENCE_PATH;
 
   /** Re-mesh a set of chunks, skipping the duplicates a drag produces. */
   const remesh = (dirty: readonly { cx: number; cz: number }[]): void => {
@@ -387,7 +401,6 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     rebakeNav(scene.map.store, layerId, restored, settings.walkSlope);
     scene.refreshProps();
     refreshMarkers();
-  refreshNav();
     refreshNav();
   };
 
@@ -555,20 +568,21 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     const dt = lastFrame === undefined ? 0 : Math.min(0.1, (time - lastFrame) / 1000);
     lastFrame = time;
 
-    const drag = input.takeDrag();
-    if (drag.dx !== 0 || drag.dy !== 0) scene.camera3 = orbitEditorCamera(scene.camera3, drag.dx, drag.dy);
+    const orbit = input.takeOrbit();
+    if (orbit.dx !== 0 || orbit.dy !== 0) scene.camera3 = orbitEditorCamera(scene.camera3, orbit.dx, orbit.dy);
     const wheel = input.takeWheel();
     if (wheel.deltaY !== 0) scene.camera3 = zoomEditorCamera(scene.camera3, wheel.deltaY, wheel.deltaMode);
-    const pan = input.panAxes();
-    if (pan.forward !== 0 || pan.right !== 0) {
-      scene.camera3 = panEditorCamera(scene.camera3, pan.forward, pan.right, dt);
+    // The grip is in pixels, so it needs the width those pixels are spread over.
+    const track = input.takeTrack();
+    if (track.dx !== 0 || track.dy !== 0) {
+      scene.camera3 = trackEditorCamera(scene.camera3, track.dx, track.dy, canvas.clientWidth);
     }
 
     // The cursor goes where the ray lands, and the brush follows it. Both read
     // the same pick, so the ring always marks the ground that is about to move.
     const at = scene.pick(input.mouseCanvas().x, input.mouseCanvas().y);
     if (at) {
-      cursor.moveTo(at.x, at.z, settings.radius, (x, z) => scene.map.world.heightAt(x, z));
+      cursor.moveTo(at.x, at.z, cursorRadius(settings), (x, z) => scene.map.world.heightAt(x, z));
       cursor.setVisible(true);
     } else {
       cursor.setVisible(false);
@@ -586,6 +600,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       strokeChangedMarkers = false;
       strokeDirty.length = 0;
       scatterCarry = 0;
+      fencePath = NO_FENCE_PATH;
       propsRebuiltAt = time;
       // The height under the first press is the level `flatten` works toward.
       if (at) flattenTo = scene.map.world.heightAt(at.x, at.z);
@@ -596,7 +611,6 @@ export function mountEditor(container: HTMLElement): ViewHandle {
         if (placed.marker) {
           strokeChangedMarkers = true;
           refreshMarkers();
-  refreshNav();
         }
       }
     }
@@ -621,6 +635,18 @@ export function mountEditor(container: HTMLElement): ViewHandle {
         rng = out.rng;
         scatterCarry = out.carry;
         if (out.added.length > 0) strokeChangedProps = true;
+      } else if (settings.mode === 'fence') {
+        const out = fenceStroke(
+          scene.map.store,
+          layerId,
+          settings,
+          { x: at.x, z: at.z, onTouchChunk: capture },
+          fencePath,
+          rng,
+        );
+        rng = out.rng;
+        fencePath = out.path;
+        if (out.added.length > 0) strokeChangedProps = true;
       } else if (settings.mode === 'erase') {
         const circle = { x: at.x, z: at.z, radius: settings.radius };
         const props = eraseStroke(scene.map.store, layerId, circle, capture);
@@ -631,7 +657,6 @@ export function mountEditor(container: HTMLElement): ViewHandle {
         if (markers.removed.length > 0) {
           strokeChangedMarkers = true;
           refreshMarkers();
-  refreshNav();
         }
       }
 
@@ -640,7 +665,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
         propsRebuiltAt = time;
       }
       // The ring reads the surface it may just have moved, so redraw it after.
-      cursor.moveTo(at.x, at.z, settings.radius, (x, z) => scene.map.world.heightAt(x, z));
+      cursor.moveTo(at.x, at.z, cursorRadius(settings), (x, z) => scene.map.world.heightAt(x, z));
     }
 
     if (input.takePaintEnd()) {
@@ -661,7 +686,13 @@ export function mountEditor(container: HTMLElement): ViewHandle {
 
     autosave(time);
 
-    canvas.style.cursor = input.isOrbiting ? 'grabbing' : input.isPainting ? 'crosshair' : 'default';
+    canvas.style.cursor = input.isTracking
+      ? 'move'
+      : input.isOrbiting
+        ? 'grabbing'
+        : input.isPainting
+          ? 'crosshair'
+          : 'default';
     scene.render();
 
     const c = scene.camera3;
@@ -670,7 +701,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       `span <b>${Math.round(c.halfWidth)}</b> &middot; ` +
       `pitch <b>${Math.round((c.elevation * 180) / Math.PI)}&deg;</b><br>` +
       `<span style="color:#7a7a90;">${chunks} chunks &middot; ` +
-      `${scene.map.store.props(layerId).length} props &middot; ` +
+      `${scene.map.store.props(layerId).length} props${scene.undrawnProps > 0 ? ` (<b style="color:#e08f8f;">${scene.undrawnProps} not drawn</b>)` : ''} &middot; ` +
       `${scene.map.store.markers(layerId).length} markers &middot; ${history.depth} undo` +
       `${status ? ` &middot; ${status}` : ''}</span>`;
 

@@ -60,6 +60,28 @@ export const PALETTE = {
   // The arena's walls (spec 037): grey stone, with a lighter lit cap on top.
   wall: 0x6b6b78,
   wallTop: 0x84848f,
+  // Fences (spec 058). Sawn timber sits a shade lighter and greyer than a living
+  // trunk, so a paddock rail reads as built rather than grown; the drystone
+  // courses borrow the terrain's warm limestone so a wall belongs to its ground.
+  post: 0x8f6438,
+  plank: 0xb0854c,
+  // Two more timber tones, for the palisade whose boards are meant to look
+  // gathered rather than milled: one sun-bleached, one weathered grey.
+  plankPale: 0xc49f68,
+  plankGrey: 0x8d7a5a,
+  drystone: 0xbdb4a1,
+  // A cooler and a warmer stone, so a rubble wall is not one grey.
+  drystonePale: 0xcfc7b4,
+  drystoneWarm: 0xb3a58c,
+  // Fired brick in three tones and the mortar behind it (spec 060). A real wall
+  // is never one colour -- the batch variation is most of what says "brick"
+  // before any single brick is big enough on screen to be read as one.
+  brick: 0xa8543c,
+  brickDark: 0x8c4331,
+  brickPale: 0xc06a4a,
+  // Darker than the brick around it, so a joint reads as a shadow between
+  // bricks rather than as a pale line drawn over them.
+  mortar: 0x8e857a,
 } as const;
 
 /**

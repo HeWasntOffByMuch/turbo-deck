@@ -55,12 +55,17 @@ const DEFAULT_ELEVATION = (35 * Math.PI) / 180;
 const ORBIT_PER_PIXEL = 0.01;
 
 /**
- * Pan speed, as a fraction of the view span per second. The span is the editor's
- * unit of distance: a fixed world-units-per-second crawls when zoomed out to the
- * whole map and launches you off it when zoomed in on a cell. Expressed this way,
- * a given hold always covers the same fraction of the screen.
+ * Floor on the foreshortening a dolly divides by (spec 058).
+ *
+ * Vertical drag moves the pivot along the camera's ground heading, and that
+ * heading is squashed on screen by `sin(elevation)` -- so undoing it means
+ * dividing by that sine. Near the horizon the sine goes to nothing and the
+ * division goes to infinity: at the 3-degree floor the pitch band allows, a
+ * hundred-pixel drag would fling the pivot nineteen screens away. Below this
+ * the grip is given up rather than the control: the ground stops tracking the
+ * cursor exactly, which is much less bad than losing the map.
  */
-const PAN_SPANS_PER_SECOND = 1.1;
+const DOLLY_MIN_SIN = 0.25;
 
 /** How far past the map's bounds the pivot may wander before it is held. */
 const PIVOT_MARGIN = 600;
@@ -162,43 +167,57 @@ export function orbitEditorCamera(
 }
 
 /**
- * WASD pan, in the camera's **own** ground frame: `forward` moves the pivot along
- * the camera's heading projected onto the XZ plane, `right` strafes across it.
- * Panning in world axes instead would send the view diagonally off screen at
- * every bearing but one, which is the thing that makes a free camera unusable.
+ * Middle-drag to track and dolly (spec 058), in the camera's **own** ground
+ * frame: horizontal pixels slide the pivot across the camera's heading, vertical
+ * pixels push it along that heading. Moving in world axes instead would send the
+ * view diagonally off screen at every bearing but one, which is the thing that
+ * makes a free camera unusable.
  *
- * Both inputs are the usual -1/0/+1 axis; anything in between scales smoothly, so
- * a future analogue stick needs no new path.
+ * This is a **grip**, not a speed, which is why it takes pixels and a viewport
+ * rather than an axis and a `dt`. One pixel of drag moves the pivot by exactly
+ * one pixel's worth of world -- `2 * halfWidth / viewportWidth` across the
+ * screen -- so the ground under the cursor stays under the cursor at every zoom,
+ * and the same gesture covers the same amount of *map* whether the frame took a
+ * millisecond or a tenth of a second. The keyboard pan it replaces could do
+ * neither: it moved a fixed fraction of the span per second, so the ground slid
+ * out from under whatever you were aiming at.
+ *
+ * The direction is "grab the world and drag it", matching the orbit: drag right
+ * and the world goes right, so the pivot goes left.
  */
-export function panEditorCamera(
+export function trackEditorCamera(
   state: EditorCameraState,
-  forward: number,
-  right: number,
-  dtSeconds: number,
+  dxPixels: number,
+  dyPixels: number,
+  viewportWidthPx: number,
 ): EditorCameraState {
-  const f = Number.isFinite(forward) ? forward : 0;
-  const r = Number.isFinite(right) ? right : 0;
-  const dt = Number.isFinite(dtSeconds) ? Math.max(0, dtSeconds) : 0;
-  if ((f === 0 && r === 0) || dt === 0) return state;
+  const dx = Number.isFinite(dxPixels) ? dxPixels : 0;
+  const dy = Number.isFinite(dyPixels) ? dyPixels : 0;
+  const width = Number.isFinite(viewportWidthPx) ? viewportWidthPx : 0;
+  if ((dx === 0 && dy === 0) || width <= 0) return state;
 
-  const distance = state.halfWidth * PAN_SPANS_PER_SECOND * dt;
+  const worldPerPixel = (2 * state.halfWidth) / width;
   // The camera sits at +offset from the pivot, so it *looks* along -offset. The
   // ground heading is that direction with its Y dropped and renormalised.
-  const cos = Math.cos(state.azimuth);
-  const sin = Math.sin(state.azimuth);
-  const forwardX = -cos;
-  const forwardZ = -sin;
-  // Right-hand strafe: the forward heading turned a quarter turn about +Y.
+  const forwardX = -Math.cos(state.azimuth);
+  const forwardZ = -Math.sin(state.azimuth);
+  // The screen's right: the forward heading turned a quarter turn about +Y.
   const rightX = -forwardZ;
   const rightZ = forwardX;
+
+  const across = dx * worldPerPixel;
+  // A step along the ground heading only climbs the screen by `sin(elevation)`
+  // of itself, so the world distance that answers `dy` pixels is that much
+  // longer. Held off the horizon by the floor above.
+  const along = (dy * worldPerPixel) / Math.max(DOLLY_MIN_SIN, Math.sin(state.elevation));
 
   return {
     ...state,
     target: holdPivot(
       {
-        x: state.target.x + (forwardX * f + rightX * r) * distance,
+        x: state.target.x - rightX * across + forwardX * along,
         y: state.target.y,
-        z: state.target.z + (forwardZ * f + rightZ * r) * distance,
+        z: state.target.z - rightZ * across + forwardZ * along,
       },
       state.bounds,
     ),

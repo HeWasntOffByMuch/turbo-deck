@@ -18,7 +18,41 @@ import { arenaBounds } from './world.js';
  * thing is unit-testable in Node.
  */
 
-export type PropKind = 'tree' | 'bush';
+/**
+ * What a prop is. Trees and bushes are scattered over an area; the two fences
+ * are laid along a path, one tile per prop (spec 058).
+ */
+export type PropKind =
+  | 'tree'
+  | 'bush'
+  | 'fence-wood'
+  | 'fence-boards'
+  | 'fence-brick'
+  | 'fence-rubble';
+
+/**
+ * The kinds that are a length of fence rather than a plant: a regular one and a
+ * rough one in each material -- picket and boards in timber, brick and rubble in
+ * stone (spec 058, 059, 060).
+ */
+export const FENCE_KINDS = ['fence-wood', 'fence-boards', 'fence-brick', 'fence-rubble'] as const;
+export type FenceKind = (typeof FENCE_KINDS)[number];
+
+export function isFenceKind(kind: PropKind): kind is FenceKind {
+  return (FENCE_KINDS as readonly string[]).includes(kind);
+}
+
+/**
+ * How long one fence tile runs, in world units at scale 1.
+ *
+ * The load-bearing number of the whole fence design, which is why it lives here
+ * beside the kinds rather than in either of the two modules that need it. A tile
+ * is drawn spanning exactly this much along its own +X, and the fence tool lays
+ * tiles exactly this far apart -- so a run butts up seamlessly and the renderer
+ * never has to know that a tile has neighbours. If the geometry and the spacing
+ * ever disagree, a fence grows either gaps or overlaps at every junction.
+ */
+export const FENCE_TILE_LENGTH = 48;
 
 export interface Prop {
   readonly kind: PropKind;
@@ -41,6 +75,16 @@ export interface Prop {
    * unaffected.
    */
   readonly alignToNormal?: boolean;
+  /**
+   * Draw this prop in one flat colour per material instead of its varied tones
+   * (spec 061).
+   *
+   * The *intent*, like `alignToNormal` beside it: which tone a part ends up
+   * with is the renderer's business, and this only says whether it may vary at
+   * all. Absent means varied, so nothing already saved changes and the
+   * generated forest is untouched.
+   */
+  readonly uniform?: boolean;
 }
 
 export interface ScatterOptions {
@@ -141,9 +185,33 @@ export function scatterProps(
  * Ground-footprint radius a prop blocks: what the unwalkable overlay draws
  * (spec 034) and, since spec 044, what the sim collides against.
  */
-const FOOTPRINT_BASE: Record<PropKind, number> = { tree: 24, bush: 16 };
+const FOOTPRINT_BASE: Record<PropKind, number> = {
+  tree: 24,
+  bush: 16,
+  // Half a tile, so the circles of a run overlap into one continuous barrier
+  // rather than leaving a walkable gap between every pair of posts. A fence is
+  // thinner than it is long and a circle cannot say so; erring wide is the side
+  // that keeps a wall a wall.
+  'fence-wood': FENCE_TILE_LENGTH / 2,
+  'fence-boards': FENCE_TILE_LENGTH / 2,
+  'fence-brick': FENCE_TILE_LENGTH / 2,
+  'fence-rubble': FENCE_TILE_LENGTH / 2,
+};
+/**
+ * Fallback for a kind this build has no footprint for -- a map written by a
+ * newer build, or a half-updated module graph in a dev server.
+ *
+ * The number matters less than it not being `undefined`: unguarded, the lookup
+ * makes the radius **NaN**, and NaN spreads. A NaN footprint disc gives the
+ * walkability overlay NaN vertices, which takes the whole overlay off screen; a
+ * NaN collider radius makes every distance test against it false. Both fail by
+ * showing nothing, which reads as "the prop was never placed" and sends you
+ * looking in the wrong place entirely.
+ */
+const FALLBACK_FOOTPRINT = 16;
+
 export function footprintRadius(prop: Prop): number {
-  return FOOTPRINT_BASE[prop.kind] * prop.scale;
+  return (FOOTPRINT_BASE[prop.kind] ?? FALLBACK_FOOTPRINT) * (Number.isFinite(prop.scale) ? prop.scale : 1);
 }
 
 /** The props as sim obstacles: one circle per footprint (spec 044). */
