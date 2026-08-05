@@ -389,6 +389,11 @@ function woodFenceParts(): PropPart[] {
  * sides in six courses -- so the wall is solid by construction and the joints are
  * recesses between bricks rather than gaps through to the far side.
  *
+ * The **top course is laid across the wall** rather than on its faces: full-depth
+ * bricks, wider than the core, so what you see from above is brick and not the
+ * core's grey top. A wall of face bricks alone has to be capped by something, and
+ * the something should be more brick.
+ *
  * **The bond carries across a tile boundary.** Even courses hold three whole
  * bricks; odd courses hold two whole bricks and a *half* at each end, so the half
  * at this tile's edge and the half at its neighbour's meet to make one brick with
@@ -479,18 +484,33 @@ export function brickCourse(course: number): readonly (readonly [number, number]
 }
 
 function brickFenceParts(): PropPart[] {
-  const height = BRICK_COURSES * BRICK_PITCH;
   const brickHeight = BRICK_PITCH - BRICK_JOINT;
   const faceZ = BRICK_CORE_DEPTH / 2 + BRICK_PROUD / 2;
+  const wallDepth = BRICK_CORE_DEPTH + 2 * BRICK_PROUD;
+  // Where the capping course starts, and so where the core stops: the core is
+  // narrower than the cap, so ending it here leaves nothing of it in view from
+  // above except the joints between cap bricks -- which is where mortar belongs.
+  const capBottom = (BRICK_COURSES - 1) * BRICK_PITCH + BRICK_JOINT / 2;
   // One list of boxes per colour band; which band a brick joins is hashed from
   // where it sits, so the mottling is fixed rather than drawn afresh.
   const bands: Box[][] = BRICK_TONES.map(() => []);
   for (let course = 0; course < BRICK_COURSES; course++) {
-    const y = course * BRICK_PITCH + brickHeight / 2 + BRICK_JOINT / 2;
+    const top = course * BRICK_PITCH + BRICK_JOINT / 2 + brickHeight;
+    // The bottom course runs down past the ground instead of stopping at a
+    // joint, so the wall meets the earth as brick rather than as a pale strip of
+    // core -- and keeps meeting it as brick where a run steps down a slope.
+    const bottom = course === 0 ? -FENCE_SINK : top - brickHeight;
+    const y = (top + bottom) / 2;
+    const h = top - bottom;
+    const capping = course === BRICK_COURSES - 1;
     brickCourse(course).forEach(([x, run], i) => {
       const band = Math.floor(hashUnit2(course, i * 7 + 1, HASH_BRICK) * BRICK_TONES.length) % BRICK_TONES.length;
+      if (capping) {
+        (bands[band] as Box[]).push({ x, y, z: 0, w: run, h, d: wallDepth });
+        return;
+      }
       for (const z of [faceZ, -faceZ]) {
-        (bands[band] as Box[]).push({ x, y, z, w: run, h: brickHeight, d: BRICK_PROUD });
+        (bands[band] as Box[]).push({ x, y, z, w: run, h, d: BRICK_PROUD });
       }
     });
   }
@@ -499,8 +519,8 @@ function brickFenceParts(): PropPart[] {
     {
       // The core: mortar seen only through the joints, and what makes the wall
       // solid rather than two rows of bricks with daylight between them.
-      geometry: new THREE.BoxGeometry(FENCE_TILE_LENGTH, height + FENCE_SINK, BRICK_CORE_DEPTH),
-      offsetY: (height - FENCE_SINK) / 2,
+      geometry: new THREE.BoxGeometry(FENCE_TILE_LENGTH, capBottom + FENCE_SINK, BRICK_CORE_DEPTH),
+      offsetY: (capBottom - FENCE_SINK) / 2,
       color: PALETTE.mortar,
       foliage: false,
       tintAmount: 0.08,
@@ -519,15 +539,6 @@ function brickFenceParts(): PropPart[] {
       tintAmount: 0.1,
       jitterTint: 0.05,
     });
-  });
-  // A flat coping over the top, wider than the wall, which is both what a garden
-  // wall has and what stops the top course reading as a cut edge.
-  parts.push({
-    geometry: new THREE.BoxGeometry(FENCE_TILE_LENGTH, 3.5, BRICK_CORE_DEPTH + 2 * BRICK_PROUD + 3),
-    offsetY: height + 1.75,
-    color: PALETTE.mortar,
-    foliage: false,
-    tintAmount: 0.08,
   });
   return parts;
 }
