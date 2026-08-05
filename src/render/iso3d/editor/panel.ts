@@ -235,6 +235,9 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   };
   showTileLength();
   size.onChange(showTileLength);
+  // Set per tile as it is laid, so it changes what you paint next rather than
+  // what is already on the ground.
+  fence.add(s, 'variedColor').name('Colour variety');
 
   const markers = gui.addFolder('Markers');
   strip(

@@ -466,3 +466,75 @@ describe('the brick bond', () => {
     }
   });
 });
+
+/**
+ * Spec 059. The flag says only "do not vary my colours"; everything else about
+ * the tile -- where its parts sit, how many there are, what shape they take --
+ * has to be untouched, or a setting people reach for to calm a wall down would
+ * quietly rebuild it.
+ */
+describe('uniform fence colour', () => {
+  const flat = (): number => 0;
+  const tile = (kind: Prop['kind'], over: Partial<Prop> = {}): Prop => ({
+    kind,
+    x: 0,
+    y: 0,
+    scale: 1,
+    rotation: 0,
+    tint: 0.4,
+    ...over,
+  });
+
+  function drawn(props: readonly Prop[]): { colors: number[]; positions: string[] } {
+    const field = buildPropField(props, flat);
+    const colors: number[] = [];
+    const positions: string[] = [];
+    const matrix = new THREE.Matrix4();
+    const at = new THREE.Vector3();
+    const color = new THREE.Color();
+    field.group.traverse((object) => {
+      if (!(object instanceof THREE.InstancedMesh)) return;
+      for (let i = 0; i < object.count; i++) {
+        object.getMatrixAt(i, matrix);
+        positions.push(at.setFromMatrixPosition(matrix).toArray().map((n) => n.toFixed(5)).join(','));
+        if (object.instanceColor) {
+          object.getColorAt(i, color);
+          colors.push(color.getHex());
+        }
+      }
+    });
+    field.dispose();
+    return { colors, positions };
+  }
+
+  for (const kind of ['fence-boards', 'fence-brick', 'fence-rubble'] as const) {
+    it(`draws ${kind} in fewer colours when asked for one flat tone`, () => {
+      const varied = new Set(drawn([tile(kind)]).colors).size;
+      const uniform = new Set(drawn([tile(kind, { uniform: true })]).colors).size;
+      expect(uniform).toBeGreaterThan(0);
+      expect(uniform).toBeLessThan(varied);
+    });
+
+    it(`gives every ${kind} tile the same colours, wherever it stands`, () => {
+      // The point of the option: a run reads as one batch of material rather
+      // than as fifty tiles that each drifted somewhere else.
+      const here = drawn([tile(kind, { uniform: true })]).colors;
+      const there = drawn([tile(kind, { uniform: true, x: 480, y: 240, tint: -0.9 })]).colors;
+      expect(there).toEqual(here);
+      // ...which is exactly what a varied tile does *not* do.
+      const variedThere = drawn([tile(kind, { x: 480, y: 240, tint: -0.9 })]).colors;
+      expect(variedThere).not.toEqual(drawn([tile(kind)]).colors);
+    });
+
+    it(`changes nothing but colour on a ${kind} tile`, () => {
+      expect(drawn([tile(kind, { uniform: true })]).positions).toEqual(drawn([tile(kind)]).positions);
+    });
+  }
+
+  it('keeps colour that is structural rather than decorative', () => {
+    // A picket's posts are darker than its rails because they are a different
+    // piece of timber. Flattening that would be flattening the design, not the
+    // variety, so the parts that carry it have no uniform tone to fall back to.
+    expect(new Set(drawn([tile('fence-wood', { uniform: true })]).colors).size).toBeGreaterThan(1);
+  });
+});

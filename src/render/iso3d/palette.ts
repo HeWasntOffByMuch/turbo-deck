@@ -79,7 +79,9 @@ export const PALETTE = {
   brick: 0xa8543c,
   brickDark: 0x8c4331,
   brickPale: 0xc06a4a,
-  mortar: 0xa9a196,
+  // Darker than the brick around it, so a joint reads as a shadow between
+  // bricks rather than as a pale line drawn over them.
+  mortar: 0x8e857a,
 } as const;
 
 /**

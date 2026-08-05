@@ -62,6 +62,7 @@ export interface EditorSettings {
   // Fence
   style: FenceStyle;
   fenceScale: number;
+  variedColor: boolean;
   // Markers
   markerKind: MapMarkerKind;
   showArena: boolean;
@@ -86,6 +87,7 @@ export function createEditorSettings(): EditorSettings {
     alignToNormal: DEFAULT_SCATTER.alignToNormal,
     style: DEFAULT_FENCE.style,
     fenceScale: DEFAULT_FENCE.fenceScale,
+    variedColor: DEFAULT_FENCE.variedColor,
     markerKind: 'spawn',
     showArena: true,
     showNav: false,

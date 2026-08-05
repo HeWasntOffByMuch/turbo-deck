@@ -167,6 +167,7 @@ export class MapChunkStore {
         rotation: p.rotation,
         tint: p.tint,
         ...(p.align ? { alignToNormal: true } : {}),
+        ...(p.uniform ? { uniform: true } : {}),
       })),
       // World space inside the store, chunk-local in the document -- the same
       // convention props use. Holding the two differently is how a world
@@ -672,6 +673,7 @@ export class MapChunkStore {
                 scale: quantize(p.scale),
                 tint: quantize(p.tint),
                 ...(p.alignToNormal ? { align: true } : {}),
+                ...(p.uniform ? { uniform: true } : {}),
               })),
               markers: chunk.markers.map((m) => ({
                 ...m,

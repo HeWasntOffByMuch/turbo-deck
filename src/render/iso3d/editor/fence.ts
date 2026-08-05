@@ -43,9 +43,17 @@ export interface FenceSettings {
   readonly style: FenceStyle;
   /** Size multiplier. Tiles are laid this much longer as well as taller. */
   readonly fenceScale: number;
+  /**
+   * Whether tiles may draw their materials in varied tones (spec 059).
+   *
+   * On for a field wall, off for a run meant to read as one built thing, where
+   * the mottling reads as dirt rather than as material. Stored per tile rather
+   * than kept here, so two runs in one map can differ and a save keeps both.
+   */
+  readonly variedColor: boolean;
 }
 
-export const DEFAULT_FENCE: FenceSettings = { style: 'wood', fenceScale: 1 };
+export const DEFAULT_FENCE: FenceSettings = { style: 'wood', fenceScale: 1, variedColor: true };
 
 const STYLE_KINDS: Record<FenceStyle, FenceKind> = {
   wood: 'fence-wood',
@@ -197,7 +205,17 @@ export function fenceStroke(
 
     let tint: number;
     [tint, next] = unit(next);
-    const prop: Prop = { kind, x: midX, y: midZ, scale, rotation, tint: tint * 2 - 1 };
+    const prop: Prop = {
+      kind,
+      x: midX,
+      y: midZ,
+      scale,
+      rotation,
+      tint: tint * 2 - 1,
+      // Absent rather than false when varied, so the default costs the document
+      // nothing and a map written before the option existed still parses.
+      ...(settings.variedColor ? {} : { uniform: true }),
+    };
     const at = store.addProp(layerId, prop);
     if (!at) continue;
     const chunkKey = `${at.cx},${at.cz}`;

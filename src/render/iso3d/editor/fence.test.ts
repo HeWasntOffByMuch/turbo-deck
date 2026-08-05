@@ -6,6 +6,8 @@ import {
   exportMap,
   FENCE_TILE_LENGTH,
   loadMap,
+  parseMap,
+  serializeMap,
   type ChunkOptions,
   type LoadedMap,
   type Prop,
@@ -235,6 +237,44 @@ describe('what a fence refuses to do', () => {
     const path = { x: 0, z: 0, started: true };
     expect(fenceStroke(map.store, LAYER, settings(), { x: NaN, z: 0 }, path, Rng.fromSeed(1)).added).toHaveLength(0);
     expect(fenceStroke(map.store, 'nope', settings(), { x: 100, z: 0 }, path, Rng.fromSeed(1)).added).toHaveLength(0);
+  });
+});
+
+describe('the colour-variety option (spec 059)', () => {
+  it('marks a tile uniform only when the variety is off', () => {
+    // Absent rather than false for the default, so the document does not grow a
+    // field per prop for the way every fence painted so far was already laid.
+    for (const prop of drag(loaded(), [-200, 0], [200, 0], 20, { variedColor: true })) {
+      expect('uniform' in prop).toBe(false);
+    }
+    const flat = drag(loaded(), [-200, 0], [200, 0], 20, { variedColor: false });
+    expect(flat.length).toBeGreaterThan(6);
+    for (const prop of flat) expect(prop.uniform).toBe(true);
+  });
+
+  it('carries the flag through a save and a load, in both directions', () => {
+    const map = loaded();
+    drag(map, [-200, -80], [200, -80], 20, { variedColor: false });
+    drag(map, [-200, 80], [200, 80], 20, { variedColor: true });
+    const reloaded = loadMap(parseMap(serializeMap(map.store.toDocument())));
+    const props = reloaded.store.props(LAYER);
+    expect(props.filter((p) => p.uniform === true).length).toBeGreaterThan(6);
+    // ...and the varied ones come back varied, without the field appearing.
+    const varied = props.filter((p) => p.uniform !== true);
+    expect(varied.length).toBeGreaterThan(6);
+    for (const prop of varied) expect('uniform' in prop).toBe(false);
+  });
+
+  it('leaves a document written before the option existed alone', () => {
+    const map = loaded();
+    drag(map, [-200, 0], [200, 0], 20, { variedColor: false });
+    const text = serializeMap(map.store.toDocument());
+    // Strip the field as an older writer would have, and it still parses and
+    // still draws varied rather than failing or defaulting to flat.
+    const older = parseMap(text.replace(/, "uniform": true/g, ''));
+    const props = loadMap(older).store.props(LAYER);
+    expect(props.length).toBeGreaterThan(6);
+    for (const prop of props) expect('uniform' in prop).toBe(false);
   });
 });
 

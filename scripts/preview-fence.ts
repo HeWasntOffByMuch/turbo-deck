@@ -67,8 +67,13 @@ function world(amplitude: number): LoadedMap {
 }
 
 /** Drag through `corners`, sampled finely, exactly as the frame loop would. */
-function run(map: LoadedMap, style: FenceStyle, corners: readonly (readonly [number, number])[]): Prop[] {
-  const settings: FenceSettings = { style, fenceScale: 1 };
+function run(
+  map: LoadedMap,
+  style: FenceStyle,
+  corners: readonly (readonly [number, number])[],
+  variedColor = true,
+): Prop[] {
+  const settings: FenceSettings = { style, fenceScale: 1, variedColor };
   let rng = Rng.fromSeed(4242);
   let path: FencePath = NO_FENCE_PATH;
   const added: Prop[] = [];
@@ -226,6 +231,8 @@ interface Shot {
   readonly style: FenceStyle;
   readonly corners: readonly (readonly [number, number])[];
   readonly amplitude: number;
+  /** The last column of each row drops the colour variety (spec 059). */
+  readonly variedColor?: boolean;
 }
 
 const STRAIGHT: readonly (readonly [number, number])[] = [[-220, 0], [220, 0]];
@@ -239,9 +246,10 @@ const SHOTS: readonly Shot[] = STYLES.flatMap((style) => [
   { style, corners: STRAIGHT, amplitude: 0 },
   { style, corners: CORNER, amplitude: 0 },
   { style, corners: STRAIGHT, amplitude: 34 },
+  { style, corners: STRAIGHT, amplitude: 0, variedColor: false },
 ]);
 
-const cols = 3;
+const cols = 4;
 const rows = Math.ceil(SHOTS.length / cols);
 const sheet = new PNG({ width: cols * (SIZE + GAP), height: rows * (SIZE + GAP), colorType: 6 });
 for (let i = 0; i < sheet.data.length; i += 4) {
@@ -253,7 +261,7 @@ for (let i = 0; i < sheet.data.length; i += 4) {
 
 SHOTS.forEach((shot, i) => {
   const map = world(shot.amplitude);
-  const props = run(map, shot.style, shot.corners);
+  const props = run(map, shot.style, shot.corners, shot.variedColor ?? true);
   const field = buildPropField(props, (x, z) => map.world.heightAt(x, z));
   const pixels = render(collectTriangles(field.group), SIZE);
   field.dispose();
@@ -269,7 +277,10 @@ SHOTS.forEach((shot, i) => {
       sheet.data[to + 3] = 255;
     }
   }
-  process.stdout.write(`${shot.style} ${shot.corners.length - 1} leg(s), rise ${shot.amplitude}: ${props.length} tiles\n`);
+  process.stdout.write(
+    `${shot.style} ${shot.corners.length - 1} leg(s), rise ${shot.amplitude}` +
+      `${shot.variedColor === false ? ', uniform' : ''}: ${props.length} tiles\n`,
+  );
 });
 
 mkdirSync('.claude/screenshots', { recursive: true });

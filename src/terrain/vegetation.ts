@@ -75,6 +75,16 @@ export interface Prop {
    * unaffected.
    */
   readonly alignToNormal?: boolean;
+  /**
+   * Draw this prop in one flat colour per material instead of its varied tones
+   * (spec 059).
+   *
+   * The *intent*, like `alignToNormal` beside it: which tone a part ends up
+   * with is the renderer's business, and this only says whether it may vary at
+   * all. Absent means varied, so nothing already saved changes and the
+   * generated forest is untouched.
+   */
+  readonly uniform?: boolean;
 }
 
 export interface ScatterOptions {

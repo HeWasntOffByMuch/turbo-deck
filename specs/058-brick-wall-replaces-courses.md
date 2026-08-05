@@ -31,6 +31,13 @@ The deliberate opposite of rubble. Where that one is sized so irregular stones
 still overlap, brick is laid: a mortar core spanning the tile, with brick faces
 standing proud of it on both sides, in six courses of pitch 8.
 
+**Nothing but brick is visible from outside.** The top course is laid *across*
+the wall -- full-depth bricks, wider than the core -- so what caps the wall is
+more brick rather than the core's grey top, and the bottom course runs down past
+the ground rather than stopping at a joint, so the wall meets the earth as brick
+too. Mortar shows only where mortar belongs: in the joints, and in the
+cross-section at the cut end of a run.
+
 **Running bond, carried across tile boundaries.** Even courses hold three whole
 bricks; odd courses hold two whole bricks and a *half* brick at each end, so the
 half at one tile's edge and the half at its neighbour's meet to form one whole
