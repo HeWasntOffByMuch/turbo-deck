@@ -239,7 +239,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       facing,
       // What roots us and what we are turning into, from the client session
       // rather than from the button that was pressed. It covers both a cast the
-      // server has confirmed and one we have only asked for (spec 066) -- and it
+      // server has confirmed and one we have only asked for (spec 067) -- and it
       // can end without us asking, because being hit interrupts one.
       castAim: view.selfRoot,
     });

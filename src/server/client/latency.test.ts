@@ -1,6 +1,6 @@
 /**
- * The regression spec 066 exists for: prediction over a connection that is not
- * free (spec 066).
+ * The regression spec 067 exists for: prediction over a connection that is not
+ * free (spec 067).
  *
  * Single-player is a server in the same tab, so every reply comes back within a
  * frame and a prediction bug has nowhere to show. This puts a delay line between

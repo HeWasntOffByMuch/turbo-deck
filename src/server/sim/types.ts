@@ -157,7 +157,7 @@ export interface ServerEntity {
   readonly claimedPosition: { readonly x: number; readonly y: number } | null;
   /**
    * The sequence number {@link claimedPosition} came from, or 0 before the
-   * first input (spec 066).
+   * first input (spec 067).
    *
    * The speed check is per *input*, not per tick, and the two stop being the
    * same thing the moment an input is dropped -- from a full queue, or by a
@@ -167,7 +167,7 @@ export interface ServerEntity {
    */
   readonly claimedSeq: number;
   /**
-   * The last correction sent to this entity's client, or null (spec 066).
+   * The last correction sent to this entity's client, or null (spec 067).
    *
    * A client that has been corrected makes its next claims from *there* -- it
    * snaps to this position and replays every input it had not heard back about
@@ -214,7 +214,7 @@ export interface ServerInput {
    */
   readonly hasPrediction: boolean;
   /**
-   * How many sequence numbers this input covers, normally 1 (spec 066).
+   * How many sequence numbers this input covers, normally 1 (spec 067).
    *
    * More than that means inputs between the last applied one and this one never
    * reached the sim, so the claim it carries has had that many ticks to travel.

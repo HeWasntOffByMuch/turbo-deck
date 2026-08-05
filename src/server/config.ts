@@ -87,7 +87,7 @@ export const INTEREST_CHUNK_RADIUS = 8;
  * 3: knockback and hitstop left the sim, and with them four fields of the combat
  * result and one derived stat (spec 065).
  * 4: an ability request says which input it was made on, so a commit lands at
- * the same point in the input stream on both ends (spec 066).
+ * the same point in the input stream on both ends (spec 067).
  */
 export const PROTOCOL_VERSION = 4;
 

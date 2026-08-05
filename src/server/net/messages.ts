@@ -79,7 +79,7 @@ export interface UseAbilityMessage {
   readonly targetX: number;
   readonly targetY: number;
   /**
-   * The last input sequence number the client had sent when it asked (spec 066).
+   * The last input sequence number the client had sent when it asked (spec 067).
    *
    * The server applies one input per tick from a queue, so the tick a request
    * *arrives* on and the tick the input it was made on is *applied* on are

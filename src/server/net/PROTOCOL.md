@@ -65,7 +65,7 @@ or `CastRejected` — exactly one of them, per request, in the order the request
 arrived, which is how a client with several in flight tells the answers apart.
 
 `afterInputSeq` is the last input `seq` the client had sent when it asked
-(spec 066). The server holds the request until it applies *that* input, rather
+(spec 067). The server holds the request until it applies *that* input, rather
 than acting on the tick the frame arrived: inputs are queued, so those are
 different ticks, and committing on the stamped one is what makes the client's
 own predicted root land in the same place as the server's.
@@ -84,7 +84,7 @@ cooldown, so the only thing it spent is time.
 Answered with `Pong` carrying the same nonce and the server's tick. The client
 sends one every half second and counts its own ticks until the answer: that is
 the only clock it has, and half of it is how far behind the server a delta is by
-the time it lands (spec 066).
+the time it lands (spec 067).
 ### `0x04 Equip` — `str slot` · `str itemId`
 ### `0x05 Unequip` — `str slot`
 ### `0x06 SpendSkillPoint` — `str skillId`
@@ -148,7 +148,7 @@ this position as of `inputSeq` and **replays** every input after it.
 `reason`: `0` divergence past the threshold, `1` speed violation, `2` collision
 or terrain, `3` admin teleport, `4` drift.
 
-`4` is the ordinary one and the others are not (spec 066). Drift means the
+`4` is the ordinary one and the others are not (spec 067). Drift means the
 prediction is merely a little wrong: adopt it exactly, but *ease* the difference
 into the drawn position over a few ticks rather than snapping the body. It is
 throttled to the broadcast cadence, so a wrong client costs at most one small
@@ -294,7 +294,7 @@ non-finite value is refused rather than silently ignored.
    snap, no bandwidth. That silence is the point.
 5. A client also predicts the *root* a commit puts on it: from the moment it
    asks for an ability until the server answers, it sends no movement
-   (spec 066). This costs nothing when the guess is wrong, because being rooted
+   (spec 067). This costs nothing when the guess is wrong, because being rooted
    is expressed as `moveX = moveY = 0` in the input, and a server that refused
    the cast honours that zero like any other.
 

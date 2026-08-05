@@ -20,7 +20,7 @@
  * would throw away every input the player has made since, which reads as the
  * character being yanked backwards.
  *
- * Spec 066 splits step 3 in two. A correction is still adopted *exactly* -- the
+ * Spec 067 splits step 3 in two. A correction is still adopted *exactly* -- the
  * position this buffer reports to the server is always authoritative-plus-replay
  * and never a compromise -- but a **drift** correction, the small kind the server
  * now sends as soon as it notices any disagreement at all, keeps the difference

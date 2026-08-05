@@ -684,7 +684,7 @@ describe('cooldowns', () => {
 });
 
 /**
- * The predicted root (spec 066). The server roots a caster and only says so a
+ * The predicted root (spec 067). The server roots a caster and only says so a
  * round trip later; the client stops asking to move the moment it commits.
  */
 describe('committing before the server has answered', () => {

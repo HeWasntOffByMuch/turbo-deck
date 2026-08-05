@@ -381,7 +381,7 @@ describe('combat over the wire', () => {
 });
 
 /**
- * Spec 066: an ability request names the input it was made on, and waits for it.
+ * Spec 067: an ability request names the input it was made on, and waits for it.
  *
  * The two are different ticks whenever anything is buffered, and the difference
  * is exactly what the client predicted its root from.

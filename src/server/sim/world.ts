@@ -294,7 +294,7 @@ export function step(
       // A correction tells the client to be here, so its next claim will start
       // from here rather than from where it was. Pardoning that position is what
       // stops the snap we just asked for from being read as a speed hack
-      // (spec 066).
+      // (spec 067).
       //
       // The *seq* is the one the disagreement started at, not the latest: our
       // corrections take a one-way trip to arrive, so the client is reconciling

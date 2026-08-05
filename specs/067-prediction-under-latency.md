@@ -1,4 +1,4 @@
-# 066 — Prediction that survives a round trip
+# 067 — Prediction that survives a round trip
 
 ## Problem
 

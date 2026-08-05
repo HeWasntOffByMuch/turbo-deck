@@ -16,7 +16,7 @@
  *  - it disagrees with the server by more than the threshold -- the prediction
  *    is badly wrong, and the correction is a snap;
  *  - it disagrees at all, by more than {@link DRIFT_EPSILON} -- ordinary drift,
- *    and the correction is a nudge the client eases in (spec 066).
+ *    and the correction is a nudge the client eases in (spec 067).
  *
  * That last tier is new, and it is the one that keeps the other two rare. Before
  * it, anything under 48 units was neither reported nor fixed, so every tick the
@@ -57,7 +57,7 @@ const DEG = Math.PI / 180;
 
 /**
  * How far a client's claim may sit from the server's answer before it is worth
- * saying so (spec 066).
+ * saying so (spec 067).
  *
  * A tenth of a tick's walk at the default speed, and four orders of magnitude
  * above the f32 rounding the wire puts on a position, so an agreeing client is
@@ -217,7 +217,7 @@ function resolveFacing(entity: ServerEntity, input: ServerInput | null): number 
  * The claim is measured against the entity's own last claim, not against the
  * server's last authoritative position -- see {@link ServerEntity.claimedPosition}
  * for why that distinction is the difference between a working speed check and
- * one that flags every player with a ping. Two things widen it (spec 066):
+ * one that flags every player with a ping. Two things widen it (spec 067):
  * an input that spans several sequence numbers gets that many ticks of
  * allowance, and the position of the last correction is pardoned, because a
  * client that has just been snapped is *supposed* to be there.

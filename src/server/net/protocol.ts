@@ -169,7 +169,7 @@ export const CorrectionReason = {
   Teleport: 3,
   /**
    * The prediction is slightly wrong and the client should ease onto the
-   * server's answer rather than snap to it (spec 066). Everything above is a
+   * server's answer rather than snap to it (spec 067). Everything above is a
    * client that cannot be believed; this one is a client that is trying and
    * missing, which is the ordinary case on a real connection.
    */

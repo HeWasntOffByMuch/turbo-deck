@@ -269,7 +269,7 @@ describe('movement validation', () => {
   });
 
   it('nudges a client that is drifting, long before it is worth a snap', () => {
-    // The gap this closes (spec 066): under the 48-unit threshold, nothing used
+    // The gap this closes (spec 067): under the 48-unit threshold, nothing used
     // to be sent and nothing was fixed, so a tick of error was permanent and
     // every swing banked another one.
     let state = createWorldState(1);

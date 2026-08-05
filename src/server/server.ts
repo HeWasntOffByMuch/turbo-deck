@@ -135,7 +135,7 @@ interface Connection {
   sentCooldowns: Readonly<Record<string, number>> | null;
   /**
    * Abilities asked for and not yet committed, each stamped with the input it
-   * was asked after (spec 066). Held here rather than on the input frame
+   * was asked after (spec 067). Held here rather than on the input frame
    * because a client sends them as their own messages, and they must not be
    * lost if no movement input happens to arrive in the same tick.
    *
@@ -150,7 +150,7 @@ interface Connection {
   appliedSeq: number;
   /**
    * The tick a drift correction was last sent on, so nudges ride the broadcast
-   * cadence instead of going out sixty times a second (spec 066). Hard
+   * cadence instead of going out sixty times a second (spec 067). Hard
    * corrections are not throttled -- they are rare and the point of them is that
    * they are immediate.
    */

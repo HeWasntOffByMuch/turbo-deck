@@ -77,7 +77,7 @@ export interface ClientView {
    *
    * Advanced by {@link GameClient.advanceTick} once per simulated tick and
    * re-synced to every delta, never backwards. The re-sync adds half the
-   * measured round trip (spec 066): a delta describes a tick that is already
+   * measured round trip (spec 067): a delta describes a tick that is already
    * one-way-latency old, and a clock that believes otherwise is behind by
    * exactly the ping -- which is how a cooldown the server considered ready was
    * still greyed out here, and why the root prediction used to refuse to fire.
@@ -110,7 +110,7 @@ export interface ClientView {
    */
   readonly requestedAbilityId: string | null;
   /**
-   * The point this client is rooted facing, or null when it may walk (spec 066).
+   * The point this client is rooted facing, or null when it may walk (spec 067).
    *
    * The server roots a caster outright and only says so a round trip later, so a
    * client that waited to be told kept predicting a walk through its own
@@ -141,7 +141,7 @@ type EffectListener = (effect: EffectMessage) => void;
 type CastRejectedListener = (abilityId: string, reason: string) => void;
 
 /**
- * A cast this client has asked for and has not heard back about (spec 066).
+ * A cast this client has asked for and has not heard back about (spec 067).
  *
  * Deliberately *not* a {@link KnownCast}: it is not drawn, it has no phase and
  * no release tick, and nothing reads it but the root. The client still assumes
@@ -219,7 +219,7 @@ export class GameClient {
   private cooldowns: Readonly<Record<string, number>> = {};
   private estimated = 0;
   /**
-   * Ability requests sent and not yet answered, oldest first (spec 066).
+   * Ability requests sent and not yet answered, oldest first (spec 067).
    *
    * A queue rather than a slot, because the answers are what identify them: the
    * server handles requests in the order they arrive and answers each exactly
@@ -231,7 +231,7 @@ export class GameClient {
    */
   private readonly outstandingCasts: PredictedCast[] = [];
   /**
-   * Cooldowns this client has spent and not yet been told about (spec 066).
+   * Cooldowns this client has spent and not yet been told about (spec 067).
    *
    * The server stamps a cooldown the moment it commits, and says so -- but that
    * message is a round trip away, and a player spamming a button presses it
@@ -324,7 +324,7 @@ export class GameClient {
    * and guessing wrong about a hit is far more visible than guessing wrong about
    * a step.
    *
-   * What is predicted, since spec 066, is the root: from here until the server
+   * What is predicted, since spec 067, is the root: from here until the server
    * answers, this client asks for no movement. The request carries the last
    * input seq so the server commits at the same point in the stream.
    */
@@ -593,7 +593,7 @@ export class GameClient {
       case ServerMessageType.Correction:
         // Drift is eased, everything else snaps. The state adopted is the same
         // either way -- the difference is whether the player watches it happen
-        // or is moved (spec 066).
+        // or is moved (spec 067).
         this.prediction?.reconcile(message.inputSeq, message.position, {
           eased: message.reason === CorrectionReason.Drift,
         });

@@ -125,7 +125,7 @@ describe('game message round-trip', () => {
       abilityId: 'melee.slash',
       targetX: 612.5,
       targetY: -48.25,
-      // The input this request was made on (spec 066), not decoration: the
+      // The input this request was made on (spec 067), not decoration: the
       // server commits on that input rather than on arrival.
       afterInputSeq: 9001,
     },

@@ -202,7 +202,7 @@ describe('predicting against the real world', () => {
   });
 });
 
-describe('easing a drift correction (spec 066)', () => {
+describe('easing a drift correction (spec 067)', () => {
   it('adopts the server\'s answer exactly, and only the drawing lags', () => {
     const local = buffer();
     for (let seq = 1; seq <= 4; seq++) local.apply(input(seq));
