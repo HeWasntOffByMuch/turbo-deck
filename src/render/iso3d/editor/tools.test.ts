@@ -116,12 +116,12 @@ describe('the button strips', () => {
   });
 
   it('labels the fence styles by what they look like, not by their stored ids', () => {
-    // 'wood' and 'stone' are in saved maps and cannot be renamed, but WOOD
-    // beside BOARDS says nothing about which is which.
+    // 'wood' is in saved maps and cannot be renamed, but WOOD beside BOARDS
+    // says nothing about which is which.
     const label = (value: string): string | undefined =>
       FENCE_STYLE_CHOICES.find((c) => c.value === value)?.label;
     expect(label('wood')).toBe('picket');
-    expect(label('stone')).toBe('courses');
+    expect(FENCE_STYLE_CHOICES.map((c) => c.label)).toEqual(['picket', 'boards', 'brick', 'rubble']);
   });
 });
 

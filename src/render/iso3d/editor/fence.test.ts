@@ -172,10 +172,10 @@ describe('laying a fence', () => {
   });
 
   it('stores the style the settings asked for', () => {
-    // Every style gets its own kind, and the two that existed before spec 057
-    // keep the ids already written into saved maps.
+    // Every style gets its own kind, and 'wood' keeps the id already written
+    // into saved maps.
     expect(fencePropKind('wood')).toBe('fence-wood');
-    expect(fencePropKind('stone')).toBe('fence-stone');
+    expect(fencePropKind('brick')).toBe('fence-brick');
     expect(new Set(FENCE_STYLES.map(fencePropKind)).size).toBe(FENCE_STYLES.length);
     for (const style of FENCE_STYLES) {
       const added = drag(loaded(), [-150, 0], [150, 0], 10, { style });
@@ -200,7 +200,7 @@ describe('what a fence refuses to do', () => {
   it('lets a second fence of the other style share the ground', () => {
     const map = loaded();
     drag(map, [-200, 0], [200, 0], 20, { style: 'wood' });
-    expect(drag(map, [-200, 0], [200, 0], 20, { style: 'stone' }).length).toBeGreaterThan(6);
+    expect(drag(map, [-200, 0], [200, 0], 20, { style: 'brick' }).length).toBeGreaterThan(6);
   });
 
   it('skips ground the layer says is not solid, without giving up the run', () => {

@@ -27,14 +27,15 @@ export type PropKind =
   | 'bush'
   | 'fence-wood'
   | 'fence-boards'
-  | 'fence-stone'
+  | 'fence-brick'
   | 'fence-rubble';
 
 /**
  * The kinds that are a length of fence rather than a plant: a regular one and a
- * rough one in each material (spec 056, 057).
+ * rough one in each material -- picket and boards in timber, brick and rubble in
+ * stone (spec 056, 057, 058).
  */
-export const FENCE_KINDS = ['fence-wood', 'fence-boards', 'fence-stone', 'fence-rubble'] as const;
+export const FENCE_KINDS = ['fence-wood', 'fence-boards', 'fence-brick', 'fence-rubble'] as const;
 export type FenceKind = (typeof FENCE_KINDS)[number];
 
 export function isFenceKind(kind: PropKind): kind is FenceKind {
@@ -183,7 +184,7 @@ const FOOTPRINT_BASE: Record<PropKind, number> = {
   // that keeps a wall a wall.
   'fence-wood': FENCE_TILE_LENGTH / 2,
   'fence-boards': FENCE_TILE_LENGTH / 2,
-  'fence-stone': FENCE_TILE_LENGTH / 2,
+  'fence-brick': FENCE_TILE_LENGTH / 2,
   'fence-rubble': FENCE_TILE_LENGTH / 2,
 };
 /**

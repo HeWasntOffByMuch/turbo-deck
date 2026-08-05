@@ -30,10 +30,13 @@ import {
  */
 
 /**
- * The fence styles, regular and rough in each material (spec 057). The ids of
- * the first two are the ones already written into saved maps, so they stay.
+ * The fence styles: regular and rough, in timber and then in stone (spec 057,
+ * 058). Ordered so the panel's two-column strip groups them by material.
+ *
+ * `wood` keeps its id rather than being renamed to what the button calls it,
+ * because that id is written into every map already saved with a picket fence.
  */
-export const FENCE_STYLES = ['wood', 'boards', 'stone', 'rubble'] as const;
+export const FENCE_STYLES = ['wood', 'boards', 'brick', 'rubble'] as const;
 export type FenceStyle = (typeof FENCE_STYLES)[number];
 
 export interface FenceSettings {
@@ -47,7 +50,7 @@ export const DEFAULT_FENCE: FenceSettings = { style: 'wood', fenceScale: 1 };
 const STYLE_KINDS: Record<FenceStyle, FenceKind> = {
   wood: 'fence-wood',
   boards: 'fence-boards',
-  stone: 'fence-stone',
+  brick: 'fence-brick',
   rubble: 'fence-rubble',
 };
 

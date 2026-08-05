@@ -9,6 +9,7 @@ import {
   treeVariant,
   trunkHeight,
   trunkTopCover,
+  brickCourse,
   type TreeSpecies,
 } from './props.js';
 import { fenceRotation } from './editor/fence.js';
@@ -262,7 +263,7 @@ describe('fence tiles as they are actually built', () => {
     // -- but hashed from the position, so a rebuild mid-stroke does not reshuffle
     // the wall someone is looking at.
     const run: Prop[] = [0, 1, 2, 3, 4].map((i) => ({
-      kind: 'fence-stone' as const,
+      kind: 'fence-rubble' as const,
       x: i * FENCE_TILE_LENGTH,
       y: 0,
       scale: 1,
@@ -396,5 +397,72 @@ describe('the rough fence variants', () => {
       }
     });
     field.dispose();
+  });
+});
+
+/**
+ * Spec 058. Brick is the one style whose whole point is regularity, so the
+ * property worth pinning is not that it varies but that its bond *lines up* --
+ * specifically across a tile boundary, where the failure is two bricks in the
+ * same world space z-fighting the length of a wall.
+ */
+describe('the brick bond', () => {
+  const half = FENCE_TILE_LENGTH / 2;
+  /** A course as [start, end] spans, sorted along the run. */
+  const spans = (course: number): [number, number][] =>
+    brickCourse(course)
+      .map(([centre, run]) => [centre - run / 2, centre + run / 2] as [number, number])
+      .sort((a, b) => a[0] - b[0]);
+
+  it('keeps every brick inside its own tile', () => {
+    for (let course = 0; course < 6; course++) {
+      for (const [from, to] of spans(course)) {
+        expect(from).toBeGreaterThanOrEqual(-half - 1e-9);
+        expect(to).toBeLessThanOrEqual(half + 1e-9);
+      }
+    }
+  });
+
+  it('leaves a joint between bricks, and never overlaps them', () => {
+    for (let course = 0; course < 6; course++) {
+      const laid = spans(course);
+      for (let i = 1; i < laid.length; i++) {
+        const gap = (laid[i] as [number, number])[0] - (laid[i - 1] as [number, number])[1];
+        expect(gap).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('offsets alternate courses, which is what a running bond is', () => {
+    const even = spans(0).map(([from]) => from);
+    const odd = spans(1).map(([from]) => from);
+    expect(odd).not.toEqual(even);
+    // No joint sits above a joint: the ends of one course fall inside the bricks
+    // of the one below, which is the whole structural point of the pattern.
+    for (let i = 1; i < spans(1).length; i++) {
+      const joint = (spans(1)[i] as [number, number])[0];
+      const under = spans(0).find(([from, to]) => joint > from && joint < to);
+      expect(under).toBeDefined();
+    }
+  });
+
+  it('carries the bond across a tile boundary without doubling a brick', () => {
+    // This tile's last brick and the next tile's first, in one coordinate frame.
+    for (const course of [0, 1]) {
+      const here = spans(course);
+      const next = spans(course).map(([from, to]) => [from + FENCE_TILE_LENGTH, to + FENCE_TILE_LENGTH]);
+      const lastEnd = (here[here.length - 1] as [number, number])[1];
+      const firstStart = (next[0] as number[])[0] as number;
+      // They may meet exactly (the two halves of one brick) or leave a joint,
+      // but they must never overlap.
+      expect(firstStart).toBeGreaterThanOrEqual(lastEnd - 1e-9);
+      // ...and the odd course's halves must add up to a whole brick, or the
+      // pattern visibly breaks at every junction.
+      if (course === 1) {
+        const merged = (next[0] as number[])[1] as number - lastEnd + (lastEnd - (here[here.length - 1] as [number, number])[0]);
+        const whole = (here[1] as [number, number])[1] - (here[1] as [number, number])[0];
+        expect(merged).toBeCloseTo(whole, 6);
+      }
+    }
   });
 });

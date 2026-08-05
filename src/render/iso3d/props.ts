@@ -382,43 +382,153 @@ function woodFenceParts(): PropPart[] {
   return parts;
 }
 
-function stoneFenceParts(): PropPart[] {
-  const parts: PropPart[] = [];
-  // Three courses, each narrower and shorter than the one below: a drystone wall
-  // is batter, not a slab. Each spans the whole tile, so a run is continuous.
-  const courses: readonly (readonly [height: number, depth: number, baseY: number])[] = [
-    [18, 23, -FENCE_SINK],
-    [14, 19, 11],
-    [11, 15, 25],
+/**
+ * A brick wall (spec 058), the built counterpart to the rubble one.
+ *
+ * A mortar core spanning the tile, with brick faces standing proud of it on both
+ * sides in six courses -- so the wall is solid by construction and the joints are
+ * recesses between bricks rather than gaps through to the far side.
+ *
+ * **The bond carries across a tile boundary.** Even courses hold three whole
+ * bricks; odd courses hold two whole bricks and a *half* at each end, so the half
+ * at this tile's edge and the half at its neighbour's meet to make one brick with
+ * no joint between them. Whole bricks at the edge would instead land in exactly
+ * the same world space as the neighbour's and z-fight the length of the run.
+ *
+ * The bricks are merged into three colour bands rather than kept as a part each:
+ * forty-odd parts would be forty-odd instanced meshes per region, and a brick is
+ * far too small on screen to need its own instance matrix. What is worth having
+ * is the batch variation, which the bands give.
+ */
+const BRICK_COURSES = 6;
+const BRICK_PITCH = 8;
+/** Three bricks to a course, so the length divides the tile exactly. */
+const BRICK_RUN = FENCE_TILE_LENGTH / 3;
+const BRICK_JOINT = 1.5;
+const BRICK_PROUD = 1.6;
+const BRICK_CORE_DEPTH = 13;
+const BRICK_TONES = [PALETTE.brick, PALETTE.brickDark, PALETTE.brickPale] as const;
+
+interface Box {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly w: number;
+  readonly h: number;
+  readonly d: number;
+}
+
+/** Boxes merged into one buffer, wound so every face points out of its box. */
+function brickGeometry(boxes: readonly Box[]): THREE.BufferGeometry {
+  const positions: number[] = [];
+  for (const b of boxes) {
+    const x0 = b.x - b.w / 2;
+    const x1 = b.x + b.w / 2;
+    const y0 = b.y - b.h / 2;
+    const y1 = b.y + b.h / 2;
+    const z0 = b.z - b.d / 2;
+    const z1 = b.z + b.d / 2;
+    const v = (x: number, y: number, z: number): readonly [number, number, number] => [x, y, z];
+    const quad = (
+      a: readonly [number, number, number],
+      c: readonly [number, number, number],
+      d: readonly [number, number, number],
+      e: readonly [number, number, number],
+    ): void => {
+      positions.push(...a, ...c, ...d, ...a, ...d, ...e);
+    };
+    quad(v(x0, y0, z0), v(x1, y0, z0), v(x1, y0, z1), v(x0, y0, z1)); // underside
+    quad(v(x0, y1, z0), v(x0, y1, z1), v(x1, y1, z1), v(x1, y1, z0)); // top
+    quad(v(x0, y0, z1), v(x1, y0, z1), v(x1, y1, z1), v(x0, y1, z1)); // front
+    quad(v(x1, y0, z0), v(x0, y0, z0), v(x0, y1, z0), v(x1, y1, z0)); // back
+    quad(v(x0, y0, z0), v(x0, y0, z1), v(x0, y1, z1), v(x0, y1, z0)); // left
+    quad(v(x1, y0, z1), v(x1, y0, z0), v(x1, y1, z0), v(x1, y1, z1)); // right
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/**
+ * Where the bricks of one course sit, as (centre, length) along the run.
+ *
+ * Exported for the test that checks the bond survives a junction, which is the
+ * one property here a screenshot cannot show: two tiles' bricks either meet
+ * exactly or overlap and z-fight down the whole wall, and at this size the
+ * difference is a shimmer you would blame on the renderer.
+ */
+export function brickCourse(course: number): readonly (readonly [number, number])[] {
+  const half = FENCE_TILE_LENGTH / 2;
+  const whole = BRICK_RUN - BRICK_JOINT;
+  if (course % 2 === 0) {
+    return [-BRICK_RUN, 0, BRICK_RUN].map((x) => [x, whole] as const);
+  }
+  // Offset half a brick, with the two ends halved so the bond continues into the
+  // next tile instead of doubling up on its bricks.
+  // Each stub reaches exactly to the tile edge, so it and the neighbour tile's
+  // stub form one whole brick across the join -- with no joint between them,
+  // because the joint they would share falls inside the brick they make.
+  const stub = BRICK_RUN / 2 - BRICK_JOINT / 2;
+  return [
+    [-half + stub / 2, stub],
+    [-BRICK_RUN / 2, whole],
+    [BRICK_RUN / 2, whole],
+    [half - stub / 2, stub],
   ];
-  courses.forEach(([height, depth, baseY], i) => {
-    parts.push({
-      geometry: new THREE.BoxGeometry(FENCE_TILE_LENGTH, height, depth),
-      offsetY: baseY + height / 2,
-      color: i === 1 ? PALETTE.drystoneDark : PALETTE.drystone,
-      foliage: false,
-      tintAmount: 0.14,
-      // Courses that shift and skew a little are what stop a run of tiles
-      // reading as one long extruded box.
-      jitterZ: 1.6,
-      jitterYaw: 0.035,
-    });
-  });
-  // Capstones: rubble along the top, the part that says "stacked" at a glance.
-  for (const at of [-FENCE_SPAN, 0, FENCE_SPAN]) {
-    parts.push({
-      geometry: new THREE.IcosahedronGeometry(9, 0),
-      offsetX: at,
-      offsetY: 38,
-      color: PALETTE.drystone,
-      foliage: false,
-      tintAmount: 0.16,
-      scaleY: 0.62,
-      jitterZ: 2.2,
-      jitterYaw: 0.9,
-      jitterScaleY: 0.22,
+}
+
+function brickFenceParts(): PropPart[] {
+  const height = BRICK_COURSES * BRICK_PITCH;
+  const brickHeight = BRICK_PITCH - BRICK_JOINT;
+  const faceZ = BRICK_CORE_DEPTH / 2 + BRICK_PROUD / 2;
+  // One list of boxes per colour band; which band a brick joins is hashed from
+  // where it sits, so the mottling is fixed rather than drawn afresh.
+  const bands: Box[][] = BRICK_TONES.map(() => []);
+  for (let course = 0; course < BRICK_COURSES; course++) {
+    const y = course * BRICK_PITCH + brickHeight / 2 + BRICK_JOINT / 2;
+    brickCourse(course).forEach(([x, run], i) => {
+      const band = Math.floor(hashUnit2(course, i * 7 + 1, HASH_BRICK) * BRICK_TONES.length) % BRICK_TONES.length;
+      for (const z of [faceZ, -faceZ]) {
+        (bands[band] as Box[]).push({ x, y, z, w: run, h: brickHeight, d: BRICK_PROUD });
+      }
     });
   }
+
+  const parts: PropPart[] = [
+    {
+      // The core: mortar seen only through the joints, and what makes the wall
+      // solid rather than two rows of bricks with daylight between them.
+      geometry: new THREE.BoxGeometry(FENCE_TILE_LENGTH, height + FENCE_SINK, BRICK_CORE_DEPTH),
+      offsetY: (height - FENCE_SINK) / 2,
+      color: PALETTE.mortar,
+      foliage: false,
+      tintAmount: 0.08,
+    },
+  ];
+  bands.forEach((boxes, i) => {
+    if (boxes.length === 0) return;
+    parts.push({
+      geometry: brickGeometry(boxes),
+      offsetY: 0,
+      color: BRICK_TONES[i] ?? PALETTE.brick,
+      foliage: false,
+      // No positional jitter anywhere on this style: a brick wall is laid, and a
+      // course that wanders reads as a mistake rather than as character. The
+      // variation is the three bands and the tile's own tint.
+      tintAmount: 0.1,
+      jitterTint: 0.05,
+    });
+  });
+  // A flat coping over the top, wider than the wall, which is both what a garden
+  // wall has and what stops the top course reading as a cut edge.
+  parts.push({
+    geometry: new THREE.BoxGeometry(FENCE_TILE_LENGTH, 3.5, BRICK_CORE_DEPTH + 2 * BRICK_PROUD + 3),
+    offsetY: height + 1.75,
+    color: PALETTE.mortar,
+    foliage: false,
+    tintAmount: 0.08,
+  });
   return parts;
 }
 
@@ -522,6 +632,7 @@ const authored = (index: number, seed: number): number => hashUnit2(index, index
 
 const HASH_BOARD = 0xb0a2d5;
 const HASH_STONE = 0x57012e;
+const HASH_BRICK = 0xb21c14;
 
 /** Boards to a tile, and how far each overlaps the one before it. */
 const BOARD_COUNT = 7;
@@ -654,8 +765,8 @@ function fenceParts(kind: FenceKind): PropPart[] {
   switch (kind) {
     case 'fence-boards':
       return boardFenceParts();
-    case 'fence-stone':
-      return stoneFenceParts();
+    case 'fence-brick':
+      return brickFenceParts();
     case 'fence-rubble':
       return rubbleFenceParts();
     default:

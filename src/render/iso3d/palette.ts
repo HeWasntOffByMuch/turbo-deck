@@ -70,10 +70,16 @@ export const PALETTE = {
   plankPale: 0xc49f68,
   plankGrey: 0x8d7a5a,
   drystone: 0xbdb4a1,
-  drystoneDark: 0x9d9483,
   // A cooler and a warmer stone, so a rubble wall is not one grey.
   drystonePale: 0xcfc7b4,
   drystoneWarm: 0xb3a58c,
+  // Fired brick in three tones and the mortar behind it (spec 058). A real wall
+  // is never one colour -- the batch variation is most of what says "brick"
+  // before any single brick is big enough on screen to be read as one.
+  brick: 0xa8543c,
+  brickDark: 0x8c4331,
+  brickPale: 0xc06a4a,
+  mortar: 0xa9a196,
 } as const;
 
 /**

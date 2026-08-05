@@ -158,14 +158,11 @@ export const MODE_CHOICES = choices(EDITOR_MODES);
 export const TERRAIN_TOOL_CHOICES = choices(TERRAIN_TOOLS);
 export const MARKER_CHOICES = choices(MARKER_KINDS);
 /**
- * Labelled by what they look like rather than by their stored ids: 'wood' and
- * 'stone' are written into saved maps and cannot be renamed, but a button that
- * says WOOD next to one that says BOARDS tells you nothing (spec 057).
+ * Labelled by what they look like rather than by their stored id: 'wood' is
+ * written into saved maps and cannot be renamed, but a button that says WOOD
+ * next to one that says BOARDS tells you nothing (spec 057).
  */
-export const FENCE_STYLE_CHOICES = choices(FENCE_STYLES, {
-  wood: 'picket',
-  stone: 'courses',
-});
+export const FENCE_STYLE_CHOICES = choices(FENCE_STYLES, { wood: 'picket' });
 /**
  * What the scatter may plant. Not every `PropKind`: the fence kinds are laid a
  * tile at a time along a path and would be nonsense sprinkled over an area.
