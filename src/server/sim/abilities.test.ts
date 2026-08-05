@@ -118,6 +118,7 @@ function input(entityId: number, overrides: Partial<ServerInput> = {}): ServerIn
     predictedX: 0,
     predictedY: 0,
     hasPrediction: false,
+    seqSpan: 1,
     castAbilityId: '',
     castTargetX: 0,
     castTargetY: 0,

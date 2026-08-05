@@ -41,6 +41,8 @@ function entity(id: number, overrides: Partial<ServerEntity> = {}): ServerEntity
     repathAtTick: 0,
     pathGoal: null,
     claimedPosition: null,
+    claimedSeq: 0,
+    pardon: null,
     resource: 0,
     cast: null,
     cooldowns: {},

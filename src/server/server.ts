@@ -134,13 +134,35 @@ interface Connection {
    */
   sentCooldowns: Readonly<Record<string, number>> | null;
   /**
-   * An ability asked for since the last tick, and whether a cancel was asked
-   * for. Held here rather than on the input frame because a client sends them
-   * as their own messages, and they must not be lost if no movement input
-   * happens to arrive in the same tick.
+   * Abilities asked for and not yet committed, each stamped with the input it
+   * was asked after (spec 066). Held here rather than on the input frame
+   * because a client sends them as their own messages, and they must not be
+   * lost if no movement input happens to arrive in the same tick.
+   *
+   * A queue rather than a single slot: two requests can arrive between ticks on
+   * a connection that is buffering, and the second is a real decision the player
+   * made rather than something to overwrite the first with.
    */
-  pendingCast: { readonly abilityId: string; readonly targetX: number; readonly targetY: number } | null;
-  pendingCancel: boolean;
+  readonly pendingCasts: PendingCast[];
+  /** Cancels, stamped the same way; `-1` means none outstanding. */
+  readonly pendingCancels: number[];
+  /** The last input seq handed to the sim, so a gap in the stream is visible. */
+  appliedSeq: number;
+  /**
+   * The tick a drift correction was last sent on, so nudges ride the broadcast
+   * cadence instead of going out sixty times a second (spec 066). Hard
+   * corrections are not throttled -- they are rare and the point of them is that
+   * they are immediate.
+   */
+  lastDriftTick: number;
+}
+
+interface PendingCast {
+  readonly abilityId: string;
+  readonly targetX: number;
+  readonly targetY: number;
+  /** Commit on the tick this input seq is applied, not on the tick it arrived. */
+  readonly afterInputSeq: number;
 }
 
 export class GameServer implements AdminHost {
@@ -217,8 +239,10 @@ export class GameServer implements AdminHost {
       inputs: [],
       lastSeq: 0,
       respawnAtTick: 0,
-      pendingCast: null,
-      pendingCancel: false,
+      pendingCasts: [],
+      pendingCancels: [],
+      appliedSeq: 0,
+      lastDriftTick: 0,
       sentCooldowns: null,
     };
     this.connections.add(connection);
@@ -289,6 +313,7 @@ export class GameServer implements AdminHost {
           predictedX: message.predictedX,
           predictedY: message.predictedY,
           hasPrediction: true,
+          seqSpan: 1,
           castAbilityId: '',
           castTargetX: 0,
           castTargetY: 0,
@@ -328,16 +353,17 @@ export class GameServer implements AdminHost {
 
       case ClientMessageType.UseAbility:
         if (connection.playerId === null || connection.entityId < 0) return;
-        connection.pendingCast = {
+        connection.pendingCasts.push({
           abilityId: message.abilityId,
           targetX: message.targetX,
           targetY: message.targetY,
-        };
+          afterInputSeq: message.afterInputSeq,
+        });
         break;
 
       case ClientMessageType.CancelCast:
         if (connection.playerId === null || connection.entityId < 0) return;
-        connection.pendingCancel = true;
+        connection.pendingCancels.push(message.afterInputSeq);
         break;
 
       case ClientMessageType.Chat: {
@@ -541,10 +567,15 @@ export class GameServer implements AdminHost {
     const inputs: ServerInput[] = [];
     for (const connection of this.connections) {
       const next = connection.inputs.shift();
-      const cast = connection.pendingCast;
-      const cancel = connection.pendingCancel;
-      connection.pendingCast = null;
-      connection.pendingCancel = false;
+      // The stream has reached `applied`, so anything asked for at or before it
+      // is due now. A request stamped ahead of the queue waits for its input --
+      // unless there is no queue left to wait for, in which case the client is
+      // acting between input frames and holding it would simply lose the press.
+      const applied = next ? next.seq : connection.lastSeq;
+      const starved = connection.inputs.length === 0;
+      const due = (afterSeq: number): boolean => afterSeq <= applied || starved;
+      const cast = takeWhere(connection.pendingCasts, (pending) => due(pending.afterInputSeq));
+      const cancel = takeWhere(connection.pendingCancels, due) !== null;
 
       if (next) {
         if (connection.playerId !== null) {
@@ -552,11 +583,17 @@ export class GameServer implements AdminHost {
         }
         inputs.push({
           ...next,
+          // How many of the client's inputs this frame stands for. One in the
+          // healthy case; more when the queue overflowed or the connection lost
+          // frames, which is the difference between a speed check that survives
+          // a bad connection and one that punishes it.
+          seqSpan: Math.max(1, next.seq - connection.appliedSeq),
           castAbilityId: cast?.abilityId ?? '',
           castTargetX: cast?.targetX ?? 0,
           castTargetY: cast?.targetY ?? 0,
           cancelCast: cancel,
         });
+        connection.appliedSeq = next.seq;
       } else if ((cast || cancel) && connection.entityId >= 0) {
         // An ability asked for on a tick with no movement input still has to
         // reach the sim, or standing still would make you unable to act.
@@ -570,6 +607,7 @@ export class GameServer implements AdminHost {
           predictedX: 0,
           predictedY: 0,
           hasPrediction: false,
+          seqSpan: 1,
           castAbilityId: cast?.abilityId ?? '',
           castTargetX: cast?.targetX ?? 0,
           castTargetY: cast?.targetY ?? 0,
@@ -676,6 +714,10 @@ export class GameServer implements AdminHost {
         // Cleared, or the first input after respawn is measured against a claim
         // from wherever they died and reads as crossing the map in one tick.
         claimedPosition: null,
+        claimedSeq: 0,
+        // The teleport home is pardoned the same way a correction is: the client
+        // is told to be here, so its next claim starting here is not a hack.
+        pardon: { x: position.x, y: position.y, seq: connection.lastSeq },
       });
       this.chunks.place(entity.id, position.x, position.y, true);
       this.players.syncFromEntity(connection.playerId, position, entity.facing, session.stats.maxHealth);
@@ -697,6 +739,14 @@ export class GameServer implements AdminHost {
         case 'correction': {
           const connection = this.connectionForEntity(event.entityId);
           if (!connection) break;
+          // A nudge rides the broadcast cadence. The sim measures drift on every
+          // tick, and every tick's worth of it describes the same disagreement:
+          // sending one per delta converges the client just as fast and costs a
+          // twentieth of the traffic. Anything more serious goes out at once.
+          if (event.reason === CorrectionReason.Drift) {
+            if (this.state.tick - connection.lastDriftTick < BROADCAST_EVERY_N_TICKS) break;
+            connection.lastDriftTick = this.state.tick;
+          }
           this.send(connection, {
             type: ServerMessageType.Correction,
             inputSeq: event.inputSeq,
@@ -1067,3 +1117,19 @@ export class GameServer implements AdminHost {
 }
 
 
+
+/**
+ * Removes and returns the first entry a predicate accepts, leaving the rest in
+ * order. The pending-cast queues are drained by *due date* rather than by
+ * arrival, so this is a shift with a condition on it.
+ */
+function takeWhere<T>(queue: T[], accepts: (item: T) => boolean): T | null {
+  for (let index = 0; index < queue.length; index += 1) {
+    const item = queue[index];
+    if (item !== undefined && accepts(item)) {
+      queue.splice(index, 1);
+      return item;
+    }
+  }
+  return null;
+}
