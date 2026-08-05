@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { ARRIVE_EPS, moveIntent, steerTo, type IntentInput } from './intent.js';
+import { ARRIVE_EPS, moveIntent, RoutePlanner, steerTo, type IntentInput } from './intent.js';
+import { createWorldColliders } from '../../../sim/collision.js';
+import { WORLD_BOUNDS } from '../../../sim/constants.js';
 
 const ORIGIN = { x: 0, y: 0 };
 
@@ -8,9 +10,9 @@ function intent(over: Partial<IntentInput> = {}): ReturnType<typeof moveIntent> 
     held: new Set(),
     self: ORIGIN,
     destination: null,
+    route: null,
     facing: 0,
     castAim: null,
-    world: null,
     ...over,
   });
 }
@@ -152,5 +154,114 @@ describe('steerTo', () => {
       if (!direction) return;
       expect(Math.hypot(direction.x, direction.y)).toBeCloseTo(1, 9);
     }
+  });
+});
+
+/**
+ * The route cache (spec 065's follow-up).
+ *
+ * The first cut re-ran `findPath` on every tick an order stood -- a full A* at
+ * 60Hz. The monsters have carried their route on the entity since spec 065;
+ * this is the same bookkeeping for the one place a player's order lives.
+ */
+describe('RoutePlanner', () => {
+  /** A wall between (600,450) and (900,450), open above and below. */
+  const WALL = { x: 740, y: 250, w: 40, h: 400 };
+  const world = { colliders: createWorldColliders([WALL], [], WORLD_BOUNDS), radius: 16 };
+
+  it('plans nothing at all when the way is clear', () => {
+    const planner = new RoutePlanner();
+    // Straight down an empty lane, nowhere near the wall.
+    expect(planner.next({ x: 100, y: 100 }, { x: 100, y: 600 }, world, 0)).toBeNull();
+    expect(planner.searches).toBe(0);
+    expect(planner.waypoints).toEqual([]);
+  });
+
+  it('routes around a wall it cannot walk through', () => {
+    const planner = new RoutePlanner();
+    const next = planner.next({ x: 600, y: 450 }, { x: 900, y: 450 }, world, 0);
+
+    expect(next).not.toBeNull();
+    expect(planner.searches).toBe(1);
+    // It aims off the straight line, which is the only way past.
+    expect(next?.y).not.toBeCloseTo(450, 0);
+  });
+
+  /** The point of the cache: one search, then many ticks of following it. */
+  it('searches once and follows the route for many ticks', () => {
+    const planner = new RoutePlanner();
+    for (let tick = 0; tick < 19; tick++) {
+      planner.next({ x: 600, y: 450 }, { x: 900, y: 450 }, world, tick);
+    }
+    expect(planner.searches).toBe(1);
+  });
+
+  it('replans on its cadence rather than never', () => {
+    const planner = new RoutePlanner();
+    for (let tick = 0; tick < 41; tick++) {
+      planner.next({ x: 600, y: 450 }, { x: 900, y: 450 }, world, tick, 20);
+    }
+    // Ticks 0, 20 and 40: three searches over forty-one ticks, not forty-one.
+    expect(planner.searches).toBe(3);
+  });
+
+  it('replans at once when the order is re-pointed somewhere else', () => {
+    const planner = new RoutePlanner();
+    planner.next({ x: 600, y: 450 }, { x: 900, y: 450 }, world, 0);
+    expect(planner.searches).toBe(1);
+    planner.next({ x: 600, y: 450 }, { x: 900, y: 200 }, world, 1);
+    expect(planner.searches).toBe(2);
+  });
+
+  it('consumes waypoints as it reaches them', () => {
+    const planner = new RoutePlanner();
+    const first = planner.next({ x: 600, y: 450 }, { x: 900, y: 450 }, world, 0);
+    expect(first).not.toBeNull();
+    if (!first) return;
+    const before = planner.waypoints.length;
+
+    // Standing on the first waypoint: it is spent, and the next one is offered.
+    const second = planner.next(first, { x: 900, y: 450 }, world, 1);
+    expect(planner.waypoints.length).toBeLessThan(before);
+    expect(second).not.toEqual(first);
+  });
+
+  it('forgets everything when the order is dropped', () => {
+    const planner = new RoutePlanner();
+    planner.next({ x: 600, y: 450 }, { x: 900, y: 450 }, world, 0);
+    expect(planner.waypoints.length).toBeGreaterThan(0);
+
+    expect(planner.next({ x: 600, y: 450 }, null, world, 1)).toBeNull();
+    expect(planner.waypoints).toEqual([]);
+  });
+
+  it('steers straight when it has no world to route through', () => {
+    const planner = new RoutePlanner();
+    expect(planner.next({ x: 600, y: 450 }, { x: 900, y: 450 }, null, 0)).toBeNull();
+    expect(planner.searches).toBe(0);
+  });
+});
+
+describe('following a route', () => {
+  it('steers at the waypoint but only arrives at the destination', () => {
+    // Standing on the waypoint, with the real order still far away.
+    const result = intent({
+      self: { x: 0, y: 0 },
+      destination: { x: 500, y: 0 },
+      route: { x: 0, y: 100 },
+    });
+    expect(result.moveY).toBeCloseTo(1, 9);
+    expect(result.arrived).toBe(false);
+  });
+
+  it('arrives on the destination even while a waypoint is still offered', () => {
+    const result = intent({
+      self: { x: 0, y: 0 },
+      destination: { x: 1, y: 0 },
+      route: { x: 900, y: 900 },
+    });
+    expect(result.arrived).toBe(true);
+    expect(result.moveX).toBe(0);
+    expect(result.moveY).toBe(0);
   });
 });

@@ -16,6 +16,7 @@
  * decides, and if these drift the only symptom is a rubber-band.
  */
 
+import { segmentClear } from '../../../sim/collision.js';
 import { findPath, navGridFor } from '../../../sim/pathfinding.js';
 import type { WorldColliders } from '../../../sim/types.js';
 
@@ -24,7 +25,7 @@ export interface Point {
   readonly y: number;
 }
 
-/** What {@link routeTo} needs to path through: the world, and how wide the body is. */
+/** What {@link RoutePlanner} paths through: the world, and how wide the body is. */
 export interface PathWorld {
   readonly colliders: WorldColliders;
   readonly radius: number;
@@ -74,10 +75,14 @@ export interface IntentInput {
   /** The standing move order from the last right-click, or null. */
   readonly destination: Point | null;
   /**
-   * The world to route a move order through, or null to steer straight at it.
-   * Null until the welcome lands and the client has built the world.
+   * The next waypoint on the way to `destination`, from {@link RoutePlanner},
+   * or null to walk straight at it.
+   *
+   * Arrival is still measured against `destination` -- reaching a waypoint is
+   * not reaching the order, and clearing the order there would strand the player
+   * at the first corner.
    */
-  readonly world: PathWorld | null;
+  readonly route: Point | null;
   /** The body's current heading, kept when nothing asks for a new one. */
   readonly facing: number;
   /**
@@ -95,10 +100,15 @@ export interface IntentInput {
 
 export function moveIntent(input: IntentInput): MoveIntent {
   const keyed = keyDirection(input.held);
+  // Arrival is measured against the *order*, never against a waypoint: reaching
+  // a corner is not reaching where you were going, and clearing the order there
+  // would strand the player at the first turn.
+  const arrived =
+    keyed === null && input.destination !== null && steerTo(input.self, input.destination) === null;
   // Keys outrank a standing order: grabbing WASD is how you take manual control
-  // back, and having to cancel an order first would feel like a stuck key.
-  const direction = keyed ?? routeTo(input.self, input.destination, input.world);
-  const arrived = keyed === null && direction === null && input.destination !== null;
+  // back, and having to cancel an order first would feel like a stuck key. A
+  // spent order steers nothing, whatever waypoint is still on offer.
+  const direction = keyed ?? (arrived ? null : steerTo(input.self, input.route ?? input.destination));
 
   // Rooted, and turning into the blow. Asking for the aim rather than holding
   // the old heading is what makes the figure visibly come round during a
@@ -123,7 +133,11 @@ export function moveIntent(input: IntentInput): MoveIntent {
     // the server captures it at the moment of commit -- so the cursor does not
     // drag the heading around between blows.
     facing: Math.atan2(direction.y, direction.x),
-    arrived: false,
+    // Reported, not hardcoded false. Steering and arriving are separate
+    // questions: a waypoint can still be pulling us along after the order itself
+    // has been reached, and saying "not arrived" there would leave the order
+    // standing forever.
+    arrived,
   };
 }
 
@@ -145,8 +159,8 @@ function keyDirection(held: ReadonlySet<string>): Point | null {
  *
  * A straight line, which is right whenever the way is clear and wrong the moment
  * it is not: a move order across a wall used to press the body into it and slide.
- * {@link routeTo} is the same question asked of the nav grid; this is what it
- * falls back to.
+ * {@link RoutePlanner} is the same question asked of the nav grid; this is what
+ * it falls back to, and what it steers along between waypoints.
  */
 export function steerTo(self: Point, destination: Point | null): Point | null {
   if (!destination) return null;
@@ -155,6 +169,12 @@ export function steerTo(self: Point, destination: Point | null): Point | null {
   if (Math.hypot(dx, dy) <= ARRIVE_EPS) return null;
   return normalise(dx, dy);
 }
+
+/**
+ * How far the destination may drift before a planned route is stale. A move
+ * order does not move, so this only fires when the caller re-points it.
+ */
+const REPLAN_DISTANCE = 48;
 
 /**
  * A route for a move order, through the same grid the monsters use.
@@ -166,28 +186,82 @@ export function steerTo(self: Point, destination: Point | null): Point | null {
  * client either re-deriving the same path anyway or mispredicting every step
  * around every tree.
  *
- * `findPath` short-circuits to a straight line when nothing is in the way, so the
- * common case costs one segment test.
+ * Stateful, and deliberately so: the first cut re-ran `findPath` every tick,
+ * which is a full A* sixty times a second for as long as an order stands. The
+ * monsters have carried their route on the entity since spec 065 for exactly
+ * this reason; this is the same bookkeeping, in the only place a player's order
+ * lives. No clock and no DOM -- the tick is passed in -- so it is testable.
  */
-export function routeTo(
-  self: Point,
-  destination: Point | null,
-  world: PathWorld | null,
-): Point | null {
-  if (!destination) return null;
-  if (Math.hypot(destination.x - self.x, destination.y - self.y) <= ARRIVE_EPS) return null;
-  if (!world) return steerTo(self, destination);
+export class RoutePlanner {
+  private path: readonly Point[] = [];
+  private index = 0;
+  private goal: Point | null = null;
+  private replanAtTick = 0;
 
-  const waypoints = findPath(navGridFor(world.radius, world.colliders), self, destination);
-  // Unreachable within the node budget: press toward it and let collision decide,
-  // which is what a held key in the same direction would do.
-  const next = waypoints[0];
-  if (!next) return steerTo(self, destination);
-  // A waypoint we are already standing on says nothing about which way to go.
-  if (Math.hypot(next.x - self.x, next.y - self.y) <= 1e-6) {
-    return steerTo(self, destination);
+  /** The waypoints currently planned, for tests and for drawing the route. */
+  get waypoints(): readonly Point[] {
+    return this.path.slice(this.index);
   }
-  return normalise(next.x - self.x, next.y - self.y);
+
+  /** How many searches this planner has run. The thing the cache exists to hold down. */
+  searches = 0;
+
+  clear(): void {
+    this.path = [];
+    this.index = 0;
+    this.goal = null;
+    this.replanAtTick = 0;
+  }
+
+  /**
+   * The next point to walk toward, or null to walk straight at `destination`.
+   *
+   * Null is the common answer: when nothing is between the body and its order
+   * there is no route to follow and none is planned, so an unobstructed march
+   * across open ground never touches the grid.
+   */
+  next(
+    self: Point,
+    destination: Point | null,
+    world: PathWorld | null,
+    tick: number,
+    replanEvery = 20,
+  ): Point | null {
+    if (!destination || !world) {
+      this.clear();
+      return null;
+    }
+    if (segmentClear(self, destination, world.radius, world.colliders)) {
+      this.clear();
+      return null;
+    }
+
+    const goalMoved =
+      this.goal === null ||
+      Math.hypot(this.goal.x - destination.x, this.goal.y - destination.y) > REPLAN_DISTANCE;
+    const exhausted = this.index >= this.path.length;
+
+    if (goalMoved || exhausted || tick >= this.replanAtTick) {
+      this.path = findPath(navGridFor(world.radius, world.colliders), self, destination);
+      this.index = 0;
+      this.goal = destination;
+      this.replanAtTick = tick + replanEvery;
+      this.searches += 1;
+    }
+
+    // Consume every waypoint already reached; a fast body can clear more than
+    // one in a tick once a string-pull has left them far apart.
+    while (this.index < this.path.length) {
+      const point = this.path[this.index];
+      if (!point) break;
+      if (Math.hypot(point.x - self.x, point.y - self.y) > ARRIVE_EPS) break;
+      this.index += 1;
+    }
+
+    // Unreachable, or nothing left: press toward the order and let collision
+    // decide, which is what a held key in the same direction would do.
+    return this.path[this.index] ?? null;
+  }
 }
 
 function normalise(x: number, y: number): Point | null {

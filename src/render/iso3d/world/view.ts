@@ -38,7 +38,7 @@ import { viewSeed } from '../seed.js';
 import type { ViewHandle } from '../view-handle.js';
 import { turnToward } from '../../../server/sim/movement.js';
 import { createHud, HOTBAR } from './hud.js';
-import { moveIntent, MOVE_KEYS } from './intent.js';
+import { moveIntent, MOVE_KEYS, RoutePlanner } from './intent.js';
 import { WorldScene } from './scene.js';
 
 const TICK_MS = 1000 / SERVER_TICK_RATE;
@@ -91,6 +91,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
   /** The world a move order routes through -- the one the server is colliding against. */
   const pathWorld = { colliders: world.colliders, radius: SERVER_PLAYER_RADIUS };
+  const planner = new RoutePlanner();
 
   const scene = new WorldScene(canvas, world);
   const hud = createHud();
@@ -141,6 +142,12 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
   function useAbility(abilityId: string): void {
     const target = worldAim();
+    // Committing to a blow cancels where you were going. The server roots a
+    // caster anyway, so a standing order would simply resume the moment the cast
+    // ended -- walking off mid-fight, seconds after the click that ordered it,
+    // with nothing on screen to explain why.
+    destination = null;
+    planner.clear();
     client.useAbility(abilityId, target.x, target.y);
   }
 
@@ -157,7 +164,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     if (event.code === 'Escape') client.cancelCast();
     // Any manual step also drops a standing order, for the same reason held
     // keys outrank one in `moveIntent`: taking the keys is taking control.
-    if (MOVE_KEYS[event.code]) destination = null;
+    if (MOVE_KEYS[event.code]) {
+      destination = null;
+      planner.clear();
+    }
   };
   const onKeyUp = (event: KeyboardEvent): void => {
     held.delete(event.code);
@@ -228,11 +238,16 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       held,
       self: me,
       destination,
+      // Routed once and remembered, not re-searched every tick: an A* at 60Hz
+      // for as long as an order stands is what the first cut did.
+      route: planner.next(me, destination, pathWorld, view.estimatedTick),
       facing,
       castAim: selfCast ? { x: selfCast.targetX, y: selfCast.targetY } : null,
-      world: pathWorld,
     });
-    if (intent.arrived) destination = null;
+    if (intent.arrived) {
+      destination = null;
+      planner.clear();
+    }
 
     // Turn toward what was asked for at our own rate, so the drawn heading is
     // the one the server is about to arrive at rather than the one it left.
