@@ -86,8 +86,10 @@ export const INTEREST_CHUNK_RADIUS = 8;
  * ground and the trees the server is colliding against.
  * 3: knockback and hitstop left the sim, and with them four fields of the combat
  * result and one derived stat (spec 065).
+ * 4: an ability request says which input it was made on, so a commit lands at
+ * the same point in the input stream on both ends (spec 066).
  */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 /** How long a dead player lies there before the server puts them back (spec 057). */
 export const RESPAWN_DELAY_TICKS = SERVER_TICK_RATE * 3;
