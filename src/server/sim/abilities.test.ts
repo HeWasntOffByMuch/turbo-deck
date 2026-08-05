@@ -736,7 +736,7 @@ describe('determinism holds with abilities in play', () => {
 });
 
 describe('cast phases reach the client', () => {
-  it('reports a start and an end for every cast', () => {
+  it('reports every phase it passes through, and ends once', () => {
     let state = createWorldState(1);
     const player = withPlayer(state, 600, 450);
     state = player.state;
@@ -747,14 +747,68 @@ describe('cast phases reach the client', () => {
       0: [input(player.id, { castAbilityId: 'melee.slash', castTargetX: 700, castTargetY: 450 })],
     });
 
-    const started = result.events.filter((event) => event.kind === 'castStarted');
-    expect(started).toHaveLength(1);
-    expect(started[0]).toMatchObject({ abilityId: 'melee.slash', phase: CastPhase.Windup });
+    const phases = result.events
+      .filter((event) => event.kind === 'castStarted')
+      .map((event) => (event.kind === 'castStarted' ? event.phase : -1));
+    // Committed facing the aim, so no turn: wind up, then recovery.
+    expect(phases).toEqual([CastPhase.Windup, CastPhase.Recovery]);
 
+    const ended = result.events.filter(
+      (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Released,
+    );
+    expect(ended).toHaveLength(1);
+  });
+
+  /**
+   * The bug this pins. `castEnded` used to fire at the *release* tick while the
+   * server went on rooting the caster through recovery, so the bar vanished
+   * mid-cast and a client that believed itself free predicted movement the
+   * server was still refusing -- a correction per tick, every recovery.
+   */
+  it('does not say the cast is over while the caster is still rooted', () => {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+
+    const ability = abilityById('melee.heavy');
+    if (!ability) throw new Error('no melee.heavy');
+    const total = totalCastTicks(ability);
+
+    // Stop one tick short of the end: released, recovering, still rooted.
+    const midRecovery = run(state, total - 1, {
+      0: [input(player.id, { castAbilityId: 'melee.heavy', castTargetX: 700, castTargetY: 450 })],
+    });
+    const caster = midRecovery.state.entities.get(player.id);
+    expect(caster?.cast?.phase).toBe(CastPhase.Recovery);
     expect(
-      result.events.some(
+      midRecovery.events.some((event) => event.kind === 'castEnded'),
+      'the cast is still in progress; nothing should have ended it',
+    ).toBe(false);
+
+    // And the tick it actually ends, it says so.
+    const done = run(midRecovery.state, 2);
+    expect(done.state.entities.get(player.id)?.cast).toBeNull();
+    expect(
+      done.events.some(
         (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Released,
       ),
     ).toBe(true);
+  });
+
+  it('walks a channel through channel and then recovery', () => {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+
+    const ability = abilityById('channel.drain');
+    if (!ability) throw new Error('no channel.drain');
+    const result = run(state, totalCastTicks(ability) + 2, {
+      0: [input(player.id, { castAbilityId: 'channel.drain', castTargetX: 700, castTargetY: 450 })],
+    });
+
+    const phases = result.events
+      .filter((event) => event.kind === 'castStarted')
+      .map((event) => (event.kind === 'castStarted' ? event.phase : -1));
+    expect(phases).toEqual([CastPhase.Windup, CastPhase.Channel, CastPhase.Recovery]);
   });
 });

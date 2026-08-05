@@ -353,12 +353,24 @@ export function advanceCast(
       spawns.push(...landed.spawns);
     }
 
-    events.push({
-      kind: 'castEnded',
-      entityId: entity.id,
-      abilityId: ability.id,
-      reason: CastEndReason.Released,
-    });
+    // The blow has gone off, but the cast is not over: the caster is rooted
+    // through recovery, and `castEnded` here told the client otherwise. The bar
+    // vanished mid-cast, and the client -- believing itself free -- predicted
+    // movement the server was still refusing, which is a correction per tick for
+    // the length of every recovery. A phase change, not an ending.
+    const settledCast = caster.cast;
+    if (settledCast) {
+      events.push({
+        kind: 'castStarted',
+        entityId: entity.id,
+        abilityId: ability.id,
+        phase: settledCast.phase,
+        releaseTick: settledCast.releaseTick,
+        endTick: settledCast.endTick,
+        targetX: settledCast.targetX,
+        targetY: settledCast.targetY,
+      });
+    }
   }
 
   // --- channel pulses --------------------------------------------------
@@ -387,9 +399,37 @@ export function advanceCast(
   }
 
   // --- done ------------------------------------------------------------
+  // A channel that has run its course drops into recovery; announce that too, so
+  // the bar switches from filling to draining rather than sitting full.
+  const channelled = caster.cast;
+  if (
+    channelled &&
+    channelled.phase === CastPhase.Recovery &&
+    cast.phase === CastPhase.Channel
+  ) {
+    events.push({
+      kind: 'castStarted',
+      entityId: caster.id,
+      abilityId: ability.id,
+      phase: CastPhase.Recovery,
+      releaseTick: channelled.releaseTick,
+      endTick: channelled.endTick,
+      targetX: channelled.targetX,
+      targetY: channelled.targetY,
+    });
+  }
+
   const settled = caster.cast;
   if (settled && settled.phase === CastPhase.Recovery && tick >= settled.endTick) {
     caster = { ...caster, cast: null, activity: ActivityValue.Idle, activityUntilTick: 0 };
+    // *Now* it is over. This is the event the client clears its bar on, and the
+    // one that tells it it may move again.
+    events.push({
+      kind: 'castEnded',
+      entityId: caster.id,
+      abilityId: settled.abilityId,
+      reason: CastEndReason.Released,
+    });
   }
 
   updated.set(caster.id, caster);

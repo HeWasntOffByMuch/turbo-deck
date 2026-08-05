@@ -59,7 +59,25 @@ export interface GameClientOptions {
 
 /** What the renderer reads. Read-only, and free of anything derived. */
 export interface ClientView {
+  /**
+   * The tick the last delta described. Advances in steps of
+   * `BROADCAST_EVERY_N_TICKS`, and **stops entirely** when the server has
+   * nothing to say -- deltas are suppressed when nothing changed. Use it to
+   * order authoritative samples (interpolation does), never as a clock.
+   */
   readonly tick: number;
+  /**
+   * The client's estimate of the server's current tick.
+   *
+   * A clock, which `tick` is not. A rooted caster alone in a field changes
+   * nothing, so no delta is sent, so `tick` freezes -- and anything drawn
+   * against it freezes too. That is exactly what happened to the cast bar: it
+   * stopped partway and sat there while the wind-up ran on without it.
+   *
+   * Advanced by {@link GameClient.advanceTick} once per simulated tick and
+   * re-synced to every delta, never backwards.
+   */
+  readonly estimatedTick: number;
   readonly entities: readonly import('./replica.js').ReplicatedEntity[];
   /** The local player's predicted position -- what to draw them at. */
   readonly self: { readonly x: number; readonly y: number } | null;
@@ -130,6 +148,7 @@ export class GameClient {
   private readonly casts = new Map<number, KnownCast>();
   private requestedAbilityId: string | null = null;
   private cooldowns: Readonly<Record<string, number>> = {};
+  private estimated = 0;
 
   constructor(
     private readonly channel: Channel,
@@ -251,9 +270,19 @@ export class GameClient {
     this.errorListeners.push(listener);
   }
 
+  /**
+   * Advances the estimated clock by one tick. The caller drives this from the
+   * same fixed-timestep loop it sends input on, so the estimate keeps time with
+   * the server whether or not the server has anything to report.
+   */
+  advanceTick(): void {
+    this.estimated += 1;
+  }
+
   view(): ClientView {
     return {
       tick: this.world.tick,
+      estimatedTick: this.estimated,
       entities: this.world.all(),
       self: this.prediction?.position ?? null,
       selfEntityId: this.welcome?.entityId ?? -1,
@@ -292,6 +321,7 @@ export class GameClient {
           correctionThreshold: message.correctionThreshold,
           worldSeed: message.worldSeed,
         };
+        this.estimated = message.tick;
         this.connected = true;
         this.resolveWelcome?.(this.welcome);
         this.resolveWelcome = null;
@@ -307,6 +337,10 @@ export class GameClient {
         break;
 
       case ServerMessageType.Delta: {
+        // Never backwards: the estimate may legitimately be a tick or two ahead
+        // of the delta describing an older frame, and yanking a cast bar
+        // backwards is worse than letting it run slightly fast.
+        this.estimated = Math.max(this.estimated, message.tick);
         this.world.apply(message.tick, message.removed, message.upserts);
         for (const id of message.removed) this.casts.delete(id);
         this.prediction?.acknowledge(message.ackInputSeq);

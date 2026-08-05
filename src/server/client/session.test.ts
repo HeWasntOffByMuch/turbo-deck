@@ -444,6 +444,40 @@ describe('calling off a cast', () => {
     expect(client.view().casts).toHaveLength(0);
     expect(client.view().requestedAbilityId).toBeNull();
   });
+
+  /**
+   * The client's cast has to last exactly as long as the server's, because the
+   * client roots itself for it. `castEnded` used to fire at the *release* tick
+   * while the server went on rooting through recovery, so the client believed
+   * itself free and predicted movement the server refused -- a correction per
+   * tick, for the length of every recovery.
+   */
+  it('keeps the cast until the server is finished with it', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+
+    const entityId = client.view().selfEntityId;
+    const at = test.server.world.entities.get(entityId)?.position;
+    if (!at) return;
+
+    client.useAbility('melee.heavy', at.x + 60, at.y);
+    await settle();
+
+    let disagreements = 0;
+    for (let i = 0; i < 200; i++) {
+      test.server.tick();
+      client.advanceTick();
+      await settle();
+      const serverCasting = test.server.world.entities.get(entityId)?.cast !== null;
+      const clientCasting = client.view().casts.some((cast) => cast.entityId === entityId);
+      if (serverCasting !== clientCasting) disagreements += 1;
+    }
+
+    expect(disagreements).toBe(0);
+    // And it did finish, rather than both sides agreeing it never ended.
+    expect(test.server.world.entities.get(entityId)?.cast).toBeNull();
+  });
 });
 
 /**
@@ -519,6 +553,56 @@ describe('being interrupted', () => {
     }
 
     expect(reasons).toContain(CastEndReason.Interrupted);
+  });
+});
+
+/**
+ * The client's clock.
+ *
+ * `view.tick` is the tick of the last delta, and deltas are suppressed when
+ * nothing changed -- so a rooted caster alone in a field freezes it completely.
+ * Anything drawn against it froze too: the cast bar stopped partway through a
+ * wind-up and sat there while the wind-up ran on without it.
+ */
+describe('the estimated tick', () => {
+  it('keeps time when the server has nothing to say', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+
+    const entityId = client.view().selfEntityId;
+    const at = test.server.world.entities.get(entityId)?.position;
+    if (!at) return;
+
+    // Commit to something long. The caster is rooted, nothing else is alive, so
+    // the server stops sending deltas entirely.
+    client.useAbility('ground.quake', at.x + 100, at.y);
+    await settle();
+
+    for (let i = 0; i < 40; i++) {
+      test.server.tick();
+      client.advanceTick();
+      await settle();
+    }
+
+    const view = client.view();
+    // The delta tick has genuinely stalled -- that is the condition, not a bug.
+    expect(test.server.world.tick - view.tick).toBeGreaterThan(10);
+    // ...and the estimate has not.
+    expect(view.estimatedTick).toBe(test.server.world.tick);
+  });
+
+  it('never runs backwards when a delta describes an older frame', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+
+    // Run the estimate ahead of anything the server has broadcast.
+    for (let i = 0; i < 20; i++) client.advanceTick();
+    const ahead = client.view().estimatedTick;
+
+    await advance(test, 1);
+    expect(client.view().estimatedTick).toBeGreaterThanOrEqual(ahead);
   });
 });
 

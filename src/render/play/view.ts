@@ -206,6 +206,9 @@ export function mountPlay(container: HTMLElement): ViewHandle {
       // The in-tab server advances on the same fixed step it would over a wire;
       // this view just happens to be the thing driving its clock.
       server.tick();
+      // ...and the client keeps its own, because deltas are suppressed when
+      // nothing changed and `view.tick` therefore is not one.
+      client.advanceTick();
       sendInput();
     }
     draw();

@@ -251,6 +251,9 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // The in-tab server advances on the same fixed step it would over a wire;
       // this view just happens to be the thing driving its clock.
       server.tick();
+      // The client keeps its own clock (spec 065's follow-up): deltas are
+      // suppressed when nothing changed, so `view.tick` is not one.
+      client.advanceTick();
       sendInput();
     }
 
@@ -264,9 +267,17 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       sinceDelta = 0;
     }
     const alpha = Math.min(1, sinceDelta / DELTA_MS);
-    // The clock the bodies move on, so a cast bar fills in step with the figure
-    // casting it rather than in 20Hz jumps beside it.
-    const drawnTick = view.tick + alpha * BROADCAST_EVERY_N_TICKS;
+    // Two different clocks, and the difference matters.
+    //
+    // `alpha` interpolates *bodies* between the last two deltas, so it is
+    // measured against `view.tick` -- authoritative samples, 20Hz apart.
+    //
+    // Anything with a duration -- a cast bar, a cooldown sweep -- is drawn
+    // against `estimatedTick` instead, plus the fraction of a tick the
+    // accumulator is holding. `view.tick` stops dead whenever the server has
+    // nothing to say, and a rooted caster alone in a field says nothing at all:
+    // the bar froze partway and sat there while the wind-up ran on without it.
+    const drawnTick = view.estimatedTick + Math.min(1, accumulator / TICK_MS);
 
     scene.render(view, {
       dt: elapsed / 1000,
