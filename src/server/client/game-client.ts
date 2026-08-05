@@ -22,7 +22,10 @@ import type { Channel } from '../net/transport.js';
 import {
   decodeServerMessage,
   encodeClientMessage,
+  type CastEndedMessage,
+  type CastStateMessage,
   type CombatResultMessage,
+  type EffectMessage,
   type ServerChatMessage,
 } from '../net/messages.js';
 import { ClientMessageType, ServerMessageType } from '../net/protocol.js';
@@ -64,11 +67,33 @@ export interface ClientView {
   readonly experience: number;
   readonly unspentSkillPoints: number;
   readonly connected: boolean;
+  /** Casts in progress, keyed by caster -- what to draw a wind-up bar over. */
+  readonly casts: readonly KnownCast[];
+  /**
+   * The ability this client asked for and has not heard back about. Purely a
+   * local "the button was pressed" hint: the server decides, and clears it.
+   */
+  readonly requestedAbilityId: string | null;
 }
 
 type CombatListener = (result: CombatResultMessage) => void;
 type ChatListener = (message: ServerChatMessage) => void;
 type ErrorListener = (code: number, message: string) => void;
+type CastListener = (cast: CastStateMessage) => void;
+type CastEndListener = (end: CastEndedMessage) => void;
+type EffectListener = (effect: EffectMessage) => void;
+type CastRejectedListener = (abilityId: string, reason: string) => void;
+
+/** A cast the client knows about, as it is drawn. */
+export interface KnownCast {
+  readonly entityId: number;
+  readonly abilityId: string;
+  readonly phase: number;
+  readonly releaseTick: number;
+  readonly endTick: number;
+  readonly targetX: number;
+  readonly targetY: number;
+}
 
 export class GameClient {
   private readonly world = new ReplicatedWorld();
@@ -85,6 +110,12 @@ export class GameClient {
   private readonly combatListeners: CombatListener[] = [];
   private readonly chatListeners: ChatListener[] = [];
   private readonly errorListeners: ErrorListener[] = [];
+  private readonly castListeners: CastListener[] = [];
+  private readonly castEndListeners: CastEndListener[] = [];
+  private readonly effectListeners: EffectListener[] = [];
+  private readonly castRejectedListeners: CastRejectedListener[] = [];
+  private readonly casts = new Map<number, KnownCast>();
+  private requestedAbilityId: string | null = null;
 
   constructor(
     private readonly channel: Channel,
@@ -150,6 +181,46 @@ export class GameClient {
     this.channel.send(encodeClientMessage({ type: ClientMessageType.SpendSkillPoint, skillId }));
   }
 
+  /**
+   * Asks to commit to an ability. Deliberately not predicted: the local state
+   * is "requested", and only the server's CastState makes it real. Predicting
+   * damage is a much larger commitment than predicting a walk, and guessing
+   * wrong about a hit is far more visible than guessing wrong about a step.
+   */
+  useAbility(abilityId: string, targetX = 0, targetY = 0): void {
+    if (!this.connected) return;
+    this.requestedAbilityId = abilityId;
+    this.channel.send(
+      encodeClientMessage({ type: ClientMessageType.UseAbility, abilityId, targetX, targetY }),
+    );
+  }
+
+  cancelCast(): void {
+    if (!this.connected) return;
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.CancelCast }));
+  }
+
+  /** The cast this entity is in the middle of, or null. */
+  castOf(entityId: number): KnownCast | null {
+    return this.casts.get(entityId) ?? null;
+  }
+
+  onCastStarted(listener: CastListener): void {
+    this.castListeners.push(listener);
+  }
+
+  onCastEnded(listener: CastEndListener): void {
+    this.castEndListeners.push(listener);
+  }
+
+  onEffect(listener: EffectListener): void {
+    this.effectListeners.push(listener);
+  }
+
+  onCastRejected(listener: CastRejectedListener): void {
+    this.castRejectedListeners.push(listener);
+  }
+
   say(text: string): void {
     this.channel.send(encodeClientMessage({ type: ClientMessageType.Chat, text }));
   }
@@ -177,6 +248,8 @@ export class GameClient {
       experience: this.experience,
       unspentSkillPoints: this.unspentSkillPoints,
       connected: this.connected,
+      casts: [...this.casts.values()],
+      requestedAbilityId: this.requestedAbilityId,
     };
   }
 
@@ -218,6 +291,7 @@ export class GameClient {
 
       case ServerMessageType.Delta: {
         this.world.apply(message.tick, message.removed, message.upserts);
+        for (const id of message.removed) this.casts.delete(id);
         this.prediction?.acknowledge(message.ackInputSeq);
         this.startPredictingIfReady();
         break;
@@ -244,6 +318,37 @@ export class GameClient {
 
       case ServerMessageType.Disconnect:
         this.connected = false;
+        break;
+
+      case ServerMessageType.CastState:
+        this.casts.set(message.entityId, {
+          entityId: message.entityId,
+          abilityId: message.abilityId,
+          phase: message.phase,
+          releaseTick: message.releaseTick,
+          endTick: message.endTick,
+          targetX: message.targetX,
+          targetY: message.targetY,
+        });
+        if (message.entityId === this.welcome?.entityId) this.requestedAbilityId = null;
+        for (const listener of this.castListeners) listener(message);
+        break;
+
+      case ServerMessageType.CastEnded:
+        this.casts.delete(message.entityId);
+        if (message.entityId === this.welcome?.entityId) this.requestedAbilityId = null;
+        for (const listener of this.castEndListeners) listener(message);
+        break;
+
+      case ServerMessageType.Effect:
+        for (const listener of this.effectListeners) listener(message);
+        break;
+
+      case ServerMessageType.CastRejected:
+        this.requestedAbilityId = null;
+        for (const listener of this.castRejectedListeners) {
+          listener(message.abilityId, message.reason);
+        }
         break;
 
       case ServerMessageType.Pong:

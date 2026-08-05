@@ -15,15 +15,77 @@ export const EntityKindValue = {
   Player: 0,
   Monster: 1,
   Prop: 2,
+  /**
+   * A projectile in flight (spec 062). Deliberately an entity rather than a
+   * parallel collection: interest management, delta tracking and replication
+   * then apply to it unchanged, instead of being reimplemented alongside with
+   * their own bugs.
+   */
+  Projectile: 3,
 } as const;
 
 export const ActivityValue = {
   Idle: 0,
   Moving: 1,
-  Attacking: 2,
+  /** Winding up or channelling -- committed, and visibly so. */
+  Casting: 2,
   Stunned: 3,
   Dead: 4,
+  /** Rooted after a cast released; past the point of cancelling. */
+  Recovering: 5,
 } as const;
+
+/** Where a cast has got to. Drives the client's animation and the cancel rule. */
+export const CastPhase = {
+  Windup: 0,
+  Channel: 1,
+  Recovery: 2,
+} as const;
+
+/** Why a cast stopped, so the client can play the right thing. */
+export const CastEndReason = {
+  Released: 0,
+  Cancelled: 1,
+  /** Knocked out of it -- hitstop, death, or a forced move. */
+  Interrupted: 2,
+} as const;
+
+/**
+ * A cast in progress. One at a time per entity: starting another while this is
+ * live is refused rather than queued, so "am I committed right now" is a single
+ * null check everywhere it is asked.
+ */
+export interface CastState {
+  readonly abilityId: string;
+  readonly startedTick: number;
+  /** Tick the effect lands. Cancelling before this costs nothing but time. */
+  readonly releaseTick: number;
+  /** Tick the caster is free again, past recovery or the end of a channel. */
+  readonly endTick: number;
+  readonly phase: number;
+  /** Aim captured at commit, so turning mid-cast cannot re-aim a landed blow. */
+  readonly targetX: number;
+  readonly targetY: number;
+  /** Channels only: the next tick a pulse is due. */
+  readonly nextPulseTick: number;
+}
+
+/** A projectile's flight, carried so its arc is reproducible on both ends. */
+export interface ProjectileState {
+  readonly abilityId: string;
+  readonly ownerId: number;
+  readonly originX: number;
+  readonly originY: number;
+  readonly targetX: number;
+  readonly targetY: number;
+  /** World units per tick along the ground line. */
+  readonly speed: number;
+  readonly arcHeight: number;
+  /** Total ground distance; progress is travelled/total, which drives the arc. */
+  readonly totalDistance: number;
+  readonly travelled: number;
+  readonly expiresAtTick: number;
+}
 
 export interface ServerEntity {
   readonly id: number;
@@ -56,6 +118,18 @@ export interface ServerEntity {
   readonly radius: number;
   /** Homing target for a monster; null when idle or player-controlled. */
   readonly targetId: number | null;
+  /** Ability resource. Live, clamped to `stats.maxResource` on recalculation. */
+  readonly resource: number;
+  /** The cast in progress, or null when free (spec 062). */
+  readonly cast: CastState | null;
+  /**
+   * Ability id -> the tick it may next be used. Absent means ready; entries are
+   * never pruned mid-fight, which keeps the map a pure function of what has been
+   * cast rather than of when it was last swept.
+   */
+  readonly cooldowns: Readonly<Record<string, number>>;
+  /** Set only on a projectile entity; null on everything that walks. */
+  readonly projectile: ProjectileState | null;
   /**
    * The position this entity's client last claimed to have predicted, or null
    * before its first input (spec 057).
@@ -97,6 +171,19 @@ export interface ServerInput {
   readonly buttons: number;
   readonly predictedX: number;
   readonly predictedY: number;
+  /**
+   * False when this frame carries no prediction -- a synthesised input that
+   * exists only to deliver an ability request on a tick the client sent no
+   * movement. Without it those frames would be read as a client predicting
+   * nowhere, and answered with a correction on every cast.
+   */
+  readonly hasPrediction: boolean;
+  /** An ability the client is asking to commit to this tick; '' for none. */
+  readonly castAbilityId: string;
+  readonly castTargetX: number;
+  readonly castTargetY: number;
+  /** Withdraw from whatever is winding up. Honoured before any new commit. */
+  readonly cancelCast: boolean;
 }
 
 export type ServerSimEvent =
@@ -123,6 +210,38 @@ export type ServerSimEvent =
       readonly reason: number;
     }
   | { readonly kind: 'attackMissed'; readonly attackerId: number }
+  | {
+      readonly kind: 'castStarted';
+      readonly entityId: number;
+      readonly abilityId: string;
+      readonly phase: number;
+      readonly releaseTick: number;
+      readonly endTick: number;
+      readonly targetX: number;
+      readonly targetY: number;
+    }
+  | {
+      readonly kind: 'castEnded';
+      readonly entityId: number;
+      readonly abilityId: string;
+      readonly reason: number;
+    }
+  | {
+      readonly kind: 'castRejected';
+      readonly entityId: number;
+      readonly abilityId: string;
+      readonly reason: string;
+    }
+  | {
+      /** A point cue for the client to draw: an impact, a blast, a heal. */
+      readonly kind: 'effect';
+      readonly effectId: string;
+      readonly x: number;
+      readonly y: number;
+      readonly z: number;
+      readonly radius: number;
+      readonly durationTicks: number;
+    }
   | { readonly kind: 'spawned'; readonly entityId: number; readonly typeId: string }
   | { readonly kind: 'despawned'; readonly entityId: number }
   | { readonly kind: 'died'; readonly entityId: number; readonly killerId: number | null };

@@ -144,9 +144,10 @@ export function resolveMovement(
   return {
     position,
     facing,
-    correctionReason: input
-      ? correctionFor(input, entity.claimedPosition, position, maxStep, blockedByTerrain, config)
-      : null,
+    correctionReason:
+      input && input.hasPrediction
+        ? correctionFor(input, entity.claimedPosition, position, maxStep, blockedByTerrain, config)
+        : null,
     knockbackX: nextKnockbackX,
     knockbackY: nextKnockbackY,
   };

@@ -1,109 +1,19 @@
-import { initSpellGame, stepSpellGame, type SpellGameState } from '../../game/spell-session.js';
-import { TICK_RATE } from '../../sim/constants.js';
-import { IsoInputCapture } from './input.js';
-import { IsoHud } from './hud.js';
-import { IsoScene } from './scene.js';
-import { mountMovement, type ViewHandle } from './movement.js';
-import { mountDebug } from './debug-view.js';
-import { mountEditor } from './editor/view.js';
-import { viewSeed } from './seed.js';
-
 /**
- * Entry point for the isometric 3D view (spec 031/032). A small tab shell mounts
- * one of three views: the **combat** view (the MOBA spell game), a game-free
- * **movement sandbox** (spec 032), and a **rig debug** viewport (spec 035) that
- * shows the unit from two angles with slow-mo and joint overlays. Each view is a
- * fixed-timestep loop where real
- * elapsed time becomes a whole number of sim ticks, inputs are fed one tick at a
- * time, and the scene only ever reads the resulting state -- all game logic stays
- * in the sim/cards/game layers below. Switching tabs pauses the hidden view's
- * loop and releases its input.
+ * Entry point and tab shell (specs 031, 062).
  *
- * The combat view is the *game window*: it fills the viewport, and every piece of
- * UI -- the tab bar, the settings cog, the HUD and its tooltips -- floats on top
- * of it (spec 041). The two sandbox tabs keep their ordinary scrolling layout.
+ * The combat, movement and rig-debug tabs went with the card game they existed
+ * to exercise. What is left is the play view -- a plain canvas over a real
+ * server session, so the ability system is testable now -- and the map editor,
+ * which never depended on any of it.
+ *
+ * The shell makes no game decisions. It mounts a view, starts it when shown and
+ * stops it when hidden; every rule lives on the server and every pixel is a
+ * `ViewHandle`'s business.
  */
 
-const TICK_MS = 1000 / TICK_RATE;
-const MAX_CATCH_UP = 8;
-
-/**
- * Mount the combat view (spec 031/039): a fullscreen game window with the HUD
- * overlaid. The MOBA move order raycasts the cursor onto the ground each tick, a
- * right-click issues a move order (shift-click queues one, spec 040), and a
- * left-click fires a basic attack toward the cursor. Returns a start/stop handle.
- */
-function mountCombat(container: HTMLElement): ViewHandle {
-  const root = document.createElement('div');
-  root.style.cssText = 'position:absolute;inset:0;overflow:hidden;background:#0b0b12;';
-
-  const seed = viewSeed();
-  const canvas = document.createElement('canvas');
-  canvas.style.cssText = 'position:absolute;inset:0;';
-  const scene = new IsoScene(canvas, seed);
-  // The game window is the whole viewport and the HUD floats over the play area,
-  // so right-click belongs to the game everywhere on screen -- not just where the
-  // canvas happens to be the topmost element.
-  const input = new IsoInputCapture(canvas, { contextMenuRoot: document.documentElement });
-  const hud = new IsoHud(input);
-
-  // The camera/light cog floats over the top-right corner of the game window.
-  const cog = document.createElement('div');
-  cog.style.cssText = 'position:absolute;top:8px;right:10px;z-index:30;';
-  cog.appendChild(scene.controls.element);
-
-  root.append(canvas, hud.element, cog);
-  container.appendChild(root);
-
-  // The sim collides against the world the scene built (spec 044): the arena's
-  // walls plus every tree and bush that got drawn.
-  let state: SpellGameState = initSpellGame(seed, { world: scene.worldColliders() });
-
-  // The hand slot holding a basic `attack` card, for left-click attacks (null if none).
-  const attackSlot = (): 0 | 1 | 2 | 3 | null => {
-    const i = state.deck.hand.findIndex((c) => c?.id === 'attack');
-    return i === 0 || i === 1 || i === 2 || i === 3 ? i : null;
-  };
-
-  let running = false;
-  let accumulator = 0;
-  let lastFrame: number | undefined;
-
-  const frame = (time: number): void => {
-    if (!running) return;
-    if (lastFrame !== undefined) accumulator = Math.min(accumulator + (time - lastFrame), TICK_MS * MAX_CATCH_UP);
-    lastFrame = time;
-
-    const cursor = input.mouseCanvas();
-    const worldCursor = scene.screenToWorld(cursor.x, cursor.y);
-    while (accumulator >= TICK_MS) {
-      state = stepSpellGame(state, input.sample(worldCursor, state.combat.player.position, attackSlot())).state;
-      accumulator -= TICK_MS;
-    }
-
-    // Hovering is presentation only, so it is read per frame, not per tick.
-    scene.setCursorScreen(cursor);
-    scene.render(state.combat);
-    hud.render(state);
-    requestAnimationFrame(frame);
-  };
-
-  return {
-    element: root,
-    start(): void {
-      if (running) return;
-      running = true;
-      lastFrame = undefined;
-      accumulator = 0;
-      input.attach(window);
-      requestAnimationFrame(frame);
-    },
-    stop(): void {
-      running = false;
-      input.detach();
-    },
-  };
-}
+import { mountPlay } from '../play/view.js';
+import { mountEditor } from './editor/view.js';
+import type { ViewHandle } from './view-handle.js';
 
 interface Tab {
   readonly label: string;
@@ -122,9 +32,7 @@ function main(): void {
   if (!app) throw new Error('missing #app');
 
   const tabs: readonly Tab[] = [
-    { label: 'Combat (isometric 3D)', mount: mountCombat, fullscreen: true },
-    { label: 'Movement sandbox', mount: mountMovement },
-    { label: 'Rig debug', mount: mountDebug },
+    { label: 'Play', mount: mountPlay, fullscreen: true },
     { label: 'Map editor', mount: mountEditor, fullscreen: true },
   ];
 

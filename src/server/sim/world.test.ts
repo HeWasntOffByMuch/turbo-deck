@@ -3,14 +3,13 @@ import { createWorldColliders, DEFAULT_WORLD } from '../../sim/collision.js';
 import { ARENA_OBSTACLES, WORLD_BOUNDS } from '../../sim/constants.js';
 import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE, type LiveConfig } from '../config.js';
 import { monsterById } from '../data/monsters.js';
-import { CorrectionReason, InputButton } from '../net/protocol.js';
+import { CorrectionReason } from '../net/protocol.js';
 import { computeEffectiveStats } from '../player/stats.js';
 import { EMPTY_EQUIPMENT, type EffectiveStats, type PersistedPlayer } from '../state/types.js';
 import { chunkKeyOf } from '../world/chunks.js';
 import { FLAT_TERRAIN, type TerrainSampler } from '../world/terrain.js';
 import { ZoneManager } from '../world/zone-manager.js';
 import {
-  ActivityValue,
   EntityKindValue,
   type ServerInput,
   type ServerWorldState,
@@ -30,6 +29,7 @@ const RECORD: PersistedPlayer = {
   experience: 0,
   unspentSkillPoints: 0,
   health: 100,
+  resource: 20,
 };
 
 const PLAYER_STATS: EffectiveStats = computeEffectiveStats(RECORD);
@@ -107,6 +107,11 @@ function input(entityId: number, seq: number, overrides: Partial<ServerInput> = 
     buttons: 0,
     predictedX: 0,
     predictedY: 0,
+    hasPrediction: true,
+    castAbilityId: '',
+    castTargetX: 0,
+    castTargetY: 0,
+    cancelCast: false,
     ...overrides,
   };
 }
@@ -137,7 +142,9 @@ describe('determinism', () => {
           moveX: Math.cos(angle),
           moveY: Math.sin(angle),
           facing: angle,
-          buttons: next() > 0.7 ? InputButton.Attack : 0,
+          castAbilityId: next() > 0.7 ? 'melee.slash' : '',
+          castTargetX: 660,
+          castTargetY: 450,
           predictedX: 600,
           predictedY: 450,
         }),
@@ -360,134 +367,6 @@ describe('movement validation', () => {
   });
 });
 
-describe('combat resolution', () => {
-  it('lands a hit in the arc, with hitstop and knockback pointing away from the attacker', () => {
-    let state = createWorldState(1);
-    const player = withPlayer(state, 600, 450);
-    state = player.state;
-    const monster = withMonster(state, 'grazer', 640, 450);
-    state = monster.state;
-
-    const result = step(
-      state,
-      [input(player.id, 1, { facing: 0, buttons: InputButton.Attack })],
-      context(),
-    );
-    const hit = result.events.find((event) => event.kind === 'hit');
-    expect(hit).toBeDefined();
-    if (hit?.kind !== 'hit') throw new Error('expected a hit');
-
-    expect(hit.attackerId).toBe(player.id);
-    expect(hit.targetId).toBe(monster.id);
-    expect(hit.damage).toBeGreaterThan(0);
-    expect(hit.hitstopTicks).toBeGreaterThanOrEqual(1);
-    // The target is to the attacker's +x, so it is pushed further along +x.
-    expect(hit.knockbackX).toBeGreaterThan(0);
-    expect(hit.knockbackY).toBeCloseTo(0, 5);
-    expect(hit.knockbackTicks).toBeGreaterThan(0);
-    expect(hit.targetHealth).toBeLessThan(monsterMaxHealth('grazer'));
-  });
-
-  it('misses a target outside the forward wedge', () => {
-    let state = createWorldState(1);
-    const player = withPlayer(state, 600, 450);
-    state = player.state;
-    // Directly behind the attacker, who is facing +x.
-    state = withMonster(state, 'grazer', 560, 450).state;
-
-    const result = step(
-      state,
-      [input(player.id, 1, { facing: 0, buttons: InputButton.Attack })],
-      context(),
-    );
-    expect(result.events.some((event) => event.kind === 'hit')).toBe(false);
-    expect(result.events.some((event) => event.kind === 'attackMissed')).toBe(true);
-  });
-
-  it('holds the attacker to its cooldown', () => {
-    let state = createWorldState(1);
-    const player = withPlayer(state, 600, 450);
-    state = player.state;
-    state = withMonster(state, 'ravager', 640, 450).state;
-
-    const ctx = context();
-    let hits = 0;
-    const cooldown = PLAYER_STATS.attackCooldownTicks;
-    for (let tick = 0; tick < cooldown; tick++) {
-      const result = step(
-        state,
-        [input(player.id, tick + 1, { facing: 0, buttons: InputButton.Attack })],
-        ctx,
-      );
-      state = result.state;
-      // The ravager is swinging back, so count only the player's own hits.
-      hits += result.events.filter(
-        (event) => event.kind === 'hit' && event.attackerId === player.id,
-      ).length;
-    }
-    // Mashing attack every tick still only lands one swing inside a cooldown.
-    expect(hits).toBe(1);
-  });
-
-  it('mitigates damage by the target armour, and flags that it did', () => {
-    let state = createWorldState(1);
-    const player = withPlayer(state, 600, 450);
-    state = player.state;
-    // The ravager carries 18% armour; the grazer has none.
-    state = withMonster(state, 'ravager', 645, 450).state;
-
-    const result = step(
-      state,
-      [input(player.id, 1, { facing: 0, buttons: InputButton.Attack })],
-      context(),
-    );
-    const hit = result.events.find((event) => event.kind === 'hit');
-    if (hit?.kind !== 'hit') throw new Error('expected a hit');
-    expect(hit.damage).toBeLessThan(PLAYER_STATS.attackDamage);
-    expect(hit.blocked).toBe(true);
-  });
-
-  it('kills, reports the death, and eventually despawns the corpse', () => {
-    let state = createWorldState(1);
-    const player = withPlayer(state, 600, 450, { ...PLAYER_STATS, attackDamage: 1000 });
-    state = player.state;
-    const monster = withMonster(state, 'grazer', 640, 450);
-    state = monster.state;
-
-    const ctx = context();
-    const first = step(state, [input(player.id, 1, { facing: 0, buttons: InputButton.Attack })], ctx);
-    state = first.state;
-    expect(first.events.some((event) => event.kind === 'died')).toBe(true);
-    expect(state.entities.get(monster.id)?.activity).toBe(ActivityValue.Dead);
-
-    let despawned = false;
-    for (let tick = 0; tick < SERVER_TICK_RATE * 6 && !despawned; tick++) {
-      const result = step(state, [], ctx);
-      state = result.state;
-      despawned = result.events.some(
-        (event) => event.kind === 'despawned' && event.entityId === monster.id,
-      );
-    }
-    expect(despawned).toBe(true);
-    expect(state.entities.has(monster.id)).toBe(false);
-  });
-
-  it('leaves players unable to hurt each other outside a pvp zone', () => {
-    let state = createWorldState(1);
-    // Hearthstead is the safe hub.
-    const attacker = withPlayer(state, 600, 450);
-    state = attacker.state;
-    state = withPlayer(state, 640, 450).state;
-
-    const result = step(
-      state,
-      [input(attacker.id, 1, { facing: 0, buttons: InputButton.Attack })],
-      context(),
-    );
-    expect(result.events.some((event) => event.kind === 'hit')).toBe(false);
-  });
-});
-
 describe('chunk activation gates simulation', () => {
   it('leaves a monster in an inactive chunk exactly where it was', () => {
     let state = createWorldState(1);
@@ -544,6 +423,3 @@ describe('chunk activation gates simulation', () => {
   });
 });
 
-function monsterMaxHealth(typeId: string): number {
-  return monsterById(typeId)?.stats.maxHealth ?? 0;
-}

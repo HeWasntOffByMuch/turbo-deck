@@ -20,6 +20,11 @@ export interface MonsterDefinition {
   readonly stats: EffectiveStats;
   /** Passive monsters only fight back once hit. */
   readonly passive: boolean;
+  /**
+   * The ability it swings with, or null for something that never attacks --
+   * a training dummy, a critter, anything that is scenery with a health bar.
+   */
+  readonly ability: string | null;
 }
 
 function seconds(value: number): number {
@@ -34,6 +39,7 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
     aggroRange: 0,
     experience: 8,
     passive: true,
+    ability: 'melee.slash',
     stats: {
       maxHealth: 24,
       moveSpeed: 40,
@@ -45,6 +51,8 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
       spellPower: 1,
       knockbackResist: 0.1,
       critChance: 0,
+      maxResource: 0,
+      resourceRegen: 0,
     },
   },
   {
@@ -54,6 +62,7 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
     aggroRange: 320,
     experience: 18,
     passive: false,
+    ability: 'melee.slash',
     stats: {
       maxHealth: 40,
       moveSpeed: 105,
@@ -65,6 +74,8 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
       spellPower: 1,
       knockbackResist: 0.2,
       critChance: 0.05,
+      maxResource: 0,
+      resourceRegen: 0,
     },
   },
   {
@@ -74,6 +85,7 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
     aggroRange: 420,
     experience: 55,
     passive: false,
+    ability: 'melee.slash',
     stats: {
       maxHealth: 140,
       moveSpeed: 95,
@@ -85,12 +97,38 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
       spellPower: 1,
       knockbackResist: 0.6,
       critChance: 0.1,
+      maxResource: 0,
+      resourceRegen: 0,
     },
   },
 ];
 
+const DUMMY: MonsterDefinition = {
+  id: 'dummy',
+  name: 'Training Dummy',
+  radius: 22,
+  aggroRange: 0,
+  experience: 0,
+  passive: true,
+  ability: null,
+  stats: {
+    maxHealth: 100000,
+    moveSpeed: 0,
+    turnRate: 0,
+    attackDamage: 0,
+    attackRange: 0,
+    attackCooldownTicks: 1,
+    armor: 0,
+    spellPower: 1,
+    knockbackResist: 1,
+    critChance: 0,
+    maxResource: 0,
+    resourceRegen: 0,
+  },
+};
+
 export const MONSTERS: ReadonlyMap<string, MonsterDefinition> = new Map(
-  DEFINITIONS.map((monster) => [monster.id, monster]),
+  [...DEFINITIONS, DUMMY].map((monster) => [monster.id, monster]),
 );
 
 export const ALL_MONSTERS: readonly MonsterDefinition[] = DEFINITIONS;

@@ -25,6 +25,8 @@ export interface StatModifier {
   readonly spellPower?: number;
   readonly knockbackResist?: number;
   readonly critChance?: number;
+  readonly maxResource?: number;
+  readonly resourceRegen?: number;
   // --- percentages, applied after every flat addition ---
   readonly maxHealthPct?: number;
   readonly moveSpeedPct?: number;
@@ -53,6 +55,8 @@ export function sumModifiers(modifiers: readonly StatModifier[]): Readonly<Modif
     spellPower: 0,
     knockbackResist: 0,
     critChance: 0,
+    maxResource: 0,
+    resourceRegen: 0,
     maxHealthPct: 0,
     moveSpeedPct: 0,
     attackDamagePct: 0,

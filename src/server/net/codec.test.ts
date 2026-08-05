@@ -37,6 +37,9 @@ const STATS: EffectiveStats = {
   spellPower: 1.5,
   knockbackResist: 0.25,
   critChance: 0.0625,
+  maxResource: 30,
+  // f32-exact, so the round-trip is testing the codec and not float precision.
+  resourceRegen: 0.0625,
 };
 
 describe('codec primitives', () => {

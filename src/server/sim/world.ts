@@ -31,10 +31,21 @@ import type { EffectiveStats, Vec3 } from '../state/types.js';
 import { chunkKeyOf, type ChunkKey } from '../world/chunks.js';
 import type { TerrainSampler } from '../world/terrain.js';
 import type { ZoneManager } from '../world/zone-manager.js';
-import { resolveAttack } from './combat.js';
+import { abilityById } from '../data/abilities.js';
+import {
+  advanceCast,
+  arcHeightAt,
+  applyDamage,
+  cancelCast,
+  projectileHits,
+  startCast,
+  type CastAttempt,
+  type ProjectileSpawn,
+} from './abilities.js';
 import { resolveMovement, type MovementContext } from './movement.js';
 import {
   ActivityValue,
+  CastEndReason,
   EntityKindValue,
   type ServerEntity,
   type ServerInput,
@@ -49,8 +60,48 @@ export const CORPSE_TICKS = SERVER_TICK_RATE * 5;
 /** A monster closes to this fraction of its reach before it stops walking in. */
 const STANDOFF_FRACTION = 0.8;
 
-/** Attack button bit, mirrored from the protocol so the sim needs no net import. */
-const BUTTON_ATTACK = 1 << 0;
+/** What every entity starts as, before its kind fills in the rest. */
+function blankEntity(id: number): ServerEntity {
+  return {
+    id,
+    kind: EntityKindValue.Prop,
+    typeId: '',
+    ownerPlayerId: null,
+    position: { x: 0, y: 0, z: 0 },
+    facing: 0,
+    health: 1,
+    level: 1,
+    zoneId: 'wilds',
+    stats: {
+      maxHealth: 1,
+      moveSpeed: 0,
+      turnRate: 0,
+      attackDamage: 0,
+      attackRange: 0,
+      attackCooldownTicks: 1,
+      armor: 0,
+      spellPower: 1,
+      knockbackResist: 1,
+      critChance: 0,
+      maxResource: 0,
+      resourceRegen: 0,
+    },
+    activity: ActivityValue.Idle,
+    activityUntilTick: 0,
+    attackReadyTick: 0,
+    knockbackX: 0,
+    knockbackY: 0,
+    knockbackUntilTick: 0,
+    hitstopUntilTick: 0,
+    radius: 4,
+    targetId: null,
+    claimedPosition: null,
+    resource: 0,
+    cast: null,
+    cooldowns: {},
+    projectile: null,
+  };
+}
 
 export interface StepContext {
   readonly world: WorldColliders;
@@ -112,6 +163,10 @@ export function spawnEntity(
     radius: spec.radius,
     targetId: null,
     claimedPosition: null,
+    resource: spec.stats.maxResource,
+    cast: null,
+    cooldowns: {},
+    projectile: null,
   };
   const entities = new Map(state.entities);
   entities.set(entity.id, entity);
@@ -142,6 +197,11 @@ export function isHostile(
   zones: ZoneManager,
 ): boolean {
   if (attacker.id === target.id) return false;
+  // A projectile is a body for the purposes of flying and colliding, but never
+  // something to be shot at -- otherwise a blast catches the very shell that
+  // caused it, and a bolt can be shot down by another bolt.
+  if (attacker.kind === EntityKindValue.Projectile) return false;
+  if (target.kind === EntityKindValue.Projectile) return false;
   if (attacker.kind === target.kind) {
     if (attacker.kind !== EntityKindValue.Player) return false;
     return zones.zoneAt(attacker.position.x, attacker.position.y).pvp;
@@ -173,7 +233,10 @@ export function step(
     context.activeChunks.has(chunkKeyOf(entity.position.x, entity.position.y, context.chunkSize));
 
   // --- 1 + 2: timers and movement, in creation order -------------------
-  const attackers: number[] = [];
+  const casters: number[] = [];
+  // Monsters decide their intent during the movement pass; the cast pass needs
+  // the same decision rather than a second, differently-timed one.
+  const monsterIntentCache = new Map<number, ServerInput>();
   for (const entity of state.entities.values()) {
     const current = working.get(entity.id) ?? entity;
     if (current.health <= 0) {
@@ -182,9 +245,20 @@ export function step(
     }
     if (!isSimulated(current)) continue;
 
+    // Projectiles fly on their own path; they are moved in their own pass.
+    if (current.kind === EntityKindValue.Projectile) continue;
+
     const input = inputByEntity.get(current.id) ?? null;
+    const rawIntent =
+      current.kind === EntityKindValue.Player ? input : monsterIntent(current, working);
+    // A committed cast roots the caster. The intent still carries the facing so
+    // a client's aim stays live until the moment of commit, but the movement
+    // components are dropped.
     const intent =
-      current.kind === EntityKindValue.Player ? input : monsterIntent(current, working, tick);
+      rawIntent && current.cast !== null
+        ? { ...rawIntent, moveX: 0, moveY: 0 }
+        : rawIntent;
+    if (intent && current.kind !== EntityKindValue.Player) monsterIntentCache.set(current.id, intent);
 
     const outcome = resolveMovement(current, intent, tick, movement);
     const moved =
@@ -199,7 +273,10 @@ export function step(
       zoneId: context.zones.zoneIdAt(outcome.position.x, outcome.position.y),
       // Remember what this client claimed, so the next input's speed is measured
       // against its own previous claim rather than against our position.
-      claimedPosition: input ? { x: input.predictedX, y: input.predictedY } : current.claimedPosition,
+      claimedPosition:
+        input && input.hasPrediction
+          ? { x: input.predictedX, y: input.predictedY }
+          : current.claimedPosition,
     };
     next = expireActivity(next, tick, moved ? ActivityValue.Moving : ActivityValue.Idle);
     working.set(next.id, next);
@@ -215,24 +292,191 @@ export function step(
       });
     }
 
-    const wantsAttack =
-      intent !== null && (intent.buttons & BUTTON_ATTACK) !== 0 && tick >= next.attackReadyTick && tick >= next.hitstopUntilTick;
-    if (wantsAttack) attackers.push(next.id);
+    // Resource ticks back up whenever the body is alive, casting or not.
+    if (next.resource < next.stats.maxResource) {
+      working.set(next.id, {
+        ...next,
+        resource: Math.min(next.stats.maxResource, next.resource + next.stats.resourceRegen),
+      });
+    }
+
+    // A cast already in progress advances whether or not an input arrived this
+    // tick. Gating this on the intent froze wind-ups the moment a client went
+    // quiet -- which, at 60Hz against a 20Hz-ish input stream, is most ticks.
+    if (intent !== null || next.cast !== null) casters.push(next.id);
   }
 
-  // --- 3: attacks, in id order so a multi-way fight resolves the same way
+  // --- 3: casts, in id order so a multi-way fight resolves the same way
   //        every replay regardless of who was created first ---------------
-  attackers.sort((a, b) => a - b);
-  for (const attackerId of attackers) {
-    const attacker = working.get(attackerId);
-    if (!attacker || attacker.health <= 0) continue;
+  casters.sort((a, b) => a - b);
+  const spawnQueue: { readonly owner: ServerEntity; readonly spawn: ProjectileSpawn }[] = [];
+
+  for (const casterId of casters) {
+    const caster = working.get(casterId);
+    if (!caster || caster.health <= 0) continue;
+    const intent = inputByEntity.get(casterId) ?? monsterIntentCache.get(casterId) ?? null;
+
+    // A cancel is honoured before anything else this tick, so releasing the key
+    // on the last tick of a wind-up still calls the cast off.
+    if (intent?.cancelCast) {
+      const cancelled = cancelCast(caster, tick, CastEndReason.Cancelled);
+      if (cancelled.cancelled) {
+        working.set(casterId, cancelled.entity);
+        events.push(...cancelled.events);
+        continue;
+      }
+    }
+
+    // A new commit, if one was asked for and nothing is in progress.
+    const current = working.get(casterId) ?? caster;
+    if (intent?.castAbilityId) {
+      const attempt: CastAttempt = {
+        abilityId: intent.castAbilityId,
+        targetX: intent.castTargetX,
+        targetY: intent.castTargetY,
+      };
+      const started = startCast(current, attempt, tick);
+      if (started.ok) {
+        working.set(casterId, started.entity);
+        events.push(...started.events);
+      } else {
+        events.push({
+          kind: 'castRejected',
+          entityId: casterId,
+          abilityId: attempt.abilityId,
+          reason: started.reason,
+        });
+      }
+    }
+
+    // Advance whatever is now in flight.
+    const casting = working.get(casterId);
+    if (!casting?.cast) continue;
     const candidates = [...working.values()].filter((candidate) =>
-      isHostile(attacker, candidate, context.zones),
+      isHostile(casting, candidate, context.zones),
     );
-    const resolution = resolveAttack(attacker, candidates, tick, rng);
-    rng = resolution.rng;
-    for (const [id, entity] of resolution.updated) working.set(id, entity);
-    events.push(...resolution.events);
+    const advanced = advanceCast(casting, candidates, tick, rng);
+    rng = advanced.rng;
+    for (const [id, entity] of advanced.updated) working.set(id, entity);
+    events.push(...advanced.events);
+    for (const spawn of advanced.spawns) spawnQueue.push({ owner: casting, spawn });
+  }
+
+  // --- 3b: projectiles fly, and the ones that connect resolve --------------
+  let nextEntityId = state.nextEntityId;
+  for (const { owner, spawn } of spawnQueue) {
+    const entity: ServerEntity = {
+      ...blankEntity(nextEntityId),
+      kind: EntityKindValue.Projectile,
+      typeId: spawn.state.abilityId,
+      position: { x: spawn.x, y: spawn.y, z: context.terrain.heightAt(spawn.x, spawn.y) },
+      facing: owner.facing,
+      health: 1,
+      zoneId: owner.zoneId,
+      stats: owner.stats,
+      radius: spawn.radius,
+      projectile: spawn.state,
+    };
+    working.set(entity.id, entity);
+    nextEntityId += 1;
+    events.push({ kind: 'spawned', entityId: entity.id, typeId: entity.typeId });
+  }
+
+  for (const entity of [...working.values()]) {
+    const flight = entity.projectile;
+    if (!flight) continue;
+
+    if (tick >= flight.expiresAtTick) {
+      working.delete(entity.id);
+      events.push({ kind: 'despawned', entityId: entity.id });
+      continue;
+    }
+
+    const travelled = Math.min(flight.totalDistance, flight.travelled + flight.speed);
+    const progress = travelled / flight.totalDistance;
+    const dirX = (flight.targetX - flight.originX) / flight.totalDistance;
+    const dirY = (flight.targetY - flight.originY) / flight.totalDistance;
+    const x = flight.originX + dirX * travelled;
+    const y = flight.originY + dirY * travelled;
+    const moved: ServerEntity = {
+      ...entity,
+      position: { x, y, z: context.terrain.heightAt(x, y) + arcHeightAt(progress, flight.arcHeight) },
+      projectile: { ...flight, travelled },
+    };
+    working.set(entity.id, moved);
+
+    const owner = working.get(flight.ownerId);
+    const ability = abilityById(flight.abilityId);
+    if (!ability || !owner) continue;
+
+    const struck = [...working.values()].find(
+      (candidate) => projectileHits(moved, candidate) && isHostile(owner, candidate, context.zones),
+    );
+    const arrived = travelled >= flight.totalDistance;
+    if (!struck && !arrived) continue;
+
+    // A projectile with a blast radius bursts where it stops, hit or not; a
+    // plain bolt only does something when it actually connects.
+    if (ability.radius !== undefined && ability.radius > 0) {
+      const blastCandidates = [...working.values()].filter((candidate) =>
+        isHostile(owner, candidate, context.zones),
+      );
+      events.push({
+        kind: 'effect',
+        effectId: `${ability.id}.impact`,
+        x: moved.position.x,
+        y: moved.position.y,
+        z: 0,
+        radius: ability.radius,
+        durationTicks: Math.round(SERVER_TICK_RATE * 0.4),
+      });
+      for (const target of blastCandidates) {
+        const dx = target.position.x - moved.position.x;
+        const dy = target.position.y - moved.position.y;
+        const length = Math.hypot(dx, dy);
+        if (length > ability.radius + target.radius) continue;
+        const hit = applyDamage(
+          ability,
+          owner,
+          target,
+          tick,
+          rng,
+          length > 1e-6 ? dx / length : 1,
+          length > 1e-6 ? dy / length : 0,
+        );
+        rng = hit.rng;
+        working.set(target.id, hit.target);
+        events.push(...hit.events);
+      }
+    } else if (struck) {
+      const dx = struck.position.x - moved.position.x;
+      const dy = struck.position.y - moved.position.y;
+      const length = Math.hypot(dx, dy);
+      const hit = applyDamage(
+        ability,
+        owner,
+        struck,
+        tick,
+        rng,
+        length > 1e-6 ? dx / length : dirX,
+        length > 1e-6 ? dy / length : dirY,
+      );
+      rng = hit.rng;
+      working.set(struck.id, hit.target);
+      events.push(...hit.events);
+      events.push({
+        kind: 'effect',
+        effectId: `${ability.id}.impact`,
+        x: moved.position.x,
+        y: moved.position.y,
+        z: moved.position.z,
+        radius: moved.radius,
+        durationTicks: Math.round(SERVER_TICK_RATE * 0.25),
+      });
+    }
+
+    working.delete(entity.id);
+    events.push({ kind: 'despawned', entityId: entity.id });
   }
 
   // --- 4: despawn what the corpse timer has finished with ---------------
@@ -264,7 +508,6 @@ export function step(
   }
 
   // --- 5: ambient spawning ---------------------------------------------
-  let nextEntityId = state.nextEntityId;
   const spawned = runSpawner(working, nextEntityId, tick, rng, context);
   nextEntityId = spawned.nextEntityId;
   rng = spawned.rng;
@@ -288,7 +531,6 @@ function expireActivity(entity: ServerEntity, tick: number, resting: number): Se
 function monsterIntent(
   monster: ServerEntity,
   entities: ReadonlyMap<number, ServerEntity>,
-  tick: number,
 ): ServerInput | null {
   const definition = monsterById(monster.typeId);
   const aggroRange = definition?.aggroRange ?? 0;
@@ -315,19 +557,29 @@ function monsterIntent(
   const dx = target.position.x - monster.position.x;
   const dy = target.position.y - monster.position.y;
   const distance = Math.hypot(dx, dy);
-  const reach = (monster.stats.attackRange + target.radius) * STANDOFF_FRACTION;
+  const swing = abilityById(definition?.ability ?? '');
+  const reach = ((swing?.range ?? monster.stats.attackRange) + target.radius) * STANDOFF_FRACTION;
   const facing = distance > 1e-6 ? Math.atan2(dy, dx) : monster.facing;
   const closing = distance > reach;
 
+  // Monsters use the same ability system players do -- one code path for
+  // "something committed to a swing", so a monster's wind-up is as readable
+  // and as interruptible as anyone else's.
+  const wantsToSwing = !closing && monster.cast === null && swing !== null;
   return {
     entityId: monster.id,
     seq: 0,
     moveX: closing && distance > 1e-6 ? dx / distance : 0,
     moveY: closing && distance > 1e-6 ? dy / distance : 0,
     facing,
-    buttons: !closing && tick >= monster.attackReadyTick ? BUTTON_ATTACK : 0,
+    buttons: 0,
     predictedX: monster.position.x,
     predictedY: monster.position.y,
+    hasPrediction: false,
+    castAbilityId: wantsToSwing && swing ? swing.id : '',
+    castTargetX: target.position.x,
+    castTargetY: target.position.y,
+    cancelCast: false,
   };
 }
 
@@ -419,6 +671,10 @@ function runSpawner(
       radius: definition.radius,
       targetId: null,
       claimedPosition: null,
+      resource: definition.stats.maxResource,
+      cast: null,
+      cooldowns: {},
+      projectile: null,
     };
     entities.set(entity.id, entity);
     nextEntityId += 1;

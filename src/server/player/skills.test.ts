@@ -23,6 +23,7 @@ function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
     experience: 0,
     unspentSkillPoints: 20,
     health: 100,
+    resource: 20,
     ...overrides,
   };
 }

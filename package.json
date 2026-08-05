@@ -15,9 +15,7 @@
     "build": "vite build",
     "dev": "vite",
     "server": "tsx src/server/index.ts",
-    "server:bots": "tsx scripts/server-bot.ts",
-    "balance": "tsx scripts/balance-harness.ts",
-    "bake:sprites": "tsx scripts/bake-dude-atlas.ts"
+    "server:bots": "tsx scripts/server-bot.ts"
   },
   "dependencies": {
     "@types/ws": "^8.18.1",
@@ -34,6 +32,7 @@
     "@types/three": "^0.160.0",
     "eslint": "^9.18.0",
     "fast-check": "^3.23.2",
+    "playwright": "^1.62.1",
     "pngjs": "^7.0.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
