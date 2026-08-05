@@ -5,7 +5,7 @@ import {
   type TerrainChunk,
 } from './chunk.js';
 import { TERRAIN_MATERIALS, rectContains, type Rect, type TerrainWorld } from './types.js';
-import type { Prop, PropKind } from './vegetation.js';
+import { FENCE_KINDS, type Prop, type PropKind } from './vegetation.js';
 
 /**
  * The map document (spec 048): a world written down.
@@ -598,7 +598,7 @@ export function parseMap(text: string): MapDocument {
 }
 
 /** The prop kinds the renderer knows how to build, for validating a species id. */
-const KNOWN_PROP_KINDS: readonly string[] = ['tree', 'bush', 'fence-wood', 'fence-stone'];
+const KNOWN_PROP_KINDS: readonly string[] = ['tree', 'bush', ...FENCE_KINDS];
 
 /** True when a species id maps onto a `PropKind` the prop field can draw. */
 export function isKnownPropKind(species: string): species is PropKind {

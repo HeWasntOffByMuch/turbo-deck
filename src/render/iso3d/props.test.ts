@@ -13,7 +13,7 @@ import {
 } from './props.js';
 import { fenceRotation } from './editor/fence.js';
 import { PLAYER_RADIUS } from '../../sim/constants.js';
-import { FENCE_TILE_LENGTH } from '../../terrain/vegetation.js';
+import { FENCE_KINDS, FENCE_TILE_LENGTH } from '../../terrain/vegetation.js';
 import { worldVegetation } from '../../terrain/vegetation.js';
 import { createArenaWorld } from '../../terrain/world.js';
 import type { Prop } from '../../terrain/vegetation.js';
@@ -213,18 +213,20 @@ describe('fence tiles as they are actually built', () => {
     }
   });
 
-  it('draws a tile no longer than the step the fence tool lays it at', () => {
-    // The whole seamless-tiling argument rests on this: parts inside
-    // [-L/2, +L/2] meet the neighbour's and nothing overhangs into it.
-    const reach = Math.max(...instancePositions([fenceProp(0)]).map((p) => Math.abs(p.x)));
-    expect(reach).toBeLessThanOrEqual(FENCE_TILE_LENGTH / 2 + 1e-6);
+  it('places every style\'s parts within half a tile of the tile centre', () => {
+    // The whole seamless-tiling argument rests on this: parts placed inside
+    // [-L/2, +L/2] meet the neighbour's rather than reaching over it.
+    for (const kind of FENCE_KINDS) {
+      const at = instancePositions([{ kind, x: 0, y: 0, scale: 1, rotation: 0, tint: 0 }]);
+      expect(at.length).toBeGreaterThan(3);
+      expect(Math.max(...at.map((p) => Math.abs(p.x)))).toBeLessThanOrEqual(FENCE_TILE_LENGTH / 2 + 1e-6);
+    }
   });
 
-  it('builds both styles, and keeps them in separate batches from the plants', () => {
+  it('builds every style, and keeps them in separate batches from the plants', () => {
     const props: Prop[] = [
-      { kind: 'fence-wood', x: 0, y: 0, scale: 1, rotation: 0, tint: 0 },
-      { kind: 'fence-stone', x: 60, y: 0, scale: 1, rotation: 0, tint: 0.3 },
-      { kind: 'bush', x: 120, y: 0, scale: 1, rotation: 0, tint: 0 },
+      ...FENCE_KINDS.map((kind, i) => ({ kind, x: i * 200, y: 0, scale: 1, rotation: 0, tint: i / 5 })),
+      { kind: 'bush' as const, x: 1200, y: 0, scale: 1, rotation: 0, tint: 0 },
     ];
     const field = buildPropField(props, flat);
     const meshes: THREE.InstancedMesh[] = [];
@@ -255,5 +257,126 @@ describe('fence tiles as they are actually built', () => {
     // Tiles differ from each other: the same part is not at the same offset on
     // every one of them.
     expect(new Set(once.map((key) => key.split(',')[1])).size).toBeGreaterThan(1);
+  });
+});
+
+/**
+ * Spec 057. The two rough variants are irregular on purpose, which makes most
+ * of them a matter for the eye and `scripts/preview-fence.ts`. Two things are
+ * not: that the irregularity does not open a hole in what is meant to be a
+ * continuous barrier, and that it actually varies rather than merely looking
+ * like it might.
+ */
+describe('the rough fence variants', () => {
+  const tile = (kind: Prop['kind'], x = 0): Prop => ({ kind, x, y: 0, scale: 1, rotation: 0, tint: 0 });
+
+  /** Each drawn part's extent along the run, in world units. */
+  function partSpans(props: readonly Prop[]): { min: number; max: number }[] {
+    const field = buildPropField(props, () => 0);
+    const spans: { min: number; max: number }[] = [];
+    const matrix = new THREE.Matrix4();
+    field.group.traverse((object) => {
+      if (!(object instanceof THREE.InstancedMesh)) return;
+      object.geometry.computeBoundingBox();
+      const box = object.geometry.boundingBox;
+      if (!box) return;
+      for (let i = 0; i < object.count; i++) {
+        object.getMatrixAt(i, matrix);
+        const world = box.clone().applyMatrix4(matrix);
+        spans.push({ min: world.min.x, max: world.max.x });
+      }
+    });
+    field.dispose();
+    return spans.sort((a, b) => a.min - b.min);
+  }
+
+  /** Every instance colour in a built field, as hex. */
+  function instanceColors(props: readonly Prop[]): number[] {
+    const field = buildPropField(props, () => 0);
+    const colors: number[] = [];
+    const color = new THREE.Color();
+    field.group.traverse((object) => {
+      if (!(object instanceof THREE.InstancedMesh) || !object.instanceColor) return;
+      for (let i = 0; i < object.count; i++) {
+        object.getColorAt(i, color);
+        colors.push(color.getHex());
+      }
+    });
+    field.dispose();
+    return colors;
+  }
+
+  for (const kind of ['fence-boards', 'fence-rubble'] as const) {
+    it(`covers ${kind} end to end along the run, with no gap to see through`, () => {
+      // A fence with a hole in it is not a fence, and an irregular layout is
+      // exactly the kind that grows one when a width is nudged.
+      const half = FENCE_TILE_LENGTH / 2;
+      const spans = partSpans([tile(kind)]);
+      expect((spans[0] as { min: number }).min).toBeLessThanOrEqual(-half);
+      let reach = -Infinity;
+      for (const span of spans) {
+        if (span.min > reach && reach > -Infinity) {
+          throw new Error(`${kind} has a gap from ${reach.toFixed(2)} to ${span.min.toFixed(2)}`);
+        }
+        reach = Math.max(reach, span.max);
+      }
+      expect(reach).toBeGreaterThanOrEqual(half);
+    });
+  }
+
+  it('lays boards of differing widths, so the palisade is not a barcode', () => {
+    const widths = partSpans([tile('fence-boards')]).map((s) => Number((s.max - s.min).toFixed(3)));
+    expect(widths.length).toBeGreaterThan(4);
+    expect(new Set(widths).size).toBeGreaterThan(3);
+  });
+
+  it('stacks stones of differing sizes', () => {
+    const sizes = partSpans([tile('fence-rubble')]).map((s) => Number((s.max - s.min).toFixed(3)));
+    expect(sizes.length).toBeGreaterThan(8);
+    expect(new Set(sizes).size).toBeGreaterThan(4);
+  });
+
+  it('gives one tile several colours, not one', () => {
+    for (const kind of ['fence-boards', 'fence-rubble'] as const) {
+      expect(new Set(instanceColors([tile(kind)])).size).toBeGreaterThan(2);
+    }
+  });
+
+  it('varies one tile from the next, and stays put when rebuilt', () => {
+    // Both halves matter: without the first a run is one tile stamped fifty
+    // times, and without the second the wall reshuffles itself mid-stroke.
+    const run = [0, 1, 2, 3].map((i) => tile('fence-boards', i * FENCE_TILE_LENGTH));
+    const key = (): string[] =>
+      partSpans(run).map((s) => `${s.min.toFixed(4)},${s.max.toFixed(4)}`);
+    expect(key()).toEqual(key());
+    // Same part on two tiles: its width relative to its own tile differs.
+    const widths = partSpans(run).map((s) => Number((s.max - s.min).toFixed(4)));
+    expect(new Set(widths).size).toBeGreaterThan(7);
+  });
+
+  it('keeps a stone whole: the hash that roughens it never tears a corner apart', () => {
+    // The perturbation is keyed by vertex *position* because the geometry is
+    // non-indexed; keyed by index the copies of a shared corner would separate.
+    const field = buildPropField([tile('fence-rubble')], () => 0);
+    field.group.traverse((object) => {
+      if (!(object instanceof THREE.InstancedMesh)) return;
+      const position = object.geometry.getAttribute('position');
+      const corners = new Map<string, string>();
+      for (let i = 0; i < position.count; i++) {
+        const x = position.getX(i);
+        const y = position.getY(i);
+        const z = position.getZ(i);
+        expect(Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)).toBe(true);
+        // Every copy of a corner has to have landed in the same place. Keyed on
+        // the *direction* it started in, which the knock does not change.
+        const length = Math.hypot(x, y, z);
+        const key = [x / length, y / length, z / length].map((n) => n.toFixed(3)).join(' ');
+        const at = [x, y, z].map((n) => n.toFixed(4)).join(' ');
+        const seen = corners.get(key);
+        if (seen !== undefined) expect(at).toBe(seen);
+        else corners.set(key, at);
+      }
+    });
+    field.dispose();
   });
 });

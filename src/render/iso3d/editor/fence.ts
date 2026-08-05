@@ -29,7 +29,11 @@ import {
  * without any of them learning a new concept.
  */
 
-export const FENCE_STYLES = ['wood', 'stone'] as const;
+/**
+ * The fence styles, regular and rough in each material (spec 057). The ids of
+ * the first two are the ones already written into saved maps, so they stay.
+ */
+export const FENCE_STYLES = ['wood', 'boards', 'stone', 'rubble'] as const;
 export type FenceStyle = (typeof FENCE_STYLES)[number];
 
 export interface FenceSettings {
@@ -40,9 +44,16 @@ export interface FenceSettings {
 
 export const DEFAULT_FENCE: FenceSettings = { style: 'wood', fenceScale: 1 };
 
+const STYLE_KINDS: Record<FenceStyle, FenceKind> = {
+  wood: 'fence-wood',
+  boards: 'fence-boards',
+  stone: 'fence-stone',
+  rubble: 'fence-rubble',
+};
+
 /** Which prop kind a style stores as. */
 export function fencePropKind(style: FenceStyle): FenceKind {
-  return style === 'stone' ? 'fence-stone' : 'fence-wood';
+  return STYLE_KINDS[style] ?? 'fence-wood';
 }
 
 /** How far apart tiles of this size are laid, and how long each one is drawn. */

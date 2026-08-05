@@ -149,13 +149,23 @@ export interface ToolChoice<T extends string> {
   readonly label: string;
 }
 
-const choices = <T extends string>(values: readonly T[]): readonly ToolChoice<T>[] =>
-  values.map((value) => ({ value, label: value.replace(/-/g, ' ') }));
+const choices = <T extends string>(
+  values: readonly T[],
+  labels: Partial<Record<T, string>> = {},
+): readonly ToolChoice<T>[] => values.map((value) => ({ value, label: labels[value] ?? value.replace(/-/g, ' ') }));
 
 export const MODE_CHOICES = choices(EDITOR_MODES);
 export const TERRAIN_TOOL_CHOICES = choices(TERRAIN_TOOLS);
 export const MARKER_CHOICES = choices(MARKER_KINDS);
-export const FENCE_STYLE_CHOICES = choices(FENCE_STYLES);
+/**
+ * Labelled by what they look like rather than by their stored ids: 'wood' and
+ * 'stone' are written into saved maps and cannot be renamed, but a button that
+ * says WOOD next to one that says BOARDS tells you nothing (spec 057).
+ */
+export const FENCE_STYLE_CHOICES = choices(FENCE_STYLES, {
+  wood: 'picket',
+  stone: 'courses',
+});
 /**
  * What the scatter may plant. Not every `PropKind`: the fence kinds are laid a
  * tile at a time along a path and would be nonsense sprinkled over an area.

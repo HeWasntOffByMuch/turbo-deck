@@ -14,6 +14,7 @@ import {
 import { EditHistory } from './history.js';
 import {
   DEFAULT_FENCE,
+  FENCE_STYLES,
   fencePropKind,
   fenceStep,
   fenceStroke,
@@ -171,12 +172,16 @@ describe('laying a fence', () => {
   });
 
   it('stores the style the settings asked for', () => {
+    // Every style gets its own kind, and the two that existed before spec 057
+    // keep the ids already written into saved maps.
     expect(fencePropKind('wood')).toBe('fence-wood');
     expect(fencePropKind('stone')).toBe('fence-stone');
-    const map = loaded();
-    const added = drag(map, [-150, 0], [150, 0], 10, { style: 'stone' });
-    expect(added.length).toBeGreaterThan(0);
-    for (const prop of added) expect(prop.kind).toBe('fence-stone');
+    expect(new Set(FENCE_STYLES.map(fencePropKind)).size).toBe(FENCE_STYLES.length);
+    for (const style of FENCE_STYLES) {
+      const added = drag(loaded(), [-150, 0], [150, 0], 10, { style });
+      expect(added.length).toBeGreaterThan(0);
+      for (const prop of added) expect(prop.kind).toBe(fencePropKind(style));
+    }
   });
 });
 

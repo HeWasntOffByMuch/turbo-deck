@@ -36,8 +36,17 @@ const HASH_SPECIES = 0x5eed01;
 const HASH_TIERS = 0x5eed02;
 const HASH_ASYMMETRY = 0x5eed03;
 const HASH_LEAN = 0x5eed04;
-/** Base seed for a part's own jitter; the part's index is mixed in (spec 056). */
-const HASH_PART_JITTER = 0x5eed05;
+/**
+ * Base seeds for a part's own jitter; the part's index is mixed in (spec 056).
+ *
+ * Three independent channels rather than one (spec 057), because a single hash
+ * correlates every wobble a part has: the board that came out widest would also
+ * always be the one leaning furthest and the palest, which reads as a pattern
+ * rather than as variation.
+ */
+const HASH_JITTER_POS = 0x5eed05;
+const HASH_JITTER_ROT = 0x5eed06;
+const HASH_JITTER_SIZE = 0x5eed07;
 
 /** Fraction of trees that are pines rather than firs. */
 const PINE_SHARE = 0.38;
@@ -83,6 +92,14 @@ interface PropPart {
   readonly jitterZ?: number;
   readonly jitterYaw?: number;
   readonly jitterScaleY?: number;
+  /** Slide along the prop's run. Small: it eats into a neighbour's overlap. */
+  readonly jitterX?: number;
+  /** Width along the run -- a board that came out a little wider than its fellows. */
+  readonly jitterScaleX?: number;
+  /** Lean within the prop's own plane, radians: a board off the vertical. */
+  readonly jitterRoll?: number;
+  /** Colour drift that is this part's alone, on top of the prop's `tint`. */
+  readonly jitterTint?: number;
 }
 
 /**
@@ -405,8 +422,245 @@ function stoneFenceParts(): PropPart[] {
   return parts;
 }
 
+/**
+ * A board (spec 057): eight corners placed one at a time rather than a box
+ * scaled, so it can taper toward the top, lean its top edge along the run, and
+ * be cut off at a slant. A palisade of boxes is a barcode; the whole point of
+ * this style is that no two boards are the same shape.
+ *
+ * Built with its origin at **ground level** and its foot below that, so scaling
+ * an instance taller grows it upward instead of pushing it into the ground.
+ */
+interface BoardSpec {
+  readonly width: number;
+  /** Width at the top: under 1:1 it tapers, which is what stops it reading as a box. */
+  readonly topWidth: number;
+  readonly depth: number;
+  readonly height: number;
+  /** How much lower the left top corner sits than the right: the slant of the cut. */
+  readonly slant: number;
+  /** How far the top slides along the run: a board that is not quite plumb. */
+  readonly lean: number;
+  readonly sink: number;
+}
+
+function boardGeometry(spec: BoardSpec): THREE.BufferGeometry {
+  const hw = spec.width / 2;
+  const ht = spec.topWidth / 2;
+  const hd = spec.depth / 2;
+  const foot = -spec.sink;
+  const leftY = spec.height - Math.max(0, spec.slant);
+  const rightY = spec.height + Math.min(0, spec.slant);
+  const v = (x: number, y: number, z: number): readonly [number, number, number] => [x, y, z];
+  const b00 = v(-hw, foot, -hd);
+  const b10 = v(hw, foot, -hd);
+  const b11 = v(hw, foot, hd);
+  const b01 = v(-hw, foot, hd);
+  const t00 = v(-ht + spec.lean, leftY, -hd);
+  const t10 = v(ht + spec.lean, rightY, -hd);
+  const t11 = v(ht + spec.lean, rightY, hd);
+  const t01 = v(-ht + spec.lean, leftY, hd);
+
+  const positions: number[] = [];
+  // Wound so the face normal points out of the solid; `computeVertexNormals`
+  // then reads the winding, and a face wound the other way is invisible.
+  const quad = (
+    a: readonly [number, number, number],
+    b: readonly [number, number, number],
+    c: readonly [number, number, number],
+    d: readonly [number, number, number],
+  ): void => {
+    positions.push(...a, ...b, ...c, ...a, ...c, ...d);
+  };
+  quad(b00, b10, b11, b01); // underside
+  quad(t00, t01, t11, t10); // top
+  quad(b01, b11, t11, t01); // front
+  quad(b10, b00, t00, t10); // back
+  quad(b00, b01, t01, t00); // left
+  quad(b11, b10, t10, t11); // right
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/**
+ * A stone (spec 057): an icosahedron with every vertex pushed in or out, then
+ * squashed to the size wanted.
+ *
+ * The perturbation is a hash of the vertex **position**, never of its index. The
+ * geometry is non-indexed, so a corner shared by five faces exists five times
+ * over; keyed by index those five copies would move apart and tear the stone
+ * open along every edge meeting there.
+ */
+function rockGeometry(seed: number, rx: number, ry: number, rz: number, rough = 0.24): THREE.BufferGeometry {
+  // `IcosahedronGeometry` is already non-indexed, which is exactly why the hash
+  // below has to be keyed by position.
+  const geometry = new THREE.IcosahedronGeometry(1, 0);
+  const position = geometry.getAttribute('position');
+  for (let i = 0; i < position.count; i++) {
+    const x = position.getX(i);
+    const y = position.getY(i);
+    const z = position.getZ(i);
+    const key = hashUnit2(
+      Math.round(x * 997) + Math.round(y * 131),
+      Math.round(z * 997) + Math.round(y * 17),
+      seed,
+    );
+    // Never below 1 - rough, so a stone sized to overlap its neighbours still
+    // does after being knocked about -- a shrunken one opens a hole in the wall.
+    const knock = 1 - rough / 2 + rough * key;
+    position.setXYZ(i, x * knock * rx, y * knock * ry, z * knock * rz);
+  }
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/** A deterministic unit value for authoring layouts at module load. */
+const authored = (index: number, seed: number): number => hashUnit2(index, index * 7 + 1, seed);
+
+const HASH_BOARD = 0xb0a2d5;
+const HASH_STONE = 0x57012e;
+
+/** Boards to a tile, and how far each overlaps the one before it. */
+const BOARD_COUNT = 7;
+const BOARD_OVERLAP = 1.2;
+const BOARD_TONES = [PALETTE.plank, PALETTE.plankPale, PALETTE.plankGrey, PALETTE.post] as const;
+
+/**
+ * A palisade of vertical boards, no rails and no posts (spec 057).
+ *
+ * The widths are drawn from a hash and then **normalised so the advances sum to
+ * exactly one tile**, which is the whole trick: the boards can be any widths at
+ * all and a run still has neither a seam nor a doubled board at each junction.
+ * Each board keeps the overlap it was given, so its neighbour is always behind
+ * its edge rather than beside it.
+ */
+function boardFenceParts(): PropPart[] {
+  const widths: number[] = [];
+  for (let i = 0; i < BOARD_COUNT; i++) widths.push(5.8 + authored(i, HASH_BOARD) * 3.6);
+  const advances = widths.map((w) => w - BOARD_OVERLAP);
+  const total = advances.reduce((sum, a) => sum + a, 0);
+  const fit = FENCE_TILE_LENGTH / total;
+
+  const parts: PropPart[] = [];
+  let at = -FENCE_TILE_LENGTH / 2;
+  advances.forEach((advance, i) => {
+    const step = advance * fit;
+    const width = step + BOARD_OVERLAP;
+    const u = (n: number): number => authored(i * 13 + n, HASH_BOARD);
+    const height = 43 + u(1) * 15;
+    parts.push({
+      geometry: boardGeometry({
+        width,
+        // Tapered, slanted and out of plumb by an amount that is this board's
+        // own -- authored once, so the shape is stable, and added to by the
+        // per-instance jitter below so tiles still differ from each other.
+        topWidth: width * (0.84 + u(2) * 0.16),
+        depth: 4.2 + u(3) * 1.6,
+        height,
+        slant: (u(4) * 2 - 1) * 5,
+        lean: (u(5) * 2 - 1) * 1.8,
+        sink: FENCE_SINK,
+      }),
+      // The geometry stands on the origin, so nothing to offset vertically.
+      offsetY: 0,
+      offsetX: at + width / 2 - BOARD_OVERLAP / 2,
+      color: BOARD_TONES[Math.floor(u(6) * BOARD_TONES.length) % BOARD_TONES.length] ?? PALETTE.plank,
+      foliage: false,
+      tintAmount: 0.1,
+      jitterX: 0.5,
+      jitterYaw: 0.05,
+      jitterRoll: 0.055,
+      jitterScaleX: 0.09,
+      jitterScaleY: 0.08,
+      jitterTint: 0.13,
+    });
+    at += step;
+  });
+  return parts;
+}
+
+/**
+ * A wall of stones and nothing else (spec 057).
+ *
+ * Three staggered rows, each stone wide enough that it still overlaps its
+ * neighbours after `rockGeometry` has knocked it about and the per-instance
+ * jitter has shifted it -- a rubble wall with a hole in it is a fence, not a
+ * wall, and the hole is what you see rather than the ninety stones around it.
+ *
+ * The middle row is offset by half a stone, so its end stone reaches past the
+ * tile edge and interlocks with the next tile's rather than butting it. The top
+ * row is deliberately uneven: that is what a drystone wall's top looks like, and
+ * a level one reads as a kerb.
+ */
+function rubbleFenceParts(): PropPart[] {
+  const rows: readonly {
+    readonly xs: readonly number[];
+    readonly y: number;
+    readonly ry: number;
+    /** Per-stone height offsets, so the row's top is not a straight line. */
+    readonly rise?: readonly number[];
+  }[] = [
+    { xs: [-16, 0, 16], y: 7, ry: 9 },
+    // Offset half a stone: the joints of one course sit over the middles of the
+    // one below, which is the thing that makes stacked stone read as stacked
+    // rather than as a heap. An offset row's end stones sit *at* the tile edge
+    // (as far out as the jitter below still leaves them inside it) and their
+    // geometry reaches over it, so consecutive tiles interlock rather than butt.
+    { xs: [-23.3, -7.8, 7.8, 23.3], y: 17, ry: 8.5 },
+    { xs: [-16, 0, 16], y: 27.5, ry: 8.5 },
+    { xs: [-23.3, -7.8, 7.8, 23.3], y: 38, ry: 8, rise: [-1.5, 2.5, -2.5, 1.5] },
+  ];
+  // Wider than they are tall and flattened across the wall: a stone laid in a
+  // wall is a slab with a face, and a ball of rock reads as scree.
+  const STONE_RX = 12.5;
+  const STONE_RZ = 8.5;
+  const parts: PropPart[] = [];
+  rows.forEach((row, r) => {
+    row.xs.forEach((x, i) => {
+      const u = (n: number): number => authored(r * 17 + i * 5 + n, HASH_STONE);
+      parts.push({
+        geometry: rockGeometry(
+          HASH_STONE + r * 31 + i,
+          STONE_RX * (0.94 + u(1) * 0.14),
+          row.ry * (0.92 + u(2) * 0.18),
+          STONE_RZ * (0.94 + u(3) * 0.12),
+          0.16,
+        ),
+        offsetY: row.y + (row.rise?.[i] ?? 0),
+        offsetX: x,
+        color: [PALETTE.drystone, PALETTE.drystonePale, PALETTE.drystoneWarm][
+          Math.floor(u(4) * 3) % 3
+        ] as number,
+        foliage: false,
+        tintAmount: 0.1,
+        // All small: the sizes above are chosen so neighbours overlap, and jitter
+        // this side of that margin varies the wall without opening it.
+        jitterX: 0.6,
+        jitterZ: 0.35,
+        jitterYaw: 0.22,
+        jitterRoll: 0.08,
+        jitterScaleY: 0.06,
+        jitterTint: 0.11,
+      });
+    });
+  });
+  return parts;
+}
+
 function fenceParts(kind: FenceKind): PropPart[] {
-  return kind === 'fence-stone' ? stoneFenceParts() : woodFenceParts();
+  switch (kind) {
+    case 'fence-boards':
+      return boardFenceParts();
+    case 'fence-stone':
+      return stoneFenceParts();
+    case 'fence-rubble':
+      return rubbleFenceParts();
+    default:
+      return woodFenceParts();
+  }
 }
 
 /** Warm autumn foliage, for the fraction of trees that turn. */
@@ -431,9 +685,14 @@ function foliageColor(base: number, tier: number, tint: number): number {
   return scaleColor(base, 0.88 + 0.24 * ((tint + 1) / 2));
 }
 
-/** The colour a non-foliage part takes, drifting `amount` either side of `base`. */
-function shadedColor(base: number, tint: number, amount: number): number {
-  return amount === 0 ? base : scaleColor(base, 1 + amount * Math.max(-1, Math.min(1, tint)));
+/**
+ * The colour a non-foliage part takes: `base`, drifted by `amount` of the prop's
+ * own tint (so one tile differs from the next) plus `extra` (so one part differs
+ * from its neighbours on the same tile).
+ */
+function shadedColor(base: number, tint: number, amount: number, extra = 0): number {
+  const drift = amount * Math.max(-1, Math.min(1, tint)) + extra;
+  return drift === 0 ? base : scaleColor(base, 1 + drift);
 }
 
 /** How one tree differs from the rest of its species. */
@@ -525,6 +784,8 @@ export function buildPropField(
   const tilt = new THREE.Quaternion();
   const leanAxis = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0);
+  // The axis a board leans about: across the fence's face, in the part's frame.
+  const rollAxis = new THREE.Vector3(0, 0, 1);
   const groundUp = new THREE.Vector3();
   const align = new THREE.Quaternion();
   const offset = new THREE.Vector3();
@@ -548,7 +809,10 @@ export function buildPropField(
       const grown =
         tier === undefined || !variants ? of : of.filter((prop) => (variants.get(prop)?.tierCount ?? 0) > tier);
       if (grown.length === 0) return;
-      const jittered = part.jitterZ !== undefined || part.jitterYaw !== undefined || part.jitterScaleY !== undefined;
+      const jitterPos = part.jitterX !== undefined || part.jitterZ !== undefined;
+      const jitterRot = part.jitterYaw !== undefined || part.jitterRoll !== undefined;
+      const jitterSize =
+        part.jitterScaleX !== undefined || part.jitterScaleY !== undefined || part.jitterTint !== undefined;
 
       const material = new THREE.MeshLambertMaterial({ flatShading: true });
       const mesh = new THREE.InstancedMesh(part.geometry, material, grown.length);
@@ -562,12 +826,17 @@ export function buildPropField(
         const s = prop.scale;
         const variant = variants?.get(prop);
         const asymmetry = variant?.asymmetry ?? 0;
-        // This part's own wobble on this instance, in [-1, 1]. Keyed off where
-        // the prop stands, on a lattice fine enough that no two props share a
-        // cell, plus the part's index so a tile's courses wobble independently.
-        const wobble = jittered
-          ? hashUnit2(Math.round(prop.x / 4), Math.round(prop.y / 4), HASH_PART_JITTER + partIndex * 0x9e37) * 2 - 1
-          : 0;
+        // This part's own wobble on this instance, in [-1, 1] per channel. Keyed
+        // off where the prop stands, on a lattice fine enough that no two props
+        // share a cell, plus the part's index so a tile's boards or courses
+        // wobble independently of each other.
+        const cellX = Math.round(prop.x / 4);
+        const cellZ = Math.round(prop.y / 4);
+        const wobble = (base: number): number =>
+          hashUnit2(cellX, cellZ, base + partIndex * 0x9e37) * 2 - 1;
+        const wobblePos = jitterPos ? wobble(HASH_JITTER_POS) : 0;
+        const wobbleRot = jitterRot ? wobble(HASH_JITTER_ROT) : 0;
+        const wobbleSize = jitterSize ? wobble(HASH_JITTER_SIZE) : 0;
 
         // Local offset, scaled with the prop and spun by its rotation. The
         // per-instance drift rides in that same local frame, so a leaning tree
@@ -582,8 +851,8 @@ export function buildPropField(
         // symmetric along its run -- a mirrored tile puts the post at the far
         // end and the rails on the wrong face, and on a diagonal run reflects
         // the whole tile off the line being drawn.
-        const lx = ((part.offsetX ?? 0) + (part.driftMax ?? 0) * asymmetry) * s;
-        const lz = ((part.offsetZ ?? 0) + (part.jitterZ ?? 0) * wobble) * s;
+        const lx = ((part.offsetX ?? 0) + (part.driftMax ?? 0) * asymmetry + (part.jitterX ?? 0) * wobblePos) * s;
+        const lz = ((part.offsetZ ?? 0) + (part.jitterZ ?? 0) * wobblePos) * s;
         const cos = Math.cos(prop.rotation);
         const sin = Math.sin(prop.rotation);
         position.set(
@@ -592,7 +861,11 @@ export function buildPropField(
           prop.y - lx * sin + lz * cos,
         );
 
-        quaternion.setFromAxisAngle(up, prop.rotation + (part.jitterYaw ?? 0) * wobble);
+        quaternion.setFromAxisAngle(up, prop.rotation + (part.jitterYaw ?? 0) * wobbleRot);
+        // Applied after the yaw and so in the part's own frame: a board leans
+        // within the plane of the fence rather than out of it, whichever way the
+        // run happens to be pointing.
+        if (part.jitterRoll) quaternion.multiply(tilt.setFromAxisAngle(rollAxis, part.jitterRoll * wobbleRot));
         const lean = (part.leanMax ?? 0) * asymmetry;
         if (lean !== 0 && variant) {
           leanAxis.set(Math.cos(variant.leanAngle), 0, Math.sin(variant.leanAngle));
@@ -613,12 +886,16 @@ export function buildPropField(
           }
         }
 
-        scale.set(s, s * (part.scaleY ?? 1) * (1 + (part.jitterScaleY ?? 0) * wobble), s);
+        scale.set(
+          s * (1 + (part.jitterScaleX ?? 0) * wobbleSize),
+          s * (part.scaleY ?? 1) * (1 + (part.jitterScaleY ?? 0) * wobbleSize),
+          s,
+        );
         mesh.setMatrixAt(i, matrix.compose(position, quaternion, scale));
         color.setHex(
           part.foliage
             ? foliageColor(part.color, tier ?? 0, prop.tint)
-            : shadedColor(part.color, prop.tint, part.tintAmount ?? 0),
+            : shadedColor(part.color, prop.tint, part.tintAmount ?? 0, (part.jitterTint ?? 0) * wobbleSize),
         );
         mesh.setColorAt(i, color);
       });

@@ -65,8 +65,15 @@ export const PALETTE = {
   // courses borrow the terrain's warm limestone so a wall belongs to its ground.
   post: 0x8f6438,
   plank: 0xb0854c,
+  // Two more timber tones, for the palisade whose boards are meant to look
+  // gathered rather than milled: one sun-bleached, one weathered grey.
+  plankPale: 0xc49f68,
+  plankGrey: 0x8d7a5a,
   drystone: 0xbdb4a1,
   drystoneDark: 0x9d9483,
+  // A cooler and a warmer stone, so a rubble wall is not one grey.
+  drystonePale: 0xcfc7b4,
+  drystoneWarm: 0xb3a58c,
 } as const;
 
 /**

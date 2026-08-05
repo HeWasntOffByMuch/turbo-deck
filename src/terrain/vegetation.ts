@@ -22,14 +22,23 @@ import { arenaBounds } from './world.js';
  * What a prop is. Trees and bushes are scattered over an area; the two fences
  * are laid along a path, one tile per prop (spec 056).
  */
-export type PropKind = 'tree' | 'bush' | 'fence-wood' | 'fence-stone';
+export type PropKind =
+  | 'tree'
+  | 'bush'
+  | 'fence-wood'
+  | 'fence-boards'
+  | 'fence-stone'
+  | 'fence-rubble';
 
-/** The kinds that are a length of fence rather than a plant. */
-export const FENCE_KINDS = ['fence-wood', 'fence-stone'] as const;
+/**
+ * The kinds that are a length of fence rather than a plant: a regular one and a
+ * rough one in each material (spec 056, 057).
+ */
+export const FENCE_KINDS = ['fence-wood', 'fence-boards', 'fence-stone', 'fence-rubble'] as const;
 export type FenceKind = (typeof FENCE_KINDS)[number];
 
 export function isFenceKind(kind: PropKind): kind is FenceKind {
-  return kind === 'fence-wood' || kind === 'fence-stone';
+  return (FENCE_KINDS as readonly string[]).includes(kind);
 }
 
 /**
@@ -173,7 +182,9 @@ const FOOTPRINT_BASE: Record<PropKind, number> = {
   // thinner than it is long and a circle cannot say so; erring wide is the side
   // that keeps a wall a wall.
   'fence-wood': FENCE_TILE_LENGTH / 2,
+  'fence-boards': FENCE_TILE_LENGTH / 2,
   'fence-stone': FENCE_TILE_LENGTH / 2,
+  'fence-rubble': FENCE_TILE_LENGTH / 2,
 };
 export function footprintRadius(prop: Prop): number {
   return FOOTPRINT_BASE[prop.kind] * prop.scale;

@@ -107,10 +107,21 @@ describe('the button strips', () => {
     expect(FENCE_STYLE_CHOICES.map((c) => c.value)).toEqual([...FENCE_STYLES]);
   });
 
-  it('labels every button', () => {
-    for (const choice of [...MODE_CHOICES, ...TERRAIN_TOOL_CHOICES, ...MARKER_CHOICES, ...FENCE_STYLE_CHOICES]) {
-      expect(choice.label.length).toBeGreaterThan(0);
+  it('labels every button, distinctly within its strip', () => {
+    for (const strip of [MODE_CHOICES, TERRAIN_TOOL_CHOICES, MARKER_CHOICES, FENCE_STYLE_CHOICES]) {
+      for (const choice of strip) expect(choice.label.length).toBeGreaterThan(0);
+      // Two buttons reading the same is worse than one reading badly.
+      expect(new Set(strip.map((c) => c.label)).size).toBe(strip.length);
     }
+  });
+
+  it('labels the fence styles by what they look like, not by their stored ids', () => {
+    // 'wood' and 'stone' are in saved maps and cannot be renamed, but WOOD
+    // beside BOARDS says nothing about which is which.
+    const label = (value: string): string | undefined =>
+      FENCE_STYLE_CHOICES.find((c) => c.value === value)?.label;
+    expect(label('wood')).toBe('picket');
+    expect(label('stone')).toBe('courses');
   });
 });
 

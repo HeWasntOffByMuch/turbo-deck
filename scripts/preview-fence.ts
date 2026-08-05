@@ -1,4 +1,4 @@
-// Dev-only: render a run of each fence style (spec 056) to a PNG so a human --
+// Dev-only: render a run of each fence style (spec 056/057) to a PNG so a human --
 // or an agent with no screen -- can check that a painted fence actually reads as
 // a fence. Not part of the app. `tsx scripts/preview-fence.ts`
 //
@@ -17,6 +17,7 @@ import { Rng } from '../src/shared/prng.js';
 import { buildPropField } from '../src/render/iso3d/props.js';
 import {
   fenceStroke,
+  FENCE_STYLES,
   NO_FENCE_PATH,
   type FencePath,
   type FenceSettings,
@@ -227,14 +228,18 @@ interface Shot {
   readonly amplitude: number;
 }
 
-const SHOTS: readonly Shot[] = [
-  { style: 'wood', corners: [[-220, 0], [220, 0]], amplitude: 0 },
-  { style: 'wood', corners: [[-200, -120], [120, -120], [120, 200]], amplitude: 0 },
-  { style: 'wood', corners: [[-220, 0], [220, 0]], amplitude: 34 },
-  { style: 'stone', corners: [[-220, 0], [220, 0]], amplitude: 0 },
-  { style: 'stone', corners: [[-200, -120], [120, -120], [120, 200]], amplitude: 0 },
-  { style: 'stone', corners: [[-220, 0], [220, 0]], amplitude: 34 },
-];
+const STRAIGHT: readonly (readonly [number, number])[] = [[-220, 0], [220, 0]];
+const CORNER: readonly (readonly [number, number])[] = [[-200, -120], [120, -120], [120, 200]];
+
+/** `ONLY=rubble tsx scripts/preview-fence.ts` to look at one style up close. */
+const ONLY = process.env.ONLY?.split(',');
+const STYLES = ONLY ? FENCE_STYLES.filter((s) => ONLY.includes(s)) : FENCE_STYLES;
+
+const SHOTS: readonly Shot[] = STYLES.flatMap((style) => [
+  { style, corners: STRAIGHT, amplitude: 0 },
+  { style, corners: CORNER, amplitude: 0 },
+  { style, corners: STRAIGHT, amplitude: 34 },
+]);
 
 const cols = 3;
 const rows = Math.ceil(SHOTS.length / cols);
@@ -268,6 +273,6 @@ SHOTS.forEach((shot, i) => {
 });
 
 mkdirSync('.claude/screenshots', { recursive: true });
-const path = '.claude/screenshots/fences.png';
+const path = `.claude/screenshots/fences${ONLY ? `-${ONLY.join('-')}` : ''}.png`;
 writeFileSync(path, PNG.sync.write(sheet));
 process.stdout.write(`wrote ${path}\n`);
