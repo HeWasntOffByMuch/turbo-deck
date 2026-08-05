@@ -23,7 +23,10 @@
  */
 
 import { Rng } from '../../shared/prng.js';
-import type { WorldColliders } from '../../sim/types.js';
+import { segmentClear } from '../../sim/collision.js';
+import { findPath, navGridFor } from '../../sim/pathfinding.js';
+import { PATH_REPLAN_TICKS, PATH_WAYPOINT_EPS } from '../../sim/constants.js';
+import type { Vec2, WorldColliders } from '../../sim/types.js';
 import type { LiveConfig } from '../config.js';
 import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../config.js';
 import { monsterById } from '../data/monsters.js';
@@ -90,6 +93,10 @@ function blankEntity(id: number): ServerEntity {
     attackReadyTick: 0,
     radius: 4,
     targetId: null,
+    path: null,
+    pathIndex: 0,
+    repathAtTick: 0,
+    pathGoal: null,
     claimedPosition: null,
     resource: 0,
     cast: null,
@@ -153,6 +160,10 @@ export function spawnEntity(
     attackReadyTick: 0,
     radius: spec.radius,
     targetId: null,
+    path: null,
+    pathIndex: 0,
+    repathAtTick: 0,
+    pathGoal: null,
     claimedPosition: null,
     resource: spec.stats.maxResource,
     cast: null,
@@ -240,8 +251,17 @@ export function step(
     if (current.kind === EntityKindValue.Projectile) continue;
 
     const input = inputByEntity.get(current.id) ?? null;
-    const rawIntent =
-      current.kind === EntityKindValue.Player ? input : monsterIntent(current, working);
+    let rawIntent: ServerInput | null;
+    let steered = current;
+    if (current.kind === EntityKindValue.Player) {
+      rawIntent = input;
+    } else {
+      // A monster's route is entity state, so deciding where to walk can change
+      // the entity -- see `monsterIntent`.
+      const decided = monsterIntent(current, working, tick, context);
+      rawIntent = decided.input;
+      steered = decided.entity;
+    }
     // A committed cast roots the caster. The intent still carries the facing so
     // a client's aim stays live until the moment of commit, but the movement
     // components are dropped.
@@ -251,12 +271,12 @@ export function step(
         : rawIntent;
     if (intent && current.kind !== EntityKindValue.Player) monsterIntentCache.set(current.id, intent);
 
-    const outcome = resolveMovement(current, intent, movement);
+    const outcome = resolveMovement(steered, intent, movement);
     const moved =
-      outcome.position.x !== current.position.x || outcome.position.y !== current.position.y;
+      outcome.position.x !== steered.position.x || outcome.position.y !== steered.position.y;
 
     let next: ServerEntity = {
-      ...current,
+      ...steered,
       position: outcome.position,
       facing: outcome.facing,
       zoneId: context.zones.zoneIdAt(outcome.position.x, outcome.position.y),
@@ -265,7 +285,7 @@ export function step(
       claimedPosition:
         input && input.hasPrediction
           ? { x: input.predictedX, y: input.predictedY }
-          : current.claimedPosition,
+          : steered.claimedPosition,
     };
     next = expireActivity(next, tick, moved ? ActivityValue.Moving : ActivityValue.Idle);
     working.set(next.id, next);
@@ -273,7 +293,7 @@ export function step(
     if (outcome.correctionReason !== null && input) {
       events.push({
         kind: 'correction',
-        entityId: current.id,
+        entityId: steered.id,
         inputSeq: input.seq,
         position: outcome.position,
         facing: outcome.facing,
@@ -498,15 +518,27 @@ function expireActivity(entity: ServerEntity, tick: number, resting: number): Se
   return { ...entity, activity: resting, activityUntilTick: 0 };
 }
 
+/** What a monster decided this tick: how to move, and any route state it changed. */
+interface MonsterDecision {
+  /** Null when there is nothing to chase; the body simply stands. */
+  readonly input: ServerInput | null;
+  readonly entity: ServerEntity;
+}
+
 /**
  * A monster's intent, in the same shape as a client's input frame -- so the
  * movement path is literally the same code, and a monster is subject to exactly
  * the same collision and terrain rules a player is.
+ *
+ * Returns the entity as well because a route is entity state (spec 065): the act
+ * of deciding where to walk can plan, advance or drop a path.
  */
 function monsterIntent(
   monster: ServerEntity,
   entities: ReadonlyMap<number, ServerEntity>,
-): ServerInput | null {
+  tick: number,
+  context: StepContext,
+): MonsterDecision {
   const definition = monsterById(monster.typeId);
   const aggroRange = definition?.aggroRange ?? 0;
 
@@ -527,35 +559,148 @@ function monsterIntent(
     }
   }
 
-  if (!target) return null;
+  if (!target) return { input: null, entity: forgetPath(monster) };
 
   const dx = target.position.x - monster.position.x;
   const dy = target.position.y - monster.position.y;
   const distance = Math.hypot(dx, dy);
   const swing = abilityById(definition?.ability ?? '');
   const reach = ((swing?.range ?? monster.stats.attackRange) + target.radius) * STANDOFF_FRACTION;
-  const facing = distance > 1e-6 ? Math.atan2(dy, dx) : monster.facing;
   const closing = distance > reach;
+
+  const steer = closing
+    ? routeToward(monster, target.position, tick, context)
+    : { direction: null, entity: forgetPath(monster) };
+  const entity = steer.entity;
+
+  // Face where it is walking; face the target once it has stopped to swing.
+  const facing = steer.direction
+    ? Math.atan2(steer.direction.y, steer.direction.x)
+    : distance > 1e-6
+      ? Math.atan2(dy, dx)
+      : monster.facing;
 
   // Monsters use the same ability system players do -- one code path for
   // "something committed to a swing", so a monster's wind-up is as readable
   // and as interruptible as anyone else's.
   const wantsToSwing = !closing && monster.cast === null && swing !== null;
   return {
-    entityId: monster.id,
-    seq: 0,
-    moveX: closing && distance > 1e-6 ? dx / distance : 0,
-    moveY: closing && distance > 1e-6 ? dy / distance : 0,
-    facing,
-    buttons: 0,
-    predictedX: monster.position.x,
-    predictedY: monster.position.y,
-    hasPrediction: false,
-    castAbilityId: wantsToSwing && swing ? swing.id : '',
-    castTargetX: target.position.x,
-    castTargetY: target.position.y,
-    cancelCast: false,
+    entity,
+    input: {
+      entityId: monster.id,
+      seq: 0,
+      moveX: steer.direction?.x ?? 0,
+      moveY: steer.direction?.y ?? 0,
+      facing,
+      buttons: 0,
+      predictedX: monster.position.x,
+      predictedY: monster.position.y,
+      hasPrediction: false,
+      castAbilityId: wantsToSwing && swing ? swing.id : '',
+      castTargetX: target.position.x,
+      castTargetY: target.position.y,
+      cancelCast: false,
+    },
   };
+}
+
+/** Drops a route, for a body that no longer has anywhere to be. */
+function forgetPath(entity: ServerEntity): ServerEntity {
+  if (entity.path === null && entity.pathGoal === null) return entity;
+  return { ...entity, path: null, pathIndex: 0, pathGoal: null };
+}
+
+/**
+ * How far the target may drift from where a route was planned to before that
+ * route is stale. Roughly a body's own length: past that, the last waypoint is
+ * aiming somewhere the target has left.
+ */
+const REPLAN_DISTANCE = 48;
+
+interface SteerResult {
+  /** A unit vector to walk along, or null when there is nowhere to go. */
+  readonly direction: Vec2 | null;
+  readonly entity: ServerEntity;
+}
+
+/**
+ * Which way to walk to reach `goal` (spec 065).
+ *
+ * The common case is free: when nothing is between the body and its goal, this
+ * is a straight line and no search happens at all. `findPath` makes the same
+ * check first, but doing it here means a monster chasing a player across open
+ * ground never touches the grid, and never carries a route it is not using.
+ *
+ * When the way *is* blocked, the route is A* over the nav grid built for this
+ * body's radius -- string-pulled, so a corridor is two waypoints rather than
+ * forty. It is replanned on a cadence rather than every tick, and early when the
+ * target has walked away from where the route was aimed. Both of those are what
+ * keeps a pack of monsters from re-searching the world every frame.
+ */
+function routeToward(
+  monster: ServerEntity,
+  goal: Vec3,
+  tick: number,
+  context: StepContext,
+): SteerResult {
+  const from: Vec2 = { x: monster.position.x, y: monster.position.y };
+  const to: Vec2 = { x: goal.x, y: goal.y };
+
+  if (segmentClear(from, to, monster.radius, context.world)) {
+    return { direction: unit(to.x - from.x, to.y - from.y), entity: forgetPath(monster) };
+  }
+
+  const goalMoved =
+    monster.pathGoal === null ||
+    Math.hypot(monster.pathGoal.x - to.x, monster.pathGoal.y - to.y) > REPLAN_DISTANCE;
+  const exhausted = monster.path === null || monster.pathIndex >= monster.path.length;
+
+  let entity = monster;
+  if (exhausted || goalMoved || tick >= monster.repathAtTick) {
+    const grid = navGridFor(monster.radius, context.world);
+    const path = findPath(grid, from, to);
+    entity = {
+      ...monster,
+      // An empty result means unreachable within the node budget. Kept as an
+      // empty path rather than null so the cadence still applies: retrying a
+      // hopeless search every tick is how a walled-in monster burns a core.
+      path,
+      pathIndex: 0,
+      pathGoal: to,
+      repathAtTick: tick + PATH_REPLAN_TICKS,
+    };
+  }
+
+  const path = entity.path;
+  if (!path || path.length === 0) {
+    // Nowhere to route. Push toward the goal anyway and let collision decide --
+    // it is what the body did before it could path at all, and it keeps a
+    // monster pressed against the wall it cannot get round rather than idle.
+    return { direction: unit(to.x - from.x, to.y - from.y), entity };
+  }
+
+  // Consume every waypoint already reached; a fast body can clear more than one
+  // in a tick after a string-pull has left them far apart.
+  let index = entity.pathIndex;
+  while (index < path.length) {
+    const point = path[index];
+    if (!point) break;
+    if (Math.hypot(point.x - from.x, point.y - from.y) > PATH_WAYPOINT_EPS) break;
+    index += 1;
+  }
+  if (index !== entity.pathIndex) entity = { ...entity, pathIndex: index };
+
+  const waypoint = path[index];
+  if (!waypoint) {
+    return { direction: unit(to.x - from.x, to.y - from.y), entity: forgetPath(entity) };
+  }
+  return { direction: unit(waypoint.x - from.x, waypoint.y - from.y), entity };
+}
+
+function unit(x: number, y: number): Vec2 | null {
+  const length = Math.hypot(x, y);
+  if (!Number.isFinite(length) || length <= 1e-6) return null;
+  return { x: x / length, y: y / length };
 }
 
 interface SpawnerResult {
@@ -641,6 +786,10 @@ function runSpawner(
       attackReadyTick: 0,
       radius: definition.radius,
       targetId: null,
+      path: null,
+      pathIndex: 0,
+      repathAtTick: 0,
+      pathGoal: null,
       claimedPosition: null,
       resource: definition.stats.maxResource,
       cast: null,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createWorldColliders, DEFAULT_WORLD } from '../../sim/collision.js';
+import { circleBlocked, createWorldColliders, DEFAULT_WORLD } from '../../sim/collision.js';
 import { ARENA_OBSTACLES, WORLD_BOUNDS } from '../../sim/constants.js';
 import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE, type LiveConfig } from '../config.js';
 import { monsterById } from '../data/monsters.js';
@@ -423,3 +423,76 @@ describe('chunk activation gates simulation', () => {
   });
 });
 
+
+/**
+ * Spec 065. `src/sim/pathfinding.ts` survived every deletion and nothing in the
+ * server had ever imported it, so a monster walked into a wall and slid along it
+ * until the player happened to come back into the open.
+ */
+describe('monsters find their way round', () => {
+  /** A long wall between (600,450) and (900,450), with open ground above and below. */
+  const WALL = { x: 740, y: 250, w: 40, h: 400 };
+  const walled = createWorldColliders([WALL], [], WORLD_BOUNDS);
+
+  function chase(
+    ticks: number,
+    world = walled,
+  ): { distance: number; monsterX: number; monsterY: number; path: number } {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    // Beyond the wall, and well inside a stalker's aggro range.
+    const monster = withMonster(state, 'stalker', 900, 450);
+    state = monster.state;
+
+    const ctx = context({ world, activeChunks: activeAround({ x: 750, y: 450 }) });
+    for (let i = 0; i < ticks; i++) state = step(state, [], ctx).state;
+
+    const at = state.entities.get(monster.id);
+    return {
+      distance: Math.hypot((at?.position.x ?? 0) - 600, (at?.position.y ?? 0) - 450),
+      monsterX: at?.position.x ?? 0,
+      monsterY: at?.position.y ?? 0,
+      path: at?.path?.length ?? 0,
+    };
+  }
+
+  it('gets round a wall that straight-line homing would stall against', () => {
+    const start = Math.hypot(900 - 600, 0);
+    const after = chase(SERVER_TICK_RATE * 6);
+
+    // It closed most of the gap, which it cannot do by pressing into the wall.
+    expect(after.distance).toBeLessThan(start * 0.35);
+    // And it went around rather than through: the wall spans y 250..650, so
+    // getting past it means having left the straight line at some point.
+    expect(after.monsterX).toBeLessThan(WALL.x);
+  });
+
+  it('never ends up inside the wall it routed around', () => {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const monster = withMonster(state, 'stalker', 900, 450);
+    state = monster.state;
+
+    const ctx = context({ world: walled, activeChunks: activeAround({ x: 750, y: 450 }) });
+    const radius = monsterById('stalker')?.radius ?? 20;
+    for (let i = 0; i < SERVER_TICK_RATE * 6; i++) {
+      state = step(state, [], ctx).state;
+      const at = state.entities.get(monster.id)?.position;
+      if (!at) continue;
+      expect(circleBlocked({ x: at.x, y: at.y }, radius, walled)).toBe(false);
+    }
+  });
+
+  /**
+   * The straight line is the common case and it must stay free -- a monster
+   * chasing across open ground should never touch the grid, nor carry a route
+   * it is not using.
+   */
+  it('carries no route at all when the way is clear', () => {
+    const after = chase(SERVER_TICK_RATE, DEFAULT_WORLD);
+    expect(after.path).toBe(0);
+    expect(after.distance).toBeLessThan(300);
+  });
+});

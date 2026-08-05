@@ -633,6 +633,10 @@ export class GameServer implements AdminHost {
         activity: ActivityValue.Idle,
         activityUntilTick: 0,
         targetId: null,
+        path: null,
+        pathIndex: 0,
+        repathAtTick: 0,
+        pathGoal: null,
         // Cleared, or the first input after respawn is measured against a claim
         // from wherever they died and reads as crossing the map in one tick.
         claimedPosition: null,

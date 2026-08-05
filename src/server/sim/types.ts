@@ -9,6 +9,7 @@
  */
 
 import type { Rng } from '../../shared/prng.js';
+import type { Vec2 } from '../../sim/types.js';
 import type { EffectiveStats, Vec3 } from '../state/types.js';
 
 export const EntityKindValue = {
@@ -117,6 +118,18 @@ export interface ServerEntity {
   readonly radius: number;
   /** Homing target for a monster; null when idle or player-controlled. */
   readonly targetId: number | null;
+  /**
+   * The route this body is following, when the straight line to its target is
+   * blocked (spec 065). Plain data on an immutable entity like everything else,
+   * so a replay walks the same way round the same tree.
+   */
+  readonly path: readonly Vec2[] | null;
+  /** How many of `path`'s waypoints have been reached. */
+  readonly pathIndex: number;
+  /** Earliest tick a new search may run, so replanning has a cadence. */
+  readonly repathAtTick: number;
+  /** Where the target was when `path` was planned, to notice it moving away. */
+  readonly pathGoal: Vec2 | null;
   /** Ability resource. Live, clamped to `stats.maxResource` on recalculation. */
   readonly resource: number;
   /** The cast in progress, or null when free (spec 062). */
