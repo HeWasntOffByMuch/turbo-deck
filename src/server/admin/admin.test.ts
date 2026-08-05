@@ -4,10 +4,17 @@ import type { AdminPlayerRow } from '../net/admin-messages.js';
 import { AdminMessageType, AdminReplyType } from '../net/protocol.js';
 import { MemoryDataStore } from '../state/memory-store.js';
 import { AuditLog } from './audit.js';
-import { DEFAULT_TOKEN_TTL_SECONDS, signToken, verifyAdminToken, verifyToken } from './auth.js';
+import {
+  createHmacAdminVerifier,
+  DEFAULT_TOKEN_TTL_SECONDS,
+  signToken,
+  verifyAdminToken,
+  verifyToken,
+} from './auth.js';
 import {
   AdminRouter,
   createAdminConnectionState,
+  DENY_ALL_ADMIN,
   type AdminHost,
   type AdminConnectionState,
 } from './router.js';
@@ -105,7 +112,7 @@ function harness(): Harness {
   const state = { now: T0 };
   const audit = new AuditLog(store, () => state.now);
   const host = new FakeHost();
-  const router = new AdminRouter(host, audit, SECRET, () => state.now);
+  const router = new AdminRouter(host, audit, createHmacAdminVerifier(SECRET), () => state.now);
   return {
     router,
     host,
@@ -313,6 +320,28 @@ describe('admin routing', () => {
     });
     expect(log[2]).toMatchObject({ action: 'admin:auth', accepted: true });
     for (const entry of log) expect(entry.at).toBe(T0);
+  });
+
+  it('refuses everything, auth included, when no verifier is configured', async () => {
+    // What an in-tab single-player server gets (spec 057): no admin channel at
+    // all, rather than one guarded by a secret that would have to live in the
+    // browser bundle.
+    const store = new MemoryDataStore();
+    const audit = new AuditLog(store, () => T0);
+    const router = new AdminRouter(new FakeHost(), audit, DENY_ALL_ADMIN, () => T0);
+    const connection = createAdminConnectionState();
+
+    const authed = await router.handle(connection, {
+      type: AdminMessageType.Auth,
+      token: adminToken(),
+    });
+    expect(authed.type).toBe(AdminReplyType.Error);
+    expect(connection.token).toBeNull();
+
+    const listed = await router.handle(connection, { type: AdminMessageType.ListPlayers });
+    expect(listed.type).toBe(AdminReplyType.Error);
+    // Refusals are still on the record.
+    expect((await audit.recent(10)).length).toBeGreaterThan(0);
   });
 
   it('names the actor from the token, not from anything the client said', async () => {

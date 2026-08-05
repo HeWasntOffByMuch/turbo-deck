@@ -25,7 +25,28 @@ import {
 import { AdminMessageType, AdminReplyType, messageTypeName } from '../net/protocol.js';
 import type { AuditEntry } from '../state/types.js';
 import type { AuditLog } from './audit.js';
-import { verifyAdminToken } from './auth.js';
+
+/**
+ * Checks a token and names who presented it (spec 057).
+ *
+ * Injected rather than imported so the router -- and through it the whole
+ * server -- carries no dependency on `node:crypto`, which is what lets the
+ * server be bundled into a browser tab for single-player. The Node entry point
+ * supplies the HMAC implementation from `auth.ts`; an in-tab server supplies
+ * nothing and gets {@link DENY_ALL_ADMIN}, because a server running inside a
+ * player's own browser has no business having an admin channel at all.
+ */
+export type AdminTokenVerifier = (
+  token: string,
+  nowMs: number,
+) =>
+  | { readonly ok: true; readonly subject: string }
+  | { readonly ok: false; readonly reason: string };
+
+export const DENY_ALL_ADMIN: AdminTokenVerifier = () => ({
+  ok: false,
+  reason: 'the admin namespace is not enabled on this server',
+});
 
 /**
  * What the server must be able to do for an admin. Implemented by `GameServer`;
@@ -66,7 +87,7 @@ export class AdminRouter {
   constructor(
     private readonly host: AdminHost,
     private readonly audit: AuditLog,
-    private readonly secret: string,
+    private readonly verify: AdminTokenVerifier,
     private readonly now: Clock = () => Date.now(),
   ) {}
 
@@ -78,16 +99,16 @@ export class AdminRouter {
 
     // Auth is the one message that may arrive unauthenticated.
     if (request.type === AdminMessageType.Auth) {
-      const verified = verifyAdminToken(request.token, this.secret, this.now());
+      const verified = this.verify(request.token, this.now());
       if (!verified.ok) {
         connection.token = null;
         await this.audit.record('anonymous', actionName, '-', verified.reason, false);
         return this.error(request.type, `authentication failed: ${verified.reason}`);
       }
       connection.token = request.token;
-      connection.lastKnownActor = verified.claims.sub;
-      await this.audit.record(verified.claims.sub, actionName, '-', 'authenticated', true);
-      return this.ok(request.type, `authenticated as ${verified.claims.sub}`);
+      connection.lastKnownActor = verified.subject;
+      await this.audit.record(verified.subject, actionName, '-', 'authenticated', true);
+      return this.ok(request.type, `authenticated as ${verified.subject}`);
     }
 
     // Everything else re-checks the stored token, every time.
@@ -104,13 +125,13 @@ export class AdminRouter {
     connection: AdminConnectionState,
   ): { readonly ok: true; readonly subject: string } | { readonly ok: false; readonly reason: string } {
     if (connection.token === null) return { ok: false, reason: 'not authenticated' };
-    const verified = verifyAdminToken(connection.token, this.secret, this.now());
+    const verified = this.verify(connection.token, this.now());
     if (!verified.ok) {
       connection.token = null;
       return { ok: false, reason: verified.reason };
     }
-    connection.lastKnownActor = verified.claims.sub;
-    return { ok: true, subject: verified.claims.sub };
+    connection.lastKnownActor = verified.subject;
+    return { ok: true, subject: verified.subject };
   }
 
   private async dispatch(

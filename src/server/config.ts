@@ -7,13 +7,32 @@
  */
 
 /**
- * The authoritative simulation rate. Deliberately *not* the 60Hz of
- * `src/sim/`: this is a separate sim (see spec 056), and 20Hz is the rate the
- * network layer is designed around. Nothing here constrains the single-player
- * sim's timestep and nothing there constrains this one.
+ * The authoritative simulation rate (spec 057).
+ *
+ * 60Hz, matching `src/sim/`, and deliberately *not* the broadcast rate. Spec 056
+ * ran the sim at 20 because it sat beside the single-player game and nothing
+ * depended on it; once the game itself routes through here, a 50ms tick cannot
+ * express the 66ms perfect-parry window (`PERFECT_WINDOW_TICKS` = 4 at 60Hz)
+ * that the card economy is built on -- it would round a quarter tighter or half
+ * again looser, and that timing is the game.
+ *
+ * Keeping 60 also means every duration constant in `src/sim/constants.ts` keeps
+ * meaning what it says, and CLAUDE.md's fixed-60-ticks rule stays true of the
+ * whole codebase rather than half of it.
  */
-export const SERVER_TICK_RATE = 20;
+export const SERVER_TICK_RATE = 60;
 export const SERVER_TICK_MS = 1000 / SERVER_TICK_RATE;
+
+/**
+ * Deltas go out every Nth tick, so the network rate is 20Hz while the sim runs
+ * at 60. These were one number in spec 056 and separating them is the whole
+ * point of 057: interest management and delta tracking were never coupled to
+ * how often the world advanced, only to how often it is described.
+ */
+export const BROADCAST_EVERY_N_TICKS = 3;
+
+/** Deltas per second, for the welcome message and for sanity in tests. */
+export const BROADCAST_RATE = SERVER_TICK_RATE / BROADCAST_EVERY_N_TICKS;
 
 /**
  * Edge length of a network chunk, in world units.
@@ -36,15 +55,19 @@ export const INTEREST_CHUNK_RADIUS = 3;
 /** Bumped whenever the wire format changes incompatibly; checked on connect. */
 export const PROTOCOL_VERSION = 1;
 
+/** How long a dead player lies there before the server puts them back (spec 057). */
+export const RESPAWN_DELAY_TICKS = SERVER_TICK_RATE * 3;
+
 /** Body radius used for server-side movement collision, matching the sim's player. */
 export const SERVER_PLAYER_RADIUS = 16;
 
 /**
  * How many ticks of input a client may have in flight before the server stops
  * buffering. Sized well past a bad connection's round trip; past it the oldest
- * inputs are dropped rather than letting a stalled client bank a rewind.
+ * inputs are dropped rather than letting a stalled client bank a rewind. At
+ * 60Hz this is a second of backlog.
  */
-export const MAX_BUFFERED_INPUTS = 20;
+export const MAX_BUFFERED_INPUTS = 60;
 
 /**
  * Knobs an admin can turn on a running server (`admin:setConfig`). Every value
@@ -70,7 +93,12 @@ export interface LiveConfig {
    * meaningful cheating window.
    */
   readonly speedTolerance: number;
-  /** Ticks between ambient spawn attempts in an active chunk, before the multiplier. */
+  /**
+   * Ticks between ambient spawn attempts in an active chunk, before the
+   * multiplier. In *ticks*, so it had to move with the rate change in spec 057
+   * -- left at its old value the 60Hz sim would have tripled monster density
+   * against a number nobody had touched.
+   */
   readonly spawnIntervalTicks: number;
 }
 
@@ -80,7 +108,8 @@ export const DEFAULT_LIVE_CONFIG: LiveConfig = {
   maxEntitiesPerChunk: 12,
   correctionThreshold: 48,
   speedTolerance: 1.15,
-  spawnIntervalTicks: 100,
+  // 5 seconds at 60Hz, the same wall-clock cadence 100 ticks bought at 20Hz.
+  spawnIntervalTicks: 300,
 };
 
 export type LiveConfigKey = keyof LiveConfig;

@@ -39,6 +39,7 @@ function entity(id: number, overrides: Partial<ServerEntity> = {}): ServerEntity
     hitstopUntilTick: 0,
     radius: 22,
     targetId: null,
+    claimedPosition: null,
     ...overrides,
   };
 }

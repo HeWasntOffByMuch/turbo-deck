@@ -209,14 +209,54 @@ describe('movement validation', () => {
     let state = createWorldState(1);
     const player = withPlayer(state, 600, 450);
     state = player.state;
+    const ctx = context();
+    const perTick = PLAYER_STATS.moveSpeed / SERVER_TICK_RATE;
 
+    // An honest first input, which is what gives the next one a claim to be
+    // measured against.
+    state = step(
+      state,
+      [input(player.id, 1, { moveX: 1, moveY: 0, predictedX: 600 + perTick, predictedY: 450 })],
+      ctx,
+    ).state;
+
+    // Then a claim to have crossed the map in one tick.
     const result = step(
       state,
-      [input(player.id, 1, { moveX: 1, moveY: 0, predictedX: 5000, predictedY: 450 })],
-      context(),
+      [input(player.id, 2, { moveX: 1, moveY: 0, predictedX: 5000, predictedY: 450 })],
+      ctx,
     );
-    const correction = result.events.find((event) => event.kind === 'correction');
-    expect(correction).toMatchObject({ reason: CorrectionReason.SpeedViolation, inputSeq: 1 });
+    expect(result.events.find((event) => event.kind === 'correction')).toMatchObject({
+      reason: CorrectionReason.SpeedViolation,
+      inputSeq: 2,
+    });
+  });
+
+  it('does not flag a client that is simply running ahead of the server', () => {
+    // The regression this exists for: a client predicts ahead of the server by
+    // its one-way latency, so its claim is always a few ticks in front of where
+    // the server has it. Measured against the server's position that reads as a
+    // speed hack on every input; measured against the client's own previous
+    // claim -- which is what the check does -- it reads as walking.
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const ctx = context();
+    const perTick = PLAYER_STATS.moveSpeed / SERVER_TICK_RATE;
+    const LEAD_TICKS = 6; // ~100ms of one-way latency at 60Hz
+
+    let corrections = 0;
+    for (let tick = 1; tick <= 40; tick++) {
+      const claimedX = 600 + perTick * (tick + LEAD_TICKS);
+      const result = step(
+        state,
+        [input(player.id, tick, { moveX: 1, moveY: 0, predictedX: claimedX, predictedY: 450 })],
+        ctx,
+      );
+      state = result.state;
+      corrections += result.events.filter((event) => event.kind === 'correction').length;
+    }
+    expect(corrections).toBe(0);
   });
 
   it('says nothing at all when the prediction is close enough', () => {
@@ -274,9 +314,9 @@ describe('movement validation', () => {
   });
 
   it('refuses a step up a cliff, and reports it as a collision', () => {
-    // Ground is flat until x = 612, then a sheer 200-unit wall of rock -- close
-    // enough that one tick of travel (7.375 units) runs straight into it.
-    const cliff: TerrainSampler = { heightAt: (x) => (x > 612 ? 200 : 0) };
+    // Ground is flat until x = 611, then a sheer 200-unit wall of rock -- close
+    // enough that one tick of travel (~2.46 units at 60Hz) runs into it.
+    const cliff: TerrainSampler = { heightAt: (x) => (x > 611 ? 200 : 0) };
     let state = createWorldState(1);
     const player = withPlayer(state, 610, 450);
     state = player.state;
@@ -285,7 +325,7 @@ describe('movement validation', () => {
     // That is a collision correction, not a speed violation.
     const result = step(
       state,
-      [input(player.id, 1, { moveX: 1, moveY: 0, predictedX: 617, predictedY: 450 })],
+      [input(player.id, 1, { moveX: 1, moveY: 0, predictedX: 612.5, predictedY: 450 })],
       context({ terrain: cliff }),
     );
     expect(result.state.entities.get(player.id)?.position.x).toBe(610);
@@ -295,7 +335,7 @@ describe('movement validation', () => {
   });
 
   it('refuses to walk into deep water', () => {
-    const lake: TerrainSampler = { heightAt: (x) => (x > 620 ? -100 : 0) };
+    const lake: TerrainSampler = { heightAt: (x) => (x > 616 ? -100 : 0) };
     let state = createWorldState(1);
     const player = withPlayer(state, 615, 450);
     state = player.state;

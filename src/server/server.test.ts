@@ -5,8 +5,8 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { signToken } from './admin/auth.js';
-import { PROTOCOL_VERSION, SERVER_TICK_RATE } from './config.js';
+import { createHmacAdminVerifier, signToken } from './admin/auth.js';
+import { BROADCAST_EVERY_N_TICKS, PROTOCOL_VERSION, SERVER_TICK_RATE } from './config.js';
 import { encodeAdminRequest, decodeAdminReply, type AdminReply } from './net/admin-messages.js';
 import { decodeServerMessage, encodeClientMessage, type ServerMessage } from './net/messages.js';
 import {
@@ -89,7 +89,16 @@ class Client {
 }
 
 function server(): GameServer {
-  return new GameServer({ headless: true, seed: 5, adminSecret: SECRET });
+  return new GameServer({ seed: 5, adminVerifier: createHmacAdminVerifier(SECRET) });
+}
+
+/**
+ * One whole broadcast period. Since spec 057 the sim runs at 60Hz and deltas go
+ * out every third tick, so a test that wants to see a delta has to advance far
+ * enough for one to be due.
+ */
+function broadcast(game: GameServer): void {
+  for (let i = 0; i < BROADCAST_EVERY_N_TICKS; i++) game.tick();
 }
 
 describe('login', () => {
@@ -145,7 +154,7 @@ describe('the tick loop and delta broadcast', () => {
     await client.hello('alice');
     client.clear();
 
-    game.tick();
+    broadcast(game);
     const first = client.of(ServerMessageType.Delta)[0];
     expect(first).toBeDefined();
     const spawn = first?.upserts.find((record) => record.fields & EntityField.Spawn);
@@ -153,16 +162,22 @@ describe('the tick loop and delta broadcast', () => {
 
     // Standing still: nothing to say, so nothing is sent.
     client.clear();
-    game.tick();
+    broadcast(game);
     expect(client.of(ServerMessageType.Delta)).toEqual([]);
 
-    // Moving: the position and the idle -> moving flip, and nothing else. No
-    // identity, no health, no level -- none of those changed.
+    // Moving: position, and nothing else. No identity, no health, no level --
+    // none of those changed.
+    //
+    // Nor does activity: the single input moves them on the first tick of the
+    // period and the next two have nothing to obey, so idle -> moving -> idle
+    // resolves back to where it started before the delta goes out. Coalescing
+    // a transient the client would only have shown for 50ms is the broadcast
+    // divisor doing its job, not losing information.
     await client.input(1, { moveX: 1, predictedX: 0, predictedY: 0 });
     client.clear();
-    game.tick();
+    broadcast(game);
     const moving = client.of(ServerMessageType.Delta)[0];
-    expect(moving?.upserts[0]?.fields).toBe(EntityField.Position | EntityField.Activity);
+    expect(moving?.upserts[0]?.fields).toBe(EntityField.Position);
     expect(moving?.upserts[0]?.typeId).toBeUndefined();
     expect(moving?.upserts[0]?.health).toBeUndefined();
   });
@@ -173,7 +188,7 @@ describe('the tick loop and delta broadcast', () => {
     await client.hello('alice');
     await client.input(7, { moveX: 1 });
     client.clear();
-    game.tick();
+    broadcast(game);
     expect(client.of(ServerMessageType.Delta)[0]?.ackInputSeq).toBe(7);
   });
 
@@ -218,12 +233,15 @@ describe('the tick loop and delta broadcast', () => {
     const client = new Client(game);
     await client.hello('alice');
     client.clear();
-    await client.input(1, { moveX: 1, predictedX: 99999, predictedY: 450 });
+    // An honest input first, so the cheat has a claim to be measured against.
+    await client.input(1, { moveX: 1, predictedX: 600, predictedY: 450 });
+    game.tick();
+    await client.input(2, { moveX: 1, predictedX: 99999, predictedY: 450 });
     game.tick();
 
     const correction = client.of(ServerMessageType.Correction)[0];
     expect(correction?.reason).toBe(CorrectionReason.SpeedViolation);
-    expect(correction?.inputSeq).toBe(1);
+    expect(correction?.inputSeq).toBe(2);
     expect(Math.abs(correction?.position.x ?? 0)).toBeLessThan(1000);
   });
 });
@@ -242,10 +260,10 @@ describe('interest management over the wire', () => {
     // Carol is teleported far outside anyone's interest window.
     expect(game.teleport('carol', 40000, 40000)).toBe(true);
 
-    game.tick();
+    broadcast(game);
     alice.clear();
-    game.tick();
-    game.tick();
+    broadcast(game);
+    broadcast(game);
 
     const seen = new Set<number>();
     for (const delta of alice.of(ServerMessageType.Delta)) {
@@ -265,10 +283,10 @@ describe('interest management over the wire', () => {
     await bob.hello('bob');
     const bobEntity = bob.of(ServerMessageType.Welcome)[0]?.entityId ?? -1;
 
-    game.tick();
+    broadcast(game);
     alice.clear();
     game.teleport('bob', 40000, 40000);
-    game.tick();
+    broadcast(game);
 
     const removed = alice.of(ServerMessageType.Delta).flatMap((delta) => delta.removed);
     expect(removed).toContain(bobEntity);
@@ -334,7 +352,7 @@ describe('combat over the wire', () => {
     client.clear();
 
     await client.input(1, { facing: 0, buttons: InputButton.Attack });
-    game.tick();
+    broadcast(game);
 
     const result = client.of(ServerMessageType.CombatResult)[0];
     expect(result).toBeDefined();

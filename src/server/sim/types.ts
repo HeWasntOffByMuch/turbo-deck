@@ -56,6 +56,19 @@ export interface ServerEntity {
   readonly radius: number;
   /** Homing target for a monster; null when idle or player-controlled. */
   readonly targetId: number | null;
+  /**
+   * The position this entity's client last claimed to have predicted, or null
+   * before its first input (spec 057).
+   *
+   * The speed check is made against *this*, not against the entity's
+   * authoritative position. A client legitimately runs ahead of the server by
+   * roughly the one-way latency, so measuring "how far is your guess from where
+   * I last put you" flags every honest player on a real connection. Measuring
+   * how far the claim moved between consecutive inputs asks the question that
+   * actually matters -- what speed are you claiming to travel at -- and is
+   * immune to a constant lead.
+   */
+  readonly claimedPosition: { readonly x: number; readonly y: number } | null;
 }
 
 export interface ServerWorldState {

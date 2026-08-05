@@ -10,29 +10,34 @@
  *  2. step the sim
  *  3. update chunk occupancy, and recompute which chunks are active
  *  4. mirror authoritative positions back into player records
- *  5. send each client its own delta, plus the combat results and corrections
- *     that concern it
+ *  5. send the combat results and corrections that concern each client, and --
+ *     every `BROADCAST_EVERY_N_TICKS` -- its delta
+ *
+ * Since spec 057 it holds no transport of its own: it is handed a
+ * `ServerTransport`, which is what lets the same class run behind a socket in
+ * Node and inside a browser tab for single-player.
  */
 
-import { randomBytes } from 'node:crypto';
-import type { Server as HttpServer } from 'node:http';
-import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { DEFAULT_WORLD } from '../sim/collision.js';
 import type { WorldColliders } from '../sim/types.js';
 import { AuditLog } from './admin/audit.js';
 import {
   AdminRouter,
   createAdminConnectionState,
+  DENY_ALL_ADMIN,
   type AdminConnectionState,
   type AdminHost,
+  type AdminTokenVerifier,
 } from './admin/router.js';
 import {
+  BROADCAST_EVERY_N_TICKS,
   CHUNK_SIZE,
   INTEREST_CHUNK_RADIUS,
   LIVE_CONFIG_KEYS,
   LiveConfigStore,
   MAX_BUFFERED_INPUTS,
   PROTOCOL_VERSION,
+  RESPAWN_DELAY_TICKS,
   SERVER_TICK_MS,
   SERVER_TICK_RATE,
 } from './config.js';
@@ -54,7 +59,7 @@ import {
   isAdminRequest,
   ServerMessageType,
 } from './net/protocol.js';
-import { PlayerManager } from './player/player-manager.js';
+import { DEFAULT_SPAWN, PlayerManager } from './player/player-manager.js';
 import { MemoryDataStore } from './state/memory-store.js';
 import type { DataStore } from './state/store.js';
 import type { Vec3 } from './state/types.js';
@@ -74,33 +79,33 @@ import {
   spawnEntity,
   step,
 } from './sim/world.js';
+import { NullTransport, type Channel, type ServerTransport } from './net/transport.js';
 import { ChunkManager } from './world/chunk-manager.js';
 import { FLAT_TERRAIN, type TerrainSampler } from './world/terrain.js';
 import { ZoneManager } from './world/zone-manager.js';
 
 export interface GameServerOptions {
-  readonly port?: number;
   readonly seed?: number;
-  /** HMAC secret for admin tokens. Generated per-process when omitted. */
-  readonly adminSecret?: string;
+  /**
+   * How clients reach this server (spec 057). Omit for a server a test drives
+   * by calling `tick()`; `WebSocketTransport` for a real one; `LoopbackTransport`
+   * for single-player in a browser tab.
+   */
+  readonly transport?: ServerTransport;
+  /**
+   * Checks admin tokens. Omit and every `admin:*` message is refused -- which is
+   * the right answer for a server running inside a player's own browser.
+   */
+  readonly adminVerifier?: AdminTokenVerifier;
   readonly store?: DataStore;
   readonly zones?: ZoneManager;
   readonly terrain?: TerrainSampler;
   readonly world?: WorldColliders;
   readonly tickMs?: number;
-  /** Skip binding a socket -- for tests that drive `tick()` directly. */
-  readonly headless?: boolean;
-  /**
-   * Attach to an existing HTTP server instead of binding a port, so the admin
-   * page and the game socket can share an origin.
-   */
-  readonly httpServer?: HttpServer;
 }
 
 interface Connection {
-  readonly socket: WebSocket | null;
-  /** Where frames go for a socket-less connection: the test seam. */
-  readonly sink: ((bytes: Uint8Array) => void) | null;
+  readonly channel: Channel;
   playerId: string | null;
   entityId: number;
   readonly delta: DeltaTracker;
@@ -108,6 +113,8 @@ interface Connection {
   /** Inputs waiting their turn; one is applied per tick. */
   readonly inputs: ServerInput[];
   lastSeq: number;
+  /** Tick this player is put back on their feet; 0 when they are alive. */
+  respawnAtTick: number;
 }
 
 export class GameServer implements AdminHost {
@@ -122,11 +129,10 @@ export class GameServer implements AdminHost {
   private readonly admin: AdminRouter;
   private readonly loop: TickLoop;
   private readonly connections = new Set<Connection>();
-  private readonly adminSecret: string;
-  private wss: WebSocketServer | null = null;
+  private readonly transport: ServerTransport;
   private state: ServerWorldState;
 
-  constructor(private readonly options: GameServerOptions = {}) {
+  constructor(options: GameServerOptions = {}) {
     this.zones = options.zones ?? new ZoneManager();
     this.terrain = options.terrain ?? FLAT_TERRAIN;
     this.colliders = options.world ?? DEFAULT_WORLD;
@@ -134,8 +140,8 @@ export class GameServer implements AdminHost {
     this.chunks = new ChunkManager(CHUNK_SIZE, INTEREST_CHUNK_RADIUS);
     this.players = new PlayerManager(this.store, this.zones);
     this.audit = new AuditLog(this.store);
-    this.adminSecret = options.adminSecret ?? defaultSecret();
-    this.admin = new AdminRouter(this, this.audit, this.adminSecret);
+    this.transport = options.transport ?? new NullTransport();
+    this.admin = new AdminRouter(this, this.audit, options.adminVerifier ?? DENY_ALL_ADMIN);
     this.state = createWorldState(options.seed ?? 1);
     this.loop = new TickLoop(() => this.tick(), {
       tickMs: options.tickMs ?? SERVER_TICK_MS,
@@ -143,11 +149,6 @@ export class GameServer implements AdminHost {
         console.warn(`[server] dropped ${dropped} tick(s) of backlog`);
       },
     });
-  }
-
-  /** The secret admin tokens must be signed with, for the CLI to print. */
-  get secret(): string {
-    return this.adminSecret;
   }
 
   get world(): ServerWorldState {
@@ -163,45 +164,36 @@ export class GameServer implements AdminHost {
   }
 
   start(): void {
-    if (!this.options.headless) {
-      const port = this.options.port ?? 8787;
-      this.wss = this.options.httpServer
-        ? new WebSocketServer({ server: this.options.httpServer })
-        : new WebSocketServer({ port });
-      this.wss.on('connection', (socket) => this.accept(socket));
-      console.log(`[server] listening on ws://localhost:${port} at ${SERVER_TICK_RATE}Hz`);
-    }
+    this.transport.onConnection((channel) => this.accept(channel));
     this.loop.start();
   }
 
   async stop(): Promise<void> {
     this.loop.stop();
     for (const connection of [...this.connections]) this.drop(connection, 'server shutting down');
-    this.wss?.close();
+    this.transport.close();
     await this.store.close();
   }
 
   // --- transport ---------------------------------------------------------
 
-  private accept(socket: WebSocket): Connection {
+  /** Registers a connected channel. Public so a test can attach one directly. */
+  accept(channel: Channel): Connection {
     const connection: Connection = {
-      socket,
-      sink: null,
+      channel,
       playerId: null,
       entityId: -1,
       delta: new DeltaTracker(),
       admin: createAdminConnectionState(),
       inputs: [],
       lastSeq: 0,
+      respawnAtTick: 0,
     };
     this.connections.add(connection);
-    socket.on('message', (data: RawData) => {
-      void this.receive(connection, toBytes(data));
+    channel.onMessage((bytes) => {
+      void this.receive(connection, bytes);
     });
-    socket.on('close', () => {
-      void this.disconnect(connection);
-    });
-    socket.on('error', () => {
+    channel.onClose(() => {
       void this.disconnect(connection);
     });
     return connection;
@@ -401,7 +393,7 @@ export class GameServer implements AdminHost {
 
   private drop(connection: Connection, reason: string): void {
     this.send(connection, { type: ServerMessageType.Disconnect, reason });
-    connection.socket?.close();
+    connection.channel.close();
     void this.disconnect(connection);
   }
 
@@ -410,15 +402,7 @@ export class GameServer implements AdminHost {
   }
 
   private sendRaw(connection: Connection, bytes: Uint8Array): void {
-    // Copied out of the writer's arena either way: the view aliases a buffer
-    // the next message would reuse.
-    if (connection.sink) {
-      connection.sink(new Uint8Array(bytes));
-      return;
-    }
-    const socket = connection.socket;
-    if (!socket || socket.readyState !== 1) return;
-    socket.send(new Uint8Array(bytes), { binary: true });
+    connection.channel.send(bytes);
   }
 
   private broadcastMessage(message: ServerMessage): number {
@@ -524,8 +508,77 @@ export class GameServer implements AdminHost {
       );
     }
 
+    this.handleRespawns();
+
+    // Corrections and combat results go out the tick they happen -- they are
+    // rare and latency is the whole point of them. Deltas are the bulk traffic
+    // and ride the broadcast divisor instead (spec 057): the world advances at
+    // 60Hz, clients hear about it at 20.
     this.dispatchEvents(result.events);
-    this.broadcastDeltas();
+    if (this.state.tick % BROADCAST_EVERY_N_TICKS === 0) this.broadcastDeltas();
+  }
+
+  /**
+   * Puts dead players back on their feet. Their entity is never swept up (see
+   * `sim/world.ts`), so a respawn is a heal and a move rather than a new entity
+   * -- the id the client knows itself by survives, which is what stops a death
+   * from silently orphaning the client's view of itself.
+   */
+  private handleRespawns(): void {
+    for (const connection of this.connections) {
+      if (connection.playerId === null || connection.entityId < 0) continue;
+      const entity = this.state.entities.get(connection.entityId);
+      if (!entity) continue;
+
+      if (entity.health > 0) {
+        connection.respawnAtTick = 0;
+        continue;
+      }
+
+      if (connection.respawnAtTick === 0) {
+        connection.respawnAtTick = this.state.tick + RESPAWN_DELAY_TICKS;
+        this.send(connection, {
+          type: ServerMessageType.Chat,
+          channel: ChatChannel.System,
+          from: 'World',
+          text: 'You have fallen. Returning to Hearthstead...',
+        });
+        continue;
+      }
+
+      if (this.state.tick < connection.respawnAtTick) continue;
+
+      const session = this.players.get(connection.playerId);
+      if (!session) continue;
+      const at = DEFAULT_SPAWN;
+      const position: Vec3 = { x: at.x, y: at.y, z: this.terrain.heightAt(at.x, at.y) };
+      this.state = replaceEntity(this.state, {
+        ...entity,
+        position,
+        health: session.stats.maxHealth,
+        activity: ActivityValue.Idle,
+        activityUntilTick: 0,
+        knockbackX: 0,
+        knockbackY: 0,
+        knockbackUntilTick: 0,
+        hitstopUntilTick: 0,
+        targetId: null,
+        // Cleared, or the first input after respawn is measured against a claim
+        // from wherever they died and reads as crossing the map in one tick.
+        claimedPosition: null,
+      });
+      this.chunks.place(entity.id, position.x, position.y, true);
+      this.players.syncFromEntity(connection.playerId, position, entity.facing, session.stats.maxHealth);
+      connection.respawnAtTick = 0;
+
+      this.send(connection, {
+        type: ServerMessageType.Correction,
+        inputSeq: connection.lastSeq,
+        position,
+        facing: entity.facing,
+        reason: CorrectionReason.Teleport,
+      });
+    }
   }
 
   private dispatchEvents(events: readonly ServerSimEvent[]): void {
@@ -589,7 +642,11 @@ export class GameServer implements AdminHost {
           break;
         }
         case 'despawned':
-          for (const connection of this.connections) connection.delta.forget(event.entityId);
+          // Deliberately *not* `delta.forget` here. The tracker derives its
+          // removal list from "what I told you about that I can no longer see",
+          // so forgetting an entity is precisely how to stop it ever being
+          // withdrawn -- the client would keep drawing a corpse that is gone.
+          // Dropping out of `this.state.entities` is all the signal it needs.
           break;
         case 'spawned':
         case 'attackMissed':
@@ -744,7 +801,9 @@ export class GameServer implements AdminHost {
     if (!this.state.entities.has(entityId)) return false;
     this.state = removeEntity(this.state, entityId);
     this.chunks.remove(entityId);
-    for (const connection of this.connections) connection.delta.forget(entityId);
+    // No `delta.forget` -- see the 'despawned' case in `dispatchEvents`. The
+    // next delta withdraws it because it is gone from the world, and forgetting
+    // it here would suppress exactly that.
     return true;
   }
 
@@ -816,36 +875,23 @@ export class GameServer implements AdminHost {
   }
 
   /**
-   * Test seam: a socket-less connection whose outgoing frames go to `sink`, so
-   * the whole login/input/delta round trip can be driven without a network.
+   * Test seam: a connection whose outgoing frames go straight to `sink`, so the
+   * login/input/delta round trip can be driven without any transport at all.
    */
   createLocalConnection(sink: (bytes: Uint8Array) => void): Connection {
-    const connection: Connection = {
-      socket: null,
-      sink,
-      playerId: null,
-      entityId: -1,
-      delta: new DeltaTracker(),
-      admin: createAdminConnectionState(),
-      inputs: [],
-      lastSeq: 0,
-    };
-    this.connections.add(connection);
-    return connection;
+    let onClose: (() => void) | null = null;
+    return this.accept({
+      isOpen: true,
+      send: (bytes) => sink(new Uint8Array(bytes)),
+      close: () => onClose?.(),
+      onMessage: () => {
+        // Frames are pushed in by the test through `receive`, not pulled.
+      },
+      onClose: (handler) => {
+        onClose = handler;
+      },
+    });
   }
 }
 
-function toBytes(data: RawData): Uint8Array {
-  if (data instanceof ArrayBuffer) return new Uint8Array(data);
-  if (Array.isArray(data)) return new Uint8Array(Buffer.concat(data));
-  return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-}
 
-/**
- * A per-process secret when none is configured: a dev server still requires a
- * signed token, it just mints a fresh signing key each boot, so nothing is ever
- * protected by a default that ships in the repository.
- */
-function defaultSecret(): string {
-  return randomBytes(32).toString('hex');
-}

@@ -111,6 +111,7 @@ export function spawnEntity(
     hitstopUntilTick: 0,
     radius: spec.radius,
     targetId: null,
+    claimedPosition: null,
   };
   const entities = new Map(state.entities);
   entities.set(entity.id, entity);
@@ -196,6 +197,9 @@ export function step(
       knockbackX: outcome.knockbackX,
       knockbackY: outcome.knockbackY,
       zoneId: context.zones.zoneIdAt(outcome.position.x, outcome.position.y),
+      // Remember what this client claimed, so the next input's speed is measured
+      // against its own previous claim rather than against our position.
+      claimedPosition: input ? { x: input.predictedX, y: input.predictedY } : current.claimedPosition,
     };
     next = expireActivity(next, tick, moved ? ActivityValue.Moving : ActivityValue.Idle);
     working.set(next.id, next);
@@ -234,6 +238,17 @@ export function step(
   // --- 4: despawn what the corpse timer has finished with ---------------
   for (const entity of [...working.values()]) {
     if (entity.health > 0) continue;
+    // A dead player stays in the world. Sweeping their body away would take
+    // their entity id with it, and the client identifies itself by that id --
+    // it would be left rendering an empty world at a frozen position with no
+    // way to say "that one is me". They are respawned in place instead, by the
+    // server, which keeps the id stable across a death.
+    if (entity.kind === EntityKindValue.Player) {
+      if (entity.activity !== ActivityValue.Dead) {
+        working.set(entity.id, { ...entity, activity: ActivityValue.Dead, activityUntilTick: 0 });
+      }
+      continue;
+    }
     if (entity.activity !== ActivityValue.Dead) {
       working.set(entity.id, {
         ...entity,
@@ -403,6 +418,7 @@ function runSpawner(
       hitstopUntilTick: 0,
       radius: definition.radius,
       targetId: null,
+      claimedPosition: null,
     };
     entities.set(entity.id, entity);
     nextEntityId += 1;

@@ -145,7 +145,7 @@ export function resolveMovement(
     position,
     facing,
     correctionReason: input
-      ? correctionFor(input, from, position, maxStep, blockedByTerrain, config)
+      ? correctionFor(input, entity.claimedPosition, position, maxStep, blockedByTerrain, config)
       : null,
     knockbackX: nextKnockbackX,
     knockbackY: nextKnockbackY,
@@ -156,10 +156,15 @@ export function resolveMovement(
  * Decides whether the client needs telling. Ordered most-serious first, so an
  * impossible move is reported as a speed violation rather than as drift that
  * happens to be large.
+ *
+ * `previousClaim` is the client's own last predicted position, not the server's
+ * last authoritative one -- see {@link ServerEntity.claimedPosition} for why
+ * that distinction is the difference between a working speed check and one that
+ * flags every player with a ping.
  */
 function correctionFor(
   input: ServerInput,
-  previous: Vec2,
+  previousClaim: { readonly x: number; readonly y: number } | null,
   authoritative: Vec3,
   maxStep: number,
   blockedByTerrain: boolean,
@@ -171,8 +176,12 @@ function correctionFor(
     return CorrectionReason.Divergence;
   }
 
-  const travelled = distance(predictedX, predictedY, previous.x, previous.y);
-  if (travelled > maxStep * config.speedTolerance) return CorrectionReason.SpeedViolation;
+  // The first input has nothing to compare against; one free tick of movement
+  // is not worth a correction, and the divergence check below still applies.
+  if (previousClaim !== null) {
+    const claimedTravel = distance(predictedX, predictedY, previousClaim.x, previousClaim.y);
+    if (claimedTravel > maxStep * config.speedTolerance) return CorrectionReason.SpeedViolation;
+  }
 
   const drift = distance(predictedX, predictedY, authoritative.x, authoritative.y);
   if (blockedByTerrain && drift > 1) return CorrectionReason.Collision;

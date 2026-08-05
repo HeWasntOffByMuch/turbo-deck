@@ -29,9 +29,10 @@ describe('effective stats', () => {
     expect(computeEffectiveStats(record)).toEqual(computeEffectiveStats(record));
   });
 
-  it('converts the single-player sim durations into server ticks', () => {
-    // 24 ticks at 60Hz is 0.4s, which is 8 ticks at 20Hz.
-    expect(simTicksToServerTicks(24)).toBe(8);
+  it('carries the single-player sim durations across unchanged', () => {
+    // Since spec 057 both sims run at 60Hz, so the conversion is identity --
+    // kept as a function because the rate is a constant, not a promise.
+    expect(simTicksToServerTicks(24)).toBe(24);
     expect(simTicksToServerTicks(1)).toBe(1);
   });
 

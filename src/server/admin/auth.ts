@@ -106,6 +106,21 @@ export function verifyToken(token: string, secret: string, nowMs: number): Verif
 
 export const ADMIN_ROLE = 'admin';
 
+/**
+ * The HMAC-backed verifier, in the shape `AdminRouter` takes (spec 057). Only
+ * the Node entry point constructs one, which is what keeps `node:crypto` out of
+ * the server's browser-bound half.
+ */
+export function createHmacAdminVerifier(secret: string) {
+  return (
+    token: string,
+    nowMs: number,
+  ): { readonly ok: true; readonly subject: string } | { readonly ok: false; readonly reason: string } => {
+    const result = verifyAdminToken(token, secret, nowMs);
+    return result.ok ? { ok: true, subject: result.claims.sub } : { ok: false, reason: result.reason };
+  };
+}
+
 /** Verify *and* require the admin role. The only gate on the admin namespace. */
 export function verifyAdminToken(token: string, secret: string, nowMs: number): VerifyResult {
   const result = verifyToken(token, secret, nowMs);
