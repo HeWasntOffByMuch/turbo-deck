@@ -167,7 +167,11 @@ export function createHud(): HudHandle {
         element.cast.style.display = 'block';
         element.castFill.style.width = `${progress.progress * 100}%`;
         // Amber while it can still be called off, blue once it cannot -- the
-        // one distinction the whole wind-up design rests on.
+        // one distinction the whole wind-up design rests on. A turn shows as an
+        // empty track in its own colour: committed, but not yet swinging.
+        element.cast.style.background = progress.turning
+          ? 'rgba(120,170,220,.55)'
+          : 'rgba(0,0,0,.65)';
         element.castFill.style.background = progress.cancellable ? '#ffcf6b' : '#7fd0ff';
         element.root.style.display = 'block';
       } else {

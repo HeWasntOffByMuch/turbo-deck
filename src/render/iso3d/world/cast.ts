@@ -10,6 +10,9 @@
  * carries the tick a cast *releases* and the tick it *ends*, not how long it has
  * been running. The three phases fill differently:
  *
+ *  - **turning** -- committed and paid for, but the body is still coming round
+ *    to face the aim (spec 065), so the wind-up clock has not started. Shown
+ *    empty: the commitment is real, the swing has not begun.
  *  - **wind-up** -- from committing to the release. This is the phase that
  *    matters; a cancel here refunds everything.
  *  - **channel** -- from the release to the end, running while it pulses.
@@ -35,6 +38,8 @@ export interface CastBar {
   /** True while the caster can still withdraw -- the bar that means something. */
   readonly cancellable: boolean;
   readonly phase: number;
+  /** True while the body is only turning; the wind-up has not started. */
+  readonly turning: boolean;
 }
 
 function clamp01(value: number): number {
@@ -49,21 +54,29 @@ function clamp01(value: number): number {
 export function castBar(cast: CastLike, tick: number, ability: AbilityDefinition | null): CastBar {
   const phase = cast.phase;
 
+  // Turning. `releaseTick` is provisional here and the server will re-stamp it
+  // at alignment, so there is nothing honest to fill a bar with -- drawing
+  // against it would run the bar up and then reset it when the real wind-up
+  // starts. Empty, and cancellable, which is exactly the state it describes.
+  if (phase === CastPhaseValue.Turning) {
+    return { progress: 0, cancellable: true, phase, turning: true };
+  }
+
   if (phase === CastPhaseValue.Windup) {
     // The wind-up's length is the ability's, and its start is the release minus
     // that -- the server never sends a start tick, and deriving it here is
     // exact as long as both sides read the same table, which they do.
     const windup = Math.max(1, ability?.windupTicks ?? 1);
-    return { progress: clamp01(1 - (cast.releaseTick - tick) / windup), cancellable: true, phase };
+    return { progress: clamp01(1 - (cast.releaseTick - tick) / windup), cancellable: true, phase, turning: false };
   }
 
   if (phase === CastPhaseValue.Channel) {
     const span = Math.max(1, cast.endTick - cast.releaseTick);
-    return { progress: clamp01((tick - cast.releaseTick) / span), cancellable: true, phase };
+    return { progress: clamp01((tick - cast.releaseTick) / span), cancellable: true, phase, turning: false };
   }
 
   // Recovery: past the point of no return. Drains from full to empty, so the
   // bar never reads as a fresh commitment the player could still call off.
   const span = Math.max(1, cast.endTick - cast.releaseTick);
-  return { progress: clamp01((cast.endTick - tick) / span), cancellable: false, phase };
+  return { progress: clamp01((cast.endTick - tick) / span), cancellable: false, phase, turning: false };
 }

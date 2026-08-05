@@ -535,18 +535,161 @@ describe('self abilities', () => {
   });
 });
 
+/**
+ * Spec 065. Turning is rate-limited (spec 064), and until now a cast ignored
+ * that: commit facing north and the blow resolved south on schedule, from a body
+ * still halfway round.
+ */
+describe('turning before the wind-up', () => {
+  function committedFacingAway(abilityId: string): {
+    state: ReturnType<typeof createWorldState>;
+    playerId: number;
+  } {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    state = withDummy(state, 640, 450).state;
+    // Face due west, and swing due east: a half turn before anything happens.
+    const facing = state.entities.get(player.id);
+    if (facing) {
+      const entities = state.entities as Map<number, typeof facing>;
+      entities.set(player.id, { ...facing, facing: Math.PI });
+    }
+    const started = run(state, 1, {
+      0: [input(player.id, { castAbilityId: abilityId, castTargetX: 640, castTargetY: 450 })],
+    });
+    return { state: started.state, playerId: player.id };
+  }
+
+  it('holds a cast in Turning until the body has come round', () => {
+    const { state, playerId } = committedFacingAway('melee.slash');
+    expect(state.entities.get(playerId)?.cast?.phase).toBe(CastPhase.Turning);
+
+    // Still turning a few ticks later, and nothing has landed.
+    const soon = run(state, 5);
+    expect(soon.state.entities.get(playerId)?.cast?.phase).toBe(CastPhase.Turning);
+    expect(hits(soon.events)).toHaveLength(0);
+  });
+
+  it('starts the wind-up when it arrives, and lands a full wind-up later', () => {
+    const ability = abilityById('melee.slash');
+    if (!ability) throw new Error('no melee.slash');
+    const { state, playerId } = committedFacingAway('melee.slash');
+    const turnRate = state.entities.get(playerId)?.stats.turnRate ?? 0;
+    expect(turnRate).toBeGreaterThan(0);
+
+    // A half turn, then the ability's own wind-up -- not a tick less.
+    const turnTicks = Math.ceil((180 / turnRate) * SERVER_TICK_RATE);
+    const beforeRelease = run(state, turnTicks + ability.windupTicks - 2);
+    expect(hits(beforeRelease.events)).toHaveLength(0);
+
+    const landed = run(beforeRelease.state, 3);
+    expect(hits(landed.events).length).toBeGreaterThan(0);
+  });
+
+  it('never enters Turning when the body is already facing the aim', () => {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    state = withDummy(state, 640, 450).state;
+
+    // withPlayer faces east by default, and the aim is due east.
+    const started = run(state, 1, {
+      0: [input(player.id, { castAbilityId: 'melee.slash', castTargetX: 640, castTargetY: 450 })],
+    });
+    expect(started.state.entities.get(player.id)?.cast?.phase).toBe(CastPhase.Windup);
+  });
+
+  it('re-stamps the release tick, so the client is never told a stale one', () => {
+    const ability = abilityById('melee.slash');
+    if (!ability) throw new Error('no melee.slash');
+    const { state, playerId } = committedFacingAway('melee.slash');
+    const provisional = state.entities.get(playerId)?.cast?.releaseTick ?? 0;
+
+    // Run until the wind-up actually begins.
+    let current = state;
+    let phase: number = CastPhase.Turning;
+    for (let i = 0; i < 200 && phase === CastPhase.Turning; i++) {
+      const next = run(current, 1);
+      current = next.state;
+      phase = current.entities.get(playerId)?.cast?.phase ?? CastPhase.Windup;
+    }
+
+    const actual = current.entities.get(playerId)?.cast?.releaseTick ?? 0;
+    expect(phase).toBe(CastPhase.Windup);
+    // The turn took longer than the wind-up, so the provisional tick is long past.
+    expect(actual).toBeGreaterThan(provisional);
+  });
+
+  /**
+   * The turn is part of the commitment, so calling off during it must cost
+   * exactly nothing -- the same deal the wind-up offers.
+   */
+  it('refunds in full when cancelled mid-turn', () => {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const before = state.entities.get(player.id)?.resource ?? 0;
+
+    const facing = state.entities.get(player.id);
+    if (facing) {
+      const entities = state.entities as Map<number, typeof facing>;
+      entities.set(player.id, { ...facing, facing: Math.PI });
+    }
+
+    const started = run(state, 1, {
+      0: [input(player.id, { castAbilityId: 'melee.heavy', castTargetX: 640, castTargetY: 450 })],
+    });
+    expect(started.state.entities.get(player.id)?.cast?.phase).toBe(CastPhase.Turning);
+
+    const turning = run(started.state, 4);
+    const cancelled = run(turning.state, 1, { 0: [input(player.id, { cancelCast: true })] });
+
+    const caster = cancelled.state.entities.get(player.id);
+    expect(caster?.cast).toBeNull();
+    expect(caster?.resource ?? 0).toBeGreaterThanOrEqual(before);
+    expect(caster?.cooldowns['melee.heavy']).toBeUndefined();
+  });
+
+  /**
+   * The provisional release tick can be *behind* the current tick by the time a
+   * slow body finishes turning. Cancelling then must still work -- comparing
+   * against it would report a cast that has not begun as already released.
+   */
+  it('is still cancellable after turning for longer than the wind-up', () => {
+    const ability = abilityById('melee.slash');
+    if (!ability) throw new Error('no melee.slash');
+    const { state, playerId } = committedFacingAway('melee.slash');
+
+    const wellPast = run(state, ability.windupTicks + 2);
+    expect(wellPast.state.entities.get(playerId)?.cast?.phase).toBe(CastPhase.Turning);
+
+    const cancelled = run(wellPast.state, 1, { 0: [input(playerId, { cancelCast: true })] });
+    expect(cancelled.state.entities.get(playerId)?.cast).toBeNull();
+    expect(
+      cancelled.events.some(
+        (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Cancelled,
+      ),
+    ).toBe(true);
+  });
+});
+
 describe('interruption', () => {
   it('knocks a caster out of a wind-up when something hits them hard', () => {
     let state = createWorldState(1);
     const player = withPlayer(state, 600, 450);
     state = player.state;
-    // A stalker close enough to start swinging immediately.
+    // A stalker close enough to start swinging immediately, and already facing
+    // its target -- since spec 065 a body turns before it swings, and a monster
+    // spawned looking the other way would spend most of this test rotating.
+    // That is the turn phase's own test; this one is about interruption.
     const definition = monsterById('stalker');
     if (!definition) throw new Error('no stalker');
     const monster = spawnEntity(state, {
       kind: EntityKindValue.Monster,
       typeId: 'stalker',
       position: { x: 640, y: 450, z: 0 },
+      facing: Math.PI,
       stats: { ...definition.stats, spellPower: 40 },
       radius: definition.radius,
       zoneId: 'greenmarch',

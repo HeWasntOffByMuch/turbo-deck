@@ -88,16 +88,23 @@ export function startCast(
     if (Math.hypot(dx, dy) > ability.range) return { ok: false, reason: 'outOfRange' };
   }
 
+  const aim = aimFor(ability, entity, attempt);
+
+  // Turn first, wind up second (spec 065). A body that has not yet turned to
+  // face what it is swinging at has not begun the swing -- the wind-up clock
+  // starts at alignment, and until then `releaseTick` is provisional and gets
+  // re-stamped by `advanceCast`.
+  const turning = !facingAim(entity, aim);
+  const phase = turning ? CastPhase.Turning : CastPhase.Windup;
   const releaseTick = tick + ability.windupTicks;
   const endTick = tick + totalCastTicks(ability);
-  const aim = aimFor(ability, entity, attempt);
 
   const cast: CastState = {
     abilityId: ability.id,
     startedTick: tick,
     releaseTick,
     endTick,
-    phase: CastPhase.Windup,
+    phase,
     targetX: aim.x,
     targetY: aim.y,
     nextPulseTick: 0,
@@ -126,7 +133,7 @@ export function startCast(
         kind: 'castStarted',
         entityId: entity.id,
         abilityId: ability.id,
-        phase: CastPhase.Windup,
+        phase,
         releaseTick,
         endTick,
         targetX: aim.x,
@@ -134,6 +141,28 @@ export function startCast(
       },
     ],
   };
+}
+
+/**
+ * How far off the aim a body may be and still count as facing it.
+ *
+ * Tiny on purpose. A caster is rooted, so the angle to its captured aim does not
+ * move, and `turnToward` lands exactly on its target on the last tick of the
+ * turn -- this is slack against float drift, not a tolerance anybody plays
+ * against. Half a degree.
+ */
+const TURN_ALIGN_EPS = (0.5 * Math.PI) / 180;
+
+/** Whether `entity` is already pointing at `aim` closely enough to swing. */
+function facingAim(entity: ServerEntity, aim: { readonly x: number; readonly y: number }): boolean {
+  const dx = aim.x - entity.position.x;
+  const dy = aim.y - entity.position.y;
+  // A self cast, or an aim on top of the caster, has no direction to face.
+  if (Math.hypot(dx, dy) < 1e-6) return true;
+  let delta = (Math.atan2(dy, dx) - entity.facing) % (Math.PI * 2);
+  if (delta > Math.PI) delta -= Math.PI * 2;
+  if (delta <= -Math.PI) delta += Math.PI * 2;
+  return Math.abs(delta) <= TURN_ALIGN_EPS;
 }
 
 /** A self cast aims at itself; everything else aims where it was told. */
@@ -168,13 +197,19 @@ export function cancelCast(entity: ServerEntity, tick: number, reason: number): 
   if (!cast) return { entity, events: [], cancelled: false };
 
   const interrupting = reason === CastEndReason.Interrupted;
-  if (!interrupting && tick >= cast.releaseTick && cast.phase !== CastPhase.Channel) {
+  // While turning, `releaseTick` is provisional -- it was stamped at commit and
+  // the wind-up has not started, so a turn longer than the wind-up would sail
+  // past it. Comparing against it here would call a cast that has not even begun
+  // winding up "already released" and refuse to call it off, which is the exact
+  // opposite of the truth.
+  const turning = cast.phase === CastPhase.Turning;
+  if (!interrupting && !turning && tick >= cast.releaseTick && cast.phase !== CastPhase.Channel) {
     // Already released and merely recovering: nothing left to call off.
     return { entity, events: [], cancelled: false };
   }
 
   const ability = abilityById(cast.abilityId);
-  const refundable = tick < cast.releaseTick;
+  const refundable = turning || tick < cast.releaseTick;
   // Rebuilt without the key rather than deleted from a copy: the cooldown map is
   // plain data on an immutable entity, and a dynamic delete is both slower and
   // the sort of thing the linter is right to ask about.
@@ -257,6 +292,38 @@ export function advanceCast(
   const spawns: ProjectileSpawn[] = [];
   let currentRng = rng;
   let caster = entity;
+
+  // --- turning ---------------------------------------------------------
+  // Held here until the body is pointing at what it committed to. Movement runs
+  // before casts within a tick, so `entity.facing` is already this tick's.
+  if (cast.phase === CastPhase.Turning) {
+    if (!facingAim(caster, { x: cast.targetX, y: cast.targetY })) {
+      return { updated: new Map(), spawns: [], events: [], rng: currentRng };
+    }
+
+    // Aligned. The wind-up starts *now*, so the ticks it takes are the ability's
+    // own however long the turn took, and the client is told the new release --
+    // otherwise it would be drawing a bar against a tick that has since moved.
+    const releaseTick = tick + ability.windupTicks;
+    const endTick = tick + totalCastTicks(ability);
+    caster = {
+      ...caster,
+      cast: { ...cast, phase: CastPhase.Windup, releaseTick, endTick },
+      activityUntilTick: endTick,
+    };
+    updated.set(caster.id, caster);
+    events.push({
+      kind: 'castStarted',
+      entityId: caster.id,
+      abilityId: ability.id,
+      phase: CastPhase.Windup,
+      releaseTick,
+      endTick,
+      targetX: cast.targetX,
+      targetY: cast.targetY,
+    });
+    return { updated, spawns, events, rng: currentRng };
+  }
 
   // --- release ---------------------------------------------------------
   if (cast.phase === CastPhase.Windup && tick >= cast.releaseTick) {

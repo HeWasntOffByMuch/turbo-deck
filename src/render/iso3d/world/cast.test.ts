@@ -76,3 +76,32 @@ describe('castBar', () => {
     expect(bar.progress).toBeLessThanOrEqual(1);
   });
 });
+
+describe('turning', () => {
+  /**
+   * Spec 065: while a body is turning into its blow, `releaseTick` is
+   * provisional and the server re-stamps it at alignment. Filling a bar against
+   * it would run the bar up and then reset it when the real wind-up starts.
+   */
+  it('shows an empty, cancellable bar whatever the provisional release says', () => {
+    const cast = {
+      abilityId: 'melee.heavy',
+      phase: CastPhaseValue.Turning,
+      releaseTick: 100,
+      endTick: 140,
+    };
+    for (const tick of [0, 50, 99, 100, 200, 5000]) {
+      const bar = castBar(cast, tick, heavy);
+      expect(bar.progress).toBe(0);
+      expect(bar.cancellable).toBe(true);
+      expect(bar.turning).toBe(true);
+    }
+  });
+
+  it('is the only phase that reports turning', () => {
+    for (const phase of [CastPhaseValue.Windup, CastPhaseValue.Channel, CastPhaseValue.Recovery]) {
+      const cast = { abilityId: 'melee.heavy', phase, releaseTick: 100, endTick: 140 };
+      expect(castBar(cast, 100, heavy).turning).toBe(false);
+    }
+  });
+});

@@ -488,6 +488,11 @@ export function step(
 
 /** Returns to a resting activity once the committed one has run out. */
 function expireActivity(entity: ServerEntity, tick: number, resting: number): ServerEntity {
+  // A cast in progress is never idle, whatever the timer says. Since spec 065 a
+  // wind-up can start later than the tick it was committed on -- the body turns
+  // first -- so `activityUntilTick` stamped at commit can pass while the cast is
+  // still very much happening.
+  if (entity.cast !== null) return entity;
   if (entity.activityUntilTick > tick && entity.activity !== ActivityValue.Idle) return entity;
   if (entity.activity === resting) return entity;
   return { ...entity, activity: resting, activityUntilTick: 0 };

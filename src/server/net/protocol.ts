@@ -141,6 +141,8 @@ export const CastPhaseValue = {
   Windup: 0,
   Channel: 1,
   Recovery: 2,
+  /** Turning to face the aim before the wind-up starts (spec 065). */
+  Turning: 3,
 } as const;
 
 export const CastEndReasonValue = {

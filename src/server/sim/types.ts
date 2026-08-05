@@ -40,6 +40,11 @@ export const CastPhase = {
   Windup: 0,
   Channel: 1,
   Recovery: 2,
+  /**
+   * Committed, but not yet pointing at what it committed to (spec 065). The
+   * cost is spent and the aim is captured; the wind-up clock has not started.
+   */
+  Turning: 3,
 } as const;
 
 /** Why a cast stopped, so the client can play the right thing. */
