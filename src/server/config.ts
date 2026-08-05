@@ -52,8 +52,13 @@ export const CHUNK_SIZE = 100;
  */
 export const INTEREST_CHUNK_RADIUS = 3;
 
-/** Bumped whenever the wire format changes incompatibly; checked on connect. */
-export const PROTOCOL_VERSION = 1;
+/**
+ * Bumped whenever the wire format changes incompatibly; checked on connect.
+ *
+ * 2: the welcome carries the world seed (spec 063), so a client can build the
+ * ground and the trees the server is colliding against.
+ */
+export const PROTOCOL_VERSION = 2;
 
 /** How long a dead player lies there before the server puts them back (spec 057). */
 export const RESPAWN_DELAY_TICKS = SERVER_TICK_RATE * 3;

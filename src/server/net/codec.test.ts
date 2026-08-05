@@ -141,6 +141,7 @@ describe('game message round-trip', () => {
       chunkSize: 100,
       interestRadius: 3,
       correctionThreshold: 48,
+      worldSeed: 4242,
     },
     {
       type: ServerMessageType.Delta,

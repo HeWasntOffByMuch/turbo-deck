@@ -94,6 +94,25 @@ describe('loopback session', () => {
     expect(test.server.listPlayers().map((row) => row.playerId)).toEqual(['alice']);
   });
 
+  /**
+   * Spec 063: a 3D client has to build the ground it is standing on, and being
+   * told which world this is on connect is the only honest way it can. A client
+   * that guessed would draw trees the server walks through.
+   */
+  it('is told which world the server is running', async () => {
+    const test = harness(4242);
+    const client = await connect(test, 'alice');
+
+    expect(client.view().worldSeed).toBe(4242);
+  });
+
+  it('knows no world before the welcome lands', () => {
+    const test = harness();
+    const client = new GameClient(test.transport.connect(), { playerId: 'alice' });
+
+    expect(client.view().worldSeed).toBeNull();
+  });
+
   it('replicates the world from deltas alone', async () => {
     const test = harness();
     const client = await connect(test, 'alice');

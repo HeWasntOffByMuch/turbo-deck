@@ -18,14 +18,11 @@ import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createWorldColliders } from '../sim/collision.js';
-import { ARENA_OBSTACLES, WORLD_BOUNDS } from '../sim/constants.js';
-import { createArenaWorld } from '../terrain/world.js';
 import { createHmacAdminVerifier, signToken } from './admin/auth.js';
 import { BROADCAST_RATE, SERVER_TICK_RATE } from './config.js';
 import { WebSocketTransport } from './net/transport-ws.js';
 import { GameServer } from './server.js';
-import { terrainSamplerFrom } from './world/terrain.js';
+import { buildWorld } from './world/build.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -39,7 +36,13 @@ const configuredSecret = process.env['ADMIN_SECRET'];
  */
 const adminSecret = configuredSecret ?? randomBytes(32).toString('hex');
 
-const terrainWorld = createArenaWorld(seed);
+/**
+ * Terrain, trees and colliders in one build (spec 063). This used to be terrain
+ * here and `createWorldColliders(ARENA_OBSTACLES, [], WORLD_BOUNDS)` at the call
+ * below -- real ground, and an empty vegetation list next to it, so the server
+ * walked through every tree in the world it had just generated.
+ */
+const world = buildWorld(seed);
 
 const http = createServer((request, response) => {
   const url = request.url ?? '/';
@@ -58,11 +61,9 @@ const http = createServer((request, response) => {
 });
 
 const server = new GameServer({
-  seed,
+  built: world,
   transport: new WebSocketTransport({ port, httpServer: http }),
   adminVerifier: createHmacAdminVerifier(adminSecret),
-  terrain: terrainSamplerFrom(terrainWorld),
-  world: createWorldColliders(ARENA_OBSTACLES, [], WORLD_BOUNDS),
 });
 
 http.listen(port, () => {

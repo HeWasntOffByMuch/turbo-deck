@@ -197,6 +197,15 @@ export interface WelcomeMessage {
   readonly interestRadius: number;
   /** Divergence past which the client should expect a hard correction. */
   readonly correctionThreshold: number;
+  /**
+   * The seed the server's world was built from (spec 063).
+   *
+   * The client needs it to build the same ground and the same trees, and being
+   * told is the only honest way it can have it -- a client that assumed a seed
+   * would draw a forest the server does not collide against, and every trunk
+   * would become a correction the player cannot account for.
+   */
+  readonly worldSeed: number;
 }
 
 /**
@@ -467,7 +476,8 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
         .u8(message.tickRate)
         .u16(message.chunkSize)
         .u8(message.interestRadius)
-        .f32(message.correctionThreshold);
+        .f32(message.correctionThreshold)
+        .u32(message.worldSeed);
       break;
     case ServerMessageType.Delta:
       writer.u32(message.tick).varuint(message.ackInputSeq).varuint(message.removed.length);
@@ -560,6 +570,7 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         chunkSize: reader.u16(),
         interestRadius: reader.u8(),
         correctionThreshold: reader.f32(),
+        worldSeed: reader.u32(),
       };
     case ServerMessageType.Delta: {
       const tick = reader.u32();

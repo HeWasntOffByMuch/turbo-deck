@@ -41,6 +41,8 @@ export interface WelcomeInfo {
   readonly chunkSize: number;
   readonly interestRadius: number;
   readonly correctionThreshold: number;
+  /** The seed the server's world was built from; build the same one (spec 063). */
+  readonly worldSeed: number;
 }
 
 export interface GameClientOptions {
@@ -62,6 +64,11 @@ export interface ClientView {
   /** The local player's predicted position -- what to draw them at. */
   readonly self: { readonly x: number; readonly y: number } | null;
   readonly selfEntityId: number;
+  /**
+   * The world the server is running, or null before the welcome lands. A
+   * renderer builds its terrain from this and from nothing else.
+   */
+  readonly worldSeed: number | null;
   readonly stats: EffectiveStats | null;
   readonly level: number;
   readonly experience: number;
@@ -243,6 +250,7 @@ export class GameClient {
       entities: this.world.all(),
       self: this.prediction?.position ?? null,
       selfEntityId: this.welcome?.entityId ?? -1,
+      worldSeed: this.welcome?.worldSeed ?? null,
       stats: this.stats,
       level: this.level,
       experience: this.experience,
@@ -274,6 +282,7 @@ export class GameClient {
           chunkSize: message.chunkSize,
           interestRadius: message.interestRadius,
           correctionThreshold: message.correctionThreshold,
+          worldSeed: message.worldSeed,
         };
         this.connected = true;
         this.resolveWelcome?.(this.welcome);

@@ -81,6 +81,7 @@ import {
 } from './sim/world.js';
 import { NullTransport, type Channel, type ServerTransport } from './net/transport.js';
 import { ChunkManager } from './world/chunk-manager.js';
+import type { BuiltWorld } from './world/build.js';
 import { FLAT_TERRAIN, type TerrainSampler } from './world/terrain.js';
 import { ZoneManager } from './world/zone-manager.js';
 
@@ -102,6 +103,17 @@ export interface GameServerOptions {
   readonly terrain?: TerrainSampler;
   readonly world?: WorldColliders;
   readonly tickMs?: number;
+  /**
+   * The generated world this server runs (spec 063). Supplies the seed, the
+   * height sampler and the colliders *together*, so a caller cannot wire those
+   * three to three different worlds -- which is precisely the bug that shipped
+   * when they were three separate options: real terrain, and an empty
+   * vegetation list beside it.
+   *
+   * The granular options above stay for tests, which mostly want a flat plane
+   * and nothing to walk into.
+   */
+  readonly built?: BuiltWorld;
 }
 
 interface Connection {
@@ -129,6 +141,8 @@ export class GameServer implements AdminHost {
   private readonly zones: ZoneManager;
   private readonly terrain: TerrainSampler;
   private readonly colliders: WorldColliders;
+  /** Announced in the welcome so a client can build the same ground (spec 063). */
+  private readonly worldSeed: number;
   private readonly store: DataStore;
   private readonly config = new LiveConfigStore();
   private readonly chunks: ChunkManager;
@@ -142,15 +156,16 @@ export class GameServer implements AdminHost {
 
   constructor(options: GameServerOptions = {}) {
     this.zones = options.zones ?? new ZoneManager();
-    this.terrain = options.terrain ?? FLAT_TERRAIN;
-    this.colliders = options.world ?? DEFAULT_WORLD;
+    this.terrain = options.terrain ?? options.built?.sampler ?? FLAT_TERRAIN;
+    this.colliders = options.world ?? options.built?.colliders ?? DEFAULT_WORLD;
+    this.worldSeed = options.seed ?? options.built?.seed ?? 1;
     this.store = options.store ?? new MemoryDataStore();
     this.chunks = new ChunkManager(CHUNK_SIZE, INTEREST_CHUNK_RADIUS);
     this.players = new PlayerManager(this.store, this.zones);
     this.audit = new AuditLog(this.store);
     this.transport = options.transport ?? new NullTransport();
     this.admin = new AdminRouter(this, this.audit, options.adminVerifier ?? DENY_ALL_ADMIN);
-    this.state = createWorldState(options.seed ?? 1);
+    this.state = createWorldState(this.worldSeed);
     this.loop = new TickLoop(() => this.tick(), {
       tickMs: options.tickMs ?? SERVER_TICK_MS,
       onLag: (dropped) => {
@@ -406,6 +421,7 @@ export class GameServer implements AdminHost {
       chunkSize: CHUNK_SIZE,
       interestRadius: INTEREST_CHUNK_RADIUS,
       correctionThreshold: this.config.get().correctionThreshold,
+      worldSeed: this.worldSeed,
     });
     this.sendStats(connection);
   }
