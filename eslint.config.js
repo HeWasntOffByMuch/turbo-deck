@@ -34,14 +34,17 @@ const DETERMINISTIC_CORE = [
  * Subtrees that sit under `src/render/` for organisational reasons but carry the
  * same guarantee, because the whole point of them is that they run and are
  * tested headlessly: the cloth solver (spec 046), the critter data (spec 055),
- * the pure half of the map editor (specs 049-052), and the pure half of the
- * world view (spec 063) -- interpolation, input intent, cast bars and which rig
- * draws what are all answerable in Node, and only `scene.ts`, `hud.ts` and
- * `view.ts` need a canvas.
+ * the pure half of the map editor (specs 049-052), the pure half of the world
+ * view (spec 063) -- interpolation, input intent, cast bars and which rig draws
+ * what are all answerable in Node, and only `scene.ts`, `hud.ts` and `view.ts`
+ * need a canvas -- and the sandbox mover (spec 066), which walks the tuning
+ * viewports' unit around and must replay identically to be worth testing.
  */
 const PURE_RENDER = [
   'src/render/cloth/**/*.ts',
   'src/render/critters/**/*.ts',
+  'src/render/iso3d/sandbox-mover.ts',
+  'src/render/iso3d/sandbox-mover.test.ts',
   'src/render/iso3d/world/appearance.ts',
   'src/render/iso3d/world/cast.ts',
   'src/render/iso3d/world/intent.ts',
