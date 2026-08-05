@@ -112,7 +112,8 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  map-world.ts loads one back as array-backed terrain.
 src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
                  collision and pathfinding helpers the server collides against
-src/render/      the client: a tab shell over the play view and the map editor
+src/render/      the client: a tab shell over the play view, the two tuning
+                 sandboxes and the map editor
 src/render/cloth/ pure cloth simulation for the robed character (spec 046) --
                  solver, wind, patterns, colliders and figure metrics. No
                  three.js and no DOM, so it runs and is tested headlessly.
@@ -150,9 +151,13 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  are pure and tested headlessly; scene.ts, hud.ts and
                  view.ts are the three.js/DOM half. `npx tsx scripts/preview-world.ts`
                  photographs the real page into .claude/screenshots/world-*.png.
-src/render/play/ the flat debug tab (spec 062, kept by 063): a plain top-down canvas
-                 over the same GameClient, with no terrain, rigs or post filter in
-                 the way -- the quickest way to tell a wire bug from a scene bug
+src/render/iso3d/movement.ts, debug-view.ts  the two tuning sandboxes (specs
+                 032/033/035/046, back since 066): one unit, no game, so a gait,
+                 a cloth solve or a turn rate can be watched in isolation. The
+                 rig debugger adds a top+side split, slow-mo/single-step and the
+                 joint and cloth overlays. Both drive sandbox-mover.ts -- a pure,
+                 headlessly tested position/heading/move-order driver, NOT a
+                 second sim -- through sandbox-input.ts, and share buildPanel().
 scripts/         standalone scripts (e.g. the balance harness), run via tsx
 .claude/         harness config: agents/ (the delegation policy, see below),
                  hooks/session-start.sh (branch-base check + dependency install),

@@ -1,24 +1,26 @@
 /**
- * Entry point and tab shell (specs 031, 062, 063).
+ * Entry point and tab shell (specs 031, 062, 063, 066).
  *
- * The combat, movement and rig-debug tabs went with the card game they existed
- * to exercise. Since spec 063 the first tab is the isometric world again --
- * terrain, props, rigs and shadows -- but reading a replicated server view
- * rather than a sim in this tab.
+ * Four tabs, and only the first of them is the game: since spec 063 it is the
+ * isometric world -- terrain, props, rigs and shadows -- reading a replicated
+ * server view rather than simulating anything itself.
  *
- * The flat canvas 062 stood up as a stopgap stays, as the second tab. It draws
- * the same `GameClient` with no art in the way, which makes it the fastest way
- * to tell a wire bug from a rendering one. Two *views* over one client breaks
- * nothing; it was two *sims* that CLAUDE.md's one rule was ever about.
+ * The other three are workshops. The movement sandbox and the rig debugger
+ * (specs 032/035, back since 066) drive one unit over the sandbox mover so a
+ * gait, a cloth solve or a turn rate can be watched and tuned with no game in
+ * the way; the map editor authors the world document. The flat debug canvas 062
+ * stood up as a stopgap left with 066 -- the isometric view it stood in for came
+ * back a spec earlier.
  *
  * The shell makes no game decisions. It mounts a view, starts it when shown and
  * stops it when hidden; every rule lives on the server and every pixel is a
  * `ViewHandle`'s business.
  */
 
-import { mountPlay } from '../play/view.js';
 import { mountEditor } from './editor/view.js';
 import { mountWorld } from './world/view.js';
+import { mountMovement } from './movement.js';
+import { mountDebug } from './debug-view.js';
 import type { ViewHandle } from './view-handle.js';
 
 interface Tab {
@@ -39,7 +41,8 @@ function main(): void {
 
   const tabs: readonly Tab[] = [
     { label: 'Play', mount: mountWorld, fullscreen: true },
-    { label: 'Flat (debug)', mount: mountPlay, fullscreen: true },
+    { label: 'Movement sandbox', mount: mountMovement },
+    { label: 'Rig debug', mount: mountDebug },
     { label: 'Map editor', mount: mountEditor, fullscreen: true },
   ];
 
