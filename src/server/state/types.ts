@@ -121,8 +121,6 @@ export interface EffectiveStats {
   readonly armor: number;
   /** Multiplier on ability damage. */
   readonly spellPower: number;
-  /** Fraction of incoming knockback removed, 0..1. */
-  readonly knockbackResist: number;
   /** Chance a hit crits, 0..1. Rolled server-side against the sim's seeded PRNG. */
   readonly critChance: number;
   /** Pool abilities are paid out of (spec 062). */

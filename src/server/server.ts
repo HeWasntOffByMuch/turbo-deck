@@ -632,10 +632,6 @@ export class GameServer implements AdminHost {
         health: session.stats.maxHealth,
         activity: ActivityValue.Idle,
         activityUntilTick: 0,
-        knockbackX: 0,
-        knockbackY: 0,
-        knockbackUntilTick: 0,
-        hitstopUntilTick: 0,
         targetId: null,
         // Cleared, or the first input after respawn is measured against a claim
         // from wherever they died and reads as crossing the map in one tick.
@@ -677,10 +673,6 @@ export class GameServer implements AdminHost {
             targetId: event.targetId,
             damage: event.damage,
             targetHealth: event.targetHealth,
-            hitstopTicks: event.hitstopTicks,
-            knockbackX: event.knockbackX,
-            knockbackY: event.knockbackY,
-            knockbackTicks: event.knockbackTicks,
             flags:
               (event.killed ? 1 : 0) | (event.critical ? 2 : 0) | (event.blocked ? 4 : 0),
           };
@@ -892,9 +884,6 @@ export class GameServer implements AdminHost {
       ...entity,
       position,
       zoneId: this.zones.zoneIdAt(x, y),
-      knockbackX: 0,
-      knockbackY: 0,
-      knockbackUntilTick: 0,
     });
     this.chunks.place(entity.id, x, y, true);
     this.players.syncFromEntity(playerId, position, entity.facing, entity.health);

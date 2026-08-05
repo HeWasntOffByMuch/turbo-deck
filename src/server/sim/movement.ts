@@ -42,13 +42,7 @@ export interface MovementOutcome {
   readonly facing: number;
   /** A {@link CorrectionReason}, or null when the client's prediction was fine. */
   readonly correctionReason: number | null;
-  /** Residual knockback after this tick's decay. */
-  readonly knockbackX: number;
-  readonly knockbackY: number;
 }
-
-/** Knockback bleeds off by this fraction per tick, so it eases rather than stops dead. */
-const KNOCKBACK_DECAY = 0.6;
 
 const TAU = Math.PI * 2;
 const DEG = Math.PI / 180;
@@ -122,26 +116,16 @@ export function isWalkable(
 export function resolveMovement(
   entity: ServerEntity,
   input: ServerInput | null,
-  tick: number,
   context: MovementContext,
 ): MovementOutcome {
   const { world, terrain, config } = context;
   const from: Vec2 = { x: entity.position.x, y: entity.position.y };
 
-  // Hitstop freezes the body outright; knockback still carries it, because
-  // being frozen in place mid-knockback reads as the hit not landing.
-  const frozen = tick < entity.hitstopUntilTick;
-  const knocked = tick < entity.knockbackUntilTick;
-
   let dx = 0;
   let dy = 0;
-  if (knocked) {
-    dx += entity.knockbackX;
-    dy += entity.knockbackY;
-  }
 
   const maxStep = entity.stats.moveSpeed / SERVER_TICK_RATE;
-  if (!frozen && !knocked && input) {
+  if (input) {
     const direction = clampDirection(input.moveX, input.moveY);
     dx += direction.x * maxStep;
     dy += direction.y * maxStep;
@@ -175,10 +159,7 @@ export function resolveMovement(
     z: terrain.heightAt(settled.x, settled.y),
   };
 
-  const facing = resolveFacing(entity, input, frozen);
-
-  const nextKnockbackX = knocked ? entity.knockbackX * KNOCKBACK_DECAY : 0;
-  const nextKnockbackY = knocked ? entity.knockbackY * KNOCKBACK_DECAY : 0;
+  const facing = resolveFacing(entity, input);
 
   return {
     position,
@@ -187,8 +168,6 @@ export function resolveMovement(
       input && input.hasPrediction
         ? correctionFor(input, entity.claimedPosition, position, maxStep, blockedByTerrain, config)
         : null,
-    knockbackX: nextKnockbackX,
-    knockbackY: nextKnockbackY,
   };
 }
 
@@ -200,13 +179,8 @@ export function resolveMovement(
  * snapping to it the instant the key went down. That turn is visible and it is
  * the readable half of committing -- and it changes no outcome, because a melee
  * cone is measured from `cast.targetX/Y`, not from where the body is looking.
- *
- * Frozen bodies do not turn. Being stunned and still able to pivot on the spot
- * is how a hitstop stops reading as a hit.
  */
-function resolveFacing(entity: ServerEntity, input: ServerInput | null, frozen: boolean): number {
-  if (frozen) return entity.facing;
-
+function resolveFacing(entity: ServerEntity, input: ServerInput | null): number {
   const cast = entity.cast;
   const wanted = cast
     ? Math.atan2(cast.targetY - entity.position.y, cast.targetX - entity.position.x)

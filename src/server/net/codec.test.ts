@@ -35,7 +35,6 @@ const STATS: EffectiveStats = {
   attackCooldownTicks: 7,
   armor: 0.125,
   spellPower: 1.5,
-  knockbackResist: 0.25,
   critChance: 0.0625,
   maxResource: 30,
   // f32-exact, so the round-trip is testing the codec and not float precision.
@@ -163,10 +162,6 @@ describe('game message round-trip', () => {
       targetId: 2,
       damage: 12.5,
       targetHealth: 27.5,
-      hitstopTicks: 4,
-      knockbackX: -6.5,
-      knockbackY: 3.25,
-      knockbackTicks: 3,
       flags: 3,
     },
     {

@@ -62,8 +62,8 @@ const DEFINITIONS: readonly SkillDefinition[] = [
     tier: 1,
     maxLevel: 5,
     requires: [],
-    perLevel: { maxHealth: 12, knockbackResist: 0.02 },
-    description: 'Flat health and a firmer footing against knockback.',
+    perLevel: { maxHealth: 12, armor: 0.01 },
+    description: 'Flat health, and enough plate to blunt a blow.',
   },
   {
     id: 'might.heavyBlows',

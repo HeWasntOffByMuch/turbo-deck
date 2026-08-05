@@ -57,8 +57,10 @@ export const INTEREST_CHUNK_RADIUS = 3;
  *
  * 2: the welcome carries the world seed (spec 063), so a client can build the
  * ground and the trees the server is colliding against.
+ * 3: knockback and hitstop left the sim, and with them four fields of the combat
+ * result and one derived stat (spec 065).
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /** How long a dead player lies there before the server puts them back (spec 057). */
 export const RESPAWN_DELAY_TICKS = SERVER_TICK_RATE * 3;

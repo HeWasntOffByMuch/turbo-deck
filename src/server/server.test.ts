@@ -340,7 +340,7 @@ describe('inventory and skills are server-side only', () => {
 });
 
 describe('combat over the wire', () => {
-  it('delivers a combat result carrying its own hitstop and knockback', async () => {
+  it('delivers a combat result with the damage and the health left', async () => {
     const game = server();
     const client = new Client(game);
     await client.hello('alice');
@@ -366,8 +366,7 @@ describe('combat over the wire', () => {
     expect(result).toBeDefined();
     expect(result?.attackerId).toBe(entityId);
     expect(result?.damage).toBeGreaterThan(0);
-    expect(result?.hitstopTicks).toBeGreaterThanOrEqual(1);
-    expect(result?.knockbackX).toBeGreaterThan(0);
+    expect(result?.targetHealth).toBeGreaterThanOrEqual(0);
   });
 });
 

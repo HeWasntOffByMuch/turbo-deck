@@ -48,10 +48,6 @@ export const HP_PER_VITALITY = 14;
 export const HP_PER_LEVEL = 8;
 /** Attack damage per point of strength. */
 export const DAMAGE_PER_STRENGTH = 0.6;
-/** Knockback resistance per point of vitality. */
-export const KNOCKBACK_RESIST_PER_VITALITY = 0.01;
-/** Ceiling on knockback resistance, so nothing is ever completely immovable. */
-export const MAX_KNOCKBACK_RESIST = 0.9;
 /** Ceiling on the attack-speed bonus from dexterity, so cooldowns stay meaningful. */
 export const MAX_ATTACK_SPEED_BONUS = 0.6;
 /** Critical-hit chance per point of dexterity, and its ceiling. */
@@ -151,12 +147,6 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
     1 + SPELL_DAMAGE_PER_INTELLIGENCE * intelligence + bonus.spellPower,
   );
 
-  const knockbackResist = clamp(
-    KNOCKBACK_RESIST_PER_VITALITY * vitality + bonus.knockbackResist,
-    0,
-    MAX_KNOCKBACK_RESIST,
-  );
-
   const critChance = clamp(CRIT_PER_DEXTERITY * dexterity + bonus.critChance, 0, MAX_CRIT_CHANCE);
 
   const maxResource = Math.max(
@@ -177,7 +167,6 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
     attackCooldownTicks,
     armor,
     spellPower,
-    knockbackResist,
     critChance,
     maxResource,
     resourceRegen,

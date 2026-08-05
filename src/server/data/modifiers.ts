@@ -23,7 +23,6 @@ export interface StatModifier {
   readonly attackCooldownTicks?: number;
   readonly armor?: number;
   readonly spellPower?: number;
-  readonly knockbackResist?: number;
   readonly critChance?: number;
   readonly maxResource?: number;
   readonly resourceRegen?: number;
@@ -53,7 +52,6 @@ export function sumModifiers(modifiers: readonly StatModifier[]): Readonly<Modif
     attackCooldownTicks: 0,
     armor: 0,
     spellPower: 0,
-    knockbackResist: 0,
     critChance: 0,
     maxResource: 0,
     resourceRegen: 0,

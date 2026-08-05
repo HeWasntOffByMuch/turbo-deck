@@ -74,10 +74,9 @@ export function createFlatPredictor(speed: number, tickRate: number): PredictSte
  *
  * This runs the same three steps the server's `resolveMovement` does, against
  * the same colliders and the same heightfield, from `buildWorld`. It is not
- * exact -- it does not know about knockback, hitstop or another body pressing on
- * it, all of which are the server's alone -- but it agrees everywhere terrain
- * and vegetation are the only thing in the way, which is where the corrections
- * were coming from.
+ * exact -- it does not know about another body pressing on it, which is the
+ * server's alone -- but it agrees everywhere terrain and vegetation are the only
+ * thing in the way, which is where the corrections were coming from.
  */
 export function createWorldPredictor(options: {
   readonly world: WorldColliders;

@@ -209,7 +209,7 @@ describe('loopback session', () => {
     expect(test.server.playerManager.get('alice')?.record.skills).toEqual([]);
   });
 
-  it('surfaces combat results with their hitstop and knockback', async () => {
+  it('surfaces combat results, and moves nobody (spec 065)', async () => {
     const test = harness();
     const client = await connect(test, 'alice');
     await advance(test, 1);
@@ -217,7 +217,12 @@ describe('loopback session', () => {
     test.server.spawnEntities('grazer', (self?.position.x ?? 0) + 40, self?.position.y ?? 0, 1);
 
     const results: number[] = [];
-    client.onCombatResult((result) => results.push(result.hitstopTicks));
+    client.onCombatResult((result) => results.push(result.damage));
+    // Read the id server-side: the spawn has not been broadcast yet, so the
+    // replica does not know about it at this point in the tick.
+    const targetId = [...test.server.world.entities.values()].find(
+      (entity) => entity.kind === EntityKindValue.Monster,
+    )?.id;
 
     // Commit to the basic melee, then run out its wind-up.
     client.useAbility('melee.slash', (self?.position.x ?? 0) + 40, self?.position.y ?? 0);
@@ -228,7 +233,14 @@ describe('loopback session', () => {
     }
 
     expect(results.length).toBeGreaterThan(0);
-    expect(results[0]).toBeGreaterThanOrEqual(1);
+    expect(results[0]).toBeGreaterThan(0);
+
+    // Nothing was displaced. A grazer is passive and never moves itself, so any
+    // travel here would be knockback coming back.
+    const struck = test.server.world.entities.get(targetId ?? -1);
+    expect(struck).toBeDefined();
+    expect(struck?.position.x).toBeCloseTo((self?.position.x ?? 0) + 40, 6);
+    expect(struck?.position.y).toBeCloseTo(self?.position.y ?? 0, 6);
   });
 
   it('refuses admin messages -- an in-tab server has no admin channel', async () => {

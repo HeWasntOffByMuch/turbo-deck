@@ -26,7 +26,7 @@ import {
   type AbilityDefinition,
 } from '../data/abilities.js';
 import { applyArmor } from '../player/stats.js';
-import { hitstopFor, isInCone, KNOCKBACK_IMPULSE, KNOCKBACK_TICKS } from './combat.js';
+import { isInCone } from './combat.js';
 import {
   ActivityValue,
   CastEndReason,
@@ -45,7 +45,6 @@ export type CastRejection =
   | 'onCooldown'
   | 'notEnoughResource'
   | 'dead'
-  | 'stunned'
   | 'outOfRange';
 
 export interface CastAttempt {
@@ -75,7 +74,6 @@ export function startCast(
   const ability = abilityById(attempt.abilityId);
   if (!ability) return { ok: false, reason: 'unknownAbility' };
   if (entity.health <= 0) return { ok: false, reason: 'dead' };
-  if (tick < entity.hitstopUntilTick) return { ok: false, reason: 'stunned' };
   if (entity.cast !== null) return { ok: false, reason: 'alreadyCasting' };
 
   const readyAt = entity.cooldowns[ability.id] ?? 0;
@@ -349,11 +347,11 @@ function landAbility(
 ): LandResult {
   switch (ability.kind) {
     case 'melee':
-      return landCone(ability, caster, cast, candidates, tick, rng);
+      return landCone(ability, caster, cast, candidates, rng);
     case 'channel':
-      return landCone(ability, caster, cast, candidates, tick, rng);
+      return landCone(ability, caster, cast, candidates, rng);
     case 'ground':
-      return landBlast(ability, caster, cast.targetX, cast.targetY, candidates, tick, rng);
+      return landBlast(ability, caster, cast.targetX, cast.targetY, candidates, rng);
     case 'self':
       return landSelf(ability, caster, rng);
     case 'projectile':
@@ -366,7 +364,6 @@ function landCone(
   caster: ServerEntity,
   cast: CastState,
   candidates: readonly ServerEntity[],
-  tick: number,
   rng: Rng,
 ): LandResult {
   const aimX = cast.targetX - caster.position.x;
@@ -386,7 +383,7 @@ function landCone(
       continue;
     }
     connected = true;
-    const hit = applyDamage(ability, caster, target, tick, currentRng, dirX, dirY);
+    const hit = applyDamage(ability, caster, target, currentRng);
     currentRng = hit.rng;
     updated.set(target.id, hit.target);
     events.push(...hit.events);
@@ -402,7 +399,6 @@ function landBlast(
   x: number,
   y: number,
   candidates: readonly ServerEntity[],
-  tick: number,
   rng: Rng,
 ): LandResult {
   const radius = ability.radius ?? 100;
@@ -417,11 +413,7 @@ function landBlast(
     const dx = target.position.x - x;
     const dy = target.position.y - y;
     if (Math.hypot(dx, dy) > radius + target.radius) continue;
-    const length = Math.hypot(dx, dy);
-    // Blown outward from the blast's centre, not from the caster.
-    const dirX = length > 1e-6 ? dx / length : 1;
-    const dirY = length > 1e-6 ? dy / length : 0;
-    const hit = applyDamage(ability, caster, target, tick, currentRng, dirX, dirY);
+    const hit = applyDamage(ability, caster, target, currentRng);
     currentRng = hit.rng;
     updated.set(target.id, hit.target);
     events.push(...hit.events);
@@ -454,10 +446,6 @@ function landSelf(ability: AbilityDefinition, caster: ServerEntity, rng: Rng): L
         targetId: caster.id,
         damage: -(healed - caster.health),
         targetHealth: healed,
-        hitstopTicks: 0,
-        knockbackX: 0,
-        knockbackY: 0,
-        knockbackTicks: 0,
         killed: false,
         critical: false,
         blocked: false,
@@ -515,15 +503,12 @@ interface DamageResult {
   readonly rng: Rng;
 }
 
-/** One application of an ability's damage, with its knockback and hitstop. */
+/** One application of an ability's damage. */
 export function applyDamage(
   ability: AbilityDefinition,
   attacker: ServerEntity,
   target: ServerEntity,
-  tick: number,
   rng: Rng,
-  dirX: number,
-  dirY: number,
 ): DamageResult {
   const [roll, nextRng] = rng.nextInt(0, 9999);
   const critical = roll / 10000 < attacker.stats.critChance;
@@ -535,9 +520,6 @@ export function applyDamage(
   const health = Math.max(0, target.health - damage);
   const killed = health <= 0;
 
-  const impulse = KNOCKBACK_IMPULSE * (1 - target.stats.knockbackResist);
-  const hitstopTicks = hitstopFor(damage, target.stats.maxHealth);
-
   const events: ServerSimEvent[] = [
     {
       kind: 'hit',
@@ -545,10 +527,6 @@ export function applyDamage(
       targetId: target.id,
       damage,
       targetHealth: health,
-      hitstopTicks,
-      knockbackX: dirX * impulse,
-      knockbackY: dirY * impulse,
-      knockbackTicks: KNOCKBACK_TICKS,
       killed,
       critical,
       blocked: target.stats.armor > 0 && damage < raw,
@@ -562,15 +540,12 @@ export function applyDamage(
     target: {
       ...target,
       health,
-      knockbackX: dirX * impulse,
-      knockbackY: dirY * impulse,
-      knockbackUntilTick: tick + KNOCKBACK_TICKS,
-      hitstopUntilTick: tick + hitstopTicks,
-      activity: killed ? ActivityValue.Dead : ActivityValue.Stunned,
-      activityUntilTick: tick + hitstopTicks,
+      activity: killed ? ActivityValue.Dead : target.activity,
       targetId: target.targetId ?? attacker.id,
-      // Being hit hard enough to flinch knocks you out of what you were doing.
-      cast: hitstopTicks > 0 ? null : target.cast,
+      // Being hit knocks you out of what you were doing. Spec 065 took the
+      // hitstop freeze this used to be keyed on; interruption is its own
+      // mechanic and survives on its own terms.
+      cast: null,
     },
   };
 }

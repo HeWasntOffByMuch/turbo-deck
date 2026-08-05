@@ -54,7 +54,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     name: 'Oak Shield',
     slot: 'offHand',
     levelRequirement: 2,
-    modifiers: { armor: 0.06, knockbackResist: 0.15, moveSpeed: -6 },
+    modifiers: { armor: 0.06, moveSpeed: -6 },
   },
   {
     id: 'focus.quartz',

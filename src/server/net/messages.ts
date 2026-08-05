@@ -246,9 +246,11 @@ export interface CorrectionMessage {
 }
 
 /**
- * The authoritative outcome of one hit. Carries the presentation data --
- * hitstop and knockback -- so the client renders feedback by playing it back,
- * never by recomputing it and hoping the numbers match.
+ * The authoritative outcome of one hit: what was taken off, and what is left.
+ *
+ * Spec 065 removed the presentation fields this used to carry as well
+ * (`hitstopTicks`, `knockbackX/Y`, `knockbackTicks`) along with the mechanics
+ * behind them. A client plays back the damage; nothing is displaced.
  */
 export interface CombatResultMessage {
   readonly type: typeof ServerMessageType.CombatResult;
@@ -256,11 +258,6 @@ export interface CombatResultMessage {
   readonly targetId: number;
   readonly damage: number;
   readonly targetHealth: number;
-  /** Frames of freeze on impact, in server ticks. */
-  readonly hitstopTicks: number;
-  readonly knockbackX: number;
-  readonly knockbackY: number;
-  readonly knockbackTicks: number;
   /** bit 0 = killing blow, bit 1 = critical, bit 2 = blocked. */
   readonly flags: number;
 }
@@ -440,7 +437,6 @@ function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
     .u16(stats.attackCooldownTicks)
     .f32(stats.armor)
     .f32(stats.spellPower)
-    .f32(stats.knockbackResist)
     .f32(stats.critChance)
     .f32(stats.maxResource)
     .f32(stats.resourceRegen);
@@ -456,7 +452,6 @@ function readStats(reader: BufferReader): EffectiveStats {
     attackCooldownTicks: reader.u16(),
     armor: reader.f32(),
     spellPower: reader.f32(),
-    knockbackResist: reader.f32(),
     critChance: reader.f32(),
     maxResource: reader.f32(),
     resourceRegen: reader.f32(),
@@ -500,10 +495,6 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
         .varuint(message.targetId)
         .f32(message.damage)
         .f32(message.targetHealth)
-        .u8(message.hitstopTicks)
-        .f32(message.knockbackX)
-        .f32(message.knockbackY)
-        .u8(message.knockbackTicks)
         .u8(message.flags);
       break;
     case ServerMessageType.Stats:
@@ -598,10 +589,6 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         targetId: reader.varuint(),
         damage: reader.f32(),
         targetHealth: reader.f32(),
-        hitstopTicks: reader.u8(),
-        knockbackX: reader.f32(),
-        knockbackY: reader.f32(),
-        knockbackTicks: reader.u8(),
         flags: reader.u8(),
       };
     case ServerMessageType.Stats:

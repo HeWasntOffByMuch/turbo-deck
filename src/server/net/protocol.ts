@@ -159,8 +159,6 @@ export const CorrectionReason = {
   Collision: 2,
   /** An admin moved them. */
   Teleport: 3,
-  /** Knocked back by a combat result. */
-  Knockback: 4,
 } as const;
 
 export const ErrorCode = {

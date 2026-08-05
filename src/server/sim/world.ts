@@ -10,7 +10,7 @@
  * Order within a tick is fixed and documented, because "which entity moved
  * first" is the difference between a reproducible sim and a coin flip:
  *
- *  1. expire timers (hitstop, knockback, activity, corpses)
+ *  1. expire timers (activity, corpses)
  *  2. movement, in entity-creation order: players from their input, monsters
  *     from their AI
  *  3. attacks, in entity-id order
@@ -81,7 +81,6 @@ function blankEntity(id: number): ServerEntity {
       attackCooldownTicks: 1,
       armor: 0,
       spellPower: 1,
-      knockbackResist: 1,
       critChance: 0,
       maxResource: 0,
       resourceRegen: 0,
@@ -89,10 +88,6 @@ function blankEntity(id: number): ServerEntity {
     activity: ActivityValue.Idle,
     activityUntilTick: 0,
     attackReadyTick: 0,
-    knockbackX: 0,
-    knockbackY: 0,
-    knockbackUntilTick: 0,
-    hitstopUntilTick: 0,
     radius: 4,
     targetId: null,
     claimedPosition: null,
@@ -156,10 +151,6 @@ export function spawnEntity(
     activity: ActivityValue.Idle,
     activityUntilTick: 0,
     attackReadyTick: 0,
-    knockbackX: 0,
-    knockbackY: 0,
-    knockbackUntilTick: 0,
-    hitstopUntilTick: 0,
     radius: spec.radius,
     targetId: null,
     claimedPosition: null,
@@ -260,7 +251,7 @@ export function step(
         : rawIntent;
     if (intent && current.kind !== EntityKindValue.Player) monsterIntentCache.set(current.id, intent);
 
-    const outcome = resolveMovement(current, intent, tick, movement);
+    const outcome = resolveMovement(current, intent, movement);
     const moved =
       outcome.position.x !== current.position.x || outcome.position.y !== current.position.y;
 
@@ -268,8 +259,6 @@ export function step(
       ...current,
       position: outcome.position,
       facing: outcome.facing,
-      knockbackX: outcome.knockbackX,
-      knockbackY: outcome.knockbackY,
       zoneId: context.zones.zoneIdAt(outcome.position.x, outcome.position.y),
       // Remember what this client claimed, so the next input's speed is measured
       // against its own previous claim rather than against our position.
@@ -435,32 +424,13 @@ export function step(
         const dy = target.position.y - moved.position.y;
         const length = Math.hypot(dx, dy);
         if (length > ability.radius + target.radius) continue;
-        const hit = applyDamage(
-          ability,
-          owner,
-          target,
-          tick,
-          rng,
-          length > 1e-6 ? dx / length : 1,
-          length > 1e-6 ? dy / length : 0,
-        );
+        const hit = applyDamage(ability, owner, target, rng);
         rng = hit.rng;
         working.set(target.id, hit.target);
         events.push(...hit.events);
       }
     } else if (struck) {
-      const dx = struck.position.x - moved.position.x;
-      const dy = struck.position.y - moved.position.y;
-      const length = Math.hypot(dx, dy);
-      const hit = applyDamage(
-        ability,
-        owner,
-        struck,
-        tick,
-        rng,
-        length > 1e-6 ? dx / length : dirX,
-        length > 1e-6 ? dy / length : dirY,
-      );
+      const hit = applyDamage(ability, owner, struck, rng);
       rng = hit.rng;
       working.set(struck.id, hit.target);
       events.push(...hit.events);
@@ -664,10 +634,6 @@ function runSpawner(
       activity: ActivityValue.Idle,
       activityUntilTick: 0,
       attackReadyTick: 0,
-      knockbackX: 0,
-      knockbackY: 0,
-      knockbackUntilTick: 0,
-      hitstopUntilTick: 0,
       radius: definition.radius,
       targetId: null,
       claimedPosition: null,

@@ -46,7 +46,7 @@ export const CastPhase = {
 export const CastEndReason = {
   Released: 0,
   Cancelled: 1,
-  /** Knocked out of it -- hitstop, death, or a forced move. */
+  /** Knocked out of it -- death, or a forced move. */
   Interrupted: 2,
 } as const;
 
@@ -108,12 +108,6 @@ export interface ServerEntity {
   readonly activityUntilTick: number;
   /** Earliest tick this entity may attack again. */
   readonly attackReadyTick: number;
-  /** Residual knockback velocity, in world units per tick. */
-  readonly knockbackX: number;
-  readonly knockbackY: number;
-  readonly knockbackUntilTick: number;
-  /** Frozen on impact; inputs are ignored until this tick. */
-  readonly hitstopUntilTick: number;
   /** Body radius for collision. */
   readonly radius: number;
   /** Homing target for a monster; null when idle or player-controlled. */
@@ -193,10 +187,6 @@ export type ServerSimEvent =
       readonly targetId: number;
       readonly damage: number;
       readonly targetHealth: number;
-      readonly hitstopTicks: number;
-      readonly knockbackX: number;
-      readonly knockbackY: number;
-      readonly knockbackTicks: number;
       readonly killed: boolean;
       readonly critical: boolean;
       readonly blocked: boolean;

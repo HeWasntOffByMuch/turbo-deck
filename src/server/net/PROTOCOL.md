@@ -135,16 +135,19 @@ Sent only when the client's prediction is wrong enough to matter. The client
 should snap to this position and replay every input after `inputSeq`.
 
 `reason`: `0` divergence past the threshold, `1` speed violation, `2` collision
-or terrain, `3` admin teleport, `4` knockback.
+or terrain, `3` admin teleport.
 
 ### `0x43 CombatResult`
 `varuint attackerId` · `varuint targetId` · `f32 damage` · `f32 targetHealth` ·
-`u8 hitstopTicks` · `f32 knockbackX` · `f32 knockbackY` · `u8 knockbackTicks` ·
 `u8 flags`
 
-The authoritative outcome of one hit, carrying its own presentation data so the
-client renders feedback by playing it back rather than recomputing it — which is
-what keeps two clients watching the same fight agreeing about how hard it looked.
+The authoritative outcome of one hit: what was taken off, and what is left. The
+client plays the numbers back rather than recomputing them, which is what keeps
+two clients watching the same fight agreeing about it.
+
+Protocol 3 (spec 065) removed `hitstopTicks`, `knockbackX`, `knockbackY` and
+`knockbackTicks` along with the mechanics behind them. Nothing is displaced by a
+hit, so nothing about displacement is described here.
 
 `flags` bits: `1` killing blow, `2` critical, `4` mitigated by armour.
 
@@ -155,7 +158,7 @@ Sent to every connection whose interest set contains the attacker or the target.
 `varuint unspentSkillPoints` · then the effective stat block:
 `f32 maxHealth` · `f32 moveSpeed` · `f32 turnRate` · `f32 attackDamage` ·
 `f32 attackRange` · `u16 attackCooldownTicks` · `f32 armor` · `f32 spellPower` ·
-`f32 knockbackResist` · `f32 critChance`
+`f32 critChance`
 
 Every one of these is derived server-side from base stats, skill levels and
 equipped item ids. None is ever persisted, and none is ever accepted from a
