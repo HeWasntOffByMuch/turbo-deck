@@ -1,0 +1,114 @@
+/**
+ * The world as a client knows it (spec 057).
+ *
+ * The mirror image of `net/delta.ts`: that decides what to say, this applies
+ * what was said. Between them they are the only two places that know the delta
+ * encoding, and they are written to be read side by side.
+ *
+ * A replica holds exactly the fields the protocol carries and nothing derived.
+ * Anything a renderer wants that is not here -- an interpolated position, a
+ * bobbing animation phase, a health bar's easing -- is presentation and belongs
+ * in the renderer, which is the same boundary CLAUDE.md draws between the sim
+ * and the view. Keeping the replica this thin is what stops the client growing
+ * a second opinion about game state.
+ */
+
+import type { EntityDelta } from '../net/messages.js';
+import { EntityField } from '../net/protocol.js';
+
+export interface ReplicatedEntity {
+  readonly id: number;
+  readonly kind: number;
+  readonly typeId: string;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly facing: number;
+  readonly health: number;
+  readonly maxHealth: number;
+  readonly activity: number;
+  readonly activityUntilTick: number;
+  readonly level: number;
+}
+
+export class ReplicatedWorld {
+  private readonly entities = new Map<number, ReplicatedEntity>();
+  private lastTick = 0;
+
+  get tick(): number {
+    return this.lastTick;
+  }
+
+  get size(): number {
+    return this.entities.size;
+  }
+
+  get(id: number): ReplicatedEntity | null {
+    return this.entities.get(id) ?? null;
+  }
+
+  /** Insertion-ordered, matching the order the server sent them in. */
+  all(): readonly ReplicatedEntity[] {
+    return [...this.entities.values()];
+  }
+
+  /**
+   * Applies one delta. An upsert without the Spawn bit for an entity we have
+   * never heard of is dropped rather than half-built: the server only omits
+   * identity for something it believes we already have, so receiving one is a
+   * desync, and inventing a placeholder would hide it.
+   */
+  apply(tick: number, removed: readonly number[], upserts: readonly EntityDelta[]): void {
+    this.lastTick = tick;
+    for (const id of removed) this.entities.delete(id);
+
+    for (const record of upserts) {
+      const existing = this.entities.get(record.id);
+      if (!existing) {
+        if ((record.fields & EntityField.Spawn) === 0) continue;
+        this.entities.set(record.id, {
+          id: record.id,
+          kind: record.kind ?? 0,
+          typeId: record.typeId ?? '',
+          x: record.position?.x ?? 0,
+          y: record.position?.y ?? 0,
+          z: record.position?.z ?? 0,
+          facing: record.facing ?? 0,
+          health: record.health ?? 0,
+          maxHealth: record.maxHealth ?? 0,
+          activity: record.activity ?? 0,
+          activityUntilTick: record.activityUntilTick ?? 0,
+          level: record.level ?? 1,
+        });
+        continue;
+      }
+
+      this.entities.set(record.id, {
+        ...existing,
+        ...(record.fields & EntityField.Position && record.position
+          ? { x: record.position.x, y: record.position.y, z: record.position.z }
+          : {}),
+        ...(record.fields & EntityField.Facing && record.facing !== undefined
+          ? { facing: record.facing }
+          : {}),
+        ...(record.fields & EntityField.Health && record.health !== undefined
+          ? { health: record.health, maxHealth: record.maxHealth ?? existing.maxHealth }
+          : {}),
+        ...(record.fields & EntityField.Activity && record.activity !== undefined
+          ? {
+              activity: record.activity,
+              activityUntilTick: record.activityUntilTick ?? existing.activityUntilTick,
+            }
+          : {}),
+        ...(record.fields & EntityField.Level && record.level !== undefined
+          ? { level: record.level }
+          : {}),
+      });
+    }
+  }
+
+  clear(): void {
+    this.entities.clear();
+    this.lastTick = 0;
+  }
+}

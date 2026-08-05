@@ -14,14 +14,18 @@
     "lint": "eslint .",
     "build": "vite build",
     "dev": "vite",
+    "server": "tsx src/server/index.ts",
+    "server:bots": "tsx scripts/server-bot.ts",
     "balance": "tsx scripts/balance-harness.ts",
     "bake:sprites": "tsx scripts/bake-dude-atlas.ts"
   },
   "dependencies": {
+    "@types/ws": "^8.18.1",
     "lil-gui": "^0.21.0",
     "pixi.js": "^8.6.6",
     "pure-rand": "^6.1.0",
-    "three": "^0.160.1"
+    "three": "^0.160.1",
+    "ws": "^8.21.2"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",

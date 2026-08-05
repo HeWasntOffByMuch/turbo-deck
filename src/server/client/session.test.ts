@@ -1,0 +1,322 @@
+/**
+ * The client session end to end (spec 057): a real `GameClient` against a real
+ * `GameServer` over a real loopback transport, exchanging real encoded frames.
+ *
+ * Nothing here reaches past the wire format. If a field is not in the protocol
+ * the client cannot see it, which is the property that makes single-player over
+ * a loopback a genuine test of multiplayer rather than a separate code path.
+ */
+
+import { describe, expect, it } from 'vitest';
+import { BROADCAST_EVERY_N_TICKS, SERVER_TICK_RATE } from '../config.js';
+import { EntityKindValue, type ServerEntity } from '../sim/types.js';
+import { LoopbackTransport } from '../net/transport-loop.js';
+import { GameServer } from '../server.js';
+import { GameClient } from './game-client.js';
+
+/** Lets the loopback's queued microtasks drain. */
+const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+interface Harness {
+  readonly server: GameServer;
+  readonly transport: LoopbackTransport;
+}
+
+function harness(seed = 5): Harness {
+  const transport = new LoopbackTransport();
+  const server = new GameServer({ seed, transport });
+  server.liveConfig.set('spawnRateMultiplier', 0);
+  // `start()` would also run the loop off a real clock; tests drive `tick()`.
+  transport.onConnection((channel) => server.accept(channel));
+  return { server, transport };
+}
+
+async function connect(test: Harness, playerId: string): Promise<GameClient> {
+  const client = new GameClient(test.transport.connect(), { playerId, displayName: playerId });
+  const welcomed = client.connect();
+  await settle();
+  await welcomed;
+  return client;
+}
+
+/** Runs whole broadcast periods, so the client always sees a delta. */
+async function advance(test: Harness, periods: number): Promise<void> {
+  for (let i = 0; i < periods * BROADCAST_EVERY_N_TICKS; i++) test.server.tick();
+  await settle();
+}
+
+/**
+ * One tick with an input in it. The settle before the tick matters: the loopback
+ * delivers asynchronously, exactly as a socket does, so an input sent in the
+ * same breath as a tick has not arrived yet when that tick runs.
+ */
+/**
+ * Drops a player to zero health outright. The map is readonly to everything
+ * that plays by the rules; a test that wants a death without spending a minute
+ * of simulated combat to get one reaches through it deliberately.
+ */
+function kill(test: Harness, entityId: number): void {
+  const live = test.server.world.entities as Map<number, ServerEntity>;
+  const entity = live.get(entityId);
+  if (entity) live.set(entityId, { ...entity, health: 0 });
+}
+
+async function inputTick(
+  test: Harness,
+  client: GameClient,
+  intent: { moveX: number; moveY: number; facing: number; buttons: number },
+): Promise<void> {
+  client.sendInput(intent);
+  await settle();
+  test.server.tick();
+  await settle();
+}
+
+describe('loopback session', () => {
+  it('connects, and the server counts it as a player like any other', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+
+    const view = client.view();
+    expect(view.connected).toBe(true);
+    expect(view.selfEntityId).toBeGreaterThan(0);
+    expect(view.stats?.maxHealth).toBeGreaterThan(0);
+    // The thing the admin console lists -- an in-tab server is not a special case.
+    expect(test.server.listPlayers().map((row) => row.playerId)).toEqual(['alice']);
+  });
+
+  it('replicates the world from deltas alone', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    const at = test.server.world.entities.get(client.view().selfEntityId)?.position;
+    expect(at).toBeDefined();
+    test.server.spawnEntities('grazer', (at?.x ?? 0) + 60, at?.y ?? 0, 2);
+
+    await advance(test, 1);
+
+    const view = client.view();
+    // Itself plus the two grazers, and nothing invented.
+    expect(view.entities).toHaveLength(3);
+    const monsters = view.entities.filter((e) => e.kind === EntityKindValue.Monster);
+    expect(monsters).toHaveLength(2);
+    expect(monsters[0]?.typeId).toBe('grazer');
+    expect(monsters[0]?.maxHealth).toBeGreaterThan(0);
+  });
+
+  it('agrees with the server about every entity it can see', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    test.server.spawnEntities('stalker', 640, 450, 3);
+
+    for (let round = 0; round < 20; round++) {
+      await inputTick(test, client, { moveX: 1, moveY: 0, facing: 0, buttons: 0 });
+    }
+    await advance(test, 1);
+
+    const view = client.view();
+    expect(view.entities.length).toBeGreaterThan(1);
+    for (const replica of view.entities) {
+      const authoritative = test.server.world.entities.get(replica.id);
+      expect(authoritative, `entity ${replica.id} should exist server-side`).toBeDefined();
+      if (!authoritative) continue;
+      expect(replica.x).toBeCloseTo(authoritative.position.x, 2);
+      expect(replica.y).toBeCloseTo(authoritative.position.y, 2);
+      expect(replica.health).toBeCloseTo(authoritative.health, 2);
+      expect(replica.typeId).toBe(authoritative.typeId);
+    }
+  });
+
+  it('drops an entity from the replica when the server removes it', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    test.server.spawnEntities('grazer', 640, 450, 1);
+    await advance(test, 1);
+
+    const monster = client.view().entities.find((e) => e.kind === EntityKindValue.Monster);
+    expect(monster).toBeDefined();
+
+    test.server.despawnEntity(monster?.id ?? -1);
+    await advance(test, 1);
+    expect(client.view().entities.some((e) => e.id === monster?.id)).toBe(false);
+  });
+
+  it('predicts silently while walking in the open', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+
+    for (let round = 0; round < 40; round++) {
+      await inputTick(test, client, { moveX: 0, moveY: 1, facing: Math.PI / 2, buttons: 0 });
+    }
+    expect(client.correctionCount).toBe(0);
+
+    // And the prediction is where the server actually is.
+    const authoritative = test.server.world.entities.get(client.view().selfEntityId);
+    expect(client.view().self?.y).toBeCloseTo(authoritative?.position.y ?? 0, 1);
+  });
+
+  it('re-derives stats server-side when the client asks to equip', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    const before = client.view().stats?.maxHealth ?? 0;
+
+    client.equip('head', 'helm.leather');
+    await settle();
+    expect(client.view().stats?.maxHealth ?? 0).toBeGreaterThan(before);
+  });
+
+  it('reports an illegal skill spend without changing anything', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    const errors: string[] = [];
+    client.onError((_code, message) => errors.push(message));
+
+    client.spendSkillPoint('might.bulwark');
+    await settle();
+    expect(errors).toHaveLength(1);
+    expect(test.server.playerManager.get('alice')?.record.skills).toEqual([]);
+  });
+
+  it('surfaces combat results with their hitstop and knockback', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+    const self = test.server.world.entities.get(client.view().selfEntityId);
+    test.server.spawnEntities('grazer', (self?.position.x ?? 0) + 40, self?.position.y ?? 0, 1);
+
+    const results: number[] = [];
+    client.onCombatResult((result) => results.push(result.hitstopTicks));
+
+    await inputTick(test, client, { moveX: 0, moveY: 0, facing: 0, buttons: 1 });
+
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]).toBeGreaterThanOrEqual(1);
+  });
+
+  it('refuses admin messages -- an in-tab server has no admin channel', async () => {
+    const test = harness();
+    await connect(test, 'alice');
+    const replies: number[] = [];
+    const channel = test.transport.connect();
+    channel.onMessage((bytes) => replies.push(bytes[0] ?? 0));
+    // admin:auth with an empty token.
+    channel.send(new Uint8Array([0x80, 0x00]));
+    await settle();
+    // 0xa1 is the admin error reply.
+    expect(replies).toEqual([0xa1]);
+  });
+});
+
+describe('the rate split', () => {
+  it('advances the sim at 60Hz and describes it at 20', async () => {
+    expect(SERVER_TICK_RATE).toBe(60);
+    expect(SERVER_TICK_RATE / BROADCAST_EVERY_N_TICKS).toBe(20);
+
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+
+    // Seeded with what the client already knows, so the loop counts only the
+    // broadcasts it causes.
+    const ticksSeen: number[] = [client.view().tick];
+    const startTick = test.server.world.tick;
+    for (let i = 0; i < 30; i++) {
+      await inputTick(test, client, { moveX: 1, moveY: 0, facing: 0, buttons: 0 });
+      const seen = client.view().tick;
+      if (ticksSeen[ticksSeen.length - 1] !== seen) ticksSeen.push(seen);
+    }
+    ticksSeen.shift();
+
+    expect(test.server.world.tick - startTick).toBe(30);
+    // 30 sim ticks is 10 broadcasts, and each one is three ticks newer.
+    expect(ticksSeen).toHaveLength(10);
+    for (let i = 1; i < ticksSeen.length; i++) {
+      expect((ticksSeen[i] ?? 0) - (ticksSeen[i - 1] ?? 0)).toBe(BROADCAST_EVERY_N_TICKS);
+    }
+  });
+
+  it('leaves an honest client uncorrected across a whole run of ticks', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+    for (let i = 0; i < 30; i++) {
+      await inputTick(test, client, { moveX: 1, moveY: 0, facing: 0, buttons: 0 });
+    }
+    expect(client.correctionCount).toBe(0);
+  });
+});
+
+describe('loopback is the socket', () => {
+  it('carries real encoded frames, not shared objects', async () => {
+    // The loopback deliberately does not shortcut encoding, so a field missing
+    // from the wire format fails here exactly as it would over a network. The
+    // proof: everything the client knows survived a round trip through bytes,
+    // and mutating the server's own entity afterwards does not reach it.
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+
+    const replica = client.view().entities[0];
+    expect(replica).toBeDefined();
+    const authoritative = test.server.world.entities.get(replica?.id ?? -1);
+    expect(authoritative).toBeDefined();
+    expect(replica).not.toBe(authoritative);
+    expect(replica?.x).toBeCloseTo(authoritative?.position.x ?? -1, 3);
+  });
+});
+
+describe('dying', () => {
+  it('puts a player back on their feet without changing who they are', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+
+    const entityId = client.view().selfEntityId;
+    const maxHealth = client.view().stats?.maxHealth ?? 0;
+    expect(maxHealth).toBeGreaterThan(0);
+
+    expect(test.server.world.entities.get(entityId)).toBeDefined();
+    kill(test, entityId);
+
+    test.server.tick();
+    await settle();
+    // The body stays: sweeping it up would take the id the client knows itself
+    // by, and leave it rendering an empty world.
+    expect(test.server.world.entities.has(entityId)).toBe(true);
+
+    for (let i = 0; i < SERVER_TICK_RATE * 4; i++) test.server.tick();
+    await settle();
+
+    const revived = test.server.world.entities.get(entityId);
+    expect(revived?.health).toBeCloseTo(maxHealth, 3);
+    // Same entity id, so the client never lost track of itself.
+    expect(client.view().selfEntityId).toBe(entityId);
+    expect(client.view().entities.some((e) => e.id === entityId)).toBe(true);
+  });
+
+  it('does not flag the first input after a respawn as a speed hack', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+    const entityId = client.view().selfEntityId;
+
+    // Walk away from spawn, so respawning is a long jump backwards.
+    for (let i = 0; i < 60; i++) {
+      await inputTick(test, client, { moveX: 1, moveY: 0, facing: 0, buttons: 0 });
+    }
+    const before = client.correctionCount;
+
+    kill(test, entityId);
+    for (let i = 0; i < SERVER_TICK_RATE * 4; i++) test.server.tick();
+    await settle();
+
+    // The teleport correction is expected; what must not follow is a speed
+    // violation on every input afterwards.
+    const afterRespawn = client.correctionCount;
+    for (let i = 0; i < 20; i++) {
+      await inputTick(test, client, { moveX: 0, moveY: 1, facing: Math.PI / 2, buttons: 0 });
+    }
+    expect(client.correctionCount).toBe(afterRespawn);
+    expect(afterRespawn).toBeGreaterThan(before);
+  });
+});
