@@ -19,6 +19,15 @@ const DETERMINISTIC_CORE = [
   'src/game/**/*.ts',
   'src/terrain/**/*.ts',
   'src/balance/**/*.ts',
+  // The server's own sim (spec 056) carries the identical guarantee -- same
+  // seed and inputs, same state -- and its purity is what lets single-player
+  // run it inside a browser tab (spec 057). Only the halves that genuinely are
+  // pure: net/, admin/, state/, loop.ts and server.ts read clocks and sockets
+  // for a living, which is exactly why the boundary is drawn here.
+  'src/server/sim/**/*.ts',
+  'src/server/world/**/*.ts',
+  'src/server/player/**/*.ts',
+  'src/server/data/**/*.ts',
 ];
 
 /**
