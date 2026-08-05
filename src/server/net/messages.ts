@@ -67,6 +67,23 @@ export interface ChatMessage {
   readonly text: string;
 }
 
+/**
+ * A request to commit to an ability (spec 062). The server decides whether it
+ * may start -- cooldown, cost, range, and whether something is already winding
+ * up -- and answers with a CastState or a CastRejected. The client never
+ * assumes it worked.
+ */
+export interface UseAbilityMessage {
+  readonly type: typeof ClientMessageType.UseAbility;
+  readonly abilityId: string;
+  readonly targetX: number;
+  readonly targetY: number;
+}
+
+export interface CancelCastMessage {
+  readonly type: typeof ClientMessageType.CancelCast;
+}
+
 export type ClientMessage =
   | HelloMessage
   | InputMessage
@@ -74,7 +91,9 @@ export type ClientMessage =
   | EquipMessage
   | UnequipMessage
   | SpendSkillPointMessage
-  | ChatMessage;
+  | ChatMessage
+  | UseAbilityMessage
+  | CancelCastMessage;
 
 export function encodeClientMessage(message: ClientMessage): Uint8Array {
   const writer = new BufferWriter(64);
@@ -107,6 +126,11 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
       break;
     case ClientMessageType.Chat:
       writer.str(message.text);
+      break;
+    case ClientMessageType.UseAbility:
+      writer.str(message.abilityId).f32(message.targetX).f32(message.targetY);
+      break;
+    case ClientMessageType.CancelCast:
       break;
   }
   return writer.toBytes();
@@ -145,6 +169,15 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
       return { type: ClientMessageType.SpendSkillPoint, skillId: reader.str() };
     case ClientMessageType.Chat:
       return { type: ClientMessageType.Chat, text: reader.str() };
+    case ClientMessageType.UseAbility:
+      return {
+        type: ClientMessageType.UseAbility,
+        abilityId: reader.str(),
+        targetX: reader.f32(),
+        targetY: reader.f32(),
+      };
+    case ClientMessageType.CancelCast:
+      return { type: ClientMessageType.CancelCast };
     default:
       throw new CodecError(`unknown client message type 0x${type.toString(16)}`);
   }
@@ -262,6 +295,47 @@ export interface DisconnectMessage {
   readonly reason: string;
 }
 
+/** Someone committed to an ability, and how long it runs (spec 062). */
+export interface CastStateMessage {
+  readonly type: typeof ServerMessageType.CastState;
+  readonly entityId: number;
+  readonly abilityId: string;
+  readonly phase: number;
+  readonly releaseTick: number;
+  readonly endTick: number;
+  readonly targetX: number;
+  readonly targetY: number;
+}
+
+export interface CastEndedMessage {
+  readonly type: typeof ServerMessageType.CastEnded;
+  readonly entityId: number;
+  readonly abilityId: string;
+  /** {@link CastEndReasonValue}: released, cancelled, or interrupted. */
+  readonly reason: number;
+}
+
+/**
+ * A point cue for the client to draw. Deliberately not tied to an entity: an
+ * impact outlives the projectile that caused it and a blast has no body at all.
+ */
+export interface EffectMessage {
+  readonly type: typeof ServerMessageType.Effect;
+  readonly effectId: string;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly radius: number;
+  readonly durationTicks: number;
+}
+
+/** Why the server would not start an ability the client asked for. */
+export interface CastRejectedMessage {
+  readonly type: typeof ServerMessageType.CastRejected;
+  readonly abilityId: string;
+  readonly reason: string;
+}
+
 export type ServerMessage =
   | WelcomeMessage
   | DeltaMessage
@@ -271,7 +345,11 @@ export type ServerMessage =
   | ServerChatMessage
   | PongMessage
   | ErrorMessage
-  | DisconnectMessage;
+  | DisconnectMessage
+  | CastStateMessage
+  | CastEndedMessage
+  | EffectMessage
+  | CastRejectedMessage;
 
 // Field bits, duplicated here as plain numbers so the hot encode path is a
 // bitmask test rather than a property lookup. Kept in sync with protocol.ts.
@@ -354,7 +432,9 @@ function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
     .f32(stats.armor)
     .f32(stats.spellPower)
     .f32(stats.knockbackResist)
-    .f32(stats.critChance);
+    .f32(stats.critChance)
+    .f32(stats.maxResource)
+    .f32(stats.resourceRegen);
 }
 
 function readStats(reader: BufferReader): EffectiveStats {
@@ -369,6 +449,8 @@ function readStats(reader: BufferReader): EffectiveStats {
     spellPower: reader.f32(),
     knockbackResist: reader.f32(),
     critChance: reader.f32(),
+    maxResource: reader.f32(),
+    resourceRegen: reader.f32(),
   };
 }
 
@@ -433,6 +515,31 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
       break;
     case ServerMessageType.Disconnect:
       writer.str(message.reason);
+      break;
+    case ServerMessageType.CastState:
+      writer
+        .varuint(message.entityId)
+        .str(message.abilityId)
+        .u8(message.phase)
+        .u32(message.releaseTick)
+        .u32(message.endTick)
+        .f32(message.targetX)
+        .f32(message.targetY);
+      break;
+    case ServerMessageType.CastEnded:
+      writer.varuint(message.entityId).str(message.abilityId).u8(message.reason);
+      break;
+    case ServerMessageType.Effect:
+      writer
+        .str(message.effectId)
+        .f32(message.x)
+        .f32(message.y)
+        .f32(message.z)
+        .f32(message.radius)
+        .u16(message.durationTicks);
+      break;
+    case ServerMessageType.CastRejected:
+      writer.str(message.abilityId).str(message.reason);
       break;
   }
   return writer.toBytes();
@@ -508,6 +615,40 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
       return { type: ServerMessageType.Error, code: reader.u16(), message: reader.str() };
     case ServerMessageType.Disconnect:
       return { type: ServerMessageType.Disconnect, reason: reader.str() };
+    case ServerMessageType.CastState:
+      return {
+        type: ServerMessageType.CastState,
+        entityId: reader.varuint(),
+        abilityId: reader.str(),
+        phase: reader.u8(),
+        releaseTick: reader.u32(),
+        endTick: reader.u32(),
+        targetX: reader.f32(),
+        targetY: reader.f32(),
+      };
+    case ServerMessageType.CastEnded:
+      return {
+        type: ServerMessageType.CastEnded,
+        entityId: reader.varuint(),
+        abilityId: reader.str(),
+        reason: reader.u8(),
+      };
+    case ServerMessageType.Effect:
+      return {
+        type: ServerMessageType.Effect,
+        effectId: reader.str(),
+        x: reader.f32(),
+        y: reader.f32(),
+        z: reader.f32(),
+        radius: reader.f32(),
+        durationTicks: reader.u16(),
+      };
+    case ServerMessageType.CastRejected:
+      return {
+        type: ServerMessageType.CastRejected,
+        abilityId: reader.str(),
+        reason: reader.str(),
+      };
     default:
       throw new CodecError(`unknown server message type 0x${type.toString(16)}`);
   }

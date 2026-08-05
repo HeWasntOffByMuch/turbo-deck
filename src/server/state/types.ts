@@ -100,6 +100,8 @@ export interface PersistedPlayer {
   readonly unspentSkillPoints: number;
   /** Live resource, clamped to derived maxHealth whenever stats are recomputed. */
   readonly health: number;
+  /** Ability resource, clamped the same way. Live, not derived. */
+  readonly resource: number;
 }
 
 /**
@@ -123,6 +125,10 @@ export interface EffectiveStats {
   readonly knockbackResist: number;
   /** Chance a hit crits, 0..1. Rolled server-side against the sim's seeded PRNG. */
   readonly critChance: number;
+  /** Pool abilities are paid out of (spec 062). */
+  readonly maxResource: number;
+  /** Refilled by this much every tick. */
+  readonly resourceRegen: number;
 }
 
 export interface Ban {

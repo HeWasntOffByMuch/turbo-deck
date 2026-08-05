@@ -56,6 +56,23 @@ The server applies **one input per tick**, so sending faster buys nothing.
 `predictedX/Y` is never adopted as position — it is only measured, to decide
 whether a `Correction` is owed.
 
+### `0x08 UseAbility`
+`str abilityId` · `f32 targetX` · `f32 targetY`
+
+Asks to commit to an ability (spec 062). The server decides: cooldown, cost,
+range, and whether something is already winding up. It answers with `CastState`
+or `CastRejected`, and the client assumes nothing in between.
+
+`targetX/Y` is a world point. A `direction`-targeted ability treats it as where
+to aim; a `point`-targeted one as where to land, and refuses it past its range;
+a `self` one ignores it.
+
+### `0x09 CancelCast` — no payload
+Withdraws from whatever is winding up. Legal only during the wind-up (and for
+the duration of a channel); past the release tick the effect has happened and
+there is nothing to call off. A cancelled cast refunds its cost and clears its
+cooldown, so the only thing it spent is time.
+
 ### `0x03 Ping` — `u32 nonce`
 ### `0x04 Equip` — `str slot` · `str itemId`
 ### `0x05 Unequip` — `str slot`
@@ -103,8 +120,13 @@ with no upserts and no removals is not sent.
 `Spawn` is set the first time an entity enters this client's interest set, and
 carries identity so a client never has to infer a field it was not told.
 
-`kind`: `0` player, `1` monster, `2` prop.
-`activity`: `0` idle, `1` moving, `2` attacking, `3` stunned, `4` dead.
+`kind`: `0` player, `1` monster, `2` prop, `3` projectile.
+`activity`: `0` idle, `1` moving, `2` casting, `3` stunned, `4` dead, `5` recovering.
+
+A projectile in flight is an ordinary entity (spec 062), so it replicates
+through this same delta rather than through a parallel system. Its `z` carries
+the arc height, which is what lets a client draw a lobbed shot rising and
+falling with a shadow underneath it.
 
 ### `0x42 Correction`
 `varuint inputSeq` · `f32 x` · `f32 y` · `f32 z` · `f32 facing` · `u8 reason`
@@ -148,6 +170,35 @@ client.
 `4` not authorized, `5` banned, `6` muted, `7` rejected action, `8` unknown message.
 
 ### `0x48 Disconnect` — `str reason`
+
+### `0x49 CastState`
+`varuint entityId` · `str abilityId` · `u8 phase` · `u32 releaseTick` ·
+`u32 endTick` · `f32 targetX` · `f32 targetY`
+
+Someone committed to an ability. `phase`: `0` wind-up, `1` channel, `2` recovery.
+`releaseTick` is when the effect lands, which is all a client needs to draw a
+wind-up bar that finishes at the right moment. Sent to everyone whose interest
+set contains the caster, so other players see a telegraph too.
+
+### `0x4A CastEnded`
+`varuint entityId` · `str abilityId` · `u8 reason`
+
+`reason`: `0` released, `1` cancelled, `2` interrupted.
+
+### `0x4B Effect`
+`str effectId` · `f32 x` · `f32 y` · `f32 z` · `f32 radius` · `u16 durationTicks`
+
+A point cue to draw: an impact, a blast, a heal. Deliberately not tied to an
+entity — an impact outlives the projectile that caused it, and a blast never had
+a body at all. Delivered on proximity to the point rather than by entity
+interest, for the same reason.
+
+### `0x4C CastRejected`
+`str abilityId` · `str reason`
+
+Why the server would not start an ability. Sent only to the client that asked:
+`onCooldown`, `notEnoughResource`, `alreadyCasting`, `outOfRange`,
+`unknownAbility`, `stunned`, `dead`.
 
 ## `admin:*` — client → server
 

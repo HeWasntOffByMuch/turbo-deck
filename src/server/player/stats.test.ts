@@ -19,6 +19,7 @@ function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
     experience: 0,
     unspentSkillPoints: 0,
     health: 100,
+    resource: 20,
     ...overrides,
   };
 }
@@ -124,6 +125,7 @@ describe('persistence never carries a derived stat', () => {
         'id',
         'level',
         'position',
+        'resource',
         'skills',
         'unspentSkillPoints',
       ].sort(),

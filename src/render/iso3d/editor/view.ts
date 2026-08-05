@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { arenaBounds, loadMap, parseMap, type LoadedMap, type MapDocument } from '../../../terrain/index.js';
 import { PLAY_HEIGHT, PLAY_WIDTH } from '../../../shared/world.js';
-import type { ViewHandle } from '../movement.js';
+import type { ViewHandle } from '../view-handle.js';
 import { PALETTE } from '../palette.js';
 import { buildPropField, type PropFieldHandle } from '../props.js';
 import { viewSeed } from '../seed.js';

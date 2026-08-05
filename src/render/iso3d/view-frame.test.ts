@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { cameraFrustum, cursorToNdc, internalRenderSize, MAX_RENDER_W, REFERENCE_ASPECT, RENDER_H } from './view-frame.js';
-import { HAND_KEYS, WAVE_KEY } from './input.js';
 import { DEFAULT_VIEW_HALF_WIDTH, MAX_VIEW_HALF_WIDTH, MIN_VIEW_HALF_WIDTH } from './view-settings.js';
 
 describe('internal render size (spec 041)', () => {
@@ -61,17 +60,5 @@ describe('cursor to NDC (spec 041)', () => {
 
   it('does not divide by a zero-sized box', () => {
     expect(Number.isFinite(cursorToNdc(10, 10, 0, 0).x)).toBe(true);
-  });
-});
-
-describe('key bindings (spec 041)', () => {
-  it('plays the hand with Q/W/E/R, keeping the digits as aliases', () => {
-    expect([HAND_KEYS.KeyQ, HAND_KEYS.KeyW, HAND_KEYS.KeyE, HAND_KEYS.KeyR]).toEqual([0, 1, 2, 3]);
-    expect([HAND_KEYS.Digit1, HAND_KEYS.Digit2, HAND_KEYS.Digit3, HAND_KEYS.Digit4]).toEqual([0, 1, 2, 3]);
-  });
-
-  it('no longer summons the wave with Q, since the hand took it', () => {
-    expect(WAVE_KEY).not.toBe('KeyQ');
-    expect(HAND_KEYS[WAVE_KEY]).toBeUndefined();
   });
 });

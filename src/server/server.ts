@@ -115,6 +115,14 @@ interface Connection {
   lastSeq: number;
   /** Tick this player is put back on their feet; 0 when they are alive. */
   respawnAtTick: number;
+  /**
+   * An ability asked for since the last tick, and whether a cancel was asked
+   * for. Held here rather than on the input frame because a client sends them
+   * as their own messages, and they must not be lost if no movement input
+   * happens to arrive in the same tick.
+   */
+  pendingCast: { readonly abilityId: string; readonly targetX: number; readonly targetY: number } | null;
+  pendingCancel: boolean;
 }
 
 export class GameServer implements AdminHost {
@@ -188,6 +196,8 @@ export class GameServer implements AdminHost {
       inputs: [],
       lastSeq: 0,
       respawnAtTick: 0,
+      pendingCast: null,
+      pendingCancel: false,
     };
     this.connections.add(connection);
     channel.onMessage((bytes) => {
@@ -256,6 +266,11 @@ export class GameServer implements AdminHost {
           buttons: message.buttons,
           predictedX: message.predictedX,
           predictedY: message.predictedY,
+          hasPrediction: true,
+          castAbilityId: '',
+          castTargetX: 0,
+          castTargetY: 0,
+          cancelCast: false,
         });
         break;
       }
@@ -288,6 +303,20 @@ export class GameServer implements AdminHost {
         this.reportAction(connection, result.ok ? null : result.reason);
         break;
       }
+
+      case ClientMessageType.UseAbility:
+        if (connection.playerId === null || connection.entityId < 0) return;
+        connection.pendingCast = {
+          abilityId: message.abilityId,
+          targetX: message.targetX,
+          targetY: message.targetY,
+        };
+        break;
+
+      case ClientMessageType.CancelCast:
+        if (connection.playerId === null || connection.entityId < 0) return;
+        connection.pendingCancel = true;
+        break;
 
       case ClientMessageType.Chat: {
         if (connection.playerId === null) return;
@@ -463,11 +492,40 @@ export class GameServer implements AdminHost {
     const inputs: ServerInput[] = [];
     for (const connection of this.connections) {
       const next = connection.inputs.shift();
+      const cast = connection.pendingCast;
+      const cancel = connection.pendingCancel;
+      connection.pendingCast = null;
+      connection.pendingCancel = false;
+
       if (next) {
-        inputs.push(next);
         if (connection.playerId !== null) {
           this.players.noteInputSeq(connection.playerId, next.seq);
         }
+        inputs.push({
+          ...next,
+          castAbilityId: cast?.abilityId ?? '',
+          castTargetX: cast?.targetX ?? 0,
+          castTargetY: cast?.targetY ?? 0,
+          cancelCast: cancel,
+        });
+      } else if ((cast || cancel) && connection.entityId >= 0) {
+        // An ability asked for on a tick with no movement input still has to
+        // reach the sim, or standing still would make you unable to act.
+        inputs.push({
+          entityId: connection.entityId,
+          seq: connection.lastSeq,
+          moveX: 0,
+          moveY: 0,
+          facing: this.state.entities.get(connection.entityId)?.facing ?? 0,
+          buttons: 0,
+          predictedX: 0,
+          predictedY: 0,
+          hasPrediction: false,
+          castAbilityId: cast?.abilityId ?? '',
+          castTargetX: cast?.targetX ?? 0,
+          castTargetY: cast?.targetY ?? 0,
+          cancelCast: cancel,
+        });
       }
     }
 
@@ -641,6 +699,65 @@ export class GameServer implements AdminHost {
             });
           break;
         }
+        case 'castStarted': {
+          const bytes = encodeServerMessage({
+            type: ServerMessageType.CastState,
+            entityId: event.entityId,
+            abilityId: event.abilityId,
+            phase: event.phase,
+            releaseTick: event.releaseTick,
+            endTick: event.endTick,
+            targetX: event.targetX,
+            targetY: event.targetY,
+          });
+          this.sendToWatchersOf(event.entityId, bytes);
+          break;
+        }
+        case 'castEnded': {
+          const bytes = encodeServerMessage({
+            type: ServerMessageType.CastEnded,
+            entityId: event.entityId,
+            abilityId: event.abilityId,
+            reason: event.reason,
+          });
+          this.sendToWatchersOf(event.entityId, bytes);
+          break;
+        }
+        case 'castRejected': {
+          // Only the asker cares why their own request was refused.
+          const connection = this.connectionForEntity(event.entityId);
+          if (connection) {
+            this.send(connection, {
+              type: ServerMessageType.CastRejected,
+              abilityId: event.abilityId,
+              reason: event.reason,
+            });
+          }
+          break;
+        }
+        case 'effect': {
+          const bytes = encodeServerMessage({
+            type: ServerMessageType.Effect,
+            effectId: event.effectId,
+            x: event.x,
+            y: event.y,
+            z: event.z,
+            radius: event.radius,
+            durationTicks: event.durationTicks,
+          });
+          // An effect has no entity, so interest is judged by the chunk it
+          // happens in rather than by whose body it belongs to.
+          for (const connection of this.connections) {
+            if (connection.entityId < 0) continue;
+            const watcher = this.state.entities.get(connection.entityId);
+            if (!watcher) continue;
+            const reach = CHUNK_SIZE * (INTEREST_CHUNK_RADIUS + 1);
+            if (Math.abs(watcher.position.x - event.x) > reach) continue;
+            if (Math.abs(watcher.position.y - event.y) > reach) continue;
+            this.sendRaw(connection, bytes);
+          }
+          break;
+        }
         case 'despawned':
           // Deliberately *not* `delta.forget` here. The tracker derives its
           // removal list from "what I told you about that I can no longer see",
@@ -672,6 +789,16 @@ export class GameServer implements AdminHost {
       // Silence is meaningful: a client whose world did not change gets nothing.
       if (DeltaTracker.isEmpty(delta)) continue;
       this.send(connection, delta);
+    }
+  }
+
+  /** Everyone whose interest set contains `entityId`, the entity's owner included. */
+  private sendToWatchersOf(entityId: number, bytes: Uint8Array): void {
+    for (const connection of this.connections) {
+      if (connection.entityId < 0) continue;
+      if (connection.entityId === entityId || this.chunks.isInInterest(connection.entityId, entityId)) {
+        this.sendRaw(connection, bytes);
+      }
     }
   }
 

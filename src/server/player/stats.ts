@@ -57,6 +57,11 @@ export const MAX_ATTACK_SPEED_BONUS = 0.6;
 /** Critical-hit chance per point of dexterity, and its ceiling. */
 export const CRIT_PER_DEXTERITY = 0.008;
 export const MAX_CRIT_CHANCE = 0.5;
+/** The ability resource pool (spec 062): a base, plus intelligence. */
+export const BASE_RESOURCE = 20;
+export const RESOURCE_PER_INTELLIGENCE = 2;
+/** Resource regained per second, before modifiers. */
+export const RESOURCE_REGEN_PER_SECOND = 2;
 
 const BASE_MOVE_SPEED = CHARACTERS[0]?.moveSpeed ?? 147.5;
 const BASE_TURN_RATE = CHARACTERS[0]?.turnRate ?? 180;
@@ -154,6 +159,15 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
 
   const critChance = clamp(CRIT_PER_DEXTERITY * dexterity + bonus.critChance, 0, MAX_CRIT_CHANCE);
 
+  const maxResource = Math.max(
+    0,
+    BASE_RESOURCE + RESOURCE_PER_INTELLIGENCE * intelligence + bonus.maxResource,
+  );
+  const resourceRegen = Math.max(
+    0,
+    RESOURCE_REGEN_PER_SECOND / SERVER_TICK_RATE + bonus.resourceRegen,
+  );
+
   return {
     maxHealth,
     moveSpeed,
@@ -165,7 +179,15 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
     spellPower,
     knockbackResist,
     critChance,
+    maxResource,
+    resourceRegen,
   };
+}
+
+/** Ability resource after a recalculation, held under the fresh ceiling. */
+export function clampResourceToStats(resource: number, stats: EffectiveStats): number {
+  if (!Number.isFinite(resource) || resource <= 0) return 0;
+  return Math.min(resource, stats.maxResource);
 }
 
 /**

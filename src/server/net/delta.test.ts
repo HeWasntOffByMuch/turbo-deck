@@ -16,6 +16,8 @@ const STATS: EffectiveStats = {
   spellPower: 1,
   knockbackResist: 0,
   critChance: 0,
+  maxResource: 30,
+  resourceRegen: 0.05,
 };
 
 function entity(id: number, overrides: Partial<ServerEntity> = {}): ServerEntity {
@@ -40,6 +42,10 @@ function entity(id: number, overrides: Partial<ServerEntity> = {}): ServerEntity
     radius: 22,
     targetId: null,
     claimedPosition: null,
+    resource: 0,
+    cast: null,
+    cooldowns: {},
+    projectile: null,
     ...overrides,
   };
 }

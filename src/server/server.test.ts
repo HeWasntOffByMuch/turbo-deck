@@ -16,7 +16,6 @@ import {
   CorrectionReason,
   EntityField,
   ErrorCode,
-  InputButton,
   ServerMessageType,
 } from './net/protocol.js';
 import { GameServer } from './server.js';
@@ -351,8 +350,17 @@ describe('combat over the wire', () => {
     expect(game.spawnEntities('grazer', at.x + 40, at.y, 1)).toBe(1);
     client.clear();
 
-    await client.input(1, { facing: 0, buttons: InputButton.Attack });
-    broadcast(game);
+    await game.receive(
+      client.connection,
+      encodeClientMessage({
+        type: ClientMessageType.UseAbility,
+        abilityId: 'melee.slash',
+        targetX: at.x + 40,
+        targetY: at.y,
+      }),
+    );
+    // Run out the wind-up: nothing lands on the tick the button is pressed.
+    for (let i = 0; i < 30; i++) game.tick();
 
     const result = client.of(ServerMessageType.CombatResult)[0];
     expect(result).toBeDefined();

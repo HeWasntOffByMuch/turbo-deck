@@ -1,12 +1,15 @@
-import type { ScreenPoint } from '../input.js';
+/** A point in canvas pixels. Owned here since the game capture was deleted. */
+export interface ScreenPoint {
+  readonly x: number;
+  readonly y: number;
+}
 
 /**
  * Input capture for the map editor (spec 049).
  *
- * Deliberately not `IsoInputCapture`. That one speaks the game's language --
- * move orders, hand slots, waves -- and an editor shares none of it. What it does
- * share is the contract the tab shell relies on: `attach` on show, `detach` on
- * hide, and nothing captured in between.
+ * Deliberately its own thing. It shares with the play view only the contract the
+ * tab shell relies on: `attach` on show, `detach` on hide, and nothing captured
+ * in between.
  *
  * Reports intent only. Every rule about where the camera may end up lives in
  * `camera.ts`; this decides nothing but which buttons are down.

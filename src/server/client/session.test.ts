@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import { BROADCAST_EVERY_N_TICKS, SERVER_TICK_RATE } from '../config.js';
 import { EntityKindValue, type ServerEntity } from '../sim/types.js';
+import { EntityKind } from '../net/protocol.js';
 import { LoopbackTransport } from '../net/transport-loop.js';
 import { GameServer } from '../server.js';
 import { GameClient } from './game-client.js';
@@ -39,9 +40,17 @@ async function connect(test: Harness, playerId: string): Promise<GameClient> {
   return client;
 }
 
-/** Runs whole broadcast periods, so the client always sees a delta. */
+/**
+ * Runs whole broadcast periods, finishing *on* a broadcast tick.
+ *
+ * Landing anywhere else leaves the world one or two ticks ahead of the last
+ * delta the client was sent, which is correct behaviour and useless to compare
+ * against -- a replica is only supposed to match the server as of the frame it
+ * was told about.
+ */
 async function advance(test: Harness, periods: number): Promise<void> {
   for (let i = 0; i < periods * BROADCAST_EVERY_N_TICKS; i++) test.server.tick();
+  while (test.server.world.tick % BROADCAST_EVERY_N_TICKS !== 0) test.server.tick();
   await settle();
 }
 
@@ -116,6 +125,9 @@ describe('loopback session', () => {
     const view = client.view();
     expect(view.entities.length).toBeGreaterThan(1);
     for (const replica of view.entities) {
+      // Projectiles are spawned and resolved between broadcasts, so a replica
+      // can legitimately still hold one the server has already retired.
+      if (replica.kind === EntityKind.Projectile) continue;
       const authoritative = test.server.world.entities.get(replica.id);
       expect(authoritative, `entity ${replica.id} should exist server-side`).toBeDefined();
       if (!authoritative) continue;
@@ -187,7 +199,13 @@ describe('loopback session', () => {
     const results: number[] = [];
     client.onCombatResult((result) => results.push(result.hitstopTicks));
 
-    await inputTick(test, client, { moveX: 0, moveY: 0, facing: 0, buttons: 1 });
+    // Commit to the basic melee, then run out its wind-up.
+    client.useAbility('melee.slash', (self?.position.x ?? 0) + 40, self?.position.y ?? 0);
+    await settle();
+    for (let i = 0; i < 30; i++) {
+      test.server.tick();
+      await settle();
+    }
 
     expect(results.length).toBeGreaterThan(0);
     expect(results[0]).toBeGreaterThanOrEqual(1);

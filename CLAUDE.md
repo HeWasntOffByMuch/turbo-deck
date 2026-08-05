@@ -1,17 +1,21 @@
 # turbo-deck
 
-Real-time action combat fused with a rolling card economy: a hand of 3 cards
-drawn from a deck, spent as special attacks, refilled on use, with perfect
-parries/dodges drawing bonus cards.
+Real-time action combat over an authoritative server: melee swings and skills
+that wind up and can be withdrawn from, projectiles that travel and arc, and
+abilities with a cost and a cooldown. Committing to a blow is the decision the
+game is built on -- the wind-up is long enough to be read, and short enough to
+matter.
 
 ## The one rule that governs everything
 
 **Simulation and rendering are completely separate.**
 
-- `src/sim/` and `src/cards/` are the simulation. They are pure TypeScript,
-  have zero rendering/DOM dependencies, and run identically in Node or a
-  browser. Given `(seed, sequence of timed inputs)`, the sim MUST produce
-  bit-identical state on every run.
+- `src/server/` is the simulation, and since spec 062 it is the *only* one.
+  Its pure half (`sim/`, `world/`, `player/`, `data/`) has zero rendering/DOM
+  dependencies and runs identically in Node or a browser. Given `(seed,
+  sequence of timed inputs)` it MUST produce bit-identical state on every run.
+  `src/sim/` is now just the shared geometry and the collision/pathfinding
+  helpers the server builds on.
 - `src/render/` is a thin layer on top: it reads sim state and draws it, and
   captures input and feeds it into the sim as timed events. It contains no
   game rules. If you find yourself writing an `if` that changes game outcome
@@ -23,8 +27,7 @@ parries/dodges drawing bonus cards.
 ## Determinism rules
 
 - Never call `Math.random()`, read `Date.now()`, or otherwise touch
-  wall-clock time or ambient nondeterminism inside `src/sim/` or
-  `src/cards/`.
+  wall-clock time or ambient nondeterminism inside the deterministic core.
 - All randomness (shuffles, drawn RNG for effects, etc.) goes through a
   seeded PRNG (`src/shared/prng.ts`) that is passed into the sim explicitly
   as part of its constructor/init, never imported as a singleton.
@@ -40,7 +43,7 @@ parries/dodges drawing bonus cards.
 Most of this is mechanical, not honour-system. `eslint.config.js` fails the
 build on `Math.random`, on `Date`/`performance`/DOM globals, and on importing
 three.js, PixiJS, lil-gui or anything under `src/render/` — across the whole
-deterministic core (`shared`, `cards`, `sim`, `game`, `terrain`, `balance`) and
+deterministic core (`shared`, `sim`, `terrain`, and the pure half of `server`) and
 the pure subtrees that live under `src/render/` anyway (`cloth/`, `critters/`,
 and the headless half of the editor). `src/shared/` additionally may not import
 its own siblings. Two rules a linter can't see are still on you: the PRNG must
@@ -51,13 +54,14 @@ change a game outcome.
 
 | Command | What it does |
 |---|---|
-| `npm test` | Run the Vitest suite once (sim, cards, integration tests) |
+| `npm test` | Run the Vitest suite once (server sim, protocol, integration) |
 | `npm run test:watch` | Vitest in watch mode |
 | `npm run typecheck` | `tsc --noEmit` against the strict tsconfig |
 | `npm run lint` | ESLint over the whole repo |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
-| `npm run balance` | Headless Monte Carlo balance harness (see `scripts/balance-harness.ts`) |
+| `npm run server` | The authoritative server, plus the admin console |
+| `npm run server:bots` | Headless bot clients, for load and for watching prediction |
 
 CI (`.github/workflows/ci.yml`) runs typecheck + lint + test on every push
 and must be green before merging.
@@ -90,8 +94,8 @@ merge time.
 
 ## Commit conventions
 
-- Small commits, one system per commit (e.g. "add deck/hand engine", not
-  "add deck engine and renderer and balance harness").
+- Small commits, one system per commit (e.g. "add the ability resolver", not
+  "add abilities and the protocol and the play view").
 - Write the spec in its own commit before the implementation commit that
   follows it.
 - Commit messages describe *why*, not a changelog of files touched.
@@ -101,16 +105,14 @@ merge time.
 ```
 specs/           spec markdown, one file per system, written before its code
 src/shared/      PRNG, spatial hash, world extent — dependency-free helpers
-                 shared by sim, cards and terrain
+                 shared by the server, the geometry helpers and terrain
 src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  and where the vegetation stands. No three.js, no DOM. Also the
                  map document (spec 048): map.ts bakes a world to JSON,
                  map-world.ts loads one back as array-backed terrain.
-src/cards/       card/deck engine — pure data and pure functions, no sim/render deps
-src/sim/         deterministic fixed-timestep combat sim, no rendering/DOM deps
-src/game/        composition root wiring cards to the sim (stepGame) — the only
-                 place that translates a CardEffect into the sim's ExternalEffect
-src/render/      PixiJS renderer + keyboard input capture, no game rules
+src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
+                 collision and pathfinding helpers the server collides against
+src/render/      the client: a tab shell over the play view and the map editor
 src/render/cloth/ pure cloth simulation for the robed character (spec 046) --
                  solver, wind, patterns, colliders and figure metrics. No
                  three.js and no DOM, so it runs and is tested headlessly.
@@ -126,7 +128,7 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052). Renders only from
                  brush.ts, scatter.ts, markers.ts and history.ts are pure and
                  tested headlessly; view.ts, cursor.ts and marker-view.ts are the
                  three.js scene; panel.ts is the lil-gui surface.
-src/server/      authoritative multiplayer server (specs 056-057). Its sim runs on
+src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim runs on
                  the same fixed 60Hz timestep as src/sim/ and broadcasts deltas
                  every third tick (20Hz) -- one rate for the game, another for the
                  wire. It shares the pure helpers (prng, collision, terrain, world
@@ -137,10 +139,13 @@ src/server/      authoritative multiplayer server (specs 056-057). Its sim runs 
                  deterministic tick, world/ is chunking and zones, player/ derives
                  stats from ids and levels, state/ is the swappable DataStore,
                  admin/ is the token-gated admin namespace, client/ is the
-                 transport-agnostic session the renderer will draw from.
+                 transport-agnostic session the renderer draws from. data/ holds
+                 the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
+                 content is data, and an entity only ever stores an id.
                  `npm run server`, and `npm run server:bots` for load.
-src/balance/     Monte Carlo balance harness logic (seeded bot policy + runner),
-                 pure and testable; scripts/balance-harness.ts is its thin CLI
+src/render/play/ the play view (spec 062): a plain top-down canvas driven entirely
+                 by GameClient, so the ability system is testable before the
+                 iso3d renderer is repointed at the server (spec 057 stage 3)
 scripts/         standalone scripts (e.g. the balance harness), run via tsx
 .claude/         harness config: agents/ (the delegation policy, see below),
                  hooks/session-start.sh (branch-base check + dependency install),

@@ -22,6 +22,10 @@ export const ClientMessageType = {
   Unequip: 0x05,
   SpendSkillPoint: 0x06,
   Chat: 0x07,
+  /** Commit to an ability this tick (spec 062). */
+  UseAbility: 0x08,
+  /** Withdraw from whatever is winding up. */
+  CancelCast: 0x09,
 } as const;
 
 export const ServerMessageType = {
@@ -34,6 +38,14 @@ export const ServerMessageType = {
   Pong: 0x46,
   Error: 0x47,
   Disconnect: 0x48,
+  /** Someone started casting: what, which phase, until when (spec 062). */
+  CastState: 0x49,
+  /** ...and how it finished: released, cancelled or interrupted. */
+  CastEnded: 0x4a,
+  /** A point cue to draw: an impact, a blast, a heal. */
+  Effect: 0x4b,
+  /** An ability the server refused, and why. */
+  CastRejected: 0x4c,
 } as const;
 
 export const AdminMessageType = {
@@ -112,14 +124,29 @@ export const EntityKind = {
   Player: 0,
   Monster: 1,
   Prop: 2,
+  Projectile: 3,
 } as const;
 
 export const EntityActivity = {
   Idle: 0,
   Moving: 1,
-  Attacking: 2,
+  Casting: 2,
   Stunned: 3,
   Dead: 4,
+  Recovering: 5,
+} as const;
+
+/** Mirrors `sim/types.ts`; the client animates from this. */
+export const CastPhaseValue = {
+  Windup: 0,
+  Channel: 1,
+  Recovery: 2,
+} as const;
+
+export const CastEndReasonValue = {
+  Released: 0,
+  Cancelled: 1,
+  Interrupted: 2,
 } as const;
 
 /** Why the server overrode a client's predicted position. */

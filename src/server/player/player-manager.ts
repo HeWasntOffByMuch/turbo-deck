@@ -21,7 +21,7 @@ import {
   type Vec3,
 } from '../state/types.js';
 import { spendSkillPoint, sanitizeSkills } from './skills.js';
-import { clampHealthToStats, computeEffectiveStats } from './stats.js';
+import { clampHealthToStats, clampResourceToStats, computeEffectiveStats } from './stats.js';
 
 /** Stats a brand new character starts with, before any allocation. */
 export const DEFAULT_BASE_STATS: BaseStats = {
@@ -93,6 +93,9 @@ export class PlayerManager {
       record: {
         ...record,
         health: clampHealthToStats(record.health > 0 ? record.health : stats.maxHealth, stats),
+        // A fresh login comes back with a full pool; there is nothing to gain
+        // from making someone wait out a regen timer at the character select.
+        resource: stats.maxResource,
         currentZone: this.zones.zoneIdAt(record.position.x, record.position.y),
       },
       stats,
@@ -118,6 +121,7 @@ export class PlayerManager {
       experience: 0,
       unspentSkillPoints: 1,
       health: 0,
+      resource: 0,
     };
   }
 
@@ -168,7 +172,11 @@ export class PlayerManager {
     const next: PlayerSession = {
       ...session,
       stats,
-      record: { ...session.record, health: clampHealthToStats(session.record.health, stats) },
+      record: {
+        ...session.record,
+        health: clampHealthToStats(session.record.health, stats),
+        resource: clampResourceToStats(session.record.resource, stats),
+      },
     };
     this.commit(next);
     await this.store.savePlayer(next.record);

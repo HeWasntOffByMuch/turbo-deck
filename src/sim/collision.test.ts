@@ -1,6 +1,10 @@
+/**
+ * The pure geometry half of collision (spec 062). The sim-driven half went with
+ * the single-player combat sim it exercised; every rule those tests covered now
+ * lives on the server and is tested under `src/server/sim/`.
+ */
+
 import { describe, expect, it } from 'vitest';
-import fc from 'fast-check';
-import { initCombat, step } from './combat.js';
 import {
   circleBlocked,
   circleHitsCircle,
@@ -13,16 +17,7 @@ import {
   type Collider,
 } from './collision.js';
 import { ARENA_HEIGHT, ARENA_OBSTACLES, ARENA_WIDTH, ENEMY_RADIUS, PLAYER_RADIUS, WORLD_BOUNDS } from './constants.js';
-import { enemyTypeByKey } from './enemies.js';
-import {
-  NEUTRAL_INPUT,
-  type Circle,
-  type CombatState,
-  type EnemyState,
-  type InputFrame,
-  type Rect,
-  type Vec2,
-} from './types.js';
+import type { Circle, Rect, Vec2 } from './types.js';
 
 // A single test wall, away from the world edges so clamping never interferes.
 const WALL: Rect = { x: 400, y: 400, w: 100, h: 100 };
@@ -45,71 +40,15 @@ function insideWorld(position: Vec2, radius: number): boolean {
 /** The first barricade of the real layout, used for player-vs-wall tests. */
 const BARRICADE = ARENA_OBSTACLES[0] as Rect;
 
-function enemyAt(id: number, position: Vec2, overrides: Partial<EnemyState> = {}): EnemyState {
-  const brawler = enemyTypeByKey('brawler');
-  return {
-    id,
-    type: 'brawler',
-    health: brawler.maxHealth,
-    maxHealth: brawler.maxHealth,
-    position,
-    behavior: 'grazing',
-    phase: 'idle',
-    phaseEndsAtTick: 0,
-    incomingAttackOutcome: 'none',
-    attackAim: null,
-    grazeTarget: null,
-    grazeResumeTick: Number.MAX_SAFE_INTEGER,
-    path: [],
-    repathAtTick: 0,
-    ...overrides,
-  };
-}
 
 function distance(a: Vec2, b: Vec2): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-/** Gap between a point and a rectangle's nearest surface (0 when inside it). */
-function distanceToRect(point: Vec2, rect: Rect): number {
-  const dx = point.x - Math.min(Math.max(point.x, rect.x), rect.x + rect.w);
-  const dy = point.y - Math.min(Math.max(point.y, rect.y), rect.y + rect.h);
-  return Math.hypot(dx, dy);
-}
 
-/** Deepest overlap between any two enemies, or 0 when none overlap. */
-function worstEnemyOverlap(state: CombatState): number {
-  let worst = 0;
-  for (let i = 0; i < state.enemies.length; i++) {
-    for (let j = i + 1; j < state.enemies.length; j++) {
-      const a = state.enemies[i];
-      const b = state.enemies[j];
-      if (!a || !b) continue;
-      worst = Math.max(worst, ENEMY_RADIUS * 2 - distance(a.position, b.position));
-    }
-  }
-  return worst;
-}
 
-/**
- * Separation is an iterative solver, so a body squeezed by several neighbours at
- * once can keep a sub-unit residual overlap for a tick (fixing one pair can
- * nudge another back together). Under a unit on a 44-unit body is invisible;
- * what matters is that units never pile up on the same spot.
- */
-const CROWD_TOLERANCE = 1;
 
-/** An empty arena with the player parked at `position`. */
-function playerAt(state: CombatState, position: Vec2): CombatState {
-  return { ...state, player: { ...state.player, position }, enemies: [], nextSpawnTick: Number.MAX_SAFE_INTEGER };
-}
 
-/** Issue one standing move order, then let it run for `ticks` (as a click would). */
-function orderTo(state: CombatState, target: Vec2, ticks: number): CombatState {
-  let s = step(state, { ...NEUTRAL_INPUT, moveTarget: target }).state;
-  for (let t = 1; t < ticks; t++) s = step(s, NEUTRAL_INPUT).state;
-  return s;
-}
 
 describe('hitbox geometry', () => {
   it('detects circle/rectangle overlap, and treats exact touching as clear', () => {
@@ -203,18 +142,6 @@ describe('vegetation footprints block like walls (spec 044)', () => {
     }
   });
 
-  it('walks a move order that runs straight through a tree without ever overlapping it', () => {
-    const start = { x: TREE.x - 260, y: TREE.y };
-    const beyond = { x: TREE.x + 260, y: TREE.y };
-    const base = initCombat(11, { ambientSpawner: false, initialEnemies: 0, world: GROVE });
-    let s = playerAt(base, start);
-    s = step(s, { ...NEUTRAL_INPUT, moveTarget: beyond }).state;
-    for (let t = 1; t < 600; t++) {
-      s = step(s, NEUTRAL_INPUT).state;
-      expect(circleBlocked(s.player.position, PLAYER_RADIUS, GROVE)).toBe(false);
-    }
-    expect(distance(s.player.position, beyond)).toBeLessThan(PLAYER_RADIUS);
-  });
 });
 
 describe('separation pass', () => {
@@ -251,143 +178,5 @@ describe('separation pass', () => {
       expect(circleBlocked(spot, ENEMY_RADIUS, WALLS)).toBe(false);
       expect(insideWorld(spot, ENEMY_RADIUS)).toBe(true);
     }
-  });
-});
-
-describe('units collide in the sim', () => {
-  it('separates two enemies spawned on top of each other in a single step', () => {
-    const base = initCombat(4);
-    const stacked = { x: 600, y: 200 };
-    const state: CombatState = {
-      ...base,
-      enemies: [enemyAt(1, stacked), enemyAt(2, stacked)],
-      nextSpawnTick: Number.MAX_SAFE_INTEGER,
-    };
-    const after = step(state, NEUTRAL_INPUT).state;
-    const [a, b] = after.enemies;
-    if (!a || !b) throw new Error('expected both enemies to survive');
-    expect(distance(a.position, b.position)).toBeGreaterThanOrEqual(ENEMY_RADIUS * 2 - 1e-9);
-  });
-
-  it('keeps a grazing herd from stacking, walking through walls, or leaving the world', () => {
-    for (const seed of [31, 37, 5]) {
-      let s = initCombat(seed);
-      for (let t = 0; t < 1500; t++) {
-        s = step(s, NEUTRAL_INPUT).state;
-        expect(worstEnemyOverlap(s)).toBeLessThan(CROWD_TOLERANCE);
-        for (const enemy of s.enemies) {
-          expect(circleBlocked(enemy.position, ENEMY_RADIUS)).toBe(false);
-          expect(insideWorld(enemy.position, ENEMY_RADIUS)).toBe(true);
-        }
-      }
-    }
-  });
-
-  it('grazes the play area: the herd stays put even with the border gone (spec 044)', () => {
-    // Graze targets are drawn inside the play rectangle, so the herd ambles
-    // around the arena rather than diffusing off into the hills. Separation can
-    // nudge a body a little past the edge; it cannot walk away.
-    const slack = ENEMY_RADIUS * 3;
-    for (const seed of [31, 37, 5]) {
-      let s = initCombat(seed);
-      for (let t = 0; t < 1500; t++) {
-        s = step(s, NEUTRAL_INPUT).state;
-        for (const enemy of s.enemies) {
-          expect(enemy.position.x).toBeGreaterThan(-slack);
-          expect(enemy.position.y).toBeGreaterThan(-slack);
-          expect(enemy.position.x).toBeLessThan(ARENA_WIDTH + slack);
-          expect(enemy.position.y).toBeLessThan(ARENA_HEIGHT + slack);
-        }
-      }
-    }
-  });
-
-  it('holds the crowd apart when whole waves converge on a standing player', () => {
-    let s = initCombat(1, { ambientSpawner: false, initialEnemies: 0 });
-    // Keep the player alive so the sim keeps running and the crowd keeps pressing.
-    s = { ...s, player: { ...s.player, health: 1e6, maxHealth: 1e6 } };
-    let peak = 0;
-    for (let t = 0; t < 1200; t++) {
-      s = step(s, { ...NEUTRAL_INPUT, spawnWave: t % 200 === 1 && t < 1000 }).state;
-      peak = Math.max(peak, s.enemies.length);
-      expect(worstEnemyOverlap(s)).toBeLessThan(CROWD_TOLERANCE);
-      for (const enemy of s.enemies) expect(circleBlocked(enemy.position, ENEMY_RADIUS)).toBe(false);
-    }
-    expect(peak).toBeGreaterThan(10); // the crowd really did build up
-  });
-});
-
-describe('the player collides with walls', () => {
-  it('cannot walk into a barricade: an order inside one stops against it', () => {
-    // Level with the barricade, to its left, ordered into the middle of it. The
-    // destination itself is unreachable, so the unit gets as close as its hitbox
-    // allows -- against one of the wall's faces -- and never inside it. Which
-    // face it settles on is up to the router; it may well come round the far side.
-    const start = { x: 150, y: BARRICADE.y + BARRICADE.h / 2 };
-    const insideIt = { x: BARRICADE.x + BARRICADE.w / 2, y: start.y };
-    const s = orderTo(playerAt(initCombat(6), start), insideIt, 400);
-    expect(distance(s.player.position, start)).toBeGreaterThan(50); // it did travel
-    expect(circleBlocked(s.player.position, PLAYER_RADIUS)).toBe(false);
-    expect(distanceToRect(s.player.position, BARRICADE)).toBeLessThanOrEqual(PLAYER_RADIUS + 2);
-    // Still standing, order unfulfilled: it cannot reach a point inside a wall.
-    expect(s.player.moveTarget).not.toBeNull();
-  });
-
-  it('never ends a tick inside a wall, whatever the orders', () => {
-    const inputArb: fc.Arbitrary<InputFrame> = fc.record({
-      moveTarget: fc.record({
-        x: fc.integer({ min: -200, max: ARENA_WIDTH + 200 }),
-        y: fc.integer({ min: -200, max: ARENA_HEIGHT + 200 }),
-      }),
-      attack: fc.boolean(),
-      aimX: fc.constantFrom(-1, 0, 1),
-      aimY: fc.constantFrom(-1, 0, 1),
-      parry: fc.boolean(),
-      dodge: fc.boolean(),
-    });
-    fc.assert(
-      fc.property(fc.integer({ min: 0, max: 2 ** 31 - 1 }), fc.array(inputArb, { maxLength: 200 }), (seed, inputs) => {
-        let s = initCombat(seed);
-        for (const input of inputs) {
-          s = step(s, input).state;
-          expect(circleBlocked(s.player.position, PLAYER_RADIUS)).toBe(false);
-        }
-      }),
-      { numRuns: 20 },
-    );
-  });
-
-  it('cannot dash through a wall', () => {
-    // Parked left of the barricade, dashing hard to the right: the dash is stopped
-    // by the wall instead of carrying the unit past it.
-    const start = { x: 250, y: BARRICADE.y + BARRICADE.h / 2 };
-    const base = playerAt(initCombat(8), start);
-    let s: CombatState = {
-      ...base,
-      player: { ...base.player, dashDx: 30, dashDy: 0, dashExpiresAtTick: base.tick + 20 },
-    };
-    for (let t = 0; t < 20; t++) s = step(s, NEUTRAL_INPUT).state;
-    expect(s.player.position.x).toBeLessThanOrEqual(BARRICADE.x - PLAYER_RADIUS);
-    expect(circleBlocked(s.player.position, PLAYER_RADIUS)).toBe(false);
-  });
-});
-
-describe('the play area no longer walls the player in (spec 044)', () => {
-  it('walks straight out past the old arena border and keeps going', () => {
-    const start = { x: ARENA_WIDTH - 100, y: ARENA_HEIGHT / 2 };
-    const outside = { x: ARENA_WIDTH + 800, y: ARENA_HEIGHT / 2 };
-    const s = orderTo(playerAt(initCombat(12), start), outside, 900);
-    expect(s.player.position.x).toBeGreaterThan(ARENA_WIDTH);
-    expect(distance(s.player.position, outside)).toBeLessThan(PLAYER_RADIUS);
-    // The order was fulfilled, not abandoned against an invisible wall.
-    expect(s.player.moveTarget).toBeNull();
-  });
-
-  it("still stops at the world's edge, where the ground runs out", () => {
-    const start = { x: 200, y: ARENA_HEIGHT / 2 };
-    const offMap = { x: WORLD_BOUNDS.x - 5000, y: ARENA_HEIGHT / 2 };
-    const s = orderTo(playerAt(initCombat(13), start), offMap, 3000);
-    expect(s.player.position.x).toBeLessThan(0); // it really did leave the play area
-    expect(insideWorld(s.player.position, PLAYER_RADIUS)).toBe(true);
   });
 });
