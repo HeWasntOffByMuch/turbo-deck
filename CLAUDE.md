@@ -75,22 +75,18 @@ spec they implement.
 
 **The default branch is `main`. Branch from it, and merge back into it.**
 
-`master` also exists on the remote and is badly out of date — it is an
-abandoned ref, not a second line of development. Nothing should ever be based
-on it. A fresh clone will not have `main` locally until you fetch, and
-`git branch -a` will happily show you `master` and no `main`, so:
+A fresh clone will not have `main` locally until you fetch, so:
 
 ```sh
 git fetch origin
-git rev-parse --verify origin/main   # check the ref directly, not by scanning a list
 git checkout -b <branch> origin/main
 ```
 
-This has bitten real work: a feature branch cut from `master` landed 42 commits
-behind, against a flat world that had since become a heightfield. The
-`SessionStart` hook now says so at the top of every session: if your branch
-forks from history at or before `origin/master`, it prints the `git rebase`
-command to fix it. Fix it before writing code, not after.
+Basing a branch on stale history has bitten real work here before: one feature
+branch landed 42 commits behind, against a flat world that had since become a
+heightfield. The `SessionStart` hook reports how far behind `origin/main` the
+current branch is, so that shows up at the top of the session rather than at
+merge time.
 
 ## Commit conventions
 
