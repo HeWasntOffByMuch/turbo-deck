@@ -37,9 +37,9 @@ const HASH_TIERS = 0x5eed02;
 const HASH_ASYMMETRY = 0x5eed03;
 const HASH_LEAN = 0x5eed04;
 /**
- * Base seeds for a part's own jitter; the part's index is mixed in (spec 056).
+ * Base seeds for a part's own jitter; the part's index is mixed in (spec 058).
  *
- * Three independent channels rather than one (spec 057), because a single hash
+ * Three independent channels rather than one (spec 059), because a single hash
  * correlates every wobble a part has: the board that came out widest would also
  * always be the one leaning furthest and the palest, which reads as a pattern
  * rather than as variation.
@@ -81,7 +81,7 @@ interface PropPart {
    */
   readonly tintAmount?: number;
   /**
-   * Per-instance jitter, hashed from where the prop stands (spec 056).
+   * Per-instance jitter, hashed from where the prop stands (spec 058).
    *
    * The variation a *repeated* part needs. A tree gets its variety from its
    * species, its tier count and its lean; a fence tile is the same tile stamped
@@ -101,7 +101,7 @@ interface PropPart {
   /** Colour drift that is this part's alone, on top of the prop's `tint`. */
   readonly jitterTint?: number;
   /**
-   * The colour this part takes when its prop asked for one flat tone (spec 059).
+   * The colour this part takes when its prop asked for one flat tone (spec 061).
    *
    * Only the parts whose colour is *decorative* need one -- a board drawn from
    * four timber tones, a brick from three fired bands. A part whose colour is
@@ -327,7 +327,7 @@ function bushParts(): PropPart[] {
 }
 
 /**
- * One tile of fence, in the prop's local space (spec 056).
+ * One tile of fence, in the prop's local space (spec 058).
  *
  * The tile runs along local **+X**, spanning exactly `[-L/2, +L/2]` and no
  * further, where `L` is `FENCE_TILE_LENGTH`. That is the contract with
@@ -393,7 +393,7 @@ function woodFenceParts(): PropPart[] {
 }
 
 /**
- * A brick wall (spec 058), the built counterpart to the rubble one.
+ * A brick wall (spec 060), the built counterpart to the rubble one.
  *
  * A mortar core spanning the tile, with brick faces standing proud of it on both
  * sides in six courses -- so the wall is solid by construction and the joints are
@@ -427,7 +427,7 @@ const BRICK_RUN = FENCE_TILE_LENGTH / 3;
  * gap is that brick's own side face, not the mortar behind. That is invisible
  * while every brick is a different tone -- the bond reads by colour instead --
  * and turns the wall into a flat slab with horizontal stripes the moment the
- * colour variety is switched off (spec 059). Wider than deep, the mortar shows
+ * colour variety is switched off (spec 061). Wider than deep, the mortar shows
  * and the bond reads from the geometry, whatever the colours are doing.
  */
 const BRICK_JOINT = 2;
@@ -566,7 +566,7 @@ function brickFenceParts(): PropPart[] {
 }
 
 /**
- * A board (spec 057): eight corners placed one at a time rather than a box
+ * A board (spec 059): eight corners placed one at a time rather than a box
  * scaled, so it can taper toward the top, lean its top edge along the run, and
  * be cut off at a slant. A palisade of boxes is a barcode; the whole point of
  * this style is that no two boards are the same shape.
@@ -629,7 +629,7 @@ function boardGeometry(spec: BoardSpec): THREE.BufferGeometry {
 }
 
 /**
- * A stone (spec 057): an icosahedron with every vertex pushed in or out, then
+ * A stone (spec 059): an icosahedron with every vertex pushed in or out, then
  * squashed to the size wanted.
  *
  * The perturbation is a hash of the vertex **position**, never of its index. The
@@ -673,7 +673,7 @@ const BOARD_OVERLAP = 1.2;
 const BOARD_TONES = [PALETTE.plank, PALETTE.plankPale, PALETTE.plankGrey, PALETTE.post] as const;
 
 /**
- * A palisade of vertical boards, no rails and no posts (spec 057).
+ * A palisade of vertical boards, no rails and no posts (spec 059).
  *
  * The widths are drawn from a hash and then **normalised so the advances sum to
  * exactly one tile**, which is the whole trick: the boards can be any widths at
@@ -728,7 +728,7 @@ function boardFenceParts(): PropPart[] {
 }
 
 /**
- * A wall of stones and nothing else (spec 057).
+ * A wall of stones and nothing else (spec 059).
  *
  * Three staggered rows, each stone wide enough that it still overlaps its
  * neighbours after `rockGeometry` has knocked it about and the per-instance

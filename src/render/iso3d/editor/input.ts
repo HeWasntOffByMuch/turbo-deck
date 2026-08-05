@@ -22,7 +22,7 @@ import type { ScreenPoint } from '../input.js';
 const ORBIT_BUTTON = 2;
 
 /**
- * The button that tracks and dollies: middle (spec 056).
+ * The button that tracks and dollies: middle (spec 058).
  *
  * It used to orbit alongside the right button, and moving the view was on WASD
  * -- the one set of keys the left hand is never on while the right hand is

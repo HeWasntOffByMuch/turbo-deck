@@ -26,7 +26,7 @@ import {
 } from './fence.js';
 
 /**
- * Spec 056. A fence is the first tool here whose stroke is a *path* rather than
+ * Spec 058. A fence is the first tool here whose stroke is a *path* rather than
  * an area, and the property that makes it usable is one a screenshot cannot
  * show: tiles land exactly a tile apart however often the mouse is sampled. Draw
  * that wrong and a fence has gaps when the hand moves fast and doubles up when
@@ -240,7 +240,7 @@ describe('what a fence refuses to do', () => {
   });
 });
 
-describe('the colour-variety option (spec 059)', () => {
+describe('the colour-variety option (spec 061)', () => {
   it('marks a tile uniform only when the variety is off', () => {
     // Absent rather than false for the default, so the document does not grow a
     // field per prop for the way every fence painted so far was already laid.

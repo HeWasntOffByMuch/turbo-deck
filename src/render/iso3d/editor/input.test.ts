@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { EditorInputCapture } from './input.js';
 
 /**
- * Spec 049, rebound in 056. The tab shell's whole contract with a view is
+ * Spec 049, rebound in 058. The tab shell's whole contract with a view is
  * `start`/`stop`, and the half of it that actually bites is that a hidden view
  * captures nothing -- a tab still listening moves a scene nobody is looking at,
  * and a button held while focus moves away never sends its pointerup at all.
@@ -48,7 +48,7 @@ function attached(): Rig {
   return { input, canvas, window };
 }
 
-describe('button assignment (spec 056)', () => {
+describe('button assignment (spec 058)', () => {
   it('orbits on right-drag and never on middle or left', () => {
     const { input, canvas, window } = attached();
     fire(canvas, 'pointerdown', { button: 2, pointerId: 1 });

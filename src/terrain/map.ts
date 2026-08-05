@@ -69,7 +69,7 @@ export interface MapProp {
   readonly tint: number;
   /** Lie the prop along the ground rather than standing it up (spec 051). */
   readonly align?: boolean;
-  /** Draw it in one flat colour per material rather than varied (spec 059). */
+  /** Draw it in one flat colour per material rather than varied (spec 061). */
   readonly uniform?: boolean;
 }
 

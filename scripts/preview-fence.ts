@@ -1,4 +1,4 @@
-// Dev-only: render a run of each fence style (spec 056/057) to a PNG so a human --
+// Dev-only: render a run of each fence style (spec 058/059) to a PNG so a human --
 // or an agent with no screen -- can check that a painted fence actually reads as
 // a fence. Not part of the app. `tsx scripts/preview-fence.ts`
 //
@@ -231,7 +231,7 @@ interface Shot {
   readonly style: FenceStyle;
   readonly corners: readonly (readonly [number, number])[];
   readonly amplitude: number;
-  /** The last column of each row drops the colour variety (spec 059). */
+  /** The last column of each row drops the colour variety (spec 061). */
   readonly variedColor?: boolean;
 }
 

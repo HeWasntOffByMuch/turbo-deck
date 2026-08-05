@@ -55,7 +55,7 @@ const DEFAULT_ELEVATION = (35 * Math.PI) / 180;
 const ORBIT_PER_PIXEL = 0.01;
 
 /**
- * Floor on the foreshortening a dolly divides by (spec 056).
+ * Floor on the foreshortening a dolly divides by (spec 058).
  *
  * Vertical drag moves the pivot along the camera's ground heading, and that
  * heading is squashed on screen by `sin(elevation)` -- so undoing it means
@@ -167,7 +167,7 @@ export function orbitEditorCamera(
 }
 
 /**
- * Middle-drag to track and dolly (spec 056), in the camera's **own** ground
+ * Middle-drag to track and dolly (spec 058), in the camera's **own** ground
  * frame: horizontal pixels slide the pivot across the camera's heading, vertical
  * pixels push it along that heading. Moving in world axes instead would send the
  * view diagonally off screen at every bearing but one, which is the thing that

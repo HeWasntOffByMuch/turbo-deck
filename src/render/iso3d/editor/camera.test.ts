@@ -94,7 +94,7 @@ describe('orbit', () => {
   });
 });
 
-describe('track and dolly (spec 056)', () => {
+describe('track and dolly (spec 058)', () => {
   /** A viewport wide enough that a pixel is a round number of world units. */
   const WIDTH = 1000;
 

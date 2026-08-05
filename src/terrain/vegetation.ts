@@ -20,7 +20,7 @@ import { arenaBounds } from './world.js';
 
 /**
  * What a prop is. Trees and bushes are scattered over an area; the two fences
- * are laid along a path, one tile per prop (spec 056).
+ * are laid along a path, one tile per prop (spec 058).
  */
 export type PropKind =
   | 'tree'
@@ -33,7 +33,7 @@ export type PropKind =
 /**
  * The kinds that are a length of fence rather than a plant: a regular one and a
  * rough one in each material -- picket and boards in timber, brick and rubble in
- * stone (spec 056, 057, 058).
+ * stone (spec 058, 059, 060).
  */
 export const FENCE_KINDS = ['fence-wood', 'fence-boards', 'fence-brick', 'fence-rubble'] as const;
 export type FenceKind = (typeof FENCE_KINDS)[number];
@@ -77,7 +77,7 @@ export interface Prop {
   readonly alignToNormal?: boolean;
   /**
    * Draw this prop in one flat colour per material instead of its varied tones
-   * (spec 059).
+   * (spec 061).
    *
    * The *intent*, like `alignToNormal` beside it: which tone a part ends up
    * with is the renderer's business, and this only says whether it may vary at

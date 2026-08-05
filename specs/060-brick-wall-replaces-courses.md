@@ -1,8 +1,8 @@
-# 058 — A brick wall, and the coursed wall retired
+# 060 — A brick wall, and the coursed wall retired
 
 ## Problem
 
-Four fence styles shipped in 056/057: picket, boards, courses (a battered
+Four fence styles shipped in 058/059: picket, boards, courses (a battered
 drystone wall of three straight courses) and rubble. Two of them are stone, and
 the coursed one is the weaker of the pair — it is what rubble is a better
 version of, so it occupies a button without offering a look the rubble wall does

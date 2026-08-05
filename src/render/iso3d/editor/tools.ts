@@ -7,7 +7,7 @@ import { DEFAULT_SCATTER } from './scatter.js';
 
 /**
  * What the editor's tools are, and what the panel shows for each (spec 050/051,
- * reshaped in 056).
+ * reshaped in 058).
  *
  * Split out of `panel.ts` so it imports no `lil-gui` and touches no DOM: what
  * the panel *decides* -- which mode is armed, which settings belong to it, what
@@ -162,7 +162,7 @@ export const MARKER_CHOICES = choices(MARKER_KINDS);
 /**
  * Labelled by what they look like rather than by their stored id: 'wood' is
  * written into saved maps and cannot be renamed, but a button that says WOOD
- * next to one that says BOARDS tells you nothing (spec 057).
+ * next to one that says BOARDS tells you nothing (spec 059).
  */
 export const FENCE_STYLE_CHOICES = choices(FENCE_STYLES, { wood: 'picket' });
 /**

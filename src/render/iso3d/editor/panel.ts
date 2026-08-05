@@ -15,7 +15,7 @@ import {
 } from './tools.js';
 
 /**
- * The editor's control panel (spec 050/051, reshaped in 056).
+ * The editor's control panel (spec 050/051, reshaped in 058).
  *
  * `lil-gui` for every knob, per the brief: no custom UI framework, no dockable
  * panels. It binds straight to one mutable settings object, so the frame loop

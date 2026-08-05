@@ -20,7 +20,7 @@ import {
 } from './tools.js';
 
 /**
- * Spec 056. The panel's *decisions* -- which tool is armed, whose settings that
+ * Spec 058. The panel's *decisions* -- which tool is armed, whose settings that
  * puts on screen, what the ring on the ground says -- are here rather than in
  * `panel.ts`, which is why they can be tested at all: `panel.ts` is lil-gui and
  * a DOM, and this is a pure function of the settings object.

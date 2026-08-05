@@ -1,4 +1,4 @@
-# 056 — Editor navigation, a tool-first panel, and fences
+# 058 — Editor navigation, a tool-first panel, and fences
 
 ## Problem
 

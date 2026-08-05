@@ -1,8 +1,8 @@
-# 057 — Fence variants: boards and rubble
+# 059 — Fence variants: boards and rubble
 
 ## Problem
 
-Spec 056 gave the editor one wooden fence and one stone one, and both are
+Spec 058 gave the editor one wooden fence and one stone one, and both are
 *regular*: the picket fence repeats a post and two pickets at a fixed pitch, and
 the drystone wall is three straight courses. That regularity is what makes them
 tile seamlessly, and it is also what makes a long run read as one extruded
@@ -64,7 +64,7 @@ times over and must move identically in all three or the stone tears open.
 
 ### Tiling still holds
 
-The seamlessness argument of 056 is unchanged and is what constrains the layout:
+The seamlessness argument of 058 is unchanged and is what constrains the layout:
 boards are laid edge to edge with a fixed overlap and their widths normalised so
 the advances sum to exactly `FENCE_TILE_LENGTH`, and rubble stones sit at
 positions inside `[-L/2, +L/2]` while their geometry deliberately overhangs, so
@@ -79,7 +79,7 @@ enough to stay inside the overlap it is eating into.
   seam nor a double-thickness board at every junction — asserted on the layout,
   not by looking.
 - Every fence kind builds a field whose instance positions stay within half a
-  tile of the tile's centre, for all four styles (056 asserted this for the
+  tile of the tile's centre, for all four styles (058 asserted this for the
   picket only).
 - A board tile's boards differ from each other in width and in colour, and a
   rubble tile's stones differ in size — i.e. the authored layer actually varies.
@@ -94,7 +94,7 @@ enough to stay inside the overlap it is eating into.
 
 ## Out of scope
 
-- Replacing the 056 styles. Regular picket and coursed wall are the right thing
+- Replacing the 058 styles. Regular picket and coursed wall are the right thing
   for a fenced paddock and a built wall; these are the rougher counterparts, not
   successors.
 - Per-tile geometry (a tile whose boards are generated for *that* tile). Every

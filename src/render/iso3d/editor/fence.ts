@@ -8,7 +8,7 @@ import {
 } from '../../../terrain/index.js';
 
 /**
- * The fence tool (spec 056).
+ * The fence tool (spec 058).
  *
  * Pure and seeded, like the scatter beside it: every random choice comes from an
  * `Rng` passed in and handed back advanced, so a run is a thing a test can
@@ -30,8 +30,8 @@ import {
  */
 
 /**
- * The fence styles: regular and rough, in timber and then in stone (spec 057,
- * 058). Ordered so the panel's two-column strip groups them by material.
+ * The fence styles: regular and rough, in timber and then in stone (spec 059,
+ * 060). Ordered so the panel's two-column strip groups them by material.
  *
  * `wood` keeps its id rather than being renamed to what the button calls it,
  * because that id is written into every map already saved with a picket fence.
@@ -44,7 +44,7 @@ export interface FenceSettings {
   /** Size multiplier. Tiles are laid this much longer as well as taller. */
   readonly fenceScale: number;
   /**
-   * Whether tiles may draw their materials in varied tones (spec 059).
+   * Whether tiles may draw their materials in varied tones (spec 061).
    *
    * On for a field wall, off for a run meant to read as one built thing, where
    * the mottling reads as dirt rather than as material. Stored per tile rather

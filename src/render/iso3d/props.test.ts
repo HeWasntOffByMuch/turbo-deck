@@ -144,7 +144,7 @@ describe('the trunk ends inside the canopy, not through it', () => {
 });
 
 /**
- * Spec 056. A fence tile is the first prop whose *parts* have to line up with
+ * Spec 058. A fence tile is the first prop whose *parts* have to line up with
  * the world -- a tree can be turned any way at all and nobody can tell, but a
  * tile's uprights sit along its own local +X and have to come out along the run.
  *
@@ -280,7 +280,7 @@ describe('fence tiles as they are actually built', () => {
 });
 
 /**
- * Spec 057. The two rough variants are irregular on purpose, which makes most
+ * Spec 059. The two rough variants are irregular on purpose, which makes most
  * of them a matter for the eye and `scripts/preview-fence.ts`. Two things are
  * not: that the irregularity does not open a hole in what is meant to be a
  * continuous barrier, and that it actually varies rather than merely looking
@@ -401,7 +401,7 @@ describe('the rough fence variants', () => {
 });
 
 /**
- * Spec 058. Brick is the one style whose whole point is regularity, so the
+ * Spec 060. Brick is the one style whose whole point is regularity, so the
  * property worth pinning is not that it varies but that its bond *lines up* --
  * specifically across a tile boundary, where the failure is two bricks in the
  * same world space z-fighting the length of a wall.
@@ -468,7 +468,7 @@ describe('the brick bond', () => {
 });
 
 /**
- * Spec 059. The flag says only "do not vary my colours"; everything else about
+ * Spec 061. The flag says only "do not vary my colours"; everything else about
  * the tile -- where its parts sit, how many there are, what shape they take --
  * has to be untouched, or a setting people reach for to calm a wall down would
  * quietly rebuild it.
