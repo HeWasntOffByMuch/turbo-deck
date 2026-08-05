@@ -15,6 +15,7 @@ import { LoopbackTransport } from '../net/transport-loop.js';
 import { GameServer } from '../server.js';
 import { GameClient } from './game-client.js';
 import { abilityById } from '../data/abilities.js';
+import { CastEndReason } from '../sim/types.js';
 
 /** Lets the loopback's queued microtasks drain. */
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -442,6 +443,82 @@ describe('calling off a cast', () => {
     await settle();
     expect(client.view().casts).toHaveLength(0);
     expect(client.view().requestedAbilityId).toBeNull();
+  });
+});
+
+/**
+ * Interruption has to be *announced*, not just done.
+ *
+ * `applyDamage` clears the target's cast. Doing that without an event left the
+ * client holding a cast the server had dropped -- and since a client roots
+ * itself while it believes it is casting (spec 064), the player was stuck on the
+ * spot permanently. Measured at 288 ticks of phantom cast before the fix.
+ */
+describe('being interrupted', () => {
+  it('tells the client, so it never believes it is casting when it is not', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+
+    const entityId = client.view().selfEntityId;
+    const at = test.server.world.entities.get(entityId)?.position;
+    expect(at).toBeDefined();
+    if (!at) return;
+
+    // Something big, already facing us, close enough to swing at once.
+    test.server.spawnEntities('ravager', at.x + 40, at.y, 1);
+    const live = test.server.world.entities as Map<number, ServerEntity>;
+    for (const [id, entity] of live) {
+      if (entity.typeId === 'ravager') live.set(id, { ...entity, facing: Math.PI });
+    }
+
+    // A long cast, aimed away, so there is plenty of wind-up to be knocked out of.
+    client.useAbility('ground.quake', at.x + 200, at.y);
+    await settle();
+
+    let phantomTicks = 0;
+    for (let i = 0; i < 300; i++) {
+      test.server.tick();
+      await settle();
+      const serverCasting = test.server.world.entities.get(entityId)?.cast !== null;
+      const clientCasting = client.view().casts.some((cast) => cast.entityId === entityId);
+      if (!serverCasting && clientCasting) phantomTicks += 1;
+    }
+
+    expect(phantomTicks).toBe(0);
+    // And the fight actually happened -- otherwise this asserts nothing.
+    expect(test.server.world.entities.get(entityId)?.health ?? 0).toBeLessThan(
+      client.view().stats?.maxHealth ?? 0,
+    );
+  });
+
+  it('reports the interruption as an interruption, not a cancel', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+
+    const entityId = client.view().selfEntityId;
+    const at = test.server.world.entities.get(entityId)?.position;
+    if (!at) return;
+    test.server.spawnEntities('ravager', at.x + 40, at.y, 1);
+    const live = test.server.world.entities as Map<number, ServerEntity>;
+    for (const [id, entity] of live) {
+      if (entity.typeId === 'ravager') live.set(id, { ...entity, facing: Math.PI });
+    }
+
+    const reasons: number[] = [];
+    client.onCastEnded((end) => {
+      if (end.entityId === entityId) reasons.push(end.reason);
+    });
+
+    client.useAbility('ground.quake', at.x + 200, at.y);
+    await settle();
+    for (let i = 0; i < 120; i++) {
+      test.server.tick();
+      await settle();
+    }
+
+    expect(reasons).toContain(CastEndReason.Interrupted);
   });
 });
 

@@ -19,6 +19,7 @@ import {
   ServerMessageType,
 } from './net/protocol.js';
 import { GameServer } from './server.js';
+import { WORLD_BOUNDS } from '../sim/constants.js';
 
 const SECRET = 'integration-secret';
 
@@ -284,7 +285,15 @@ describe('interest management over the wire', () => {
 
     broadcast(game);
     alice.clear();
-    game.teleport('bob', 40000, 40000);
+
+    // Opposite corners of the world, and both of them, because since spec 065's
+    // interest window (2000 units) the whole world fits inside one player's --
+    // teleporting only bob leaves him clamped back inside the bounds and still
+    // in view. Which is itself worth knowing: culling has nothing to cull at
+    // this world size, and starts earning its keep when the map outgrows the
+    // camera.
+    game.teleport('alice', WORLD_BOUNDS.x + 50, WORLD_BOUNDS.y + 50);
+    game.teleport('bob', WORLD_BOUNDS.x + WORLD_BOUNDS.w - 50, WORLD_BOUNDS.y + WORLD_BOUNDS.h - 50);
     broadcast(game);
 
     const removed = alice.of(ServerMessageType.Delta).flatMap((delta) => delta.removed);

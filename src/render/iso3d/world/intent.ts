@@ -9,16 +9,25 @@
  * view is so "does W+D walk the diagonal at walking speed" and "does a move
  * order stop on arrival" are answerable in Node.
  *
- * Two of the rules below mirror the server rather than invent anything, and both
- * exist for the same reason: the client *predicts* with this vector, so anywhere
+ * Several of the rules below mirror the server rather than invent anything, and
+ * they exist for the same reason: the client *predicts* with this vector, so anywhere
  * it disagrees with `resolveMovement` is a correction the player sees. Mirroring
  * a rule to predict it is not the renderer having an opinion -- the server still
  * decides, and if these drift the only symptom is a rubber-band.
  */
 
+import { findPath, navGridFor } from '../../../sim/pathfinding.js';
+import type { WorldColliders } from '../../../sim/types.js';
+
 export interface Point {
   readonly x: number;
   readonly y: number;
+}
+
+/** What {@link routeTo} needs to path through: the world, and how wide the body is. */
+export interface PathWorld {
+  readonly colliders: WorldColliders;
+  readonly radius: number;
 }
 
 export interface MoveIntent {
@@ -64,27 +73,42 @@ export interface IntentInput {
   readonly self: Point;
   /** The standing move order from the last right-click, or null. */
   readonly destination: Point | null;
+  /**
+   * The world to route a move order through, or null to steer straight at it.
+   * Null until the welcome lands and the client has built the world.
+   */
+  readonly world: PathWorld | null;
   /** The body's current heading, kept when nothing asks for a new one. */
   readonly facing: number;
   /**
-   * Whether this body is mid-cast. The server roots a caster outright
-   * (`world.ts` zeroes the movement components while `cast !== null`), so
-   * predicting a walk here would diverge on every tick of every wind-up.
+   * The aim of the cast in progress, or null when not casting.
+   *
+   * Two things at once, both mirroring the server. The server roots a caster
+   * outright (`world.ts` zeroes the movement components while `cast !== null`),
+   * so predicting a walk here would diverge on every tick of every wind-up. And
+   * the server turns the body *into* its captured aim over the wind-up
+   * (`resolveFacing`), so the heading asked for while casting is that aim and
+   * not whatever the keys say.
    */
-  readonly casting: boolean;
+  readonly castAim: Point | null;
 }
 
 export function moveIntent(input: IntentInput): MoveIntent {
   const keyed = keyDirection(input.held);
   // Keys outrank a standing order: grabbing WASD is how you take manual control
   // back, and having to cancel an order first would feel like a stuck key.
-  const direction = keyed ?? steerTo(input.self, input.destination);
+  const direction = keyed ?? routeTo(input.self, input.destination, input.world);
   const arrived = keyed === null && direction === null && input.destination !== null;
 
-  // Rooted: ask for nothing, but keep facing where it was. A caster still turns
-  // into its blow, and that turn is the server's to make.
-  if (input.casting) {
-    return { moveX: 0, moveY: 0, facing: input.facing, arrived };
+  // Rooted, and turning into the blow. Asking for the aim rather than holding
+  // the old heading is what makes the figure visibly come round during a
+  // wind-up: the server is already turning it, and a client that kept asking for
+  // its previous heading simply drew a body that never moved.
+  if (input.castAim) {
+    const dx = input.castAim.x - input.self.x;
+    const dy = input.castAim.y - input.self.y;
+    const facing = Math.hypot(dx, dy) < 1e-6 ? input.facing : Math.atan2(dy, dx);
+    return { moveX: 0, moveY: 0, facing, arrived };
   }
 
   if (!direction) {
@@ -119,10 +143,10 @@ function keyDirection(held: ReadonlySet<string>): Point | null {
 /**
  * The direction toward a standing move order, or null once it is reached.
  *
- * A straight line. Steering around a tree is the server's pathfinding to do and
- * a client that guessed at it would be predicting a route rather than a step --
- * for now a blocked order slides along the obstacle exactly as a held key does,
- * because that is what `slideCircle` makes of a direction on both sides.
+ * A straight line, which is right whenever the way is clear and wrong the moment
+ * it is not: a move order across a wall used to press the body into it and slide.
+ * {@link routeTo} is the same question asked of the nav grid; this is what it
+ * falls back to.
  */
 export function steerTo(self: Point, destination: Point | null): Point | null {
   if (!destination) return null;
@@ -130,6 +154,40 @@ export function steerTo(self: Point, destination: Point | null): Point | null {
   const dy = destination.y - self.y;
   if (Math.hypot(dx, dy) <= ARRIVE_EPS) return null;
   return normalise(dx, dy);
+}
+
+/**
+ * A route for a move order, through the same grid the monsters use.
+ *
+ * Client-side on purpose. A move order is *input*: what it produces is the same
+ * per-tick unit vector a held key produces, and the server validates it
+ * identically. Keeping the routing here is what keeps prediction exact -- the
+ * client predicts with the vector it sent. Routing it server-side would mean the
+ * client either re-deriving the same path anyway or mispredicting every step
+ * around every tree.
+ *
+ * `findPath` short-circuits to a straight line when nothing is in the way, so the
+ * common case costs one segment test.
+ */
+export function routeTo(
+  self: Point,
+  destination: Point | null,
+  world: PathWorld | null,
+): Point | null {
+  if (!destination) return null;
+  if (Math.hypot(destination.x - self.x, destination.y - self.y) <= ARRIVE_EPS) return null;
+  if (!world) return steerTo(self, destination);
+
+  const waypoints = findPath(navGridFor(world.radius, world.colliders), self, destination);
+  // Unreachable within the node budget: press toward it and let collision decide,
+  // which is what a held key in the same direction would do.
+  const next = waypoints[0];
+  if (!next) return steerTo(self, destination);
+  // A waypoint we are already standing on says nothing about which way to go.
+  if (Math.hypot(next.x - self.x, next.y - self.y) <= 1e-6) {
+    return steerTo(self, destination);
+  }
+  return normalise(next.x - self.x, next.y - self.y);
 }
 
 function normalise(x: number, y: number): Point | null {

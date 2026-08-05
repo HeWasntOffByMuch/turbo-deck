@@ -53,6 +53,12 @@ async function waitForServer(url: string, timeoutMs = 30_000): Promise<void> {
   throw new Error(`server at ${url} never came up`);
 }
 
+/** The tick the HUD is showing. */
+async function readTick(page: Page): Promise<number> {
+  const text = (await page.textContent('body')) ?? '';
+  return Number(/tick (\d+)/.exec(text)?.[1] ?? -1);
+}
+
 /** Waits until the sim has actually run `ticks` ticks, and says so if it never does. */
 async function waitForTick(page: Page, ticks: number, timeoutMs = 90_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -141,6 +147,15 @@ async function main(): Promise<void> {
     // (spec 065) and the pixel damage numbers over the bodies.
     await page.waitForTimeout(900);
     await shoot(page, 'world-cooldowns');
+
+    // The player must still be able to walk after all that. Attacking used to
+    // root them permanently: being hit cleared the cast server-side without
+    // telling the client, which then believed it was casting for good.
+    const before = await readTick(page);
+    await page.mouse.click(300, 620, { button: 'right' });
+    await page.waitForTimeout(1600);
+    await shoot(page, 'world-after-combat');
+    console.log(`  ticks advanced during the walk: ${(await readTick(page)) - before}`);
 
     const status = await page.textContent('body');
     console.log('\nHUD read back:', status?.slice(0, 200).replace(/\s+/g, ' '));

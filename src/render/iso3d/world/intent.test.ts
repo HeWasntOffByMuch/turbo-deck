@@ -9,7 +9,8 @@ function intent(over: Partial<IntentInput> = {}): ReturnType<typeof moveIntent> 
     self: ORIGIN,
     destination: null,
     facing: 0,
-    casting: false,
+    castAim: null,
+    world: null,
     ...over,
   });
 }
@@ -109,20 +110,28 @@ describe('while casting', () => {
    * player is watching most closely.
    */
   it('asks for no movement, whatever is held', () => {
-    const result = intent({ held: new Set(['KeyW', 'KeyD']), casting: true });
+    const result = intent({ held: new Set(['KeyW', 'KeyD']), castAim: { x: 100, y: 0 } });
     expect(result.moveX).toBe(0);
     expect(result.moveY).toBe(0);
   });
 
   it('asks for no movement toward a standing order either', () => {
-    const result = intent({ destination: { x: 500, y: 500 }, casting: true });
+    const result = intent({ destination: { x: 500, y: 500 }, castAim: { x: 100, y: 0 } });
     expect(result.moveX).toBe(0);
     expect(result.moveY).toBe(0);
   });
 
-  it('leaves the heading alone -- turning into the blow is the server\'s', () => {
-    const result = intent({ held: new Set(['KeyW']), casting: true, facing: 2 });
-    expect(result.facing).toBe(2);
+  /**
+   * The bug this replaced: holding the old heading meant the client drew a body
+   * that never turned, while the server turned it the whole time.
+   */
+  it('asks to face the aim, so the body visibly comes round', () => {
+    expect(intent({ facing: 0, castAim: { x: 0, y: 100 } }).facing).toBeCloseTo(Math.PI / 2, 9);
+    expect(intent({ facing: 0, castAim: { x: -100, y: 0 } }).facing).toBeCloseTo(Math.PI, 9);
+  });
+
+  it('keeps its heading for an aim sitting on top of it', () => {
+    expect(intent({ facing: 1.25, self: { x: 5, y: 5 }, castAim: { x: 5, y: 5 } }).facing).toBe(1.25);
   });
 });
 

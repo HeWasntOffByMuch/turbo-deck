@@ -599,6 +599,19 @@ export function applyDamage(
       blocked: target.stats.armor > 0 && damage < raw,
     },
   ];
+
+  // Being hit knocks the target out of what they were doing -- and that has to
+  // be *announced*, not just done. Clearing `cast` silently left the client
+  // holding a cast the server had dropped, and since a client roots itself while
+  // it believes it is casting, the player was stuck on the spot for good.
+  if (target.cast) {
+    events.push({
+      kind: 'castEnded',
+      entityId: target.id,
+      abilityId: target.cast.abilityId,
+      reason: CastEndReason.Interrupted,
+    });
+  }
   if (killed) events.push({ kind: 'died', entityId: target.id, killerId: attacker.id });
 
   return {
@@ -609,9 +622,9 @@ export function applyDamage(
       health,
       activity: killed ? ActivityValue.Dead : target.activity,
       targetId: target.targetId ?? attacker.id,
-      // Being hit knocks you out of what you were doing. Spec 065 took the
-      // hitstop freeze this used to be keyed on; interruption is its own
-      // mechanic and survives on its own terms.
+      // Interruption. Spec 065 took the hitstop freeze this used to be keyed on;
+      // it is its own mechanic and survives on its own terms. The `castEnded`
+      // above is not optional decoration -- see the comment there.
       cast: null,
     },
   };

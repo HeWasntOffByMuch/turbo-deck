@@ -39,18 +39,45 @@ export const BROADCAST_RATE = SERVER_TICK_RATE / BROADCAST_EVERY_N_TICKS;
  *
  * This is an interest-management grid and has nothing to do with
  * `src/terrain/chunk.ts`, whose 616-unit chunks are sized for draw calls. The
- * two grids are independent by design, so retuning either is a local change.
- * At 100 units a sprinting player crosses a chunk several times a second, which
- * is chatty but cheap; raising this is a one-line change with no protocol
- * impact, since chunk size is announced in the welcome message.
+ * two grids are independent by design, so retuning either is a local change --
+ * and it has no protocol impact, since chunk size is announced in the welcome.
+ *
+ * Was 100, which turned out to be far too fine once something actually drew the
+ * world: bodies winked out well inside the frame. See {@link INTEREST_CHUNK_RADIUS}.
  */
-export const CHUNK_SIZE = 100;
+export const CHUNK_SIZE = 400;
 
 /**
- * How many chunks out from their own a player is told about. 3 gives a
- * 700x700-unit window, comfortably past the far edge of a zoomed-out camera.
+ * How many chunks out from their own a player is told about.
+ *
+ * This has to cover **what the camera can frame**, and the old 3-at-100-units
+ * did not come close. Measured against the real camera at a 1280x800 window: the
+ * default zoom frames +-320 by +-441 world units and the widest frames +-1400 by
+ * +-1927, against an interest window that reached 300 to 400. Monsters vanished
+ * on screen at every zoom, which is exactly what was reported.
+ *
+ * 8 at 400 units guarantees 3200, which covers the widest zoom on a 32:9
+ * monitor (~3110). It has to be sized off the *window shape*, not just the zoom:
+ * `internalRenderSize` trades height rather than capping the aspect past 2.53,
+ * so the horizontal ground reach keeps growing with the window and there is no
+ * ceiling to aim at. 32:9 is where real monitors stop; a pathological aspect at
+ * maximum zoom could still outrun this, and the answer there would be a cap on
+ * the zoom rather than an ever-wider window.
+ *
+ * The window is 17x17 chunks -- 289 rather than the 49 it was. That is 289 map
+ * lookups per connection per broadcast, twenty times a second, which is nothing.
+ *
+ * Worth being straight about the consequence: the generated world is ~4400 by
+ * ~4100, so a window this wide contains most of it and culling currently culls
+ * almost nothing. That is the right trade -- a player seeing bodies wink out
+ * inside the frame is a bug, and an optimisation with nothing to optimise is
+ * not -- but interest management only starts earning its keep again when the
+ * map outgrows the camera.
+ *
+ * `src/render/iso3d/world/interest.test.ts` asserts the relationship rather than
+ * the numbers, so the next person to touch the camera finds out here.
  */
-export const INTEREST_CHUNK_RADIUS = 3;
+export const INTEREST_CHUNK_RADIUS = 8;
 
 /**
  * Bumped whenever the wire format changes incompatibly; checked on connect.
@@ -86,7 +113,11 @@ export interface LiveConfig {
   readonly spawnRateMultiplier: number;
   /** Scales drop chance on entity death. Read by the loot roll, not by the sim's shape. */
   readonly dropRateMultiplier: number;
-  /** Ceiling on simulated entities in one chunk, so a raid can't wedge a chunk. */
+  /**
+   * Ceiling on simulated entities in one chunk, so a raid can't wedge a chunk.
+   * A safety valve rather than a density knob -- it moved with `CHUNK_SIZE`,
+   * which grew sixteenfold in area.
+   */
   readonly maxEntitiesPerChunk: number;
   /**
    * Divergence in world units past which the server stops trusting a client's
@@ -112,7 +143,7 @@ export interface LiveConfig {
 export const DEFAULT_LIVE_CONFIG: LiveConfig = {
   spawnRateMultiplier: 1,
   dropRateMultiplier: 1,
-  maxEntitiesPerChunk: 12,
+  maxEntitiesPerChunk: 40,
   correctionThreshold: 48,
   speedTolerance: 1.15,
   // 5 seconds at 60Hz, the same wall-clock cadence 100 ticks bought at 20Hz.

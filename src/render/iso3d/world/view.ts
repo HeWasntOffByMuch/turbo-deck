@@ -89,6 +89,9 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       }),
   });
 
+  /** The world a move order routes through -- the one the server is colliding against. */
+  const pathWorld = { colliders: world.colliders, radius: SERVER_PLAYER_RADIUS };
+
   const scene = new WorldScene(canvas, world);
   const hud = createHud();
   hud.onUse((abilityId) => useAbility(abilityId));
@@ -216,12 +219,18 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   function sendInput(): void {
     const view = client.view();
     const me = selfPosition();
+    // The cast the *server* says we are in, which is what roots us and what we
+    // are turning into. Read from `view.casts` rather than from the button that
+    // was pressed: a cast only exists once the server has confirmed it, and it
+    // can end without us asking -- being hit interrupts one.
+    const selfCast = view.casts.find((cast) => cast.entityId === view.selfEntityId) ?? null;
     const intent = moveIntent({
       held,
       self: me,
       destination,
       facing,
-      casting: view.casts.some((cast) => cast.entityId === view.selfEntityId),
+      castAim: selfCast ? { x: selfCast.targetX, y: selfCast.targetY } : null,
+      world: pathWorld,
     });
     if (intent.arrived) destination = null;
 
