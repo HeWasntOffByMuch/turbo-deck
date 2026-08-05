@@ -169,21 +169,39 @@ export const ARENA_OBSTACLES: readonly Rect[] = [
 export const SEPARATION_ITERATIONS = 4;
 
 // --- Pathfinding (spec 037) ---
-// Nav-grid cell size. Small enough that the gaps between obstacles survive
-// being inflated by a body radius, large enough to keep the grid tiny.
-export const NAV_CELL_SIZE = 30;
-// Extra margin beyond the body radius when marking a cell blocked, so a path
-// never hugs a wall closely enough for separation to shove a unit into it.
+// Nav-grid cell size, and so the pitch at which the world is sampled. A cell is
+// judged by its centre, so this is also the floor on how well a gap can be
+// resolved: a corridor is only found when a cell centre lands in the band of
+// standable positions across it, and that band is (gap width - 2 * radius)
+// wide. At the 30 this used to be, the 32-to-40-unit gaps the scatter actually
+// produces were found or missed on alignment alone (spec 066).
+export const NAV_CELL_SIZE = 10;
+// Elbow room a route prefers to keep beyond the body radius, so it does not hug
+// a wall closely enough for separation to shove a unit into one.
+//
+// A preference, not a requirement (spec 066). Cells where the body fits but this
+// margin does not are NAV_TIGHT: passable, at NAV_TIGHT_COST per step. Making it
+// a requirement is what stopped the router from using gaps the world was
+// deliberately scattered to leave open.
 export const NAV_CLEARANCE = 4;
+// What a step into a NAV_TIGHT cell costs, in ordinary steps. High enough that a
+// comfortable detour wins over a squeeze whenever there is one, low enough that
+// a long squeeze still beats a hopeless-looking way round.
+export const NAV_TIGHT_COST = 3;
+// How far from a blocked start or goal to look for a stand-in cell. In world
+// units rather than cells, so shrinking NAV_CELL_SIZE does not quietly shorten
+// the reach: a click into a grove needs to find the ground outside it.
+export const NAV_RELOCATE_RADIUS = 160;
 // A hunter whose line to the player is blocked re-runs the search this often.
 export const PATH_REPLAN_TICKS = 20;
 // Distance at which a waypoint counts as reached and is consumed.
 export const PATH_WAYPOINT_EPS = 14;
 // Hard ceiling on cells expanded per search, so an unreachable goal is cheap.
-// Sized for the whole world rather than the play area (spec 044): the grid grew
-// from ~1.3k cells to ~20k when the border came down, and a budget that could
-// only ever expand a tenth of it would give up mid-route.
-export const PATH_MAX_NODES = 8000;
+// Sized for the whole world rather than the play area (spec 044), and raised
+// with the cell size in spec 066 to keep the same reach in world units: a
+// 2000-unit route over the real world expands ~6k cells at the 90th percentile,
+// so this leaves room for the hard ones without letting a sealed box run away.
+export const PATH_MAX_NODES = 40000;
 
 // --- Grazing behaviour (passive enemies) ---
 // Grazing amble speed, slower than a hunting enemy's homing speed.

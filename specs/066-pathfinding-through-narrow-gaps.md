@@ -90,17 +90,44 @@ the old 20k, and the search has to stay cheap:
 the stand-in cell `freeCellNear` chose rather than at `to` itself. Ending a path
 on a point inside an obstacle is what left the player grinding against the bark.
 
+**A stand-in has to be somewhere you can get to.** Standing room and reachable
+are different questions, and `freeCellNear` only ever asked the first. The
+nearest passable cell to a trunk in a grove is very often the nook right beside
+it, boxed in by that trunk's neighbours — so the goal relocated into a sealed
+pocket and the search spent its whole budget failing to arrive. A relocated goal
+is now checked with a bounded flood (`POCKET_CELLS = 128`, using the search's own
+connectivity rules) and dismissed if its region is walled off; the next-nearest
+candidate is taken instead. Measured on seed 1, clicking directly onto a trunk
+within 700 units produced a usable route **0 times out of 200** before this and
+200/200 after. A relocated *start* is deliberately exempt: a body shoved into a
+nook is where it is, and moving its route's origin somewhere it cannot walk from
+would be worse than the nook.
+
+**What the guarantee actually is.** Centre sampling cannot promise every gap a
+body fits: the standable band across a gap is `width - 2 * radius` wide, and a
+band narrower than the sampling pitch may fall between two cell centres. So the
+grid resolves a gap when `width >= 2 * radius + NAV_CELL_SIZE` — 42 units for the
+player, against the roughly 70 the old grid needed, and against the 32 the world
+guarantees. Gaps between 32 and 42 are found or missed on alignment, as before,
+just over a much narrower window. Measured on seed 1 that is enough: short hops
+between standable points go from 5.3% failing to 0%, because a route almost never
+depends on one specific gap. A finer cell would tighten the window further and
+measurably buy nothing, so 10 is where this stops.
+
 ## Invariants tested
 
-- A gap of `2 * radius + 1` between two obstacles is routed *through*, not
-  around; a gap of `2 * radius - 1` is routed around. The grid's passable set
-  agrees with `circleBlocked` at the width where walking starts to work.
+- A gap of `2 * radius + NAV_CELL_SIZE` between two obstacles is routed
+  *through*, not around; a gap narrower than `2 * radius` is routed around. The
+  grid's passable set agrees with `circleBlocked` where walking starts to work.
 - Every leg of every returned path is `segmentClear` at the grid's radius — the
   existing guarantee, now also across tight gaps.
 - Given the choice between an open detour and a tight squeeze of similar length,
   the route takes the open one; when the squeeze is the only way, it is taken.
 - The last waypoint is `to` when a body can stand there, and a standable point
   otherwise. No returned waypoint is ever inside an obstacle.
+- A click onto a trunk whose nearest standing room is a sealed nook routes to
+  ground outside the nook, not into it — and the nook itself is still correctly
+  reported unreachable when asked for directly.
 - A sealed box still returns `[]` rather than hanging, and stays within budget.
 - `findPath` is pure: same `(grid, from, to)` gives an identical path every
   time, including across searches that share scratch with a different grid.
