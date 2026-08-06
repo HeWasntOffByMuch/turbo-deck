@@ -155,8 +155,9 @@ export class WorldScene {
   private torchHost: THREE.Object3D | null = null;
   private readonly unwalkable = new THREE.Group();
 
-  private readonly terrainMesh: TerrainMeshHandle;
-  private readonly propField: PropFieldHandle;
+  // Not readonly since spec 070: both are rebuilt when new chunks arrive.
+  private terrainMesh: TerrainMeshHandle;
+  private propField: PropFieldHandle;
   private readonly poofs: Poofs;
   /** Marks the standing move order on the ground (spec 064). */
   private readonly moveMarker = makeMoveMarker();
@@ -194,7 +195,7 @@ export class WorldScene {
 
   constructor(
     readonly canvas: HTMLCanvasElement,
-    private readonly world: BuiltWorld,
+    private world: BuiltWorld,
   ) {
     canvas.style.width = '100%';
     canvas.style.height = '100%';
@@ -225,7 +226,9 @@ export class WorldScene {
     this.sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
     this.scene.add(this.sun, this.sun.target, this.ambient);
 
-    // The ground and the trees the server is running, not a second scatter.
+    // The ground and the trees the server is running, not a second scatter --
+    // and since spec 070, the ground the server *sent*, which starts empty and
+    // fills in as chunks land.
     this.terrainMesh = buildTerrainMesh(world.terrain);
     this.scene.add(this.terrainMesh.group);
     this.propField = buildPropField(world.props, (x, z) => world.terrain.heightAt(x, z));
@@ -244,6 +247,37 @@ export class WorldScene {
 
     this.controls = createViewControls();
     this.controls.attachWheelZoom(canvas);
+  }
+
+  /**
+   * Swap in the world built from the chunks received so far (spec 070).
+   *
+   * Everything derived is rebuilt, for the reason the editor's `replaceMap`
+   * gives: a terrain mesh from one set of chunks over a prop field from another
+   * is not a state worth having a name for.
+   *
+   * The whole held set is re-meshed rather than patched per chunk. The shipped
+   * map is 56 chunks and the caller coalesces this to at most once a frame, so
+   * there is nothing here to optimise yet -- and incremental meshing would mean
+   * two meshing paths to keep in step for a saving nobody can currently measure.
+   */
+  replaceWorld(next: BuiltWorld): void {
+    this.world = next;
+
+    this.scene.remove(this.terrainMesh.group);
+    this.terrainMesh.dispose();
+    this.terrainMesh = buildTerrainMesh(next.terrain);
+    this.scene.add(this.terrainMesh.group);
+
+    this.scene.remove(this.propField.group);
+    this.propField.dispose();
+    this.propField = buildPropField(next.props, (x, z) => next.terrain.heightAt(x, z));
+    this.scene.add(this.propField.group);
+
+    this.unwalkable.clear();
+    this.unwalkable.add(
+      makeUnwalkableField(vegetationColliders(next.props), (x, z) => next.terrain.heightAt(x, z)),
+    );
   }
 
   /**

@@ -27,7 +27,7 @@ import { GameClient } from '../../../server/client/game-client.js';
 import { createWorldPredictor } from '../../../server/client/prediction.js';
 import { LoopbackTransport } from '../../../server/net/transport-loop.js';
 import { GameServer } from '../../../server/server.js';
-import { buildWorld } from '../../../server/world/build.js';
+import { buildWorldFromDocument, buildWorldFromMap } from '../../../server/world/build.js';
 import {
   BROADCAST_EVERY_N_TICKS,
   SERVER_PLAYER_RADIUS,
@@ -35,6 +35,9 @@ import {
 } from '../../../server/config.js';
 import { abilityById } from '../../../server/data/abilities.js';
 import { viewSeed } from '../seed.js';
+import mapText from '../../../../maps/arena.json?raw';
+import { parseMap, type MapDocument } from '../../../terrain/map.js';
+import { chunksToDocument } from '../../../server/client/map-rebuild.js';
 import type { ViewHandle } from '../view-handle.js';
 import { turnToward } from '../../../server/sim/movement.js';
 import { createHud, HOTBAR } from './hud.js';
@@ -56,8 +59,12 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   root.append(canvas);
 
   // --- the world, the server, and the client that reads it ---------------
+  //
+  // The world is the **map document** now (spec 070), not `buildWorld(seed)`.
+  // The seed still picks the fight's randomness; it stopped describing the
+  // ground the moment the ground became a file somebody could edit by hand.
   const seed = viewSeed();
-  const world = buildWorld(seed);
+  const world = buildWorldFromMap(parseMap(mapText), mapText);
 
   const transport = new LoopbackTransport();
   const server = new GameServer({ seed, built: world, transport });
@@ -93,7 +100,31 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   const pathWorld = { colliders: world.colliders, radius: SERVER_PLAYER_RADIUS };
   const planner = new RoutePlanner();
 
-  const scene = new WorldScene(canvas, world);
+  // The scene draws the map the *client* was sent, not the document the in-tab
+  // server happens to be holding (spec 070). Starting empty and filling in from
+  // chunks is the only way this path is genuinely exercised: handed `world` it
+  // would look right while streaming did nothing.
+  const scene = new WorldScene(canvas, buildWorldFromDocument(emptyMap()));
+
+  /** A document with the right grid and layers and no chunks at all. */
+  function emptyMap(): MapDocument {
+    return { ...world.doc, layers: world.doc.layers.map((l) => ({ ...l, chunks: [] })) };
+  }
+
+  /**
+   * Remesh when chunks have landed since the last time we looked.
+   *
+   * Keyed on the cache's revision rather than on the chunk count, and checked
+   * once a frame, so a burst of eight arrivals in one tick costs one rebuild
+   * rather than eight.
+   */
+  let meshedRevision = -1;
+  function refreshTerrain(view: ReturnType<typeof client.view>): void {
+    const map = view.map;
+    if (!map || map.revision === meshedRevision) return;
+    meshedRevision = map.revision;
+    scene.replaceWorld(buildWorldFromDocument(chunksToDocument(map.info, map.chunks)));
+  }
   const hud = createHud();
   hud.onUse((abilityId) => useAbility(abilityId));
 
@@ -272,6 +303,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     }
 
     const view = client.view();
+    refreshTerrain(view);
     seedTheField(view);
     // A new delta resets the interpolation window. Measuring it from the delta's
     // own tick rather than from a wall-clock guess keeps the alpha honest when

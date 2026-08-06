@@ -83,6 +83,27 @@ export interface BuiltMapWorld extends BuiltWorld {
  * disk, and a client is told the answer rather than recomputing it.
  */
 export function buildWorldFromMap(doc: MapDocument, serialized: string): BuiltMapWorld {
+  return {
+    ...buildWorldFromDocument(doc),
+    doc,
+    index: buildMapIndex(doc, mapIdOf(serialized)),
+  };
+}
+
+/**
+ * The same build without the index -- what a *client* has, since it holds some
+ * chunks rather than a document it can hash (spec 070).
+ *
+ * Shared with {@link buildWorldFromMap} rather than reimplemented, so a client
+ * assembling a world out of streamed chunks runs the identical three steps the
+ * server ran over the whole document. A second construction path here is
+ * exactly the drift this file exists to prevent.
+ *
+ * The document may have holes: only the chunks that arrived are in it.
+ * `MapChunkStore` treats a layer as a sparse map from `(cx, cz)` to arrays, so
+ * a partial map loads, meshes and samples for the ground it does have.
+ */
+export function buildWorldFromDocument(doc: MapDocument): BuiltWorld {
   const loaded = loadMap(doc);
   const props = loaded.props;
   return {
@@ -91,7 +112,5 @@ export function buildWorldFromMap(doc: MapDocument, serialized: string): BuiltMa
     props,
     sampler: terrainSamplerFrom(loaded.world),
     colliders: createWorldColliders(ARENA_OBSTACLES, vegetationColliders(props), WORLD_BOUNDS),
-    doc,
-    index: buildMapIndex(doc, mapIdOf(serialized)),
   };
 }
