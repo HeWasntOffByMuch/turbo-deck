@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { buildPropField, speciesHeight, treeVariant } from './props.js';
+import { buildPropField, maxCanopyTiltReach, speciesHeight, treeVariant, TREE_SPECIES } from './props.js';
 import { bakeBend, bendWeight } from './sway.js';
 import { maxTipDisplacement, WIND, WIND_LIMITS } from './wind.js';
 import { WIND_UNIFORMS, windTimeUniform } from './wind-uniforms.js';
@@ -225,12 +225,20 @@ describe('a batch of trees', () => {
       // Against the strongest wind the panel allows (spec 075), not the
       // default: the bounds are written once and the slider moves later.
       //
-      // Bracketed by the two species rather than pinned to one, because a batch
-      // is per species and the two conifers are different heights -- so the
-      // right answer for a stand of pines is smaller than for a stand of firs,
-      // and asserting either one alone passes for the wrong reason.
-      const floor = maxTipDisplacement(WIND, speciesHeight('pine'), WIND_LIMITS.maxStrength);
-      const ceiling = maxTipDisplacement(WIND, speciesHeight('fir'), WIND_LIMITS.maxStrength);
+      // Bracketed by the species rather than pinned to one, because a batch is
+      // per species and the three are different heights -- so the right answer
+      // for a stand of pines is smaller than for a stand of firs, and asserting
+      // either one alone passes for the wrong reason.
+      //
+      // The ceiling carries the lobed canopy's tilt as well (spec 077). A slab
+      // is inflated for two motions, not one: the trunk's lean carries its
+      // origin downwind and the tilt about that origin then throws its rim
+      // further still, and a sphere sized for only the first takes the whole
+      // batch off screen the moment that rim leaves it.
+      const heights = TREE_SPECIES.map(speciesHeight);
+      const floor = maxTipDisplacement(WIND, Math.min(...heights), WIND_LIMITS.maxStrength);
+      const ceiling =
+        maxTipDisplacement(WIND, Math.max(...heights), WIND_LIMITS.maxStrength) + maxCanopyTiltReach();
       expect(grown).toBeGreaterThanOrEqual(floor - 1e-6);
       expect(grown).toBeLessThanOrEqual(ceiling + 1e-6);
     }
@@ -258,10 +266,10 @@ describe('props that are not trees', () => {
 
 describe('the species a tree grows', () => {
   it('bakes a bend weight that reaches the top of whichever species it is', () => {
-    // The weight is measured against the species height, not the part, so both
-    // conifers reach 1 at their own crown rather than one of them topping out
-    // partway up because it happens to be shorter.
-    for (const species of ['fir', 'pine'] as const) {
+    // The weight is measured against the species height, not the part, so each
+    // species reaches 1 at its own crown rather than the shorter ones topping
+    // out partway up because they happen to be shorter.
+    for (const species of TREE_SPECIES) {
       const props: Prop[] = [{ kind: 'tree', x: 0, y: 0, scale: 1, rotation: 0, tint: 0.5 }];
       // treeVariant is a hash of position, so a species is picked rather than
       // asked for; walk until this one turns up.
