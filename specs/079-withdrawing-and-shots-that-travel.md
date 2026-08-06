@@ -1,7 +1,7 @@
-# 077 — Withdrawing from a blow, and shots that travel
+# 079 — Withdrawing from a blow, and shots that travel
 
-*Renumbered from 076: the map's spawners took that number while this branch
-waited.*
+*Renumbered twice while this branch waited: the map's spawners took 076, and the
+lobed canopy tree took 077.*
 
 ## Problem
 

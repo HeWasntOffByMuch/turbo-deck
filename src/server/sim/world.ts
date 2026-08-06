@@ -302,7 +302,7 @@ export function step(
       steered = decided.entity;
     }
     // Asking to move is how a body withdraws from a blow it has committed to
-    // (spec 077). The refund is the one `Esc` gives -- cost back, cooldown
+    // (spec 079). The refund is the one `Esc` gives -- cost back, cooldown
     // cleared -- so the feint costs exactly the time it took to show, and it is
     // settled *here* rather than deferred to the cast pass, because withdrawing
     // and stepping away have to be the same tick or the step reads as a stutter.
@@ -483,7 +483,7 @@ export function step(
     }
 
     // Re-aimed every tick at the body it named, so a shot follows a target that
-    // moved after it was loosed (spec 077). A target that died or left the world
+    // moved after it was loosed (spec 079). A target that died or left the world
     // *disjoints* it: the last aim stands and the shot finishes at a patch of
     // ground. Nothing was ever scheduled, so there is nothing to un-schedule --
     // the travel is the only thing that decides when, or whether, this lands.
@@ -517,7 +517,7 @@ export function step(
     if (!ability || !owner) continue;
 
     // What a shot answers to is whether it *named* something, not how high it
-    // flew (spec 077). A shot fired at a body resolves against that body and
+    // flew (spec 079). A shot fired at a body resolves against that body and
     // nothing else, for the reason melee does since spec 070: an attack is
     // single-target, and the bystander who wandered into the line is a
     // bystander. A shot thrown at a patch of ground -- the cursor-aimed bolts --
@@ -617,7 +617,7 @@ export function step(
 }
 
 /**
- * Whether this intent asks the body to walk (spec 077).
+ * Whether this intent asks the body to walk (spec 079).
  *
  * The threshold is float slack, not a dead zone: every producer of a move vector
  * -- `moveIntent`, `monsterIntent`, the bots -- emits either a unit vector or an
@@ -686,7 +686,7 @@ function monsterIntent(
   const dx = target.position.x - monster.position.x;
   const dy = target.position.y - monster.position.y;
   const distance = Math.hypot(dx, dy);
-  // What it swings with is a stat now (spec 077), so a slinger stands off at
+  // What it swings with is a stat now (spec 079), so a slinger stands off at
   // its throw's range and a stalker at its sword's, off the same two lines.
   const swing = abilityById(monster.stats.basicAttackId);
   const reach = ((swing?.range ?? monster.stats.attackRange) + target.radius) * STANDOFF_FRACTION;

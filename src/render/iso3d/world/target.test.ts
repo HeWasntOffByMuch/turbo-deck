@@ -73,7 +73,7 @@ describe('auto-attacking a named target (spec 070)', () => {
   });
 
   /**
-   * Spec 077. The standoff is where a chase *stops*, not merely where it points.
+   * Spec 079. The standoff is where a chase *stops*, not merely where it points.
    *
    * It used to be both and neither: the walk aimed at `reach * STANDOFF` and
    * halted the moment it was inside `reach`, so a body came to rest exactly on
@@ -172,7 +172,7 @@ describe('auto-attacking a named target (spec 070)', () => {
   });
 
   /**
-   * Spec 077. A move order withdraws from a cast now, so a chase issued while
+   * Spec 079. A move order withdraws from a cast now, so a chase issued while
    * committed would call the swing off on the player's behalf -- and the one
    * thing a feint has to be is theirs.
    */

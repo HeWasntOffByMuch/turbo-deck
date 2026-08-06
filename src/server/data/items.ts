@@ -17,7 +17,7 @@ export interface ItemDefinition {
   readonly levelRequirement: number;
   readonly modifiers: StatModifier;
   /**
-   * The auto-attack this weapon swings with (spec 077), or absent for one that
+   * The auto-attack this weapon swings with (spec 079), or absent for one that
    * changes numbers but not the motion.
    *
    * Only a main hand is ever asked. It is an ability *id* like everything else
@@ -66,7 +66,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     // Level 1 like the worn sword: these are the starting alternatives, and a
     // switch that refuses two of its three buttons is not a switch.
     levelRequirement: 1,
-    // The range is the weapon; the shot it names carries its own (spec 077), so
+    // The range is the weapon; the shot it names carries its own (spec 079), so
     // `attackRange` here only nudges what a melee swing would have reached.
     modifiers: { attackDamage: 5, attackSpeedPct: -0.1 },
     basicAttackId: 'ranged.shot',

@@ -8,7 +8,7 @@
  * and a lumbering ravager stop feeling like the same fight at different damage
  * numbers: they swing at visibly different rates off the same swing.
  *
- * Since spec 077 it also includes `basicAttackId`, which is where the monster's
+ * Since spec 079 it also includes `basicAttackId`, which is where the monster's
  * `ability` field went. Two places naming what a body swings with was one too
  * many, and the sim was already reaching past the entity to find the other one.
  * An empty id is a training dummy: scenery with a health bar.

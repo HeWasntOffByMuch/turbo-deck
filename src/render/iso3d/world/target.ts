@@ -101,7 +101,7 @@ export function autoAttack(input: AutoAttackInput): AutoAttack {
   // "when does auto-attacking stop" has one answer and it is tested.
   if (target.health <= 0) return { chaseTo: null, attack: false, drop: true };
 
-  // A committed body holds, in reach or out of it (spec 077). It has to: a move
+  // A committed body holds, in reach or out of it (spec 079). It has to: a move
   // order now *withdraws* from a cast, so chasing a target that stepped back
   // during a wind-up would call the swing off on the player's behalf -- and the
   // one thing the feint has to be is theirs.

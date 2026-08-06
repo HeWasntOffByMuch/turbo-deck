@@ -445,7 +445,7 @@ export class GameClient {
     // input, and whether it has arrived decides whether the next press winds up
     // or spends ticks turning first.
     if (Number.isFinite(intent.facing)) this.wantedFacing = intent.facing;
-    // Asking to move withdraws from a cast (spec 077), and the server settles
+    // Asking to move withdraws from a cast (spec 079), and the server settles
     // that on the very tick this input lands. Predicting the walk without also
     // predicting the withdrawal would keep the legs locked locally while the
     // server moved them -- a correction on every tick of the step away, and a

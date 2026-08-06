@@ -92,7 +92,7 @@ the table's `cooldownTicks`. Everything else always uses the table value.
 
 `src/server/sim/world.ts` `step()`, in the movement pass (~line 271-278):
 ```
-// Since spec 077 the root yields to a move order rather than outranking it.
+// Since spec 079 the root yields to a move order rather than outranking it.
 if (steered.cast !== null && asksToMove(rawIntent)) {
   const withdrawn = cancelCast(steered, tick, CastEndReason.Cancelled);
   ...
@@ -103,7 +103,7 @@ const intent =
     : rawIntent;
 ```
 A move order (WASD or a right-click destination) arriving while
-`entity.cast !== null` **withdraws from the cast** (spec 077) at the same refund
+`entity.cast !== null` **withdraws from the cast** (spec 079) at the same refund
 `Esc` gives — cost back, cooldown cleared — and the body moves on that same
 tick. Only a cast past its release is unaffected, because there is nothing left
 to withdraw from. An intent that asks for nothing still roots as it always did.
@@ -277,7 +277,7 @@ transform; `activity`/`activityUntilTick` drive animation state on the wire.
 
 ---
 
-## Spec 077 additions
+## Spec 079 additions
 
 - **`EffectiveStats.basicAttackId`** — which attack a body swings with is a
   derived stat now, from `ItemDefinition.basicAttackId` (main hand) for a player

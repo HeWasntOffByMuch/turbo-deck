@@ -111,7 +111,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     range: 420,
     damage: 12,
     // Lobbed, which is what makes it unblockable: an arcing shot flies over
-    // whatever is between the archer and the body it named (spec 077).
+    // whatever is between the archer and the body it named (spec 079).
     projectile: { speed: 900, arcHeight: 55, radius: 7, lifetimeTicks: seconds(2) },
     basicAttack: true,
     description: 'An arrow, lobbed over whatever is in the way. Lands where the target is, not where it was.',

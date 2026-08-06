@@ -118,7 +118,7 @@ describe('while casting', () => {
   });
 
   /**
-   * And the other half, since spec 077: asking to move *withdraws* from the
+   * And the other half, since spec 079: asking to move *withdraws* from the
    * cast on the server, so predicting a stand would be predicting the opposite
    * of what the very same input frame is about to cause.
    */

@@ -412,7 +412,7 @@ async function main(): Promise<void> {
       // which is the only way an attack order ends by itself.
     }
 
-    // The weapon switch (spec 077). Clicking one is an ordinary equip, and the
+    // The weapon switch (spec 079). Clicking one is an ordinary equip, and the
     // proof it took is that the *server's* stat block came back naming the new
     // attack -- which is what lights the button. Photographed with a bow in
     // hand so the ranged auto-attack is on screen at all.

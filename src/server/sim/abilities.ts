@@ -54,7 +54,7 @@ export interface CastAttempt {
   /** The entity being attacked, or 0 to aim at the point alone (spec 070). */
   readonly targetEntityId?: number;
   /**
-   * The named body's radius, or 0 when nothing was named (spec 077).
+   * The named body's radius, or 0 when nothing was named (spec 079).
    *
    * Reach to a *body* is measured to its edge everywhere else -- `landOnTarget`
    * allows `range + target.radius`, and the client's chase stops inside the
@@ -111,7 +111,7 @@ export function startCast(
   // ones are always legal to start -- they simply reach as far as they reach.
   //
   // A cast that named a body is measured to that body's edge, the same as the
-  // blow that eventually lands on it (spec 077). A patch of ground has no edge,
+  // blow that eventually lands on it (spec 079). A patch of ground has no edge,
   // so `targetRadius` is 0 and this is the centre check it always was.
   if (ability.targeting === 'point') {
     const dx = attempt.targetX - entity.position.x;
@@ -325,7 +325,7 @@ export function advanceCast(
 
   // --- the target died -------------------------------------------------
   // A blow aimed at a body that is no longer there is called off rather than
-  // thrown at the corpse (spec 077). The refund is a withdrawal's, because that
+  // thrown at the corpse (spec 079). The refund is a withdrawal's, because that
   // is what this is: nothing was thrown, so nothing was spent but the time.
   //
   // Only up to the release, and deliberately so. A shot already in the air is
@@ -664,7 +664,7 @@ function launchProjectile(
   // A direction-targeted bolt flies its full range; a point-targeted lob lands
   // where it was aimed, which is what makes the arc land on the marker. A shot
   // that named a body is aimed at the body, and re-aimed every tick of the
-  // flight from there (spec 077).
+  // flight from there (spec 079).
   const distance =
     ability.targeting === 'point' || cast.targetEntityId > 0
       ? Math.min(aimed, ability.range)

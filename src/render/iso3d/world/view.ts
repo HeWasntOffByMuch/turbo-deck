@@ -171,7 +171,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
   const hud = createHud();
   hud.onUse((abilityId) => useAbility(abilityId));
-  // Picking a weapon is an ordinary equip (spec 077): the server puts it in the
+  // Picking a weapon is an ordinary equip (spec 079): the server puts it in the
   // hand, recomputes the stat block, and the new `basicAttackId` comes back on
   // `Stats`. Nothing here decides what the right-click then does -- the next
   // frame simply reads the stat and asks for whatever it names.
@@ -362,7 +362,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   function driveAutoAttack(view: ReturnType<typeof client.view>, me: { x: number; y: number }): void {
     if (targetId === null) return;
     const entity = view.entities.find((candidate) => candidate.id === targetId);
-    // What this character attacks with is a stat now (spec 077), so the reach a
+    // What this character attacks with is a stat now (spec 079), so the reach a
     // chase stops at, the cooldown the sweep is drawn from and the ability that
     // is asked for are all one answer: a bow reaches further than a sword
     // without a line here knowing which is being held.

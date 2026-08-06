@@ -177,7 +177,7 @@ through this same delta rather than through a parallel system. Its `z` carries
 the arc height, which is what lets a client draw a lobbed shot rising and
 falling with a shadow underneath it.
 
-Since spec 077 a shot can be *tracking* a body, so its position changes on a
+Since spec 079 a shot can be *tracking* a body, so its position changes on a
 curve the client was never told about. Nothing new is sent for it: the position
 is authoritative every tick and the client interpolates between the samples it
 gets, exactly as it does for anything else that walks.
@@ -222,7 +222,7 @@ Sent to every connection whose interest set contains the attacker or the target.
 `f32 spellPower` · `f32 critChance` · `f32 maxResource` · `f32 resourceRegen` ·
 `str basicAttackId`
 
-`basicAttackId` is the ability this character's auto-attack uses (spec 077),
+`basicAttackId` is the ability this character's auto-attack uses (spec 079),
 derived from the main hand. The client needs it to know what its right-click
 reaches with, which cooldown the sweep is drawn against, and which ability to
 ask for; a body that never attacks carries `''`.

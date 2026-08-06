@@ -96,7 +96,7 @@ export interface IntentInput {
    * the wind-up (`resolveFacing`), so the heading asked for while casting is
    * that aim and not whatever the keys say.
    *
-   * Only while nothing else is asked for, since spec 077: a key or a move order
+   * Only while nothing else is asked for, since spec 079: a key or a move order
    * withdraws from the cast on the server, so it has to steer here too.
    */
   readonly castAim: Point | null;
@@ -119,7 +119,7 @@ export function moveIntent(input: IntentInput): MoveIntent {
   // wind-up: the server is already turning it, and a client that kept asking for
   // its previous heading simply drew a body that never moved.
   //
-  // A direction outranks the root since spec 077: asking to move *is* how a
+  // A direction outranks the root since spec 079: asking to move *is* how a
   // commitment is withdrawn from, and the server acts on it the tick it arrives.
   // Holding the body still here would be predicting a stand the server is about
   // to turn into a step.

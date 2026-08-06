@@ -886,7 +886,7 @@ describe('monsters find their way round', () => {
 });
 
 /**
- * Spec 077. A shot's flight is what decides when it lands, so everything here
+ * Spec 079. A shot's flight is what decides when it lands, so everything here
  * is measured in ticks between the release and the hit rather than asserted
  * against a schedule.
  */

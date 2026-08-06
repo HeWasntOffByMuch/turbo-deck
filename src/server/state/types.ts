@@ -139,7 +139,7 @@ export interface EffectiveStats {
   /** Refilled by this much every tick. */
   readonly resourceRegen: number;
   /**
-   * The ability this body's auto-attack uses (spec 077), or `''` for something
+   * The ability this body's auto-attack uses (spec 079), or `''` for something
    * that never attacks.
    *
    * A stat rather than a constant because it is the difference between a

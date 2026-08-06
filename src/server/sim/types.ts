@@ -93,13 +93,13 @@ export interface ProjectileState {
   readonly originY: number;
   /**
    * Where it is headed *now*. Re-aimed every tick at a named target, so a shot
-   * follows a body that moved after it was loosed (spec 077); fixed for a shot
+   * follows a body that moved after it was loosed (spec 079); fixed for a shot
    * thrown at a patch of ground.
    */
   readonly targetX: number;
   readonly targetY: number;
   /**
-   * The body this shot is chasing, or 0 for one aimed at a point (spec 077).
+   * The body this shot is chasing, or 0 for one aimed at a point (spec 079).
    *
    * When it dies or leaves the world the shot is *disjointed*: it keeps the aim
    * it last had and flies on to that spot. Nothing was scheduled, so there is

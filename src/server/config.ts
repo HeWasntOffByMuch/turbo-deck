@@ -97,7 +97,7 @@ export const INTEREST_CHUNK_RADIUS = 8;
  * 8: a client can ask to be told what the map's spawners are doing, for the
  * overlay behind the "show spawners" setting (spec 076).
  * 9: the stat block names the body's auto-attack, so a client knows what its
- * right-click reaches with rather than assuming a sword (spec 077).
+ * right-click reaches with rather than assuming a sword (spec 079).
  */
 export const PROTOCOL_VERSION = 9;
 

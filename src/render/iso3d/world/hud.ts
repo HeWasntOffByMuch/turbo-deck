@@ -62,7 +62,7 @@ export const HOTBAR: readonly string[] = [
 ];
 
 /**
- * One main-hand weapon per distinct auto-attack (spec 077).
+ * One main-hand weapon per distinct auto-attack (spec 079).
  *
  * Derived from the item table rather than listed, so a crossbow added there
  * turns up here without this file being told. The *attack* is what the switch
@@ -142,7 +142,7 @@ export interface HudHandle {
   /** What to call when a hotbar button is clicked. */
   onUse(handler: (abilityId: string) => void): void;
   /**
-   * What to call when a weapon is picked out of the switch (spec 077). It hands
+   * What to call when a weapon is picked out of the switch (spec 079). It hands
    * back an item id and nothing else: the server equips it, recomputes the stat
    * block and sends it back, and the lit button follows *that* rather than the
    * click.
@@ -213,7 +213,7 @@ export function createHud(): HudHandle {
     return { abilityId, ability, button, sweep, remaining };
   });
 
-  // The weapon switch (spec 077), bottom left and out of the hotbar's way.
+  // The weapon switch (spec 079), bottom left and out of the hotbar's way.
   // Which one is lit is read back off `stats.basicAttackId` -- the server's
   // answer -- so a refused equip simply leaves the old one lit.
   const weapons = document.createElement('div');

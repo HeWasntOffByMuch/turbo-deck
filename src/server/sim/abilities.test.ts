@@ -215,7 +215,7 @@ describe('wind-up', () => {
   });
 
   /**
-   * Spec 077. Asking to move is the other way out of a commitment, and the one
+   * Spec 079. Asking to move is the other way out of a commitment, and the one
    * that makes a feint possible: show the wind-up, read the answer, walk out of
    * it. The refund is the one `Esc` gives, so the only thing spent is the time.
    */
@@ -923,7 +923,7 @@ describe('cast phases reach the client', () => {
     expect(releaseTick).toBeGreaterThan(commit.state.tick);
 
     // Nothing asked for while it winds up. Walking would withdraw from it now
-    // (spec 077), which is a different test; what is being measured here is
+    // (spec 079), which is a different test; what is being measured here is
     // where the cast *ends*.
     const walk: Record<number, ServerInput[]> = { 0: [input(player.id, { moveX: 0, moveY: 1 })] };
 
@@ -1065,7 +1065,7 @@ describe('a named target (spec 070)', () => {
   });
 
   /**
-   * Spec 077. A blow aimed at a body that is no longer there is called off
+   * Spec 079. A blow aimed at a body that is no longer there is called off
    * rather than thrown at the corpse, at a withdrawal's refund -- nothing was
    * thrown, so nothing was spent but the time.
    */
