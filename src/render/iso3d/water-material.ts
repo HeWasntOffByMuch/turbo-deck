@@ -96,8 +96,8 @@ void main() {
   col = mix(col, uShallow, step(b, SHALLOW_EDGE));
 
   // Isolines of the same field: a thin bright line wherever it crosses one of
-  // ISO_LINES evenly spaced levels. step(), never smoothstep() -- a soft line
-  // here is the one thing that would give the whole surface away.
+  // a handful of evenly spaced levels. step(), never smoothstep() -- a soft
+  // line here is the one thing that would give the whole surface away.
   float iso = step(abs(fract(f * ISO_LINES) - 0.5), ISO_WIDTH);
   col = mix(col, col * ISO_GAIN, iso);
 
@@ -120,22 +120,44 @@ function f(value: number): string {
   return value.toFixed(6);
 }
 
-/** The fragment shader with every art-direction constant substituted in. */
-function fragmentShader(): string {
-  return FRAGMENT_SHADER.replace('WIND_CHUNK', glslWindChunk())
-    .replace('SHORE_RANGE_VALUE', f(WATER.shoreRange))
-    .replace('EDGE_WOBBLE', f(WATER.edgeWobble))
-    .replace('EDGE_DITHER', f(WATER.edgeDither))
-    .replace('MID_EDGE', f(WATER.midEdge))
-    .replace('SHALLOW_EDGE', f(WATER.shallowEdge))
-    .replace('ISO_LINES', f(WATER.isoLines))
-    .replace('ISO_WIDTH', f(WATER.isoWidth))
-    .replace('ISO_GAIN', f(WATER.isoGain))
-    .replace('FOAM_OMEGA', f(WATER.foamOmega))
-    .replace('FOAM_TRAVEL', f(WATER.foamTravel))
-    .replace('FOAM_EDGE', f(WATER.foamEdge))
-    .replace('FOAM_SWING', f(WATER.foamSwing))
-    .replace('FOAM_LIMIT', f(WATER.foamLimit));
+/**
+ * The art direction, as GLSL literals. Substituted in rather than declared as
+ * uniforms: they are baked at build time, and the only thing that changes per
+ * frame is the clock.
+ */
+const CONSTANTS: Readonly<Record<string, string>> = {
+  SHORE_RANGE_VALUE: f(WATER.shoreRange),
+  EDGE_WOBBLE: f(WATER.edgeWobble),
+  EDGE_DITHER: f(WATER.edgeDither),
+  MID_EDGE: f(WATER.midEdge),
+  SHALLOW_EDGE: f(WATER.shallowEdge),
+  ISO_LINES: f(WATER.isoLines),
+  ISO_WIDTH: f(WATER.isoWidth),
+  ISO_GAIN: f(WATER.isoGain),
+  FOAM_OMEGA: f(WATER.foamOmega),
+  FOAM_TRAVEL: f(WATER.foamTravel),
+  FOAM_EDGE: f(WATER.foamEdge),
+  FOAM_SWING: f(WATER.foamSwing),
+  FOAM_LIMIT: f(WATER.foamLimit),
+};
+
+/**
+ * The fragment shader with every constant substituted in.
+ *
+ * One whole-word pass over the source rather than a chain of `replace` calls.
+ * A chain looks equivalent and is not: `String.replace` with a string pattern
+ * substitutes the *first* occurrence only, so a constant used twice compiled
+ * with the second use left as an undeclared identifier -- and since this is a
+ * string until a GPU sees it, nothing in the type system or the test suite had
+ * an opinion about that. Whole-word so a token can never eat a longer one it is
+ * a prefix of.
+ */
+export function waterFragmentShader(): string {
+  const tokens = new RegExp(`\\b(${Object.keys(CONSTANTS).join('|')})\\b`, 'g');
+  return FRAGMENT_SHADER.replace('WIND_CHUNK', glslWindChunk()).replace(
+    tokens,
+    (token) => CONSTANTS[token] ?? token,
+  );
 }
 
 /**
@@ -193,7 +215,7 @@ export function buildWaterQuad(opt: WaterQuadOptions): THREE.Mesh {
 
   const material = new THREE.ShaderMaterial({
     vertexShader: VERTEX_SHADER,
-    fragmentShader: fragmentShader(),
+    fragmentShader: waterFragmentShader(),
     uniforms: {
       // By reference, not by value: one clock and one palette for the whole
       // world, however many chunks are on screen.

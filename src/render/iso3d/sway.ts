@@ -29,20 +29,26 @@ import { windTimeUniform } from './wind-uniforms.js';
  * screen. Bend only the visible geometry and the trees dance over shadows that
  * stand perfectly still, which reads worse than no sway at all.
  *
- * ## Why the patch is two string replacements
+ * ## Why the patch splices into two of three.js's own chunks
  *
  * The displacement has to be applied to the vertex *after* `instanceMatrix` and
  * *before* `modelViewMatrix` / `modelMatrix`, because the arc is about a point
  * in world space and the instance transform is what puts the vertex there.
  * three.js applies the instance matrix in two chunks -- `project_vertex` for
  * what is drawn and `worldpos_vertex` for what shadows are measured against --
- * and both do it on one line each. Splicing after those two lines is far less
- * brittle than replacing either chunk wholesale, and it keeps the two agreeing
- * by construction.
+ * and both do it on one line each, so the patch is one line spliced after each.
+ *
+ * The chunks are expanded here rather than matched in place, because
+ * `onBeforeCompile` hands over the shader with its `#include` directives *still
+ * unresolved* -- three.js expands them afterwards. A patch that looks for the
+ * chunk's contents therefore matches nothing, changes nothing, and compiles and
+ * links perfectly: the trees simply do not move, with no error anywhere. That
+ * is exactly what happened, and it is why {@link SPLICES} is verified at module
+ * load rather than trusted.
  *
  * This assumes the batches' own `modelMatrix` is identity -- that the prop
  * field's group sits at the origin unrotated, so that "after `instanceMatrix`"
- * already *is* world space. It does, and `props.test.ts` holds it to that.
+ * already *is* world space. It does, and `sway.test.ts` holds it to that.
  */
 
 const INSTANCE_LINE_VIEW = 'mvPosition = instanceMatrix * mvPosition;';
@@ -158,14 +164,44 @@ export function applySway(mesh: THREE.InstancedMesh, instances: readonly SwayIns
   if (mesh.boundingSphere) mesh.boundingSphere.radius += maxTipDisplacement(WIND, height);
 }
 
+/**
+ * three.js's own chunks with the bend spliced in, expanded once at module load.
+ *
+ * Built by name so a three.js upgrade that reworks either chunk shows up as the
+ * error below rather than as trees that quietly stop moving.
+ */
+export const SPLICES: readonly { readonly include: string; readonly source: string }[] = [
+  {
+    include: '#include <project_vertex>',
+    source: (THREE.ShaderChunk['project_vertex'] ?? '').replace(
+      INSTANCE_LINE_VIEW,
+      `${INSTANCE_LINE_VIEW}\n\t\tmvPosition.xyz = windBend( mvPosition.xyz );`,
+    ),
+  },
+  {
+    include: '#include <worldpos_vertex>',
+    source: (THREE.ShaderChunk['worldpos_vertex'] ?? '').replace(
+      INSTANCE_LINE_WORLD,
+      `${INSTANCE_LINE_WORLD}\n\t\tworldPosition.xyz = windBend( worldPosition.xyz );`,
+    ),
+  },
+];
+
+for (const splice of SPLICES) {
+  if (!splice.source.includes('windBend')) {
+    // Loud, because the alternative is silence: a splice that matched nothing
+    // still compiles, still links, and draws a forest that does not move.
+    throw new Error(`sway: nothing to splice in ${splice.include} -- has three.js changed the chunk?`);
+  }
+}
+
 /** Splice the bend into a material's vertex shader. Idempotent per material. */
 function patchMaterial(material: THREE.Material): void {
   material.onBeforeCompile = (shader): void => {
     shader.uniforms['uWindTime'] = windTimeUniform;
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', `#include <common>\n${SWAY_PROLOGUE}`)
-      .replace(INSTANCE_LINE_VIEW, `${INSTANCE_LINE_VIEW}\n\t\tmvPosition.xyz = windBend( mvPosition.xyz );`)
-      .replace(INSTANCE_LINE_WORLD, `${INSTANCE_LINE_WORLD}\n\t\tworldPosition.xyz = windBend( worldPosition.xyz );`);
+    let vertex = shader.vertexShader.replace('#include <common>', `#include <common>\n${SWAY_PROLOGUE}`);
+    for (const splice of SPLICES) vertex = vertex.replace(splice.include, splice.source);
+    shader.vertexShader = vertex;
   };
   // Materials are keyed by this when three.js decides whether two of them can
   // share a compiled program. Without it a patched and an unpatched Lambert

@@ -157,6 +157,40 @@ the same string.
 - Both terrain and water read the *same* wind uniform objects: writing
   `advanceWind` once moves every material.
 
+## Measured, and where the numbers disagree with the brief
+
+Everything answerable by arithmetic is asserted in `wind.test.ts`,
+`shore-sdf.test.ts`, `sway.test.ts`, `water-material.test.ts` and
+`terrain-mesh.test.ts`. Everything that is only about the *frame* is measured by
+`scripts/preview-wind.ts` against a real GL context. Three results need saying
+out loud rather than filing as passes.
+
+**The travelling wave is at this world's scale, not the brief's.** The brief
+specifies `travel = dot(originXZ, uWindDir) * 0.06` and asks that two trees ~20
+*world units* apart visibly lag. Both assume roughly metric units. Here a
+full-grown fir is 128 units tall, so 0.06/unit gives a 105-unit wavelength —
+narrower than one crown — and a grove would shimmer at random rather than lean
+together, which is the opposite of the reference. The wavelength is 600 units
+instead (`WAVE_LENGTH` in `wind.ts`, one constant). At 20 units apart the
+measured lag is 0.095s — five frames at 60Hz, and visible; at the ~200 units the
+scatter actually settles at it is 0.95s, a third of a cycle.
+
+**"Exactly four colours" and the rest of the brief cannot both hold.** The
+bands are four colours with `step()` edges and nothing between them. But the
+brief's own shader skeleton then multiplies isoline pixels by 1.22, and part 3
+multiplies a continuous streak into albedo — so a colour picker over the water
+finds four dominant tones covering 86% of it, four more from the isolines, and a
+low-amplitude spread from the streak. Measured: the four palette colours are the
+top four by area; through the shipped retro pass (spec 038), which quantizes the
+whole frame anyway, the water resolves to 49 colours across the entire lake
+including its shoreline and the sand behind it.
+
+**Arc versus translation is not visible at this lean, only correct.** At 5.7°
+the difference between rotating the crown about the base and sliding it sideways
+is 0.2 world units of trunk length — a fifth of a pixel. The invariant is
+asserted exactly in `wind.test.ts` rather than photographed, because no
+screenshot at any zoom this game uses could tell them apart.
+
 ## Out of scope
 
 - Water transparency, depth fog, reflections, refraction, caustics, render

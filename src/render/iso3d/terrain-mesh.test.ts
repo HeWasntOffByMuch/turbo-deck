@@ -270,6 +270,48 @@ describe('a reloaded map draws the same water', () => {
     expect(fields.size).toBe(quads.length);
   });
 
+  it('ends up where a whole-map bake would, however the chunks arrive', () => {
+    // Acceptance criterion 5, the half a screenshot cannot answer: a streaming
+    // client meshes chunks one at a time, and a chunk baked before its
+    // neighbours landed saw open water where there is really a coast. The
+    // mesher re-bakes a chunk's shore field when a neighbour arrives; this is
+    // what says the re-bake is complete rather than merely present.
+    //
+    // Reversed arrival order, because a forward order accidentally satisfies
+    // "re-bake the west and north neighbours" and hides a missing direction.
+    const streamed = buildTerrainMeshFromChunks(loaded.meshLayers, []);
+    for (const chunk of [...loaded.chunks].reverse()) streamed.rebuild(chunk);
+
+    const key = (mesh: THREE.Mesh): string => mesh.position.toArray().join(',');
+    const settled = new Map(waterQuads(streamed.group).map((q) => [key(q), shoreBytes(q)]));
+    const wanted = new Map(waterQuads(reloaded.group).map((q) => [key(q), shoreBytes(q)]));
+    expect(settled.size).toBe(wanted.size);
+    for (const [where, bytes] of wanted) expect(settled.get(where)).toEqual(bytes);
+    streamed.dispose();
+  });
+
+  it('never draws a shore further out than the settled one while streaming', () => {
+    // The property that makes the re-bake safe to watch happen: an incomplete
+    // neighbourhood reads as open water, so the sea can only ever *shallow* as
+    // chunks land. A player watching the world stream in sees the shallows
+    // arrive, never a beach that turns back into deep water.
+    const streamed = buildTerrainMeshFromChunks(loaded.meshLayers, []);
+    const settled = new Map(
+      waterQuads(reloaded.group).map((q) => [q.position.toArray().join(','), shoreBytes(q)]),
+    );
+    for (const chunk of loaded.chunks) {
+      streamed.rebuild(chunk);
+      for (const quad of waterQuads(streamed.group)) {
+        const target = settled.get(quad.position.toArray().join(','));
+        if (!target) continue;
+        shoreBytes(quad).forEach((byte, i) => {
+          expect(byte).toBeGreaterThanOrEqual(target[i] ?? 0);
+        });
+      }
+    }
+    streamed.dispose();
+  });
+
   it('shows shallows near the shore and deep water away from it', () => {
     // The field is the whole shape of the effect, so it is worth one assertion
     // that it is not simply saturated everywhere -- which is what a distance

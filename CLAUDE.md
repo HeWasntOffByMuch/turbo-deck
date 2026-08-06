@@ -160,6 +160,17 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  are pure and tested headlessly; scene.ts, hud.ts and
                  view.ts are the three.js/DOM half. `npx tsx scripts/preview-world.ts`
                  photographs the real page into .claude/screenshots/world-*.png.
+src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 073): one wind vector
+                 read by the tree sway, the water and the streak layer over the
+                 ground, plus the shore distance transform the water's bands step
+                 on. Pure and tested headlessly -- the GLSL lives here as strings
+                 with a TypeScript transcription beside it, because a shader
+                 expression nobody can execute is where a typo lives forever.
+                 sway.ts, water-material.ts, terrain-streak.ts and
+                 wind-uniforms.ts are the three.js half; `wind-probe.ts` plus
+                 `src/render/wind-probe.html` are a dev-server-only measuring rig
+                 (never in a build) driven by `npx tsx scripts/preview-wind.ts`,
+                 which photographs the frame and reports the acceptance numbers.
 src/render/iso3d/movement.ts, debug-view.ts  the two tuning sandboxes (specs
                  032/033/035/046, back since 066): one unit, no game, so a gait,
                  a cloth solve or a turn rate can be watched in isolation. The

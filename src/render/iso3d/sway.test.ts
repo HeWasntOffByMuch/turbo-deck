@@ -169,29 +169,39 @@ describe('a batch of trees', () => {
     // and the wind direction means nothing. There is one correct seam and this
     // pins it -- in the view chunk *and* the world chunk, since the second is
     // what shadows are measured against.
+    //
+    // Fed the shader in the state three.js actually hands it over in: with the
+    // `#include` directives still *unresolved*. An earlier version of this test
+    // helpfully expanded them first, and so agreed with a patch that matched
+    // nothing at all in the real shader -- which links, draws, and leaves the
+    // forest standing perfectly still. That is the bug this shape catches.
     const mesh = swaying[0] as THREE.InstancedMesh;
     const shader = {
       uniforms: {} as Record<string, THREE.IUniform>,
       vertexShader: [
         '#include <common>',
-        'vec4 mvPosition = vec4( transformed, 1.0 );',
-        'mvPosition = instanceMatrix * mvPosition;',
-        'mvPosition = modelViewMatrix * mvPosition;',
-        'vec4 worldPosition = vec4( transformed, 1.0 );',
-        'worldPosition = instanceMatrix * worldPosition;',
-        'worldPosition = modelMatrix * worldPosition;',
+        'void main() {',
+        '#include <begin_vertex>',
+        '#include <project_vertex>',
+        '#include <worldpos_vertex>',
+        '}',
       ].join('\n'),
       fragmentShader: '',
     };
     (mesh.material as THREE.Material).onBeforeCompile?.(shader as never, null as never);
 
     const lines = shader.vertexShader.split('\n').map((l) => l.trim());
-    const bendView = lines.indexOf('mvPosition.xyz = windBend( mvPosition.xyz );');
-    const bendWorld = lines.indexOf('worldPosition.xyz = windBend( worldPosition.xyz );');
-    expect(bendView).toBeGreaterThan(lines.indexOf('mvPosition = instanceMatrix * mvPosition;'));
-    expect(bendView).toBeLessThan(lines.indexOf('mvPosition = modelViewMatrix * mvPosition;'));
-    expect(bendWorld).toBeGreaterThan(lines.indexOf('worldPosition = instanceMatrix * worldPosition;'));
-    expect(bendWorld).toBeLessThan(lines.indexOf('worldPosition = modelMatrix * worldPosition;'));
+    const index = (needle: string): number => lines.findIndex((line) => line === needle);
+    const bendView = index('mvPosition.xyz = windBend( mvPosition.xyz );');
+    const bendWorld = index('worldPosition.xyz = windBend( worldPosition.xyz );');
+    expect(bendView).toBeGreaterThan(index('mvPosition = instanceMatrix * mvPosition;'));
+    expect(bendView).toBeLessThan(index('mvPosition = modelViewMatrix * mvPosition;'));
+    expect(bendWorld).toBeGreaterThan(index('worldPosition = instanceMatrix * worldPosition;'));
+    expect(bendWorld).toBeLessThan(index('worldPosition = modelMatrix * worldPosition;'));
+    // No directive may survive the patch unexpanded, or the line it was supposed
+    // to carry went nowhere.
+    expect(shader.vertexShader).not.toContain('#include <project_vertex>');
+    expect(shader.vertexShader).not.toContain('#include <worldpos_vertex>');
     // ...and it reads the one shared clock rather than a copy of its value.
     expect(shader.uniforms['uWindTime']).toBe(windTimeUniform);
   });
