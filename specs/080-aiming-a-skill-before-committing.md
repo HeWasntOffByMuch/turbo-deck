@@ -191,7 +191,7 @@ applies here unchanged.
 | `1`..`8`, hotbar button | replaces the aim | starts one (or casts, for `'self'`) |
 | Left-click a unit | confirms a `'unit'` aim | nothing, as today |
 | Left-click the ground | confirms a `'ground'` aim; a `'unit'` aim ignores it and stays live | nothing |
-| Right-click | **cancels the aim, and nothing else** | target / move order, unchanged |
+| Right-click | **cancels the aim, and nothing else** | drops a standing order, then target / move order as before |
 | `Esc` | cancels the aim | cancels a wind-up, forgets the target |
 | `W`/`A`/`S`/`D` | walks, aim survives | walks, drops orders |
 
@@ -199,9 +199,14 @@ Two of those rows are the ones worth being deliberate about.
 
 **Right-click while aiming does not fall through.** It cancels and returns; it
 does not become a move order or an attack order on whatever was under it. The
-button that means "no" cannot also mean "and go there instead" — the user
-asking for this asked for exactly that, and it is also the only reading under
-which cancelling is free.
+button that means "no" cannot also mean "and go there instead" — and it is the
+only reading under which cancelling is free.
+
+That is about a *pending* aim. A right-click over an order that is already
+walking is an ordinary change of orders: the order is dropped and the click
+means what it has always meant, the way a new move order replaces an attack
+target. There is nothing to protect at that point — the decision was made, and
+this is the next one.
 
 **A movement key does not drop a pending aim.** Walking while you decide where
 to put a blast is the point of being allowed to decide. A *confirmed* order is
