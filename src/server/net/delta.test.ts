@@ -45,6 +45,8 @@ function entity(id: number, overrides: Partial<ServerEntity> = {}): ServerEntity
     claimedPosition: null,
     claimedSeq: 0,
     pardon: null,
+    spawnerId: null,
+    anchor: null,
     resource: 0,
     cast: null,
     cooldowns: {},

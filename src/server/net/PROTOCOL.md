@@ -1,4 +1,4 @@
-# turbo-deck wire protocol v8
+# turbo-deck wire protocol v9
 
 Binary, not JSON. Every frame is a WebSocket **binary** message whose first byte
 is the message type; the rest is a type-specific payload. All multi-byte numbers
@@ -119,6 +119,14 @@ Equip, unequip and skill spends each trigger a full server-side stat
 recalculation and are answered with a fresh `Stats` message, or with `Error`
 (`RejectedAction`) and no state change.
 
+### `0x0b WatchSpawners`
+`bool on`
+
+Turns the `SpawnerStates` readout on or off (spec 076). The only client message
+that changes nothing about the world: it subscribes to a debug readout, so a
+client that never sends it is never sent one, and the overlay costs nothing
+while it is switched off. Needs no player and no entity.
+
 ## Server → client
 
 ### `0x40 Welcome`
@@ -169,7 +177,7 @@ through this same delta rather than through a parallel system. Its `z` carries
 the arc height, which is what lets a client draw a lobbed shot rising and
 falling with a shadow underneath it.
 
-Since spec 076 a shot can be *tracking* a body, so its position changes on a
+Since spec 077 a shot can be *tracking* a body, so its position changes on a
 curve the client was never told about. Nothing new is sent for it: the position
 is authoritative every tick and the client interpolates between the samples it
 gets, exactly as it does for anything else that walks.
@@ -214,7 +222,7 @@ Sent to every connection whose interest set contains the attacker or the target.
 `f32 spellPower` · `f32 critChance` · `f32 maxResource` · `f32 resourceRegen` ·
 `str basicAttackId`
 
-`basicAttackId` is the ability this character's auto-attack uses (spec 076),
+`basicAttackId` is the ability this character's auto-attack uses (spec 077),
 derived from the main hand. The client needs it to know what its right-click
 reaches with, which cooldown the sweep is drawn against, and which ability to
 ask for; a body that never attacks carries `''`.
@@ -334,6 +342,21 @@ frame readable only after another frame would break that quietly.
 client can retire the request from its in-flight set rather than waiting
 forever. `unknown` is permanent and the client stops asking; the other two are
 temporary and the chunk goes back on the wanted list.
+
+### `0x51 SpawnerStates`
+`u32 tick` · `varuint count` · per spawner: `str id` · `str monsterId` ·
+`varint x` · `varint z` · `u8 state` · `varuint ticks`
+
+What every spawn point the map places is doing (spec 076). `state` is `0`
+occupied and `1` counting down; `ticks` is what is left of the timer, and `0`
+while occupied. Coordinates are thousandths, like every other coordinate since
+spec 072 — they come out of the document and an `f32` cannot hold most of them.
+
+Sent on the broadcast cadence, and **only to a connection that sent
+`WatchSpawners(true)`**. It carries the whole map rather than the player's
+interest set: these are markers a level designer placed, so there are tens of
+them, and an overlay that faded out at the interest radius would be worst at
+exactly the question it exists to answer.
 
 ## `admin:*` — client → server
 

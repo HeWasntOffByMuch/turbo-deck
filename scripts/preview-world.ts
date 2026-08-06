@@ -131,6 +131,28 @@ async function findUnit(page: Page): Promise<Bar | null> {
   return null;
 }
 
+/**
+ * Waits until a body's bar stops moving on screen, and returns where it settled.
+ *
+ * Every click this harness aims at a body is aimed at a *pixel*, and the camera
+ * follows the player with 130ms of lag (spec 039) -- so a bar read while the
+ * player is still walking names a pixel the body has already left. Polling until
+ * two readings agree is the only honest way to ask "where is it now", and it is
+ * what separates a forgiving pick that missed from a harness that did.
+ */
+async function settledBar(page: Page, id: string, timeoutMs = 4000): Promise<Bar | null> {
+  const deadline = Date.now() + timeoutMs;
+  let last = (await bodiesOnScreen(page)).find((bar) => bar.id === id) ?? null;
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(120);
+    const now = (await bodiesOnScreen(page)).find((bar) => bar.id === id) ?? null;
+    if (!now) return null;
+    if (last && Math.abs(now.x - last.x) <= 1 && Math.abs(now.y - last.y) <= 1) return now;
+    last = now;
+  }
+  return last;
+}
+
 /** The tick the HUD is showing. */
 async function readTick(page: Page): Promise<number> {
   const text = (await page.textContent('body')) ?? '';
@@ -220,6 +242,22 @@ async function main(): Promise<void> {
 
     await shoot(page, 'world-play');
 
+    // The spawner overlay (spec 076): open the cog, tick "Spawners", and
+    // photograph what the map placed. Every enemy on screen came from one of
+    // these markers, so a frame with bodies and no marks would mean the
+    // overlay is lying about where they came from.
+    await page.click('button[aria-label="View settings"]');
+    await page.waitForTimeout(120);
+    await page.click('label:has-text("Spawners") input[type=checkbox]');
+    await page.waitForTimeout(400);
+    const marks = await page.$$eval('div', (nodes) =>
+      nodes.filter((n) => / · |^(grazer|stalker|ravager)$/.test(n.textContent ?? '')).length,
+    );
+    console.log(`  spawner marks drawn: ${marks}`);
+    if (marks === 0) problems.push('the spawner overlay drew nothing');
+    await shoot(page, 'world-spawners');
+    await page.click('label:has-text("Spawners") input[type=checkbox]');
+    await page.click('button[aria-label="View settings"]');
     // The weather panel (spec 075): its own button beside the view cog. Opened
     // and driven here rather than trusted, because the sliders write straight
     // into the shared wind uniforms -- a wiring mistake would leave a panel that
@@ -311,12 +349,31 @@ async function main(): Promise<void> {
       // before the screenshots, because the alternative is measuring how long
       // the body survived being attacked -- an earlier version of this waited,
       // and reported a failure that was really a dead grazer.
-      await page.mouse.click(240, 660, { button: 'right' });
-      await page.waitForTimeout(130);
+      // Dropped onto grass a short step from the player, directly *away* from
+      // the body -- not across the frame, and not next to it either.
+      //
+      // Letting a target go is a move order, so wherever this click lands is
+      // where the player then walks, and the camera follows with 130ms of lag
+      // (spec 039): a bar read mid-walk is a pixel the body has already left.
+      // A far corner used to be harmless because the field was hand-seeded a
+      // couple of body-lengths away; since the map places the monsters (spec
+      // 076) that walk carried the body clean off screen. Stepping the other
+      // way keeps the frame still *and* keeps the click off the body, which a
+      // step toward it would not -- the forgiving pick would simply take it
+      // again, and "let go" would never have happened.
+      const away = (() => {
+        const from = bodyPoint(unit);
+        const dx = 640 - from.x;
+        const dy = 400 - from.y;
+        const len = Math.max(1, Math.hypot(dx, dy));
+        return { x: 640 + (dx / len) * 110, y: 400 + (dy / len) * 110 };
+      })();
+      await page.mouse.click(away.x, away.y, { button: 'right' });
+      await page.waitForTimeout(400);
       const dropped = await readTarget(page);
 
       let sloppy = 'the body left the screen before it could be tried';
-      const beside = (await bodiesOnScreen(page)).find((bar) => bar.id === unit.id);
+      const beside = await settledBar(page, unit.id);
       if (beside) {
         const point = bodyPoint(beside);
         await page.mouse.click(point.x + SLOPPY_OFFSET, point.y, { button: 'right' });
@@ -355,7 +412,7 @@ async function main(): Promise<void> {
       // which is the only way an attack order ends by itself.
     }
 
-    // The weapon switch (spec 076). Clicking one is an ordinary equip, and the
+    // The weapon switch (spec 077). Clicking one is an ordinary equip, and the
     // proof it took is that the *server's* stat block came back naming the new
     // attack -- which is what lights the button. Photographed with a bow in
     // hand so the ranged auto-attack is on screen at all.

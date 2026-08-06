@@ -94,10 +94,12 @@ export const INTEREST_CHUNK_RADIUS = 8;
  * a right-click lands on the unit under it (spec 070).
  * 7: the world is a map document rather than a seed, so terrain travels as
  * `MapInfo` plus requested `MapChunk`s instead of being rederived (spec 072).
- * 8: the stat block names the body's auto-attack, so a client knows what its
- * right-click reaches with rather than assuming a sword (spec 076).
+ * 8: a client can ask to be told what the map's spawners are doing, for the
+ * overlay behind the "show spawners" setting (spec 076).
+ * 9: the stat block names the body's auto-attack, so a client knows what its
+ * right-click reaches with rather than assuming a sword (spec 077).
  */
-export const PROTOCOL_VERSION = 8;
+export const PROTOCOL_VERSION = 9;
 
 /**
  * How far from a map chunk a player may be and still be sent it (spec 072).

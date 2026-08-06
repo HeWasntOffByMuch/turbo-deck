@@ -92,7 +92,7 @@ the table's `cooldownTicks`. Everything else always uses the table value.
 
 `src/server/sim/world.ts` `step()`, in the movement pass (~line 271-278):
 ```
-// Since spec 076 the root yields to a move order rather than outranking it.
+// Since spec 077 the root yields to a move order rather than outranking it.
 if (steered.cast !== null && asksToMove(rawIntent)) {
   const withdrawn = cancelCast(steered, tick, CastEndReason.Cancelled);
   ...
@@ -103,7 +103,7 @@ const intent =
     : rawIntent;
 ```
 A move order (WASD or a right-click destination) arriving while
-`entity.cast !== null` **withdraws from the cast** (spec 076) at the same refund
+`entity.cast !== null` **withdraws from the cast** (spec 077) at the same refund
 `Esc` gives — cost back, cooldown cleared — and the body moves on that same
 tick. Only a cast past its release is unaffected, because there is nothing left
 to withdraw from. An intent that asks for nothing still roots as it always did.
@@ -277,13 +277,13 @@ transform; `activity`/`activityUntilTick` drive animation state on the wire.
 
 ---
 
-## Spec 076 additions
+## Spec 077 additions
 
 - **`EffectiveStats.basicAttackId`** — which attack a body swings with is a
   derived stat now, from `ItemDefinition.basicAttackId` (main hand) for a player
   and from its row for a monster. `MonsterDefinition.ability` is gone.
   `BASIC_ATTACK_ID` survives only as the fallback. On the wire in `0x44 Stats`;
-  `PROTOCOL_VERSION` 8.
+  `PROTOCOL_VERSION` 9.
 - **`ranged.shot` / `ranged.star`** — `kind: 'projectile'`, `basicAttack: true`,
   `targeting: 'point'`. The `slinger` monster and the `bow.hunting` /
   `stars.weighted` items carry them.

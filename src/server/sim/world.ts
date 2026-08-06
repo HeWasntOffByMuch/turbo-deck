@@ -10,12 +10,12 @@
  * Order within a tick is fixed and documented, because "which entity moved
  * first" is the difference between a reproducible sim and a coin flip:
  *
- *  1. expire timers (activity, corpses)
+ *  1. expire timers
  *  2. movement, in entity-creation order: players from their input, monsters
  *     from their AI
  *  3. attacks, in entity-id order
  *  4. deaths and despawns
- *  5. the ambient spawner
+ *  5. the map's spawners refill what died
  *
  * Entities in chunks that no player is near are skipped entirely at step 2-3:
  * an unloaded chunk costs nothing, so the world's cost tracks where the players
@@ -32,6 +32,7 @@ import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../config.js';
 import { monsterById } from '../data/monsters.js';
 import type { EffectiveStats, Vec3 } from '../state/types.js';
 import { chunkKeyOf, type ChunkKey } from '../world/chunks.js';
+import type { SpawnPoint } from '../world/spawners.js';
 import type { TerrainSampler } from '../world/terrain.js';
 import type { ZoneManager } from '../world/zone-manager.js';
 import { abilityById } from '../data/abilities.js';
@@ -55,14 +56,24 @@ import {
   type ServerInput,
   type ServerSimEvent,
   type ServerWorldState,
+  type SpawnerState,
   type StepResult,
 } from './types.js';
 
-/** How long a corpse lingers before it is removed from the world. */
-export const CORPSE_TICKS = SERVER_TICK_RATE * 5;
-
 /** A monster closes to this fraction of its reach before it stops walking in. */
 const STANDOFF_FRACTION = 0.8;
+
+/**
+ * How far a monster may be dragged from its spawn point before it gives up
+ * (spec 076).
+ *
+ * Sized so a fight can move -- around a tree, out of a doorway, backwards
+ * through a camp -- without ending, and so that a player who has decided to
+ * leave has left within a few seconds of running. Roughly twice the widest
+ * aggro range in the table, which is the distance at which a monster used to
+ * notice you at all.
+ */
+export const LEASH_RADIUS = 800;
 
 /** What every entity starts as, before its kind fills in the rest. */
 function blankEntity(id: number): ServerEntity {
@@ -103,6 +114,8 @@ function blankEntity(id: number): ServerEntity {
     claimedPosition: null,
     claimedSeq: 0,
     pardon: null,
+    spawnerId: null,
+    anchor: null,
     resource: 0,
     cast: null,
     cooldowns: {},
@@ -121,6 +134,12 @@ export interface StepContext {
    */
   readonly activeChunks: ReadonlySet<ChunkKey>;
   readonly chunkSize: number;
+  /**
+   * Every enemy spawn point the map places (spec 076). Empty for a world with
+   * no document behind it, which is every sandbox and most tests -- and a world
+   * with no spawn points simply has no monsters in it.
+   */
+  readonly spawnPoints: readonly SpawnPoint[];
 }
 
 export function createWorldState(seed: number): ServerWorldState {
@@ -129,6 +148,7 @@ export function createWorldState(seed: number): ServerWorldState {
     entities: new Map(),
     nextEntityId: 1,
     rng: Rng.fromSeed(seed),
+    spawners: new Map(),
   };
 }
 
@@ -143,6 +163,16 @@ export interface SpawnSpec {
   readonly level?: number;
   readonly zoneId: string;
   readonly health?: number;
+  /**
+   * Who this body starts out fighting, if anyone (spec 076).
+   *
+   * Nothing initiates any more, so a caller that wants a monster to walk at
+   * someone has to say so -- which is what being hit does, and what a scripted
+   * encounter or a test would otherwise have no way to express.
+   */
+  readonly targetId?: number;
+  /** Where it considers home, and so the centre of its leash. */
+  readonly anchor?: Vec2;
 }
 
 export function spawnEntity(
@@ -164,7 +194,7 @@ export function spawnEntity(
     activityUntilTick: 0,
     attackReadyTick: 0,
     radius: spec.radius,
-    targetId: null,
+    targetId: spec.targetId ?? null,
     path: null,
     pathIndex: 0,
     repathAtTick: 0,
@@ -172,6 +202,8 @@ export function spawnEntity(
     claimedPosition: null,
     claimedSeq: 0,
     pardon: null,
+    spawnerId: null,
+    anchor: spec.anchor ?? null,
     resource: spec.stats.maxResource,
     cast: null,
     cooldowns: {},
@@ -270,7 +302,7 @@ export function step(
       steered = decided.entity;
     }
     // Asking to move is how a body withdraws from a blow it has committed to
-    // (spec 076). The refund is the one `Esc` gives -- cost back, cooldown
+    // (spec 077). The refund is the one `Esc` gives -- cost back, cooldown
     // cleared -- so the feint costs exactly the time it took to show, and it is
     // settled *here* rather than deferred to the cast pass, because withdrawing
     // and stepping away have to be the same tick or the step reads as a stutter.
@@ -445,7 +477,7 @@ export function step(
     }
 
     // Re-aimed every tick at the body it named, so a shot follows a target that
-    // moved after it was loosed (spec 076). A target that died or left the world
+    // moved after it was loosed (spec 077). A target that died or left the world
     // *disjoints* it: the last aim stands and the shot finishes at a patch of
     // ground. Nothing was ever scheduled, so there is nothing to un-schedule --
     // the travel is the only thing that decides when, or whether, this lands.
@@ -479,7 +511,7 @@ export function step(
     if (!ability || !owner) continue;
 
     // What a shot answers to is whether it *named* something, not how high it
-    // flew (spec 076). A shot fired at a body resolves against that body and
+    // flew (spec 077). A shot fired at a body resolves against that body and
     // nothing else, for the reason melee does since spec 070: an attack is
     // single-target, and the bystander who wandered into the line is a
     // bystander. A shot thrown at a patch of ground -- the cursor-aimed bolts --
@@ -545,7 +577,9 @@ export function step(
     events.push({ kind: 'despawned', entityId: entity.id });
   }
 
-  // --- 4: despawn what the corpse timer has finished with ---------------
+  // --- 4: sweep the dead ------------------------------------------------
+  /** Spawners whose body left the world this tick; their timers start now. */
+  const emptied: string[] = [];
   for (const entity of [...working.values()]) {
     if (entity.health > 0) continue;
     // A dead player stays in the world. Sweeping their body away would take
@@ -559,31 +593,25 @@ export function step(
       }
       continue;
     }
-    if (entity.activity !== ActivityValue.Dead) {
-      working.set(entity.id, {
-        ...entity,
-        activity: ActivityValue.Dead,
-        activityUntilTick: tick + CORPSE_TICKS,
-      });
-      continue;
-    }
-    if (entity.activityUntilTick > 0 && tick >= entity.activityUntilTick) {
-      working.delete(entity.id);
-      events.push({ kind: 'despawned', entityId: entity.id });
-    }
+    // Everything else leaves nothing behind (spec 076). A five-second body that
+    // cannot be looted, hit or walked through is not a corpse, it is a monster
+    // you have stopped being able to fight standing in the doorway. Corpses are
+    // their own feature and will arrive as one.
+    working.delete(entity.id);
+    events.push({ kind: 'despawned', entityId: entity.id });
+    if (entity.spawnerId !== null) emptied.push(entity.spawnerId);
   }
 
-  // --- 5: ambient spawning ---------------------------------------------
-  const spawned = runSpawner(working, nextEntityId, tick, rng, context);
+  // --- 5: the map's spawners -------------------------------------------
+  const spawned = runSpawners(working, state.spawners, emptied, nextEntityId, tick, context);
   nextEntityId = spawned.nextEntityId;
-  rng = spawned.rng;
   events.push(...spawned.events);
 
-  return { state: { tick, entities: working, nextEntityId, rng }, events };
+  return { state: { tick, entities: working, nextEntityId, rng, spawners: spawned.spawners }, events };
 }
 
 /**
- * Whether this intent asks the body to walk (spec 076).
+ * Whether this intent asks the body to walk (spec 077).
  *
  * The threshold is float slack, not a dead zone: every producer of a move vector
  * -- `moveIntent`, `monsterIntent`, the bots -- emits either a unit vector or an
@@ -627,32 +655,32 @@ function monsterIntent(
   tick: number,
   context: StepContext,
 ): MonsterDecision {
-  const definition = monsterById(monster.typeId);
-  const aggroRange = definition?.aggroRange ?? 0;
-
   let target = monster.targetId === null ? null : entities.get(monster.targetId) ?? null;
   if (target && target.health <= 0) target = null;
 
-  if (!target && aggroRange > 0) {
-    let nearestDistanceSq = aggroRange * aggroRange;
-    for (const candidate of entities.values()) {
-      if (candidate.kind !== EntityKindValue.Player || candidate.health <= 0) continue;
-      const dx = candidate.position.x - monster.position.x;
-      const dy = candidate.position.y - monster.position.y;
-      const distanceSq = dx * dx + dy * dy;
-      if (distanceSq <= nearestDistanceSq) {
-        nearestDistanceSq = distanceSq;
-        target = candidate;
-      }
-    }
-  }
+  // Nothing initiates (spec 076). A monster's only route to a target is the
+  // retaliation `applyDamage` writes when something hits it, so walking past
+  // one is walking past one -- and `aggroRange` sits unread in the table until
+  // a spec turns proximity back on with something more interesting than a
+  // radius. Which leaves the leash as the one thing that can *take* a target
+  // away, and it is checked first because it outranks everything below.
+  if (target && beyondLeash(monster)) target = null;
 
-  if (!target) return { input: null, entity: forgetPath(monster) };
+  // Dropped on the entity, not just in this function's head: a grudge nothing
+  // can see is a grudge nothing can test, and it would leave a body walking
+  // home that still reports the player it has given up on.
+  if (!target && monster.targetId !== null) monster = { ...monster, targetId: null };
+
+  if (!target) {
+    const home = walkHome(monster, tick, context);
+    if (home) return home;
+    return { input: null, entity: forgetPath(monster) };
+  }
 
   const dx = target.position.x - monster.position.x;
   const dy = target.position.y - monster.position.y;
   const distance = Math.hypot(dx, dy);
-  // What it swings with is a stat now (spec 076), so a slinger stands off at
+  // What it swings with is a stat now (spec 077), so a slinger stands off at
   // its throw's range and a stalker at its sword's, off the same two lines.
   const swing = abilityById(monster.stats.basicAttackId);
   const reach = ((swing?.range ?? monster.stats.attackRange) + target.radius) * STANDOFF_FRACTION;
@@ -693,6 +721,61 @@ function monsterIntent(
       // Monsters attack by id like everyone else since spec 070, so a swing
       // aimed at one player cannot catch another who walked through the arc.
       castTargetEntityId: target.id,
+      cancelCast: false,
+    },
+  };
+}
+
+/** Whether this body has been dragged further from its spawn point than it will go. */
+function beyondLeash(monster: ServerEntity): boolean {
+  const anchor = monster.anchor;
+  if (!anchor) return false;
+  const dx = monster.position.x - anchor.x;
+  const dy = monster.position.y - anchor.y;
+  return dx * dx + dy * dy > LEASH_RADIUS * LEASH_RADIUS;
+}
+
+/**
+ * The walk back to the spawn point, for a body with no target and no business
+ * being where it is (spec 076).
+ *
+ * Routed with the same A* a chase uses, so a monster led round a wall comes
+ * back round it rather than pressing into it. It walks until it is within its
+ * own radius of home and then simply stands: it does not snap to the marker,
+ * because an inch of drift costs nothing and a teleport is visible.
+ *
+ * Nothing here stops it being hit on the way. Being hit re-targets it, exactly
+ * as it always did -- and the leash check runs before the target is read, so the
+ * next tick takes that target straight back off it. "Cannot be pulled again
+ * until it is home" falls out of the rule rather than being a second flag.
+ */
+function walkHome(monster: ServerEntity, tick: number, context: StepContext): MonsterDecision | null {
+  const anchor = monster.anchor;
+  if (!anchor) return null;
+  const dx = anchor.x - monster.position.x;
+  const dy = anchor.y - monster.position.y;
+  if (Math.hypot(dx, dy) <= monster.radius) return null;
+
+  const steer = routeToward(monster, { x: anchor.x, y: anchor.y, z: monster.position.z }, tick, context);
+  if (!steer.direction) return { input: null, entity: forgetPath(steer.entity) };
+
+  return {
+    entity: steer.entity,
+    input: {
+      entityId: monster.id,
+      seq: 0,
+      moveX: steer.direction.x,
+      moveY: steer.direction.y,
+      facing: Math.atan2(steer.direction.y, steer.direction.x),
+      buttons: 0,
+      predictedX: monster.position.x,
+      predictedY: monster.position.y,
+      hasPrediction: false,
+      seqSpan: 1,
+      castAbilityId: '',
+      castTargetX: 0,
+      castTargetY: 0,
+      castTargetEntityId: 0,
       cancelCast: false,
     },
   };
@@ -807,105 +890,113 @@ function unit(x: number, y: number): Vec2 | null {
 
 interface SpawnerResult {
   readonly nextEntityId: number;
-  readonly rng: Rng;
+  readonly spawners: ReadonlyMap<string, SpawnerState>;
   readonly events: readonly ServerSimEvent[];
 }
 
 /**
- * Adds monsters to active chunks that are under their population cap. Cadence
- * is derived from the tick number and the live config, never from a clock, so a
- * replay spawns the same monsters at the same ticks -- and an admin turning
- * `spawnRateMultiplier` to 0 stops it dead without a restart.
+ * Refills the map's spawn points (spec 076).
+ *
+ * One spawner, one monster, one timer each. A spawner with no entry has never
+ * been filled and is ready immediately, so the first tick of a server populates
+ * the whole map; after that the wait is stamped when the body is *removed*,
+ * which is what makes it "five seconds after you killed it" rather than five
+ * seconds after some global cadence came round.
+ *
+ * No RNG. Where a monster stands and which one it is are both decided by the
+ * document, and the timer is arithmetic on the tick number -- so the sim's
+ * random stream belongs entirely to combat, and how many things have spawned
+ * can no longer shift a crit roll in a replay.
  */
-function runSpawner(
+function runSpawners(
   entities: Map<number, ServerEntity>,
+  previous: ReadonlyMap<string, SpawnerState>,
+  emptied: readonly string[],
   startingEntityId: number,
   tick: number,
-  startingRng: Rng,
   context: StepContext,
 ): SpawnerResult {
-  const { config, zones, chunkSize } = context;
+  const { config, zones, chunkSize, spawnPoints } = context;
   const events: ServerSimEvent[] = [];
   let nextEntityId = startingEntityId;
-  let rng = startingRng;
 
-  if (config.spawnRateMultiplier <= 0 || config.maxEntitiesPerChunk <= 0) {
-    return { nextEntityId, rng, events };
+  const interval = respawnInterval(config);
+  const spawners = new Map(previous);
+
+  // The bodies that left the world this tick start their spawner's clock. Done
+  // before the refill pass so a monster killed on tick T waits the full
+  // interval, rather than being replaced on T by the same pass that buried it.
+  for (const id of emptied) {
+    spawners.set(id, { entityId: null, readyAtTick: interval === null ? 0 : tick + interval });
   }
 
-  const population = new Map<ChunkKey, number>();
-  for (const entity of entities.values()) {
-    const key = chunkKeyOf(entity.position.x, entity.position.y, chunkSize);
-    population.set(key, (population.get(key) ?? 0) + 1);
-  }
+  if (interval === null) return { nextEntityId, spawners, events };
 
-  // Sorted, so iteration order does not depend on Set insertion history.
-  for (const key of [...context.activeChunks].sort()) {
-    if ((population.get(key) ?? 0) >= config.maxEntitiesPerChunk) continue;
+  for (const point of spawnPoints) {
+    const current = spawners.get(point.id) ?? EMPTY_SPAWNER;
 
-    const comma = key.indexOf(',');
-    const cx = Number(key.slice(0, comma));
-    const cy = Number(key.slice(comma + 1));
-    const centreX = (cx + 0.5) * chunkSize;
-    const centreY = (cy + 0.5) * chunkSize;
+    // Still holding a live body: nothing to do. A body that vanished by some
+    // other route -- an admin despawn -- reads as empty here and refills on the
+    // same delay, which is the behaviour you would have asked for anyway.
+    if (current.entityId !== null) {
+      if (entities.has(current.entityId)) continue;
+      spawners.set(point.id, { entityId: null, readyAtTick: tick + interval });
+      continue;
+    }
+    if (tick < current.readyAtTick) continue;
 
-    const zone = zones.zoneAt(centreX, centreY);
-    if (zone.spawnMultiplier <= 0 || zone.spawnTable.length === 0) continue;
+    // The population cap is the one thing that can still refuse a spawn: a
+    // spawner inside a chunk that is already full waits rather than tipping it
+    // over, and tries again next tick.
+    if (config.maxEntitiesPerChunk > 0) {
+      const key = chunkKeyOf(point.x, point.y, chunkSize);
+      let population = 0;
+      for (const entity of entities.values()) {
+        if (chunkKeyOf(entity.position.x, entity.position.y, chunkSize) === key) population += 1;
+      }
+      if (population >= config.maxEntitiesPerChunk) continue;
+    }
 
-    const rate = config.spawnRateMultiplier * zone.spawnMultiplier;
-    const interval = Math.max(1, Math.round(config.spawnIntervalTicks / rate));
-    // Offsetting by a hash of the chunk keeps every chunk from spawning on the
-    // same tick, without needing per-chunk timer state.
-    const offset = Math.abs(cx * 73856093 + cy * 19349663) % interval;
-    if ((tick + offset) % interval !== 0) continue;
-
-    const [typeIndex, afterType] = rng.nextInt(0, zone.spawnTable.length - 1);
-    rng = afterType;
-    const typeId = zone.spawnTable[typeIndex];
-    const definition = typeId === undefined ? null : monsterById(typeId);
+    const definition = monsterById(point.monsterId);
+    // Unreachable through `spawnPointsFrom`, which refuses the document that
+    // would produce it. Kept because the sim may not assume its caller.
     if (!definition) continue;
 
-    const [offsetX, afterX] = rng.nextInt(0, chunkSize - 1);
-    rng = afterX;
-    const [offsetY, afterY] = rng.nextInt(0, chunkSize - 1);
-    rng = afterY;
-    const x = cx * chunkSize + offsetX;
-    const y = cy * chunkSize + offsetY;
-
     const entity: ServerEntity = {
-      id: nextEntityId,
+      ...blankEntity(nextEntityId),
       kind: EntityKindValue.Monster,
       typeId: definition.id,
-      ownerPlayerId: null,
-      position: { x, y, z: context.terrain.heightAt(x, y) },
-      facing: 0,
+      position: { x: point.x, y: point.y, z: context.terrain.heightAt(point.x, point.y) },
       health: definition.stats.maxHealth,
-      level: 1,
-      zoneId: zone.id,
+      zoneId: zones.zoneIdAt(point.x, point.y),
       stats: definition.stats,
-      activity: ActivityValue.Idle,
-      activityUntilTick: 0,
-      attackReadyTick: 0,
       radius: definition.radius,
-      targetId: null,
-      path: null,
-      pathIndex: 0,
-      repathAtTick: 0,
-      pathGoal: null,
-      claimedPosition: null,
-    claimedSeq: 0,
-    pardon: null,
       resource: definition.stats.maxResource,
-      cast: null,
-      cooldowns: {},
-      projectile: null,
+      spawnerId: point.id,
+      anchor: { x: point.x, y: point.y },
     };
     entities.set(entity.id, entity);
+    spawners.set(point.id, { entityId: entity.id, readyAtTick: 0 });
     nextEntityId += 1;
     events.push({ kind: 'spawned', entityId: entity.id, typeId: entity.typeId });
   }
 
-  return { nextEntityId, rng, events };
+  return { nextEntityId, spawners, events };
+}
+
+const EMPTY_SPAWNER: SpawnerState = { entityId: null, readyAtTick: 0 };
+
+/**
+ * How long a spawner waits before refilling, or null when spawning is off.
+ *
+ * `spawnIntervalTicks` used to mean "how often a chunk rolls the dice"; it now
+ * means the only thing left for it to mean, and `spawnRateMultiplier` still
+ * scales it -- including to 0, which is how the admin console stops the world
+ * repopulating without a restart.
+ */
+function respawnInterval(config: LiveConfig): number | null {
+  if (config.spawnRateMultiplier <= 0) return null;
+  return Math.max(1, Math.round(config.spawnIntervalTicks / config.spawnRateMultiplier));
 }
 
 /** Body radius for a player entity; monsters carry their own. */

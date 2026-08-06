@@ -1,4 +1,5 @@
 import type { MapMarkerKind, PropKind } from '../../../terrain/index.js';
+import { ALL_MONSTERS } from '../../../server/data/monsters.js';
 import { DEFAULT_BRUSH, TERRAIN_TOOLS, type TerrainTool } from './brush.js';
 import { DEFAULT_FENCE, FENCE_STYLES, fenceStep, type FenceStyle } from './fence.js';
 import { MARKER_KINDS } from './markers.js';
@@ -65,6 +66,8 @@ export interface EditorSettings {
   variedColor: boolean;
   // Markers
   markerKind: MapMarkerKind;
+  /** Which monster a `spawner` marker spawns (spec 076). Ignored by other kinds. */
+  spawnerMonster: string;
   showArena: boolean;
   // Nav
   showNav: boolean;
@@ -89,6 +92,7 @@ export function createEditorSettings(): EditorSettings {
     fenceScale: DEFAULT_FENCE.fenceScale,
     variedColor: DEFAULT_FENCE.variedColor,
     markerKind: 'spawn',
+    spawnerMonster: SPAWNER_MONSTER_CHOICES[0]?.value ?? '',
     showArena: true,
     showNav: false,
     walkSlope: DEFAULT_WALK_SLOPE,
@@ -159,6 +163,14 @@ const choices = <T extends string>(
 export const MODE_CHOICES = choices(EDITOR_MODES);
 export const TERRAIN_TOOL_CHOICES = choices(TERRAIN_TOOLS);
 export const MARKER_CHOICES = choices(MARKER_KINDS);
+/**
+ * What a spawner marker may name, straight from the MONSTERS table (spec 076).
+ *
+ * A dropdown rather than a text field because the server refuses to boot on a
+ * spawner whose monster it does not know, and a typo an hour into a map edit
+ * should not be something you find out about at the next server start.
+ */
+export const SPAWNER_MONSTER_CHOICES = choices(ALL_MONSTERS.map((monster) => monster.id));
 /**
  * Labelled by what they look like rather than by their stored id: 'wood' is
  * written into saved maps and cannot be renamed, but a button that says WOOD

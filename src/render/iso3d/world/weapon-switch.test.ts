@@ -1,5 +1,5 @@
 /**
- * The weapon switch's contents (spec 076).
+ * The weapon switch's contents (spec 077).
  *
  * The switch itself is DOM and is not tested here; what is worth pinning is the
  * table it derives from, because that is the part that silently stops offering

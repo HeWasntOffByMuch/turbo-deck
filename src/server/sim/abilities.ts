@@ -626,7 +626,7 @@ function launchProjectile(
   // A direction-targeted bolt flies its full range; a point-targeted lob lands
   // where it was aimed, which is what makes the arc land on the marker. A shot
   // that named a body is aimed at the body, and re-aimed every tick of the
-  // flight from there (spec 076).
+  // flight from there (spec 077).
   const distance =
     ability.targeting === 'point' || cast.targetEntityId > 0
       ? Math.min(aimed, ability.range)

@@ -62,7 +62,7 @@ export const HOTBAR: readonly string[] = [
 ];
 
 /**
- * One main-hand weapon per distinct auto-attack (spec 076).
+ * One main-hand weapon per distinct auto-attack (spec 077).
  *
  * Derived from the item table rather than listed, so a crossbow added there
  * turns up here without this file being told. The *attack* is what the switch
@@ -122,10 +122,27 @@ export interface HudHandle {
   addDamage(entityId: number, damage: number, crit: boolean): void;
   /** The server refused a cast, and said why. */
   notice(text: string): void;
+  /**
+   * Draw the spawner overlay, or clear it (spec 076).
+   *
+   * Handed already-projected pixels and already-worded strings: what a spawner
+   * is called and where it is on screen are both decided elsewhere, so this is
+   * placement and nothing else.
+   */
+  showSpawners(
+    marks: readonly {
+      readonly id: string;
+      readonly text: string;
+      readonly waiting: boolean;
+      readonly x: number;
+      readonly y: number;
+      readonly onScreen: boolean;
+    }[],
+  ): void;
   /** What to call when a hotbar button is clicked. */
   onUse(handler: (abilityId: string) => void): void;
   /**
-   * What to call when a weapon is picked out of the switch (spec 076). It hands
+   * What to call when a weapon is picked out of the switch (spec 077). It hands
    * back an item id and nothing else: the server equips it, recomputes the stat
    * block and sends it back, and the lit button follows *that* rather than the
    * click.
@@ -148,6 +165,13 @@ export function createHud(): HudHandle {
     'position:absolute;left:50%;top:86px;transform:translateX(-50%);font:13px ui-monospace,Menlo,monospace;' +
     'color:#ffa07a;text-shadow:0 1px 2px #000;';
   root.append(notices);
+
+  // The spawner overlay lives in its own layer so clearing it is one truncation
+  // rather than a walk looking for which children were spawners.
+  const spawnerLayer = document.createElement('div');
+  spawnerLayer.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
+  root.append(spawnerLayer);
+  const spawnerMarks = new Map<string, HTMLElement>();
 
   const bar = document.createElement('div');
   bar.style.cssText =
@@ -189,7 +213,7 @@ export function createHud(): HudHandle {
     return { abilityId, ability, button, sweep, remaining };
   });
 
-  // The weapon switch (spec 076), bottom left and out of the hotbar's way.
+  // The weapon switch (spec 077), bottom left and out of the hotbar's way.
   // Which one is lit is read back off `stats.basicAttackId` -- the server's
   // answer -- so a refused equip simply leaves the old one lit.
   const weapons = document.createElement('div');
@@ -382,7 +406,12 @@ export function createHud(): HudHandle {
     const stats = view.stats;
     const monsters = view.entities.filter((entity) => entity.kind === EntityKind.Monster).length;
     status.textContent =
-      `tick ${view.tick}   seed ${view.worldSeed ?? '-'}\n` +
+      // The client's own clock first, and the last delta beside it. They used to
+      // be one number -- `view.tick` -- which was fine only because something was
+      // always moving: deltas are suppressed when nothing changed, and since
+      // spec 076 a field of monsters that nobody has hit is genuinely still, so
+      // the readout sat at 3 while the game ran perfectly well underneath it.
+      `tick ${Math.floor(tick)}   delta ${view.tick}   seed ${view.worldSeed ?? '-'}\n` +
       `hp ${Math.round(self?.health ?? 0)}/${Math.round(stats?.maxHealth ?? 0)}   ` +
       `lvl ${view.level}   xp ${view.experience}\n` +
       `monsters ${monsters}   corrections ${corrections}` +
@@ -394,6 +423,34 @@ export function createHud(): HudHandle {
   return {
     element: root,
     update,
+    showSpawners(marks) {
+      const seen = new Set<string>();
+      for (const mark of marks) {
+        if (!mark.onScreen) continue;
+        seen.add(mark.id);
+        let element = spawnerMarks.get(mark.id);
+        if (!element) {
+          element = document.createElement('div');
+          element.style.cssText =
+            'position:absolute;transform:translate(-50%,-100%);white-space:nowrap;' +
+            'font:11px ui-monospace,Menlo,monospace;padding:2px 6px;border-radius:5px;' +
+            'background:rgba(10,14,20,.72);border:1px solid rgba(224,96,92,.7);';
+          spawnerLayer.append(element);
+          spawnerMarks.set(mark.id, element);
+        }
+        element.textContent = mark.text;
+        // Dimmed while the ground is empty, lit while something is standing on
+        // it: the two states are readable without reading the text.
+        element.style.color = mark.waiting ? '#9aa3b0' : '#f0a09c';
+        element.style.left = `${Math.round(mark.x)}px`;
+        element.style.top = `${Math.round(mark.y)}px`;
+      }
+      for (const [id, element] of spawnerMarks) {
+        if (seen.has(id)) continue;
+        element.remove();
+        spawnerMarks.delete(id);
+      }
+    },
     addDamage(entityId, damage, crit) {
       const heal = damage < 0;
       const text = (heal ? '+' : '') + Math.round(Math.abs(damage)).toString();

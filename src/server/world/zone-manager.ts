@@ -19,10 +19,13 @@ export interface ZoneDefinition {
   readonly bounds: { readonly x: number; readonly y: number; readonly w: number; readonly h: number };
   /** Whether players may damage each other here. */
   readonly pvp: boolean;
-  /** Multiplies the ambient spawn rate inside this zone. 0 = a safe town. */
+  /**
+   * Reserved for a zone that wants its own repopulation rate. Unread since spec
+   * 073 took spawning out of the zone and into the map document; kept because
+   * "this region refills faster" is a knob a zone should own, and removing it
+   * would only mean adding it back.
+   */
   readonly spawnMultiplier: number;
-  /** Monster types the ambient spawner may use here. */
-  readonly spawnTable: readonly string[];
 }
 
 export const WILDERNESS_ZONE_ID = 'wilds';
@@ -39,7 +42,6 @@ export const DEFAULT_ZONES: readonly ZoneDefinition[] = [
     bounds: { x: 450, y: 300, w: 300, h: 300 },
     pvp: false,
     spawnMultiplier: 0,
-    spawnTable: [],
   },
   {
     id: 'greenmarch',
@@ -47,7 +49,6 @@ export const DEFAULT_ZONES: readonly ZoneDefinition[] = [
     bounds: { x: 0, y: 0, w: 1200, h: 900 },
     pvp: false,
     spawnMultiplier: 1,
-    spawnTable: ['grazer', 'stalker'],
   },
 ];
 
@@ -57,7 +58,6 @@ export const WILDERNESS: ZoneDefinition = {
   bounds: { x: -1e9, y: -1e9, w: 2e9, h: 2e9 },
   pvp: true,
   spawnMultiplier: 1.5,
-  spawnTable: ['grazer', 'stalker', 'slinger', 'ravager'],
 };
 
 export class ZoneManager {

@@ -191,7 +191,7 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
 }
 
 /**
- * The ability this character's auto-attack uses (spec 076).
+ * The ability this character's auto-attack uses (spec 077).
  *
  * The main hand decides, because that is what a weapon *is* here: a bow says
  * `ranged.shot` the same way the Keen Longsword says `attackSpeedPct`. A weapon

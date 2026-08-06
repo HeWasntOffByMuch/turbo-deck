@@ -93,13 +93,13 @@ export interface ProjectileState {
   readonly originY: number;
   /**
    * Where it is headed *now*. Re-aimed every tick at a named target, so a shot
-   * follows a body that moved after it was loosed (spec 076); fixed for a shot
+   * follows a body that moved after it was loosed (spec 077); fixed for a shot
    * thrown at a patch of ground.
    */
   readonly targetX: number;
   readonly targetY: number;
   /**
-   * The body this shot is chasing, or 0 for one aimed at a point (spec 076).
+   * The body this shot is chasing, or 0 for one aimed at a point (spec 077).
    *
    * When it dies or leaves the world the shot is *disjointed*: it keeps the aim
    * it last had and flies on to that spot. Nothing was scheduled, so there is
@@ -205,6 +205,28 @@ export interface ServerEntity {
    * replay, is what stops that.
    */
   readonly pardon: { readonly x: number; readonly y: number; readonly seq: number } | null;
+  /**
+   * The map spawner that produced this body, or null for anything else -- a
+   * player, a projectile, a monster an admin conjured (spec 076).
+   */
+  readonly spawnerId: string | null;
+  /**
+   * Where this body was spawned, and so the centre of its leash. Null when it
+   * has no home to be dragged away from.
+   */
+  readonly anchor: Vec2 | null;
+}
+
+/** One map spawner's live state (spec 076). */
+export interface SpawnerState {
+  /** The body this spawner put in the world, or null while it is empty. */
+  readonly entityId: number | null;
+  /**
+   * The earliest tick a replacement may appear. Stamped when the last one was
+   * removed, so the wait starts at the death rather than at a global cadence;
+   * 0, and so immediately, for a spawner that has never been filled.
+   */
+  readonly readyAtTick: number;
 }
 
 export interface ServerWorldState {
@@ -216,6 +238,11 @@ export interface ServerWorldState {
   readonly entities: ReadonlyMap<number, ServerEntity>;
   readonly nextEntityId: number;
   readonly rng: Rng;
+  /**
+   * Spawner id -> its timer. Sim state, not server bookkeeping: a replay that
+   * did not carry it would repopulate the world on a different tick.
+   */
+  readonly spawners: ReadonlyMap<string, SpawnerState>;
 }
 
 /**
