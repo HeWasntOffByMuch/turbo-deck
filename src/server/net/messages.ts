@@ -11,6 +11,26 @@
 import type { EffectiveStats, Vec3 } from '../state/types.js';
 import { BufferReader, BufferWriter, CodecError } from './codec.js';
 import { ClientMessageType, ServerMessageType } from './protocol.js';
+import {
+  decodeChunkDenied,
+  decodeMapChunk,
+  decodeMapInfo,
+  encodeChunkDenied,
+  encodeMapChunk,
+  encodeMapInfo,
+  type ChunkDeniedMessage,
+  type MapChunkMessage,
+  type MapInfoMessage,
+  type RequestChunkMessage,
+} from './map-messages.js';
+
+export type {
+  ChunkDeniedMessage,
+  MapChunkMessage,
+  MapInfoMessage,
+  MapLayerInfoMsg,
+  RequestChunkMessage,
+} from './map-messages.js';
 
 // --- client -> server ---------------------------------------------------
 
@@ -114,7 +134,8 @@ export type ClientMessage =
   | SpendSkillPointMessage
   | ChatMessage
   | UseAbilityMessage
-  | CancelCastMessage;
+  | CancelCastMessage
+  | RequestChunkMessage;
 
 export function encodeClientMessage(message: ClientMessage): Uint8Array {
   const writer = new BufferWriter(64);
@@ -158,6 +179,9 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
       break;
     case ClientMessageType.CancelCast:
       writer.varuint(message.afterInputSeq);
+      break;
+    case ClientMessageType.RequestChunk:
+      writer.varuint(message.layer).varint(message.cx).varint(message.cz);
       break;
   }
   return writer.toBytes();
@@ -207,6 +231,13 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
       };
     case ClientMessageType.CancelCast:
       return { type: ClientMessageType.CancelCast, afterInputSeq: reader.varuint() };
+    case ClientMessageType.RequestChunk:
+      return {
+        type: ClientMessageType.RequestChunk,
+        layer: reader.varuint(),
+        cx: reader.varint(),
+        cz: reader.varint(),
+      };
     default:
       throw new CodecError(`unknown client message type 0x${type.toString(16)}`);
   }
@@ -419,7 +450,10 @@ export type ServerMessage =
   | CastEndedMessage
   | EffectMessage
   | CastRejectedMessage
-  | CooldownsMessage;
+  | CooldownsMessage
+  | MapInfoMessage
+  | MapChunkMessage
+  | ChunkDeniedMessage;
 
 // Field bits, duplicated here as plain numbers so the hot encode path is a
 // bitmask test rather than a property lookup. Kept in sync with protocol.ts.
@@ -525,6 +559,18 @@ function readStats(reader: BufferReader): EffectiveStats {
 }
 
 export function encodeServerMessage(message: ServerMessage): Uint8Array {
+  // The map messages size and frame themselves -- a chunk is kilobytes where
+  // everything below is tens of bytes, and it has its own writer to match.
+  switch (message.type) {
+    case ServerMessageType.MapInfo:
+      return encodeMapInfo(message);
+    case ServerMessageType.MapChunk:
+      return encodeMapChunk(message);
+    case ServerMessageType.ChunkDenied:
+      return encodeChunkDenied(message);
+    default:
+      break;
+  }
   const writer = new BufferWriter(message.type === ServerMessageType.Delta ? 512 : 64);
   writer.u8(message.type);
   switch (message.type) {
@@ -622,6 +668,12 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
   const reader = new BufferReader(frame);
   const type = reader.u8();
   switch (type) {
+    case ServerMessageType.MapInfo:
+      return decodeMapInfo(reader);
+    case ServerMessageType.MapChunk:
+      return decodeMapChunk(reader);
+    case ServerMessageType.ChunkDenied:
+      return decodeChunkDenied(reader);
     case ServerMessageType.Welcome:
       return {
         type: ServerMessageType.Welcome,

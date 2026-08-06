@@ -90,8 +90,64 @@ export const INTEREST_CHUNK_RADIUS = 8;
  * the same point in the input stream on both ends (spec 067).
  * 5: the cooldown message carries the caster's live resource and the tick it was
  * true on, so a client can decide whether it can afford a blow (spec 069).
+ * 6: an ability request names the entity it means to hit, not just a point, so
+ * a right-click lands on the unit under it (spec 070).
+ * 7: the world is a map document rather than a seed, so terrain travels as
+ * `MapInfo` plus requested `MapChunk`s instead of being rederived (spec 072).
  */
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
+
+/**
+ * How far from a map chunk a player may be and still be sent it (spec 072).
+ *
+ * In *map* chunks -- the document's own 616-unit geometry buckets -- not the
+ * 400-unit interest chunks of {@link CHUNK_SIZE}. Three independent grids now
+ * exist and merging them would couple a draw-call decision to a bandwidth one.
+ *
+ * Sized off what the camera can frame, exactly as {@link INTEREST_CHUNK_RADIUS}
+ * is, and for a worse failure: a monster outside the interest window winks out,
+ * but terrain outside this one is a hole with the sky showing through.
+ *
+ * It has to be sized off the *window shape*, not just the zoom -- the same trap
+ * `INTEREST_CHUNK_RADIUS` documents. 4 looked right against the widest zoom's
+ * +-1400 by +-1927 on a 16:9 window and was wrong: `internalRenderSize` trades
+ * height rather than capping the aspect, so a 32:9 monitor at maximum zoom
+ * reaches ~3107 units and radius 4 guarantees only 4 * 616 = 2464. 6 guarantees
+ * 3696, which covers it with room to spare.
+ *
+ * `src/render/iso3d/world/map-radius.test.ts` asserts that relationship rather
+ * than the literal 6 -- it is the test that caught the 4.
+ */
+export const MAP_CHUNK_REQUEST_RADIUS = 6;
+
+/**
+ * Token bucket on chunk sends, per connection (spec 072).
+ *
+ * The radius check bounds *where* a client may read; this bounds how fast. They
+ * are not the same guard: every chunk under a standing player is permanently in
+ * range, so without a bucket a client can ask for one legal chunk in a loop and
+ * make the server serialize ~12 KB per request for as long as it likes.
+ *
+ * The burst has to cover a **whole cold start**, not part of one. 24 did not,
+ * and the effect was measurable: the shipped map's 56 chunks took about five
+ * seconds to arrive over a loopback, because the first 24 went instantly and the
+ * remaining 32 trickled in at the refill rate. The terrain visibly filled in and
+ * the trees appeared last. That is the throttle shaping normal play, which is
+ * exactly what it is not for.
+ *
+ * 64 covers the shipped map outright, so a cold start is paced by the link and
+ * by `CHUNK_REQUESTS_PER_PASS`, never by this. What the bucket still bounds is
+ * the case it was written for: a client re-asking for one permanently-in-range
+ * chunk forever. At 16/s sustained that costs ~190 KB/s of serialization, and a
+ * player would have to cross a whole 616-unit chunk sixteen times a second to
+ * need it legitimately.
+ *
+ * A map much larger than this one would want the burst raised with it, or the
+ * cold start starts trickling again -- which is why the first symptom to look
+ * for is "the far half of the world arrives late".
+ */
+export const MAP_CHUNK_BURST = 64;
+export const MAP_CHUNK_REFILL_PER_SECOND = 16;
 
 /**
  * How far the client's modelled resource may be from the server's before it is

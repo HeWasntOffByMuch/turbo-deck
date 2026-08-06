@@ -104,6 +104,10 @@ merge time.
 
 ```
 specs/           spec markdown, one file per system, written before its code
+maps/            the world, as a map document (spec 072). arena.json is what the
+                 server loads at boot and streams to clients; regenerate it with
+                 `npx tsx scripts/bake-map.ts`, or edit it in the Map editor tab
+                 and save over it. Checked in so the world reviews as a diff.
 src/shared/      PRNG, spatial hash, world extent — dependency-free helpers
                  shared by the server, the geometry helpers and terrain
 src/terrain/     pure, deterministic world data: heightfields, materials, chunks
@@ -136,6 +140,10 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  extent) but not CombatState. sim/, world/, player/ and data/ are
                  pure and linted as part of the deterministic core; the transport
                  and admin halves are not.
+                 Since spec 072 its world comes from maps/arena.json rather than
+                 the generator, and terrain reaches clients as MapInfo plus the
+                 MapChunks a player is standing near -- a seed cannot describe a
+                 map somebody edited by hand.
                  net/ is the binary wire format (see net/PROTOCOL.md), sim/ is the
                  deterministic tick, world/ is chunking and zones, player/ derives
                  stats from ids and levels, state/ is the swappable DataStore,
@@ -147,7 +155,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
 src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometric
                  world drawn from GameClient.view() and nothing else. interpolate.ts
                  (20Hz deltas to a pose per frame), intent.ts, target.ts (the
-                 right-click attack order, spec 070), cast.ts, appearance.ts
+                 right-click attack order, spec 072), cast.ts, appearance.ts
                  and pixel-font.ts (a 5x7 glyph table, since nothing may be fetched)
                  are pure and tested headlessly; scene.ts, hud.ts and
                  view.ts are the three.js/DOM half. `npx tsx scripts/preview-world.ts`

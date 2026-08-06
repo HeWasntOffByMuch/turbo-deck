@@ -179,12 +179,19 @@ async function main(): Promise<void> {
 
     await page.goto(`http://localhost:${PORT}/`, { waitUntil: 'load' });
     await page.waitForSelector('canvas');
-    // Building the world, meshing the terrain and batching the prop field all
-    // happen before the first frame, and under software WebGL that is seconds
-    // rather than milliseconds -- and it varies enough run to run that a fixed
-    // delay photographs a world still starting up. Poll the HUD's own tick
-    // counter instead, from here rather than in-page: it is the same fact the
-    // player reads, and a failure says which tick it got stuck at.
+    // Two waits, because they are two different facts.
+    //
+    // The world is streamed now (spec 072): terrain arrives chunk by chunk and
+    // the prop field is batched once the stream settles, all of it *during*
+    // frames rather than before the first one. So ticks advance over a world
+    // that is still half-drawn, and waiting on the tick counter alone put this
+    // harness's clicks into a field where the bodies were not yet where they
+    // would end up -- which showed up as right-click targeting "finding
+    // nothing". The view says when it is done; wait for that first.
+    await page.waitForSelector('[data-world-ready="true"]', { timeout: 60_000 });
+    // ...and then for the sim to have run far enough to be worth photographing.
+    // Polled from here rather than in-page: it is the same fact the player
+    // reads, and a failure says which tick it got stuck at.
     await waitForTick(page, 150);
 
     await shoot(page, 'world-play');

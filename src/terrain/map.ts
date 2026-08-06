@@ -51,6 +51,17 @@ export const MAP_VERSION = 1;
 const PRECISION = 3;
 const QUANTUM = 10 ** PRECISION;
 
+/**
+ * The grid every stored coordinate lands on: thousandths.
+ *
+ * Exported because the wire has to agree with it exactly (spec 072). A document
+ * value is `n / 1000` for an integer `n`, which an `f32` cannot generally hold;
+ * sending `n` and dividing on arrival reproduces the number bit for bit, and
+ * that is what keeps a client's `heightAt` equal to the server's rather than
+ * merely close to it.
+ */
+export const MAP_QUANTUM = QUANTUM;
+
 export interface MapRect {
   readonly minX: number;
   readonly minZ: number;

@@ -19,6 +19,7 @@
  */
 
 import type { Channel } from '../net/transport.js';
+import { MapChunkCache, type HeldChunk } from './map-cache.js';
 import {
   decodeServerMessage,
   encodeClientMessage,
@@ -26,15 +27,43 @@ import {
   type CastStateMessage,
   type CombatResultMessage,
   type EffectMessage,
+  type MapInfoMessage,
   type ServerChatMessage,
 } from '../net/messages.js';
 import {
   CastPhaseValue,
+  ChunkDeniedReason,
   ClientMessageType,
   CorrectionReason,
   ServerMessageType,
 } from '../net/protocol.js';
-import { PROTOCOL_VERSION } from '../config.js';
+import { MAP_CHUNK_REQUEST_RADIUS, PROTOCOL_VERSION } from '../config.js';
+
+/**
+ * How many chunks one pass may ask for (spec 072).
+ *
+ * Comfortably under the server's `MAP_CHUNK_BURST`, so the throttle is a guard
+ * against a misbehaving client rather than something that shapes the stream in
+ * normal play -- a cold start should be paced by this number, not by a refusal.
+ */
+const CHUNK_REQUESTS_PER_PASS = 8;
+
+/**
+ * How often the backstop pump runs, in client ticks. One broadcast period: often
+ * enough that a stalled window recovers within a frame or two, rare enough that
+ * it costs nothing when there is nothing to ask for.
+ */
+const CHUNK_REQUEST_INTERVAL_TICKS = 3;
+
+/**
+ * How long to stop asking after a `Throttled` refusal, in client ticks.
+ *
+ * A quarter second: long enough that the server's bucket has refilled several
+ * tokens, short enough that a player walking into new ground does not notice.
+ * The alternative -- retrying immediately -- is a refusal storm that makes the
+ * throttle worse rather than respecting it.
+ */
+const CHUNK_THROTTLE_BACKOFF_TICKS = 15;
 import { abilityById } from '../data/abilities.js';
 import type { EffectiveStats } from '../state/types.js';
 import { createFlatPredictor, PredictionBuffer, type PredictedInput, type PredictStep } from './prediction.js';
@@ -72,6 +101,18 @@ export interface GameClientOptions {
 }
 
 /** What the renderer reads. Read-only, and free of anything derived. */
+/** The map, as a renderer sees it (spec 072). */
+export interface ClientMapView {
+  readonly info: MapInfoMessage;
+  readonly chunks: readonly HeldChunk[];
+  /**
+   * Bumped on every chunk that arrives. A view watches this rather than diffing
+   * `chunks`: remeshing is the expensive half and it only needs to know that
+   * something landed.
+   */
+  readonly revision: number;
+}
+
 export interface ClientView {
   /**
    * The tick the last delta described. Advances in steps of
@@ -116,6 +157,16 @@ export interface ClientView {
    * renderer builds its terrain from this and from nothing else.
    */
   readonly worldSeed: number | null;
+  /**
+   * The map the server is serving, and the pieces of it that have arrived
+   * (spec 072). Null until `MapInfo` lands.
+   *
+   * This -- not {@link worldSeed} -- is where a renderer's terrain comes from
+   * now. The seed stays for provenance and for the fight's RNG; it stopped
+   * describing the ground the moment the ground became a document somebody
+   * could edit by hand.
+   */
+  readonly map: ClientMapView | null;
   readonly stats: EffectiveStats | null;
   readonly level: number;
   readonly experience: number;
@@ -243,6 +294,10 @@ export class GameClient {
   private readonly world = new ReplicatedWorld();
   private prediction: PredictionBuffer | null = null;
   private welcome: WelcomeInfo | null = null;
+  /** The map and the chunks of it that have arrived (spec 072). */
+  private mapCache: MapChunkCache | null = null;
+  /** Ticks to wait before asking for chunks again, after being throttled. */
+  private chunkBackoffTicks = 0;
   private stats: EffectiveStats | null = null;
   private level = 1;
   private experience = 0;
@@ -654,6 +709,12 @@ export class GameClient {
   advanceTick(): void {
     this.estimated += 1;
     this.localTick += 1;
+    // Chunk requests cannot ride on deltas alone: a delta is suppressed when
+    // nothing in the world changed, so a player standing still in an empty
+    // field would stop asking and sit on a half-loaded map. This is the pump
+    // that does not depend on anything happening.
+    if (this.chunkBackoffTicks > 0) this.chunkBackoffTicks--;
+    if (this.localTick % CHUNK_REQUEST_INTERVAL_TICKS === 0) this.requestChunks();
     // One tick of easing off the last drift correction, and one tick closer to
     // giving up on an ability request nobody answered.
     this.prediction?.decay();
@@ -791,6 +852,7 @@ export class GameClient {
       self: this.prediction?.drawn ?? null,
       selfEntityId: this.welcome?.entityId ?? -1,
       worldSeed: this.welcome?.worldSeed ?? null,
+      map: this.mapView(),
       stats: this.stats,
       level: this.level,
       experience: this.experience,
@@ -802,6 +864,47 @@ export class GameClient {
       selfRoot: this.selfRoot(),
       resource: this.modelledResource(),
     };
+  }
+
+  private mapView(): ClientMapView | null {
+    const cache = this.mapCache;
+    if (!cache) return null;
+    return { info: cache.info, chunks: cache.held(), revision: cache.revision };
+  }
+
+  /**
+   * Ask for the chunks under and around the player that are not held yet.
+   *
+   * Driven from the delta rather than from a timer: a delta is when this client
+   * learns where it actually is, and asking on any other schedule would be
+   * asking about a position the server has not confirmed. The per-pass budget
+   * keeps a cold start from firing eighty requests into one frame, and it is
+   * sized under the server's burst so the throttle is never what shapes the
+   * stream in normal play.
+   */
+  private requestChunks(): void {
+    const cache = this.mapCache;
+    const at = this.prediction?.drawn ?? this.selfAuthoritative();
+    if (!cache || !at || this.chunkBackoffTicks > 0) return;
+    for (const req of cache.wanted(at.x, at.y, MAP_CHUNK_REQUEST_RADIUS, CHUNK_REQUESTS_PER_PASS)) {
+      cache.markRequested(req);
+      this.channel.send(
+        encodeClientMessage({
+          type: ClientMessageType.RequestChunk,
+          layer: req.layer,
+          cx: req.cx,
+          cz: req.cz,
+        }),
+      );
+    }
+  }
+
+  /** The server's own position for this client, before any prediction. */
+  private selfAuthoritative(): { x: number; y: number } | null {
+    const id = this.welcome?.entityId ?? -1;
+    if (id < 0) return null;
+    const entity = this.world.all().find((e) => e.id === id);
+    return entity ? { x: entity.x, y: entity.y } : null;
   }
 
   /**
@@ -896,6 +999,32 @@ export class GameClient {
         break;
       }
 
+      case ServerMessageType.MapInfo:
+        // A fresh cache rather than a merge: `mapId` changing means the world
+        // changed under this session, and chunks from the old one describe
+        // ground that is no longer there.
+        this.mapCache = new MapChunkCache(message);
+        this.requestChunks();
+        break;
+
+      case ServerMessageType.MapChunk:
+        // Each arrival frees a slot, so ask again straight away. This is what
+        // actually paces a cold start: the window fills as fast as the link
+        // carries it, and the pipeline stops on its own once `wanted` is empty.
+        if (this.mapCache?.accept(message) === true) this.requestChunks();
+        break;
+
+      case ServerMessageType.ChunkDenied:
+        this.mapCache?.deny(message.layer, message.cx, message.cz, message.reason);
+        // A throttled chunk goes straight back on the wanted list, so without a
+        // pause the next pump re-asks it and is refused again -- twenty rounds
+        // of that a second, achieving nothing. Backing off is also the polite
+        // reading of the message: the server said "not now", not "not ever".
+        if (message.reason === ChunkDeniedReason.Throttled) {
+          this.chunkBackoffTicks = CHUNK_THROTTLE_BACKOFF_TICKS;
+        }
+        break;
+
       case ServerMessageType.Stats:
         this.stats = message.stats;
         this.level = message.level;
@@ -919,6 +1048,7 @@ export class GameClient {
         }
         this.prediction?.acknowledge(message.ackInputSeq);
         this.startPredictingIfReady();
+        this.requestChunks();
         break;
       }
 
