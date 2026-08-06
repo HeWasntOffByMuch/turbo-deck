@@ -26,6 +26,8 @@ export const ClientMessageType = {
   UseAbility: 0x08,
   /** Withdraw from whatever is winding up. */
   CancelCast: 0x09,
+  /** Ask for one chunk of the map document (spec 070). */
+  RequestChunk: 0x0a,
 } as const;
 
 export const ServerMessageType = {
@@ -52,7 +54,36 @@ export const ServerMessageType = {
    * else's business.
    */
   Cooldowns: 0x4d,
+  /**
+   * Everything about the map that is not per-chunk (spec 070): the grid, the
+   * arena, the layer scalars and which chunks exist. Sent once, straight after
+   * the welcome, because a client can ask for nothing until it has it.
+   */
+  MapInfo: 0x4e,
+  /** One chunk of one layer, in answer to a `RequestChunk`. */
+  MapChunk: 0x4f,
+  /** A `RequestChunk` the server will not serve, and why. */
+  ChunkDenied: 0x50,
 } as const;
+
+/** Why a chunk request was refused (spec 070). */
+export const ChunkDeniedReason = {
+  /** The player is not standing near enough to that chunk to be told about it. */
+  OutOfRange: 0,
+  /** No such chunk was ever baked. The client remembers this and stops asking. */
+  Unknown: 1,
+  /** Asking too fast. The client backs off and re-asks. */
+  Throttled: 2,
+} as const;
+
+/** Bit flags on a wire prop, mirroring `MapProp`'s two optional fields. */
+export const MapPropFlag = {
+  Align: 1 << 0,
+  Uniform: 1 << 1,
+} as const;
+
+/** `MapMarkerKind` as a byte, in a fixed order the wire depends on. */
+export const MapMarkerKindValue = ['spawn', 'objective', 'campfire', 'trigger'] as const;
 
 export const AdminMessageType = {
   Auth: 0x80,
