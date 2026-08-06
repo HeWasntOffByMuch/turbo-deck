@@ -28,9 +28,9 @@
  * ## Composition order
  *
  * The GLSL fragments below are concatenated, and they are not independent:
- * `GLSL_WIND` first (it declares `uWindTime` and `WIND_DIR`), then `GLSL_NOISE`
- * (it declares `n2`), then `GLSL_STREAK` (it uses both). {@link glslWindChunk}
- * assembles them in that order so no caller has to remember it.
+ * `GLSL_WIND` first (it declares the uniforms), then `GLSL_NOISE` (it declares
+ * `n2`), then `GLSL_STREAK` (it uses both). {@link glslWindChunk} assembles them
+ * in that order so no caller has to remember it.
  */
 
 export interface WindConfig {
@@ -70,19 +70,35 @@ export interface WindConfig {
 export const WAVE_LENGTH = 600;
 
 /**
- * Wind blowing towards +X/-Z.
+ * Compass bearing, degrees, of the direction the wind blows towards.
  *
  * The direction is a *look* decision, not a physical one. The camera is fixed
- * isometric and looks down the world diagonal, so a wind along +X alone -- or
- * along +Z alone -- pushes the trees almost straight towards or away from the
- * viewer, where a 6-degree lean is worth a couple of pixels of horizontal
- * movement and reads as nothing at all. Blowing along the *other* diagonal puts
- * the whole displacement across the screen, which is the only direction an
+ * isometric and looks down the world's +X/+Z diagonal, so a wind along that
+ * diagonal pushes the trees almost straight towards or away from the viewer,
+ * where a six-degree lean is worth a couple of pixels and reads as nothing at
+ * all. -45 degrees is the perpendicular diagonal: every scrap of the
+ * displacement lands across the screen, which is the only direction an
  * orthographic camera can show it in.
+ *
+ * Stated as the bearing rather than as a vector because the vector then comes
+ * out exactly unit-length, and because the weather panel's direction slider
+ * (spec 075) is in the same units -- so its default position and this are one
+ * number rather than two that have to be kept agreeing.
  */
+export const WIND_BEARING_DEG = -45;
+
+/** The unit direction a compass bearing in degrees points along, on the XZ plane. */
+export function windDirection(bearingDeg: number): { x: number; z: number } {
+  const radians = (bearingDeg * Math.PI) / 180;
+  return { x: Math.cos(radians), z: Math.sin(radians) };
+}
+
+const HOME = windDirection(WIND_BEARING_DEG);
+
+/** The weather the world is art-directed for, and what every knob resets to. */
 export const WIND: WindConfig = {
-  dirX: 0.7218,
-  dirZ: -0.6921,
+  dirX: HOME.x,
+  dirZ: HOME.z,
   /**
    * 0.10 rad = 5.7 degrees of lean at the crown at full gust, which puts the
    * tip of a 128-unit fir 12.7 units downwind: 9.9% of its height, the middle
@@ -94,6 +110,39 @@ export const WIND: WindConfig = {
   streakScale: 190,
   streakContrast: 0.055,
 };
+
+/**
+ * What the weather panel is allowed to ask for (spec 075).
+ *
+ * Bounds, not suggestions. Strength is capped at 2.5x the art-directed lean
+ * because the bend is an arc about the base and the crown of a 128-unit fir
+ * swings 31 units at that setting -- already past what the inflated instance
+ * bounding spheres were sized for, and well past anything that still reads as a
+ * conifer rather than as a whip. Zero is allowed and is the honest way to see
+ * the world without weather.
+ */
+export const WIND_LIMITS = {
+  /** Multiplier on `WIND.strength`. 1 is the art direction. */
+  minStrength: 0,
+  maxStrength: 2.5,
+  /** Multiplier on the shared clock's rate. 0 freezes the weather mid-gust. */
+  minSpeed: 0,
+  maxSpeed: 3,
+} as const;
+
+/**
+ * How visible a wind blowing along `bearingDeg` will be, in `[0, 1]`.
+ *
+ * The camera is fixed isometric looking down the world's +X/+Z diagonal, so
+ * displacement along that diagonal projects to almost nothing: a tree leaning
+ * six degrees straight at the viewer moves about two pixels. The panel shows
+ * this beside the direction slider rather than letting someone dial in a wind
+ * that is working perfectly and looks broken.
+ */
+export function screenVisibility(bearingDeg: number): number {
+  const dir = windDirection(bearingDeg);
+  return Math.abs((dir.x - dir.z) / Math.SQRT2);
+}
 
 /** Angular frequencies of the three sway harmonics, radians/second. */
 const OMEGA = [2.2, 4.4, 6.9] as const;
@@ -170,11 +219,17 @@ export function bendAngle(config: WindConfig, wind: number, stiff: number, bend:
 
 /**
  * How far downwind the tip of a tree `height` tall can be pushed, world units.
- * The mesher inflates instance bounds by this, so a crown leaning out of its
- * rigid bounding sphere does not take the whole batch off screen with it.
+ *
+ * `strengthMultiplier` is what the weather panel is dialled to (spec 075). It
+ * defaults to 1, the art direction — but the *bounding spheres* are inflated
+ * against {@link WIND_LIMITS}`.maxStrength` rather than against 1, because a
+ * player who turns the wind up must not be rewarded with trees popping out at
+ * the edge of the frame. Sizing bounds for the default and then allowing 2.5x
+ * of it is the same bug as not inflating them at all, only rarer and therefore
+ * harder to find.
  */
-export function maxTipDisplacement(config: WindConfig, height: number): number {
-  return height * Math.sin(config.strength * WIND_MAX);
+export function maxTipDisplacement(config: WindConfig, height: number, strengthMultiplier = 1): number {
+  return height * Math.sin(config.strength * strengthMultiplier * WIND_MAX);
 }
 
 /**
@@ -244,32 +299,34 @@ export const WATER = {
   isoGain: 1.22,
 } as const;
 
-/** GLSL for a `vec2` literal, so a config value can be inlined into a shader. */
-function glslVec2(x: number, z: number): string {
-  return `vec2(${x.toFixed(6)}, ${z.toFixed(6)})`;
-}
-
 /** GLSL for a float literal, at enough precision that the inlining is lossless. */
 function f(value: number): string {
   return value.toFixed(8);
 }
 
 /**
- * `windAt()`, and the one uniform it reads.
+ * `windAt()`, and the three uniforms every weather shader reads.
  *
- * The constants are inlined from {@link WIND} rather than declared as more
- * uniforms: they are art direction baked at build time, and the only thing that
- * changes per frame is `uWindTime`.
+ * Nearly everything here is *inlined* from {@link WIND} rather than declared as
+ * a uniform, because it is art direction baked at build time: the harmonics,
+ * their amplitudes, the gust envelope and the wave's spatial period are the
+ * look, and none of them is a knob.
+ *
+ * The exceptions are the three the weather panel (spec 075) drives. Direction
+ * and strength have to be uniforms because they are the two the player can
+ * feel: which way the world leans, and how hard. Time is a uniform because it
+ * is a clock. They are declared here, once, so the trees, the ground and the
+ * sea cannot be handed different weather.
  */
 export const GLSL_WIND = /* glsl */ `
 uniform float uWindTime;
+uniform vec2 uWindDir;
+uniform float uWindStrength;
 
-const vec2 WIND_DIR = ${glslVec2(WIND.dirX, WIND.dirZ)};
 const float WIND_TRAVEL = ${f(WIND.travel)};
-const float WIND_STRENGTH = ${f(WIND.strength)};
 
 float windAt(vec2 originXZ, float t) {
-  float travel = dot(originXZ, WIND_DIR) * WIND_TRAVEL;
+  float travel = dot(originXZ, uWindDir) * WIND_TRAVEL;
   float gust = ${f(GUST_BASE)} + ${f(GUST_SWING)} * sin(t * ${f(GUST_OMEGA)} - travel * ${f(GUST_TRAVEL_SCALE)});
   return gust * ( sin(t * ${f(OMEGA[0])} - travel)                                       * ${f(AMPLITUDE[0])}
                 + sin(t * ${f(OMEGA[1])} - travel * ${f(TRAVEL_SCALE[1])} + ${f(PHASE[1])}) * ${f(AMPLITUDE[1])}
@@ -348,10 +405,10 @@ const float STREAK_CONTRAST = ${f(WIND.streakContrast)};
 
 // Multiplier for albedo at a world point: 1 +- STREAK_CONTRAST.
 float windStreak(vec2 worldXZ, float t) {
-  vec2 p = worldXZ - WIND_DIR * (t * STREAK_SPEED);
+  vec2 p = worldXZ - uWindDir * (t * STREAK_SPEED);
   // Stretched along the wind, so the grain reads as streaks being dragged
   // rather than as blobs drifting: one octave squashed 4:1 across the flow.
-  vec2 along = vec2(dot(p, WIND_DIR), dot(p, vec2(-WIND_DIR.y, WIND_DIR.x)));
+  vec2 along = vec2(dot(p, uWindDir), dot(p, vec2(-uWindDir.y, uWindDir.x)));
   float n = n2(vec2(along.x * 0.25, along.y) * STREAK_SCALE);
   return 1.0 + (n - 0.5) * 2.0 * STREAK_CONTRAST;
 }

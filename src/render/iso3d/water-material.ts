@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { glslWindChunk, WATER } from './wind.js';
-import { windTimeUniform } from './wind-uniforms.js';
+import { WIND_UNIFORMS } from './wind-uniforms.js';
 import { shoreQuantum, type ShoreField } from './shore-sdf.js';
 
 /**
@@ -217,9 +217,9 @@ export function buildWaterQuad(opt: WaterQuadOptions): THREE.Mesh {
     vertexShader: VERTEX_SHADER,
     fragmentShader: waterFragmentShader(),
     uniforms: {
-      // By reference, not by value: one clock and one palette for the whole
-      // world, however many chunks are on screen.
-      uWindTime: windTimeUniform,
+      // By reference, not by value: one clock, one wind and one palette for the
+      // whole world, however many chunks are on screen.
+      ...WIND_UNIFORMS,
       ...PALETTE_UNIFORMS,
       uShoreField: { value: texture },
       // World XZ -> [0, 1] over the chunk's cells. Texel i covers cell i

@@ -40,10 +40,12 @@ describe('the assembled water shader', () => {
   });
 
   it('substitutes every use of a constant, not just the first', () => {
-    // The specific regression. WIND_DIR is used three times across the wind
-    // chunk and the streak layer, and SHORE_RANGE twice.
+    // The specific regression. SHORE_RANGE_VALUE is the placeholder; if any
+    // survives, a constant went in unsubstituted.
     expect(source).not.toMatch(/\bSHORE_RANGE_VALUE\b/);
-    expect(source.match(/\bWIND_DIR\b/g)?.length ?? 0).toBeGreaterThan(2);
+    // ...and one that is genuinely used more than once still resolves at both
+    // sites, which is what the chain of replace() calls got wrong.
+    expect(source.match(/\bSHORE_RANGE\b/g)?.length ?? 0).toBeGreaterThan(1);
   });
 
   it('declares the wind chunk it was handed', () => {

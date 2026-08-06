@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { buildPropField, speciesHeight, treeVariant } from './props.js';
 import { bakeBend, bendWeight } from './sway.js';
-import { maxTipDisplacement, WIND } from './wind.js';
-import { windTimeUniform } from './wind-uniforms.js';
+import { maxTipDisplacement, WIND, WIND_LIMITS } from './wind.js';
+import { WIND_UNIFORMS, windTimeUniform } from './wind-uniforms.js';
 import type { Prop } from '../../terrain/vegetation.js';
 
 /**
@@ -202,8 +202,13 @@ describe('a batch of trees', () => {
     // to carry went nowhere.
     expect(shader.vertexShader).not.toContain('#include <project_vertex>');
     expect(shader.vertexShader).not.toContain('#include <worldpos_vertex>');
-    // ...and it reads the one shared clock rather than a copy of its value.
+    // ...and it reads the one shared clock and the one shared wind, by
+    // reference rather than by value. Copying any of them here is how a tree
+    // ends up leaning into weather the water has never heard of.
     expect(shader.uniforms['uWindTime']).toBe(windTimeUniform);
+    for (const [name, uniform] of Object.entries(WIND_UNIFORMS)) {
+      expect(shader.uniforms[name]).toBe(uniform);
+    }
   });
 
   it('leaves room in its bounds for the lean', () => {
@@ -217,7 +222,17 @@ describe('a batch of trees', () => {
       }
       rigid.computeBoundingSphere();
       const grown = (mesh.boundingSphere?.radius ?? 0) - (rigid.boundingSphere?.radius ?? 0);
-      expect(grown).toBeGreaterThanOrEqual(maxTipDisplacement(WIND, speciesHeight('fir')) - 1e-6);
+      // Against the strongest wind the panel allows (spec 075), not the
+      // default: the bounds are written once and the slider moves later.
+      //
+      // Bracketed by the two species rather than pinned to one, because a batch
+      // is per species and the two conifers are different heights -- so the
+      // right answer for a stand of pines is smaller than for a stand of firs,
+      // and asserting either one alone passes for the wrong reason.
+      const floor = maxTipDisplacement(WIND, speciesHeight('pine'), WIND_LIMITS.maxStrength);
+      const ceiling = maxTipDisplacement(WIND, speciesHeight('fir'), WIND_LIMITS.maxStrength);
+      expect(grown).toBeGreaterThanOrEqual(floor - 1e-6);
+      expect(grown).toBeLessThanOrEqual(ceiling + 1e-6);
     }
   });
 

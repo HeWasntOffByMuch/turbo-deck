@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { glslWindChunk, maxTipDisplacement, WIND } from './wind.js';
-import { windTimeUniform } from './wind-uniforms.js';
+import { glslWindChunk, maxTipDisplacement, WIND, WIND_LIMITS } from './wind.js';
+import { WIND_UNIFORMS } from './wind-uniforms.js';
 
 /**
  * Tree sway, as a patch on the materials the prop field already uses (spec 074).
@@ -71,12 +71,12 @@ ${glslWindChunk()}
 vec3 windBend(vec3 worldPos) {
   float w = clamp(aBend, 0.0, 1.0);
   float gust = windAt(aWindBase.xz, uWindTime + aWindTune.y);
-  float angle = WIND_STRENGTH * gust * aWindTune.x * w * w;
+  float angle = uWindStrength * gust * aWindTune.x * w * w;
   vec3 rel = worldPos - aWindBase;
   float h = rel.y;
   // An arc, not a slide: the vertex keeps its distance from the base exactly,
   // so a leaning trunk is the same length as an upright one.
-  rel.xz += WIND_DIR * (h * sin(angle));
+  rel.xz += uWindDir * (h * sin(angle));
   rel.y = h * cos(angle);
   return aWindBase + rel;
 }
@@ -160,8 +160,14 @@ export function applySway(mesh: THREE.InstancedMesh, instances: readonly SwayIns
   // A crown that leans out of its batch's bounding sphere would take the whole
   // batch off screen with it the moment the sphere left the frustum -- trees
   // popping out at the edge of the view, which is the classic tell.
+  //
+  // Sized against the *strongest* wind the weather panel can ask for (spec 075),
+  // not against the default: the bounds are written once at build time and the
+  // slider moves afterwards.
   mesh.computeBoundingSphere();
-  if (mesh.boundingSphere) mesh.boundingSphere.radius += maxTipDisplacement(WIND, height);
+  if (mesh.boundingSphere) {
+    mesh.boundingSphere.radius += maxTipDisplacement(WIND, height, WIND_LIMITS.maxStrength);
+  }
 }
 
 /**
@@ -198,7 +204,7 @@ for (const splice of SPLICES) {
 /** Splice the bend into a material's vertex shader. Idempotent per material. */
 function patchMaterial(material: THREE.Material): void {
   material.onBeforeCompile = (shader): void => {
-    shader.uniforms['uWindTime'] = windTimeUniform;
+    Object.assign(shader.uniforms, WIND_UNIFORMS);
     let vertex = shader.vertexShader.replace('#include <common>', `#include <common>\n${SWAY_PROLOGUE}`);
     for (const splice of SPLICES) vertex = vertex.replace(splice.include, splice.source);
     shader.vertexShader = vertex;

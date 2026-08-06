@@ -8,10 +8,14 @@ import {
   maxTipDisplacement,
   phaseLagSeconds,
   stiffness,
+  screenVisibility,
   WAVE_LENGTH,
   WIND,
+  WIND_BEARING_DEG,
+  WIND_LIMITS,
   WIND_MAX,
   windAt,
+  windDirection,
   glslWindChunk,
   type WindConfig,
 } from './wind.js';
@@ -229,14 +233,23 @@ describe('the shader chunk', () => {
     // has to come first. Concatenating them the other way round compiles
     // nowhere, and nothing else in the suite would notice.
     expect(glsl.indexOf('float n2(')).toBeLessThan(glsl.indexOf('windStreak'));
-    expect(glsl.indexOf('const vec2 WIND_DIR')).toBeLessThan(glsl.indexOf('windStreak'));
+    expect(glsl.indexOf('uniform vec2 uWindDir')).toBeLessThan(glsl.indexOf('windStreak'));
     expect(glsl).toContain('uniform float uWindTime;');
   });
 
-  it('inlines the config rather than growing more uniforms', () => {
-    // One uniform, so one write per frame however many materials read it.
-    expect(glsl.match(/uniform /g)).toHaveLength(1);
+  it('grows exactly the three uniforms the weather panel drives', () => {
+    // Everything else is art direction inlined at build time. These three are
+    // uniforms because they are the ones a player can turn (spec 075): the
+    // clock, and the two things a wind *is* -- which way, and how hard.
+    expect([...glsl.matchAll(/uniform \w+ (\w+);/g)].map((m) => m[1]).sort()).toEqual([
+      'uWindDir',
+      'uWindStrength',
+      'uWindTime',
+    ]);
+    // The wave's spatial period is not among them: changing it while trees are
+    // mid-lean would teleport every crown.
     expect(glsl).toContain(WIND.travel.toFixed(8));
+    expect(glsl).not.toContain('uWindTravel');
   });
 
   it('bans smoothstep from the band logic it hands out', () => {
@@ -248,7 +261,9 @@ describe('the shader chunk', () => {
 
 describe('the config is the only source of truth', () => {
   it('describes a unit direction', () => {
-    expect(Math.hypot(WIND.dirX, WIND.dirZ)).toBeCloseTo(1, 4);
+    // Exactly, not nearly: it is derived from one bearing rather than typed out
+    // as two decimals that have to agree with each other.
+    expect(Math.hypot(WIND.dirX, WIND.dirZ)).toBeCloseTo(1, 15);
   });
 
   it('points across the isometric camera rather than along it', () => {
@@ -257,8 +272,55 @@ describe('the config is the only source of truth', () => {
     // large component on the *other* diagonal to be visible at all.
     const alongView = (WIND.dirX + WIND.dirZ) / Math.SQRT2;
     const acrossView = (WIND.dirX - WIND.dirZ) / Math.SQRT2;
-    expect(Math.abs(acrossView)).toBeGreaterThan(0.9);
-    expect(Math.abs(alongView)).toBeLessThan(0.2);
+    // The default bearing is *exactly* the perpendicular diagonal, so all of it
+    // lands across the screen and none of it along the view.
+    expect(Math.abs(acrossView)).toBeCloseTo(1, 12);
+    expect(Math.abs(alongView)).toBeLessThan(1e-12);
+  });
+
+  it('converts a bearing to a direction and back', () => {
+    // The panel talks in degrees and everything downstream talks in a unit
+    // vector; this is the one seam between them (spec 075).
+    for (const bearing of [0, 37, 90, 180, 271, 359]) {
+      const dir = windDirection(bearing);
+      expect(Math.hypot(dir.x, dir.z)).toBeCloseTo(1, 12);
+      const back = ((Math.atan2(dir.z, dir.x) * 180) / Math.PI + 360) % 360;
+      expect(back).toBeCloseTo(bearing % 360, 9);
+    }
+    // ...and the default wind's own bearing comes back as the default wind.
+    const home = windDirection(WIND_BEARING_DEG);
+    expect(home.x).toBe(WIND.dirX);
+    expect(home.z).toBe(WIND.dirZ);
+  });
+
+  it('tells the panel which bearings the camera can actually show', () => {
+    // The view looks down the +X/+Z diagonal. A wind along it is working
+    // perfectly and reads as nothing, which is the one way a player can dial in
+    // a setting that looks like a broken feature.
+    expect(screenVisibility(WIND_BEARING_DEG)).toBeGreaterThan(0.99);
+    // Straight along the view axis: invisible.
+    expect(screenVisibility(45)).toBeLessThan(0.01);
+    expect(screenVisibility(225)).toBeLessThan(0.01);
+    // Symmetric, and never outside [0, 1].
+    for (let bearing = 0; bearing < 360; bearing += 7) {
+      const v = screenVisibility(bearing);
+      expect(v).toBeGreaterThanOrEqual(0);
+      expect(v).toBeLessThanOrEqual(1);
+      expect(v).toBeCloseTo(screenVisibility(bearing + 180), 12);
+    }
+  });
+
+  it('leaves room in the limits for a wind worth turning up', () => {
+    // The panel's ceiling has to be far enough above the default to be worth a
+    // slider, and low enough that the crown still reads as a tree.
+    expect(WIND_LIMITS.maxStrength).toBeGreaterThan(1.5);
+    const peak = bendAngle(WIND, WIND_MAX, 1, 1) * WIND_LIMITS.maxStrength;
+    expect((peak * 180) / Math.PI).toBeLessThan(15);
+    // ...and the tip displacement the bounding spheres are inflated by grows
+    // with it, or a strong wind pops trees at the edge of the frame.
+    expect(maxTipDisplacement(WIND, 128, WIND_LIMITS.maxStrength)).toBeGreaterThan(
+      maxTipDisplacement(WIND, 128),
+    );
   });
 
   it('re-derives the same wind from a config passed in', () => {

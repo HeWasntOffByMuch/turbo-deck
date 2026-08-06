@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { glslWindChunk } from './wind.js';
-import { windTimeUniform } from './wind-uniforms.js';
+import { WIND_UNIFORMS } from './wind-uniforms.js';
 
 /**
  * The wind's streak layer over the ground (spec 074, part 3).
@@ -44,7 +44,7 @@ const STREAK_APPLY = /* glsl */ `
  */
 export function patchTerrainStreak(material: THREE.Material): void {
   material.onBeforeCompile = (shader): void => {
-    shader.uniforms['uWindTime'] = windTimeUniform;
+    Object.assign(shader.uniforms, WIND_UNIFORMS);
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vWindWorld;')
       // The world position is already computed here for shadows and lights;
