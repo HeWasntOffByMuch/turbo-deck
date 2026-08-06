@@ -53,6 +53,11 @@ const PURE_RENDER = [
   'src/render/iso3d/wind.test.ts',
   'src/render/iso3d/shore-sdf.ts',
   'src/render/iso3d/shore-sdf.test.ts',
+  // The lobed tree's silhouette (spec 076): a union of circles, a domed disc and
+  // a tapering trunk are all arithmetic, and the outline is the whole point of
+  // the species -- so it is checked in Node rather than by eye.
+  'src/render/iso3d/lobe.ts',
+  'src/render/iso3d/lobe.test.ts',
   'src/render/iso3d/world/appearance.ts',
   'src/render/iso3d/world/cast.ts',
   'src/render/iso3d/world/intent.ts',

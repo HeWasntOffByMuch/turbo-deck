@@ -10,8 +10,11 @@ import {
   trunkHeight,
   trunkTopCover,
   brickCourse,
+  TREE_SPECIES,
   type TreeSpecies,
 } from './props.js';
+import { LOBED, slabLayout, trunkProfile } from './lobe.js';
+import { PALETTE } from './palette.js';
 import { fenceRotation } from './editor/fence.js';
 import { PLAYER_RADIUS } from '../../sim/constants.js';
 import { FENCE_KINDS, FENCE_TILE_LENGTH } from '../../terrain/vegetation.js';
@@ -30,12 +33,13 @@ describe('treeVariant (spec 045)', () => {
     expect(treeVariant(tree(412, -880, 0.9))).toEqual(treeVariant(tree(412, -880, -0.9)));
   });
 
-  it('grows both species across the world, neither of them rare', () => {
+  it('grows every species across the world, none of them rare', () => {
     expect(forest.length).toBeGreaterThan(200);
-    const pines = forest.filter((p) => treeVariant(p).species === 'pine').length;
-    const share = pines / forest.length;
-    expect(share).toBeGreaterThan(0.25);
-    expect(share).toBeLessThan(0.5);
+    for (const species of TREE_SPECIES) {
+      const share = forest.filter((p) => treeVariant(p).species === species).length / forest.length;
+      expect(share).toBeGreaterThan(0.2);
+      expect(share).toBeLessThan(0.5);
+    }
   });
 
   it('varies the tier count within a species, so one outline is not stamped everywhere', () => {
@@ -60,7 +64,7 @@ describe('treeVariant (spec 045)', () => {
     const autumn = forest.filter((p) => p.tint > 0.64);
     expect(autumn.length).toBeGreaterThan(20);
     const species = new Set(autumn.map((p) => treeVariant(p).species));
-    expect(species.size).toBe(2);
+    expect([...species].sort()).toEqual([...TREE_SPECIES].sort());
   });
 
   it('keeps the lean and the tier count independent of each other', () => {
@@ -70,7 +74,7 @@ describe('treeVariant (spec 045)', () => {
 });
 
 describe('the tree shapes themselves (spec 045)', () => {
-  const species = ['fir', 'pine'] as const satisfies readonly TreeSpecies[];
+  const species = TREE_SPECIES;
 
   it('leaves bare trunk standing under the canopy', () => {
     // The whole point of the reshape. The tree this replaced put a 34-radius
@@ -122,11 +126,22 @@ describe('the trunk ends inside the canopy, not through it', () => {
     }
   });
 
-  it('buries it on every tree the world actually grows', () => {
-    const forest = worldVegetation(20260731, createArenaWorld(20260731)).filter((p) => p.kind === 'tree');
+  it('buries it on every conifer the world actually grows', () => {
+    const forest = worldVegetation(20260731, createArenaWorld(20260731))
+      .filter((p) => p.kind === 'tree')
+      .filter((p) => treeVariant(p).species !== 'lobed');
     expect(forest.length).toBeGreaterThan(200);
     const worst = Math.min(...forest.map((p) => trunkTopCover(treeVariant(p))));
     expect(worst).toBeGreaterThan(0);
+  });
+
+  it('reports the question as vacuous for the lobed tree rather than answering it', () => {
+    // Its trunk narrows to a single vertex, so there is no flat cap to bury and
+    // no corners to poke out through a frond. Saying `Infinity` is what stops
+    // the sweep above quietly counting it as a pass on a shape it cannot judge.
+    for (const tierCount of speciesTierCounts('lobed')) {
+      expect(trunkTopCover({ species: 'lobed', tierCount, asymmetry: 1, leanAngle: 0 })).toBe(Infinity);
+    }
   });
 
   it('still runs the trunk up through the canopy rather than stopping under it', () => {
@@ -536,5 +551,222 @@ describe('uniform fence colour', () => {
     // piece of timber. Flattening that would be flattening the design, not the
     // variety, so the parts that carry it have no uniform tone to fall back to.
     expect(new Set(drawn([tile('fence-wood', { uniform: true })]).colors).size).toBeGreaterThan(1);
+  });
+});
+
+/**
+ * The lobed canopy tree as `buildPropField` actually builds it (spec 076).
+ *
+ * `lobe.test.ts` covers the arithmetic -- where the slabs go, what the outline
+ * is, how the trunk tapers. What is left is everything between that and a frame:
+ * whether the tip really is one vertex rather than a cap collapsed to nothing,
+ * whether the dome came out convex on top and concave underneath, and whether
+ * the canopy is wired to the wind differently from the trunk it hangs off.
+ * Every one of those draws *something* when it is wrong.
+ */
+describe('the lobed canopy tree, as built', () => {
+  /** A lobed tree of a given slab count, found by walking the position hash. */
+  function lobedProp(tierCount: number): Prop {
+    for (let i = 0; i < 40000; i++) {
+      const prop: Prop = { kind: 'tree', x: i * 37, y: i * 53, scale: 1, rotation: 0, tint: 0 };
+      const variant = treeVariant(prop);
+      if (variant.species === 'lobed' && variant.tierCount === tierCount) return prop;
+    }
+    throw new Error(`no lobed tree with ${tierCount} slabs in the hash`);
+  }
+
+  /** Every batch of one tree, with the world Y its instance sits at. */
+  function partsOf(prop: Prop): { mesh: THREE.InstancedMesh; y: number; color: THREE.Color }[] {
+    const field = buildPropField([prop], () => 0);
+    const out: { mesh: THREE.InstancedMesh; y: number; color: THREE.Color }[] = [];
+    const matrix = new THREE.Matrix4();
+    field.group.traverse((object) => {
+      if (!(object instanceof THREE.InstancedMesh)) return;
+      object.getMatrixAt(0, matrix);
+      const color = new THREE.Color();
+      object.getColorAt(0, color);
+      out.push({ mesh: object, y: new THREE.Vector3().setFromMatrixPosition(matrix).y, color });
+    });
+    return out;
+  }
+
+  /** The trunk is the one part drawn in bark rather than in leaf. */
+  const isTrunk = (part: { color: THREE.Color }): boolean =>
+    part.color.getHex() === new THREE.Color(PALETTE.trunk).getHex();
+
+  /** The uniforms a patched material would hand three.js, without a GL context. */
+  function swayUniforms(material: THREE.Material): Record<string, THREE.IUniform> {
+    const shader = { uniforms: {} as Record<string, THREE.IUniform>, vertexShader: '', fragmentShader: '' };
+    material.onBeforeCompile?.(shader as never, null as never);
+    return shader.uniforms;
+  }
+
+  it('draws one trunk and exactly the slabs the count asks for', () => {
+    for (const count of new Set(speciesTierCounts('lobed'))) {
+      const parts = partsOf(lobedProp(count));
+      expect(parts.filter(isTrunk)).toHaveLength(1);
+      expect(parts.filter((p) => !isTrunk(p))).toHaveLength(count);
+    }
+  });
+
+  it('keeps the canopy top where it is however few slabs it grows', () => {
+    // The failure `grownAt` exists to prevent: slabs dropped off the top instead
+    // of out of the middle leave a three-slab tree as a tall bare whip.
+    const tops = [...new Set(speciesTierCounts('lobed'))].map((count) =>
+      Math.max(...partsOf(lobedProp(count)).filter((p) => !isTrunk(p)).map((p) => p.y)),
+    );
+    for (const top of tops) expect(top).toBeCloseTo(tops[0] as number, 6);
+    // ...and every count still leaves the tapered tip standing above the crown.
+    expect(Math.max(...tops)).toBeLessThan(speciesHeight('lobed'));
+  });
+
+  it('ends the trunk in a single vertex, not a cap', () => {
+    const trunk = partsOf(lobedProp(5)).find(isTrunk);
+    const position = (trunk as { mesh: THREE.InstancedMesh }).mesh.geometry.getAttribute('position');
+    let top = -Infinity;
+    for (let i = 0; i < position.count; i++) top = Math.max(top, position.getY(i));
+    expect(top).toBeCloseTo(speciesHeight('lobed'), 6);
+    // Every vertex up there is the *same* vertex. A `radiusTop: 0` cylinder
+    // would put one per side at the same height and a hair apart in XZ, which
+    // draws the same picture and Z-fights at the top of every tree in the world.
+    const apex: [number, number][] = [];
+    for (let i = 0; i < position.count; i++) {
+      if (position.getY(i) > top - 1e-6) apex.push([position.getX(i), position.getZ(i)]);
+    }
+    expect(apex.length).toBeGreaterThan(2);
+    for (const [x, z] of apex) {
+      expect(x).toBeCloseTo(apex[0]?.[0] as number, 9);
+      expect(z).toBeCloseTo(apex[0]?.[1] as number, 9);
+    }
+  });
+
+  it('tapers the trunk all the way, so no ring is wider than the one below it', () => {
+    const trunk = partsOf(lobedProp(5)).find(isTrunk);
+    const position = (trunk as { mesh: THREE.InstancedMesh }).mesh.geometry.getAttribute('position');
+    // The widest vertex at each height, against the profile's own centre line.
+    const widest = new Map<number, number>();
+    const centres = new Map<number, [number, number]>();
+    for (const ring of trunkProfile(LOBED)) centres.set(Math.round(ring.y * 1e6), [ring.x, ring.z]);
+    for (let i = 0; i < position.count; i++) {
+      const key = Math.round(position.getY(i) * 1e6);
+      const centre = centres.get(key);
+      if (!centre) continue;
+      const r = Math.hypot(position.getX(i) - centre[0], position.getZ(i) - centre[1]);
+      widest.set(key, Math.max(widest.get(key) ?? 0, r));
+    }
+    const byHeight = [...widest.entries()].sort((a, b) => a[0] - b[0]).map(([, r]) => r);
+    expect(byHeight.length).toBe(LOBED.trunkRings + 1);
+    for (let i = 1; i < byHeight.length; i++) {
+      expect(byHeight[i] as number).toBeLessThan(byHeight[i - 1] as number);
+    }
+    expect(byHeight[0] as number).toBeCloseTo(LOBED.trunkRadius, 4);
+    // A single point, to within what a Float32 buffer can hold at this height.
+    expect(byHeight[byHeight.length - 1] as number).toBeCloseTo(0, 5);
+  });
+
+  it('domes each slab up over a concave underside', () => {
+    // A slab's vertices sit at exactly two surfaces, `thickness` apart, each of
+    // them `rise * (1 - u^2)` over its ring fraction. Pinning the whole set of
+    // heights is what says the top is convex *and* the underside mirrors it:
+    // a flat bottom would be missing the upper half of this list.
+    const slabs = slabLayout(LOBED);
+    for (const part of partsOf(lobedProp(5)).filter((p) => !isTrunk(p))) {
+      const slab = slabs.find((s) => Math.abs(s.y - part.y) < 1e-3);
+      expect(slab).toBeDefined();
+      const rise = (slab as (typeof slabs)[number]).rise;
+      const expected: number[] = [];
+      for (let ring = 0; ring <= LOBED.lobeRings; ring++) {
+        const u = ring / LOBED.lobeRings;
+        const dome = rise * (1 - u * u);
+        expected.push(dome, dome - LOBED.slabThickness);
+      }
+      const position = part.mesh.geometry.getAttribute('position');
+      const seen = new Set<number>();
+      for (let i = 0; i < position.count; i++) seen.add(position.getY(i));
+      const wanted = [...new Set(expected)].sort((a, b) => a - b);
+      const got = [...seen].sort((a, b) => a - b);
+      // Compared one by one rather than deeply: the buffer is Float32 and the
+      // expectation is doubles, so `13.2` and `13.2` are not the same number.
+      expect(got).toHaveLength(wanted.length);
+      got.forEach((y, i) => expect(y).toBeCloseTo(wanted[i] as number, 4));
+      // Convex on top: highest in the middle, exactly flat at the rim so two
+      // neighbouring slabs meet cleanly rather than at a lip.
+      expect(Math.max(...expected)).toBeCloseTo(rise, 9);
+      expect(expected).toContain(0);
+    }
+  });
+
+  it('is a sheet with a rim rather than a slab of cake', () => {
+    const slabs = slabLayout(LOBED);
+    for (const part of partsOf(lobedProp(5)).filter((p) => !isTrunk(p))) {
+      const slab = slabs.find((s) => Math.abs(s.y - part.y) < 1e-3) as (typeof slabs)[number];
+      expect(LOBED.slabThickness / (2 * slab.radius)).toBeLessThan(0.1);
+    }
+  });
+
+  it('paints the canopy in two tones and no more', () => {
+    const tones = new Set(partsOf(lobedProp(5)).filter((p) => !isTrunk(p)).map((p) => p.color.getHex()));
+    expect(tones.size).toBe(2);
+  });
+
+  it('keeps to two tones when it turns autumn as well', () => {
+    // The autumn ramp is indexed per part, and the conifers index it by tier so
+    // it climbs dark to bright over four of them. Indexed the same way here the
+    // canopy would come out a three-colour gradient, which is the one thing a
+    // flat two-tone palette is not.
+    const autumn = { ...lobedProp(5), tint: 0.9 };
+    const tones = new Set(partsOf(autumn).filter((p) => !isTrunk(p)).map((p) => p.color.getHex()));
+    expect(tones.size).toBe(2);
+  });
+
+  it('lags each slab behind the trunk, and tilts it, while the trunk does neither', () => {
+    // The wind is spec 074's and there is only one of it. What a slab gets is
+    // two per-batch uniforms on top: a lag, so the canopy trails, and a tilt
+    // about the slab's own origin, because a flat plate rides the trunk's arc
+    // perfectly horizontally and would otherwise never lean at all.
+    const parts = partsOf(lobedProp(5));
+    const trunk = swayUniforms((parts.find(isTrunk) as { mesh: THREE.InstancedMesh }).mesh
+      .material as THREE.Material);
+    expect(trunk['uSwayLag']?.value).toBe(0);
+    expect(trunk['uSwayTilt']?.value).toBe(0);
+
+    const lags: number[] = [];
+    for (const part of parts.filter((p) => !isTrunk(p)).sort((a, b) => a.y - b.y)) {
+      const uniforms = swayUniforms(part.mesh.material as THREE.Material);
+      expect(uniforms['uSwayTilt']?.value).toBeGreaterThan(0);
+      lags.push(uniforms['uSwayLag']?.value as number);
+      // The shadow passes bend with their own materials, so they need the same
+      // two numbers or the shade under a tree trails on a different clock.
+      for (const shadow of [part.mesh.customDepthMaterial, part.mesh.customDistanceMaterial]) {
+        const theirs = swayUniforms(shadow as THREE.Material);
+        expect(theirs['uSwayLag']?.value).toBe(uniforms['uSwayLag']?.value);
+        expect(theirs['uSwayTilt']?.value).toBe(uniforms['uSwayTilt']?.value);
+      }
+    }
+    // A gust reaches the top of a tree last, so the lag climbs with the slab.
+    for (let i = 1; i < lags.length; i++) expect(lags[i] as number).toBeGreaterThan(lags[i - 1] as number);
+    expect(Math.min(...lags)).toBeGreaterThan(0);
+  });
+
+  it('leaves the conifers on exactly the shader they were on', () => {
+    // The lag and the tilt are uniform *values*, never generated source. If they
+    // were spliced in as literals every species would need its own compiled
+    // program, and `customProgramCacheKey` -- which is one constant string --
+    // would hand one of them the other's shader.
+    const source = (material: THREE.Material): string => {
+      const shader = {
+        uniforms: {} as Record<string, THREE.IUniform>,
+        vertexShader: '#include <common>\n#include <project_vertex>\n#include <worldpos_vertex>',
+        fragmentShader: '',
+      };
+      material.onBeforeCompile?.(shader as never, null as never);
+      return shader.vertexShader;
+    };
+    const conifer = partsOf(tree(0, 0)).find(isTrunk) as { mesh: THREE.InstancedMesh };
+    const slab = partsOf(lobedProp(5)).find((p) => !isTrunk(p)) as { mesh: THREE.InstancedMesh };
+    expect(source(slab.mesh.material as THREE.Material)).toBe(source(conifer.mesh.material as THREE.Material));
+    expect((slab.mesh.material as THREE.Material).customProgramCacheKey?.()).toBe(
+      (conifer.mesh.material as THREE.Material).customProgramCacheKey?.(),
+    );
   });
 });
