@@ -77,6 +77,21 @@ export interface AutoAttack {
  */
 export const STANDOFF_FRACTION = 0.8;
 
+/**
+ * How far out the body may be and still swing, as a fraction of reach.
+ *
+ * Strictly larger than {@link STANDOFF_FRACTION}, and by more than the move
+ * order's `ARRIVE_EPS` -- which is the whole reason it exists as a second
+ * number. A chase stops within that tolerance *of its destination*, so a body
+ * that had to be at the destination to swing parks a few units short of its own
+ * threshold and stands there for good: not walking, because it has arrived, and
+ * not attacking, because it has not. That is exactly what one threshold did.
+ *
+ * Below 1, so the body comes to rest inside its reach rather than on the edge
+ * of it, and a target that shuffles does not flip the decision every tick.
+ */
+export const HOLD_FRACTION = 0.9;
+
 const NOTHING: AutoAttack = { chaseTo: null, attack: false, drop: false };
 
 export function autoAttack(input: AutoAttackInput): AutoAttack {
@@ -86,24 +101,43 @@ export function autoAttack(input: AutoAttackInput): AutoAttack {
   // "when does auto-attacking stop" has one answer and it is tested.
   if (target.health <= 0) return { chaseTo: null, attack: false, drop: true };
 
+  // A committed body holds, in reach or out of it (spec 079). It has to: a move
+  // order now *withdraws* from a cast, so chasing a target that stepped back
+  // during a wind-up would call the swing off on the player's behalf -- and the
+  // one thing the feint has to be is theirs.
+  if (input.rooted) return { chaseTo: null, attack: false, drop: false };
+
   const dx = target.x - input.self.x;
   const dy = target.y - input.self.y;
   const distance = Math.hypot(dx, dy);
   const reach = input.range + target.radius;
+  // Two numbers, and they have to be two.
+  //
+  // The chase walks to `reach * STANDOFF_FRACTION` and the swing is allowed out
+  // to `reach * HOLD_FRACTION`, which is looser. Collapsing them into one -- the
+  // obvious-looking fix for a body that stopped on the edge of its reach -- gives
+  // a body that arrives within `ARRIVE_EPS` of the destination and is therefore
+  // *just outside* the threshold it has to be inside to swing: it stops walking
+  // because it has arrived and never attacks because it has not, forever.
+  //
+  // The gap between them is the hysteresis that a moving target needs, too: at
+  // one threshold a shuffling grazer flips the decision every tick, and with a
+  // move order now withdrawing from a cast, every flip would cancel a wind-up.
+  const stop = reach * HOLD_FRACTION;
 
-  if (distance > reach) {
+  if (distance > stop) {
     return { chaseTo: standoffPoint(input.self, target, reach), attack: false, drop: false };
   }
 
-  // In reach. Standing still is the point of being here -- walking on would
-  // shove past the body we are trying to hit -- so there is no chase to give
-  // back even though the order is very much still standing.
+  // Inside the standoff. Standing still is the point of being here -- walking on
+  // would shove past the body we are trying to hit -- so there is no chase to
+  // give back even though the order is very much still standing.
   return {
     chaseTo: null,
     // The cooldown is the server's number, played back. Asking anyway would not
     // be wrong so much as noisy: every refused request is a round trip of
     // `castRejected` and a cooldown guess to take back again.
-    attack: !input.rooted && input.tick >= input.readyAtTick,
+    attack: input.tick >= input.readyAtTick,
     drop: false,
   };
 }

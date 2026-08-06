@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MemoryDataStore } from '../state/memory-store.js';
+import { abilityById } from '../data/abilities.js';
 import { EMPTY_EQUIPMENT, type PersistedPlayer } from '../state/types.js';
 import { ZoneManager } from '../world/zone-manager.js';
 import { PlayerManager } from './player-manager.js';
@@ -146,6 +147,41 @@ describe('effective stats', () => {
     expect(clampHealthToStats(stats.maxHealth + 50, stats)).toBe(stats.maxHealth);
     expect(clampHealthToStats(10, stats)).toBe(10);
     expect(clampHealthToStats(-5, stats)).toBe(0);
+  });
+});
+
+/**
+ * Spec 076. Which attack a body swings with is derived like every other stat,
+ * so a bow is a row in the item table rather than a class.
+ */
+describe('the attack the main hand names', () => {
+  it('is the sword swing for an empty hand', () => {
+    expect(computeEffectiveStats(player({})).basicAttackId).toBe('melee.slash');
+  });
+
+  it('is the sword swing for a weapon that names nothing', () => {
+    const stats = computeEffectiveStats(
+      player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'sword.keen' } }),
+    );
+    expect(stats.basicAttackId).toBe('melee.slash');
+  });
+
+  it('is the bow\'s shot for a bow', () => {
+    const stats = computeEffectiveStats(
+      player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'bow.hunting' } }),
+    );
+    expect(stats.basicAttackId).toBe('ranged.shot');
+    // And the shot it names reaches further than the sword it replaced.
+    expect(abilityById('ranged.shot')?.range ?? 0).toBeGreaterThan(
+      abilityById('melee.slash')?.range ?? 0,
+    );
+  });
+
+  it('falls back rather than leaving a character unable to attack', () => {
+    const stats = computeEffectiveStats(
+      player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'deleted.item' } }),
+    );
+    expect(stats.basicAttackId).toBe('melee.slash');
   });
 });
 

@@ -445,6 +445,12 @@ export class GameClient {
     // input, and whether it has arrived decides whether the next press winds up
     // or spends ticks turning first.
     if (Number.isFinite(intent.facing)) this.wantedFacing = intent.facing;
+    // Asking to move withdraws from a cast (spec 079), and the server settles
+    // that on the very tick this input lands. Predicting the walk without also
+    // predicting the withdrawal would keep the legs locked locally while the
+    // server moved them -- a correction on every tick of the step away, and a
+    // bar still draining for a blow that has been called off.
+    if (Math.hypot(intent.moveX, intent.moveY) > 1e-6) this.withdrawLocally();
     const input: PredictedInput = { ...intent, seq: this.seq };
     const predicted = this.prediction.apply(input);
     this.channel.send(
@@ -588,8 +594,7 @@ export class GameClient {
     // draw a bar for a blow they have withdrawn from. The request itself stays
     // outstanding: it will still be answered, and that answer still has a
     // cooldown and a cost to give back.
-    this.predictedCast = null;
-    this.predictedCastRequestId = -1;
+    this.withdrawLocally();
     this.channel.send(
       encodeClientMessage({ type: ClientMessageType.CancelCast, afterInputSeq: this.seq }),
     );
@@ -661,6 +666,22 @@ export class GameClient {
       this.stats,
       this.estimated,
     );
+  }
+
+  /**
+   * Drops the local body's cast, however it was come by: the one this client
+   * only predicted, and the one the server confirmed.
+   *
+   * Both halves, because {@link selfCast} prefers the confirmed one and it is
+   * what roots the legs -- clearing only the guess would leave a body that has
+   * withdrawn standing still until `CastEnded` came back a round trip later. The
+   * server's own message still arrives and is still what makes it final; this
+   * only stops the wait from being visible.
+   */
+  private withdrawLocally(): void {
+    this.predictedCast = null;
+    this.predictedCastRequestId = -1;
+    if (this.welcome) this.casts.delete(this.welcome.entityId);
   }
 
   /** The cast the local entity is in: the server's if it has one, else the guess. */

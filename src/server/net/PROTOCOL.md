@@ -1,4 +1,4 @@
-# turbo-deck wire protocol v6
+# turbo-deck wire protocol v9
 
 Binary, not JSON. Every frame is a WebSocket **binary** message whose first byte
 is the message type; the rest is a type-specific payload. All multi-byte numbers
@@ -177,6 +177,11 @@ through this same delta rather than through a parallel system. Its `z` carries
 the arc height, which is what lets a client draw a lobbed shot rising and
 falling with a shadow underneath it.
 
+Since spec 079 a shot can be *tracking* a body, so its position changes on a
+curve the client was never told about. Nothing new is sent for it: the position
+is authoritative every tick and the client interpolates between the samples it
+gets, exactly as it does for anything else that walks.
+
 ### `0x42 Correction`
 `varuint inputSeq` · `f32 x` · `f32 y` · `f32 z` · `f32 facing` · `u8 reason`
 
@@ -214,7 +219,13 @@ Sent to every connection whose interest set contains the attacker or the target.
 `varuint unspentSkillPoints` · then the effective stat block:
 `f32 maxHealth` · `f32 moveSpeed` · `f32 turnRate` · `f32 attackDamage` ·
 `f32 attackRange` · `u16 attackCooldownTicks` · `f32 attackSpeed` · `f32 armor` ·
-`f32 spellPower` · `f32 critChance` · `f32 maxResource` · `f32 resourceRegen`
+`f32 spellPower` · `f32 critChance` · `f32 maxResource` · `f32 resourceRegen` ·
+`str basicAttackId`
+
+`basicAttackId` is the ability this character's auto-attack uses (spec 079),
+derived from the main hand. The client needs it to know what its right-click
+reaches with, which cooldown the sweep is drawn against, and which ability to
+ask for; a body that never attacks carries `''`.
 
 `attackCooldownTicks` is the *base* interval between basic attacks and
 `attackSpeed` is the multiplier on it (spec 070); the swing cadence is

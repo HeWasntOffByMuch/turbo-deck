@@ -107,20 +107,31 @@ describe('a standing move order', () => {
 
 describe('while casting', () => {
   /**
-   * The server roots a caster outright, so predicting a walk here diverges on
-   * every tick of every wind-up -- a correction per tick, on the one action the
-   * player is watching most closely.
+   * The server roots a caster that asks for nothing, so predicting a walk here
+   * would diverge on every tick of every wind-up -- a correction per tick, on
+   * the one action the player is watching most closely.
    */
-  it('asks for no movement, whatever is held', () => {
-    const result = intent({ held: new Set(['KeyW', 'KeyD']), castAim: { x: 100, y: 0 } });
+  it('asks for no movement when nothing is held and nothing is ordered', () => {
+    const result = intent({ castAim: { x: 100, y: 0 } });
     expect(result.moveX).toBe(0);
     expect(result.moveY).toBe(0);
   });
 
-  it('asks for no movement toward a standing order either', () => {
-    const result = intent({ destination: { x: 500, y: 500 }, castAim: { x: 100, y: 0 } });
-    expect(result.moveX).toBe(0);
-    expect(result.moveY).toBe(0);
+  /**
+   * And the other half, since spec 079: asking to move *withdraws* from the
+   * cast on the server, so predicting a stand would be predicting the opposite
+   * of what the very same input frame is about to cause.
+   */
+  it('walks anyway when a key is held, because that withdraws from the cast', () => {
+    const result = intent({ held: new Set(['KeyS']), castAim: { x: 100, y: 0 } });
+    expect(result.moveY).toBeCloseTo(1, 6);
+    expect(result.facing).toBeCloseTo(Math.PI / 2, 6);
+  });
+
+  it('walks anyway toward a standing order', () => {
+    const result = intent({ destination: { x: 500, y: 0 }, castAim: { x: 100, y: 0 } });
+    expect(result.moveX).toBeCloseTo(1, 6);
+    expect(result.moveY).toBeCloseTo(0, 6);
   });
 
   /**

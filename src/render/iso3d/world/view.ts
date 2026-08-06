@@ -171,6 +171,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
   const hud = createHud();
   hud.onUse((abilityId) => useAbility(abilityId));
+  // Picking a weapon is an ordinary equip (spec 079): the server puts it in the
+  // hand, recomputes the stat block, and the new `basicAttackId` comes back on
+  // `Stats`. Nothing here decides what the right-click then does -- the next
+  // frame simply reads the stat and asks for whatever it names.
+  hud.onEquip((itemId) => client.equip('mainHand', itemId));
 
   // The two settings buttons float over the top-right corner of the game
   // window: the camera/light cog (spec 034) and the weather beside it
@@ -357,7 +362,12 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   function driveAutoAttack(view: ReturnType<typeof client.view>, me: { x: number; y: number }): void {
     if (targetId === null) return;
     const entity = view.entities.find((candidate) => candidate.id === targetId);
-    const swing = abilityById(BASIC_ATTACK_ID);
+    // What this character attacks with is a stat now (spec 079), so the reach a
+    // chase stops at, the cooldown the sweep is drawn from and the ability that
+    // is asked for are all one answer: a bow reaches further than a sword
+    // without a line here knowing which is being held.
+    const swingId = view.stats?.basicAttackId || BASIC_ATTACK_ID;
+    const swing = abilityById(swingId);
     const decision = autoAttack({
       self: me,
       target: entity
@@ -373,7 +383,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // Both halves of "am I committed": the server's cast and the one this
       // client has only asked for. `selfRoot` is already the union of the two.
       rooted: view.selfRoot !== null,
-      readyAtTick: view.cooldowns[BASIC_ATTACK_ID] ?? 0,
+      readyAtTick: view.cooldowns[swingId] ?? 0,
       tick: view.estimatedTick,
     });
 
@@ -391,7 +401,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // tree is routed by the same A* a right-click on the ground is.
     destination = decision.chaseTo;
     if (!decision.chaseTo) planner.clear();
-    if (decision.attack) client.useAbility(BASIC_ATTACK_ID, entity.x, entity.y, entity.id);
+    if (decision.attack) client.useAbility(swingId, entity.x, entity.y, entity.id);
   }
 
   function sendInput(): void {

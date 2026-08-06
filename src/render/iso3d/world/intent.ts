@@ -90,11 +90,14 @@ export interface IntentInput {
    * The aim of the cast in progress, or null when not casting.
    *
    * Two things at once, both mirroring the server. The server roots a caster
-   * outright (`world.ts` zeroes the movement components while `cast !== null`),
-   * so predicting a walk here would diverge on every tick of every wind-up. And
-   * the server turns the body *into* its captured aim over the wind-up
-   * (`resolveFacing`), so the heading asked for while casting is that aim and
-   * not whatever the keys say.
+   * that asks for nothing (`world.ts` zeroes the movement components while
+   * `cast !== null`), so predicting a walk here would diverge on every tick of
+   * every wind-up. And the server turns the body *into* its captured aim over
+   * the wind-up (`resolveFacing`), so the heading asked for while casting is
+   * that aim and not whatever the keys say.
+   *
+   * Only while nothing else is asked for, since spec 079: a key or a move order
+   * withdraws from the cast on the server, so it has to steer here too.
    */
   readonly castAim: Point | null;
 }
@@ -115,7 +118,12 @@ export function moveIntent(input: IntentInput): MoveIntent {
   // the old heading is what makes the figure visibly come round during a
   // wind-up: the server is already turning it, and a client that kept asking for
   // its previous heading simply drew a body that never moved.
-  if (input.castAim) {
+  //
+  // A direction outranks the root since spec 079: asking to move *is* how a
+  // commitment is withdrawn from, and the server acts on it the tick it arrives.
+  // Holding the body still here would be predicting a stand the server is about
+  // to turn into a step.
+  if (input.castAim && !direction) {
     const dx = input.castAim.x - input.self.x;
     const dy = input.castAim.y - input.self.y;
     const facing = Math.hypot(dx, dy) < 1e-6 ? input.facing : Math.atan2(dy, dx);

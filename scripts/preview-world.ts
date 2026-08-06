@@ -218,7 +218,12 @@ async function main(): Promise<void> {
       if (message.type() === 'error') problems.push(message.text());
     });
 
-    await page.goto(`http://localhost:${PORT}/`, { waitUntil: 'load' });
+    // Pinned. Without a `seed` in the query the view falls back to `Date.now()`
+    // (`iso3d/seed.ts`), so every run photographed a different world and the
+    // checks that depend on where bodies happen to stand -- the forgiving pick
+    // most of all -- passed or failed by the clock. A harness whose answer moves
+    // between runs cannot tell a regression from a Tuesday.
+    await page.goto(`http://localhost:${PORT}/?seed=20260806`, { waitUntil: 'load' });
     await page.waitForSelector('canvas');
     // Two waits, because they are two different facts.
     //
@@ -407,6 +412,42 @@ async function main(): Promise<void> {
       // which is the only way an attack order ends by itself.
     }
 
+    // The weapon switch (spec 079). Clicking one is an ordinary equip, and the
+    // proof it took is that the *server's* stat block came back naming the new
+    // attack -- which is what lights the button. Photographed with a bow in
+    // hand so the ranged auto-attack is on screen at all.
+    const bow = page.locator('button', { hasText: 'Hunting Bow' }).first();
+    if ((await bow.count()) > 0) {
+      await bow.click();
+      await page.waitForTimeout(400);
+      const lit = await litWeapon(page);
+      console.log(`  weapon after clicking Hunting Bow: ${lit}`);
+      if (lit !== 'Hunting Bow') {
+        problems.push(`the weapon switch clicked Hunting Bow and lit ${lit}`);
+      }
+
+      // The bug this fixes: with a bow in hand the walk came to rest in a band
+      // the server would refuse to shoot from, so the player closed and then
+      // stood there. Target something and watch its health actually move.
+      const mark = await findUnit(page);
+      if (mark) {
+        await page.waitForTimeout(3500);
+        const line = await readTarget(page);
+        console.log(`  after 3.5s of ranged auto-attack: ${line}`);
+        const health = /(\d+)\/(\d+)/.exec(line);
+        // "no target" is a pass: the only way an attack order ends by itself is
+        // the body it named being dead.
+        if (health && Number(health[1]) >= Number(health[2])) {
+          problems.push(`a ranged auto-attack closed but never landed a shot (${line})`);
+        }
+      } else {
+        console.log('  no body to try a ranged auto-attack on');
+      }
+      await shoot(page, 'world-weapon-switch');
+    } else {
+      problems.push('the weapon switch is not on the page');
+    }
+
     // A ground-targeted blast, for the telegraph ring on the terrain.
     await page.keyboard.press('Digit5');
     await page.waitForTimeout(320);
@@ -438,6 +479,25 @@ async function main(): Promise<void> {
     await browser.close();
     server.kill();
   }
+}
+
+/**
+ * Which weapon the switch is showing as held.
+ *
+ * Read off the lit border rather than off a class, because that border is the
+ * whole claim being checked: it is set from `stats.basicAttackId`, so a button
+ * that lights is the server having answered.
+ */
+async function litWeapon(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const buttons = Array.from(document.querySelectorAll('button'));
+    const lit = buttons.find(
+      (button) =>
+        button.style.borderColor === 'rgb(255, 207, 107)' &&
+        button.style.textAlign === 'left',
+    );
+    return lit?.textContent ?? 'nothing';
+  });
 }
 
 await main();

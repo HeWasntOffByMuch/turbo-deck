@@ -138,6 +138,17 @@ export interface EffectiveStats {
   readonly maxResource: number;
   /** Refilled by this much every tick. */
   readonly resourceRegen: number;
+  /**
+   * The ability this body's auto-attack uses (spec 079), or `''` for something
+   * that never attacks.
+   *
+   * A stat rather than a constant because it is the difference between a
+   * swordsman and an archer, and it is derived exactly like every other stat
+   * here: from the main hand for a player, from its row for a monster. The sim
+   * never needs it -- a cast names its own ability -- but a client does, to know
+   * what its right-click reaches with and asks for.
+   */
+  readonly basicAttackId: string;
 }
 
 export interface Ban {

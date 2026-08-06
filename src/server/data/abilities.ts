@@ -99,6 +99,39 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     description: 'A long wind-up worth interrupting, and worth landing.',
   },
   {
+    id: 'ranged.shot',
+    name: 'Hunting Shot',
+    kind: 'projectile',
+    // Point-targeted, so `startCast` refuses a shot at something out of range
+    // rather than launching an arrow that was never going to reach.
+    targeting: 'point',
+    windupTicks: seconds(0.35),
+    cooldownTicks: seconds(1),
+    cost: 0,
+    range: 420,
+    damage: 12,
+    // Lobbed, which is what makes it unblockable: an arcing shot flies over
+    // whatever is between the archer and the body it named (spec 079).
+    projectile: { speed: 900, arcHeight: 55, radius: 7, lifetimeTicks: seconds(2) },
+    basicAttack: true,
+    description: 'An arrow, lobbed over whatever is in the way. Lands where the target is, not where it was.',
+  },
+  {
+    id: 'ranged.star',
+    name: 'Throwing Star',
+    kind: 'projectile',
+    targeting: 'point',
+    windupTicks: seconds(0.2),
+    cooldownTicks: seconds(0.7),
+    cost: 0,
+    range: 300,
+    damage: 8,
+    // Flat, and therefore stoppable by anything that steps into the line.
+    projectile: { speed: 1150, arcHeight: 0, radius: 6, lifetimeTicks: seconds(1.5) },
+    basicAttack: true,
+    description: 'A fast flat star. Whatever wanders into the line takes it instead.',
+  },
+  {
     id: 'bolt.arcane',
     name: 'Arcane Bolt',
     kind: 'projectile',
@@ -178,7 +211,11 @@ export function abilityById(id: string): AbilityDefinition | null {
   return ABILITIES.get(id) ?? null;
 }
 
-/** The swing a right-click attack and a monster's melee both use (spec 070). */
+/**
+ * The swing a body falls back to when nothing it carries names another
+ * (specs 070, 076). Which attack a unit actually uses is
+ * `EffectiveStats.basicAttackId`, derived from its main hand or its row.
+ */
 export const BASIC_ATTACK_ID = 'melee.slash';
 
 /** What a fresh character can use. Everything else is unlocked elsewhere later. */
