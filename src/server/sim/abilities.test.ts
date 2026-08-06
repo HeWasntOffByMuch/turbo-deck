@@ -215,7 +215,7 @@ describe('wind-up', () => {
   });
 
   /**
-   * Spec 076. Asking to move is the other way out of a commitment, and the one
+   * Spec 077. Asking to move is the other way out of a commitment, and the one
    * that makes a feint possible: show the wind-up, read the answer, walk out of
    * it. The refund is the one `Esc` gives, so the only thing spent is the time.
    */
@@ -1064,7 +1064,12 @@ describe('a named target (spec 070)', () => {
     expect(result.state.entities.get(far.id)?.health).toBe(monsterById('dummy')?.stats.maxHealth);
   });
 
-  it('misses a target that died during the wind-up, rather than hitting a corpse', () => {
+  /**
+   * Spec 077. A blow aimed at a body that is no longer there is called off
+   * rather than thrown at the corpse, at a withdrawal's refund -- nothing was
+   * thrown, so nothing was spent but the time.
+   */
+  it('calls the cast off when its target dies during the wind-up', () => {
     const heavy = abilityById('melee.heavy');
     if (!heavy) throw new Error('no melee.heavy');
 
@@ -1073,6 +1078,7 @@ describe('a named target (spec 070)', () => {
     state = player.state;
     const victim = withDummy(state, 660, 450);
     state = victim.state;
+    const resource = state.entities.get(player.id)?.resource ?? 0;
 
     // Committed, and a long way from landing.
     const committed = run(state, 2, {
@@ -1085,17 +1091,93 @@ describe('a named target (spec 070)', () => {
         }),
       ],
     });
+    expect(committed.state.entities.get(player.id)?.cast).not.toBeNull();
 
-    // Something else finishes it off mid-wind-up. The blow is already paid for
-    // and cannot be called back (spec 068), so what it finds when it lands is
-    // the question.
+    // Something else finishes it off mid-wind-up.
     const corpse = committed.state.entities.get(victim.id);
     if (!corpse) throw new Error('no victim');
     const dead = replaceEntity(committed.state, { ...corpse, health: 0 });
 
     const result = run(dead, heavy.windupTicks + 2);
+    const caster = result.state.entities.get(player.id);
+    expect(caster?.cast).toBeNull();
     expect(hits(result.events)).toHaveLength(0);
-    expect(result.events.some((event) => event.kind === 'attackMissed')).toBe(true);
+    // Called off, not swung and missed.
+    expect(result.events.some((event) => event.kind === 'attackMissed')).toBe(false);
+    expect(
+      result.events.some(
+        (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Cancelled,
+      ),
+    ).toBe(true);
+    expect(caster?.resource).toBeCloseTo(resource, 3);
+    expect(caster?.cooldowns['melee.heavy']).toBeUndefined();
+  });
+
+  it('lets a shot already in the air finish, whatever becomes of its target', () => {
+    let state = createWorldState(8);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const victim = withDummy(state, 800, 450);
+    state = victim.state;
+
+    // Run until the star is actually in flight -- past the release, so there is
+    // nothing left to call off.
+    let current = state;
+    let flying = false;
+    for (let i = 0; i < 60 && !flying; i++) {
+      current = run(current, 1, {
+        0: [
+          input(player.id, {
+            castAbilityId: 'ranged.star',
+            castTargetX: 800,
+            castTargetY: 450,
+            castTargetEntityId: victim.id,
+          }),
+        ],
+      }).state;
+      flying = [...current.entities.values()].some((e) => e.projectile !== null);
+    }
+    expect(flying).toBe(true);
+
+    const corpse = current.entities.get(victim.id);
+    if (!corpse) throw new Error('no victim');
+    current = replaceEntity(current, { ...corpse, health: 0 });
+
+    // The shot is not reached back for: it flies its course and expires. The
+    // caster's cast is already over, so nothing is refunded either.
+    const after = run(current, 40);
+    expect(hits(after.events)).toHaveLength(0);
+    expect([...after.state.entities.values()].some((e) => e.projectile !== null)).toBe(false);
+  });
+
+  it('does not refuse a shot at a body walked into range of, edge included', () => {
+    const star = abilityById('ranged.star');
+    if (!star) throw new Error('no ranged.star');
+
+    let state = createWorldState(8);
+    const player = withPlayer(state, 0, 0);
+    state = player.state;
+    // Past the ability's range from the centre, inside it from the edge --
+    // exactly the band the client's chase used to come to rest in.
+    const radius = monsterById('dummy')?.radius ?? 22;
+    const victim = withDummy(state, star.range + radius / 2, 0);
+    state = victim.state;
+
+    const asked = run(state, 1, {
+      0: [
+        input(player.id, {
+          castAbilityId: 'ranged.star',
+          castTargetX: star.range + radius / 2,
+          castTargetY: 0,
+          castTargetEntityId: victim.id,
+        }),
+      ],
+    }, context({ activeChunks: activeAround(0, 0) }));
+
+    expect(
+      asked.events.some((event) => event.kind === 'castRejected' && event.reason === 'outOfRange'),
+    ).toBe(false);
+    expect(asked.state.entities.get(player.id)?.cast).not.toBeNull();
   });
 
   it('stamps a basic attack from the caster, and everything else from the table', () => {

@@ -425,6 +425,24 @@ async function main(): Promise<void> {
       if (lit !== 'Hunting Bow') {
         problems.push(`the weapon switch clicked Hunting Bow and lit ${lit}`);
       }
+
+      // The bug this fixes: with a bow in hand the walk came to rest in a band
+      // the server would refuse to shoot from, so the player closed and then
+      // stood there. Target something and watch its health actually move.
+      const mark = await findUnit(page);
+      if (mark) {
+        await page.waitForTimeout(3500);
+        const line = await readTarget(page);
+        console.log(`  after 3.5s of ranged auto-attack: ${line}`);
+        const health = /(\d+)\/(\d+)/.exec(line);
+        // "no target" is a pass: the only way an attack order ends by itself is
+        // the body it named being dead.
+        if (health && Number(health[1]) >= Number(health[2])) {
+          problems.push(`a ranged auto-attack closed but never landed a shot (${line})`);
+        }
+      } else {
+        console.log('  no body to try a ranged auto-attack on');
+      }
       await shoot(page, 'world-weapon-switch');
     } else {
       problems.push('the weapon switch is not on the page');

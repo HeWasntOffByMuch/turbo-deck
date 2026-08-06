@@ -8,12 +8,14 @@ import { describe, expect, it } from 'vitest';
 import { autoAttack, STANDOFF_FRACTION, type AutoAttackInput, type TargetSnapshot } from './target.js';
 
 const TARGET: TargetSnapshot = { id: 7, x: 400, y: 0, radius: 20, health: 40 };
+/** The basic attack's reach, before the target's body is added to it. */
+const RANGE = 70;
 
 function ask(overrides: Partial<AutoAttackInput> = {}): ReturnType<typeof autoAttack> {
   return autoAttack({
     self: { x: 0, y: 0 },
     target: TARGET,
-    range: 70,
+    range: RANGE,
     rooted: false,
     readyAtTick: 0,
     tick: 100,
@@ -52,11 +54,48 @@ describe('auto-attacking a named target (spec 070)', () => {
   });
 
   it('counts reach to the target\'s edge, not to its centre', () => {
-    // 95 out is beyond the 70 range but inside 70 + the 20-unit body.
-    const near = ask({ self: { x: TARGET.x - 85, y: 0 } });
+    // 70 out is inside the standoff on `70 + the 20-unit body` (72) and outside
+    // the standoff on the range alone (56), so the body's width is the whole of
+    // the difference between swinging and walking closer.
+    const near = ask({ self: { x: TARGET.x - 70, y: 0 } });
     expect(near.attack).toBe(true);
-    const fat = ask({ target: { ...TARGET, radius: 0 }, self: { x: TARGET.x - 85, y: 0 } });
+    const fat = ask({ target: { ...TARGET, radius: 0 }, self: { x: TARGET.x - 70, y: 0 } });
     expect(fat.attack).toBe(false);
+  });
+
+  /**
+   * Spec 077. The standoff is where a chase *stops*, not merely where it points.
+   *
+   * It used to be both and neither: the walk aimed at `reach * STANDOFF` and
+   * halted the moment it was inside `reach`, so a body came to rest exactly on
+   * the edge it was meant to keep clear of.
+   */
+  it('keeps walking until it is inside the standoff, not merely inside reach', () => {
+    const reach = RANGE + TARGET.radius;
+    // Between the standoff and the edge: still closing, not yet swinging.
+    const between = ask({ self: { x: TARGET.x - (reach + reach * STANDOFF_FRACTION) / 2, y: 0 } });
+    expect(between.attack).toBe(false);
+    expect(between.chaseTo).not.toBeNull();
+  });
+
+  /**
+   * The bug that made it matter. A ranged attack is gated by the server at the
+   * ability's own range, measured from the caster -- so a chase that comes to
+   * rest past that number leaves the player standing and asking, and every
+   * request comes back `outOfRange`. The standoff has to land inside it.
+   */
+  it('stops a ranged chase inside the range the server gates on', () => {
+    for (const range of [300, 420]) {
+      const target = { ...TARGET, radius: 22 };
+      const decision = ask({ range, target, self: { x: -400, y: 0 } });
+      const chase = decision.chaseTo;
+      expect(chase, `range ${range}`).not.toBeNull();
+      if (!chase) continue;
+      const stop = Math.hypot(target.x - chase.x, target.y - chase.y);
+      expect(stop, `range ${range}`).toBeLessThan(range);
+      // And the attack fires from there rather than from further out.
+      expect(ask({ range, target, self: chase }).attack, `range ${range}`).toBe(true);
+    }
   });
 
   it('does not re-commit while a cast is already running', () => {
@@ -64,7 +103,7 @@ describe('auto-attacking a named target (spec 070)', () => {
   });
 
   /**
-   * Spec 076. A move order withdraws from a cast now, so a chase issued while
+   * Spec 077. A move order withdraws from a cast now, so a chase issued while
    * committed would call the swing off on the player's behalf -- and the one
    * thing a feint has to be is theirs.
    */

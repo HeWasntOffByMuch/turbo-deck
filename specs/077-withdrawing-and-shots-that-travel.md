@@ -172,6 +172,39 @@ far enough outlives the shot's `lifetimeTicks` and is not hit at all.
 `launchProjectile` passes `cast.targetEntityId` through, and a shot that names a
 target is aimed at the target rather than at a point `range` away along the aim.
 
+### Reach to a body is measured to its edge, on both ends
+
+Found by playing the above: a ranged auto-attack walked in and then stood there.
+The client stopped chasing at `range + radius` while `startCast` gates a
+point-targeted cast at `range` from the caster, so the last body-radius of every
+approach was a band the player could reach and never be allowed to shoot from.
+Melee never hit it because a direction-targeted cast has no range gate at all.
+
+Both ends move to the same number:
+
+- `CastAttempt.targetRadius`, filled by the sim from the *server's* entity, so a
+  named cast is gated at `range + radius` — the reach `landOnTarget` already
+  allows. A cast at a patch of ground has no edge and is unchanged.
+- `autoAttack` stops at `reach * STANDOFF_FRACTION` rather than at `reach`. The
+  standoff was documented as the stopping distance and was only ever the chase's
+  *destination*: the walk halted the moment it was inside `reach`, which is the
+  edge the standoff exists to keep clear of. One threshold now decides both
+  walking and swinging, and it sits inside what the server will accept — which
+  also gives the margin a body needs when its target drifts during a wind-up.
+
+### A dead target calls off the wind-up
+
+A blow aimed at a body that is no longer there is withdrawn from rather than
+thrown at the corpse. `advanceCast` checks the named target while the cast is
+still cancellable — the `Turning` phase or before the release — and ends it with
+`Cancelled` and a withdrawal's refund, because that is what it is: nothing was
+thrown, so nothing was spent but the time.
+
+**Only up to the release.** A shot already in the air is its own entity and
+finishes its flight. Reaching back to un-launch it would be exactly the schedule
+this design exists to not have — the travel decides, and a target that died
+after the loose simply is not there to be hit.
+
 ## Invariants tested
 
 - **A move order withdraws.** A move vector during `Turning` or during the
@@ -195,6 +228,13 @@ target is aimed at the target rather than at a point `range` away along the aim.
   takes nothing, and the projectile despawns.
 - **A shot is disjointed** by its target dying or despawning mid-flight: it
   flies on to its last aim and expires without damage.
+- **A body walked into range of can be shot.** A named target between `range`
+  and `range + radius` is committed to rather than refused `outOfRange`, and
+  `autoAttack`'s chase comes to rest inside `range` for both ranged weapons.
+- **A dead target calls off the wind-up**: no hit, no `attackMissed`, one
+  `castEnded(Cancelled)`, and the cost and cooldown come back.
+- **A shot in the air is never called back.** With the cast already released,
+  the target dying leaves the projectile flying its course to expiry.
 - **A named shot is single-target however it flew.** With a hostile body
   standing between archer and mark, both the flat shot and the arcing one pass
   it and land on the mark.

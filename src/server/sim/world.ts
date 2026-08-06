@@ -418,6 +418,12 @@ export function step(
         targetX: intent.castTargetX,
         targetY: intent.castTargetY,
         targetEntityId: intent.castTargetEntityId,
+        // Read here rather than in `startCast`, which is pure and holds no
+        // world: naming a body is a request, and the radius that request is
+        // judged against is the server's own number for it, never the client's.
+        targetRadius: intent.castTargetEntityId
+          ? working.get(intent.castTargetEntityId)?.radius ?? 0
+          : 0,
       };
       const started = startCast(current, attempt, tick);
       if (started.ok) {

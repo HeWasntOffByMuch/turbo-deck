@@ -96,14 +96,25 @@ export function autoAttack(input: AutoAttackInput): AutoAttack {
   const dy = target.y - input.self.y;
   const distance = Math.hypot(dx, dy);
   const reach = input.range + target.radius;
+  // The standoff is the *stopping* distance, not merely where the chase points.
+  //
+  // It used to be both at once and neither in practice: the chase walked toward
+  // `reach * STANDOFF_FRACTION` but stopped the moment it was inside `reach`, so
+  // a body came to rest exactly on the edge it was supposed to keep clear of.
+  // That is what left a ranged attack standing and asking: the client called
+  // `range + radius` in range, the server gates a point-targeted cast at
+  // `range`, and the last body-radius of the walk was a dead zone where every
+  // request came back `outOfRange`. One threshold, inside both answers, and the
+  // margin the comment below always claimed is real.
+  const stop = reach * STANDOFF_FRACTION;
 
-  if (distance > reach) {
+  if (distance > stop) {
     return { chaseTo: standoffPoint(input.self, target, reach), attack: false, drop: false };
   }
 
-  // In reach. Standing still is the point of being here -- walking on would
-  // shove past the body we are trying to hit -- so there is no chase to give
-  // back even though the order is very much still standing.
+  // Inside the standoff. Standing still is the point of being here -- walking on
+  // would shove past the body we are trying to hit -- so there is no chase to
+  // give back even though the order is very much still standing.
   return {
     chaseTo: null,
     // The cooldown is the server's number, played back. Asking anyway would not

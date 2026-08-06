@@ -53,6 +53,16 @@ export interface CastAttempt {
   readonly targetY: number;
   /** The entity being attacked, or 0 to aim at the point alone (spec 070). */
   readonly targetEntityId?: number;
+  /**
+   * The named body's radius, or 0 when nothing was named (spec 077).
+   *
+   * Reach to a *body* is measured to its edge everywhere else -- `landOnTarget`
+   * allows `range + target.radius`, and the client's chase stops inside the
+   * same number. Measuring the commit gate to the centre instead made the last
+   * body-radius of an approach a place where a shot could be walked into range
+   * of and still refused.
+   */
+  readonly targetRadius?: number;
 }
 
 /**
@@ -99,10 +109,15 @@ export function startCast(
 
   // A point-targeted ability may not be cast past its range. Direction-targeted
   // ones are always legal to start -- they simply reach as far as they reach.
+  //
+  // A cast that named a body is measured to that body's edge, the same as the
+  // blow that eventually lands on it (spec 077). A patch of ground has no edge,
+  // so `targetRadius` is 0 and this is the centre check it always was.
   if (ability.targeting === 'point') {
     const dx = attempt.targetX - entity.position.x;
     const dy = attempt.targetY - entity.position.y;
-    if (Math.hypot(dx, dy) > ability.range) return { ok: false, reason: 'outOfRange' };
+    const reach = ability.range + (attempt.targetEntityId ? (attempt.targetRadius ?? 0) : 0);
+    if (Math.hypot(dx, dy) > reach) return { ok: false, reason: 'outOfRange' };
   }
 
   const aim = aimFor(ability, entity, attempt);
@@ -306,6 +321,29 @@ export function advanceCast(
       ],
       rng,
     };
+  }
+
+  // --- the target died -------------------------------------------------
+  // A blow aimed at a body that is no longer there is called off rather than
+  // thrown at the corpse (spec 077). The refund is a withdrawal's, because that
+  // is what this is: nothing was thrown, so nothing was spent but the time.
+  //
+  // Only up to the release, and deliberately so. A shot already in the air is
+  // its own entity and finishes its flight -- the travel is the only thing that
+  // decides, and reaching back to un-launch it would be the schedule this design
+  // exists to not have.
+  const cancellable = cast.phase === CastPhase.Turning || tick < cast.releaseTick;
+  if (cast.targetEntityId > 0 && cancellable) {
+    const named = candidates.find((candidate) => candidate.id === cast.targetEntityId);
+    if (!named || named.health <= 0) {
+      const called = cancelCast(entity, tick, CastEndReason.Cancelled);
+      return {
+        updated: new Map([[entity.id, called.entity]]),
+        spawns: [],
+        events: called.events,
+        rng,
+      };
+    }
   }
 
   const updated = new Map<number, ServerEntity>();
