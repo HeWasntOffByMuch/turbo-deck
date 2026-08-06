@@ -134,15 +134,29 @@ interface Combat {
    */
   readonly barMissing: number;
   /**
-   * Ticks the client drew a bar the server did not have. The cost of guessing:
-   * a wind-up shown for a blow that was refused, or one still drawn after the
-   * server's had ended. Traded against `barMissing` -- zero here and a large
-   * `barMissing` is the old behaviour; both near zero is the goal.
+   * Ticks the client drew a bar *before* the server had started the cast it
+   * belongs to.
+   *
+   * Not a fault, and separated from `barLingering` for that reason. A request is
+   * stamped to an input and the server commits when it dequeues that input, so
+   * there is always a window between the press and the commit -- the depth of
+   * the input queue, plus the trip. Drawing an empty bar across it is the honest
+   * answer to "did my press register", and standing still across it costs
+   * nothing (spec 067). Expect it to track the queue depth and no more.
    */
-  readonly barPhantom: number;
-  /** Ticks stood still for a cast the server was not running. Wasted stillness. */
-  readonly overRoot: number;
-  /** Ticks walked while the server held us rooted. Divergence, and corrections. */
+  readonly barEarly: number;
+  /**
+   * Ticks the client was still drawing a bar *after* the server's cast ended.
+   *
+   * This one is the fault. Every tick here is a tick the player stood rooted for
+   * a blow that had already finished, which is what the old `over-root` column
+   * was mostly made of.
+   */
+  readonly barLingering: number;
+  /**
+   * Ticks the client walked while the server held it rooted. The dangerous
+   * direction: movement the server discards, banked as error, corrected later.
+   */
   readonly underRoot: number;
   /**
    * Ticks the server had the ability on cooldown and the client's sweep read
@@ -254,14 +268,21 @@ async function run(label: string, delayTicks: number, ticks: number): Promise<Ru
   const combat = {
     sampled: 0,
     barMissing: 0,
-    barPhantom: 0,
-    overRoot: 0,
+    barEarly: 0,
+    barLingering: 0,
     underRoot: 0,
     sweepMissing: 0,
     refused: 0,
     committed: 0,
   };
+  /**
+   * Whether the server has begun a cast since the client's current bar went up.
+   * This is what separates "the bar is early" from "the bar is overstaying": the
+   * same tick-level disagreement means opposite things either side of it.
+   */
+  let serverCastSeenThisBar = false;
   const pressToBar: number[] = [];
+  const timeline: string[] = [];
   /**
    * Presses sent and not yet answered, oldest first -- the same queue the client
    * keeps, for the same reason: the server answers each request exactly once and
@@ -362,7 +383,7 @@ async function run(label: string, delayTicks: number, ticks: number): Promise<Ru
       const at = serverState().entities.get(view.selfEntityId);
       console.log(
         `t=${tick} est=${view.estimatedTick} srvTick=${serverState().tick} rtt=${view.roundTripTicks} ` +
-          `root=${view.selfRoot ? 'Y' : 'n'} srvCast=${at?.cast ? 'Y' : 'n'} ` +
+          `qd=${view.commitDelayTicks} root=${view.selfRoot ? 'Y' : 'n'} srvCast=${at?.cast ? 'Y' : 'n'} ` +
           `cd=${JSON.stringify(view.cooldowns)} move=${intent.moveX.toFixed(1)} ` +
           `local=${me.x.toFixed(1)} srv=${at?.position.x.toFixed(1)}`,
       );
@@ -377,13 +398,27 @@ async function run(label: string, delayTicks: number, ticks: number): Promise<Ru
     // `fresh` -- the view *after* this tick's press -- because a bar that only
     // appears on the next tick is a bar that appeared late.
     const hasBar = fresh.casts.some((cast) => cast.entityId === fresh.selfEntityId);
-    if (!hadBar && hasBar) barAppearedAt = tick;
+    if (!hadBar && hasBar) {
+      barAppearedAt = tick;
+      serverCastSeenThisBar = false;
+    }
+    if (serverCasting) serverCastSeenThisBar = true;
     hadBar = hasBar;
+
+    // A tick-by-tick picture of the disagreement, which a percentage cannot give
+    // you: whether the client is a tick late at the start of every blow or a
+    // handful late at the end of it are different bugs with the same number.
+    // `.` neither, `C` both, `s` server only, `c` client only.
+    if (process.env.DEBUG_CAST) {
+      timeline.push(serverCasting ? (hasBar ? 'C' : 's') : hasBar ? 'c' : '.');
+    }
 
     combat.sampled += 1;
     if (serverCasting && !hasBar) combat.barMissing += 1;
-    if (!serverCasting && hasBar) combat.barPhantom += 1;
-    if (!serverCasting && fresh.selfRoot) combat.overRoot += 1;
+    if (!serverCasting && hasBar) {
+      if (serverCastSeenThisBar) combat.barLingering += 1;
+      else combat.barEarly += 1;
+    }
     if (serverCasting && !fresh.selfRoot) combat.underRoot += 1;
     // The sweep is only wrong when the server says "not yet" and the client's
     // own table says "ready" -- a button that looks pressable and is not.
@@ -412,6 +447,13 @@ async function run(label: string, delayTicks: number, ticks: number): Promise<Ru
       if (step > 8) maxSnap = Math.max(maxSnap, step);
     }
     previous = after ? { x: after.x, y: after.y } : null;
+  }
+
+  if (process.env.DEBUG_CAST) {
+    console.log(`\n${label}`);
+    for (let at = 0; at < timeline.length; at += 120) {
+      console.log(`  ${String(at).padStart(4)} ${timeline.slice(at, at + 120).join('')}`);
+    }
   }
 
   // Drift nudges are the system working -- small, eased, and gone. Anything else
@@ -472,14 +514,14 @@ async function main(): Promise<void> {
   // player sees and what the server is doing, as a percentage of the session.
   console.log('\nwhat the blow felt like -- % of ticks the client disagreed with the server\n');
   console.log(
-    'round trip       no bar   phantom bar   over-root   under-root   dead sweep   press->bar   committed/refused',
+    'round trip       no bar   early bar   lingering bar   under-root   dead sweep   press->bar   committed/refused',
   );
   for (const row of rows) {
     const pct = (value: number): string =>
       row.combat.sampled === 0 ? '-' : `${((value / row.combat.sampled) * 100).toFixed(0)}%`;
     console.log(
       `${row.label.padEnd(17)}${pct(row.combat.barMissing).padEnd(9)}` +
-        `${pct(row.combat.barPhantom).padEnd(14)}${pct(row.combat.overRoot).padEnd(12)}` +
+        `${pct(row.combat.barEarly).padEnd(12)}${pct(row.combat.barLingering).padEnd(16)}` +
         `${pct(row.combat.underRoot).padEnd(13)}${pct(row.combat.sweepMissing).padEnd(13)}` +
         `${`${row.combat.meanPressToBar.toFixed(1)} (${row.combat.worstPressToBar})`.padEnd(13)}` +
         `${row.combat.committed} / ${row.combat.refused}`,
