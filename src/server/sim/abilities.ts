@@ -325,14 +325,25 @@ export function advanceCast(
 
   // --- the target died -------------------------------------------------
   // A blow aimed at a body that is no longer there is called off rather than
-  // thrown at the corpse (spec 079). The refund is a withdrawal's, because that
-  // is what this is: nothing was thrown, so nothing was spent but the time.
+  // thrown at the corpse (spec 079) -- but only while the caster is still
+  // *turning* (spec 080). Nothing has been committed to there: the wind-up clock
+  // has not started and `releaseTick` is a placeholder the server has not
+  // stamped for real, so the refund is a withdrawal's and the only thing spent
+  // is the time.
   //
-  // Only up to the release, and deliberately so. A shot already in the air is
-  // its own entity and finishes its flight -- the travel is the only thing that
-  // decides, and reaching back to un-launch it would be the schedule this design
-  // exists to not have.
-  const cancellable = cast.phase === CastPhase.Turning || tick < cast.releaseTick;
+  // Past the turn the blow completes and finds what it finds. 079 ran this
+  // window to the release, which put an arbitrary cliff one tick wide in the
+  // middle of every ranged auto-attack: a shot's damage lands when the *shot*
+  // arrives, about one wind-up after the loose, so the previous arrow killed the
+  // target exactly while the next wind-up ran and deleted it -- once per kill,
+  // three-quarters of the way along the bar. One tick later and the same arrow
+  // would have flown and disjointed in mid-air, which is the behaviour 079 chose
+  // deliberately and described as "nothing was scheduled, so there is nothing to
+  // un-schedule". A wind-up is nothing scheduled either.
+  //
+  // Nothing new is needed to handle the corpse: `landOnTarget` misses on a
+  // target that is absent or at zero health, and `landCone` skips one.
+  const cancellable = cast.phase === CastPhase.Turning;
   if (cast.targetEntityId > 0 && cancellable) {
     const named = candidates.find((candidate) => candidate.id === cast.targetEntityId);
     if (!named || named.health <= 0) {
