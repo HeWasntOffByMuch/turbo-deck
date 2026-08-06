@@ -446,3 +446,140 @@ describe('search bookkeeping (spec 067)', () => {
     expect(path[path.length - 1]).toEqual(to);
   });
 });
+
+describe('connected components (spec 073)', () => {
+  /**
+   * Which cells are reachable from `seed`, worked out the long way: an unbounded
+   * breadth-first flood with the search's own connectivity rules, written out
+   * here rather than shared with the implementation so the two can disagree.
+   */
+  function reachableFrom(grid: ReturnType<typeof navGridFor>, seed: number): Set<number> {
+    const seen = new Set<number>([seed]);
+    const queue: number[] = [seed];
+    for (const current of queue) {
+      const col = current % grid.cols;
+      const row = (current - col) / grid.cols;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nextCol = col + dx;
+          const nextRow = row + dy;
+          if (nextCol < 0 || nextCol >= grid.cols || nextRow < 0 || nextRow >= grid.rows) continue;
+          const next = nextRow * grid.cols + nextCol;
+          if (grid.cells[next] === NAV_BLOCKED || seen.has(next)) continue;
+          if (dx !== 0 && dy !== 0) {
+            if (grid.cells[row * grid.cols + nextCol] === NAV_BLOCKED) continue;
+            if (grid.cells[nextRow * grid.cols + col] === NAV_BLOCKED) continue;
+          }
+          seen.add(next);
+          queue.push(next);
+        }
+      }
+    }
+    return seen;
+  }
+
+  const cellAt = (grid: ReturnType<typeof navGridFor>, point: Vec2): number =>
+    Math.floor((point.y - grid.originY) / grid.cellSize) * grid.cols +
+    Math.floor((point.x - grid.originX) / grid.cellSize);
+
+  it('labels exactly the cells an unbounded flood reaches', () => {
+    const grid = navGridFor(PLAYER_RADIUS, GROVE);
+    // Two seeds on opposite sides of the grove, plus one in the sealed box, so
+    // both a sprawling region and a walled-off one are checked.
+    for (const point of [{ x: 30, y: 30 }, { x: GROVE_SPAN - 30, y: GROVE_SPAN - 30 }]) {
+      const seed = cellAt(grid, point);
+      expect(grid.cells[seed]).not.toBe(NAV_BLOCKED);
+      const id = grid.components[seed];
+      const flooded = reachableFrom(grid, seed);
+      const labelled = new Set<number>();
+      for (let cell = 0; cell < grid.components.length; cell++) {
+        if (grid.components[cell] === id) labelled.add(cell);
+      }
+      expect([...labelled].sort((a, b) => a - b)).toEqual([...flooded].sort((a, b) => a - b));
+      expect(grid.componentSizes[id as number]).toBe(flooded.size);
+    }
+  });
+
+  it('gives a blocked cell no component, and every passable cell one', () => {
+    const grid = navGridFor(PLAYER_RADIUS, GROVE);
+    let passable = 0;
+    for (let cell = 0; cell < grid.cells.length; cell++) {
+      if (grid.cells[cell] === NAV_BLOCKED) {
+        expect(grid.components[cell]).toBe(-1);
+      } else {
+        expect(grid.components[cell]).toBeGreaterThanOrEqual(0);
+        passable++;
+      }
+    }
+    // The sizes account for every passable cell exactly once.
+    let total = 0;
+    for (const size of grid.componentSizes) total += size;
+    expect(total).toBe(passable);
+  });
+
+  it('separates the inside of a sealed box from everything outside it', () => {
+    const grid = navGridFor(PLAYER_RADIUS, SEALED);
+    const inside = cellAt(grid, { x: 400, y: 350 });
+    const outside = cellAt(grid, { x: 800, y: 350 });
+    expect(grid.cells[inside]).not.toBe(NAV_BLOCKED);
+    expect(grid.components[inside]).not.toBe(grid.components[outside]);
+    // And the box really is sealed, by the same long-way flood.
+    expect(reachableFrom(grid, inside).has(outside)).toBe(false);
+  });
+
+  it('refuses a pair only when no route between them exists at all', () => {
+    // The check that matters: the O(1) rejection must never turn down a pair the
+    // search could have walked. Every pair the components split is confirmed
+    // unroutable by an unbounded flood, which has no node budget to run out of.
+    const grid = navGridFor(PLAYER_RADIUS, SEALED);
+    const points: Vec2[] = [
+      { x: 400, y: 350 },
+      { x: 300, y: 250 },
+      { x: 800, y: 350 },
+      { x: 100, y: 100 },
+      { x: 1200, y: 700 },
+    ];
+    const floods = new Map<number, Set<number>>();
+    let split = 0;
+    for (const from of points) {
+      for (const to of points) {
+        const start = cellAt(grid, from);
+        const goal = cellAt(grid, to);
+        if (grid.components[start] === grid.components[goal]) continue;
+        split++;
+        let flood = floods.get(start);
+        if (!flood) {
+          flood = reachableFrom(grid, start);
+          floods.set(start, flood);
+        }
+        expect(flood.has(goal)).toBe(false);
+        expect(findPath(grid, from, to)).toEqual([]);
+      }
+    }
+    expect(split).toBeGreaterThan(0);
+  });
+
+  it('answers an unreachable goal without expanding a single cell', () => {
+    // The point of the whole thing: a hopeless pair used to cost a flood to the
+    // node budget. A search that never starts never bumps the generation stamp.
+    const grid = navGridFor(PLAYER_RADIUS, SEALED);
+    const before = grid.scratch.generation;
+    expect(findPath(grid, { x: 800, y: 350 }, { x: 400, y: 350 })).toEqual([]);
+    expect(grid.scratch.generation).toBe(before);
+
+    // A connected pair with the box between them still searches, so the stamp
+    // is not simply frozen.
+    const around = findPath(grid, { x: 800, y: 350 }, { x: 100, y: 350 });
+    expect(around.length).toBeGreaterThan(1);
+    expect(grid.scratch.generation).toBeGreaterThan(before);
+  });
+
+  it('is still deterministic: the same hopeless pair answers the same way', () => {
+    const grid = navGridFor(PLAYER_RADIUS, SEALED);
+    const from: Vec2 = { x: 800, y: 350 };
+    const to: Vec2 = { x: 400, y: 350 };
+    const first = findPath(grid, from, to);
+    for (let i = 0; i < 5; i++) expect(findPath(grid, from, to)).toEqual(first);
+  });
+});
