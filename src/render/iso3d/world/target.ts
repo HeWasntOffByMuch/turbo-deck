@@ -86,6 +86,12 @@ export function autoAttack(input: AutoAttackInput): AutoAttack {
   // "when does auto-attacking stop" has one answer and it is tested.
   if (target.health <= 0) return { chaseTo: null, attack: false, drop: true };
 
+  // A committed body holds, in reach or out of it (spec 076). It has to: a move
+  // order now *withdraws* from a cast, so chasing a target that stepped back
+  // during a wind-up would call the swing off on the player's behalf -- and the
+  // one thing the feint has to be is theirs.
+  if (input.rooted) return { chaseTo: null, attack: false, drop: false };
+
   const dx = target.x - input.self.x;
   const dy = target.y - input.self.y;
   const distance = Math.hypot(dx, dy);
@@ -103,7 +109,7 @@ export function autoAttack(input: AutoAttackInput): AutoAttack {
     // The cooldown is the server's number, played back. Asking anyway would not
     // be wrong so much as noisy: every refused request is a round trip of
     // `castRejected` and a cooldown guess to take back again.
-    attack: !input.rooted && input.tick >= input.readyAtTick,
+    attack: input.tick >= input.readyAtTick,
     drop: false,
   };
 }

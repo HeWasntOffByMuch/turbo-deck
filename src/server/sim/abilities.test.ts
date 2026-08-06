@@ -196,7 +196,7 @@ describe('wind-up', () => {
     expect(hits(after.events)).toHaveLength(0);
   });
 
-  it('roots the caster for the whole cast', () => {
+  it('roots a caster that asks for nothing', () => {
     let state = createWorldState(1);
     const player = withPlayer(state, 600, 450);
     state = player.state;
@@ -205,12 +205,95 @@ describe('wind-up', () => {
     const frames: Record<number, ServerInput[]> = {
       0: [input(player.id, { castAbilityId: 'melee.heavy', castTargetX: 700, castTargetY: 450 })],
     };
-    // Walking hard the whole time it is winding up.
-    for (let i = 1; i < 20; i++) frames[i] = [input(player.id, { moveX: 0, moveY: 1 })];
+    // Standing still: nothing asked for, so nothing is withdrawn from either.
+    for (let i = 1; i < 20; i++) frames[i] = [input(player.id, {})];
 
     const result = run(state, 20, frames);
     expect(result.state.entities.get(player.id)?.position.y).toBeCloseTo(450, 3);
     expect(result.state.entities.get(player.id)?.position.x).toBeCloseTo(startX, 3);
+  });
+
+  /**
+   * Spec 076. Asking to move is the other way out of a commitment, and the one
+   * that makes a feint possible: show the wind-up, read the answer, walk out of
+   * it. The refund is the one `Esc` gives, so the only thing spent is the time.
+   */
+  it('withdraws from a wind-up when a move order arrives, and moves that tick', () => {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const startY = state.entities.get(player.id)?.position.y ?? 0;
+    const resource = state.entities.get(player.id)?.resource ?? 0;
+
+    const commit = run(state, 1, {
+      0: [input(player.id, { castAbilityId: 'melee.heavy', castTargetX: 700, castTargetY: 450 })],
+    });
+    const committed = commit.state.entities.get(player.id);
+    expect(committed?.cast).not.toBeNull();
+    expect(committed?.resource).toBeLessThan(resource);
+    expect(committed?.cooldowns['melee.heavy']).toBeGreaterThan(0);
+
+    const away = run(commit.state, 1, { 0: [input(player.id, { moveX: 0, moveY: 1 })] });
+    const withdrawn = away.state.entities.get(player.id);
+    expect(withdrawn?.cast).toBeNull();
+    // Everything back but the time: cost refunded, cooldown gone.
+    expect(withdrawn?.resource).toBeCloseTo(resource, 3);
+    expect(withdrawn?.cooldowns['melee.heavy']).toBeUndefined();
+    // And the step away is the same tick, not the one after it.
+    expect(withdrawn?.position.y).toBeGreaterThan(startY);
+    expect(
+      away.events.some(
+        (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Cancelled,
+      ),
+    ).toBe(true);
+    // Nothing landed: a withdrawn blow is a blow that never happened.
+    expect(hits(away.events)).toHaveLength(0);
+  });
+
+  it('withdraws from the turn as readily as from the wind-up', () => {
+    let state = createWorldState(1);
+    // Spawned facing east and committing due west, so the cast is still turning
+    // when the move order lands and `releaseTick` is still the provisional one.
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+
+    const commit = run(state, 1, {
+      0: [input(player.id, { castAbilityId: 'melee.heavy', castTargetX: 300, castTargetY: 450 })],
+    });
+    expect(commit.state.entities.get(player.id)?.cast?.phase).toBe(CastPhase.Turning);
+
+    const away = run(commit.state, 1, { 0: [input(player.id, { moveX: 0, moveY: 1 })] });
+    expect(away.state.entities.get(player.id)?.cast).toBeNull();
+    expect(away.state.entities.get(player.id)?.cooldowns['melee.heavy']).toBeUndefined();
+  });
+
+  it('does not withdraw from a blow that has already landed', () => {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+
+    const commit = run(state, 1, {
+      0: [input(player.id, { castAbilityId: 'melee.slash', castTargetX: 700, castTargetY: 450 })],
+    });
+    const releaseTick = commit.state.entities.get(player.id)?.cast?.releaseTick ?? 0;
+
+    let during = commit;
+    while (during.state.tick < releaseTick) during = run(during.state, 1);
+    expect(
+      during.events.some(
+        (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Released,
+      ),
+    ).toBe(true);
+
+    // Walking now is an ordinary walk away from a blow that went off, and the
+    // cooldown it started is still standing.
+    const after = run(during.state, 1, { 0: [input(player.id, { moveX: 0, moveY: 1 })] });
+    expect(after.state.entities.get(player.id)?.cooldowns['melee.slash']).toBeGreaterThan(0);
+    expect(
+      after.events.some(
+        (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Cancelled,
+      ),
+    ).toBe(false);
   });
 
   it('captures aim at commit, so turning mid-cast cannot re-point the blow', () => {
@@ -834,19 +917,21 @@ describe('cast phases reach the client', () => {
     const releaseTick = commit.state.entities.get(player.id)?.cast?.releaseTick ?? 0;
     expect(releaseTick).toBeGreaterThan(commit.state.tick);
 
-    // Walking hard from the moment it is committed: refused for the whole cast.
+    // Nothing asked for while it winds up. Walking would withdraw from it now
+    // (spec 076), which is a different test; what is being measured here is
+    // where the cast *ends*.
     const walk: Record<number, ServerInput[]> = { 0: [input(player.id, { moveX: 0, moveY: 1 })] };
 
     // Up to the tick before the release: still winding up, still rooted, and
     // nothing has ended.
     let during = commit;
-    while (during.state.tick < releaseTick - 1) during = run(during.state, 1, walk);
+    while (during.state.tick < releaseTick - 1) during = run(during.state, 1);
     expect(during.state.entities.get(player.id)?.cast?.phase).toBe(CastPhase.Windup);
     expect(during.state.entities.get(player.id)?.position.y).toBeCloseTo(startY, 3);
     expect(during.events.some((event) => event.kind === 'castEnded')).toBe(false);
 
     // The release tick: the blow lands and the cast is over in the same breath.
-    const release = run(during.state, 1, walk);
+    const release = run(during.state, 1);
     expect(release.state.entities.get(player.id)?.cast).toBeNull();
     expect(
       release.events.some(

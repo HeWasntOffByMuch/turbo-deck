@@ -268,11 +268,24 @@ export function step(
       rawIntent = decided.input;
       steered = decided.entity;
     }
+    // Asking to move is how a body withdraws from a blow it has committed to
+    // (spec 076). The refund is the one `Esc` gives -- cost back, cooldown
+    // cleared -- so the feint costs exactly the time it took to show, and it is
+    // settled *here* rather than deferred to the cast pass, because withdrawing
+    // and stepping away have to be the same tick or the step reads as a stutter.
+    if (steered.cast !== null && asksToMove(rawIntent)) {
+      const withdrawn = cancelCast(steered, tick, CastEndReason.Cancelled);
+      if (withdrawn.cancelled) {
+        steered = withdrawn.entity;
+        events.push(...withdrawn.events);
+      }
+    }
+
     // A committed cast roots the caster. The intent still carries the facing so
     // a client's aim stays live until the moment of commit, but the movement
     // components are dropped.
     const intent =
-      rawIntent && current.cast !== null
+      rawIntent && steered.cast !== null
         ? { ...rawIntent, moveX: 0, moveY: 0 }
         : rawIntent;
     if (intent && current.kind !== EntityKindValue.Player) monsterIntentCache.set(current.id, intent);
@@ -533,6 +546,18 @@ export function step(
   events.push(...spawned.events);
 
   return { state: { tick, entities: working, nextEntityId, rng }, events };
+}
+
+/**
+ * Whether this intent asks the body to walk (spec 076).
+ *
+ * The threshold is float slack, not a dead zone: every producer of a move vector
+ * -- `moveIntent`, `monsterIntent`, the bots -- emits either a unit vector or an
+ * exact zero, so anything with length at all is somebody asking to go somewhere.
+ */
+function asksToMove(intent: ServerInput | null): boolean {
+  if (!intent) return false;
+  return Math.hypot(intent.moveX, intent.moveY) > 1e-6;
 }
 
 /** Returns to a resting activity once the committed one has run out. */

@@ -63,6 +63,18 @@ describe('auto-attacking a named target (spec 070)', () => {
     expect(ask({ self: { x: 340, y: 0 }, rooted: true }).attack).toBe(false);
   });
 
+  /**
+   * Spec 076. A move order withdraws from a cast now, so a chase issued while
+   * committed would call the swing off on the player's behalf -- and the one
+   * thing a feint has to be is theirs.
+   */
+  it('asks for no chase while committed, however far out the target is', () => {
+    expect(ask({ self: { x: -900, y: 0 }, rooted: true }).chaseTo).toBeNull();
+    expect(ask({ self: { x: 340, y: 0 }, rooted: true }).chaseTo).toBeNull();
+    // And it still says so when the target has died under a committed swing.
+    expect(ask({ target: { ...TARGET, health: 0 }, rooted: true }).drop).toBe(true);
+  });
+
   it('waits out the cooldown the server gave it', () => {
     const inReach = { self: { x: 340, y: 0 } };
     expect(ask({ ...inReach, readyAtTick: 130, tick: 129 }).attack).toBe(false);
