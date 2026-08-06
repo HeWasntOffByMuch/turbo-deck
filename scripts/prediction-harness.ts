@@ -110,6 +110,52 @@ interface Run {
   readonly rooted: number;
   /** Fraction of ticks the server really had a cast in progress. */
   readonly casting: number;
+  readonly combat: Combat;
+}
+
+/**
+ * What the *blow* felt like, as opposed to what the walk did (spec 068).
+ *
+ * Every number here is a disagreement between what the player is looking at and
+ * what the server is actually doing, counted per tick. Movement had one honest
+ * measure -- the body is where the server says or it is not -- and combat needs
+ * four, because a commit is four visible things at once: a bar, a sweep, a
+ * rooted body and a swing that lands.
+ */
+interface Combat {
+  /** Ticks compared, so the rest can be read as fractions of a session. */
+  readonly sampled: number;
+  /**
+   * Ticks the server had a cast running and the client was drawing no bar.
+   *
+   * The headline. This is the press that appears to do nothing: it is exactly
+   * the round trip on a client that waits to be told, and it is the number this
+   * spec exists to drive to zero.
+   */
+  readonly barMissing: number;
+  /**
+   * Ticks the client drew a bar the server did not have. The cost of guessing:
+   * a wind-up shown for a blow that was refused, or one still drawn after the
+   * server's had ended. Traded against `barMissing` -- zero here and a large
+   * `barMissing` is the old behaviour; both near zero is the goal.
+   */
+  readonly barPhantom: number;
+  /** Ticks stood still for a cast the server was not running. Wasted stillness. */
+  readonly overRoot: number;
+  /** Ticks walked while the server held us rooted. Divergence, and corrections. */
+  readonly underRoot: number;
+  /**
+   * Ticks the server had the ability on cooldown and the client's sweep read
+   * ready. A button that looks usable and is not.
+   */
+  readonly sweepMissing: number;
+  /** Presses the server refused outright. */
+  readonly refused: number;
+  /** Presses the server committed to. */
+  readonly committed: number;
+  /** Ticks between a press and a bar appearing for it: worst, and mean. */
+  readonly worstPressToBar: number;
+  readonly meanPressToBar: number;
 }
 
 /**
@@ -175,6 +221,76 @@ async function run(label: string, delayTicks: number, ticks: number): Promise<Ru
   });
   void client.connect();
 
+  // What the server actually has, read straight out of its state. The harness is
+  // allowed to do this and the client is not -- that asymmetry is the point.
+  //
+  // Read through a function, never captured: `step()` returns a fresh state and
+  // the server rebinds the field every tick, so a reference taken once is the
+  // world as it stood at tick zero. Holding one silently reported a session in
+  // which nobody ever cast anything.
+  const serverState = (): {
+    tick: number;
+    entities: Map<
+      number,
+      { cast: unknown; position: { x: number; y: number }; cooldowns: Record<string, number> }
+    >;
+  } =>
+    (
+      server as unknown as {
+        state: {
+          tick: number;
+          entities: Map<
+            number,
+            {
+              cast: unknown;
+              position: { x: number; y: number };
+              cooldowns: Record<string, number>;
+            }
+          >;
+        };
+      }
+    ).state;
+
+  const combat = {
+    sampled: 0,
+    barMissing: 0,
+    barPhantom: 0,
+    overRoot: 0,
+    underRoot: 0,
+    sweepMissing: 0,
+    refused: 0,
+    committed: 0,
+  };
+  const pressToBar: number[] = [];
+  /**
+   * Presses sent and not yet answered, oldest first -- the same queue the client
+   * keeps, for the same reason: the server answers each request exactly once and
+   * in order, so the n-th answer belongs to the n-th press. Pairing them is what
+   * separates "the press did nothing for 20 ticks" from "that press was refused
+   * and the bar 20 ticks later belonged to a different one" -- without it a
+   * spam-clicker on cooldown looks unresponsive when it is merely being told no.
+   */
+  const pressQueue: number[] = [];
+  /** The tick a bar last appeared where there had been none. */
+  let barAppearedAt: number | null = null;
+  let hadBar = false;
+  let atTick = 0;
+  client.onCastRejected(() => {
+    combat.refused += 1;
+    pressQueue.shift();
+  });
+  client.onCastStarted((cast) => {
+    if (cast.entityId !== client.view().selfEntityId) return;
+    combat.committed += 1;
+    const pressedAt = pressQueue.shift();
+    if (pressedAt === undefined) return;
+    // The bar for this commit is the one that went up at or after the press;
+    // anything earlier belonged to a previous cast. If none has appeared yet,
+    // it appears now, on the message that just landed.
+    const shownAt = barAppearedAt !== null && barAppearedAt >= pressedAt ? barAppearedAt : atTick;
+    pressToBar.push(Math.max(0, shownAt - pressedAt));
+  });
+
   const planner = new RoutePlanner();
   const held = new Set<string>();
   const pathWorld = { colliders: world.colliders, radius: SERVER_PLAYER_RADIUS };
@@ -190,6 +306,9 @@ async function run(label: string, delayTicks: number, ticks: number): Promise<Ru
   let sampled = 0;
 
   for (let tick = 1; tick <= ticks; tick += 1) {
+    // Set before anything is delivered: the cast callbacks fire inside `pump`
+    // and need to know what tick they are being heard on.
+    atTick = tick;
     // Frames deliver; ticks in between run blind, exactly as they do in the tab.
     if (tick % TICKS_PER_FRAME === 1 || TICKS_PER_FRAME === 1) {
       line.pump(tick);
@@ -213,6 +332,12 @@ async function run(label: string, delayTicks: number, ticks: number): Promise<Ru
       // Committing cancels where you were going -- what `view.ts` does.
       destination = null;
       planner.clear();
+      // Queued before the call, so "how long until something happened" is
+      // measured from the press rather than from the answer to it.
+      pressQueue.push(tick);
+      // A queue that never drains would mismatch every later answer; the client
+      // gives up on an unanswered request too, and this follows it.
+      if (pressQueue.length > 32) pressQueue.shift();
       client.useAbility('melee.slash', view.self.x + 100, view.self.y);
     }
 
@@ -234,23 +359,37 @@ async function run(label: string, delayTicks: number, ticks: number): Promise<Ru
     }
     facing = turnToward(facing, intent.facing, fresh.stats?.turnRate ?? 0, SERVER_TICK_RATE);
     if (process.env.DEBUG) {
-      const srv = (server as unknown as { state: { tick: number; entities: Map<number, { cast: unknown; position: { x: number } }> } }).state;
-      const mine = srv.entities.get(view.selfEntityId);
+      const at = serverState().entities.get(view.selfEntityId);
       console.log(
-        `t=${tick} est=${view.estimatedTick} srvTick=${srv.tick} rtt=${view.roundTripTicks} ` +
-          `root=${view.selfRoot ? 'Y' : 'n'} srvCast=${mine?.cast ? 'Y' : 'n'} ` +
+        `t=${tick} est=${view.estimatedTick} srvTick=${serverState().tick} rtt=${view.roundTripTicks} ` +
+          `root=${view.selfRoot ? 'Y' : 'n'} srvCast=${at?.cast ? 'Y' : 'n'} ` +
           `cd=${JSON.stringify(view.cooldowns)} move=${intent.moveX.toFixed(1)} ` +
-          `local=${me.x.toFixed(1)} srv=${mine?.position.x.toFixed(1)}`,
+          `local=${me.x.toFixed(1)} srv=${at?.position.x.toFixed(1)}`,
       );
     }
     sampled += 1;
     if (fresh.selfRoot) rootedTicks += 1;
-    if (
-      (
-        server as unknown as { state: { entities: Map<number, { cast: unknown }> } }
-      ).state.entities.get(view.selfEntityId)?.cast
-    ) {
-      castingTicks += 1;
+    const mine = serverState().entities.get(view.selfEntityId);
+    const serverCasting = Boolean(mine?.cast);
+    if (serverCasting) castingTicks += 1;
+
+    // What the player is looking at, against what the server is doing. Read from
+    // `fresh` -- the view *after* this tick's press -- because a bar that only
+    // appears on the next tick is a bar that appeared late.
+    const hasBar = fresh.casts.some((cast) => cast.entityId === fresh.selfEntityId);
+    if (!hadBar && hasBar) barAppearedAt = tick;
+    hadBar = hasBar;
+
+    combat.sampled += 1;
+    if (serverCasting && !hasBar) combat.barMissing += 1;
+    if (!serverCasting && hasBar) combat.barPhantom += 1;
+    if (!serverCasting && fresh.selfRoot) combat.overRoot += 1;
+    if (serverCasting && !fresh.selfRoot) combat.underRoot += 1;
+    // The sweep is only wrong when the server says "not yet" and the client's
+    // own table says "ready" -- a button that looks pressable and is not.
+    const serverReadyAt = mine?.cooldowns['melee.slash'] ?? 0;
+    if (serverState().tick < serverReadyAt && (fresh.cooldowns['melee.slash'] ?? 0) <= fresh.estimatedTick) {
+      combat.sweepMissing += 1;
     }
     const claimed = client.sendInput({
       moveX: intent.moveX,
@@ -288,6 +427,14 @@ async function run(label: string, delayTicks: number, ticks: number): Promise<Ru
     worstResidual,
     rooted: sampled === 0 ? 0 : rootedTicks / sampled,
     casting: sampled === 0 ? 0 : castingTicks / sampled,
+    combat: {
+      ...combat,
+      worstPressToBar: pressToBar.length === 0 ? 0 : Math.max(...pressToBar),
+      meanPressToBar:
+        pressToBar.length === 0
+          ? 0
+          : pressToBar.reduce((sum, value) => sum + value, 0) / pressToBar.length,
+    },
   };
 }
 
@@ -318,6 +465,24 @@ async function main(): Promise<void> {
       `${row.label.padEnd(17)}${String(row.hard).padEnd(13)}${(reasons || '-').padEnd(31)}` +
         `${row.maxSnap.toFixed(1).padEnd(13)}${row.worstResidual.toFixed(1).padEnd(14)}` +
         `${(row.rooted * 100).toFixed(0)}% / ${(row.casting * 100).toFixed(0)}%`,
+    );
+  }
+
+  // The combat half (spec 068). Every column is a disagreement between what the
+  // player sees and what the server is doing, as a percentage of the session.
+  console.log('\nwhat the blow felt like -- % of ticks the client disagreed with the server\n');
+  console.log(
+    'round trip       no bar   phantom bar   over-root   under-root   dead sweep   press->bar   committed/refused',
+  );
+  for (const row of rows) {
+    const pct = (value: number): string =>
+      row.combat.sampled === 0 ? '-' : `${((value / row.combat.sampled) * 100).toFixed(0)}%`;
+    console.log(
+      `${row.label.padEnd(17)}${pct(row.combat.barMissing).padEnd(9)}` +
+        `${pct(row.combat.barPhantom).padEnd(14)}${pct(row.combat.overRoot).padEnd(12)}` +
+        `${pct(row.combat.underRoot).padEnd(13)}${pct(row.combat.sweepMissing).padEnd(13)}` +
+        `${`${row.combat.meanPressToBar.toFixed(1)} (${row.combat.worstPressToBar})`.padEnd(13)}` +
+        `${row.combat.committed} / ${row.combat.refused}`,
     );
   }
   console.log('');
