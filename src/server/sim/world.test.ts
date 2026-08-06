@@ -827,14 +827,15 @@ describe('monsters find their way round', () => {
     /** A monster outside the pen, a player inside it, run for `ticks`. */
     function siege(ticks: number): { path: number | null; repathAtTick: number; tick: number } {
       let state = createWorldState(1);
-      state = withPlayer(state, 600, 450).state;
-      const monster = withMonster(state, 'stalker', 600, 280);
+      const player = withPlayer(state, 600, 450);
+      state = player.state;
+      // Already fighting the player it cannot reach: nothing initiates since
+      // spec 074, so a siege has to start with the grudge a hit would have given.
+      const monster = withMonster(state, 'stalker', 600, 280, { targetId: player.id });
       state = monster.state;
       const ctx = context({
         world: PEN,
         activeChunks: activeAround({ x: 600, y: 450 }),
-        // The ambient spawner would add monsters of its own and muddy the count.
-        config: { ...DEFAULT_LIVE_CONFIG, spawnRateMultiplier: 0 },
       });
       for (let i = 0; i < ticks; i++) state = step(state, [], ctx).state;
       const at = state.entities.get(monster.id);
@@ -866,13 +867,13 @@ describe('monsters find their way round', () => {
 
     it('still presses toward the player it cannot reach', () => {
       let state = createWorldState(1);
-      state = withPlayer(state, 600, 450).state;
-      const monster = withMonster(state, 'stalker', 600, 280);
+      const player = withPlayer(state, 600, 450);
+      state = player.state;
+      const monster = withMonster(state, 'stalker', 600, 280, { targetId: player.id });
       state = monster.state;
       const ctx = context({
         world: PEN,
         activeChunks: activeAround({ x: 600, y: 450 }),
-        config: { ...DEFAULT_LIVE_CONFIG, spawnRateMultiplier: 0 },
       });
       for (let i = 0; i < SERVER_TICK_RATE * 2; i++) state = step(state, [], ctx).state;
       const at = state.entities.get(monster.id)?.position;
