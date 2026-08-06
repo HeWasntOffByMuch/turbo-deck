@@ -886,8 +886,19 @@ export interface MeshLayer {
   readonly id: string;
   readonly bounds: MapRect;
   readonly waterLevel: number | null;
-  /** Ground at this cell of the layer's global grid — outside the chunk too. */
-  solidAt(col: number, row: number): boolean;
+  /**
+   * Ground at this cell of the layer's global grid — outside the chunk too, and
+   * `null` where no chunk holds it yet (spec 078).
+   *
+   * The same distinction `materialAt` draws below, and for the same reason. The
+   * mesher skirts an edge where solid ground meets open air, so on a streaming
+   * client a plain `false` for a neighbour that has not arrived is a coastline
+   * as far as it can tell: every seam grows a full-height wall down to `baseY`
+   * and keeps it, because nothing re-meshes a chunk once it is drawn. `false`
+   * has to mean "there is no ground there", which past the layer's own grid it
+   * genuinely does — the world's edge earns its wall.
+   */
+  solidAt(col: number, row: number): boolean | null;
   /**
    * This cell's index into `TERRAIN_MATERIALS`, or `null` where no chunk holds
    * it yet (spec 074).
@@ -928,13 +939,22 @@ export function loadMap(doc: MapDocument): LoadedMap {
     store,
     world: createWorld(layers),
     chunks: store.buildChunks(),
-    meshLayers: doc.layers.map((l) => ({
-      id: l.id,
-      bounds: l.bounds,
-      waterLevel: l.waterLevel,
-      solidAt: (col: number, row: number): boolean => store.cellSolid(l.id, col, row),
-      materialAt: (col: number, row: number): number | null => store.cellAt(l.id, col, row)?.materialIndex ?? null,
-    })),
+    meshLayers: doc.layers.map((l) => {
+      const g = store.layerInfo(l.id)?.grid;
+      const onGrid = (col: number, row: number): boolean =>
+        g !== undefined && col >= 0 && row >= 0 && col < g.totalCols && row < g.totalRows;
+      return {
+        id: l.id,
+        bounds: l.bounds,
+        waterLevel: l.waterLevel,
+        // Off the grid is a definite no -- that is the world's edge, and the
+        // wall there is real. On the grid with no chunk behind it is `null`:
+        // unknown, and not something to grow a cliff along (spec 078).
+        solidAt: (col: number, row: number): boolean | null =>
+          onGrid(col, row) ? (store.cellAt(l.id, col, row)?.solid ?? null) : false,
+        materialAt: (col: number, row: number): number | null => store.cellAt(l.id, col, row)?.materialIndex ?? null,
+      };
+    }),
     props: doc.layers.flatMap((l) => store.props(l.id)),
     markers: doc.layers.flatMap((l) => store.markers(l.id)),
   };

@@ -12,7 +12,11 @@ import {
   type Rect,
   type TerrainWorld,
 } from '../../terrain/index.js';
-import { buildTerrainMesh, buildTerrainMeshFromChunks } from './terrain-mesh.js';
+import type { MapInfoMessage } from '../../server/net/map-messages.js';
+import { ServerMessageType } from '../../server/net/protocol.js';
+import type { HeldChunk } from '../../server/client/map-cache.js';
+import { StreamedMap } from '../../server/client/streamed-map.js';
+import { buildTerrainMesh, buildTerrainMeshFromChunks, type TerrainMeshHandle } from './terrain-mesh.js';
 
 /**
  * The acceptance test for spec 048, and the reason the mesher was split in two:
@@ -320,6 +324,139 @@ describe('a reloaded map draws the same water', () => {
     const bytes = waterQuads(generated.group).flatMap(shoreBytes);
     expect(Math.min(...bytes)).toBe(0);
     expect(Math.max(...bytes)).toBeGreaterThan(64);
+  });
+});
+
+/**
+ * The land half of the same question the water tests above ask (spec 078).
+ *
+ * A chunk's walls come from asking the layer about the cell across each edge,
+ * and its corner normals from an apron one corner past it -- both of which read
+ * the *neighbour's* arrays. Meshed while a neighbour was missing, a chunk grew a
+ * full-height curtain along the seam and kept it, because nothing redrew it.
+ *
+ * Driven through the real `StreamedMap`, not by handing the mesher chunks built
+ * from a complete store: the store's answers while it is still filling are half
+ * of what went wrong, so a test that skips it would only cover the walls.
+ */
+describe('a map that streams in draws the same land', () => {
+  const world = testWorld();
+  const doc = parseMap(serializeMap(exportMap({ world, props: [], seed: 7, arena: ARENA, options: OPT })));
+  const loaded = loadMap(doc);
+  const settled = buildTerrainMeshFromChunks(loaded.meshLayers, loaded.chunks);
+
+  const info: MapInfoMessage = {
+    type: ServerMessageType.MapInfo,
+    mapId: 'stream00',
+    seed: doc.seed,
+    cellSize: doc.grid.cellSize,
+    chunkCells: doc.grid.chunkCells,
+    arena: doc.arena,
+    species: [],
+    layers: doc.layers.map((l) => ({
+      id: l.id,
+      seed: l.seed,
+      bounds: l.bounds,
+      baseY: l.baseY,
+      waterLevel: l.waterLevel,
+      coords: l.chunks.map((c) => ({ cx: c.cx, cz: c.cz })),
+    })),
+  };
+  const arrivals = (): HeldChunk[] =>
+    doc.layers.flatMap((l, layer) => l.chunks.map((chunk) => ({ layer, cx: chunk.cx, cz: chunk.cz, chunk })));
+
+  /** The ground and its skirts. Water is the other tests' subject. */
+  const land = (group: THREE.Object3D): THREE.Mesh[] =>
+    meshes(group).filter((m) => !(m.material instanceof THREE.ShaderMaterial));
+
+  /** Skirt triangles only: the walls are the meshes with no supplied normal. */
+  const wallTriangles = (group: THREE.Object3D): number =>
+    land(group)
+      .filter((m) => (m.material as THREE.Material & { flatShading?: boolean }).flatShading === true)
+      .reduce((n, m) => n + (attribute(m, 'position')?.length ?? 0) / 9, 0);
+
+  /** Every land vertex as position+normal, order-independent. */
+  const vertices = (group: THREE.Object3D): string[] => {
+    const out: string[] = [];
+    for (const mesh of land(group)) {
+      const p = attribute(mesh, 'position');
+      const n = attribute(mesh, 'normal');
+      if (!p) continue;
+      for (let v = 0; v * 3 < p.length; v++) {
+        out.push(
+          `${p[v * 3]},${p[v * 3 + 1]},${p[v * 3 + 2]}|` +
+            `${n?.[v * 3] ?? ''},${n?.[v * 3 + 1] ?? ''},${n?.[v * 3 + 2] ?? ''}`,
+        );
+      }
+    }
+    return out.sort();
+  };
+
+  /** Mesh a whole map through the streaming path, in the given arrival order. */
+  const stream = (order: HeldChunk[]): { map: StreamedMap; handle: TerrainMeshHandle } => {
+    const map = new StreamedMap(info);
+    const handle = buildTerrainMeshFromChunks(map.meshLayers, []);
+    for (const held of order) for (const chunk of map.add(held)) handle.rebuild(chunk);
+    return { map, handle };
+  };
+
+  it('has seam coastlines to get wrong in the first place', () => {
+    // The guard on every equality below: if this fixture had no open air across
+    // a chunk boundary, "the walls match" would hold for a mesher that never
+    // built a seam wall at all, and the deferral would look like a fix.
+    const g = loaded.store.layerInfo('ground');
+    if (!g) throw new Error('no ground layer');
+    let seams = 0;
+    for (let row = 0; row < g.grid.totalRows; row++) {
+      for (let col = 0; col < g.grid.totalCols; col++) {
+        if (!loaded.store.cellSolid('ground', col, row)) continue;
+        for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          const crosses =
+            Math.floor((col + dc) / OPT.chunkCells) !== Math.floor(col / OPT.chunkCells) ||
+            Math.floor((row + dr) / OPT.chunkCells) !== Math.floor(row / OPT.chunkCells);
+          if (crosses && !loaded.store.cellSolid('ground', col + dc, row + dr)) seams++;
+        }
+      }
+    }
+    expect(seams).toBeGreaterThan(0);
+  });
+
+  it('ends up vertex for vertex where a whole-map bake does', () => {
+    const forwards = stream(arrivals());
+    expect(vertices(forwards.handle.group)).toEqual(vertices(settled.group));
+    forwards.handle.dispose();
+  });
+
+  it('does not care what order the chunks arrive in', () => {
+    // Reversed, because a forward order re-meshes only the west and north
+    // neighbours and would hide a direction that was never re-meshed at all.
+    const backwards = stream([...arrivals()].reverse());
+    expect(vertices(backwards.handle.group)).toEqual(vertices(settled.group));
+    backwards.handle.dispose();
+  });
+
+  it('never walls a seam whose far side has not arrived', () => {
+    // The property that makes the stream safe to watch: a chunk skirts an edge
+    // only where the layer says outright that there is no ground, so the world
+    // can only ever gain walls as chunks land -- never carry one that a settled
+    // map does not have. Without it this map ends the stream with four times
+    // the skirt it should have, dropped the full depth of the layer.
+    const target = wallTriangles(settled.group);
+    expect(target).toBeGreaterThan(0);
+    const map = new StreamedMap(info);
+    const handle = buildTerrainMeshFromChunks(map.meshLayers, []);
+    let first = 0;
+    for (const held of arrivals()) {
+      for (const chunk of map.add(held)) handle.rebuild(chunk);
+      if (first === 0) first = wallTriangles(handle.group);
+      expect(wallTriangles(handle.group)).toBeLessThanOrEqual(target);
+    }
+    // ...and the world's own outer edge is not deferred with them: it is off the
+    // layer's grid, which is a definite no rather than an unknown, so the very
+    // first chunk to land already has its rim.
+    expect(first).toBeGreaterThan(0);
+    expect(wallTriangles(handle.group)).toBe(target);
+    handle.dispose();
   });
 });
 

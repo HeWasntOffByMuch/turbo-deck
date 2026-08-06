@@ -175,6 +175,13 @@ src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
                  `src/render/wind-probe.html` are a dev-server-only measuring rig
                  (never in a build) driven by `npx tsx scripts/preview-wind.ts`,
                  which photographs the frame and reports the acceptance numbers.
+src/render/iso3d/lobe.ts  the lobed canopy tree's shape (spec 077): the union of
+                 circles a canopy slab's outline is, where the slabs sit, and the
+                 trunk's taper to a single vertex. Pure and tested headlessly --
+                 the silhouette is the whole species, so it is checked in Node.
+                 `props.ts` turns it into buffers; `npx tsx scripts/preview-trees.ts`
+                 photographs every tree the world grows to
+                 .claude/screenshots/trees.png.
 src/render/iso3d/movement.ts, debug-view.ts  the two tuning sandboxes (specs
                  032/033/035/046, back since 066): one unit, no game, so a gait,
                  a cloth solve or a turn rate can be watched in isolation. The

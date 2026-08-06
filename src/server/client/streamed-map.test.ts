@@ -128,10 +128,10 @@ describe('what it refuses', () => {
     const first = allChunks()[0];
     if (!first) throw new Error('no chunks');
 
-    expect(streamed.add(first)).not.toBeNull();
+    expect(streamed.add(first)).not.toHaveLength(0);
     // The view offers the whole held list every frame; re-meshing what is
     // already drawn is exactly the O(n)-per-frame cost this class removed.
-    expect(streamed.add(first)).toBeNull();
+    expect(streamed.add(first)).toHaveLength(0);
     expect(streamed.size).toBe(1);
   });
 
@@ -139,7 +139,57 @@ describe('what it refuses', () => {
     const streamed = new StreamedMap(info);
     const first = allChunks()[0];
     if (!first) throw new Error('no chunks');
-    expect(streamed.add({ ...first, layer: 99 })).toBeNull();
+    expect(streamed.add({ ...first, layer: 99 })).toHaveLength(0);
     expect(streamed.size).toBe(0);
+  });
+});
+
+describe('what an arrival makes dirty (spec 078)', () => {
+  /** `cx,cz` of each chunk handed back. */
+  const coords = (chunks: readonly { coord: { cx: number; cz: number } }[]): string[] =>
+    chunks.map((c) => `${c.coord.cx},${c.coord.cz}`).sort();
+
+  it('re-meshes the neighbours already held, and only those', () => {
+    // A chunk's walls and its corner normals are read across its edges, so a
+    // neighbour meshed before this one landed is holding a seam that the
+    // settled map does not have. Arriving into an empty neighbourhood is one
+    // chunk; arriving into a full one is five.
+    const streamed = new StreamedMap(info);
+    const at = (cx: number, cz: number): HeldChunk => {
+      const found = allChunks().find((c) => c.cx === cx && c.cz === cz);
+      if (!found) throw new Error(`no chunk ${cx},${cz}`);
+      return found;
+    };
+
+    expect(coords(streamed.add(at(2, 2)))).toEqual(['2,2']);
+    // The west neighbour arrives: itself, plus the one already beside it.
+    expect(coords(streamed.add(at(1, 2)))).toEqual(['1,2', '2,2']);
+    expect(coords(streamed.add(at(3, 2)))).toEqual(['2,2', '3,2']);
+    expect(coords(streamed.add(at(2, 1)))).toEqual(['2,1', '2,2']);
+    // Still two: (2,3) touches (2,2), and its other three neighbours are ground
+    // nobody has yet. An arrival costs its own neighbourhood, not the map's.
+    expect(coords(streamed.add(at(2, 3)))).toEqual(['2,2', '2,3']);
+  });
+
+  it('never hands back a diagonal, which nothing reads across', () => {
+    // Both the mesher's wall test and `buildChunk`'s apron step one cell along
+    // an axis. Re-meshing the corner neighbours as well would be four wasted
+    // chunks per arrival, every arrival.
+    const streamed = new StreamedMap(info);
+    const all = allChunks();
+    for (const held of all) {
+      if (Math.abs(held.cx - 2) <= 1 && Math.abs(held.cz - 2) <= 1 && !(held.cx === 2 && held.cz === 2)) {
+        streamed.add(held);
+      }
+    }
+    const centre = all.find((c) => c.cx === 2 && c.cz === 2);
+    if (!centre) throw new Error('no centre chunk');
+    expect(coords(streamed.add(centre))).toEqual(['1,2', '2,1', '2,2', '2,3', '3,2']);
+  });
+
+  it('stays bounded however many chunks are already held', () => {
+    // The property that keeps a cold start O(1) per arrival rather than O(held).
+    const streamed = new StreamedMap(info);
+    for (const held of allChunks()) expect(streamed.add(held).length).toBeLessThanOrEqual(5);
   });
 });
