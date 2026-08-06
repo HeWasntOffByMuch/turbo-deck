@@ -27,7 +27,7 @@ import { GameClient } from '../../../server/client/game-client.js';
 import { createWorldPredictor } from '../../../server/client/prediction.js';
 import { LoopbackTransport } from '../../../server/net/transport-loop.js';
 import { GameServer } from '../../../server/server.js';
-import { buildWorldFromDocument, buildWorldFromMap } from '../../../server/world/build.js';
+import { buildWorldFromMap } from '../../../server/world/build.js';
 import {
   BROADCAST_EVERY_N_TICKS,
   SERVER_PLAYER_RADIUS,
@@ -36,8 +36,8 @@ import {
 import { abilityById } from '../../../server/data/abilities.js';
 import { viewSeed } from '../seed.js';
 import mapText from '../../../../maps/arena.json?raw';
-import { parseMap, type MapDocument } from '../../../terrain/map.js';
-import { chunksToDocument } from '../../../server/client/map-rebuild.js';
+import { parseMap } from '../../../terrain/map.js';
+import { StreamedMap } from '../../../server/client/streamed-map.js';
 import type { ViewHandle } from '../view-handle.js';
 import { turnToward } from '../../../server/sim/movement.js';
 import { createHud, HOTBAR } from './hud.js';
@@ -45,6 +45,16 @@ import { moveIntent, MOVE_KEYS, RoutePlanner } from './intent.js';
 import { WorldScene } from './scene.js';
 
 const TICK_MS = 1000 / SERVER_TICK_RATE;
+
+/**
+ * Frames of quiet before the prop field is rebuilt (spec 070 follow-up).
+ *
+ * Small: the point is only to coalesce a burst of arrivals into one rebuild,
+ * not to defer the trees until the player notices they are missing. Two frames
+ * of nothing arriving is enough to know a burst has ended, and at the tail of a
+ * cold start the whole field appears within ~30ms of the last chunk.
+ */
+const PROP_SETTLE_FRAMES = 2;
 /** Never advance more than this many ticks in one frame, after a long pause. */
 const MAX_CATCH_UP_TICKS = 10;
 /** Ms between deltas -- the interval the renderer interpolates across. */
@@ -104,27 +114,54 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // server happens to be holding (spec 070). Starting empty and filling in from
   // chunks is the only way this path is genuinely exercised: handed `world` it
   // would look right while streaming did nothing.
-  const scene = new WorldScene(canvas, buildWorldFromDocument(emptyMap()));
-
-  /** A document with the right grid and layers and no chunks at all. */
-  function emptyMap(): MapDocument {
-    return { ...world.doc, layers: world.doc.layers.map((l) => ({ ...l, chunks: [] })) };
-  }
+  //
+  // `streamed` is created on the first MapInfo and lives for the session. It is
+  // never rebuilt -- see streamed-map.ts for why rebuilding it per arrival cost
+  // ten seconds of frozen page.
+  const scene = new WorldScene(canvas);
+  let streamed: StreamedMap | null = null;
+  /** Props lag the terrain; this is whether they owe a rebuild, and for how long. */
+  let propsDirty = false;
+  let settledFrames = 0;
 
   /**
-   * Remesh when chunks have landed since the last time we looked.
+   * Take whatever landed since the last frame.
    *
-   * Keyed on the cache's revision rather than on the chunk count, and checked
-   * once a frame, so a burst of eight arrivals in one tick costs one rebuild
-   * rather than eight.
+   * Only chunks the streamed map has not already seen are meshed, so a frame
+   * costs the number of chunks that *arrived* in it rather than the number
+   * held. That is the whole difference between a cold start that streams in and
+   * one that blocks the main thread for its entire duration.
    */
-  let meshedRevision = -1;
-  function refreshTerrain(view: ReturnType<typeof client.view>): void {
+  function ingestChunks(view: ReturnType<typeof client.view>): void {
     const map = view.map;
-    if (!map || map.revision === meshedRevision) return;
-    meshedRevision = map.revision;
-    scene.replaceWorld(buildWorldFromDocument(chunksToDocument(map.info, map.chunks)));
+    if (!map) return;
+
+    if (!streamed) {
+      streamed = new StreamedMap(map.info);
+      scene.setMap(streamed);
+    }
+
+    let arrived = 0;
+    for (const held of map.chunks) {
+      const chunk = streamed.add(held);
+      if (!chunk) continue;
+      scene.addTerrainChunk(chunk);
+      arrived++;
+    }
+
+    // Props wait for the stream to go quiet rather than rebuilding per chunk.
+    // One instanced mesh per species over the whole map is a few draw calls;
+    // one per chunk would be fifty-odd of them on every frame from then on, so
+    // per-chunk props would trade a startup cost for a permanent one.
+    if (arrived > 0) {
+      propsDirty = true;
+      settledFrames = 0;
+    } else if (propsDirty && ++settledFrames >= PROP_SETTLE_FRAMES) {
+      propsDirty = false;
+      scene.refreshProps();
+    }
   }
+
   const hud = createHud();
   hud.onUse((abilityId) => useAbility(abilityId));
 
@@ -303,7 +340,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     }
 
     const view = client.view();
-    refreshTerrain(view);
+    ingestChunks(view);
     seedTheField(view);
     // A new delta resets the interpolation window. Measuring it from the delta's
     // own tick rather than from a wall-clock guess keeps the alpha honest when

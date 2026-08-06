@@ -269,10 +269,35 @@ far — `loadMapChunks(info, chunks)` produces the same `TerrainChunk[]` and
 `buildTerrainMeshFromChunks` already takes exactly that pair. Props and markers
 come from the chunks alongside the geometry.
 
-Remeshing the whole held set on each arrival is O(chunks held) and the shipped
-map is 49 chunks; it is coalesced to at most once per frame. Incremental
-per-chunk meshing is a real optimisation and is deliberately not done here —
-there is nothing yet to optimise, and it would double the meshing paths.
+**Meshing is incremental, one chunk at a time.** The first cut of this spec said
+the opposite — rebuild the whole held set per arrival, "there is nothing yet to
+optimise" — and that was simply wrong. Measured on the real page, it cost **10.6
+seconds of blocked main thread out of the first 12**, with single tasks over a
+second: the page was frozen for the whole of startup. O(held) per arrival is
+O(n²) across a cold start, and 56 chunks is enough for that to bite.
+
+The fix is to stop rebuilding anything. A `MapChunkStore` is a sparse map from
+`(cx, cz)` to arrays, and everything derived from it reads *through* it —
+`bakedLayer` closes over `store.cornerHeight`, `meshLayers` over
+`store.cellSolid`. So `StreamedMap` builds the store, the `TerrainWorld` and the
+mesh layers **once**, from a document with no chunks in it, and each arrival is
+one `insertChunk` plus one `buildChunk`. The height sampler answers for new
+ground the instant it lands, with nothing rebuilt.
+
+Nor is per-chunk meshing a second meshing path: `TerrainMeshHandle.rebuild` is
+the seam spec 050 already cut for the editor's brush, and a streamed chunk wants
+exactly what a brush stroke wants.
+
+Props are the one thing still rebuilt whole, when the stream goes **quiet**
+rather than per arrival. One instanced mesh per species over the whole map is a
+handful of draw calls; one per chunk would be fifty-odd of them on every frame
+from then on — trading a startup cost for a permanent one, which is the wrong
+way round.
+
+Measured after: **1.4 seconds blocked, worst task 431ms** — against a pre-spec-070
+baseline of 1.9 seconds and 731ms. Streaming now costs less than the game did
+before it streamed, and the worst single hitch is smaller because the work
+arrives in pieces. `scripts/measure-startup.ts` is how those numbers are taken.
 
 One honest limit, stated plainly rather than implied: **only the drawn world
 comes from streamed chunks.** The Play tab's *predictor* still takes its
@@ -320,7 +345,6 @@ below rather than quietly assumed to work.
   a server that is already ticking.
 - Persisting the chunk cache across reloads, and any `mapId`-keyed storage.
 - Pointing the Play tab at a remote server over `transport-ws.ts`.
-- Incremental per-chunk meshing on the client.
 - **Collider paging on the client**: building the predictor's colliders from
   streamed chunks and growing them as more arrive. Needed before a remote client
   can predict correctly; not needed by the loopback tab, which is all that runs

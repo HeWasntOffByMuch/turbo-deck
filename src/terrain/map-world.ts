@@ -177,6 +177,31 @@ export class MapChunkStore {
     };
   }
 
+  /**
+   * Add (or replace) one chunk after construction (spec 070).
+   *
+   * A store is a sparse map from `(cx, cz)` to arrays, not a dense grid, so a
+   * layer is free to gain chunks later. That is what lets a client stream a map
+   * in: it builds the store once from a document with no chunks at all and
+   * writes each one in as it lands, rather than rebuilding the whole store per
+   * arrival -- which is O(everything held) and, at 56 chunks, over a second of
+   * blocked main thread across a cold start.
+   *
+   * Everything derived from the store reads *through* it -- `bakedLayer`'s
+   * corner lookups and `meshLayers`' `solidAt` are closures over this object --
+   * so a `TerrainWorld` handed out before the insert samples the new ground
+   * without being rebuilt.
+   *
+   * Returns false if the layer does not exist. Does not touch `doc`, which stays
+   * the document this was constructed from; `toDocument()` is the live view.
+   */
+  insertChunk(layerId: string, chunk: MapChunk): boolean {
+    const layer = this.layers.get(layerId);
+    if (!layer) return false;
+    layer.chunks.set(key(chunk.cx, chunk.cz), this.storeChunk(chunk, layer.bounds));
+    return true;
+  }
+
   get document(): MapDocument {
     return this.doc;
   }

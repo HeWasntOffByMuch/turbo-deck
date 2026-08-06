@@ -23,7 +23,8 @@
 
 import * as THREE from 'three';
 import type { Vec2 } from '../../../sim/types.js';
-import type { BuiltWorld } from '../../../server/world/build.js';
+import type { StreamedMap } from '../../../server/client/streamed-map.js';
+import type { TerrainChunk } from '../../../terrain/chunk.js';
 import type { ClientView } from '../../../server/client/game-client.js';
 import { EntityKind } from '../../../server/net/protocol.js';
 import { abilityById } from '../../../server/data/abilities.js';
@@ -31,7 +32,7 @@ import { PALETTE } from '../palette.js';
 import { castsShadows, makeMoveMarker, makeUnwalkableField, makeWall } from '../meshes.js';
 import { ARENA_OBSTACLES } from '../../../sim/constants.js';
 import { vegetationColliders } from '../../../terrain/vegetation.js';
-import { buildTerrainMesh, type TerrainMeshHandle } from '../terrain-mesh.js';
+import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-mesh.js';
 import { buildPropField, type PropFieldHandle } from '../props.js';
 import { MechRig, PlayerRig, Poofs } from '../rigs.js';
 import { attachOutline, type OutlineHandle } from '../outline.js';
@@ -155,9 +156,15 @@ export class WorldScene {
   private torchHost: THREE.Object3D | null = null;
   private readonly unwalkable = new THREE.Group();
 
-  // Not readonly since spec 070: both are rebuilt when new chunks arrive.
-  private terrainMesh: TerrainMeshHandle;
-  private propField: PropFieldHandle;
+  /**
+   * Null until `MapInfo` arrives (spec 070). Kept null rather than filled with
+   * an empty stand-in so that "no map yet" is one check here instead of an
+   * `if` in every caller -- and so `ground()` can answer 0 for a world that has
+   * genuinely not been described yet.
+   */
+  private map: StreamedMap | null = null;
+  private terrainMesh: TerrainMeshHandle | null = null;
+  private propField: PropFieldHandle | null = null;
   private readonly poofs: Poofs;
   /** Marks the standing move order on the ground (spec 064). */
   private readonly moveMarker = makeMoveMarker();
@@ -193,10 +200,7 @@ export class WorldScene {
   private readonly terrainHits: THREE.Intersection[] = [];
   private readonly projected = new THREE.Vector3();
 
-  constructor(
-    readonly canvas: HTMLCanvasElement,
-    private world: BuiltWorld,
-  ) {
+  constructor(readonly canvas: HTMLCanvasElement) {
     canvas.style.width = '100%';
     canvas.style.height = '100%';
     canvas.style.imageRendering = 'pixelated';
@@ -226,16 +230,9 @@ export class WorldScene {
     this.sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
     this.scene.add(this.sun, this.sun.target, this.ambient);
 
-    // The ground and the trees the server is running, not a second scatter --
-    // and since spec 070, the ground the server *sent*, which starts empty and
-    // fills in as chunks land.
-    this.terrainMesh = buildTerrainMesh(world.terrain);
-    this.scene.add(this.terrainMesh.group);
-    this.propField = buildPropField(world.props, (x, z) => world.terrain.heightAt(x, z));
-    this.scene.add(this.propField.group);
-    this.unwalkable.add(
-      makeUnwalkableField(vegetationColliders(world.props), (x, z) => world.terrain.heightAt(x, z)),
-    );
+    // No terrain yet. The ground and the trees are the ones the server *sent*
+    // (spec 070), and nothing has been sent until `MapInfo` lands -- which is a
+    // frame or two after this, even over a loopback. `setMap` builds them.
     this.scene.add(this.unwalkable);
     this.addWalls();
 
@@ -250,34 +247,58 @@ export class WorldScene {
   }
 
   /**
-   * Swap in the world built from the chunks received so far (spec 070).
+   * Adopt the streamed map, once the server has said what it is.
    *
-   * Everything derived is rebuilt, for the reason the editor's `replaceMap`
-   * gives: a terrain mesh from one set of chunks over a prop field from another
-   * is not a state worth having a name for.
-   *
-   * The whole held set is re-meshed rather than patched per chunk. The shipped
-   * map is 56 chunks and the caller coalesces this to at most once a frame, so
-   * there is nothing here to optimise yet -- and incremental meshing would mean
-   * two meshing paths to keep in step for a saving nobody can currently measure.
+   * Builds the empty mesh and prop field the arrivals are patched into. Called
+   * once per session; a second call would mean the map changed underneath,
+   * which the client refuses at the cache instead.
    */
-  replaceWorld(next: BuiltWorld): void {
-    this.world = next;
-
-    this.scene.remove(this.terrainMesh.group);
-    this.terrainMesh.dispose();
-    this.terrainMesh = buildTerrainMesh(next.terrain);
+  setMap(map: StreamedMap): void {
+    this.map = map;
+    this.terrainMesh = buildTerrainMeshFromChunks(map.meshLayers, []);
     this.scene.add(this.terrainMesh.group);
+    this.propField = buildPropField([], (x, z) => this.ground(x, z));
+    this.scene.add(this.propField.group);
+  }
+
+  /** Ground height, or 0 before there is any ground to ask about. */
+  private ground(x: number, z: number): number {
+    return this.map?.world.heightAt(x, z) ?? 0;
+  }
+
+  /**
+   * Mesh one chunk that has just arrived (spec 070).
+   *
+   * `rebuild` is the seam spec 050 cut for the editor's brush -- replace one
+   * chunk's geometry, dispose what it replaced, leave the rest alone. A brush
+   * stroke and a streamed chunk want exactly the same thing, so this is not a
+   * second meshing path; it is the one that already existed.
+   */
+  addTerrainChunk(chunk: TerrainChunk): void {
+    this.terrainMesh?.rebuild(chunk);
+  }
+
+  /**
+   * Rebuild the instanced prop field from everything held.
+   *
+   * Deliberately *not* per chunk. One instanced mesh per species over the whole
+   * map is a handful of draw calls; one per chunk would be 56 times that, every
+   * frame, forever -- trading a startup cost for a permanent one. So the caller
+   * calls this when the chunk stream goes quiet, which costs one pass over
+   * ~1150 props, the same single pass the pre-streaming build did.
+   */
+  refreshProps(): void {
+    if (!this.map || !this.propField) return;
+    const props = this.map.props();
+    const heightAt = (x: number, z: number): number => this.ground(x, z);
 
     this.scene.remove(this.propField.group);
     this.propField.dispose();
-    this.propField = buildPropField(next.props, (x, z) => next.terrain.heightAt(x, z));
+    this.propField = buildPropField(props, heightAt);
     this.scene.add(this.propField.group);
 
     this.unwalkable.clear();
-    this.unwalkable.add(
-      makeUnwalkableField(vegetationColliders(next.props), (x, z) => next.terrain.heightAt(x, z)),
-    );
+    this.unwalkable.add(makeUnwalkableField(vegetationColliders(props), heightAt));
   }
 
   /**
@@ -291,7 +312,10 @@ export class WorldScene {
     this.raycaster.setFromCamera(this.ndc.set(point.x, point.y), this.camera);
 
     this.terrainHits.length = 0;
-    this.raycaster.intersectObjects(this.terrainMesh.pickTargets, false, this.terrainHits);
+    // Before any chunk has landed there is nothing to hit, and the raycast
+    // falls through to the y=0 plane below -- which is the right answer for a
+    // world that has not been drawn yet.
+    this.raycaster.intersectObjects(this.terrainMesh?.pickTargets ?? [], false, this.terrainHits);
     const ground = this.terrainHits[0];
     const hit = ground ? ground.point : this.raycaster.ray.intersectPlane(this.groundPlane, this.hit);
     return hit ? { x: hit.x, y: hit.z } : { x: this.target.x, y: this.target.z };
@@ -314,7 +338,7 @@ export class WorldScene {
       }),
     );
     mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(x, this.world.terrain.heightAt(x, y) + 1.5, y);
+    mesh.position.set(x, this.ground(x, y) + 1.5, y);
     this.scene.add(mesh);
     this.effects.push({ mesh, age: 0, ttl: Math.max(6, durationTicks) });
   }
@@ -334,7 +358,7 @@ export class WorldScene {
     this.moveMarker.visible = frame.destination !== null;
     if (frame.destination) {
       const { x, y } = frame.destination;
-      this.moveMarker.position.set(x, this.world.terrain.heightAt(x, y) + 6, y);
+      this.moveMarker.position.set(x, this.ground(x, y) + 6, y);
     }
     this.syncTelegraphs(view, frame);
     this.ageEffects();
@@ -343,7 +367,7 @@ export class WorldScene {
     // The camera follows the *predicted* self, not an interpolated replica: the
     // one body that must never lag its own input is this one.
     const me = view.self ?? { x: this.target.x, y: this.target.z };
-    const groundY = this.world.terrain.heightAt(me.x, me.y);
+    const groundY = this.ground(me.x, me.y);
     this.followSelf(me, groundY, dt);
     this.applyControls();
     this.applyPlayerLights(me, groundY);
@@ -365,8 +389,8 @@ export class WorldScene {
     this.effects.length = 0;
     for (const mesh of this.telegraphs.values()) this.scene.remove(mesh);
     this.telegraphs.clear();
-    this.terrainMesh.dispose();
-    this.propField.dispose();
+    this.terrainMesh?.dispose();
+    this.propField?.dispose();
     this.renderer.dispose();
   }
 
@@ -390,7 +414,7 @@ export class WorldScene {
       [x + w, z + d],
       [x + w / 2, z + d / 2],
     ] as const) {
-      low = Math.min(low, this.world.terrain.heightAt(sx, sz));
+      low = Math.min(low, this.ground(sx, sz));
     }
     return low;
   }
@@ -459,7 +483,7 @@ export class WorldScene {
       const ground =
         entity.kind === EntityKind.Projectile
           ? (pose?.z ?? entity.z)
-          : this.world.terrain.heightAt(x, y);
+          : this.ground(x, y);
 
       body.group.position.set(x, ground, y);
       // A mesh built facing +x sits at world heading `theta` when yawed -theta.
@@ -562,7 +586,7 @@ export class WorldScene {
       const bar = castBar(cast, frame.tick, ability);
       mesh.position.set(
         cast.targetX,
-        this.world.terrain.heightAt(cast.targetX, cast.targetY) + 1.2,
+        this.ground(cast.targetX, cast.targetY) + 1.2,
         cast.targetY,
       );
       const material = mesh.material as THREE.MeshBasicMaterial;
@@ -721,7 +745,7 @@ export class WorldScene {
     this.torch.visible = settings.torchOn;
     this.torchFlame.visible = settings.torchOn;
     if (settings.torchOn) {
-      const flame = torchFlicker(this.elapsed, this.world.seed, settings.torchFlicker);
+      const flame = torchFlicker(this.elapsed, (this.map?.seed ?? 0), settings.torchFlicker);
       this.torch.castShadow = settings.torchShadows;
       this.torch.distance = settings.torchRange;
       this.torch.intensity =

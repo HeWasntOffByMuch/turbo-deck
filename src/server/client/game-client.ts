@@ -32,6 +32,7 @@ import {
 } from '../net/messages.js';
 import {
   CastPhaseValue,
+  ChunkDeniedReason,
   ClientMessageType,
   CorrectionReason,
   ServerMessageType,
@@ -53,6 +54,16 @@ const CHUNK_REQUESTS_PER_PASS = 8;
  * it costs nothing when there is nothing to ask for.
  */
 const CHUNK_REQUEST_INTERVAL_TICKS = 3;
+
+/**
+ * How long to stop asking after a `Throttled` refusal, in client ticks.
+ *
+ * A quarter second: long enough that the server's bucket has refilled several
+ * tokens, short enough that a player walking into new ground does not notice.
+ * The alternative -- retrying immediately -- is a refusal storm that makes the
+ * throttle worse rather than respecting it.
+ */
+const CHUNK_THROTTLE_BACKOFF_TICKS = 15;
 import { abilityById } from '../data/abilities.js';
 import type { EffectiveStats } from '../state/types.js';
 import { createFlatPredictor, PredictionBuffer, type PredictedInput, type PredictStep } from './prediction.js';
@@ -283,6 +294,8 @@ export class GameClient {
   private welcome: WelcomeInfo | null = null;
   /** The map and the chunks of it that have arrived (spec 070). */
   private mapCache: MapChunkCache | null = null;
+  /** Ticks to wait before asking for chunks again, after being throttled. */
+  private chunkBackoffTicks = 0;
   private stats: EffectiveStats | null = null;
   private level = 1;
   private experience = 0;
@@ -679,6 +692,7 @@ export class GameClient {
     // nothing in the world changed, so a player standing still in an empty
     // field would stop asking and sit on a half-loaded map. This is the pump
     // that does not depend on anything happening.
+    if (this.chunkBackoffTicks > 0) this.chunkBackoffTicks--;
     if (this.localTick % CHUNK_REQUEST_INTERVAL_TICKS === 0) this.requestChunks();
     // One tick of easing off the last drift correction, and one tick closer to
     // giving up on an ability request nobody answered.
@@ -850,7 +864,7 @@ export class GameClient {
   private requestChunks(): void {
     const cache = this.mapCache;
     const at = this.prediction?.drawn ?? this.selfAuthoritative();
-    if (!cache || !at) return;
+    if (!cache || !at || this.chunkBackoffTicks > 0) return;
     for (const req of cache.wanted(at.x, at.y, MAP_CHUNK_REQUEST_RADIUS, CHUNK_REQUESTS_PER_PASS)) {
       cache.markRequested(req);
       this.channel.send(
@@ -980,6 +994,13 @@ export class GameClient {
 
       case ServerMessageType.ChunkDenied:
         this.mapCache?.deny(message.layer, message.cx, message.cz, message.reason);
+        // A throttled chunk goes straight back on the wanted list, so without a
+        // pause the next pump re-asks it and is refused again -- twenty rounds
+        // of that a second, achieving nothing. Backing off is also the polite
+        // reading of the message: the server said "not now", not "not ever".
+        if (message.reason === ChunkDeniedReason.Throttled) {
+          this.chunkBackoffTicks = CHUNK_THROTTLE_BACKOFF_TICKS;
+        }
         break;
 
       case ServerMessageType.Stats:

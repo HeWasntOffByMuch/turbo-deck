@@ -126,13 +126,26 @@ export const MAP_CHUNK_REQUEST_RADIUS = 6;
  * range, so without a bucket a client can ask for one legal chunk in a loop and
  * make the server serialize ~12 KB per request for as long as it likes.
  *
- * A burst of 24 lets a cold start pull most of the shipped map's 56 chunks
- * inside the first few broadcasts without feeling gated, and 12/s sustained is
- * far above what walking can newly reveal -- a player would have to cross a
- * whole 616-unit chunk twelve times a second to outrun it.
+ * The burst has to cover a **whole cold start**, not part of one. 24 did not,
+ * and the effect was measurable: the shipped map's 56 chunks took about five
+ * seconds to arrive over a loopback, because the first 24 went instantly and the
+ * remaining 32 trickled in at the refill rate. The terrain visibly filled in and
+ * the trees appeared last. That is the throttle shaping normal play, which is
+ * exactly what it is not for.
+ *
+ * 64 covers the shipped map outright, so a cold start is paced by the link and
+ * by `CHUNK_REQUESTS_PER_PASS`, never by this. What the bucket still bounds is
+ * the case it was written for: a client re-asking for one permanently-in-range
+ * chunk forever. At 16/s sustained that costs ~190 KB/s of serialization, and a
+ * player would have to cross a whole 616-unit chunk sixteen times a second to
+ * need it legitimately.
+ *
+ * A map much larger than this one would want the burst raised with it, or the
+ * cold start starts trickling again -- which is why the first symptom to look
+ * for is "the far half of the world arrives late".
  */
-export const MAP_CHUNK_BURST = 24;
-export const MAP_CHUNK_REFILL_PER_SECOND = 12;
+export const MAP_CHUNK_BURST = 64;
+export const MAP_CHUNK_REFILL_PER_SECOND = 16;
 
 /**
  * How far the client's modelled resource may be from the server's before it is
