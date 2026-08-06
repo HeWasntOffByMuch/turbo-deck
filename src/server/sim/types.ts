@@ -32,15 +32,12 @@ export const ActivityValue = {
   Casting: 2,
   Stunned: 3,
   Dead: 4,
-  /** Rooted after a cast released; past the point of cancelling. */
-  Recovering: 5,
 } as const;
 
 /** Where a cast has got to. Drives the client's animation and the cancel rule. */
 export const CastPhase = {
   Windup: 0,
   Channel: 1,
-  Recovery: 2,
   /**
    * Committed, but not yet pointing at what it committed to (spec 065). The
    * cost is spent and the aim is captured; the wind-up clock has not started.
@@ -52,7 +49,7 @@ export const CastPhase = {
 export const CastEndReason = {
   Released: 0,
   Cancelled: 1,
-  /** Knocked out of it -- death, or a forced move. */
+  /** Knocked out of it. Death only, since spec 068: a hit no longer does this. */
   Interrupted: 2,
 } as const;
 
@@ -66,7 +63,10 @@ export interface CastState {
   readonly startedTick: number;
   /** Tick the effect lands. Cancelling before this costs nothing but time. */
   readonly releaseTick: number;
-  /** Tick the caster is free again, past recovery or the end of a channel. */
+  /**
+   * Tick the caster is free again: the release for everything but a channel,
+   * whose pulses run past it (spec 068).
+   */
   readonly endTick: number;
   readonly phase: number;
   /** Aim captured at commit, so turning mid-cast cannot re-aim a landed blow. */
