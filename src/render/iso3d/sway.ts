@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { glslWindChunk, maxTipDisplacement, WIND, WIND_LIMITS } from './wind.js';
+import { glslWindChunk, maxTipDisplacement, WIND, WIND_LIMITS, WIND_MAX } from './wind.js';
 import { WIND_UNIFORMS } from './wind-uniforms.js';
 
 /**
@@ -60,7 +60,21 @@ attribute float aBend;
 attribute vec3 aWindBase;
 attribute vec2 aWindTune;
 
+uniform float uSwayLag;
+uniform float uSwayTilt;
+
 ${glslWindChunk()}
+
+// Swing a point about a base, by an angle, downwind. An arc, not a slide: the
+// point keeps its height above the base exactly, so a leaning trunk is the same
+// length as an upright one.
+vec3 swingAbout(vec3 p, vec3 base, float angle) {
+  vec3 rel = p - base;
+  float h = rel.y;
+  rel.xz += uWindDir * (h * sin(angle));
+  rel.y = h * cos(angle);
+  return base + rel;
+}
 
 // Swing a world-space vertex about its tree's base.
 //
@@ -68,17 +82,40 @@ ${glslWindChunk()}
 // the clock, hashed from where it stands: the travelling wave already puts
 // neighbours out of step, and this stops two trees the wave happens to reach
 // together from beating in exact unison for the rest of the session.
+//
+// uSwayLag and uSwayTilt are this *batch's* -- one part of one species -- and
+// are both zero for every batch that existed before spec 076, so the conifers
+// take exactly the path they always did.
 vec3 windBend(vec3 worldPos) {
   float w = clamp(aBend, 0.0, 1.0);
-  float gust = windAt(aWindBase.xz, uWindTime + aWindTune.y);
+  float gust = windAt(aWindBase.xz, uWindTime + aWindTune.y - uSwayLag);
   float angle = uWindStrength * gust * aWindTune.x * w * w;
-  vec3 rel = worldPos - aWindBase;
-  float h = rel.y;
-  // An arc, not a slide: the vertex keeps its distance from the base exactly,
-  // so a leaning trunk is the same length as an upright one.
-  rel.xz += uWindDir * (h * sin(angle));
-  rel.y = h * cos(angle);
-  return aWindBase + rel;
+  vec3 bent = swingAbout(worldPos, aWindBase, angle);
+  if (uSwayTilt == 0.0) return bent;
+
+  // A flat canopy slab is the one shape the swing above does nothing to. Every
+  // vertex of it carries the same bend weight and sits at the same height over
+  // the tree's base, so the arc moves the whole plate rigidly and leaves it
+  // exactly as horizontal as it started, while the trunk under it leans away.
+  //
+  // So tilt it about its own origin as well. The pivot is recovered from the
+  // instance transform rather than baked as an attribute: the part's offset up
+  // and off the trunk is applied as the instance's *translation*, so the part's
+  // origin in world space is simply where instanceMatrix sends (0, 0, 0). It has
+  // to be swung by the trunk first, or the slab would hinge about the point the
+  // branch used to be at rather than where it now is.
+  vec3 hinge = swingAbout((instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz, aWindBase, angle);
+  vec3 d = bent - hinge;
+  float along = dot(d.xz, uWindDir);
+  float t = angle * uSwayTilt;
+  float ca = cos(t);
+  float sa = sin(t);
+  // A true rotation in the (downwind, up) plane, unlike the swing above: the
+  // downwind edge of the slab drops and the upwind edge lifts, which is how a
+  // plate on a bending stem reads. Whatever is across the wind is untouched.
+  d.xz += uWindDir * (along * ca + d.y * sa - along);
+  d.y = d.y * ca - along * sa;
+  return hinge + d;
 }
 `;
 
@@ -122,6 +159,31 @@ export interface SwayInstance {
 }
 
 /**
+ * How one batch reads the wind differently from the trunk it hangs off
+ * (spec 076). All-zero is the behaviour every batch had before it existed.
+ */
+export interface SwayLag {
+  /**
+   * Seconds this batch reads the shared clock behind the tree's own phase. What
+   * makes a canopy trail the trunk rather than tick with it.
+   */
+  readonly lag?: number;
+  /**
+   * Extra rotation about the *part's* own origin, as a multiple of the trunk's
+   * bend angle at that height. Zero leaves the part riding the trunk's arc
+   * rigidly, which for anything but a flat plate is what you want.
+   */
+  readonly tilt?: number;
+  /**
+   * How far this part's geometry stands from its own origin, in world units at
+   * the largest instance in the batch. Only the bounding sphere reads it: a tilt
+   * lifts a rim by `reach * sin(angle)`, and a sphere sized for the lean alone
+   * would take the whole batch off screen the moment that edge left it.
+   */
+  readonly reach?: number;
+}
+
+/**
  * Attach the per-tree attributes, patch the material (and the two shadow
  * materials three.js will render this batch with), and grow the bounding sphere
  * by however far a crown can lean out of it.
@@ -129,7 +191,12 @@ export interface SwayInstance {
  * The geometry must already carry `aBend`; a batch whose geometry does not is
  * left alone rather than patched into something that will not link.
  */
-export function applySway(mesh: THREE.InstancedMesh, instances: readonly SwayInstance[], height: number): void {
+export function applySway(
+  mesh: THREE.InstancedMesh,
+  instances: readonly SwayInstance[],
+  height: number,
+  trail: SwayLag = {},
+): void {
   if (!mesh.geometry.getAttribute('aBend')) return;
 
   const base = new Float32Array(instances.length * 3);
@@ -144,17 +211,19 @@ export function applySway(mesh: THREE.InstancedMesh, instances: readonly SwayIns
   mesh.geometry.setAttribute('aWindBase', new THREE.InstancedBufferAttribute(base, 3));
   mesh.geometry.setAttribute('aWindTune', new THREE.InstancedBufferAttribute(tune, 2));
 
-  patchMaterial(mesh.material as THREE.Material);
+  const lag = trail.lag ?? 0;
+  const tilt = trail.tilt ?? 0;
+  patchMaterial(mesh.material as THREE.Material, lag, tilt);
 
   // The shadow passes use their own materials, so they need their own copies of
   // the same patch or the shade under a grove stays rigid while the grove moves.
   const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
-  patchMaterial(depth);
+  patchMaterial(depth, lag, tilt);
   mesh.customDepthMaterial = depth;
   // The player's torch is a point light that casts (spec 047), and a point
   // light's shadow is a distance cube rendered with a third material again.
   const distance = new THREE.MeshDistanceMaterial();
-  patchMaterial(distance);
+  patchMaterial(distance, lag, tilt);
   mesh.customDistanceMaterial = distance;
 
   // A crown that leans out of its batch's bounding sphere would take the whole
@@ -166,8 +235,19 @@ export function applySway(mesh: THREE.InstancedMesh, instances: readonly SwayIns
   // slider moves afterwards.
   mesh.computeBoundingSphere();
   if (mesh.boundingSphere) {
-    mesh.boundingSphere.radius += maxTipDisplacement(WIND, height, WIND_LIMITS.maxStrength);
+    mesh.boundingSphere.radius +=
+      maxTipDisplacement(WIND, height, WIND_LIMITS.maxStrength) + tiltReach(tilt, trail.reach ?? 0);
   }
+}
+
+/**
+ * How far the tilt alone can throw a vertex `reach` from its part's origin, at
+ * the strongest wind the weather panel allows (spec 075) -- measured the same way
+ * and against the same limit as the lean it is added to.
+ */
+export function tiltReach(tilt: number, reach: number): number {
+  if (tilt === 0 || reach === 0) return 0;
+  return reach * Math.abs(Math.sin(WIND.strength * WIND_LIMITS.maxStrength * WIND_MAX * tilt));
 }
 
 /**
@@ -201,10 +281,22 @@ for (const splice of SPLICES) {
   }
 }
 
-/** Splice the bend into a material's vertex shader. Idempotent per material. */
-function patchMaterial(material: THREE.Material): void {
+/**
+ * Splice the bend into a material's vertex shader. Idempotent per material.
+ *
+ * `lag` and `tilt` become uniforms of this material alone, never of the shared
+ * {@link WIND_UNIFORMS} set: they are a property of *which part of which tree*
+ * this batch draws, and the shared objects are the weather, which every batch
+ * must agree on to the reference. The generated source is the same either way,
+ * so the program cache key stays one key and a lobed slab and a fir's trunk
+ * still share a compiled program.
+ */
+function patchMaterial(material: THREE.Material, lag: number, tilt: number): void {
   material.onBeforeCompile = (shader): void => {
-    Object.assign(shader.uniforms, WIND_UNIFORMS);
+    Object.assign(shader.uniforms, WIND_UNIFORMS, {
+      uSwayLag: { value: lag },
+      uSwayTilt: { value: tilt },
+    });
     let vertex = shader.vertexShader.replace('#include <common>', `#include <common>\n${SWAY_PROLOGUE}`);
     for (const splice of SPLICES) vertex = vertex.replace(splice.include, splice.source);
     shader.vertexShader = vertex;
