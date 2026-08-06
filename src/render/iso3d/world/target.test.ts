@@ -10,11 +10,15 @@ import {
   HOLD_FRACTION,
   STANDOFF_FRACTION,
   type AutoAttackInput,
+  type Point,
   type TargetSnapshot,
 } from './target.js';
 import { ARRIVE_EPS } from './intent.js';
 import { ALL_ABILITIES } from '../../../server/data/abilities.js';
 import { ALL_MONSTERS } from '../../../server/data/monsters.js';
+import { mayCast, type CastDecision } from '../../../server/client/combat.js';
+import { computeEffectiveStats } from '../../../server/player/stats.js';
+import { EMPTY_EQUIPMENT } from '../../../server/state/types.js';
 
 const TARGET: TargetSnapshot = { id: 7, x: 400, y: 0, radius: 20, health: 40 };
 /** The basic attack's reach, before the target's body is added to it. */
@@ -23,13 +27,55 @@ const RANGE = 70;
 function ask(overrides: Partial<AutoAttackInput> = {}): ReturnType<typeof autoAttack> {
   return autoAttack({
     self: { x: 0, y: 0 },
+    selfHealth: 100,
     target: TARGET,
     range: RANGE,
     rooted: false,
+    pending: false,
     readyAtTick: 0,
     tick: 100,
     ...overrides,
   });
+}
+
+/**
+ * The gate the client asks of itself before sending a request: the sim's own
+ * `startCast`, over a mirror standing at `from` and aiming at the origin.
+ */
+function gate(abilityId: string, from: Point, targetRadius: number): CastDecision {
+  const stats = computeEffectiveStats({
+    id: 'p1',
+    displayName: 'P1',
+    baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
+    skills: [],
+    equipment: EMPTY_EQUIPMENT,
+    position: { x: 0, y: 0, z: 0 },
+    facing: 0,
+    currentZone: 'greenmarch',
+    level: 1,
+    experience: 0,
+    unspentSkillPoints: 0,
+    health: 200,
+    resource: 100,
+  });
+  return mayCast(
+    {
+      position: from,
+      // Pointing at the origin, so the answer is about reach and nothing else.
+      facing: Math.atan2(-from.y, -from.x),
+      health: stats.maxHealth,
+      resource: stats.maxResource,
+      cooldowns: {},
+      cast: null,
+      stats,
+    },
+    abilityId,
+    { x: 0, y: 0 },
+    100,
+    100,
+    7,
+    targetRadius,
+  );
 }
 
 describe('auto-attacking a named target (spec 070)', () => {
@@ -167,6 +213,43 @@ describe('auto-attacking a named target (spec 070)', () => {
     }
   });
 
+  /**
+   * Spec 080, as a standing property over the whole table: wherever the chase is
+   * allowed to come to rest, the gate the client asks of *itself* says yes.
+   *
+   * The two are the same question asked in two files -- `HOLD_FRACTION` of
+   * `range + radius` here, `startCast` over a mirror there -- and until 080 the
+   * second was never handed the radius, so it measured to the body's centre
+   * while the server measured to its edge. Today's numbers happen to keep the
+   * hold inside the range on its own; the first monster with a radius past a
+   * ninth of a weapon's range would have parked the order on a spot it refused
+   * to fire from. `combat.test.ts` pins the divergence directly, with a body
+   * wide enough to show it; this pins the pair that has to stay true.
+   */
+  it('holds where the client’s own gate would allow the shot', () => {
+    const point = ALL_ABILITIES.filter((a) => a.basicAttack && a.targeting === 'point');
+    expect(point.length).toBeGreaterThan(0);
+
+    for (const ability of point) {
+      for (const monster of ALL_MONSTERS) {
+        const reach = ability.range + monster.radius;
+        const at = { x: reach * HOLD_FRACTION, y: 0 };
+        const label = `${ability.id} vs ${monster.id}`;
+        // Where the hold allows a swing...
+        expect(
+          ask({
+            range: ability.range,
+            target: { ...TARGET, x: 0, radius: monster.radius },
+            self: at,
+          }).attack,
+          label,
+        ).toBe(true);
+        // ...the gate the client asks of itself says yes too.
+        expect(gate(ability.id, at, monster.radius).ok, label).toBe(true);
+      }
+    }
+  });
+
   it('does not re-commit while a cast is already running', () => {
     expect(ask({ self: { x: 340, y: 0 }, rooted: true }).attack).toBe(false);
   });
@@ -201,5 +284,45 @@ describe('auto-attacking a named target (spec 070)', () => {
     const far = ask({ target: { ...TARGET, x: 4000 } });
     expect(far.drop).toBe(false);
     expect(far.chaseTo).not.toBeNull();
+  });
+
+  /**
+   * Spec 080. `rooted` is a *cast*, and a request that has been sent and not yet
+   * ruled on has no cast behind it -- so on the tick after a press the order saw
+   * nothing stopping it and asked again, and again, for the whole round trip.
+   *
+   * The only thing that ever held it back was the cooldown the client guesses,
+   * and it guesses one only when its own mirror expects the server to agree. So
+   * every disagreement between the two -- and there is a whole band of them --
+   * turned one swing into sixty requests a second, each refused, each a notice.
+   */
+  it('asks once and then waits to be answered', () => {
+    const inReach = { self: { x: 340, y: 0 } };
+    expect(ask({ ...inReach, pending: false }).attack).toBe(true);
+    expect(ask({ ...inReach, pending: true }).attack).toBe(false);
+    // Ready cooldown or not: the question is whether we have already asked.
+    expect(ask({ ...inReach, pending: true, readyAtTick: 0, tick: 9999 }).attack).toBe(false);
+  });
+
+  it('still closes the gap while a request is in flight', () => {
+    // Waiting on an answer is not a reason to stand still out of reach -- the
+    // walk is the half of the order that owes nothing to the server.
+    const chasing = ask({ pending: true });
+    expect(chasing.chaseTo).not.toBeNull();
+    expect(chasing.attack).toBe(false);
+  });
+
+  /**
+   * Spec 080. Nothing dropped the order when the *player* died, and the server's
+   * cast pass skips a body at zero health -- so a corpse with a standing order
+   * asked sixty times a second into a pass that answered none of them.
+   */
+  it('drops the order when we are the one who died', () => {
+    for (const self of [{ x: 340, y: 0 }, { x: -900, y: 0 }]) {
+      const decision = ask({ self, selfHealth: 0 });
+      expect(decision.drop).toBe(true);
+      expect(decision.attack).toBe(false);
+      expect(decision.chaseTo).toBeNull();
+    }
   });
 });

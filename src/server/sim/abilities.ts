@@ -45,7 +45,9 @@ export type CastRejection =
   | 'onCooldown'
   | 'notEnoughResource'
   | 'dead'
-  | 'outOfRange';
+  | 'outOfRange'
+  /** A `targeting: 'unit'` ability asked for with nothing named (spec 080). */
+  | 'noTarget';
 
 export interface CastAttempt {
   readonly abilityId: string;
@@ -107,13 +109,22 @@ export function startCast(
   if (tick < readyAt) return { ok: false, reason: 'onCooldown' };
   if (entity.resource < ability.cost) return { ok: false, reason: 'notEnoughResource' };
 
-  // A point-targeted ability may not be cast past its range. Direction-targeted
-  // ones are always legal to start -- they simply reach as far as they reach.
+  // A skill aimed at a body has to have one (spec 080). Refused rather than
+  // quietly downgraded to a cone or a patch of ground: an ability whose whole
+  // shape is "the thing you picked" has no meaning without the pick, and a
+  // silent fallback would spend the cost on a blow nobody asked for.
+  if (ability.targeting === 'unit' && !attempt.targetEntityId) {
+    return { ok: false, reason: 'noTarget' };
+  }
+
+  // A point- or unit-targeted ability may not be cast past its range.
+  // Direction-targeted ones are always legal to start -- they simply reach as
+  // far as they reach.
   //
   // A cast that named a body is measured to that body's edge, the same as the
   // blow that eventually lands on it (spec 079). A patch of ground has no edge,
   // so `targetRadius` is 0 and this is the centre check it always was.
-  if (ability.targeting === 'point') {
+  if (ability.targeting === 'point' || ability.targeting === 'unit') {
     const dx = attempt.targetX - entity.position.x;
     const dy = attempt.targetY - entity.position.y;
     const reach = ability.range + (attempt.targetEntityId ? (attempt.targetRadius ?? 0) : 0);
@@ -325,14 +336,25 @@ export function advanceCast(
 
   // --- the target died -------------------------------------------------
   // A blow aimed at a body that is no longer there is called off rather than
-  // thrown at the corpse (spec 079). The refund is a withdrawal's, because that
-  // is what this is: nothing was thrown, so nothing was spent but the time.
+  // thrown at the corpse (spec 079) -- but only while the caster is still
+  // *turning* (spec 080). Nothing has been committed to there: the wind-up clock
+  // has not started and `releaseTick` is a placeholder the server has not
+  // stamped for real, so the refund is a withdrawal's and the only thing spent
+  // is the time.
   //
-  // Only up to the release, and deliberately so. A shot already in the air is
-  // its own entity and finishes its flight -- the travel is the only thing that
-  // decides, and reaching back to un-launch it would be the schedule this design
-  // exists to not have.
-  const cancellable = cast.phase === CastPhase.Turning || tick < cast.releaseTick;
+  // Past the turn the blow completes and finds what it finds. 079 ran this
+  // window to the release, which put an arbitrary cliff one tick wide in the
+  // middle of every ranged auto-attack: a shot's damage lands when the *shot*
+  // arrives, about one wind-up after the loose, so the previous arrow killed the
+  // target exactly while the next wind-up ran and deleted it -- once per kill,
+  // three-quarters of the way along the bar. One tick later and the same arrow
+  // would have flown and disjointed in mid-air, which is the behaviour 079 chose
+  // deliberately and described as "nothing was scheduled, so there is nothing to
+  // un-schedule". A wind-up is nothing scheduled either.
+  //
+  // Nothing new is needed to handle the corpse: `landOnTarget` misses on a
+  // target that is absent or at zero health, and `landCone` skips one.
+  const cancellable = cast.phase === CastPhase.Turning;
   if (cast.targetEntityId > 0 && cancellable) {
     const named = candidates.find((candidate) => candidate.id === cast.targetEntityId);
     if (!named || named.health <= 0) {

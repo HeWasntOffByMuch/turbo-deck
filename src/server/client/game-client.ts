@@ -202,6 +202,21 @@ export interface ClientView {
    */
   readonly selfRoot: { readonly x: number; readonly y: number } | null;
   /**
+   * True while a request of ours has been sent and not yet answered (spec 080).
+   *
+   * The other half of "am I committed", and the half nothing outside this class
+   * could see. {@link selfRoot} is the *cast*, so that it can end on the tick the
+   * blow does (spec 069); a request that is still in flight has no cast yet and
+   * therefore does not show up there at all. A standing attack order that only
+   * watched the root asked again on every tick of that window, and each repeat
+   * was a refusal the player got told about.
+   *
+   * Cleared by whichever answer arrives -- the `CastState` that roots us, the
+   * `CastRejected` that does not -- or by the timeout spec 067 carries, so a
+   * reply that never comes cannot wedge an order shut.
+   */
+  readonly awaitingCast: boolean;
+  /**
    * Ability id -> the tick it may next be used (spec 065). Straight from the
    * server; the client subtracts the tick it is drawing to get the sweep, and
    * never works out how long a cooldown is for itself.
@@ -501,7 +516,19 @@ export class GameClient {
     this.channel.send(encodeClientMessage({ type: ClientMessageType.WatchSpawners, on }));
   }
 
-  useAbility(abilityId: string, targetX = 0, targetY = 0, targetEntityId = 0): void {
+  useAbility(
+    abilityId: string,
+    targetX = 0,
+    targetY = 0,
+    targetEntityId = 0,
+    /**
+     * The named body's radius, so the gate below is the server's gate (spec
+     * 080). Reach to a body is measured to its edge; a client that measured to
+     * its centre refused to predict every attack in the band between the two
+     * and the server took them all.
+     */
+    targetRadius = 0,
+  ): void {
     if (!this.connected) return;
     this.requestedAbilityId = abilityId;
     const aim = { x: targetX, y: targetY };
@@ -546,7 +573,7 @@ export class GameClient {
     // one. Judging at the commit tick is not a compromise between the two -- it
     // is the only tick about which there is anything true to say.
     const decision = mirror
-      ? mayCast(mirror, abilityId, aim, commitAt, commitAt, targetEntityId)
+      ? mayCast(mirror, abilityId, aim, commitAt, commitAt, targetEntityId, targetRadius)
       : null;
     const id = this.nextCastRequestId;
     this.nextCastRequestId += 1;
@@ -907,6 +934,7 @@ export class GameClient {
       requestedAbilityId: this.requestedAbilityId,
       cooldowns: this.visibleCooldowns(),
       selfRoot: this.selfRoot(),
+      awaitingCast: this.outstandingCasts.length > 0,
       resource: this.modelledResource(),
     };
   }

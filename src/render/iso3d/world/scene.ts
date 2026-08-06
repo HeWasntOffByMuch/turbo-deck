@@ -70,6 +70,7 @@ import {
   torchFlicker,
 } from '../player-lights.js';
 import { appearanceOf } from './appearance.js';
+import type { AimShape } from './aim.js';
 import { castBar } from './cast.js';
 import { EntityMotion } from './interpolate.js';
 
@@ -83,6 +84,11 @@ const TORCH_SHADOW_NORMAL_BIAS = 2.5;
 const TELEGRAPH_COLOR = 0xff785a;
 /** The ring under the body being attacked (spec 070). */
 const TARGET_RING_COLOR = 0xff6a5a;
+/**
+ * The skill being aimed (spec 080). Deliberately not either red above: what a
+ * click *would* do and what is already being hit must never be the same mark.
+ */
+const AIM_COLOR = 0x7fd4ff;
 
 const FLAME_RADIUS = 5;
 const ORB_RADIUS = 7;
@@ -114,6 +120,26 @@ export interface FrameInfo {
   readonly cursor: { readonly x: number; readonly y: number } | null;
   /** The entity being attacked, so it can be ringed. */
   readonly targetEntityId: number | null;
+  /**
+   * The skill being aimed, or the one whose order is still walking into range
+   * (spec 080), or null. Everything about it was decided in `aim.ts`; this is
+   * the picture of that decision and nothing else.
+   */
+  readonly aim: AimIndicator | null;
+}
+
+/** What to draw for a pending or standing aim (spec 080). */
+export interface AimIndicator {
+  readonly shape: AimShape;
+  /** The caster, which a cone and a lane both run from. */
+  readonly origin: Vec2;
+  /** The aimed ground point: the cursor while aiming, the placement once ordered. */
+  readonly point: Vec2;
+  /** The body under the cursor, or the ordered mark, for an aim that names one. */
+  readonly unitId: number | null;
+  readonly range: number;
+  /** False when the placement is out of range, so the picture says "you will walk". */
+  readonly inRange: boolean;
 }
 
 /** A body on screen, pooled by entity id. */
@@ -189,6 +215,20 @@ export class WorldScene {
   private hovered: number | null = null;
   /** The ring under the body being attacked (spec 070). */
   private readonly targetRing: THREE.Mesh;
+  /**
+   * The aim indicator (spec 080): the shape of the blow, the range ring that
+   * says the confirm will be a walk, and the ring under a named body.
+   *
+   * Four meshes built once and re-pointed, rather than geometry rebuilt per
+   * frame -- the cursor moves every frame, and a `CircleGeometry` allocated at
+   * 60Hz for as long as somebody is deciding is a garbage-collection pause
+   * during the one moment the player is looking closely.
+   */
+  private readonly aimShapeMesh: THREE.Mesh;
+  private readonly aimRangeRing: THREE.Mesh;
+  private readonly aimUnitRing: THREE.Mesh;
+  /** The shape currently baked into `aimShapeMesh`, so it is rebuilt only on a change. */
+  private aimShapeKey = '';
   private readonly effects: LiveEffect[] = [];
   private readonly anchors: ScreenAnchor[] = [];
 
@@ -274,6 +314,50 @@ export class WorldScene {
     this.targetRing.rotation.x = -Math.PI / 2;
     this.targetRing.visible = false;
     this.scene.add(this.targetRing);
+
+    // The aim (spec 080). Flat, unlit and never depth-writing, exactly like the
+    // ground telegraph and the blast effects it sits among.
+    this.aimShapeMesh = new THREE.Mesh(
+      new THREE.CircleGeometry(1, 28),
+      new THREE.MeshBasicMaterial({
+        color: AIM_COLOR,
+        transparent: true,
+        opacity: 0.28,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    this.aimShapeMesh.rotation.x = -Math.PI / 2;
+    this.aimShapeMesh.visible = false;
+    this.scene.add(this.aimShapeMesh);
+
+    this.aimRangeRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.985, 1, 48),
+      new THREE.MeshBasicMaterial({
+        color: AIM_COLOR,
+        transparent: true,
+        opacity: 0.35,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    this.aimRangeRing.rotation.x = -Math.PI / 2;
+    this.aimRangeRing.visible = false;
+    this.scene.add(this.aimRangeRing);
+
+    this.aimUnitRing = new THREE.Mesh(
+      new THREE.RingGeometry(22, 27, 24),
+      new THREE.MeshBasicMaterial({
+        color: AIM_COLOR,
+        transparent: true,
+        opacity: 0.9,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    this.aimUnitRing.rotation.x = -Math.PI / 2;
+    this.aimUnitRing.visible = false;
+    this.scene.add(this.aimUnitRing);
 
     this.controls = createViewControls();
     this.controls.attachWheelZoom(canvas);
@@ -646,6 +730,91 @@ export class WorldScene {
       // Sized to the body it is under, so a ravager's ring is not a grazer's.
       this.targetRing.scale.setScalar(Math.max(0.6, (target.radius + 8) / 27));
     }
+
+    this.syncAim(frame);
+  }
+
+  /**
+   * The aim indicator (spec 080): the shape of the blow the player is deciding
+   * about, drawn before they are committed to it.
+   *
+   * Every number here came out of `aim.ts`, which read them off the ability
+   * table. Nothing in this method decides anything -- if it did, it would be an
+   * `if` in `src/render/` changing a game outcome, which is the one thing this
+   * layer may not do.
+   */
+  private syncAim(frame: FrameInfo): void {
+    const aim = frame.aim;
+    if (!aim) {
+      this.aimShapeMesh.visible = false;
+      this.aimRangeRing.visible = false;
+      this.aimUnitRing.visible = false;
+      return;
+    }
+
+    // The ring under the body a click would pick, or the one already picked.
+    const named =
+      aim.unitId === null
+        ? undefined
+        : this.hoverTargets.find((candidate) => candidate.id === aim.unitId);
+    this.aimUnitRing.visible = named !== undefined;
+    if (named) {
+      this.aimUnitRing.position.set(
+        named.position.x,
+        this.ground(named.position.x, named.position.y) + 1.7,
+        named.position.y,
+      );
+      this.aimUnitRing.scale.setScalar(Math.max(0.6, (named.radius + 10) / 27));
+    }
+
+    // Out of range is the one thing the picture has to say that the shape
+    // cannot: the confirm will be a walk before it is a blow.
+    this.aimRangeRing.visible = !aim.inRange && aim.range > 0;
+    if (this.aimRangeRing.visible) {
+      this.aimRangeRing.position.set(aim.origin.x, this.ground(aim.origin.x, aim.origin.y) + 1.1, aim.origin.y);
+      this.aimRangeRing.scale.setScalar(aim.range);
+    }
+
+    const shape = aim.shape;
+    if (shape.kind === 'none') {
+      this.aimShapeMesh.visible = false;
+      return;
+    }
+
+    const dx = aim.point.x - aim.origin.x;
+    const dy = aim.point.y - aim.origin.y;
+    const heading = Math.hypot(dx, dy) > 1e-6 ? Math.atan2(dy, dx) : 0;
+    this.setAimShape(shape);
+    this.aimShapeMesh.visible = true;
+    // Dimmer out of range: the same shape, said less certainly.
+    (this.aimShapeMesh.material as THREE.MeshBasicMaterial).opacity = aim.inRange ? 0.3 : 0.15;
+
+    if (shape.kind === 'circle') {
+      // A burst lands where it was placed; nothing about it points anywhere.
+      this.aimShapeMesh.position.set(aim.point.x, this.ground(aim.point.x, aim.point.y) + 1.3, aim.point.y);
+      this.aimShapeMesh.rotation.set(-Math.PI / 2, 0, 0);
+      return;
+    }
+
+    // A cone and a lane both run from the caster toward the cursor. The mesh is
+    // built pointing down +X in its own plane, so the third Euler term -- which
+    // is the world Y spin once the mesh is laid flat -- is the heading, negated
+    // because the flat rotation mirrors the sweep.
+    this.aimShapeMesh.position.set(
+      aim.origin.x,
+      this.ground(aim.origin.x, aim.origin.y) + 1.3,
+      aim.origin.y,
+    );
+    this.aimShapeMesh.rotation.set(-Math.PI / 2, 0, -heading);
+  }
+
+  /** Rebuild the aim geometry, but only when the shape it is drawing changed. */
+  private setAimShape(shape: AimShape): void {
+    const key = JSON.stringify(shape);
+    if (key === this.aimShapeKey) return;
+    this.aimShapeKey = key;
+    this.aimShapeMesh.geometry.dispose();
+    this.aimShapeMesh.geometry = buildAimGeometry(shape);
   }
 
   /**
@@ -984,5 +1153,39 @@ export class WorldScene {
           this.projected.z < 1 && x >= -80 && x <= width + 80 && y >= -80 && y <= height + 80,
       });
     }
+  }
+}
+
+/**
+ * The flat geometry for an aim shape (spec 080), built pointing down local +X.
+ *
+ * The mesh is laid flat by `rotation.x = -PI/2` and then spun by the heading,
+ * under which local +X becomes the world direction from the caster to the
+ * cursor -- so every shape is authored once, along one axis, and aimed by one
+ * number.
+ */
+function buildAimGeometry(shape: AimShape): THREE.BufferGeometry {
+  switch (shape.kind) {
+    case 'circle':
+      return new THREE.CircleGeometry(Math.max(1, shape.radius), 32);
+    case 'cone':
+      // A wedge symmetric about +X, with the half-angle the sim will actually
+      // test -- `isInCone` measures from the captured aim, and so does this.
+      return new THREE.CircleGeometry(
+        Math.max(1, shape.length),
+        32,
+        -shape.halfAngle,
+        shape.halfAngle * 2,
+      );
+    case 'line': {
+      // The lane a shot flies down: as long as the ability reaches, as wide as
+      // the projectile is, and starting at the caster rather than centred on
+      // them -- a plane is built about its own middle.
+      const plane = new THREE.PlaneGeometry(Math.max(1, shape.length), Math.max(1, shape.width));
+      plane.translate(shape.length / 2, 0, 0);
+      return plane;
+    }
+    case 'none':
+      return new THREE.BufferGeometry();
   }
 }

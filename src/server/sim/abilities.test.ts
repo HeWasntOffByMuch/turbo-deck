@@ -848,6 +848,49 @@ describe('a hit does not interrupt a cast (spec 068)', () => {
   });
 });
 
+/**
+ * Spec 080. The client pairs the n-th reply with the n-th request, so a request
+ * the server drops on the floor skews that pairing for every answer after it --
+ * and the movement pass drops a dead body before the cast pass ever sees it.
+ */
+describe('every request is answered, even one nobody can act on', () => {
+  it('refuses a cast asked for at zero health rather than swallowing it', () => {
+    let state = createWorldState(3);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const corpse = state.entities.get(player.id);
+    if (!corpse) throw new Error('no player');
+    state = replaceEntity(state, { ...corpse, health: 0 });
+
+    const result = run(state, 1, {
+      0: [input(player.id, { castAbilityId: 'melee.slash', castTargetX: 700, castTargetY: 450 })],
+    });
+
+    expect(
+      result.events.filter(
+        (event) => event.kind === 'castRejected' && event.entityId === player.id,
+      ),
+    ).toEqual([
+      { kind: 'castRejected', entityId: player.id, abilityId: 'melee.slash', reason: 'dead' },
+    ]);
+    // Refused, not begun: a corpse still does not swing.
+    expect(result.events.some((event) => event.kind === 'castStarted')).toBe(false);
+    expect(result.state.entities.get(player.id)?.cast ?? null).toBeNull();
+  });
+
+  it('says nothing at all when a dead body sends no request', () => {
+    let state = createWorldState(3);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const corpse = state.entities.get(player.id);
+    if (!corpse) throw new Error('no player');
+    state = replaceEntity(state, { ...corpse, health: 0 });
+
+    const result = run(state, 5, { 0: [input(player.id, { moveX: 1 })] });
+    expect(result.events.some((event) => event.kind === 'castRejected')).toBe(false);
+  });
+});
+
 describe('determinism holds with abilities in play', () => {
   function scripted(): ServerWorldState {
     let state = createWorldState(42);
@@ -1065,35 +1108,36 @@ describe('a named target (spec 070)', () => {
   });
 
   /**
-   * Spec 079. A blow aimed at a body that is no longer there is called off
-   * rather than thrown at the corpse, at a withdrawal's refund -- nothing was
-   * thrown, so nothing was spent but the time.
+   * Spec 080, narrowing 079. The withdrawal for a dead target ends where the
+   * commitment begins: while the caster is still *turning* there is nothing to
+   * un-commit and it is called off, and past that the blow completes and finds
+   * what it finds.
    */
-  it('calls the cast off when its target dies during the wind-up', () => {
+  it('calls the cast off when its target dies while it is still turning', () => {
     const heavy = abilityById('melee.heavy');
     if (!heavy) throw new Error('no melee.heavy');
 
     let state = createWorldState(8);
     const player = withPlayer(state, 600, 450);
     state = player.state;
-    const victim = withDummy(state, 660, 450);
+    // Due south, so a body facing east spends ticks coming round to it and the
+    // cast is still in its turn when the victim goes down.
+    const victim = withDummy(state, 600, 510);
     state = victim.state;
     const resource = state.entities.get(player.id)?.resource ?? 0;
 
-    // Committed, and a long way from landing.
-    const committed = run(state, 2, {
+    const committed = run(state, 1, {
       0: [
         input(player.id, {
           castAbilityId: 'melee.heavy',
-          castTargetX: 660,
-          castTargetY: 450,
+          castTargetX: 600,
+          castTargetY: 510,
           castTargetEntityId: victim.id,
         }),
       ],
     });
-    expect(committed.state.entities.get(player.id)?.cast).not.toBeNull();
+    expect(committed.state.entities.get(player.id)?.cast?.phase).toBe(CastPhase.Turning);
 
-    // Something else finishes it off mid-wind-up.
     const corpse = committed.state.entities.get(victim.id);
     if (!corpse) throw new Error('no victim');
     const dead = replaceEntity(committed.state, { ...corpse, health: 0 });
@@ -1111,6 +1155,100 @@ describe('a named target (spec 070)', () => {
     ).toBe(true);
     expect(caster?.resource).toBeCloseTo(resource, 3);
     expect(caster?.cooldowns['melee.heavy']).toBeUndefined();
+  });
+
+  /**
+   * Spec 080's headline. 079 ran the withdrawal all the way to the release,
+   * which put a one-tick cliff in the middle of every ranged auto-attack: a
+   * shot's damage lands when the shot *arrives*, about a wind-up after the
+   * loose, so the previous arrow killed the target exactly while the next
+   * wind-up ran and deleted it -- once per kill, three-quarters along the bar.
+   */
+  it('sees a wind-up out when its target dies, and lands it as a miss', () => {
+    const heavy = abilityById('melee.heavy');
+    if (!heavy) throw new Error('no melee.heavy');
+
+    let state = createWorldState(8);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const victim = withDummy(state, 660, 450);
+    state = victim.state;
+
+    // Committed and already winding up -- due east, so there is no turn.
+    const committed = run(state, 2, {
+      0: [
+        input(player.id, {
+          castAbilityId: 'melee.heavy',
+          castTargetX: 660,
+          castTargetY: 450,
+          castTargetEntityId: victim.id,
+        }),
+      ],
+    });
+    expect(committed.state.entities.get(player.id)?.cast?.phase).toBe(CastPhase.Windup);
+
+    const corpse = committed.state.entities.get(victim.id);
+    if (!corpse) throw new Error('no victim');
+    const dead = replaceEntity(committed.state, { ...corpse, health: 0 });
+
+    const result = run(dead, heavy.windupTicks + 2);
+    const caster = result.state.entities.get(player.id);
+    expect(caster?.cast).toBeNull();
+    // Swung and missed, not called off. Nothing was hit either way -- the
+    // difference is that the wind-up the player watched meant something.
+    expect(hits(result.events)).toHaveLength(0);
+    expect(result.events.some((event) => event.kind === 'attackMissed')).toBe(true);
+    expect(
+      result.events.some(
+        (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Cancelled,
+      ),
+    ).toBe(false);
+    expect(
+      result.events.some(
+        (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Released,
+      ),
+    ).toBe(true);
+  });
+
+  /**
+   * The same rule where it actually bit: the shot is loosed at the aim it
+   * captured and disjoints in flight, exactly as one loosed a tick later does.
+   */
+  it('looses a shot whose target died during the wind-up, and it disjoints', () => {
+    let state = createWorldState(8);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const victim = withDummy(state, 800, 450);
+    state = victim.state;
+
+    const committed = run(state, 2, {
+      0: [
+        input(player.id, {
+          castAbilityId: 'ranged.star',
+          castTargetX: 800,
+          castTargetY: 450,
+          castTargetEntityId: victim.id,
+        }),
+      ],
+    });
+    expect(committed.state.entities.get(player.id)?.cast?.phase).toBe(CastPhase.Windup);
+
+    const corpse = committed.state.entities.get(victim.id);
+    if (!corpse) throw new Error('no victim');
+    const dead = replaceEntity(committed.state, { ...corpse, health: 0 });
+
+    // Far enough past the release for the star to be spawned and to expire.
+    const result = run(dead, 80);
+    expect(
+      result.events.some(
+        (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Cancelled,
+      ),
+    ).toBe(false);
+    expect(
+      result.events.some((event) => event.kind === 'spawned' && event.typeId === 'ranged.star'),
+    ).toBe(true);
+    expect(hits(result.events)).toHaveLength(0);
+    expect([...result.state.entities.values()].some((e) => e.projectile !== null)).toBe(false);
   });
 
   it('lets a shot already in the air finish, whatever becomes of its target', () => {
@@ -1261,6 +1399,158 @@ describe('a named target (spec 070)', () => {
     const again = twoInTheArc();
     const a = run(once.state, 60, frames(once.player, once.named));
     const b = run(again.state, 60, frames(again.player, again.named));
+    expect(JSON.stringify([...b.state.entities])).toBe(JSON.stringify([...a.state.entities]));
+    expect(JSON.stringify(b.events)).toBe(JSON.stringify(a.events));
+  });
+});
+
+describe('an ability aimed at a body (spec 080)', () => {
+  const seek = abilityById('bolt.seek');
+  if (!seek) throw new Error('no bolt.seek');
+
+  it('refuses a unit-targeted cast that named nothing, and spends nothing doing it', () => {
+    let state = createWorldState(9);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    state = withDummy(state, 800, 450).state;
+
+    const before = state.entities.get(player.id);
+    const result = run(state, 3, {
+      0: [input(player.id, { castAbilityId: 'bolt.seek', castTargetX: 800, castTargetY: 450 })],
+    });
+
+    expect(
+      result.events.some((event) => event.kind === 'castRejected' && event.reason === 'noTarget'),
+    ).toBe(true);
+    const after = result.state.entities.get(player.id);
+    expect(after?.cast).toBeNull();
+    // A refusal changes no state: nothing spent, and no cooldown stamped on a
+    // blow that was never thrown.
+    expect(after?.resource).toBe(before?.resource);
+    expect(after?.cooldowns['bolt.seek']).toBeUndefined();
+  });
+
+  it('refuses a mark past its range and commits to one inside it', () => {
+    let state = createWorldState(9);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const far = withDummy(state, 600 + seek.range + 200, 450);
+    state = far.state;
+
+    const refused = run(state, 2, {
+      0: [
+        input(player.id, {
+          castAbilityId: 'bolt.seek',
+          castTargetX: 600 + seek.range + 200,
+          castTargetY: 450,
+          castTargetEntityId: far.id,
+        }),
+      ],
+    });
+    expect(
+      refused.events.some((event) => event.kind === 'castRejected' && event.reason === 'outOfRange'),
+    ).toBe(true);
+
+    let near = createWorldState(9);
+    const shooter = withPlayer(near, 600, 450);
+    near = shooter.state;
+    const mark = withDummy(near, 900, 450);
+    near = mark.state;
+    const committed = run(near, 2, {
+      0: [
+        input(shooter.id, {
+          castAbilityId: 'bolt.seek',
+          castTargetX: 900,
+          castTargetY: 450,
+          castTargetEntityId: mark.id,
+        }),
+      ],
+    });
+    expect(committed.state.entities.get(shooter.id)?.cast?.abilityId).toBe('bolt.seek');
+  });
+
+  it('looses a bolt that follows the body it named, and hits that body', () => {
+    let state = createWorldState(9);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const mark = withDummy(state, 900, 450);
+    state = mark.state;
+    const full = monsterById('dummy')?.stats.maxHealth ?? 0;
+
+    const result = run(state, seek.windupTicks + 40, {
+      0: [
+        input(player.id, {
+          castAbilityId: 'bolt.seek',
+          castTargetX: 900,
+          castTargetY: 450,
+          castTargetEntityId: mark.id,
+        }),
+      ],
+    });
+
+    const struck = hits(result.events);
+    expect(struck).toHaveLength(1);
+    expect(struck[0]?.targetId).toBe(mark.id);
+    expect(result.state.entities.get(mark.id)?.health).toBeLessThan(full);
+  });
+
+  it('is single-target however it flew: a body in the line is passed over', () => {
+    let state = createWorldState(9);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const between = withDummy(state, 750, 450);
+    state = between.state;
+    const mark = withDummy(state, 900, 450);
+    state = mark.state;
+    const full = monsterById('dummy')?.stats.maxHealth ?? 0;
+
+    const result = run(state, seek.windupTicks + 40, {
+      0: [
+        input(player.id, {
+          castAbilityId: 'bolt.seek',
+          castTargetX: 900,
+          castTargetY: 450,
+          castTargetEntityId: mark.id,
+        }),
+      ],
+    });
+
+    expect(hits(result.events).map((hit) => hit.targetId)).toEqual([mark.id]);
+    expect(result.state.entities.get(between.id)?.health).toBe(full);
+  });
+
+  it('holds the table to what a named blow is: a range, and no cone', () => {
+    for (const ability of ALL_ABILITIES) {
+      if (ability.targeting !== 'unit') continue;
+      expect(ability.range, ability.id).toBeGreaterThan(0);
+      // The wedge is not a thing a single-target blow has, and a field that
+      // stopped describing the blow is the second name spec 079 removed.
+      expect(ability.arcCosSq, ability.id).toBeUndefined();
+    }
+  });
+
+  it('replays to bit-identical state and events with the same seed', () => {
+    const windup = seek.windupTicks;
+    function once(): Run {
+      let state = createWorldState(21);
+      const player = withPlayer(state, 600, 450);
+      state = player.state;
+      const mark = withDummy(state, 880, 470);
+      state = mark.state;
+      return run(state, windup + 50, {
+        0: [
+          input(player.id, {
+            castAbilityId: 'bolt.seek',
+            castTargetX: 880,
+            castTargetY: 470,
+            castTargetEntityId: mark.id,
+          }),
+        ],
+      });
+    }
+
+    const a = once();
+    const b = once();
     expect(JSON.stringify([...b.state.entities])).toBe(JSON.stringify([...a.state.entities]));
     expect(JSON.stringify(b.events)).toBe(JSON.stringify(a.events));
   });
