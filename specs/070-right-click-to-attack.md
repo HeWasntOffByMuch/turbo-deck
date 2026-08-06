@@ -125,6 +125,23 @@ The chase point is on the line from the target back toward the player, at
 so a chase stops at the edge of its reach instead of walking into the body it
 is trying to hit.
 
+### One tick of prediction, corrected
+
+Falling out of the cadence change rather than aimed at, but real enough to name.
+Spec 069's client judged "is this ability ready" at `estimated + roundTrip` and
+stamped the cast it predicted for `estimated + commitDelay`. Those are different
+quantities -- a request waits on the server's *input queue*, not on the wire, and
+on a loopback that is three ticks while the round trip is zero -- so every
+cooldown the client stamped ran from a tick later than the one it checked
+against. It was invisible at a 36-tick swing and impossible to miss at
+nineteen: a press the server took was drawn with no bar until `CastState`
+arrived.
+
+Both questions are now asked at the tick the server will commit on. Leaning past
+it is worse than either, and the latency harness says so: the extra requests are
+refused, and a refusal stamps a cooldown of its own that outlives the press it
+came from and blocks the next real one.
+
 ### The clicks
 
 | Input | Before | After |
@@ -176,6 +193,11 @@ the current target.
   cursor-aimed; auto-attacking does not queue or weave them.
 - **Retaliation.** Being hit does not set a target for the player. Monsters
   keep the aggro rule they have.
-- **Per-weapon attack speed tables.** `attackSpeed` is a stat, fed by
-  dexterity and modifiers; weapons can carry it because items already carry
-  modifiers, but no weapon table changes here.
+- **Per-weapon attack speed tables.** `attackSpeed` is a stat, fed by dexterity
+  and modifiers, and a weapon carries it the way it carries everything else --
+  as a modifier. Two existing weapons say what they always meant in the new
+  currency (the Keen Longsword's `attackCooldownTicks: -1` becomes
+  `attackSpeedPct: 0.15`, the Iron Maul's `+4` becomes `-0.2`), because a flat
+  tick off a base interval and a percentage of a cadence are different claims
+  and only one of them survives the stat. No new weapons, and no table of
+  per-weapon swing timers.
