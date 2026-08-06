@@ -77,6 +77,21 @@ export interface AutoAttack {
  */
 export const STANDOFF_FRACTION = 0.8;
 
+/**
+ * How far out the body may be and still swing, as a fraction of reach.
+ *
+ * Strictly larger than {@link STANDOFF_FRACTION}, and by more than the move
+ * order's `ARRIVE_EPS` -- which is the whole reason it exists as a second
+ * number. A chase stops within that tolerance *of its destination*, so a body
+ * that had to be at the destination to swing parks a few units short of its own
+ * threshold and stands there for good: not walking, because it has arrived, and
+ * not attacking, because it has not. That is exactly what one threshold did.
+ *
+ * Below 1, so the body comes to rest inside its reach rather than on the edge
+ * of it, and a target that shuffles does not flip the decision every tick.
+ */
+export const HOLD_FRACTION = 0.9;
+
 const NOTHING: AutoAttack = { chaseTo: null, attack: false, drop: false };
 
 export function autoAttack(input: AutoAttackInput): AutoAttack {
@@ -96,17 +111,19 @@ export function autoAttack(input: AutoAttackInput): AutoAttack {
   const dy = target.y - input.self.y;
   const distance = Math.hypot(dx, dy);
   const reach = input.range + target.radius;
-  // The standoff is the *stopping* distance, not merely where the chase points.
+  // Two numbers, and they have to be two.
   //
-  // It used to be both at once and neither in practice: the chase walked toward
-  // `reach * STANDOFF_FRACTION` but stopped the moment it was inside `reach`, so
-  // a body came to rest exactly on the edge it was supposed to keep clear of.
-  // That is what left a ranged attack standing and asking: the client called
-  // `range + radius` in range, the server gates a point-targeted cast at
-  // `range`, and the last body-radius of the walk was a dead zone where every
-  // request came back `outOfRange`. One threshold, inside both answers, and the
-  // margin the comment below always claimed is real.
-  const stop = reach * STANDOFF_FRACTION;
+  // The chase walks to `reach * STANDOFF_FRACTION` and the swing is allowed out
+  // to `reach * HOLD_FRACTION`, which is looser. Collapsing them into one -- the
+  // obvious-looking fix for a body that stopped on the edge of its reach -- gives
+  // a body that arrives within `ARRIVE_EPS` of the destination and is therefore
+  // *just outside* the threshold it has to be inside to swing: it stops walking
+  // because it has arrived and never attacks because it has not, forever.
+  //
+  // The gap between them is the hysteresis that a moving target needs, too: at
+  // one threshold a shuffling grazer flips the decision every tick, and with a
+  // move order now withdrawing from a cast, every flip would cancel a wind-up.
+  const stop = reach * HOLD_FRACTION;
 
   if (distance > stop) {
     return { chaseTo: standoffPoint(input.self, target, reach), attack: false, drop: false };

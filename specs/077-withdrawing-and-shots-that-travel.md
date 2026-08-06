@@ -185,12 +185,19 @@ Both ends move to the same number:
 - `CastAttempt.targetRadius`, filled by the sim from the *server's* entity, so a
   named cast is gated at `range + radius` — the reach `landOnTarget` already
   allows. A cast at a patch of ground has no edge and is unchanged.
-- `autoAttack` stops at `reach * STANDOFF_FRACTION` rather than at `reach`. The
-  standoff was documented as the stopping distance and was only ever the chase's
-  *destination*: the walk halted the moment it was inside `reach`, which is the
-  edge the standoff exists to keep clear of. One threshold now decides both
-  walking and swinging, and it sits inside what the server will accept — which
-  also gives the margin a body needs when its target drifts during a wind-up.
+- `autoAttack` gets a *second* fraction. The chase still walks to
+  `reach * STANDOFF_FRACTION` (0.8, the standoff a monster keeps); the swing is
+  allowed out to `reach * HOLD_FRACTION` (0.9), which is looser.
+
+  Collapsing them into one — the obvious-looking fix for a body that came to
+  rest on the edge of its reach — produces a worse bug, and did: `moveIntent`
+  stops within `ARRIVE_EPS` of a destination, so a body that has to be *at* the
+  destination to swing parks a few units outside its own threshold and stands
+  there for good. Not walking, because it has arrived; not attacking, because it
+  has not. The gap between the fractions is what makes that impossible, and it
+  doubles as the hysteresis a moving target needs — at one threshold a shuffling
+  grazer flips the decision every tick, and every flip would now cancel a
+  wind-up.
 
 ### A dead target calls off the wind-up
 
@@ -231,6 +238,16 @@ after the loose simply is not there to be hit.
 - **A body walked into range of can be shot.** A named target between `range`
   and `range + radius` is committed to rather than refused `outOfRange`, and
   `autoAttack`'s chase comes to rest inside `range` for both ranged weapons.
+- **A body that stops walking is a body that swings.** For every basic attack
+  against the smallest body in the game, the gap between `STANDOFF_FRACTION` and
+  `HOLD_FRACTION` exceeds `ARRIVE_EPS` — and walking a body in from three times
+  its range ends in a swing rather than a stand.
+- **The whole order works, not just its halves.** A standing attack order driven
+  through the real tick — `autoAttack` deciding, `moveIntent` steering, `step`
+  answering — closes the gap and kills a grazer with each of the three weapons
+  and with empty hands, refusing nothing and withdrawing from nothing. Both pure
+  halves passed while the seam between them stood still, so the seam is what is
+  tested.
 - **A dead target calls off the wind-up**: no hit, no `attackMissed`, one
   `castEnded(Cancelled)`, and the cost and cooldown come back.
 - **A shot in the air is never called back.** With the cast already released,
