@@ -18,9 +18,14 @@ import { DEFAULT_SCATTER } from './scatter.js';
  */
 
 /** What left-drag does. */
-export type EditorMode = 'terrain' | 'scatter' | 'fence' | 'marker' | 'erase';
+export type EditorMode = 'terrain' | 'scatter' | 'fence' | 'marker' | 'erase' | 'part';
 
-export const EDITOR_MODES: readonly EditorMode[] = ['terrain', 'scatter', 'fence', 'marker', 'erase'];
+export const EDITOR_MODES: readonly EditorMode[] = ['terrain', 'scatter', 'fence', 'marker', 'erase', 'part'];
+
+/** What the part mode's drag does (spec 082). */
+export type PartTool = 'add' | 'remove';
+
+export const PART_TOOLS: readonly PartTool[] = ['add', 'remove'];
 
 /** Ring colour per mode and tool, so the cursor says what is about to happen. */
 export const MODE_COLORS: Record<EditorMode, number> = {
@@ -29,6 +34,11 @@ export const MODE_COLORS: Record<EditorMode, number> = {
   fence: 0xd8a878,
   marker: 0xd0d0e8,
   erase: 0xe08f8f,
+  part: 0x9fb8e8,
+};
+export const PART_TOOL_COLORS: Record<PartTool, number> = {
+  add: 0x9fb8e8,
+  remove: 0xe08f8f,
 };
 export const TOOL_COLORS: Record<TerrainTool, number> = {
   raise: 0x8fe08f,
@@ -72,6 +82,15 @@ export interface EditorSettings {
   // Nav
   showNav: boolean;
   walkSlope: number;
+  // Parts (spec 082)
+  partTool: PartTool;
+  /** Which of `maps/recipes/` the add tool bakes. */
+  recipe: string;
+  partSeed: number;
+  /** Left blank to be named after the recipe, as `grow-map.ts` does. */
+  partId: string;
+  /** Which existing part the "remove named" button deletes. */
+  removePartId: string;
 }
 
 export function createEditorSettings(): EditorSettings {
@@ -96,12 +115,19 @@ export function createEditorSettings(): EditorSettings {
     showArena: true,
     showNav: false,
     walkSlope: DEFAULT_WALK_SLOPE,
+    partTool: 'add',
+    recipe: '',
+    partSeed: 1,
+    partId: '',
+    removePartId: '',
   };
 }
 
 /** The colour the cursor takes for the armed tool. */
 export function cursorColor(settings: EditorSettings): number {
-  return settings.mode === 'terrain' ? TOOL_COLORS[settings.tool] : MODE_COLORS[settings.mode];
+  if (settings.mode === 'terrain') return TOOL_COLORS[settings.tool];
+  if (settings.mode === 'part') return PART_TOOL_COLORS[settings.partTool];
+  return MODE_COLORS[settings.mode];
 }
 
 /** The ring a marker drops under, since it has no radius of its own to show. */
@@ -118,6 +144,9 @@ export const MARKER_CURSOR_RADIUS = 30;
 export function cursorRadius(settings: EditorSettings): number {
   if (settings.mode === 'fence') return fenceStep(settings) / 2;
   if (settings.mode === 'marker') return MARKER_CURSOR_RADIUS;
+  // A part is a rectangle drawn by its own outline, so the ring says only
+  // "here", not how big the thing about to land is.
+  if (settings.mode === 'part') return MARKER_CURSOR_RADIUS;
   return settings.radius;
 }
 
@@ -135,6 +164,7 @@ export interface ToolVisibility {
   readonly scatter: boolean;
   readonly fence: boolean;
   readonly marker: boolean;
+  readonly part: boolean;
 }
 
 export function visibleGroups(mode: EditorMode): ToolVisibility {
@@ -146,6 +176,7 @@ export function visibleGroups(mode: EditorMode): ToolVisibility {
     scatter: mode === 'scatter',
     fence: mode === 'fence',
     marker: mode === 'marker',
+    part: mode === 'part',
   };
 }
 
@@ -161,6 +192,7 @@ const choices = <T extends string>(
 ): readonly ToolChoice<T>[] => values.map((value) => ({ value, label: labels[value] ?? value.replace(/-/g, ' ') }));
 
 export const MODE_CHOICES = choices(EDITOR_MODES);
+export const PART_TOOL_CHOICES = choices(PART_TOOLS);
 export const TERRAIN_TOOL_CHOICES = choices(TERRAIN_TOOLS);
 export const MARKER_CHOICES = choices(MARKER_KINDS);
 /**

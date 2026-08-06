@@ -11,3 +11,15 @@ declare module '*?raw' {
   const content: string;
   export default content;
 }
+
+/**
+ * Vite's `import.meta.glob`, typed just far enough for the eager JSON case.
+ *
+ * The map editor bundles every recipe under `maps/recipes/` so a part can be
+ * grown with no server behind the page (spec 082). Declared here rather than by
+ * pulling in `vite/client`, which would bring the whole ambient surface along
+ * with it for one function.
+ */
+interface ImportMeta {
+  glob(pattern: string, options: { eager: true }): Record<string, unknown>;
+}

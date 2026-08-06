@@ -208,6 +208,15 @@ export interface MapPart {
   /** Which chunks it baked, in the layer's own chunk coordinates. */
   readonly rect: ChunkRect;
   readonly seed: number;
+  /**
+   * Chunks inside `rect` that already existed and were completed rather than
+   * created -- a short edge chunk filled out to full size (spec 081).
+   *
+   * Omitted when empty, which is the ordinary case. Recorded because removing a
+   * part may only delete ground that part made: deleting a completed chunk
+   * would punch a hole in terrain somebody else baked (spec 082).
+   */
+  readonly completed?: readonly { readonly cx: number; readonly cz: number }[];
   readonly recipe: PartRecipe;
   readonly note?: string;
 }
@@ -555,6 +564,11 @@ function writePart(part: MapPart, indent: string): string {
       ],
       ['seed', String(part.seed)],
       ...(part.note === undefined ? [] : [['note', writeScalar(part.note)] as const]),
+      ...(part.completed === undefined || part.completed.length === 0
+        ? []
+        : ([
+            ['completed', `[${part.completed.map((c) => `{ "cx": ${c.cx}, "cz": ${c.cz} }`).join(', ')}]`],
+          ] as const)),
       ['recipe', JSON.stringify(part.recipe)],
     ],
     indent,
@@ -648,6 +662,20 @@ function parsePart(value: unknown, what: string): MapPart {
     },
     seed: asNumber(r['seed'], `${what}.seed`),
     ...(note === undefined ? {} : { note: asString(note, `${what}.note`) }),
+    ...(r['completed'] === undefined
+      ? {}
+      : {
+          completed: (Array.isArray(r['completed'])
+            ? r['completed']
+            : fail(`${what}.completed must be an array`)
+          ).map((c, i) => {
+            const coord = asRecord(c, `${what}.completed[${i}]`);
+            return {
+              cx: asNumber(coord['cx'], `${what}.completed[${i}].cx`),
+              cz: asNumber(coord['cz'], `${what}.completed[${i}].cz`),
+            };
+          }),
+        }),
     recipe: asRecord(r['recipe'], `${what}.recipe`) as unknown as PartRecipe,
   };
 }

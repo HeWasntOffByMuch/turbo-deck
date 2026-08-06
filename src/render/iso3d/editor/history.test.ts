@@ -167,7 +167,7 @@ describe('undo', () => {
     const map = loaded();
     const history = new EditHistory();
     paint(map, history, 0, 0);
-    const restored = history.undo(map.store);
+    const { remeshed: restored } = history.undo(map.store);
     expect(restored.length).toBeGreaterThan(0);
     for (const c of restored) {
       expect(c.layerId).toBe(LAYER);
@@ -211,7 +211,7 @@ describe('undo', () => {
     const map = loaded();
     const history = new EditHistory();
     const before = snapshotAll(map).heights;
-    expect(history.undo(map.store)).toEqual([]);
+    expect(history.undo(map.store).remeshed).toEqual([]);
     expect(snapshotAll(map).heights).toEqual(before);
   });
 });
@@ -247,6 +247,6 @@ describe('clear', () => {
     history.clear();
     expect(history.depth).toBe(0);
     expect(history.isRecording).toBe(false);
-    expect(history.undo(map.store)).toEqual([]);
+    expect(history.undo(map.store).remeshed).toEqual([]);
   });
 });

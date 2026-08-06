@@ -1,4 +1,4 @@
-import { cornerJitter, toneVariant } from './chunk.js';
+import { cornerJitter, toneVariant, type ChunkCoord } from './chunk.js';
 import { classify, DEFAULT_BANDS, type TerrainBands } from './classify.js';
 import { createLayer } from './features.js';
 import { MapChunkStore } from './map-world.js';
@@ -80,6 +80,15 @@ export interface BakedPart {
   readonly bounds: MapRect;
   /** The part's own rectangle in world space. */
   readonly worldRect: MapRect;
+  /**
+   * Chunks in the rect that already existed and were *completed* rather than
+   * created -- short edge chunks filled out to full size.
+   *
+   * Reported because it is the difference between ground this part made and
+   * ground it merely finished, and removing a part may only delete the former
+   * (spec 082).
+   */
+  readonly completed: readonly ChunkCoord[];
 }
 
 /** `3t² - 2t³` on `[0, 1]`: flat where it meets the old ground and where it leaves. */
@@ -217,6 +226,12 @@ export function bakePart(input: BakePartInput): BakedPart {
       maxZ: Math.max(info.bounds.maxZ, worldRect.maxZ),
     },
     worldRect,
+    completed: [...existing.keys()]
+      .map((k) => {
+        const [cx, cz] = k.split(',').map(Number) as [number, number];
+        return { cx, cz };
+      })
+      .sort((a, b) => a.cz - b.cz || a.cx - b.cx),
   };
 }
 
@@ -512,15 +527,19 @@ export function growMap(doc: MapDocument, input: GrowMapInput): MapDocument {
   // Bounds are declared, never derived on load, so growing the world says so
   // explicitly -- this is the line that moves the sim's edge wall outward.
   store.declareBounds(input.layerId, baked.bounds);
+  store.setParts([...store.parts, partRecord(input, baked)]);
+  return store.toDocument();
+}
 
-  const part: MapPart = {
+/** The provenance record for a part that has just been baked. */
+export function partRecord(input: GrowMapInput, baked: BakedPart): MapPart {
+  return {
     id: input.id,
     layer: input.layerId,
     rect: input.rect,
     seed: input.seed,
     ...(input.note === undefined ? {} : { note: input.note }),
+    ...(baked.completed.length === 0 ? {} : { completed: baked.completed }),
     recipe: input.recipe,
   };
-  const grown = store.toDocument();
-  return { ...grown, parts: [...(doc.parts ?? []), part] };
 }

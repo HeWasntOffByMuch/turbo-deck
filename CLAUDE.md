@@ -137,11 +137,17 @@ src/render/critters/ playable animal characters as pure data (spec 055): one
                  `src/render/iso3d/critter.ts` already knows how to build it.
                  `npx tsx scripts/preview-critters.ts` renders the real rig to
                  .claude/screenshots/critters.png to check it reads at 64px.
-src/render/iso3d/editor/  the map editor tab (specs 049-052). Renders only from
-                 a loaded map document, never from the world generator. camera.ts,
-                 brush.ts, scatter.ts, markers.ts and history.ts are pure and
-                 tested headlessly; view.ts, cursor.ts and marker-view.ts are the
-                 three.js scene; panel.ts is the lil-gui surface.
+src/render/iso3d/editor/  the map editor tab (specs 049-052, 082). Renders only
+                 from a loaded map document, never from the world generator.
+                 camera.ts, brush.ts, scatter.ts, markers.ts, parts.ts and
+                 history.ts are pure and tested headlessly; view.ts, cursor.ts and
+                 marker-view.ts are the three.js scene; panel.ts is the lil-gui
+                 surface. parts.ts adds and removes map parts (spec 082) through
+                 the same bakePart the grow script uses, and history.ts records
+                 created and deleted chunks, the layer's bounds and the parts list
+                 so growth undoes like any other stroke.
+                 `npx tsx scripts/preview-parts.ts` drives the tools in a real
+                 browser, since the drag and the commit live in view.ts.
 src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim runs on
                  the same fixed 60Hz timestep as src/sim/ and broadcasts deltas
                  every third tick (20Hz) -- one rate for the game, another for the

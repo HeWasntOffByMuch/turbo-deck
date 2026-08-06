@@ -7,6 +7,7 @@ import {
   type MapChunk,
   type MapDocument,
   type MapMarker,
+  type MapPart,
   type MapPoint,
   type MapRect,
 } from './map.js';
@@ -213,10 +214,20 @@ export class MapChunkStore {
   private readonly layers = new Map<string, StoredLayer>();
   readonly cellSize: number;
   readonly chunkCells: number;
+  /**
+   * Where each piece of the world came from (spec 081), held here rather than
+   * left on the document.
+   *
+   * `toDocument()` is the editor's save path, so anything the document carries
+   * has to live somewhere that call can reach. Left on `doc` it was dropped on
+   * every save, which quietly threw away the provenance of every grown part.
+   */
+  private partList: readonly MapPart[];
 
   constructor(private readonly doc: MapDocument) {
     this.cellSize = doc.grid.cellSize;
     this.chunkCells = doc.grid.chunkCells;
+    this.partList = doc.parts ?? [];
     for (const layer of doc.layers) {
       const chunks = new Map<string, StoredChunk>();
       for (const chunk of layer.chunks) chunks.set(key(chunk.cx, chunk.cz), this.storeChunk(chunk, layer.origin));
@@ -298,6 +309,80 @@ export class MapChunkStore {
     // being quietly unaddressable (spec 081).
     layer.grid = grid(layer.chunks.values(), layer.origin, layer.bounds, this.cellSize);
     return true;
+  }
+
+  /**
+   * Drop a chunk, so the ground it held stops existing (spec 082).
+   *
+   * The inverse of `insertChunk` and just as blunt: a layer is a sparse map, so
+   * removing an entry is all that "this ground is gone" means. The grid extent
+   * is recomputed, which is what shrinks the world back when a part is removed
+   * from its edge.
+   */
+  removeChunk(layerId: string, cx: number, cz: number): boolean {
+    const layer = this.layers.get(layerId);
+    if (!layer?.chunks.delete(key(cx, cz))) return false;
+    layer.grid = grid(layer.chunks.values(), layer.origin, layer.bounds, this.cellSize);
+    return true;
+  }
+
+  /**
+   * One chunk in document form, or null if the layer does not hold it.
+   *
+   * Exists so a chunk can be taken out and put back byte-identically: undo for
+   * a delete cannot be a snapshot-and-restore, because there is nothing left to
+   * restore *into* (spec 082).
+   */
+  exportChunk(layerId: string, cx: number, cz: number): MapChunk | null {
+    const layer = this.layers.get(layerId);
+    const chunk = layer?.chunks.get(key(cx, cz));
+    if (!layer || !chunk) return null;
+    return this.chunkToDocument(chunk);
+  }
+
+  /**
+   * Set the declared extent exactly, including smaller than it was.
+   *
+   * `declareBounds` only ever widens, because growing the world cannot shrink
+   * it. Undo and removal both need the other direction, and both know the exact
+   * rectangle they want rather than a rectangle to union in.
+   */
+  setBounds(layerId: string, bounds: MapRect): boolean {
+    const layer = this.layers.get(layerId);
+    if (!layer) return false;
+    layer.bounds = bounds;
+    layer.grid = grid(layer.chunks.values(), layer.origin, bounds, this.cellSize);
+    return true;
+  }
+
+  /** The smallest rectangle covering every chunk the layer holds. Null if none. */
+  heldBounds(layerId: string): MapRect | null {
+    const layer = this.layers.get(layerId);
+    if (!layer || layer.chunks.size === 0) return null;
+    const span = this.cellSize;
+    return {
+      minX: layer.origin.x + layer.grid.minCol * span,
+      minZ: layer.origin.z + layer.grid.minRow * span,
+      maxX: layer.origin.x + layer.grid.maxCol * span,
+      maxZ: layer.origin.z + layer.grid.maxRow * span,
+    };
+  }
+
+  /** How many chunks the layer holds, or the whole store if no layer is named. */
+  chunkCount(layerId?: string): number {
+    if (layerId !== undefined) return this.layers.get(layerId)?.chunks.size ?? 0;
+    let total = 0;
+    for (const layer of this.layers.values()) total += layer.chunks.size;
+    return total;
+  }
+
+  /** Where each piece of the world came from (spec 081). */
+  get parts(): readonly MapPart[] {
+    return this.partList;
+  }
+
+  setParts(parts: readonly MapPart[]): void {
+    this.partList = [...parts];
   }
 
   get document(): MapDocument {
@@ -827,6 +912,42 @@ export class MapChunkStore {
   }
 
   /**
+   * One stored chunk, back in document form.
+   *
+   * The single place the store's arrays become JSON, so `toDocument` and
+   * `exportChunk` cannot disagree about what a chunk is -- world-space props
+   * back to chunk-local, typed arrays back to numbers, everything quantised.
+   */
+  private chunkToDocument(chunk: StoredChunk): MapChunk {
+    return {
+      cx: chunk.cx,
+      cz: chunk.cz,
+      cols: chunk.cols,
+      rows: chunk.rows,
+      heights: Array.from(chunk.heights, quantize),
+      solid: encodeRuns(chunk.solid),
+      materials: encodeRuns(chunk.materials),
+      tones: encodeRuns(chunk.tones),
+      props: chunk.props.map((p) => ({
+        species: p.kind as string,
+        x: quantize(p.x - chunk.originX),
+        z: quantize(p.y - chunk.originZ),
+        rotation: quantize(p.rotation),
+        scale: quantize(p.scale),
+        tint: quantize(p.tint),
+        ...(p.alignToNormal ? { align: true } : {}),
+        ...(p.uniform ? { uniform: true } : {}),
+      })),
+      markers: chunk.markers.map((m) => ({
+        ...m,
+        x: quantize(m.x - chunk.originX),
+        z: quantize(m.z - chunk.originZ),
+      })),
+      nav: chunk.nav === null ? null : Array.from(chunk.nav),
+    };
+  }
+
+  /**
    * The document as it stands now, including any edits. Symmetric with the
    * document it was constructed from: nothing is recomputed here, so a store
    * that has not been edited re-emits exactly what it was given.
@@ -837,6 +958,9 @@ export class MapChunkStore {
       seed: this.doc.seed,
       grid: { cellSize: this.cellSize, chunkCells: this.chunkCells },
       arena: this.doc.arena,
+      // Held here rather than read off `this.doc`, so a part added since
+      // construction survives a save (spec 082).
+      ...(this.partList.length === 0 ? {} : { parts: this.partList }),
       layers: this.doc.layers.map((docLayer) => {
         const layer = this.layers.get(docLayer.id);
         if (!layer) return docLayer;
@@ -854,32 +978,7 @@ export class MapChunkStore {
           chunks: sortedCoords(layer).map((coord) => {
             const chunk = layer.chunks.get(key(coord.cx, coord.cz));
             if (!chunk) throw new Error(`chunk ${coord.cx},${coord.cz} vanished mid-export`);
-            return {
-              cx: chunk.cx,
-              cz: chunk.cz,
-              cols: chunk.cols,
-              rows: chunk.rows,
-              heights: Array.from(chunk.heights, quantize),
-              solid: encodeRuns(chunk.solid),
-              materials: encodeRuns(chunk.materials),
-              tones: encodeRuns(chunk.tones),
-              props: chunk.props.map((p) => ({
-                species: p.kind as string,
-                x: quantize(p.x - chunk.originX),
-                z: quantize(p.y - chunk.originZ),
-                rotation: quantize(p.rotation),
-                scale: quantize(p.scale),
-                tint: quantize(p.tint),
-                ...(p.alignToNormal ? { align: true } : {}),
-                ...(p.uniform ? { uniform: true } : {}),
-              })),
-              markers: chunk.markers.map((m) => ({
-                ...m,
-                x: quantize(m.x - chunk.originX),
-                z: quantize(m.z - chunk.originZ),
-              })),
-              nav: chunk.nav === null ? null : Array.from(chunk.nav),
-            };
+            return this.chunkToDocument(chunk);
           }),
         };
       }),

@@ -5,6 +5,8 @@ import {
   MARKER_CHOICES,
   MODE_CHOICES,
   MODE_COLORS,
+  PART_TOOL_CHOICES,
+  PART_TOOL_COLORS,
   SPAWNER_MONSTER_CHOICES,
   SPECIES_CHOICES,
   TERRAIN_TOOL_CHOICES,
@@ -127,6 +129,12 @@ export interface EditorPanelOptions {
   readonly onSave: () => void;
   readonly onLoad: () => void;
   readonly onDiscardAutosave: () => void;
+  /** The recipes a part may be grown from, by name (spec 082). */
+  readonly recipeNames: readonly string[];
+  /** Remove the part named in the dropdown, for when clicking one is awkward. */
+  readonly onRemoveNamedPart: () => void;
+  /** The parts currently in the map, re-read whenever the panel refreshes. */
+  readonly partIds: () => readonly string[];
 }
 
 export interface EditorPanel {
@@ -256,6 +264,40 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   // them moves everything below it every time you change your mind.
   markers.add(s, 'spawnerMonster', SPAWNER_MONSTER_CHOICES.map((c) => c.value)).name('Spawner monster');
 
+  const parts = gui.addFolder('Parts');
+  strip(
+    parts,
+    PART_TOOL_CHOICES,
+    2,
+    () => s.partTool,
+    (tool) => {
+      s.partTool = tool;
+    },
+    (tool) => PART_TOOL_COLORS[tool],
+  );
+  // A dropdown rather than a text field: a recipe is a committed file (spec
+  // 081), so the set is known, and a typo should not be something you discover
+  // when the bake throws.
+  parts
+    .add(s, 'recipe', opts.recipeNames.length > 0 ? opts.recipeNames : [''])
+    .name('Recipe')
+    .onChange(opts.onArmChange);
+  parts.add(s, 'partSeed', 0, 9999, 1).name('Seed');
+  parts.add(s, 'partId').name('Id (blank = recipe)');
+  // Removing by name as well as by click, because a part can be entirely
+  // off-screen once the world is a few thousand units across.
+  const removeName = parts.add(s, 'removePartId', ['']).name('Remove named');
+  parts.add({ remove: opts.onRemoveNamedPart }, 'remove').name('Remove that part');
+
+  /** Re-read the parts list into the dropdown; the map gains and loses them. */
+  const refreshPartIds = (): void => {
+    const ids = opts.partIds();
+    const options = ids.length > 0 ? [...ids] : [''];
+    if (!options.includes(s.removePartId)) s.removePartId = options[0] ?? '';
+    removeName.options(options).setValue(s.removePartId);
+  };
+  refreshPartIds();
+
   const view = gui.addFolder('View');
   view.add(s, 'showArena').name('Arena bounds').onChange(opts.onArmChange);
   // Off by default: a diagnostic, not a view mode.
@@ -278,6 +320,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
     scatter.show(show.scatter);
     fence.show(show.fence);
     markers.show(show.marker);
+    parts.show(show.part);
     // A folder that is hidden and closed comes back closed, which reads as an
     // empty panel the first time a tool is armed.
     for (const [folder, on] of [
@@ -285,6 +328,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
       [scatter, show.scatter],
       [fence, show.fence],
       [markers, show.marker],
+      [parts, show.part],
     ] as const) {
       if (on) folder.open();
     }
@@ -297,6 +341,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
       gui.controllersRecursive().forEach((c) => c.updateDisplay());
       for (const each of strips) each.refresh();
       showTileLength();
+      refreshPartIds();
       applyVisibility(s.mode);
     },
     destroy(): void {

@@ -124,9 +124,9 @@ export function grow(doc: MapDocument, args: GrowArgs, recipe: PartRecipe): MapD
 
   const { store } = loadMap(grown);
   for (const layer of grown.layers) bakeLayerNav(store, layer.id);
-  // `toDocument` is exact, so nothing but the nav arrays changes -- but `parts`
-  // is not the store's to carry, so it is put back here.
-  return { ...store.toDocument(), ...(grown.parts ? { parts: grown.parts } : {}) };
+  // `toDocument` is exact, and since spec 082 the store carries `parts` too, so
+  // the nav bake is the only thing this changes.
+  return store.toDocument();
 }
 
 /**
