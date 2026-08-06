@@ -125,7 +125,7 @@ export function buildWorldFromDocument(doc: MapDocument): BuiltWorld {
 
 /**
  * The rectangle the sim will not let a unit leave: the union of the layers'
- * declared bounds (spec 080).
+ * declared bounds (spec 081).
  *
  * It used to be `WORLD_BOUNDS`, a constant compiled in from `PLAY_WIDTH +
  * WORLD_BLEED`. That was true only for as long as every map was the same size

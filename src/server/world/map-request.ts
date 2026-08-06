@@ -36,7 +36,7 @@ export type ChunkDecision =
  * The chunk coordinates a world point falls in, within one layer's grid.
  *
  * Chunk indices are relative to the layer's own `origin` -- the document's grid
- * is anchored there rather than at the world origin, and since spec 080 that
+ * is anchored there rather than at the world origin, and since spec 081 that
  * anchor no longer moves with the bounds -- so the offset has to come off
  * before the divide. `Math.floor` for the same reason `chunks.ts` uses it:
  * truncation would make the two chunks either side of the origin half-width.

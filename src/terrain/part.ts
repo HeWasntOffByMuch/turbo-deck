@@ -19,7 +19,7 @@ import { materialIndex, type TerrainLayer } from './types.js';
 import { scatterInBounds, type Prop } from './vegetation.js';
 
 /**
- * Growing the world by parts (spec 080).
+ * Growing the world by parts (spec 081).
  *
  * A part is a chunk-snapped rectangle baked into an existing layer from a
  * recipe. The map stops being something regenerated whole and becomes something

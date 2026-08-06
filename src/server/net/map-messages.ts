@@ -51,7 +51,7 @@ export interface MapLayerInfoMsg {
   readonly id: string;
   readonly seed: number;
   /**
-   * The world point the layer's chunk grid is anchored at (spec 080).
+   * The world point the layer's chunk grid is anchored at (spec 081).
    *
    * Sent rather than inferred from `bounds`: since a map can grow, the two are
    * no longer the same point, and a client that assumed they were would place

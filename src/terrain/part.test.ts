@@ -6,7 +6,7 @@ import { loadMap, MapChunkStore } from './map-world.js';
 import { bakePart, growMap, SKIRT_CELLS } from './part.js';
 
 /**
- * Growing the world by parts (spec 080).
+ * Growing the world by parts (spec 081).
  *
  * The property that matters is the join: a part has to leave the world one
  * continuous surface, not a set of tiles that happen to be adjacent. So the

@@ -1,5 +1,5 @@
 /**
- * Grow the map by one part (spec 080).
+ * Grow the map by one part (spec 081).
  *
  * Where `bake-map.ts` regenerates the world from a seed and throws away every
  * hand edit, this *adds* to the world already on disk:

@@ -305,7 +305,7 @@ building one instanced mesh per species up front — since each chunk carries it
 own table.
 
 `origin` is the world point of the layer's chunk `(0, 0)`, and every `cx`/`cz`
-below is measured from it (spec 080). It is sent rather than inferred from
+below is measured from it (spec 081). It is sent rather than inferred from
 `bounds.min` because a map that has grown west or north has chunks at negative
 coordinates and an origin that no longer sits at its corner — a client that
 assumed the two were the same would place every streamed chunk at an offset.
