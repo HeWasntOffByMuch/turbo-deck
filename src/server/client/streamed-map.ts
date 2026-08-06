@@ -13,9 +13,11 @@
  * `bakedLayer` closes over `store.cornerHeight`, `meshLayers` closes over
  * `store.cellSolid`. So the store, the `TerrainWorld` and the mesh layers are
  * built **once**, from a document with no chunks in it, and each arrival is one
- * `insertChunk` plus one `buildChunk` for the mesher. O(1) per chunk, and the
- * height sampler starts answering for new ground the instant it lands without
- * anyone rebuilding anything.
+ * `insertChunk` plus a bounded handful of `buildChunk`s for the mesher -- its
+ * own and its four edge neighbours', which were meshed against ground it has
+ * only now supplied (spec 077). O(1) per chunk, and the height sampler starts
+ * answering for new ground the instant it lands without anyone rebuilding
+ * anything.
  *
  * Pure: no three.js, no DOM, no clock. The renderer asks it what to mesh.
  */
@@ -27,6 +29,14 @@ import type { Prop } from '../../terrain/vegetation.js';
 import type { MapInfoMessage } from '../net/map-messages.js';
 import type { HeldChunk } from './map-cache.js';
 import { chunksToDocument } from './map-rebuild.js';
+
+/** The four a chunk's own mesh reads across. See `add`. */
+const EDGE_NEIGHBOURS: readonly (readonly [number, number])[] = [
+  [-1, 0],
+  [1, 0],
+  [0, -1],
+  [0, 1],
+];
 
 export class StreamedMap {
   private readonly loaded: LoadedMap;
@@ -64,19 +74,42 @@ export class StreamedMap {
   }
 
   /**
-   * Insert one chunk and hand back the single `TerrainChunk` to mesh.
+   * Insert one chunk and hand back every `TerrainChunk` that now needs meshing:
+   * the arrival, plus the neighbours whose own mesh was baked against ground
+   * that has only just landed (spec 077).
    *
-   * Null when the layer is unknown or the chunk was already held -- both cases
+   * A chunk's mesh is not entirely its own. Its walls come from asking the layer
+   * whether the cell across each edge is solid, and its corner normals from an
+   * apron one corner past the edge -- both of which read the *neighbour's*
+   * arrays. Meshed while a neighbour was missing, a chunk keeps a seam that the
+   * settled map does not have, because nothing else would ever redraw it.
+   *
+   * Four neighbours and not eight: the apron and the wall test each step one
+   * cell along an axis, never diagonally, so a chunk's mesh cannot depend on the
+   * one touching it at a corner. They are rebuilt through the store rather than
+   * re-handed, which is what picks the new apron heights up.
+   *
+   * Empty when the layer is unknown or the chunk was already held -- both cases
    * where meshing would be wasted work rather than an error.
    */
-  add(held: HeldChunk): TerrainChunk | null {
+  add(held: HeldChunk): readonly TerrainChunk[] {
     const key = `${held.layer}:${held.cx},${held.cz}`;
-    if (this.held.has(key)) return null;
+    if (this.held.has(key)) return [];
     const layerId = this.info.layers[held.layer]?.id;
-    if (layerId === undefined) return null;
-    if (!this.loaded.store.insertChunk(layerId, held.chunk)) return null;
+    if (layerId === undefined) return [];
+    if (!this.loaded.store.insertChunk(layerId, held.chunk)) return [];
     this.held.add(key);
-    return this.loaded.store.buildChunk(layerId, held.cx, held.cz);
+
+    const out: TerrainChunk[] = [];
+    const mesh = (cx: number, cz: number): void => {
+      const chunk = this.loaded.store.buildChunk(layerId, cx, cz);
+      if (chunk) out.push(chunk);
+    };
+    mesh(held.cx, held.cz);
+    for (const [dx, dz] of EDGE_NEIGHBOURS) {
+      if (this.has(held.layer, held.cx + dx, held.cz + dz)) mesh(held.cx + dx, held.cz + dz);
+    }
+    return out;
   }
 
   /**

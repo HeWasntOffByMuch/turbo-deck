@@ -139,9 +139,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
     let arrived = 0;
     for (const held of map.chunks) {
-      const chunk = streamed.add(held);
-      if (!chunk) continue;
-      scene.addTerrainChunk(chunk);
+      // One arrival, but up to five chunks to draw: a neighbour's mesh was baked
+      // against ground this chunk has only now supplied (spec 077).
+      const dirty = streamed.add(held);
+      if (dirty.length === 0) continue;
+      for (const chunk of dirty) scene.addTerrainChunk(chunk);
       arrived++;
     }
 

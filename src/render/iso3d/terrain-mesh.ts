@@ -133,7 +133,8 @@ class MeshBuffer {
 /**
  * Mesh one chunk. Neighbour solidity is asked of the *layer*, not the chunk, so
  * a chunk seam is not mistaken for a coastline -- otherwise every chunk boundary
- * would grow a wall down the middle of open ground.
+ * would grow a wall down the middle of open ground. On a streaming client the
+ * layer may not know yet, which is a third answer and not a `false` (spec 077).
  */
 function buildChunk(
   layer: MeshLayer,
@@ -157,7 +158,8 @@ function buildChunk(
     ];
   };
 
-  const solidAt = (i: number, j: number): boolean =>
+  /** True, false, or `null` for a cell across a seam that has not streamed in. */
+  const solidAt = (i: number, j: number): boolean | null =>
     i >= 0 && j >= 0 && i < cols && j < rows
       ? solid[j * cols + i] === 1
       : layer.solidAt(chunk.startCol + i, chunk.startRow + j);
@@ -185,10 +187,14 @@ function buildChunk(
       const wall = (a: Corner, b: Corner): void => {
         walls.quad(a, b, [b[0], baseY, b[2]], [a[0], baseY, a[2]], cliff);
       };
-      if (!solidAt(i - 1, j)) wall(c00, c01);
-      if (!solidAt(i + 1, j)) wall(c10, c11);
-      if (!solidAt(i, j - 1)) wall(c00, c10);
-      if (!solidAt(i, j + 1)) wall(c01, c11);
+      // Only a *definite* no earns a skirt. An unknown neighbour is one that has
+      // not streamed in, and a wall built against it is a cliff the settled map
+      // does not have (spec 077); the chunk is re-meshed when the neighbour
+      // lands, which is where a real seam coastline gets its wall.
+      if (solidAt(i - 1, j) === false) wall(c00, c01);
+      if (solidAt(i + 1, j) === false) wall(c10, c11);
+      if (solidAt(i, j - 1) === false) wall(c00, c10);
+      if (solidAt(i, j + 1) === false) wall(c01, c11);
     }
   }
 
