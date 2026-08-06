@@ -862,9 +862,9 @@ describe('the lobed tree with flat leaves', () => {
       for (let k = 0; k < position.count; k++) expect(position.getY(k)).toBe(0);
       // One fan over the outline and nothing else: no underside, no rim, and no
       // interior rings subdividing a plane that has no curve in it -- one
-      // triangle per corner of the n-gon.
+      // triangle per vertex of the traced boundary.
       const outline = (slabs[i] as (typeof slabs)[number]).outline;
-      expect(LOBED_FLAT.lobeVertices).toContain(outline.length);
+      expect(outline.length).toBeGreaterThan(12);
       expect(position.count).toBe(outline.length * 3);
     });
   });

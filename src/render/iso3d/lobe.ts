@@ -8,53 +8,61 @@ import { hashUnit2 } from '../../shared/hash.js';
  * reads should be checkable in Node rather than by squinting at a frame. What
  * lives here is *where the vertices go*; `props.ts` turns that into buffers.
  *
-* ## Why the outline is an irregular n-gon
+* ## Why the outline is a cluster of discs, traced as arcs
  *
- * The brief asks for a bumpy, scalloped edge -- an irregular blob rather than a
- * clean ellipse. A perturbed radius (`r(theta) = R * (1 + a*sin(k*theta))`)
- * gives a wobble, not a scallop: its notches are as smooth as its bulges, and it
- * has a *period*, which the eye finds immediately and reads as a machined part.
+ * The reference is a canopy of a handful of **big round lumps** with **narrow
+ * deep clefts** between them: wide convex arcs, and a sharp V only where two
+ * lumps meet. Round almost everywhere, sharp in a few places. Two obvious
+ * constructions each get exactly half of that, and neither can be pushed into
+ * the other half:
  *
- * So the outline is a polygon of seven to fourteen vertices whose radii
- * alternate between a **far** band and a **near** band, placed at **uneven**
- * angular intervals and joined by straight edges. Three properties, each doing
- * one job:
+ * - A **polygon** -- vertices at alternating near and far radii -- is sharp
+ *   *everywhere*. Its lobe tips are corners, so at eight or ten vertices it
+ *   reads as a star, and adding vertices to round the tips shallows the clefts
+ *   at the same rate, because both are made of the same thing.
+ * - A **radially sampled union** of circles is round everywhere and sharp
+ *   nowhere: a cleft is a cusp, a cusp is a single point, and evenly spaced
+ *   samples land on one about never, so every cleft comes back with a chord
+ *   across it.
  *
- * - The **alternation** is where the notches come from, and they come for free
- *   and at full depth: a near vertex between two far ones is a notch cutting a
- *   third of the radius, with nothing to compute and nothing to sample.
- * - The **uneven angles** are what stop it reading as a gear. Evenly spaced, a
- *   far/near alternation is exactly a cog, and no amount of radius jitter hides
- *   the regular pitch; it is the spacing the eye locks onto, not the radii.
- * - **Straight edges and no smoothing**, so every vertex is a corner. A corner
- *   is the whole point -- it is what says "leaf mass" rather than "squashed
- *   circle" -- and the previous construction here spent most of its complexity
- *   on not losing the corners it had.
+ * So the union is not sampled radially, it is **walked**. For each disc, the
+ * stretches of its rim that no other disc buries are its share of the union's
+ * boundary; each of those arcs is sampled along its own length, and each *ends*
+ * exactly at a crossing with another disc. Roundness and sharpness stop
+ * competing: the arc step buys the first, and the arc endpoints are the second,
+ * exactly, for nothing.
  *
- * This replaces a union of overlapping circles, which produced the right shape
- * and paid a great deal for it: circle-circle crossings solved algebraically so
- * the corners survived sampling, and a star-shape condition on where every
- * circle was allowed to sit so that the union stayed a single interval along
- * each ray. A polygon defined directly as (bearing, radius) with the bearings
- * increasing is star-shaped by construction and simple by construction, so both
- * of those problems stop existing rather than being solved.
+ * ## What keeps it star-shaped, and why that matters
  *
- * The vertex count is even. Odd, the alternation cannot close: the last vertex
- * and the first are neighbours, so one adjacent pair ends up in the same band
- * and the shape carries a single long flat edge where a notch should be.
+ * A slab's mesh is a fan from its centre, and the domed variant is that fan at
+ * two or three shrunken rings -- both of which need the outline star-shaped
+ * about the origin, or they fold through themselves.
+ *
+ * So the discs are a **core at the origin plus lobes around it**, and each lobe
+ * is held to
+ *
+ *     |c|^2 <= coreRadius^2 + r^2
+ *
+ * which says the furthest along a ray that the ray can *enter* that lobe --
+ * `sqrt(|c|^2 - r^2)`, the tangent case, imaginary when the origin is inside it
+ * -- is no further out than the core, so the core has already covered the gap
+ * and the ray never leaves the shape and comes back. Star-shaped, the boundary
+ * has exactly one point per bearing, which is what lets the sampled arcs be
+ * assembled by **sorting on bearing** rather than by chaining endpoints.
  */
 
 const TAU = Math.PI * 2;
 
 /** Seeds for the independent hashed channels, so one wobble does not imply another. */
-const HASH_LOBE_GAP = 0x10be01;
+const HASH_LOBE_BEARING = 0x10be01;
 const HASH_LOBE_RADIUS = 0x10be02;
-const HASH_LOBE_START = 0x10be03;
-const HASH_LOBE_COUNT = 0x10be08;
+const HASH_LOBE_REACH = 0x10be03;
 const HASH_SLAB_BEARING = 0x10be04;
 const HASH_SLAB_REACH = 0x10be05;
 const HASH_TRUNK_KINK = 0x10be06;
 const HASH_TRUNK_BOW = 0x10be07;
+const HASH_LOBE_COUNT = 0x10be08;
+const HASH_LOBE_SQUASH = 0x10be09;
 
 /** One vertex of a slab's outline: which way it lies, and how far out it reaches. */
 export interface LobePoint {
@@ -62,87 +70,234 @@ export interface LobePoint {
   readonly radius: number;
 }
 
-/**
- * The angular gap between one vertex and the next, before the gaps are
- * normalised to close the circle -- so these are ratios, not radians.
- *
- * The spread is the single number that decides whether the slab reads as
- * hand-drawn or as machined, and it is bounded at *both* ends. Too narrow and
- * the vertices are evenly spaced, which with an alternating radius is a cog.
- * Too wide and the smallest gap becomes a sliver: two vertices a couple of
- * degrees apart, which is a wasted triangle at best and a shading artefact at
- * worst. From 0.55 to 1.45 the widest gap is not quite three times the
- * narrowest, and at fourteen vertices the narrowest is still 14 degrees.
- */
-const GAP_MIN = 0.55;
-const GAP_SPAN = 0.9;
+/** One disc of the cluster a slab's silhouette is the union of. */
+export interface LobeDisc {
+  readonly x: number;
+  readonly z: number;
+  readonly r: number;
+}
+
+/** An angular interval of some disc's rim. Always `lo < hi`, never wrapping. */
+export interface LobeArc {
+  readonly lo: number;
+  readonly hi: number;
+}
+
+/** Bearings nearer than this are one vertex, not two: no sliver triangles. */
+const ANGLE_MERGE = 2e-3;
 
 /**
- * The two radius bands, as fractions of the slab's radius.
+ * The core disc's radius, as a fraction of the slab's own.
  *
- * The gap between them *is* the notch depth, and it is the number the whole
- * shape exists to produce: between 0.11 and 0.38 of the radius, around a quarter
- * on average. Each band has width of its own as well, so the lobes are not all
- * the same length as each other -- the brief's "randomized radius", where a band
- * with no width would give a perfectly regular star.
- *
- * Deeper is not better, and this is the second setting rather than the first.
- * At a near band down around 0.46 the notches cut a third of the radius and the
- * slab stops reading as a leaf mass with bumps on it and starts reading as a
- * holly leaf -- a spike between every pair of clefts. What makes a notch read as
- * a notch is its depth against the *angular width of the lobe beside it*, and at
- * ten to fourteen corners those lobes are only thirty or forty degrees wide.
+ * How deep the clefts can cut, since a cleft bottoms out where the two lobes
+ * beside it meet the core. Smaller and they bite deeper but the slab starts to
+ * read as separate leaves; larger and the core swallows the lobes back into one
+ * plain disc.
  */
-const FAR_MIN = 0.87;
-const FAR_SPAN = 0.13;
-const NEAR_MIN = 0.62;
-const NEAR_SPAN = 0.14;
+const CORE_SHARE = 0.46;
+
+/** A lobe's radius, against the slab's. Big: these are lumps, not bumps on a disc. */
+const LOBE_MIN = 0.36;
+const LOBE_SPAN = 0.22;
 
 /**
- * One slab's silhouette: an irregular n-gon of `vertices` corners, normalised so
- * its widest reaches exactly `radius`.
- *
- * The count is rounded **down to even**, because the alternation has to close
- * around the ring: at an odd count the last vertex and the first are both in the
- * same band, and the slab carries one long flat edge where a notch belongs.
- *
- * Normalising against the widest vertex is what lets `crownRadius` be a fact
- * about the mesh rather than an estimate -- and it has to be done afterwards,
- * because clamping each vertex to `radius` as it was drawn would pile the whole
- * far band onto the limit and flatten the lobes to one length.
+ * How much of the star-shape limit a lobe uses. Near the top of it, because that
+ * is where two neighbours cross deepest and the cleft between them is narrowest
+ * -- which is the shape of the reference: wide lumps, thin partings.
  */
-export function lobeOutline(seed: number, radius: number, vertices: number): LobePoint[] {
-  const count = Math.max(4, vertices - (vertices % 2));
+const REACH_MIN = 0.84;
+const REACH_SPAN = 0.15;
 
-  // Drawn as ratios and then scaled to sum to a full turn, so the gaps can be as
-  // uneven as they like and the polygon still closes exactly. Distributing a
-  // fixed step and jittering each vertex off it cannot promise that: the last
-  // gap is whatever is left over, and it is the one that comes out a sliver.
+/** The bearing gaps between lobes, as ratios before they are scaled to a turn. */
+const GAP_MIN = 0.6;
+const GAP_SPAN = 0.85;
+
+/** How far the cluster may be drawn out along one axis, so it reads as a clump. */
+const SQUASH_MIN = 0.05;
+const SQUASH_SPAN = 0.16;
+
+/**
+ * How far from the origin a lobe of radius `r` may sit and leave the union
+ * star-shaped, given a core of radius `core`.
+ *
+ * The furthest a ray can *enter* the lobe is at the tangent, `sqrt(|c|^2 - r^2)`
+ * from the origin; requiring that to be at most `core` rearranges to this. When
+ * the origin is inside the lobe the requirement is met trivially, and this
+ * returns the larger distance that says so.
+ */
+export function lobeReachLimit(core: number, r: number): number {
+  return Math.hypot(core, r);
+}
+
+/**
+ * Merge angular intervals, splitting any that wrap past a full turn. The result
+ * is sorted, disjoint and non-wrapping.
+ */
+function mergeArcs(raw: readonly LobeArc[]): LobeArc[] {
+  const split: LobeArc[] = [];
+  for (const arc of raw) {
+    if (arc.hi - arc.lo >= TAU) return [{ lo: 0, hi: TAU }];
+    // Everything arrives centred on some bearing and can hang off either end of
+    // [0, TAU). Cut those in two rather than carrying a wrap flag through the
+    // merge, where it would have to be special-cased at every comparison.
+    const lo = ((arc.lo % TAU) + TAU) % TAU;
+    const hi = lo + (arc.hi - arc.lo);
+    if (hi > TAU) split.push({ lo, hi: TAU }, { lo: 0, hi: hi - TAU });
+    else split.push({ lo, hi });
+  }
+  split.sort((a, b) => a.lo - b.lo);
+
+  const merged: LobeArc[] = [];
+  for (const arc of split) {
+    const last = merged[merged.length - 1];
+    if (last && arc.lo <= last.hi) {
+      if (arc.hi > last.hi) merged[merged.length - 1] = { lo: last.lo, hi: arc.hi };
+    } else {
+      merged.push(arc);
+    }
+  }
+  return merged;
+}
+
+/**
+ * The stretches of disc `i`'s rim that no other disc buries -- its share of the
+ * union's boundary.
+ *
+ * Three arrangements have to be told apart and only one of them is interesting.
+ * A disc swallowed whole by another contributes nothing; a disc that swallows
+ * another loses nothing to it; and two that genuinely cross hide the arc of one
+ * within `acos((d^2 + r^2 - other^2) / 2dr)` of the bearing toward the other.
+ * Confusing the first two is how a slab comes out either missing a lobe or drawn
+ * with a stray rim through its middle.
+ */
+export function lobeFreeArcs(discs: readonly LobeDisc[], i: number): LobeArc[] {
+  const a = discs[i];
+  if (!a) return [];
+  const covered: LobeArc[] = [];
+  for (let j = 0; j < discs.length; j++) {
+    if (j === i) continue;
+    const b = discs[j] as LobeDisc;
+    const span = Math.hypot(b.x - a.x, b.z - a.z);
+    if (span + a.r <= b.r) return [];
+    if (span >= a.r + b.r || span + b.r <= a.r) continue;
+    const mid = Math.atan2(b.z - a.z, b.x - a.x);
+    const cosHalf = (span * span + a.r * a.r - b.r * b.r) / (2 * span * a.r);
+    const half = Math.acos(Math.min(1, Math.max(-1, cosHalf)));
+    covered.push({ lo: mid - half, hi: mid + half });
+  }
+
+  const merged = mergeArcs(covered);
+  if (merged.length === 0) return [{ lo: 0, hi: TAU }];
+  const free: LobeArc[] = [];
+  let at = 0;
+  for (const arc of merged) {
+    if (arc.lo > at) free.push({ lo: at, hi: arc.lo });
+    at = Math.max(at, arc.hi);
+  }
+  if (at < TAU) free.push({ lo: at, hi: TAU });
+  return free;
+}
+
+/**
+ * The discs one slab's silhouette is the union of: a core at the origin and a
+ * few big lobes around it.
+ *
+ * The lobes are **big** -- comparable to the core rather than decorations on it
+ * -- which is what makes the finished outline a handful of round lumps instead
+ * of a disc with bumps. And they are pushed out to most of
+ * {@link lobeReachLimit}, because that is where two neighbours cross deepest and
+ * the cleft between them is narrowest.
+ *
+ * The bearings are drawn as *gaps* and scaled to close the circle, so they can
+ * be as uneven as they like and still come out spread. Jittering each lobe off
+ * an even step cannot promise that, and the lobe that lands doubled with its
+ * neighbour merges into it and quietly reduces the count by one.
+ */
+export function lobeDiscs(seed: number, radius: number, lobes: number): LobeDisc[] {
+  const core = radius * CORE_SHARE;
+  // The core is a disc like any other, so the arc walk, the normalisation and
+  // the star-shape rule all treat it as one and nothing needs a special case.
+  const out: LobeDisc[] = [{ x: 0, z: 0, r: core }];
+
   const gaps: number[] = [];
   let total = 0;
-  for (let i = 0; i < count; i++) {
-    const gap = GAP_MIN + GAP_SPAN * hashUnit2(i, seed, HASH_LOBE_GAP);
+  for (let i = 0; i < lobes; i++) {
+    const gap = GAP_MIN + GAP_SPAN * hashUnit2(i, seed, HASH_LOBE_BEARING);
     gaps.push(gap);
     total += gap;
   }
 
-  const points: LobePoint[] = [];
-  // Where the first vertex sits. Without it every slab in the world would have a
-  // corner pointing along its own local +X, which the slabs' shared drift and
-  // lean would then line up into a pattern across a whole tree.
-  let angle = hashUnit2(count, seed, HASH_LOBE_START) * TAU;
-  let widest = 0;
-  for (let i = 0; i < count; i++) {
-    const far = i % 2 === 0;
-    const u = hashUnit2(i, seed, HASH_LOBE_RADIUS);
-    const reach = radius * (far ? FAR_MIN + FAR_SPAN * u : NEAR_MIN + NEAR_SPAN * u);
-    widest = Math.max(widest, reach);
-    points.push({ angle, radius: reach });
-    angle += ((gaps[i] as number) / total) * TAU;
-  }
+  // How far the cluster is drawn out along one axis, and which axis. Lobes all
+  // at one distance make a rosette; the point of this is that a canopy read from
+  // above is a clump, and a clump is longer one way than the other.
+  const squash = SQUASH_MIN + SQUASH_SPAN * hashUnit2(lobes, seed, HASH_LOBE_SQUASH);
+  const squashAxis = hashUnit2(lobes + 1, seed, HASH_LOBE_SQUASH) * TAU;
 
+  let bearing = hashUnit2(lobes + 2, seed, HASH_LOBE_BEARING) * TAU;
+  for (let i = 0; i < lobes; i++) {
+    const r = radius * (LOBE_MIN + LOBE_SPAN * hashUnit2(i, seed, HASH_LOBE_RADIUS));
+    const limit = lobeReachLimit(core, r);
+    const wanted = limit * (REACH_MIN + REACH_SPAN * hashUnit2(i, seed, HASH_LOBE_REACH));
+    // Elliptical, then clamped back inside the limit -- so the squash can never
+    // be the thing that breaks star-shapedness.
+    const stretch = 1 + squash * Math.cos(2 * (bearing - squashAxis));
+    const distance = Math.min(limit, wanted * stretch);
+    out.push({ x: Math.cos(bearing) * distance, z: Math.sin(bearing) * distance, r });
+    bearing += ((gaps[i] as number) / total) * TAU;
+  }
+  return out;
+}
+
+/**
+ * The union's boundary as a closed polygon, in order of bearing.
+ *
+ * Each disc's free arcs are sampled along their own length at `arcStep`, so a
+ * long arc gets many points and reads as round, and every arc contributes its
+ * two endpoints -- which are crossings with another disc, and so are the clefts,
+ * exactly, without being searched for.
+ *
+ * Assembled by **sorting on bearing**, which works because the union is
+ * star-shaped about the origin and its boundary therefore has one point per
+ * bearing. Without that guarantee the arcs would have to be chained end to end,
+ * and the arithmetic deciding which endpoint meets which is where this kind of
+ * code goes wrong.
+ */
+export function lobeOutline(seed: number, radius: number, lobes: number, arcStep: number): LobePoint[] {
+  const discs = lobeDiscs(seed, radius, lobes);
+  const points: LobePoint[] = [];
+  discs.forEach((disc, i) => {
+    for (const arc of lobeFreeArcs(discs, i)) {
+      const steps = Math.max(1, Math.ceil((arc.hi - arc.lo) / arcStep));
+      for (let k = 0; k <= steps; k++) {
+        const at = arc.lo + ((arc.hi - arc.lo) * k) / steps;
+        const x = disc.x + Math.cos(at) * disc.r;
+        const z = disc.z + Math.sin(at) * disc.r;
+        points.push({ angle: ((Math.atan2(z, x) % TAU) + TAU) % TAU, radius: Math.hypot(x, z) });
+      }
+    }
+  });
+  points.sort((a, b) => a.angle - b.angle);
+
+  const kept: LobePoint[] = [];
+  for (const point of points) {
+    const last = kept[kept.length - 1];
+    if (last && point.angle - last.angle < ANGLE_MERGE) {
+      // Two samples at one bearing: an arc's endpoint and the neighbouring
+      // disc's copy of the same crossing, to within the arithmetic. Keep the
+      // outer -- on a star-shaped union they are the same point, and taking the
+      // inner one would nick the cleft.
+      if (point.radius > last.radius) kept[kept.length - 1] = point;
+      continue;
+    }
+    kept.push(point);
+  }
+  const first = kept[0];
+  const final = kept[kept.length - 1];
+  if (kept.length > 2 && first && final && TAU - final.angle + first.angle < ANGLE_MERGE) kept.pop();
+
+  const widest = kept.reduce((wide, point) => Math.max(wide, point.radius), 0);
   const fit = widest > 0 ? radius / widest : 1;
-  return points.map((point) => ({ angle: point.angle, radius: point.radius * fit }));
+  return kept.map((point) => ({ angle: point.angle, radius: point.radius * fit }));
 }
 
 /** The lobed tree's authored parameters -- the knobs the brief asks to expose. */
@@ -161,15 +316,19 @@ export interface LobedShape {
   /** How far the tip drifts off the axis, as a fraction of height. Small. */
   readonly trunkBow: number;
   /**
-   * The corner counts a slab's outline may take -- the hash picks one per slab,
-   * so repeats in the list weight it.
+   * The lobe counts a slab's cluster may take -- the hash picks one per slab, so
+   * repeats in the list weight it. The core is not one of them.
    *
-   * Seven to fourteen is the band the shape reads in. Below it the slab is a
-   * crude star with three or four points; above it the notches get narrow enough
-   * that at the size a tree is drawn they close up into a rim again. Every entry
-   * is even, because the far/near alternation has to close around the ring.
+   * Four to six is the band the shape reads in. Below it a slab is a clover;
+   * above it the lobes are narrow enough that at the size a tree is drawn the
+   * clefts between them close up and the outline is a disc again.
    */
-  readonly lobeVertices: readonly number[];
+  readonly lobeCounts: readonly number[];
+  /**
+   * Radians between samples along a boundary arc. What buys the roundness: the
+   * clefts are exact whatever this is, because they are arc *endpoints*.
+   */
+  readonly lobeArcStep: number;
   /** Rings from a slab's centre to its rim, so the dome is a dome. */
   readonly lobeRings: number;
   /** Slabs authored. An instance draws a subset -- see {@link slabLayout}. */
@@ -249,7 +408,8 @@ export const LOBED: LobedShape = {
   // rings would give the same lean as a straight stick tipped over.
   trunkRings: 8,
   trunkBow: 0.035,
-  lobeVertices: [8, 10, 10, 12],
+  lobeCounts: [4, 5, 5, 6],
+  lobeArcStep: (20 * Math.PI) / 180,
   lobeRings: 2,
   slabs: 5,
   slabCounts: [3, 4, 4, 5],
@@ -376,9 +536,9 @@ export function slabLayout(shape: LobedShape): SlabSpec[] {
   for (let i = 0; i < shape.slabs; i++) {
     const t = i / last;
     const radius = shape.canopySpread * (1 - shape.canopyTaper * t);
-    const corners =
-      shape.lobeVertices[Math.floor(hashUnit2(i, shape.seed, HASH_LOBE_COUNT) * shape.lobeVertices.length) %
-        shape.lobeVertices.length] ?? 10;
+    const lobes =
+      shape.lobeCounts[Math.floor(hashUnit2(i, shape.seed, HASH_LOBE_COUNT) * shape.lobeCounts.length) %
+        shape.lobeCounts.length] ?? 5;
     const bearing = i * golden + (hashUnit2(i, shape.seed, HASH_SLAB_BEARING) * 2 - 1) * 0.8;
     const reach = shape.slabOffset * (0.35 + 0.65 * hashUnit2(i, shape.seed, HASH_SLAB_REACH));
     out.push({
@@ -389,7 +549,7 @@ export function slabLayout(shape: LobedShape): SlabSpec[] {
       offsetZ: Math.sin(bearing) * reach,
       // Against the slab's *width*, which is what the brief measures it against.
       rise: shape.domeRise * 2 * radius,
-      outline: lobeOutline(shape.seed + i * 7919, radius, corners),
+      outline: lobeOutline(shape.seed + i * 7919, radius, lobes, shape.lobeArcStep),
       grownAt: grownAtFor(i, shape.slabs, shape.slabCounts),
     });
   }

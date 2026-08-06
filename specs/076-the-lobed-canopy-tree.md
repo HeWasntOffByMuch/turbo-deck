@@ -36,7 +36,8 @@ interface LobedShape {
   readonly taperPower: number;     // radius = R * (1 - u)^p
   readonly trunkSegments: number;  // radial sides of the trunk
   readonly trunkRings: number;     // rings up its length -- what lets it *curve*
-  readonly lobeVertices: readonly number[]; // corner counts a slab may take, even
+  readonly lobeCounts: readonly number[];   // lobe counts a slab may take, 4..6
+  readonly lobeArcStep: number;    // radians between samples along a boundary arc
   readonly lobeRings: number;      // rings from a slab's centre to its rim
   readonly slabs: number;          // slabs authored (an instance draws a subset)
   readonly slabCounts: readonly number[];  // the counts an instance may take, 3..5
@@ -59,54 +60,59 @@ trunk's flat cap is buried, and a trunk that ends in a single vertex has no cap.
 It returns `Infinity` for the lobed tree, which is the honest answer — the
 invariant is vacuous, not satisfied by luck.
 
-### The slab outline is an irregular n-gon
+### The slab outline is a cluster of discs, walked as arcs
 
 Pure, in a new `lobe.ts` beside `wind.ts`, with no three.js in it:
 
 ```ts
+interface LobeDisc  { readonly x: number; readonly z: number; readonly r: number; }
+interface LobeArc   { readonly lo: number; readonly hi: number; }
 interface LobePoint { readonly angle: number; readonly radius: number; }
-function lobeOutline(seed: number, radius: number, vertices: number): LobePoint[];
+
+function lobeDiscs(seed: number, radius: number, lobes: number): LobeDisc[];
+function lobeFreeArcs(discs: readonly LobeDisc[], i: number): LobeArc[];
+function lobeOutline(seed, radius, lobes, arcStep: number): LobePoint[];
 function slabLayout(shape: LobedShape): SlabSpec[];
 ```
 
-Seven to fourteen vertices, radii alternating between a **far** band and a
-**near** band, at **uneven** angular intervals, joined by straight edges. Three
-properties, each doing one job:
+The reference canopy is a handful of **big round lumps** with **narrow deep
+clefts** between them: wide convex arcs, and a sharp V only where two lumps meet.
+Round almost everywhere, sharp in a few places. Two obvious constructions each
+get half of that and neither can be pushed into the other half:
 
-- The **alternation** is where the notches come from, at full depth and for
-  nothing: a near vertex between two far ones is a notch, with no geometry to
-  intersect and no curve to sample.
-- The **uneven angles** are what stop it reading as a gear. Evenly spaced, a
-  far/near alternation *is* a cog, and jittering the radii does not hide it —
-  the eye locks onto the pitch, not the lengths. The gaps are drawn as ratios
-  and scaled to sum to a full turn, so they can be as uneven as they like and
-  the polygon still closes exactly. (Jittering each vertex off a fixed step
-  cannot promise that: the last gap is whatever is left over, and it is the one
-  that comes out a sliver.)
-- **Straight edges, no smoothing**, so every vertex is a corner.
+- A **polygon** of alternating near/far radii is sharp *everywhere*. Its lobe
+  tips are corners, so at eight or ten vertices it reads as a star, and adding
+  vertices to round the tips shallows the clefts at the same rate — both are made
+  of the same thing.
+- A **radially sampled union** of circles is round everywhere and sharp nowhere:
+  a cleft is a cusp, a cusp is one point, evenly spaced samples land on one about
+  never, and every cleft comes back with a chord across it.
 
-The count is rounded down to **even**: the alternation has to close around the
-ring, and at an odd count one adjacent pair lands in the same band and the slab
-carries a long flat edge where a notch belongs.
+So the union is not sampled radially, it is **walked**. For each disc, the
+stretches of its rim that no other disc buries are its share of the boundary;
+each arc is sampled along its own length at `arcStep`, and each *ends* exactly at
+a crossing. Roundness and sharpness stop competing — the step buys the first, the
+endpoints are the second, exactly and for nothing.
 
-A polygon given as `(bearing, radius)` with bearings increasing is star-shaped
-about the origin and non-self-intersecting *by construction*, which is what the
-mesh builder relies on when it fans a slab from its centre. Normalising against
-the widest vertex afterwards — rather than clamping each one as it is drawn,
-which would pile the whole far band onto the limit — keeps `crownRadius` a fact
-about the mesh rather than an estimate.
+The discs are a **core at the origin plus four to six big lobes**, each held to
+`|c|² ≤ core² + r²` — the furthest a ray can *enter* a lobe (the tangent case,
+`sqrt(|c|²−r²)`) is still inside the core, so the core has covered the gap and
+the ray never leaves the shape and comes back. That keeps the union star-shaped,
+which the slab's centre fan and the domed variant's shrunken rings both require,
+and which is also what lets the sampled arcs be assembled by **sorting on
+bearing** rather than by chaining endpoints — the arithmetic deciding which
+endpoint meets which is where this kind of code goes wrong.
 
-**Depth is bounded above as well as below.** A notch reads against the angular
-width of the lobe beside it, and at ten or twelve corners those lobes are only
-thirty-odd degrees wide; past about a third of the radius the slab stops being a
-leaf mass with bumps on it and becomes a holly leaf. The bands are set for a
-mean around a quarter.
+Lobes are pushed to most of that limit, because that is where two neighbours
+cross deepest and the parting between them is thinnest. Their bearings are drawn
+as *gaps* scaled to close the circle, and the cluster is stretched slightly along
+one axis and clamped back inside the limit, so a slab reads as a clump rather
+than a rosette.
 
-*This replaces a union of overlapping circles.* That produced the right shape
-and paid a great deal for it: circle–circle crossings solved algebraically so
-the corners survived sampling, and a star-shape condition governing where every
-circle was allowed to sit. Defining the polygon directly makes both of those
-problems stop existing rather than being solved.
+*This is the third construction here.* A union sampled radially came first and
+read as an ellipse; an irregular n-gon replaced it and read as a star. Both are
+recorded above because the failure in each case is the same shape of mistake —
+one mechanism asked to produce two opposite qualities at once.
 
 The mesh is a domed disc of that outline, duplicated `slabThickness` below
 itself and joined at the rim: a closed shell, convex on top and concave
@@ -150,13 +156,22 @@ sparser canopy rather than a tall bare whip with a stump of foliage halfway up.
   round, every radius positive, the wrap closing the turn. That is what makes it
   star-shaped, which is what the centre fan assumes; out of order the fan folds
   through itself and the slab is drawn inside out.
-- The corner count is rounded down to even, so the far/near alternation closes.
-- Radii really do alternate: every far vertex is beyond every near one, and both
-  bands have width of their own, so the lobes are not all one length.
-- Notches average between 20% and 32% of the radius, and none is under 10%.
-  Bounded at both ends: too shallow is an ellipse, too deep is a holly leaf.
-- The gaps are uneven — widest at least 1.5x the narrowest — and none is a
-  sliver, and they sum to exactly a full turn.
+- **It is round almost everywhere and sharp in a few places** — measured as a
+  signed turn per vertex. Two to eight reflex corners (the clefts); over 70% of
+  vertices convex; the mean convex turn no more than about the arc step; and the
+  hardest reflex turn several times that. This is the assertion that separates
+  this construction from both of the ones it replaced, each of which would fail
+  it from a different side.
+- Clefts cut over 15% of the radius, while the *mean* radius stays above 65% of
+  it — wide lumps, thin partings. Depth alone would also describe a starfish.
+- The traced boundary agrees with the union computed the other way round (the
+  radial max, exact on a star-shaped union) at every vertex, to one global scale.
+- The union is star-shaped: every lobe within `lobeReachLimit`, and walking out
+  along any ray to the boundary, every point on the way is inside some disc.
+- `lobeFreeArcs` tells the three arrangements apart: a disc swallowed by another
+  contributes no rim, a disc that swallows another loses none of its own, and
+  disjoint discs hide nothing. It also handles a covered arc straddling the seam
+  at bearing zero, which is the case a wrap-flag implementation gets wrong.
 - Normalisation: the widest point of a slab is exactly `canopySpread`.
 - No two slabs of a tree share an outline.
 - The slab dome rises between 10% and 20% of the slab's width, is highest at the

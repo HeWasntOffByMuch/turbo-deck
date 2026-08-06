@@ -3,12 +3,16 @@ import {
   LOBED,
   LOBED_FLAT,
   LOBED_SHAPES,
+  lobeDiscs,
+  lobeFreeArcs,
   lobeOutline,
+  lobeReachLimit,
   lobedCrownRadius,
   slabDrop,
   slabLayout,
   slabRise,
   trunkProfile,
+  type LobeDisc,
   type LobePoint,
 } from './lobe.js';
 
@@ -16,11 +20,12 @@ import {
  * The lobed tree's shape as arithmetic (spec 076).
  *
  * What is worth asserting here is only the things a screenshot cannot tell you
- * apart. How *deep* the outline's notches cut is one of them: a shallow scallop
- * and a deep one are the same picture at a glance and completely different at
- * the size a tree is actually drawn, so the depth is a number here rather than
- * an impression. That the trunk ends in one vertex is another -- a cap collapsed
- * to zero width draws identically and Z-fights.
+ * apart. Where the outline is *round* and where it is *sharp* is the one this
+ * shape lives or dies on: sharp everywhere is a star, round everywhere is an
+ * ellipse, and both look broadly like the intended thing until you look at the
+ * edge. So it is measured -- as a turn angle per vertex -- rather than admired.
+ * That the trunk ends in one vertex is another such thing: a cap collapsed to
+ * zero width draws identically and Z-fights.
  */
 
 /** The shape the world actually grows, not a restatement of it. */
@@ -31,11 +36,36 @@ const RADIUS = SHAPE.canopySpread;
 const SEEDS = [1, 7919, 15838, 23757, 31676, 404, 20260806];
 
 describe('the slab outline', () => {
-  /** The corner counts the shipped tree draws from, plus the ends of the band. */
-  const COUNTS = [...new Set([...SHAPE.lobeVertices, 8, 14])];
+  /** The lobe counts the shipped tree draws from, plus the ends of the band. */
+  const COUNTS = [...new Set([...SHAPE.lobeCounts, 4, 6])];
+  const STEP = SHAPE.lobeArcStep;
 
-  /** Every outline this suite sweeps: each count, at each seed. */
-  const outlines = COUNTS.flatMap((count) => SEEDS.map((seed) => lobeOutline(seed, RADIUS, count)));
+  /** Every outline this suite sweeps: each lobe count, at each seed. */
+  const outlines = COUNTS.flatMap((lobes) => SEEDS.map((seed) => lobeOutline(seed, RADIUS, lobes, STEP)));
+
+  /** An outline vertex in the slab's own plane. */
+  const at = (point: LobePoint): { x: number; z: number } => ({
+    x: Math.cos(point.angle) * point.radius,
+    z: Math.sin(point.angle) * point.radius,
+  });
+
+  /**
+   * How far the boundary turns at each vertex, radians, signed: positive where
+   * it bends the way a convex outline does, negative at a reflex corner.
+   */
+  function turns(outline: readonly LobePoint[]): number[] {
+    const n = outline.length;
+    return outline.map((_, i) => {
+      const before = at(outline[(i - 1 + n) % n] as LobePoint);
+      const here = at(outline[i] as LobePoint);
+      const after = at(outline[(i + 1) % n] as LobePoint);
+      const ax = here.x - before.x;
+      const az = here.z - before.z;
+      const bx = after.x - here.x;
+      const bz = after.z - here.z;
+      return Math.atan2(ax * bz - az * bx, ax * bx + az * bz);
+    });
+  }
 
   it('is a simple polygon: bearings strictly increasing, all the way round', () => {
     // Not bookkeeping. A polygon given as (bearing, radius) with the bearings in
@@ -44,86 +74,139 @@ describe('the slab outline', () => {
     // centre. Out of order, that fan folds back through itself and the slab is
     // drawn inside out.
     for (const outline of outlines) {
+      expect(outline.length).toBeGreaterThan(12);
       for (let i = 1; i < outline.length; i++) {
         expect((outline[i] as LobePoint).angle).toBeGreaterThan((outline[i - 1] as LobePoint).angle);
       }
       const first = outline[0] as LobePoint;
       const last = outline[outline.length - 1] as LobePoint;
       expect(first.angle).toBeGreaterThanOrEqual(0);
-      // ...and the wrap from the last vertex back to the first closes the turn
-      // rather than overshooting it or leaving a wedge missing.
       expect(last.angle - first.angle).toBeLessThan(Math.PI * 2);
       for (const point of outline) expect(point.radius).toBeGreaterThan(0);
     }
   });
 
-  it('rounds the corner count down to even, so the alternation closes', () => {
-    // At an odd count the last vertex and the first are both in the same band,
-    // and the slab carries one long flat edge where a notch belongs.
-    for (const asked of [7, 8, 9, 10, 11, 12, 13, 14]) {
-      const outline = lobeOutline(4242, RADIUS, asked);
-      expect(outline.length % 2).toBe(0);
-      expect(outline.length).toBeLessThanOrEqual(asked);
-      expect(outline.length).toBeGreaterThanOrEqual(asked - 1);
-    }
-  });
-
-  it('alternates far and near, so every other vertex is a notch', () => {
+  it('is round almost everywhere and sharp in a few places', () => {
+    // The property that separates this construction from both of the ones it
+    // replaced, and the reason it exists. A polygon of alternating radii is
+    // sharp at *every* vertex, so its lobe tips are corners and it reads as a
+    // star; a radially sampled union is round at every vertex including the
+    // clefts, so it reads as an ellipse. Walking the arcs gives gentle turns
+    // along a lobe and a handful of hard reflex turns between them.
     for (const outline of outlines) {
-      const radii = outline.map((point) => point.radius);
-      const far = radii.filter((_, i) => i % 2 === 0);
-      const near = radii.filter((_, i) => i % 2 === 1);
-      expect(Math.min(...far)).toBeGreaterThan(Math.max(...near));
-      // Each band has width of its own, so the lobes are not all one length --
-      // bands with no width would give a perfectly regular star.
-      expect(Math.max(...far) - Math.min(...far)).toBeGreaterThan(0);
-      expect(Math.max(...near) - Math.min(...near)).toBeGreaterThan(0);
+      const bend = turns(outline);
+      const reflex = bend.filter((turn) => turn < -0.2);
+      const convex = bend.filter((turn) => turn > 0);
+      // A cleft per pair of neighbouring lobes, give or take the ones that
+      // merged -- never none, and never one at every vertex.
+      expect(reflex.length).toBeGreaterThanOrEqual(2);
+      expect(reflex.length).toBeLessThanOrEqual(8);
+      // The rest of the boundary is arc, and turns by about the arc step.
+      expect(convex.length / bend.length).toBeGreaterThan(0.7);
+      const gentle = convex.reduce((a, b) => a + b, 0) / convex.length;
+      expect(gentle).toBeLessThan(STEP * 1.6);
+      // ...and the clefts turn several times harder than the arcs do, which is
+      // what "sharp" means when every vertex is technically a corner.
+      expect(Math.abs(Math.min(...bend))).toBeGreaterThan(gentle * 2.5);
     }
   });
 
-  it('cuts notches deep enough to survive being drawn at the size of a tree', () => {
-    // The number the shape exists to produce. A slab is drawn a few dozen pixels
-    // across and foreshortened by an isometric camera on top of that, so a notch
-    // worth a few percent of the radius is not a notch, it is an ellipse.
+  it('cuts clefts deep enough to survive being drawn at the size of a tree', () => {
+    // A slab is drawn a few dozen pixels across and foreshortened by an
+    // isometric camera on top of that, so a notch worth a few percent of the
+    // radius is not a notch, it is an ellipse.
     for (const outline of outlines) {
       const n = outline.length;
       const depths: number[] = [];
-      for (let i = 1; i < n; i += 2) {
-        const before = (outline[i - 1] as LobePoint).radius;
+      for (let i = 0; i < n; i++) {
         const here = (outline[i] as LobePoint).radius;
-        const after = (outline[(i + 1) % n] as LobePoint).radius;
-        depths.push((Math.min(before, after) - here) / RADIUS);
+        if (here >= (outline[(i - 1 + n) % n] as LobePoint).radius) continue;
+        if (here > (outline[(i + 1) % n] as LobePoint).radius) continue;
+        // Climb out of the cleft both ways; the shallower rim is its depth.
+        let up = i;
+        let down = i;
+        const radiusAt = (k: number): number => (outline[((k % n) + n) % n] as LobePoint).radius;
+        while (radiusAt(up + 1) >= radiusAt(up)) up++;
+        while (radiusAt(down - 1) >= radiusAt(down)) down--;
+        depths.push((Math.min(radiusAt(up), radiusAt(down)) - here) / RADIUS);
       }
-      expect(depths.length).toBeGreaterThanOrEqual(4);
-      expect(Math.min(...depths)).toBeGreaterThan(0.1);
-      const mean = depths.reduce((a, b) => a + b, 0) / depths.length;
-      expect(mean).toBeGreaterThan(0.2);
-      // Bounded above as well, and that bound is not a formality. A notch reads
-      // against the angular width of the lobe beside it, and at ten or twelve
-      // corners those lobes are thirty-odd degrees wide -- so past about a third
-      // the slab stops being a leaf mass with bumps and becomes a holly leaf.
-      expect(mean).toBeLessThan(0.32);
+      expect(depths.length).toBeGreaterThanOrEqual(2);
+      // Shallower at six lobes than at four, necessarily: the same rim divided
+      // more ways leaves each neighbour pair less room to part company.
+      expect(Math.max(...depths)).toBeGreaterThan(0.15);
     }
   });
 
-  it('spaces the vertices unevenly, which is what stops it reading as a gear', () => {
-    // The property that is easiest to lose and hardest to see in a still: evenly
-    // spaced, a far/near alternation *is* a cog, and jittering the radii does not
-    // hide it, because the eye locks onto the pitch and not the lengths.
+  it('keeps the lumps wide and the partings thin', () => {
+    // The other half of the reference's look, and the one a depth number alone
+    // does not pin: clefts that deep spread evenly around the rim is a starfish.
+    // Most of the boundary has to be out near full reach, with the clefts narrow
+    // -- so the *average* radius sits high even though a few vertices dive.
     for (const outline of outlines) {
-      const n = outline.length;
-      const gaps = outline.map((point, i) =>
-        i === n - 1 ? Math.PI * 2 - point.angle + (outline[0] as LobePoint).angle
-          : (outline[i + 1] as LobePoint).angle - point.angle,
-      );
-      const even = (Math.PI * 2) / n;
-      // The widest gap is at least half again the narrowest...
-      expect(Math.max(...gaps) / Math.min(...gaps)).toBeGreaterThan(1.5);
-      // ...and no gap is a sliver, which is a wasted triangle and a shading
-      // artefact rather than character.
-      expect(Math.min(...gaps)).toBeGreaterThan(even * 0.4);
-      // The gaps still close the circle exactly, whatever they were drawn as.
-      expect(gaps.reduce((a, b) => a + b, 0)).toBeCloseTo(Math.PI * 2, 9);
+      const mean = outline.reduce((sum, point) => sum + point.radius, 0) / outline.length;
+      expect(mean / RADIUS).toBeGreaterThan(0.65);
+    }
+  });
+
+  it('agrees with the union worked out the other way round', () => {
+    // The arc walk checked against an independent computation of the same shape:
+    // the radial max, which is exact on a star-shaped union and is what the
+    // outline used to be built from before roundness and sharpness had to stop
+    // competing. Every traced vertex must sit on the boundary that gives at its
+    // own bearing -- to a single global factor, since the traced outline is
+    // normalised and the raw discs are not.
+    for (const lobes of COUNTS) {
+      for (const seed of SEEDS) {
+        const discs = lobeDiscs(seed, RADIUS, lobes);
+        const reachAt = (angle: number): number => {
+          let reach = 0;
+          for (const d of discs) {
+            const along = d.x * Math.cos(angle) + d.z * Math.sin(angle);
+            const under = d.r * d.r - (d.x * d.x + d.z * d.z) + along * along;
+            if (under > 0) reach = Math.max(reach, along + Math.sqrt(under));
+          }
+          return reach;
+        };
+        const ratios = lobeOutline(seed, RADIUS, lobes, STEP).map((p) => p.radius / reachAt(p.angle));
+        // Not exact to the last bit, and could not be: at a cleft the two discs
+        // give the same reach by two different routes through atan2 and hypot.
+        expect(Math.max(...ratios) - Math.min(...ratios)).toBeLessThan(1e-6);
+        expect(Math.min(...ratios)).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('is one unbroken interval along every ray, which is what star-shaped means', () => {
+    // The condition the mesh's centre fan rests on, checked by its consequence
+    // rather than by restating the formula: walk out along a ray to the boundary
+    // and every point on the way must be inside *something*. A gap here is a
+    // slab with a ring-shaped hole in it.
+    for (const lobes of COUNTS) {
+      for (const seed of SEEDS) {
+        const discs = lobeDiscs(seed, RADIUS, lobes);
+        const core = discs[0] as LobeDisc;
+        expect(core.x).toBe(0);
+        expect(core.z).toBe(0);
+        for (const disc of discs) {
+          expect(Math.hypot(disc.x, disc.z)).toBeLessThanOrEqual(lobeReachLimit(core.r, disc.r) + 1e-9);
+        }
+        for (let i = 0; i < 180; i++) {
+          const angle = (i / 180) * Math.PI * 2;
+          let reach = 0;
+          for (const disc of discs) {
+            const along = disc.x * Math.cos(angle) + disc.z * Math.sin(angle);
+            const disc2 = disc.r * disc.r - (disc.x * disc.x + disc.z * disc.z) + along * along;
+            if (disc2 > 0) reach = Math.max(reach, along + Math.sqrt(disc2));
+          }
+          expect(reach).toBeGreaterThan(0);
+          for (let step = 0; step <= 24; step++) {
+            const t = (step / 24) * reach;
+            const x = Math.cos(angle) * t;
+            const z = Math.sin(angle) * t;
+            expect(discs.some((d) => Math.hypot(x - d.x, z - d.z) <= d.r + 1e-9)).toBe(true);
+          }
+        }
+      }
     }
   });
 
@@ -131,18 +214,18 @@ describe('the slab outline', () => {
     // What lets `crownRadius` be a fact about the mesh rather than an estimate.
     for (const seed of SEEDS) {
       for (const radius of [12, 44, 90]) {
-        const outline = lobeOutline(seed, radius, 10);
+        const outline = lobeOutline(seed, radius, 5, STEP);
         expect(Math.max(...outline.map((p) => p.radius))).toBeCloseTo(radius, 9);
       }
     }
   });
 
   it('is pure in its seed', () => {
-    expect(lobeOutline(7919, RADIUS, 10)).toEqual(lobeOutline(7919, RADIUS, 10));
-    expect(lobeOutline(7919, RADIUS, 10)).not.toEqual(lobeOutline(7920, RADIUS, 10));
+    expect(lobeOutline(7919, RADIUS, 5, STEP)).toEqual(lobeOutline(7919, RADIUS, 5, STEP));
+    expect(lobeOutline(7919, RADIUS, 5, STEP)).not.toEqual(lobeOutline(7920, RADIUS, 5, STEP));
   });
 
-  it('turns out a different polygon for every slab of a tree', () => {
+  it('turns out a different outline for every slab of a tree', () => {
     // Five slabs stamped from one outline read as a stack of copies, however
     // well the outline itself is shaped.
     for (const shape of LOBED_SHAPES) {
@@ -151,6 +234,61 @@ describe('the slab outline', () => {
       );
       expect(new Set(shapes).size).toBe(shapes.length);
     }
+  });
+});
+
+describe('walking one disc of the cluster', () => {
+  const disc = (x: number, z: number, r: number): LobeDisc => ({ x, z, r });
+
+  it('gives a lone disc its whole rim', () => {
+    const arcs = lobeFreeArcs([disc(0, 0, 10)], 0);
+    expect(arcs).toHaveLength(1);
+    expect((arcs[0] as { lo: number; hi: number }).hi - (arcs[0] as { lo: number; hi: number }).lo)
+      .toBeCloseTo(Math.PI * 2, 9);
+  });
+
+  it('gives a swallowed disc none of it, and its swallower all of it', () => {
+    // The two cases that look alike in the arithmetic and are opposite in the
+    // result. Confusing them is how a slab comes out either missing a lobe or
+    // drawn with a stray rim through its middle.
+    const discs = [disc(0, 0, 20), disc(2, 0, 5)];
+    expect(lobeFreeArcs(discs, 1)).toHaveLength(0);
+    const outer = lobeFreeArcs(discs, 0);
+    expect(outer).toHaveLength(1);
+    expect((outer[0] as { lo: number; hi: number }).hi - (outer[0] as { lo: number; hi: number }).lo)
+      .toBeCloseTo(Math.PI * 2, 9);
+  });
+
+  it('leaves disjoint discs alone', () => {
+    const discs = [disc(0, 0, 5), disc(40, 0, 5)];
+    for (const i of [0, 1]) expect(lobeFreeArcs(discs, i)).toHaveLength(1);
+  });
+
+  it('hides the arc a crossing disc covers, and only that', () => {
+    // Two equal discs offset along +x: each hides exactly the third of the
+    // other's rim facing it. `acos(d / 2r)` at d = r is 60 degrees either side.
+    const discs = [disc(0, 0, 10), disc(10, 0, 10)];
+    const free = lobeFreeArcs(discs, 0);
+    const covered = free.reduce((sum, arc) => sum - (arc.hi - arc.lo), Math.PI * 2);
+    expect(covered).toBeCloseTo((2 * Math.PI) / 3, 9);
+    // ...and what is hidden is the side facing the neighbour, not the far side.
+    for (const arc of free) {
+      for (const t of [arc.lo + 1e-6, arc.hi - 1e-6]) {
+        expect(Math.hypot(Math.cos(t) * 10 - 10, Math.sin(t) * 10)).toBeGreaterThan(10 - 1e-6);
+      }
+    }
+  });
+
+  it('handles a covered arc that straddles the seam at zero', () => {
+    // A neighbour due +x hides an interval centred on bearing 0, so it hangs off
+    // both ends of [0, TAU) at once. Carried through the merge as a wrapping
+    // interval that would have to be special-cased at every comparison; split in
+    // two instead, and this is the case that says the split happened.
+    const free = lobeFreeArcs([disc(0, 0, 10), disc(10, 0, 10)], 0);
+    const covered = free.reduce((sum, arc) => sum - (arc.hi - arc.lo), Math.PI * 2);
+    expect(covered).toBeCloseTo((2 * Math.PI) / 3, 9);
+    // Nothing survives at bearing 0 itself, which is the middle of the hidden arc.
+    expect(free.some((arc) => arc.lo <= 1e-9 && arc.hi >= 1e-9)).toBe(false);
   });
 });
 
@@ -325,7 +463,7 @@ describe('the flat variant', () => {
 
   it('draws its own outlines rather than the domed tree\'s', () => {
     // Same proportions, different seed: the two stand side by side in the same
-    // wood, and identical polygons at two thicknesses would read as a mistake.
+    // wood, and identical outlines at two thicknesses would read as a mistake.
     const shapesOf = (shape: typeof LOBED): string[] =>
       slabLayout(shape).map((slab) =>
         slab.outline.map((p) => `${p.angle.toFixed(4)}:${(p.radius / slab.radius).toFixed(4)}`).join('|'),
