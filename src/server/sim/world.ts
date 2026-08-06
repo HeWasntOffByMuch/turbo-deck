@@ -46,6 +46,7 @@ import {
   type ProjectileSpawn,
 } from './abilities.js';
 import { resolveMovement, type MovementContext } from './movement.js';
+import { regenerated } from './resource.js';
 import {
   ActivityValue,
   CastEndReason,
@@ -331,7 +332,7 @@ export function step(
     if (next.resource < next.stats.maxResource) {
       working.set(next.id, {
         ...next,
-        resource: Math.min(next.stats.maxResource, next.resource + next.stats.resourceRegen),
+        resource: regenerated(next.resource, next.stats.resourceRegen, next.stats.maxResource, 1),
       });
     }
 

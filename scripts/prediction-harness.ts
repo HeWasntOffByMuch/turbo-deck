@@ -110,6 +110,70 @@ interface Run {
   readonly rooted: number;
   /** Fraction of ticks the server really had a cast in progress. */
   readonly casting: number;
+  readonly combat: Combat;
+}
+
+/**
+ * What the *blow* felt like, as opposed to what the walk did (spec 069).
+ *
+ * Every number here is a disagreement between what the player is looking at and
+ * what the server is actually doing, counted per tick. Movement had one honest
+ * measure -- the body is where the server says or it is not -- and combat needs
+ * four, because a commit is four visible things at once: a bar, a sweep, a
+ * rooted body and a swing that lands.
+ */
+interface Combat {
+  /** Ticks compared, so the rest can be read as fractions of a session. */
+  readonly sampled: number;
+  /**
+   * Ticks the server had a cast running and the client was drawing no bar.
+   *
+   * The headline. This is the press that appears to do nothing: it is exactly
+   * the round trip on a client that waits to be told, and it is the number this
+   * spec exists to drive to zero.
+   */
+  readonly barMissing: number;
+  /**
+   * Ticks the client drew a bar *before* the server had started the cast it
+   * belongs to.
+   *
+   * Not a fault, and separated from `barLingering` for that reason. A request is
+   * stamped to an input and the server commits when it dequeues that input, so
+   * there is always a window between the press and the commit -- the depth of
+   * the input queue, plus the trip. Drawing an empty bar across it is the honest
+   * answer to "did my press register", and standing still across it costs
+   * nothing (spec 067). Expect it to track the queue depth and no more.
+   */
+  readonly barEarly: number;
+  /**
+   * Ticks the client was still drawing a bar *after* the server's cast ended.
+   *
+   * This one is the fault. Every tick here is a tick the player stood rooted for
+   * a blow that had already finished, which is what the old `over-root` column
+   * was mostly made of.
+   */
+  readonly barLingering: number;
+  /**
+   * Ticks the client walked while the server held it rooted. The dangerous
+   * direction: movement the server discards, banked as error, corrected later.
+   */
+  readonly underRoot: number;
+  /**
+   * Ticks the server had the ability on cooldown and the client's sweep read
+   * ready. A button that looks usable and is not.
+   */
+  readonly sweepMissing: number;
+  /** Presses the server refused outright. */
+  readonly refused: number;
+  /**
+   * Casts the server actually began, counted from its own state rather than
+   * from `CastState` messages -- it sends that twice for one cast, once at the
+   * commit and again when a turn finishes and the wind-up clock restarts (spec
+   * 065), so counting messages reports roughly twice as many blows as happened.
+   */
+  readonly committed: number;
+  /** Presses that lit a bar on the spot. At least one per cast is the goal. */
+  readonly instantBars: number;
 }
 
 /**
@@ -175,6 +239,62 @@ async function run(label: string, delayTicks: number, ticks: number): Promise<Ru
   });
   void client.connect();
 
+  // What the server actually has, read straight out of its state. The harness is
+  // allowed to do this and the client is not -- that asymmetry is the point.
+  //
+  // Read through a function, never captured: `step()` returns a fresh state and
+  // the server rebinds the field every tick, so a reference taken once is the
+  // world as it stood at tick zero. Holding one silently reported a session in
+  // which nobody ever cast anything.
+  const serverState = (): {
+    tick: number;
+    entities: Map<
+      number,
+      { cast: unknown; position: { x: number; y: number }; cooldowns: Record<string, number> }
+    >;
+  } =>
+    (
+      server as unknown as {
+        state: {
+          tick: number;
+          entities: Map<
+            number,
+            {
+              cast: unknown;
+              position: { x: number; y: number };
+              cooldowns: Record<string, number>;
+            }
+          >;
+        };
+      }
+    ).state;
+
+  const combat = {
+    sampled: 0,
+    barMissing: 0,
+    barEarly: 0,
+    barLingering: 0,
+    underRoot: 0,
+    sweepMissing: 0,
+    refused: 0,
+    committed: 0,
+  };
+  /**
+   * Whether the server has begun a cast since the client's current bar went up.
+   * This is what separates "the bar is early" from "the bar is overstaying": the
+   * same tick-level disagreement means opposite things either side of it.
+   */
+  let serverCastSeenThisBar = false;
+  /** Whether the server had a cast last tick, so a new one can be counted once. */
+  let serverWasCasting = false;
+  const timeline: string[] = [];
+  /** Presses that put a bar on screen on the very tick they were made. */
+  let instantBars = 0;
+  let hadBar = false;
+  client.onCastRejected(() => {
+    combat.refused += 1;
+  });
+
   const planner = new RoutePlanner();
   const held = new Set<string>();
   const pathWorld = { colliders: world.colliders, radius: SERVER_PLAYER_RADIUS };
@@ -213,7 +333,15 @@ async function run(label: string, delayTicks: number, ticks: number): Promise<Ru
       // Committing cancels where you were going -- what `view.ts` does.
       destination = null;
       planner.clear();
+      // Counted only when the press puts up a bar that was not already there.
+      // A press made *during* a swing can see the bar of the swing already
+      // running, and counting that would score a client that predicts nothing
+      // as though it predicted everything.
+      const showedBefore = view.casts.some((cast) => cast.entityId === view.selfEntityId);
       client.useAbility('melee.slash', view.self.x + 100, view.self.y);
+      const pressed = client.view();
+      const showsAfter = pressed.casts.some((cast) => cast.entityId === pressed.selfEntityId);
+      if (!showedBefore && showsAfter) instantBars += 1;
     }
 
     // Read after the clicks, exactly as the view does: a root asked for this
@@ -234,23 +362,50 @@ async function run(label: string, delayTicks: number, ticks: number): Promise<Ru
     }
     facing = turnToward(facing, intent.facing, fresh.stats?.turnRate ?? 0, SERVER_TICK_RATE);
     if (process.env.DEBUG) {
-      const srv = (server as unknown as { state: { tick: number; entities: Map<number, { cast: unknown; position: { x: number } }> } }).state;
-      const mine = srv.entities.get(view.selfEntityId);
+      const at = serverState().entities.get(view.selfEntityId);
       console.log(
-        `t=${tick} est=${view.estimatedTick} srvTick=${srv.tick} rtt=${view.roundTripTicks} ` +
-          `root=${view.selfRoot ? 'Y' : 'n'} srvCast=${mine?.cast ? 'Y' : 'n'} ` +
+        `t=${tick} est=${view.estimatedTick} srvTick=${serverState().tick} rtt=${view.roundTripTicks} ` +
+          `qd=${view.commitDelayTicks} root=${view.selfRoot ? 'Y' : 'n'} srvCast=${at?.cast ? 'Y' : 'n'} ` +
           `cd=${JSON.stringify(view.cooldowns)} move=${intent.moveX.toFixed(1)} ` +
-          `local=${me.x.toFixed(1)} srv=${mine?.position.x.toFixed(1)}`,
+          `local=${me.x.toFixed(1)} srv=${at?.position.x.toFixed(1)}`,
       );
     }
     sampled += 1;
     if (fresh.selfRoot) rootedTicks += 1;
-    if (
-      (
-        server as unknown as { state: { entities: Map<number, { cast: unknown }> } }
-      ).state.entities.get(view.selfEntityId)?.cast
-    ) {
-      castingTicks += 1;
+    const mine = serverState().entities.get(view.selfEntityId);
+    const serverCasting = Boolean(mine?.cast);
+    if (serverCasting) castingTicks += 1;
+    if (serverCasting && !serverWasCasting) combat.committed += 1;
+    serverWasCasting = serverCasting;
+
+    // What the player is looking at, against what the server is doing. Read from
+    // `fresh` -- the view *after* this tick's press -- because a bar that only
+    // appears on the next tick is a bar that appeared late.
+    const hasBar = fresh.casts.some((cast) => cast.entityId === fresh.selfEntityId);
+    if (!hadBar && hasBar) serverCastSeenThisBar = false;
+    if (serverCasting) serverCastSeenThisBar = true;
+    hadBar = hasBar;
+
+    // A tick-by-tick picture of the disagreement, which a percentage cannot give
+    // you: whether the client is a tick late at the start of every blow or a
+    // handful late at the end of it are different bugs with the same number.
+    // `.` neither, `C` both, `s` server only, `c` client only.
+    if (process.env.DEBUG_CAST) {
+      timeline.push(serverCasting ? (hasBar ? 'C' : 's') : hasBar ? 'c' : '.');
+    }
+
+    combat.sampled += 1;
+    if (serverCasting && !hasBar) combat.barMissing += 1;
+    if (!serverCasting && hasBar) {
+      if (serverCastSeenThisBar) combat.barLingering += 1;
+      else combat.barEarly += 1;
+    }
+    if (serverCasting && !fresh.selfRoot) combat.underRoot += 1;
+    // The sweep is only wrong when the server says "not yet" and the client's
+    // own table says "ready" -- a button that looks pressable and is not.
+    const serverReadyAt = mine?.cooldowns['melee.slash'] ?? 0;
+    if (serverState().tick < serverReadyAt && (fresh.cooldowns['melee.slash'] ?? 0) <= fresh.estimatedTick) {
+      combat.sweepMissing += 1;
     }
     const claimed = client.sendInput({
       moveX: intent.moveX,
@@ -275,6 +430,13 @@ async function run(label: string, delayTicks: number, ticks: number): Promise<Ru
     previous = after ? { x: after.x, y: after.y } : null;
   }
 
+  if (process.env.DEBUG_CAST) {
+    console.log(`\n${label}`);
+    for (let at = 0; at < timeline.length; at += 120) {
+      console.log(`  ${String(at).padStart(4)} ${timeline.slice(at, at + 120).join('')}`);
+    }
+  }
+
   // Drift nudges are the system working -- small, eased, and gone. Anything else
   // is a snap the player sees.
   const hard = Object.entries(corrections)
@@ -288,6 +450,7 @@ async function run(label: string, delayTicks: number, ticks: number): Promise<Ru
     worstResidual,
     rooted: sampled === 0 ? 0 : rootedTicks / sampled,
     casting: sampled === 0 ? 0 : castingTicks / sampled,
+    combat: { ...combat, instantBars },
   };
 }
 
@@ -318,6 +481,24 @@ async function main(): Promise<void> {
       `${row.label.padEnd(17)}${String(row.hard).padEnd(13)}${(reasons || '-').padEnd(31)}` +
         `${row.maxSnap.toFixed(1).padEnd(13)}${row.worstResidual.toFixed(1).padEnd(14)}` +
         `${(row.rooted * 100).toFixed(0)}% / ${(row.casting * 100).toFixed(0)}%`,
+    );
+  }
+
+  // The combat half (spec 069). Every column is a disagreement between what the
+  // player sees and what the server is doing, as a percentage of the session.
+  console.log('\nwhat the blow felt like -- % of ticks the client disagreed with the server\n');
+  console.log(
+    'round trip       no bar   early bar   lingering bar   under-root   dead sweep   instant/cast   refused',
+  );
+  for (const row of rows) {
+    const pct = (value: number): string =>
+      row.combat.sampled === 0 ? '-' : `${((value / row.combat.sampled) * 100).toFixed(0)}%`;
+    console.log(
+      `${row.label.padEnd(17)}${pct(row.combat.barMissing).padEnd(9)}` +
+        `${pct(row.combat.barEarly).padEnd(12)}${pct(row.combat.barLingering).padEnd(16)}` +
+        `${pct(row.combat.underRoot).padEnd(13)}${pct(row.combat.sweepMissing).padEnd(13)}` +
+        `${`${row.combat.instantBars} / ${row.combat.committed}`.padEnd(15)}` +
+        `${row.combat.refused}`,
     );
   }
   console.log('');

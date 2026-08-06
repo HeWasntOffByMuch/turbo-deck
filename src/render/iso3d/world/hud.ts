@@ -340,8 +340,16 @@ function formatSeconds(seconds: number): string {
   return seconds.toFixed(1);
 }
 
-/** Whether the player could pay for an ability right now. Cosmetic dimming only. */
+/**
+ * Whether the player could pay for an ability right now. Cosmetic dimming only:
+ * the server decides, and refuses a cast it will not fund whatever this said.
+ *
+ * Against the live pool since spec 069. It used to compare with `maxResource`,
+ * which only ever answered "could this *ever* be afforded" -- the live number
+ * was on the entity and had never been on the wire, so a button for a bolt the
+ * player could not currently pay for looked exactly like one they could.
+ */
 function affordable(view: ClientView, ability: AbilityDefinition | null): boolean {
   if (!ability || !view.stats) return true;
-  return ability.cost <= view.stats.maxResource;
+  return ability.cost <= view.resource;
 }
