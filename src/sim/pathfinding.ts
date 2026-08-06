@@ -70,6 +70,16 @@ export interface NavGrid {
   /** One of NAV_OPEN / NAV_TIGHT / NAV_BLOCKED per cell, judged at its centre. */
   readonly cells: Uint8Array;
   /**
+   * Which connected region each cell belongs to, or -1 for a cell no body of
+   * this radius can stand in (spec 073). Two cells are in one component exactly
+   * when the search could walk between them, so a differing pair is a route
+   * that does not exist -- answered here in a comparison rather than by a flood
+   * to the node budget, which is what an unreachable goal used to cost.
+   */
+  readonly components: Int32Array;
+  /** How many cells each component holds, indexed by component id. */
+  readonly componentSizes: Int32Array;
+  /**
    * Search buffers. Shared with every other grid of the same cell count rather
    * than owned -- the radii in play (a player and three monster sizes) all span
    * the same world, and four private copies of 2.5MB buys nothing. `findPath`
@@ -143,6 +153,65 @@ function markRim(
   markCells(grid, value, bounds.x, bottom - inset, right, bottom, outside);
 }
 
+/**
+ * Label every passable cell with the region it belongs to, and measure each
+ * region (spec 073).
+ *
+ * The connectivity here must be *exactly* the search's, or the O(1) rejection
+ * built on it would refuse routes the search could walk: 8-connected, `NAV_TIGHT`
+ * passable, and a diagonal refused when either of the two cells it corners past
+ * is `NAV_BLOCKED`. Step *cost* differs between tight and open ground and does
+ * not matter here -- reachability is about which steps exist, not what they cost.
+ *
+ * One flood over the whole grid, at build time, on a grid that is memoized per
+ * (world, radius) and already costs more than this to grade.
+ */
+function labelComponents(
+  cols: number,
+  rows: number,
+  cells: Uint8Array,
+): { components: Int32Array; componentSizes: Int32Array } {
+  const components = new Int32Array(cols * rows).fill(-1);
+  const sizes: number[] = [];
+  // One shared stack, reused across floods: the regions partition the grid, so
+  // no cell is ever pushed twice and the total pushes are bounded by cell count.
+  const stack = new Int32Array(cols * rows);
+  for (let seed = 0; seed < components.length; seed++) {
+    if ((cells[seed] ?? NAV_BLOCKED) === NAV_BLOCKED || components[seed] !== -1) continue;
+    const id = sizes.length;
+    let size = 0;
+    let top = 0;
+    stack[top++] = seed;
+    components[seed] = id;
+    while (top > 0) {
+      const current = stack[--top] ?? 0;
+      size++;
+      const col = current % cols;
+      const row = (current - col) / cols;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nextCol = col + dx;
+          const nextRow = row + dy;
+          if (nextCol < 0 || nextCol >= cols || nextRow < 0 || nextRow >= rows) continue;
+          const next = nextRow * cols + nextCol;
+          if ((cells[next] ?? NAV_BLOCKED) === NAV_BLOCKED || components[next] !== -1) continue;
+          if (dx !== 0 && dy !== 0) {
+            if ((cells[row * cols + nextCol] ?? NAV_BLOCKED) === NAV_BLOCKED) continue;
+            if ((cells[nextRow * cols + col] ?? NAV_BLOCKED) === NAV_BLOCKED) continue;
+          }
+          // Claimed on push rather than on pop, so a cell reachable from two
+          // neighbours is only stacked once.
+          components[next] = id;
+          stack[top++] = next;
+        }
+      }
+    }
+    sizes.push(size);
+  }
+  return { components, componentSizes: Int32Array.from(sizes) };
+}
+
 export function createNavGrid(world: WorldColliders, radius: number, cellSize: number = NAV_CELL_SIZE): NavGrid {
   const bounds = world.bounds;
   const cols = Math.ceil(bounds.w / cellSize);
@@ -184,6 +253,8 @@ export function createNavGrid(world: WorldColliders, radius: number, cellSize: n
     }
   }
 
+  const { components, componentSizes } = labelComponents(cols, rows, cells);
+
   return {
     cellSize,
     cols,
@@ -193,6 +264,8 @@ export function createNavGrid(world: WorldColliders, radius: number, cellSize: n
     radius,
     world,
     cells,
+    components,
+    componentSizes,
     scratch: scratchFor(cols * rows),
   };
 }
@@ -281,43 +354,17 @@ const POCKET_CELLS = 128;
  * relocates to -- and in a grove it is very often boxed in by the neighbouring
  * trunks, so the search then spends its whole budget failing to arrive.
  *
- * A bounded flood with the search's own connectivity rules, so a region with any
- * way out is dismissed in a few dozen cells and the verdict matches what the
- * search can actually do. `escape` -- the body's own cell -- counts as a way
- * out, so a body already standing in a nook can still be routed inside it.
- *
- * Stamps the cells of a confirmed pocket, so the next candidate out of the same
- * nook is skipped without flooding it again.
+ * Two lookups since spec 073, where it used to be a flood bounded at
+ * `POCKET_CELLS`. The predicate is the same one that flood computed: a region
+ * holding `escape` had a way out, a region that reached the bound was too big to
+ * be a nook, and anything else was a pocket. Components make both questions
+ * O(1), and the bound stops being the flood's budget and becomes only what it
+ * always meant -- how much ground is too much to call a nook.
  */
-function isPocket(grid: NavGrid, cell: number, escape: number, generation: number): boolean {
-  if (cell === escape) return false;
-  const region: number[] = [cell];
-  const seen = new Set<number>([cell]);
-  // The queue is the region: appending to it while walking it is the flood.
-  for (const current of region) {
-    if (region.length >= POCKET_CELLS) return false;
-    const col = current % grid.cols;
-    const row = (current - col) / grid.cols;
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        if (dx === 0 && dy === 0) continue;
-        const nextCol = col + dx;
-        const nextRow = row + dy;
-        if (nextCol < 0 || nextCol >= grid.cols || nextRow < 0 || nextRow >= grid.rows) continue;
-        const next = nextRow * grid.cols + nextCol;
-        if ((grid.cells[next] ?? NAV_BLOCKED) === NAV_BLOCKED || seen.has(next)) continue;
-        if (dx !== 0 && dy !== 0) {
-          if ((grid.cells[row * grid.cols + nextCol] ?? NAV_BLOCKED) === NAV_BLOCKED) continue;
-          if ((grid.cells[nextRow * grid.cols + col] ?? NAV_BLOCKED) === NAV_BLOCKED) continue;
-        }
-        if (next === escape) return false;
-        seen.add(next);
-        region.push(next);
-      }
-    }
-  }
-  for (const pocketCell of region) grid.scratch.closed[pocketCell] = generation;
-  return true;
+function isPocket(grid: NavGrid, cell: number, escape: number): boolean {
+  const component = grid.components[cell] ?? -1;
+  if (component < 0 || component === (grid.components[escape] ?? -2)) return false;
+  return (grid.componentSizes[component] ?? 0) < POCKET_CELLS;
 }
 
 /**
@@ -338,43 +385,42 @@ function isPocket(grid: NavGrid, cell: number, escape: number, generation: numbe
  * cannot arrive. A relocated *start* must not have it: a body shoved into a nook
  * is where it is, and moving its route's origin somewhere it cannot walk from
  * would be worse than the nook.
+ *
+ * One scan per ring since spec 073. It used to re-scan a whole ring from scratch
+ * after every pocket it dismissed, stamping the nook's cells so the next scan
+ * would skip them; now that the pocket test is a lookup, the nearest acceptable
+ * cell falls out of the single scan already walking the ring.
  */
-function freeCellNear(grid: NavGrid, point: Vec2, escape: number, generation: number): number {
+function freeCellNear(grid: NavGrid, point: Vec2, escape: number): number {
   const start = cellOf(grid, point);
   if ((grid.cells[start] ?? NAV_BLOCKED) !== NAV_BLOCKED) return start;
   const col0 = start % grid.cols;
   const row0 = (start - col0) / grid.cols;
   const rings = Math.max(1, Math.ceil(NAV_RELOCATE_RADIUS / grid.cellSize));
   for (let ring = 1; ring <= rings; ring++) {
-    // Nearest first, and again past anything the pocket test dismisses -- whose
-    // cells are stamped, so the rescan skips the whole nook rather than just its
-    // nearest cell.
-    for (;;) {
-      let best = -1;
-      let bestDistSq = Infinity;
-      for (let row = row0 - ring; row <= row0 + ring; row++) {
-        if (row < 0 || row >= grid.rows) continue;
-        for (let col = col0 - ring; col <= col0 + ring; col++) {
-          if (col < 0 || col >= grid.cols) continue;
-          // Only the ring's edge is new on this pass.
-          if (Math.abs(row - row0) !== ring && Math.abs(col - col0) !== ring) continue;
-          const cell = row * grid.cols + col;
-          if ((grid.cells[cell] ?? NAV_BLOCKED) === NAV_BLOCKED) continue;
-          if (grid.scratch.closed[cell] === generation) continue;
-          const centre = centreOf(grid, cell);
-          const dx = centre.x - point.x;
-          const dy = centre.y - point.y;
-          const distSq = dx * dx + dy * dy;
-          // Index order breaks exact ties, keeping the choice deterministic.
-          if (distSq < bestDistSq) {
-            best = cell;
-            bestDistSq = distSq;
-          }
+    let best = -1;
+    let bestDistSq = Infinity;
+    for (let row = row0 - ring; row <= row0 + ring; row++) {
+      if (row < 0 || row >= grid.rows) continue;
+      for (let col = col0 - ring; col <= col0 + ring; col++) {
+        if (col < 0 || col >= grid.cols) continue;
+        // Only the ring's edge is new on this pass.
+        if (Math.abs(row - row0) !== ring && Math.abs(col - col0) !== ring) continue;
+        const cell = row * grid.cols + col;
+        if ((grid.cells[cell] ?? NAV_BLOCKED) === NAV_BLOCKED) continue;
+        if (escape >= 0 && isPocket(grid, cell, escape)) continue;
+        const centre = centreOf(grid, cell);
+        const dx = centre.x - point.x;
+        const dy = centre.y - point.y;
+        const distSq = dx * dx + dy * dy;
+        // Index order breaks exact ties, keeping the choice deterministic.
+        if (distSq < bestDistSq) {
+          best = cell;
+          bestDistSq = distSq;
         }
       }
-      if (best === -1) break;
-      if (escape < 0 || !isPocket(grid, best, escape, generation)) return best;
     }
+    if (best !== -1) return best;
   }
   return -1;
 }
@@ -527,17 +573,19 @@ export function findPath(grid: NavGrid, from: Vec2, to: Vec2): readonly Vec2[] {
   const reachable = standable(grid, to);
   if (reachable && segmentClear(from, to, grid.radius, grid.world)) return [to];
 
-  // Relocation runs on its own generation, so the pocket floods can stamp cells
-  // without the search that follows mistaking them for ground it has closed.
-  const relocation = beginSearch(grid.scratch);
-  const start = freeCellNear(grid, from, -1, relocation);
-  const goal = freeCellNear(grid, to, start, relocation);
+  const start = freeCellNear(grid, from, -1);
+  const goal = freeCellNear(grid, to, start);
   if (start === -1 || goal === -1) return [];
   // Where the route ends. A click into a trunk, or past the world's edge, is a
   // point no body can occupy; ending the path there is what left a player
   // grinding against the bark, so the stand-in cell is the arrival instead.
   const arrival = reachable ? to : centreOf(grid, goal);
   if (start === goal) return [arrival];
+  // Nothing connects the two, so there is no route and no reason to look for one
+  // (spec 073). This is the cheap half of the answer a search used to spend its
+  // whole node budget on: a body walled away from its target now costs a
+  // comparison rather than forty thousand expansions, every time it asks.
+  if ((grid.components[start] ?? -1) !== (grid.components[goal] ?? -2)) return [];
 
   const { gScore, cameFrom, seen, closed, open } = grid.scratch;
   const generation = beginSearch(grid.scratch);
