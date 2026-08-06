@@ -25,6 +25,17 @@ const outDir = join(root, '.claude', 'screenshots');
 const PORT = 4319;
 
 /**
+ * How far beside a body the deliberately-sloppy click lands, in CSS pixels.
+ *
+ * Outside the body at the default framing, and comfortably short of the ~110px
+ * the seeded grazers stand apart -- so a hit is this body being forgiving
+ * rather than the neighbour being picked instead. What the budget *is* belongs
+ * to `hover.test.ts`, which pins it exactly; this asks only whether the
+ * forgiveness is wired to the mouse at all.
+ */
+const SLOPPY_OFFSET = 40;
+
+/**
  * A Chromium to drive. Prefers a browser already on the box (an agent container
  * ships one at `PLAYWRIGHT_BROWSERS_PATH` that may not match the version this
  * Playwright would download), and otherwise lets Playwright find its own.
@@ -97,6 +108,15 @@ function bodyPoint(bar: Bar): { x: number; y: number } {
   return { x: bar.x, y: bar.y + 40 };
 }
 
+/**
+ * How far beside a body a right-click can land and still pick it (spec 071).
+ *
+ * Measured rather than asserted: the body's drawn size depends on the zoom and
+ * on which monster the field happened to seed, so the honest thing to report is
+ * the number, not a pass against a threshold this script would have to guess.
+ * Each attempt drops the target on bare grass first, or a click that picked
+ * nothing would look exactly like one that re-picked the same unit.
+ */
 async function findUnit(page: Page): Promise<Bar | null> {
   for (const bar of await bodiesOnScreen(page)) {
     const point = bodyPoint(bar);
@@ -201,6 +221,27 @@ async function main(): Promise<void> {
       // The click that found it is the click that targeted it, so the readout
       // is taken before anything else moves.
       const opened = await readTarget(page);
+
+      // Now the same order, given badly (spec 071): let the body go, then take
+      // it again from a pixel that is beside it rather than on it. Done here,
+      // before the screenshots, because the alternative is measuring how long
+      // the body survived being attacked -- an earlier version of this waited,
+      // and reported a failure that was really a dead grazer.
+      await page.mouse.click(240, 660, { button: 'right' });
+      await page.waitForTimeout(130);
+      const dropped = await readTarget(page);
+
+      let sloppy = 'the body left the screen before it could be tried';
+      const beside = (await bodiesOnScreen(page)).find((bar) => bar.id === unit.id);
+      if (beside) {
+        const point = bodyPoint(beside);
+        await page.mouse.click(point.x + SLOPPY_OFFSET, point.y, { button: 'right' });
+        await page.waitForTimeout(130);
+        sloppy = await readTarget(page);
+        if (!sloppy.startsWith('target ')) {
+          problems.push(`a right-click ${SLOPPY_OFFSET}px beside a body picked nothing`);
+        }
+      }
       await shoot(page, 'world-target');
 
       // The cursor sitting on a body outlines it -- the thing that says what a
@@ -220,11 +261,14 @@ async function main(): Promise<void> {
       await page.waitForTimeout(4000);
       const later = await readTarget(page);
       await shoot(page, 'world-autoattack');
-      console.log(`  target on the click:      ${opened}`);
-      console.log(`  ...four seconds later:    ${later}`);
-      // The order runs itself: no second press was made between those two
-      // lines. "no target" means the body it named is dead and the client
-      // dropped it, which is the only way an attack order ends by itself.
+
+      console.log(`  target on the click:            ${opened}`);
+      console.log(`  after letting go on bare grass: ${dropped}`);
+      console.log(`  after a click ${SLOPPY_OFFSET}px beside it:   ${sloppy}`);
+      console.log(`  ...four seconds later:          ${later}`);
+      // The order runs itself: no press was made between the last two lines.
+      // "no target" means the body it named is dead and the client dropped it,
+      // which is the only way an attack order ends by itself.
     }
 
     // A ground-targeted blast, for the telegraph ring on the terrain.

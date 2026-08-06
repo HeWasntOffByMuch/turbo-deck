@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { HOVER_PLAYER_ID, pickHoveredUnit, type HoverTarget } from './hover.js';
+import {
+  distanceToBox,
+  FOOTPRINT_PAD,
+  HOVER_PLAYER_ID,
+  pickHoveredUnit,
+  SNAP_PIXELS,
+  type HoverTarget,
+  type ScreenBox,
+} from './hover.js';
 import { attachOutline } from './outline.js';
 import { box, makeHeadingArrow } from './meshes.js';
 import { PlayerRig } from './rigs.js';
@@ -130,5 +138,91 @@ describe('hover picking (spec 041)', () => {
     expect(pickHoveredUnit(shellOnly, [target], null)).toBeNull();
     const throughModel = new THREE.Raycaster(new THREE.Vector3(0, 100, 0), new THREE.Vector3(0, -1, 0));
     expect(pickHoveredUnit(throughModel, [target], null)).toBe(1);
+  });
+});
+
+/**
+ * Forgiving picking (spec 071). Hand-built targets rather than real rigs: what
+ * is under test is which claim wins, and a box plus an empty group says that
+ * without a camera in the way. The model raycast is exercised above.
+ */
+describe('forgiving picking (spec 071)', () => {
+  /** A target the ray can never hit, so only the fallbacks can answer. */
+  function ghost(id: number, ground: Vec2, screen: ScreenBox | null, radius = 20): HoverTarget {
+    return { id, object: new THREE.Object3D(), position: ground, radius, screen };
+  }
+
+  const NO_RAY = new THREE.Raycaster(new THREE.Vector3(0, 1e6, 0), new THREE.Vector3(0, 1, 0));
+  const BOX: ScreenBox = { minX: 100, minY: 100, maxX: 140, maxY: 200 };
+
+  it('measures distance to the drawn box, and calls inside it zero', () => {
+    expect(distanceToBox({ x: 120, y: 150 }, BOX)).toBe(0);
+    expect(distanceToBox({ x: 120, y: 90 }, BOX)).toBe(10);
+    expect(distanceToBox({ x: 150, y: 150 }, BOX)).toBe(10);
+    expect(distanceToBox({ x: 143, y: 96 }, BOX)).toBeCloseTo(5, 6);
+  });
+
+  it('picks a unit the cursor is inside the outline of, even where the ray slips through', () => {
+    // Between two legs, under an arm: visually the player is pointing straight
+    // at it, and a raycast disagrees.
+    const spider = ghost(1, { x: 9999, y: 9999 }, BOX);
+    expect(pickHoveredUnit(NO_RAY, [spider], null, { x: 120, y: 150 })).toBe(1);
+  });
+
+  it('picks a unit the cursor is merely beside, up to the snap budget', () => {
+    const unit = ghost(1, { x: 9999, y: 9999 }, BOX);
+    const justOutside = { x: 140 + SNAP_PIXELS - 1, y: 150 };
+    const wellOutside = { x: 140 + SNAP_PIXELS + 4, y: 150 };
+    expect(pickHoveredUnit(NO_RAY, [unit], null, justOutside)).toBe(1);
+    expect(pickHoveredUnit(NO_RAY, [unit], null, wellOutside)).toBeNull();
+  });
+
+  it('gives the ground around a body to that body, out to the apron', () => {
+    const unit = ghost(1, { x: 0, y: 0 }, null, 20);
+    // Past the 20-unit body, inside the apron.
+    expect(pickHoveredUnit(NO_RAY, [unit], { x: 20 + FOOTPRINT_PAD - 2, y: 0 })).toBe(1);
+    expect(pickHoveredUnit(NO_RAY, [unit], { x: 20 + FOOTPRINT_PAD + 8, y: 0 })).toBeNull();
+  });
+
+  it('prefers the outline it is inside to the footprint it is standing on', () => {
+    // The classic isometric confusion: pointing at a body draws the ground ray
+    // to the earth *behind* it, which is where somebody else is standing.
+    const pointedAt = ghost(1, { x: 9999, y: 9999 }, BOX);
+    const behind = ghost(2, { x: 0, y: 0 }, null);
+    expect(pickHoveredUnit(NO_RAY, [pointedAt, behind], { x: 0, y: 0 }, { x: 120, y: 150 })).toBe(1);
+  });
+
+  it('prefers the footprint it is standing on to a unit it is only near', () => {
+    const nearby = ghost(1, { x: 9999, y: 9999 }, BOX);
+    const stoodOn = ghost(2, { x: 0, y: 0 }, null);
+    // Ten pixels off the first one's box, and squarely on the second's ground.
+    expect(pickHoveredUnit(NO_RAY, [nearby, stoodOn], { x: 0, y: 0 }, { x: 150, y: 150 })).toBe(2);
+  });
+
+  it('takes the silhouette whose middle the cursor is nearest, of two it is inside', () => {
+    const left = ghost(1, { x: 9999, y: 9999 }, { minX: 100, minY: 100, maxX: 200, maxY: 200 });
+    const right = ghost(2, { x: 9999, y: 9999 }, { minX: 150, minY: 100, maxX: 250, maxY: 200 });
+    expect(pickHoveredUnit(NO_RAY, [left, right], null, { x: 155, y: 150 })).toBe(1);
+    expect(pickHoveredUnit(NO_RAY, [left, right], null, { x: 195, y: 150 })).toBe(2);
+  });
+
+  it('takes the nearest of two units it is only near', () => {
+    const near = ghost(1, { x: 9999, y: 9999 }, { minX: 100, minY: 140, maxX: 110, maxY: 160 });
+    const far = ghost(2, { x: 9999, y: 9999 }, { minX: 84, minY: 140, maxX: 94, maxY: 160 });
+    expect(pickHoveredUnit(NO_RAY, [far, near], null, { x: 118, y: 150 })).toBe(1);
+  });
+
+  it('still answers nothing for ground that is nowhere near anybody', () => {
+    const unit = ghost(1, { x: 0, y: 0 }, BOX);
+    expect(pickHoveredUnit(NO_RAY, [unit], { x: 600, y: 600 }, { x: 900, y: 700 })).toBeNull();
+  });
+
+  it('falls back to spec 041\'s pick when nothing has been projected', () => {
+    // A caller that passes no cursor pixels gets the model-and-footprint answer,
+    // unchanged -- which is what keeps this function usable from a test, and
+    // from any view that has not projected its bodies.
+    const unit = ghost(1, { x: 0, y: 0 }, null);
+    expect(pickHoveredUnit(NO_RAY, [unit], { x: 10, y: 0 })).toBe(1);
+    expect(pickHoveredUnit(NO_RAY, [unit], null)).toBeNull();
   });
 });
