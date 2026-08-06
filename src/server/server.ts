@@ -89,6 +89,7 @@ import {
 import { NullTransport, type Channel, type ServerTransport } from './net/transport.js';
 import { ChunkManager } from './world/chunk-manager.js';
 import type { BuiltMapWorld, BuiltWorld } from './world/build.js';
+import type { SpawnPoint } from './world/spawners.js';
 import type { MapIndex } from './world/map-index.js';
 import { ChunkBudget, decideChunkRequest } from './world/map-request.js';
 import { FLAT_TERRAIN, type TerrainSampler } from './world/terrain.js';
@@ -209,6 +210,12 @@ export class GameServer implements AdminHost {
    * `MapInfo` is sent -- which is what a flat-plane unit test wants.
    */
   private readonly mapIndex: MapIndex | null;
+  /**
+   * The enemy spawn points the map places (spec 073). Empty for a server built
+   * from a bare seed, which then has no monsters in it at all -- the map is the
+   * only thing that puts one anywhere.
+   */
+  private readonly spawnPoints: readonly SpawnPoint[];
   private state: ServerWorldState;
 
   constructor(options: GameServerOptions = {}) {
@@ -218,6 +225,7 @@ export class GameServer implements AdminHost {
     this.worldSeed = options.seed ?? options.built?.seed ?? 1;
     const built = options.built;
     this.mapIndex = built && 'index' in built ? (built as BuiltMapWorld).index : null;
+    this.spawnPoints = built && 'spawnPoints' in built ? (built as BuiltMapWorld).spawnPoints : [];
     this.store = options.store ?? new MemoryDataStore();
     this.chunks = new ChunkManager(CHUNK_SIZE, INTEREST_CHUNK_RADIUS);
     this.players = new PlayerManager(this.store, this.zones);
@@ -767,6 +775,7 @@ export class GameServer implements AdminHost {
       config: this.config.get(),
       activeChunks: new Set(this.chunks.activeChunks()),
       chunkSize: CHUNK_SIZE,
+      spawnPoints: this.spawnPoints,
     });
     this.state = result.state;
 
