@@ -274,13 +274,17 @@ map is 49 chunks; it is coalesced to at most once per frame. Incremental
 per-chunk meshing is a real optimisation and is deliberately not done here —
 there is nothing yet to optimise, and it would double the meshing paths.
 
-One honest consequence: **the client's colliders grow as chunks arrive**, where
-today they are complete before the first frame. Prediction near the edge of the
-loaded set could therefore miss a tree the server has. The request radius is
-2464 units and a chunk round trip is one broadcast, so a player would have to
-cross most of a chunk inside ~50 ms to reach unloaded ground; the server
-corrects it if they somehow do. It is a real edge and it is bounded, rather than
-waved at.
+One honest limit, stated plainly rather than implied: **only the drawn world
+comes from streamed chunks.** The Play tab's *predictor* still takes its
+colliders and its height sampler from the document the in-tab server loaded,
+because in a loopback tab the two are the same process and there is nothing to
+stream them from. Meshing is the half that had to change for the streaming path
+to be exercised at all — handed the full world the scene would have looked
+correct while streaming did nothing — and it is the half this spec changes.
+
+Collider paging for a genuinely remote client is therefore still open, and it is
+the one thing standing between this and a real socket. It is listed out of scope
+below rather than quietly assumed to work.
 
 ## Invariants to test
 
@@ -316,7 +320,11 @@ waved at.
   a server that is already ticking.
 - Persisting the chunk cache across reloads, and any `mapId`-keyed storage.
 - Pointing the Play tab at a remote server over `transport-ws.ts`.
-- Incremental per-chunk meshing and collider paging on the client.
+- Incremental per-chunk meshing on the client.
+- **Collider paging on the client**: building the predictor's colliders from
+  streamed chunks and growing them as more arrive. Needed before a remote client
+  can predict correctly; not needed by the loopback tab, which is all that runs
+  today.
 - Moving `WORLD_BOUNDS` / `ARENA_OBSTACLES` into the document.
 - Compressing the wire beyond the run-length and delta encodings already in the
   document's own format.

@@ -87,12 +87,12 @@ describe('the map arrives', () => {
     await run(test, client, 120);
 
     const map = client.view().map;
-    expect(map).not.toBeNull();
-    expect(map!.chunks.length).toBeGreaterThan(0);
+    if (!map) throw new Error('no map on the view');
+    expect(map.chunks.length).toBeGreaterThan(0);
 
     // Every chunk exactly once -- a re-send would mean the cache is not doing
     // its job, and would turn a bounded download into an unbounded one.
-    const keys = map!.chunks.map((c) => `${c.layer}:${c.cx},${c.cz}`);
+    const keys = map.chunks.map((c) => `${c.layer}:${c.cx},${c.cz}`);
     expect(new Set(keys).size).toBe(keys.length);
   });
 
@@ -103,16 +103,17 @@ describe('the map arrives', () => {
 
     const view = client.view();
     const self = view.self;
-    expect(self).not.toBeNull();
+    const map = view.map;
+    if (!self || !map) throw new Error('no player or no map on the view');
+    const ground = map.info.layers[0];
+    if (!ground) throw new Error('the map announced no layers');
 
-    const map = view.map!;
     const extent = map.info.cellSize * map.info.chunkCells;
-    const bounds = map.info.layers[0]!.bounds;
-    const atCx = Math.floor((self!.x - bounds.minX) / extent);
-    const atCz = Math.floor((self!.y - bounds.minZ) / extent);
+    const atCx = Math.floor((self.x - ground.bounds.minX) / extent);
+    const atCz = Math.floor((self.y - ground.bounds.minZ) / extent);
 
     const held = new Set(map.chunks.map((c) => `${c.cx},${c.cz}`));
-    const announced = new Set(map.info.layers[0]!.coords.map((c) => `${c.cx},${c.cz}`));
+    const announced = new Set(ground.coords.map((c) => `${c.cx},${c.cz}`));
     for (let cz = atCz - MAP_CHUNK_REQUEST_RADIUS; cz <= atCz + MAP_CHUNK_REQUEST_RADIUS; cz++) {
       for (let cx = atCx - MAP_CHUNK_REQUEST_RADIUS; cx <= atCx + MAP_CHUNK_REQUEST_RADIUS; cx++) {
         const key = `${cx},${cz}`;
@@ -128,12 +129,15 @@ describe('both ends agree on the ground', () => {
     const client = await connect(test);
     await run(test, client, 600);
 
-    const map = client.view().map!;
+    const map = client.view().map;
+    if (!map) throw new Error('no map on the view');
+    const ground = map.info.layers[0];
+    if (!ground) throw new Error('the map announced no layers');
     // Rebuild a world from exactly what came over the wire, and from nothing
     // else -- no access to the server's document.
     const rebuilt = loadMap(chunksToDocument(map.info, map.chunks));
 
-    const bounds = map.info.layers[0]!.bounds;
+    const bounds = ground.bounds;
     const extent = map.info.cellSize * map.info.chunkCells;
     let sampled = 0;
     for (const chunk of map.chunks) {
@@ -161,11 +165,12 @@ describe('the range check on a live server', () => {
     await run(test, client, 30);
 
     const coords = doc.layers[0]?.chunks ?? [];
-    const self = client.view().self!;
-    const bounds = test.built.index.layers[0]!.bounds;
+    const self = client.view().self;
+    const ground = test.built.index.layers[0];
+    if (!self || !ground) throw new Error('no player or no layer');
     const extent = test.built.index.chunkExtent;
-    const atCx = Math.floor((self.x - bounds.minX) / extent);
-    const atCz = Math.floor((self.y - bounds.minZ) / extent);
+    const atCx = Math.floor((self.x - ground.bounds.minX) / extent);
+    const atCz = Math.floor((self.y - ground.bounds.minZ) / extent);
 
     // A chunk that exists but is outside the window from where the player is.
     const far = coords.find(
@@ -174,7 +179,8 @@ describe('the range check on a live server', () => {
     if (!far) return; // The shipped map is smaller than the window; nothing to assert.
 
     await run(test, client, 600);
-    const before = client.view().map!.chunks;
-    expect(before.some((c) => c.cx === far.cx && c.cz === far.cz)).toBe(false);
+    const after = client.view().map;
+    if (!after) throw new Error('no map on the view');
+    expect(after.chunks.some((c) => c.cx === far.cx && c.cz === far.cz)).toBe(false);
   });
 });

@@ -157,7 +157,9 @@ describe('MapInfo round trip', () => {
   });
 
   it('announces a null water level as null, not as zero', () => {
-    const dry = { ...message, layers: [{ ...message.layers[0]!, waterLevel: null }] };
+    const first = message.layers[0];
+    if (!first) throw new Error('the shipped map has no layers');
+    const dry = { ...message, layers: [{ ...first, waterLevel: null }] };
     expect(decodeMapInfo(payload(encodeMapInfo(dry))).layers[0]?.waterLevel).toBeNull();
   });
 });

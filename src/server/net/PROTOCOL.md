@@ -1,4 +1,4 @@
-# turbo-deck wire protocol v4
+# turbo-deck wire protocol v6
 
 Binary, not JSON. Every frame is a WebSocket **binary** message whose first byte
 is the message type; the rest is a type-specific payload. All multi-byte numbers
@@ -80,6 +80,23 @@ the duration of a channel); past the release tick the effect has happened and
 there is nothing to call off. A cancelled cast refunds its cost and clears its
 cooldown, so the only thing it spent is time.
 
+### `0x0a RequestChunk`
+`varuint layer` · `varint cx` · `varint cz`
+
+Asks for one chunk of the map (spec 070). Answered with exactly one `MapChunk`
+or one `ChunkDenied`.
+
+The server serves it only if **its own** position for that player is within
+`MAP_CHUNK_REQUEST_RADIUS` map chunks (Chebyshev) of the one asked for. The
+client's `predictedX/Y` is never consulted: it is a hint the sim measures for
+corrections, and honouring it here would let anyone read the whole map by
+claiming to stand anywhere. A per-connection token bucket bounds the rate on top
+of that, because every chunk under a standing player is permanently in range.
+
+Note the grid: map chunks are the document's own `cellSize * chunkCells` buckets
+(616 units today), *not* the `chunkSize` the welcome announces, which is the
+400-unit entity-interest grid. Three grids, deliberately independent.
+
 ### `0x03 Ping` — `u32 nonce`
 Answered with `Pong` carrying the same nonce and the server's tick. The client
 sends one every half second and counts its own ticks until the answer: that is
@@ -98,10 +115,15 @@ recalculation and are answered with a fresh `Stats` message, or with `Error`
 
 ### `0x40 Welcome`
 `u16 protocolVersion` · `str playerId` · `varuint entityId` · `u32 tick` ·
-`u8 tickRate` · `u16 chunkSize` · `u8 interestRadius` · `f32 correctionThreshold`
+`u8 tickRate` · `u16 chunkSize` · `u8 interestRadius` · `f32 correctionThreshold` ·
+`u32 worldSeed`
 
 Chunk size and interest radius are announced rather than compiled into the
 client, so retuning them needs no client release.
+
+`worldSeed` used to be the client's whole terrain source (spec 063). Since
+spec 070 it is provenance and the fight's randomness only — the ground arrives
+as `MapInfo` and `MapChunk`.
 
 ### `0x41 Delta`
 `u32 tick` · `varuint ackInputSeq` ·
@@ -237,6 +259,59 @@ Why the server would not start an ability. Sent only to the client that asked:
 `onCooldown`, `notEnoughResource`, `alreadyCasting`, `outOfRange`,
 `unknownAbility`, `stunned`, `dead`.
 
+### `0x4e MapInfo`
+`str mapId` · `u32 seed` · `varint cellSize` · `varuint chunkCells` · `rect arena` ·
+`varuint speciesCount` · `str × speciesCount` ·
+`varuint layerCount`, then per layer: `str id` · `u32 seed` · `rect bounds` ·
+`varint baseY` · `bool hasWater` · `varint waterLevel` ·
+`varuint coordCount` · (`varint cx` · `varint cz`) × coordCount
+
+Sent unprompted straight after `Welcome`, because a client can ask for nothing
+until it has it. The coord list is which chunks were actually baked, so a client
+never asks for one that does not exist. The species list is advisory — for
+building one instanced mesh per species up front — since each chunk carries its
+own table.
+
+A `rect` is four `varint`s: `minX` · `minZ` · `maxX` · `maxZ`.
+
+### `0x4f MapChunk`
+`str mapId` · `varuint layer` · `varint cx` · `varint cz` · `varuint cols` · `varuint rows` ·
+`varuint heightCount` · `varint × heightCount` (delta-encoded) ·
+`runs solid` · `runs materials` · `runs tones` ·
+`bool hasNav` · `runs nav` (only when `hasNav`) ·
+`varuint speciesCount` · `str × speciesCount` ·
+`varuint propCount`, then per prop: `varuint speciesIndex` · `varint x` · `varint z` ·
+`varint rotation` · `varint scale` · `varint tint` · `u8 flags` ·
+`varuint markerCount`, then per marker: `u8 kind` · `str id` · `varint x` · `varint z` · `str label`
+
+A `runs` is `varuint pairCount` then that many `varuint`s — the document's own
+run-length `value, count` pairs, passed through rather than expanded.
+
+`flags`: `1` align, `2` uniform. `kind`: `0` spawn, `1` objective, `2` campfire,
+`3` trigger. An empty `label` string means the marker had none.
+
+**Every coordinate in this message is an integer of thousandths, not an `f32`.**
+The document is quantized to three decimals and most such values have no exact
+`f32`; a client decoding floats would sample a heightfield a few ulps from the
+server's and get corrected on ground that looks flat. Heights are additionally
+delta-encoded against the previous corner, which roughly halves the largest
+array at no cost in fidelity since it is integer arithmetic throughout.
+
+Note `tint` is a quantized *tone*, not a packed colour — encoding it as a `u32`
+rounds every prop's tint to zero.
+
+The species table is chunk-local, duplicating a few short strings per chunk, so
+that decoding needs no earlier frame. `decodeServerMessage` is stateless and a
+frame readable only after another frame would break that quietly.
+
+### `0x50 ChunkDenied`
+`varuint layer` · `varint cx` · `varint cz` · `u8 reason`
+
+`reason`: `0` out of range, `1` unknown chunk, `2` throttled. It exists so a
+client can retire the request from its in-flight set rather than waiting
+forever. `unknown` is permanent and the client stops asking; the other two are
+temporary and the chunk goes back on the wanted list.
+
 ## `admin:*` — client → server
 
 Every one of these is refused unless the connection's stored token verifies **on
@@ -299,3 +374,20 @@ non-finite value is refused rather than silently ignored.
    the cast honours that zero like any other.
 
 Other entities are not predicted; they are interpolated between deltas.
+
+## Map streaming contract
+
+1. The server sends `MapInfo` unprompted after `Welcome`. Until it arrives the
+   client knows of no chunks and asks for nothing.
+2. The client asks for chunks within `MAP_CHUNK_REQUEST_RADIUS` of itself,
+   **nearest first** and budgeted per pass, so a cold start draws the ground
+   under the player's feet before the ground at the edge of the frame.
+3. It asks again on each arrival — which is what actually paces a cold start,
+   since the pipeline runs as fast as the link carries it and stops on its own
+   when nothing is wanted — and on its own tick as a backstop. It cannot rely on
+   deltas: a delta is suppressed when nothing in the world changed, so a player
+   standing still would stop asking and sit on a half-loaded map.
+4. A chunk is asked for once. Held and in-flight chunks are never re-requested;
+   a `ChunkDenied(unknown)` is remembered as absent.
+5. A `MapChunk` whose `mapId` is not the announced one is dropped rather than
+   drawn — an edited map served to a session holding the old one.
