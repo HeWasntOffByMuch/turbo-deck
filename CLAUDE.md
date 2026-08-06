@@ -146,7 +146,8 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  `npm run server`, and `npm run server:bots` for load.
 src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometric
                  world drawn from GameClient.view() and nothing else. interpolate.ts
-                 (20Hz deltas to a pose per frame), intent.ts, cast.ts, appearance.ts
+                 (20Hz deltas to a pose per frame), intent.ts, target.ts (the
+                 right-click attack order, spec 070), cast.ts, appearance.ts
                  and pixel-font.ts (a 5x7 glyph table, since nothing may be fetched)
                  are pure and tested headlessly; scene.ts, hud.ts and
                  view.ts are the three.js/DOM half. `npx tsx scripts/preview-world.ts`

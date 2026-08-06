@@ -53,6 +53,63 @@ async function waitForServer(url: string, timeoutMs = 30_000): Promise<void> {
   throw new Error(`server at ${url} never came up`);
 }
 
+/** The target line the HUD is showing: "no target", or a name and its health. */
+async function readTarget(page: Page): Promise<string> {
+  const text = (await page.textContent('body')) ?? '';
+  return /(no target|target [^\n]*)/.exec(text)?.[1] ?? '';
+}
+
+/**
+ * Right-clicks around the frame until one of the clicks lands on a body
+ * (spec 070).
+ *
+ * The alternative is arithmetic: project a monster's world position through the
+ * camera and click the result, which would be testing this script's copy of the
+ * projection rather than the game's picking. Asking the HUD what got targeted
+ * is the same question the player asks by looking at it.
+ */
+interface Bar {
+  readonly id: string;
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * Where every body with a health bar is on screen.
+ *
+ * The bars are anchored over the bodies and tagged with their entity ids, so
+ * reading them is how this script finds something to click. The alternative is
+ * re-deriving the camera projection here, which would test this file's copy of
+ * it rather than the game's picking.
+ */
+async function bodiesOnScreen(page: Page): Promise<Bar[]> {
+  return page.$$eval('[data-entity]', (nodes) =>
+    nodes.map((node) => {
+      const element = node as HTMLElement;
+      return { id: element.dataset['entity'] ?? '', x: element.offsetLeft, y: element.offsetTop };
+    }),
+  );
+}
+
+/** The pixel to point at for a body, given the bar floating over its head. */
+function bodyPoint(bar: Bar): { x: number; y: number } {
+  // The footprint fallback in the pick makes the exact offset forgiving.
+  return { x: bar.x, y: bar.y + 40 };
+}
+
+async function findUnit(page: Page): Promise<Bar | null> {
+  for (const bar of await bodiesOnScreen(page)) {
+    const point = bodyPoint(bar);
+    await page.mouse.click(point.x, point.y, { button: 'right' });
+    await page.waitForTimeout(90);
+    // The click that found it has *already* targeted it. The player's own bar
+    // is in this list too, and right-clicking yourself is a move order -- so a
+    // miss here is an answer, not a failure.
+    if ((await readTarget(page)).startsWith('target ')) return bar;
+  }
+  return null;
+}
+
 /** The tick the HUD is showing. */
 async function readTick(page: Page): Promise<number> {
   const text = (await page.textContent('body')) ?? '';
@@ -133,10 +190,42 @@ async function main(): Promise<void> {
     await page.waitForTimeout(200);
     await shoot(page, 'world-cancelled');
 
-    // Left click is the melee swing (spec 064).
-    await page.mouse.click(760, 380);
-    await page.waitForTimeout(140);
-    await shoot(page, 'world-melee');
+    // Right-click a body: it becomes the target, the player walks into reach
+    // and then swings at it until it is dead (spec 070). Nothing is bound to
+    // left-click any more.
+    const unit = await findUnit(page);
+    if (!unit) {
+      console.error('no unit could be targeted by right-clicking; is the field empty?');
+      problems.push('right-click targeting found nothing to attack');
+    } else {
+      // The click that found it is the click that targeted it, so the readout
+      // is taken before anything else moves.
+      const opened = await readTarget(page);
+      await shoot(page, 'world-target');
+
+      // The cursor sitting on a body outlines it -- the thing that says what a
+      // click would pick before it is made. Aimed at where the body is *now*:
+      // the player is already walking toward it, so the pixel that was over it
+      // a screenshot ago is over the grass behind it.
+      const moved = (await bodiesOnScreen(page)).find((bar) => bar.id === unit.id);
+      if (moved) {
+        const point = bodyPoint(moved);
+        await page.mouse.move(point.x, point.y);
+        await page.waitForTimeout(120);
+        await shoot(page, 'world-hover');
+      }
+
+      // Long enough to walk into reach and land several blows without a second
+      // press: the auto-attack is the whole point.
+      await page.waitForTimeout(4000);
+      const later = await readTarget(page);
+      await shoot(page, 'world-autoattack');
+      console.log(`  target on the click:      ${opened}`);
+      console.log(`  ...four seconds later:    ${later}`);
+      // The order runs itself: no second press was made between those two
+      // lines. "no target" means the body it named is dead and the client
+      // dropped it, which is the only way an attack order ends by itself.
+    }
 
     // A ground-targeted blast, for the telegraph ring on the terrain.
     await page.keyboard.press('Digit5');

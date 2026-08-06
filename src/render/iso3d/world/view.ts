@@ -33,12 +33,15 @@ import {
   SERVER_PLAYER_RADIUS,
   SERVER_TICK_RATE,
 } from '../../../server/config.js';
-import { abilityById } from '../../../server/data/abilities.js';
+import { abilityById, BASIC_ATTACK_ID } from '../../../server/data/abilities.js';
+import { EntityKind } from '../../../server/net/protocol.js';
 import { viewSeed } from '../seed.js';
 import type { ViewHandle } from '../view-handle.js';
 import { turnToward } from '../../../server/sim/movement.js';
 import { createHud, HOTBAR } from './hud.js';
+import { appearanceOf } from './appearance.js';
 import { moveIntent, MOVE_KEYS, RoutePlanner } from './intent.js';
+import { autoAttack } from './target.js';
 import { WorldScene } from './scene.js';
 
 const TICK_MS = 1000 / SERVER_TICK_RATE;
@@ -120,6 +123,13 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   /** The standing move order from the last right-click, in world units. */
   let destination: { x: number; y: number } | null = null;
   /**
+   * The body being attacked, or null (spec 070). The only thing this view holds
+   * about a fight: what to walk toward, what to ask to hit, and what to ring.
+   * Everything that follows from it -- range, cooldown, whether the blow lands
+   * -- belongs to the server.
+   */
+  let targetId: number | null = null;
+  /**
    * The heading we believe we have, turned at the server's own rate.
    *
    * Predicted for the same reason position is: facing is replicated at 20Hz, and
@@ -148,7 +158,24 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // with nothing on screen to explain why.
     destination = null;
     planner.clear();
+    // ...and it calls off the auto-attack, for the same reason held keys
+    // outrank a move order: reaching for a hotbar slot is taking control back.
+    targetId = null;
     client.useAbility(abilityId, target.x, target.y);
+  }
+
+  /**
+   * Whether a right-click on this body should attack it rather than walk to it.
+   *
+   * Deliberately thin, and deliberately not a rule: it keeps the cursor from
+   * ordering an attack on yourself, on a corpse or on a bolt in flight. Whether
+   * the blow is *allowed* -- hostility, range, the zone's pvp flag -- is the
+   * server's to answer, and it answers it on every swing.
+   */
+  function attackable(entity: { id: number; kind: number; health: number }, selfId: number): boolean {
+    if (entity.id === selfId) return false;
+    if (entity.health <= 0) return false;
+    return entity.kind === EntityKind.Monster || entity.kind === EntityKind.Player;
   }
 
   const onKeyDown = (event: KeyboardEvent): void => {
@@ -161,12 +188,18 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // Escape calls off a wind-up. Cancelling refunds the cost and the cooldown,
     // so what a called-off cast spends is exactly the time it took -- which is
     // why the key is worth having somewhere that is not also the move button.
-    if (event.code === 'Escape') client.cancelCast();
+    if (event.code === 'Escape') {
+      client.cancelCast();
+      // Withdrawing from a blow that the auto-attack would re-commit to on the
+      // next tick is not withdrawing from anything.
+      targetId = null;
+    }
     // Any manual step also drops a standing order, for the same reason held
     // keys outrank one in `moveIntent`: taking the keys is taking control.
     if (MOVE_KEYS[event.code]) {
       destination = null;
       planner.clear();
+      targetId = null;
     }
   };
   const onKeyUp = (event: KeyboardEvent): void => {
@@ -183,17 +216,28 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     const rect = canvas.getBoundingClientRect();
     cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
 
-    // Left click swings; right click walks. The MOBA split the game had before
-    // the server existed, and the one the wind-up design was written against:
-    // you commit to a blow with one hand and reposition with the other.
-    const melee = HOTBAR[0];
-    if (event.button === 0 && melee) {
-      useAbility(melee);
+    // One button does both, and which one it does is decided by what is under
+    // it (spec 070). Left-click is bound to nothing: it used to fire the first
+    // hotbar slot at the cursor, which is a click race rather than a decision,
+    // and it could not tell you what you were fighting.
+    if (event.button !== 2) return;
+
+    const hovered = scene.pickUnitAt(cursor.x, cursor.y);
+    const picked = hovered === null ? null : client.view().entities.find((e) => e.id === hovered);
+    if (picked && attackable(picked, client.view().selfEntityId)) {
+      targetId = picked.id;
+      // The chase is the auto-attack's to set, tick by tick, as the target
+      // moves; a standing order left over from a previous click would fight it.
+      destination = null;
+      planner.clear();
       return;
     }
-    if (event.button === 2) {
-      destination = scene.screenToWorld(cursor.x, cursor.y);
-    }
+
+    // Empty ground: an ordinary move order, and the target is let go. Walking
+    // somewhere is how you stop attacking, which is the whole reason it is the
+    // same button.
+    targetId = null;
+    destination = scene.screenToWorld(cursor.x, cursor.y);
   };
   const onContextMenu = (event: Event): void => event.preventDefault();
   const onBlur = (): void => held.clear();
@@ -226,9 +270,58 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     server.spawnEntities('stalker', view.self.x - 240, view.self.y + 110, 1);
   }
 
+  /**
+   * One tick of the standing attack order (spec 070): close the gap, then swing
+   * again and again until the body is down.
+   *
+   * The order is dropped by anything that takes manual control -- a key, a move
+   * order, a cancel -- because those are all the player saying they would like
+   * to be doing something else.
+   */
+  function driveAutoAttack(view: ReturnType<typeof client.view>, me: { x: number; y: number }): void {
+    if (targetId === null) return;
+    const entity = view.entities.find((candidate) => candidate.id === targetId);
+    const swing = abilityById(BASIC_ATTACK_ID);
+    const decision = autoAttack({
+      self: me,
+      target: entity
+        ? {
+            id: entity.id,
+            x: entity.x,
+            y: entity.y,
+            radius: appearanceOf(entity).radius,
+            health: entity.health,
+          }
+        : null,
+      range: swing?.range ?? 0,
+      // Both halves of "am I committed": the server's cast and the one this
+      // client has only asked for. `selfRoot` is already the union of the two.
+      rooted: view.selfRoot !== null,
+      readyAtTick: view.cooldowns[BASIC_ATTACK_ID] ?? 0,
+      tick: view.estimatedTick,
+    });
+
+    // A target that despawned entirely is as gone as one that died: either way
+    // there is nothing left to walk to.
+    if (decision.drop || !entity) {
+      targetId = null;
+      destination = null;
+      planner.clear();
+      return;
+    }
+
+    // The chase is re-pointed every tick because the target moves. `moveIntent`
+    // and the planner treat it as any other destination, so a chase round a
+    // tree is routed by the same A* a right-click on the ground is.
+    destination = decision.chaseTo;
+    if (!decision.chaseTo) planner.clear();
+    if (decision.attack) client.useAbility(BASIC_ATTACK_ID, entity.x, entity.y, entity.id);
+  }
+
   function sendInput(): void {
     const view = client.view();
     const me = selfPosition();
+    driveAutoAttack(view, me);
     const intent = moveIntent({
       held,
       self: me,
@@ -298,9 +391,14 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       alpha,
       tick: drawnTick,
       selfFacing: facing,
-      destination,
+      // A chase re-points its destination every tick as the target moves, so
+      // marking it would strobe a diamond along the ground for the whole run.
+      // The ring under the target is the marker while one is being attacked.
+      destination: targetId === null ? destination : null,
+      cursor,
+      targetEntityId: targetId,
     });
-    hud.update(view, scene.screenAnchors(), drawnTick, client.correctionCount);
+    hud.update(view, scene.screenAnchors(), drawnTick, client.correctionCount, targetId);
 
     raf = requestAnimationFrame(frame);
   }

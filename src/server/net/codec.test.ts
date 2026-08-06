@@ -185,6 +185,20 @@ describe('game message round-trip', () => {
       unspentSkillPoints: 2,
       stats: STATS,
     },
+    {
+      type: ServerMessageType.CastState,
+      entityId: 12,
+      abilityId: 'melee.slash',
+      phase: 0,
+      releaseTick: 4210,
+      endTick: 4222,
+      targetX: 612.5,
+      targetY: -48.25,
+      // What the swing is aimed at (spec 070), which is what makes it single
+      // target on the other side of the wire.
+      targetEntityId: 44,
+    },
+    { type: ServerMessageType.CastEnded, entityId: 12, abilityId: 'melee.slash', reason: 0 },
     { type: ServerMessageType.Chat, channel: 2, from: 'Server', text: 'be nice' },
     {
       type: ServerMessageType.Cooldowns,

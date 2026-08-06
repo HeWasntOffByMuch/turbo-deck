@@ -35,6 +35,7 @@ import { buildTerrainMesh, type TerrainMeshHandle } from '../terrain-mesh.js';
 import { buildPropField, type PropFieldHandle } from '../props.js';
 import { MechRig, PlayerRig, Poofs } from '../rigs.js';
 import { attachOutline, type OutlineHandle } from '../outline.js';
+import { pickHoveredUnit, type HoverTarget } from '../hover.js';
 import { createViewControls, type ViewControls } from '../view-controls.js';
 import {
   CAMERA_FAR,
@@ -78,6 +79,8 @@ const TORCH_SHADOW_NEAR = 8;
 const TORCH_SHADOW_NORMAL_BIAS = 2.5;
 /** The ring under a ground-targeted cast. Warm red: it is about to hurt. */
 const TELEGRAPH_COLOR = 0xff785a;
+/** The ring under the body being attacked (spec 070). */
+const TARGET_RING_COLOR = 0xff6a5a;
 
 const FLAME_RADIUS = 5;
 const ORB_RADIUS = 7;
@@ -101,6 +104,14 @@ export interface FrameInfo {
   readonly selfFacing: number;
   /** The standing move order to mark on the ground, or null (spec 064). */
   readonly destination: { readonly x: number; readonly y: number } | null;
+  /**
+   * Where the mouse is inside the canvas, in CSS pixels, or null when it has
+   * left. Drives the hover outline (spec 070) and nothing else -- the pick is
+   * redone per frame because bodies move under a cursor that is standing still.
+   */
+  readonly cursor: { readonly x: number; readonly y: number } | null;
+  /** The entity being attacked, so it can be ringed. */
+  readonly targetEntityId: number | null;
 }
 
 /** A body on screen, pooled by entity id. */
@@ -164,6 +175,11 @@ export class WorldScene {
   private readonly motion = new EntityMotion();
   private readonly bodies = new Map<number, Body>();
   private readonly telegraphs = new Map<number, THREE.Mesh>();
+  /** Units the cursor may pick this frame, rebuilt as bodies are placed. */
+  private readonly hoverTargets: HoverTarget[] = [];
+  private hovered: number | null = null;
+  /** The ring under the body being attacked (spec 070). */
+  private readonly targetRing: THREE.Mesh;
   private readonly effects: LiveEffect[] = [];
   private readonly anchors: ScreenAnchor[] = [];
 
@@ -242,6 +258,20 @@ export class WorldScene {
     this.moveMarker.visible = false;
     this.scene.add(this.moveMarker);
 
+    this.targetRing = new THREE.Mesh(
+      new THREE.RingGeometry(22, 27, 24),
+      new THREE.MeshBasicMaterial({
+        color: TARGET_RING_COLOR,
+        transparent: true,
+        opacity: 0.85,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    this.targetRing.rotation.x = -Math.PI / 2;
+    this.targetRing.visible = false;
+    this.scene.add(this.targetRing);
+
     this.controls = createViewControls();
     this.controls.attachWheelZoom(canvas);
   }
@@ -261,6 +291,24 @@ export class WorldScene {
     const ground = this.terrainHits[0];
     const hit = ground ? ground.point : this.raycaster.ray.intersectPlane(this.groundPlane, this.hit);
     return hit ? { x: hit.x, y: hit.z } : { x: this.target.x, y: this.target.z };
+  }
+
+  /**
+   * The unit at a canvas pixel, or null for empty ground (spec 070).
+   *
+   * Asked afresh when a click arrives rather than answered from the last
+   * frame's hover. The two are the same answer for a cursor that has been
+   * sitting still, and different in the case that matters: a click that arrives
+   * in the same task as the `mousemove` that positioned it -- a synthetic one,
+   * a tap, a fast flick -- has had no frame in between, so the remembered hover
+   * is a frame old at best and null at worst. It picked nothing at all the
+   * first time a preview run tried to right-click a monster.
+   */
+  pickUnitAt(cssX: number, cssY: number): number | null {
+    const rect = this.canvas.getBoundingClientRect();
+    const point = cursorToNdc(cssX, cssY, rect.width || 1, rect.height || 1);
+    this.raycaster.setFromCamera(this.ndc.set(point.x, point.y), this.camera);
+    return pickHoveredUnit(this.raycaster, this.hoverTargets, this.screenToWorld(cssX, cssY));
   }
 
   /** Where the bodies drawn last frame are on screen, for the DOM overlay. */
@@ -318,6 +366,9 @@ export class WorldScene {
     this.camera.updateMatrixWorld();
     this.scene.updateMatrixWorld();
     this.collectAnchors();
+    // After the matrices are fresh: a pick made against last frame's camera
+    // lags the outline behind a moving view by a frame.
+    this.syncHover(frame);
 
     this.retro.set(this.controls.retro());
     this.retro.setGrade(this.controls.grade());
@@ -407,6 +458,7 @@ export class WorldScene {
 
   private syncBodies(view: ClientView, frame: FrameInfo, dt: number): void {
     const live = new Set<number>();
+    this.hoverTargets.length = 0;
 
     for (const entity of view.entities) {
       live.add(entity.id);
@@ -440,13 +492,59 @@ export class WorldScene {
       // A corpse lies where it fell and stops animating, so a kill reads.
       const dead = entity.maxHealth > 0 && entity.health <= 0;
       body.group.scale.setScalar(dead ? 0.6 : 1);
+      // Cleared here and turned back on by `syncHover`, so exactly one body is
+      // ever outlined however many frames ago the cursor last moved.
       body.outline?.setVisible(false);
+
+      // Only living units are pickable. A corpse is scenery, and a projectile
+      // is a few pixels of geometry crossing the frame -- outlining either is a
+      // cursor that catches on things nothing can be done about.
+      if (body.outline && !dead) {
+        this.hoverTargets.push({
+          id: entity.id,
+          object: body.group,
+          position: { x, y },
+          radius: look.radius,
+        });
+      }
     }
 
     for (const [id, body] of this.bodies) {
       if (live.has(id)) continue;
       this.scene.remove(body.group);
       this.bodies.delete(id);
+    }
+  }
+
+  /**
+   * Outline the unit under the cursor, and ring the one being attacked
+   * (spec 070).
+   *
+   * `pickHoveredUnit` is spec 041's, unchanged: the model's meshes first, its
+   * ground footprint as a fallback, so a body is pickable both by pointing at
+   * it and by pointing at where it stands. Cosmetic in the strict sense -- what
+   * it returns decides which mesh is white, and the *view* decides whether a
+   * click acts on it.
+   */
+  private syncHover(frame: FrameInfo): void {
+    const cursor = frame.cursor;
+    this.hovered = cursor ? this.pickUnitAt(cursor.x, cursor.y) : null;
+
+    if (this.hovered !== null) this.bodies.get(this.hovered)?.outline?.setVisible(true);
+
+    const target =
+      frame.targetEntityId === null
+        ? undefined
+        : this.hoverTargets.find((candidate) => candidate.id === frame.targetEntityId);
+    this.targetRing.visible = target !== undefined;
+    if (target) {
+      this.targetRing.position.set(
+        target.position.x,
+        this.world.terrain.heightAt(target.position.x, target.position.y) + 1.6,
+        target.position.y,
+      );
+      // Sized to the body it is under, so a ravager's ring is not a grazer's.
+      this.targetRing.scale.setScalar(Math.max(0.6, (target.radius + 8) / 27));
     }
   }
 

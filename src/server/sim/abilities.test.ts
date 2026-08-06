@@ -882,3 +882,178 @@ describe('cast phases reach the client', () => {
     ).toBe(true);
   });
 });
+
+describe('a named target (spec 070)', () => {
+  const slash = abilityById('melee.slash');
+  if (!slash) throw new Error('no melee.slash');
+
+  /** A player and two dummies standing side by side, both well inside the arc. */
+  function twoInTheArc(): {
+    state: ServerWorldState;
+    player: number;
+    named: number;
+    bystander: number;
+  } {
+    let state = createWorldState(4);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    // Both due east, a few units apart: whatever cone slash would sweep, it
+    // sweeps over the pair of them.
+    const named = withDummy(state, 640, 445);
+    state = named.state;
+    const bystander = withDummy(state, 640, 455);
+    return {
+      state: bystander.state,
+      player: player.id,
+      named: named.id,
+      bystander: bystander.id,
+    };
+  }
+
+  it('damages the body it names and nobody standing beside it', () => {
+    const field = twoInTheArc();
+    // Long enough to turn onto an aim a few degrees off the current heading and
+    // then wind up: the turn comes first, and its length is the body's own.
+    const result = run(field.state, slash.windupTicks + 12, {
+      0: [
+        input(field.player, {
+          castAbilityId: 'melee.slash',
+          castTargetX: 640,
+          castTargetY: 445,
+          castTargetEntityId: field.named,
+        }),
+      ],
+    });
+
+    const struck = hits(result.events);
+    expect(struck).toHaveLength(1);
+    expect(struck[0]?.targetId).toBe(field.named);
+    expect(result.state.entities.get(field.bystander)?.health).toBe(
+      monsterById('dummy')?.stats.maxHealth,
+    );
+  });
+
+  it('still sweeps the cone when no target is named, which is what the hotbar uses', () => {
+    const field = twoInTheArc();
+    const result = run(field.state, slash.windupTicks + 12, {
+      0: [
+        input(field.player, {
+          castAbilityId: 'melee.slash',
+          castTargetX: 700,
+          castTargetY: 450,
+        }),
+      ],
+    });
+    expect(new Set(hits(result.events).map((hit) => hit.targetId))).toEqual(
+      new Set([field.named, field.bystander]),
+    );
+  });
+
+  it('misses a target that is out of reach at the release, rather than reaching it', () => {
+    let state = createWorldState(5);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    // Named from well outside slash's reach: the commit is legal (a direction
+    // ability may always be started) and the blow simply finds nothing.
+    const far = withDummy(state, 600 + slash.range * 3, 450);
+    state = far.state;
+
+    const result = run(state, slash.windupTicks + 12, {
+      0: [
+        input(player.id, {
+          castAbilityId: 'melee.slash',
+          castTargetX: 600 + slash.range * 3,
+          castTargetY: 450,
+          castTargetEntityId: far.id,
+        }),
+      ],
+    });
+
+    expect(hits(result.events)).toHaveLength(0);
+    expect(result.events.some((event) => event.kind === 'attackMissed')).toBe(true);
+    expect(result.state.entities.get(far.id)?.health).toBe(monsterById('dummy')?.stats.maxHealth);
+  });
+
+  it('stamps a basic attack from the caster, and everything else from the table', () => {
+    const quick: EffectiveStats = { ...STATS, attackCooldownTicks: 40, attackSpeed: 2 };
+    const slow: EffectiveStats = { ...STATS, attackCooldownTicks: 40, attackSpeed: 1 };
+
+    let state = createWorldState(6);
+    const fast = withPlayer(state, 600, 450, quick);
+    state = fast.state;
+    const plodder = withPlayer(state, 600, 470, slow);
+    state = plodder.state;
+
+    const commit = run(state, 1, {
+      0: [
+        input(fast.id, { castAbilityId: 'melee.slash', castTargetX: 700, castTargetY: 450 }),
+        input(plodder.id, { castAbilityId: 'melee.slash', castTargetX: 700, castTargetY: 470 }),
+      ],
+    });
+
+    const at = (id: number): number => commit.state.entities.get(id)?.cooldowns['melee.slash'] ?? 0;
+    // Same weapon, same tick, twice the speed: half the wait.
+    expect(at(fast.id) - 1).toBe(20);
+    expect(at(plodder.id) - 1).toBe(40);
+    // Neither of them is the table's number, which is what the swing used to
+    // cost everybody.
+    expect(slash.cooldownTicks).not.toBe(20);
+
+    // A non-basic ability ignores the stat entirely.
+    const heavy = run(state, 1, {
+      0: [input(fast.id, { castAbilityId: 'melee.heavy', castTargetX: 700, castTargetY: 450 })],
+    });
+    expect(heavy.state.entities.get(fast.id)?.cooldowns['melee.heavy']).toBe(
+      1 + (abilityById('melee.heavy')?.cooldownTicks ?? 0),
+    );
+  });
+
+  it('lets a monster swing at the player it is chasing, by id', () => {
+    let state = createWorldState(7);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const definition = monsterById('stalker');
+    if (!definition) throw new Error('no stalker');
+    const spawned = spawnEntity(state, {
+      kind: EntityKindValue.Monster,
+      typeId: 'stalker',
+      position: { x: 640, y: 450, z: 0 },
+      stats: definition.stats,
+      radius: definition.radius,
+      zoneId: 'greenmarch',
+    });
+
+    const result = run(spawned.state, SERVER_TICK_RATE);
+    const struck = hits(result.events).filter((hit) => hit.attackerId === spawned.entity.id);
+    expect(struck.length).toBeGreaterThan(0);
+    expect(struck.every((hit) => hit.targetId === player.id)).toBe(true);
+  });
+
+  it('replays a targeted fight identically from the same seed', () => {
+    const frames = (player: number, target: number): Record<number, ServerInput[]> => ({
+      0: [
+        input(player, {
+          castAbilityId: 'melee.slash',
+          castTargetX: 640,
+          castTargetY: 445,
+          castTargetEntityId: target,
+        }),
+      ],
+      30: [
+        input(player, {
+          castAbilityId: 'melee.slash',
+          castTargetX: 640,
+          castTargetY: 445,
+          castTargetEntityId: target,
+        }),
+      ],
+    });
+
+    const once = twoInTheArc();
+    const again = twoInTheArc();
+    const a = run(once.state, 60, frames(once.player, once.named));
+    const b = run(again.state, 60, frames(again.player, again.named));
+    expect(JSON.stringify([...b.state.entities])).toBe(JSON.stringify([...a.state.entities]));
+    expect(JSON.stringify(b.events)).toBe(JSON.stringify(a.events));
+  });
+});
