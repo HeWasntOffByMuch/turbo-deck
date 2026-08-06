@@ -139,14 +139,12 @@ export const EntityActivity = {
   Casting: 2,
   Stunned: 3,
   Dead: 4,
-  Recovering: 5,
 } as const;
 
 /** Mirrors `sim/types.ts`; the client animates from this. */
 export const CastPhaseValue = {
   Windup: 0,
   Channel: 1,
-  Recovery: 2,
   /** Turning to face the aim before the wind-up starts (spec 065). */
   Turning: 3,
 } as const;

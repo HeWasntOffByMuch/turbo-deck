@@ -328,15 +328,10 @@ export function advanceCast(
   // --- release ---------------------------------------------------------
   if (cast.phase === CastPhase.Windup && tick >= cast.releaseTick) {
     const isChannel = ability.kind === 'channel';
-    const nextPhase = isChannel ? CastPhase.Channel : CastPhase.Recovery;
     caster = {
       ...caster,
-      cast: {
-        ...cast,
-        phase: nextPhase,
-        nextPulseTick: isChannel ? tick : 0,
-      },
-      activity: isChannel ? ActivityValue.Casting : ActivityValue.Recovering,
+      cast: isChannel ? { ...cast, phase: CastPhase.Channel, nextPulseTick: tick } : cast,
+      activity: ActivityValue.Casting,
     };
 
     if (!isChannel) {
@@ -353,22 +348,32 @@ export function advanceCast(
       spawns.push(...landed.spawns);
     }
 
-    // The blow has gone off, but the cast is not over: the caster is rooted
-    // through recovery, and `castEnded` here told the client otherwise. The bar
-    // vanished mid-cast, and the client -- believing itself free -- predicted
-    // movement the server was still refusing, which is a correction per tick for
-    // the length of every recovery. A phase change, not an ending.
-    const settledCast = caster.cast;
-    if (settledCast) {
+    if (isChannel) {
+      // Into the channel: announce the phase change so the bar switches from
+      // filling toward the release to running with the pulses.
+      const channelling = caster.cast;
+      if (channelling) {
+        events.push({
+          kind: 'castStarted',
+          entityId: entity.id,
+          abilityId: ability.id,
+          phase: channelling.phase,
+          releaseTick: channelling.releaseTick,
+          endTick: channelling.endTick,
+          targetX: channelling.targetX,
+          targetY: channelling.targetY,
+        });
+      }
+    } else {
+      // The blow has gone off and there is nothing left to be rooted for (spec
+      // 068), so the cast is over on the tick it lands. This is the event the
+      // client clears its bar on, and the one that tells it it may move again.
+      caster = { ...caster, cast: null, activity: ActivityValue.Idle, activityUntilTick: 0 };
       events.push({
-        kind: 'castStarted',
-        entityId: entity.id,
+        kind: 'castEnded',
+        entityId: caster.id,
         abilityId: ability.id,
-        phase: settledCast.phase,
-        releaseTick: settledCast.releaseTick,
-        endTick: settledCast.endTick,
-        targetX: settledCast.targetX,
-        targetY: settledCast.targetY,
+        reason: CastEndReason.Released,
       });
     }
   }
@@ -394,42 +399,16 @@ export function advanceCast(
         },
       };
     } else if (tick >= channelEnds) {
-      caster = { ...caster, cast: { ...live, phase: CastPhase.Recovery }, activity: ActivityValue.Recovering };
+      // The last pulse has gone off: the channel is over and, with no recovery
+      // to sit through (spec 068), so is the cast.
+      caster = { ...caster, cast: null, activity: ActivityValue.Idle, activityUntilTick: 0 };
+      events.push({
+        kind: 'castEnded',
+        entityId: caster.id,
+        abilityId: live.abilityId,
+        reason: CastEndReason.Released,
+      });
     }
-  }
-
-  // --- done ------------------------------------------------------------
-  // A channel that has run its course drops into recovery; announce that too, so
-  // the bar switches from filling to draining rather than sitting full.
-  const channelled = caster.cast;
-  if (
-    channelled &&
-    channelled.phase === CastPhase.Recovery &&
-    cast.phase === CastPhase.Channel
-  ) {
-    events.push({
-      kind: 'castStarted',
-      entityId: caster.id,
-      abilityId: ability.id,
-      phase: CastPhase.Recovery,
-      releaseTick: channelled.releaseTick,
-      endTick: channelled.endTick,
-      targetX: channelled.targetX,
-      targetY: channelled.targetY,
-    });
-  }
-
-  const settled = caster.cast;
-  if (settled && settled.phase === CastPhase.Recovery && tick >= settled.endTick) {
-    caster = { ...caster, cast: null, activity: ActivityValue.Idle, activityUntilTick: 0 };
-    // *Now* it is over. This is the event the client clears its bar on, and the
-    // one that tells it it may move again.
-    events.push({
-      kind: 'castEnded',
-      entityId: caster.id,
-      abilityId: settled.abilityId,
-      reason: CastEndReason.Released,
-    });
   }
 
   updated.set(caster.id, caster);
@@ -640,19 +619,25 @@ export function applyDamage(
     },
   ];
 
-  // Being hit knocks the target out of what they were doing -- and that has to
-  // be *announced*, not just done. Clearing `cast` silently left the client
-  // holding a cast the server had dropped, and since a client roots itself while
-  // it believes it is casting, the player was stuck on the spot for good.
-  if (target.cast) {
-    events.push({
-      kind: 'castEnded',
-      entityId: target.id,
-      abilityId: target.cast.abilityId,
-      reason: CastEndReason.Interrupted,
-    });
+  // Being hit no longer knocks the target out of a cast (spec 068): a blow that
+  // has been committed to lands, and taking damage while winding up -- or while
+  // still turning into it -- costs health rather than the whole commitment.
+  //
+  // Death is the exception, since a corpse may not go on swinging. It has to be
+  // *announced*, not just done: clearing `cast` silently leaves the client
+  // holding a cast the server has dropped, and a client roots itself while it
+  // believes it is casting, so the player would be stuck on the spot for good.
+  if (killed) {
+    if (target.cast) {
+      events.push({
+        kind: 'castEnded',
+        entityId: target.id,
+        abilityId: target.cast.abilityId,
+        reason: CastEndReason.Interrupted,
+      });
+    }
+    events.push({ kind: 'died', entityId: target.id, killerId: attacker.id });
   }
-  if (killed) events.push({ kind: 'died', entityId: target.id, killerId: attacker.id });
 
   return {
     rng: nextRng,
@@ -662,10 +647,7 @@ export function applyDamage(
       health,
       activity: killed ? ActivityValue.Dead : target.activity,
       targetId: target.targetId ?? attacker.id,
-      // Interruption. Spec 065 took the hitstop freeze this used to be keyed on;
-      // it is its own mechanic and survives on its own terms. The `castEnded`
-      // above is not optional decoration -- see the comment there.
-      cast: null,
+      cast: killed ? null : target.cast,
     },
   };
 }
