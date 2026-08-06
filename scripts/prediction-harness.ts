@@ -114,7 +114,7 @@ interface Run {
 }
 
 /**
- * What the *blow* felt like, as opposed to what the walk did (spec 068).
+ * What the *blow* felt like, as opposed to what the walk did (spec 069).
  *
  * Every number here is a disagreement between what the player is looking at and
  * what the server is actually doing, counted per tick. Movement had one honest
@@ -484,7 +484,7 @@ async function main(): Promise<void> {
     );
   }
 
-  // The combat half (spec 068). Every column is a disagreement between what the
+  // The combat half (spec 069). Every column is a disagreement between what the
   // player sees and what the server is doing, as a percentage of the session.
   console.log('\nwhat the blow felt like -- % of ticks the client disagreed with the server\n');
   console.log(

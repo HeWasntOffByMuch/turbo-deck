@@ -1,5 +1,5 @@
 /**
- * Predicting the blow (spec 068).
+ * Predicting the blow (spec 069).
  *
  * Spec 067 predicted the *root* a cast implies, because a root is expressible as
  * input and therefore costs nothing when the guess is wrong. It deliberately
@@ -179,23 +179,20 @@ export function advanceCast(
     };
   }
 
+  // The release. A blow that is not a channel is *over* on the tick it lands:
+  // there is no recovery to sit through since spec 069, so the body is free the
+  // moment the swing goes off.
   if (cast.phase === CastPhase.Windup && tick >= cast.releaseTick) {
-    return {
-      ...cast,
-      phase: ability.kind === 'channel' ? CastPhase.Channel : CastPhase.Recovery,
-    };
+    if (ability.kind !== 'channel') return null;
+    return { ...cast, phase: CastPhase.Channel, nextPulseTick: tick };
   }
 
-  // A channel runs from its release for `channelTicks`, which is its own line
-  // and not `endTick` -- `endTick` is the end of the recovery that follows it.
-  if (
-    cast.phase === CastPhase.Channel &&
-    tick >= cast.releaseTick + (ability.channelTicks ?? 0)
-  ) {
-    return { ...cast, phase: CastPhase.Recovery };
+  // A channel runs from its release for `channelTicks`, and ends when its pulses
+  // are done. That line is `releaseTick + channelTicks` rather than `endTick`,
+  // to match the sim exactly -- the pulses are what the phase is for.
+  if (cast.phase === CastPhase.Channel && tick >= cast.releaseTick + (ability.channelTicks ?? 0)) {
+    return null;
   }
-
-  if (cast.phase === CastPhase.Recovery && tick >= cast.endTick) return null;
 
   return cast;
 }

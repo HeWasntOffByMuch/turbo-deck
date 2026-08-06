@@ -103,7 +103,7 @@ export interface ClientView {
   readonly roundTripTicks: number;
   /**
    * Ticks until the server acts on the input being sent now: the depth of its
-   * input queue (spec 068). Diagnostics, and what a predicted cast is stamped
+   * input queue (spec 069). Diagnostics, and what a predicted cast is stamped
    * against -- a commit lands when its input is dequeued, not when it arrives.
    */
   readonly commitDelayTicks: number;
@@ -150,7 +150,7 @@ export interface ClientView {
    */
   readonly cooldowns: Readonly<Record<string, number>>;
   /**
-   * The ability pool this client believes it has (spec 068): the server's last
+   * The ability pool this client believes it has (spec 069): the server's last
    * word, regenerated forward, minus what it has spent on commits not yet
    * answered. The number a button is greyed out against.
    */
@@ -192,7 +192,7 @@ interface PredictedCast {
   readonly stampedCooldown: number | null;
   /**
    * The resource this request expects to have spent, still subtracted from the
-   * modelled pool because the server has not confirmed it (spec 068). Released
+   * modelled pool because the server has not confirmed it (spec 069). Released
    * on any answer: a commit is reflected in the resource that arrives with it,
    * and a refusal spent nothing.
    */
@@ -208,7 +208,7 @@ const PREDICTED_CAST_TIMEOUT_TICKS = 120;
 
 /**
  * How long past its stamped end a cast is held before the client drops it
- * (spec 068).
+ * (spec 069).
  *
  * `estimatedTick` is deliberately a forward-biased ratchet -- it is `max`ed
  * upward, never walked back, and carries half a round trip -- so it can lead the
@@ -288,7 +288,7 @@ export class GameClient {
    */
   private readonly predictedCooldowns = new Map<string, number>();
   /**
-   * The cast this client has committed to locally and is drawing (spec 068).
+   * The cast this client has committed to locally and is drawing (spec 069).
    *
    * Put on the view as an ordinary cast for the local entity, so `scene.ts` and
    * `hud.ts` draw the bar, the sweep and the rooted body without knowing that
@@ -303,7 +303,7 @@ export class GameClient {
   private predictedCastRequestId = -1;
   private nextCastRequestId = 1;
   /**
-   * This client's own facing, stepped the way the server steps it (spec 068).
+   * This client's own facing, stepped the way the server steps it (spec 069).
    *
    * The renderer keeps a facing for drawing; this is a separate one, kept here,
    * because the *gate* depends on it: whether a press begins winding up or first
@@ -375,7 +375,7 @@ export class GameClient {
     if (!this.prediction || !this.connected) return null;
     this.seq += 1;
     // Remembered so the local body can be steered the way the server steers it
-    // (spec 068): this is what it will turn toward on every tick until the next
+    // (spec 069): this is what it will turn toward on every tick until the next
     // input, and whether it has arrived decides whether the next press winds up
     // or spends ticks turning first.
     if (Number.isFinite(intent.facing)) this.wantedFacing = intent.facing;
@@ -419,7 +419,7 @@ export class GameClient {
     if (!this.connected) return;
     this.requestedAbilityId = abilityId;
     const aim = { x: targetX, y: targetY };
-    // The server's own gate, asked of a mirror of this entity (spec 068). What
+    // The server's own gate, asked of a mirror of this entity (spec 069). What
     // it decides is what the server will decide, given the same entity -- so a
     // wrong guess here means a field of the mirror was stale, never that the
     // client and the server disagree about the rules.
@@ -508,7 +508,7 @@ export class GameClient {
    */
   /**
    * This client's own entity as it believes it to be, or null before it knows
-   * enough to have a belief (spec 068).
+   * enough to have a belief (spec 069).
    *
    * Assembled from the most authoritative source for each field: position from
    * the prediction buffer's *truth* rather than its drawn value -- the drawn one
@@ -650,7 +650,7 @@ export class GameClient {
 
   /**
    * One tick of the local body: where it is looking, and how far through its
-   * own predicted cast it is (spec 068).
+   * own predicted cast it is (spec 069).
    *
    * The facing is stepped whether or not a cast is running, because the gate for
    * the *next* press reads it. The predicted cast retires itself at its own
@@ -670,7 +670,7 @@ export class GameClient {
       this.welcome?.tickRate ?? 60,
     );
     // A confirmed cast is over when the server's own `endTick` says it is, not
-    // when `CastEnded` gets here (spec 068).
+    // when `CastEnded` gets here (spec 069).
     //
     // 067 waited to be told, and called that caution: "guessing the end of a
     // cast injects exactly the error this spec removes from the start of one".
@@ -726,7 +726,7 @@ export class GameClient {
   }
 
   /**
-   * How many ticks until the server acts on the input being sent now (spec 068).
+   * How many ticks until the server acts on the input being sent now (spec 069).
    *
    * An ability request is stamped with an input seq and held until the server
    * dequeues *that* input (spec 067), and the server dequeues exactly one per
@@ -785,7 +785,7 @@ export class GameClient {
 
   /**
    * Every cast worth drawing: the server's, plus this client's own predicted one
-   * when the server has not confirmed a cast for us yet (spec 068).
+   * when the server has not confirmed a cast for us yet (spec 069).
    *
    * The predicted cast is put on the view as an ordinary cast, indistinguishable
    * from a real one, so the renderer needs no notion of prediction at all -- it
@@ -813,7 +813,7 @@ export class GameClient {
   /**
    * The server's cooldown table, raised by what this client has spent and not
    * been told about, so the sweep starts on the press rather than a round trip
-   * later (spec 068). The overlay can only ever push a cooldown *later*: it may
+   * later (spec 069). The overlay can only ever push a cooldown *later*: it may
    * grey a button out early, never light one up early.
    */
   private visibleCooldowns(): Readonly<Record<string, number>> {
@@ -829,7 +829,7 @@ export class GameClient {
    * The aim to hold while rooted: the confirmed cast's if the server has spoken,
    * the predicted one's until then, and null when free to walk.
    *
-   * Since spec 068 this is the *cast* rather than the request behind it, which
+   * Since spec 069 this is the *cast* rather than the request behind it, which
    * is what lets it end on time: a cast knows its `endTick`, so the legs come
    * back the tick the blow finishes instead of a round trip after it.
    */
@@ -994,7 +994,7 @@ export class GameClient {
         this.cooldowns = Object.fromEntries(
           message.entries.map((entry) => [entry.abilityId, entry.readyAtTick]),
         );
-        // The pool, and the tick it was true on (spec 068). Carried forward
+        // The pool, and the tick it was true on (spec 069). Carried forward
         // locally from here by the sim's own regen curve, so this message is
         // needed only when that model would be wrong -- which is when something
         // was spent.

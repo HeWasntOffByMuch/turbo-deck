@@ -1,5 +1,5 @@
 /**
- * The regression spec 068 exists for: what the *blow* looks like over a wire
+ * The regression spec 069 exists for: what the *blow* looks like over a wire
  * that is not free.
  *
  * `latency.test.ts` asks whether the body ends up where the server says. This

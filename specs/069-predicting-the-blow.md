@@ -1,4 +1,10 @@
-# 068 — Predicting the blow itself
+# 069 — Predicting the blow itself
+
+> Renumbered from 068, which landed on `main` first as "a committed blow lands,
+> and frees the body when it does". This spec was written against the phase
+> machine as it stood before that one and is merged on top of it: recovery is
+> gone, so a cast now ends on its release tick and the predicted timeline ends
+> there too. The measured results below are from after the merge.
 
 ## Problem
 
@@ -191,13 +197,18 @@ standing after the server's cast ended is stillness the player gets nothing for.
 |---|---|---|---|---|---|---|
 | loopback | 0% | 8% | 2% | 0% | 0% | 15 / 15 |
 | 50ms | 0% | 7% | 7% | 0% | 0% | 15 / 15 |
-| 100ms | 0% | 12% | 7% | 0% | 0% | 27 / 14 |
-| 200ms | 12% | 14% | 7% | 12% | 10% | 38 / 14 |
+| 100ms | 1% | 12% | 7% | 1% | 0% | 27 / 14 |
+| 200ms | 8% | 36% | 6% | 8% | 4% | 27 / 14 |
 
-Against the before-table: `no bar` 8% → 0% at loopback and 37% → 12% at 200ms;
-`dead sweep` 12% → 0% and 37% → 10%; press-to-bar, which was six ticks with no
+Against the before-table: `no bar` 8% → 0% at loopback and 37% → 8% at 200ms;
+`dead sweep` 12% → 0% and 37% → 4%; press-to-bar, which was six ticks with no
 network at all, is now zero by construction -- the bar is put up by the press
 rather than by a message.
+
+`early bar` at 200ms is the one column that grew, and it grew when 068 removed
+recovery: a blow is now twelve ticks rather than twenty-one, so a bar shown for a
+press the server later refuses covers proportionally more of it. It is the
+harmless direction, and it is the deliberate lean.
 
 `bars/casts` is the honest measure of over-prediction: how many presses put up a
 bar that was not already there, against how many casts the server actually ran.
@@ -207,7 +218,7 @@ it later withdraws, because its cooldown table is a round trip stale; those are
 the `early bar` ticks growing, and they are the deliberate lean.
 
 What is *not* fixed is the 200ms column's `no bar` and `under-root`. Both sit at
-12%, roughly where `under-root` was before (10%), and they are the same ticks:
+8%, a little under where `under-root` was before (10%), and they are the same ticks:
 presses the client declines to predict from a stale mirror, which the server then
 accepts. The movement guarantee is untouched -- **no hard corrections at any
 latency** -- so this is a blow drawn late, not a body moved. Shrinking it means

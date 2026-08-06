@@ -136,7 +136,7 @@ interface Connection {
    */
   sentCooldowns: Readonly<Record<string, number>> | null;
   /**
-   * The last resource this connection was told about, and when (spec 068).
+   * The last resource this connection was told about, and when (spec 069).
    *
    * Kept so the server can model what the client now believes and send only
    * when that belief has gone wrong. Starts negative so the first comparison

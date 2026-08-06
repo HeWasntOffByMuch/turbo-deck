@@ -1,5 +1,5 @@
 /**
- * Predicting the blow (spec 068).
+ * Predicting the blow (spec 069).
  *
  * Two halves, and the split is deliberate. The pure half exercises the timeline
  * and the gate directly, because they are functions and a function is cheaper to
@@ -132,17 +132,21 @@ describe('the predicted timeline', () => {
     return decision.cast;
   };
 
-  it('winds up, releases into recovery, and is over at its own endTick', () => {
+  it('winds up, and is over on the tick the blow lands', () => {
     let cast: CastState | null = start(0);
     const seen: number[] = [];
+    let endedAt = -1;
     for (let tick = 0; tick <= 60 && cast; tick++) {
       cast = advanceCast(cast, 0, { x: 0, y: 0 }, tick, ability);
       if (cast) seen.push(cast.phase);
+      else endedAt = tick;
     }
     expect(seen).toContain(CastPhase.Windup);
-    expect(seen).toContain(CastPhase.Recovery);
-    // And it ended by itself, with nothing from the server at all.
+    // It ended by itself, with nothing from the server at all -- and it ended on
+    // the release rather than sitting through a recovery, which is the rule main
+    // changed underneath this: once the swing has gone off the body is free.
     expect(cast).toBeNull();
+    expect(endedAt).toBe(start(0).releaseTick);
   });
 
   it('holds a turn until the body has come round, then restarts the wind-up', () => {

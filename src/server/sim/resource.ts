@@ -1,5 +1,5 @@
 /**
- * How the ability pool refills (spec 068).
+ * How the ability pool refills (spec 069).
  *
  * One line, in one place, because two things now depend on agreeing about it
  * exactly: the sim regenerates the pool a tick at a time, and the client models

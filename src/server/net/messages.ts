@@ -376,7 +376,7 @@ export interface CooldownsMessage {
   readonly type: typeof ServerMessageType.Cooldowns;
   readonly entries: readonly { readonly abilityId: string; readonly readyAtTick: number }[];
   /**
-   * The caster's live resource, and the tick it was true on (spec 068).
+   * The caster's live resource, and the tick it was true on (spec 069).
    *
    * Here rather than on the entity delta because it is nobody else's business:
    * what another player has left to spend changes nothing this client draws,
