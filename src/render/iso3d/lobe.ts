@@ -1,7 +1,7 @@
 import { hashUnit2 } from '../../shared/hash.js';
 
 /**
- * The lobed canopy tree's shape, as arithmetic (spec 076).
+ * The lobed canopy tree's shape, as arithmetic (spec 077).
  *
  * Pure -- no three.js, no DOM -- for the same reason `wind.ts` is: the numbers
  * here are the art direction, and a silhouette that decides how a whole forest
@@ -358,7 +358,7 @@ export interface LobedShape {
 }
 
 /**
- * The lobed canopy tree as the world grows it (spec 076): a pole that tapers to
+ * The lobed canopy tree as the world grows it (spec 077): a pole that tapers to
  * a point, carrying a scatter of flat lobed slabs up its top half.
  *
  * Slender is the whole read -- 4.6 units of radius under 136 of height, against

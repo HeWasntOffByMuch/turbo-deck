@@ -84,7 +84,7 @@ vec3 swingAbout(vec3 p, vec3 base, float angle) {
 // together from beating in exact unison for the rest of the session.
 //
 // uSwayLag and uSwayTilt are this *batch's* -- one part of one species -- and
-// are both zero for every batch that existed before spec 076, so the conifers
+// are both zero for every batch that existed before spec 077, so the conifers
 // take exactly the path they always did.
 vec3 windBend(vec3 worldPos) {
   float w = clamp(aBend, 0.0, 1.0);
@@ -160,7 +160,7 @@ export interface SwayInstance {
 
 /**
  * How one batch reads the wind differently from the trunk it hangs off
- * (spec 076). All-zero is the behaviour every batch had before it existed.
+ * (spec 077). All-zero is the behaviour every batch had before it existed.
  */
 export interface SwayLag {
   /**

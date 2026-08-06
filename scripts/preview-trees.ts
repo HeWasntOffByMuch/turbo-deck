@@ -1,4 +1,4 @@
-// Dev-only: photograph the world's tree species (spec 045, spec 076) so a human --
+// Dev-only: photograph the world's tree species (spec 045, spec 077) so a human --
 // or an agent with no screen -- can see whether a silhouette actually reads.
 // Not part of the app. `npx tsx scripts/preview-trees.ts`
 //

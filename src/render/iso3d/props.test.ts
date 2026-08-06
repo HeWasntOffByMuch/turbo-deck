@@ -555,7 +555,7 @@ describe('uniform fence colour', () => {
 });
 
 /**
- * The lobed canopy tree as `buildPropField` actually builds it (spec 076).
+ * The lobed canopy tree as `buildPropField` actually builds it (spec 077).
  *
  * `lobe.test.ts` covers the arithmetic -- where the slabs go, what the outline
  * is, how the trunk tapers. What is left is everything between that and a frame:

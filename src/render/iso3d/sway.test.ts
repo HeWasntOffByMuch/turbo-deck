@@ -230,7 +230,7 @@ describe('a batch of trees', () => {
       // for a stand of pines is smaller than for a stand of firs, and asserting
       // either one alone passes for the wrong reason.
       //
-      // The ceiling carries the lobed canopy's tilt as well (spec 076). A slab
+      // The ceiling carries the lobed canopy's tilt as well (spec 077). A slab
       // is inflated for two motions, not one: the trunk's lean carries its
       // origin downwind and the tilt about that origin then throws its rim
       // further still, and a sphere sized for only the first takes the whole

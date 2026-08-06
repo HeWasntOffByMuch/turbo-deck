@@ -1,4 +1,4 @@
-# 076 — The lobed canopy tree
+# 077 — The lobed canopy tree
 
 ## Problem
 

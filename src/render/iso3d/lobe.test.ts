@@ -15,7 +15,7 @@ import {
 } from './lobe.js';
 
 /**
- * The lobed tree's shape as arithmetic (spec 076).
+ * The lobed tree's shape as arithmetic (spec 077).
  *
  * What is worth asserting here is only the things a screenshot cannot tell you
  * apart. Where the outline is *round* and where it is *sharp* is the one this

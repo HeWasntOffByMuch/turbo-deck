@@ -64,7 +64,7 @@ const HASH_WIND_PHASE = 0x5eed08;
 
 /**
  * How the three species divide the forest, as cumulative shares of the position
- * hash. The lobed tree (spec 076) is the odd one out by construction, so it is
+ * hash. The lobed tree (spec 077) is the odd one out by construction, so it is
  * held to a bit over a quarter: enough that a walk through the woods runs into
  * one every few trees, few enough that the world still reads as coniferous.
  */
@@ -97,7 +97,7 @@ interface PropPart {
    * The tier count at or above which this part is grown, defaulting to
    * `tier + 1` -- which is the rule every conifer has always used, written out.
    *
-   * It is separate from `tier` because the lobed canopy (spec 076) needs the two
+   * It is separate from `tier` because the lobed canopy (spec 077) needs the two
    * to disagree: its slab count fills in the *middle* of the cluster and always
    * keeps the topmost slab, since the trunk is one shared geometry and cannot
    * shorten with the canopy. Dropping slabs off the top would leave a three-slab
@@ -158,7 +158,7 @@ interface PropPart {
    */
   readonly sway?: boolean;
   /**
-   * Seconds this part reads the wind behind the trunk it hangs off (spec 076),
+   * Seconds this part reads the wind behind the trunk it hangs off (spec 077),
    * on top of the per-tree phase the whole tree already carries.
    */
   readonly swayLag?: number;
@@ -217,7 +217,7 @@ interface ConiferShape {
 }
 
 /**
- * A species, in whichever of the two constructions it is built from (spec 076).
+ * A species, in whichever of the two constructions it is built from (spec 077).
  *
  * The union is the point: the conifers' `tiers` table cannot describe a trunk
  * that ends in a vertex or a canopy that is a set of flat blobs, and a shape
@@ -360,7 +360,7 @@ export function trunkHeight(species: TreeSpecies): number {
  * out through a frond. Scale-free: the trunk, the tiers and the drift all scale
  * with the prop together, so one number answers for every size it can grow to.
  *
- * `Infinity` for the lobed tree (spec 076), and that is the honest answer rather
+ * `Infinity` for the lobed tree (spec 077), and that is the honest answer rather
  * than a dodge: the question is about a solid column's flat cap and its corners
  * hanging out through a sloped cone, and a trunk that tapers to a single vertex
  * has neither. The invariant is vacuous there, not satisfied by luck.
@@ -421,7 +421,7 @@ function meshBuilder(): {
 type Vec3 = readonly [number, number, number];
 
 /**
- * The lobed tree's trunk (spec 076): a round column that tapers to a point.
+ * The lobed tree's trunk (spec 077): a round column that tapers to a point.
  *
  * Built ring by ring from {@link trunkProfile} with its origin at the **ground**,
  * so `offsetY` is zero and the baked bend weight is just the local height over
@@ -476,7 +476,7 @@ function lobedTrunkGeometry(shape: LobedShape): THREE.BufferGeometry {
  * visible from below, it casts a shadow from every orientation, and -- the one
  * that turned out to matter most -- its facets face different ways, so it takes
  * light. A truly flat slab has one normal, and one normal is one shade for ever;
- * that is what a variant built on zero thickness was removed for (spec 076).
+ * that is what a variant built on zero thickness was removed for (spec 077).
  */
 function lobedSlabGeometry(slab: SlabSpec, shape: LobedShape): THREE.BufferGeometry {
   // However many vertices the outline turned out to need -- its corners and its
@@ -515,7 +515,7 @@ function lobedSlabGeometry(slab: SlabSpec, shape: LobedShape): THREE.BufferGeome
 const LOBED_TONES = [PALETTE.leafMid, PALETTE.leafBright] as const;
 
 /**
- * How the canopy trails the trunk in the wind (spec 076).
+ * How the canopy trails the trunk in the wind (spec 077).
  *
  * `tilt` is a multiple of the trunk's bend *angle* at the slab's height, and
  * the trunk's local inclination there is around three times that angle -- the
@@ -1315,7 +1315,7 @@ export function buildPropField(
     parts.forEach((part, partIndex) => {
       const tier = part.tier;
       // `tier + 1` is the rule the conifers have always used; `grownAt` is what
-      // lets the lobed canopy keep its topmost slab at every count (spec 076).
+      // lets the lobed canopy keep its topmost slab at every count (spec 077).
       const needs = part.grownAt ?? (tier === undefined ? 0 : tier + 1);
       const grown =
         tier === undefined || !variants ? of : of.filter((prop) => (variants.get(prop)?.tierCount ?? 0) >= needs);

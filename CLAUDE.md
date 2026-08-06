@@ -175,7 +175,7 @@ src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
                  `src/render/wind-probe.html` are a dev-server-only measuring rig
                  (never in a build) driven by `npx tsx scripts/preview-wind.ts`,
                  which photographs the frame and reports the acceptance numbers.
-src/render/iso3d/lobe.ts  the lobed canopy tree's shape (spec 076): the union of
+src/render/iso3d/lobe.ts  the lobed canopy tree's shape (spec 077): the union of
                  circles a canopy slab's outline is, where the slabs sit, and the
                  trunk's taper to a single vertex. Pure and tested headlessly --
                  the silhouette is the whole species, so it is checked in Node.
