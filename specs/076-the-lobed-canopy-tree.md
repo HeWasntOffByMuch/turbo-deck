@@ -46,7 +46,8 @@ interface LobedShape {
   readonly canopyTaper: number;    // how much narrower the top slab is
   readonly slabOffset: number;     // how far a slab sits off the trunk axis
   readonly domeRise: number;       // slab rise as a fraction of slab *width*
-  readonly slabThickness: number;
+  readonly slabThickness: number;  // zero makes the slab a single sheet
+  readonly slabPitch: number;      // radians tipped toward the camera bearing
   readonly seed: number;           // drives the blobs, the bow and the offsets
 }
 ```
@@ -142,6 +143,42 @@ sparser canopy rather than a tall bare whip with a stump of foliage halfway up.
   difference is uniform values, so the program cache key stays one key).
 - Bounding spheres are inflated for the lean *and* the tilt, against the
   strongest wind the weather panel allows.
+
+## The flat variant
+
+A second species off the same `LobedShape`, differing only in its leaves: no
+dome, no thickness, and a fixed pitch toward the camera. Three fields carry it,
+and all three already had to exist for the domed one to be describable.
+
+- `domeRise: 0` — the slab is a plane.
+- `slabThickness: 0` — and it is a *single sheet*. The geometry builder drops the
+  underside and the rim entirely rather than placing two surfaces zero apart,
+  which is not "very thin" but two coincident sheets Z-fighting over every pixel.
+  `lobeRings` drops to 1 with it: interior rings subdivide a curve, and there is
+  no longer a curve, so a flat slab is one fan of 18 triangles.
+- `slabPitch` — radians the slab is tipped toward the camera's bearing, applied
+  in `buildPropField` as a **world-space** rotation premultiplied onto the
+  instance, never baked into the geometry. Baked, the prop's own random yaw would
+  spin the tilt to a different direction on every tree.
+
+Two consequences worth stating rather than discovering:
+
+- **A single sheet needs `side: DoubleSide`,** on the visible material and on the
+  depth material the shadow pass uses. A one-sided plane vanishes from below and
+  casts no shadow from half its orientations.
+- **The pitch is static.** The camera's azimuth is a slider
+  (`CameraControls`' *Orbit*), so a baked tilt faces the viewer at the default
+  bearing and not at every one. That is the deliberate trade: a slab that
+  tracked the camera would be the billboard this spec rules out, and would cost
+  a rewrite of every instance matrix every frame. Turned right round, the flat
+  slabs read as edge-on plates — which is what a flat leaf mass does.
+
+All the slabs of a tree take the *same* pitch, so they stay parallel and stack
+without intersecting; the per-instance lean is the only thing that splays them,
+and it is small. What the pitch does change is the canopy's vertical extent --
+a slab's rim now rises and falls `radius * sin(pitch)` about its own plane -- so
+`speciesHeight` and `bareTrunkHeight` account for it rather than measuring the
+plane the slab nominally sits on.
 
 ## Out of scope
 
