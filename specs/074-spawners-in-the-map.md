@@ -1,4 +1,4 @@
-# 073 — Spawners in the map
+# 074 — Spawners in the map
 
 ## Problem
 

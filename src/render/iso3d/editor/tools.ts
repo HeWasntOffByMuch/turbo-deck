@@ -66,7 +66,7 @@ export interface EditorSettings {
   variedColor: boolean;
   // Markers
   markerKind: MapMarkerKind;
-  /** Which monster a `spawner` marker spawns (spec 073). Ignored by other kinds. */
+  /** Which monster a `spawner` marker spawns (spec 074). Ignored by other kinds. */
   spawnerMonster: string;
   showArena: boolean;
   // Nav
@@ -164,7 +164,7 @@ export const MODE_CHOICES = choices(EDITOR_MODES);
 export const TERRAIN_TOOL_CHOICES = choices(TERRAIN_TOOLS);
 export const MARKER_CHOICES = choices(MARKER_KINDS);
 /**
- * What a spawner marker may name, straight from the MONSTERS table (spec 073).
+ * What a spawner marker may name, straight from the MONSTERS table (spec 074).
  *
  * A dropdown rather than a text field because the server refuses to boot on a
  * spawner whose monster it does not know, and a typo an hour into a map edit

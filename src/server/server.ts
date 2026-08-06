@@ -157,7 +157,7 @@ interface Connection {
   sentResourceTick: number;
   /** Token bucket on map chunk sends (spec 072). */
   readonly chunkBudget: ChunkBudget;
-  /** Whether this client asked for the spawner readout (spec 073). */
+  /** Whether this client asked for the spawner readout (spec 074). */
   watchingSpawners: boolean;
   /**
    * Abilities asked for and not yet committed, each stamped with the input it
@@ -215,7 +215,7 @@ export class GameServer implements AdminHost {
    */
   private readonly mapIndex: MapIndex | null;
   /**
-   * The enemy spawn points the map places (spec 073). Empty for a server built
+   * The enemy spawn points the map places (spec 074). Empty for a server built
    * from a bare seed, which then has no monsters in it at all -- the map is the
    * only thing that puts one anywhere.
    */
@@ -419,7 +419,7 @@ export class GameServer implements AdminHost {
         this.handleChunkRequest(connection, message);
         break;
       // A subscription to a readout, not an action: it changes nothing about
-      // the world, so it needs no player and no entity (spec 073).
+      // the world, so it needs no player and no entity (spec 074).
       case ClientMessageType.WatchSpawners:
         connection.watchingSpawners = message.on;
         if (message.on) this.sendSpawnerStates(connection);
@@ -836,7 +836,7 @@ export class GameServer implements AdminHost {
   }
 
   /**
-   * What every spawner is doing, for a client drawing the overlay (spec 073).
+   * What every spawner is doing, for a client drawing the overlay (spec 074).
    *
    * Built from the map's spawn points rather than from the state map, so a
    * spawner that has never been filled still appears -- an empty marker with a

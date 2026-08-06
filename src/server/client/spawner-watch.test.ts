@@ -1,5 +1,5 @@
 /**
- * The spawner readout, end to end over the loopback (spec 073).
+ * The spawner readout, end to end over the loopback (spec 074).
  *
  * Against the shipped map rather than a fixture, because the thing being tested
  * is that a document's markers reach a client's overlay -- and `maps/arena.json`

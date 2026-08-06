@@ -320,14 +320,14 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   let lastDeltaTick = 0;
   /** Whether the opening facing has been taken from the first delta. */
   let seeded = false;
-  /** Whether the spawner readout has been asked for (spec 073). */
+  /** Whether the spawner readout has been asked for (spec 074). */
   let watchingSpawners = false;
 
   /**
    * Face the way the server says we are facing, once.
    *
    * This used to also place a handful of monsters by hand, which was the tab
-   * reaching past the sim to put content in the world. Since spec 073 the map
+   * reaching past the sim to put content in the world. Since spec 074 the map
    * document does that, so all that is left is the one thing that genuinely
    * has to wait for the first delta: the welcome says which entity we are, but
    * the *position and facing* arrive with the delta after it.
@@ -469,7 +469,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     });
     hud.update(view, scene.screenAnchors(), drawnTick, client.correctionCount, targetId);
 
-    // The setting is the subscription (spec 073): turning it on is what asks
+    // The setting is the subscription (spec 074): turning it on is what asks
     // the server for the timers, and turning it off is what stops them coming.
     // Watched rather than wired to a change event because "Reset" moves the
     // checkbox too, and a subscription that survived a reset would be a leak.

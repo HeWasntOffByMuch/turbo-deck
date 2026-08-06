@@ -122,7 +122,7 @@ recalculation and are answered with a fresh `Stats` message, or with `Error`
 ### `0x0b WatchSpawners`
 `bool on`
 
-Turns the `SpawnerStates` readout on or off (spec 073). The only client message
+Turns the `SpawnerStates` readout on or off (spec 074). The only client message
 that changes nothing about the world: it subscribes to a debug readout, so a
 client that never sends it is never sent one, and the overlay costs nothing
 while it is switched off. Needs no player and no entity.
@@ -336,7 +336,7 @@ temporary and the chunk goes back on the wanted list.
 `u32 tick` · `varuint count` · per spawner: `str id` · `str monsterId` ·
 `varint x` · `varint z` · `u8 state` · `varuint ticks`
 
-What every spawn point the map places is doing (spec 073). `state` is `0`
+What every spawn point the map places is doing (spec 074). `state` is `0`
 occupied and `1` counting down; `ticks` is what is left of the timer, and `0`
 while occupied. Coordinates are thousandths, like every other coordinate since
 spec 072 — they come out of the document and an `f32` cannot hold most of them.

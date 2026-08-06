@@ -696,7 +696,7 @@ describe('a hit does not interrupt a cast (spec 068)', () => {
       stats: definition.stats,
       radius: definition.radius,
       zoneId: 'greenmarch',
-      // Already fighting us: nothing initiates since spec 073.
+      // Already fighting us: nothing initiates since spec 074.
       targetId: player.id,
     });
     state = monster.state;
@@ -747,7 +747,7 @@ describe('a hit does not interrupt a cast (spec 068)', () => {
       stats: definition.stats,
       radius: definition.radius,
       zoneId: 'greenmarch',
-      // Already fighting us: nothing initiates since spec 073.
+      // Already fighting us: nothing initiates since spec 074.
       targetId: player.id,
     });
     state = monster.state;
@@ -1060,7 +1060,7 @@ describe('a named target (spec 070)', () => {
       stats: definition.stats,
       radius: definition.radius,
       zoneId: 'greenmarch',
-      // Already fighting us: nothing initiates since spec 073.
+      // Already fighting us: nothing initiates since spec 074.
       targetId: player.id,
     });
 

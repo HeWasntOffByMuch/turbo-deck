@@ -65,7 +65,7 @@ export interface ViewControls {
   lightOffset(): Vec3;
   /** Whether the unwalkable-terrain footprint overlay is shown. */
   showUnwalkable(): boolean;
-  /** Whether the map's spawn points and their timers are drawn (spec 073). */
+  /** Whether the map's spawn points and their timers are drawn (spec 074). */
   showSpawners(): boolean;
   /** The retro dither/quantization filter's current settings (spec 038). */
   retro(): RetroSettings;
@@ -384,7 +384,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   const unwalkable = makeCheckbox('Unwalkable terrain', false,
     "Toggle the overlay marking tree and bush footprints the unit can't walk onto.");
   // Off by default, and it costs nothing while it is: turning it on is what
-  // asks the server for the timers in the first place (spec 073).
+  // asks the server for the timers in the first place (spec 074).
   const spawners = makeCheckbox('Spawners', false,
     'Mark every spawn point the map places, with what it spawns and how long until it comes back.');
 

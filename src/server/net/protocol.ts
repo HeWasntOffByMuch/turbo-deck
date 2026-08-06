@@ -29,7 +29,7 @@ export const ClientMessageType = {
   /** Ask for one chunk of the map document (spec 072). */
   RequestChunk: 0x0a,
   /**
-   * Turn the spawner readout on or off (spec 073).
+   * Turn the spawner readout on or off (spec 074).
    *
    * A debug channel, and opt-in for exactly that reason: a client that is not
    * showing the overlay is sent nothing, so the toggle costs what it draws and
@@ -73,14 +73,14 @@ export const ServerMessageType = {
   /** A `RequestChunk` the server will not serve, and why. */
   ChunkDenied: 0x50,
   /**
-   * Every map spawner and what its timer is doing (spec 073). Sent on the
+   * Every map spawner and what its timer is doing (spec 074). Sent on the
    * broadcast cadence, and only to a connection that asked with
    * `WatchSpawners`.
    */
   SpawnerStates: 0x51,
 } as const;
 
-/** What a spawner is doing, as a byte (spec 073). */
+/** What a spawner is doing, as a byte (spec 074). */
 export const SpawnerStateValue = {
   /** Its monster is alive; there is no timer running. */
   Occupied: 0,

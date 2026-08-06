@@ -127,7 +127,7 @@ export interface CancelCastMessage {
 
 /**
  * Ask to be told what the map's spawners are doing, or to stop being told
- * (spec 073).
+ * (spec 074).
  *
  * The only client message that changes nothing about the world. It is a
  * subscription to a readout, so the server may answer it with silence and a
@@ -455,7 +455,7 @@ export interface CooldownsMessage {
   readonly atTick: number;
 }
 
-/** One spawner's live state, as the overlay draws it (spec 073). */
+/** One spawner's live state, as the overlay draws it (spec 074). */
 export interface SpawnerStatus {
   readonly id: string;
   readonly monsterId: string;
@@ -468,7 +468,7 @@ export interface SpawnerStatus {
 }
 
 /**
- * What every spawner on the map is doing (spec 073).
+ * What every spawner on the map is doing (spec 074).
  *
  * The whole map rather than the player's interest set: these are markers a
  * level designer placed, so there are tens of them, and an overlay that faded

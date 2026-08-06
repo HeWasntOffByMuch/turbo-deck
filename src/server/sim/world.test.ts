@@ -95,7 +95,7 @@ function withMonster(
   /**
    * Who it is already fighting, and where it considers home.
    *
-   * Nothing initiates since spec 073, so a test that wants a monster to walk
+   * Nothing initiates since spec 074, so a test that wants a monster to walk
    * anywhere has to hand it the target being hit would have given it.
    */
   extra: { targetId?: number; anchor?: { x: number; y: number } } = {},
@@ -611,7 +611,7 @@ describe("the map's spawners", () => {
 
     const died = step(state, [], ctx);
     state = died.state;
-    // Gone the same tick: no corpse (spec 073).
+    // Gone the same tick: no corpse (spec 074).
     expect(state.entities.has(victim.id)).toBe(false);
     expect(died.events.some((e) => e.kind === 'despawned' && e.entityId === victim.id)).toBe(true);
     const deathTick = state.tick;
