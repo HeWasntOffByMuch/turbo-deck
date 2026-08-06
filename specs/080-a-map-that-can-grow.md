@@ -81,13 +81,17 @@ insert. Then:
   outside every existing chunk belongs to the chunk its coordinates name.
 
 `meshLayers`' three-valued `solidAt` (spec 078) needs a new basis, since "off
-the dense grid" no longer exists. The store is told the layer's **declared chunk
-coordinates** — the set `MapInfo` lists, which the server has in full and a
-client learns before any chunk arrives:
+the dense grid" no longer exists. It moves onto the layer's **declared cell
+extent**, computed from `bounds` and `origin` — known from `MapInfo` before any
+chunk arrives, so it answers from the first frame:
 
 - held chunk → the cell's real solidity;
 - declared but not yet arrived → `null`, unknown, do not grow a cliff here;
-- not declared → `false`, the world genuinely ends, the wall is real.
+- outside the declaration → `false`, the world genuinely ends, the wall is real.
+
+A rectangle rather than the literal set of coordinates `MapInfo` lists: it needs
+no new plumbing, and where the two differ it errs toward `null`, which is the
+safe direction — "don't invent a coastline" rather than "wall this off".
 
 ### The world's edge comes from the document
 
@@ -159,15 +163,25 @@ export function bakePart(input: {
 }): { readonly chunks: readonly MapChunk[]; readonly bounds: MapRect };
 ```
 
-Pure and deterministic — same inputs, same chunks, in Node or a tab. Two rules
-make the join continuous:
+Pure and deterministic — same inputs, same chunks, in Node or a tab. It refuses
+to bake over a chunk that already exists, with one exception that is not a
+corner case but the shipped map: a **short** chunk on a flank is *completed*
+rather than refused. `arena.json`'s east column is 4 cells wide against a
+28-cell chunk, because its bounds are not a whole number of chunks across, and
+growing east of it would otherwise leave a chunk-wide strip of nothing. A
+completed chunk keeps its existing cells and corners verbatim and bakes only the
+rest.
+
+Two rules make the join continuous:
 
 - **Edge copy.** A corner shared with an existing chunk takes that chunk's
   height exactly. Not "close": the same number, so the seam invariant the store
   already enforces *inside* a layer holds *across* a part boundary.
-- **Skirt blend.** Within `SKIRT_CELLS` (4) of such an edge, the recipe's field
-  is lerped toward the neighbour's, smoothstep-weighted, so the join is a slope
-  rather than a step at the fourth cell in.
+- **Skirt blend.** Within `SKIRT_CELLS` (4) of such a corner, the recipe's field
+  is eased toward the existing ground, smoothstep-weighted, so the join is a
+  slope rather than a step at the fourth cell in. The anchor is found by walking
+  out along the four axes, which handles a part meeting old ground on one side,
+  on three, or in an L without any of those being a separate case.
 
 Materials and tones are classified from the blended field the normal way;
 solidity comes from the recipe's masks; props scatter from a PRNG seeded on
@@ -205,7 +219,10 @@ trees.
   chunk in a new one and pass distance validation; a chunk at a negative
   coordinate survives request, encode, decode and `insertChunk`.
 - **Sampling is continuous.** `heightAt` along a line crossing a seam steps by
-  no more than the layer's terrace step.
+  no more than the map's *own* worst step, measured over the same sweep. This
+  terrain terraces, so it is full of honest risers and an absolute threshold
+  would be a number picked to pass; the question worth asking is whether the
+  join is rougher than the ground it joins.
 - **Migration.** A v1 document loads, and re-exporting it as v2 leaves every
   chunk array unchanged.
 - **Three-valued solidity survives.** Held / declared-but-absent / undeclared
@@ -221,6 +238,11 @@ trees.
   untouched.
 - Chunk unloading and LOD. `loadMap` still meshes everything it holds — fine at
   a few hundred chunks, and a budget is its own spec.
+- Non-rectangular worlds. A layer declares one rectangle, so ground that is not
+  a rectangle leaves cells declared and unfilled; growth reports it rather than
+  modelling it. A per-layer coverage mask is the fix if it is ever wanted.
+- Changing the shipped `maps/arena.json`. The capability lands here; what the
+  world should actually become is a content decision, not this spec's.
 - Vertical layers. Parts are one ground layer.
 - Any runtime natural language. Recipes are committed JSON.
 - Splitting the document across files. One `maps/arena.json`; if it ever needs

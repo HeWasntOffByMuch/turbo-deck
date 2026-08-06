@@ -108,12 +108,21 @@ maps/            the world, as a map document (spec 072). arena.json is what the
                  server loads at boot and streams to clients; regenerate it with
                  `npx tsx scripts/bake-map.ts`, or edit it in the Map editor tab
                  and save over it. Checked in so the world reviews as a diff.
+                 recipes/ are the feature lists parts are grown from (spec 080) --
+                 `npx tsx scripts/grow-map.ts --recipe maps/recipes/<n>.json
+                 --rect minCx,minCz,maxCx,maxCz --seed N` adds one to the map
+                 rather than regenerating it. A recipe is the only place natural
+                 language enters: an agent writes one, it is reviewed as JSON,
+                 and nothing at runtime reads a model.
 src/shared/      PRNG, spatial hash, world extent — dependency-free helpers
                  shared by the server, the geometry helpers and terrain
 src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  and where the vegetation stands. No three.js, no DOM. Also the
                  map document (spec 048): map.ts bakes a world to JSON,
-                 map-world.ts loads one back as array-backed terrain.
+                 map-world.ts loads one back as array-backed terrain, and part.ts
+                 grows an existing one by a chunk-snapped rectangle (spec 080),
+                 stitching the join by copying shared corners exactly and easing
+                 the recipe's field in over a short skirt.
 src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
                  collision and pathfinding helpers the server collides against
 src/render/      the client: a tab shell over the play view, the two tuning

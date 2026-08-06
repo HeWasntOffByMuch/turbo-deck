@@ -12,3 +12,4 @@ export * from './world.js';
 export * from './vegetation.js';
 export * from './map.js';
 export * from './map-world.js';
+export * from './part.js';

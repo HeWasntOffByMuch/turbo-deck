@@ -105,10 +105,12 @@ interface StoredChunk {
   nav: Uint8Array | null;
 }
 
-interface StoredLayer extends Omit<LayerInfo, 'grid'> {
+interface StoredLayer extends Omit<LayerInfo, 'grid' | 'bounds'> {
   readonly chunks: Map<string, StoredChunk>;
   /** Recomputed whenever a chunk is added, since the extent can grow. */
   grid: LayerGrid;
+  /** Widened by `declareBounds` when the layer grows (spec 080). */
+  bounds: MapRect;
 }
 
 const key = (cx: number, cz: number): string => `${cx},${cz}`;
@@ -353,6 +355,45 @@ export class MapChunkStore {
    * Continuing the last two corners' slope instead reproduces the sampler to
    * within the same quantum as everywhere else.
    */
+  /**
+   * The height stored at a global corner, or null if no chunk holds it.
+   *
+   * The distinction `cornerHeight` deliberately hides -- it extrapolates rather
+   * than admitting it ran out of ground, which is right for the mesher's apron
+   * and wrong for stitching. A part being baked has to know exactly which of its
+   * corners already exist, because those are the ones it must copy rather than
+   * invent (spec 080).
+   */
+  heldCornerHeight(layerId: string, col: number, row: number): number | null {
+    const layer = this.layers.get(layerId);
+    if (!layer) return null;
+    const chunk = this.chunksAtCorner(layer, col, row)[0];
+    if (!chunk) return null;
+    return chunk.heights[(row - chunk.startRow) * (chunk.cols + 1) + (col - chunk.startCol)] ?? null;
+  }
+
+  /**
+   * Widen the extent this layer declares (spec 080).
+   *
+   * Bounds are declared rather than derived, so growing the world is an
+   * explicit act: `bakePart` computes the new rectangle and this is where it
+   * lands. Only ever widens -- a layer that has grown cannot un-grow, and a
+   * caller passing a smaller rectangle would otherwise put the sim's edge wall
+   * inside ground that exists.
+   */
+  declareBounds(layerId: string, bounds: MapRect): boolean {
+    const layer = this.layers.get(layerId);
+    if (!layer) return false;
+    layer.bounds = {
+      minX: Math.min(layer.bounds.minX, bounds.minX),
+      minZ: Math.min(layer.bounds.minZ, bounds.minZ),
+      maxX: Math.max(layer.bounds.maxX, bounds.maxX),
+      maxZ: Math.max(layer.bounds.maxZ, bounds.maxZ),
+    };
+    layer.grid = grid(layer.chunks.values(), layer.origin, layer.bounds, this.cellSize);
+    return true;
+  }
+
   cornerHeight(layerId: string, col: number, row: number): number {
     const layer = this.layers.get(layerId);
     if (!layer) return 0;
@@ -416,6 +457,19 @@ export class MapChunkStore {
   /** Is the layer's global cell solid? What the mesher asks to find real coastlines. */
   cellSolid(layerId: string, col: number, row: number): boolean {
     return this.cellAt(layerId, col, row)?.solid === true;
+  }
+
+  /**
+   * A chunk's size in cells, or null if the layer holds no such chunk.
+   *
+   * A chunk on the layer's far edge is *short* when the bounds are not a whole
+   * number of chunks across, so "how big is this one" is a real question rather
+   * than a constant -- and completing a short chunk is how a map grows past one
+   * (spec 080).
+   */
+  chunkShape(layerId: string, cx: number, cz: number): { cols: number; rows: number } | null {
+    const chunk = this.layers.get(layerId)?.chunks.get(key(cx, cz));
+    return chunk ? { cols: chunk.cols, rows: chunk.rows } : null;
   }
 
   /** A chunk's baked walkability, or null if it has not been baked (spec 053). */

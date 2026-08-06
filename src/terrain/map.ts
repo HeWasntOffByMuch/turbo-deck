@@ -4,6 +4,7 @@ import {
   type ChunkOptions,
   type TerrainChunk,
 } from './chunk.js';
+import type { TerrainFeature } from './features.js';
 import { TERRAIN_MATERIALS, rectContains, type Rect, type TerrainWorld } from './types.js';
 import { FENCE_KINDS, type Prop, type PropKind } from './vegetation.js';
 
@@ -168,6 +169,49 @@ export interface MapLayer {
   readonly chunks: readonly MapChunk[];
 }
 
+/**
+ * What a part is grown from (spec 080): a feature list in the authored terrain
+ * vocabulary, plus how thickly to plant it.
+ *
+ * `features` is `TerrainFeature[]`, the same literal a generated world is
+ * written in -- `features.ts` says features are data "so a world reads as a
+ * literal that can be reviewed, diffed, and one day loaded from a file or
+ * emitted by a generator", and this is that file. Coordinates are world-space,
+ * as they are everywhere else in that vocabulary.
+ *
+ * There is deliberately no `waterLevel`: one sea per layer, so the shore
+ * distance transform the water shader steps on (spec 074) stays a single
+ * continuous field rather than stepping at every part boundary.
+ */
+export interface PartRecipe {
+  readonly features: readonly TerrainFeature[];
+  /** Constant added to every height: the part's nominal ground level. */
+  readonly elevation?: number;
+  /** Quantises the composed height into flat treads, as `LayerDef.terrace` does. */
+  readonly terrace?: { readonly step: number; readonly strength: number };
+  /** Planting, as a multiple of the world's own density. 0 leaves it bare. */
+  readonly vegetation?: { readonly density: number };
+}
+
+/**
+ * A piece of world, and where it came from (spec 080).
+ *
+ * Metadata, not truth: the chunks are the map, and nothing at load time reads a
+ * part. It is here so a piece can be reviewed as a diff, re-rolled with another
+ * seed, or re-baked after its recipe changes -- and so the answer to "why does
+ * the world look like that over there" is in the file rather than in somebody's
+ * memory of a command they ran.
+ */
+export interface MapPart {
+  readonly id: string;
+  readonly layer: string;
+  /** Which chunks it baked, in the layer's own chunk coordinates. */
+  readonly rect: ChunkRect;
+  readonly seed: number;
+  readonly recipe: PartRecipe;
+  readonly note?: string;
+}
+
 export interface MapDocument {
   readonly version: number;
   /** The seed this map was baked from. Provenance; the layers carry their own. */
@@ -176,6 +220,8 @@ export interface MapDocument {
   readonly layers: readonly MapLayer[];
   /** The sim's play rectangle, in world space -- see the note on `arena` above. */
   readonly arena: MapRect;
+  /** Where each piece of the world came from (spec 080). Provenance only. */
+  readonly parts?: readonly MapPart[];
 }
 
 /** Round to the document's quantum, normalising `-0` so serialisation is stable. */
@@ -489,11 +535,39 @@ function writeLayer(layer: MapLayer, indent: string): string {
 }
 
 /**
+ * A part, as JSON (spec 080).
+ *
+ * The recipe goes through `JSON.stringify` rather than a hand-written emitter:
+ * a feature list is a small, irregular union, and enumerating every member here
+ * would be a second definition of the vocabulary that could fall behind the
+ * first. Key order is whatever the object has, which is stable because the
+ * object was either parsed from this file or built by the baker.
+ */
+function writePart(part: MapPart, indent: string): string {
+  return writeObject(
+    [
+      ['id', writeScalar(part.id)],
+      ['layer', writeScalar(part.layer)],
+      [
+        'rect',
+        `{ "minCx": ${part.rect.minCx}, "minCz": ${part.rect.minCz}, ` +
+          `"maxCx": ${part.rect.maxCx}, "maxCz": ${part.rect.maxCz} }`,
+      ],
+      ['seed', String(part.seed)],
+      ...(part.note === undefined ? [] : [['note', writeScalar(part.note)] as const]),
+      ['recipe', JSON.stringify(part.recipe)],
+    ],
+    indent,
+  );
+}
+
+/**
  * The document as text: stable key order, stable spacing, no dependence on
  * anything ambient. The same document always serialises to the same bytes, which
  * is the property the round-trip test rests on.
  */
 export function serializeMap(doc: MapDocument): string {
+  const parts = doc.parts ?? [];
   return (
     writeObject(
       [
@@ -501,6 +575,11 @@ export function serializeMap(doc: MapDocument): string {
         ['seed', String(doc.seed)],
         ['grid', `{ "cellSize": ${doc.grid.cellSize}, "chunkCells": ${doc.grid.chunkCells} }`],
         ['arena', writeRect(doc.arena)],
+        // Omitted entirely when there are none, so a map that has never grown
+        // serialises exactly as it did before parts existed.
+        ...(parts.length === 0
+          ? []
+          : ([['parts', writeList(parts.map((p) => writePart(p, INDENT + INDENT)), INDENT)]] as const)),
         ['layers', writeList(doc.layers.map((l) => writeLayer(l, INDENT + INDENT)), INDENT)],
       ],
       '',
@@ -541,6 +620,35 @@ function asRect(value: unknown, what: string): MapRect {
     minZ: asNumber(r['minZ'], `${what}.minZ`),
     maxX: asNumber(r['maxX'], `${what}.maxX`),
     maxZ: asNumber(r['maxZ'], `${what}.maxZ`),
+  };
+}
+
+/**
+ * A part, read back.
+ *
+ * The recipe's *contents* are not validated here, and that is deliberate: it is
+ * provenance, nothing at load time reads it, and the chunks it produced are
+ * already in the file. It is checked when it is used -- baking runs it through
+ * `createLayer`, which is the only thing that can meaningfully say whether a
+ * feature list means anything. Validating it twice, in two places, is how the
+ * two definitions drift.
+ */
+function parsePart(value: unknown, what: string): MapPart {
+  const r = asRecord(value, what);
+  const rect = asRecord(r['rect'], `${what}.rect`);
+  const note = r['note'];
+  return {
+    id: asString(r['id'], `${what}.id`),
+    layer: asString(r['layer'], `${what}.layer`),
+    rect: {
+      minCx: asNumber(rect['minCx'], `${what}.rect.minCx`),
+      minCz: asNumber(rect['minCz'], `${what}.rect.minCz`),
+      maxCx: asNumber(rect['maxCx'], `${what}.rect.maxCx`),
+      maxCz: asNumber(rect['maxCz'], `${what}.rect.maxCz`),
+    },
+    seed: asNumber(r['seed'], `${what}.seed`),
+    ...(note === undefined ? {} : { note: asString(note, `${what}.note`) }),
+    recipe: asRecord(r['recipe'], `${what}.recipe`) as unknown as PartRecipe,
   };
 }
 
@@ -674,6 +782,13 @@ export function parseMap(text: string): MapDocument {
       chunkCells: asNumber(grid['chunkCells'], 'document.grid.chunkCells'),
     },
     arena: asRect(r['arena'], 'document.arena'),
+    ...(r['parts'] === undefined
+      ? {}
+      : {
+          parts: (Array.isArray(r['parts']) ? r['parts'] : fail('document.parts must be an array')).map((p, i) =>
+            parsePart(p, `document.parts[${i}]`),
+          ),
+        }),
     layers: (Array.isArray(r['layers']) ? r['layers'] : fail('document.layers must be an array')).map((l, i) =>
       parseLayer(l, `document.layers[${i}]`),
     ),
