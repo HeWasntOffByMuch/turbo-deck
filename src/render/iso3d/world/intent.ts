@@ -17,6 +17,7 @@
  */
 
 import { segmentClear } from '../../../sim/collision.js';
+import { PATH_RETRY_TICKS } from '../../../sim/constants.js';
 import { findPath, navGridFor } from '../../../sim/pathfinding.js';
 import type { WorldColliders } from '../../../sim/types.js';
 
@@ -197,6 +198,12 @@ export class RoutePlanner {
   private index = 0;
   private goal: Point | null = null;
   private replanAtTick = 0;
+  /**
+   * Whether `path` is a search's answer or just the empty start. The server
+   * carries `path: null` for "never asked"; here the two states share `[]`, and
+   * the retry backoff needs to tell an unreachable order from a fresh one.
+   */
+  private searched = false;
 
   /** The waypoints currently planned, for tests and for drawing the route. */
   get waypoints(): readonly Point[] {
@@ -211,6 +218,7 @@ export class RoutePlanner {
     this.index = 0;
     this.goal = null;
     this.replanAtTick = 0;
+    this.searched = false;
   }
 
   /**
@@ -236,16 +244,25 @@ export class RoutePlanner {
       return null;
     }
 
+    // A search that came back empty leaves the same empty path as a route walked
+    // to its end, and `index >= path.length` cannot tell them apart -- which had
+    // an order onto unreachable ground re-running a full A* every frame, the one
+    // case this planner exists to prevent (spec 073). A failure waits out
+    // `PATH_RETRY_TICKS`, and a target shuffling about is no reason to ask
+    // sooner: what is unreachable here is unreachable a body's length away.
+    const failed = this.searched && this.path.length === 0;
     const goalMoved =
-      this.goal === null ||
-      Math.hypot(this.goal.x - destination.x, this.goal.y - destination.y) > REPLAN_DISTANCE;
-    const exhausted = this.index >= this.path.length;
+      !failed &&
+      (this.goal === null ||
+        Math.hypot(this.goal.x - destination.x, this.goal.y - destination.y) > REPLAN_DISTANCE);
+    const exhausted = !failed && this.index >= this.path.length;
 
     if (goalMoved || exhausted || tick >= this.replanAtTick) {
       this.path = findPath(navGridFor(world.radius, world.colliders), self, destination);
       this.index = 0;
       this.goal = destination;
-      this.replanAtTick = tick + replanEvery;
+      this.searched = true;
+      this.replanAtTick = tick + (this.path.length === 0 ? PATH_RETRY_TICKS : replanEvery);
       this.searches += 1;
     }
 
