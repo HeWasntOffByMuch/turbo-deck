@@ -16,8 +16,9 @@
  *  - **wind-up** -- from committing to the release. This is the phase that
  *    matters; a cancel here refunds everything.
  *  - **channel** -- from the release to the end, running while it pulses.
- *  - **recovery** -- the caster is rooted but the decision is made. Shown full,
- *    and drained, so it reads as "over" rather than "starting again".
+ *
+ * There is no fourth: a cast ends when it releases (spec 068), so the bar is
+ * gone by the time the blow has landed.
  *
  * Pure: a few numbers in, a number out, tested headlessly.
  */
@@ -70,13 +71,7 @@ export function castBar(cast: CastLike, tick: number, ability: AbilityDefinition
     return { progress: clamp01(1 - (cast.releaseTick - tick) / windup), cancellable: true, phase, turning: false };
   }
 
-  if (phase === CastPhaseValue.Channel) {
-    const span = Math.max(1, cast.endTick - cast.releaseTick);
-    return { progress: clamp01((tick - cast.releaseTick) / span), cancellable: true, phase, turning: false };
-  }
-
-  // Recovery: past the point of no return. Drains from full to empty, so the
-  // bar never reads as a fresh commitment the player could still call off.
+  // Channel: from the release to the end, running while it pulses.
   const span = Math.max(1, cast.endTick - cast.releaseTick);
-  return { progress: clamp01((cast.endTick - tick) / span), cancellable: false, phase, turning: false };
+  return { progress: clamp01((tick - cast.releaseTick) / span), cancellable: true, phase, turning: false };
 }

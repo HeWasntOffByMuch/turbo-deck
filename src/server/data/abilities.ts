@@ -42,8 +42,6 @@ export interface AbilityDefinition {
    * commitment the old parry system used to read.
    */
   readonly windupTicks: number;
-  /** Ticks rooted after release. Past this line a cast can no longer be undone. */
-  readonly recoveryTicks: number;
   readonly cooldownTicks: number;
   readonly cost: number;
   readonly range: number;
@@ -72,7 +70,6 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     kind: 'melee',
     targeting: 'direction',
     windupTicks: seconds(0.2),
-    recoveryTicks: seconds(0.15),
     cooldownTicks: seconds(0.6),
     cost: 0,
     range: 70,
@@ -86,7 +83,6 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     kind: 'melee',
     targeting: 'direction',
     windupTicks: seconds(0.65),
-    recoveryTicks: seconds(0.35),
     cooldownTicks: seconds(3),
     cost: 2,
     range: 90,
@@ -100,7 +96,6 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     kind: 'projectile',
     targeting: 'direction',
     windupTicks: seconds(0.3),
-    recoveryTicks: seconds(0.1),
     cooldownTicks: seconds(0.8),
     cost: 3,
     range: 700,
@@ -114,7 +109,6 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     kind: 'projectile',
     targeting: 'point',
     windupTicks: seconds(0.5),
-    recoveryTicks: seconds(0.2),
     cooldownTicks: seconds(4),
     cost: 5,
     range: 520,
@@ -129,7 +123,6 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     kind: 'ground',
     targeting: 'point',
     windupTicks: seconds(0.9),
-    recoveryTicks: seconds(0.4),
     cooldownTicks: seconds(8),
     cost: 7,
     range: 420,
@@ -143,7 +136,6 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     kind: 'self',
     targeting: 'self',
     windupTicks: seconds(0.8),
-    recoveryTicks: seconds(0.2),
     cooldownTicks: seconds(10),
     cost: 6,
     range: 0,
@@ -157,7 +149,6 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     kind: 'channel',
     targeting: 'direction',
     windupTicks: seconds(0.25),
-    recoveryTicks: seconds(0.2),
     cooldownTicks: seconds(6),
     cost: 4,
     range: 220,
@@ -190,8 +181,12 @@ export const STARTING_ABILITIES: readonly string[] = [
   'channel.drain',
 ];
 
-/** Total ticks a cast occupies the caster, from commit to free. */
+/**
+ * Total ticks a cast occupies the caster, from commit to free. The release frees
+ * the caster, so there is nothing past the wind-up but a channel's pulses (spec
+ * 068).
+ */
 export function totalCastTicks(ability: AbilityDefinition): number {
   const channel = ability.kind === 'channel' ? (ability.channelTicks ?? 0) : 0;
-  return ability.windupTicks + channel + ability.recoveryTicks;
+  return ability.windupTicks + channel;
 }

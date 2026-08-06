@@ -15,7 +15,7 @@ describe('castBar', () => {
       abilityId: heavy.id,
       phase: CastPhaseValue.Windup,
       releaseTick: 1000,
-      endTick: 1000 + heavy.recoveryTicks,
+      endTick: 1000,
     };
 
     expect(castBar(cast, 1000 - windup, heavy).progress).toBeCloseTo(0, 9);
@@ -44,21 +44,10 @@ describe('castBar', () => {
     expect(castBar(cast, 620, drain).progress).toBeCloseTo(1, 9);
   });
 
-  it('drains through recovery, and says the decision is made', () => {
-    expect(heavy).not.toBeNull();
-    if (!heavy) return;
-    const cast = { abilityId: heavy.id, phase: CastPhaseValue.Recovery, releaseTick: 200, endTick: 240 };
-
-    expect(castBar(cast, 200, heavy).progress).toBeCloseTo(1, 9);
-    expect(castBar(cast, 220, heavy).progress).toBeCloseTo(0.5, 9);
-    expect(castBar(cast, 240, heavy).progress).toBeCloseTo(0, 9);
-    expect(castBar(cast, 210, heavy).cancellable).toBe(false);
-  });
-
   it('stays inside 0..1 however far off the tick is', () => {
     expect(heavy).not.toBeNull();
     if (!heavy) return;
-    for (const phase of [CastPhaseValue.Windup, CastPhaseValue.Channel, CastPhaseValue.Recovery]) {
+    for (const phase of [CastPhaseValue.Windup, CastPhaseValue.Channel]) {
       const cast = { abilityId: heavy.id, phase, releaseTick: 100, endTick: 140 };
       for (const tick of [-9999, 0, 99, 100, 139, 140, 99999]) {
         const bar = castBar(cast, tick, heavy);
@@ -99,7 +88,7 @@ describe('turning', () => {
   });
 
   it('is the only phase that reports turning', () => {
-    for (const phase of [CastPhaseValue.Windup, CastPhaseValue.Channel, CastPhaseValue.Recovery]) {
+    for (const phase of [CastPhaseValue.Windup, CastPhaseValue.Channel]) {
       const cast = { abilityId: 'melee.heavy', phase, releaseTick: 100, endTick: 140 };
       expect(castBar(cast, 100, heavy).turning).toBe(false);
     }
