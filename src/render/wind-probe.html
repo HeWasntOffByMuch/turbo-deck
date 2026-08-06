@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>turbo-deck · wind probe</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #16161e; overflow: hidden; }
+      #app { position: fixed; inset: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <!-- Spec 073's measuring rig. Dev-server only: `vite build` bundles
+         index.html and nothing else, so this never ships. See
+         iso3d/wind-probe.ts for what it is for and how to point it. -->
+    <script type="module" src="./iso3d/wind-probe.ts"></script>
+  </body>
+</html>
