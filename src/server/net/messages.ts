@@ -375,6 +375,21 @@ export interface CastRejectedMessage {
 export interface CooldownsMessage {
   readonly type: typeof ServerMessageType.Cooldowns;
   readonly entries: readonly { readonly abilityId: string; readonly readyAtTick: number }[];
+  /**
+   * The caster's live resource, and the tick it was true on (spec 068).
+   *
+   * Here rather than on the entity delta because it is nobody else's business:
+   * what another player has left to spend changes nothing this client draws,
+   * and the delta is the one message that is paid for per entity.
+   *
+   * It rides on this message because this message is already sent exactly when
+   * a cast commits, which is when resource moves by a cost. Between those, the
+   * client models regen from `resourceRegen` -- so `atTick` is not decoration:
+   * the number is a round trip old on arrival, and modelling forward from it
+   * needs to know how far forward.
+   */
+  readonly resource: number;
+  readonly atTick: number;
 }
 
 export type ServerMessage =
@@ -513,6 +528,7 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
     case ServerMessageType.Cooldowns:
       writer.varuint(message.entries.length);
       for (const entry of message.entries) writer.str(entry.abilityId).u32(entry.readyAtTick);
+      writer.f32(message.resource).u32(message.atTick);
       break;
     case ServerMessageType.Delta:
       writer.u32(message.tick).varuint(message.ackInputSeq).varuint(message.removed.length);
@@ -609,7 +625,9 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
       for (let i = 0; i < count; i++) {
         entries.push({ abilityId: reader.str(), readyAtTick: reader.u32() });
       }
-      return { type: ServerMessageType.Cooldowns, entries };
+      const resource = reader.f32();
+      const atTick = reader.u32();
+      return { type: ServerMessageType.Cooldowns, entries, resource, atTick };
     }
     case ServerMessageType.Delta: {
       const tick = reader.u32();

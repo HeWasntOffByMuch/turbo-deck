@@ -37,11 +37,13 @@ import {
   LiveConfigStore,
   MAX_BUFFERED_INPUTS,
   PROTOCOL_VERSION,
+  RESOURCE_EPSILON,
   RESPAWN_DELAY_TICKS,
   SERVER_TICK_MS,
   SERVER_TICK_RATE,
 } from './config.js';
 import { TickLoop } from './loop.js';
+import { regenerated } from './sim/resource.js';
 import { monsterById } from './data/monsters.js';
 import { decodeAdminRequest, encodeAdminReply, type AdminPlayerRow } from './net/admin-messages.js';
 import { CodecError } from './net/codec.js';
@@ -133,6 +135,16 @@ interface Connection {
    * is a pointer compare per connection per tick rather than a walk.
    */
   sentCooldowns: Readonly<Record<string, number>> | null;
+  /**
+   * The last resource this connection was told about, and when (spec 068).
+   *
+   * Kept so the server can model what the client now believes and send only
+   * when that belief has gone wrong. Starts negative so the first comparison
+   * always disagrees: a client that has never been told cannot model anything,
+   * and must be given a number before it can predict a cost against it.
+   */
+  sentResource: number;
+  sentResourceTick: number;
   /**
    * Abilities asked for and not yet committed, each stamped with the input it
    * was asked after (spec 067). Held here rather than on the input frame
@@ -244,6 +256,8 @@ export class GameServer implements AdminHost {
       appliedSeq: 0,
       lastDriftTick: 0,
       sentCooldowns: null,
+      sentResource: -1,
+      sentResourceTick: 0,
     };
     this.connections.add(connection);
     channel.onMessage((bytes) => {
@@ -535,14 +549,33 @@ export class GameServer implements AdminHost {
     if (connection.entityId < 0) return;
     const entity = this.state.entities.get(connection.entityId);
     if (!entity) return;
-    if (entity.cooldowns === connection.sentCooldowns) return;
+
+    // The client models regen forward from the last number it was given, so it
+    // needs telling only when that model has gone wrong -- which is when it has
+    // spent something, or when anything moved the pool that regen does not
+    // explain. Modelling what the client believes and comparing is the same
+    // trick the drift correction plays with position (spec 067): silence is a
+    // statement that the prediction is right, and idling back to full is one
+    // message rather than one per tick.
+    const believed = regenerated(
+      connection.sentResource,
+      entity.stats.resourceRegen,
+      entity.stats.maxResource,
+      tick - connection.sentResourceTick,
+    );
+    const resourceStale = Math.abs(believed - entity.resource) > RESOURCE_EPSILON;
+    if (entity.cooldowns === connection.sentCooldowns && !resourceStale) return;
     connection.sentCooldowns = entity.cooldowns;
+    connection.sentResource = entity.resource;
+    connection.sentResourceTick = tick;
 
     this.send(connection, {
       type: ServerMessageType.Cooldowns,
       entries: Object.entries(entity.cooldowns)
         .filter(([, readyAtTick]) => readyAtTick > tick)
         .map(([abilityId, readyAtTick]) => ({ abilityId, readyAtTick })),
+      resource: entity.resource,
+      atTick: tick,
     });
   }
 

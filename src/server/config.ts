@@ -88,8 +88,20 @@ export const INTEREST_CHUNK_RADIUS = 8;
  * result and one derived stat (spec 065).
  * 4: an ability request says which input it was made on, so a commit lands at
  * the same point in the input stream on both ends (spec 067).
+ * 5: the cooldown message carries the caster's live resource and the tick it was
+ * true on, so a client can decide whether it can afford a blow (spec 068).
  */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
+
+/**
+ * How far the client's modelled resource may be from the server's before it is
+ * told (spec 068).
+ *
+ * Small, because it gates a yes/no: sitting a hair under a cost and believing
+ * you are over it is a predicted cast the server refuses, which is the visible
+ * failure this whole spec exists to avoid. Well above f32 wire rounding.
+ */
+export const RESOURCE_EPSILON = 0.05;
 
 /** How long a dead player lies there before the server puts them back (spec 057). */
 export const RESPAWN_DELAY_TICKS = SERVER_TICK_RATE * 3;
