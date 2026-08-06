@@ -29,6 +29,7 @@ import {
   type EffectMessage,
   type MapInfoMessage,
   type ServerChatMessage,
+  type SpawnerStatus,
 } from '../net/messages.js';
 import {
   CastPhaseValue,
@@ -167,6 +168,12 @@ export interface ClientView {
    * could edit by hand.
    */
   readonly map: ClientMapView | null;
+  /**
+   * What every map spawner is doing (spec 076). Empty unless the client asked
+   * for it with {@link GameClient.watchSpawners} -- it is a debug readout, and
+   * one nobody is drawing costs nothing.
+   */
+  readonly spawners: readonly SpawnerStatus[];
   readonly stats: EffectiveStats | null;
   readonly level: number;
   readonly experience: number;
@@ -298,6 +305,8 @@ export class GameClient {
   private mapCache: MapChunkCache | null = null;
   /** Ticks to wait before asking for chunks again, after being throttled. */
   private chunkBackoffTicks = 0;
+  /** The spawner readout, when it has been asked for (spec 076). */
+  private spawners: readonly SpawnerStatus[] = [];
   private stats: EffectiveStats | null = null;
   private level = 1;
   private experience = 0;
@@ -472,6 +481,20 @@ export class GameClient {
    * answers, this client asks for no movement. The request carries the last
    * input seq so the server commits at the same point in the stream.
    */
+  /**
+   * Ask the server to keep {@link ClientView.spawners} up to date, or to stop
+   * (spec 076).
+   *
+   * The one request that asks for a readout rather than an action, which is why
+   * it is off by default: a view that is not drawing the overlay should not be
+   * paying twenty messages a second for it.
+   */
+  watchSpawners(on: boolean): void {
+    if (!this.connected) return;
+    if (!on) this.spawners = [];
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.WatchSpawners, on }));
+  }
+
   useAbility(abilityId: string, targetX = 0, targetY = 0, targetEntityId = 0): void {
     if (!this.connected) return;
     this.requestedAbilityId = abilityId;
@@ -853,6 +876,7 @@ export class GameClient {
       selfEntityId: this.welcome?.entityId ?? -1,
       worldSeed: this.welcome?.worldSeed ?? null,
       map: this.mapView(),
+      spawners: this.spawners,
       stats: this.stats,
       level: this.level,
       experience: this.experience,
@@ -1012,6 +1036,10 @@ export class GameClient {
         // actually paces a cold start: the window fills as fast as the link
         // carries it, and the pipeline stops on its own once `wanted` is empty.
         if (this.mapCache?.accept(message) === true) this.requestChunks();
+        break;
+
+      case ServerMessageType.SpawnerStates:
+        this.spawners = message.spawners;
         break;
 
       case ServerMessageType.ChunkDenied:

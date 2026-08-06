@@ -9,7 +9,13 @@ import type { ChunkCoord, MapChunkStore, MapMarker, MapMarkerKind } from '../../
  * chrome, and it belongs somewhere a test can reach.
  */
 
-export const MARKER_KINDS: readonly MapMarkerKind[] = ['spawn', 'objective', 'campfire', 'trigger'];
+export const MARKER_KINDS: readonly MapMarkerKind[] = [
+  'spawn',
+  'objective',
+  'campfire',
+  'trigger',
+  'spawner',
+];
 
 /** Billboard colour per kind. */
 export const MARKER_COLORS: Record<MapMarkerKind, number> = {
@@ -17,6 +23,7 @@ export const MARKER_COLORS: Record<MapMarkerKind, number> = {
   objective: 0xf0c65a,
   campfire: 0xe8843c,
   trigger: 0xb98ce0,
+  spawner: 0xe0605c,
 };
 
 /** The letter drawn on the billboard. */
@@ -25,6 +32,7 @@ export const MARKER_GLYPHS: Record<MapMarkerKind, string> = {
   objective: 'O',
   campfire: 'C',
   trigger: 'T',
+  spawner: 'M',
 };
 
 /**
@@ -66,9 +74,19 @@ export function placeMarker(
   x: number,
   z: number,
   onTouchChunk?: (cx: number, cz: number) => void,
+  label?: string,
 ): PlaceMarkerResult {
   if (!Number.isFinite(x) || !Number.isFinite(z)) return { marker: null, dirty: [] };
-  const marker: MapMarker = { kind, id: nextMarkerId(store.markers(layerId), kind), x, z };
+  const marker: MapMarker = {
+    kind,
+    id: nextMarkerId(store.markers(layerId), kind),
+    x,
+    z,
+    // A spawner's label is the monster it spawns (spec 076), so it is the one
+    // kind that is useless without one -- for the rest an empty label is just
+    // an unnamed point, and storing `''` would be noise in the document.
+    ...(label === undefined || label === '' ? {} : { label }),
+  };
 
   // Announce the chunk before writing to it, so an undo entry captures the
   // state the placement is about to replace rather than the placement itself.

@@ -11,10 +11,18 @@ import { FLAT_TERRAIN, type TerrainSampler } from '../world/terrain.js';
 import { ZoneManager } from '../world/zone-manager.js';
 import {
   EntityKindValue,
+  type ServerEntity,
   type ServerInput,
   type ServerWorldState,
 } from './types.js';
-import { createWorldState, spawnEntity, step, type StepContext } from './world.js';
+import {
+  createWorldState,
+  LEASH_RADIUS,
+  replaceEntity,
+  spawnEntity,
+  step,
+  type StepContext,
+} from './world.js';
 
 const RECORD: PersistedPlayer = {
   id: 'p1',
@@ -56,6 +64,7 @@ function context(overrides: Partial<StepContext> = {}): StepContext {
     config: DEFAULT_LIVE_CONFIG,
     activeChunks: activeAround({ x: 600, y: 450 }),
     chunkSize: CHUNK,
+    spawnPoints: [],
     ...overrides,
   };
 }
@@ -83,6 +92,13 @@ function withMonster(
   typeId: string,
   x: number,
   y: number,
+  /**
+   * Who it is already fighting, and where it considers home.
+   *
+   * Nothing initiates since spec 076, so a test that wants a monster to walk
+   * anywhere has to hand it the target being hit would have given it.
+   */
+  extra: { targetId?: number; anchor?: { x: number; y: number } } = {},
 ): { state: ServerWorldState; id: number } {
   const definition = monsterById(typeId);
   if (!definition) throw new Error(`no monster ${typeId}`);
@@ -94,7 +110,15 @@ function withMonster(
     radius: definition.radius,
     zoneId: 'greenmarch',
   });
-  return { state: result.state, id: result.entity.id };
+  const next =
+    extra.targetId === undefined && extra.anchor === undefined
+      ? result.state
+      : replaceEntity(result.state, {
+          ...result.entity,
+          ...(extra.targetId === undefined ? {} : { targetId: extra.targetId }),
+          ...(extra.anchor === undefined ? {} : { anchor: extra.anchor }),
+        });
+  return { state: next, id: result.entity.id };
 }
 
 function input(entityId: number, seq: number, overrides: Partial<ServerInput> = {}): ServerInput {
@@ -523,47 +547,192 @@ describe('chunk activation gates simulation', () => {
     expect(state.entities.get(monster.id)?.position).toEqual(before);
   });
 
-  it('runs the ambient spawner only in active chunks, and stops when told to', () => {
+  it('spawns nothing at all when the map places no spawners', () => {
     let state = createWorldState(7);
     state = withPlayer(state, 100, 100).state;
-    const active = activeAround({ x: 100, y: 100 });
-
-    const busy = context({
-      activeChunks: active,
-      config: { ...DEFAULT_LIVE_CONFIG, spawnIntervalTicks: 5, spawnRateMultiplier: 1 },
-    });
-    for (let tick = 0; tick < 40; tick++) state = step(state, [], busy).state;
-    const populated = state.entities.size;
-    expect(populated).toBeGreaterThan(1);
-
-    // An admin turning the rate to zero stops it without a restart.
-    const stopped = context({
-      activeChunks: active,
-      config: { ...DEFAULT_LIVE_CONFIG, spawnRateMultiplier: 0 },
-    });
-    for (let tick = 0; tick < 40; tick++) state = step(state, [], stopped).state;
-    expect(state.entities.size).toBeLessThanOrEqual(populated);
-  });
-
-  it('respects the per-chunk population cap', () => {
-    let state = createWorldState(11);
-    state = withPlayer(state, 100, 100).state;
-    const ctx = context({
-      activeChunks: new Set([chunkKeyOf(100, 100, CHUNK)]),
-      config: {
-        ...DEFAULT_LIVE_CONFIG,
-        spawnIntervalTicks: 1,
-        maxEntitiesPerChunk: 3,
-      },
-    });
-    for (let tick = 0; tick < 100; tick++) state = step(state, [], ctx).state;
-    const inChunk = [...state.entities.values()].filter(
-      (entity) => chunkKeyOf(entity.position.x, entity.position.y, CHUNK) === chunkKeyOf(100, 100, CHUNK),
-    );
-    expect(inChunk.length).toBeLessThanOrEqual(4);
+    const ctx = context({ activeChunks: activeAround({ x: 100, y: 100 }) });
+    for (let tick = 0; tick < 120; tick++) state = step(state, [], ctx).state;
+    expect(state.entities.size).toBe(1);
   });
 });
 
+/** Spec 073. Every enemy in the world stands where the map document put it. */
+describe("the map's spawners", () => {
+  const POINTS = [
+    { id: 'spawner-1', monsterId: 'grazer', x: 620, y: 470 },
+    { id: 'spawner-2', monsterId: 'stalker', x: 660, y: 430 },
+  ];
+
+  function spawnerContext(overrides: Partial<StepContext> = {}): StepContext {
+    return context({
+      spawnPoints: POINTS,
+      activeChunks: activeAround({ x: 600, y: 450 }),
+      ...overrides,
+    });
+  }
+
+  function monsters(state: ServerWorldState): ServerEntity[] {
+    return [...state.entities.values()].filter((e) => e.kind === EntityKindValue.Monster);
+  }
+
+  it('fills every spawn point on the first tick, at the marker', () => {
+    const state = step(createWorldState(3), [], spawnerContext()).state;
+    const live = monsters(state);
+    expect(live).toHaveLength(2);
+    expect(live.map((m) => m.typeId).sort()).toEqual(['grazer', 'stalker']);
+    for (const point of POINTS) {
+      const body = live.find((m) => m.spawnerId === point.id);
+      expect(body?.position.x).toBe(point.x);
+      expect(body?.position.y).toBe(point.y);
+      expect(body?.anchor).toEqual({ x: point.x, y: point.y });
+    }
+  });
+
+  it('never puts a second body on a spawner that still has one', () => {
+    let state = createWorldState(3);
+    const ctx = spawnerContext();
+    for (let tick = 0; tick < 600; tick++) state = step(state, [], ctx).state;
+    expect(monsters(state)).toHaveLength(2);
+  });
+
+  it('waits the interval after a death, then refills at the marker', () => {
+    const interval = 300;
+    const ctx = spawnerContext({
+      config: { ...DEFAULT_LIVE_CONFIG, spawnIntervalTicks: interval, spawnRateMultiplier: 1 },
+    });
+    let state = step(createWorldState(3), [], ctx).state;
+
+    // Kill the grazer where it stands, and walk its body somewhere else first so
+    // "refills at the marker" is a claim about the marker and not about luck.
+    const victim = monsters(state).find((m) => m.spawnerId === 'spawner-1');
+    expect(victim).toBeDefined();
+    if (!victim) return;
+    state = replaceEntity(state, { ...victim, health: 0, position: { x: 900, y: 900, z: 0 } });
+
+    const died = step(state, [], ctx);
+    state = died.state;
+    // Gone the same tick: no corpse (spec 076).
+    expect(state.entities.has(victim.id)).toBe(false);
+    expect(died.events.some((e) => e.kind === 'despawned' && e.entityId === victim.id)).toBe(true);
+    const deathTick = state.tick;
+    expect(state.spawners.get('spawner-1')).toEqual({
+      entityId: null,
+      readyAtTick: deathTick + interval,
+    });
+
+    for (let tick = 0; tick < interval - 1; tick++) state = step(state, [], ctx).state;
+    expect(monsters(state)).toHaveLength(1);
+
+    state = step(state, [], ctx).state;
+    const replacement = monsters(state).find((m) => m.spawnerId === 'spawner-1');
+    expect(replacement).toBeDefined();
+    expect(replacement?.position.x).toBe(POINTS[0]?.x);
+    expect(replacement?.position.y).toBe(POINTS[0]?.y);
+    expect(replacement?.id).not.toBe(victim.id);
+  });
+
+  it('stops dead when an admin turns the rate to zero, and resumes when it comes back', () => {
+    const off = spawnerContext({
+      config: { ...DEFAULT_LIVE_CONFIG, spawnRateMultiplier: 0 },
+    });
+    let state = createWorldState(3);
+    for (let tick = 0; tick < 120; tick++) state = step(state, [], off).state;
+    expect(monsters(state)).toHaveLength(0);
+
+    state = step(state, [], spawnerContext()).state;
+    expect(monsters(state)).toHaveLength(2);
+  });
+
+  it('draws no randomness, so spawning cannot shift a combat roll', () => {
+    const ctx = spawnerContext();
+    let state = createWorldState(3);
+    // `Rng` is immutable and `step` only reassigns it when something draws, so
+    // the untouched stream is the very same object it started as.
+    const before = state.rng;
+    for (let tick = 0; tick < 400; tick++) state = step(state, [], ctx).state;
+    expect(state.rng).toBe(before);
+  });
+
+  it('replays identically from the same seed and the same map', () => {
+    const ctx = spawnerContext();
+    const run = (): ServerWorldState => {
+      let state = createWorldState(9);
+      for (let tick = 0; tick < 400; tick++) state = step(state, [], ctx).state;
+      return state;
+    };
+    const a = run();
+    const b = run();
+    expect([...b.spawners.entries()]).toEqual([...a.spawners.entries()]);
+    expect(monsters(b).map((m) => [m.id, m.spawnerId, m.position.x, m.position.y])).toEqual(
+      monsters(a).map((m) => [m.id, m.spawnerId, m.position.x, m.position.y]),
+    );
+  });
+});
+
+/** Spec 073. Nothing initiates, and nothing follows you home. */
+describe('aggro and the leash', () => {
+  it('ignores a player standing on top of it until it is hit', () => {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    // Well inside a ravager's old aggro range, and then some.
+    const monster = withMonster(state, 'ravager', 640, 450);
+    state = monster.state;
+
+    const ctx = context({ activeChunks: activeAround({ x: 600, y: 450 }) });
+    for (let tick = 0; tick < SERVER_TICK_RATE * 10; tick++) {
+      const result = step(state, [], ctx);
+      state = result.state;
+      expect(result.events.some((e) => e.kind === 'hit')).toBe(false);
+    }
+    const at = state.entities.get(monster.id);
+    expect(at?.targetId).toBeNull();
+    expect(at?.position.x).toBe(640);
+  });
+
+  it('drops a target it has been dragged too far from, and walks home', () => {
+    const anchor = { x: 600, y: 450 };
+    let state = createWorldState(1);
+    // The player waits well beyond the leash; the monster starts on its anchor
+    // already holding the grudge a hit would have given it.
+    const player = withPlayer(state, anchor.x + LEASH_RADIUS + 400, anchor.y);
+    state = player.state;
+    const monster = withMonster(state, 'stalker', anchor.x, anchor.y, {
+      targetId: player.id,
+      anchor,
+    });
+    state = monster.state;
+
+    // Every chunk between home and the player, so nothing is skipped as
+    // unloaded while the monster walks the length of its leash and back.
+    const along: { x: number; y: number }[] = [];
+    for (let x = anchor.x - 200; x <= anchor.x + LEASH_RADIUS + 600; x += 100) {
+      along.push({ x, y: anchor.y });
+    }
+    const ctx = context({ activeChunks: activeAround(...along) });
+
+    // Chases out past the leash...
+    let broke = false;
+    for (let tick = 0; tick < SERVER_TICK_RATE * 30 && !broke; tick++) {
+      state = step(state, [], ctx).state;
+      broke = state.entities.get(monster.id)?.targetId === null;
+    }
+    expect(broke).toBe(true);
+
+    // ...and then comes back, even though the player never stopped hitting it:
+    // the leash is read before the target, so the grudge is taken straight off
+    // again on the tick after it lands.
+    for (let tick = 0; tick < SERVER_TICK_RATE * 40; tick++) {
+      const body = state.entities.get(monster.id);
+      if (body) state = replaceEntity(state, { ...body, targetId: player.id });
+      state = step(state, [], ctx).state;
+    }
+    const home = state.entities.get(monster.id)?.position;
+    expect(Math.hypot((home?.x ?? 0) - anchor.x, (home?.y ?? 0) - anchor.y)).toBeLessThan(
+      LEASH_RADIUS,
+    );
+  });
+});
 
 /**
  * Spec 065. `src/sim/pathfinding.ts` survived every deletion and nothing in the
@@ -583,7 +752,7 @@ describe('monsters find their way round', () => {
     const player = withPlayer(state, 600, 450);
     state = player.state;
     // Beyond the wall, and well inside a stalker's aggro range.
-    const monster = withMonster(state, 'stalker', 900, 450);
+    const monster = withMonster(state, 'stalker', 900, 450, { targetId: player.id });
     state = monster.state;
 
     const ctx = context({ world, activeChunks: activeAround({ x: 750, y: 450 }) });
@@ -613,7 +782,7 @@ describe('monsters find their way round', () => {
     let state = createWorldState(1);
     const player = withPlayer(state, 600, 450);
     state = player.state;
-    const monster = withMonster(state, 'stalker', 900, 450);
+    const monster = withMonster(state, 'stalker', 900, 450, { targetId: player.id });
     state = monster.state;
 
     const ctx = context({ world: walled, activeChunks: activeAround({ x: 750, y: 450 }) });
@@ -658,14 +827,15 @@ describe('monsters find their way round', () => {
     /** A monster outside the pen, a player inside it, run for `ticks`. */
     function siege(ticks: number): { path: number | null; repathAtTick: number; tick: number } {
       let state = createWorldState(1);
-      state = withPlayer(state, 600, 450).state;
-      const monster = withMonster(state, 'stalker', 600, 280);
+      const player = withPlayer(state, 600, 450);
+      state = player.state;
+      // Already fighting the player it cannot reach: nothing initiates since
+      // spec 076, so a siege has to start with the grudge a hit would have given.
+      const monster = withMonster(state, 'stalker', 600, 280, { targetId: player.id });
       state = monster.state;
       const ctx = context({
         world: PEN,
         activeChunks: activeAround({ x: 600, y: 450 }),
-        // The ambient spawner would add monsters of its own and muddy the count.
-        config: { ...DEFAULT_LIVE_CONFIG, spawnRateMultiplier: 0 },
       });
       for (let i = 0; i < ticks; i++) state = step(state, [], ctx).state;
       const at = state.entities.get(monster.id);
@@ -697,13 +867,13 @@ describe('monsters find their way round', () => {
 
     it('still presses toward the player it cannot reach', () => {
       let state = createWorldState(1);
-      state = withPlayer(state, 600, 450).state;
-      const monster = withMonster(state, 'stalker', 600, 280);
+      const player = withPlayer(state, 600, 450);
+      state = player.state;
+      const monster = withMonster(state, 'stalker', 600, 280, { targetId: player.id });
       state = monster.state;
       const ctx = context({
         world: PEN,
         activeChunks: activeAround({ x: 600, y: 450 }),
-        config: { ...DEFAULT_LIVE_CONFIG, spawnRateMultiplier: 0 },
       });
       for (let i = 0; i < SERVER_TICK_RATE * 2; i++) state = step(state, [], ctx).state;
       const at = state.entities.get(monster.id)?.position;

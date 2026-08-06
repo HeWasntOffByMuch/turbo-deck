@@ -94,8 +94,10 @@ export const INTEREST_CHUNK_RADIUS = 8;
  * a right-click lands on the unit under it (spec 070).
  * 7: the world is a map document rather than a seed, so terrain travels as
  * `MapInfo` plus requested `MapChunk`s instead of being rederived (spec 072).
+ * 8: a client can ask to be told what the map's spawners are doing, for the
+ * overlay behind the "show spawners" setting (spec 076).
  */
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 
 /**
  * How far from a map chunk a player may be and still be sent it (spec 072).
