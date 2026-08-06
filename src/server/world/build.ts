@@ -27,6 +27,7 @@ import type { TerrainWorld } from '../../terrain/types.js';
 import { loadMap, type MapDocument } from '../../terrain/index.js';
 import { terrainSamplerFrom, type TerrainSampler } from './terrain.js';
 import { buildMapIndex, mapIdOf, type MapIndex } from './map-index.js';
+import { spawnPointsFrom, type SpawnPoint } from './spawners.js';
 
 export interface BuiltWorld {
   /** The number this was built from, and the number the welcome announces. */
@@ -65,6 +66,8 @@ export interface BuiltMapWorld extends BuiltWorld {
   readonly doc: MapDocument;
   /** Chunk lookup for the wire, and the layer scalars a client needs to mesh. */
   readonly index: MapIndex;
+  /** Every enemy spawn point the document places (spec 076), sorted by id. */
+  readonly spawnPoints: readonly SpawnPoint[];
 }
 
 /**
@@ -87,6 +90,11 @@ export function buildWorldFromMap(doc: MapDocument, serialized: string): BuiltMa
     ...buildWorldFromDocument(doc),
     doc,
     index: buildMapIndex(doc, mapIdOf(serialized)),
+    // Read here rather than in `buildWorldFromDocument`, because that path is
+    // also a *client* assembling a partial world out of streamed chunks, and a
+    // spawner that has not arrived yet is not an error there. On the server the
+    // whole document is in hand, so an unknown monster is one (spec 076).
+    spawnPoints: spawnPointsFrom(doc),
   };
 }
 

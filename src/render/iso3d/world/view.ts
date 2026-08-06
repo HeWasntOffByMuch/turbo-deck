@@ -47,6 +47,7 @@ import { appearanceOf } from './appearance.js';
 import { moveIntent, MOVE_KEYS, RoutePlanner } from './intent.js';
 import { autoAttack } from './target.js';
 import { WorldScene } from './scene.js';
+import { spawnerLabels } from './spawner-overlay.js';
 
 const TICK_MS = 1000 / SERVER_TICK_RATE;
 
@@ -86,15 +87,6 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // server's own wall-clock loop, and this view already drives the tick from its
   // animation frame. Registering the handler is the half we want.
   transport.onConnection((channel) => server.accept(channel));
-  // The ambient spawner runs per *active chunk*, and a player's interest window
-  // is 49 of them -- at the default rate the field is fifty deep inside half a
-  // minute and there is nothing to read in any direction. Off entirely for now:
-  // this tab places a handful of monsters by hand below, and a field you can
-  // count is what makes a wind-up, a cancel or a correction observable at all.
-  // The tab choosing how busy its own single-player server is, the way it
-  // chooses the seed; the rule it turns down lives on the server, unchanged.
-  server.liveConfig.set('spawnRateMultiplier', 0);
-
   const client = new GameClient(transport.connect(), {
     playerId: 'you',
     displayName: 'You',
@@ -332,25 +324,24 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   /** Ms since the last delta landed, for the interpolation alpha. */
   let sinceDelta = 0;
   let lastDeltaTick = 0;
-  /** Whether the opening monsters have been placed; see {@link seedTheField}. */
+  /** Whether the opening facing has been taken from the first delta. */
   let seeded = false;
+  /** Whether the spawner readout has been asked for (spec 076). */
+  let watchingSpawners = false;
 
   /**
-   * Put a few monsters near the player, once.
+   * Face the way the server says we are facing, once.
    *
-   * Waits for `view.self` rather than firing when `connect()` resolves. The
-   * welcome only says which entity we are; the *position* arrives with the first
-   * delta, and prediction does not start until that and the stats have both
-   * landed. Spawning on the welcome put every monster at the world origin --
-   * several hundred units from a player who spawns mid-map, so they fell outside
-   * the interest radius and the field came up empty.
+   * This used to also place a handful of monsters by hand, which was the tab
+   * reaching past the sim to put content in the world. Since spec 076 the map
+   * document does that, so all that is left is the one thing that genuinely
+   * has to wait for the first delta: the welcome says which entity we are, but
+   * the *position and facing* arrive with the delta after it.
    */
   function seedTheField(view: ReturnType<typeof client.view>): void {
     if (seeded || !view.self) return;
     seeded = true;
     facing = view.entities.find((entity) => entity.id === view.selfEntityId)?.facing ?? 0;
-    server.spawnEntities('grazer', view.self.x + 200, view.self.y - 70, 2);
-    server.spawnEntities('stalker', view.self.x - 240, view.self.y + 110, 1);
   }
 
   /**
@@ -483,6 +474,24 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       targetEntityId: targetId,
     });
     hud.update(view, scene.screenAnchors(), drawnTick, client.correctionCount, targetId);
+
+    // The setting is the subscription (spec 076): turning it on is what asks
+    // the server for the timers, and turning it off is what stops them coming.
+    // Watched rather than wired to a change event because "Reset" moves the
+    // checkbox too, and a subscription that survived a reset would be a leak.
+    const wantSpawners = scene.controls.showSpawners();
+    if (wantSpawners !== watchingSpawners) {
+      watchingSpawners = wantSpawners;
+      client.watchSpawners(wantSpawners);
+    }
+    hud.showSpawners(
+      wantSpawners
+        ? spawnerLabels(view.spawners, SERVER_TICK_RATE).map((label) => ({
+            ...label,
+            ...scene.projectPoint(label.x, label.y),
+          }))
+        : [],
+    );
 
     raf = requestAnimationFrame(frame);
   }

@@ -93,6 +93,8 @@ export function asEntity(mirror: Mirror): ServerEntity {
     claimedPosition: null,
     claimedSeq: 0,
     pardon: null,
+    spawnerId: null,
+    anchor: null,
   };
 }
 

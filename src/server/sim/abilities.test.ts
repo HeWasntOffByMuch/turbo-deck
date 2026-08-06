@@ -65,6 +65,7 @@ function context(overrides: Partial<StepContext> = {}): StepContext {
     config: { ...DEFAULT_LIVE_CONFIG, spawnRateMultiplier: 0 },
     activeChunks: activeAround(600, 450),
     chunkSize: CHUNK,
+    spawnPoints: [],
     ...overrides,
   };
 }
@@ -695,6 +696,8 @@ describe('a hit does not interrupt a cast (spec 068)', () => {
       stats: definition.stats,
       radius: definition.radius,
       zoneId: 'greenmarch',
+      // Already fighting us: nothing initiates since spec 076.
+      targetId: player.id,
     });
     state = monster.state;
 
@@ -744,6 +747,8 @@ describe('a hit does not interrupt a cast (spec 068)', () => {
       stats: definition.stats,
       radius: definition.radius,
       zoneId: 'greenmarch',
+      // Already fighting us: nothing initiates since spec 076.
+      targetId: player.id,
     });
     state = monster.state;
 
@@ -1055,6 +1060,8 @@ describe('a named target (spec 070)', () => {
       stats: definition.stats,
       radius: definition.radius,
       zoneId: 'greenmarch',
+      // Already fighting us: nothing initiates since spec 076.
+      targetId: player.id,
     });
 
     const result = run(spawned.state, SERVER_TICK_RATE);
