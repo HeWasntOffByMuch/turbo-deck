@@ -63,7 +63,9 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     id: 'bow.hunting',
     name: 'Hunting Bow',
     slot: 'mainHand',
-    levelRequirement: 3,
+    // Level 1 like the worn sword: these are the starting alternatives, and a
+    // switch that refuses two of its three buttons is not a switch.
+    levelRequirement: 1,
     // The range is the weapon; the shot it names carries its own (spec 076), so
     // `attackRange` here only nudges what a melee swing would have reached.
     modifiers: { attackDamage: 5, attackSpeedPct: -0.1 },
@@ -73,7 +75,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     id: 'stars.weighted',
     name: 'Weighted Stars',
     slot: 'mainHand',
-    levelRequirement: 3,
+    levelRequirement: 1,
     modifiers: { attackDamage: 2, attackSpeedPct: 0.2, dexterity: 1 },
     basicAttackId: 'ranged.star',
   },

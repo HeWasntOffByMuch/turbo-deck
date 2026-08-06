@@ -17,7 +17,12 @@
 
 import type { ClientView } from '../../../server/client/game-client.js';
 import type { ScreenAnchor } from './scene.js';
-import { abilityById, type AbilityDefinition } from '../../../server/data/abilities.js';
+import {
+  abilityById,
+  BASIC_ATTACK_ID,
+  type AbilityDefinition,
+} from '../../../server/data/abilities.js';
+import { ALL_ITEMS } from '../../../server/data/items.js';
 import { EntityKind } from '../../../server/net/protocol.js';
 import { SERVER_TICK_RATE } from '../../../server/config.js';
 import { attackIntervalTicks } from '../../../server/player/stats.js';
@@ -55,6 +60,29 @@ export const HOTBAR: readonly string[] = [
   'self.mend',
   'channel.drain',
 ];
+
+/**
+ * One main-hand weapon per distinct auto-attack (spec 076).
+ *
+ * Derived from the item table rather than listed, so a crossbow added there
+ * turns up here without this file being told. The *attack* is what the switch
+ * is really choosing -- two swords that both slash are one entry, because
+ * picking between them would change numbers and not the motion.
+ */
+export const WEAPON_SWITCH: readonly {
+  readonly itemId: string;
+  readonly name: string;
+  readonly abilityId: string;
+}[] = (() => {
+  const byAttack = new Map<string, { itemId: string; name: string; abilityId: string }>();
+  for (const item of ALL_ITEMS) {
+    if (item.slot !== 'mainHand') continue;
+    const abilityId = item.basicAttackId ?? BASIC_ATTACK_ID;
+    if (byAttack.has(abilityId)) continue;
+    byAttack.set(abilityId, { itemId: item.id, name: item.name, abilityId });
+  }
+  return [...byAttack.values()];
+})();
 
 interface FloatingNumber {
   readonly entityId: number;
@@ -96,6 +124,13 @@ export interface HudHandle {
   notice(text: string): void;
   /** What to call when a hotbar button is clicked. */
   onUse(handler: (abilityId: string) => void): void;
+  /**
+   * What to call when a weapon is picked out of the switch (spec 076). It hands
+   * back an item id and nothing else: the server equips it, recomputes the stat
+   * block and sends it back, and the lit button follows *that* rather than the
+   * click.
+   */
+  onEquip(handler: (itemId: string) => void): void;
 }
 
 export function createHud(): HudHandle {
@@ -152,6 +187,39 @@ export function createHud(): HudHandle {
 
     bar.append(button);
     return { abilityId, ability, button, sweep, remaining };
+  });
+
+  // The weapon switch (spec 076), bottom left and out of the hotbar's way.
+  // Which one is lit is read back off `stats.basicAttackId` -- the server's
+  // answer -- so a refused equip simply leaves the old one lit.
+  const weapons = document.createElement('div');
+  weapons.style.cssText =
+    'position:absolute;left:12px;bottom:16px;display:flex;flex-direction:column;gap:4px;' +
+    'font:11px ui-monospace,Menlo,monospace;pointer-events:auto;' +
+    // Backed like the status readout: the caption is small grey text and the
+    // world behind it is a bright green field, so unbacked it disappears over
+    // half the map.
+    'background:rgba(10,14,20,.72);padding:8px;border-radius:6px;';
+  root.append(weapons);
+
+  const weaponCaption = document.createElement('div');
+  weaponCaption.style.cssText = 'color:#8b97a8;letter-spacing:.08em;padding-left:2px;';
+  weaponCaption.textContent = 'WEAPON';
+  weapons.append(weaponCaption);
+
+  let equipHandler: (itemId: string) => void = () => undefined;
+
+  const weaponSlots = WEAPON_SWITCH.map((weapon) => {
+    const ability = abilityById(weapon.abilityId);
+    const button = document.createElement('button');
+    button.style.cssText =
+      'width:132px;padding:5px 8px;border-radius:6px;border:1px solid #33405a;background:#182130;' +
+      'color:#cfd6e0;cursor:pointer;font:inherit;text-align:left;line-height:1.4;';
+    button.textContent = weapon.name;
+    button.title = ability ? `${ability.name} -- ${ability.description}` : weapon.itemId;
+    button.addEventListener('click', () => equipHandler(weapon.itemId));
+    weapons.append(button);
+    return { ...weapon, button };
   });
 
   const bars = new Map<number, Bar>();
@@ -268,6 +336,17 @@ export function createHud(): HudHandle {
     noticeAge += 1;
     notices.textContent = noticeAge < 120 ? notice : '';
 
+    // Lit from the stat block, never from the last click: the server decides
+    // what is in this character's hand, and a refused equip leaves the old one
+    // lit rather than a button that lies.
+    const held = view.stats?.basicAttackId ?? BASIC_ATTACK_ID;
+    for (const weapon of weaponSlots) {
+      const current = weapon.abilityId === held;
+      weapon.button.style.borderColor = current ? '#ffcf6b' : '#33405a';
+      weapon.button.style.background = current ? '#243044' : '#182130';
+      weapon.button.style.color = current ? '#f2f6fb' : '#98a4b4';
+    }
+
     for (const slot of slots) {
       const casting = view.casts.some(
         (cast) => cast.entityId === view.selfEntityId && cast.abilityId === slot.abilityId,
@@ -351,6 +430,9 @@ export function createHud(): HudHandle {
     },
     onUse(handler) {
       useHandler = handler;
+    },
+    onEquip(handler) {
+      equipHandler = handler;
     },
   };
 }

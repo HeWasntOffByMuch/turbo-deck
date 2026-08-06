@@ -177,6 +177,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
   const hud = createHud();
   hud.onUse((abilityId) => useAbility(abilityId));
+  // Picking a weapon is an ordinary equip (spec 076): the server puts it in the
+  // hand, recomputes the stat block, and the new `basicAttackId` comes back on
+  // `Stats`. Nothing here decides what the right-click then does -- the next
+  // frame simply reads the stat and asks for whatever it names.
+  hud.onEquip((itemId) => client.equip('mainHand', itemId));
 
   // The two settings buttons float over the top-right corner of the game
   // window: the camera/light cog (spec 034) and the weather beside it

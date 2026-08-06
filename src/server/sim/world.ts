@@ -478,13 +478,18 @@ export function step(
     const ability = abilityById(flight.abilityId);
     if (!ability || !owner) continue;
 
-    // The two travel types differ in what can stop them, which is the point of
-    // there being two (spec 076). A flat shot takes the first hostile body it
-    // overlaps, whoever that turns out to be -- something that stepped into the
-    // line is in the line. An arcing one passes over everything and answers only
-    // to the body it was fired at.
+    // What a shot answers to is whether it *named* something, not how high it
+    // flew (spec 076). A shot fired at a body resolves against that body and
+    // nothing else, for the reason melee does since spec 070: an attack is
+    // single-target, and the bystander who wandered into the line is a
+    // bystander. A shot thrown at a patch of ground -- the cursor-aimed bolts --
+    // takes the first hostile thing it overlaps, as it always has.
+    //
+    // `arcHeight` is a *look*: whether the shot rises on its way. It buys
+    // nothing mechanical, so an arrow and a star reach the same body at the
+    // same tick and only differ in what the eye follows.
     const struck =
-      flight.arcHeight > 0
+      flight.targetEntityId > 0
         ? tracking && chased && projectileHits(moved, chased) && isHostile(owner, chased, context.zones)
           ? chased
           : undefined

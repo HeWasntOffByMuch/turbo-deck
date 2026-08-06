@@ -80,6 +80,28 @@ range like any other point-targeted cast. Two of them, one per travel type:
 | `ranged.shot` | Hunting Shot | lobbed | 900 | 0.35s |
 | `ranged.star` | Throwing Star | flat | 1150 | 0.2s |
 
+### The switch
+
+Three main hands and one attack each is only worth having if it can be swapped
+without editing a save, so the HUD grows a **weapon switch** at the bottom left,
+clear of the hotbar:
+
+```ts
+// render/iso3d/world/hud.ts
+export const WEAPON_SWITCH: readonly {
+  readonly itemId: string; readonly name: string; readonly abilityId: string;
+}[];
+HudHandle.onEquip(handler: (itemId: string) => void): void;
+```
+
+Derived from `ALL_ITEMS`, one entry per *distinct* `basicAttackId`, so a
+crossbow added to the table turns up in the switch without the HUD being told.
+A click is an ordinary `Equip` on `mainHand` — the path that already exists —
+and which button is lit is read back off `stats.basicAttackId`, never off the
+click, so an equip the server refuses leaves the old one lit rather than a
+button that lies. `bow.hunting` and `stars.weighted` drop to level 1, because a
+switch that refuses two of its three buttons is not a switch.
+
 Which attack a body swings with becomes a property of the body rather than a
 module constant:
 
@@ -128,12 +150,17 @@ chases where its target is now rather than where it was:
    nothing to un-schedule.
 2. **Step** `speed` along the aim, clamped to arrival.
 3. **Height** is the terrain plus `arcHeightAt(progress, arcHeight)`, unchanged.
-4. **Resolve.** A *flat* shot hits the first hostile body it overlaps, whoever
-   that turns out to be — a body in the way is in the way. An *arcing* shot
-   passes over everything and resolves only against the body it was fired at,
-   when it reaches it. This is what the two travel types are for: the height is
-   what makes the difference readable, and being blockable is what makes it
-   matter.
+4. **Resolve.** A shot that *named* a body resolves against that body and
+   nothing else — the same rule melee has had since spec 070, for the same
+   reason: an attack is single-target, and the bystander who wandered into the
+   line is a bystander. A shot thrown at a patch of ground (the cursor-aimed
+   bolts) takes the first hostile thing it overlaps, as it always has.
+
+   **`arcHeight` is a look and nothing more.** Whether a shot rises on its way
+   is what tells an arrow from a star at a glance; it buys no mechanical
+   difference, so both reach the same body on the same tick. A travel type that
+   changed what could stop it would be a real mechanic and would need its own
+   spec entry, its own tuning, and a reason.
 5. Blast radius and lifetime expiry are untouched.
 
 Damage lands when the shot arrives. A target that ran is hit later; one that ran
@@ -165,8 +192,12 @@ target is aimed at the target rather than at a point `range` away along the aim.
   takes nothing, and the projectile despawns.
 - **A shot is disjointed** by its target dying or despawning mid-flight: it
   flies on to its last aim and expires without damage.
-- **Flat is blockable, arcing is not.** A hostile body standing between archer
-  and target eats a flat shot and is passed over by an arcing one.
+- **A named shot is single-target however it flew.** With a hostile body
+  standing between archer and mark, both the flat shot and the arcing one pass
+  it and land on the mark.
+- **The arc changes nothing but the picture.** The same shot with `arcHeight`
+  imposed on it mid-flight reaches its target on the same tick as one flying
+  level.
 - `arcHeightAt` still peaks at the midpoint of a shot whose target never moved,
   and a tracked shot's `progress` never goes backwards.
 - `EffectiveStats.basicAttackId` comes from the main hand, defaults to
@@ -186,6 +217,11 @@ target is aimed at the target rather than at a point `range` away along the aim.
   draws; whether a body should visibly abort a swing is an animation question.
 - **Retuning anything existing.** No `windupTicks`, damage or range in the
   current table moves; the new rows are there to exercise the two travel types.
+- **Making the arc mechanical.** Flying over a body that would stop a flat shot
+  is the obvious thing an arc could buy, and it is deliberately not bought here:
+  the height is a look for now.
+- **A real inventory.** The switch is three buttons over the equip path that
+  already exists, not a bag, a paper doll, or a place items come from.
 - **Ammunition, reloads, or a minimum range.** A bow is a weapon that names a
   different swing, and nothing more.
 - **Bringing back the recovery lock** so that withdrawing has a cost beyond the

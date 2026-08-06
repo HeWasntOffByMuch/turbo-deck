@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { circleBlocked, createWorldColliders, DEFAULT_WORLD } from '../../sim/collision.js';
 import { ARENA_OBSTACLES, PATH_RETRY_TICKS, WORLD_BOUNDS } from '../../sim/constants.js';
 import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE, type LiveConfig } from '../config.js';
+import { abilityById } from '../data/abilities.js';
 import { monsterById } from '../data/monsters.js';
 import { CorrectionReason } from '../net/protocol.js';
 import { computeEffectiveStats } from '../player/stats.js';
@@ -879,9 +880,12 @@ describe('shots that travel', () => {
     expect([...current.entities.values()].some((e) => e.projectile !== null)).toBe(false);
   });
 
-  it('lets a flat shot be blocked, and an arcing one fly over', () => {
+  it('lands on the body it named, whichever way it flew there', () => {
     /** A shot from 600 at a mark at 850, with a body standing at 750 between. */
-    function throughAScreen(abilityId: string): { readonly struck: number | null } {
+    function throughAScreen(abilityId: string): {
+      readonly struck: number | null;
+      readonly tick: number | null;
+    } {
       let state = createWorldState(4);
       const player = withPlayer(state, 600, 450);
       state = player.state;
@@ -899,15 +903,61 @@ describe('shots that travel', () => {
         const result = step(current, shoot(i), ctx);
         current = result.state;
         const hit = result.events.find((event) => event.kind === 'hit');
-        if (hit && hit.kind === 'hit') return { struck: hit.targetId };
+        if (hit && hit.kind === 'hit') return { struck: hit.targetId, tick: current.tick };
       }
-      return { struck: null };
+      return { struck: null, tick: null };
     }
 
-    // Flat: whatever wandered into the line takes it instead.
-    expect(throughAScreen('ranged.star').struck).toBe(2);
-    // Lobbed: over the screen, onto the body it was fired at.
-    expect(throughAScreen('ranged.shot').struck).toBe(3);
+    // The mark is entity 3; the screen it flew past is entity 2. Neither shape
+    // of flight is stopped by a bystander, because naming a body is what makes
+    // a shot single-target -- the arc is a look and buys nothing.
+    const lobbed = throughAScreen('ranged.shot');
+    const flat = throughAScreen('ranged.star');
+    expect(lobbed.struck).toBe(3);
+    expect(flat.struck).toBe(3);
+  });
+
+  it('does not care how high a shot flew, only that it arrived', () => {
+    // The same shot at the same speed, differing only in `arcHeight`, reaches
+    // the same body on the same tick.
+    const flat = { ...(abilityById('ranged.star') ?? { projectile: null }) };
+    const lobbed = { ...(abilityById('ranged.shot') ?? { projectile: null }) };
+    expect(flat.projectile?.arcHeight).toBe(0);
+    expect(lobbed.projectile?.arcHeight ?? 0).toBeGreaterThan(0);
+
+    function arrivalOf(arcHeight: number): number | null {
+      let state = createWorldState(4);
+      const player = withPlayer(state, 600, 450);
+      state = player.state;
+      const mark = withMonster(state, 'dummy', 850, 450);
+      state = mark.state;
+      const ctx = quiet({ activeChunks: activeAround({ x: 600, y: 450 }, { x: 850, y: 450 }) });
+
+      let current = state;
+      const shoot = shootAt('ranged.star', player.id, mark.id, 850, 450);
+      for (let i = 0; i < 200; i++) {
+        const result = step(current, shoot(i), ctx);
+        current = result.state;
+        // The height is imposed on the live shot rather than on the table, so
+        // the two runs are the same flight drawn two ways.
+        for (const [id, entity] of current.entities) {
+          if (!entity.projectile) continue;
+          current = {
+            ...current,
+            entities: new Map(current.entities).set(id, {
+              ...entity,
+              projectile: { ...entity.projectile, arcHeight },
+            }),
+          };
+        }
+        if (result.events.some((event) => event.kind === 'hit')) return current.tick;
+      }
+      return null;
+    }
+
+    const level = arrivalOf(0);
+    expect(level).not.toBeNull();
+    expect(arrivalOf(120)).toBe(level);
   });
 
   it('lets a slinger open at its throw, not at a sword length', () => {
