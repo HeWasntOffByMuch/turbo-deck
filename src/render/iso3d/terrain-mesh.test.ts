@@ -64,6 +64,21 @@ function attribute(mesh: THREE.Mesh, name: string): Float32Array | null {
   return attr ? (attr.array as Float32Array) : null;
 }
 
+/**
+ * The water quads under a group (spec 074). They are the only meshes here
+ * carrying a `ShaderMaterial`; the ground and its skirts are Lambert.
+ */
+function waterQuads(group: THREE.Object3D): THREE.Mesh[] {
+  return meshes(group).filter((m) => m.material instanceof THREE.ShaderMaterial);
+}
+
+/** One water quad's packed shore distance field. */
+function shoreBytes(mesh: THREE.Mesh): number[] {
+  const material = mesh.material as THREE.ShaderMaterial;
+  const texture = material.uniforms['uShoreField']?.value as THREE.DataTexture;
+  return [...(texture.image.data as unknown as Uint8Array)];
+}
+
 describe('a reloaded map draws the same scene', () => {
   const world = testWorld();
   const doc = exportMap({ world, props: [], seed: 7, arena: ARENA, options: OPT });
@@ -173,13 +188,138 @@ describe('a reloaded map draws the same scene', () => {
     expect(worstRim).toBeLessThan(0.15);
   });
 
-  it('keeps the water plane where it was', () => {
-    const water = (group: THREE.Object3D): THREE.Mesh | undefined =>
-      meshes(group).find((m) => (m.material as THREE.Material).transparent);
-    const from = water(generated.group);
-    const to = water(reloaded.group);
-    expect(from).toBeDefined();
-    expect(to?.position.toArray()).toEqual(from?.position.toArray());
+});
+
+/**
+ * The same round trip, over a world with a lake in it (spec 074).
+ *
+ * Its own world rather than the one above, because water needs ground that
+ * actually falls below the flood line and the spec 048 fixture deliberately
+ * does not have any -- and widening that fixture would quietly change what
+ * every assertion in it is measuring.
+ */
+describe('a reloaded map draws the same water', () => {
+  const world = createWorld([
+    createLayer({
+      id: 'ground',
+      bounds: BOUNDS,
+      baseY: -100,
+      waterLevel: -40,
+      seed: 11,
+      features: [
+        { kind: 'rolling', amplitude: 14 },
+        // A bowl deep enough to flood, with a shore that crosses chunk seams.
+        { kind: 'basin', x: 40, z: 0, radius: 170, edge: 70, depth: 90 },
+      ],
+    }),
+  ]);
+  const doc = exportMap({ world, props: [], seed: 11, arena: ARENA, options: OPT });
+  const loaded = loadMap(parseMap(serializeMap(doc)));
+  const generated = buildTerrainMesh(world, OPT);
+  const reloaded = buildTerrainMeshFromChunks(loaded.meshLayers, loaded.chunks);
+
+  it('puts the same quads over the same coastlines', () => {
+    // One opaque quad per chunk that has any water in it, each carrying its own
+    // shore distance field. Both halves have to match, or a reloaded map draws
+    // its sea in different places -- or, worse, in the same places with the
+    // shallows somewhere else.
+    const from = waterQuads(generated.group);
+    const to = waterQuads(reloaded.group);
+    expect(from.length).toBeGreaterThan(0);
+    expect(to.map((m) => m.position.toArray())).toEqual(from.map((m) => m.position.toArray()));
+    expect(to.map(shoreBytes)).toEqual(from.map(shoreBytes));
+  });
+
+  it('skips the chunks that have no water in them', () => {
+    // A quad per chunk regardless would be a full-screen overdraw of ocean
+    // hidden behind hillsides, on a world that is mostly dry.
+    const quads = waterQuads(generated.group);
+    expect(quads.length).toBeLessThan(loaded.chunks.length);
+  });
+
+  it('stands every quad at the layer flood level, opaque', () => {
+    for (const quad of waterQuads(generated.group)) {
+      expect(quad.position.y).toBe(-40);
+      const material = quad.material as THREE.Material;
+      expect(material.transparent).toBe(false);
+      expect(material.depthWrite).toBe(true);
+      // A shadow on a flat stylized surface reads as dirt floating on it.
+      expect(quad.castShadow).toBe(false);
+      expect(quad.receiveShadow).toBe(false);
+    }
+  });
+
+  it('reads one shared clock and one shared palette', () => {
+    // Every chunk needs its own shore texture, so every chunk needs its own
+    // material. What must *not* be per chunk is the weather or the palette:
+    // those are shared uniform objects, so a second source of truth cannot be
+    // introduced by writing to the wrong one.
+    const quads = waterQuads(generated.group).map((q) => q.material as THREE.ShaderMaterial);
+    expect(quads.length).toBeGreaterThan(1);
+    const first = quads[0] as THREE.ShaderMaterial;
+    for (const material of quads) {
+      for (const shared of ['uWindTime', 'uDeep', 'uMid', 'uShallow', 'uFoam']) {
+        expect(material.uniforms[shared]).toBe(first.uniforms[shared]);
+      }
+      // ...and one compiled program behind all of them, so the per-chunk
+      // material costs a texture bind rather than a shader switch.
+      expect(material.fragmentShader).toBe(first.fragmentShader);
+    }
+    // The shore field is the one thing that genuinely is per chunk.
+    const fields = new Set(quads.map((m) => m.uniforms['uShoreField']));
+    expect(fields.size).toBe(quads.length);
+  });
+
+  it('ends up where a whole-map bake would, however the chunks arrive', () => {
+    // Acceptance criterion 5, the half a screenshot cannot answer: a streaming
+    // client meshes chunks one at a time, and a chunk baked before its
+    // neighbours landed saw open water where there is really a coast. The
+    // mesher re-bakes a chunk's shore field when a neighbour arrives; this is
+    // what says the re-bake is complete rather than merely present.
+    //
+    // Reversed arrival order, because a forward order accidentally satisfies
+    // "re-bake the west and north neighbours" and hides a missing direction.
+    const streamed = buildTerrainMeshFromChunks(loaded.meshLayers, []);
+    for (const chunk of [...loaded.chunks].reverse()) streamed.rebuild(chunk);
+
+    const key = (mesh: THREE.Mesh): string => mesh.position.toArray().join(',');
+    const settled = new Map(waterQuads(streamed.group).map((q) => [key(q), shoreBytes(q)]));
+    const wanted = new Map(waterQuads(reloaded.group).map((q) => [key(q), shoreBytes(q)]));
+    expect(settled.size).toBe(wanted.size);
+    for (const [where, bytes] of wanted) expect(settled.get(where)).toEqual(bytes);
+    streamed.dispose();
+  });
+
+  it('never draws a shore further out than the settled one while streaming', () => {
+    // The property that makes the re-bake safe to watch happen: an incomplete
+    // neighbourhood reads as open water, so the sea can only ever *shallow* as
+    // chunks land. A player watching the world stream in sees the shallows
+    // arrive, never a beach that turns back into deep water.
+    const streamed = buildTerrainMeshFromChunks(loaded.meshLayers, []);
+    const settled = new Map(
+      waterQuads(reloaded.group).map((q) => [q.position.toArray().join(','), shoreBytes(q)]),
+    );
+    for (const chunk of loaded.chunks) {
+      streamed.rebuild(chunk);
+      for (const quad of waterQuads(streamed.group)) {
+        const target = settled.get(quad.position.toArray().join(','));
+        if (!target) continue;
+        shoreBytes(quad).forEach((byte, i) => {
+          expect(byte).toBeGreaterThanOrEqual(target[i] ?? 0);
+        });
+      }
+    }
+    streamed.dispose();
+  });
+
+  it('shows shallows near the shore and deep water away from it', () => {
+    // The field is the whole shape of the effect, so it is worth one assertion
+    // that it is not simply saturated everywhere -- which is what a distance
+    // transform that never found the coast would produce, and which draws as a
+    // flat slab of the deep colour with no band at all.
+    const bytes = waterQuads(generated.group).flatMap(shoreBytes);
+    expect(Math.min(...bytes)).toBe(0);
+    expect(Math.max(...bytes)).toBeGreaterThan(64);
   });
 });
 
@@ -207,8 +347,14 @@ describe('rebuilding one chunk', () => {
     const after = meshes(handle.group);
     const replaced = after.filter((m) => !survivors.has(m));
     // A chunk is at most a surface and a skirt.
-    expect(replaced.length).toBeGreaterThan(0);
-    expect(replaced.length).toBeLessThanOrEqual(2);
+    const ground = replaced.filter((m) => !(m.material instanceof THREE.ShaderMaterial));
+    expect(ground.length).toBeGreaterThan(0);
+    expect(ground.length).toBeLessThanOrEqual(2);
+    // Water is allowed to go further (spec 074): a shoreline a few cells over a
+    // chunk boundary colours the water on both sides of it, so this chunk's own
+    // quad and its eight neighbours' are re-baked. Nine is the ceiling, and the
+    // point of pinning it is that a rebuild must not re-bake the whole map.
+    expect(replaced.length - ground.length).toBeLessThanOrEqual(9);
     // Rebuilt from an unedited store, so the geometry itself is unchanged --
     // compared as a multiset, since a rebuild appends rather than splicing.
     expect(shape(handle.group).map((v) => v.join(',')).sort()).toEqual(before);

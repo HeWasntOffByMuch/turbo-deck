@@ -40,6 +40,7 @@ import mapText from '../../../../maps/arena.json?raw';
 import { parseMap } from '../../../terrain/map.js';
 import { StreamedMap } from '../../../server/client/streamed-map.js';
 import type { ViewHandle } from '../view-handle.js';
+import { createWeatherControls } from '../weather-controls.js';
 import { turnToward } from '../../../server/sim/movement.js';
 import { createHud, HOTBAR } from './hud.js';
 import { appearanceOf } from './appearance.js';
@@ -169,11 +170,16 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   const hud = createHud();
   hud.onUse((abilityId) => useAbility(abilityId));
 
-  // The camera/light cog floats over the top-right corner of the game window.
-  const cog = document.createElement('div');
-  cog.style.cssText = 'position:absolute;top:8px;right:10px;z-index:30;';
-  cog.append(scene.controls.element);
-  root.append(hud.element, cog);
+  // The two settings buttons float over the top-right corner of the game
+  // window: the camera/light cog (spec 034) and the weather beside it
+  // (spec 075). Separate popovers rather than one -- the cog's is already
+  // twenty rows deep and scrolls on a short window, and what the world is doing
+  // is a different question from how it is being looked at.
+  const weather = createWeatherControls();
+  const buttons = document.createElement('div');
+  buttons.style.cssText = 'position:absolute;top:8px;right:10px;z-index:30;display:flex;gap:6px;';
+  buttons.append(weather.element, scene.controls.element);
+  root.append(hud.element, buttons);
 
   client.onCombatResult((result) => {
     hud.addDamage(result.targetId, result.damage, (result.flags & 2) !== 0);

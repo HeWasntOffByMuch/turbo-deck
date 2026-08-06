@@ -57,6 +57,7 @@ import {
   type HorizonShadow,
 } from '../shadow.js';
 import { RetroPass } from '../retro-pass.js';
+import { advanceWind } from '../wind-uniforms.js';
 import { FIXED_DAYLIGHT } from '../daynight.js';
 import {
   MAGIC_COLOR,
@@ -431,6 +432,10 @@ export class WorldScene {
     const dt = Math.min(0.05, Math.max(0, frame.dt));
     this.elapsed += dt;
     this.controls.advanceClock(dt);
+    // The entire per-frame cost of the wind (spec 074): one float, shared by
+    // every tree, every tree shadow, every chunk of ground and every quad of
+    // sea. Nothing else about either feature is touched between frames.
+    advanceWind(dt);
 
     this.observe(view);
     this.syncBodies(view, frame, dt);
