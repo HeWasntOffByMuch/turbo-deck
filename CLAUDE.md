@@ -167,7 +167,11 @@ src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
                  with a TypeScript transcription beside it, because a shader
                  expression nobody can execute is where a typo lives forever.
                  sway.ts, water-material.ts, terrain-streak.ts and
-                 wind-uniforms.ts are the three.js half; `wind-probe.ts` plus
+                 wind-uniforms.ts are the three.js half -- the last of those owns
+                 the uniform objects every weather material shares by reference,
+                 and weather-controls.ts (spec 075, the second button beside the
+                 view cog) writes straight into them rather than being polled.
+                 `wind-probe.ts` plus
                  `src/render/wind-probe.html` are a dev-server-only measuring rig
                  (never in a build) driven by `npx tsx scripts/preview-wind.ts`,
                  which photographs the frame and reports the acceptance numbers.

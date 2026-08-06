@@ -18,7 +18,8 @@ import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium, type Page } from 'playwright';
+import { chromium, type ElementHandle, type Page } from 'playwright';
+import { PNG } from 'pngjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = join(root, '.claude', 'screenshots');
@@ -149,6 +150,24 @@ async function waitForTick(page: Page, ticks: number, timeoutMs = 90_000): Promi
   throw new Error(`sim never reached tick ${ticks} (last seen: ${last})`);
 }
 
+/** A screenshot decoded to pixels. Screenshots are PNGs -- comparing the
+ * compressed bytes says nothing about what is on screen. */
+async function pixelsOf(page: Page): Promise<PNG> {
+  return PNG.sync.read(await page.screenshot());
+}
+
+/** How many pixels differ between two decoded frames. */
+function differingPixels(a: PNG, b: PNG): number {
+  let n = 0;
+  for (let i = 0; i < a.data.length && i < b.data.length; i += 4) {
+    const dr = Math.abs((a.data[i] ?? 0) - (b.data[i] ?? 0));
+    const dg = Math.abs((a.data[i + 1] ?? 0) - (b.data[i + 1] ?? 0));
+    const db = Math.abs((a.data[i + 2] ?? 0) - (b.data[i + 2] ?? 0));
+    if (Math.max(dr, dg, db) > 8) n++;
+  }
+  return n;
+}
+
 async function shoot(page: Page, name: string): Promise<void> {
   await page.screenshot({ path: join(outDir, `${name}.png`) });
   console.log(`  wrote ${name}.png`);
@@ -195,6 +214,59 @@ async function main(): Promise<void> {
     await waitForTick(page, 150);
 
     await shoot(page, 'world-play');
+
+    // The weather panel (spec 075): its own button beside the view cog. Opened
+    // and driven here rather than trusted, because the sliders write straight
+    // into the shared wind uniforms -- a wiring mistake would leave a panel that
+    // looks perfect and moves nothing.
+    await page.click('button[aria-label="Weather"]');
+    await page.waitForTimeout(150);
+    await shoot(page, 'world-weather-panel');
+    const windSliders = await page.$$('button[aria-label="Weather"] ~ div input[type=range]');
+    console.log(`  weather sliders: ${windSliders.length}`);
+    const [strengthSlider, , speedSlider] = windSliders;
+    if (!strengthSlider || !speedSlider) {
+      problems.push('the weather panel is missing its wind strength or speed slider');
+    } else {
+      const setSlider = async (handle: ElementHandle<SVGElement | HTMLElement>, value: string): Promise<void> => {
+        await handle.evaluate((el, v) => {
+          const input = el as HTMLInputElement;
+          input.value = v === 'max' ? input.max : v;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        }, value);
+        await page.waitForTimeout(400);
+      };
+
+      // The world is live, so "the frame changed" is true at any wind at all.
+      // Stilling the *clock* first removes every other moving thing the weather
+      // owns -- the water, the streaks over the ground -- and leaves the lean as
+      // the only thing the strength slider can be changing.
+      await setSlider(speedSlider, '0');
+      await setSlider(strengthSlider, '0');
+      const upright = await pixelsOf(page);
+      const uprightAgain = await pixelsOf(page);
+      await setSlider(strengthSlider, 'max');
+      await shoot(page, 'world-weather-strong');
+      const leaning = await pixelsOf(page);
+
+      // Two shots at the same setting are the control. Even stilled, a live
+      // world is a noisy place to measure in -- the torch gutters, the monsters
+      // walk, and the retro pass redithers all of it -- so this asks only for a
+      // clear margin over that floor, not for a clean number. The clean numbers
+      // live in `preview-wind.ts`, which draws a frozen scene with nothing in it
+      // but ground and trees.
+      const control = differingPixels(upright, uprightAgain);
+      const swayed = differingPixels(upright, leaning);
+      console.log(`  pixels moving with the wind stilled:     ${control}`);
+      console.log(`  ...and with the strength at its ceiling: ${swayed} (${(swayed / Math.max(1, control)).toFixed(2)}x)`);
+      if (swayed < control * 1.25) problems.push('the wind strength slider did not visibly bend the trees');
+
+      // Put both back, so every later screenshot is the shipped weather.
+      await setSlider(strengthSlider, '100');
+      await setSlider(speedSlider, '100');
+    }
+    await page.click('button[aria-label="Weather"]');
+    await page.waitForTimeout(120);
 
     // Right-click a point on the ground: the move order the game had before the
     // server existed (spec 064). The marker should appear and the figure walk to it.
