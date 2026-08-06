@@ -35,11 +35,11 @@ export type ChunkDecision =
 /**
  * The chunk coordinates a world point falls in, within one layer's grid.
  *
- * Chunk indices are relative to the layer's own `bounds.minX/minZ` -- the
- * document's grid starts at the layer's corner, not at the world origin -- so
- * the offset has to come off before the divide. `Math.floor` for the same
- * reason `chunks.ts` uses it: truncation would make the two chunks either side
- * of the layer origin half-width.
+ * Chunk indices are relative to the layer's own `origin` -- the document's grid
+ * is anchored there rather than at the world origin, and since spec 080 that
+ * anchor no longer moves with the bounds -- so the offset has to come off
+ * before the divide. `Math.floor` for the same reason `chunks.ts` uses it:
+ * truncation would make the two chunks either side of the origin half-width.
  */
 export function chunkCoordsAt(
   index: MapIndex,
@@ -50,8 +50,8 @@ export function chunkCoordsAt(
   const info = index.layers[layer];
   if (!info) return null;
   return {
-    cx: Math.floor((x - info.bounds.minX) / index.chunkExtent),
-    cz: Math.floor((z - info.bounds.minZ) / index.chunkExtent),
+    cx: Math.floor((x - info.origin.x) / index.chunkExtent),
+    cz: Math.floor((z - info.origin.z) / index.chunkExtent),
   };
 }
 

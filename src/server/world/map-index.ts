@@ -11,11 +11,13 @@
  * a clock, a file or a global.
  */
 
-import type { MapChunk, MapDocument, MapRect } from '../../terrain/map.js';
+import type { MapChunk, MapDocument, MapPoint, MapRect } from '../../terrain/map.js';
 
 export interface MapLayerInfo {
   readonly id: string;
   readonly seed: number;
+  /** Anchor of the layer's chunk grid; chunk indices are measured from it. */
+  readonly origin: MapPoint;
   readonly bounds: MapRect;
   readonly baseY: number;
   readonly waterLevel: number | null;
@@ -82,6 +84,7 @@ export function buildMapIndex(doc: MapDocument, mapId: string): MapIndex {
     layers.push({
       id: layer.id,
       seed: layer.seed,
+      origin: layer.origin,
       bounds: layer.bounds,
       baseY: layer.baseY,
       waterLevel: layer.waterLevel,
@@ -110,8 +113,8 @@ export function buildMapIndex(doc: MapDocument, mapId: string): MapIndex {
       const chunk = chunks.get(chunkKey(layer, cx, cz));
       const info = layers[layer];
       if (!chunk || !info) return null;
-      const originX = info.bounds.minX + cx * chunkCells * cellSize;
-      const originZ = info.bounds.minZ + cz * chunkCells * cellSize;
+      const originX = info.origin.x + cx * chunkCells * cellSize;
+      const originZ = info.origin.z + cz * chunkCells * cellSize;
       return {
         x: originX + (chunk.cols * cellSize) / 2,
         z: originZ + (chunk.rows * cellSize) / 2,

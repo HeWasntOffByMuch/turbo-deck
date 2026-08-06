@@ -356,6 +356,7 @@ describe('a map that streams in draws the same land', () => {
     layers: doc.layers.map((l) => ({
       id: l.id,
       seed: l.seed,
+      origin: l.origin,
       bounds: l.bounds,
       baseY: l.baseY,
       waterLevel: l.waterLevel,

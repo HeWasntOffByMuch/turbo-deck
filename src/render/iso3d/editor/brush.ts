@@ -76,16 +76,18 @@ export function brushCorners(
   z: number,
   radius: number,
 ): CornerRange {
-  const { totalCols, totalRows } = layer.grid;
-  const toCol = (world: number): number => (world - layer.bounds.minX) / cellSize;
-  const toRow = (world: number): number => (world - layer.bounds.minZ) / cellSize;
+  // Clamped to the cells the layer actually holds, which on a grown layer does
+  // not start at zero (spec 080).
+  const g = layer.grid;
+  const toCol = (world: number): number => (world - layer.origin.x) / cellSize;
+  const toRow = (world: number): number => (world - layer.origin.z) / cellSize;
   // A corner is jittered up to a third of a cell off its lattice position, so
   // the box is widened by one to be sure of catching every corner in range.
   return {
-    minCol: Math.max(0, Math.floor(toCol(x - radius)) - 1),
-    maxCol: Math.min(totalCols, Math.ceil(toCol(x + radius)) + 1),
-    minRow: Math.max(0, Math.floor(toRow(z - radius)) - 1),
-    maxRow: Math.min(totalRows, Math.ceil(toRow(z + radius)) + 1),
+    minCol: Math.max(g.minCol, Math.floor(toCol(x - radius)) - 1),
+    maxCol: Math.min(g.maxCol, Math.ceil(toCol(x + radius)) + 1),
+    minRow: Math.max(g.minRow, Math.floor(toRow(z - radius)) - 1),
+    maxRow: Math.min(g.maxRow, Math.ceil(toRow(z + radius)) + 1),
   };
 }
 
@@ -98,11 +100,11 @@ export function brushCorners(
  * seam where one side reshaded and the other did not.
  */
 export function dirtyChunks(layer: LayerInfo, chunkCells: number, range: CornerRange): ChunkCoord[] {
-  const { chunksX, chunksZ } = layer.grid;
-  const minCx = Math.max(0, Math.floor((range.minCol - 1) / chunkCells));
-  const maxCx = Math.min(chunksX - 1, Math.floor((range.maxCol + 1) / chunkCells));
-  const minCz = Math.max(0, Math.floor((range.minRow - 1) / chunkCells));
-  const maxCz = Math.min(chunksZ - 1, Math.floor((range.maxRow + 1) / chunkCells));
+  const g = layer.grid;
+  const minCx = Math.max(g.minCx, Math.floor((range.minCol - 1) / chunkCells));
+  const maxCx = Math.min(g.maxCx, Math.floor((range.maxCol + 1) / chunkCells));
+  const minCz = Math.max(g.minCz, Math.floor((range.minRow - 1) / chunkCells));
+  const maxCz = Math.min(g.maxCz, Math.floor((range.maxRow + 1) / chunkCells));
   const out: ChunkCoord[] = [];
   for (let cz = minCz; cz <= maxCz; cz++) {
     for (let cx = minCx; cx <= maxCx; cx++) out.push({ cx, cz });
@@ -205,8 +207,8 @@ export function applyTerrainBrush(
       // of a cell at most, and a brush edge that wobbles by a third of a cell is
       // indistinguishable from one that does not -- while looking the jitter up
       // per corner would double the cost of every stroke.
-      const cornerX = layer.bounds.minX + col * cell;
-      const cornerZ = layer.bounds.minZ + row * cell;
+      const cornerX = layer.origin.x + col * cell;
+      const cornerZ = layer.origin.z + row * cell;
       const weight = brushWeight(Math.hypot(cornerX - step.x, cornerZ - step.z), settings.radius, settings.falloff);
       if (weight <= 0) continue;
 
@@ -259,8 +261,8 @@ function refreshMaterials(
   range: CornerRange,
 ): void {
   const cell = store.cellSize;
-  const maxCol = Math.min(layer.grid.totalCols - 1, range.maxCol);
-  const maxRow = Math.min(layer.grid.totalRows - 1, range.maxRow);
+  const maxCol = Math.min(layer.grid.maxCol - 1, range.maxCol);
+  const maxRow = Math.min(layer.grid.maxRow - 1, range.maxRow);
   for (let row = range.minRow; row <= maxRow; row++) {
     for (let col = range.minCol; col <= maxCol; col++) {
       const stored = store.cellAt(layerId, col, row);

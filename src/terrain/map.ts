@@ -40,7 +40,10 @@ import { FENCE_KINDS, type Prop, type PropKind } from './vegetation.js';
  * `classify`, and in a baked map the materials are authoritative.
  */
 
-export const MAP_VERSION = 1;
+export const MAP_VERSION = 2;
+
+/** The oldest document `parseMap` will read. Anything older has no migration. */
+export const MIN_MAP_VERSION = 1;
 
 /**
  * Decimal places kept for every stored coordinate. Terrain relief here spans a
@@ -67,6 +70,19 @@ export interface MapRect {
   readonly minZ: number;
   readonly maxX: number;
   readonly maxZ: number;
+}
+
+export interface MapPoint {
+  readonly x: number;
+  readonly z: number;
+}
+
+/** A rectangle of chunk coordinates, inclusive on both ends (spec 080). */
+export interface ChunkRect {
+  readonly minCx: number;
+  readonly minCz: number;
+  readonly maxCx: number;
+  readonly maxCz: number;
 }
 
 /** A prop instance, positioned in its chunk's local space. */
@@ -120,6 +136,32 @@ export interface MapLayer {
   readonly id: string;
   /** Seeds the corner jitter, so it has to survive the round trip. */
   readonly seed: number;
+  /**
+   * The world point chunk `(0, 0)`'s low corner sits on, and the anchor every
+   * chunk and cell index is measured from (spec 080).
+   *
+   * Split out from `bounds` because a map that can grow needs an anchor that
+   * does *not* move. Indices used to be relative to `bounds.minX/minZ`, which
+   * meant extending the world west or north renumbered every chunk in the file:
+   * a whole-document rewrite, an unreadable diff, and every client's cached
+   * chunk silently pointing at different ground. With an origin the indices are
+   * absolute, growth only ever adds coordinates -- negative ones, going west or
+   * north -- and nothing already baked is touched.
+   *
+   * Fixed for the life of a map. Changing it renumbers everything, which is the
+   * one thing it exists to prevent.
+   */
+  readonly origin: MapPoint;
+  /**
+   * The rectangle this layer covers. **Declared, not derived on load**: it is
+   * computed when a map is baked or saved, and after that it is read as-is.
+   *
+   * A streaming client holds a handful of chunks and has to know how big the
+   * world is anyway -- the sim's edge wall comes from here (spec 080). Deriving
+   * the extent from the chunks in hand would put that wall wherever streaming
+   * happened to have got to, and the client would predict a barrier in open
+   * ground and then be corrected through it.
+   */
   readonly bounds: MapRect;
   readonly baseY: number;
   readonly waterLevel: number | null;
@@ -313,6 +355,9 @@ export function exportMap(input: ExportMapInput): MapDocument {
     layers.push({
       id: layer.id,
       seed: layer.seed,
+      // A freshly baked world anchors its grid at its own corner. Growth later
+      // moves `bounds` and leaves this alone -- that is the whole point of it.
+      origin: { x: quantize(layer.bounds.minX), z: quantize(layer.bounds.minZ) },
       bounds: {
         minX: quantize(layer.bounds.minX),
         minZ: quantize(layer.bounds.minZ),
@@ -433,6 +478,7 @@ function writeLayer(layer: MapLayer, indent: string): string {
     [
       ['id', writeScalar(layer.id)],
       ['seed', String(layer.seed)],
+      ['origin', `{ "x": ${layer.origin.x}, "z": ${layer.origin.z} }`],
       ['bounds', writeRect(layer.bounds)],
       ['baseY', String(layer.baseY)],
       ['waterLevel', layer.waterLevel === null ? 'null' : String(layer.waterLevel)],
@@ -496,6 +542,11 @@ function asRect(value: unknown, what: string): MapRect {
     maxX: asNumber(r['maxX'], `${what}.maxX`),
     maxZ: asNumber(r['maxZ'], `${what}.maxZ`),
   };
+}
+
+function asPoint(value: unknown, what: string): MapPoint {
+  const r = asRecord(value, what);
+  return { x: asNumber(r['x'], `${what}.x`), z: asNumber(r['z'], `${what}.z`) };
 }
 
 const MARKER_KINDS: readonly MapMarkerKind[] = ['spawn', 'objective', 'campfire', 'trigger', 'spawner'];
@@ -574,10 +625,16 @@ function parseChunk(value: unknown, what: string): MapChunk {
 function parseLayer(value: unknown, what: string): MapLayer {
   const r = asRecord(value, what);
   const waterLevel = r['waterLevel'];
+  const bounds = asRect(r['bounds'], `${what}.bounds`);
+  const origin = r['origin'];
   return {
     id: asString(r['id'], `${what}.id`),
     seed: asNumber(r['seed'], `${what}.seed`),
-    bounds: asRect(r['bounds'], `${what}.bounds`),
+    // A v1 layer has no origin because its grid was anchored at its own corner.
+    // Reading it as `bounds.min` leaves every index in the file meaning exactly
+    // what it meant before, so the migration changes no numbers at all.
+    origin: origin === undefined ? { x: bounds.minX, z: bounds.minZ } : asPoint(origin, `${what}.origin`),
+    bounds,
     baseY: asNumber(r['baseY'], `${what}.baseY`),
     waterLevel: waterLevel === null || waterLevel === undefined ? null : asNumber(waterLevel, `${what}.waterLevel`),
     chunks: (Array.isArray(r['chunks']) ? r['chunks'] : fail(`${what}.chunks must be an array`)).map((c, i) =>
@@ -602,10 +659,15 @@ export function parseMap(text: string): MapDocument {
   }
   const r = asRecord(raw, 'document');
   const version = asNumber(r['version'], 'document.version');
-  if (version !== MAP_VERSION) fail(`unsupported version ${version}, expected ${MAP_VERSION}`);
+  // Older documents are read forward, not rejected: v1 predates the grid origin
+  // (spec 080) and `parseLayer` fills it in. A document is always *emitted* at
+  // the current version, so loading and re-saving a v1 file upgrades it.
+  if (version < MIN_MAP_VERSION || version > MAP_VERSION) {
+    fail(`unsupported version ${version}, expected ${MIN_MAP_VERSION}..${MAP_VERSION}`);
+  }
   const grid = asRecord(r['grid'], 'document.grid');
   return {
-    version,
+    version: MAP_VERSION,
     seed: asNumber(r['seed'], 'document.seed'),
     grid: {
       cellSize: asNumber(grid['cellSize'], 'document.grid.cellSize'),

@@ -257,7 +257,7 @@ describe('a round trip through the whole editor', () => {
   it('rejects a file that is not a map without changing anything', () => {
     const map = loaded();
     const before = mapText(map.store.toDocument());
-    expect(() => parseMap('{"version": 2}')).toThrow(/unsupported version/);
+    expect(() => parseMap('{"version": 99}')).toThrow(/unsupported version/);
     expect(mapText(map.store.toDocument())).toBe(before);
   });
 });
