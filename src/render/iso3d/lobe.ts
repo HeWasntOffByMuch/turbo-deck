@@ -16,12 +16,32 @@ import { hashUnit2 } from '../../shared/hash.js';
  * "several leaf masses merged" instead of "one squashed circle".
  *
  * So the outline is the genuine union of several overlapping circles, and the
- * one trick that makes that cheap is {@link lobeBlobs} placing every circle so
- * that it **contains the slab's origin**. A union of circles all containing one
- * point is star-shaped about that point, so along any ray from it the union's
- * boundary is simply the furthest of the individual circles' boundaries -- one
- * `max` over a closed form, with no marching squares and no polygon clipping,
- * and the cusps fall out for free where two circles cross.
+ * trick that makes that cheap is keeping the union **star-shaped about the
+ * origin**: along any ray from the centre the union is then one unbroken
+ * interval, so its boundary is simply the furthest of the individual circles'
+ * boundaries -- one `max` over a closed form, with no marching squares and no
+ * polygon clipping, and the corners fall out for free where two circles cross.
+ *
+ * ## How the circles are allowed to sit
+ *
+ * A slab is a **core circle at the origin plus a ring of lobes** around it, and
+ * the star-shape condition on each lobe is
+ *
+ *     |c|^2 <= coreRadius^2 + r^2
+ *
+ * which says: the furthest along a ray that the ray can *enter* this lobe --
+ * `sqrt(|c|^2 - r^2)`, the tangent case, and imaginary when the origin is inside
+ * it -- is still no further out than the core, so the core has already covered
+ * the gap and the ray never leaves the shape and re-enters it.
+ *
+ * The obvious stricter rule, "every circle contains the origin", is what this
+ * replaces, and the difference is the whole look. A circle containing the origin
+ * spans more than half the compass from it, so neighbouring circles overlap
+ * enormously and cross each other close to the rim: the scallops come out about
+ * 6% of the radius deep, which at the size a tree is drawn is nothing, and the
+ * silhouette reads as the clean ellipse the brief rules out. Lobes held only to
+ * the condition above sit right out at the rim, and their notches cut about a
+ * quarter of the radius.
  */
 
 /** One circle of a slab's silhouette, in the slab's own plane. */
@@ -31,32 +51,133 @@ export interface LobeBlob {
   readonly r: number;
 }
 
+const TAU = Math.PI * 2;
+
+/** One vertex of a slab's outline: which way it lies, and how far out it reaches. */
+export interface LobePoint {
+  readonly angle: number;
+  readonly radius: number;
+}
+
 /**
- * The union's boundary distance from the origin, at `segments` angles.
+ * How far the union's boundary is from the origin along one ray.
  *
- * Exact, given that every blob contains the origin (see {@link lobeBlobs}): the
- * ray `t * d` meets a circle of centre `c` and radius `r` at
- * `t = c.d + sqrt(r^2 - |c|^2 + (c.d)^2)`, and the union's boundary is the
- * largest of those. A blob that does *not* contain the origin has a negative
- * discriminant along some rays and is skipped there, which is exactly the case
- * this cannot represent -- hence the placement rule.
+ * Exact, given the star-shape condition {@link lobeBlobs} places the circles
+ * under: the ray `t * d` meets a circle of centre `c` and radius `r` at
+ * `t = c.d +- sqrt(r^2 - |c|^2 + (c.d)^2)`, and the union's boundary is the
+ * largest of the far roots. A ray that misses a circle has a negative
+ * discriminant and skips it; one whose two roots are both behind the origin
+ * yields a negative reach, which the `max` discards -- the core is always in
+ * front, so the answer is never that.
  */
-export function lobeOutline(blobs: readonly LobeBlob[], segments: number): number[] {
+export function lobeReach(blobs: readonly LobeBlob[], angle: number): number {
+  const dx = Math.cos(angle);
+  const dz = Math.sin(angle);
+  let reach = 0;
+  for (const blob of blobs) {
+    const along = blob.x * dx + blob.z * dz;
+    const disc = blob.r * blob.r - (blob.x * blob.x + blob.z * blob.z) + along * along;
+    if (disc <= 0) continue;
+    reach = Math.max(reach, along + Math.sqrt(disc));
+  }
+  return reach;
+}
+
+/** Angles nearer than this are one vertex, not two: no sliver triangles. */
+const ANGLE_MERGE = 2e-3;
+/** Slack when asking whether a crossing point is buried inside a third circle. */
+const BURIED = 1e-9;
+
+/**
+ * The bearings at which the union's boundary has a **corner**.
+ *
+ * These are the whole point of the construction and the easiest thing in it to
+ * throw away. Where two circles cross, the boundary switches from one arc to the
+ * other and its tangent jumps -- a notch, and a row of notches is what the word
+ * "scalloped" means. But a corner is a single point, so an outline sampled at
+ * fixed angular steps essentially never lands on one: every notch gets cut
+ * across by a chord and the silhouette comes back rounded. That is a union of
+ * circles rendered as the ellipse it was specifically not supposed to be.
+ *
+ * So the crossings are solved for rather than sampled at. Two circles meet where
+ * `|p - cA| = rA` and `|p - cB| = rB`, which is the standard two-point solution
+ * below; the pair is on the *union's* boundary only if no third circle has
+ * swallowed it.
+ */
+export function lobeCusps(blobs: readonly LobeBlob[]): number[] {
   const out: number[] = [];
-  for (let i = 0; i < segments; i++) {
-    const angle = (i / segments) * Math.PI * 2;
-    const dx = Math.cos(angle);
-    const dz = Math.sin(angle);
-    let reach = 0;
-    for (const blob of blobs) {
-      const along = blob.x * dx + blob.z * dz;
-      const disc = blob.r * blob.r - (blob.x * blob.x + blob.z * blob.z) + along * along;
-      if (disc <= 0) continue;
-      reach = Math.max(reach, along + Math.sqrt(disc));
+  for (let i = 0; i < blobs.length; i++) {
+    for (let k = i + 1; k < blobs.length; k++) {
+      const a = blobs[i] as LobeBlob;
+      const b = blobs[k] as LobeBlob;
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const span = Math.hypot(dx, dz);
+      // Concentric, disjoint, or one wholly inside the other: no crossing, and
+      // in the last case the inner circle contributes no boundary at all.
+      if (span === 0 || span > a.r + b.r || span < Math.abs(a.r - b.r)) continue;
+      const along = (span * span + a.r * a.r - b.r * b.r) / (2 * span);
+      const across = a.r * a.r - along * along;
+      if (across <= 0) continue;
+      const h = Math.sqrt(across);
+      const ux = dx / span;
+      const uz = dz / span;
+      const mx = a.x + ux * along;
+      const mz = a.z + uz * along;
+      for (const side of [1, -1]) {
+        const px = mx - uz * h * side;
+        const pz = mz + ux * h * side;
+        let onEdge = true;
+        for (let j = 0; j < blobs.length && onEdge; j++) {
+          if (j === i || j === k) continue;
+          const other = blobs[j] as LobeBlob;
+          if (Math.hypot(px - other.x, pz - other.z) < other.r - BURIED) onEdge = false;
+        }
+        if (onEdge) out.push(Math.atan2(pz, px));
+      }
     }
-    out.push(reach);
   }
   return out;
+}
+
+/**
+ * The union's boundary as a closed polygon, in order of bearing.
+ *
+ * Three sets of vertices, and each is there for its own reason:
+ *
+ * - **The crossings** ({@link lobeCusps}), so every notch between two circles is
+ *   a real corner of the mesh rather than a chord cutting the corner off.
+ * - **Each circle's own bearing**, which is where that circle reaches furthest
+ *   from the origin -- the tip of its lobe. Without it a lobe's apex is flattened
+ *   in exactly the way its notches were.
+ * - **`segments` even steps**, so the arcs between all that are still arcs and
+ *   not long straight chords across a bulge.
+ *
+ * So the vertex count is not `segments`; it is however many the shape turns out
+ * to need, which for a six-circle slab is around thirty.
+ */
+export function lobeOutline(blobs: readonly LobeBlob[], segments: number): LobePoint[] {
+  const wrap = (angle: number): number => ((angle % TAU) + TAU) % TAU;
+  const angles: number[] = [];
+  for (let i = 0; i < segments; i++) angles.push((i / segments) * TAU);
+  for (const blob of blobs) {
+    if (blob.x !== 0 || blob.z !== 0) angles.push(wrap(Math.atan2(blob.z, blob.x)));
+  }
+  for (const cusp of lobeCusps(blobs)) angles.push(wrap(cusp));
+  angles.sort((a, b) => a - b);
+
+  const points: LobePoint[] = [];
+  for (const angle of angles) {
+    const last = points[points.length - 1];
+    if (last && angle - last.angle < ANGLE_MERGE) continue;
+    points.push({ angle, radius: lobeReach(blobs, angle) });
+  }
+  // The seam: the last vertex and the first are neighbours too, and two of them
+  // a hair apart there is the same sliver triangle as anywhere else.
+  const first = points[0];
+  const final = points[points.length - 1];
+  if (points.length > 2 && first && final && TAU - final.angle + first.angle < ANGLE_MERGE) points.pop();
+  return points;
 }
 
 /** Seeds for the independent hashed channels, so one wobble does not imply another. */
@@ -68,40 +189,79 @@ const HASH_SLAB_REACH = 0x10be05;
 const HASH_TRUNK_KINK = 0x10be06;
 const HASH_TRUNK_BOW = 0x10be07;
 
-/** Circles to a slab. Fewer and it is a circle; more and the scallops average out. */
-const BLOBS_PER_SLAB = 6;
+/**
+ * The core circle's radius, as a fraction of the slab's own.
+ *
+ * It sets how deep the notches between lobes can cut, because a notch bottoms
+ * out where the lobes on either side of it meet the core. Smaller and the
+ * scallops bite deeper but the slab starts to read as separate leaves rather
+ * than one mass; larger and it swallows the lobes back into a disc.
+ */
+const CORE_SHARE = 0.44;
+
+/** Lobes around that core. Fewer and each is a bulge; more and they average out. */
+const LOBES_PER_SLAB = 5;
 
 /**
- * The circles one slab's silhouette is the union of, sized so that the sampled
- * outline's widest point is exactly `radius`.
+ * How much of the star-shape limit a lobe is allowed to use.
  *
- * Two constraints, both load-bearing. Every centre sits closer to the origin
- * than its own radius, so the union stays star-shaped and {@link lobeOutline}
- * stays exact. And the *whole set* is scaled to fit `radius` afterwards rather
- * than each circle being clamped to it, because clamping is what would pull
- * every blob to the same size and turn the outline back into a circle.
+ * At 1 a lobe sits exactly at the limit, where a grazing ray enters it precisely
+ * at the core's edge; the margin below that is for the floating point, and for
+ * the fact that a lobe right on the limit meets the core tangentially and its
+ * notch degenerates into a cusp of zero width.
+ */
+const LOBE_REACH_MIN = 0.82;
+const LOBE_REACH_SPAN = 0.17;
+
+/**
+ * How far from the origin a lobe of radius `r` may sit and leave the union
+ * star-shaped, given a core of radius `core`.
+ *
+ * The furthest a ray can *enter* the lobe is at the tangent, `sqrt(|c|^2 - r^2)`
+ * from the origin; requiring that to be at most `core` rearranges to this. When
+ * the origin is inside the lobe the requirement is met trivially, and this
+ * returns the larger distance that says so.
+ */
+export function lobeReachLimit(core: number, r: number): number {
+  return Math.hypot(core, r);
+}
+
+/**
+ * The circles one slab's silhouette is the union of: a core at the origin and a
+ * ring of lobes around it, scaled so the outline's widest point is exactly
+ * `radius`.
+ *
+ * Two constraints, both load-bearing. Every lobe sits within
+ * {@link lobeReachLimit} of the origin, which is what keeps the union
+ * star-shaped and {@link lobeOutline} exact. And the *whole set* is scaled to
+ * fit `radius` afterwards rather than each circle being clamped to it, because
+ * clamping is what would pull every lobe to the same size and turn the outline
+ * back into a circle.
  *
  * The scale is measured against the **sampled** outline rather than against
  * `max(|c| + r)`, so the number `crownRadius` reports is the widest point of the
  * mesh that actually gets built, not of the ideal curve behind it.
  */
-export function lobeBlobs(seed: number, radius: number, segments: number, count = BLOBS_PER_SLAB): LobeBlob[] {
-  const raw: LobeBlob[] = [];
+export function lobeBlobs(seed: number, radius: number, segments: number, count = LOBES_PER_SLAB): LobeBlob[] {
+  const core = radius * CORE_SHARE;
+  // The core is a blob like any other, so the outline, the crossings and the
+  // normalisation below all treat it as one and nothing needs a special case.
+  const raw: LobeBlob[] = [{ x: 0, z: 0, r: core }];
   for (let i = 0; i < count; i++) {
     // Spread around the circle rather than drawn freely, so no slab comes out
-    // with all six blobs stacked on one side and a flat back.
+    // with every lobe stacked on one side and a flat back.
     const angle =
       (i / count) * Math.PI * 2 + (hashUnit2(i, seed, HASH_BLOB_ANGLE) * 2 - 1) * (Math.PI / count);
-    // Smaller circles pushed further out than a "blobby circle" would want. Both
-    // ends of that trade are visible in a silhouette: bigger circles nearer the
-    // middle bury each other's crossings and the outline rounds off into an
-    // ellipse, which is the one thing the brief rules out.
-    const r = radius * (0.42 + 0.34 * hashUnit2(i, seed, HASH_BLOB_RADIUS));
-    // Strictly inside its own circle: `0.92 * r` at the very most.
-    const distance = r * (0.34 + 0.58 * hashUnit2(i, seed, HASH_BLOB_OFFSET));
+    // Varying radius, which is what the brief asks for and what stops the lobes
+    // reading as a cog: the largest is nearly twice the smallest.
+    const r = radius * (0.29 + 0.21 * hashUnit2(i, seed, HASH_BLOB_RADIUS));
+    // ...pushed out to most of the distance the star-shape rule allows, which is
+    // where the notch between two neighbours is deepest.
+    const distance =
+      lobeReachLimit(core, r) * (LOBE_REACH_MIN + LOBE_REACH_SPAN * hashUnit2(i, seed, HASH_BLOB_OFFSET));
     raw.push({ x: Math.cos(angle) * distance, z: Math.sin(angle) * distance, r });
   }
-  const widest = Math.max(...lobeOutline(raw, segments));
+  const widest = Math.max(...lobeOutline(raw, segments).map((point) => point.radius));
   const fit = widest > 0 ? radius / widest : 1;
   return raw.map((blob) => ({ x: blob.x * fit, z: blob.z * fit, r: blob.r * fit }));
 }
@@ -121,7 +281,14 @@ export interface LobedShape {
   readonly trunkRings: number;
   /** How far the tip drifts off the axis, as a fraction of height. Small. */
   readonly trunkBow: number;
-  /** Outline samples around a slab. */
+  /**
+   * Even steps around a slab's outline, *before* its corners are added.
+   *
+   * A floor on the sampling rather than the sampling itself: the crossings
+   * between circles and the tip of each lobe are solved for and inserted on top,
+   * so a slab ends up with rather more vertices than this and they land where
+   * the shape actually turns.
+   */
   readonly lobeSegments: number;
   /** Rings from a slab's centre to its rim, so the dome is a dome. */
   readonly lobeRings: number;
@@ -282,6 +449,8 @@ export interface SlabSpec {
   /** How far the dome's centre stands above its rim. */
   readonly rise: number;
   readonly blobs: readonly LobeBlob[];
+  /** The union of those blobs, as the closed polygon the mesh is built from. */
+  readonly outline: readonly LobePoint[];
   /**
    * The slab count at or above which this slab is grown.
    *
@@ -328,6 +497,7 @@ export function slabLayout(shape: LobedShape): SlabSpec[] {
   for (let i = 0; i < shape.slabs; i++) {
     const t = i / last;
     const radius = shape.canopySpread * (1 - shape.canopyTaper * t);
+    const blobs = lobeBlobs(shape.seed + i * 7919, radius, shape.lobeSegments);
     const bearing = i * golden + (hashUnit2(i, shape.seed, HASH_SLAB_BEARING) * 2 - 1) * 0.8;
     const reach = shape.slabOffset * (0.35 + 0.65 * hashUnit2(i, shape.seed, HASH_SLAB_REACH));
     out.push({
@@ -338,7 +508,8 @@ export function slabLayout(shape: LobedShape): SlabSpec[] {
       offsetZ: Math.sin(bearing) * reach,
       // Against the slab's *width*, which is what the brief measures it against.
       rise: shape.domeRise * 2 * radius,
-      blobs: lobeBlobs(shape.seed + i * 7919, radius, shape.lobeSegments),
+      blobs,
+      outline: lobeOutline(blobs, shape.lobeSegments),
       grownAt: grownAtFor(i, shape.slabs, shape.slabCounts),
     });
   }

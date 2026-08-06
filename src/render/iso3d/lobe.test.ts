@@ -4,7 +4,10 @@ import {
   LOBED_FLAT,
   LOBED_SHAPES,
   lobeBlobs,
+  lobeCusps,
   lobeOutline,
+  lobeReach,
+  lobeReachLimit,
   lobedCrownRadius,
   slabDrop,
   slabLayout,
@@ -32,14 +35,41 @@ const SEGMENTS = SHAPE.lobeSegments;
 const SEEDS = [1, 7919, 15838, 23757, 31676, 404, 20260806];
 
 describe('the blob outline', () => {
-  it('places every circle so the slab origin is inside it', () => {
-    // Not decoration: it is what makes the radial max below an *exact* union
-    // rather than an approximation of one. A circle that missed the origin
-    // would be invisible along the rays that do not reach it, and the outline
-    // would develop a chord where its arc should be.
+  it('keeps every lobe inside the limit that leaves the union star-shaped', () => {
+    // Not decoration: it is what makes the radial max an *exact* union rather
+    // than an approximation of one. The furthest a ray can enter a lobe is at
+    // the tangent, and if that is past the core's edge the ray leaves the shape
+    // and comes back -- so the outline would have a chord where its arc should
+    // be, and a slab would be drawn with a bite out of it.
     for (const seed of SEEDS) {
-      for (const blob of lobeBlobs(seed, RADIUS, SEGMENTS)) {
-        expect(Math.hypot(blob.x, blob.z)).toBeLessThan(blob.r);
+      const blobs = lobeBlobs(seed, RADIUS, SEGMENTS);
+      const core = blobs[0] as (typeof blobs)[number];
+      expect(core.x).toBe(0);
+      expect(core.z).toBe(0);
+      for (const blob of blobs) {
+        expect(Math.hypot(blob.x, blob.z)).toBeLessThanOrEqual(lobeReachLimit(core.r, blob.r) + 1e-9);
+      }
+    }
+  });
+
+  it('is one unbroken interval along every ray, which is what star-shaped means', () => {
+    // The condition above, checked by its consequence rather than by restating
+    // it: walk out along a ray to the boundary and every point on the way must
+    // be inside *something*. A gap here is a slab with a ring-shaped hole in it,
+    // and the outline would sail straight over it without noticing.
+    for (const seed of SEEDS) {
+      const blobs = lobeBlobs(seed, RADIUS, SEGMENTS);
+      for (let i = 0; i < 240; i++) {
+        const angle = (i / 240) * Math.PI * 2;
+        const reach = lobeReach(blobs, angle);
+        expect(reach).toBeGreaterThan(0);
+        for (let step = 0; step <= 40; step++) {
+          const t = (step / 40) * reach;
+          const x = Math.cos(angle) * t;
+          const z = Math.sin(angle) * t;
+          const inside = blobs.some((b) => Math.hypot(x - b.x, z - b.z) <= b.r + 1e-9);
+          expect(inside).toBe(true);
+        }
       }
     }
   });
@@ -48,10 +78,9 @@ describe('the blob outline', () => {
     for (const seed of SEEDS) {
       const blobs = lobeBlobs(seed, RADIUS, SEGMENTS);
       const outline = lobeOutline(blobs, SEGMENTS);
-      outline.forEach((reach, i) => {
-        const angle = (i / SEGMENTS) * Math.PI * 2;
-        const x = Math.cos(angle) * reach;
-        const z = Math.sin(angle) * reach;
+      outline.forEach(({ angle, radius }) => {
+        const x = Math.cos(angle) * radius;
+        const z = Math.sin(angle) * radius;
         // How far outside each circle the outline point sits. Never negative --
         // that would be a boundary point inside the shape it bounds.
         const outside = blobs.map((b) => Math.hypot(x - b.x, z - b.z) - b.r);
@@ -65,10 +94,10 @@ describe('the blob outline', () => {
 
   it('is bumpy rather than elliptical', () => {
     // The property the whole construction exists for. An ellipse has exactly two
-    // local maxima and a modest long/short ratio; a union of six offset circles
-    // has more of the first and much more of the second.
+    // local maxima and a modest long/short ratio; a union of offset circles has
+    // more of the first and much more of the second.
     for (const seed of SEEDS) {
-      const outline = lobeOutline(lobeBlobs(seed, RADIUS, SEGMENTS), SEGMENTS);
+      const outline = lobeOutline(lobeBlobs(seed, RADIUS, SEGMENTS), SEGMENTS).map((p) => p.radius);
       let maxima = 0;
       for (let i = 0; i < outline.length; i++) {
         const before = outline[(i - 1 + outline.length) % outline.length] as number;
@@ -76,11 +105,66 @@ describe('the blob outline', () => {
         const after = outline[(i + 1) % outline.length] as number;
         if (here > before && here >= after) maxima++;
       }
-      expect(maxima).toBeGreaterThanOrEqual(2);
+      expect(maxima).toBeGreaterThanOrEqual(3);
       const ratio = Math.max(...outline) / Math.min(...outline);
       // Well off round, and still recognisably a canopy rather than a shard.
-      expect(ratio).toBeGreaterThan(1.25);
-      expect(ratio).toBeLessThan(2.6);
+      expect(ratio).toBeGreaterThan(1.5);
+      expect(ratio).toBeLessThan(3.2);
+    }
+  });
+
+  it('cuts scallops deep enough to survive being drawn at the size of a tree', () => {
+    // The number this shape was retuned for, and the one thing "several
+    // overlapping circles" is worth nothing without.
+    //
+    // The outline had all of this before and none of it read: with every circle
+    // required to contain the origin, neighbours overlapped so heavily that they
+    // crossed near the rim and the notches came out about 6% of the radius deep.
+    // On a slab foreshortened by an isometric camera that is a couple of pixels,
+    // which is to say an ellipse. Held to the looser star-shape rule instead the
+    // lobes sit out at the rim and their notches cut a fifth of the way in.
+    for (const seed of SEEDS) {
+      const outline = lobeOutline(lobeBlobs(seed, RADIUS, SEGMENTS), SEGMENTS).map((p) => p.radius);
+      const n = outline.length;
+      const depths: number[] = [];
+      for (let i = 0; i < n; i++) {
+        const here = outline[i] as number;
+        if (here >= (outline[(i - 1 + n) % n] as number) || here > (outline[(i + 1) % n] as number)) continue;
+        // Climb out of the notch both ways; the shallower rim is its depth.
+        let up = i;
+        let down = i;
+        while ((outline[(up + 1) % n] as number) >= (outline[up % n] as number)) up++;
+        while ((outline[((down - 1 + n) % n + n) % n] as number) >= (outline[((down % n) + n) % n] as number)) down--;
+        const flank = Math.min(outline[up % n] as number, outline[((down % n) + n) % n] as number);
+        depths.push((flank - here) / RADIUS);
+      }
+      expect(depths.length).toBeGreaterThanOrEqual(3);
+      expect(depths.reduce((a, b) => a + b, 0) / depths.length).toBeGreaterThan(0.15);
+      // ...and no notch is a mere ripple, so none of the lobes is decorative.
+      expect(Math.max(...depths)).toBeGreaterThan(0.2);
+    }
+  });
+
+  it('puts a vertex exactly on every corner, because the corner is the scallop', () => {
+    // Sampling at fixed angular steps essentially never lands on a crossing, so
+    // every notch gets cut across by a chord and the silhouette comes back
+    // rounded -- a union of circles rendered as the ellipse it was specifically
+    // not supposed to be. The crossings are solved for and inserted instead.
+    for (const seed of SEEDS) {
+      const blobs = lobeBlobs(seed, RADIUS, SEGMENTS);
+      const cusps = lobeCusps(blobs);
+      expect(cusps.length).toBeGreaterThanOrEqual(4);
+      const outline = lobeOutline(blobs, SEGMENTS);
+      for (const cusp of cusps) {
+        const wrapped = ((cusp % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+        const nearest = Math.min(
+          ...outline.map((p) => Math.min(Math.abs(p.angle - wrapped), Math.PI * 2 - Math.abs(p.angle - wrapped))),
+        );
+        expect(nearest).toBeLessThan(2e-3);
+      }
+      // ...and the outline carries more vertices than the even steps alone, so
+      // the corners and the lobe tips really were added rather than merged away.
+      expect(outline.length).toBeGreaterThan(SEGMENTS);
     }
   });
 
@@ -89,7 +173,7 @@ describe('the blob outline', () => {
     for (const seed of SEEDS) {
       for (const radius of [12, 44, 90]) {
         const outline = lobeOutline(lobeBlobs(seed, radius, SEGMENTS), SEGMENTS);
-        expect(Math.max(...outline)).toBeCloseTo(radius, 9);
+        expect(Math.max(...outline.map((p) => p.radius))).toBeCloseTo(radius, 9);
       }
     }
   });

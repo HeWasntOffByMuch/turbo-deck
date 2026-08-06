@@ -65,18 +65,45 @@ Pure, in a new `lobe.ts` beside `wind.ts`, with no three.js in it:
 
 ```ts
 interface Blob { readonly x: number; readonly z: number; readonly r: number; }
-function lobeBlobs(seed: number, radius: number, count: number): Blob[];
-function lobeOutline(blobs: readonly Blob[], segments: number): number[];
+interface LobePoint { readonly angle: number; readonly radius: number; }
+function lobeBlobs(seed: number, radius: number, segments: number): Blob[];
+function lobeReach(blobs: readonly Blob[], angle: number): number;
+function lobeCusps(blobs: readonly Blob[]): number[];
+function lobeOutline(blobs: readonly Blob[], segments: number): LobePoint[];
 function slabLayout(shape: LobedShape): SlabSpec[];
 ```
 
-Every blob is placed so the slab's origin is *inside* it (`hypot(x, z) < r`).
-That makes the union star-shaped about the origin, which in turn makes the
-outline exactly `max over blobs of the ray/circle hit distance` at each sampled
-angle — a closed-form union with a scalloped edge where two circles cross, and
-no marching-squares pass to get there. The result is normalised so the widest
-point is exactly `canopySpread`, so `crownRadius` is a fact rather than an
-estimate.
+A slab is a **core circle at the origin plus a ring of lobes** around it. Each
+lobe is held to
+
+    |c|^2 <= coreRadius^2 + r^2
+
+which says the furthest along a ray that the ray can *enter* that lobe — the
+tangent case, `sqrt(|c|^2 - r^2)` — is still inside the core, so the core has
+already covered the gap. The union is therefore star-shaped about the origin,
+which makes the outline exactly `max over blobs of the ray/circle hit distance`
+along each ray: a closed-form union with no marching-squares pass. The result is
+normalised so the widest point is exactly `canopySpread`, so `crownRadius` is a
+fact rather than an estimate.
+
+**Two things the first cut of this got wrong, and both of them turned the
+silhouette back into the ellipse the brief rules out.**
+
+The stricter rule — "every circle contains the origin" — is simpler and looks
+equivalent. It is not: a circle containing the origin spans more than half the
+compass from it, so neighbouring circles overlap enormously and cross near the
+rim. The scallops came out about **6%** of the radius deep, which on a slab an
+isometric camera foreshortens by half is a couple of pixels. Under the looser
+condition the lobes sit out at the rim and their notches cut about **a quarter**
+of the radius.
+
+And the outline is not sampled at even angular steps. A crossing between two
+circles is a *corner*, and a corner is a single point, so evenly-spaced samples
+essentially never land on one — every notch gets cut across by a chord and comes
+back rounded. So `lobeOutline` solves for the crossings and inserts them, plus
+each circle's own bearing (the tip of its lobe, flattened the same way
+otherwise), on top of a floor of `lobeSegments` even steps. A slab's vertex
+count is therefore whatever the shape needs, around thirty, not `lobeSegments`.
 
 The mesh is a domed disc of that outline, duplicated `slabThickness` below
 itself and joined at the rim: a closed shell, convex on top and concave
@@ -118,12 +145,20 @@ sparser canopy rather than a tall bare whip with a stump of foliage halfway up.
 
 - `lobeOutline` is a genuine union: at every sampled angle the outline is at or
   outside every blob it was built from, and it touches at least one of them.
+- The union is star-shaped: walking out along any ray to the boundary, every
+  point on the way is inside some circle. A gap there is a slab with a
+  ring-shaped hole, and the outline would sail over it without noticing.
 - The outline is *not* an ellipse — its radius has several local maxima, and the
   ratio of its largest to smallest radius is well away from 1.
+- Its notches cut deep enough to survive being drawn at the size of a tree:
+  three or more of them, averaging over 15% of the radius. This is the assertion
+  the first version of the shape failed at 6%.
+- Every crossing between two circles has a vertex on it, to within the merge
+  epsilon — the corner is the scallop, and a sampled outline loses it.
 - Normalisation: the widest point of a slab is exactly `canopySpread`.
 - The slab dome rises between 10% and 20% of the slab's width, is highest at the
   centre and flat at the rim, and the underside mirrors it (concave).
-- Blobs all contain the slab origin, which is what makes the radial union exact.
+- Every lobe sits within the star-shape limit, and the core is at the origin.
 - Slabs get smaller from the bottom of the cluster to the top, and neighbouring
   slabs overlap in plan view (centre distance < sum of radii).
 - The trunk tapers monotonically and its top ring is a single point (radius 0),

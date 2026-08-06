@@ -827,27 +827,47 @@ describe('the lobed tree with flat leaves', () => {
       // Element 13 of a column-major Matrix4 is its translation Y.
       .sort((a, b) => (a.matrix.elements[13] ?? 0) - (b.matrix.elements[13] ?? 0));
 
-  /** The world-space normal of a batch's first triangle. */
-  function faceNormal(batch: { mesh: THREE.InstancedMesh; matrix: THREE.Matrix4 }): THREE.Vector3 {
+  /**
+   * The world direction a slab's own up-axis points.
+   *
+   * Read off the instance matrix rather than measured from a triangle: a domed
+   * slab's facets are all tilted by the dome and none of them is the slab's
+   * plane, so a face normal answers a different question depending on which face
+   * you picked. The matrix's second column is the slab's local +Y, exactly.
+   */
+  function slabAxis(batch: { matrix: THREE.Matrix4 }): THREE.Vector3 {
+    const e = batch.matrix.elements;
+    return new THREE.Vector3(e[4] ?? 0, e[5] ?? 0, e[6] ?? 0).normalize();
+  }
+
+  /** The world-space normals of every triangle of a batch. */
+  function faceNormals(batch: { mesh: THREE.InstancedMesh; matrix: THREE.Matrix4 }): THREE.Vector3[] {
     const position = batch.mesh.geometry.getAttribute('position');
     const corner = (i: number): THREE.Vector3 =>
       new THREE.Vector3().fromBufferAttribute(position, i).applyMatrix4(batch.matrix);
-    return new THREE.Vector3()
-      .crossVectors(corner(1).sub(corner(0)), corner(2).sub(corner(0)))
-      .normalize();
+    const out: THREE.Vector3[] = [];
+    for (let i = 0; i < position.count; i += 3) {
+      out.push(new THREE.Vector3().crossVectors(corner(i + 1).sub(corner(i)), corner(i + 2).sub(corner(i))).normalize());
+    }
+    return out;
   }
 
   it('builds each slab as one flat sheet, not two surfaces a hair apart', () => {
     // The bug this exists for draws *identically* until it moves: two coincident
     // sheets Z-fight over every pixel, which reads as a shimmer somebody blames
     // on the renderer rather than on the tree.
-    for (const { mesh } of leaves(find('lobed-flat'))) {
+    const slabs = slabLayout(LOBED_FLAT);
+    leaves(find('lobed-flat')).forEach(({ mesh }, i) => {
       const position = mesh.geometry.getAttribute('position');
-      for (let i = 0; i < position.count; i++) expect(position.getY(i)).toBe(0);
-      // One fan of `lobeSegments` triangles and nothing else: no underside, no
-      // rim, and no interior rings subdividing a plane that has no curve in it.
-      expect(position.count).toBe(LOBED_FLAT.lobeSegments * 3);
-    }
+      for (let k = 0; k < position.count; k++) expect(position.getY(k)).toBe(0);
+      // One fan over the outline and nothing else: no underside, no rim, and no
+      // interior rings subdividing a plane that has no curve in it. One triangle
+      // per outline vertex -- which is more than `lobeSegments`, because the
+      // corners and the lobe tips were inserted on top of the even steps.
+      const outline = (slabs[i] as (typeof slabs)[number]).outline;
+      expect(outline.length).toBeGreaterThan(LOBED_FLAT.lobeSegments);
+      expect(position.count).toBe(outline.length * 3);
+    });
   });
 
   it('is far cheaper than the domed one it is a variant of', () => {
@@ -890,7 +910,7 @@ describe('the lobed tree with flat leaves', () => {
     // random yaw, so it would point a different way on every tree in the wood --
     // which reads as noise rather than as a mistake, and so never gets found.
     const prop = find('lobed-flat');
-    const reference = leaves(prop).map(faceNormal);
+    const reference = leaves(prop).map(slabAxis);
     // Not bit-identical, and it should not be: the tree's own lean *is* applied
     // inside the yaw, so it turns with the prop. What separates the two cases is
     // how far a normal may drift -- the lean is small and bounded, where a baked
@@ -900,7 +920,7 @@ describe('the lobed tree with flat leaves', () => {
     expect(slack).toBeLessThan(LOBED_FLAT.slabPitch);
     for (const rotation of [0.7, 2.4, Math.PI, 5.1]) {
       leaves({ ...prop, rotation }).forEach((batch, i) => {
-        expect(faceNormal(batch).angleTo(reference[i] as THREE.Vector3)).toBeLessThanOrEqual(slack);
+        expect(slabAxis(batch).angleTo(reference[i] as THREE.Vector3)).toBeLessThanOrEqual(slack);
       });
     }
   });
@@ -913,7 +933,10 @@ describe('the lobed tree with flat leaves', () => {
     );
     const up = new THREE.Vector3(0, 1, 0);
     for (const batch of leaves(find('lobed-flat'))) {
-      const normal = faceNormal(batch);
+      const normal = slabAxis(batch);
+      // The sheet really is a plane, and really is square to that axis -- so
+      // what is asserted below about the axis is asserted about the leaf.
+      for (const face of faceNormals(batch)) expect(Math.abs(face.dot(normal))).toBeCloseTo(1, 4);
       // Within the per-instance lean of the pitch. The lean is the tree's own
       // and is applied in the prop's frame, so it is added to this rather than
       // replacing it -- the assertion is "tipped by the pitch", not "tipped by
@@ -928,7 +951,7 @@ describe('the lobed tree with flat leaves', () => {
     // The domed tree keeps its slabs level, which is what makes it read the same
     // from every bearing where this one does not.
     for (const batch of leaves(find('lobed'))) {
-      expect(Math.abs(faceNormal(batch).dot(up))).toBeGreaterThan(0.9);
+      expect(Math.acos(Math.min(1, Math.abs(slabAxis(batch).dot(up))))).toBeLessThanOrEqual(LOBED.leanMax);
     }
   });
 

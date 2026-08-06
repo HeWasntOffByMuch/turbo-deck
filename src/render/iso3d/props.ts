@@ -9,7 +9,6 @@ import {
   LOBED,
   LOBED_FLAT,
   LOBED_SHAPES,
-  lobeOutline,
   lobedCrownRadius,
   slabDrop,
   slabLayout,
@@ -533,17 +532,21 @@ function lobedTrunkGeometry(shape: LobedShape): THREE.BufferGeometry {
  * turns double-sided to buy back what the underside was doing.
  */
 function lobedSlabGeometry(slab: SlabSpec, shape: LobedShape): THREE.BufferGeometry {
-  const segments = shape.lobeSegments;
+  // However many vertices the outline turned out to need -- its corners and its
+  // lobe tips, not a fixed step -- rather than `shape.lobeSegments`, which is
+  // only the floor those were added on top of.
+  const outline = slab.outline;
+  const segments = outline.length;
   const rings = shape.lobeRings;
-  const outline = lobeOutline(slab.blobs, segments);
   const { tri, quad, build } = meshBuilder();
 
   const solid = shape.slabThickness > 0;
   const dome = (u: number): number => slab.rise * (1 - u * u);
   const at = (ring: number, side: number, lower: boolean): Vec3 => {
     const u = ring / rings;
-    const reach = (outline[side % segments] ?? 0) * u;
-    const angle = ((side % segments) / segments) * Math.PI * 2;
+    const point = outline[side % segments];
+    const reach = (point?.radius ?? 0) * u;
+    const angle = point?.angle ?? 0;
     return [Math.cos(angle) * reach, dome(u) - (lower ? shape.slabThickness : 0), Math.sin(angle) * reach];
   };
 
