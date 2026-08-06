@@ -1,5 +1,5 @@
 /**
- * Vite's `?raw` imports, typed (spec 070).
+ * Vite's `?raw` imports, typed (spec 072).
  *
  * The Play view needs the map document *inside the bundle*: it runs the
  * authoritative server in the tab, and that server has no filesystem to read

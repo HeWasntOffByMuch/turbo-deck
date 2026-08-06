@@ -1,5 +1,5 @@
 /**
- * A world that grows as chunks arrive (spec 070 follow-up).
+ * A world that grows as chunks arrive (spec 072 follow-up).
  *
  * The first cut of the streaming client rebuilt everything on every arrival:
  * `loadMap` over the whole held set, every collider, every terrain mesh and all

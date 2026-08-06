@@ -1,5 +1,5 @@
 /**
- * An index over a map document (spec 070).
+ * An index over a map document (spec 072).
  *
  * Two callers need to ask questions of a `MapDocument` that the document itself
  * answers only by linear scan: the wire encoder ("give me layer 0's chunk at

@@ -16,6 +16,7 @@
 import { describe, expect, it } from 'vitest';
 import { BROADCAST_EVERY_N_TICKS, SERVER_TICK_RATE } from '../config.js';
 import { abilityById } from '../data/abilities.js';
+import { attackIntervalTicks } from '../player/stats.js';
 import { LoopbackTransport } from '../net/transport-loop.js';
 import { GameServer } from '../server.js';
 import { CastPhase, type CastState } from '../sim/types.js';
@@ -32,6 +33,7 @@ const STATS: EffectiveStats = {
   attackDamage: 10,
   attackRange: 60,
   attackCooldownTicks: 30,
+  attackSpeed: 1.25,
   armor: 0,
   spellPower: 1,
   critChance: 0,
@@ -112,8 +114,12 @@ describe('the gate, asked of a mirror', () => {
     expect(decision.cast.startedTick).toBe(100);
     expect(decision.cast.releaseTick).toBe(100 + (abilityById('melee.slash')?.windupTicks ?? 0));
     // And the cooldown it expects to have spent runs from the stamp, not the
-    // lookahead, or every press would push the next one further out.
-    expect(decision.readyAtTick).toBe(100 + (abilityById('melee.slash')?.cooldownTicks ?? 0));
+    // lookahead, or every press would push the next one further out. Its
+    // *length* is the caster's own swing cadence rather than the ability
+    // table's number, because slash is the basic attack (spec 070) -- a client
+    // that read the table would grey the button for the wrong span.
+    expect(decision.readyAtTick).toBe(100 + attackIntervalTicks(STATS));
+    expect(attackIntervalTicks(STATS)).not.toBe(abilityById('melee.slash')?.cooldownTicks);
   });
 
   it('starts a cast turning when the body is not yet facing the aim', () => {

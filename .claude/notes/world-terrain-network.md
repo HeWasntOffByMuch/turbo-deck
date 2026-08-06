@@ -1,6 +1,6 @@
 # How terrain/world data reaches the client (traced 2026-08-06)
 
-> **Superseded in part by spec 070, the same day.** The headline below was true
+> **Superseded in part by spec 072, the same day.** The headline below was true
 > when traced and is now history. Terrain *is* sent over the wire: the server
 > runs on a map document (`maps/arena.json`), announces it with `MapInfo`
 > (`0x4e`), and answers `RequestChunk` (`0x0a`) with `MapChunk` (`0x4f`) or

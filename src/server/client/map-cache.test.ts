@@ -1,5 +1,5 @@
 /**
- * What the client asks for, and what it refuses to keep (spec 070).
+ * What the client asks for, and what it refuses to keep (spec 072).
  *
  * The property that matters most is the boring one: **a chunk is asked for
  * once**. A cache that re-asks for what it already holds turns a fixed 0.65 MB

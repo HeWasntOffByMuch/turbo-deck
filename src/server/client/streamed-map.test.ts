@@ -1,5 +1,5 @@
 /**
- * A map assembled chunk by chunk is the same map (spec 070 follow-up).
+ * A map assembled chunk by chunk is the same map (spec 072 follow-up).
  *
  * The incremental path exists for speed, and the only thing that makes it worth
  * having is that it is *not* an approximation: a world built by inserting 56

@@ -20,8 +20,9 @@ import type { ScreenAnchor } from './scene.js';
 import { abilityById, type AbilityDefinition } from '../../../server/data/abilities.js';
 import { EntityKind } from '../../../server/net/protocol.js';
 import { SERVER_TICK_RATE } from '../../../server/config.js';
+import { attackIntervalTicks } from '../../../server/player/stats.js';
 import { castBar } from './cast.js';
-import { appearanceOf } from './appearance.js';
+import { appearanceOf, displayName } from './appearance.js';
 import { pixelTextSvg } from './pixel-font.js';
 
 /** How long a damage number floats, in frames. */
@@ -81,7 +82,14 @@ interface Bar {
 export interface HudHandle {
   readonly element: HTMLElement;
   /** Called once per frame, after the scene has drawn and anchors are current. */
-  update(view: ClientView, anchors: readonly ScreenAnchor[], tick: number, corrections: number): void;
+  update(
+    view: ClientView,
+    anchors: readonly ScreenAnchor[],
+    tick: number,
+    corrections: number,
+    /** The body being attacked, or null (spec 070). Shown as a one-line readout. */
+    targetId: number | null,
+  ): void;
   /** A hit landed on `entityId`. Presentation of something already resolved. */
   addDamage(entityId: number, damage: number, crit: boolean): void;
   /** The server refused a cast, and said why. */
@@ -159,6 +167,10 @@ export function createHud(): HudHandle {
 
     const holder = document.createElement('div');
     holder.style.cssText = 'position:absolute;transform:translate(-50%,-100%);width:52px;';
+    // Says which body this bar belongs to. Nothing in the game reads it; it is
+    // how `scripts/preview-world.ts` finds a real unit on screen to click,
+    // instead of re-deriving the camera projection and testing its own copy.
+    holder.dataset['entity'] = String(id);
 
     const healthTrack = document.createElement('div');
     healthTrack.style.cssText = 'height:4px;background:rgba(0,0,0,.65);border-radius:2px;overflow:hidden;';
@@ -185,6 +197,7 @@ export function createHud(): HudHandle {
     anchors: readonly ScreenAnchor[],
     tick: number,
     corrections: number,
+    targetId: number | null,
   ): void {
     const byId = new Map(view.entities.map((entity) => [entity.id, entity]));
     const casts = new Map(view.casts.map((cast) => [cast.entityId, cast]));
@@ -268,7 +281,15 @@ export function createHud(): HudHandle {
       // client never decides when something is ready.
       const readyAt = view.cooldowns[slot.abilityId] ?? 0;
       const left = readyAt - tick;
-      const total = Math.max(1, slot.ability?.cooldownTicks ?? 1);
+      // The sweep's length is the cadence the cooldown was stamped with, which
+      // for the basic attack is the player's own (spec 070) -- against the
+      // table's number the shade would start part-drained and finish early.
+      const total = Math.max(
+        1,
+        slot.ability?.basicAttack && view.stats
+          ? attackIntervalTicks(view.stats)
+          : (slot.ability?.cooldownTicks ?? 1),
+      );
       if (left > 0) {
         slot.sweep.style.height = `${Math.min(1, left / total) * 100}%`;
         slot.remaining.textContent = formatSeconds(left / SERVER_TICK_RATE);
@@ -287,7 +308,8 @@ export function createHud(): HudHandle {
       `lvl ${view.level}   xp ${view.experience}\n` +
       `monsters ${monsters}   corrections ${corrections}` +
       (view.connected ? '' : '   (disconnected)') +
-      '\nright-click move · left-click swing · WASD · 1-7 abilities · Esc cancel';
+      `\n${targetLine(view, targetId)}` +
+      '\nright-click ground to move, a unit to attack · WASD · 1-7 abilities · Esc cancel';
   }
 
   return {
@@ -331,6 +353,19 @@ export function createHud(): HudHandle {
       useHandler = handler;
     },
   };
+}
+
+/**
+ * The one line of target readout (spec 070). Deliberately one line: knowing
+ * what you are hitting and how much of it is left is the whole job, and a
+ * target frame is a different change.
+ */
+function targetLine(view: ClientView, targetId: number | null): string {
+  const target = targetId === null
+    ? undefined
+    : view.entities.find((entity) => entity.id === targetId);
+  if (!target) return 'no target';
+  return `target ${displayName(target)} ${Math.round(target.health)}/${Math.round(target.maxHealth)}`;
 }
 
 /** A cooldown countdown: whole seconds while there are several, tenths at the end. */

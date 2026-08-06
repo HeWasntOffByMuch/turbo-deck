@@ -99,6 +99,15 @@ export interface UseAbilityMessage {
   readonly targetX: number;
   readonly targetY: number;
   /**
+   * The entity being attacked, or 0 to aim at the point alone (spec 070).
+   *
+   * A request like everything else here: the server checks the id is something
+   * this caster may hit and refuses to land on it otherwise. Sent alongside the
+   * point rather than instead of it, because the point is what the body turns
+   * into and what a client draws while it does.
+   */
+  readonly targetEntityId: number;
+  /**
    * The last input sequence number the client had sent when it asked (spec 067).
    *
    * The server applies one input per tick from a queue, so the tick a request
@@ -165,6 +174,7 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
         .str(message.abilityId)
         .f32(message.targetX)
         .f32(message.targetY)
+        .varuint(message.targetEntityId)
         .varuint(message.afterInputSeq);
       break;
     case ClientMessageType.CancelCast:
@@ -216,6 +226,7 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
         abilityId: reader.str(),
         targetX: reader.f32(),
         targetY: reader.f32(),
+        targetEntityId: reader.varuint(),
         afterInputSeq: reader.varuint(),
       };
     case ClientMessageType.CancelCast:
@@ -360,6 +371,8 @@ export interface CastStateMessage {
   readonly endTick: number;
   readonly targetX: number;
   readonly targetY: number;
+  /** The entity it was aimed at, or 0 for a point aim (spec 070). */
+  readonly targetEntityId: number;
 }
 
 export interface CastEndedMessage {
@@ -520,6 +533,7 @@ function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
     .f32(stats.attackDamage)
     .f32(stats.attackRange)
     .u16(stats.attackCooldownTicks)
+    .f32(stats.attackSpeed)
     .f32(stats.armor)
     .f32(stats.spellPower)
     .f32(stats.critChance)
@@ -535,6 +549,7 @@ function readStats(reader: BufferReader): EffectiveStats {
     attackDamage: reader.f32(),
     attackRange: reader.f32(),
     attackCooldownTicks: reader.u16(),
+    attackSpeed: reader.f32(),
     armor: reader.f32(),
     spellPower: reader.f32(),
     critChance: reader.f32(),
@@ -627,7 +642,8 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
         .u32(message.releaseTick)
         .u32(message.endTick)
         .f32(message.targetX)
-        .f32(message.targetY);
+        .f32(message.targetY)
+        .varuint(message.targetEntityId);
       break;
     case ServerMessageType.CastEnded:
       writer.varuint(message.entityId).str(message.abilityId).u8(message.reason);
@@ -741,6 +757,7 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         endTick: reader.u32(),
         targetX: reader.f32(),
         targetY: reader.f32(),
+        targetEntityId: reader.varuint(),
       };
     case ServerMessageType.CastEnded:
       return {

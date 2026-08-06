@@ -1,4 +1,4 @@
-# 070 — The map on the wire
+# 072 — The map on the wire
 
 ## Problem
 

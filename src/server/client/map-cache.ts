@@ -1,5 +1,5 @@
 /**
- * What a client knows of the map, and what it still needs (spec 070).
+ * What a client knows of the map, and what it still needs (spec 072).
  *
  * Pure: no transport, no clock, no DOM. It is handed a `MapInfo`, told where
  * the player is, and answers "ask for these next" -- which makes the whole

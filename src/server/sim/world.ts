@@ -83,6 +83,7 @@ function blankEntity(id: number): ServerEntity {
       attackDamage: 0,
       attackRange: 0,
       attackCooldownTicks: 1,
+      attackSpeed: 1,
       armor: 0,
       spellPower: 1,
       critChance: 0,
@@ -370,6 +371,7 @@ export function step(
         abilityId: intent.castAbilityId,
         targetX: intent.castTargetX,
         targetY: intent.castTargetY,
+        targetEntityId: intent.castTargetEntityId,
       };
       const started = startCast(current, attempt, tick);
       if (started.ok) {
@@ -627,6 +629,9 @@ function monsterIntent(
       castAbilityId: wantsToSwing && swing ? swing.id : '',
       castTargetX: target.position.x,
       castTargetY: target.position.y,
+      // Monsters attack by id like everyone else since spec 070, so a swing
+      // aimed at one player cannot catch another who walked through the arc.
+      castTargetEntityId: target.id,
       cancelCast: false,
     },
   };

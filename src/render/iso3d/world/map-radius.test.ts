@@ -1,5 +1,5 @@
 /**
- * The chunk request window has to cover what the camera can frame (spec 070).
+ * The chunk request window has to cover what the camera can frame (spec 072).
  *
  * The sibling of `interest.test.ts`, and it lives here for the same reason: this
  * is the only place both facts are importable, since the server may not import

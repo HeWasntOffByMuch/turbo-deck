@@ -26,7 +26,7 @@ export const ClientMessageType = {
   UseAbility: 0x08,
   /** Withdraw from whatever is winding up. */
   CancelCast: 0x09,
-  /** Ask for one chunk of the map document (spec 070). */
+  /** Ask for one chunk of the map document (spec 072). */
   RequestChunk: 0x0a,
 } as const;
 
@@ -55,7 +55,7 @@ export const ServerMessageType = {
    */
   Cooldowns: 0x4d,
   /**
-   * Everything about the map that is not per-chunk (spec 070): the grid, the
+   * Everything about the map that is not per-chunk (spec 072): the grid, the
    * arena, the layer scalars and which chunks exist. Sent once, straight after
    * the welcome, because a client can ask for nothing until it has it.
    */
@@ -66,7 +66,7 @@ export const ServerMessageType = {
   ChunkDenied: 0x50,
 } as const;
 
-/** Why a chunk request was refused (spec 070). */
+/** Why a chunk request was refused (spec 072). */
 export const ChunkDeniedReason = {
   /** The player is not standing near enough to that chunk to be told about it. */
   OutOfRange: 0,

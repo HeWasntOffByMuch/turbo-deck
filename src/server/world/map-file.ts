@@ -1,5 +1,5 @@
 /**
- * Reading the map off disk (spec 070).
+ * Reading the map off disk (spec 072).
  *
  * The one impure corner of `src/server/world/`, and deliberately tiny: it reads
  * a file and hands the text to `parseMap`. Everything that *decides* anything --
@@ -30,7 +30,7 @@ export interface LoadedMapFile {
  * Throws on a missing or malformed file, and the caller is expected to let that
  * kill the process. There is deliberately no fallback to the generator: a
  * server that quietly plays a different world than the one in `maps/` is
- * precisely the failure spec 070 exists to remove, and it would be invisible
+ * precisely the failure spec 072 exists to remove, and it would be invisible
  * until a player walked through a wall someone had drawn.
  */
 export function loadMapFile(path: string = DEFAULT_MAP_PATH): LoadedMapFile {

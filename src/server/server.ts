@@ -152,7 +152,7 @@ interface Connection {
    */
   sentResource: number;
   sentResourceTick: number;
-  /** Token bucket on map chunk sends (spec 070). */
+  /** Token bucket on map chunk sends (spec 072). */
   readonly chunkBudget: ChunkBudget;
   /**
    * Abilities asked for and not yet committed, each stamped with the input it
@@ -182,6 +182,8 @@ interface PendingCast {
   readonly abilityId: string;
   readonly targetX: number;
   readonly targetY: number;
+  /** The entity asked for by id, or 0 for a point aim (spec 070). */
+  readonly targetEntityId: number;
   /** Commit on the tick this input seq is applied, not on the tick it arrived. */
   readonly afterInputSeq: number;
 }
@@ -203,7 +205,7 @@ export class GameServer implements AdminHost {
   private readonly transport: ServerTransport;
   /**
    * The map this server serves, or null when it was built from a bare seed
-   * (spec 070). Null means chunk requests are refused as `Unknown` and no
+   * (spec 072). Null means chunk requests are refused as `Unknown` and no
    * `MapInfo` is sent -- which is what a flat-plane unit test wants.
    */
   private readonly mapIndex: MapIndex | null;
@@ -354,6 +356,7 @@ export class GameServer implements AdminHost {
           castAbilityId: '',
           castTargetX: 0,
           castTargetY: 0,
+          castTargetEntityId: 0,
           cancelCast: false,
         });
         break;
@@ -394,6 +397,7 @@ export class GameServer implements AdminHost {
           abilityId: message.abilityId,
           targetX: message.targetX,
           targetY: message.targetY,
+          targetEntityId: message.targetEntityId,
           afterInputSeq: message.afterInputSeq,
         });
         break;
@@ -501,7 +505,7 @@ export class GameServer implements AdminHost {
   }
 
   /**
-   * Everything about the map that is not per-chunk, unprompted (spec 070).
+   * Everything about the map that is not per-chunk, unprompted (spec 072).
    *
    * Pushed rather than requested because a client can ask for nothing until it
    * has it: the chunk list in here is what tells it which chunks exist, and the
@@ -729,6 +733,7 @@ export class GameServer implements AdminHost {
           castAbilityId: cast?.abilityId ?? '',
           castTargetX: cast?.targetX ?? 0,
           castTargetY: cast?.targetY ?? 0,
+          castTargetEntityId: cast?.targetEntityId ?? 0,
           cancelCast: cancel,
         });
         connection.appliedSeq = next.seq;
@@ -749,6 +754,7 @@ export class GameServer implements AdminHost {
           castAbilityId: cast?.abilityId ?? '',
           castTargetX: cast?.targetX ?? 0,
           castTargetY: cast?.targetY ?? 0,
+          castTargetEntityId: cast?.targetEntityId ?? 0,
           cancelCast: cancel,
         });
       }
@@ -945,6 +951,7 @@ export class GameServer implements AdminHost {
             endTick: event.endTick,
             targetX: event.targetX,
             targetY: event.targetY,
+            targetEntityId: event.targetEntityId,
           });
           this.sendToWatchersOf(event.entityId, bytes);
           break;

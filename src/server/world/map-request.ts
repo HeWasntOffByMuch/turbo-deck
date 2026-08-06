@@ -1,5 +1,5 @@
 /**
- * Deciding whether to serve a chunk request (spec 070).
+ * Deciding whether to serve a chunk request (spec 072).
  *
  * Pure, and separate from `server.ts` on purpose: "may this player read this
  * chunk" is a rule, and a rule that lives inside a transport handler is a rule

@@ -1,5 +1,5 @@
 /**
- * Who may read which chunk, and how fast (spec 070).
+ * Who may read which chunk, and how fast (spec 072).
  *
  * The two guards are tested separately because they fail differently: a broken
  * range check leaks the whole map to anyone who asks, and a broken bucket lets

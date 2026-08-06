@@ -1,5 +1,5 @@
 /**
- * Turning what arrived back into a document (spec 070).
+ * Turning what arrived back into a document (spec 072).
  *
  * Pure, and deliberately trivial: a `MapInfo` plus the chunks held so far is
  * already a `MapDocument` in every respect but its shape, so this is a reshuffle

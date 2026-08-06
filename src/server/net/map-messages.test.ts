@@ -1,5 +1,5 @@
 /**
- * The map survives the wire exactly (spec 070).
+ * The map survives the wire exactly (spec 072).
  *
  * "Exactly" is the whole test. A chunk that decoded to values a few ulps off
  * would look perfect and be wrong: the client's `heightAt` would sit

@@ -1,5 +1,5 @@
 /**
- * Frame times through a cold start (spec 070 follow-up).
+ * Frame times through a cold start (spec 072 follow-up).
  *
  * Chunk streaming is the first thing this game does that competes with the
  * render loop for the main thread, and "it looks fine in a screenshot" cannot

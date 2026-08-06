@@ -72,6 +72,15 @@ export interface CastState {
   /** Aim captured at commit, so turning mid-cast cannot re-aim a landed blow. */
   readonly targetX: number;
   readonly targetY: number;
+  /**
+   * The entity this cast was aimed at, or 0 for an aim at a point (spec 070).
+   *
+   * A melee cast that names one resolves against that entity and nothing else:
+   * an attack is single-target, and a bystander who wandered into the arc is a
+   * bystander. The point aim is still captured alongside it, because that is
+   * what the body turns into and what the client draws.
+   */
+  readonly targetEntityId: number;
   /** Channels only: the next tick a pulse is due. */
   readonly nextPulseTick: number;
 }
@@ -226,6 +235,8 @@ export interface ServerInput {
   readonly castAbilityId: string;
   readonly castTargetX: number;
   readonly castTargetY: number;
+  /** The entity asked for by id, or 0 to aim at the point alone (spec 070). */
+  readonly castTargetEntityId: number;
   /** Withdraw from whatever is winding up. Honoured before any new commit. */
   readonly cancelCast: boolean;
 }
@@ -259,6 +270,7 @@ export type ServerSimEvent =
       readonly endTick: number;
       readonly targetX: number;
       readonly targetY: number;
+      readonly targetEntityId: number;
     }
   | {
       readonly kind: 'castEnded';

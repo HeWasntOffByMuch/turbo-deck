@@ -90,13 +90,15 @@ export const INTEREST_CHUNK_RADIUS = 8;
  * the same point in the input stream on both ends (spec 067).
  * 5: the cooldown message carries the caster's live resource and the tick it was
  * true on, so a client can decide whether it can afford a blow (spec 069).
- * 6: the world is a map document rather than a seed, so terrain travels as
- * `MapInfo` plus requested `MapChunk`s instead of being rederived (spec 070).
+ * 6: an ability request names the entity it means to hit, not just a point, so
+ * a right-click lands on the unit under it (spec 070).
+ * 7: the world is a map document rather than a seed, so terrain travels as
+ * `MapInfo` plus requested `MapChunk`s instead of being rederived (spec 072).
  */
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 
 /**
- * How far from a map chunk a player may be and still be sent it (spec 070).
+ * How far from a map chunk a player may be and still be sent it (spec 072).
  *
  * In *map* chunks -- the document's own 616-unit geometry buckets -- not the
  * 400-unit interest chunks of {@link CHUNK_SIZE}. Three independent grids now
@@ -119,7 +121,7 @@ export const PROTOCOL_VERSION = 6;
 export const MAP_CHUNK_REQUEST_RADIUS = 6;
 
 /**
- * Token bucket on chunk sends, per connection (spec 070).
+ * Token bucket on chunk sends, per connection (spec 072).
  *
  * The radius check bounds *where* a client may read; this bounds how fast. They
  * are not the same guard: every chunk under a standing player is permanently in

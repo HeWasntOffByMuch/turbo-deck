@@ -1,5 +1,5 @@
 /**
- * The map on disk (spec 070).
+ * The map on disk (spec 072).
  *
  * Covers the two things that can rot without anyone noticing: the bake stops
  * being reproducible, and the shipped file stops being loadable.

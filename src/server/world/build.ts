@@ -60,7 +60,7 @@ export function buildWorld(seed: number): BuiltWorld {
   };
 }
 
-/** A world the server plays on, plus the document it came from (spec 070). */
+/** A world the server plays on, plus the document it came from (spec 072). */
 export interface BuiltMapWorld extends BuiltWorld {
   readonly doc: MapDocument;
   /** Chunk lookup for the wire, and the layer scalars a client needs to mesh. */
@@ -69,7 +69,7 @@ export interface BuiltMapWorld extends BuiltWorld {
 
 /**
  * The world a **map document** describes -- what the server actually runs on
- * since spec 070.
+ * since spec 072.
  *
  * Structurally the same three steps as {@link buildWorld}, with the generator
  * swapped for `loadMap`: the terrain is array-backed rather than a field, and
@@ -92,7 +92,7 @@ export function buildWorldFromMap(doc: MapDocument, serialized: string): BuiltMa
 
 /**
  * The same build without the index -- what a *client* has, since it holds some
- * chunks rather than a document it can hash (spec 070).
+ * chunks rather than a document it can hash (spec 072).
  *
  * Shared with {@link buildWorldFromMap} rather than reimplemented, so a client
  * assembling a world out of streamed chunks runs the identical three steps the

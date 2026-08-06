@@ -1,5 +1,5 @@
 /**
- * Bake the generated world into a map document on disk (spec 070).
+ * Bake the generated world into a map document on disk (spec 072).
  *
  * This is how `maps/arena.json` is made, and the only sanctioned way to
  * regenerate it. After that the *editor* owns the file: load it, brush it, save

@@ -1,5 +1,5 @@
 /**
- * The map reaches the client, and the two ends agree on the ground (spec 070).
+ * The map reaches the client, and the two ends agree on the ground (spec 072).
  *
  * A real `GameServer` built from the shipped map, a real `GameClient`, and real
  * encoded frames over a loopback -- the same harness shape `session.test.ts`

@@ -178,7 +178,7 @@ export class MapChunkStore {
   }
 
   /**
-   * Add (or replace) one chunk after construction (spec 070).
+   * Add (or replace) one chunk after construction (spec 072).
    *
    * A store is a sparse map from `(cx, cz)` to arrays, not a dense grid, so a
    * layer is free to gain chunks later. That is what lets a client stream a map

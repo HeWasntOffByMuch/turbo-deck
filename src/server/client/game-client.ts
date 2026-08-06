@@ -40,7 +40,7 @@ import {
 import { MAP_CHUNK_REQUEST_RADIUS, PROTOCOL_VERSION } from '../config.js';
 
 /**
- * How many chunks one pass may ask for (spec 070).
+ * How many chunks one pass may ask for (spec 072).
  *
  * Comfortably under the server's `MAP_CHUNK_BURST`, so the throttle is a guard
  * against a misbehaving client rather than something that shapes the stream in
@@ -101,7 +101,7 @@ export interface GameClientOptions {
 }
 
 /** What the renderer reads. Read-only, and free of anything derived. */
-/** The map, as a renderer sees it (spec 070). */
+/** The map, as a renderer sees it (spec 072). */
 export interface ClientMapView {
   readonly info: MapInfoMessage;
   readonly chunks: readonly HeldChunk[];
@@ -159,7 +159,7 @@ export interface ClientView {
   readonly worldSeed: number | null;
   /**
    * The map the server is serving, and the pieces of it that have arrived
-   * (spec 070). Null until `MapInfo` lands.
+   * (spec 072). Null until `MapInfo` lands.
    *
    * This -- not {@link worldSeed} -- is where a renderer's terrain comes from
    * now. The seed stays for provenance and for the fight's RNG; it stopped
@@ -286,13 +286,15 @@ export interface KnownCast {
   readonly endTick: number;
   readonly targetX: number;
   readonly targetY: number;
+  /** The body it was aimed at, or 0 for a point aim (spec 070). */
+  readonly targetEntityId: number;
 }
 
 export class GameClient {
   private readonly world = new ReplicatedWorld();
   private prediction: PredictionBuffer | null = null;
   private welcome: WelcomeInfo | null = null;
-  /** The map and the chunks of it that have arrived (spec 070). */
+  /** The map and the chunks of it that have arrived (spec 072). */
   private mapCache: MapChunkCache | null = null;
   /** Ticks to wait before asking for chunks again, after being throttled. */
   private chunkBackoffTicks = 0;
@@ -470,7 +472,7 @@ export class GameClient {
    * answers, this client asks for no movement. The request carries the last
    * input seq so the server commits at the same point in the stream.
    */
-  useAbility(abilityId: string, targetX = 0, targetY = 0): void {
+  useAbility(abilityId: string, targetX = 0, targetY = 0, targetEntityId = 0): void {
     if (!this.connected) return;
     this.requestedAbilityId = abilityId;
     const aim = { x: targetX, y: targetY };
@@ -497,8 +499,25 @@ export class GameClient {
     // guess is wrong (spec 067); walking through a commit costs a correction.
     const commitAt = this.estimated + this.commitDelayTicks();
     const mirror = this.mirror(commitAt);
+    // Readiness is judged at the tick the server will *commit* on -- the same
+    // tick the cast is stamped for. One number, asked once (spec 070).
+    //
+    // 069 judged it at `estimated + roundTrip` and leaned deliberately forward,
+    // on the argument that failing to predict a commit costs more than
+    // predicting one that is refused. The lean was measuring the wrong gap: a
+    // request waits on the input *queue*, not on the wire, and on a loopback
+    // that is three ticks while the round trip is zero. Every cooldown this
+    // client stamps already runs from `commitAt`, so asking "is it ready now"
+    // against a number stamped for later made the client pessimistic by exactly
+    // the queue depth, and drew no bar at all for a swing the server took.
+    //
+    // Leaning *past* `commitAt` is worse than either, and the harness says so
+    // plainly: the extra requests are refused, and a refusal stamps a cooldown
+    // of its own that outlives the press it came from and blocks the next real
+    // one. Judging at the commit tick is not a compromise between the two -- it
+    // is the only tick about which there is anything true to say.
     const decision = mirror
-      ? mayCast(mirror, abilityId, aim, this.estimated + this.measuredRoundTrip(), commitAt)
+      ? mayCast(mirror, abilityId, aim, commitAt, commitAt, targetEntityId)
       : null;
     const id = this.nextCastRequestId;
     this.nextCastRequestId += 1;
@@ -533,6 +552,7 @@ export class GameClient {
         abilityId,
         targetX,
         targetY,
+        targetEntityId,
         afterInputSeq: this.seq,
       }),
     );
@@ -632,6 +652,7 @@ export class GameClient {
         phase: confirmed.phase,
         targetX: confirmed.targetX,
         targetY: confirmed.targetY,
+        targetEntityId: confirmed.targetEntityId,
         nextPulseTick: 0,
       };
     }
@@ -908,6 +929,7 @@ export class GameClient {
         endTick: this.predictedCast.endTick,
         targetX: this.predictedCast.targetX,
         targetY: this.predictedCast.targetY,
+        targetEntityId: this.predictedCast.targetEntityId,
       });
     }
     return casts;
@@ -1067,6 +1089,7 @@ export class GameClient {
           endTick: message.endTick,
           targetX: message.targetX,
           targetY: message.targetY,
+          targetEntityId: message.targetEntityId,
         });
         if (message.entityId === this.welcome?.entityId) {
           this.requestedAbilityId = null;

@@ -1,5 +1,5 @@
 /**
- * The map on the wire (spec 070).
+ * The map on the wire (spec 072).
  *
  * Kept out of `messages.ts` because it is a different kind of traffic: the game
  * messages describe a world that is changing twenty times a second, and these

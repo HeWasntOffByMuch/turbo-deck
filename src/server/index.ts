@@ -45,7 +45,7 @@ const adminSecret = configuredSecret ?? randomBytes(32).toString('hex');
  * below -- real ground, and an empty vegetation list next to it, so the server
  * walked through every tree in the world it had just generated.
  *
- * Since spec 070 that build reads a **map document**: the world is the file the
+ * Since spec 072 that build reads a **map document**: the world is the file the
  * editor writes, not the feature list the generator evaluates. A map that will
  * not parse takes the boot down rather than falling back, because a server
  * silently playing a different world than the one in `maps/` is invisible until
