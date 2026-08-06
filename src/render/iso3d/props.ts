@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 import { hashUnit2 } from '../../shared/hash.js';
 import { FENCE_KINDS, FENCE_TILE_LENGTH, type FenceKind, type Prop } from '../../terrain/vegetation.js';
+import { applySway, bakeBend, disposeSway, type SwayInstance } from './sway.js';
+import { stiffness } from './wind.js';
 
 /**
  * Batched scenery for the whole world (spec 043/045). The scatter puts a
@@ -47,6 +49,8 @@ const HASH_LEAN = 0x5eed04;
 const HASH_JITTER_POS = 0x5eed05;
 const HASH_JITTER_ROT = 0x5eed06;
 const HASH_JITTER_SIZE = 0x5eed07;
+/** A tree's own offset into the wind's clock (spec 073). */
+const HASH_WIND_PHASE = 0x5eed08;
 
 /** Fraction of trees that are pines rather than firs. */
 const PINE_SHARE = 0.38;
@@ -110,6 +114,13 @@ interface PropPart {
    * because that fence happened to vary.
    */
   readonly uniformColor?: number;
+  /**
+   * This part leans in the wind (spec 073). Set on tree parts and nothing else:
+   * the geometry carries a baked `aBend` weight and the batch gets the sway
+   * patch, its two shadow materials, and a bounding sphere with room in it for
+   * the lean. A part without it is drawn exactly as it was before.
+   */
+  readonly sway?: boolean;
 }
 
 /**
@@ -288,12 +299,17 @@ function treeParts(species: TreeSpecies): PropPart[] {
   const shape = SPECIES[species];
   const trunkWidth = shape.trunkWidth;
   const height = trunkHeight(species);
+  // The bend weight is measured against the tallest the species reaches, not
+  // against the part, so the trunk and the crown above it lie on one continuous
+  // curve rather than each running 0..1 within itself.
+  const full = speciesHeight(species);
   const parts: PropPart[] = [
     {
       geometry: new THREE.BoxGeometry(trunkWidth, height, trunkWidth),
       offsetY: height / 2,
       color: PALETTE.trunk,
       foliage: false,
+      sway: true,
     },
   ];
   shape.tiers.forEach(([radius, tierHeight, baseY], tier) => {
@@ -306,10 +322,32 @@ function treeParts(species: TreeSpecies): PropPart[] {
       tier,
       driftMax: sway.drift,
       leanMax: sway.lean,
+      sway: true,
     });
   });
+  for (const part of parts) bakeBend(part.geometry, part.offsetY, full);
   return parts;
 }
+
+/**
+ * How stiff each species is, from its trunk against its full height. Both
+ * conifers carry the same 12-unit trunk today, so the two answers are within a
+ * hair of each other -- the term is here because a species that grows a stouter
+ * trunk should sway less for it, and that should not need a second edit here to
+ * take effect.
+ */
+const SPECIES_STIFFNESS: Record<TreeSpecies, number> = {
+  fir: stiffness(SPECIES.fir.trunkWidth / 2, speciesHeight('fir')),
+  pine: stiffness(SPECIES.pine.trunkWidth / 2, speciesHeight('pine')),
+};
+
+/**
+ * Seconds either side of the shared clock a tree's own sway may sit. Small: the
+ * travelling wave is what should decorrelate a grove, and a large offset would
+ * dissolve the wave into noise. This only breaks the tie between two trees the
+ * wave reaches at the same moment.
+ */
+const PHASE_SPREAD = 0.25;
 
 function bushParts(): PropPart[] {
   return [
@@ -981,6 +1019,11 @@ export function buildPropField(
       // dappled shade onto the ground is what stops props reading as decals.
       mesh.castShadow = true;
       mesh.receiveShadow = true;
+      // What the wind is sampled with, once per tree (spec 073). Gathered
+      // alongside the matrices rather than in a second pass, because it is the
+      // same three numbers the matrix is being composed from.
+      const swaying: SwayInstance[] = [];
+      let swayHeight = 0;
 
       grown.forEach((prop, i) => {
         const s = prop.scale;
@@ -1062,10 +1105,28 @@ export function buildPropField(
               : shadedColor(part.color, prop.tint, part.tintAmount ?? 0, (part.jitterTint ?? 0) * wobbleSize),
         );
         mesh.setColorAt(i, color);
+
+        if (part.sway && variant) {
+          // The tree's *ground point*, not this part's origin. Every batch a
+          // tree appears in writes the same three numbers here, which is what
+          // makes the trunk and the four cones above it lean as one thing.
+          const treeHeight = speciesHeight(variant.species) * s;
+          swayHeight = Math.max(swayHeight, treeHeight);
+          swaying.push({
+            baseX: prop.x,
+            baseY: heightAt(prop.x, prop.y),
+            baseZ: prop.y,
+            stiffness: SPECIES_STIFFNESS[variant.species],
+            phase: hashUnit2(cellX, cellZ, HASH_WIND_PHASE) * 2 * PHASE_SPREAD - PHASE_SPREAD,
+          });
+        }
       });
 
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      if (swaying.length === grown.length && swaying.length > 0) {
+        applySway(mesh, swaying, swayHeight);
+      }
       group.add(mesh);
       geometries.push(part.geometry);
       materials.push(material);
@@ -1113,6 +1174,11 @@ export function buildPropField(
     group,
     undrawn,
     dispose(): void {
+      // The sway patch hangs two shadow materials off each swaying batch that
+      // nothing else owns (spec 073), so they are freed with the batch.
+      for (const child of group.children) {
+        if (child instanceof THREE.InstancedMesh) disposeSway(child);
+      }
       for (const geo of geometries) geo.dispose();
       for (const mat of materials) mat.dispose();
       group.clear();
