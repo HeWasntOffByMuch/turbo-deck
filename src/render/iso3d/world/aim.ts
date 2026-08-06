@@ -46,6 +46,47 @@ export function aimGesture(ability: AbilityDefinition): AimGesture {
   }
 }
 
+/** What a hotbar press turns into. */
+export type AimStart =
+  /** Nothing to aim: ask for it now. */
+  | { readonly kind: 'cast' }
+  /** Draw the shape and wait for the click that answers it. */
+  | { readonly kind: 'aim'; readonly gesture: AimGesture }
+  /** Not the player's to make yet. Nothing is drawn, and nothing is sent. */
+  | { readonly kind: 'refused'; readonly reason: 'onCooldown' };
+
+export interface AimStartInput {
+  /** The tick this ability is ready again, from the server's own table. */
+  readonly readyAtTick: number;
+  /** The client's estimate of the server's tick. */
+  readonly tick: number;
+}
+
+/**
+ * What a press does, decided in one place before anything is drawn.
+ *
+ * An aim is refused while its ability is on cooldown rather than started and
+ * left standing. A shape on the ground that cannot be thrown is a place to park
+ * a press until the timer comes back, which is a queue -- and the whole point of
+ * a wind-up you can be seen entering is that what you commit to is something you
+ * can do *now*.
+ *
+ * The cooldown is the server's own number played back, exactly as `autoAttack`
+ * plays it back to decide whether a swing is worth asking for. The client never
+ * decides when something is ready; it decides whether asking is worth the round
+ * trip, and a request the server would refuse costs a `castRejected` and a
+ * cooldown guess to take back again.
+ *
+ * A `'self'` cast is gated too, though it has nothing to aim. One rule reads
+ * better than "gated, except the instant ones", and the answer is the one the
+ * server would have sent back a tick later anyway.
+ */
+export function startAim(ability: AbilityDefinition, input: AimStartInput): AimStart {
+  if (input.tick < input.readyAtTick) return { kind: 'refused', reason: 'onCooldown' };
+  const gesture = aimGesture(ability);
+  return gesture === 'none' ? { kind: 'cast' } : { kind: 'aim', gesture };
+}
+
 /** What to draw on the ground while aiming. */
 export type AimShape =
   | { readonly kind: 'none' }
@@ -173,10 +214,12 @@ export function castOrder(input: CastOrderInput): CastOrderStep {
     return { chaseTo: standoffPoint(input.self, at, reach), cast: null, drop: false };
   }
 
-  // In reach, and the cooldown is the server's number played back. An order
-  // waits on it exactly the way it waits on the range -- which is the only
-  // answer that does not need a second rule for a press a quarter-second early.
-  if (input.tick < input.readyAtTick) return NOTHING;
+  // In reach, and not ready: the order is dropped rather than parked. It waits
+  // on the range, because walking is what it is for, and on nothing else --
+  // holding here is the queue `startAim` refuses a press to avoid, arrived at
+  // by the back door. Unreachable while that gate holds, and this is what it
+  // does if it ever stops.
+  if (input.tick < input.readyAtTick) return { chaseTo: null, cast: null, drop: true };
 
   return {
     chaseTo: null,

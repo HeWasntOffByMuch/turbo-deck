@@ -46,7 +46,7 @@ import { createHud, HOTBAR } from './hud.js';
 import { appearanceOf } from './appearance.js';
 import { moveIntent, MOVE_KEYS, RoutePlanner } from './intent.js';
 import { autoAttack } from './target.js';
-import { aimGesture, aimShape, castOrder, type AimGesture, type AimOrder } from './aim.js';
+import { aimShape, castOrder, startAim, type AimGesture, type AimOrder } from './aim.js';
 import { WorldScene, type AimIndicator } from './scene.js';
 import { spawnerLabels } from './spawner-overlay.js';
 
@@ -259,14 +259,26 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     const ability = abilityById(abilityId);
     if (!ability) return;
 
-    const gesture = aimGesture(ability);
-    if (gesture === 'none') {
+    const view = client.view();
+    const start = startAim(ability, {
+      readyAtTick: view.cooldowns[abilityId] ?? 0,
+      tick: view.estimatedTick,
+    });
+
+    if (start.kind === 'refused') {
+      // Said out loud in the same line the server's refusals use, so a dead
+      // press is never silent. Nothing else moves: a key that does nothing does
+      // nothing, so a standing aim is left exactly as it was.
+      hud.notice(`${ability.name}: ${start.reason}`);
+      return;
+    }
+    if (start.kind === 'cast') {
       castNow(abilityId, worldAim(), 0);
       return;
     }
     // A second press replaces the first rather than queueing behind it. There
     // is one aim, and it is whichever one you reached for last.
-    pendingAim = { abilityId, gesture };
+    pendingAim = { abilityId, gesture: start.gesture };
   }
 
   /** Commit: send the request, and give up everything that would fight it. */

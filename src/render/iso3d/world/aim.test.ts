@@ -9,6 +9,7 @@ import {
   aimGesture,
   aimShape,
   castOrder,
+  startAim,
   type AimOrder,
   type CastOrderInput,
 } from './aim.js';
@@ -33,6 +34,37 @@ describe('the gesture an ability asks for (spec 080)', () => {
   it('answers for every ability in the table', () => {
     for (const entry of ALL_ABILITIES) {
       expect(['none', 'unit', 'ground']).toContain(aimGesture(entry));
+    }
+  });
+});
+
+describe('what a press turns into (spec 080)', () => {
+  const ready = { readyAtTick: 0, tick: 100 };
+
+  it('asks for a self cast now, and aims everything else', () => {
+    expect(startAim(ability('self.mend'), ready)).toEqual({ kind: 'cast' });
+    expect(startAim(ability('bolt.seek'), ready)).toEqual({ kind: 'aim', gesture: 'unit' });
+    expect(startAim(ability('ground.quake'), ready)).toEqual({ kind: 'aim', gesture: 'ground' });
+  });
+
+  it('refuses a press while the ability is on cooldown, whatever it aims at', () => {
+    const cooling = { readyAtTick: 120, tick: 100 };
+    for (const id of ['self.mend', 'bolt.seek', 'ground.quake', 'melee.heavy']) {
+      expect(startAim(ability(id), cooling), id).toEqual({
+        kind: 'refused',
+        reason: 'onCooldown',
+      });
+    }
+  });
+
+  it('allows it on the very tick the cooldown comes back, and not before', () => {
+    expect(startAim(ability('ground.quake'), { readyAtTick: 120, tick: 119 }).kind).toBe('refused');
+    expect(startAim(ability('ground.quake'), { readyAtTick: 120, tick: 120 }).kind).toBe('aim');
+  });
+
+  it('never refuses an ability with no cooldown standing against it', () => {
+    for (const entry of ALL_ABILITIES) {
+      expect(startAim(entry, ready).kind, entry.id).not.toBe('refused');
     }
   });
 });
@@ -127,11 +159,20 @@ describe('one tick of a confirmed aim (spec 080)', () => {
     });
   });
 
-  it('waits on the cooldown the way it waits on the range, then throws', () => {
+  it('drops rather than waiting when it arrives with the ability not ready', () => {
+    // An order waits on the range and on nothing else: parking here would be
+    // the queue `startAim` refuses a press to avoid, reached by the back door.
     const early = step({ self: { x: 400, y: 0 }, tick: 100, readyAtTick: 120 });
-    expect(early).toEqual({ chaseTo: null, cast: null, drop: false });
-    const later = step({ self: { x: 400, y: 0 }, tick: 120, readyAtTick: 120 });
-    expect(later.cast?.abilityId).toBe('bolt.seek');
+    expect(early).toEqual({ chaseTo: null, cast: null, drop: true });
+    const ready = step({ self: { x: 400, y: 0 }, tick: 120, readyAtTick: 120 });
+    expect(ready.cast?.abilityId).toBe('bolt.seek');
+  });
+
+  it('still walks toward a mark while the ability comes back, and gives up on arrival', () => {
+    // Out of reach, the cooldown is not what is stopping it, so it walks.
+    const far = step({ self: { x: -600, y: 0 }, tick: 100, readyAtTick: 120 });
+    expect(far.chaseTo).not.toBeNull();
+    expect(far.drop).toBe(false);
   });
 
   it('drops a unit order whose mark died or left the world', () => {

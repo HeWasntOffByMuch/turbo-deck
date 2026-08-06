@@ -556,6 +556,21 @@ async function main(): Promise<void> {
     await page.waitForTimeout(420);
     await shoot(page, 'world-telegraph');
 
+    // ...and now that Quake is on its eight-second cooldown, pressing it again
+    // must start nothing. An aim that cannot be thrown is a place to park a
+    // press until the timer comes back, which is the queue this refuses.
+    await page.mouse.move(700, 500);
+    await page.keyboard.press('Digit6');
+    const refused = await waitForAim(page, /^aiming Quake/, 900);
+    if (/^aiming Quake/.test(refused)) {
+      problems.push('a skill on cooldown could still be aimed');
+    }
+    const said = (await page.textContent('body')) ?? '';
+    if (!said.includes('Quake: onCooldown')) {
+      problems.push('a press refused on cooldown said nothing about it');
+    }
+    await shoot(page, 'world-aim-refused');
+
     // Let the fight run a little, then photograph the hotbar: cooldown sweeps
     // (spec 065) and the pixel damage numbers over the bodies.
     await page.waitForTimeout(900);
