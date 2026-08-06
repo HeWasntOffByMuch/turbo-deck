@@ -47,8 +47,7 @@ interface LobedShape {
   readonly canopyTaper: number;    // how much narrower the top slab is
   readonly slabOffset: number;     // how far a slab sits off the trunk axis
   readonly domeRise: number;       // slab rise as a fraction of slab *width*
-  readonly slabThickness: number;  // zero makes the slab a single sheet
-  readonly slabPitch: number;      // radians tipped toward the camera bearing
+  readonly slabThickness: number;  // near zero: a sheet with a rim
   readonly seed: number;           // drives the outlines, the bow and the offsets
 }
 ```
@@ -197,44 +196,47 @@ sparser canopy rather than a tall bare whip with a stump of foliage halfway up.
 - Bounding spheres are inflated for the lean *and* the tilt, against the
   strongest wind the weather panel allows.
 
-## The flat variant
+## The flat variant, and why it was removed
 
-A second species off the same `LobedShape`, differing only in its leaves: no
-dome, no thickness, and a fixed pitch toward the camera. Three fields carry it,
-and all three already had to exist for the domed one to be describable.
+A second species was built off the same `LobedShape`, differing only in its
+leaves: `domeRise: 0`, `slabThickness: 0` — a single sheet with no underside —
+and a fixed 30° pitch toward the camera's bearing.
 
-- `domeRise: 0` — the slab is a plane.
-- `slabThickness: 0` — and it is a *single sheet*. The geometry builder drops the
-  underside and the rim entirely rather than placing two surfaces zero apart,
-  which is not "very thin" but two coincident sheets Z-fighting over every pixel.
-  `lobeRings` drops to 1 with it: interior rings subdivide a curve, and there is
-  no longer a curve, so a flat slab is one fan of 18 triangles.
-- `slabPitch` — radians the slab is tipped toward the camera's bearing, applied
-  in `buildPropField` as a **world-space** rotation premultiplied onto the
-  instance, never baked into the geometry. Baked, the prop's own random yaw would
-  spin the tilt to a different direction on every tree.
+**It does not take light, and it cannot be made to.** A single flat sheet has one
+normal; every slab of the tree shared the same pitch, so every one of its 238
+leaf faces had the identical lambert term. Measured against the scene's sun:
 
-Two consequences worth stating rather than discovering:
+| species | leaf faces | lambert sd | distinct shades |
+|---|---|---|---|
+| `lobed` | 1496 | 0.359 | 21 |
+| `lobed-flat` | 238 | **0.000** | **1** |
 
-- **A single sheet needs `side: DoubleSide`,** on the visible material and on the
-  depth material the shadow pass uses. A one-sided plane vanishes from below and
-  casts no shadow from half its orientations.
-- **The pitch is static.** The camera's azimuth is a slider
-  (`CameraControls`' *Orbit*), so a baked tilt faces the viewer at the default
-  bearing and not at every one. That is the deliberate trade: a slab that
-  tracked the camera would be the billboard this spec rules out, and would cost
-  a rewrite of every instance matrix every frame. Turned right round, the flat
-  slabs read as edge-on plates — which is what a flat leaf mass does.
+Not dim, not mis-lit — *one shade*, for every light direction. And the plate is
+sat at the sun's peak rather than anywhere it could be shaded: at the specified
+30° pitch its lambert is 0.993, and across the whole usable band, 20° to 50°, it
+only moves between 0.96 and 1.00. A near-horizontal sheet under a near-overhead
+sun is pinned at full brightness.
 
-All the slabs of a tree take the *same* pitch, so they stay parallel and stack
-without intersecting; the per-instance lean is the only thing that splays them,
-and it is small. What the pitch does change is the canopy's vertical extent --
-a slab's rim now rises and falls `radius * sin(pitch)` about its own plane -- so
-`speciesHeight` and `bareTrunkHeight` account for it rather than measuring the
-plane the slab nominally sits on.
+Every route out contradicts the variant's own definition:
+
+- **Jitter the pitch per slab** — buys the 3–4% above. Invisible.
+- **Fold or dome the slab** — that *is* "no dome curve, just flat, not even 3D".
+- **Let it receive shadow again** — it had to stop, because a zero-thickness
+  double-sided sheet is its own occluder at zero distance and cross-hatched every
+  canopy in the forest. A per-mesh depth-material `polygonOffset` would solve
+  that, but the slab would still only be shaded when another tree covered it.
+
+So it is gone, and with it the machinery nothing else used: `slabPitch`,
+`PropPart.pitchToCamera` (the world-space tilt), `PropPart.doubleSided`,
+`PropPart.receivesShadow`, and the zero-thickness fork in the slab mesh builder.
+The one lasting mark it leaves is the note in that builder saying why a canopy
+slab has thickness at all — being visible from below and casting from every
+orientation were the reasons on the way in; taking light turned out to be the one
+that mattered.
 
 ## Out of scope
 
+- **A second species built on flat leaves.** Tried and removed; see above.
 - **A new `PropKind`.** Species is a hash of where the tree stands, deliberately:
   the terrain module does not know that species exist, and the sim's collider is
   one radius for `'tree'`. A lobed tree is a `'tree'`, so it scatters, blocks,

@@ -7,15 +7,11 @@
 // colours, the same variant hashed from where the tree stands. The only thing
 // faked is the rasteriser, which is here because there is no GPU in a container.
 //
-// Three rows. The top is every species at every slab/tier count it can grow,
-// from the game's own isometric bearing. The two below turn the camera around
-// each lobed tree in turn, through four bearings and then from straight above.
-//
-// That is the one claim a single frame cannot make either way -- real geometry
-// keeps its orientation and a billboard would look identical from all of them --
-// and for the flat variant it is also the honest picture of what its fixed 30
-// degree pitch costs: leaves face-on at the default bearing, and increasingly on
-// edge as the Orbit slider carries the camera away from it.
+// Two rows. The top is every species at every slab/tier count it can grow, from
+// the game's own isometric bearing. The bottom turns the camera around the lobed
+// tree, through four bearings and then from straight above -- the one claim a
+// single frame cannot make either way, since real geometry keeps its orientation
+// as the view moves and a billboard would look identical from all of them.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { PNG } from 'pngjs';
 import * as THREE from 'three';
@@ -212,25 +208,18 @@ shapes.forEach((shape, column) => {
   });
 });
 
-// Rows 1 and 2: each lobed tree turned under a camera that is turning. Real
-// geometry keeps its orientation; a billboard would look identical in all five.
-//
-// The flat variant is the one this row is really for. Its slabs are tipped
-// toward the *default* bearing and stay tipped there, so the row is a picture of
-// exactly what the player gives up by dragging the Orbit slider: face-on leaf
-// masses at 45 degrees, and plates increasingly on edge either side of it.
-(['lobed', 'lobed-flat'] as const).forEach((species, row) => {
-  const prop = find(species, 5);
-  if (!prop) return;
+// Row 1: the lobed tree turned under a camera that is turning.
+const lobed = find('lobed', 5);
+if (lobed) {
   const bearings: { label: string; dir: THREE.Vector3 }[] = [45, 135, 225, 315].map((deg) => {
     const a = (deg * Math.PI) / 180;
-    return { label: `${species} ${deg}deg`, dir: new THREE.Vector3(-Math.cos(a), -0.51, -Math.sin(a)).normalize() };
+    return { label: `lobed ${deg}deg`, dir: new THREE.Vector3(-Math.cos(a), -0.51, -Math.sin(a)).normalize() };
   });
-  bearings.push({ label: `${species}, from above`, dir: new THREE.Vector3(0, -1, 0) });
+  bearings.push({ label: 'lobed, from above', dir: new THREE.Vector3(0, -1, 0) });
   bearings.forEach((bearing, column) => {
-    cells.push({ row: row + 1, column, pixels: panel(prop, bearing.dir, FIT), label: bearing.label });
+    cells.push({ row: 1, column, pixels: panel(lobed, bearing.dir, FIT), label: bearing.label });
   });
-});
+}
 
 const columns = Math.max(...cells.map((c) => c.column)) + 1;
 const rows = Math.max(...cells.map((c) => c.row)) + 1;

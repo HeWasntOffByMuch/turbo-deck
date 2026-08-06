@@ -4,11 +4,8 @@ import { hashUnit2 } from '../../shared/hash.js';
 import { FENCE_KINDS, FENCE_TILE_LENGTH, type FenceKind, type Prop } from '../../terrain/vegetation.js';
 import { applySway, bakeBend, disposeSway, tiltReach, type SwayInstance } from './sway.js';
 import { stiffness } from './wind.js';
-import { DEFAULT_CAMERA_ORBIT } from './view-settings.js';
 import {
   LOBED,
-  LOBED_FLAT,
-  LOBED_SHAPES,
   lobedCrownRadius,
   slabDrop,
   slabLayout,
@@ -71,12 +68,11 @@ const HASH_WIND_PHASE = 0x5eed08;
  * held to a bit over a quarter: enough that a walk through the woods runs into
  * one every few trees, few enough that the world still reads as coniferous.
  */
-const LOBED_SHARE = 0.13;
-const LOBED_FLAT_SHARE = 0.13;
+const LOBED_SHARE = 0.26;
 const PINE_SHARE = 0.3;
 
 /** Every species, in the order their batches are added to a region's group. */
-export const TREE_SPECIES = ['fir', 'pine', 'lobed', 'lobed-flat'] as const;
+export const TREE_SPECIES = ['fir', 'pine', 'lobed'] as const;
 
 export type TreeSpecies = (typeof TREE_SPECIES)[number];
 
@@ -173,42 +169,6 @@ interface PropPart {
   readonly swayTilt?: number;
   /** How far this part's geometry reaches from its own origin, for those bounds. */
   readonly swayReach?: number;
-  /**
-   * Radians to tip this part toward the camera's bearing, about a **world** axis
-   * (spec 076's flat variant).
-   *
-   * World, not local, and that is the whole reason it is a placement flag rather
-   * than something baked into the geometry: the prop carries a random yaw, so a
-   * tilt in the mesh would point a different way on every tree. Applied outside
-   * the yaw, the direction is the same on all of them.
-   *
-   * The result is still real geometry with a fixed orientation -- it is a tilt
-   * *toward where the camera usually is*, not a billboard that follows it.
-   */
-  readonly pitchToCamera?: number;
-  /**
-   * Draw both faces of this part, and cast its shadow from both.
-   *
-   * For geometry with no thickness, where there is no "inside" for the far face
-   * to be hidden by, and back-face culling would simply delete half of it.
-   */
-  readonly doubleSided?: boolean;
-  /**
-   * Let the shadow map darken this part. Default true, and false only for
-   * geometry that would shadow *itself*.
-   *
-   * A zero-thickness double-sided sheet is exactly that case: it is its own
-   * occluder, at a depth equal to its own to within the shadow map's precision,
-   * so every texel is a coin flip between lit and shadowed and the leaf comes
-   * out cross-hatched. No shadow bias fixes it -- bias is per light, and the
-   * error here is zero distance.
-   *
-   * Turning it off costs the sheet the shade of the trees around it and keeps
-   * the shade it throws on the ground, which is the half that matters. It also
-   * happens to be what the flat look wants: a leaf mass in two flat tones is not
-   * supposed to have dapple crawling over it.
-   */
-  readonly receivesShadow?: boolean;
 }
 
 /**
@@ -289,12 +249,7 @@ const PINE: ConiferShape = {
   leanMax: 0.19,
 };
 
-const SPECIES: Record<TreeSpecies, SpeciesShape> = {
-  fir: FIR,
-  pine: PINE,
-  lobed: LOBED,
-  'lobed-flat': LOBED_FLAT,
-};
+const SPECIES: Record<TreeSpecies, SpeciesShape> = { fir: FIR, pine: PINE, lobed: LOBED };
 
 /** Sides on a tier's cone. */
 const CONE_SEGMENTS = 7;
@@ -392,7 +347,6 @@ const TRUNK_HEIGHT: Record<TreeSpecies, number> = {
   // Nothing to bury: the lobed trunk narrows to a single vertex, so it runs the
   // whole height of the tree and its "top" is a point in open air by design.
   lobed: LOBED.height,
-  'lobed-flat': LOBED_FLAT.height,
 };
 
 /** How tall a species' trunk stands, in prop-local units (before scale). */
@@ -510,26 +464,19 @@ function lobedTrunkGeometry(shape: LobedShape): THREE.BufferGeometry {
 }
 
 /**
- * One canopy slab: a domed disc of the blob outline, duplicated a hair below
- * itself and joined at the rim -- or, where the shape asks for no thickness at
- * all, that disc alone.
+ * One canopy slab: a domed disc of the traced outline, duplicated a hair below
+ * itself and joined at the rim.
  *
  * The dome is `rise * (1 - u^2)`: highest at the centre, exactly flat at the rim
  * so neighbouring slabs meet cleanly, and mirrored on the underside, which makes
  * the top gently convex and the underside gently concave out of one profile.
  *
- * ## Thickness is a fork, not a number that happens to be small
- *
  * A closed shell 2.2 units thick against a 44-unit radius is 5% and reads as a
  * sheet, while keeping three things a single surface does not have: it is
- * visible from below, it casts a shadow from every orientation, and its rim has
- * an edge to catch the light.
- *
- * At **exactly zero** none of that survives being asked for anyway: two surfaces
- * placed zero apart are not a very thin slab, they are two coincident sheets
- * Z-fighting over every pixel, and a rim of degenerate quads between them. So
- * zero builds the top surface and stops -- one genuine sheet -- and the material
- * turns double-sided to buy back what the underside was doing.
+ * visible from below, it casts a shadow from every orientation, and -- the one
+ * that turned out to matter most -- its facets face different ways, so it takes
+ * light. A truly flat slab has one normal, and one normal is one shade for ever;
+ * that is what a variant built on zero thickness was removed for (spec 076).
  */
 function lobedSlabGeometry(slab: SlabSpec, shape: LobedShape): THREE.BufferGeometry {
   // However many vertices the outline turned out to need -- its corners and its
@@ -540,7 +487,6 @@ function lobedSlabGeometry(slab: SlabSpec, shape: LobedShape): THREE.BufferGeome
   const rings = shape.lobeRings;
   const { tri, quad, build } = meshBuilder();
 
-  const solid = shape.slabThickness > 0;
   const dome = (u: number): number => slab.rise * (1 - u * u);
   const at = (ring: number, side: number, lower: boolean): Vec3 => {
     const u = ring / rings;
@@ -554,15 +500,13 @@ function lobedSlabGeometry(slab: SlabSpec, shape: LobedShape): THREE.BufferGeome
     // The centre fan. Every vertex of ring 0 is the same point, so it is written
     // once rather than as a ring of coincident ones.
     tri(at(0, side, false), at(1, side + 1, false), at(1, side, false));
-    if (solid) tri(at(0, side, true), at(1, side, true), at(1, side + 1, true));
+    tri(at(0, side, true), at(1, side, true), at(1, side + 1, true));
     for (let ring = 1; ring < rings; ring++) {
       quad(at(ring, side, false), at(ring, side + 1, false), at(ring + 1, side + 1, false), at(ring + 1, side, false));
-      if (solid) {
-        quad(at(ring, side, true), at(ring + 1, side, true), at(ring + 1, side + 1, true), at(ring, side + 1, true));
-      }
+      quad(at(ring, side, true), at(ring + 1, side, true), at(ring + 1, side + 1, true), at(ring, side + 1, true));
     }
     // The rim, facing out of the slab.
-    if (solid) quad(at(rings, side, false), at(rings, side + 1, false), at(rings, side + 1, true), at(rings, side, true));
+    quad(at(rings, side, false), at(rings, side + 1, false), at(rings, side + 1, true), at(rings, side, true));
   }
   return build();
 }
@@ -593,7 +537,7 @@ const SLAB_TILT_STEP = 0.1;
  * while the widest slab in the world swung out of frame at full wind.
  */
 export function maxCanopyTiltReach(scale = 1): number {
-  return LOBED_SHAPES.flatMap(slabLayout).reduce(
+  return slabLayout(LOBED).reduce(
     (most, slab) => Math.max(most, tiltReach(SLAB_TILT_BASE + SLAB_TILT_STEP * slab.index, slab.radius * scale)),
     0,
   );
@@ -632,13 +576,6 @@ function lobedParts(shape: LobedShape): PropPart[] {
       swayLag: SLAB_LAG_BASE + SLAB_LAG_STEP * slab.index,
       swayTilt: SLAB_TILT_BASE + SLAB_TILT_STEP * slab.index,
       swayReach: slab.radius,
-      ...(shape.slabPitch !== 0 ? { pitchToCamera: shape.slabPitch } : {}),
-      // A single sheet is only half there without this, and the half that is
-      // missing is whichever half the light and the camera happen to want. It
-      // must stop *receiving* shade in the same breath: a sheet with no
-      // thickness is its own occluder at zero distance, which cross-hatches
-      // every leaf on the tree.
-      ...(shape.slabThickness === 0 ? { doubleSided: true, receivesShadow: false } : {}),
     });
   });
   for (const part of parts) bakeBend(part.geometry, part.offsetY, full);
@@ -698,7 +635,6 @@ const SPECIES_STIFFNESS: Record<TreeSpecies, number> = {
   fir: stiffness(speciesTrunkRadius('fir'), speciesHeight('fir')),
   pine: stiffness(speciesTrunkRadius('pine'), speciesHeight('pine')),
   lobed: stiffness(speciesTrunkRadius('lobed'), speciesHeight('lobed')),
-  'lobed-flat': stiffness(speciesTrunkRadius('lobed-flat'), speciesHeight('lobed-flat')),
 };
 
 /**
@@ -1264,14 +1200,7 @@ export function treeVariant(prop: Prop): TreeVariant {
   const x = Math.round(prop.x / 8);
   const z = Math.round(prop.y / 8);
   const roll = hashUnit2(x, z, HASH_SPECIES);
-  const species: TreeSpecies =
-    roll < LOBED_SHARE
-      ? 'lobed'
-      : roll < LOBED_SHARE + LOBED_FLAT_SHARE
-        ? 'lobed-flat'
-        : roll < LOBED_SHARE + LOBED_FLAT_SHARE + PINE_SHARE
-          ? 'pine'
-          : 'fir';
+  const species: TreeSpecies = roll < LOBED_SHARE ? 'lobed' : roll < LOBED_SHARE + PINE_SHARE ? 'pine' : 'fir';
   const counts = speciesTierCounts(species);
   const pick = Math.min(counts.length - 1, Math.floor(hashUnit2(x, z, HASH_TIERS) * counts.length));
   return {
@@ -1286,10 +1215,9 @@ export function treeVariant(prop: Prop): TreeVariant {
 export function speciesHeight(species: TreeSpecies): number {
   const shape = SPECIES[species];
   if (shape.kind === 'lobed') {
-    // The tip is the top of a lobed tree by construction, but a slab's dome --
-    // or, on the flat variant, the rim its pitch lifts -- could in principle
-    // reach past it, so ask rather than assert.
-    const crown = slabLayout(shape).reduce((high, slab) => Math.max(high, slab.y + slabRise(slab, shape)), 0);
+    // The tip is the top of a lobed tree by construction, but a slab's dome
+    // could in principle reach past it, so ask rather than assert.
+    const crown = slabLayout(shape).reduce((high, slab) => Math.max(high, slab.y + slabRise(slab)), 0);
     return Math.max(crown, shape.height);
   }
   const crown = shape.tiers.reduce((high, [, height, baseY]) => Math.max(high, baseY + height), 0);
@@ -1305,10 +1233,7 @@ export function bareTrunkHeight(species: TreeSpecies): number {
   // The lowest slab's *lowest point*, not the plane it is placed at: the
   // underside is what you see the trunk against, and it hangs below that plane
   // by the slab's own thickness and by however far its pitch drops the near rim.
-  if (shape.kind === 'lobed') {
-    const lowest = slabLayout(shape)[0];
-    return shape.height * shape.canopyBase - (lowest ? slabDrop(lowest, shape) : 0);
-  }
+  if (shape.kind === 'lobed') return shape.height * shape.canopyBase - slabDrop(shape);
   return shape.tiers[0]?.[2] ?? 0;
 }
 
@@ -1369,15 +1294,6 @@ export function buildPropField(
   const up = new THREE.Vector3(0, 1, 0);
   // The axis a board leans about: across the fence's face, in the part's frame.
   const rollAxis = new THREE.Vector3(0, 0, 1);
-  const pitch = new THREE.Quaternion();
-  // The world axis a part is tipped about to face the camera: horizontal, and
-  // across the view's bearing, so the rotation carries the part's up-vector
-  // straight toward the viewer rather than off to one side of them.
-  const pitchAxis = new THREE.Vector3(
-    Math.sin(DEFAULT_CAMERA_ORBIT.azimuth),
-    0,
-    -Math.cos(DEFAULT_CAMERA_ORBIT.azimuth),
-  );
   const groundUp = new THREE.Vector3();
   const align = new THREE.Quaternion();
   const offset = new THREE.Vector3();
@@ -1410,13 +1326,12 @@ export function buildPropField(
         part.jitterScaleX !== undefined || part.jitterScaleY !== undefined || part.jitterTint !== undefined;
 
       const material = new THREE.MeshLambertMaterial({ flatShading: true });
-      if (part.doubleSided) material.side = THREE.DoubleSide;
       const mesh = new THREE.InstancedMesh(part.geometry, material, grown.length);
       mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
       // Scenery is the bulk of the shadow pass (spec 045): a canopy that throws
       // dappled shade onto the ground is what stops props reading as decals.
       mesh.castShadow = true;
-      mesh.receiveShadow = part.receivesShadow ?? true;
+      mesh.receiveShadow = true;
       // What the wind is sampled with, once per tree (spec 074). Gathered
       // alongside the matrices rather than in a second pass, because it is the
       // same three numbers the matrix is being composed from.
@@ -1476,10 +1391,6 @@ export function buildPropField(
           leanAxis.set(Math.cos(variant.leanAngle), 0, Math.sin(variant.leanAngle));
           quaternion.multiply(tilt.setFromAxisAngle(leanAxis, lean));
         }
-        // Premultiplied, so it is a rotation in *world* space applied after
-        // everything the prop did to itself: every slab of every tree ends up
-        // tipped the same way whatever yaw its own prop was given.
-        if (part.pitchToCamera) quaternion.premultiply(pitch.setFromAxisAngle(pitchAxis, part.pitchToCamera));
         if (prop.alignToNormal && normalAt) {
           const [nx, ny, nz] = normalAt(prop.x, prop.y);
           groundUp.set(nx, ny, nz);
@@ -1537,10 +1448,6 @@ export function buildPropField(
           tilt: part.swayTilt ?? 0,
           reach: swayReach,
         });
-        // The shadow pass draws with a material of its own, so a sheet that is
-        // double-sided on screen and single-sided in the depth map casts a
-        // shadow from some orientations and none from others.
-        if (part.doubleSided && mesh.customDepthMaterial) mesh.customDepthMaterial.side = THREE.DoubleSide;
       }
       group.add(mesh);
       geometries.push(part.geometry);

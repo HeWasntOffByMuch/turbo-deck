@@ -13,8 +13,7 @@ import {
   TREE_SPECIES,
   type TreeSpecies,
 } from './props.js';
-import { LOBED, LOBED_FLAT, slabDrop, slabLayout, slabRise, trunkProfile } from './lobe.js';
-import { DEFAULT_CAMERA_ORBIT } from './view-settings.js';
+import { LOBED, slabLayout, trunkProfile } from './lobe.js';
 import { PALETTE } from './palette.js';
 import { fenceRotation } from './editor/fence.js';
 import { PLAYER_RADIUS } from '../../sim/constants.js';
@@ -36,18 +35,11 @@ describe('treeVariant (spec 045)', () => {
 
   it('grows every species across the world, none of them rare', () => {
     expect(forest.length).toBeGreaterThan(200);
-    // A tenth is the floor rather than a quarter because the two lobed forms
-    // split one share between them: the world is still a coniferous one with a
-    // lobed minority, and that minority now comes in two builds.
     for (const species of TREE_SPECIES) {
       const share = forest.filter((p) => treeVariant(p).species === species).length / forest.length;
-      expect(share).toBeGreaterThan(0.1);
+      expect(share).toBeGreaterThan(0.2);
       expect(share).toBeLessThan(0.5);
     }
-    // ...and between them the lobed pair are still the minority they were.
-    const lobed = forest.filter((p) => treeVariant(p).species.startsWith('lobed')).length / forest.length;
-    expect(lobed).toBeGreaterThan(0.2);
-    expect(lobed).toBeLessThan(0.35);
   });
 
   it('varies the tier count within a species, so one outline is not stamped everywhere', () => {
@@ -776,214 +768,5 @@ describe('the lobed canopy tree, as built', () => {
     expect((slab.mesh.material as THREE.Material).customProgramCacheKey?.()).toBe(
       (conifer.mesh.material as THREE.Material).customProgramCacheKey?.(),
     );
-  });
-});
-
-/**
- * The flat variant (spec 076, second half): the same tree with leaves that are
- * one sheet, tipped toward the camera.
- *
- * Three of the four things here are invisible until they are wrong in a way
- * nobody connects back to this file. Two coincident surfaces Z-fight and read as
- * a shimmer somebody blames on the renderer; a single-sided sheet is simply
- * missing from half its orientations; and a tilt baked into the geometry instead
- * of the placement points a different way on every tree, which reads as noise
- * rather than as a mistake.
- */
-describe('the lobed tree with flat leaves', () => {
-  /** A tree of a given species and slab count, found by walking the hash. */
-  function find(species: TreeSpecies, tierCount = 5): Prop {
-    for (let i = 0; i < 40000; i++) {
-      const prop: Prop = { kind: 'tree', x: i * 37, y: i * 53, scale: 1, rotation: 0, tint: 0 };
-      const variant = treeVariant(prop);
-      if (variant.species === species && variant.tierCount === tierCount) return prop;
-    }
-    throw new Error(`no ${species} tree with ${tierCount} slabs in the hash`);
-  }
-
-  /** Every batch of one prop, with its instance matrix. */
-  function batchesOf(prop: Prop): { mesh: THREE.InstancedMesh; matrix: THREE.Matrix4 }[] {
-    const field = buildPropField([prop], () => 0);
-    const out: { mesh: THREE.InstancedMesh; matrix: THREE.Matrix4 }[] = [];
-    field.group.traverse((object) => {
-      if (!(object instanceof THREE.InstancedMesh)) return;
-      const matrix = new THREE.Matrix4();
-      object.getMatrixAt(0, matrix);
-      out.push({ mesh: object, matrix });
-    });
-    return out;
-  }
-
-  const isBark = (mesh: THREE.InstancedMesh): boolean => {
-    const color = new THREE.Color();
-    mesh.getColorAt(0, color);
-    return color.getHex() === new THREE.Color(PALETTE.trunk).getHex();
-  };
-
-  /** The leaf batches of one prop, bottom slab first. */
-  const leaves = (prop: Prop): { mesh: THREE.InstancedMesh; matrix: THREE.Matrix4 }[] =>
-    batchesOf(prop)
-      .filter((b) => !isBark(b.mesh))
-      // Element 13 of a column-major Matrix4 is its translation Y.
-      .sort((a, b) => (a.matrix.elements[13] ?? 0) - (b.matrix.elements[13] ?? 0));
-
-  /**
-   * The world direction a slab's own up-axis points.
-   *
-   * Read off the instance matrix rather than measured from a triangle: a domed
-   * slab's facets are all tilted by the dome and none of them is the slab's
-   * plane, so a face normal answers a different question depending on which face
-   * you picked. The matrix's second column is the slab's local +Y, exactly.
-   */
-  function slabAxis(batch: { matrix: THREE.Matrix4 }): THREE.Vector3 {
-    const e = batch.matrix.elements;
-    return new THREE.Vector3(e[4] ?? 0, e[5] ?? 0, e[6] ?? 0).normalize();
-  }
-
-  /** The world-space normals of every triangle of a batch. */
-  function faceNormals(batch: { mesh: THREE.InstancedMesh; matrix: THREE.Matrix4 }): THREE.Vector3[] {
-    const position = batch.mesh.geometry.getAttribute('position');
-    const corner = (i: number): THREE.Vector3 =>
-      new THREE.Vector3().fromBufferAttribute(position, i).applyMatrix4(batch.matrix);
-    const out: THREE.Vector3[] = [];
-    for (let i = 0; i < position.count; i += 3) {
-      out.push(new THREE.Vector3().crossVectors(corner(i + 1).sub(corner(i)), corner(i + 2).sub(corner(i))).normalize());
-    }
-    return out;
-  }
-
-  it('builds each slab as one flat sheet, not two surfaces a hair apart', () => {
-    // The bug this exists for draws *identically* until it moves: two coincident
-    // sheets Z-fight over every pixel, which reads as a shimmer somebody blames
-    // on the renderer rather than on the tree.
-    const slabs = slabLayout(LOBED_FLAT);
-    leaves(find('lobed-flat')).forEach(({ mesh }, i) => {
-      const position = mesh.geometry.getAttribute('position');
-      for (let k = 0; k < position.count; k++) expect(position.getY(k)).toBe(0);
-      // One fan over the outline and nothing else: no underside, no rim, and no
-      // interior rings subdividing a plane that has no curve in it -- one
-      // triangle per vertex of the traced boundary.
-      const outline = (slabs[i] as (typeof slabs)[number]).outline;
-      expect(outline.length).toBeGreaterThan(12);
-      expect(position.count).toBe(outline.length * 3);
-    });
-  });
-
-  it('is far cheaper than the domed one it is a variant of', () => {
-    const triangles = (prop: Prop): number =>
-      leaves(prop).reduce((n, b) => n + b.mesh.geometry.getAttribute('position').count / 3, 0);
-    expect(triangles(find('lobed-flat'))).toBeLessThan(triangles(find('lobed')) / 5);
-  });
-
-  it('draws both faces of a sheet, casts from both, and receives on neither', () => {
-    // A one-sided plane is missing from half its orientations -- and the camera's
-    // Orbit slider reaches every one of them. Half of that failure lives in the
-    // depth material, which is a second material the shadow pass swaps in.
-    for (const { mesh } of leaves(find('lobed-flat'))) {
-      expect((mesh.material as THREE.Material).side).toBe(THREE.DoubleSide);
-      expect(mesh.customDepthMaterial?.side).toBe(THREE.DoubleSide);
-    }
-    // ...and stops receiving one in the same breath. A double-sided sheet with
-    // no thickness is its own occluder at zero distance, so every shadow-map
-    // texel over it is a coin flip and the leaf comes out cross-hatched. That
-    // is what this looked like before, in a real GL context and not in any test:
-    // the canopies of a whole forest wearing a moire pattern.
-    for (const { mesh } of leaves(find('lobed-flat'))) {
-      expect(mesh.castShadow).toBe(true);
-      expect(mesh.receiveShadow).toBe(false);
-    }
-    // The domed tree is a closed shell with a real inside, so it pays nothing
-    // for a problem it does not have -- it shades and is shaded as before.
-    for (const { mesh } of leaves(find('lobed'))) {
-      expect(mesh.castShadow).toBe(true);
-      expect(mesh.receiveShadow).toBe(true);
-    }
-    for (const { mesh } of leaves(find('lobed'))) {
-      expect((mesh.material as THREE.Material).side).toBe(THREE.FrontSide);
-    }
-  });
-
-  it('tips its slabs identically however the prop was yawed', () => {
-    // The reason the pitch is applied when the instance is placed rather than
-    // baked into the mesh. A tilt inside the geometry rides the prop's own
-    // random yaw, so it would point a different way on every tree in the wood --
-    // which reads as noise rather than as a mistake, and so never gets found.
-    const prop = find('lobed-flat');
-    const reference = leaves(prop).map(slabAxis);
-    // Not bit-identical, and it should not be: the tree's own lean *is* applied
-    // inside the yaw, so it turns with the prop. What separates the two cases is
-    // how far a normal may drift -- the lean is small and bounded, where a baked
-    // pitch would carry the normal's bearing right round with the prop, 2 * pitch
-    // between opposite yaws.
-    const slack = 2 * LOBED_FLAT.leanMax;
-    expect(slack).toBeLessThan(LOBED_FLAT.slabPitch);
-    for (const rotation of [0.7, 2.4, Math.PI, 5.1]) {
-      leaves({ ...prop, rotation }).forEach((batch, i) => {
-        expect(slabAxis(batch).angleTo(reference[i] as THREE.Vector3)).toBeLessThanOrEqual(slack);
-      });
-    }
-  });
-
-  it('tips them toward the camera, by the pitch it was given', () => {
-    const toward = new THREE.Vector3(
-      Math.cos(DEFAULT_CAMERA_ORBIT.azimuth),
-      0,
-      Math.sin(DEFAULT_CAMERA_ORBIT.azimuth),
-    );
-    const up = new THREE.Vector3(0, 1, 0);
-    for (const batch of leaves(find('lobed-flat'))) {
-      const normal = slabAxis(batch);
-      // The sheet really is a plane, and really is square to that axis -- so
-      // what is asserted below about the axis is asserted about the leaf.
-      for (const face of faceNormals(batch)) expect(Math.abs(face.dot(normal))).toBeCloseTo(1, 4);
-      // Within the per-instance lean of the pitch. The lean is the tree's own
-      // and is applied in the prop's frame, so it is added to this rather than
-      // replacing it -- the assertion is "tipped by the pitch", not "tipped by
-      // the pitch and nothing else ever touches it".
-      const off = Math.acos(Math.min(1, Math.abs(normal.dot(up))));
-      expect(Math.abs(off - LOBED_FLAT.slabPitch)).toBeLessThanOrEqual(LOBED_FLAT.leanMax);
-      // ...and tipped toward the camera rather than off to one side of it: what
-      // is left of the normal on the ground plane lies along the view bearing.
-      const flat = new THREE.Vector3(normal.x, 0, normal.z).normalize();
-      expect(Math.abs(flat.dot(toward))).toBeGreaterThan(0.9);
-    }
-    // The domed tree keeps its slabs level, which is what makes it read the same
-    // from every bearing where this one does not.
-    for (const batch of leaves(find('lobed'))) {
-      expect(Math.acos(Math.min(1, Math.abs(slabAxis(batch).dot(up))))).toBeLessThanOrEqual(LOBED.leanMax);
-    }
-  });
-
-  it('keeps its orientation as the camera moves, which is what stops it being a billboard', () => {
-    // Nothing here reads a camera. The proof is that the field is written once
-    // and never touched -- a billboard would have to rewrite every instance
-    // matrix every frame, and these are uploaded as static.
-    for (const { mesh } of batchesOf(find('lobed-flat'))) {
-      expect(mesh.instanceMatrix.usage).toBe(THREE.StaticDrawUsage);
-    }
-  });
-
-  it('measures the canopy from the rims the pitch lifts, not the planes it sits on', () => {
-    // The pitch swings a slab's rim `radius * sin` above and below the height it
-    // is nominally placed at, so a canopy measured at its planes would report a
-    // longer bare trunk and a shorter tree than the one being drawn.
-    const slabs = slabLayout(LOBED_FLAT);
-    const lowest = slabs[0] as (typeof slabs)[number];
-    expect(bareTrunkHeight('lobed-flat')).toBeCloseTo(
-      LOBED_FLAT.height * LOBED_FLAT.canopyBase - slabDrop(lowest, LOBED_FLAT),
-      6,
-    );
-    expect(bareTrunkHeight('lobed-flat')).toBeLessThan(bareTrunkHeight('lobed'));
-    // ...and the tapered tip still stands clear above the highest of them.
-    const top = slabs[slabs.length - 1] as (typeof slabs)[number];
-    expect(top.y + slabRise(top, LOBED_FLAT)).toBeLessThan(speciesHeight('lobed-flat'));
-  });
-
-  it('sways on the same wind as everything else', () => {
-    for (const { mesh } of batchesOf(find('lobed-flat'))) {
-      expect(mesh.geometry.getAttribute('aBend')).toBeDefined();
-      expect(mesh.geometry.getAttribute('aWindBase')).toBeDefined();
-      expect((mesh.material as THREE.Material).customProgramCacheKey?.()).toBe('wind-sway');
-    }
   });
 });
