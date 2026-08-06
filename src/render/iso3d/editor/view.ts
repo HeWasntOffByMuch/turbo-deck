@@ -6,6 +6,7 @@ import { PALETTE } from '../palette.js';
 import { buildPropField, type PropFieldHandle } from '../props.js';
 import { viewSeed } from '../seed.js';
 import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-mesh.js';
+import { advanceWind } from '../wind-uniforms.js';
 import { CAMERA_FAR, CAMERA_NEAR, DEFAULT_LIGHT_OFFSET } from '../view-settings.js';
 import {
   createEditorCamera,
@@ -247,7 +248,14 @@ class EditorScene {
     this.lastHalfWidth = -1; // force the frustum to be rebuilt for the new aspect
   }
 
-  render(): void {
+  /**
+   * `dt` is real elapsed seconds, and the only thing the editor does with it is
+   * advance the wind (spec 073) -- so an author sees the same weather on the
+   * water and the trees they will see in the Play tab, rather than a still
+   * frame that starts moving only once the game opens.
+   */
+  render(dt = 0): void {
+    advanceWind(dt);
     this.resize();
     const aspect = this.renderH === 0 ? 1 : this.renderW / this.renderH;
     const hw = this.camera3.halfWidth;
@@ -693,7 +701,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
         : input.isPainting
           ? 'crosshair'
           : 'default';
-    scene.render();
+    scene.render(dt);
 
     const c = scene.camera3;
     readout.innerHTML =

@@ -888,6 +888,18 @@ export interface MeshLayer {
   readonly waterLevel: number | null;
   /** Ground at this cell of the layer's global grid — outside the chunk too. */
   solidAt(col: number, row: number): boolean;
+  /**
+   * This cell's index into `TERRAIN_MATERIALS`, or `null` where no chunk holds
+   * it yet (spec 073).
+   *
+   * The water shader's bands are steps on horizontal distance to the shore, and
+   * a shoreline three cells into the next chunk still colours this one — so the
+   * distance transform has to read past the chunk it is baking. `null` is the
+   * important part of the signature: on a streaming client the neighbour may
+   * simply not have arrived, and "unknown" has to be distinguishable from "dry"
+   * or a chunk edge invents a coastline that vanishes a second later.
+   */
+  materialAt(col: number, row: number): number | null;
 }
 
 export interface LoadedMap {
@@ -921,6 +933,7 @@ export function loadMap(doc: MapDocument): LoadedMap {
       bounds: l.bounds,
       waterLevel: l.waterLevel,
       solidAt: (col: number, row: number): boolean => store.cellSolid(l.id, col, row),
+      materialAt: (col: number, row: number): number | null => store.cellAt(l.id, col, row)?.materialIndex ?? null,
     })),
     props: doc.layers.flatMap((l) => store.props(l.id)),
     markers: doc.layers.flatMap((l) => store.markers(l.id)),

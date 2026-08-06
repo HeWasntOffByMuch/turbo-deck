@@ -2,16 +2,21 @@ import * as THREE from 'three';
 import {
   DEFAULT_CHUNK_OPTIONS,
   layerCellSolid,
+  materialAtPoint,
+  materialIndex,
+  rectContains,
   sampleLayer,
   TERRAIN_MATERIALS,
-  rectDepth,
-  rectWidth,
   type ChunkOptions,
   type MeshLayer,
   type TerrainChunk,
   type TerrainWorld,
 } from '../../terrain/index.js';
 import { TERRAIN_CLIFF_COLORS, TERRAIN_COLORS } from './palette.js';
+import { shoreField } from './shore-sdf.js';
+import { WATER } from './wind.js';
+import { buildWaterQuad, disposeWaterQuad } from './water-material.js';
+import { patchTerrainStreak } from './terrain-streak.js';
 
 /**
  * The only thing that turns terrain data into geometry (spec 043). Everything
@@ -31,10 +36,16 @@ import { TERRAIN_CLIFF_COLORS, TERRAIN_COLORS } from './palette.js';
  *   meets open air or the layer's boundary. This is what gives a coastline, a
  *   cliff, or (later) a floating island a solid side instead of a paper edge.
  *   These *are* flat-shaded: a cliff face should read as stone slabs.
+ * - the **water**, one opaque quad at the layer's flood level per chunk that
+ *   has any water cell in it (spec 073). It used to be a single translucent
+ *   plane spanning the whole layer; it is per chunk now because each one needs
+ *   its own shore distance field bound to it, and because a quad that is culled
+ *   with its chunk is a quad that is not drawn when its chunk is off screen.
+ *   Being opaque is what shapes the coastline: every scrap of land is above the
+ *   water line and simply occludes it.
  *
- * Plus one translucent plane per layer that declares a water level. It sits at
- * that height across the whole layer and is simply hidden by any ground above
- * it, so a lake, a sea and a flooded crater all come out of the same quad.
+ * Both ground materials carry the wind's streak layer (spec 073), from the same
+ * clock and the same direction the trees lean and the water churns to.
  */
 
 const surfaceMaterial = new THREE.MeshLambertMaterial({ vertexColors: true });
@@ -45,6 +56,11 @@ const wallMaterial = new THREE.MeshLambertMaterial({
   flatShading: true,
   side: THREE.DoubleSide,
 });
+patchTerrainStreak(surfaceMaterial);
+patchTerrainStreak(wallMaterial);
+
+/** The material index water cells carry, resolved once. */
+const WATER_MATERIAL = materialIndex('water');
 
 export interface TerrainMeshHandle {
   /** Add this to the scene. Positioned in world space; do not move it. */
@@ -179,26 +195,53 @@ function buildChunk(
   return { surface: surface.build(true), walls: walls.build(false) };
 }
 
-/** The layer's water surface: one flat translucent quad at its flood level. */
-function buildWater(layer: MeshLayer): THREE.Mesh | null {
+/**
+ * One chunk's water surface, or null where the chunk has no water in it (or the
+ * layer never floods).
+ *
+ * The shore field is baked here, from the *layer's* per-cell materials rather
+ * than the chunk's own array: a coastline a few cells into the next chunk still
+ * colours this one, so the distance transform has to read past the chunk's edge
+ * or the boundary becomes a visible seam. Where the neighbour has not streamed
+ * in yet, `materialAt` answers null and the transform treats it as water --
+ * which can only ever make this chunk's sea look deeper, never invent a shore
+ * that disappears when the neighbour lands.
+ */
+function buildWater(layer: MeshLayer, chunk: TerrainChunk): THREE.Mesh | null {
   if (layer.waterLevel === null) return null;
-  const geo = new THREE.PlaneGeometry(rectWidth(layer.bounds), rectDepth(layer.bounds));
-  geo.rotateX(-Math.PI / 2);
-  const mesh = new THREE.Mesh(
-    geo,
-    new THREE.MeshLambertMaterial({
-      color: TERRAIN_COLORS.water[0],
-      flatShading: true,
-      transparent: true,
-      opacity: 0.82,
-    }),
+  let wet = false;
+  for (const material of chunk.materials) {
+    if (material === WATER_MATERIAL) {
+      wet = true;
+      break;
+    }
+  }
+  if (!wet) return null;
+
+  const field = shoreField(
+    (col, row) => {
+      const material = layer.materialAt(col, row);
+      return material === null ? null : material === WATER_MATERIAL;
+    },
+    {
+      startCol: chunk.startCol,
+      startRow: chunk.startRow,
+      cols: chunk.cols,
+      rows: chunk.rows,
+      cellSize: chunk.cellSize,
+      range: WATER.shoreRange,
+    },
   );
-  mesh.position.set(
-    (layer.bounds.minX + layer.bounds.maxX) / 2,
-    layer.waterLevel,
-    (layer.bounds.minZ + layer.bounds.maxZ) / 2,
-  );
-  return mesh;
+
+  return buildWaterQuad({
+    originX: chunk.originX,
+    originZ: chunk.originZ,
+    width: chunk.cols * chunk.cellSize,
+    depth: chunk.rows * chunk.cellSize,
+    waterLevel: layer.waterLevel,
+    cellSize: chunk.cellSize,
+    field,
+  });
 }
 
 /**
@@ -220,11 +263,28 @@ export function buildTerrainMeshFromChunks(
   // array rather than replace it -- a swapped array leaves a scene raycasting
   // against geometry that has since been disposed.
   const pickTargets: THREE.Object3D[] = [];
-  const materials: THREE.Material[] = [];
   const byId = new Map(layers.map((layer) => [layer.id, layer]));
-  /** The meshes currently drawn for each chunk, so one can be replaced. */
-  const drawn = new Map<string, { surface: THREE.Mesh | null; walls: THREE.Mesh | null }>();
-  const slotKey = (chunk: TerrainChunk): string => `${chunk.layerId}:${chunk.coord.cx},${chunk.coord.cz}`;
+  /** What is currently drawn for each chunk, so one can be replaced. */
+  interface Slot {
+    surface: THREE.Mesh | null;
+    walls: THREE.Mesh | null;
+    water: THREE.Mesh | null;
+    /** Kept so a neighbour's arrival can re-bake this chunk's shore field. */
+    readonly chunk: TerrainChunk;
+  }
+  const drawn = new Map<string, Slot>();
+  const keyOf = (layerId: string, cx: number, cz: number): string => `${layerId}:${cx},${cz}`;
+  const slotKey = (chunk: TerrainChunk): string => keyOf(chunk.layerId, chunk.coord.cx, chunk.coord.cz);
+
+  /** Replace one chunk's water quad, disposing whatever it replaces. */
+  const drawWater = (layer: MeshLayer, slot: Slot): void => {
+    if (slot.water) {
+      group.remove(slot.water);
+      disposeWaterQuad(slot.water);
+    }
+    slot.water = buildWater(layer, slot.chunk);
+    if (slot.water) group.add(slot.water);
+  };
 
   /** Build (or rebuild) one chunk's meshes into the group. */
   const draw = (layer: MeshLayer, chunk: TerrainChunk): void => {
@@ -236,17 +296,21 @@ export function buildTerrainMeshFromChunks(
         group.remove(mesh);
         mesh.geometry.dispose();
       }
+      if (previous.water) {
+        group.remove(previous.water);
+        disposeWaterQuad(previous.water);
+      }
       const stale = previous.surface ? pickTargets.indexOf(previous.surface) : -1;
       if (stale >= 0) pickTargets.splice(stale, 1);
     }
 
     const { surface, walls } = buildChunk(layer, chunk);
-    const slot: { surface: THREE.Mesh | null; walls: THREE.Mesh | null } = { surface: null, walls: null };
+    const slot: Slot = { surface: null, walls: null, water: null, chunk };
     if (surface) {
       // Ground both takes shadows and throws them (spec 045): a cliff casting
       // its own shape onto the shelf below is most of what makes a terrace
-      // read as a step rather than a stripe. Water does neither -- a shadow
-      // on a translucent plane reads as dirt floating on it.
+      // read as a step rather than a stripe. Water does neither -- a shadow on
+      // a flat stylized surface reads as dirt floating on it.
       slot.surface = new THREE.Mesh(surface, surfaceMaterial);
       slot.surface.castShadow = true;
       slot.surface.receiveShadow = true;
@@ -260,17 +324,27 @@ export function buildTerrainMeshFromChunks(
       group.add(slot.walls);
     }
     drawn.set(key, slot);
+    drawWater(layer, slot);
+
+    // A shore three cells over the boundary colours the water on *both* sides
+    // of it, so the neighbours' fields were baked against ground that has only
+    // now arrived and are wrong until they see it (spec 073). Re-baking eight
+    // small distance transforms is what closes the seam a streaming client
+    // would otherwise show for as long as its neighbour was missing; nothing is
+    // re-meshed, only the water.
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dz === 0) continue;
+        const neighbour = drawn.get(keyOf(chunk.layerId, chunk.coord.cx + dx, chunk.coord.cz + dz));
+        if (neighbour) drawWater(layer, neighbour);
+      }
+    }
   };
 
   for (const layer of layers) {
     for (const chunk of chunks) {
       if (byId.get(chunk.layerId) !== layer) continue;
       draw(layer, chunk);
-    }
-    const water = buildWater(layer);
-    if (water) {
-      group.add(water);
-      materials.push(water.material as THREE.Material);
     }
   }
 
@@ -282,10 +356,17 @@ export function buildTerrainMeshFromChunks(
       if (layer) draw(layer, chunk);
     },
     dispose(): void {
+      // Water owns a material and a shore texture of its own, so it is freed
+      // first and taken out of the group; the surface and wall materials are
+      // shared module singletons and are deliberately *not* disposed here.
+      for (const slot of drawn.values()) {
+        if (!slot.water) continue;
+        group.remove(slot.water);
+        disposeWaterQuad(slot.water);
+      }
       for (const child of group.children) {
         if (child instanceof THREE.Mesh) child.geometry.dispose();
       }
-      for (const mat of materials) mat.dispose();
       drawn.clear();
       pickTargets.length = 0;
       group.clear();
@@ -308,6 +389,18 @@ export function buildTerrainMesh(
       bounds: layer.bounds,
       waterLevel: layer.waterLevel,
       solidAt: (col: number, row: number): boolean => layerCellSolid(layer, col, row, opt),
+      // The generated path has no stored cells to look up, so the material is
+      // re-derived from the field at the cell's centre -- the same classify()
+      // the sampler ran. Past the layer's edge it answers null, matching what a
+      // loaded map says about a chunk it does not hold: the shore field then
+      // reads open water there rather than a wall of land, so the world's
+      // border does not grow a rim of foam.
+      materialAt: (col: number, row: number): number | null => {
+        const x = layer.bounds.minX + (col + 0.5) * opt.cellSize;
+        const z = layer.bounds.minZ + (row + 0.5) * opt.cellSize;
+        if (!rectContains(layer.bounds, x, z)) return null;
+        return materialIndex(materialAtPoint(layer, x, z, opt.bands));
+      },
     })),
     world.layers.flatMap((layer) => sampleLayer(layer, opt)),
   );
