@@ -111,6 +111,12 @@ export type CastDecision =
  * and `stampAt` sets the cast's own clock -- though since spec 070 the caller
  * passes the same tick for both, and the reason is worth keeping.
  *
+ * `targetRadius` is the named body's, and it is not optional in practice
+ * (spec 080): reach to a body is measured to its edge on the server, so a client
+ * that left it at zero was asking a *stricter* question than the one that will
+ * be asked of the server -- and every attack in the band between the two was one
+ * it refused to predict and the server took.
+ *
  * 069 leaned `decideAt` forward by a round trip, on the argument that failing to
  * predict a commit costs a whole wind-up of discarded walking while predicting
  * one that is refused only shows a bar that vanishes. That is true, and it was
@@ -131,13 +137,14 @@ export function mayCast(
   decideAt: number,
   stampAt: number,
   targetEntityId = 0,
+  targetRadius = 0,
 ): CastDecision {
   const ability = abilityById(abilityId);
   if (!ability) return { ok: false, reason: 'unknownAbility' };
   const entity = asEntity(mirror);
   const result = startCast(
     entity,
-    { abilityId, targetX: aim.x, targetY: aim.y, targetEntityId },
+    { abilityId, targetX: aim.x, targetY: aim.y, targetEntityId, targetRadius },
     decideAt,
   );
   if (!result.ok) return { ok: false, reason: result.reason };

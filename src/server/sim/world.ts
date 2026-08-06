@@ -282,6 +282,10 @@ export function step(
     const current = working.get(entity.id) ?? entity;
     if (current.health <= 0) {
       working.set(current.id, expireActivity(current, tick, ActivityValue.Dead));
+      // A corpse neither walks nor swings, but a request one made still has to
+      // be answered (spec 080), so it goes to the cast pass to be refused there
+      // rather than being dropped here without a word.
+      if (inputByEntity.get(current.id)?.castAbilityId) casters.push(current.id);
       continue;
     }
     if (!isSimulated(current)) continue;
@@ -396,8 +400,23 @@ export function step(
 
   for (const casterId of casters) {
     const caster = working.get(casterId);
-    if (!caster || caster.health <= 0) continue;
     const intent = inputByEntity.get(casterId) ?? monsterIntentCache.get(casterId) ?? null;
+    if (!caster || caster.health <= 0) {
+      // A corpse does not swing -- but it still answers (spec 080). The client
+      // pairs the n-th reply with the n-th request, so a request dropped here
+      // without a word skews that pairing for every answer after it. This is the
+      // rejection `startCast` would have given, from the one place that knows
+      // the request was thrown away.
+      if (intent?.castAbilityId) {
+        events.push({
+          kind: 'castRejected',
+          entityId: casterId,
+          abilityId: intent.castAbilityId,
+          reason: 'dead',
+        });
+      }
+      continue;
+    }
 
     // A cancel is honoured before anything else this tick, so releasing the key
     // on the last tick of a wind-up still calls the cast off.

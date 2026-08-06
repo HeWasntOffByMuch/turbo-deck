@@ -129,6 +129,34 @@ describe('the gate, asked of a mirror', () => {
     if (!decision.ok) return;
     expect(decision.cast.phase).toBe(CastPhase.Turning);
   });
+
+  /**
+   * Spec 080. Reach to a *body* is measured to its edge on the server, and this
+   * is the same `startCast` -- but it was never handed the radius, so it asked a
+   * stricter question than the one the server would ask, and refused to predict
+   * every attack in the band between the two. Silent on today's content and
+   * wrong in principle: the whole reason this calls the sim's own gate is so
+   * that a disagreement can only ever come from an input, never from a rule.
+   */
+  it('measures reach to a named body’s edge, exactly as the server does', () => {
+    const star = abilityById('ranged.star');
+    if (!star) throw new Error('no ranged.star');
+    const radius = 40;
+    // Past the range from the centre, inside it from the edge.
+    const aim = { x: star.range + radius / 2, y: 0 };
+
+    expect(mayCast(mirror(), 'ranged.star', aim, 100, 100, 7, radius).ok).toBe(true);
+    // Named, but with no edge to reach for: the centre check, refused.
+    expect(mayCast(mirror(), 'ranged.star', aim, 100, 100, 7, 0)).toEqual({
+      ok: false,
+      reason: 'outOfRange',
+    });
+    // A patch of ground has no edge at all, and a radius cannot buy it one.
+    expect(mayCast(mirror(), 'ranged.star', aim, 100, 100, 0, radius)).toEqual({
+      ok: false,
+      reason: 'outOfRange',
+    });
+  });
 });
 
 describe('the predicted timeline', () => {

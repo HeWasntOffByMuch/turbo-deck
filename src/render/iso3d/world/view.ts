@@ -481,21 +481,24 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // without a line here knowing which is being held.
     const swingId = view.stats?.basicAttackId || BASIC_ATTACK_ID;
     const swing = abilityById(swingId);
+    // The reach the chase stops at and the reach the *server* will judge the
+    // commit against are one number, so it is read once here and handed to both
+    // (spec 080). It used to be read here and left out of the request, which
+    // made the client's own gate stricter than the server's by exactly a body.
+    const targetRadius = entity ? appearanceOf(entity).radius : 0;
     const decision = autoAttack({
       self: me,
+      selfHealth: view.entities.find((e) => e.id === view.selfEntityId)?.health ?? 1,
       target: entity
-        ? {
-            id: entity.id,
-            x: entity.x,
-            y: entity.y,
-            radius: appearanceOf(entity).radius,
-            health: entity.health,
-          }
+        ? { id: entity.id, x: entity.x, y: entity.y, radius: targetRadius, health: entity.health }
         : null,
       range: swing?.range ?? 0,
       // Both halves of "am I committed": the server's cast and the one this
       // client has only asked for. `selfRoot` is already the union of the two.
       rooted: view.selfRoot !== null,
+      // ...and the third: a request that has been sent and not yet ruled on,
+      // which has no cast behind it and so shows up in neither of those.
+      pending: view.awaitingCast,
       readyAtTick: view.cooldowns[swingId] ?? 0,
       tick: view.estimatedTick,
     });
@@ -514,7 +517,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // tree is routed by the same A* a right-click on the ground is.
     destination = decision.chaseTo;
     if (!decision.chaseTo) planner.clear();
-    if (decision.attack) client.useAbility(swingId, entity.x, entity.y, entity.id);
+    if (decision.attack) client.useAbility(swingId, entity.x, entity.y, entity.id, targetRadius);
   }
 
   /**

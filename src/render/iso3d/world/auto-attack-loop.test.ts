@@ -135,6 +135,7 @@ function fight(mainHand: string | null, monsterId: string, startX: number, ticks
 
     const decision = autoAttack({
       self: { x: me.position.x, y: me.position.y },
+      selfHealth: me.health,
       target: {
         id: target.id,
         x: target.position.x,
@@ -144,6 +145,9 @@ function fight(mainHand: string | null, monsterId: string, startX: number, ticks
       },
       range: swing.range,
       rooted: me.cast !== null,
+      // No wire here, so a request is answered on the tick it is made and
+      // nothing is ever outstanding.
+      pending: false,
       readyAtTick: me.cooldowns[swing.id] ?? 0,
       tick: state.tick,
     });
