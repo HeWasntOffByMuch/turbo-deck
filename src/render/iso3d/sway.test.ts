@@ -7,7 +7,7 @@ import { windTimeUniform } from './wind-uniforms.js';
 import type { Prop } from '../../terrain/vegetation.js';
 
 /**
- * The tree sway, checked as far as it can be without a GPU (spec 073).
+ * The tree sway, checked as far as it can be without a GPU (spec 074).
  *
  * What the vertex shader *computes* is arithmetic and lives in `wind.test.ts`.
  * What this covers is everything around it that is just as capable of breaking

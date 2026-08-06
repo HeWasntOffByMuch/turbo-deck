@@ -1,5 +1,5 @@
 /**
- * Distance to the shore, per terrain cell (spec 073).
+ * Distance to the shore, per terrain cell (spec 074).
  *
  * The water shader's four bands are steps on *horizontal distance to dry
  * ground*, and nothing else will do. The obvious substitute -- how far the

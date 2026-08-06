@@ -37,14 +37,14 @@ import { patchTerrainStreak } from './terrain-streak.js';
  *   cliff, or (later) a floating island a solid side instead of a paper edge.
  *   These *are* flat-shaded: a cliff face should read as stone slabs.
  * - the **water**, one opaque quad at the layer's flood level per chunk that
- *   has any water cell in it (spec 073). It used to be a single translucent
+ *   has any water cell in it (spec 074). It used to be a single translucent
  *   plane spanning the whole layer; it is per chunk now because each one needs
  *   its own shore distance field bound to it, and because a quad that is culled
  *   with its chunk is a quad that is not drawn when its chunk is off screen.
  *   Being opaque is what shapes the coastline: every scrap of land is above the
  *   water line and simply occludes it.
  *
- * Both ground materials carry the wind's streak layer (spec 073), from the same
+ * Both ground materials carry the wind's streak layer (spec 074), from the same
  * clock and the same direction the trees lean and the water churns to.
  */
 
@@ -328,7 +328,7 @@ export function buildTerrainMeshFromChunks(
 
     // A shore three cells over the boundary colours the water on *both* sides
     // of it, so the neighbours' fields were baked against ground that has only
-    // now arrived and are wrong until they see it (spec 073). Re-baking eight
+    // now arrived and are wrong until they see it (spec 074). Re-baking eight
     // small distance transforms is what closes the seam a streaming client
     // would otherwise show for as long as its neighbour was missing; nothing is
     // re-meshed, only the water.

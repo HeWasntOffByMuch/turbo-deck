@@ -3,7 +3,7 @@ import { glslWindChunk, maxTipDisplacement, WIND } from './wind.js';
 import { windTimeUniform } from './wind-uniforms.js';
 
 /**
- * Tree sway, as a patch on the materials the prop field already uses (spec 073).
+ * Tree sway, as a patch on the materials the prop field already uses (spec 074).
  *
  * Entirely in the vertex shader. Nothing here runs per frame: the instance
  * matrices are still written once and never touched again, and the only thing

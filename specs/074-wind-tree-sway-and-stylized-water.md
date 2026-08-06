@@ -1,4 +1,4 @@
-# 073 — Wind-driven tree sway and stylized water
+# 074 — Wind-driven tree sway and stylized water
 
 ## Problem
 

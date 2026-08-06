@@ -3,7 +3,7 @@ import { glslWindChunk } from './wind.js';
 import { windTimeUniform } from './wind-uniforms.js';
 
 /**
- * The wind's streak layer over the ground (spec 073, part 3).
+ * The wind's streak layer over the ground (spec 074, part 3).
  *
  * The smallest piece of the weather and the one that ties it together. The
  * trees lean and the sea churns, and without this the land between them is

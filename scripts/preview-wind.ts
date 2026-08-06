@@ -1,5 +1,5 @@
 /**
- * The acceptance pass for spec 073, run against a real browser and a real GL
+ * The acceptance pass for spec 074, run against a real browser and a real GL
  * context.
  *
  * Everything about the weather that can be answered by arithmetic is answered

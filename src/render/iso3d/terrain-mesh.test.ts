@@ -65,7 +65,7 @@ function attribute(mesh: THREE.Mesh, name: string): Float32Array | null {
 }
 
 /**
- * The water quads under a group (spec 073). They are the only meshes here
+ * The water quads under a group (spec 074). They are the only meshes here
  * carrying a `ShaderMaterial`; the ground and its skirts are Lambert.
  */
 function waterQuads(group: THREE.Object3D): THREE.Mesh[] {
@@ -191,7 +191,7 @@ describe('a reloaded map draws the same scene', () => {
 });
 
 /**
- * The same round trip, over a world with a lake in it (spec 073).
+ * The same round trip, over a world with a lake in it (spec 074).
  *
  * Its own world rather than the one above, because water needs ground that
  * actually falls below the flood line and the spec 048 fixture deliberately
@@ -350,7 +350,7 @@ describe('rebuilding one chunk', () => {
     const ground = replaced.filter((m) => !(m.material instanceof THREE.ShaderMaterial));
     expect(ground.length).toBeGreaterThan(0);
     expect(ground.length).toBeLessThanOrEqual(2);
-    // Water is allowed to go further (spec 073): a shoreline a few cells over a
+    // Water is allowed to go further (spec 074): a shoreline a few cells over a
     // chunk boundary colours the water on both sides of it, so this chunk's own
     // quad and its eight neighbours' are re-baked. Nine is the ceiling, and the
     // point of pinning it is that a rebuild must not re-bake the whole map.

@@ -14,11 +14,11 @@ import { advanceWind, resetWind, windTimeUniform } from './wind-uniforms.js';
 import { WATER, WIND } from './wind.js';
 
 /**
- * The measuring rig for the weather (spec 073).
+ * The measuring rig for the weather (spec 074).
  *
  * Dev-server only -- `vite build` bundles `index.html` and nothing else, so
  * this page is never part of a shipped build. It exists because the acceptance
- * questions for spec 073 are all of the form "what does the *frame* do", and
+ * questions for spec 074 are all of the form "what does the *frame* do", and
  * the Play tab cannot answer any of them: its camera follows the player, so it
  * cannot be pointed at a coastline; its clock runs from real time, so two runs
  * never photograph the same instant; and it draws one scene, so there is
@@ -139,7 +139,7 @@ const propField = buildPropField(props, (x, z) => map.world.heightAt(x, z));
 scene.add(propField.group);
 
 /**
- * Put the scene back the way it looked before spec 073, in place: the sway
+ * Put the scene back the way it looked before spec 074, in place: the sway
  * patch off the trees and off their two shadow materials, the streak off the
  * ground, and the water back to a plain unlit quad of the old flat colour.
  *

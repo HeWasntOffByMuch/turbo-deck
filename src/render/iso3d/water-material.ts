@@ -4,7 +4,7 @@ import { windTimeUniform } from './wind-uniforms.js';
 import { shoreQuantum, type ShoreField } from './shore-sdf.js';
 
 /**
- * The water surface (spec 073, part 2).
+ * The water surface (spec 074, part 2).
  *
  * A fragment shader on a flat opaque quad, and nothing else. No vertex
  * displacement, no transparency, no normal map, no reflection, no refraction,

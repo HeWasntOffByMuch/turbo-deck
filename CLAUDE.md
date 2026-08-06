@@ -160,7 +160,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  are pure and tested headlessly; scene.ts, hud.ts and
                  view.ts are the three.js/DOM half. `npx tsx scripts/preview-world.ts`
                  photographs the real page into .claude/screenshots/world-*.png.
-src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 073): one wind vector
+src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
                  read by the tree sway, the water and the streak layer over the
                  ground, plus the shore distance transform the water's bands step
                  on. Pure and tested headlessly -- the GLSL lives here as strings

@@ -890,7 +890,7 @@ export interface MeshLayer {
   solidAt(col: number, row: number): boolean;
   /**
    * This cell's index into `TERRAIN_MATERIALS`, or `null` where no chunk holds
-   * it yet (spec 073).
+   * it yet (spec 074).
    *
    * The water shader's bands are steps on horizontal distance to the shore, and
    * a shoreline three cells into the next chunk still colours this one — so the

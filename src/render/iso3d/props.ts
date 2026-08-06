@@ -49,7 +49,7 @@ const HASH_LEAN = 0x5eed04;
 const HASH_JITTER_POS = 0x5eed05;
 const HASH_JITTER_ROT = 0x5eed06;
 const HASH_JITTER_SIZE = 0x5eed07;
-/** A tree's own offset into the wind's clock (spec 073). */
+/** A tree's own offset into the wind's clock (spec 074). */
 const HASH_WIND_PHASE = 0x5eed08;
 
 /** Fraction of trees that are pines rather than firs. */
@@ -115,7 +115,7 @@ interface PropPart {
    */
   readonly uniformColor?: number;
   /**
-   * This part leans in the wind (spec 073). Set on tree parts and nothing else:
+   * This part leans in the wind (spec 074). Set on tree parts and nothing else:
    * the geometry carries a baked `aBend` weight and the batch gets the sway
    * patch, its two shadow materials, and a bounding sphere with room in it for
    * the lean. A part without it is drawn exactly as it was before.
@@ -1019,7 +1019,7 @@ export function buildPropField(
       // dappled shade onto the ground is what stops props reading as decals.
       mesh.castShadow = true;
       mesh.receiveShadow = true;
-      // What the wind is sampled with, once per tree (spec 073). Gathered
+      // What the wind is sampled with, once per tree (spec 074). Gathered
       // alongside the matrices rather than in a second pass, because it is the
       // same three numbers the matrix is being composed from.
       const swaying: SwayInstance[] = [];
@@ -1175,7 +1175,7 @@ export function buildPropField(
     undrawn,
     dispose(): void {
       // The sway patch hangs two shadow materials off each swaying batch that
-      // nothing else owns (spec 073), so they are freed with the batch.
+      // nothing else owns (spec 074), so they are freed with the batch.
       for (const child of group.children) {
         if (child instanceof THREE.InstancedMesh) disposeSway(child);
       }

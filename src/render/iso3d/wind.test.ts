@@ -17,7 +17,7 @@ import {
 } from './wind.js';
 
 /**
- * The wind's numbers (spec 073).
+ * The wind's numbers (spec 074).
  *
  * What runs on the GPU is a string, so what is checked here is the TypeScript
  * the string was transcribed from -- {@link windAt} and {@link bayer4} are the

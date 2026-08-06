@@ -250,7 +250,7 @@ class EditorScene {
 
   /**
    * `dt` is real elapsed seconds, and the only thing the editor does with it is
-   * advance the wind (spec 073) -- so an author sees the same weather on the
+   * advance the wind (spec 074) -- so an author sees the same weather on the
    * water and the trees they will see in the Play tab, rather than a still
    * frame that starts moving only once the game opens.
    */

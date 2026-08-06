@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { apronCells, shoreDistances, shoreField, shoreQuantum, type CellIsWater } from './shore-sdf.js';
 
 /**
- * The shore distance field (spec 073).
+ * The shore distance field (spec 074).
  *
  * Two properties matter and neither is obvious from reading the transform. The
  * first is that it is *right*: the separable lower-envelope transform is fast

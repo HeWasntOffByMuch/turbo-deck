@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 /**
- * The three.js half of the weather (spec 073).
+ * The three.js half of the weather (spec 074).
  *
  * There is exactly one `uWindTime` uniform object in the process, and every
  * material that leans on the wind is handed *this object*, not a copy of its

@@ -1,5 +1,5 @@
 /**
- * The weather (spec 073). One wind vector, read by three shaders: the tree
+ * The weather (spec 074). One wind vector, read by three shaders: the tree
  * sway, the streak layer over the ground, and the water.
  *
  * Pure -- no three.js, no DOM, no clock -- for two reasons. The first is that
@@ -200,7 +200,7 @@ export function bayer4(x: number, y: number): number {
 }
 
 /**
- * The water surface's palette and thresholds (spec 073, part 2).
+ * The water surface's palette and thresholds (spec 074, part 2).
  *
  * Exactly four colours, and every threshold is a world-unit distance from the
  * shore -- converted from the reference's metres at this world's ~13 units to
@@ -332,7 +332,7 @@ float bayer4(vec2 fragCoord) {
 `;
 
 /**
- * The streak layer (spec 073, part 3): a faint scrolling grain multiplied into
+ * The streak layer (spec 074, part 3): a faint scrolling grain multiplied into
  * albedo, sampled at world XZ shifted downwind by the same wind and the same
  * clock the trees lean to.
  *

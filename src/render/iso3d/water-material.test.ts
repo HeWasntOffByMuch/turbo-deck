@@ -4,7 +4,7 @@ import { waterFragmentShader } from './water-material.js';
 /**
  * The water shader is a *string* until a GPU sees it, so neither the type
  * system nor any amount of headless testing of what it computes will notice
- * that it does not compile (spec 073).
+ * that it does not compile (spec 074).
  *
  * It got shipped broken exactly once, and instructively: the art-direction
  * constants were substituted with a chain of `String.replace` calls, which take
