@@ -25,7 +25,7 @@
 import { Rng } from '../../shared/prng.js';
 import { segmentClear } from '../../sim/collision.js';
 import { findPath, navGridFor } from '../../sim/pathfinding.js';
-import { PATH_REPLAN_TICKS, PATH_WAYPOINT_EPS } from '../../sim/constants.js';
+import { PATH_REPLAN_TICKS, PATH_RETRY_TICKS, PATH_WAYPOINT_EPS } from '../../sim/constants.js';
 import type { Vec2, WorldColliders } from '../../sim/types.js';
 import type { LiveConfig } from '../config.js';
 import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../config.js';
@@ -683,10 +683,21 @@ function routeToward(
     return { direction: unit(to.x - from.x, to.y - from.y), entity: forgetPath(monster) };
   }
 
+  // An empty path is the record of a search that failed, not a route walked to
+  // its end, and telling those apart is the whole of the throttle (spec 073).
+  // Read as "exhausted" it made every hopeless case replan on the very next
+  // tick -- `pathIndex >= path.length` is `0 >= 0` -- which is how a monster
+  // walled away from a player burned a core running the most expensive search
+  // there is, sixty times a second.
+  const failed = monster.path !== null && monster.path.length === 0;
+  const exhausted = monster.path === null || (!failed && monster.pathIndex >= monster.path.length);
+  // A goal unreachable from here is unreachable a body's length away, so a
+  // shuffling target is no reason to ask again; after a failure the cadence is
+  // the only thing that starts a new search.
   const goalMoved =
-    monster.pathGoal === null ||
-    Math.hypot(monster.pathGoal.x - to.x, monster.pathGoal.y - to.y) > REPLAN_DISTANCE;
-  const exhausted = monster.path === null || monster.pathIndex >= monster.path.length;
+    !failed &&
+    (monster.pathGoal === null ||
+      Math.hypot(monster.pathGoal.x - to.x, monster.pathGoal.y - to.y) > REPLAN_DISTANCE);
 
   let entity = monster;
   if (exhausted || goalMoved || tick >= monster.repathAtTick) {
@@ -694,13 +705,10 @@ function routeToward(
     const path = findPath(grid, from, to);
     entity = {
       ...monster,
-      // An empty result means unreachable within the node budget. Kept as an
-      // empty path rather than null so the cadence still applies: retrying a
-      // hopeless search every tick is how a walled-in monster burns a core.
       path,
       pathIndex: 0,
       pathGoal: to,
-      repathAtTick: tick + PATH_REPLAN_TICKS,
+      repathAtTick: tick + (path.length === 0 ? PATH_RETRY_TICKS : PATH_REPLAN_TICKS),
     };
   }
 
