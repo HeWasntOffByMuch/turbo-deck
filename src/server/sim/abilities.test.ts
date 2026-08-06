@@ -1265,3 +1265,154 @@ describe('a named target (spec 070)', () => {
     expect(JSON.stringify(b.events)).toBe(JSON.stringify(a.events));
   });
 });
+
+describe('an ability aimed at a body (spec 080)', () => {
+  const seek = abilityById('bolt.seek');
+  if (!seek) throw new Error('no bolt.seek');
+
+  it('refuses a unit-targeted cast that named nothing, and spends nothing doing it', () => {
+    let state = createWorldState(9);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    state = withDummy(state, 800, 450).state;
+
+    const before = state.entities.get(player.id);
+    const result = run(state, 3, {
+      0: [input(player.id, { castAbilityId: 'bolt.seek', castTargetX: 800, castTargetY: 450 })],
+    });
+
+    expect(
+      result.events.some((event) => event.kind === 'castRejected' && event.reason === 'noTarget'),
+    ).toBe(true);
+    const after = result.state.entities.get(player.id);
+    expect(after?.cast).toBeNull();
+    // A refusal changes no state: nothing spent, and no cooldown stamped on a
+    // blow that was never thrown.
+    expect(after?.resource).toBe(before?.resource);
+    expect(after?.cooldowns['bolt.seek']).toBeUndefined();
+  });
+
+  it('refuses a mark past its range and commits to one inside it', () => {
+    let state = createWorldState(9);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const far = withDummy(state, 600 + seek.range + 200, 450);
+    state = far.state;
+
+    const refused = run(state, 2, {
+      0: [
+        input(player.id, {
+          castAbilityId: 'bolt.seek',
+          castTargetX: 600 + seek.range + 200,
+          castTargetY: 450,
+          castTargetEntityId: far.id,
+        }),
+      ],
+    });
+    expect(
+      refused.events.some((event) => event.kind === 'castRejected' && event.reason === 'outOfRange'),
+    ).toBe(true);
+
+    let near = createWorldState(9);
+    const shooter = withPlayer(near, 600, 450);
+    near = shooter.state;
+    const mark = withDummy(near, 900, 450);
+    near = mark.state;
+    const committed = run(near, 2, {
+      0: [
+        input(shooter.id, {
+          castAbilityId: 'bolt.seek',
+          castTargetX: 900,
+          castTargetY: 450,
+          castTargetEntityId: mark.id,
+        }),
+      ],
+    });
+    expect(committed.state.entities.get(shooter.id)?.cast?.abilityId).toBe('bolt.seek');
+  });
+
+  it('looses a bolt that follows the body it named, and hits that body', () => {
+    let state = createWorldState(9);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const mark = withDummy(state, 900, 450);
+    state = mark.state;
+    const full = monsterById('dummy')?.stats.maxHealth ?? 0;
+
+    const result = run(state, seek.windupTicks + 40, {
+      0: [
+        input(player.id, {
+          castAbilityId: 'bolt.seek',
+          castTargetX: 900,
+          castTargetY: 450,
+          castTargetEntityId: mark.id,
+        }),
+      ],
+    });
+
+    const struck = hits(result.events);
+    expect(struck).toHaveLength(1);
+    expect(struck[0]?.targetId).toBe(mark.id);
+    expect(result.state.entities.get(mark.id)?.health).toBeLessThan(full);
+  });
+
+  it('is single-target however it flew: a body in the line is passed over', () => {
+    let state = createWorldState(9);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const between = withDummy(state, 750, 450);
+    state = between.state;
+    const mark = withDummy(state, 900, 450);
+    state = mark.state;
+    const full = monsterById('dummy')?.stats.maxHealth ?? 0;
+
+    const result = run(state, seek.windupTicks + 40, {
+      0: [
+        input(player.id, {
+          castAbilityId: 'bolt.seek',
+          castTargetX: 900,
+          castTargetY: 450,
+          castTargetEntityId: mark.id,
+        }),
+      ],
+    });
+
+    expect(hits(result.events).map((hit) => hit.targetId)).toEqual([mark.id]);
+    expect(result.state.entities.get(between.id)?.health).toBe(full);
+  });
+
+  it('holds the table to what a named blow is: a range, and no cone', () => {
+    for (const ability of ALL_ABILITIES) {
+      if (ability.targeting !== 'unit') continue;
+      expect(ability.range, ability.id).toBeGreaterThan(0);
+      // The wedge is not a thing a single-target blow has, and a field that
+      // stopped describing the blow is the second name spec 079 removed.
+      expect(ability.arcCosSq, ability.id).toBeUndefined();
+    }
+  });
+
+  it('replays to bit-identical state and events with the same seed', () => {
+    function once(): Run {
+      let state = createWorldState(21);
+      const player = withPlayer(state, 600, 450);
+      state = player.state;
+      const mark = withDummy(state, 880, 470);
+      state = mark.state;
+      return run(state, seek.windupTicks + 50, {
+        0: [
+          input(player.id, {
+            castAbilityId: 'bolt.seek',
+            castTargetX: 880,
+            castTargetY: 470,
+            castTargetEntityId: mark.id,
+          }),
+        ],
+      });
+    }
+
+    const a = once();
+    const b = once();
+    expect(JSON.stringify([...b.state.entities])).toBe(JSON.stringify([...a.state.entities]));
+    expect(JSON.stringify(b.events)).toBe(JSON.stringify(a.events));
+  });
+});

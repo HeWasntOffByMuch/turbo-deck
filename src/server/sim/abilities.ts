@@ -45,7 +45,9 @@ export type CastRejection =
   | 'onCooldown'
   | 'notEnoughResource'
   | 'dead'
-  | 'outOfRange';
+  | 'outOfRange'
+  /** A `targeting: 'unit'` ability asked for with nothing named (spec 080). */
+  | 'noTarget';
 
 export interface CastAttempt {
   readonly abilityId: string;
@@ -107,13 +109,22 @@ export function startCast(
   if (tick < readyAt) return { ok: false, reason: 'onCooldown' };
   if (entity.resource < ability.cost) return { ok: false, reason: 'notEnoughResource' };
 
-  // A point-targeted ability may not be cast past its range. Direction-targeted
-  // ones are always legal to start -- they simply reach as far as they reach.
+  // A skill aimed at a body has to have one (spec 080). Refused rather than
+  // quietly downgraded to a cone or a patch of ground: an ability whose whole
+  // shape is "the thing you picked" has no meaning without the pick, and a
+  // silent fallback would spend the cost on a blow nobody asked for.
+  if (ability.targeting === 'unit' && !attempt.targetEntityId) {
+    return { ok: false, reason: 'noTarget' };
+  }
+
+  // A point- or unit-targeted ability may not be cast past its range.
+  // Direction-targeted ones are always legal to start -- they simply reach as
+  // far as they reach.
   //
   // A cast that named a body is measured to that body's edge, the same as the
   // blow that eventually lands on it (spec 079). A patch of ground has no edge,
   // so `targetRadius` is 0 and this is the centre check it always was.
-  if (ability.targeting === 'point') {
+  if (ability.targeting === 'point' || ability.targeting === 'unit') {
     const dx = attempt.targetX - entity.position.x;
     const dy = attempt.targetY - entity.position.y;
     const reach = ability.range + (attempt.targetEntityId ? (attempt.targetRadius ?? 0) : 0);

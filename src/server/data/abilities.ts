@@ -15,8 +15,21 @@ import { SERVER_TICK_RATE } from '../config.js';
 
 export type AbilityKind = 'melee' | 'projectile' | 'ground' | 'self' | 'channel';
 
-/** How the client is expected to supply a target when it asks to cast. */
-export type AbilityTargeting = 'direction' | 'point' | 'self';
+/**
+ * How the client is expected to supply a target when it asks to cast.
+ *
+ * One field, and it names both halves of the question (spec 080): what the
+ * player has to supply before the ability may be asked for, and what the blow
+ * resolves against once it is. They are the same thing, so they are one field.
+ *
+ * - `direction` -- a point on the ground; the cone or the lane runs from the
+ *   caster toward it, and reaches as far as it reaches.
+ * - `point` -- a point on the ground, and the cast is refused past its range.
+ * - `unit` -- a *body*, named by id. Single-target, gated at that body's edge,
+ *   and refused outright when nothing was named.
+ * - `self` -- nothing; it lands on the caster whatever came with the request.
+ */
+export type AbilityTargeting = 'direction' | 'point' | 'unit' | 'self';
 
 export interface ProjectileSpec {
   /** World units per second. */
@@ -159,6 +172,22 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     description: 'A slow lobbed pot that bursts where it lands.',
   },
   {
+    id: 'bolt.seek',
+    name: 'Seeking Bolt',
+    kind: 'projectile',
+    // The one row that exists to exercise a named cast at a range worth walking
+    // (spec 080). Everything under it was already built: a projectile carrying
+    // a target id tracks its mark and is disjointed by its death (spec 079).
+    targeting: 'unit',
+    windupTicks: seconds(0.45),
+    cooldownTicks: seconds(2.5),
+    cost: 4,
+    range: 480,
+    damage: 26,
+    projectile: { speed: 700, arcHeight: 40, radius: 9, lifetimeTicks: seconds(3) },
+    description: 'A bolt that follows the body it was aimed at, until it arrives or burns out.',
+  },
+  {
     id: 'ground.quake',
     name: 'Quake',
     kind: 'ground',
@@ -224,6 +253,7 @@ export const STARTING_ABILITIES: readonly string[] = [
   'melee.heavy',
   'bolt.arcane',
   'bolt.lob',
+  'bolt.seek',
   'ground.quake',
   'self.mend',
   'channel.drain',
