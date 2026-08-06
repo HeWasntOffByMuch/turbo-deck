@@ -83,7 +83,11 @@ export const MapPropFlag = {
 } as const;
 
 /** `MapMarkerKind` as a byte, in a fixed order the wire depends on. */
-export const MapMarkerKindValue = ['spawn', 'objective', 'campfire', 'trigger'] as const;
+/**
+ * The marker kinds, in wire order: a marker's byte is its index here, so new
+ * kinds are appended and none is ever reordered or removed in place.
+ */
+export const MapMarkerKindValue = ['spawn', 'objective', 'campfire', 'trigger', 'spawner'] as const;
 
 export const AdminMessageType = {
   Auth: 0x80,

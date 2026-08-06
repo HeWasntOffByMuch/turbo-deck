@@ -607,7 +607,15 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       // A marker is placed on the press, not the drag: a spawn point is not a
       // bulk thing, and dragging would leave a trail of forty of them.
       if (at && settings.mode === 'marker') {
-        const placed = placeMarker(scene.map.store, layerId, settings.markerKind, at.x, at.z, capture);
+        const placed = placeMarker(
+          scene.map.store,
+          layerId,
+          settings.markerKind,
+          at.x,
+          at.z,
+          capture,
+          settings.markerKind === 'spawner' ? settings.spawnerMonster : undefined,
+        );
         if (placed.marker) {
           strokeChangedMarkers = true;
           refreshMarkers();

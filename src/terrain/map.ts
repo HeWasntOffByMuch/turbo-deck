@@ -84,7 +84,7 @@ export interface MapProp {
   readonly uniform?: boolean;
 }
 
-export type MapMarkerKind = 'spawn' | 'objective' | 'campfire' | 'trigger';
+export type MapMarkerKind = 'spawn' | 'objective' | 'campfire' | 'trigger' | 'spawner';
 
 /** A point of interest, positioned in its chunk's local space. */
 export interface MapMarker {
@@ -92,6 +92,10 @@ export interface MapMarker {
   readonly id: string;
   readonly x: number;
   readonly z: number;
+  /**
+   * Free text for most kinds. For `spawner` it is the monster id the point
+   * spawns (spec 073), and the server refuses to boot on one it does not know.
+   */
   readonly label?: string;
 }
 
@@ -494,7 +498,7 @@ function asRect(value: unknown, what: string): MapRect {
   };
 }
 
-const MARKER_KINDS: readonly MapMarkerKind[] = ['spawn', 'objective', 'campfire', 'trigger'];
+const MARKER_KINDS: readonly MapMarkerKind[] = ['spawn', 'objective', 'campfire', 'trigger', 'spawner'];
 
 function parseMarker(value: unknown, what: string): MapMarker {
   const r = asRecord(value, what);
