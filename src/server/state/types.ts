@@ -116,7 +116,18 @@ export interface EffectiveStats {
   readonly turnRate: number;
   readonly attackDamage: number;
   readonly attackRange: number;
+  /**
+   * The *base* interval between basic attacks, in ticks, before speed. Flat
+   * modifiers land here; everything proportional lands on {@link attackSpeed},
+   * so the two never double-count.
+   */
   readonly attackCooldownTicks: number;
+  /**
+   * Attacks per second, as a multiplier on that base cadence (spec 070). 1 is
+   * unmodified. The one number that decides how often a unit -- player or
+   * monster -- can swing; see `attackIntervalTicks`.
+   */
+  readonly attackSpeed: number;
   /** Fraction of incoming damage removed, 0..MAX_ARMOR. */
   readonly armor: number;
   /** Multiplier on ability damage. */

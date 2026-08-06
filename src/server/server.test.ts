@@ -364,6 +364,7 @@ describe('combat over the wire', () => {
       encodeClientMessage({
         type: ClientMessageType.UseAbility,
         abilityId: 'melee.slash',
+        targetEntityId: 0,
         targetX: at.x + 40,
         targetY: at.y,
         afterInputSeq: 0,
@@ -401,6 +402,7 @@ describe('a cast commits on the input it was asked for', () => {
       encodeClientMessage({
         type: ClientMessageType.UseAbility,
         abilityId: 'melee.slash',
+        targetEntityId: 0,
         targetX: 900,
         targetY: 500,
         afterInputSeq: 5,
@@ -428,6 +430,7 @@ describe('a cast commits on the input it was asked for', () => {
       encodeClientMessage({
         type: ClientMessageType.UseAbility,
         abilityId: 'melee.slash',
+        targetEntityId: 0,
         targetX: 900,
         targetY: 500,
         afterInputSeq: 0,
@@ -449,6 +452,7 @@ describe('a cast commits on the input it was asked for', () => {
         encodeClientMessage({
           type: ClientMessageType.UseAbility,
           abilityId,
+          targetEntityId: 0,
           targetX: 900,
           targetY: 500,
           afterInputSeq: 0,

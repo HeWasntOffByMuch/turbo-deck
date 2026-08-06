@@ -1,4 +1,4 @@
-# turbo-deck wire protocol v4
+# turbo-deck wire protocol v6
 
 Binary, not JSON. Every frame is a WebSocket **binary** message whose first byte
 is the message type; the rest is a type-specific payload. All multi-byte numbers
@@ -57,7 +57,8 @@ The server applies **one input per tick**, so sending faster buys nothing.
 whether a `Correction` is owed.
 
 ### `0x08 UseAbility`
-`str abilityId` · `f32 targetX` · `f32 targetY` · `varuint afterInputSeq`
+`str abilityId` · `f32 targetX` · `f32 targetY` · `varuint targetEntityId` ·
+`varuint afterInputSeq`
 
 Asks to commit to an ability (spec 062). The server decides: cooldown, cost,
 range, and whether something is already winding up. It answers with `CastState`
@@ -73,6 +74,13 @@ own predicted root land in the same place as the server's.
 `targetX/Y` is a world point. A `direction`-targeted ability treats it as where
 to aim; a `point`-targeted one as where to land, and refuses it past its range;
 a `self` one ignores it.
+
+`targetEntityId` names a body, or is `0` for an aim at the point alone
+(spec 070). A melee cast that names one is single-target: it resolves against
+that entity and nothing else, and only if it is hostile, alive and still within
+reach *at the release* — so a target that walked out during the wind-up is a
+miss rather than a free hit. It is a request like everything else on this side
+of the wire; the server checks it and lands nothing if it does not hold.
 
 ### `0x09 CancelCast` — `varuint afterInputSeq`
 Withdraws from whatever is winding up. Legal only during the wind-up (and for
@@ -175,8 +183,12 @@ Sent to every connection whose interest set contains the attacker or the target.
 `varuint entityId` · `varuint level` · `varuint experience` ·
 `varuint unspentSkillPoints` · then the effective stat block:
 `f32 maxHealth` · `f32 moveSpeed` · `f32 turnRate` · `f32 attackDamage` ·
-`f32 attackRange` · `u16 attackCooldownTicks` · `f32 armor` · `f32 spellPower` ·
-`f32 critChance`
+`f32 attackRange` · `u16 attackCooldownTicks` · `f32 attackSpeed` · `f32 armor` ·
+`f32 spellPower` · `f32 critChance` · `f32 maxResource` · `f32 resourceRegen`
+
+`attackCooldownTicks` is the *base* interval between basic attacks and
+`attackSpeed` is the multiplier on it (spec 070); the swing cadence is
+`attackCooldownTicks / attackSpeed`, floored at one tick.
 
 Every one of these is derived server-side from base stats, skill levels and
 equipped item ids. None is ever persisted, and none is ever accepted from a
@@ -210,7 +222,7 @@ nothing.
 
 ### `0x49 CastState`
 `varuint entityId` · `str abilityId` · `u8 phase` · `u32 releaseTick` ·
-`u32 endTick` · `f32 targetX` · `f32 targetY`
+`u32 endTick` · `f32 targetX` · `f32 targetY` · `varuint targetEntityId`
 
 Someone committed to an ability. `phase`: `0` wind-up, `1` channel, `2` recovery.
 `releaseTick` is when the effect lands, which is all a client needs to draw a

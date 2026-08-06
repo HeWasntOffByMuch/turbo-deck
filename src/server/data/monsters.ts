@@ -4,6 +4,9 @@
  *
  * Stats are expressed as a full {@link EffectiveStats} because the resolver does
  * not care whether an attacker is a player or not -- one shape, one code path.
+ * That now includes `attackSpeed` (spec 070), which is where a darting stalker
+ * and a lumbering ravager stop feeling like the same fight at different damage
+ * numbers: they swing at visibly different rates off the same swing.
  */
 
 import { SERVER_TICK_RATE } from '../config.js';
@@ -47,6 +50,7 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
       attackDamage: 6,
       attackRange: 60,
       attackCooldownTicks: seconds(1.6),
+      attackSpeed: 1,
       armor: 0,
       spellPower: 1,
       critChance: 0,
@@ -69,6 +73,7 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
       attackDamage: 11,
       attackRange: 70,
       attackCooldownTicks: seconds(1.2),
+      attackSpeed: 1.35,
       armor: 0.05,
       spellPower: 1,
       critChance: 0.05,
@@ -91,6 +96,7 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
       attackDamage: 24,
       attackRange: 95,
       attackCooldownTicks: seconds(1.8),
+      attackSpeed: 0.8,
       armor: 0.18,
       spellPower: 1,
       critChance: 0.1,
@@ -115,6 +121,7 @@ const DUMMY: MonsterDefinition = {
     attackDamage: 0,
     attackRange: 0,
     attackCooldownTicks: 1,
+    attackSpeed: 1,
     armor: 0,
     spellPower: 1,
     critChance: 0,

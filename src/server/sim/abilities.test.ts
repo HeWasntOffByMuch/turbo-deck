@@ -122,6 +122,7 @@ function input(entityId: number, overrides: Partial<ServerInput> = {}): ServerIn
     castAbilityId: '',
     castTargetX: 0,
     castTargetY: 0,
+    castTargetEntityId: 0,
     cancelCast: false,
     ...overrides,
   };

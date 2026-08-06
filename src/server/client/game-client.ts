@@ -235,6 +235,8 @@ export interface KnownCast {
   readonly endTick: number;
   readonly targetX: number;
   readonly targetY: number;
+  /** The body it was aimed at, or 0 for a point aim (spec 070). */
+  readonly targetEntityId: number;
 }
 
 export class GameClient {
@@ -415,7 +417,7 @@ export class GameClient {
    * answers, this client asks for no movement. The request carries the last
    * input seq so the server commits at the same point in the stream.
    */
-  useAbility(abilityId: string, targetX = 0, targetY = 0): void {
+  useAbility(abilityId: string, targetX = 0, targetY = 0, targetEntityId = 0): void {
     if (!this.connected) return;
     this.requestedAbilityId = abilityId;
     const aim = { x: targetX, y: targetY };
@@ -442,8 +444,25 @@ export class GameClient {
     // guess is wrong (spec 067); walking through a commit costs a correction.
     const commitAt = this.estimated + this.commitDelayTicks();
     const mirror = this.mirror(commitAt);
+    // Readiness is judged at the tick the server will *commit* on -- the same
+    // tick the cast is stamped for. One number, asked once (spec 070).
+    //
+    // 069 judged it at `estimated + roundTrip` and leaned deliberately forward,
+    // on the argument that failing to predict a commit costs more than
+    // predicting one that is refused. The lean was measuring the wrong gap: a
+    // request waits on the input *queue*, not on the wire, and on a loopback
+    // that is three ticks while the round trip is zero. Every cooldown this
+    // client stamps already runs from `commitAt`, so asking "is it ready now"
+    // against a number stamped for later made the client pessimistic by exactly
+    // the queue depth, and drew no bar at all for a swing the server took.
+    //
+    // Leaning *past* `commitAt` is worse than either, and the harness says so
+    // plainly: the extra requests are refused, and a refusal stamps a cooldown
+    // of its own that outlives the press it came from and blocks the next real
+    // one. Judging at the commit tick is not a compromise between the two -- it
+    // is the only tick about which there is anything true to say.
     const decision = mirror
-      ? mayCast(mirror, abilityId, aim, this.estimated + this.measuredRoundTrip(), commitAt)
+      ? mayCast(mirror, abilityId, aim, commitAt, commitAt, targetEntityId)
       : null;
     const id = this.nextCastRequestId;
     this.nextCastRequestId += 1;
@@ -478,6 +497,7 @@ export class GameClient {
         abilityId,
         targetX,
         targetY,
+        targetEntityId,
         afterInputSeq: this.seq,
       }),
     );
@@ -577,6 +597,7 @@ export class GameClient {
         phase: confirmed.phase,
         targetX: confirmed.targetX,
         targetY: confirmed.targetY,
+        targetEntityId: confirmed.targetEntityId,
         nextPulseTick: 0,
       };
     }
@@ -805,6 +826,7 @@ export class GameClient {
         endTick: this.predictedCast.endTick,
         targetX: this.predictedCast.targetX,
         targetY: this.predictedCast.targetY,
+        targetEntityId: this.predictedCast.targetEntityId,
       });
     }
     return casts;
@@ -937,6 +959,7 @@ export class GameClient {
           endTick: message.endTick,
           targetX: message.targetX,
           targetY: message.targetY,
+          targetEntityId: message.targetEntityId,
         });
         if (message.entityId === this.welcome?.entityId) {
           this.requestedAbilityId = null;

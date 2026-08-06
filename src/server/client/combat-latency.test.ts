@@ -251,11 +251,18 @@ describe('a swing, over a wire', () => {
     // server's clock by a tick or two, so a blow is held slightly past its
     // stamped end on purpose -- late costs a tick of stillness, early costs a
     // correction. What must not happen is a bar that waits for `CastEnded` to
-    // arrive, which is a whole one-way trip and would show up here as tens of
-    // percent.
+    // arrive, which is a whole one-way trip on top of that.
+    //
+    // Per *cast*, not per tick. The tail being measured belongs to a blow, so
+    // dividing it by the sample count measures the swing rate as much as the
+    // tail: when spec 070 put the basic attack's cadence on `attackSpeed` and
+    // it roughly halved, the same two-tick tail on twice as many blows doubled
+    // a ratio that nothing had got worse about. The bound is what the old ratio
+    // came to per cast at the cadence it was written against.
     for (const delayTicks of [0, 3, 6]) {
       const played = await play({ delayTicks, ticksPerFrame: 3, ticks: 420 });
-      expect(played.lingering / played.sampled).toBeLessThan(0.1);
+      expect(played.commits).toBeGreaterThan(5);
+      expect(played.lingering / played.commits).toBeLessThan(4.5);
     }
   });
 

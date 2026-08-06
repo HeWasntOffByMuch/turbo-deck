@@ -33,6 +33,7 @@ const STATS: EffectiveStats = {
   attackDamage: 11.5,
   attackRange: 56,
   attackCooldownTicks: 7,
+  attackSpeed: 1.25,
   armor: 0.125,
   spellPower: 1.5,
   critChance: 0.0625,
@@ -125,6 +126,8 @@ describe('game message round-trip', () => {
       abilityId: 'melee.slash',
       targetX: 612.5,
       targetY: -48.25,
+      // The body it was aimed at (spec 070); 0 would be a point aim.
+      targetEntityId: 44,
       // The input this request was made on (spec 067), not decoration: the
       // server commits on that input rather than on arrival.
       afterInputSeq: 9001,

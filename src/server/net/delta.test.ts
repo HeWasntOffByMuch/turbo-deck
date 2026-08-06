@@ -12,6 +12,7 @@ const STATS: EffectiveStats = {
   attackDamage: 10,
   attackRange: 50,
   attackCooldownTicks: 8,
+  attackSpeed: 1.25,
   armor: 0,
   spellPower: 1,
   critChance: 0,

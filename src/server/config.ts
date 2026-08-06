@@ -91,7 +91,7 @@ export const INTEREST_CHUNK_RADIUS = 8;
  * 5: the cooldown message carries the caster's live resource and the tick it was
  * true on, so a client can decide whether it can afford a blow (spec 069).
  */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 /**
  * How far the client's modelled resource may be from the server's before it is
