@@ -25,7 +25,7 @@ import {
   type ServerSimEvent,
   type ServerWorldState,
 } from './types.js';
-import { createWorldState, spawnEntity, step, type StepContext } from './world.js';
+import { createWorldState, replaceEntity, spawnEntity, step, type StepContext } from './world.js';
 
 const RECORD: PersistedPlayer = {
   id: 'p1',
@@ -972,6 +972,40 @@ describe('a named target (spec 070)', () => {
     expect(hits(result.events)).toHaveLength(0);
     expect(result.events.some((event) => event.kind === 'attackMissed')).toBe(true);
     expect(result.state.entities.get(far.id)?.health).toBe(monsterById('dummy')?.stats.maxHealth);
+  });
+
+  it('misses a target that died during the wind-up, rather than hitting a corpse', () => {
+    const heavy = abilityById('melee.heavy');
+    if (!heavy) throw new Error('no melee.heavy');
+
+    let state = createWorldState(8);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const victim = withDummy(state, 660, 450);
+    state = victim.state;
+
+    // Committed, and a long way from landing.
+    const committed = run(state, 2, {
+      0: [
+        input(player.id, {
+          castAbilityId: 'melee.heavy',
+          castTargetX: 660,
+          castTargetY: 450,
+          castTargetEntityId: victim.id,
+        }),
+      ],
+    });
+
+    // Something else finishes it off mid-wind-up. The blow is already paid for
+    // and cannot be called back (spec 068), so what it finds when it lands is
+    // the question.
+    const corpse = committed.state.entities.get(victim.id);
+    if (!corpse) throw new Error('no victim');
+    const dead = replaceEntity(committed.state, { ...corpse, health: 0 });
+
+    const result = run(dead, heavy.windupTicks + 2);
+    expect(hits(result.events)).toHaveLength(0);
+    expect(result.events.some((event) => event.kind === 'attackMissed')).toBe(true);
   });
 
   it('stamps a basic attack from the caster, and everything else from the table', () => {
