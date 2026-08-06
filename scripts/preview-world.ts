@@ -153,6 +153,29 @@ async function settledBar(page: Page, id: string, timeoutMs = 4000): Promise<Bar
   return last;
 }
 
+/**
+ * The bottom line of the readout: what the next click does (spec 080).
+ *
+ * Polled rather than read once, because the line is written during a *frame*
+ * and this harness runs on software WebGL where a frame is not a formality. A
+ * single read a couple of hundred milliseconds after a click was reporting the
+ * state before it, which is a stopwatch failing rather than the game.
+ */
+async function waitForAim(page: Page, wanted: RegExp, timeoutMs = 4000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let seen = '';
+  while (Date.now() < deadline) {
+    const text = (await page.textContent('body')) ?? '';
+    seen =
+      /(aiming [^\n]*|[\w ]+: moving into range[^\n]*|right-click ground to move[^\n]*)/.exec(
+        text,
+      )?.[1] ?? '';
+    if (wanted.test(seen)) return seen;
+    await page.waitForTimeout(120);
+  }
+  return seen;
+}
+
 /** The tick the HUD is showing. */
 async function readTick(page: Page): Promise<number> {
   const text = (await page.textContent('body')) ?? '';
@@ -319,13 +342,48 @@ async function main(): Promise<void> {
     await page.waitForTimeout(1400);
     await shoot(page, 'world-walking');
 
-    // Commit to a heavy blow and catch the frame mid-wind-up: the bar, and the
-    // body turning into the blow at its own turn rate rather than snapping.
+    // A hotbar press is a question now (spec 080), not the commitment. The
+    // shape of the blow goes on the ground and nothing has been asked for
+    // until a click answers it.
     await page.mouse.move(820, 330);
     await page.waitForTimeout(200);
     await page.keyboard.press('Digit2');
-    await page.waitForTimeout(220);
+    const aimed = await waitForAim(page, /^aiming Heavy Blow/);
+    await shoot(page, 'world-aim-cone');
+    if (!/^aiming Heavy Blow/.test(aimed)) {
+      problems.push(`pressing 2 did not start an aim (readout: ${aimed})`);
+    }
+
+    // Right-click over an aim means *no*, and only that: it goes away, and
+    // nothing was spent, moved toward or attacked.
+    const tickAtCancel = await readTick(page);
+    await page.mouse.click(820, 330, { button: 'right' });
+    const cancelled = await waitForAim(page, /^right-click ground/);
+    if (/^aiming /.test(cancelled)) {
+      problems.push('right-click did not cancel the aim');
+    }
+    // ...and it really did move nothing: a cancel that fell through to a move
+    // order would have put a marker on the ground and started a walk.
+    if (((await page.textContent('body')) ?? '').includes('Heavy Blow: moving into range')) {
+      problems.push('right-click turned the aim into an order instead of cancelling it');
+    }
+    await shoot(page, 'world-aim-cancelled');
+    console.log(`  ticks while cancelling an aim: ${(await readTick(page)) - tickAtCancel}`);
+
+    // ...and again, answered this time. Placed close to the body so the confirm
+    // is a commitment rather than a walk, which is what this frame is of: the
+    // bar, and the body turning into the blow at its own turn rate.
+    await page.keyboard.press('Digit2');
+    await waitForAim(page, /^aiming Heavy Blow/);
+    await page.mouse.click(700, 430);
+    // Confirming consumes the aim, so the question comes off the readout --
+    // either for an order that is still walking, or because the blow is already
+    // committed and the order is spent.
+    const confirmed = await waitForAim(page, /^(right-click ground|Heavy Blow: moving)/);
     await shoot(page, 'world-windup');
+    if (/^aiming /.test(confirmed)) {
+      problems.push('a left-click did not confirm the aim');
+    }
 
     // ...then call it off. Nothing should be spent: no cooldown, no resource.
     await page.keyboard.press('Escape');
@@ -448,10 +506,70 @@ async function main(): Promise<void> {
       problems.push('the weapon switch is not on the page');
     }
 
-    // A ground-targeted blast, for the telegraph ring on the terrain.
-    await page.keyboard.press('Digit5');
-    await page.waitForTimeout(320);
+    // A skill that names a body (spec 080): the aim rings what a click would
+    // pick, the click orders it, and the player then walks into range and
+    // casts without a second press.
+    const seekAt = await findUnit(page);
+    // Aimed at where the body is *now*, not where the click that found it
+    // landed: finding one targets it, so the player is already walking and both
+    // pixels have moved on. The same lesson the hover frame above learned.
+    const settled = seekAt ? await settledBar(page, seekAt.id) : null;
+    if (settled) {
+      await page.mouse.move(bodyPoint(settled).x, bodyPoint(settled).y);
+      await page.keyboard.press('Digit5');
+      const asking = await waitForAim(page, /^aiming Seeking Bolt/);
+      if (!/^aiming Seeking Bolt/.test(asking)) {
+        problems.push(`pressing 5 did not start a unit aim (readout: ${asking})`);
+      }
+
+      // Aimed at where the body is *now*. Starting an aim deliberately does not
+      // call off the attack order underneath it -- deciding is not committing --
+      // so the player has gone on chasing and swinging for as long as this
+      // harness spent waiting for the readout, and the pixel has moved.
+      const nowAt = (await bodiesOnScreen(page)).find((bar) => bar.id === settled.id);
+      if (!nowAt) {
+        console.log('  the body being aimed at died before it could be clicked');
+      } else {
+        const point = bodyPoint(nowAt);
+        await page.mouse.move(point.x, point.y);
+        await page.waitForTimeout(160);
+        await shoot(page, 'world-aim-unit');
+        await page.mouse.click(point.x, point.y);
+        const taken = await waitForAim(page, /^(right-click ground|Seeking Bolt: moving)/);
+        if (/^aiming /.test(taken)) {
+          problems.push('a left-click on a body did not confirm the unit aim');
+        }
+        await page.waitForTimeout(900);
+        await shoot(page, 'world-seeking-bolt');
+      }
+    } else {
+      problems.push('no body to aim a unit-targeted skill at');
+    }
+
+    // A ground-targeted blast: the aim circle first, then the telegraph ring
+    // the cast puts on the terrain.
+    await page.mouse.move(760, 340);
+    await page.keyboard.press('Digit6');
+    await waitForAim(page, /^aiming Quake/);
+    await shoot(page, 'world-aim-circle');
+    await page.mouse.click(760, 340);
+    await page.waitForTimeout(420);
     await shoot(page, 'world-telegraph');
+
+    // ...and now that Quake is on its eight-second cooldown, pressing it again
+    // must start nothing. An aim that cannot be thrown is a place to park a
+    // press until the timer comes back, which is the queue this refuses.
+    await page.mouse.move(700, 500);
+    await page.keyboard.press('Digit6');
+    const refused = await waitForAim(page, /^aiming Quake/, 900);
+    if (/^aiming Quake/.test(refused)) {
+      problems.push('a skill on cooldown could still be aimed');
+    }
+    const said = (await page.textContent('body')) ?? '';
+    if (!said.includes('Quake: onCooldown')) {
+      problems.push('a press refused on cooldown said nothing about it');
+    }
+    await shoot(page, 'world-aim-refused');
 
     // Let the fight run a little, then photograph the hotbar: cooldown sweeps
     // (spec 065) and the pixel damage numbers over the bodies.
