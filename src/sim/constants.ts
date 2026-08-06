@@ -194,6 +194,12 @@ export const NAV_TIGHT_COST = 3;
 export const NAV_RELOCATE_RADIUS = 160;
 // A hunter whose line to the player is blocked re-runs the search this often.
 export const PATH_REPLAN_TICKS = 20;
+// How long a body waits before asking again after a search came back empty
+// (spec 073). A failure is the expensive answer and the stable one -- it changes
+// only when the world or the target's side of it does -- so it is asked once a
+// second rather than sixty times. Short enough that an opened gate is noticed
+// while the player is still standing in it.
+export const PATH_RETRY_TICKS = 60;
 // Distance at which a waypoint counts as reached and is consumed.
 export const PATH_WAYPOINT_EPS = 14;
 // Hard ceiling on cells expanded per search, so an unreachable goal is cheap.

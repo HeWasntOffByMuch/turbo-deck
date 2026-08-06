@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { circleBlocked, createWorldColliders, DEFAULT_WORLD } from '../../sim/collision.js';
-import { ARENA_OBSTACLES, WORLD_BOUNDS } from '../../sim/constants.js';
+import { ARENA_OBSTACLES, PATH_RETRY_TICKS, WORLD_BOUNDS } from '../../sim/constants.js';
 import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE, type LiveConfig } from '../config.js';
 import { monsterById } from '../data/monsters.js';
 import { CorrectionReason } from '../net/protocol.js';
@@ -804,5 +804,81 @@ describe('monsters find their way round', () => {
     const after = chase(SERVER_TICK_RATE, DEFAULT_WORLD);
     expect(after.path).toBe(0);
     expect(after.distance).toBeLessThan(300);
+  });
+
+  /**
+   * Spec 073. A failed search leaves an empty path, which read as an exhausted
+   * one -- so the case that costs the most ran on the cadence that costs the
+   * most, sixty times a second, per monster.
+   */
+  describe('when there is no way through at all', () => {
+    /** A palisade around the player, with no gate. */
+    const PEN = createWorldColliders(
+      [
+        { x: 500, y: 350, w: 200, h: 40 },
+        { x: 500, y: 510, w: 200, h: 40 },
+        { x: 500, y: 350, w: 40, h: 200 },
+        { x: 660, y: 350, w: 40, h: 200 },
+      ],
+      [],
+      WORLD_BOUNDS,
+    );
+
+    /** A monster outside the pen, a player inside it, run for `ticks`. */
+    function siege(ticks: number): { path: number | null; repathAtTick: number; tick: number } {
+      let state = createWorldState(1);
+      state = withPlayer(state, 600, 450).state;
+      const monster = withMonster(state, 'stalker', 600, 280);
+      state = monster.state;
+      const ctx = context({
+        world: PEN,
+        activeChunks: activeAround({ x: 600, y: 450 }),
+        // The ambient spawner would add monsters of its own and muddy the count.
+        config: { ...DEFAULT_LIVE_CONFIG, spawnRateMultiplier: 0 },
+      });
+      for (let i = 0; i < ticks; i++) state = step(state, [], ctx).state;
+      const at = state.entities.get(monster.id);
+      return {
+        path: at?.path === null ? null : (at?.path?.length ?? null),
+        repathAtTick: at?.repathAtTick ?? 0,
+        tick: state.tick,
+      };
+    }
+
+    it('books its next attempt a retry out, not a replan out', () => {
+      const after = siege(1);
+      // The search ran and failed, so the empty path is kept as the record of it.
+      expect(after.path).toBe(0);
+      expect(after.repathAtTick).toBe(after.tick + PATH_RETRY_TICKS);
+    });
+
+    it('re-searches on the retry cadence rather than every tick', () => {
+      // Well past the first retry: whatever tick the last search ran on, the next
+      // one is still a full PATH_RETRY_TICKS away -- which cannot be true of a
+      // monster that searched on the tick just gone.
+      const after = siege(PATH_RETRY_TICKS * 2 + 5);
+      expect(after.path).toBe(0);
+      expect(after.repathAtTick).toBeGreaterThan(after.tick);
+      expect(after.repathAtTick - after.tick).toBeLessThanOrEqual(PATH_RETRY_TICKS);
+      // Searches land on multiples of the retry cadence, not on every tick.
+      expect((after.repathAtTick - 1) % PATH_RETRY_TICKS).toBe(0);
+    });
+
+    it('still presses toward the player it cannot reach', () => {
+      let state = createWorldState(1);
+      state = withPlayer(state, 600, 450).state;
+      const monster = withMonster(state, 'stalker', 600, 280);
+      state = monster.state;
+      const ctx = context({
+        world: PEN,
+        activeChunks: activeAround({ x: 600, y: 450 }),
+        config: { ...DEFAULT_LIVE_CONFIG, spawnRateMultiplier: 0 },
+      });
+      for (let i = 0; i < SERVER_TICK_RATE * 2; i++) state = step(state, [], ctx).state;
+      const at = state.entities.get(monster.id)?.position;
+      // Up against the pen's north wall rather than idling where it spawned.
+      expect(at?.y ?? 0).toBeGreaterThan(280);
+      expect(circleBlocked({ x: at?.x ?? 0, y: at?.y ?? 0 }, monsterById('stalker')?.radius ?? 20, PEN)).toBe(false);
+    });
   });
 });
