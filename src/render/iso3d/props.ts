@@ -2,8 +2,18 @@ import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 import { hashUnit2 } from '../../shared/hash.js';
 import { FENCE_KINDS, FENCE_TILE_LENGTH, type FenceKind, type Prop } from '../../terrain/vegetation.js';
-import { applySway, bakeBend, disposeSway, type SwayInstance } from './sway.js';
+import { applySway, bakeBend, disposeSway, tiltReach, type SwayInstance } from './sway.js';
 import { stiffness } from './wind.js';
+import {
+  LOBED,
+  lobedCrownRadius,
+  slabDrop,
+  slabLayout,
+  slabRise,
+  trunkProfile,
+  type LobedShape,
+  type SlabSpec,
+} from './lobe.js';
 
 /**
  * Batched scenery for the whole world (spec 043/045). The scatter puts a
@@ -52,10 +62,19 @@ const HASH_JITTER_SIZE = 0x5eed07;
 /** A tree's own offset into the wind's clock (spec 074). */
 const HASH_WIND_PHASE = 0x5eed08;
 
-/** Fraction of trees that are pines rather than firs. */
-const PINE_SHARE = 0.38;
+/**
+ * How the three species divide the forest, as cumulative shares of the position
+ * hash. The lobed tree (spec 077) is the odd one out by construction, so it is
+ * held to a bit over a quarter: enough that a walk through the woods runs into
+ * one every few trees, few enough that the world still reads as coniferous.
+ */
+const LOBED_SHARE = 0.26;
+const PINE_SHARE = 0.3;
 
-export type TreeSpecies = 'fir' | 'pine';
+/** Every species, in the order their batches are added to a region's group. */
+export const TREE_SPECIES = ['fir', 'pine', 'lobed'] as const;
+
+export type TreeSpecies = (typeof TREE_SPECIES)[number];
 
 /** One part of a prop: a shared geometry plus where it sits in the prop's local space. */
 interface PropPart {
@@ -74,6 +93,23 @@ interface PropPart {
    * and full-grown spires out of the same geometry.
    */
   readonly tier?: number;
+  /**
+   * The tier count at or above which this part is grown, defaulting to
+   * `tier + 1` -- which is the rule every conifer has always used, written out.
+   *
+   * It is separate from `tier` because the lobed canopy (spec 077) needs the two
+   * to disagree: its slab count fills in the *middle* of the cluster and always
+   * keeps the topmost slab, since the trunk is one shared geometry and cannot
+   * shorten with the canopy. Dropping slabs off the top would leave a three-slab
+   * tree as a bare whip with a clump of foliage halfway up it.
+   */
+  readonly grownAt?: number;
+  /**
+   * Which entry of the autumn ramp this part takes, defaulting to `tier`. The
+   * conifers want the ramp to climb with the tier, dark base to bright crown;
+   * the lobed tree wants two tones alternating and nothing else.
+   */
+  readonly toneIndex?: number;
   /** How far this part may slide off the trunk's axis, at full asymmetry. */
   readonly driftMax?: number;
   /** How far this part may lean over, radians, at full asymmetry. */
@@ -121,6 +157,18 @@ interface PropPart {
    * the lean. A part without it is drawn exactly as it was before.
    */
   readonly sway?: boolean;
+  /**
+   * Seconds this part reads the wind behind the trunk it hangs off (spec 077),
+   * on top of the per-tree phase the whole tree already carries.
+   */
+  readonly swayLag?: number;
+  /**
+   * Extra tilt about this part's own origin, as a multiple of the trunk's bend
+   * angle there. Only a flat plate needs it -- see `sway.ts`.
+   */
+  readonly swayTilt?: number;
+  /** How far this part's geometry reaches from its own origin, for those bounds. */
+  readonly swayReach?: number;
 }
 
 /**
@@ -156,7 +204,9 @@ const PINE_TIERS: readonly (readonly [radius: number, height: number, baseY: num
 /** Tier ramp, dark at the base to bright at the crown, however many tiers there are. */
 const TIER_COLORS = [PALETTE.leafDeep, PALETTE.leafMid, PALETTE.leafBright, PALETTE.leafBright] as const;
 
-interface SpeciesShape {
+/** A stack of cones on a square column: the fir and the pine. */
+interface ConiferShape {
+  readonly kind: 'conifer';
   /** Trunk box: a square column this wide. Its height is derived, below. */
   readonly trunkWidth: number;
   readonly tiers: readonly (readonly [radius: number, height: number, baseY: number])[];
@@ -166,12 +216,40 @@ interface SpeciesShape {
   readonly leanMax: number;
 }
 
-const SPECIES: Record<TreeSpecies, SpeciesShape> = {
-  fir: { trunkWidth: 12, tiers: FIR_TIERS, tierCounts: [2, 3, 3, 4], driftMax: 5, leanMax: 0.1 },
-  // Fewer, wider, floppier fronds on a long bare trunk -- and leaning harder,
-  // since a drooping frond is most of what tells the two apart at this size.
-  pine: { trunkWidth: 12, tiers: PINE_TIERS, tierCounts: [2, 2, 3], driftMax: 9, leanMax: 0.19 },
+/**
+ * A species, in whichever of the two constructions it is built from (spec 077).
+ *
+ * The union is the point: the conifers' `tiers` table cannot describe a trunk
+ * that ends in a vertex or a canopy that is a set of flat blobs, and a shape
+ * general enough to describe both would describe neither clearly. The exported
+ * questions below -- how tall, how bare, how wide -- are what the rest of the
+ * file asks, and each of them branches once.
+ */
+type SpeciesShape = ConiferShape | LobedShape;
+
+const FIR: ConiferShape = {
+  kind: 'conifer',
+  trunkWidth: 12,
+  tiers: FIR_TIERS,
+  tierCounts: [2, 3, 3, 4],
+  driftMax: 5,
+  leanMax: 0.1,
 };
+
+/**
+ * Fewer, wider, floppier fronds on a long bare trunk -- and leaning harder,
+ * since a drooping frond is most of what tells the two apart at this size.
+ */
+const PINE: ConiferShape = {
+  kind: 'conifer',
+  trunkWidth: 12,
+  tiers: PINE_TIERS,
+  tierCounts: [2, 2, 3],
+  driftMax: 9,
+  leanMax: 0.19,
+};
+
+const SPECIES: Record<TreeSpecies, SpeciesShape> = { fir: FIR, pine: PINE, lobed: LOBED };
 
 /** Sides on a tier's cone. */
 const CONE_SEGMENTS = 7;
@@ -186,7 +264,7 @@ const CONE_COVER = Math.cos(Math.PI / CONE_SEGMENTS);
 const EPSILON = 1e-6;
 
 /** How far a tier may swing off the trunk's axis at full asymmetry. */
-function tierSway(shape: SpeciesShape, tier: number): { drift: number; lean: number } {
+function tierSway(shape: ConiferShape, tier: number): { drift: number; lean: number } {
   // The higher the frond, the further it may swing: a tier down at trunk height
   // that slid sideways would tear the tree in half, a crown tip flops.
   const top = Math.max(1, shape.tiers.length - 1);
@@ -207,7 +285,7 @@ function tierSway(shape: SpeciesShape, tier: number): { drift: number; lean: num
  * cone leans about its own centre, which both slides the axis sideways by
  * `dy * tan(lean)` and tips the slice being cut at `y` further up the cone.
  */
-function tierCover(shape: SpeciesShape, tier: number, y: number, asymmetry: number): number {
+function tierCover(shape: ConiferShape, tier: number, y: number, asymmetry: number): number {
   const tierSpec = shape.tiers[tier];
   if (!tierSpec) return -Infinity;
   const [radius, height, baseY] = tierSpec;
@@ -239,7 +317,7 @@ const TRUNK_BURIAL = 2;
  * the worst case -- both terms only grow with it). Only the tiers *every*
  * instance grows count, since a two-tier sapling has no crown to hide in.
  */
-function buriedTrunkHeight(shape: SpeciesShape): number {
+function buriedTrunkHeight(shape: ConiferShape): number {
   const guaranteed = Math.min(...shape.tierCounts);
   let best = 0;
   for (let tier = 0; tier < guaranteed; tier++) {
@@ -264,11 +342,14 @@ function buriedTrunkHeight(shape: SpeciesShape): number {
 }
 
 const TRUNK_HEIGHT: Record<TreeSpecies, number> = {
-  fir: buriedTrunkHeight(SPECIES.fir),
-  pine: buriedTrunkHeight(SPECIES.pine),
+  fir: buriedTrunkHeight(FIR),
+  pine: buriedTrunkHeight(PINE),
+  // Nothing to bury: the lobed trunk narrows to a single vertex, so it runs the
+  // whole height of the tree and its "top" is a point in open air by design.
+  lobed: LOBED.height,
 };
 
-/** How tall a species' trunk box stands, in prop-local units (before scale). */
+/** How tall a species' trunk stands, in prop-local units (before scale). */
 export function trunkHeight(species: TreeSpecies): number {
   return TRUNK_HEIGHT[species];
 }
@@ -278,9 +359,15 @@ export function trunkHeight(species: TreeSpecies): number {
  * units. Positive means the foliage hides it; negative means the trunk clips
  * out through a frond. Scale-free: the trunk, the tiers and the drift all scale
  * with the prop together, so one number answers for every size it can grow to.
+ *
+ * `Infinity` for the lobed tree (spec 077), and that is the honest answer rather
+ * than a dodge: the question is about a solid column's flat cap and its corners
+ * hanging out through a sloped cone, and a trunk that tapers to a single vertex
+ * has neither. The invariant is vacuous there, not satisfied by luck.
  */
 export function trunkTopCover(variant: TreeVariant): number {
   const shape = SPECIES[variant.species];
+  if (shape.kind === 'lobed') return Infinity;
   const y = TRUNK_HEIGHT[variant.species];
   let best = -Infinity;
   const grown = Math.min(variant.tierCount, shape.tiers.length);
@@ -290,13 +377,214 @@ export function trunkTopCover(variant: TreeVariant): number {
   return best;
 }
 
-/** The tier counts an instance of a species may grow. */
+/**
+ * The tier counts an instance of a species may grow -- cones for a conifer,
+ * canopy slabs for the lobed tree.
+ */
 export function speciesTierCounts(species: TreeSpecies): readonly number[] {
-  return SPECIES[species].tierCounts;
+  const shape = SPECIES[species];
+  return shape.kind === 'lobed' ? shape.slabCounts : shape.tierCounts;
+}
+
+/**
+ * A triangle sink: positions pushed in winding order, turned into a
+ * non-indexed buffer with normals computed from that winding.
+ *
+ * Non-indexed on purpose. `flatShading` reads the face normal, and the two
+ * surfaces of a canopy slab meet at its rim with opposite normals -- shared
+ * vertices there would average the two into a rim that lights like neither.
+ */
+function meshBuilder(): {
+  tri: (a: Vec3, b: Vec3, c: Vec3) => void;
+  quad: (a: Vec3, b: Vec3, c: Vec3, d: Vec3) => void;
+  build: () => THREE.BufferGeometry;
+} {
+  const positions: number[] = [];
+  const tri = (a: Vec3, b: Vec3, c: Vec3): void => {
+    positions.push(...a, ...b, ...c);
+  };
+  return {
+    tri,
+    quad: (a, b, c, d): void => {
+      tri(a, b, c);
+      tri(a, c, d);
+    },
+    build: (): THREE.BufferGeometry => {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.computeVertexNormals();
+      return geometry;
+    },
+  };
+}
+
+type Vec3 = readonly [number, number, number];
+
+/**
+ * The lobed tree's trunk (spec 077): a round column that tapers to a point.
+ *
+ * Built ring by ring from {@link trunkProfile} with its origin at the **ground**,
+ * so `offsetY` is zero and the baked bend weight is just the local height over
+ * the species height. The rings are what make the wind's quadratic bend draw a
+ * curve rather than tip a stick: with only a base and a tip there is nothing in
+ * between to lag.
+ *
+ * The last band is a fan to one apex vertex rather than a strip to a degenerate
+ * ring, so the tip really is a single point and not a cap collapsed to zero
+ * width -- the difference shows up as a speck of Z-fighting at the top of every
+ * tree in the world, which is exactly the kind of thing nobody finds later.
+ */
+function lobedTrunkGeometry(shape: LobedShape): THREE.BufferGeometry {
+  const rings = trunkProfile(shape);
+  const sides = shape.trunkSegments;
+  const { tri, quad, build } = meshBuilder();
+  const at = (ring: number, side: number): Vec3 => {
+    const r = rings[ring] as (typeof rings)[number];
+    const angle = (side / sides) * Math.PI * 2;
+    return [r.x + Math.cos(angle) * r.radius, r.y, r.z + Math.sin(angle) * r.radius];
+  };
+
+  const base = rings[0] as (typeof rings)[number];
+  for (let side = 0; side < sides; side++) {
+    const next = (side + 1) % sides;
+    // The base cap, wound downward. A trunk stands on ground sampled at one
+    // point, so on a slope its foot is partly in the air; an open bottom would
+    // show daylight straight up the inside of the tree.
+    tri([base.x, base.y, base.z], at(0, side), at(0, next));
+    for (let ring = 0; ring < rings.length - 1; ring++) {
+      const top = rings[ring + 1] as (typeof rings)[number];
+      if (top.radius === 0) {
+        tri(at(ring, side), [top.x, top.y, top.z], at(ring, next));
+      } else {
+        quad(at(ring, side), at(ring + 1, side), at(ring + 1, next), at(ring, next));
+      }
+    }
+  }
+  return build();
+}
+
+/**
+ * One canopy slab: a domed disc of the traced outline, duplicated a hair below
+ * itself and joined at the rim.
+ *
+ * The dome is `rise * (1 - u^2)`: highest at the centre, exactly flat at the rim
+ * so neighbouring slabs meet cleanly, and mirrored on the underside, which makes
+ * the top gently convex and the underside gently concave out of one profile.
+ *
+ * A closed shell 2.2 units thick against a 44-unit radius is 5% and reads as a
+ * sheet, while keeping three things a single surface does not have: it is
+ * visible from below, it casts a shadow from every orientation, and -- the one
+ * that turned out to matter most -- its facets face different ways, so it takes
+ * light. A truly flat slab has one normal, and one normal is one shade for ever;
+ * that is what a variant built on zero thickness was removed for (spec 077).
+ */
+function lobedSlabGeometry(slab: SlabSpec, shape: LobedShape): THREE.BufferGeometry {
+  // However many vertices the outline turned out to need -- its corners and its
+  // lobe tips, not a fixed step -- rather than `shape.lobeSegments`, which is
+  // only the floor those were added on top of.
+  const outline = slab.outline;
+  const segments = outline.length;
+  const rings = shape.lobeRings;
+  const { tri, quad, build } = meshBuilder();
+
+  const dome = (u: number): number => slab.rise * (1 - u * u);
+  const at = (ring: number, side: number, lower: boolean): Vec3 => {
+    const u = ring / rings;
+    const point = outline[side % segments];
+    const reach = (point?.radius ?? 0) * u;
+    const angle = point?.angle ?? 0;
+    return [Math.cos(angle) * reach, dome(u) - (lower ? shape.slabThickness : 0), Math.sin(angle) * reach];
+  };
+
+  for (let side = 0; side < segments; side++) {
+    // The centre fan. Every vertex of ring 0 is the same point, so it is written
+    // once rather than as a ring of coincident ones.
+    tri(at(0, side, false), at(1, side + 1, false), at(1, side, false));
+    tri(at(0, side, true), at(1, side, true), at(1, side + 1, true));
+    for (let ring = 1; ring < rings; ring++) {
+      quad(at(ring, side, false), at(ring, side + 1, false), at(ring + 1, side + 1, false), at(ring + 1, side, false));
+      quad(at(ring, side, true), at(ring + 1, side, true), at(ring + 1, side + 1, true), at(ring, side + 1, true));
+    }
+    // The rim, facing out of the slab.
+    quad(at(rings, side, false), at(rings, side + 1, false), at(rings, side + 1, true), at(rings, side, true));
+  }
+  return build();
+}
+
+/** Two tones and no more, alternating up the cluster: the brief's flat palette. */
+const LOBED_TONES = [PALETTE.leafMid, PALETTE.leafBright] as const;
+
+/**
+ * How the canopy trails the trunk in the wind (spec 077).
+ *
+ * `tilt` is a multiple of the trunk's bend *angle* at the slab's height, and
+ * the trunk's local inclination there is around three times that angle -- the
+ * bend is quadratic in height, so its slope is not its value. Between 1.5 and
+ * 1.9 the slabs read as hinged to a stem that is leaning, without the plate
+ * flapping past what the stem is doing. The lag climbs with the slab because a
+ * gust reaches the top of a tree last.
+ */
+const SLAB_LAG_BASE = 0.05;
+const SLAB_LAG_STEP = 0.035;
+const SLAB_TILT_BASE = 1.5;
+const SLAB_TILT_STEP = 0.1;
+
+/**
+ * The most any canopy slab's tilt asks of a bounding sphere, at `scale`.
+ *
+ * Exported because it is half of what a batch's inflated sphere is made of, and
+ * a test that brackets those spheres against the lean alone would pass happily
+ * while the widest slab in the world swung out of frame at full wind.
+ */
+export function maxCanopyTiltReach(scale = 1): number {
+  return slabLayout(LOBED).reduce(
+    (most, slab) => Math.max(most, tiltReach(SLAB_TILT_BASE + SLAB_TILT_STEP * slab.index, slab.radius * scale)),
+    0,
+  );
+}
+
+function lobedParts(shape: LobedShape): PropPart[] {
+  const full = shape.height;
+  const parts: PropPart[] = [
+    {
+      geometry: lobedTrunkGeometry(shape),
+      // Built standing on its own origin, so nothing to offset.
+      offsetY: 0,
+      color: PALETTE.trunk,
+      foliage: false,
+      sway: true,
+    },
+  ];
+  slabLayout(shape).forEach((slab) => {
+    // Higher slabs swing further off the axis, for the reason a conifer's upper
+    // fronds do: a slab down at the first fork that slid sideways would tear the
+    // canopy off the trunk, and one near the tip just nods.
+    const t = slab.index / Math.max(1, shape.slabs - 1);
+    parts.push({
+      geometry: lobedSlabGeometry(slab, shape),
+      offsetY: slab.y,
+      offsetX: slab.offsetX,
+      offsetZ: slab.offsetZ,
+      color: LOBED_TONES[slab.index % LOBED_TONES.length] ?? PALETTE.leafMid,
+      foliage: true,
+      tier: slab.index,
+      grownAt: slab.grownAt,
+      toneIndex: slab.index % LOBED_TONES.length,
+      driftMax: shape.driftMax * (0.35 + 0.65 * t),
+      leanMax: shape.leanMax * (0.4 + 0.6 * t),
+      sway: true,
+      swayLag: SLAB_LAG_BASE + SLAB_LAG_STEP * slab.index,
+      swayTilt: SLAB_TILT_BASE + SLAB_TILT_STEP * slab.index,
+      swayReach: slab.radius,
+    });
+  });
+  for (const part of parts) bakeBend(part.geometry, part.offsetY, full);
+  return parts;
 }
 
 function treeParts(species: TreeSpecies): PropPart[] {
   const shape = SPECIES[species];
+  if (shape.kind === 'lobed') return lobedParts(shape);
   const trunkWidth = shape.trunkWidth;
   const height = trunkHeight(species);
   // The bend weight is measured against the tallest the species reaches, not
@@ -329,16 +617,24 @@ function treeParts(species: TreeSpecies): PropPart[] {
   return parts;
 }
 
+/** A species' trunk radius at the ground, whichever construction it is. */
+function speciesTrunkRadius(species: TreeSpecies): number {
+  const shape = SPECIES[species];
+  return shape.kind === 'lobed' ? shape.trunkRadius : shape.trunkWidth / 2;
+}
+
 /**
  * How stiff each species is, from its trunk against its full height. Both
  * conifers carry the same 12-unit trunk today, so the two answers are within a
  * hair of each other -- the term is here because a species that grows a stouter
  * trunk should sway less for it, and that should not need a second edit here to
- * take effect.
+ * take effect. The lobed tree is the first one to collect: its trunk is thinner
+ * under a taller tree, so it sways measurably more for the same gust.
  */
 const SPECIES_STIFFNESS: Record<TreeSpecies, number> = {
-  fir: stiffness(SPECIES.fir.trunkWidth / 2, speciesHeight('fir')),
-  pine: stiffness(SPECIES.pine.trunkWidth / 2, speciesHeight('pine')),
+  fir: stiffness(speciesTrunkRadius('fir'), speciesHeight('fir')),
+  pine: stiffness(speciesTrunkRadius('pine'), speciesHeight('pine')),
+  lobed: stiffness(speciesTrunkRadius('lobed'), speciesHeight('lobed')),
 };
 
 /**
@@ -903,8 +1199,9 @@ export function treeVariant(prop: Prop): TreeVariant {
   // collide on it: the scatter keeps trunks much further apart than this.
   const x = Math.round(prop.x / 8);
   const z = Math.round(prop.y / 8);
-  const species: TreeSpecies = hashUnit2(x, z, HASH_SPECIES) < PINE_SHARE ? 'pine' : 'fir';
-  const counts = SPECIES[species].tierCounts;
+  const roll = hashUnit2(x, z, HASH_SPECIES);
+  const species: TreeSpecies = roll < LOBED_SHARE ? 'lobed' : roll < LOBED_SHARE + PINE_SHARE ? 'pine' : 'fir';
+  const counts = speciesTierCounts(species);
   const pick = Math.min(counts.length - 1, Math.floor(hashUnit2(x, z, HASH_TIERS) * counts.length));
   return {
     species,
@@ -917,6 +1214,12 @@ export function treeVariant(prop: Prop): TreeVariant {
 /** The tallest a tree of a species can stand, in prop-local units (before scale). */
 export function speciesHeight(species: TreeSpecies): number {
   const shape = SPECIES[species];
+  if (shape.kind === 'lobed') {
+    // The tip is the top of a lobed tree by construction, but a slab's dome
+    // could in principle reach past it, so ask rather than assert.
+    const crown = slabLayout(shape).reduce((high, slab) => Math.max(high, slab.y + slabRise(slab)), 0);
+    return Math.max(crown, shape.height);
+  }
   const crown = shape.tiers.reduce((high, [, height, baseY]) => Math.max(high, baseY + height), 0);
   return Math.max(crown, trunkHeight(species));
 }
@@ -926,12 +1229,19 @@ export function speciesHeight(species: TreeSpecies): number {
  * The number this whole reshape is about: it used to be zero.
  */
 export function bareTrunkHeight(species: TreeSpecies): number {
-  return SPECIES[species].tiers[0]?.[2] ?? 0;
+  const shape = SPECIES[species];
+  // The lowest slab's *lowest point*, not the plane it is placed at: the
+  // underside is what you see the trunk against, and it hangs below that plane
+  // by the slab's own thickness and by however far its pitch drops the near rim.
+  if (shape.kind === 'lobed') return shape.height * shape.canopyBase - slabDrop(shape);
+  return shape.tiers[0]?.[2] ?? 0;
 }
 
 /** The widest a species' crown gets, for reasoning about canopy overlap. */
 export function crownRadius(species: TreeSpecies): number {
-  return SPECIES[species].tiers.reduce((wide, [radius]) => Math.max(wide, radius), 0);
+  const shape = SPECIES[species];
+  if (shape.kind === 'lobed') return lobedCrownRadius(shape);
+  return shape.tiers.reduce((wide, [radius]) => Math.max(wide, radius), 0);
 }
 
 export interface PropFieldHandle {
@@ -1004,8 +1314,11 @@ export function buildPropField(
     if (of.length === 0) return;
     parts.forEach((part, partIndex) => {
       const tier = part.tier;
+      // `tier + 1` is the rule the conifers have always used; `grownAt` is what
+      // lets the lobed canopy keep its topmost slab at every count (spec 077).
+      const needs = part.grownAt ?? (tier === undefined ? 0 : tier + 1);
       const grown =
-        tier === undefined || !variants ? of : of.filter((prop) => (variants.get(prop)?.tierCount ?? 0) > tier);
+        tier === undefined || !variants ? of : of.filter((prop) => (variants.get(prop)?.tierCount ?? 0) >= needs);
       if (grown.length === 0) return;
       const jitterPos = part.jitterX !== undefined || part.jitterZ !== undefined;
       const jitterRot = part.jitterYaw !== undefined || part.jitterRoll !== undefined;
@@ -1024,6 +1337,10 @@ export function buildPropField(
       // same three numbers the matrix is being composed from.
       const swaying: SwayInstance[] = [];
       let swayHeight = 0;
+      // How far this part's geometry stands from its own origin on the *largest*
+      // instance in the batch -- the bounding sphere has to hold the biggest of
+      // them, and a batch mixes every scale the scatter drew.
+      let swayReach = 0;
 
       grown.forEach((prop, i) => {
         const s = prop.scale;
@@ -1099,7 +1416,7 @@ export function buildPropField(
         // tiles of a run come out identical however far apart they stand.
         color.setHex(
           part.foliage
-            ? foliageColor(part.color, tier ?? 0, prop.tint)
+            ? foliageColor(part.color, part.toneIndex ?? tier ?? 0, prop.tint)
             : prop.uniform
               ? part.uniformColor ?? part.color
               : shadedColor(part.color, prop.tint, part.tintAmount ?? 0, (part.jitterTint ?? 0) * wobbleSize),
@@ -1112,6 +1429,7 @@ export function buildPropField(
           // makes the trunk and the four cones above it lean as one thing.
           const treeHeight = speciesHeight(variant.species) * s;
           swayHeight = Math.max(swayHeight, treeHeight);
+          swayReach = Math.max(swayReach, (part.swayReach ?? 0) * s);
           swaying.push({
             baseX: prop.x,
             baseY: heightAt(prop.x, prop.y),
@@ -1125,7 +1443,11 @@ export function buildPropField(
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       if (swaying.length === grown.length && swaying.length > 0) {
-        applySway(mesh, swaying, swayHeight);
+        applySway(mesh, swaying, swayHeight, {
+          lag: part.swayLag ?? 0,
+          tilt: part.swayTilt ?? 0,
+          reach: swayReach,
+        });
       }
       group.add(mesh);
       geometries.push(part.geometry);
@@ -1151,7 +1473,7 @@ export function buildPropField(
     const variants = new Map<Prop, TreeVariant>();
     const trees = bucket.filter((p) => p.kind === 'tree');
     for (const tree of trees) variants.set(tree, treeVariant(tree));
-    for (const species of ['fir', 'pine'] as const) {
+    for (const species of TREE_SPECIES) {
       build(treeParts(species), trees.filter((p) => variants.get(p)?.species === species), variants);
     }
     build(bushParts(), bucket.filter((p) => p.kind === 'bush'));
