@@ -95,7 +95,7 @@ export interface HudHandle {
   /** The server refused a cast, and said why. */
   notice(text: string): void;
   /**
-   * Draw the spawner overlay, or clear it (spec 074).
+   * Draw the spawner overlay, or clear it (spec 076).
    *
    * Handed already-projected pixels and already-worded strings: what a spawner
    * is called and where it is on screen are both decided elsewhere, so this is
@@ -330,7 +330,7 @@ export function createHud(): HudHandle {
       // The client's own clock first, and the last delta beside it. They used to
       // be one number -- `view.tick` -- which was fine only because something was
       // always moving: deltas are suppressed when nothing changed, and since
-      // spec 074 a field of monsters that nobody has hit is genuinely still, so
+      // spec 076 a field of monsters that nobody has hit is genuinely still, so
       // the readout sat at 3 while the game ran perfectly well underneath it.
       `tick ${Math.floor(tick)}   delta ${view.tick}   seed ${view.worldSeed ?? '-'}\n` +
       `hp ${Math.round(self?.health ?? 0)}/${Math.round(stats?.maxHealth ?? 0)}   ` +

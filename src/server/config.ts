@@ -95,7 +95,7 @@ export const INTEREST_CHUNK_RADIUS = 8;
  * 7: the world is a map document rather than a seed, so terrain travels as
  * `MapInfo` plus requested `MapChunk`s instead of being rederived (spec 072).
  * 8: a client can ask to be told what the map's spawners are doing, for the
- * overlay behind the "show spawners" setting (spec 074).
+ * overlay behind the "show spawners" setting (spec 076).
  */
 export const PROTOCOL_VERSION = 8;
 

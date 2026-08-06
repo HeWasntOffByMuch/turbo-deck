@@ -189,7 +189,7 @@ export interface ServerEntity {
   readonly pardon: { readonly x: number; readonly y: number; readonly seq: number } | null;
   /**
    * The map spawner that produced this body, or null for anything else -- a
-   * player, a projectile, a monster an admin conjured (spec 074).
+   * player, a projectile, a monster an admin conjured (spec 076).
    */
   readonly spawnerId: string | null;
   /**
@@ -199,7 +199,7 @@ export interface ServerEntity {
   readonly anchor: Vec2 | null;
 }
 
-/** One map spawner's live state (spec 074). */
+/** One map spawner's live state (spec 076). */
 export interface SpawnerState {
   /** The body this spawner put in the world, or null while it is empty. */
   readonly entityId: number | null;

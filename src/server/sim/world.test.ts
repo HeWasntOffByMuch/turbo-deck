@@ -95,7 +95,7 @@ function withMonster(
   /**
    * Who it is already fighting, and where it considers home.
    *
-   * Nothing initiates since spec 074, so a test that wants a monster to walk
+   * Nothing initiates since spec 076, so a test that wants a monster to walk
    * anywhere has to hand it the target being hit would have given it.
    */
   extra: { targetId?: number; anchor?: { x: number; y: number } } = {},
@@ -611,7 +611,7 @@ describe("the map's spawners", () => {
 
     const died = step(state, [], ctx);
     state = died.state;
-    // Gone the same tick: no corpse (spec 074).
+    // Gone the same tick: no corpse (spec 076).
     expect(state.entities.has(victim.id)).toBe(false);
     expect(died.events.some((e) => e.kind === 'despawned' && e.entityId === victim.id)).toBe(true);
     const deathTick = state.tick;
@@ -830,7 +830,7 @@ describe('monsters find their way round', () => {
       const player = withPlayer(state, 600, 450);
       state = player.state;
       // Already fighting the player it cannot reach: nothing initiates since
-      // spec 074, so a siege has to start with the grudge a hit would have given.
+      // spec 076, so a siege has to start with the grudge a hit would have given.
       const monster = withMonster(state, 'stalker', 600, 280, { targetId: player.id });
       state = monster.state;
       const ctx = context({

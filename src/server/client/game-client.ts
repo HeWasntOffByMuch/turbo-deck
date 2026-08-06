@@ -169,7 +169,7 @@ export interface ClientView {
    */
   readonly map: ClientMapView | null;
   /**
-   * What every map spawner is doing (spec 074). Empty unless the client asked
+   * What every map spawner is doing (spec 076). Empty unless the client asked
    * for it with {@link GameClient.watchSpawners} -- it is a debug readout, and
    * one nobody is drawing costs nothing.
    */
@@ -305,7 +305,7 @@ export class GameClient {
   private mapCache: MapChunkCache | null = null;
   /** Ticks to wait before asking for chunks again, after being throttled. */
   private chunkBackoffTicks = 0;
-  /** The spawner readout, when it has been asked for (spec 074). */
+  /** The spawner readout, when it has been asked for (spec 076). */
   private spawners: readonly SpawnerStatus[] = [];
   private stats: EffectiveStats | null = null;
   private level = 1;
@@ -483,7 +483,7 @@ export class GameClient {
    */
   /**
    * Ask the server to keep {@link ClientView.spawners} up to date, or to stop
-   * (spec 074).
+   * (spec 076).
    *
    * The one request that asks for a readout rather than an action, which is why
    * it is off by default: a view that is not drawing the overlay should not be

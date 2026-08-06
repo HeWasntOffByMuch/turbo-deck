@@ -389,7 +389,7 @@ export class WorldScene {
 
   /**
    * Project a world point to a canvas pixel, the way {@link collectAnchors}
-   * does for a body (spec 074).
+   * does for a body (spec 076).
    *
    * The overlay is DOM for the same reason the health bars are: text through
    * the low-res buffer and the dither pass comes out as chewed pixels, and a

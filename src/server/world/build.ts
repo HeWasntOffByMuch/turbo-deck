@@ -66,7 +66,7 @@ export interface BuiltMapWorld extends BuiltWorld {
   readonly doc: MapDocument;
   /** Chunk lookup for the wire, and the layer scalars a client needs to mesh. */
   readonly index: MapIndex;
-  /** Every enemy spawn point the document places (spec 074), sorted by id. */
+  /** Every enemy spawn point the document places (spec 076), sorted by id. */
   readonly spawnPoints: readonly SpawnPoint[];
 }
 
@@ -93,7 +93,7 @@ export function buildWorldFromMap(doc: MapDocument, serialized: string): BuiltMa
     // Read here rather than in `buildWorldFromDocument`, because that path is
     // also a *client* assembling a partial world out of streamed chunks, and a
     // spawner that has not arrived yet is not an error there. On the server the
-    // whole document is in hand, so an unknown monster is one (spec 074).
+    // whole document is in hand, so an unknown monster is one (spec 076).
     spawnPoints: spawnPointsFrom(doc),
   };
 }

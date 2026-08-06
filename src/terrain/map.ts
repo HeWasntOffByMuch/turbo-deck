@@ -94,7 +94,7 @@ export interface MapMarker {
   readonly z: number;
   /**
    * Free text for most kinds. For `spawner` it is the monster id the point
-   * spawns (spec 074), and the server refuses to boot on one it does not know.
+   * spawns (spec 076), and the server refuses to boot on one it does not know.
    */
   readonly label?: string;
 }

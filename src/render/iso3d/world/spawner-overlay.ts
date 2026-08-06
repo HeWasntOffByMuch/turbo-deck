@@ -1,5 +1,5 @@
 /**
- * What the spawner overlay says (spec 074). Pure: no three.js, no DOM.
+ * What the spawner overlay says (spec 076). Pure: no three.js, no DOM.
  *
  * The overlay exists to answer two questions at a glance -- what stands here,
  * and how long until it does again -- so this turns the wire's `SpawnerStatus`

@@ -65,7 +65,7 @@ const STANDOFF_FRACTION = 0.8;
 
 /**
  * How far a monster may be dragged from its spawn point before it gives up
- * (spec 074).
+ * (spec 076).
  *
  * Sized so a fight can move -- around a tree, out of a doorway, backwards
  * through a camp -- without ending, and so that a player who has decided to
@@ -134,7 +134,7 @@ export interface StepContext {
   readonly activeChunks: ReadonlySet<ChunkKey>;
   readonly chunkSize: number;
   /**
-   * Every enemy spawn point the map places (spec 074). Empty for a world with
+   * Every enemy spawn point the map places (spec 076). Empty for a world with
    * no document behind it, which is every sandbox and most tests -- and a world
    * with no spawn points simply has no monsters in it.
    */
@@ -163,7 +163,7 @@ export interface SpawnSpec {
   readonly zoneId: string;
   readonly health?: number;
   /**
-   * Who this body starts out fighting, if anyone (spec 074).
+   * Who this body starts out fighting, if anyone (spec 076).
    *
    * Nothing initiates any more, so a caller that wants a monster to walk at
    * someone has to say so -- which is what being hit does, and what a scripted
@@ -546,7 +546,7 @@ export function step(
       }
       continue;
     }
-    // Everything else leaves nothing behind (spec 074). A five-second body that
+    // Everything else leaves nothing behind (spec 076). A five-second body that
     // cannot be looted, hit or walked through is not a corpse, it is a monster
     // you have stopped being able to fight standing in the doorway. Corpses are
     // their own feature and will arrive as one.
@@ -601,7 +601,7 @@ function monsterIntent(
   let target = monster.targetId === null ? null : entities.get(monster.targetId) ?? null;
   if (target && target.health <= 0) target = null;
 
-  // Nothing initiates (spec 074). A monster's only route to a target is the
+  // Nothing initiates (spec 076). A monster's only route to a target is the
   // retaliation `applyDamage` writes when something hits it, so walking past
   // one is walking past one -- and `aggroRange` sits unread in the table until
   // a spec turns proximity back on with something more interesting than a
@@ -678,7 +678,7 @@ function beyondLeash(monster: ServerEntity): boolean {
 
 /**
  * The walk back to the spawn point, for a body with no target and no business
- * being where it is (spec 074).
+ * being where it is (spec 076).
  *
  * Routed with the same A* a chase uses, so a monster led round a wall comes
  * back round it rather than pressing into it. It walks until it is within its
@@ -836,7 +836,7 @@ interface SpawnerResult {
 }
 
 /**
- * Refills the map's spawn points (spec 074).
+ * Refills the map's spawn points (spec 076).
  *
  * One spawner, one monster, one timer each. A spawner with no entry has never
  * been filled and is ready immediately, so the first tick of a server populates

@@ -1,5 +1,5 @@
 /**
- * Where the enemies are (spec 074).
+ * Where the enemies are (spec 076).
  *
  * The map document is the only answer. A `spawner` marker is a named point in
  * world space whose `label` is a monster id, and this turns the document's

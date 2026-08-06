@@ -82,7 +82,7 @@ export function placeMarker(
     id: nextMarkerId(store.markers(layerId), kind),
     x,
     z,
-    // A spawner's label is the monster it spawns (spec 074), so it is the one
+    // A spawner's label is the monster it spawns (spec 076), so it is the one
     // kind that is useless without one -- for the rest an empty label is just
     // an unnamed point, and storing `''` would be noise in the document.
     ...(label === undefined || label === '' ? {} : { label }),

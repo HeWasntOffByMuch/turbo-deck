@@ -196,7 +196,7 @@ async function main(): Promise<void> {
 
     await shoot(page, 'world-play');
 
-    // The spawner overlay (spec 074): open the cog, tick "Spawners", and
+    // The spawner overlay (spec 076): open the cog, tick "Spawners", and
     // photograph what the map placed. Every enemy on screen came from one of
     // these markers, so a frame with bodies and no marks would mean the
     // overlay is lying about where they came from.

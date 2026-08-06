@@ -505,7 +505,7 @@ describe('a cast the client is holding', () => {
     test.server.spawnEntities('ravager', at.x + 40, at.y, 1);
     const live = test.server.world.entities as Map<number, ServerEntity>;
     for (const [id, entity] of live) {
-      // Facing us, and already fighting us: nothing initiates since spec 074, so
+      // Facing us, and already fighting us: nothing initiates since spec 076, so
       // a monster that is meant to swing has to be handed the grudge a hit
       // would have given it.
       if (entity.typeId === 'ravager') {
@@ -548,7 +548,7 @@ describe('a cast the client is holding', () => {
     test.server.spawnEntities('ravager', at.x + 40, at.y, 1);
     const live = test.server.world.entities as Map<number, ServerEntity>;
     for (const [id, entity] of live) {
-      // Facing us, and already fighting us: nothing initiates since spec 074, so
+      // Facing us, and already fighting us: nothing initiates since spec 076, so
       // a monster that is meant to swing has to be handed the grudge a hit
       // would have given it.
       if (entity.typeId === 'ravager') {
