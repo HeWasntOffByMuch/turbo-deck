@@ -144,7 +144,7 @@ describe('what it refuses', () => {
   });
 });
 
-describe('what an arrival makes dirty (spec 077)', () => {
+describe('what an arrival makes dirty (spec 078)', () => {
   /** `cx,cz` of each chunk handed back. */
   const coords = (chunks: readonly { coord: { cx: number; cz: number } }[]): string[] =>
     chunks.map((c) => `${c.coord.cx},${c.coord.cz}`).sort();

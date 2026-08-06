@@ -1,4 +1,4 @@
-# 077 — The seam a streamed chunk leaves behind
+# 078 — The seam a streamed chunk leaves behind
 
 ## Problem
 

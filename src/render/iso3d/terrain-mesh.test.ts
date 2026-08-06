@@ -328,7 +328,7 @@ describe('a reloaded map draws the same water', () => {
 });
 
 /**
- * The land half of the same question the water tests above ask (spec 077).
+ * The land half of the same question the water tests above ask (spec 078).
  *
  * A chunk's walls come from asking the layer about the cell across each edge,
  * and its corner normals from an apron one corner past it -- both of which read

@@ -15,7 +15,7 @@
  * built **once**, from a document with no chunks in it, and each arrival is one
  * `insertChunk` plus a bounded handful of `buildChunk`s for the mesher -- its
  * own and its four edge neighbours', which were meshed against ground it has
- * only now supplied (spec 077). O(1) per chunk, and the height sampler starts
+ * only now supplied (spec 078). O(1) per chunk, and the height sampler starts
  * answering for new ground the instant it lands without anyone rebuilding
  * anything.
  *
@@ -76,7 +76,7 @@ export class StreamedMap {
   /**
    * Insert one chunk and hand back every `TerrainChunk` that now needs meshing:
    * the arrival, plus the neighbours whose own mesh was baked against ground
-   * that has only just landed (spec 077).
+   * that has only just landed (spec 078).
    *
    * A chunk's mesh is not entirely its own. Its walls come from asking the layer
    * whether the cell across each edge is solid, and its corner normals from an

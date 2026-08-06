@@ -134,7 +134,7 @@ class MeshBuffer {
  * Mesh one chunk. Neighbour solidity is asked of the *layer*, not the chunk, so
  * a chunk seam is not mistaken for a coastline -- otherwise every chunk boundary
  * would grow a wall down the middle of open ground. On a streaming client the
- * layer may not know yet, which is a third answer and not a `false` (spec 077).
+ * layer may not know yet, which is a third answer and not a `false` (spec 078).
  */
 function buildChunk(
   layer: MeshLayer,
@@ -189,7 +189,7 @@ function buildChunk(
       };
       // Only a *definite* no earns a skirt. An unknown neighbour is one that has
       // not streamed in, and a wall built against it is a cliff the settled map
-      // does not have (spec 077); the chunk is re-meshed when the neighbour
+      // does not have (spec 078); the chunk is re-meshed when the neighbour
       // lands, which is where a real seam coastline gets its wall.
       if (solidAt(i - 1, j) === false) wall(c00, c01);
       if (solidAt(i + 1, j) === false) wall(c10, c11);

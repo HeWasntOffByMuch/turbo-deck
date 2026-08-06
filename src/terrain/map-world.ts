@@ -888,7 +888,7 @@ export interface MeshLayer {
   readonly waterLevel: number | null;
   /**
    * Ground at this cell of the layer's global grid — outside the chunk too, and
-   * `null` where no chunk holds it yet (spec 077).
+   * `null` where no chunk holds it yet (spec 078).
    *
    * The same distinction `materialAt` draws below, and for the same reason. The
    * mesher skirts an edge where solid ground meets open air, so on a streaming
@@ -949,7 +949,7 @@ export function loadMap(doc: MapDocument): LoadedMap {
         waterLevel: l.waterLevel,
         // Off the grid is a definite no -- that is the world's edge, and the
         // wall there is real. On the grid with no chunk behind it is `null`:
-        // unknown, and not something to grow a cliff along (spec 077).
+        // unknown, and not something to grow a cliff along (spec 078).
         solidAt: (col: number, row: number): boolean | null =>
           onGrid(col, row) ? (store.cellAt(l.id, col, row)?.solid ?? null) : false,
         materialAt: (col: number, row: number): number | null => store.cellAt(l.id, col, row)?.materialIndex ?? null,
