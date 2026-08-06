@@ -127,6 +127,44 @@ retune moves the picture with it and no third field has to agree:
 - `projectile` → `line` of length `range` and width `2 * projectile.radius` —
   the straight shot, drawn as the lane it flies down.
 
+### A press of a skill that is not ready starts nothing
+
+An aim is refused outright while its ability is on cooldown, rather than
+started and left standing. So the press is answered, in one place, before
+anything is drawn:
+
+```ts
+export type AimStart =
+  /** Nothing to aim: ask for it now. */
+  | { readonly kind: 'cast' }
+  | { readonly kind: 'aim'; readonly gesture: AimGesture }
+  /** Not the player's to make yet. Nothing is drawn and nothing is sent. */
+  | { readonly kind: 'refused'; readonly reason: 'onCooldown' };
+
+export function startAim(
+  ability: AbilityDefinition,
+  input: { readonly readyAtTick: number; readonly tick: number },
+): AimStart;
+```
+
+The cooldown is the server's own number played back, exactly as `autoAttack`
+plays it back to decide whether to ask for a swing — the client never decides
+when something is ready, only whether asking is worth the round trip. A refusal
+says so in the notice line the server's `castRejected` already uses, so a dead
+press is never silent.
+
+It applies to `'self'` too, which has no aim to refuse. One rule reads better
+than "gated, except the instant ones", and the outcome is the same one the
+server would have sent back a tick later anyway.
+
+The rule has a second half, in `castOrder` below: **an order never waits on a
+cooldown.** It waits on the range, because walking is what it is for, and on
+nothing else. Arriving with the ability not ready drops the order instead of
+holding it — which is unreachable while the press gate holds, and is exactly
+the queue this rule exists to not have if it ever stops holding.
+
+### The order
+
 The confirmed aim is an order, and one tick of it is decided the same way one
 tick of an attack order is:
 
@@ -180,15 +218,15 @@ applies here unchanged.
 - In reach and off cooldown: `cast`, and `drop`. **One confirm is one cast**,
   not a cadence. That is the difference between this and an attack order, and
   it is the whole difference.
-- In reach and still on cooldown: hold the order. It waits on the cooldown the
-  same way it waits on the range, which is the only answer that does not need a
-  second rule for "you pressed it a quarter-second early".
+- In reach and still on cooldown: `drop`. An order waits on the range and on
+  nothing else — see above.
 
 ### The clicks
 
 | Input | Aim pending | No aim pending |
 |---|---|---|
-| `1`..`8`, hotbar button | replaces the aim | starts one (or casts, for `'self'`) |
+| `1`..`8`, hotbar button, ability ready | replaces the aim | starts one (or casts, for `'self'`) |
+| `1`..`8`, hotbar button, on cooldown | *nothing* — the standing aim is left alone | *nothing*, with a notice |
 | Left-click a unit | confirms a `'unit'` aim | nothing, as today |
 | Left-click the ground | confirms a `'ground'` aim; a `'unit'` aim ignores it and stays live | nothing |
 | Right-click | **cancels the aim, and nothing else** | drops a standing order, then target / move order as before |
@@ -264,11 +302,16 @@ that already exists.
   `radius` for a ground blast and for a bursting lob; a line of the table's
   `range` for a projectile with no radius. Every ability in the table produces a
   shape without throwing.
+- `startAim` refuses a press while the ability is on cooldown — for a gesture
+  and for a `'self'` cast alike — and allows it on the tick it comes back. A
+  refusal is not an aim: nothing is drawn and nothing is sent.
+- A press refused on cooldown leaves a *standing* aim exactly as it was, rather
+  than clearing it. A key that does nothing does nothing.
 - `castOrder` asks for nothing with no order; chases when the placement is out
   of reach and stops chasing inside it; asks for the cast exactly once and
-  drops in the same step; holds while `rooted`; holds while on cooldown and then
-  casts when the cooldown passes; drops a unit order whose mark died or
-  despawned.
+  drops in the same step; holds while `rooted`; **drops rather than waiting**
+  when it arrives with the ability on cooldown; drops a unit order whose mark
+  died or despawned.
 - A unit order's reach is measured to the mark's edge (`range + radius`), and
   its chase point comes to rest inside `range` — the same property spec 079
   asserts for the attack order, against the smallest body in the game.
@@ -298,7 +341,13 @@ that already exists.
   rectangular AoE would be new geometry in `sim/combat.ts` and needs a reason
   beyond an indicator wanting to exist.
 - **Queueing.** One aim at a time, one cast per confirm. A second press
-  replaces the first rather than lining up behind it.
+  replaces the first rather than lining up behind it, and a press of something
+  on cooldown starts nothing at all.
+- **Gating an aim on its cost.** Only the cooldown stops a press. A resource
+  that is a point short refills on its own, and the hotbar already dims what
+  cannot be paid for; a shortfall at the moment of pressing is a different
+  claim from a skill that is genuinely not available yet, and the server's
+  `notEnoughResource` still answers it.
 - **Smart-cast, self-cast modifiers, or a hold-to-aim key.** The gesture is the
   ability's, not the player's; there is no key that turns a placed blast into an
   instant one.
