@@ -36,7 +36,7 @@ interface LobedShape {
   readonly taperPower: number;     // radius = R * (1 - u)^p
   readonly trunkSegments: number;  // radial sides of the trunk
   readonly trunkRings: number;     // rings up its length -- what lets it *curve*
-  readonly lobeSegments: number;   // outline samples around a slab
+  readonly lobeVertices: readonly number[]; // corner counts a slab may take, even
   readonly lobeRings: number;      // rings from a slab's centre to its rim
   readonly slabs: number;          // slabs authored (an instance draws a subset)
   readonly slabCounts: readonly number[];  // the counts an instance may take, 3..5
@@ -48,7 +48,7 @@ interface LobedShape {
   readonly domeRise: number;       // slab rise as a fraction of slab *width*
   readonly slabThickness: number;  // zero makes the slab a single sheet
   readonly slabPitch: number;      // radians tipped toward the camera bearing
-  readonly seed: number;           // drives the blobs, the bow and the offsets
+  readonly seed: number;           // drives the outlines, the bow and the offsets
 }
 ```
 
@@ -59,51 +59,54 @@ trunk's flat cap is buried, and a trunk that ends in a single vertex has no cap.
 It returns `Infinity` for the lobed tree, which is the honest answer — the
 invariant is vacuous, not satisfied by luck.
 
-### The slab outline is a union of circles
+### The slab outline is an irregular n-gon
 
 Pure, in a new `lobe.ts` beside `wind.ts`, with no three.js in it:
 
 ```ts
-interface Blob { readonly x: number; readonly z: number; readonly r: number; }
 interface LobePoint { readonly angle: number; readonly radius: number; }
-function lobeBlobs(seed: number, radius: number, segments: number): Blob[];
-function lobeReach(blobs: readonly Blob[], angle: number): number;
-function lobeCusps(blobs: readonly Blob[]): number[];
-function lobeOutline(blobs: readonly Blob[], segments: number): LobePoint[];
+function lobeOutline(seed: number, radius: number, vertices: number): LobePoint[];
 function slabLayout(shape: LobedShape): SlabSpec[];
 ```
 
-A slab is a **core circle at the origin plus a ring of lobes** around it. Each
-lobe is held to
+Seven to fourteen vertices, radii alternating between a **far** band and a
+**near** band, at **uneven** angular intervals, joined by straight edges. Three
+properties, each doing one job:
 
-    |c|^2 <= coreRadius^2 + r^2
+- The **alternation** is where the notches come from, at full depth and for
+  nothing: a near vertex between two far ones is a notch, with no geometry to
+  intersect and no curve to sample.
+- The **uneven angles** are what stop it reading as a gear. Evenly spaced, a
+  far/near alternation *is* a cog, and jittering the radii does not hide it —
+  the eye locks onto the pitch, not the lengths. The gaps are drawn as ratios
+  and scaled to sum to a full turn, so they can be as uneven as they like and
+  the polygon still closes exactly. (Jittering each vertex off a fixed step
+  cannot promise that: the last gap is whatever is left over, and it is the one
+  that comes out a sliver.)
+- **Straight edges, no smoothing**, so every vertex is a corner.
 
-which says the furthest along a ray that the ray can *enter* that lobe — the
-tangent case, `sqrt(|c|^2 - r^2)` — is still inside the core, so the core has
-already covered the gap. The union is therefore star-shaped about the origin,
-which makes the outline exactly `max over blobs of the ray/circle hit distance`
-along each ray: a closed-form union with no marching-squares pass. The result is
-normalised so the widest point is exactly `canopySpread`, so `crownRadius` is a
-fact rather than an estimate.
+The count is rounded down to **even**: the alternation has to close around the
+ring, and at an odd count one adjacent pair lands in the same band and the slab
+carries a long flat edge where a notch belongs.
 
-**Two things the first cut of this got wrong, and both of them turned the
-silhouette back into the ellipse the brief rules out.**
+A polygon given as `(bearing, radius)` with bearings increasing is star-shaped
+about the origin and non-self-intersecting *by construction*, which is what the
+mesh builder relies on when it fans a slab from its centre. Normalising against
+the widest vertex afterwards — rather than clamping each one as it is drawn,
+which would pile the whole far band onto the limit — keeps `crownRadius` a fact
+about the mesh rather than an estimate.
 
-The stricter rule — "every circle contains the origin" — is simpler and looks
-equivalent. It is not: a circle containing the origin spans more than half the
-compass from it, so neighbouring circles overlap enormously and cross near the
-rim. The scallops came out about **6%** of the radius deep, which on a slab an
-isometric camera foreshortens by half is a couple of pixels. Under the looser
-condition the lobes sit out at the rim and their notches cut about **a quarter**
-of the radius.
+**Depth is bounded above as well as below.** A notch reads against the angular
+width of the lobe beside it, and at ten or twelve corners those lobes are only
+thirty-odd degrees wide; past about a third of the radius the slab stops being a
+leaf mass with bumps on it and becomes a holly leaf. The bands are set for a
+mean around a quarter.
 
-And the outline is not sampled at even angular steps. A crossing between two
-circles is a *corner*, and a corner is a single point, so evenly-spaced samples
-essentially never land on one — every notch gets cut across by a chord and comes
-back rounded. So `lobeOutline` solves for the crossings and inserts them, plus
-each circle's own bearing (the tip of its lobe, flattened the same way
-otherwise), on top of a floor of `lobeSegments` even steps. A slab's vertex
-count is therefore whatever the shape needs, around thirty, not `lobeSegments`.
+*This replaces a union of overlapping circles.* That produced the right shape
+and paid a great deal for it: circle–circle crossings solved algebraically so
+the corners survived sampling, and a star-shape condition governing where every
+circle was allowed to sit. Defining the polygon directly makes both of those
+problems stop existing rather than being solved.
 
 The mesh is a domed disc of that outline, duplicated `slabThickness` below
 itself and joined at the rim: a closed shell, convex on top and concave
@@ -143,19 +146,19 @@ sparser canopy rather than a tall bare whip with a stump of foliage halfway up.
 
 ## Invariants tested
 
-- `lobeOutline` is a genuine union: at every sampled angle the outline is at or
-  outside every blob it was built from, and it touches at least one of them.
-- The union is star-shaped: walking out along any ray to the boundary, every
-  point on the way is inside some circle. A gap there is a slab with a
-  ring-shaped hole, and the outline would sail over it without noticing.
-- The outline is *not* an ellipse — its radius has several local maxima, and the
-  ratio of its largest to smallest radius is well away from 1.
-- Its notches cut deep enough to survive being drawn at the size of a tree:
-  three or more of them, averaging over 15% of the radius. This is the assertion
-  the first version of the shape failed at 6%.
-- Every crossing between two circles has a vertex on it, to within the merge
-  epsilon — the corner is the scallop, and a sampled outline loses it.
+- The outline is a simple polygon: bearings strictly increasing all the way
+  round, every radius positive, the wrap closing the turn. That is what makes it
+  star-shaped, which is what the centre fan assumes; out of order the fan folds
+  through itself and the slab is drawn inside out.
+- The corner count is rounded down to even, so the far/near alternation closes.
+- Radii really do alternate: every far vertex is beyond every near one, and both
+  bands have width of their own, so the lobes are not all one length.
+- Notches average between 20% and 32% of the radius, and none is under 10%.
+  Bounded at both ends: too shallow is an ellipse, too deep is a holly leaf.
+- The gaps are uneven — widest at least 1.5x the narrowest — and none is a
+  sliver, and they sum to exactly a full turn.
 - Normalisation: the widest point of a slab is exactly `canopySpread`.
+- No two slabs of a tree share an outline.
 - The slab dome rises between 10% and 20% of the slab's width, is highest at the
   centre and flat at the rim, and the underside mirrors it (concave).
 - Every lobe sits within the star-shape limit, and the core is at the origin.
@@ -222,9 +225,9 @@ plane the slab nominally sits on.
   one radius for `'tree'`. A lobed tree is a `'tree'`, so it scatters, blocks,
   saves and loads with no change to `terrain/` at all — and the map editor's
   scatter brush plants it today without knowing it can.
-- **Per-instance procedural geometry.** The blobs are drawn from the species
-  seed once, at module load, and shared by every lobed tree in the world. Variety
-  comes from where the batching already puts it: the slab count, the lean, the
-  drift, the tint and the prop's own rotation.
+- **Per-instance procedural geometry.** Each slab's polygon is drawn from the
+  species seed once, at module load, and shared by every lobed tree in the world.
+  Variety comes from where the batching already puts it: the slab count, the
+  lean, the drift, the tint and the prop's own rotation.
 - **Retuning the conifers.** Their numbers, their parts and their shader are
   untouched.

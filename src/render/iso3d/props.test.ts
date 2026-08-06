@@ -861,11 +861,10 @@ describe('the lobed tree with flat leaves', () => {
       const position = mesh.geometry.getAttribute('position');
       for (let k = 0; k < position.count; k++) expect(position.getY(k)).toBe(0);
       // One fan over the outline and nothing else: no underside, no rim, and no
-      // interior rings subdividing a plane that has no curve in it. One triangle
-      // per outline vertex -- which is more than `lobeSegments`, because the
-      // corners and the lobe tips were inserted on top of the even steps.
+      // interior rings subdividing a plane that has no curve in it -- one
+      // triangle per corner of the n-gon.
       const outline = (slabs[i] as (typeof slabs)[number]).outline;
-      expect(outline.length).toBeGreaterThan(LOBED_FLAT.lobeSegments);
+      expect(LOBED_FLAT.lobeVertices).toContain(outline.length);
       expect(position.count).toBe(outline.length * 3);
     });
   });
