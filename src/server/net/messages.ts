@@ -538,7 +538,8 @@ function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
     .f32(stats.spellPower)
     .f32(stats.critChance)
     .f32(stats.maxResource)
-    .f32(stats.resourceRegen);
+    .f32(stats.resourceRegen)
+    .str(stats.basicAttackId);
 }
 
 function readStats(reader: BufferReader): EffectiveStats {
@@ -555,6 +556,7 @@ function readStats(reader: BufferReader): EffectiveStats {
     critChance: reader.f32(),
     maxResource: reader.f32(),
     resourceRegen: reader.f32(),
+    basicAttackId: reader.str(),
   };
 }
 

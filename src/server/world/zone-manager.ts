@@ -57,7 +57,7 @@ export const WILDERNESS: ZoneDefinition = {
   bounds: { x: -1e9, y: -1e9, w: 2e9, h: 2e9 },
   pvp: true,
   spawnMultiplier: 1.5,
-  spawnTable: ['grazer', 'stalker', 'ravager'],
+  spawnTable: ['grazer', 'stalker', 'slinger', 'ravager'],
 };
 
 export class ZoneManager {

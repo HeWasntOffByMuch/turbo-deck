@@ -351,6 +351,9 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     facing = view.entities.find((entity) => entity.id === view.selfEntityId)?.facing ?? 0;
     server.spawnEntities('grazer', view.self.x + 200, view.self.y - 70, 2);
     server.spawnEntities('stalker', view.self.x - 240, view.self.y + 110, 1);
+    // One that shoots back (spec 076), placed beyond its own throw so the fight
+    // opens with it closing to range rather than already loosing.
+    server.spawnEntities('slinger', view.self.x + 60, view.self.y + 400, 1);
   }
 
   /**
@@ -364,7 +367,12 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   function driveAutoAttack(view: ReturnType<typeof client.view>, me: { x: number; y: number }): void {
     if (targetId === null) return;
     const entity = view.entities.find((candidate) => candidate.id === targetId);
-    const swing = abilityById(BASIC_ATTACK_ID);
+    // What this character attacks with is a stat now (spec 076), so the reach a
+    // chase stops at, the cooldown the sweep is drawn from and the ability that
+    // is asked for are all one answer: a bow reaches further than a sword
+    // without a line here knowing which is being held.
+    const swingId = view.stats?.basicAttackId || BASIC_ATTACK_ID;
+    const swing = abilityById(swingId);
     const decision = autoAttack({
       self: me,
       target: entity
@@ -380,7 +388,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // Both halves of "am I committed": the server's cast and the one this
       // client has only asked for. `selfRoot` is already the union of the two.
       rooted: view.selfRoot !== null,
-      readyAtTick: view.cooldowns[BASIC_ATTACK_ID] ?? 0,
+      readyAtTick: view.cooldowns[swingId] ?? 0,
       tick: view.estimatedTick,
     });
 
@@ -398,7 +406,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // tree is routed by the same A* a right-click on the ground is.
     destination = decision.chaseTo;
     if (!decision.chaseTo) planner.clear();
-    if (decision.attack) client.useAbility(BASIC_ATTACK_ID, entity.x, entity.y, entity.id);
+    if (decision.attack) client.useAbility(swingId, entity.x, entity.y, entity.id);
   }
 
   function sendInput(): void {

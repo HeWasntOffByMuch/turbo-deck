@@ -713,3 +713,224 @@ describe('monsters find their way round', () => {
     });
   });
 });
+
+/**
+ * Spec 076. A shot's flight is what decides when it lands, so everything here
+ * is measured in ticks between the release and the hit rather than asserted
+ * against a schedule.
+ */
+describe('shots that travel', () => {
+  /**
+   * The ambient spawner off, because these tests count `hit` events and a
+   * wandering stalker's blows are indistinguishable from an arrow's.
+   */
+  function quiet(overrides: Partial<StepContext> = {}): StepContext {
+    return context({
+      config: { ...DEFAULT_LIVE_CONFIG, spawnRateMultiplier: 0 } as LiveConfig,
+      ...overrides,
+    });
+  }
+
+  /** Moves a body by hand between ticks -- a dummy has no legs of its own. */
+  function nudge(state: ServerWorldState, id: number, dx: number): ServerWorldState {
+    const entity = state.entities.get(id);
+    if (!entity) return state;
+    const entities = new Map(state.entities);
+    entities.set(id, { ...entity, position: { ...entity.position, x: entity.position.x + dx } });
+    return { ...state, entities };
+  }
+
+  /** A player who shoots `abilityId` at `targetId`, committing on the first tick. */
+  function shootAt(abilityId: string, playerId: number, targetId: number, x: number, y: number) {
+    return (tick: number): ServerInput[] =>
+      tick === 0
+        ? [
+            input(playerId, 1, {
+              castAbilityId: abilityId,
+              castTargetX: x,
+              castTargetY: y,
+              castTargetEntityId: targetId,
+              predictedX: 600,
+              predictedY: 450,
+            }),
+          ]
+        : [];
+  }
+
+  it('spawns nothing before the release, and a projectile on it', () => {
+    let state = createWorldState(4);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const dummy = withMonster(state, 'dummy', 800, 450);
+    state = dummy.state;
+    const ctx = quiet({ activeChunks: activeAround({ x: 600, y: 450 }, { x: 800, y: 450 }) });
+
+    const shoot = shootAt('ranged.shot', player.id, dummy.id, 800, 450);
+    let current = state;
+    let releaseTick: number | null = null;
+    for (let i = 0; i < 40 && releaseTick === null; i++) {
+      const result = step(current, shoot(i), ctx);
+      current = result.state;
+      const projectiles = [...current.entities.values()].filter((e) => e.projectile !== null);
+      if (projectiles.length > 0) releaseTick = current.tick;
+      // Nothing lands merely by winding up.
+      if (releaseTick === null) expect(result.events.some((e) => e.kind === 'hit')).toBe(false);
+    }
+    expect(releaseTick).not.toBeNull();
+
+    const shot = [...current.entities.values()].find((e) => e.projectile !== null);
+    expect(shot?.projectile?.targetEntityId).toBe(dummy.id);
+    expect(shot?.kind).toBe(EntityKindValue.Projectile);
+  });
+
+  it('follows a target that moves after the loose, and lands late for it', () => {
+    // Two identical fights: one where the mark stands, one where it retreats
+    // down the line of flight. The travel is the only difference between them.
+    function fight(retreatPerTick: number): number | null {
+      let state = createWorldState(4);
+      const player = withPlayer(state, 600, 450);
+      state = player.state;
+      const mark = withMonster(state, 'dummy', 900, 450);
+      state = mark.state;
+      const ctx = quiet({
+        activeChunks: activeAround(
+          { x: 600, y: 450 },
+          { x: 900, y: 450 },
+          { x: 1200, y: 450 },
+          { x: 1500, y: 450 },
+        ),
+      });
+
+      const shoot = shootAt('ranged.shot', player.id, mark.id, 900, 450);
+      let current = state;
+      for (let i = 0; i < 200; i++) {
+        const result = step(current, shoot(i), ctx);
+        current = result.state;
+        if (result.events.some((event) => event.kind === 'hit')) return current.tick;
+        if (retreatPerTick !== 0) current = nudge(current, mark.id, retreatPerTick);
+      }
+      return null;
+    }
+
+    const standing = fight(0);
+    // Slower than the arrow, so it is caught -- but not before it has run.
+    const running = fight(8);
+    expect(standing).not.toBeNull();
+    expect(running).not.toBeNull();
+    expect(running ?? 0).toBeGreaterThan(standing ?? 0);
+  });
+
+  it('lets a target outrun a shot entirely, and the shot expires', () => {
+    let state = createWorldState(4);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const mark = withMonster(state, 'dummy', 900, 450);
+    state = mark.state;
+    const ctx = quiet({
+      activeChunks: activeAround({ x: 600, y: 450 }, { x: 900, y: 450 }, { x: 1200, y: 450 }),
+    });
+
+    const shoot = shootAt('ranged.star', player.id, mark.id, 900, 450);
+    let current = state;
+    let hits = 0;
+    for (let i = 0; i < 200; i++) {
+      const result = step(current, shoot(i), ctx);
+      current = result.state;
+      hits += result.events.filter((event) => event.kind === 'hit').length;
+      // Faster than the star, so it is never caught.
+      current = nudge(current, mark.id, 30);
+    }
+    expect(hits).toBe(0);
+    expect([...current.entities.values()].some((e) => e.projectile !== null)).toBe(false);
+  });
+
+  it('is disjointed by a target that leaves the world, and lands on nobody', () => {
+    let state = createWorldState(4);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const mark = withMonster(state, 'dummy', 900, 450);
+    state = mark.state;
+    const ctx = quiet({
+      activeChunks: activeAround({ x: 600, y: 450 }, { x: 900, y: 450 }),
+    });
+
+    const shoot = shootAt('ranged.shot', player.id, mark.id, 900, 450);
+    let current = state;
+    let loosed = false;
+    for (let i = 0; i < 40 && !loosed; i++) {
+      current = step(current, shoot(i), ctx).state;
+      loosed = [...current.entities.values()].some((e) => e.projectile !== null);
+    }
+    expect(loosed).toBe(true);
+
+    // The mark is removed mid-flight: nothing was scheduled, so there is nothing
+    // to un-schedule -- the shot simply finishes its flight at a patch of ground.
+    const without = new Map(current.entities);
+    without.delete(mark.id);
+    current = { ...current, entities: without };
+
+    let hits = 0;
+    for (let i = 0; i < 200; i++) {
+      const result = step(current, [], ctx);
+      current = result.state;
+      hits += result.events.filter((event) => event.kind === 'hit').length;
+    }
+    expect(hits).toBe(0);
+    expect([...current.entities.values()].some((e) => e.projectile !== null)).toBe(false);
+  });
+
+  it('lets a flat shot be blocked, and an arcing one fly over', () => {
+    /** A shot from 600 at a mark at 850, with a body standing at 750 between. */
+    function throughAScreen(abilityId: string): { readonly struck: number | null } {
+      let state = createWorldState(4);
+      const player = withPlayer(state, 600, 450);
+      state = player.state;
+      const screen = withMonster(state, 'dummy', 750, 450);
+      state = screen.state;
+      const mark = withMonster(state, 'dummy', 850, 450);
+      state = mark.state;
+      const ctx = quiet({
+        activeChunks: activeAround({ x: 600, y: 450 }, { x: 750, y: 450 }, { x: 850, y: 450 }),
+      });
+
+      let current = state;
+      const shoot = shootAt(abilityId, player.id, mark.id, 850, 450);
+      for (let i = 0; i < 200; i++) {
+        const result = step(current, shoot(i), ctx);
+        current = result.state;
+        const hit = result.events.find((event) => event.kind === 'hit');
+        if (hit && hit.kind === 'hit') return { struck: hit.targetId };
+      }
+      return { struck: null };
+    }
+
+    // Flat: whatever wandered into the line takes it instead.
+    expect(throughAScreen('ranged.star').struck).toBe(2);
+    // Lobbed: over the screen, onto the body it was fired at.
+    expect(throughAScreen('ranged.shot').struck).toBe(3);
+  });
+
+  it('lets a slinger open at its throw, not at a sword length', () => {
+    let state = createWorldState(4);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const slinger = withMonster(state, 'slinger', 900, 450);
+    state = slinger.state;
+    const ctx = quiet({
+      activeChunks: activeAround({ x: 600, y: 450 }, { x: 900, y: 450 }),
+    });
+
+    let current = state;
+    let threw = false;
+    for (let i = 0; i < 120 && !threw; i++) {
+      current = step(current, [], ctx).state;
+      threw = [...current.entities.values()].some(
+        (e) => e.projectile?.abilityId === 'ranged.star',
+      );
+    }
+    expect(threw).toBe(true);
+    // And it never had to walk into melee to do it.
+    const at = current.entities.get(slinger.id)?.position;
+    expect(Math.hypot((at?.x ?? 0) - 600, (at?.y ?? 0) - 450)).toBeGreaterThan(150);
+  });
+});

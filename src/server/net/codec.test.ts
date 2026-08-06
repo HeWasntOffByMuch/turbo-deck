@@ -40,6 +40,7 @@ const STATS: EffectiveStats = {
   maxResource: 30,
   // f32-exact, so the round-trip is testing the codec and not float precision.
   resourceRegen: 0.0625,
+  basicAttackId: 'ranged.shot',
 };
 
 describe('codec primitives', () => {

@@ -89,6 +89,7 @@ function blankEntity(id: number): ServerEntity {
       critChance: 0,
       maxResource: 0,
       resourceRegen: 0,
+      basicAttackId: '',
     },
     activity: ActivityValue.Idle,
     activityUntilTick: 0,
@@ -443,16 +444,33 @@ export function step(
       continue;
     }
 
-    const travelled = Math.min(flight.totalDistance, flight.travelled + flight.speed);
-    const progress = travelled / flight.totalDistance;
-    const dirX = (flight.targetX - flight.originX) / flight.totalDistance;
-    const dirY = (flight.targetY - flight.originY) / flight.totalDistance;
-    const x = flight.originX + dirX * travelled;
-    const y = flight.originY + dirY * travelled;
+    // Re-aimed every tick at the body it named, so a shot follows a target that
+    // moved after it was loosed (spec 076). A target that died or left the world
+    // *disjoints* it: the last aim stands and the shot finishes at a patch of
+    // ground. Nothing was ever scheduled, so there is nothing to un-schedule --
+    // the travel is the only thing that decides when, or whether, this lands.
+    const chased =
+      flight.targetEntityId > 0 ? working.get(flight.targetEntityId) ?? null : null;
+    const tracking = chased !== null && chased.health > 0;
+    const aimX = tracking && chased ? chased.position.x : flight.targetX;
+    const aimY = tracking && chased ? chased.position.y : flight.targetY;
+
+    const toGo = Math.hypot(aimX - entity.position.x, aimY - entity.position.y);
+    const stride = Math.min(flight.speed, toGo);
+    const travelled = flight.travelled + stride;
+    // The finish line moves with the target, so the total is re-stamped rather
+    // than fixed at launch. Progress still runs 0 -> 1, and still drives the arc.
+    const totalDistance = Math.max(1e-6, travelled + (toGo - stride));
+    const progress = Math.min(1, travelled / totalDistance);
+    const dirX = toGo > 1e-6 ? (aimX - entity.position.x) / toGo : Math.cos(entity.facing);
+    const dirY = toGo > 1e-6 ? (aimY - entity.position.y) / toGo : Math.sin(entity.facing);
+    const x = entity.position.x + dirX * stride;
+    const y = entity.position.y + dirY * stride;
     const moved: ServerEntity = {
       ...entity,
       position: { x, y, z: context.terrain.heightAt(x, y) + arcHeightAt(progress, flight.arcHeight) },
-      projectile: { ...flight, travelled },
+      facing: toGo > 1e-6 ? Math.atan2(dirY, dirX) : entity.facing,
+      projectile: { ...flight, targetX: aimX, targetY: aimY, totalDistance, travelled },
     };
     working.set(entity.id, moved);
 
@@ -460,10 +478,21 @@ export function step(
     const ability = abilityById(flight.abilityId);
     if (!ability || !owner) continue;
 
-    const struck = [...working.values()].find(
-      (candidate) => projectileHits(moved, candidate) && isHostile(owner, candidate, context.zones),
-    );
-    const arrived = travelled >= flight.totalDistance;
+    // The two travel types differ in what can stop them, which is the point of
+    // there being two (spec 076). A flat shot takes the first hostile body it
+    // overlaps, whoever that turns out to be -- something that stepped into the
+    // line is in the line. An arcing one passes over everything and answers only
+    // to the body it was fired at.
+    const struck =
+      flight.arcHeight > 0
+        ? tracking && chased && projectileHits(moved, chased) && isHostile(owner, chased, context.zones)
+          ? chased
+          : undefined
+        : [...working.values()].find(
+            (candidate) =>
+              projectileHits(moved, candidate) && isHostile(owner, candidate, context.zones),
+          );
+    const arrived = toGo - stride <= 1e-6;
     if (!struck && !arrived) continue;
 
     // A projectile with a blast radius bursts where it stops, hit or not; a
@@ -618,7 +647,9 @@ function monsterIntent(
   const dx = target.position.x - monster.position.x;
   const dy = target.position.y - monster.position.y;
   const distance = Math.hypot(dx, dy);
-  const swing = abilityById(definition?.ability ?? '');
+  // What it swings with is a stat now (spec 076), so a slinger stands off at
+  // its throw's range and a stalker at its sword's, off the same two lines.
+  const swing = abilityById(monster.stats.basicAttackId);
   const reach = ((swing?.range ?? monster.stats.attackRange) + target.radius) * STANDOFF_FRACTION;
   const closing = distance > reach;
 

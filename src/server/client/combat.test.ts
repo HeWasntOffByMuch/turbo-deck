@@ -39,6 +39,7 @@ const STATS: EffectiveStats = {
   critChance: 0,
   maxResource: 20,
   resourceRegen: 0.1,
+  basicAttackId: 'melee.slash',
 };
 
 function mirror(overrides: Partial<Mirror> = {}): Mirror {

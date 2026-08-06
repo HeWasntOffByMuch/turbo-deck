@@ -624,9 +624,13 @@ function launchProjectile(
   const dy = cast.targetY - caster.position.y;
   const aimed = Math.hypot(dx, dy);
   // A direction-targeted bolt flies its full range; a point-targeted lob lands
-  // where it was aimed, which is what makes the arc land on the marker.
+  // where it was aimed, which is what makes the arc land on the marker. A shot
+  // that named a body is aimed at the body, and re-aimed every tick of the
+  // flight from there (spec 076).
   const distance =
-    ability.targeting === 'point' ? Math.min(aimed, ability.range) : ability.range;
+    ability.targeting === 'point' || cast.targetEntityId > 0
+      ? Math.min(aimed, ability.range)
+      : ability.range;
   const dirX = aimed > 1e-6 ? dx / aimed : Math.cos(caster.facing);
   const dirY = aimed > 1e-6 ? dy / aimed : Math.sin(caster.facing);
 
@@ -637,6 +641,7 @@ function launchProjectile(
     originY: caster.position.y,
     targetX: caster.position.x + dirX * distance,
     targetY: caster.position.y + dirY * distance,
+    targetEntityId: cast.targetEntityId,
     speed: spec.speed / SERVER_TICK_RATE,
     arcHeight: spec.arcHeight,
     totalDistance: Math.max(1e-6, distance),

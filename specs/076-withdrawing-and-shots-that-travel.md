@@ -101,7 +101,7 @@ is `swing.range * STANDOFF_FRACTION`, so a slinger keeps its distance without a
 line of AI written for it.
 
 The id rides the existing `0x44 Stats` message (`str basicAttackId` after the
-stat block); `PROTOCOL_VERSION` goes to **7**. The client reads it there and
+stat block); `PROTOCOL_VERSION` goes to **8**. The client reads it there and
 stops importing `BASIC_ATTACK_ID` — which stays, as the default a character
 with empty hands falls back to.
 
@@ -170,7 +170,7 @@ target is aimed at the target rather than at a point `range` away along the aim.
 - `arcHeightAt` still peaks at the midpoint of a shot whose target never moved,
   and a tracked shot's `progress` never goes backwards.
 - `EffectiveStats.basicAttackId` comes from the main hand, defaults to
-  `melee.slash`, and round-trips the codec; `PROTOCOL_VERSION` is 7.
+  `melee.slash`, and round-trips the codec; `PROTOCOL_VERSION` is 8.
 - **A slinger opens at range** and a stalker still closes to melee, off the same
   intent code.
 - **Determinism survives**: the same seed and inputs — a withdrawn wind-up and

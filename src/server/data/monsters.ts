@@ -7,6 +7,11 @@
  * That now includes `attackSpeed` (spec 070), which is where a darting stalker
  * and a lumbering ravager stop feeling like the same fight at different damage
  * numbers: they swing at visibly different rates off the same swing.
+ *
+ * Since spec 076 it also includes `basicAttackId`, which is where the monster's
+ * `ability` field went. Two places naming what a body swings with was one too
+ * many, and the sim was already reaching past the entity to find the other one.
+ * An empty id is a training dummy: scenery with a health bar.
  */
 
 import { SERVER_TICK_RATE } from '../config.js';
@@ -23,11 +28,6 @@ export interface MonsterDefinition {
   readonly stats: EffectiveStats;
   /** Passive monsters only fight back once hit. */
   readonly passive: boolean;
-  /**
-   * The ability it swings with, or null for something that never attacks --
-   * a training dummy, a critter, anything that is scenery with a health bar.
-   */
-  readonly ability: string | null;
 }
 
 function seconds(value: number): number {
@@ -42,7 +42,6 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
     aggroRange: 0,
     experience: 8,
     passive: true,
-    ability: 'melee.slash',
     stats: {
       maxHealth: 24,
       moveSpeed: 40,
@@ -56,6 +55,7 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
       critChance: 0,
       maxResource: 0,
       resourceRegen: 0,
+      basicAttackId: 'melee.slash',
     },
   },
   {
@@ -65,7 +65,6 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
     aggroRange: 320,
     experience: 18,
     passive: false,
-    ability: 'melee.slash',
     stats: {
       maxHealth: 40,
       moveSpeed: 105,
@@ -79,6 +78,7 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
       critChance: 0.05,
       maxResource: 0,
       resourceRegen: 0,
+      basicAttackId: 'melee.slash',
     },
   },
   {
@@ -88,7 +88,6 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
     aggroRange: 420,
     experience: 55,
     passive: false,
-    ability: 'melee.slash',
     stats: {
       maxHealth: 140,
       moveSpeed: 95,
@@ -102,6 +101,34 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
       critChance: 0.1,
       maxResource: 0,
       resourceRegen: 0,
+      basicAttackId: 'melee.slash',
+    },
+  },
+  {
+    id: 'slinger',
+    name: 'Slinger',
+    radius: 20,
+    // Notices further than it can throw, so it opens the fight by closing to
+    // its own standoff rather than being walked up on.
+    aggroRange: 520,
+    experience: 32,
+    passive: false,
+    stats: {
+      maxHealth: 34,
+      moveSpeed: 90,
+      turnRate: 200,
+      attackDamage: 9,
+      // `monsterIntent` stands off at the *ability's* range, so this number only
+      // matters to a body that has lost its throwing arm. The star reaches 300.
+      attackRange: 300,
+      attackCooldownTicks: seconds(1.4),
+      attackSpeed: 1,
+      armor: 0,
+      spellPower: 1,
+      critChance: 0.05,
+      maxResource: 0,
+      resourceRegen: 0,
+      basicAttackId: 'ranged.star',
     },
   },
 ];
@@ -113,7 +140,6 @@ const DUMMY: MonsterDefinition = {
   aggroRange: 0,
   experience: 0,
   passive: true,
-  ability: null,
   stats: {
     maxHealth: 100000,
     moveSpeed: 0,
@@ -127,6 +153,7 @@ const DUMMY: MonsterDefinition = {
     critChance: 0,
     maxResource: 0,
     resourceRegen: 0,
+    basicAttackId: '',
   },
 };
 

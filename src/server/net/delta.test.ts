@@ -18,6 +18,7 @@ const STATS: EffectiveStats = {
   critChance: 0,
   maxResource: 30,
   resourceRegen: 0.05,
+  basicAttackId: 'melee.slash',
 };
 
 function entity(id: number, overrides: Partial<ServerEntity> = {}): ServerEntity {

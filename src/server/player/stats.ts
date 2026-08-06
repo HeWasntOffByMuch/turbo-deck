@@ -28,6 +28,7 @@ import {
 } from '../../sim/constants.js';
 import { CHARACTERS } from '../../sim/characters.js';
 import { SERVER_TICK_RATE } from '../config.js';
+import { BASIC_ATTACK_ID } from '../data/abilities.js';
 import { itemById } from '../data/items.js';
 import { scaleModifier, sumModifiers, type StatModifier } from '../data/modifiers.js';
 import { skillById } from '../data/skills.js';
@@ -185,7 +186,23 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
     critChance,
     maxResource,
     resourceRegen,
+    basicAttackId: basicAttackFor(player),
   };
+}
+
+/**
+ * The ability this character's auto-attack uses (spec 076).
+ *
+ * The main hand decides, because that is what a weapon *is* here: a bow says
+ * `ranged.shot` the same way the Keen Longsword says `attackSpeedPct`. A weapon
+ * that says nothing, an empty hand, and an item id no longer in the table all
+ * fall back to the sword swing, so a character is never left unable to attack by
+ * what it happens to be holding.
+ */
+export function basicAttackFor(player: PersistedPlayer): string {
+  const mainHand = player.equipment.mainHand;
+  const item = mainHand ? itemById(mainHand) : null;
+  return item?.basicAttackId ?? BASIC_ATTACK_ID;
 }
 
 /**

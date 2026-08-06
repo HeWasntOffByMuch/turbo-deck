@@ -91,12 +91,30 @@ export interface ProjectileState {
   readonly ownerId: number;
   readonly originX: number;
   readonly originY: number;
+  /**
+   * Where it is headed *now*. Re-aimed every tick at a named target, so a shot
+   * follows a body that moved after it was loosed (spec 076); fixed for a shot
+   * thrown at a patch of ground.
+   */
   readonly targetX: number;
   readonly targetY: number;
+  /**
+   * The body this shot is chasing, or 0 for one aimed at a point (spec 076).
+   *
+   * When it dies or leaves the world the shot is *disjointed*: it keeps the aim
+   * it last had and flies on to that spot. Nothing was scheduled, so there is
+   * nothing to un-schedule -- the travel is the only thing that decides.
+   */
+  readonly targetEntityId: number;
   /** World units per tick along the ground line. */
   readonly speed: number;
   readonly arcHeight: number;
-  /** Total ground distance; progress is travelled/total, which drives the arc. */
+  /**
+   * Ground distance this flight will cover: `travelled` plus what is left to
+   * run. Re-stamped every tick, because a tracked target moves the finish line;
+   * for a shot at a fixed point it never changes. `travelled / totalDistance` is
+   * the flight's progress, and what the arc is drawn against.
+   */
   readonly totalDistance: number;
   readonly travelled: number;
   readonly expiresAtTick: number;
