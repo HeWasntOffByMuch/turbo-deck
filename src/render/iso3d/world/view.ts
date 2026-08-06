@@ -46,7 +46,8 @@ import { createHud, HOTBAR } from './hud.js';
 import { appearanceOf } from './appearance.js';
 import { moveIntent, MOVE_KEYS, RoutePlanner } from './intent.js';
 import { autoAttack } from './target.js';
-import { WorldScene } from './scene.js';
+import { aimGesture, aimShape, castOrder, type AimGesture, type AimOrder } from './aim.js';
+import { WorldScene, type AimIndicator } from './scene.js';
 import { spawnerLabels } from './spawner-overlay.js';
 
 const TICK_MS = 1000 / SERVER_TICK_RATE;
@@ -170,7 +171,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   }
 
   const hud = createHud();
-  hud.onUse((abilityId) => useAbility(abilityId));
+  hud.onUse((abilityId) => pressAbility(abilityId));
   // Picking a weapon is an ordinary equip (spec 079): the server puts it in the
   // hand, recomputes the stat block, and the new `basicAttackId` comes back on
   // `Stats`. Nothing here decides what the right-click then does -- the next
@@ -212,6 +213,20 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    */
   let targetId: number | null = null;
   /**
+   * The skill being aimed but not yet thrown (spec 080).
+   *
+   * A hotbar press stops being the commitment and becomes this: the shape of
+   * the blow is on the ground, and nothing has been asked for. A left-click
+   * turns it into an {@link order}; a right-click throws it away, at no cost,
+   * because there was nothing to refund.
+   */
+  let pendingAim: { readonly abilityId: string; readonly gesture: AimGesture } | null = null;
+  /**
+   * A confirmed aim, walking into range (spec 080). One cast, not a cadence:
+   * the tick it is asked for is the tick it is forgotten.
+   */
+  let order: AimOrder | null = null;
+  /**
    * The heading we believe we have, turned at the server's own rate.
    *
    * Predicted for the same reason position is: facing is replicated at 20Hz, and
@@ -232,8 +247,30 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     return aim;
   }
 
-  function useAbility(abilityId: string): void {
-    const target = worldAim();
+  /**
+   * A hotbar slot was reached for (spec 080).
+   *
+   * What that means now depends on what the ability asks for. A self cast has
+   * nothing to supply, so it is still the commitment it always was. Everything
+   * else becomes an aim: a picture on the ground and a question, until a click
+   * answers it.
+   */
+  function pressAbility(abilityId: string): void {
+    const ability = abilityById(abilityId);
+    if (!ability) return;
+
+    const gesture = aimGesture(ability);
+    if (gesture === 'none') {
+      castNow(abilityId, worldAim(), 0);
+      return;
+    }
+    // A second press replaces the first rather than queueing behind it. There
+    // is one aim, and it is whichever one you reached for last.
+    pendingAim = { abilityId, gesture };
+  }
+
+  /** Commit: send the request, and give up everything that would fight it. */
+  function castNow(abilityId: string, at: { x: number; y: number }, targetEntityId: number): void {
     // Committing to a blow cancels where you were going. The server roots a
     // caster anyway, so a standing order would simply resume the moment the cast
     // ended -- walking off mid-fight, seconds after the click that ordered it,
@@ -243,7 +280,45 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // ...and it calls off the auto-attack, for the same reason held keys
     // outrank a move order: reaching for a hotbar slot is taking control back.
     targetId = null;
-    client.useAbility(abilityId, target.x, target.y);
+    client.useAbility(abilityId, at.x, at.y, targetEntityId);
+  }
+
+  /**
+   * The left-click that answers the aim's question.
+   *
+   * A ground aim takes the point under the cursor. A unit aim takes the body
+   * under it -- and a click on empty grass is *ignored* rather than treated as
+   * a cancel: it asked for a body, so a click that found none has not answered
+   * anything, and throwing the aim away would punish a near miss.
+   */
+  function confirmAim(): void {
+    const pending = pendingAim;
+    if (!pending) return;
+    const ability = abilityById(pending.abilityId);
+    if (!ability) return;
+
+    let targetEntityId = 0;
+    let at = worldAim();
+    if (pending.gesture === 'unit') {
+      const hovered = cursor ? scene.pickUnitAt(cursor.x, cursor.y) : null;
+      const picked = hovered === null ? null : client.view().entities.find((e) => e.id === hovered);
+      if (!picked || !attackable(picked, client.view().selfEntityId)) return;
+      targetEntityId = picked.id;
+      at = { x: picked.x, y: picked.y };
+    }
+
+    pendingAim = null;
+    // The order owns the walking from here, so nothing else may be steering.
+    destination = null;
+    planner.clear();
+    targetId = null;
+    order = { abilityId: ability.id, targetEntityId, x: at.x, y: at.y, range: ability.range };
+  }
+
+  /** Throw the aim away. Nothing was asked for, so there is nothing to refund. */
+  function clearAim(): void {
+    pendingAim = null;
+    order = null;
   }
 
   /**
@@ -264,7 +339,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     held.add(event.code);
     const slot = HOTBAR[Number(event.key) - 1];
     if (slot) {
-      useAbility(slot);
+      pressAbility(slot);
       event.preventDefault();
     }
     // Escape calls off a wind-up. Cancelling refunds the cost and the cooldown,
@@ -275,13 +350,20 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // Withdrawing from a blow that the auto-attack would re-commit to on the
       // next tick is not withdrawing from anything.
       targetId = null;
+      clearAim();
     }
     // Any manual step also drops a standing order, for the same reason held
     // keys outrank one in `moveIntent`: taking the keys is taking control.
+    //
+    // A *pending* aim survives it. Walking while you decide where to put a
+    // blast is the point of being allowed to decide; a confirmed order does not
+    // survive, because from then on it is steering and a held key already
+    // outranks a destination in `moveIntent`.
     if (MOVE_KEYS[event.code]) {
       destination = null;
       planner.clear();
       targetId = null;
+      order = null;
     }
   };
   const onKeyUp = (event: KeyboardEvent): void => {
@@ -298,11 +380,30 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     const rect = canvas.getBoundingClientRect();
     cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
 
+    // Left-click confirms an aim, and does nothing at all without one
+    // (spec 080). It used to fire the first hotbar slot at the cursor, which is
+    // a click race rather than a decision.
+    if (event.button === 0) {
+      confirmAim();
+      return;
+    }
+
     // One button does both, and which one it does is decided by what is under
-    // it (spec 070). Left-click is bound to nothing: it used to fire the first
-    // hotbar slot at the cursor, which is a click race rather than a decision,
-    // and it could not tell you what you were fighting.
+    // it (spec 070).
     if (event.button !== 2) return;
+
+    // Right-click over a pending aim means *no*, and only that: no move order,
+    // no attack order, nothing under the cursor acted on. The button that calls
+    // a blow off cannot also mean "and go there instead" -- and it is the only
+    // reading under which changing your mind is genuinely free.
+    if (pendingAim) {
+      pendingAim = null;
+      return;
+    }
+    // A confirmed order is already walking, so a right-click is an ordinary
+    // change of orders and replaces it, the way a new move order replaces an
+    // attack target.
+    order = null;
 
     const hovered = scene.pickUnitAt(cursor.x, cursor.y);
     const picked = hovered === null ? null : client.view().entities.find((e) => e.id === hovered);
@@ -404,9 +505,114 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     if (decision.attack) client.useAbility(swingId, entity.x, entity.y, entity.id);
   }
 
+  /**
+   * One tick of a confirmed aim (spec 080): close the gap, then throw it.
+   *
+   * The same shape as `driveAutoAttack` above and deliberately so -- both feed
+   * `moveIntent` an ordinary destination and ask the server for an ability, and
+   * the server validates them identically. The one difference is the ending: an
+   * attack order stands until the body is down, and this is a single blow.
+   */
+  function driveCastOrder(view: ReturnType<typeof client.view>, me: { x: number; y: number }): void {
+    const standing = order;
+    if (!standing) return;
+
+    const mark =
+      standing.targetEntityId === 0
+        ? undefined
+        : view.entities.find((entity) => entity.id === standing.targetEntityId);
+    const decision = castOrder({
+      self: me,
+      order: standing,
+      target: mark
+        ? {
+            id: mark.id,
+            x: mark.x,
+            y: mark.y,
+            radius: appearanceOf(mark).radius,
+            health: mark.health,
+          }
+        : null,
+      // Both halves of "am I committed": the server's cast and the one this
+      // client has only asked for.
+      rooted: view.selfRoot !== null,
+      readyAtTick: view.cooldowns[standing.abilityId] ?? 0,
+      tick: view.estimatedTick,
+    });
+
+    // Re-pointed every tick, because a named mark moves. The planner treats it
+    // as any other destination, so an approach round a tree is routed by the
+    // same A* a right-click on the ground is.
+    destination = decision.chaseTo;
+    if (!decision.chaseTo) planner.clear();
+    if (decision.cast) {
+      client.useAbility(
+        decision.cast.abilityId,
+        decision.cast.x,
+        decision.cast.y,
+        decision.cast.targetEntityId,
+      );
+    }
+    if (decision.drop) {
+      order = null;
+      destination = null;
+      planner.clear();
+    }
+  }
+
+  /**
+   * What the aim looks like this frame, or null. Presentation assembled from
+   * the decision `aim.ts` already made -- no branch here changes an outcome.
+   */
+  function aimIndicator(
+    view: ReturnType<typeof client.view>,
+    me: { x: number; y: number },
+  ): AimIndicator | null {
+    const abilityId = pendingAim?.abilityId ?? order?.abilityId ?? null;
+    if (abilityId === null) return null;
+    const ability = abilityById(abilityId);
+    if (!ability) return null;
+
+    // Where it is pointed: the cursor while the aim is still a question, the
+    // placement once it has been answered.
+    let point = worldAim();
+    let unitId: number | null = null;
+    let markRadius = 0;
+
+    if (order) {
+      const mark =
+        order.targetEntityId === 0
+          ? undefined
+          : view.entities.find((entity) => entity.id === order?.targetEntityId);
+      point = mark ? { x: mark.x, y: mark.y } : { x: order.x, y: order.y };
+      unitId = mark ? mark.id : null;
+      markRadius = mark ? appearanceOf(mark).radius : 0;
+    } else if (pendingAim?.gesture === 'unit') {
+      const hovered = cursor ? scene.pickUnitAt(cursor.x, cursor.y) : null;
+      const picked = hovered === null ? null : view.entities.find((entity) => entity.id === hovered);
+      if (picked && attackable(picked, view.selfEntityId)) {
+        unitId = picked.id;
+        point = { x: picked.x, y: picked.y };
+        markRadius = appearanceOf(picked).radius;
+      }
+    }
+
+    return {
+      shape: aimShape(ability),
+      origin: me,
+      point,
+      unitId,
+      range: ability.range,
+      // Measured to the body's edge when there is one, the same as the gate the
+      // server will apply to the cast this becomes.
+      inRange: Math.hypot(point.x - me.x, point.y - me.y) <= ability.range + markRadius,
+    };
+  }
+
   function sendInput(): void {
     const view = client.view();
     const me = selfPosition();
+    driveCastOrder(view, me);
     driveAutoAttack(view, me);
     const intent = moveIntent({
       held,
@@ -481,11 +687,15 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // A chase re-points its destination every tick as the target moves, so
       // marking it would strobe a diamond along the ground for the whole run.
       // The ring under the target is the marker while one is being attacked.
-      destination: targetId === null ? destination : null,
+      destination: targetId === null && order === null ? destination : null,
       cursor,
       targetEntityId: targetId,
+      aim: aimIndicator(view, view.self ?? { x: 0, y: 0 }),
     });
-    hud.update(view, scene.screenAnchors(), drawnTick, client.correctionCount, targetId);
+    hud.update(view, scene.screenAnchors(), drawnTick, client.correctionCount, targetId, {
+      abilityId: pendingAim?.abilityId ?? order?.abilityId ?? null,
+      pending: pendingAim !== null,
+    });
 
     // The setting is the subscription (spec 076): turning it on is what asks
     // the server for the timers, and turning it off is what stops them coming.

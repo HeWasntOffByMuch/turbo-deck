@@ -1392,13 +1392,14 @@ describe('an ability aimed at a body (spec 080)', () => {
   });
 
   it('replays to bit-identical state and events with the same seed', () => {
+    const windup = seek.windupTicks;
     function once(): Run {
       let state = createWorldState(21);
       const player = withPlayer(state, 600, 450);
       state = player.state;
       const mark = withDummy(state, 880, 470);
       state = mark.state;
-      return run(state, seek.windupTicks + 50, {
+      return run(state, windup + 50, {
         0: [
           input(player.id, {
             castAbilityId: 'bolt.seek',

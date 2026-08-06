@@ -27,8 +27,12 @@ import { EntityKind } from '../../../server/net/protocol.js';
 import { SERVER_TICK_RATE } from '../../../server/config.js';
 import { attackIntervalTicks } from '../../../server/player/stats.js';
 import { castBar } from './cast.js';
+import { aimGesture } from './aim.js';
 import { appearanceOf, displayName } from './appearance.js';
 import { pixelTextSvg } from './pixel-font.js';
+
+/** The slot being aimed (spec 080). The aim indicator's colour, in the DOM. */
+const AIM_HIGHLIGHT = '#7fd4ff';
 
 /** How long a damage number floats, in frames. */
 const NUMBER_LIFE = 48;
@@ -56,6 +60,7 @@ export const HOTBAR: readonly string[] = [
   'melee.heavy',
   'bolt.arcane',
   'bolt.lob',
+  'bolt.seek',
   'ground.quake',
   'self.mend',
   'channel.drain',
@@ -117,6 +122,11 @@ export interface HudHandle {
     corrections: number,
     /** The body being attacked, or null (spec 070). Shown as a one-line readout. */
     targetId: number | null,
+    /**
+     * The skill being aimed and whether it is still a question (spec 080).
+     * Lights the slot it came from and says what the next click will do.
+     */
+    aiming: { readonly abilityId: string | null; readonly pending: boolean },
   ): void;
   /** A hit landed on `entityId`. Presentation of something already resolved. */
   addDamage(entityId: number, damage: number, crit: boolean): void;
@@ -290,6 +300,7 @@ export function createHud(): HudHandle {
     tick: number,
     corrections: number,
     targetId: number | null,
+    aiming: { readonly abilityId: string | null; readonly pending: boolean },
   ): void {
     const byId = new Map(view.entities.map((entity) => [entity.id, entity]));
     const casts = new Map(view.casts.map((cast) => [cast.entityId, cast]));
@@ -379,6 +390,12 @@ export function createHud(): HudHandle {
       slot.button.style.borderColor = casting ? '#ffcf6b' : requested ? '#5c7ba6' : '#33405a';
       slot.button.style.opacity = affordable(view, slot.ability) ? '1' : '0.45';
 
+      // The slot being aimed, lit in the aim's own colour (spec 080), so the
+      // question on the ground and the button it came from are one thing.
+      const aimed = slot.abilityId === aiming.abilityId;
+      slot.button.style.borderColor = aimed ? AIM_HIGHLIGHT : '#33405a';
+      slot.button.style.background = aimed ? '#1d2c3d' : '#182130';
+
       // The sweep is the server's cooldown, played back (spec 065). Its *length*
       // comes from the ability table so the shade shrinks proportionally; the
       // client never decides when something is ready.
@@ -417,7 +434,7 @@ export function createHud(): HudHandle {
       `monsters ${monsters}   corrections ${corrections}` +
       (view.connected ? '' : '   (disconnected)') +
       `\n${targetLine(view, targetId)}` +
-      '\nright-click ground to move, a unit to attack · WASD · 1-7 abilities · Esc cancel';
+      `\n${aimLine(aiming)}`;
   }
 
   return {
@@ -505,6 +522,23 @@ function targetLine(view: ClientView, targetId: number | null): string {
     : view.entities.find((entity) => entity.id === targetId);
   if (!target) return 'no target';
   return `target ${displayName(target)} ${Math.round(target.health)}/${Math.round(target.maxHealth)}`;
+}
+
+/**
+ * The bottom line: what the next click does (spec 080).
+ *
+ * It replaces the fixed key list, which said the same six things whatever the
+ * player was in the middle of. While a skill is aimed there is exactly one
+ * question on screen, and this is it.
+ */
+function aimLine(aiming: { readonly abilityId: string | null; readonly pending: boolean }): string {
+  const ability = aiming.abilityId === null ? null : abilityById(aiming.abilityId);
+  if (!ability) {
+    return 'right-click ground to move, a unit to attack · WASD · 1-8 abilities · Esc cancel';
+  }
+  if (!aiming.pending) return `${ability.name}: moving into range · right-click to call it off`;
+  const pick = aimGesture(ability) === 'unit' ? 'left-click a unit' : 'left-click to place';
+  return `aiming ${ability.name} — ${pick}, right-click to cancel`;
 }
 
 /** A cooldown countdown: whole seconds while there are several, tenths at the end. */
