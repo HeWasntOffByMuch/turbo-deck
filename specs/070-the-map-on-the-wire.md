@@ -119,7 +119,7 @@ interface MapIndex {
   readonly chunkCells: number;
   /** cellSize * chunkCells — the edge of a map chunk, in world units. */
   readonly chunkExtent: number;
-  readonly species: readonly string[];   // string table for prop encoding
+  readonly species: readonly string[];   // union of every chunk's species
   readonly layers: readonly MapLayerInfo[];
   chunkAt(layer: number, cx: number, cz: number): MapChunk | null;
   /** World-space centre of a chunk, for the distance check. */
@@ -160,8 +160,9 @@ solid     varuint pairs · (varuint value · varuint count) × pairs
 materials  "
 tones      "
 nav       bool present · then the same run pairs when present
+species   varuint count · str × count          (chunk-LOCAL table, see below)
 props     varuint count · (varuint speciesIndex · varint x · varint z ·
-                           varint rotation · varint scale · u32 tint ·
+                           varint rotation · varint scale · varint tint ·
                            u8 flags) × count
 markers   varuint count · (u8 kind · str id · varint x · varint z · str label)
 ```
@@ -181,6 +182,16 @@ zigzag, because a heightfield's neighbours are close: it roughly halves the
 largest array in the message at no cost in fidelity.
 
 `flags` bit 1 is `align`, bit 2 is `uniform` — the two optional `MapProp` fields.
+`tint` is a quantized *tone*, not a packed colour, and goes over as thousandths
+like every other document number; encoding it as a `u32` silently rounded every
+prop's tint to zero, which the round-trip test caught.
+
+The species table is **chunk-local**, duplicating a few short strings per chunk,
+because `decodeServerMessage` is stateless. A frame that could only be read by a
+client that had already seen an earlier frame would quietly break that property,
+and the saving would be a few dozen bytes. `MapInfo`'s table is the union of them
+all and is advisory — it exists so a renderer can build one instanced mesh per
+species up front rather than discovering a new one mid-stream.
 
 **`0x50 ChunkDenied`** answers a request the server will not serve, with reason
 `0 OutOfRange`, `1 Unknown`, `2 Throttled`. It exists so a client can retire the
@@ -197,15 +208,18 @@ The rule, and the "within reason" the request came with:
 > (Chebyshev) of the requested chunk.
 
 ```ts
-const MAP_CHUNK_REQUEST_RADIUS = 4;   // in map chunks, so 4 * 616 = 2464 units
+const MAP_CHUNK_REQUEST_RADIUS = 6;   // in map chunks, so 6 * 616 = 3696 units
 ```
 
-Sized off the camera, exactly as `INTEREST_CHUNK_RADIUS` is and for the same
-reason: terrain that is framed but not loaded is a hole in the world. The widest
-zoom frames ±1400 by ±1927 world units; a Chebyshev radius of 4 guarantees 2464
-units in the worst case (the player against the far edge of their own chunk),
-which covers it. The relationship is asserted in a test rather than the number,
-so the next person to touch the camera finds out here.
+Sized off the camera, exactly as `INTEREST_CHUNK_RADIUS` is and for a worse
+failure: terrain that is framed but not loaded is a hole with the sky through
+it. And sized off the *window shape*, not just the zoom — this spec first said
+4, and the test below is what caught it: `internalRenderSize` trades height
+rather than capping the aspect, so a 32:9 monitor at maximum zoom reaches ~3107
+units where 4 guarantees only 2464. 6 guarantees 3696.
+
+The relationship is asserted in a test rather than the number, so the next
+person to touch the camera finds out here rather than in someone's game.
 
 Note this is a **different grid** from `CHUNK_SIZE`/`INTEREST_CHUNK_RADIUS`.
 Interest chunks are 400 units and decide who hears about which *entities*; map
