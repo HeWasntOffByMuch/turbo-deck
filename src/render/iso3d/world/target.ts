@@ -37,6 +37,8 @@ export interface TargetSnapshot {
 export interface AutoAttackInput {
   /** Where we are: the predicted position, not the replica. */
   readonly self: Point;
+  /** Our own health. A corpse holds no attack order (spec 080). */
+  readonly selfHealth: number;
   /** The body being attacked, or null when there is no order standing. */
   readonly target: TargetSnapshot | null;
   /** The basic attack's range. The target's radius is added to it here. */
@@ -47,6 +49,17 @@ export interface AutoAttackInput {
    * `alreadyCasting` refusal.
    */
   readonly rooted: boolean;
+  /**
+   * True while a request of ours is still unanswered (spec 080).
+   *
+   * The other half of "have I already asked for this swing", and the half that
+   * was missing: {@link rooted} is a cast, and a request in flight has no cast
+   * yet. Without it the only brake on asking again next tick was the *predicted*
+   * cooldown, which the client stamps only when its own mirror expects the
+   * server to say yes -- so every disagreement between the two repeated the
+   * request sixty times a second until the answer landed.
+   */
+  readonly pending: boolean;
   /** The tick the basic attack is ready again, from the server's own table. */
   readonly readyAtTick: number;
   /** The client's estimate of the server's tick. */
@@ -97,9 +110,14 @@ const NOTHING: AutoAttack = { chaseTo: null, attack: false, drop: false };
 export function autoAttack(input: AutoAttackInput): AutoAttack {
   const target = input.target;
   if (!target) return NOTHING;
-  // A corpse is not a target. Dropping it here rather than in the view means
-  // "when does auto-attacking stop" has one answer and it is tested.
-  if (target.health <= 0) return { chaseTo: null, attack: false, drop: true };
+  // A corpse is not a target -- and a corpse holds no order either (spec 080).
+  // Both halves live here rather than in the view so that "when does
+  // auto-attacking stop" has one answer and it is tested. Without the second,
+  // a dead player with a standing order asked sixty times a second into a cast
+  // pass that skips the dead, and was answered by nobody.
+  if (target.health <= 0 || input.selfHealth <= 0) {
+    return { chaseTo: null, attack: false, drop: true };
+  }
 
   // A committed body holds, in reach or out of it (spec 079). It has to: a move
   // order now *withdraws* from a cast, so chasing a target that stepped back
@@ -134,10 +152,13 @@ export function autoAttack(input: AutoAttackInput): AutoAttack {
   // give back even though the order is very much still standing.
   return {
     chaseTo: null,
-    // The cooldown is the server's number, played back. Asking anyway would not
-    // be wrong so much as noisy: every refused request is a round trip of
-    // `castRejected` and a cooldown guess to take back again.
-    attack: input.tick >= input.readyAtTick,
+    // Ask once, and then wait to be answered (spec 080). The cooldown is the
+    // server's number played back, and `pending` is the window before there is
+    // a number to play back at all -- a request sent and not yet ruled on.
+    // Asking across that window is not wrong so much as futile: the server
+    // refuses the repeats, and every refusal is a notice on the HUD and a
+    // cooldown guess to take back again.
+    attack: !input.pending && input.tick >= input.readyAtTick,
     drop: false,
   };
 }
