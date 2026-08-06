@@ -12,11 +12,13 @@ const STATS: EffectiveStats = {
   attackDamage: 10,
   attackRange: 50,
   attackCooldownTicks: 8,
+  attackSpeed: 1.25,
   armor: 0,
   spellPower: 1,
   critChance: 0,
   maxResource: 30,
   resourceRegen: 0.05,
+  basicAttackId: 'melee.slash',
 };
 
 function entity(id: number, overrides: Partial<ServerEntity> = {}): ServerEntity {
@@ -43,6 +45,8 @@ function entity(id: number, overrides: Partial<ServerEntity> = {}): ServerEntity
     claimedPosition: null,
     claimedSeq: 0,
     pardon: null,
+    spawnerId: null,
+    anchor: null,
     resource: 0,
     cast: null,
     cooldowns: {},

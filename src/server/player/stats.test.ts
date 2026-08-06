@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { MemoryDataStore } from '../state/memory-store.js';
+import { abilityById } from '../data/abilities.js';
 import { EMPTY_EQUIPMENT, type PersistedPlayer } from '../state/types.js';
 import { ZoneManager } from '../world/zone-manager.js';
 import { PlayerManager } from './player-manager.js';
-import { clampHealthToStats, computeEffectiveStats, simTicksToServerTicks } from './stats.js';
+import {
+  attackIntervalTicks,
+  clampHealthToStats,
+  computeEffectiveStats,
+  MAX_ATTACK_SPEED,
+  MIN_ATTACK_SPEED,
+  simTicksToServerTicks,
+} from './stats.js';
 
 function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
   return {
@@ -90,11 +98,90 @@ describe('effective stats', () => {
     expect(tank.attackCooldownTicks).toBeGreaterThanOrEqual(1);
   });
 
+  it('turns dexterity into attack speed, not into a shorter base swing', () => {
+    const slow = computeEffectiveStats(player());
+    const quick = computeEffectiveStats(
+      player({ baseStats: { strength: 5, dexterity: 40, intelligence: 5, vitality: 5 } }),
+    );
+    expect(quick.attackSpeed).toBeGreaterThan(slow.attackSpeed);
+    // The base cadence is untouched by it: one lever, in one place (spec 070).
+    expect(quick.attackCooldownTicks).toBe(slow.attackCooldownTicks);
+    expect(attackIntervalTicks(quick)).toBeLessThan(attackIntervalTicks(slow));
+  });
+
+  it('takes attack speed from equipment, in both directions', () => {
+    const bare = computeEffectiveStats(player());
+    const keen = computeEffectiveStats(
+      player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'sword.keen' } }),
+    );
+    const maul = computeEffectiveStats(
+      player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'maul.iron' } }),
+    );
+    expect(keen.attackSpeed).toBeGreaterThan(bare.attackSpeed);
+    expect(maul.attackSpeed).toBeLessThan(bare.attackSpeed);
+    expect(attackIntervalTicks(keen)).toBeLessThan(attackIntervalTicks(maul));
+  });
+
+  it('holds attack speed between its floor and its ceiling', () => {
+    const wild = computeEffectiveStats(
+      player({ baseStats: { strength: 5, dexterity: 100000, intelligence: 5, vitality: 5 } }),
+    );
+    expect(wild.attackSpeed).toBeLessThanOrEqual(MAX_ATTACK_SPEED);
+    expect(wild.attackSpeed).toBeGreaterThanOrEqual(MIN_ATTACK_SPEED);
+    expect(attackIntervalTicks(wild)).toBeGreaterThanOrEqual(1);
+  });
+
+  it('halves the swing interval when attack speed doubles', () => {
+    const base = computeEffectiveStats(player());
+    const once = { ...base, attackCooldownTicks: 40, attackSpeed: 1 };
+    const twice = { ...once, attackSpeed: 2 };
+    expect(attackIntervalTicks(once)).toBe(40);
+    expect(attackIntervalTicks(twice)).toBe(20);
+    // Never zero, whatever a modifier says: the interval divides by this.
+    expect(attackIntervalTicks({ ...once, attackSpeed: 0 })).toBeGreaterThanOrEqual(1);
+    expect(attackIntervalTicks({ ...once, attackSpeed: Number.NaN })).toBe(40);
+  });
+
   it('clamps health to the ceiling but never heals on recalculation', () => {
     const stats = computeEffectiveStats(player());
     expect(clampHealthToStats(stats.maxHealth + 50, stats)).toBe(stats.maxHealth);
     expect(clampHealthToStats(10, stats)).toBe(10);
     expect(clampHealthToStats(-5, stats)).toBe(0);
+  });
+});
+
+/**
+ * Spec 076. Which attack a body swings with is derived like every other stat,
+ * so a bow is a row in the item table rather than a class.
+ */
+describe('the attack the main hand names', () => {
+  it('is the sword swing for an empty hand', () => {
+    expect(computeEffectiveStats(player({})).basicAttackId).toBe('melee.slash');
+  });
+
+  it('is the sword swing for a weapon that names nothing', () => {
+    const stats = computeEffectiveStats(
+      player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'sword.keen' } }),
+    );
+    expect(stats.basicAttackId).toBe('melee.slash');
+  });
+
+  it('is the bow\'s shot for a bow', () => {
+    const stats = computeEffectiveStats(
+      player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'bow.hunting' } }),
+    );
+    expect(stats.basicAttackId).toBe('ranged.shot');
+    // And the shot it names reaches further than the sword it replaced.
+    expect(abilityById('ranged.shot')?.range ?? 0).toBeGreaterThan(
+      abilityById('melee.slash')?.range ?? 0,
+    );
+  });
+
+  it('falls back rather than leaving a character unable to attack', () => {
+    const stats = computeEffectiveStats(
+      player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'deleted.item' } }),
+    );
+    expect(stats.basicAttackId).toBe('melee.slash');
   });
 });
 

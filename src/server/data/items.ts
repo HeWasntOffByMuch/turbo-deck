@@ -16,6 +16,15 @@ export interface ItemDefinition {
   /** Character level required to equip; below it the equip is rejected. */
   readonly levelRequirement: number;
   readonly modifiers: StatModifier;
+  /**
+   * The auto-attack this weapon swings with (spec 079), or absent for one that
+   * changes numbers but not the motion.
+   *
+   * Only a main hand is ever asked. It is an ability *id* like everything else
+   * here, so a bow is a row in this table rather than a class, and re-pointing
+   * every bow at a different shot is one edit in `data/abilities.ts`.
+   */
+  readonly basicAttackId?: string;
 }
 
 const DEFINITIONS: readonly ItemDefinition[] = [
@@ -32,14 +41,16 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     name: 'Keen Longsword',
     slot: 'mainHand',
     levelRequirement: 5,
-    modifiers: { attackDamage: 8, attackRange: 6, attackCooldownTicks: -1 },
+    // Keen: the speed is the point of it (spec 070), so it says so as a
+    // percentage rather than by shaving a tick off the base interval.
+    modifiers: { attackDamage: 8, attackRange: 6, attackSpeedPct: 0.15 },
   },
   {
     id: 'maul.iron',
     name: 'Iron Maul',
     slot: 'mainHand',
     levelRequirement: 5,
-    modifiers: { attackDamage: 14, attackCooldownTicks: 4, attackRange: 10, strength: 2 },
+    modifiers: { attackDamage: 14, attackSpeedPct: -0.2, attackRange: 10, strength: 2 },
   },
   {
     id: 'staff.emberwood',
@@ -47,6 +58,26 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     slot: 'mainHand',
     levelRequirement: 4,
     modifiers: { attackDamage: 2, spellPower: 0.2, intelligence: 3, attackRange: 20 },
+  },
+  {
+    id: 'bow.hunting',
+    name: 'Hunting Bow',
+    slot: 'mainHand',
+    // Level 1 like the worn sword: these are the starting alternatives, and a
+    // switch that refuses two of its three buttons is not a switch.
+    levelRequirement: 1,
+    // The range is the weapon; the shot it names carries its own (spec 079), so
+    // `attackRange` here only nudges what a melee swing would have reached.
+    modifiers: { attackDamage: 5, attackSpeedPct: -0.1 },
+    basicAttackId: 'ranged.shot',
+  },
+  {
+    id: 'stars.weighted',
+    name: 'Weighted Stars',
+    slot: 'mainHand',
+    levelRequirement: 1,
+    modifiers: { attackDamage: 2, attackSpeedPct: 0.2, dexterity: 1 },
+    basicAttackId: 'ranged.star',
   },
   // --- off hand ---
   {

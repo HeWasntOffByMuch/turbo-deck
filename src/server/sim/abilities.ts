@@ -25,7 +25,7 @@ import {
   totalCastTicks,
   type AbilityDefinition,
 } from '../data/abilities.js';
-import { applyArmor } from '../player/stats.js';
+import { applyArmor, attackIntervalTicks } from '../player/stats.js';
 import { isInCone } from './combat.js';
 import {
   ActivityValue,
@@ -51,6 +51,33 @@ export interface CastAttempt {
   readonly abilityId: string;
   readonly targetX: number;
   readonly targetY: number;
+  /** The entity being attacked, or 0 to aim at the point alone (spec 070). */
+  readonly targetEntityId?: number;
+  /**
+   * The named body's radius, or 0 when nothing was named (spec 079).
+   *
+   * Reach to a *body* is measured to its edge everywhere else -- `landOnTarget`
+   * allows `range + target.radius`, and the client's chase stops inside the
+   * same number. Measuring the commit gate to the centre instead made the last
+   * body-radius of an approach a place where a shot could be walked into range
+   * of and still refused.
+   */
+  readonly targetRadius?: number;
+}
+
+/**
+ * How long before this caster may use this ability again (spec 070).
+ *
+ * A basic attack asks the caster's stats -- that is what `attackSpeed` is for,
+ * and it is why two units with the same weapon swing at different rates.
+ * Everything else asks the table: a heavy blow is slow because it is slow.
+ */
+export function cooldownTicksFor(
+  ability: AbilityDefinition,
+  entity: Pick<ServerEntity, 'stats'>,
+): number {
+  if (!ability.basicAttack) return ability.cooldownTicks;
+  return attackIntervalTicks(entity.stats);
 }
 
 export type CastStartResult =
@@ -82,10 +109,15 @@ export function startCast(
 
   // A point-targeted ability may not be cast past its range. Direction-targeted
   // ones are always legal to start -- they simply reach as far as they reach.
+  //
+  // A cast that named a body is measured to that body's edge, the same as the
+  // blow that eventually lands on it (spec 079). A patch of ground has no edge,
+  // so `targetRadius` is 0 and this is the centre check it always was.
   if (ability.targeting === 'point') {
     const dx = attempt.targetX - entity.position.x;
     const dy = attempt.targetY - entity.position.y;
-    if (Math.hypot(dx, dy) > ability.range) return { ok: false, reason: 'outOfRange' };
+    const reach = ability.range + (attempt.targetEntityId ? (attempt.targetRadius ?? 0) : 0);
+    if (Math.hypot(dx, dy) > reach) return { ok: false, reason: 'outOfRange' };
   }
 
   const aim = aimFor(ability, entity, attempt);
@@ -107,6 +139,9 @@ export function startCast(
     phase,
     targetX: aim.x,
     targetY: aim.y,
+    // A self cast is aimed at the caster whatever id came with the request, so
+    // it can never be turned into an attack on somebody else by naming them.
+    targetEntityId: ability.targeting === 'self' ? 0 : (attempt.targetEntityId ?? 0),
     nextPulseTick: 0,
   };
 
@@ -116,7 +151,7 @@ export function startCast(
       ...entity,
       cast,
       resource: entity.resource - ability.cost,
-      cooldowns: { ...entity.cooldowns, [ability.id]: tick + ability.cooldownTicks },
+      cooldowns: { ...entity.cooldowns, [ability.id]: tick + cooldownTicksFor(ability, entity) },
       activity: ActivityValue.Casting,
       activityUntilTick: endTick,
       // Aim is captured here in `cast.targetX/Y` and never re-read, so turning
@@ -138,6 +173,7 @@ export function startCast(
         endTick,
         targetX: aim.x,
         targetY: aim.y,
+        targetEntityId: cast.targetEntityId,
       },
     ],
   };
@@ -287,6 +323,29 @@ export function advanceCast(
     };
   }
 
+  // --- the target died -------------------------------------------------
+  // A blow aimed at a body that is no longer there is called off rather than
+  // thrown at the corpse (spec 079). The refund is a withdrawal's, because that
+  // is what this is: nothing was thrown, so nothing was spent but the time.
+  //
+  // Only up to the release, and deliberately so. A shot already in the air is
+  // its own entity and finishes its flight -- the travel is the only thing that
+  // decides, and reaching back to un-launch it would be the schedule this design
+  // exists to not have.
+  const cancellable = cast.phase === CastPhase.Turning || tick < cast.releaseTick;
+  if (cast.targetEntityId > 0 && cancellable) {
+    const named = candidates.find((candidate) => candidate.id === cast.targetEntityId);
+    if (!named || named.health <= 0) {
+      const called = cancelCast(entity, tick, CastEndReason.Cancelled);
+      return {
+        updated: new Map([[entity.id, called.entity]]),
+        spawns: [],
+        events: called.events,
+        rng,
+      };
+    }
+  }
+
   const updated = new Map<number, ServerEntity>();
   const events: ServerSimEvent[] = [];
   const spawns: ProjectileSpawn[] = [];
@@ -321,6 +380,7 @@ export function advanceCast(
       endTick,
       targetX: cast.targetX,
       targetY: cast.targetY,
+      targetEntityId: cast.targetEntityId,
     });
     return { updated, spawns, events, rng: currentRng };
   }
@@ -328,15 +388,10 @@ export function advanceCast(
   // --- release ---------------------------------------------------------
   if (cast.phase === CastPhase.Windup && tick >= cast.releaseTick) {
     const isChannel = ability.kind === 'channel';
-    const nextPhase = isChannel ? CastPhase.Channel : CastPhase.Recovery;
     caster = {
       ...caster,
-      cast: {
-        ...cast,
-        phase: nextPhase,
-        nextPulseTick: isChannel ? tick : 0,
-      },
-      activity: isChannel ? ActivityValue.Casting : ActivityValue.Recovering,
+      cast: isChannel ? { ...cast, phase: CastPhase.Channel, nextPulseTick: tick } : cast,
+      activity: ActivityValue.Casting,
     };
 
     if (!isChannel) {
@@ -353,22 +408,33 @@ export function advanceCast(
       spawns.push(...landed.spawns);
     }
 
-    // The blow has gone off, but the cast is not over: the caster is rooted
-    // through recovery, and `castEnded` here told the client otherwise. The bar
-    // vanished mid-cast, and the client -- believing itself free -- predicted
-    // movement the server was still refusing, which is a correction per tick for
-    // the length of every recovery. A phase change, not an ending.
-    const settledCast = caster.cast;
-    if (settledCast) {
+    if (isChannel) {
+      // Into the channel: announce the phase change so the bar switches from
+      // filling toward the release to running with the pulses.
+      const channelling = caster.cast;
+      if (channelling) {
+        events.push({
+          kind: 'castStarted',
+          entityId: entity.id,
+          abilityId: ability.id,
+          phase: channelling.phase,
+          releaseTick: channelling.releaseTick,
+          endTick: channelling.endTick,
+          targetX: channelling.targetX,
+          targetY: channelling.targetY,
+          targetEntityId: channelling.targetEntityId,
+        });
+      }
+    } else {
+      // The blow has gone off and there is nothing left to be rooted for (spec
+      // 068), so the cast is over on the tick it lands. This is the event the
+      // client clears its bar on, and the one that tells it it may move again.
+      caster = { ...caster, cast: null, activity: ActivityValue.Idle, activityUntilTick: 0 };
       events.push({
-        kind: 'castStarted',
-        entityId: entity.id,
+        kind: 'castEnded',
+        entityId: caster.id,
         abilityId: ability.id,
-        phase: settledCast.phase,
-        releaseTick: settledCast.releaseTick,
-        endTick: settledCast.endTick,
-        targetX: settledCast.targetX,
-        targetY: settledCast.targetY,
+        reason: CastEndReason.Released,
       });
     }
   }
@@ -394,42 +460,16 @@ export function advanceCast(
         },
       };
     } else if (tick >= channelEnds) {
-      caster = { ...caster, cast: { ...live, phase: CastPhase.Recovery }, activity: ActivityValue.Recovering };
+      // The last pulse has gone off: the channel is over and, with no recovery
+      // to sit through (spec 068), so is the cast.
+      caster = { ...caster, cast: null, activity: ActivityValue.Idle, activityUntilTick: 0 };
+      events.push({
+        kind: 'castEnded',
+        entityId: caster.id,
+        abilityId: live.abilityId,
+        reason: CastEndReason.Released,
+      });
     }
-  }
-
-  // --- done ------------------------------------------------------------
-  // A channel that has run its course drops into recovery; announce that too, so
-  // the bar switches from filling to draining rather than sitting full.
-  const channelled = caster.cast;
-  if (
-    channelled &&
-    channelled.phase === CastPhase.Recovery &&
-    cast.phase === CastPhase.Channel
-  ) {
-    events.push({
-      kind: 'castStarted',
-      entityId: caster.id,
-      abilityId: ability.id,
-      phase: CastPhase.Recovery,
-      releaseTick: channelled.releaseTick,
-      endTick: channelled.endTick,
-      targetX: channelled.targetX,
-      targetY: channelled.targetY,
-    });
-  }
-
-  const settled = caster.cast;
-  if (settled && settled.phase === CastPhase.Recovery && tick >= settled.endTick) {
-    caster = { ...caster, cast: null, activity: ActivityValue.Idle, activityUntilTick: 0 };
-    // *Now* it is over. This is the event the client clears its bar on, and the
-    // one that tells it it may move again.
-    events.push({
-      kind: 'castEnded',
-      entityId: caster.id,
-      abilityId: settled.abilityId,
-      reason: CastEndReason.Released,
-    });
   }
 
   updated.set(caster.id, caster);
@@ -454,7 +494,13 @@ function landAbility(
 ): LandResult {
   switch (ability.kind) {
     case 'melee':
-      return landCone(ability, caster, cast, candidates, rng);
+      // A named target makes the swing single-target (spec 070): a right-click
+      // attack hits what it was pointed at, and the neighbour standing inside
+      // the same arc is a neighbour. Without one it is the cone it always was,
+      // which is what the cursor-aimed hotbar still uses.
+      return cast.targetEntityId > 0
+        ? landOnTarget(ability, caster, cast, candidates, rng)
+        : landCone(ability, caster, cast, candidates, rng);
     case 'channel':
       return landCone(ability, caster, cast, candidates, rng);
     case 'ground':
@@ -464,6 +510,46 @@ function landAbility(
     case 'projectile':
       return launchProjectile(ability, caster, cast, tick, rng);
   }
+}
+
+/**
+ * One blow, on one named body (spec 070).
+ *
+ * Range is measured at the *release*, not at the commit, and that is the whole
+ * decision this function encodes: a target that walked out of reach during the
+ * wind-up is a miss. The alternative -- checking at the commit and landing
+ * regardless -- would make the wind-up unreadable from the other side, which is
+ * exactly the thing spec 062 replaced the parry window to avoid.
+ *
+ * The facing is not re-checked. The body already turned into the aim before the
+ * wind-up started (spec 065), and a target that side-stepped without leaving
+ * reach is inside the swing.
+ */
+function landOnTarget(
+  ability: AbilityDefinition,
+  caster: ServerEntity,
+  cast: CastState,
+  candidates: readonly ServerEntity[],
+  rng: Rng,
+): LandResult {
+  // Only from `candidates`, which the caller has already filtered by hostility:
+  // naming an id is a request, not a licence to hit an ally or a projectile.
+  const target = candidates.find((candidate) => candidate.id === cast.targetEntityId);
+  const dx = target ? target.position.x - caster.position.x : 0;
+  const dy = target ? target.position.y - caster.position.y : 0;
+  const reach = target ? ability.range + target.radius : 0;
+
+  if (!target || target.health <= 0 || Math.hypot(dx, dy) > reach) {
+    return {
+      updated: new Map(),
+      spawns: [],
+      events: [{ kind: 'attackMissed', attackerId: caster.id }],
+      rng,
+    };
+  }
+
+  const hit = applyDamage(ability, caster, target, rng);
+  return { updated: new Map([[target.id, hit.target]]), spawns: [], events: hit.events, rng: hit.rng };
 }
 
 function landCone(
@@ -576,9 +662,13 @@ function launchProjectile(
   const dy = cast.targetY - caster.position.y;
   const aimed = Math.hypot(dx, dy);
   // A direction-targeted bolt flies its full range; a point-targeted lob lands
-  // where it was aimed, which is what makes the arc land on the marker.
+  // where it was aimed, which is what makes the arc land on the marker. A shot
+  // that named a body is aimed at the body, and re-aimed every tick of the
+  // flight from there (spec 079).
   const distance =
-    ability.targeting === 'point' ? Math.min(aimed, ability.range) : ability.range;
+    ability.targeting === 'point' || cast.targetEntityId > 0
+      ? Math.min(aimed, ability.range)
+      : ability.range;
   const dirX = aimed > 1e-6 ? dx / aimed : Math.cos(caster.facing);
   const dirY = aimed > 1e-6 ? dy / aimed : Math.sin(caster.facing);
 
@@ -589,6 +679,7 @@ function launchProjectile(
     originY: caster.position.y,
     targetX: caster.position.x + dirX * distance,
     targetY: caster.position.y + dirY * distance,
+    targetEntityId: cast.targetEntityId,
     speed: spec.speed / SERVER_TICK_RATE,
     arcHeight: spec.arcHeight,
     totalDistance: Math.max(1e-6, distance),
@@ -640,19 +731,25 @@ export function applyDamage(
     },
   ];
 
-  // Being hit knocks the target out of what they were doing -- and that has to
-  // be *announced*, not just done. Clearing `cast` silently left the client
-  // holding a cast the server had dropped, and since a client roots itself while
-  // it believes it is casting, the player was stuck on the spot for good.
-  if (target.cast) {
-    events.push({
-      kind: 'castEnded',
-      entityId: target.id,
-      abilityId: target.cast.abilityId,
-      reason: CastEndReason.Interrupted,
-    });
+  // Being hit no longer knocks the target out of a cast (spec 068): a blow that
+  // has been committed to lands, and taking damage while winding up -- or while
+  // still turning into it -- costs health rather than the whole commitment.
+  //
+  // Death is the exception, since a corpse may not go on swinging. It has to be
+  // *announced*, not just done: clearing `cast` silently leaves the client
+  // holding a cast the server has dropped, and a client roots itself while it
+  // believes it is casting, so the player would be stuck on the spot for good.
+  if (killed) {
+    if (target.cast) {
+      events.push({
+        kind: 'castEnded',
+        entityId: target.id,
+        abilityId: target.cast.abilityId,
+        reason: CastEndReason.Interrupted,
+      });
+    }
+    events.push({ kind: 'died', entityId: target.id, killerId: attacker.id });
   }
-  if (killed) events.push({ kind: 'died', entityId: target.id, killerId: attacker.id });
 
   return {
     rng: nextRng,
@@ -662,10 +759,7 @@ export function applyDamage(
       health,
       activity: killed ? ActivityValue.Dead : target.activity,
       targetId: target.targetId ?? attacker.id,
-      // Interruption. Spec 065 took the hitstop freeze this used to be keyed on;
-      // it is its own mechanic and survives on its own terms. The `castEnded`
-      // above is not optional decoration -- see the comment there.
-      cast: null,
+      cast: killed ? null : target.cast,
     },
   };
 }

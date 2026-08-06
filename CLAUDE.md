@@ -104,6 +104,10 @@ merge time.
 
 ```
 specs/           spec markdown, one file per system, written before its code
+maps/            the world, as a map document (spec 072). arena.json is what the
+                 server loads at boot and streams to clients; regenerate it with
+                 `npx tsx scripts/bake-map.ts`, or edit it in the Map editor tab
+                 and save over it. Checked in so the world reviews as a diff.
 src/shared/      PRNG, spatial hash, world extent — dependency-free helpers
                  shared by the server, the geometry helpers and terrain
 src/terrain/     pure, deterministic world data: heightfields, materials, chunks
@@ -136,6 +140,10 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  extent) but not CombatState. sim/, world/, player/ and data/ are
                  pure and linted as part of the deterministic core; the transport
                  and admin halves are not.
+                 Since spec 072 its world comes from maps/arena.json rather than
+                 the generator, and terrain reaches clients as MapInfo plus the
+                 MapChunks a player is standing near -- a seed cannot describe a
+                 map somebody edited by hand.
                  net/ is the binary wire format (see net/PROTOCOL.md), sim/ is the
                  deterministic tick, world/ is chunking and zones, player/ derives
                  stats from ids and levels, state/ is the swappable DataStore,
@@ -146,11 +154,34 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  `npm run server`, and `npm run server:bots` for load.
 src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometric
                  world drawn from GameClient.view() and nothing else. interpolate.ts
-                 (20Hz deltas to a pose per frame), intent.ts, cast.ts, appearance.ts
+                 (20Hz deltas to a pose per frame), intent.ts, target.ts (the
+                 right-click attack order, spec 072), cast.ts, appearance.ts
                  and pixel-font.ts (a 5x7 glyph table, since nothing may be fetched)
                  are pure and tested headlessly; scene.ts, hud.ts and
                  view.ts are the three.js/DOM half. `npx tsx scripts/preview-world.ts`
                  photographs the real page into .claude/screenshots/world-*.png.
+src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
+                 read by the tree sway, the water and the streak layer over the
+                 ground, plus the shore distance transform the water's bands step
+                 on. Pure and tested headlessly -- the GLSL lives here as strings
+                 with a TypeScript transcription beside it, because a shader
+                 expression nobody can execute is where a typo lives forever.
+                 sway.ts, water-material.ts, terrain-streak.ts and
+                 wind-uniforms.ts are the three.js half -- the last of those owns
+                 the uniform objects every weather material shares by reference,
+                 and weather-controls.ts (spec 075, the second button beside the
+                 view cog) writes straight into them rather than being polled.
+                 `wind-probe.ts` plus
+                 `src/render/wind-probe.html` are a dev-server-only measuring rig
+                 (never in a build) driven by `npx tsx scripts/preview-wind.ts`,
+                 which photographs the frame and reports the acceptance numbers.
+src/render/iso3d/lobe.ts  the lobed canopy tree's shape (spec 077): the union of
+                 circles a canopy slab's outline is, where the slabs sit, and the
+                 trunk's taper to a single vertex. Pure and tested headlessly --
+                 the silhouette is the whole species, so it is checked in Node.
+                 `props.ts` turns it into buffers; `npx tsx scripts/preview-trees.ts`
+                 photographs every tree the world grows to
+                 .claude/screenshots/trees.png.
 src/render/iso3d/movement.ts, debug-view.ts  the two tuning sandboxes (specs
                  032/033/035/046, back since 066): one unit, no game, so a gait,
                  a cloth solve or a turn rate can be watched in isolation. The

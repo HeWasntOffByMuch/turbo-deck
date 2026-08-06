@@ -19,6 +19,7 @@
  */
 
 import type { Channel } from '../net/transport.js';
+import { MapChunkCache, type HeldChunk } from './map-cache.js';
 import {
   decodeServerMessage,
   encodeClientMessage,
@@ -26,14 +27,56 @@ import {
   type CastStateMessage,
   type CombatResultMessage,
   type EffectMessage,
+  type MapInfoMessage,
   type ServerChatMessage,
+  type SpawnerStatus,
 } from '../net/messages.js';
-import { ClientMessageType, CorrectionReason, ServerMessageType } from '../net/protocol.js';
-import { PROTOCOL_VERSION } from '../config.js';
+import {
+  CastPhaseValue,
+  ChunkDeniedReason,
+  ClientMessageType,
+  CorrectionReason,
+  ServerMessageType,
+} from '../net/protocol.js';
+import { MAP_CHUNK_REQUEST_RADIUS, PROTOCOL_VERSION } from '../config.js';
+
+/**
+ * How many chunks one pass may ask for (spec 072).
+ *
+ * Comfortably under the server's `MAP_CHUNK_BURST`, so the throttle is a guard
+ * against a misbehaving client rather than something that shapes the stream in
+ * normal play -- a cold start should be paced by this number, not by a refusal.
+ */
+const CHUNK_REQUESTS_PER_PASS = 8;
+
+/**
+ * How often the backstop pump runs, in client ticks. One broadcast period: often
+ * enough that a stalled window recovers within a frame or two, rare enough that
+ * it costs nothing when there is nothing to ask for.
+ */
+const CHUNK_REQUEST_INTERVAL_TICKS = 3;
+
+/**
+ * How long to stop asking after a `Throttled` refusal, in client ticks.
+ *
+ * A quarter second: long enough that the server's bucket has refilled several
+ * tokens, short enough that a player walking into new ground does not notice.
+ * The alternative -- retrying immediately -- is a refusal storm that makes the
+ * throttle worse rather than respecting it.
+ */
+const CHUNK_THROTTLE_BACKOFF_TICKS = 15;
 import { abilityById } from '../data/abilities.js';
 import type { EffectiveStats } from '../state/types.js';
 import { createFlatPredictor, PredictionBuffer, type PredictedInput, type PredictStep } from './prediction.js';
 import { ReplicatedWorld } from './replica.js';
+import {
+  advanceCast as advancePredictedCast,
+  mayCast,
+  modelledResource,
+  steerFacing,
+  type Mirror,
+} from './combat.js';
+import type { CastState } from '../sim/types.js';
 
 export interface WelcomeInfo {
   readonly playerId: string;
@@ -59,6 +102,18 @@ export interface GameClientOptions {
 }
 
 /** What the renderer reads. Read-only, and free of anything derived. */
+/** The map, as a renderer sees it (spec 072). */
+export interface ClientMapView {
+  readonly info: MapInfoMessage;
+  readonly chunks: readonly HeldChunk[];
+  /**
+   * Bumped on every chunk that arrives. A view watches this rather than diffing
+   * `chunks`: remeshing is the expensive half and it only needs to know that
+   * something landed.
+   */
+  readonly revision: number;
+}
+
 export interface ClientView {
   /**
    * The tick the last delta described. Advances in steps of
@@ -88,6 +143,12 @@ export interface ClientView {
    * decision on this client is made from.
    */
   readonly roundTripTicks: number;
+  /**
+   * Ticks until the server acts on the input being sent now: the depth of its
+   * input queue (spec 069). Diagnostics, and what a predicted cast is stamped
+   * against -- a commit lands when its input is dequeued, not when it arrives.
+   */
+  readonly commitDelayTicks: number;
   readonly entities: readonly import('./replica.js').ReplicatedEntity[];
   /** The local player's predicted position -- what to draw them at. */
   readonly self: { readonly x: number; readonly y: number } | null;
@@ -97,6 +158,22 @@ export interface ClientView {
    * renderer builds its terrain from this and from nothing else.
    */
   readonly worldSeed: number | null;
+  /**
+   * The map the server is serving, and the pieces of it that have arrived
+   * (spec 072). Null until `MapInfo` lands.
+   *
+   * This -- not {@link worldSeed} -- is where a renderer's terrain comes from
+   * now. The seed stays for provenance and for the fight's RNG; it stopped
+   * describing the ground the moment the ground became a document somebody
+   * could edit by hand.
+   */
+  readonly map: ClientMapView | null;
+  /**
+   * What every map spawner is doing (spec 076). Empty unless the client asked
+   * for it with {@link GameClient.watchSpawners} -- it is a debug readout, and
+   * one nobody is drawing costs nothing.
+   */
+  readonly spawners: readonly SpawnerStatus[];
   readonly stats: EffectiveStats | null;
   readonly level: number;
   readonly experience: number;
@@ -130,6 +207,12 @@ export interface ClientView {
    * never works out how long a cooldown is for itself.
    */
   readonly cooldowns: Readonly<Record<string, number>>;
+  /**
+   * The ability pool this client believes it has (spec 069): the server's last
+   * word, regenerated forward, minus what it has spent on commits not yet
+   * answered. The number a button is greyed out against.
+   */
+  readonly resource: number;
 }
 
 type CombatListener = (result: CombatResultMessage) => void;
@@ -150,6 +233,8 @@ type CastRejectedListener = (abilityId: string, reason: string) => void;
  * as input and therefore the one part worth predicting.
  */
 interface PredictedCast {
+  /** Distinguishes this request from every other; the predicted cast names it. */
+  readonly id: number;
   readonly abilityId: string;
   readonly aim: { readonly x: number; readonly y: number };
   /** The input this request was stamped after; the server commits on it. */
@@ -157,18 +242,19 @@ interface PredictedCast {
   /** Given up on past this tick, so a lost reply cannot root a player forever. */
   readonly expiresAtTick: number;
   /**
-   * Whether this request roots us while we wait. False when our own copy of the
-   * server's cooldowns says it will be refused -- the request still goes, and
-   * still takes its turn in the queue, but the legs keep working.
-   */
-  readonly roots: boolean;
-  /**
    * The cooldown this request wrote into {@link GameClient.predictedCooldowns},
    * or null if it wrote none. Carried so a refusal can take back its own guess
    * and only its own: every press here is the same ability, so "drop the guess
    * for melee.slash" would have a stale refusal cancel a live commit's cooldown.
    */
   readonly stampedCooldown: number | null;
+  /**
+   * The resource this request expects to have spent, still subtracted from the
+   * modelled pool because the server has not confirmed it (spec 069). Released
+   * on any answer: a commit is reflected in the resource that arrives with it,
+   * and a refusal spent nothing.
+   */
+  readonly spentResource: number;
 }
 
 /**
@@ -177,6 +263,20 @@ interface PredictedCast {
  * assumed lost and the player gets their legs back.
  */
 const PREDICTED_CAST_TIMEOUT_TICKS = 120;
+
+/**
+ * How long past its stamped end a cast is held before the client drops it
+ * (spec 069).
+ *
+ * `estimatedTick` is deliberately a forward-biased ratchet -- it is `max`ed
+ * upward, never walked back, and carries half a round trip -- so it can lead the
+ * server's real tick by a couple. Expiring a cast exactly on `endTick` therefore
+ * un-roots slightly early, and the two errors are not worth the same: a tick
+ * late is a tick of stillness nobody notices, while a tick early is movement the
+ * server discards and later corrects. So it leans late, by the smallest amount
+ * that covers the bias.
+ */
+const CAST_EXPIRY_SLACK_TICKS = 2;
 
 /** How often the client measures the round trip. Twice a second is plenty. */
 const PING_EVERY_TICKS = 30;
@@ -193,12 +293,20 @@ export interface KnownCast {
   readonly endTick: number;
   readonly targetX: number;
   readonly targetY: number;
+  /** The body it was aimed at, or 0 for a point aim (spec 070). */
+  readonly targetEntityId: number;
 }
 
 export class GameClient {
   private readonly world = new ReplicatedWorld();
   private prediction: PredictionBuffer | null = null;
   private welcome: WelcomeInfo | null = null;
+  /** The map and the chunks of it that have arrived (spec 072). */
+  private mapCache: MapChunkCache | null = null;
+  /** Ticks to wait before asking for chunks again, after being throttled. */
+  private chunkBackoffTicks = 0;
+  /** The spawner readout, when it has been asked for (spec 076). */
+  private spawners: readonly SpawnerStatus[] = [];
   private stats: EffectiveStats | null = null;
   private level = 1;
   private experience = 0;
@@ -245,6 +353,46 @@ export class GameClient {
    * client expects to be rooted.
    */
   private readonly predictedCooldowns = new Map<string, number>();
+  /**
+   * The cast this client has committed to locally and is drawing (spec 069).
+   *
+   * Put on the view as an ordinary cast for the local entity, so `scene.ts` and
+   * `hud.ts` draw the bar, the sweep and the rooted body without knowing that
+   * any of it was predicted -- which is the sim/render split doing the work
+   * rather than a convenience.
+   *
+   * Superseded by the server's own `CastState` the moment it lands, and dropped
+   * outright if the request that made it is refused.
+   */
+  private predictedCast: CastState | null = null;
+  /** Which request {@link predictedCast} came from, so only that one clears it. */
+  private predictedCastRequestId = -1;
+  private nextCastRequestId = 1;
+  /**
+   * This client's own facing, stepped the way the server steps it (spec 069).
+   *
+   * The renderer keeps a facing for drawing; this is a separate one, kept here,
+   * because the *gate* depends on it: whether a press begins winding up or first
+   * spends ticks turning is decided by where the body is pointing, and a client
+   * that assumed it was always aligned would predict a wind-up that had not
+   * started. Seeded from the first authoritative position and stepped by
+   * `steerFacing`, which mirrors `resolveFacing` in the sim.
+   */
+  private facing = 0;
+  private facingSeeded = false;
+  /** The last facing this client asked for, which is what it steers toward. */
+  private wantedFacing = 0;
+  /**
+   * The last resource the server reported, and the tick it was true on (spec
+   * 068). Regenerated forward locally between messages; `-1` until the first
+   * `Cooldowns` message, before which nothing is predicted that costs anything.
+   */
+  /** The last input the server said it had applied; the queue is everything since. */
+  private lastAckedSeq = 0;
+  /** Recent input-queue depths, sampled at each delta; the minimum is used. */
+  private readonly queueDepths: number[] = [];
+  private serverResource = -1;
+  private serverResourceTick = 0;
   /** Ticks since this client started, which is the only clock it has. */
   private localTick = 0;
   private nextPingNonce = 1;
@@ -292,6 +440,17 @@ export class GameClient {
   sendInput(intent: Omit<PredictedInput, 'seq'>): { readonly x: number; readonly y: number } | null {
     if (!this.prediction || !this.connected) return null;
     this.seq += 1;
+    // Remembered so the local body can be steered the way the server steers it
+    // (spec 069): this is what it will turn toward on every tick until the next
+    // input, and whether it has arrived decides whether the next press winds up
+    // or spends ticks turning first.
+    if (Number.isFinite(intent.facing)) this.wantedFacing = intent.facing;
+    // Asking to move withdraws from a cast (spec 079), and the server settles
+    // that on the very tick this input lands. Predicting the walk without also
+    // predicting the withdrawal would keep the legs locked locally while the
+    // server moved them -- a correction on every tick of the step away, and a
+    // bar still draining for a blow that has been called off.
+    if (Math.hypot(intent.moveX, intent.moveY) > 1e-6) this.withdrawLocally();
     const input: PredictedInput = { ...intent, seq: this.seq };
     const predicted = this.prediction.apply(input);
     this.channel.send(
@@ -328,33 +487,93 @@ export class GameClient {
    * answers, this client asks for no movement. The request carries the last
    * input seq so the server commits at the same point in the stream.
    */
-  useAbility(abilityId: string, targetX = 0, targetY = 0): void {
+  /**
+   * Ask the server to keep {@link ClientView.spawners} up to date, or to stop
+   * (spec 076).
+   *
+   * The one request that asks for a readout rather than an action, which is why
+   * it is off by default: a view that is not drawing the overlay should not be
+   * paying twenty messages a second for it.
+   */
+  watchSpawners(on: boolean): void {
+    if (!this.connected) return;
+    if (!on) this.spawners = [];
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.WatchSpawners, on }));
+  }
+
+  useAbility(abilityId: string, targetX = 0, targetY = 0, targetEntityId = 0): void {
     if (!this.connected) return;
     this.requestedAbilityId = abilityId;
-    // Both of the numbers below lean the same way, and deliberately.
+    const aim = { x: targetX, y: targetY };
+    // The server's own gate, asked of a mirror of this entity (spec 069). What
+    // it decides is what the server will decide, given the same entity -- so a
+    // wrong guess here means a field of the mirror was stale, never that the
+    // client and the server disagree about the rules.
     //
-    // The two ways of being wrong do not cost the same. Predicting a root the
-    // server refuses stands the player still until the refusal arrives -- a
-    // stutter. Failing to predict one it accepts is a whole wind-up of walking
-    // the server discarded: divergence, and a correction. So the horizon for
-    // "will this be ready" is the *whole* round trip rather than the half it
-    // strictly needs, and the cooldown a commit is expected to spend is stamped
-    // from now rather than from when the server will see it. The first
-    // over-predicts roots, the second under-holds them, and both err toward the
-    // cheaper mistake.
-    const roots = this.readyAt(abilityId) <= this.estimated + this.measuredRoundTrip();
+    // The horizon still leans, as it did in 067: "will this be ready" is asked a
+    // whole round trip ahead rather than the half it strictly needs, because the
+    // two ways of being wrong do not cost the same. Predicting a commit the
+    // server refuses shows a bar that vanishes; failing to predict one it takes
+    // is a whole wind-up of walking the server discarded, and a correction.
+    // The cast is stamped for the tick the *server* will start it on, which is
+    // one one-way trip from now: the request has to get there before it can be
+    // committed to. Stamping it at "now" instead runs the whole cast early --
+    // the harness draws it as three ticks of bar before the server has one, at
+    // loopback, and one full trip at 200ms -- and a bar that finishes before the
+    // blow does is a body that stops being rooted while the server still is.
+    //
+    // The root is *not* deferred with it: it applies from the press, because a
+    // client that walks while its own request is in flight is a client the
+    // server will discard movement from. Standing still costs nothing when the
+    // guess is wrong (spec 067); walking through a commit costs a correction.
+    const commitAt = this.estimated + this.commitDelayTicks();
+    const mirror = this.mirror(commitAt);
+    // Readiness is judged at the tick the server will *commit* on -- the same
+    // tick the cast is stamped for. One number, asked once (spec 070).
+    //
+    // 069 judged it at `estimated + roundTrip` and leaned deliberately forward,
+    // on the argument that failing to predict a commit costs more than
+    // predicting one that is refused. The lean was measuring the wrong gap: a
+    // request waits on the input *queue*, not on the wire, and on a loopback
+    // that is three ticks while the round trip is zero. Every cooldown this
+    // client stamps already runs from `commitAt`, so asking "is it ready now"
+    // against a number stamped for later made the client pessimistic by exactly
+    // the queue depth, and drew no bar at all for a swing the server took.
+    //
+    // Leaning *past* `commitAt` is worse than either, and the harness says so
+    // plainly: the extra requests are refused, and a refusal stamps a cooldown
+    // of its own that outlives the press it came from and blocks the next real
+    // one. Judging at the commit tick is not a compromise between the two -- it
+    // is the only tick about which there is anything true to say.
+    const decision = mirror
+      ? mayCast(mirror, abilityId, aim, commitAt, commitAt, targetEntityId)
+      : null;
+    const id = this.nextCastRequestId;
+    this.nextCastRequestId += 1;
+
     let stampedCooldown: number | null = null;
-    if (roots) {
-      stampedCooldown = this.estimated + (abilityById(abilityId)?.cooldownTicks ?? 0);
+    let spentResource = 0;
+    if (decision?.ok) {
+      stampedCooldown = decision.readyAtTick;
+      spentResource = decision.cost;
       this.predictedCooldowns.set(abilityId, stampedCooldown);
+      // Stamped against the estimated clock rather than the lookahead one: the
+      // bar the player is about to watch is drawn against `estimatedTick`, and a
+      // cast stamped a round trip into the future would start empty and stay
+      // that way until the clock caught up with it.
+      this.predictedCast = decision.cast;
+      this.predictedCastRequestId = id;
     }
+
+
     this.outstandingCasts.push({
+      id,
       abilityId,
-      aim: { x: targetX, y: targetY },
+      aim,
       requestedAtSeq: this.seq,
       expiresAtTick: this.estimated + PREDICTED_CAST_TIMEOUT_TICKS,
-      roots,
       stampedCooldown,
+      spentResource,
     });
     this.channel.send(
       encodeClientMessage({
@@ -362,6 +581,7 @@ export class GameClient {
         abilityId,
         targetX,
         targetY,
+        targetEntityId,
         afterInputSeq: this.seq,
       }),
     );
@@ -369,13 +589,12 @@ export class GameClient {
 
   cancelCast(): void {
     if (!this.connected) return;
-    // Withdrawing frees the legs on the server, so the predicted roots go with
-    // it -- keeping them would root a player who has just asked not to be. The
-    // requests themselves stay outstanding: they will still be answered.
-    for (let index = 0; index < this.outstandingCasts.length; index += 1) {
-      const request = this.outstandingCasts[index];
-      if (request) this.outstandingCasts[index] = { ...request, roots: false };
-    }
+    // Withdrawing frees the legs on the server, so the predicted cast goes with
+    // it -- keeping it would root a player who has just asked not to be, and
+    // draw a bar for a blow they have withdrawn from. The request itself stays
+    // outstanding: it will still be answered, and that answer still has a
+    // cooldown and a cost to give back.
+    this.withdrawLocally();
     this.channel.send(
       encodeClientMessage({ type: ClientMessageType.CancelCast, afterInputSeq: this.seq }),
     );
@@ -391,11 +610,97 @@ export class GameClient {
    * cooldown does not stutter the player's own legs once per press.
    */
   /**
-   * When this ability is next usable, in estimated server ticks: the later of
-   * what the server last said and what this client has spent since.
+   * This client's own entity as it believes it to be, or null before it knows
+   * enough to have a belief (spec 069).
+   *
+   * Assembled from the most authoritative source for each field: position from
+   * the prediction buffer's *truth* rather than its drawn value -- the drawn one
+   * lags deliberately while a correction eases, and range is not a presentation
+   * question -- facing from the locally stepped copy, health from the replica,
+   * resource from the server's last word carried forward, cooldowns from the
+   * server's table plus what this client has spent and not been told about.
    */
-  private readyAt(abilityId: string): number {
-    return Math.max(this.cooldowns[abilityId] ?? 0, this.predictedCooldowns.get(abilityId) ?? 0);
+  private mirror(atTick: number): Mirror | null {
+    const self = this.welcome ? this.world.get(this.welcome.entityId) : null;
+    if (!self || !this.stats || !this.prediction) return null;
+    const cooldowns: Record<string, number> = { ...this.cooldowns };
+    for (const [abilityId, readyAtTick] of this.predictedCooldowns) {
+      cooldowns[abilityId] = Math.max(cooldowns[abilityId] ?? 0, readyAtTick);
+    }
+    return {
+      position: this.prediction.position,
+      facing: this.facing,
+      health: self.health,
+      resource: this.modelledResource(),
+      cooldowns,
+      // The cast as it will stand *when the server gets there*, not as it stands
+      // now. A blow that ends before this request is dequeued does not make the
+      // request `alreadyCasting`, and treating it as if it did was worth a
+      // missed prediction on every press that landed in the tail of the
+      // previous swing -- the client drew nothing, and the server cast anyway.
+      cast: this.castAsOf(atTick),
+      stats: this.stats,
+    };
+  }
+
+  /** The cast this client will still be in at `tick`, or null if it is over. */
+  private castAsOf(tick: number): CastState | null {
+    const cast = this.selfCast();
+    if (!cast) return null;
+    return tick < cast.endTick ? cast : null;
+  }
+
+  /**
+   * The pool this client believes it has. Full until the server has said
+   * otherwise: refusing to predict anything before the first `Cooldowns` message
+   * would make the very first blow of a session the one that feels worst.
+   */
+  private modelledResource(): number {
+    if (!this.stats) return 0;
+    const unconfirmed = this.outstandingCasts.reduce((sum, cast) => sum + cast.spentResource, 0);
+    if (this.serverResource < 0) return Math.max(0, this.stats.maxResource - unconfirmed);
+    return modelledResource(
+      this.serverResource,
+      this.serverResourceTick,
+      unconfirmed,
+      this.stats,
+      this.estimated,
+    );
+  }
+
+  /**
+   * Drops the local body's cast, however it was come by: the one this client
+   * only predicted, and the one the server confirmed.
+   *
+   * Both halves, because {@link selfCast} prefers the confirmed one and it is
+   * what roots the legs -- clearing only the guess would leave a body that has
+   * withdrawn standing still until `CastEnded` came back a round trip later. The
+   * server's own message still arrives and is still what makes it final; this
+   * only stops the wait from being visible.
+   */
+  private withdrawLocally(): void {
+    this.predictedCast = null;
+    this.predictedCastRequestId = -1;
+    if (this.welcome) this.casts.delete(this.welcome.entityId);
+  }
+
+  /** The cast the local entity is in: the server's if it has one, else the guess. */
+  private selfCast(): CastState | null {
+    const confirmed = this.welcome ? this.casts.get(this.welcome.entityId) : undefined;
+    if (confirmed) {
+      return {
+        abilityId: confirmed.abilityId,
+        startedTick: 0,
+        releaseTick: confirmed.releaseTick,
+        endTick: confirmed.endTick,
+        phase: confirmed.phase,
+        targetX: confirmed.targetX,
+        targetY: confirmed.targetY,
+        targetEntityId: confirmed.targetEntityId,
+        nextPulseTick: 0,
+      };
+    }
+    return this.predictedCast;
   }
 
   /** Retires the oldest unanswered request; every reply answers exactly one. */
@@ -448,9 +753,16 @@ export class GameClient {
   advanceTick(): void {
     this.estimated += 1;
     this.localTick += 1;
+    // Chunk requests cannot ride on deltas alone: a delta is suppressed when
+    // nothing in the world changed, so a player standing still in an empty
+    // field would stop asking and sit on a half-loaded map. This is the pump
+    // that does not depend on anything happening.
+    if (this.chunkBackoffTicks > 0) this.chunkBackoffTicks--;
+    if (this.localTick % CHUNK_REQUEST_INTERVAL_TICKS === 0) this.requestChunks();
     // One tick of easing off the last drift correction, and one tick closer to
     // giving up on an ability request nobody answered.
     this.prediction?.decay();
+    this.stepPredictedCast();
     // A reply that never came. Dropping the request rather than only its root,
     // because a queue that never drains would mismatch every later answer.
     while (
@@ -460,6 +772,59 @@ export class GameClient {
       this.outstandingCasts.shift();
     }
     if (this.connected && this.localTick % PING_EVERY_TICKS === 0) this.ping();
+  }
+
+  /**
+   * One tick of the local body: where it is looking, and how far through its
+   * own predicted cast it is (spec 069).
+   *
+   * The facing is stepped whether or not a cast is running, because the gate for
+   * the *next* press reads it. The predicted cast retires itself at its own
+   * `endTick` -- which is the whole point, and what 067 could not do: it held a
+   * guess with no duration, so it had to wait to be told the blow was over and
+   * stood the player still for a round trip past the end of it.
+   */
+  private stepPredictedCast(): void {
+    if (!this.prediction || !this.stats) return;
+    const position = this.prediction.position;
+    this.facing = steerFacing(
+      this.facing,
+      this.selfCast(),
+      position,
+      this.wantedFacing,
+      this.stats.turnRate,
+      this.welcome?.tickRate ?? 60,
+    );
+    // A confirmed cast is over when the server's own `endTick` says it is, not
+    // when `CastEnded` gets here (spec 069).
+    //
+    // 067 waited to be told, and called that caution: "guessing the end of a
+    // cast injects exactly the error this spec removes from the start of one".
+    // The difference now is that this is not a guess -- `endTick` is the
+    // server's number, sent by the server, and re-sent whenever a turn re-stamps
+    // it. Waiting for the message that follows it just adds a one-way trip of
+    // standing still to the end of every blow, which is exactly the `over-root`
+    // the harness was reporting.
+    for (const [entityId, cast] of this.casts) {
+      // A cast still *turning* has no end to expire against: the server stamps
+      // `endTick` provisionally at the commit and re-stamps it at alignment,
+      // because the wind-up clock only starts once the body is pointing at what
+      // it committed to (spec 065). A turn of unknown length cannot be timed out
+      // against a number that is explicitly a placeholder, so a turning cast is
+      // ended only by the server -- by the re-stamp, or by `CastEnded`.
+      if (cast.phase === CastPhaseValue.Turning) continue;
+      if (this.estimated > cast.endTick + CAST_EXPIRY_SLACK_TICKS) this.casts.delete(entityId);
+    }
+
+    if (!this.predictedCast) return;
+    this.predictedCast = advancePredictedCast(
+      this.predictedCast,
+      this.facing,
+      position,
+      this.estimated,
+      abilityById(this.predictedCast.abilityId),
+    );
+    if (!this.predictedCast) this.predictedCastRequestId = -1;
   }
 
   /**
@@ -486,6 +851,31 @@ export class GameClient {
     return Math.round(this.measuredRoundTrip() / 2);
   }
 
+  /**
+   * How many ticks until the server acts on the input being sent now (spec 069).
+   *
+   * An ability request is stamped with an input seq and held until the server
+   * dequeues *that* input (spec 067), and the server dequeues exactly one per
+   * tick. So the wait is the depth of that queue -- not the latency, which is a
+   * different quantity that happens to be zero on a loopback while the queue is
+   * still three deep, because a renderer sends a frame's worth of inputs at once
+   * and the server spends them one at a time.
+   *
+   * Measured, not assumed: `ackInputSeq` says which input the server had reached,
+   * and everything sent since is still queued. That ack is one one-way trip old,
+   * so the server has since worked through roughly that many more.
+   */
+  private commitDelayTicks(): number {
+    if (this.queueDepths.length === 0) return 0;
+    // The minimum, and sampled only when a delta lands, for the same reason the
+    // round trip uses the minimum: `seq - ack` climbs between deltas simply
+    // because inputs keep being sent while the ack stands still, so read
+    // continuously it is a sawtooth from three to eight rather than a depth. The
+    // ack is itself one trip old, so the server has since worked through that
+    // many more of them.
+    return Math.max(0, Math.min(...this.queueDepths) - this.oneWayTicks());
+  }
+
   /** The best round trip seen lately, in ticks. */
   private measuredRoundTrip(): number {
     if (this.roundTrips.length === 0) return 0;
@@ -501,36 +891,121 @@ export class GameClient {
       tick: this.world.tick,
       estimatedTick: this.estimated,
       roundTripTicks: this.roundTrips.length === 0 ? 0 : Math.min(...this.roundTrips),
+      commitDelayTicks: this.commitDelayTicks(),
       entities: this.world.all(),
       self: this.prediction?.drawn ?? null,
       selfEntityId: this.welcome?.entityId ?? -1,
       worldSeed: this.welcome?.worldSeed ?? null,
+      map: this.mapView(),
+      spawners: this.spawners,
       stats: this.stats,
       level: this.level,
       experience: this.experience,
       unspentSkillPoints: this.unspentSkillPoints,
       connected: this.connected,
-      casts: [...this.casts.values()],
+      casts: this.visibleCasts(),
       requestedAbilityId: this.requestedAbilityId,
-      cooldowns: this.cooldowns,
+      cooldowns: this.visibleCooldowns(),
       selfRoot: this.selfRoot(),
+      resource: this.modelledResource(),
     };
+  }
+
+  private mapView(): ClientMapView | null {
+    const cache = this.mapCache;
+    if (!cache) return null;
+    return { info: cache.info, chunks: cache.held(), revision: cache.revision };
+  }
+
+  /**
+   * Ask for the chunks under and around the player that are not held yet.
+   *
+   * Driven from the delta rather than from a timer: a delta is when this client
+   * learns where it actually is, and asking on any other schedule would be
+   * asking about a position the server has not confirmed. The per-pass budget
+   * keeps a cold start from firing eighty requests into one frame, and it is
+   * sized under the server's burst so the throttle is never what shapes the
+   * stream in normal play.
+   */
+  private requestChunks(): void {
+    const cache = this.mapCache;
+    const at = this.prediction?.drawn ?? this.selfAuthoritative();
+    if (!cache || !at || this.chunkBackoffTicks > 0) return;
+    for (const req of cache.wanted(at.x, at.y, MAP_CHUNK_REQUEST_RADIUS, CHUNK_REQUESTS_PER_PASS)) {
+      cache.markRequested(req);
+      this.channel.send(
+        encodeClientMessage({
+          type: ClientMessageType.RequestChunk,
+          layer: req.layer,
+          cx: req.cx,
+          cz: req.cz,
+        }),
+      );
+    }
+  }
+
+  /** The server's own position for this client, before any prediction. */
+  private selfAuthoritative(): { x: number; y: number } | null {
+    const id = this.welcome?.entityId ?? -1;
+    if (id < 0) return null;
+    const entity = this.world.all().find((e) => e.id === id);
+    return entity ? { x: entity.x, y: entity.y } : null;
+  }
+
+  /**
+   * Every cast worth drawing: the server's, plus this client's own predicted one
+   * when the server has not confirmed a cast for us yet (spec 069).
+   *
+   * The predicted cast is put on the view as an ordinary cast, indistinguishable
+   * from a real one, so the renderer needs no notion of prediction at all -- it
+   * draws `view.casts` and always did. A confirmed cast for the local entity
+   * wins outright: the server's ticks are the true ones even when they disagree
+   * with the guess.
+   */
+  private visibleCasts(): readonly KnownCast[] {
+    const casts = [...this.casts.values()];
+    const selfId = this.welcome?.entityId ?? -1;
+    if (this.predictedCast && !this.casts.has(selfId) && selfId >= 0) {
+      casts.push({
+        entityId: selfId,
+        abilityId: this.predictedCast.abilityId,
+        phase: this.predictedCast.phase,
+        releaseTick: this.predictedCast.releaseTick,
+        endTick: this.predictedCast.endTick,
+        targetX: this.predictedCast.targetX,
+        targetY: this.predictedCast.targetY,
+        targetEntityId: this.predictedCast.targetEntityId,
+      });
+    }
+    return casts;
+  }
+
+  /**
+   * The server's cooldown table, raised by what this client has spent and not
+   * been told about, so the sweep starts on the press rather than a round trip
+   * later (spec 069). The overlay can only ever push a cooldown *later*: it may
+   * grey a button out early, never light one up early.
+   */
+  private visibleCooldowns(): Readonly<Record<string, number>> {
+    if (this.predictedCooldowns.size === 0) return this.cooldowns;
+    const merged: Record<string, number> = { ...this.cooldowns };
+    for (const [abilityId, readyAtTick] of this.predictedCooldowns) {
+      merged[abilityId] = Math.max(merged[abilityId] ?? 0, readyAtTick);
+    }
+    return merged;
   }
 
   /**
    * The aim to hold while rooted: the confirmed cast's if the server has spoken,
    * the predicted one's until then, and null when free to walk.
+   *
+   * Since spec 069 this is the *cast* rather than the request behind it, which
+   * is what lets it end on time: a cast knows its `endTick`, so the legs come
+   * back the tick the blow finishes instead of a round trip after it.
    */
   private selfRoot(): { readonly x: number; readonly y: number } | null {
-    const confirmed = this.welcome ? this.casts.get(this.welcome.entityId) : undefined;
-    if (confirmed) return { x: confirmed.targetX, y: confirmed.targetY };
-    // The most recent request that roots us: the last thing aimed at is the one
-    // the body should be coming round to.
-    for (let index = this.outstandingCasts.length - 1; index >= 0; index -= 1) {
-      const request = this.outstandingCasts[index];
-      if (request?.roots) return request.aim;
-    }
-    return null;
+    const cast = this.selfCast();
+    return cast ? { x: cast.targetX, y: cast.targetY } : null;
   }
 
   /** How many times the server has had to correct us. Diagnostics, not a rule. */
@@ -569,6 +1044,36 @@ export class GameClient {
         break;
       }
 
+      case ServerMessageType.MapInfo:
+        // A fresh cache rather than a merge: `mapId` changing means the world
+        // changed under this session, and chunks from the old one describe
+        // ground that is no longer there.
+        this.mapCache = new MapChunkCache(message);
+        this.requestChunks();
+        break;
+
+      case ServerMessageType.MapChunk:
+        // Each arrival frees a slot, so ask again straight away. This is what
+        // actually paces a cold start: the window fills as fast as the link
+        // carries it, and the pipeline stops on its own once `wanted` is empty.
+        if (this.mapCache?.accept(message) === true) this.requestChunks();
+        break;
+
+      case ServerMessageType.SpawnerStates:
+        this.spawners = message.spawners;
+        break;
+
+      case ServerMessageType.ChunkDenied:
+        this.mapCache?.deny(message.layer, message.cx, message.cz, message.reason);
+        // A throttled chunk goes straight back on the wanted list, so without a
+        // pause the next pump re-asks it and is refused again -- twenty rounds
+        // of that a second, achieving nothing. Backing off is also the polite
+        // reading of the message: the server said "not now", not "not ever".
+        if (message.reason === ChunkDeniedReason.Throttled) {
+          this.chunkBackoffTicks = CHUNK_THROTTLE_BACKOFF_TICKS;
+        }
+        break;
+
       case ServerMessageType.Stats:
         this.stats = message.stats;
         this.level = message.level;
@@ -585,8 +1090,14 @@ export class GameClient {
         this.estimated = Math.max(this.estimated, message.tick + this.oneWayTicks());
         this.world.apply(message.tick, message.removed, message.upserts);
         for (const id of message.removed) this.casts.delete(id);
+        this.lastAckedSeq = Math.max(this.lastAckedSeq, message.ackInputSeq);
+        if (message.ackInputSeq > 0) {
+          this.queueDepths.push(Math.max(0, this.seq - message.ackInputSeq));
+          if (this.queueDepths.length > ROUND_TRIP_SAMPLES) this.queueDepths.shift();
+        }
         this.prediction?.acknowledge(message.ackInputSeq);
         this.startPredictingIfReady();
+        this.requestChunks();
         break;
       }
 
@@ -627,12 +1138,18 @@ export class GameClient {
           endTick: message.endTick,
           targetX: message.targetX,
           targetY: message.targetY,
+          targetEntityId: message.targetEntityId,
         });
         if (message.entityId === this.welcome?.entityId) {
           this.requestedAbilityId = null;
           // The real thing has arrived, and it answers the oldest request. The
-          // confirmed cast roots us from here; the guess has done its job.
+          // confirmed cast roots us from here; the guess has done its job, and
+          // is dropped so that nothing is drawn from it -- `visibleCasts` would
+          // prefer the confirmed one anyway, but a guess left running would
+          // outlive it and re-root us the moment the real cast ended.
           this.answerOldestCast();
+          this.predictedCast = null;
+          this.predictedCastRequestId = -1;
         }
         for (const listener of this.castListeners) listener(message);
         break;
@@ -662,6 +1179,13 @@ export class GameClient {
           ) {
             this.predictedCooldowns.delete(refused.abilityId);
           }
+          // The bar goes with it, but only if it was *this* request's bar. A
+          // refusal is a round trip old, so a stale one must not tear down a
+          // commit the player has since made and is watching.
+          if (refused && refused.id === this.predictedCastRequestId) {
+            this.predictedCast = null;
+            this.predictedCastRequestId = -1;
+          }
         }
         for (const listener of this.castRejectedListeners) {
           listener(message.abilityId, message.reason);
@@ -672,6 +1196,12 @@ export class GameClient {
         this.cooldowns = Object.fromEntries(
           message.entries.map((entry) => [entry.abilityId, entry.readyAtTick]),
         );
+        // The pool, and the tick it was true on (spec 069). Carried forward
+        // locally from here by the sim's own regen curve, so this message is
+        // needed only when that model would be wrong -- which is when something
+        // was spent.
+        this.serverResource = message.resource;
+        this.serverResourceTick = message.atTick;
         // A guess is retired only once the server's own number has caught up
         // with it. Dropping it on any cooldown message at all was worse than
         // not guessing: the message that arrives while a request is in flight
@@ -709,6 +1239,13 @@ export class GameClient {
     if (this.prediction || !this.welcome || !this.stats) return;
     const self = this.world.get(this.welcome.entityId);
     if (!self) return;
+    // Seed the local facing from the first authoritative one, so the very first
+    // press is judged against where the body actually is rather than east.
+    if (!this.facingSeeded) {
+      this.facing = self.facing;
+      this.wantedFacing = self.facing;
+      this.facingSeeded = true;
+    }
     const build = this.options.predictor ?? ((stats, rate) => createFlatPredictor(stats.moveSpeed, rate));
     this.prediction = new PredictionBuffer(
       { x: self.x, y: self.y },

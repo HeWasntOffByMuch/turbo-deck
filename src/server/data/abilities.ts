@@ -42,8 +42,6 @@ export interface AbilityDefinition {
    * commitment the old parry system used to read.
    */
   readonly windupTicks: number;
-  /** Ticks rooted after release. Past this line a cast can no longer be undone. */
-  readonly recoveryTicks: number;
   readonly cooldownTicks: number;
   readonly cost: number;
   readonly range: number;
@@ -58,6 +56,13 @@ export interface AbilityDefinition {
   readonly pulseIntervalTicks?: number;
   /** Negative damage heals; kept explicit so the sign is never a surprise. */
   readonly healing?: number;
+  /**
+   * The weapon swing (spec 070). Its cooldown is stamped from the caster's own
+   * `attackSpeed` rather than from {@link cooldownTicks}, which is what makes
+   * that stat mean anything; the table's number is the fallback for a caster
+   * whose stats say nothing. Exactly one ability per unit should carry it.
+   */
+  readonly basicAttack?: boolean;
   readonly description: string;
 }
 
@@ -72,12 +77,12 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     kind: 'melee',
     targeting: 'direction',
     windupTicks: seconds(0.2),
-    recoveryTicks: seconds(0.15),
     cooldownTicks: seconds(0.6),
     cost: 0,
     range: 70,
     damage: 14,
     arcCosSq: 0.5,
+    basicAttack: true,
     description: 'A quick forward cut. Free, and the fallback when nothing else is up.',
   },
   {
@@ -86,7 +91,6 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     kind: 'melee',
     targeting: 'direction',
     windupTicks: seconds(0.65),
-    recoveryTicks: seconds(0.35),
     cooldownTicks: seconds(3),
     cost: 2,
     range: 90,
@@ -95,12 +99,44 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     description: 'A long wind-up worth interrupting, and worth landing.',
   },
   {
+    id: 'ranged.shot',
+    name: 'Hunting Shot',
+    kind: 'projectile',
+    // Point-targeted, so `startCast` refuses a shot at something out of range
+    // rather than launching an arrow that was never going to reach.
+    targeting: 'point',
+    windupTicks: seconds(0.35),
+    cooldownTicks: seconds(1),
+    cost: 0,
+    range: 420,
+    damage: 12,
+    // Lobbed, which is what makes it unblockable: an arcing shot flies over
+    // whatever is between the archer and the body it named (spec 079).
+    projectile: { speed: 900, arcHeight: 55, radius: 7, lifetimeTicks: seconds(2) },
+    basicAttack: true,
+    description: 'An arrow, lobbed over whatever is in the way. Lands where the target is, not where it was.',
+  },
+  {
+    id: 'ranged.star',
+    name: 'Throwing Star',
+    kind: 'projectile',
+    targeting: 'point',
+    windupTicks: seconds(0.2),
+    cooldownTicks: seconds(0.7),
+    cost: 0,
+    range: 300,
+    damage: 8,
+    // Flat, and therefore stoppable by anything that steps into the line.
+    projectile: { speed: 1150, arcHeight: 0, radius: 6, lifetimeTicks: seconds(1.5) },
+    basicAttack: true,
+    description: 'A fast flat star. Whatever wanders into the line takes it instead.',
+  },
+  {
     id: 'bolt.arcane',
     name: 'Arcane Bolt',
     kind: 'projectile',
     targeting: 'direction',
     windupTicks: seconds(0.3),
-    recoveryTicks: seconds(0.1),
     cooldownTicks: seconds(0.8),
     cost: 3,
     range: 700,
@@ -114,7 +150,6 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     kind: 'projectile',
     targeting: 'point',
     windupTicks: seconds(0.5),
-    recoveryTicks: seconds(0.2),
     cooldownTicks: seconds(4),
     cost: 5,
     range: 520,
@@ -129,7 +164,6 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     kind: 'ground',
     targeting: 'point',
     windupTicks: seconds(0.9),
-    recoveryTicks: seconds(0.4),
     cooldownTicks: seconds(8),
     cost: 7,
     range: 420,
@@ -143,7 +177,6 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     kind: 'self',
     targeting: 'self',
     windupTicks: seconds(0.8),
-    recoveryTicks: seconds(0.2),
     cooldownTicks: seconds(10),
     cost: 6,
     range: 0,
@@ -157,7 +190,6 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     kind: 'channel',
     targeting: 'direction',
     windupTicks: seconds(0.25),
-    recoveryTicks: seconds(0.2),
     cooldownTicks: seconds(6),
     cost: 4,
     range: 220,
@@ -179,6 +211,13 @@ export function abilityById(id: string): AbilityDefinition | null {
   return ABILITIES.get(id) ?? null;
 }
 
+/**
+ * The swing a body falls back to when nothing it carries names another
+ * (specs 070, 076). Which attack a unit actually uses is
+ * `EffectiveStats.basicAttackId`, derived from its main hand or its row.
+ */
+export const BASIC_ATTACK_ID = 'melee.slash';
+
 /** What a fresh character can use. Everything else is unlocked elsewhere later. */
 export const STARTING_ABILITIES: readonly string[] = [
   'melee.slash',
@@ -190,8 +229,12 @@ export const STARTING_ABILITIES: readonly string[] = [
   'channel.drain',
 ];
 
-/** Total ticks a cast occupies the caster, from commit to free. */
+/**
+ * Total ticks a cast occupies the caster, from commit to free. The release frees
+ * the caster, so there is nothing past the wind-up but a channel's pulses (spec
+ * 068).
+ */
 export function totalCastTicks(ability: AbilityDefinition): number {
   const channel = ability.kind === 'channel' ? (ability.channelTicks ?? 0) : 0;
-  return ability.windupTicks + channel + ability.recoveryTicks;
+  return ability.windupTicks + channel;
 }

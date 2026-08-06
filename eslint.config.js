@@ -45,11 +45,26 @@ const PURE_RENDER = [
   'src/render/critters/**/*.ts',
   'src/render/iso3d/sandbox-mover.ts',
   'src/render/iso3d/sandbox-mover.test.ts',
+  // The weather's numbers and its shore distance transform (spec 073). The
+  // shaders need a canvas; what the wind *is* and where the shore *is* are
+  // arithmetic, and arithmetic that decides how the world looks should be
+  // checkable in Node.
+  'src/render/iso3d/wind.ts',
+  'src/render/iso3d/wind.test.ts',
+  'src/render/iso3d/shore-sdf.ts',
+  'src/render/iso3d/shore-sdf.test.ts',
+  // The lobed tree's silhouette (spec 077): the disc cluster its canopy outline
+  // is walked from, and the trunk's taper, are both arithmetic -- and the
+  // outline is the whole point of the species, so it is checked in Node rather
+  // than by eye.
+  'src/render/iso3d/lobe.ts',
+  'src/render/iso3d/lobe.test.ts',
   'src/render/iso3d/world/appearance.ts',
   'src/render/iso3d/world/cast.ts',
   'src/render/iso3d/world/intent.ts',
   'src/render/iso3d/world/interpolate.ts',
   'src/render/iso3d/world/pixel-font.ts',
+  'src/render/iso3d/world/spawner-overlay.ts',
   'src/render/iso3d/world/*.test.ts',
   'src/render/iso3d/editor/brush.ts',
   'src/render/iso3d/editor/camera.ts',

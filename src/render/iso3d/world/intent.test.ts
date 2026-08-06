@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ARRIVE_EPS, moveIntent, RoutePlanner, steerTo, type IntentInput } from './intent.js';
 import { createWorldColliders } from '../../../sim/collision.js';
-import { WORLD_BOUNDS } from '../../../sim/constants.js';
+import { PATH_RETRY_TICKS, WORLD_BOUNDS } from '../../../sim/constants.js';
 
 const ORIGIN = { x: 0, y: 0 };
 
@@ -107,20 +107,31 @@ describe('a standing move order', () => {
 
 describe('while casting', () => {
   /**
-   * The server roots a caster outright, so predicting a walk here diverges on
-   * every tick of every wind-up -- a correction per tick, on the one action the
-   * player is watching most closely.
+   * The server roots a caster that asks for nothing, so predicting a walk here
+   * would diverge on every tick of every wind-up -- a correction per tick, on
+   * the one action the player is watching most closely.
    */
-  it('asks for no movement, whatever is held', () => {
-    const result = intent({ held: new Set(['KeyW', 'KeyD']), castAim: { x: 100, y: 0 } });
+  it('asks for no movement when nothing is held and nothing is ordered', () => {
+    const result = intent({ castAim: { x: 100, y: 0 } });
     expect(result.moveX).toBe(0);
     expect(result.moveY).toBe(0);
   });
 
-  it('asks for no movement toward a standing order either', () => {
-    const result = intent({ destination: { x: 500, y: 500 }, castAim: { x: 100, y: 0 } });
-    expect(result.moveX).toBe(0);
-    expect(result.moveY).toBe(0);
+  /**
+   * And the other half, since spec 079: asking to move *withdraws* from the
+   * cast on the server, so predicting a stand would be predicting the opposite
+   * of what the very same input frame is about to cause.
+   */
+  it('walks anyway when a key is held, because that withdraws from the cast', () => {
+    const result = intent({ held: new Set(['KeyS']), castAim: { x: 100, y: 0 } });
+    expect(result.moveY).toBeCloseTo(1, 6);
+    expect(result.facing).toBeCloseTo(Math.PI / 2, 6);
+  });
+
+  it('walks anyway toward a standing order', () => {
+    const result = intent({ destination: { x: 500, y: 0 }, castAim: { x: 100, y: 0 } });
+    expect(result.moveX).toBeCloseTo(1, 6);
+    expect(result.moveY).toBeCloseTo(0, 6);
   });
 
   /**
@@ -239,6 +250,60 @@ describe('RoutePlanner', () => {
     const planner = new RoutePlanner();
     expect(planner.next({ x: 600, y: 450 }, { x: 900, y: 450 }, null, 0)).toBeNull();
     expect(planner.searches).toBe(0);
+  });
+
+  /**
+   * An order onto ground nothing can reach (spec 073). It leaves the same empty
+   * path a finished route does, and reading the two the same way is what had the
+   * planner running a full A* every frame for as long as the order stood -- the
+   * exact thing it was written to prevent.
+   */
+  describe('an order onto unreachable ground', () => {
+    /** A sealed box with standing room inside and no way in. */
+    const BOX = {
+      colliders: createWorldColliders(
+        [
+          { x: 200, y: 200, w: 400, h: 30 },
+          { x: 200, y: 500, w: 400, h: 30 },
+          { x: 570, y: 200, w: 30, h: 330 },
+          { x: 200, y: 200, w: 30, h: 330 },
+        ],
+        [],
+        WORLD_BOUNDS,
+      ),
+      radius: 16,
+    };
+    const OUTSIDE = { x: 800, y: 350 };
+    const INSIDE = { x: 400, y: 350 };
+
+    it('searches on the retry cadence, not once a tick', () => {
+      const planner = new RoutePlanner();
+      for (let tick = 0; tick < PATH_RETRY_TICKS * 3; tick++) {
+        expect(planner.next(OUTSIDE, INSIDE, BOX, tick)).toBeNull();
+      }
+      // Ticks 0, 60 and 120 -- three searches over 180 ticks, not 180.
+      expect(planner.searches).toBe(3);
+    });
+
+    it('does not re-search because the unreachable target shuffled', () => {
+      const planner = new RoutePlanner();
+      planner.next(OUTSIDE, INSIDE, BOX, 0);
+      expect(planner.searches).toBe(1);
+      // Well past REPLAN_DISTANCE, and still inside the same sealed box.
+      planner.next(OUTSIDE, { x: INSIDE.x, y: INSIDE.y + 100 }, BOX, 1);
+      expect(planner.searches).toBe(1);
+    });
+
+    it('picks the order back up once it is reachable again', () => {
+      const planner = new RoutePlanner();
+      planner.next(OUTSIDE, INSIDE, BOX, 0);
+      expect(planner.waypoints).toEqual([]);
+      // Same tick budget, but now aimed at ground that needs a route round the
+      // box rather than one into it.
+      const next = planner.next(OUTSIDE, { x: 100, y: 350 }, BOX, PATH_RETRY_TICKS);
+      expect(next).not.toBeNull();
+      expect(planner.waypoints.length).toBeGreaterThan(0);
+    });
   });
 });
 

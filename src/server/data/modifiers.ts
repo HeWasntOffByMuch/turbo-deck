@@ -21,6 +21,8 @@ export interface StatModifier {
   readonly attackRange?: number;
   /** Negative shortens the swing; the result is floored at 1 tick. */
   readonly attackCooldownTicks?: number;
+  /** Flat addition to attacks per second (spec 070). +0.2 is a fifth faster. */
+  readonly attackSpeed?: number;
   readonly armor?: number;
   readonly spellPower?: number;
   readonly critChance?: number;
@@ -30,6 +32,7 @@ export interface StatModifier {
   readonly maxHealthPct?: number;
   readonly moveSpeedPct?: number;
   readonly attackDamagePct?: number;
+  readonly attackSpeedPct?: number;
 }
 
 export const EMPTY_MODIFIER: StatModifier = {};
@@ -50,6 +53,7 @@ export function sumModifiers(modifiers: readonly StatModifier[]): Readonly<Modif
     attackDamage: 0,
     attackRange: 0,
     attackCooldownTicks: 0,
+    attackSpeed: 0,
     armor: 0,
     spellPower: 0,
     critChance: 0,
@@ -58,6 +62,7 @@ export function sumModifiers(modifiers: readonly StatModifier[]): Readonly<Modif
     maxHealthPct: 0,
     moveSpeedPct: 0,
     attackDamagePct: 0,
+    attackSpeedPct: 0,
   };
   for (const modifier of modifiers) {
     for (const key of Object.keys(total) as (keyof ModifierTotals)[]) {

@@ -25,7 +25,7 @@ import {
   type ServerSimEvent,
   type ServerWorldState,
 } from './types.js';
-import { createWorldState, spawnEntity, step, type StepContext } from './world.js';
+import { createWorldState, replaceEntity, spawnEntity, step, type StepContext } from './world.js';
 
 const RECORD: PersistedPlayer = {
   id: 'p1',
@@ -65,6 +65,7 @@ function context(overrides: Partial<StepContext> = {}): StepContext {
     config: { ...DEFAULT_LIVE_CONFIG, spawnRateMultiplier: 0 },
     activeChunks: activeAround(600, 450),
     chunkSize: CHUNK,
+    spawnPoints: [],
     ...overrides,
   };
 }
@@ -122,6 +123,7 @@ function input(entityId: number, overrides: Partial<ServerInput> = {}): ServerIn
     castAbilityId: '',
     castTargetX: 0,
     castTargetY: 0,
+    castTargetEntityId: 0,
     cancelCast: false,
     ...overrides,
   };
@@ -190,12 +192,12 @@ describe('wind-up', () => {
     const release = run(during.state, 1);
     expect(hits(release.events)).toHaveLength(1);
 
-    // And it does not land a second time while recovering.
-    const after = run(release.state, ability.recoveryTicks + 5);
+    // And it does not land a second time once it is over.
+    const after = run(release.state, 5);
     expect(hits(after.events)).toHaveLength(0);
   });
 
-  it('roots the caster for the whole cast', () => {
+  it('roots a caster that asks for nothing', () => {
     let state = createWorldState(1);
     const player = withPlayer(state, 600, 450);
     state = player.state;
@@ -204,12 +206,95 @@ describe('wind-up', () => {
     const frames: Record<number, ServerInput[]> = {
       0: [input(player.id, { castAbilityId: 'melee.heavy', castTargetX: 700, castTargetY: 450 })],
     };
-    // Walking hard the whole time it is winding up.
-    for (let i = 1; i < 20; i++) frames[i] = [input(player.id, { moveX: 0, moveY: 1 })];
+    // Standing still: nothing asked for, so nothing is withdrawn from either.
+    for (let i = 1; i < 20; i++) frames[i] = [input(player.id, {})];
 
     const result = run(state, 20, frames);
     expect(result.state.entities.get(player.id)?.position.y).toBeCloseTo(450, 3);
     expect(result.state.entities.get(player.id)?.position.x).toBeCloseTo(startX, 3);
+  });
+
+  /**
+   * Spec 079. Asking to move is the other way out of a commitment, and the one
+   * that makes a feint possible: show the wind-up, read the answer, walk out of
+   * it. The refund is the one `Esc` gives, so the only thing spent is the time.
+   */
+  it('withdraws from a wind-up when a move order arrives, and moves that tick', () => {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const startY = state.entities.get(player.id)?.position.y ?? 0;
+    const resource = state.entities.get(player.id)?.resource ?? 0;
+
+    const commit = run(state, 1, {
+      0: [input(player.id, { castAbilityId: 'melee.heavy', castTargetX: 700, castTargetY: 450 })],
+    });
+    const committed = commit.state.entities.get(player.id);
+    expect(committed?.cast).not.toBeNull();
+    expect(committed?.resource).toBeLessThan(resource);
+    expect(committed?.cooldowns['melee.heavy']).toBeGreaterThan(0);
+
+    const away = run(commit.state, 1, { 0: [input(player.id, { moveX: 0, moveY: 1 })] });
+    const withdrawn = away.state.entities.get(player.id);
+    expect(withdrawn?.cast).toBeNull();
+    // Everything back but the time: cost refunded, cooldown gone.
+    expect(withdrawn?.resource).toBeCloseTo(resource, 3);
+    expect(withdrawn?.cooldowns['melee.heavy']).toBeUndefined();
+    // And the step away is the same tick, not the one after it.
+    expect(withdrawn?.position.y).toBeGreaterThan(startY);
+    expect(
+      away.events.some(
+        (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Cancelled,
+      ),
+    ).toBe(true);
+    // Nothing landed: a withdrawn blow is a blow that never happened.
+    expect(hits(away.events)).toHaveLength(0);
+  });
+
+  it('withdraws from the turn as readily as from the wind-up', () => {
+    let state = createWorldState(1);
+    // Spawned facing east and committing due west, so the cast is still turning
+    // when the move order lands and `releaseTick` is still the provisional one.
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+
+    const commit = run(state, 1, {
+      0: [input(player.id, { castAbilityId: 'melee.heavy', castTargetX: 300, castTargetY: 450 })],
+    });
+    expect(commit.state.entities.get(player.id)?.cast?.phase).toBe(CastPhase.Turning);
+
+    const away = run(commit.state, 1, { 0: [input(player.id, { moveX: 0, moveY: 1 })] });
+    expect(away.state.entities.get(player.id)?.cast).toBeNull();
+    expect(away.state.entities.get(player.id)?.cooldowns['melee.heavy']).toBeUndefined();
+  });
+
+  it('does not withdraw from a blow that has already landed', () => {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+
+    const commit = run(state, 1, {
+      0: [input(player.id, { castAbilityId: 'melee.slash', castTargetX: 700, castTargetY: 450 })],
+    });
+    const releaseTick = commit.state.entities.get(player.id)?.cast?.releaseTick ?? 0;
+
+    let during = commit;
+    while (during.state.tick < releaseTick) during = run(during.state, 1);
+    expect(
+      during.events.some(
+        (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Released,
+      ),
+    ).toBe(true);
+
+    // Walking now is an ordinary walk away from a blow that went off, and the
+    // cooldown it started is still standing.
+    const after = run(during.state, 1, { 0: [input(player.id, { moveX: 0, moveY: 1 })] });
+    expect(after.state.entities.get(player.id)?.cooldowns['melee.slash']).toBeGreaterThan(0);
+    expect(
+      after.events.some(
+        (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Cancelled,
+      ),
+    ).toBe(false);
   });
 
   it('captures aim at commit, so turning mid-cast cannot re-point the blow', () => {
@@ -675,8 +760,8 @@ describe('turning before the wind-up', () => {
   });
 });
 
-describe('interruption', () => {
-  it('knocks a caster out of a wind-up when something hits them hard', () => {
+describe('a hit does not interrupt a cast (spec 068)', () => {
+  it('leaves the wind-up running, and the blow lands on the tick it would have', () => {
     let state = createWorldState(1);
     const player = withPlayer(state, 600, 450);
     state = player.state;
@@ -691,19 +776,75 @@ describe('interruption', () => {
       typeId: 'stalker',
       position: { x: 640, y: 450, z: 0 },
       facing: Math.PI,
-      stats: { ...definition.stats, spellPower: 40 },
+      stats: definition.stats,
       radius: definition.radius,
       zoneId: 'greenmarch',
+      // Already fighting us: nothing initiates since spec 076.
+      targetId: player.id,
+    });
+    state = monster.state;
+
+    const quake = abilityById('ground.quake');
+    if (!quake) throw new Error('no ground.quake');
+
+    // Tick to the last tick of the wind-up, watching for the stalker's blow.
+    let current: Run = { state, events: [] };
+    let struckWhileWindingUp = false;
+    for (let i = 0; i < quake.windupTicks; i++) {
+      current = run(current.state, 1, i === 0
+        ? { 0: [input(player.id, { castAbilityId: 'ground.quake', castTargetX: 640, castTargetY: 450 })] }
+        : {});
+      if (hits(current.events).some((hit) => hit.targetId === player.id)) {
+        struckWhileWindingUp = true;
+        // The blow it committed to is still coming: neither the turn nor the
+        // wind-up was thrown away by being hit.
+        expect(current.state.entities.get(player.id)?.cast).not.toBeNull();
+      }
+    }
+    expect(struckWhileWindingUp, 'the stalker never landed a blow to test with').toBe(true);
+
+    // And it releases, on its own terms, into the monster that was hitting it.
+    const release = run(current.state, 1);
+    expect(hits(release.events).some((hit) => hit.targetId === monster.entity.id)).toBe(true);
+    expect(
+      release.events.some(
+        (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Released,
+      ),
+    ).toBe(true);
+  });
+
+  it('still drops the cast when the hit is a killing one, and says so', () => {
+    let state = createWorldState(1);
+    // A caster frail enough that the stalker's first blow finishes it; it spawns
+    // on full health, so its maximum is all it has.
+    const player = withPlayer(state, 600, 450, { ...STATS, maxHealth: 6, armor: 0 });
+    state = player.state;
+
+    const definition = monsterById('stalker');
+    if (!definition) throw new Error('no stalker');
+    const monster = spawnEntity(state, {
+      kind: EntityKindValue.Monster,
+      typeId: 'stalker',
+      position: { x: 640, y: 450, z: 0 },
+      facing: Math.PI,
+      stats: definition.stats,
+      radius: definition.radius,
+      zoneId: 'greenmarch',
+      // Already fighting us: nothing initiates since spec 076.
+      targetId: player.id,
     });
     state = monster.state;
 
     const result = run(state, SERVER_TICK_RATE * 3, {
       0: [input(player.id, { castAbilityId: 'ground.quake', castTargetX: 640, castTargetY: 450 })],
     });
-    // Whatever else happened, the long cast did not quietly survive being hit.
-    const struckPlayer = hits(result.events).some((hit) => hit.targetId === player.id);
-    expect(struckPlayer).toBe(true);
-    expect(result.state.entities.get(player.id)?.cast).toBeNull();
+    expect(result.events.some((event) => event.kind === 'died')).toBe(true);
+    expect(result.state.entities.get(player.id)?.cast ?? null).toBeNull();
+    expect(
+      result.events.some(
+        (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Interrupted,
+      ),
+    ).toBe(true);
   });
 });
 
@@ -751,8 +892,9 @@ describe('cast phases reach the client', () => {
     const phases = result.events
       .filter((event) => event.kind === 'castStarted')
       .map((event) => (event.kind === 'castStarted' ? event.phase : -1));
-    // Committed facing the aim, so no turn: wind up, then recovery.
-    expect(phases).toEqual([CastPhase.Windup, CastPhase.Recovery]);
+    // Committed facing the aim, so no turn -- and nothing after the wind-up,
+    // because the release is the end of the cast (spec 068).
+    expect(phases).toEqual([CastPhase.Windup]);
 
     const ended = result.events.filter(
       (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Released,
@@ -761,42 +903,53 @@ describe('cast phases reach the client', () => {
   });
 
   /**
-   * The bug this pins. `castEnded` used to fire at the *release* tick while the
-   * server went on rooting the caster through recovery, so the bar vanished
-   * mid-cast and a client that believed itself free predicted movement the
-   * server was still refusing -- a correction per tick, every recovery.
+   * Spec 068. The cast used to go on rooting the caster through a recovery phase
+   * after the blow had landed; now the release *is* the end, so the body is free
+   * on the next tick and the bar is gone.
    */
-  it('does not say the cast is over while the caster is still rooted', () => {
+  it('ends on the release tick, and the caster walks the tick after', () => {
     let state = createWorldState(1);
     const player = withPlayer(state, 600, 450);
     state = player.state;
+    const startY = state.entities.get(player.id)?.position.y ?? 0;
 
     const ability = abilityById('melee.heavy');
     if (!ability) throw new Error('no melee.heavy');
-    const total = totalCastTicks(ability);
 
-    // Stop one tick short of the end: released, recovering, still rooted.
-    const midRecovery = run(state, total - 1, {
+    const commit = run(state, 1, {
       0: [input(player.id, { castAbilityId: 'melee.heavy', castTargetX: 700, castTargetY: 450 })],
     });
-    const caster = midRecovery.state.entities.get(player.id);
-    expect(caster?.cast?.phase).toBe(CastPhase.Recovery);
-    expect(
-      midRecovery.events.some((event) => event.kind === 'castEnded'),
-      'the cast is still in progress; nothing should have ended it',
-    ).toBe(false);
+    const releaseTick = commit.state.entities.get(player.id)?.cast?.releaseTick ?? 0;
+    expect(releaseTick).toBeGreaterThan(commit.state.tick);
 
-    // And the tick it actually ends, it says so.
-    const done = run(midRecovery.state, 2);
-    expect(done.state.entities.get(player.id)?.cast).toBeNull();
+    // Nothing asked for while it winds up. Walking would withdraw from it now
+    // (spec 079), which is a different test; what is being measured here is
+    // where the cast *ends*.
+    const walk: Record<number, ServerInput[]> = { 0: [input(player.id, { moveX: 0, moveY: 1 })] };
+
+    // Up to the tick before the release: still winding up, still rooted, and
+    // nothing has ended.
+    let during = commit;
+    while (during.state.tick < releaseTick - 1) during = run(during.state, 1);
+    expect(during.state.entities.get(player.id)?.cast?.phase).toBe(CastPhase.Windup);
+    expect(during.state.entities.get(player.id)?.position.y).toBeCloseTo(startY, 3);
+    expect(during.events.some((event) => event.kind === 'castEnded')).toBe(false);
+
+    // The release tick: the blow lands and the cast is over in the same breath.
+    const release = run(during.state, 1);
+    expect(release.state.entities.get(player.id)?.cast).toBeNull();
     expect(
-      done.events.some(
+      release.events.some(
         (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Released,
       ),
     ).toBe(true);
+
+    // And the very next tick the body moves again -- no recovery to sit through.
+    const after = run(release.state, 1, walk);
+    expect(after.state.entities.get(player.id)?.position.y).toBeGreaterThan(startY);
   });
 
-  it('walks a channel through channel and then recovery', () => {
+  it('walks a channel through its pulses and then over', () => {
     let state = createWorldState(1);
     const player = withPlayer(state, 600, 450);
     state = player.state;
@@ -810,6 +963,305 @@ describe('cast phases reach the client', () => {
     const phases = result.events
       .filter((event) => event.kind === 'castStarted')
       .map((event) => (event.kind === 'castStarted' ? event.phase : -1));
-    expect(phases).toEqual([CastPhase.Windup, CastPhase.Channel, CastPhase.Recovery]);
+    expect(phases).toEqual([CastPhase.Windup, CastPhase.Channel]);
+    expect(result.state.entities.get(player.id)?.cast).toBeNull();
+    expect(
+      result.events.some(
+        (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Released,
+      ),
+    ).toBe(true);
+  });
+});
+
+describe('a named target (spec 070)', () => {
+  const slash = abilityById('melee.slash');
+  if (!slash) throw new Error('no melee.slash');
+
+  /** A player and two dummies standing side by side, both well inside the arc. */
+  function twoInTheArc(): {
+    state: ServerWorldState;
+    player: number;
+    named: number;
+    bystander: number;
+  } {
+    let state = createWorldState(4);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    // Both due east, a few units apart: whatever cone slash would sweep, it
+    // sweeps over the pair of them.
+    const named = withDummy(state, 640, 445);
+    state = named.state;
+    const bystander = withDummy(state, 640, 455);
+    return {
+      state: bystander.state,
+      player: player.id,
+      named: named.id,
+      bystander: bystander.id,
+    };
+  }
+
+  it('damages the body it names and nobody standing beside it', () => {
+    const field = twoInTheArc();
+    // Long enough to turn onto an aim a few degrees off the current heading and
+    // then wind up: the turn comes first, and its length is the body's own.
+    const result = run(field.state, slash.windupTicks + 12, {
+      0: [
+        input(field.player, {
+          castAbilityId: 'melee.slash',
+          castTargetX: 640,
+          castTargetY: 445,
+          castTargetEntityId: field.named,
+        }),
+      ],
+    });
+
+    const struck = hits(result.events);
+    expect(struck).toHaveLength(1);
+    expect(struck[0]?.targetId).toBe(field.named);
+    expect(result.state.entities.get(field.bystander)?.health).toBe(
+      monsterById('dummy')?.stats.maxHealth,
+    );
+  });
+
+  it('still sweeps the cone when no target is named, which is what the hotbar uses', () => {
+    const field = twoInTheArc();
+    const result = run(field.state, slash.windupTicks + 12, {
+      0: [
+        input(field.player, {
+          castAbilityId: 'melee.slash',
+          castTargetX: 700,
+          castTargetY: 450,
+        }),
+      ],
+    });
+    expect(new Set(hits(result.events).map((hit) => hit.targetId))).toEqual(
+      new Set([field.named, field.bystander]),
+    );
+  });
+
+  it('misses a target that is out of reach at the release, rather than reaching it', () => {
+    let state = createWorldState(5);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    // Named from well outside slash's reach: the commit is legal (a direction
+    // ability may always be started) and the blow simply finds nothing.
+    const far = withDummy(state, 600 + slash.range * 3, 450);
+    state = far.state;
+
+    const result = run(state, slash.windupTicks + 12, {
+      0: [
+        input(player.id, {
+          castAbilityId: 'melee.slash',
+          castTargetX: 600 + slash.range * 3,
+          castTargetY: 450,
+          castTargetEntityId: far.id,
+        }),
+      ],
+    });
+
+    expect(hits(result.events)).toHaveLength(0);
+    expect(result.events.some((event) => event.kind === 'attackMissed')).toBe(true);
+    expect(result.state.entities.get(far.id)?.health).toBe(monsterById('dummy')?.stats.maxHealth);
+  });
+
+  /**
+   * Spec 079. A blow aimed at a body that is no longer there is called off
+   * rather than thrown at the corpse, at a withdrawal's refund -- nothing was
+   * thrown, so nothing was spent but the time.
+   */
+  it('calls the cast off when its target dies during the wind-up', () => {
+    const heavy = abilityById('melee.heavy');
+    if (!heavy) throw new Error('no melee.heavy');
+
+    let state = createWorldState(8);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const victim = withDummy(state, 660, 450);
+    state = victim.state;
+    const resource = state.entities.get(player.id)?.resource ?? 0;
+
+    // Committed, and a long way from landing.
+    const committed = run(state, 2, {
+      0: [
+        input(player.id, {
+          castAbilityId: 'melee.heavy',
+          castTargetX: 660,
+          castTargetY: 450,
+          castTargetEntityId: victim.id,
+        }),
+      ],
+    });
+    expect(committed.state.entities.get(player.id)?.cast).not.toBeNull();
+
+    // Something else finishes it off mid-wind-up.
+    const corpse = committed.state.entities.get(victim.id);
+    if (!corpse) throw new Error('no victim');
+    const dead = replaceEntity(committed.state, { ...corpse, health: 0 });
+
+    const result = run(dead, heavy.windupTicks + 2);
+    const caster = result.state.entities.get(player.id);
+    expect(caster?.cast).toBeNull();
+    expect(hits(result.events)).toHaveLength(0);
+    // Called off, not swung and missed.
+    expect(result.events.some((event) => event.kind === 'attackMissed')).toBe(false);
+    expect(
+      result.events.some(
+        (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Cancelled,
+      ),
+    ).toBe(true);
+    expect(caster?.resource).toBeCloseTo(resource, 3);
+    expect(caster?.cooldowns['melee.heavy']).toBeUndefined();
+  });
+
+  it('lets a shot already in the air finish, whatever becomes of its target', () => {
+    let state = createWorldState(8);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const victim = withDummy(state, 800, 450);
+    state = victim.state;
+
+    // Run until the star is actually in flight -- past the release, so there is
+    // nothing left to call off.
+    let current = state;
+    let flying = false;
+    for (let i = 0; i < 60 && !flying; i++) {
+      current = run(current, 1, {
+        0: [
+          input(player.id, {
+            castAbilityId: 'ranged.star',
+            castTargetX: 800,
+            castTargetY: 450,
+            castTargetEntityId: victim.id,
+          }),
+        ],
+      }).state;
+      flying = [...current.entities.values()].some((e) => e.projectile !== null);
+    }
+    expect(flying).toBe(true);
+
+    const corpse = current.entities.get(victim.id);
+    if (!corpse) throw new Error('no victim');
+    current = replaceEntity(current, { ...corpse, health: 0 });
+
+    // The shot is not reached back for: it flies its course and expires. The
+    // caster's cast is already over, so nothing is refunded either.
+    const after = run(current, 40);
+    expect(hits(after.events)).toHaveLength(0);
+    expect([...after.state.entities.values()].some((e) => e.projectile !== null)).toBe(false);
+  });
+
+  it('does not refuse a shot at a body walked into range of, edge included', () => {
+    const star = abilityById('ranged.star');
+    if (!star) throw new Error('no ranged.star');
+
+    let state = createWorldState(8);
+    const player = withPlayer(state, 0, 0);
+    state = player.state;
+    // Past the ability's range from the centre, inside it from the edge --
+    // exactly the band the client's chase used to come to rest in.
+    const radius = monsterById('dummy')?.radius ?? 22;
+    const victim = withDummy(state, star.range + radius / 2, 0);
+    state = victim.state;
+
+    const asked = run(state, 1, {
+      0: [
+        input(player.id, {
+          castAbilityId: 'ranged.star',
+          castTargetX: star.range + radius / 2,
+          castTargetY: 0,
+          castTargetEntityId: victim.id,
+        }),
+      ],
+    }, context({ activeChunks: activeAround(0, 0) }));
+
+    expect(
+      asked.events.some((event) => event.kind === 'castRejected' && event.reason === 'outOfRange'),
+    ).toBe(false);
+    expect(asked.state.entities.get(player.id)?.cast).not.toBeNull();
+  });
+
+  it('stamps a basic attack from the caster, and everything else from the table', () => {
+    const quick: EffectiveStats = { ...STATS, attackCooldownTicks: 40, attackSpeed: 2 };
+    const slow: EffectiveStats = { ...STATS, attackCooldownTicks: 40, attackSpeed: 1 };
+
+    let state = createWorldState(6);
+    const fast = withPlayer(state, 600, 450, quick);
+    state = fast.state;
+    const plodder = withPlayer(state, 600, 470, slow);
+    state = plodder.state;
+
+    const commit = run(state, 1, {
+      0: [
+        input(fast.id, { castAbilityId: 'melee.slash', castTargetX: 700, castTargetY: 450 }),
+        input(plodder.id, { castAbilityId: 'melee.slash', castTargetX: 700, castTargetY: 470 }),
+      ],
+    });
+
+    const at = (id: number): number => commit.state.entities.get(id)?.cooldowns['melee.slash'] ?? 0;
+    // Same weapon, same tick, twice the speed: half the wait.
+    expect(at(fast.id) - 1).toBe(20);
+    expect(at(plodder.id) - 1).toBe(40);
+    // Neither of them is the table's number, which is what the swing used to
+    // cost everybody.
+    expect(slash.cooldownTicks).not.toBe(20);
+
+    // A non-basic ability ignores the stat entirely.
+    const heavy = run(state, 1, {
+      0: [input(fast.id, { castAbilityId: 'melee.heavy', castTargetX: 700, castTargetY: 450 })],
+    });
+    expect(heavy.state.entities.get(fast.id)?.cooldowns['melee.heavy']).toBe(
+      1 + (abilityById('melee.heavy')?.cooldownTicks ?? 0),
+    );
+  });
+
+  it('lets a monster swing at the player it is chasing, by id', () => {
+    let state = createWorldState(7);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const definition = monsterById('stalker');
+    if (!definition) throw new Error('no stalker');
+    const spawned = spawnEntity(state, {
+      kind: EntityKindValue.Monster,
+      typeId: 'stalker',
+      position: { x: 640, y: 450, z: 0 },
+      stats: definition.stats,
+      radius: definition.radius,
+      zoneId: 'greenmarch',
+      // Already fighting us: nothing initiates since spec 076.
+      targetId: player.id,
+    });
+
+    const result = run(spawned.state, SERVER_TICK_RATE);
+    const struck = hits(result.events).filter((hit) => hit.attackerId === spawned.entity.id);
+    expect(struck.length).toBeGreaterThan(0);
+    expect(struck.every((hit) => hit.targetId === player.id)).toBe(true);
+  });
+
+  it('replays a targeted fight identically from the same seed', () => {
+    const frames = (player: number, target: number): Record<number, ServerInput[]> => ({
+      0: [
+        input(player, {
+          castAbilityId: 'melee.slash',
+          castTargetX: 640,
+          castTargetY: 445,
+          castTargetEntityId: target,
+        }),
+      ],
+      30: [
+        input(player, {
+          castAbilityId: 'melee.slash',
+          castTargetX: 640,
+          castTargetY: 445,
+          castTargetEntityId: target,
+        }),
+      ],
+    });
+
+    const once = twoInTheArc();
+    const again = twoInTheArc();
+    const a = run(once.state, 60, frames(once.player, once.named));
+    const b = run(again.state, 60, frames(again.player, again.named));
+    expect(JSON.stringify([...b.state.entities])).toBe(JSON.stringify([...a.state.entities]));
+    expect(JSON.stringify(b.events)).toBe(JSON.stringify(a.events));
   });
 });

@@ -18,11 +18,23 @@ import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium, type Page } from 'playwright';
+import { chromium, type ElementHandle, type Page } from 'playwright';
+import { PNG } from 'pngjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = join(root, '.claude', 'screenshots');
 const PORT = 4319;
+
+/**
+ * How far beside a body the deliberately-sloppy click lands, in CSS pixels.
+ *
+ * Outside the body at the default framing, and comfortably short of the ~110px
+ * the seeded grazers stand apart -- so a hit is this body being forgiving
+ * rather than the neighbour being picked instead. What the budget *is* belongs
+ * to `hover.test.ts`, which pins it exactly; this asks only whether the
+ * forgiveness is wired to the mouse at all.
+ */
+const SLOPPY_OFFSET = 40;
 
 /**
  * A Chromium to drive. Prefers a browser already on the box (an agent container
@@ -53,6 +65,94 @@ async function waitForServer(url: string, timeoutMs = 30_000): Promise<void> {
   throw new Error(`server at ${url} never came up`);
 }
 
+/** The target line the HUD is showing: "no target", or a name and its health. */
+async function readTarget(page: Page): Promise<string> {
+  const text = (await page.textContent('body')) ?? '';
+  return /(no target|target [^\n]*)/.exec(text)?.[1] ?? '';
+}
+
+/**
+ * Right-clicks around the frame until one of the clicks lands on a body
+ * (spec 070).
+ *
+ * The alternative is arithmetic: project a monster's world position through the
+ * camera and click the result, which would be testing this script's copy of the
+ * projection rather than the game's picking. Asking the HUD what got targeted
+ * is the same question the player asks by looking at it.
+ */
+interface Bar {
+  readonly id: string;
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * Where every body with a health bar is on screen.
+ *
+ * The bars are anchored over the bodies and tagged with their entity ids, so
+ * reading them is how this script finds something to click. The alternative is
+ * re-deriving the camera projection here, which would test this file's copy of
+ * it rather than the game's picking.
+ */
+async function bodiesOnScreen(page: Page): Promise<Bar[]> {
+  return page.$$eval('[data-entity]', (nodes) =>
+    nodes.map((node) => {
+      const element = node as HTMLElement;
+      return { id: element.dataset['entity'] ?? '', x: element.offsetLeft, y: element.offsetTop };
+    }),
+  );
+}
+
+/** The pixel to point at for a body, given the bar floating over its head. */
+function bodyPoint(bar: Bar): { x: number; y: number } {
+  // The footprint fallback in the pick makes the exact offset forgiving.
+  return { x: bar.x, y: bar.y + 40 };
+}
+
+/**
+ * How far beside a body a right-click can land and still pick it (spec 071).
+ *
+ * Measured rather than asserted: the body's drawn size depends on the zoom and
+ * on which monster the field happened to seed, so the honest thing to report is
+ * the number, not a pass against a threshold this script would have to guess.
+ * Each attempt drops the target on bare grass first, or a click that picked
+ * nothing would look exactly like one that re-picked the same unit.
+ */
+async function findUnit(page: Page): Promise<Bar | null> {
+  for (const bar of await bodiesOnScreen(page)) {
+    const point = bodyPoint(bar);
+    await page.mouse.click(point.x, point.y, { button: 'right' });
+    await page.waitForTimeout(90);
+    // The click that found it has *already* targeted it. The player's own bar
+    // is in this list too, and right-clicking yourself is a move order -- so a
+    // miss here is an answer, not a failure.
+    if ((await readTarget(page)).startsWith('target ')) return bar;
+  }
+  return null;
+}
+
+/**
+ * Waits until a body's bar stops moving on screen, and returns where it settled.
+ *
+ * Every click this harness aims at a body is aimed at a *pixel*, and the camera
+ * follows the player with 130ms of lag (spec 039) -- so a bar read while the
+ * player is still walking names a pixel the body has already left. Polling until
+ * two readings agree is the only honest way to ask "where is it now", and it is
+ * what separates a forgiving pick that missed from a harness that did.
+ */
+async function settledBar(page: Page, id: string, timeoutMs = 4000): Promise<Bar | null> {
+  const deadline = Date.now() + timeoutMs;
+  let last = (await bodiesOnScreen(page)).find((bar) => bar.id === id) ?? null;
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(120);
+    const now = (await bodiesOnScreen(page)).find((bar) => bar.id === id) ?? null;
+    if (!now) return null;
+    if (last && Math.abs(now.x - last.x) <= 1 && Math.abs(now.y - last.y) <= 1) return now;
+    last = now;
+  }
+  return last;
+}
+
 /** The tick the HUD is showing. */
 async function readTick(page: Page): Promise<number> {
   const text = (await page.textContent('body')) ?? '';
@@ -70,6 +170,24 @@ async function waitForTick(page: Page, ticks: number, timeoutMs = 90_000): Promi
     await page.waitForTimeout(250);
   }
   throw new Error(`sim never reached tick ${ticks} (last seen: ${last})`);
+}
+
+/** A screenshot decoded to pixels. Screenshots are PNGs -- comparing the
+ * compressed bytes says nothing about what is on screen. */
+async function pixelsOf(page: Page): Promise<PNG> {
+  return PNG.sync.read(await page.screenshot());
+}
+
+/** How many pixels differ between two decoded frames. */
+function differingPixels(a: PNG, b: PNG): number {
+  let n = 0;
+  for (let i = 0; i < a.data.length && i < b.data.length; i += 4) {
+    const dr = Math.abs((a.data[i] ?? 0) - (b.data[i] ?? 0));
+    const dg = Math.abs((a.data[i + 1] ?? 0) - (b.data[i + 1] ?? 0));
+    const db = Math.abs((a.data[i + 2] ?? 0) - (b.data[i + 2] ?? 0));
+    if (Math.max(dr, dg, db) > 8) n++;
+  }
+  return n;
 }
 
 async function shoot(page: Page, name: string): Promise<void> {
@@ -100,17 +218,98 @@ async function main(): Promise<void> {
       if (message.type() === 'error') problems.push(message.text());
     });
 
-    await page.goto(`http://localhost:${PORT}/`, { waitUntil: 'load' });
+    // Pinned. Without a `seed` in the query the view falls back to `Date.now()`
+    // (`iso3d/seed.ts`), so every run photographed a different world and the
+    // checks that depend on where bodies happen to stand -- the forgiving pick
+    // most of all -- passed or failed by the clock. A harness whose answer moves
+    // between runs cannot tell a regression from a Tuesday.
+    await page.goto(`http://localhost:${PORT}/?seed=20260806`, { waitUntil: 'load' });
     await page.waitForSelector('canvas');
-    // Building the world, meshing the terrain and batching the prop field all
-    // happen before the first frame, and under software WebGL that is seconds
-    // rather than milliseconds -- and it varies enough run to run that a fixed
-    // delay photographs a world still starting up. Poll the HUD's own tick
-    // counter instead, from here rather than in-page: it is the same fact the
-    // player reads, and a failure says which tick it got stuck at.
+    // Two waits, because they are two different facts.
+    //
+    // The world is streamed now (spec 072): terrain arrives chunk by chunk and
+    // the prop field is batched once the stream settles, all of it *during*
+    // frames rather than before the first one. So ticks advance over a world
+    // that is still half-drawn, and waiting on the tick counter alone put this
+    // harness's clicks into a field where the bodies were not yet where they
+    // would end up -- which showed up as right-click targeting "finding
+    // nothing". The view says when it is done; wait for that first.
+    await page.waitForSelector('[data-world-ready="true"]', { timeout: 60_000 });
+    // ...and then for the sim to have run far enough to be worth photographing.
+    // Polled from here rather than in-page: it is the same fact the player
+    // reads, and a failure says which tick it got stuck at.
     await waitForTick(page, 150);
 
     await shoot(page, 'world-play');
+
+    // The spawner overlay (spec 076): open the cog, tick "Spawners", and
+    // photograph what the map placed. Every enemy on screen came from one of
+    // these markers, so a frame with bodies and no marks would mean the
+    // overlay is lying about where they came from.
+    await page.click('button[aria-label="View settings"]');
+    await page.waitForTimeout(120);
+    await page.click('label:has-text("Spawners") input[type=checkbox]');
+    await page.waitForTimeout(400);
+    const marks = await page.$$eval('div', (nodes) =>
+      nodes.filter((n) => / · |^(grazer|stalker|ravager)$/.test(n.textContent ?? '')).length,
+    );
+    console.log(`  spawner marks drawn: ${marks}`);
+    if (marks === 0) problems.push('the spawner overlay drew nothing');
+    await shoot(page, 'world-spawners');
+    await page.click('label:has-text("Spawners") input[type=checkbox]');
+    await page.click('button[aria-label="View settings"]');
+    // The weather panel (spec 075): its own button beside the view cog. Opened
+    // and driven here rather than trusted, because the sliders write straight
+    // into the shared wind uniforms -- a wiring mistake would leave a panel that
+    // looks perfect and moves nothing.
+    await page.click('button[aria-label="Weather"]');
+    await page.waitForTimeout(150);
+    await shoot(page, 'world-weather-panel');
+    const windSliders = await page.$$('button[aria-label="Weather"] ~ div input[type=range]');
+    console.log(`  weather sliders: ${windSliders.length}`);
+    const [strengthSlider, , speedSlider] = windSliders;
+    if (!strengthSlider || !speedSlider) {
+      problems.push('the weather panel is missing its wind strength or speed slider');
+    } else {
+      const setSlider = async (handle: ElementHandle<SVGElement | HTMLElement>, value: string): Promise<void> => {
+        await handle.evaluate((el, v) => {
+          const input = el as HTMLInputElement;
+          input.value = v === 'max' ? input.max : v;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        }, value);
+        await page.waitForTimeout(400);
+      };
+
+      // The world is live, so "the frame changed" is true at any wind at all.
+      // Stilling the *clock* first removes every other moving thing the weather
+      // owns -- the water, the streaks over the ground -- and leaves the lean as
+      // the only thing the strength slider can be changing.
+      await setSlider(speedSlider, '0');
+      await setSlider(strengthSlider, '0');
+      const upright = await pixelsOf(page);
+      const uprightAgain = await pixelsOf(page);
+      await setSlider(strengthSlider, 'max');
+      await shoot(page, 'world-weather-strong');
+      const leaning = await pixelsOf(page);
+
+      // Two shots at the same setting are the control. Even stilled, a live
+      // world is a noisy place to measure in -- the torch gutters, the monsters
+      // walk, and the retro pass redithers all of it -- so this asks only for a
+      // clear margin over that floor, not for a clean number. The clean numbers
+      // live in `preview-wind.ts`, which draws a frozen scene with nothing in it
+      // but ground and trees.
+      const control = differingPixels(upright, uprightAgain);
+      const swayed = differingPixels(upright, leaning);
+      console.log(`  pixels moving with the wind stilled:     ${control}`);
+      console.log(`  ...and with the strength at its ceiling: ${swayed} (${(swayed / Math.max(1, control)).toFixed(2)}x)`);
+      if (swayed < control * 1.25) problems.push('the wind strength slider did not visibly bend the trees');
+
+      // Put both back, so every later screenshot is the shipped weather.
+      await setSlider(strengthSlider, '100');
+      await setSlider(speedSlider, '100');
+    }
+    await page.click('button[aria-label="Weather"]');
+    await page.waitForTimeout(120);
 
     // Right-click a point on the ground: the move order the game had before the
     // server existed (spec 064). The marker should appear and the figure walk to it.
@@ -133,10 +332,121 @@ async function main(): Promise<void> {
     await page.waitForTimeout(200);
     await shoot(page, 'world-cancelled');
 
-    // Left click is the melee swing (spec 064).
-    await page.mouse.click(760, 380);
-    await page.waitForTimeout(140);
-    await shoot(page, 'world-melee');
+    // Right-click a body: it becomes the target, the player walks into reach
+    // and then swings at it until it is dead (spec 070). Nothing is bound to
+    // left-click any more.
+    const unit = await findUnit(page);
+    if (!unit) {
+      console.error('no unit could be targeted by right-clicking; is the field empty?');
+      problems.push('right-click targeting found nothing to attack');
+    } else {
+      // The click that found it is the click that targeted it, so the readout
+      // is taken before anything else moves.
+      const opened = await readTarget(page);
+
+      // Now the same order, given badly (spec 071): let the body go, then take
+      // it again from a pixel that is beside it rather than on it. Done here,
+      // before the screenshots, because the alternative is measuring how long
+      // the body survived being attacked -- an earlier version of this waited,
+      // and reported a failure that was really a dead grazer.
+      // Dropped onto grass a short step from the player, directly *away* from
+      // the body -- not across the frame, and not next to it either.
+      //
+      // Letting a target go is a move order, so wherever this click lands is
+      // where the player then walks, and the camera follows with 130ms of lag
+      // (spec 039): a bar read mid-walk is a pixel the body has already left.
+      // A far corner used to be harmless because the field was hand-seeded a
+      // couple of body-lengths away; since the map places the monsters (spec
+      // 076) that walk carried the body clean off screen. Stepping the other
+      // way keeps the frame still *and* keeps the click off the body, which a
+      // step toward it would not -- the forgiving pick would simply take it
+      // again, and "let go" would never have happened.
+      const away = (() => {
+        const from = bodyPoint(unit);
+        const dx = 640 - from.x;
+        const dy = 400 - from.y;
+        const len = Math.max(1, Math.hypot(dx, dy));
+        return { x: 640 + (dx / len) * 110, y: 400 + (dy / len) * 110 };
+      })();
+      await page.mouse.click(away.x, away.y, { button: 'right' });
+      await page.waitForTimeout(400);
+      const dropped = await readTarget(page);
+
+      let sloppy = 'the body left the screen before it could be tried';
+      const beside = await settledBar(page, unit.id);
+      if (beside) {
+        const point = bodyPoint(beside);
+        await page.mouse.click(point.x + SLOPPY_OFFSET, point.y, { button: 'right' });
+        await page.waitForTimeout(130);
+        sloppy = await readTarget(page);
+        if (!sloppy.startsWith('target ')) {
+          problems.push(`a right-click ${SLOPPY_OFFSET}px beside a body picked nothing`);
+        }
+      }
+      await shoot(page, 'world-target');
+
+      // The cursor sitting on a body outlines it -- the thing that says what a
+      // click would pick before it is made. Aimed at where the body is *now*:
+      // the player is already walking toward it, so the pixel that was over it
+      // a screenshot ago is over the grass behind it.
+      const moved = (await bodiesOnScreen(page)).find((bar) => bar.id === unit.id);
+      if (moved) {
+        const point = bodyPoint(moved);
+        await page.mouse.move(point.x, point.y);
+        await page.waitForTimeout(120);
+        await shoot(page, 'world-hover');
+      }
+
+      // Long enough to walk into reach and land several blows without a second
+      // press: the auto-attack is the whole point.
+      await page.waitForTimeout(4000);
+      const later = await readTarget(page);
+      await shoot(page, 'world-autoattack');
+
+      console.log(`  target on the click:            ${opened}`);
+      console.log(`  after letting go on bare grass: ${dropped}`);
+      console.log(`  after a click ${SLOPPY_OFFSET}px beside it:   ${sloppy}`);
+      console.log(`  ...four seconds later:          ${later}`);
+      // The order runs itself: no press was made between the last two lines.
+      // "no target" means the body it named is dead and the client dropped it,
+      // which is the only way an attack order ends by itself.
+    }
+
+    // The weapon switch (spec 079). Clicking one is an ordinary equip, and the
+    // proof it took is that the *server's* stat block came back naming the new
+    // attack -- which is what lights the button. Photographed with a bow in
+    // hand so the ranged auto-attack is on screen at all.
+    const bow = page.locator('button', { hasText: 'Hunting Bow' }).first();
+    if ((await bow.count()) > 0) {
+      await bow.click();
+      await page.waitForTimeout(400);
+      const lit = await litWeapon(page);
+      console.log(`  weapon after clicking Hunting Bow: ${lit}`);
+      if (lit !== 'Hunting Bow') {
+        problems.push(`the weapon switch clicked Hunting Bow and lit ${lit}`);
+      }
+
+      // The bug this fixes: with a bow in hand the walk came to rest in a band
+      // the server would refuse to shoot from, so the player closed and then
+      // stood there. Target something and watch its health actually move.
+      const mark = await findUnit(page);
+      if (mark) {
+        await page.waitForTimeout(3500);
+        const line = await readTarget(page);
+        console.log(`  after 3.5s of ranged auto-attack: ${line}`);
+        const health = /(\d+)\/(\d+)/.exec(line);
+        // "no target" is a pass: the only way an attack order ends by itself is
+        // the body it named being dead.
+        if (health && Number(health[1]) >= Number(health[2])) {
+          problems.push(`a ranged auto-attack closed but never landed a shot (${line})`);
+        }
+      } else {
+        console.log('  no body to try a ranged auto-attack on');
+      }
+      await shoot(page, 'world-weapon-switch');
+    } else {
+      problems.push('the weapon switch is not on the page');
+    }
 
     // A ground-targeted blast, for the telegraph ring on the terrain.
     await page.keyboard.press('Digit5');
@@ -169,6 +479,25 @@ async function main(): Promise<void> {
     await browser.close();
     server.kill();
   }
+}
+
+/**
+ * Which weapon the switch is showing as held.
+ *
+ * Read off the lit border rather than off a class, because that border is the
+ * whole claim being checked: it is set from `stats.basicAttackId`, so a button
+ * that lights is the server having answered.
+ */
+async function litWeapon(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const buttons = Array.from(document.querySelectorAll('button'));
+    const lit = buttons.find(
+      (button) =>
+        button.style.borderColor === 'rgb(255, 207, 107)' &&
+        button.style.textAlign === 'left',
+    );
+    return lit?.textContent ?? 'nothing';
+  });
 }
 
 await main();

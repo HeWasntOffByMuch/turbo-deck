@@ -11,6 +11,26 @@
 import type { EffectiveStats, Vec3 } from '../state/types.js';
 import { BufferReader, BufferWriter, CodecError } from './codec.js';
 import { ClientMessageType, ServerMessageType } from './protocol.js';
+import {
+  decodeChunkDenied,
+  decodeMapChunk,
+  decodeMapInfo,
+  encodeChunkDenied,
+  encodeMapChunk,
+  encodeMapInfo,
+  type ChunkDeniedMessage,
+  type MapChunkMessage,
+  type MapInfoMessage,
+  type RequestChunkMessage,
+} from './map-messages.js';
+
+export type {
+  ChunkDeniedMessage,
+  MapChunkMessage,
+  MapInfoMessage,
+  MapLayerInfoMsg,
+  RequestChunkMessage,
+} from './map-messages.js';
 
 // --- client -> server ---------------------------------------------------
 
@@ -79,6 +99,15 @@ export interface UseAbilityMessage {
   readonly targetX: number;
   readonly targetY: number;
   /**
+   * The entity being attacked, or 0 to aim at the point alone (spec 070).
+   *
+   * A request like everything else here: the server checks the id is something
+   * this caster may hit and refuses to land on it otherwise. Sent alongside the
+   * point rather than instead of it, because the point is what the body turns
+   * into and what a client draws while it does.
+   */
+  readonly targetEntityId: number;
+  /**
    * The last input sequence number the client had sent when it asked (spec 067).
    *
    * The server applies one input per tick from a queue, so the tick a request
@@ -96,6 +125,19 @@ export interface CancelCastMessage {
   readonly afterInputSeq: number;
 }
 
+/**
+ * Ask to be told what the map's spawners are doing, or to stop being told
+ * (spec 076).
+ *
+ * The only client message that changes nothing about the world. It is a
+ * subscription to a readout, so the server may answer it with silence and a
+ * client that never sends it is never sent a `SpawnerStates`.
+ */
+export interface WatchSpawnersMessage {
+  readonly type: typeof ClientMessageType.WatchSpawners;
+  readonly on: boolean;
+}
+
 export type ClientMessage =
   | HelloMessage
   | InputMessage
@@ -105,7 +147,9 @@ export type ClientMessage =
   | SpendSkillPointMessage
   | ChatMessage
   | UseAbilityMessage
-  | CancelCastMessage;
+  | CancelCastMessage
+  | RequestChunkMessage
+  | WatchSpawnersMessage;
 
 export function encodeClientMessage(message: ClientMessage): Uint8Array {
   const writer = new BufferWriter(64);
@@ -144,10 +188,17 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
         .str(message.abilityId)
         .f32(message.targetX)
         .f32(message.targetY)
+        .varuint(message.targetEntityId)
         .varuint(message.afterInputSeq);
       break;
     case ClientMessageType.CancelCast:
       writer.varuint(message.afterInputSeq);
+      break;
+    case ClientMessageType.RequestChunk:
+      writer.varuint(message.layer).varint(message.cx).varint(message.cz);
+      break;
+    case ClientMessageType.WatchSpawners:
+      writer.bool(message.on);
       break;
   }
   return writer.toBytes();
@@ -192,10 +243,20 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
         abilityId: reader.str(),
         targetX: reader.f32(),
         targetY: reader.f32(),
+        targetEntityId: reader.varuint(),
         afterInputSeq: reader.varuint(),
       };
     case ClientMessageType.CancelCast:
       return { type: ClientMessageType.CancelCast, afterInputSeq: reader.varuint() };
+    case ClientMessageType.RequestChunk:
+      return {
+        type: ClientMessageType.RequestChunk,
+        layer: reader.varuint(),
+        cx: reader.varint(),
+        cz: reader.varint(),
+      };
+    case ClientMessageType.WatchSpawners:
+      return { type: ClientMessageType.WatchSpawners, on: reader.bool() };
     default:
       throw new CodecError(`unknown client message type 0x${type.toString(16)}`);
   }
@@ -329,6 +390,8 @@ export interface CastStateMessage {
   readonly endTick: number;
   readonly targetX: number;
   readonly targetY: number;
+  /** The entity it was aimed at, or 0 for a point aim (spec 070). */
+  readonly targetEntityId: number;
 }
 
 export interface CastEndedMessage {
@@ -375,6 +438,47 @@ export interface CastRejectedMessage {
 export interface CooldownsMessage {
   readonly type: typeof ServerMessageType.Cooldowns;
   readonly entries: readonly { readonly abilityId: string; readonly readyAtTick: number }[];
+  /**
+   * The caster's live resource, and the tick it was true on (spec 069).
+   *
+   * Here rather than on the entity delta because it is nobody else's business:
+   * what another player has left to spend changes nothing this client draws,
+   * and the delta is the one message that is paid for per entity.
+   *
+   * It rides on this message because this message is already sent exactly when
+   * a cast commits, which is when resource moves by a cost. Between those, the
+   * client models regen from `resourceRegen` -- so `atTick` is not decoration:
+   * the number is a round trip old on arrival, and modelling forward from it
+   * needs to know how far forward.
+   */
+  readonly resource: number;
+  readonly atTick: number;
+}
+
+/** One spawner's live state, as the overlay draws it (spec 076). */
+export interface SpawnerStatus {
+  readonly id: string;
+  readonly monsterId: string;
+  readonly x: number;
+  readonly y: number;
+  /** `SpawnerStateValue`: occupied, or counting down. */
+  readonly state: number;
+  /** Ticks left on the timer; 0 while occupied. */
+  readonly ticks: number;
+}
+
+/**
+ * What every spawner on the map is doing (spec 076).
+ *
+ * The whole map rather than the player's interest set: these are markers a
+ * level designer placed, so there are tens of them, and an overlay that faded
+ * out at the edge of the interest radius would be worse at answering the
+ * question it exists for -- "is that camp about to come back".
+ */
+export interface SpawnerStatesMessage {
+  readonly type: typeof ServerMessageType.SpawnerStates;
+  readonly tick: number;
+  readonly spawners: readonly SpawnerStatus[];
 }
 
 export type ServerMessage =
@@ -391,7 +495,11 @@ export type ServerMessage =
   | CastEndedMessage
   | EffectMessage
   | CastRejectedMessage
-  | CooldownsMessage;
+  | CooldownsMessage
+  | MapInfoMessage
+  | MapChunkMessage
+  | ChunkDeniedMessage
+  | SpawnerStatesMessage;
 
 // Field bits, duplicated here as plain numbers so the hot encode path is a
 // bitmask test rather than a property lookup. Kept in sync with protocol.ts.
@@ -471,11 +579,13 @@ function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
     .f32(stats.attackDamage)
     .f32(stats.attackRange)
     .u16(stats.attackCooldownTicks)
+    .f32(stats.attackSpeed)
     .f32(stats.armor)
     .f32(stats.spellPower)
     .f32(stats.critChance)
     .f32(stats.maxResource)
-    .f32(stats.resourceRegen);
+    .f32(stats.resourceRegen)
+    .str(stats.basicAttackId);
 }
 
 function readStats(reader: BufferReader): EffectiveStats {
@@ -486,15 +596,29 @@ function readStats(reader: BufferReader): EffectiveStats {
     attackDamage: reader.f32(),
     attackRange: reader.f32(),
     attackCooldownTicks: reader.u16(),
+    attackSpeed: reader.f32(),
     armor: reader.f32(),
     spellPower: reader.f32(),
     critChance: reader.f32(),
     maxResource: reader.f32(),
     resourceRegen: reader.f32(),
+    basicAttackId: reader.str(),
   };
 }
 
 export function encodeServerMessage(message: ServerMessage): Uint8Array {
+  // The map messages size and frame themselves -- a chunk is kilobytes where
+  // everything below is tens of bytes, and it has its own writer to match.
+  switch (message.type) {
+    case ServerMessageType.MapInfo:
+      return encodeMapInfo(message);
+    case ServerMessageType.MapChunk:
+      return encodeMapChunk(message);
+    case ServerMessageType.ChunkDenied:
+      return encodeChunkDenied(message);
+    default:
+      break;
+  }
   const writer = new BufferWriter(message.type === ServerMessageType.Delta ? 512 : 64);
   writer.u8(message.type);
   switch (message.type) {
@@ -510,9 +634,24 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
         .f32(message.correctionThreshold)
         .u32(message.worldSeed);
       break;
+    case ServerMessageType.SpawnerStates:
+      writer.u32(message.tick).varuint(message.spawners.length);
+      for (const spawner of message.spawners) {
+        writer
+          .str(spawner.id)
+          .str(spawner.monsterId)
+          // Thousandths, like every other coordinate since spec 072: these come
+          // straight out of the document, and an f32 cannot hold most of them.
+          .varint(Math.round(spawner.x * 1000))
+          .varint(Math.round(spawner.y * 1000))
+          .u8(spawner.state)
+          .varuint(spawner.ticks);
+      }
+      break;
     case ServerMessageType.Cooldowns:
       writer.varuint(message.entries.length);
       for (const entry of message.entries) writer.str(entry.abilityId).u32(entry.readyAtTick);
+      writer.f32(message.resource).u32(message.atTick);
       break;
     case ServerMessageType.Delta:
       writer.u32(message.tick).varuint(message.ackInputSeq).varuint(message.removed.length);
@@ -565,7 +704,8 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
         .u32(message.releaseTick)
         .u32(message.endTick)
         .f32(message.targetX)
-        .f32(message.targetY);
+        .f32(message.targetY)
+        .varuint(message.targetEntityId);
       break;
     case ServerMessageType.CastEnded:
       writer.varuint(message.entityId).str(message.abilityId).u8(message.reason);
@@ -590,6 +730,12 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
   const reader = new BufferReader(frame);
   const type = reader.u8();
   switch (type) {
+    case ServerMessageType.MapInfo:
+      return decodeMapInfo(reader);
+    case ServerMessageType.MapChunk:
+      return decodeMapChunk(reader);
+    case ServerMessageType.ChunkDenied:
+      return decodeChunkDenied(reader);
     case ServerMessageType.Welcome:
       return {
         type: ServerMessageType.Welcome,
@@ -603,13 +749,31 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         correctionThreshold: reader.f32(),
         worldSeed: reader.u32(),
       };
+    case ServerMessageType.SpawnerStates: {
+      const tick = reader.u32();
+      const count = reader.varuint();
+      const spawners: SpawnerStatus[] = new Array<SpawnerStatus>(count);
+      for (let i = 0; i < count; i++) {
+        spawners[i] = {
+          id: reader.str(),
+          monsterId: reader.str(),
+          x: reader.varint() / 1000,
+          y: reader.varint() / 1000,
+          state: reader.u8(),
+          ticks: reader.varuint(),
+        };
+      }
+      return { type: ServerMessageType.SpawnerStates, tick, spawners };
+    }
     case ServerMessageType.Cooldowns: {
       const count = reader.varuint();
       const entries: { abilityId: string; readyAtTick: number }[] = [];
       for (let i = 0; i < count; i++) {
         entries.push({ abilityId: reader.str(), readyAtTick: reader.u32() });
       }
-      return { type: ServerMessageType.Cooldowns, entries };
+      const resource = reader.f32();
+      const atTick = reader.u32();
+      return { type: ServerMessageType.Cooldowns, entries, resource, atTick };
     }
     case ServerMessageType.Delta: {
       const tick = reader.u32();
@@ -671,6 +835,7 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         endTick: reader.u32(),
         targetX: reader.f32(),
         targetY: reader.f32(),
+        targetEntityId: reader.varuint(),
       };
     case ServerMessageType.CastEnded:
       return {

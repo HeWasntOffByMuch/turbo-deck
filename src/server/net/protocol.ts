@@ -26,6 +26,16 @@ export const ClientMessageType = {
   UseAbility: 0x08,
   /** Withdraw from whatever is winding up. */
   CancelCast: 0x09,
+  /** Ask for one chunk of the map document (spec 072). */
+  RequestChunk: 0x0a,
+  /**
+   * Turn the spawner readout on or off (spec 076).
+   *
+   * A debug channel, and opt-in for exactly that reason: a client that is not
+   * showing the overlay is sent nothing, so the toggle costs what it draws and
+   * nothing when it is off.
+   */
+  WatchSpawners: 0x0b,
 } as const;
 
 export const ServerMessageType = {
@@ -52,7 +62,53 @@ export const ServerMessageType = {
    * else's business.
    */
   Cooldowns: 0x4d,
+  /**
+   * Everything about the map that is not per-chunk (spec 072): the grid, the
+   * arena, the layer scalars and which chunks exist. Sent once, straight after
+   * the welcome, because a client can ask for nothing until it has it.
+   */
+  MapInfo: 0x4e,
+  /** One chunk of one layer, in answer to a `RequestChunk`. */
+  MapChunk: 0x4f,
+  /** A `RequestChunk` the server will not serve, and why. */
+  ChunkDenied: 0x50,
+  /**
+   * Every map spawner and what its timer is doing (spec 076). Sent on the
+   * broadcast cadence, and only to a connection that asked with
+   * `WatchSpawners`.
+   */
+  SpawnerStates: 0x51,
 } as const;
+
+/** What a spawner is doing, as a byte (spec 076). */
+export const SpawnerStateValue = {
+  /** Its monster is alive; there is no timer running. */
+  Occupied: 0,
+  /** Empty, and counting down to the next one. */
+  Waiting: 1,
+} as const;
+
+/** Why a chunk request was refused (spec 072). */
+export const ChunkDeniedReason = {
+  /** The player is not standing near enough to that chunk to be told about it. */
+  OutOfRange: 0,
+  /** No such chunk was ever baked. The client remembers this and stops asking. */
+  Unknown: 1,
+  /** Asking too fast. The client backs off and re-asks. */
+  Throttled: 2,
+} as const;
+
+/** Bit flags on a wire prop, mirroring `MapProp`'s two optional fields. */
+export const MapPropFlag = {
+  Align: 1 << 0,
+  Uniform: 1 << 1,
+} as const;
+
+/**
+ * The marker kinds, in wire order: a marker's byte is its index here, so new
+ * kinds are appended and none is ever reordered or removed in place.
+ */
+export const MapMarkerKindValue = ['spawn', 'objective', 'campfire', 'trigger', 'spawner'] as const;
 
 export const AdminMessageType = {
   Auth: 0x80,
@@ -139,14 +195,12 @@ export const EntityActivity = {
   Casting: 2,
   Stunned: 3,
   Dead: 4,
-  Recovering: 5,
 } as const;
 
 /** Mirrors `sim/types.ts`; the client animates from this. */
 export const CastPhaseValue = {
   Windup: 0,
   Channel: 1,
-  Recovery: 2,
   /** Turning to face the aim before the wind-up starts (spec 065). */
   Turning: 3,
 } as const;

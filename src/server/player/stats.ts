@@ -28,6 +28,7 @@ import {
 } from '../../sim/constants.js';
 import { CHARACTERS } from '../../sim/characters.js';
 import { SERVER_TICK_RATE } from '../config.js';
+import { BASIC_ATTACK_ID } from '../data/abilities.js';
 import { itemById } from '../data/items.js';
 import { scaleModifier, sumModifiers, type StatModifier } from '../data/modifiers.js';
 import { skillById } from '../data/skills.js';
@@ -48,8 +49,16 @@ export const HP_PER_VITALITY = 14;
 export const HP_PER_LEVEL = 8;
 /** Attack damage per point of strength. */
 export const DAMAGE_PER_STRENGTH = 0.6;
-/** Ceiling on the attack-speed bonus from dexterity, so cooldowns stay meaningful. */
-export const MAX_ATTACK_SPEED_BONUS = 0.6;
+/**
+ * Bounds on attacks per second (spec 070).
+ *
+ * A floor as well as a ceiling, because `attackSpeed` divides: an item that
+ * managed to drive it to zero would not make a unit slow, it would make its
+ * swing interval infinite, and a stat that can produce a division by zero is a
+ * stat that will.
+ */
+export const MIN_ATTACK_SPEED = 0.25;
+export const MAX_ATTACK_SPEED = 3;
 /** Critical-hit chance per point of dexterity, and its ceiling. */
 export const CRIT_PER_DEXTERITY = 0.008;
 export const MAX_CRIT_CHANCE = 0.5;
@@ -133,11 +142,17 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
 
   const attackRange = Math.max(1, PLAYER_ATTACK_RANGE + bonus.attackRange);
 
+  // The base cadence carries only flat modifiers (spec 070). Dexterity used to
+  // shorten it directly; it now feeds `attackSpeed` instead, so a point of
+  // dexterity and a +10% haste item are added in one place rather than two that
+  // silently multiply.
   const baseCooldown = simTicksToServerTicks(PLAYER_ATTACK_COOLDOWN_TICKS);
-  const speedBonus = clamp(ATTACK_SPEED_PER_AGILITY * dexterity, 0, MAX_ATTACK_SPEED_BONUS);
-  const attackCooldownTicks = Math.max(
-    1,
-    Math.round(baseCooldown * (1 - speedBonus) + bonus.attackCooldownTicks),
+  const attackCooldownTicks = Math.max(1, Math.round(baseCooldown + bonus.attackCooldownTicks));
+
+  const attackSpeed = clamp(
+    (1 + ATTACK_SPEED_PER_AGILITY * dexterity + bonus.attackSpeed) * (1 + bonus.attackSpeedPct),
+    MIN_ATTACK_SPEED,
+    MAX_ATTACK_SPEED,
   );
 
   const armor = clamp(ARMOR_PER_AGILITY * dexterity + bonus.armor, 0, MAX_DAMAGE_REDUCTION);
@@ -165,12 +180,44 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
     attackDamage,
     attackRange,
     attackCooldownTicks,
+    attackSpeed,
     armor,
     spellPower,
     critChance,
     maxResource,
     resourceRegen,
+    basicAttackId: basicAttackFor(player),
   };
+}
+
+/**
+ * The ability this character's auto-attack uses (spec 079).
+ *
+ * The main hand decides, because that is what a weapon *is* here: a bow says
+ * `ranged.shot` the same way the Keen Longsword says `attackSpeedPct`. A weapon
+ * that says nothing, an empty hand, and an item id no longer in the table all
+ * fall back to the sword swing, so a character is never left unable to attack by
+ * what it happens to be holding.
+ */
+export function basicAttackFor(player: PersistedPlayer): string {
+  const mainHand = player.equipment.mainHand;
+  const item = mainHand ? itemById(mainHand) : null;
+  return item?.basicAttackId ?? BASIC_ATTACK_ID;
+}
+
+/**
+ * Ticks between one basic attack and the next, for these stats (spec 070).
+ *
+ * The one place the swing cadence is worked out, called by the sim when it
+ * stamps a basic attack's cooldown and by the client's mirror of the same gate.
+ * Floored at a tick, because a cadence faster than the sim runs is not a
+ * cadence -- it is a swing every tick with the remainder thrown away.
+ */
+export function attackIntervalTicks(stats: EffectiveStats): number {
+  const speed = Number.isFinite(stats.attackSpeed)
+    ? clamp(stats.attackSpeed, MIN_ATTACK_SPEED, MAX_ATTACK_SPEED)
+    : 1;
+  return Math.max(1, Math.round(stats.attackCooldownTicks / speed));
 }
 
 /** Ability resource after a recalculation, held under the fresh ceiling. */

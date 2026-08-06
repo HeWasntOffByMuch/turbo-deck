@@ -5,6 +5,7 @@ import {
   MARKER_CHOICES,
   MODE_CHOICES,
   MODE_COLORS,
+  SPAWNER_MONSTER_CHOICES,
   SPECIES_CHOICES,
   TERRAIN_TOOL_CHOICES,
   TOOL_COLORS,
@@ -250,6 +251,10 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
     },
     () => MODE_COLORS.marker,
   );
+  // Always shown rather than revealed with the `spawner` kind: the strip above
+  // is two columns of buttons, and a control that appears and disappears under
+  // them moves everything below it every time you change your mind.
+  markers.add(s, 'spawnerMonster', SPAWNER_MONSTER_CHOICES.map((c) => c.value)).name('Spawner monster');
 
   const view = gui.addFolder('View');
   view.add(s, 'showArena').name('Arena bounds').onChange(opts.onArmChange);

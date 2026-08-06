@@ -32,15 +32,12 @@ export const ActivityValue = {
   Casting: 2,
   Stunned: 3,
   Dead: 4,
-  /** Rooted after a cast released; past the point of cancelling. */
-  Recovering: 5,
 } as const;
 
 /** Where a cast has got to. Drives the client's animation and the cancel rule. */
 export const CastPhase = {
   Windup: 0,
   Channel: 1,
-  Recovery: 2,
   /**
    * Committed, but not yet pointing at what it committed to (spec 065). The
    * cost is spent and the aim is captured; the wind-up clock has not started.
@@ -52,7 +49,7 @@ export const CastPhase = {
 export const CastEndReason = {
   Released: 0,
   Cancelled: 1,
-  /** Knocked out of it -- death, or a forced move. */
+  /** Knocked out of it. Death only, since spec 068: a hit no longer does this. */
   Interrupted: 2,
 } as const;
 
@@ -66,12 +63,24 @@ export interface CastState {
   readonly startedTick: number;
   /** Tick the effect lands. Cancelling before this costs nothing but time. */
   readonly releaseTick: number;
-  /** Tick the caster is free again, past recovery or the end of a channel. */
+  /**
+   * Tick the caster is free again: the release for everything but a channel,
+   * whose pulses run past it (spec 068).
+   */
   readonly endTick: number;
   readonly phase: number;
   /** Aim captured at commit, so turning mid-cast cannot re-aim a landed blow. */
   readonly targetX: number;
   readonly targetY: number;
+  /**
+   * The entity this cast was aimed at, or 0 for an aim at a point (spec 070).
+   *
+   * A melee cast that names one resolves against that entity and nothing else:
+   * an attack is single-target, and a bystander who wandered into the arc is a
+   * bystander. The point aim is still captured alongside it, because that is
+   * what the body turns into and what the client draws.
+   */
+  readonly targetEntityId: number;
   /** Channels only: the next tick a pulse is due. */
   readonly nextPulseTick: number;
 }
@@ -82,12 +91,30 @@ export interface ProjectileState {
   readonly ownerId: number;
   readonly originX: number;
   readonly originY: number;
+  /**
+   * Where it is headed *now*. Re-aimed every tick at a named target, so a shot
+   * follows a body that moved after it was loosed (spec 079); fixed for a shot
+   * thrown at a patch of ground.
+   */
   readonly targetX: number;
   readonly targetY: number;
+  /**
+   * The body this shot is chasing, or 0 for one aimed at a point (spec 079).
+   *
+   * When it dies or leaves the world the shot is *disjointed*: it keeps the aim
+   * it last had and flies on to that spot. Nothing was scheduled, so there is
+   * nothing to un-schedule -- the travel is the only thing that decides.
+   */
+  readonly targetEntityId: number;
   /** World units per tick along the ground line. */
   readonly speed: number;
   readonly arcHeight: number;
-  /** Total ground distance; progress is travelled/total, which drives the arc. */
+  /**
+   * Ground distance this flight will cover: `travelled` plus what is left to
+   * run. Re-stamped every tick, because a tracked target moves the finish line;
+   * for a shot at a fixed point it never changes. `travelled / totalDistance` is
+   * the flight's progress, and what the arc is drawn against.
+   */
   readonly totalDistance: number;
   readonly travelled: number;
   readonly expiresAtTick: number;
@@ -178,6 +205,28 @@ export interface ServerEntity {
    * replay, is what stops that.
    */
   readonly pardon: { readonly x: number; readonly y: number; readonly seq: number } | null;
+  /**
+   * The map spawner that produced this body, or null for anything else -- a
+   * player, a projectile, a monster an admin conjured (spec 076).
+   */
+  readonly spawnerId: string | null;
+  /**
+   * Where this body was spawned, and so the centre of its leash. Null when it
+   * has no home to be dragged away from.
+   */
+  readonly anchor: Vec2 | null;
+}
+
+/** One map spawner's live state (spec 076). */
+export interface SpawnerState {
+  /** The body this spawner put in the world, or null while it is empty. */
+  readonly entityId: number | null;
+  /**
+   * The earliest tick a replacement may appear. Stamped when the last one was
+   * removed, so the wait starts at the death rather than at a global cadence;
+   * 0, and so immediately, for a spawner that has never been filled.
+   */
+  readonly readyAtTick: number;
 }
 
 export interface ServerWorldState {
@@ -189,6 +238,11 @@ export interface ServerWorldState {
   readonly entities: ReadonlyMap<number, ServerEntity>;
   readonly nextEntityId: number;
   readonly rng: Rng;
+  /**
+   * Spawner id -> its timer. Sim state, not server bookkeeping: a replay that
+   * did not carry it would repopulate the world on a different tick.
+   */
+  readonly spawners: ReadonlyMap<string, SpawnerState>;
 }
 
 /**
@@ -226,6 +280,8 @@ export interface ServerInput {
   readonly castAbilityId: string;
   readonly castTargetX: number;
   readonly castTargetY: number;
+  /** The entity asked for by id, or 0 to aim at the point alone (spec 070). */
+  readonly castTargetEntityId: number;
   /** Withdraw from whatever is winding up. Honoured before any new commit. */
   readonly cancelCast: boolean;
 }
@@ -259,6 +315,7 @@ export type ServerSimEvent =
       readonly endTick: number;
       readonly targetX: number;
       readonly targetY: number;
+      readonly targetEntityId: number;
     }
   | {
       readonly kind: 'castEnded';

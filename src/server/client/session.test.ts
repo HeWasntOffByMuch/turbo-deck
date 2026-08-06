@@ -481,15 +481,17 @@ describe('calling off a cast', () => {
 });
 
 /**
- * Interruption has to be *announced*, not just done.
+ * However a cast ends, it has to be *announced*, not just done.
  *
- * `applyDamage` clears the target's cast. Doing that without an event left the
- * client holding a cast the server had dropped -- and since a client roots
- * itself while it believes it is casting (spec 064), the player was stuck on the
- * spot permanently. Measured at 288 ticks of phantom cast before the fix.
+ * `applyDamage` used to clear the target's cast. Doing that without an event
+ * left the client holding a cast the server had dropped -- and since a client
+ * roots itself while it believes it is casting (spec 064), the player was stuck
+ * on the spot permanently. Measured at 288 ticks of phantom cast before the fix.
+ * A hit no longer ends a cast at all (spec 068), but the rule it taught stands
+ * for every remaining ending: death, a cancel, and the release.
  */
-describe('being interrupted', () => {
-  it('tells the client, so it never believes it is casting when it is not', async () => {
+describe('a cast the client is holding', () => {
+  it('is never one the server has already dropped', async () => {
     const test = harness();
     const client = await connect(test, 'alice');
     await advance(test, 1);
@@ -503,7 +505,12 @@ describe('being interrupted', () => {
     test.server.spawnEntities('ravager', at.x + 40, at.y, 1);
     const live = test.server.world.entities as Map<number, ServerEntity>;
     for (const [id, entity] of live) {
-      if (entity.typeId === 'ravager') live.set(id, { ...entity, facing: Math.PI });
+      // Facing us, and already fighting us: nothing initiates since spec 076, so
+      // a monster that is meant to swing has to be handed the grudge a hit
+      // would have given it.
+      if (entity.typeId === 'ravager') {
+        live.set(id, { ...entity, facing: Math.PI, targetId: entityId });
+      }
     }
 
     // A long cast, aimed away, so there is plenty of wind-up to be knocked out of.
@@ -526,18 +533,27 @@ describe('being interrupted', () => {
     );
   });
 
-  it('reports the interruption as an interruption, not a cancel', async () => {
+  it('survives being hit: the cast it was holding still releases (spec 068)', async () => {
     const test = harness();
     const client = await connect(test, 'alice');
     await advance(test, 1);
 
     const entityId = client.view().selfEntityId;
     const at = test.server.world.entities.get(entityId)?.position;
+    expect(at).toBeDefined();
     if (!at) return;
+    const fullHealth = test.server.world.entities.get(entityId)?.health ?? 0;
+
+    // Close enough and already facing us, so it swings while we are winding up.
     test.server.spawnEntities('ravager', at.x + 40, at.y, 1);
     const live = test.server.world.entities as Map<number, ServerEntity>;
     for (const [id, entity] of live) {
-      if (entity.typeId === 'ravager') live.set(id, { ...entity, facing: Math.PI });
+      // Facing us, and already fighting us: nothing initiates since spec 076, so
+      // a monster that is meant to swing has to be handed the grudge a hit
+      // would have given it.
+      if (entity.typeId === 'ravager') {
+        live.set(id, { ...entity, facing: Math.PI, targetId: entityId });
+      }
     }
 
     const reasons: number[] = [];
@@ -545,14 +561,19 @@ describe('being interrupted', () => {
       if (end.entityId === entityId) reasons.push(end.reason);
     });
 
+    // A long wind-up, aimed away, so there is plenty of it to be hit during.
     client.useAbility('ground.quake', at.x + 200, at.y);
     await settle();
-    for (let i = 0; i < 120; i++) {
+    for (let i = 0; i < 200 && reasons.length === 0; i++) {
       test.server.tick();
       await settle();
     }
 
-    expect(reasons).toContain(CastEndReason.Interrupted);
+    // It was hit, it lived, and the blow it committed to went off anyway.
+    const health = test.server.world.entities.get(entityId)?.health ?? 0;
+    expect(health).toBeLessThan(fullHealth);
+    expect(health).toBeGreaterThan(0);
+    expect(reasons).toEqual([CastEndReason.Released]);
   });
 });
 
@@ -741,7 +762,7 @@ describe('committing before the server has answered', () => {
     const heavy = abilityById('melee.heavy');
     expect(heavy).toBeDefined();
     if (!heavy) return;
-    for (let i = 0; i < heavy.windupTicks + heavy.recoveryTicks + 4; i++) {
+    for (let i = 0; i < heavy.windupTicks + 4; i++) {
       test.server.tick();
       await settle();
     }

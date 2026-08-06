@@ -17,6 +17,7 @@
  */
 
 import { segmentClear } from '../../../sim/collision.js';
+import { PATH_RETRY_TICKS } from '../../../sim/constants.js';
 import { findPath, navGridFor } from '../../../sim/pathfinding.js';
 import type { WorldColliders } from '../../../sim/types.js';
 
@@ -89,11 +90,14 @@ export interface IntentInput {
    * The aim of the cast in progress, or null when not casting.
    *
    * Two things at once, both mirroring the server. The server roots a caster
-   * outright (`world.ts` zeroes the movement components while `cast !== null`),
-   * so predicting a walk here would diverge on every tick of every wind-up. And
-   * the server turns the body *into* its captured aim over the wind-up
-   * (`resolveFacing`), so the heading asked for while casting is that aim and
-   * not whatever the keys say.
+   * that asks for nothing (`world.ts` zeroes the movement components while
+   * `cast !== null`), so predicting a walk here would diverge on every tick of
+   * every wind-up. And the server turns the body *into* its captured aim over
+   * the wind-up (`resolveFacing`), so the heading asked for while casting is
+   * that aim and not whatever the keys say.
+   *
+   * Only while nothing else is asked for, since spec 079: a key or a move order
+   * withdraws from the cast on the server, so it has to steer here too.
    */
   readonly castAim: Point | null;
 }
@@ -114,7 +118,12 @@ export function moveIntent(input: IntentInput): MoveIntent {
   // the old heading is what makes the figure visibly come round during a
   // wind-up: the server is already turning it, and a client that kept asking for
   // its previous heading simply drew a body that never moved.
-  if (input.castAim) {
+  //
+  // A direction outranks the root since spec 079: asking to move *is* how a
+  // commitment is withdrawn from, and the server acts on it the tick it arrives.
+  // Holding the body still here would be predicting a stand the server is about
+  // to turn into a step.
+  if (input.castAim && !direction) {
     const dx = input.castAim.x - input.self.x;
     const dy = input.castAim.y - input.self.y;
     const facing = Math.hypot(dx, dy) < 1e-6 ? input.facing : Math.atan2(dy, dx);
@@ -197,6 +206,12 @@ export class RoutePlanner {
   private index = 0;
   private goal: Point | null = null;
   private replanAtTick = 0;
+  /**
+   * Whether `path` is a search's answer or just the empty start. The server
+   * carries `path: null` for "never asked"; here the two states share `[]`, and
+   * the retry backoff needs to tell an unreachable order from a fresh one.
+   */
+  private searched = false;
 
   /** The waypoints currently planned, for tests and for drawing the route. */
   get waypoints(): readonly Point[] {
@@ -211,6 +226,7 @@ export class RoutePlanner {
     this.index = 0;
     this.goal = null;
     this.replanAtTick = 0;
+    this.searched = false;
   }
 
   /**
@@ -236,16 +252,25 @@ export class RoutePlanner {
       return null;
     }
 
+    // A search that came back empty leaves the same empty path as a route walked
+    // to its end, and `index >= path.length` cannot tell them apart -- which had
+    // an order onto unreachable ground re-running a full A* every frame, the one
+    // case this planner exists to prevent (spec 073). A failure waits out
+    // `PATH_RETRY_TICKS`, and a target shuffling about is no reason to ask
+    // sooner: what is unreachable here is unreachable a body's length away.
+    const failed = this.searched && this.path.length === 0;
     const goalMoved =
-      this.goal === null ||
-      Math.hypot(this.goal.x - destination.x, this.goal.y - destination.y) > REPLAN_DISTANCE;
-    const exhausted = this.index >= this.path.length;
+      !failed &&
+      (this.goal === null ||
+        Math.hypot(this.goal.x - destination.x, this.goal.y - destination.y) > REPLAN_DISTANCE);
+    const exhausted = !failed && this.index >= this.path.length;
 
     if (goalMoved || exhausted || tick >= this.replanAtTick) {
       this.path = findPath(navGridFor(world.radius, world.colliders), self, destination);
       this.index = 0;
       this.goal = destination;
-      this.replanAtTick = tick + replanEvery;
+      this.searched = true;
+      this.replanAtTick = tick + (this.path.length === 0 ? PATH_RETRY_TICKS : replanEvery);
       this.searches += 1;
     }
 

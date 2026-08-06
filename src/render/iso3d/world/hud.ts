@@ -17,11 +17,17 @@
 
 import type { ClientView } from '../../../server/client/game-client.js';
 import type { ScreenAnchor } from './scene.js';
-import { abilityById, type AbilityDefinition } from '../../../server/data/abilities.js';
+import {
+  abilityById,
+  BASIC_ATTACK_ID,
+  type AbilityDefinition,
+} from '../../../server/data/abilities.js';
+import { ALL_ITEMS } from '../../../server/data/items.js';
 import { EntityKind } from '../../../server/net/protocol.js';
 import { SERVER_TICK_RATE } from '../../../server/config.js';
+import { attackIntervalTicks } from '../../../server/player/stats.js';
 import { castBar } from './cast.js';
-import { appearanceOf } from './appearance.js';
+import { appearanceOf, displayName } from './appearance.js';
 import { pixelTextSvg } from './pixel-font.js';
 
 /** How long a damage number floats, in frames. */
@@ -55,6 +61,29 @@ export const HOTBAR: readonly string[] = [
   'channel.drain',
 ];
 
+/**
+ * One main-hand weapon per distinct auto-attack (spec 079).
+ *
+ * Derived from the item table rather than listed, so a crossbow added there
+ * turns up here without this file being told. The *attack* is what the switch
+ * is really choosing -- two swords that both slash are one entry, because
+ * picking between them would change numbers and not the motion.
+ */
+export const WEAPON_SWITCH: readonly {
+  readonly itemId: string;
+  readonly name: string;
+  readonly abilityId: string;
+}[] = (() => {
+  const byAttack = new Map<string, { itemId: string; name: string; abilityId: string }>();
+  for (const item of ALL_ITEMS) {
+    if (item.slot !== 'mainHand') continue;
+    const abilityId = item.basicAttackId ?? BASIC_ATTACK_ID;
+    if (byAttack.has(abilityId)) continue;
+    byAttack.set(abilityId, { itemId: item.id, name: item.name, abilityId });
+  }
+  return [...byAttack.values()];
+})();
+
 interface FloatingNumber {
   readonly entityId: number;
   readonly text: string;
@@ -81,13 +110,44 @@ interface Bar {
 export interface HudHandle {
   readonly element: HTMLElement;
   /** Called once per frame, after the scene has drawn and anchors are current. */
-  update(view: ClientView, anchors: readonly ScreenAnchor[], tick: number, corrections: number): void;
+  update(
+    view: ClientView,
+    anchors: readonly ScreenAnchor[],
+    tick: number,
+    corrections: number,
+    /** The body being attacked, or null (spec 070). Shown as a one-line readout. */
+    targetId: number | null,
+  ): void;
   /** A hit landed on `entityId`. Presentation of something already resolved. */
   addDamage(entityId: number, damage: number, crit: boolean): void;
   /** The server refused a cast, and said why. */
   notice(text: string): void;
+  /**
+   * Draw the spawner overlay, or clear it (spec 076).
+   *
+   * Handed already-projected pixels and already-worded strings: what a spawner
+   * is called and where it is on screen are both decided elsewhere, so this is
+   * placement and nothing else.
+   */
+  showSpawners(
+    marks: readonly {
+      readonly id: string;
+      readonly text: string;
+      readonly waiting: boolean;
+      readonly x: number;
+      readonly y: number;
+      readonly onScreen: boolean;
+    }[],
+  ): void;
   /** What to call when a hotbar button is clicked. */
   onUse(handler: (abilityId: string) => void): void;
+  /**
+   * What to call when a weapon is picked out of the switch (spec 079). It hands
+   * back an item id and nothing else: the server equips it, recomputes the stat
+   * block and sends it back, and the lit button follows *that* rather than the
+   * click.
+   */
+  onEquip(handler: (itemId: string) => void): void;
 }
 
 export function createHud(): HudHandle {
@@ -105,6 +165,13 @@ export function createHud(): HudHandle {
     'position:absolute;left:50%;top:86px;transform:translateX(-50%);font:13px ui-monospace,Menlo,monospace;' +
     'color:#ffa07a;text-shadow:0 1px 2px #000;';
   root.append(notices);
+
+  // The spawner overlay lives in its own layer so clearing it is one truncation
+  // rather than a walk looking for which children were spawners.
+  const spawnerLayer = document.createElement('div');
+  spawnerLayer.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
+  root.append(spawnerLayer);
+  const spawnerMarks = new Map<string, HTMLElement>();
 
   const bar = document.createElement('div');
   bar.style.cssText =
@@ -146,6 +213,39 @@ export function createHud(): HudHandle {
     return { abilityId, ability, button, sweep, remaining };
   });
 
+  // The weapon switch (spec 079), bottom left and out of the hotbar's way.
+  // Which one is lit is read back off `stats.basicAttackId` -- the server's
+  // answer -- so a refused equip simply leaves the old one lit.
+  const weapons = document.createElement('div');
+  weapons.style.cssText =
+    'position:absolute;left:12px;bottom:16px;display:flex;flex-direction:column;gap:4px;' +
+    'font:11px ui-monospace,Menlo,monospace;pointer-events:auto;' +
+    // Backed like the status readout: the caption is small grey text and the
+    // world behind it is a bright green field, so unbacked it disappears over
+    // half the map.
+    'background:rgba(10,14,20,.72);padding:8px;border-radius:6px;';
+  root.append(weapons);
+
+  const weaponCaption = document.createElement('div');
+  weaponCaption.style.cssText = 'color:#8b97a8;letter-spacing:.08em;padding-left:2px;';
+  weaponCaption.textContent = 'WEAPON';
+  weapons.append(weaponCaption);
+
+  let equipHandler: (itemId: string) => void = () => undefined;
+
+  const weaponSlots = WEAPON_SWITCH.map((weapon) => {
+    const ability = abilityById(weapon.abilityId);
+    const button = document.createElement('button');
+    button.style.cssText =
+      'width:132px;padding:5px 8px;border-radius:6px;border:1px solid #33405a;background:#182130;' +
+      'color:#cfd6e0;cursor:pointer;font:inherit;text-align:left;line-height:1.4;';
+    button.textContent = weapon.name;
+    button.title = ability ? `${ability.name} -- ${ability.description}` : weapon.itemId;
+    button.addEventListener('click', () => equipHandler(weapon.itemId));
+    weapons.append(button);
+    return { ...weapon, button };
+  });
+
   const bars = new Map<number, Bar>();
   const numbers: FloatingNumber[] = [];
   /** How many numbers each body has been given, for lane assignment. */
@@ -159,6 +259,10 @@ export function createHud(): HudHandle {
 
     const holder = document.createElement('div');
     holder.style.cssText = 'position:absolute;transform:translate(-50%,-100%);width:52px;';
+    // Says which body this bar belongs to. Nothing in the game reads it; it is
+    // how `scripts/preview-world.ts` finds a real unit on screen to click,
+    // instead of re-deriving the camera projection and testing its own copy.
+    holder.dataset['entity'] = String(id);
 
     const healthTrack = document.createElement('div');
     healthTrack.style.cssText = 'height:4px;background:rgba(0,0,0,.65);border-radius:2px;overflow:hidden;';
@@ -185,6 +289,7 @@ export function createHud(): HudHandle {
     anchors: readonly ScreenAnchor[],
     tick: number,
     corrections: number,
+    targetId: number | null,
   ): void {
     const byId = new Map(view.entities.map((entity) => [entity.id, entity]));
     const casts = new Map(view.casts.map((cast) => [cast.entityId, cast]));
@@ -255,6 +360,17 @@ export function createHud(): HudHandle {
     noticeAge += 1;
     notices.textContent = noticeAge < 120 ? notice : '';
 
+    // Lit from the stat block, never from the last click: the server decides
+    // what is in this character's hand, and a refused equip leaves the old one
+    // lit rather than a button that lies.
+    const held = view.stats?.basicAttackId ?? BASIC_ATTACK_ID;
+    for (const weapon of weaponSlots) {
+      const current = weapon.abilityId === held;
+      weapon.button.style.borderColor = current ? '#ffcf6b' : '#33405a';
+      weapon.button.style.background = current ? '#243044' : '#182130';
+      weapon.button.style.color = current ? '#f2f6fb' : '#98a4b4';
+    }
+
     for (const slot of slots) {
       const casting = view.casts.some(
         (cast) => cast.entityId === view.selfEntityId && cast.abilityId === slot.abilityId,
@@ -268,7 +384,15 @@ export function createHud(): HudHandle {
       // client never decides when something is ready.
       const readyAt = view.cooldowns[slot.abilityId] ?? 0;
       const left = readyAt - tick;
-      const total = Math.max(1, slot.ability?.cooldownTicks ?? 1);
+      // The sweep's length is the cadence the cooldown was stamped with, which
+      // for the basic attack is the player's own (spec 070) -- against the
+      // table's number the shade would start part-drained and finish early.
+      const total = Math.max(
+        1,
+        slot.ability?.basicAttack && view.stats
+          ? attackIntervalTicks(view.stats)
+          : (slot.ability?.cooldownTicks ?? 1),
+      );
       if (left > 0) {
         slot.sweep.style.height = `${Math.min(1, left / total) * 100}%`;
         slot.remaining.textContent = formatSeconds(left / SERVER_TICK_RATE);
@@ -282,17 +406,51 @@ export function createHud(): HudHandle {
     const stats = view.stats;
     const monsters = view.entities.filter((entity) => entity.kind === EntityKind.Monster).length;
     status.textContent =
-      `tick ${view.tick}   seed ${view.worldSeed ?? '-'}\n` +
+      // The client's own clock first, and the last delta beside it. They used to
+      // be one number -- `view.tick` -- which was fine only because something was
+      // always moving: deltas are suppressed when nothing changed, and since
+      // spec 076 a field of monsters that nobody has hit is genuinely still, so
+      // the readout sat at 3 while the game ran perfectly well underneath it.
+      `tick ${Math.floor(tick)}   delta ${view.tick}   seed ${view.worldSeed ?? '-'}\n` +
       `hp ${Math.round(self?.health ?? 0)}/${Math.round(stats?.maxHealth ?? 0)}   ` +
       `lvl ${view.level}   xp ${view.experience}\n` +
       `monsters ${monsters}   corrections ${corrections}` +
       (view.connected ? '' : '   (disconnected)') +
-      '\nright-click move · left-click swing · WASD · 1-7 abilities · Esc cancel';
+      `\n${targetLine(view, targetId)}` +
+      '\nright-click ground to move, a unit to attack · WASD · 1-7 abilities · Esc cancel';
   }
 
   return {
     element: root,
     update,
+    showSpawners(marks) {
+      const seen = new Set<string>();
+      for (const mark of marks) {
+        if (!mark.onScreen) continue;
+        seen.add(mark.id);
+        let element = spawnerMarks.get(mark.id);
+        if (!element) {
+          element = document.createElement('div');
+          element.style.cssText =
+            'position:absolute;transform:translate(-50%,-100%);white-space:nowrap;' +
+            'font:11px ui-monospace,Menlo,monospace;padding:2px 6px;border-radius:5px;' +
+            'background:rgba(10,14,20,.72);border:1px solid rgba(224,96,92,.7);';
+          spawnerLayer.append(element);
+          spawnerMarks.set(mark.id, element);
+        }
+        element.textContent = mark.text;
+        // Dimmed while the ground is empty, lit while something is standing on
+        // it: the two states are readable without reading the text.
+        element.style.color = mark.waiting ? '#9aa3b0' : '#f0a09c';
+        element.style.left = `${Math.round(mark.x)}px`;
+        element.style.top = `${Math.round(mark.y)}px`;
+      }
+      for (const [id, element] of spawnerMarks) {
+        if (seen.has(id)) continue;
+        element.remove();
+        spawnerMarks.delete(id);
+      }
+    },
     addDamage(entityId, damage, crit) {
       const heal = damage < 0;
       const text = (heal ? '+' : '') + Math.round(Math.abs(damage)).toString();
@@ -330,7 +488,23 @@ export function createHud(): HudHandle {
     onUse(handler) {
       useHandler = handler;
     },
+    onEquip(handler) {
+      equipHandler = handler;
+    },
   };
+}
+
+/**
+ * The one line of target readout (spec 070). Deliberately one line: knowing
+ * what you are hitting and how much of it is left is the whole job, and a
+ * target frame is a different change.
+ */
+function targetLine(view: ClientView, targetId: number | null): string {
+  const target = targetId === null
+    ? undefined
+    : view.entities.find((entity) => entity.id === targetId);
+  if (!target) return 'no target';
+  return `target ${displayName(target)} ${Math.round(target.health)}/${Math.round(target.maxHealth)}`;
 }
 
 /** A cooldown countdown: whole seconds while there are several, tenths at the end. */
@@ -340,8 +514,16 @@ function formatSeconds(seconds: number): string {
   return seconds.toFixed(1);
 }
 
-/** Whether the player could pay for an ability right now. Cosmetic dimming only. */
+/**
+ * Whether the player could pay for an ability right now. Cosmetic dimming only:
+ * the server decides, and refuses a cast it will not fund whatever this said.
+ *
+ * Against the live pool since spec 069. It used to compare with `maxResource`,
+ * which only ever answered "could this *ever* be afforded" -- the live number
+ * was on the entity and had never been on the wire, so a button for a bolt the
+ * player could not currently pay for looked exactly like one they could.
+ */
 function affordable(view: ClientView, ability: AbilityDefinition | null): boolean {
   if (!ability || !view.stats) return true;
-  return ability.cost <= view.stats.maxResource;
+  return ability.cost <= view.resource;
 }

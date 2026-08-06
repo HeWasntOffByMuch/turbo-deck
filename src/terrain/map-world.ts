@@ -177,6 +177,31 @@ export class MapChunkStore {
     };
   }
 
+  /**
+   * Add (or replace) one chunk after construction (spec 072).
+   *
+   * A store is a sparse map from `(cx, cz)` to arrays, not a dense grid, so a
+   * layer is free to gain chunks later. That is what lets a client stream a map
+   * in: it builds the store once from a document with no chunks at all and
+   * writes each one in as it lands, rather than rebuilding the whole store per
+   * arrival -- which is O(everything held) and, at 56 chunks, over a second of
+   * blocked main thread across a cold start.
+   *
+   * Everything derived from the store reads *through* it -- `bakedLayer`'s
+   * corner lookups and `meshLayers`' `solidAt` are closures over this object --
+   * so a `TerrainWorld` handed out before the insert samples the new ground
+   * without being rebuilt.
+   *
+   * Returns false if the layer does not exist. Does not touch `doc`, which stays
+   * the document this was constructed from; `toDocument()` is the live view.
+   */
+  insertChunk(layerId: string, chunk: MapChunk): boolean {
+    const layer = this.layers.get(layerId);
+    if (!layer) return false;
+    layer.chunks.set(key(chunk.cx, chunk.cz), this.storeChunk(chunk, layer.bounds));
+    return true;
+  }
+
   get document(): MapDocument {
     return this.doc;
   }
@@ -861,8 +886,31 @@ export interface MeshLayer {
   readonly id: string;
   readonly bounds: MapRect;
   readonly waterLevel: number | null;
-  /** Ground at this cell of the layer's global grid — outside the chunk too. */
-  solidAt(col: number, row: number): boolean;
+  /**
+   * Ground at this cell of the layer's global grid — outside the chunk too, and
+   * `null` where no chunk holds it yet (spec 078).
+   *
+   * The same distinction `materialAt` draws below, and for the same reason. The
+   * mesher skirts an edge where solid ground meets open air, so on a streaming
+   * client a plain `false` for a neighbour that has not arrived is a coastline
+   * as far as it can tell: every seam grows a full-height wall down to `baseY`
+   * and keeps it, because nothing re-meshes a chunk once it is drawn. `false`
+   * has to mean "there is no ground there", which past the layer's own grid it
+   * genuinely does — the world's edge earns its wall.
+   */
+  solidAt(col: number, row: number): boolean | null;
+  /**
+   * This cell's index into `TERRAIN_MATERIALS`, or `null` where no chunk holds
+   * it yet (spec 074).
+   *
+   * The water shader's bands are steps on horizontal distance to the shore, and
+   * a shoreline three cells into the next chunk still colours this one — so the
+   * distance transform has to read past the chunk it is baking. `null` is the
+   * important part of the signature: on a streaming client the neighbour may
+   * simply not have arrived, and "unknown" has to be distinguishable from "dry"
+   * or a chunk edge invents a coastline that vanishes a second later.
+   */
+  materialAt(col: number, row: number): number | null;
 }
 
 export interface LoadedMap {
@@ -891,12 +939,22 @@ export function loadMap(doc: MapDocument): LoadedMap {
     store,
     world: createWorld(layers),
     chunks: store.buildChunks(),
-    meshLayers: doc.layers.map((l) => ({
-      id: l.id,
-      bounds: l.bounds,
-      waterLevel: l.waterLevel,
-      solidAt: (col: number, row: number): boolean => store.cellSolid(l.id, col, row),
-    })),
+    meshLayers: doc.layers.map((l) => {
+      const g = store.layerInfo(l.id)?.grid;
+      const onGrid = (col: number, row: number): boolean =>
+        g !== undefined && col >= 0 && row >= 0 && col < g.totalCols && row < g.totalRows;
+      return {
+        id: l.id,
+        bounds: l.bounds,
+        waterLevel: l.waterLevel,
+        // Off the grid is a definite no -- that is the world's edge, and the
+        // wall there is real. On the grid with no chunk behind it is `null`:
+        // unknown, and not something to grow a cliff along (spec 078).
+        solidAt: (col: number, row: number): boolean | null =>
+          onGrid(col, row) ? (store.cellAt(l.id, col, row)?.solid ?? null) : false,
+        materialAt: (col: number, row: number): number | null => store.cellAt(l.id, col, row)?.materialIndex ?? null,
+      };
+    }),
     props: doc.layers.flatMap((l) => store.props(l.id)),
     markers: doc.layers.flatMap((l) => store.markers(l.id)),
   };

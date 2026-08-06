@@ -33,15 +33,20 @@ import {
   BROADCAST_EVERY_N_TICKS,
   CHUNK_SIZE,
   INTEREST_CHUNK_RADIUS,
+  MAP_CHUNK_BURST,
+  MAP_CHUNK_REFILL_PER_SECOND,
+  MAP_CHUNK_REQUEST_RADIUS,
   LIVE_CONFIG_KEYS,
   LiveConfigStore,
   MAX_BUFFERED_INPUTS,
   PROTOCOL_VERSION,
+  RESOURCE_EPSILON,
   RESPAWN_DELAY_TICKS,
   SERVER_TICK_MS,
   SERVER_TICK_RATE,
 } from './config.js';
 import { TickLoop } from './loop.js';
+import { regenerated } from './sim/resource.js';
 import { monsterById } from './data/monsters.js';
 import { decodeAdminRequest, encodeAdminReply, type AdminPlayerRow } from './net/admin-messages.js';
 import { CodecError } from './net/codec.js';
@@ -49,15 +54,19 @@ import { DeltaTracker } from './net/delta.js';
 import {
   decodeClientMessage,
   encodeServerMessage,
+  type RequestChunkMessage,
   type ServerMessage,
+  type SpawnerStatus,
 } from './net/messages.js';
 import {
   ChatChannel,
+  ChunkDeniedReason,
   ClientMessageType,
   CorrectionReason,
   ErrorCode,
   isAdminRequest,
   ServerMessageType,
+  SpawnerStateValue,
 } from './net/protocol.js';
 import { DEFAULT_SPAWN, PlayerManager } from './player/player-manager.js';
 import { MemoryDataStore } from './state/memory-store.js';
@@ -81,7 +90,10 @@ import {
 } from './sim/world.js';
 import { NullTransport, type Channel, type ServerTransport } from './net/transport.js';
 import { ChunkManager } from './world/chunk-manager.js';
-import type { BuiltWorld } from './world/build.js';
+import type { BuiltMapWorld, BuiltWorld } from './world/build.js';
+import type { SpawnPoint } from './world/spawners.js';
+import type { MapIndex } from './world/map-index.js';
+import { ChunkBudget, decideChunkRequest } from './world/map-request.js';
 import { FLAT_TERRAIN, type TerrainSampler } from './world/terrain.js';
 import { ZoneManager } from './world/zone-manager.js';
 
@@ -134,6 +146,20 @@ interface Connection {
    */
   sentCooldowns: Readonly<Record<string, number>> | null;
   /**
+   * The last resource this connection was told about, and when (spec 069).
+   *
+   * Kept so the server can model what the client now believes and send only
+   * when that belief has gone wrong. Starts negative so the first comparison
+   * always disagrees: a client that has never been told cannot model anything,
+   * and must be given a number before it can predict a cost against it.
+   */
+  sentResource: number;
+  sentResourceTick: number;
+  /** Token bucket on map chunk sends (spec 072). */
+  readonly chunkBudget: ChunkBudget;
+  /** Whether this client asked for the spawner readout (spec 076). */
+  watchingSpawners: boolean;
+  /**
    * Abilities asked for and not yet committed, each stamped with the input it
    * was asked after (spec 067). Held here rather than on the input frame
    * because a client sends them as their own messages, and they must not be
@@ -161,6 +187,8 @@ interface PendingCast {
   readonly abilityId: string;
   readonly targetX: number;
   readonly targetY: number;
+  /** The entity asked for by id, or 0 for a point aim (spec 070). */
+  readonly targetEntityId: number;
   /** Commit on the tick this input seq is applied, not on the tick it arrived. */
   readonly afterInputSeq: number;
 }
@@ -180,6 +208,18 @@ export class GameServer implements AdminHost {
   private readonly loop: TickLoop;
   private readonly connections = new Set<Connection>();
   private readonly transport: ServerTransport;
+  /**
+   * The map this server serves, or null when it was built from a bare seed
+   * (spec 072). Null means chunk requests are refused as `Unknown` and no
+   * `MapInfo` is sent -- which is what a flat-plane unit test wants.
+   */
+  private readonly mapIndex: MapIndex | null;
+  /**
+   * The enemy spawn points the map places (spec 076). Empty for a server built
+   * from a bare seed, which then has no monsters in it at all -- the map is the
+   * only thing that puts one anywhere.
+   */
+  private readonly spawnPoints: readonly SpawnPoint[];
   private state: ServerWorldState;
 
   constructor(options: GameServerOptions = {}) {
@@ -187,6 +227,9 @@ export class GameServer implements AdminHost {
     this.terrain = options.terrain ?? options.built?.sampler ?? FLAT_TERRAIN;
     this.colliders = options.world ?? options.built?.colliders ?? DEFAULT_WORLD;
     this.worldSeed = options.seed ?? options.built?.seed ?? 1;
+    const built = options.built;
+    this.mapIndex = built && 'index' in built ? (built as BuiltMapWorld).index : null;
+    this.spawnPoints = built && 'spawnPoints' in built ? (built as BuiltMapWorld).spawnPoints : [];
     this.store = options.store ?? new MemoryDataStore();
     this.chunks = new ChunkManager(CHUNK_SIZE, INTEREST_CHUNK_RADIUS);
     this.players = new PlayerManager(this.store, this.zones);
@@ -244,6 +287,15 @@ export class GameServer implements AdminHost {
       appliedSeq: 0,
       lastDriftTick: 0,
       sentCooldowns: null,
+      sentResource: -1,
+      sentResourceTick: 0,
+      chunkBudget: new ChunkBudget(
+        MAP_CHUNK_BURST,
+        MAP_CHUNK_REFILL_PER_SECOND,
+        SERVER_TICK_RATE,
+        this.state.tick,
+      ),
+      watchingSpawners: false,
     };
     this.connections.add(connection);
     channel.onMessage((bytes) => {
@@ -317,6 +369,7 @@ export class GameServer implements AdminHost {
           castAbilityId: '',
           castTargetX: 0,
           castTargetY: 0,
+          castTargetEntityId: 0,
           cancelCast: false,
         });
         break;
@@ -357,10 +410,20 @@ export class GameServer implements AdminHost {
           abilityId: message.abilityId,
           targetX: message.targetX,
           targetY: message.targetY,
+          targetEntityId: message.targetEntityId,
           afterInputSeq: message.afterInputSeq,
         });
         break;
 
+      case ClientMessageType.RequestChunk:
+        this.handleChunkRequest(connection, message);
+        break;
+      // A subscription to a readout, not an action: it changes nothing about
+      // the world, so it needs no player and no entity (spec 076).
+      case ClientMessageType.WatchSpawners:
+        connection.watchingSpawners = message.on;
+        if (message.on) this.sendSpawnerStates(connection);
+        break;
       case ClientMessageType.CancelCast:
         if (connection.playerId === null || connection.entityId < 0) return;
         connection.pendingCancels.push(message.afterInputSeq);
@@ -456,7 +519,86 @@ export class GameServer implements AdminHost {
       correctionThreshold: this.config.get().correctionThreshold,
       worldSeed: this.worldSeed,
     });
+    this.sendMapInfo(connection);
     this.sendStats(connection);
+  }
+
+  /**
+   * Everything about the map that is not per-chunk, unprompted (spec 072).
+   *
+   * Pushed rather than requested because a client can ask for nothing until it
+   * has it: the chunk list in here is what tells it which chunks exist, and the
+   * layer scalars are what let it rebuild corner jitter for the ones it gets.
+   */
+  private sendMapInfo(connection: Connection): void {
+    const index = this.mapIndex;
+    if (!index) return;
+    this.send(connection, {
+      type: ServerMessageType.MapInfo,
+      mapId: index.mapId,
+      seed: index.seed,
+      cellSize: index.cellSize,
+      chunkCells: index.chunkCells,
+      arena: index.arena,
+      species: index.species,
+      layers: index.layers.map((layer) => ({
+        id: layer.id,
+        seed: layer.seed,
+        bounds: layer.bounds,
+        baseY: layer.baseY,
+        waterLevel: layer.waterLevel,
+        coords: layer.coords,
+      })),
+    });
+  }
+
+  /**
+   * One chunk, if this player is standing near enough to be told about it.
+   *
+   * The position fed to the check is the **entity's**, straight out of the sim.
+   * A client's own `predictedX/Y` never reaches here: it is a hint the sim
+   * measures for corrections, and trusting it would let a client read the whole
+   * map by claiming to stand anywhere.
+   */
+  private handleChunkRequest(connection: Connection, req: RequestChunkMessage): void {
+    const index = this.mapIndex;
+    const deny = (reason: number): void => {
+      this.send(connection, {
+        type: ServerMessageType.ChunkDenied,
+        layer: req.layer,
+        cx: req.cx,
+        cz: req.cz,
+        reason,
+      });
+    };
+    if (!index) {
+      deny(ChunkDeniedReason.Unknown);
+      return;
+    }
+    const entity = this.state.entities.get(connection.entityId);
+    if (!entity) {
+      deny(ChunkDeniedReason.OutOfRange);
+      return;
+    }
+    const decision = decideChunkRequest(
+      index,
+      req,
+      entity.position.x,
+      entity.position.y,
+      MAP_CHUNK_REQUEST_RADIUS,
+      connection.chunkBudget,
+      this.state.tick,
+    );
+    if (!decision.ok) {
+      deny(decision.reason);
+      return;
+    }
+    this.send(connection, {
+      type: ServerMessageType.MapChunk,
+      mapId: index.mapId,
+      layer: req.layer,
+      chunk: decision.chunk,
+    });
   }
 
   private async disconnect(connection: Connection): Promise<void> {
@@ -535,14 +677,33 @@ export class GameServer implements AdminHost {
     if (connection.entityId < 0) return;
     const entity = this.state.entities.get(connection.entityId);
     if (!entity) return;
-    if (entity.cooldowns === connection.sentCooldowns) return;
+
+    // The client models regen forward from the last number it was given, so it
+    // needs telling only when that model has gone wrong -- which is when it has
+    // spent something, or when anything moved the pool that regen does not
+    // explain. Modelling what the client believes and comparing is the same
+    // trick the drift correction plays with position (spec 067): silence is a
+    // statement that the prediction is right, and idling back to full is one
+    // message rather than one per tick.
+    const believed = regenerated(
+      connection.sentResource,
+      entity.stats.resourceRegen,
+      entity.stats.maxResource,
+      tick - connection.sentResourceTick,
+    );
+    const resourceStale = Math.abs(believed - entity.resource) > RESOURCE_EPSILON;
+    if (entity.cooldowns === connection.sentCooldowns && !resourceStale) return;
     connection.sentCooldowns = entity.cooldowns;
+    connection.sentResource = entity.resource;
+    connection.sentResourceTick = tick;
 
     this.send(connection, {
       type: ServerMessageType.Cooldowns,
       entries: Object.entries(entity.cooldowns)
         .filter(([, readyAtTick]) => readyAtTick > tick)
         .map(([abilityId, readyAtTick]) => ({ abilityId, readyAtTick })),
+      resource: entity.resource,
+      atTick: tick,
     });
   }
 
@@ -591,6 +752,7 @@ export class GameServer implements AdminHost {
           castAbilityId: cast?.abilityId ?? '',
           castTargetX: cast?.targetX ?? 0,
           castTargetY: cast?.targetY ?? 0,
+          castTargetEntityId: cast?.targetEntityId ?? 0,
           cancelCast: cancel,
         });
         connection.appliedSeq = next.seq;
@@ -611,6 +773,7 @@ export class GameServer implements AdminHost {
           castAbilityId: cast?.abilityId ?? '',
           castTargetX: cast?.targetX ?? 0,
           castTargetY: cast?.targetY ?? 0,
+          castTargetEntityId: cast?.targetEntityId ?? 0,
           cancelCast: cancel,
         });
       }
@@ -623,6 +786,7 @@ export class GameServer implements AdminHost {
       config: this.config.get(),
       activeChunks: new Set(this.chunks.activeChunks()),
       chunkSize: CHUNK_SIZE,
+      spawnPoints: this.spawnPoints,
     });
     this.state = result.state;
 
@@ -663,7 +827,36 @@ export class GameServer implements AdminHost {
     // Cooldowns ride the same reasoning as corrections: rare, owner-only, and
     // the point of them is that the button greys out the moment it is spent.
     for (const connection of this.connections) this.sendCooldowns(connection, this.state.tick);
-    if (this.state.tick % BROADCAST_EVERY_N_TICKS === 0) this.broadcastDeltas();
+    if (this.state.tick % BROADCAST_EVERY_N_TICKS === 0) {
+      this.broadcastDeltas();
+      for (const connection of this.connections) {
+        if (connection.watchingSpawners) this.sendSpawnerStates(connection);
+      }
+    }
+  }
+
+  /**
+   * What every spawner is doing, for a client drawing the overlay (spec 076).
+   *
+   * Built from the map's spawn points rather than from the state map, so a
+   * spawner that has never been filled still appears -- an empty marker with a
+   * timer at zero is exactly the thing you turned the overlay on to look at.
+   */
+  private sendSpawnerStates(connection: Connection): void {
+    const tick = this.state.tick;
+    const spawners: SpawnerStatus[] = this.spawnPoints.map((point) => {
+      const live = this.state.spawners.get(point.id);
+      const occupied = live?.entityId != null && this.state.entities.has(live.entityId);
+      return {
+        id: point.id,
+        monsterId: point.monsterId,
+        x: point.x,
+        y: point.y,
+        state: occupied ? SpawnerStateValue.Occupied : SpawnerStateValue.Waiting,
+        ticks: occupied ? 0 : Math.max(0, (live?.readyAtTick ?? 0) - tick),
+      };
+    });
+    this.send(connection, { type: ServerMessageType.SpawnerStates, tick, spawners });
   }
 
   /**
@@ -807,6 +1000,7 @@ export class GameServer implements AdminHost {
             endTick: event.endTick,
             targetX: event.targetX,
             targetY: event.targetY,
+            targetEntityId: event.targetEntityId,
           });
           this.sendToWatchersOf(event.entityId, bytes);
           break;
