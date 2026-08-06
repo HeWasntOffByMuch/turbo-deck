@@ -33,6 +33,9 @@ import {
   BROADCAST_EVERY_N_TICKS,
   CHUNK_SIZE,
   INTEREST_CHUNK_RADIUS,
+  MAP_CHUNK_BURST,
+  MAP_CHUNK_REFILL_PER_SECOND,
+  MAP_CHUNK_REQUEST_RADIUS,
   LIVE_CONFIG_KEYS,
   LiveConfigStore,
   MAX_BUFFERED_INPUTS,
@@ -51,10 +54,12 @@ import { DeltaTracker } from './net/delta.js';
 import {
   decodeClientMessage,
   encodeServerMessage,
+  type RequestChunkMessage,
   type ServerMessage,
 } from './net/messages.js';
 import {
   ChatChannel,
+  ChunkDeniedReason,
   ClientMessageType,
   CorrectionReason,
   ErrorCode,
@@ -83,7 +88,9 @@ import {
 } from './sim/world.js';
 import { NullTransport, type Channel, type ServerTransport } from './net/transport.js';
 import { ChunkManager } from './world/chunk-manager.js';
-import type { BuiltWorld } from './world/build.js';
+import type { BuiltMapWorld, BuiltWorld } from './world/build.js';
+import type { MapIndex } from './world/map-index.js';
+import { ChunkBudget, decideChunkRequest } from './world/map-request.js';
 import { FLAT_TERRAIN, type TerrainSampler } from './world/terrain.js';
 import { ZoneManager } from './world/zone-manager.js';
 
@@ -145,6 +152,8 @@ interface Connection {
    */
   sentResource: number;
   sentResourceTick: number;
+  /** Token bucket on map chunk sends (spec 070). */
+  readonly chunkBudget: ChunkBudget;
   /**
    * Abilities asked for and not yet committed, each stamped with the input it
    * was asked after (spec 067). Held here rather than on the input frame
@@ -192,6 +201,12 @@ export class GameServer implements AdminHost {
   private readonly loop: TickLoop;
   private readonly connections = new Set<Connection>();
   private readonly transport: ServerTransport;
+  /**
+   * The map this server serves, or null when it was built from a bare seed
+   * (spec 070). Null means chunk requests are refused as `Unknown` and no
+   * `MapInfo` is sent -- which is what a flat-plane unit test wants.
+   */
+  private readonly mapIndex: MapIndex | null;
   private state: ServerWorldState;
 
   constructor(options: GameServerOptions = {}) {
@@ -199,6 +214,8 @@ export class GameServer implements AdminHost {
     this.terrain = options.terrain ?? options.built?.sampler ?? FLAT_TERRAIN;
     this.colliders = options.world ?? options.built?.colliders ?? DEFAULT_WORLD;
     this.worldSeed = options.seed ?? options.built?.seed ?? 1;
+    const built = options.built;
+    this.mapIndex = built && 'index' in built ? (built as BuiltMapWorld).index : null;
     this.store = options.store ?? new MemoryDataStore();
     this.chunks = new ChunkManager(CHUNK_SIZE, INTEREST_CHUNK_RADIUS);
     this.players = new PlayerManager(this.store, this.zones);
@@ -258,6 +275,12 @@ export class GameServer implements AdminHost {
       sentCooldowns: null,
       sentResource: -1,
       sentResourceTick: 0,
+      chunkBudget: new ChunkBudget(
+        MAP_CHUNK_BURST,
+        MAP_CHUNK_REFILL_PER_SECOND,
+        SERVER_TICK_RATE,
+        this.state.tick,
+      ),
     };
     this.connections.add(connection);
     channel.onMessage((bytes) => {
@@ -375,6 +398,9 @@ export class GameServer implements AdminHost {
         });
         break;
 
+      case ClientMessageType.RequestChunk:
+        this.handleChunkRequest(connection, message);
+        break;
       case ClientMessageType.CancelCast:
         if (connection.playerId === null || connection.entityId < 0) return;
         connection.pendingCancels.push(message.afterInputSeq);
@@ -470,7 +496,86 @@ export class GameServer implements AdminHost {
       correctionThreshold: this.config.get().correctionThreshold,
       worldSeed: this.worldSeed,
     });
+    this.sendMapInfo(connection);
     this.sendStats(connection);
+  }
+
+  /**
+   * Everything about the map that is not per-chunk, unprompted (spec 070).
+   *
+   * Pushed rather than requested because a client can ask for nothing until it
+   * has it: the chunk list in here is what tells it which chunks exist, and the
+   * layer scalars are what let it rebuild corner jitter for the ones it gets.
+   */
+  private sendMapInfo(connection: Connection): void {
+    const index = this.mapIndex;
+    if (!index) return;
+    this.send(connection, {
+      type: ServerMessageType.MapInfo,
+      mapId: index.mapId,
+      seed: index.seed,
+      cellSize: index.cellSize,
+      chunkCells: index.chunkCells,
+      arena: index.arena,
+      species: index.species,
+      layers: index.layers.map((layer) => ({
+        id: layer.id,
+        seed: layer.seed,
+        bounds: layer.bounds,
+        baseY: layer.baseY,
+        waterLevel: layer.waterLevel,
+        coords: layer.coords,
+      })),
+    });
+  }
+
+  /**
+   * One chunk, if this player is standing near enough to be told about it.
+   *
+   * The position fed to the check is the **entity's**, straight out of the sim.
+   * A client's own `predictedX/Y` never reaches here: it is a hint the sim
+   * measures for corrections, and trusting it would let a client read the whole
+   * map by claiming to stand anywhere.
+   */
+  private handleChunkRequest(connection: Connection, req: RequestChunkMessage): void {
+    const index = this.mapIndex;
+    const deny = (reason: number): void => {
+      this.send(connection, {
+        type: ServerMessageType.ChunkDenied,
+        layer: req.layer,
+        cx: req.cx,
+        cz: req.cz,
+        reason,
+      });
+    };
+    if (!index) {
+      deny(ChunkDeniedReason.Unknown);
+      return;
+    }
+    const entity = this.state.entities.get(connection.entityId);
+    if (!entity) {
+      deny(ChunkDeniedReason.OutOfRange);
+      return;
+    }
+    const decision = decideChunkRequest(
+      index,
+      req,
+      entity.position.x,
+      entity.position.y,
+      MAP_CHUNK_REQUEST_RADIUS,
+      connection.chunkBudget,
+      this.state.tick,
+    );
+    if (!decision.ok) {
+      deny(decision.reason);
+      return;
+    }
+    this.send(connection, {
+      type: ServerMessageType.MapChunk,
+      mapId: index.mapId,
+      layer: req.layer,
+      chunk: decision.chunk,
+    });
   }
 
   private async disconnect(connection: Connection): Promise<void> {

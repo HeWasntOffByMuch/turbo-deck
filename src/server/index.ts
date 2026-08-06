@@ -8,9 +8,11 @@
  * for single-player.
  *
  * Environment:
- *   PORT           listen port (default 8787)
- *   SEED           world seed (default 1)
- *   ADMIN_SECRET   HMAC secret for admin tokens (default: random per boot)
+ *   PORT             listen port (default 8787)
+ *   SEED             fallback world seed, used only with TURBO_DECK_MAP=none
+ *   TURBO_DECK_MAP   map document to serve (default maps/arena.json; `none`
+ *                    falls back to the generator, for a bare load test)
+ *   ADMIN_SECRET     HMAC secret for admin tokens (default: random per boot)
  */
 
 import { randomBytes } from 'node:crypto';
@@ -22,7 +24,8 @@ import { createHmacAdminVerifier, signToken } from './admin/auth.js';
 import { BROADCAST_RATE, SERVER_TICK_RATE } from './config.js';
 import { WebSocketTransport } from './net/transport-ws.js';
 import { GameServer } from './server.js';
-import { buildWorld } from './world/build.js';
+import { buildWorld, buildWorldFromMap } from './world/build.js';
+import { loadMapFile, mapPathFromEnv } from './world/map-file.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -41,8 +44,25 @@ const adminSecret = configuredSecret ?? randomBytes(32).toString('hex');
  * here and `createWorldColliders(ARENA_OBSTACLES, [], WORLD_BOUNDS)` at the call
  * below -- real ground, and an empty vegetation list next to it, so the server
  * walked through every tree in the world it had just generated.
+ *
+ * Since spec 070 that build reads a **map document**: the world is the file the
+ * editor writes, not the feature list the generator evaluates. A map that will
+ * not parse takes the boot down rather than falling back, because a server
+ * silently playing a different world than the one in `maps/` is invisible until
+ * someone walks through a wall that is on everybody else's screen.
+ *
+ * `TURBO_DECK_MAP=none` is the one deliberate way back to the generator, for
+ * load tests that want a world without a file.
  */
-const world = buildWorld(seed);
+const mapPath = mapPathFromEnv();
+const world =
+  mapPath === 'none'
+    ? buildWorld(seed)
+    : (() => {
+        const file = loadMapFile(mapPath);
+        console.log(`[server] map ${file.path} (seed ${file.doc.seed})`);
+        return buildWorldFromMap(file.doc, file.text);
+      })();
 
 const http = createServer((request, response) => {
   const url = request.url ?? '/';

@@ -24,7 +24,9 @@ import type { WorldColliders } from '../../sim/types.js';
 import { createArenaWorld } from '../../terrain/world.js';
 import { vegetationColliders, worldVegetation, type Prop } from '../../terrain/vegetation.js';
 import type { TerrainWorld } from '../../terrain/types.js';
+import { loadMap, type MapDocument } from '../../terrain/index.js';
 import { terrainSamplerFrom, type TerrainSampler } from './terrain.js';
+import { buildMapIndex, mapIdOf, type MapIndex } from './map-index.js';
 
 export interface BuiltWorld {
   /** The number this was built from, and the number the welcome announces. */
@@ -55,5 +57,41 @@ export function buildWorld(seed: number): BuiltWorld {
     props,
     sampler: terrainSamplerFrom(terrain),
     colliders: createWorldColliders(ARENA_OBSTACLES, vegetationColliders(props), WORLD_BOUNDS),
+  };
+}
+
+/** A world the server plays on, plus the document it came from (spec 070). */
+export interface BuiltMapWorld extends BuiltWorld {
+  readonly doc: MapDocument;
+  /** Chunk lookup for the wire, and the layer scalars a client needs to mesh. */
+  readonly index: MapIndex;
+}
+
+/**
+ * The world a **map document** describes -- what the server actually runs on
+ * since spec 070.
+ *
+ * Structurally the same three steps as {@link buildWorld}, with the generator
+ * swapped for `loadMap`: the terrain is array-backed rather than a field, and
+ * the props are the ones the document stores rather than the ones the scatter
+ * would have produced. Everything downstream sees a `BuiltWorld` and cannot
+ * tell which of the two made it, which is the point -- the sim never learns
+ * that the world became editable.
+ *
+ * `mapId` is computed from the *serialized* text rather than the parsed object
+ * so that both ends hash the same bytes: the server hashes what it read from
+ * disk, and a client is told the answer rather than recomputing it.
+ */
+export function buildWorldFromMap(doc: MapDocument, serialized: string): BuiltMapWorld {
+  const loaded = loadMap(doc);
+  const props = loaded.props;
+  return {
+    seed: doc.seed,
+    terrain: loaded.world,
+    props,
+    sampler: terrainSamplerFrom(loaded.world),
+    colliders: createWorldColliders(ARENA_OBSTACLES, vegetationColliders(props), WORLD_BOUNDS),
+    doc,
+    index: buildMapIndex(doc, mapIdOf(serialized)),
   };
 }

@@ -90,8 +90,49 @@ export const INTEREST_CHUNK_RADIUS = 8;
  * the same point in the input stream on both ends (spec 067).
  * 5: the cooldown message carries the caster's live resource and the tick it was
  * true on, so a client can decide whether it can afford a blow (spec 069).
+ * 6: the world is a map document rather than a seed, so terrain travels as
+ * `MapInfo` plus requested `MapChunk`s instead of being rederived (spec 070).
  */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
+
+/**
+ * How far from a map chunk a player may be and still be sent it (spec 070).
+ *
+ * In *map* chunks -- the document's own 616-unit geometry buckets -- not the
+ * 400-unit interest chunks of {@link CHUNK_SIZE}. Three independent grids now
+ * exist and merging them would couple a draw-call decision to a bandwidth one.
+ *
+ * Sized off what the camera can frame, exactly as {@link INTEREST_CHUNK_RADIUS}
+ * is, and for a worse failure: a monster outside the interest window winks out,
+ * but terrain outside this one is a hole with the sky showing through.
+ *
+ * It has to be sized off the *window shape*, not just the zoom -- the same trap
+ * `INTEREST_CHUNK_RADIUS` documents. 4 looked right against the widest zoom's
+ * +-1400 by +-1927 on a 16:9 window and was wrong: `internalRenderSize` trades
+ * height rather than capping the aspect, so a 32:9 monitor at maximum zoom
+ * reaches ~3107 units and radius 4 guarantees only 4 * 616 = 2464. 6 guarantees
+ * 3696, which covers it with room to spare.
+ *
+ * `src/render/iso3d/world/map-radius.test.ts` asserts that relationship rather
+ * than the literal 6 -- it is the test that caught the 4.
+ */
+export const MAP_CHUNK_REQUEST_RADIUS = 6;
+
+/**
+ * Token bucket on chunk sends, per connection (spec 070).
+ *
+ * The radius check bounds *where* a client may read; this bounds how fast. They
+ * are not the same guard: every chunk under a standing player is permanently in
+ * range, so without a bucket a client can ask for one legal chunk in a loop and
+ * make the server serialize ~12 KB per request for as long as it likes.
+ *
+ * A burst of 24 lets a cold start pull most of the shipped map's 56 chunks
+ * inside the first few broadcasts without feeling gated, and 12/s sustained is
+ * far above what walking can newly reveal -- a player would have to cross a
+ * whole 616-unit chunk twelve times a second to outrun it.
+ */
+export const MAP_CHUNK_BURST = 24;
+export const MAP_CHUNK_REFILL_PER_SECOND = 12;
 
 /**
  * How far the client's modelled resource may be from the server's before it is
