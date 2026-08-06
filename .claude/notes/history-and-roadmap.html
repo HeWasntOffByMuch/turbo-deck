@@ -15,7 +15,6 @@
     --faint:   #5D6E6D;
 
     --ember:   #E4653F;
-    --ember-d: #B84A28;
 
     --lane-0: #E0A53E;
     --lane-1: #B187C6;
@@ -30,35 +29,22 @@
 
   @media (prefers-color-scheme: light) {
     :root {
-      --bg:      #E9ECE9;
-      --panel:   #F5F7F4;
-      --panel-2: #DFE4E1;
-      --rule:    #C6CFCB;
-      --rule-2:  #D6DDD9;
-      --text:    #131E1D;
-      --muted:   #566664;
-      --faint:   #82918F;
-      --ember:   #C24A22;
-      --ember-d: #98371A;
-      --lane-0: #9C6C0C;
-      --lane-1: #7A4C90;
-      --lane-2: #47702F;
-      --lane-3: #1E6C79;
-      --lane-4: #40529C;
-      --lane-5: #C24A22;
-      --lane-6: #5A6A6B;
+      --bg:#E9ECE9; --panel:#F5F7F4; --panel-2:#DFE4E1; --rule:#C6CFCB; --rule-2:#D6DDD9;
+      --text:#131E1D; --muted:#566664; --faint:#82918F; --ember:#C24A22;
+      --lane-0:#9C6C0C; --lane-1:#7A4C90; --lane-2:#47702F; --lane-3:#1E6C79;
+      --lane-4:#40529C; --lane-5:#C24A22; --lane-6:#5A6A6B;
     }
   }
 
   :root[data-theme="dark"] {
     --bg:#0D1416; --panel:#141D20; --panel-2:#101819; --rule:#24312F; --rule-2:#1A2426;
-    --text:#DDE5E2; --muted:#8B9E9C; --faint:#5D6E6D; --ember:#E4653F; --ember-d:#B84A28;
+    --text:#DDE5E2; --muted:#8B9E9C; --faint:#5D6E6D; --ember:#E4653F;
     --lane-0:#E0A53E; --lane-1:#B187C6; --lane-2:#74A55E; --lane-3:#4FA0AB;
     --lane-4:#7389D4; --lane-5:#E4653F; --lane-6:#7B8B8C;
   }
   :root[data-theme="light"] {
     --bg:#E9ECE9; --panel:#F5F7F4; --panel-2:#DFE4E1; --rule:#C6CFCB; --rule-2:#D6DDD9;
-    --text:#131E1D; --muted:#566664; --faint:#82918F; --ember:#C24A22; --ember-d:#98371A;
+    --text:#131E1D; --muted:#566664; --faint:#82918F; --ember:#C24A22;
     --lane-0:#9C6C0C; --lane-1:#7A4C90; --lane-2:#47702F; --lane-3:#1E6C79;
     --lane-4:#40529C; --lane-5:#C24A22; --lane-6:#5A6A6B;
   }
@@ -93,6 +79,7 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.4rem 1.1rem;
+    margin: 0;
   }
   .eyebrow b { color: var(--ember); font-weight: 500; }
 
@@ -108,12 +95,9 @@
   }
   h1 em { font-style: normal; color: var(--ember); }
 
-  .deck {
-    max-width: 62ch;
-    font-size: 1.06rem;
-    color: var(--muted);
-  }
+  .deck { max-width: 62ch; font-size: 1.06rem; color: var(--muted); margin: 0; }
   .deck strong { color: var(--text); font-weight: 600; }
+  .deck + .deck { margin-top: -0.35rem; }
 
   /* ---- stat strip ---- */
   .stats {
@@ -122,58 +106,46 @@
     gap: 1px;
     background: var(--rule-2);
     border: 1px solid var(--rule-2);
+    margin: 0;
   }
   .stat { background: var(--bg); padding: 0.95rem 1rem 1rem; }
   .stat dt {
-    font-family: var(--mono);
-    font-size: 0.6rem;
-    letter-spacing: 0.13em;
-    text-transform: uppercase;
-    color: var(--faint);
+    font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.13em;
+    text-transform: uppercase; color: var(--faint);
   }
   .stat dd {
-    margin: 0.3rem 0 0;
-    font-family: var(--mono);
-    font-size: 1.5rem;
-    font-weight: 600;
-    letter-spacing: -0.03em;
-    font-variant-numeric: tabular-nums;
+    margin: 0.3rem 0 0; font-family: var(--mono); font-size: 1.5rem; font-weight: 600;
+    letter-spacing: -0.03em; font-variant-numeric: tabular-nums;
   }
   .stat dd span { font-size: 0.78rem; font-weight: 400; color: var(--muted); letter-spacing: 0; }
+  .stat dd i { font-style: normal; font-size: 0.7rem; color: var(--lane-2); letter-spacing: 0; }
 
   /* ---- section furniture ---- */
   section { display: flex; flex-direction: column; gap: 1.35rem; }
   .sec-head { display: flex; flex-direction: column; gap: 0.5rem; border-top: 1px solid var(--rule); padding-top: 1.15rem; }
   h2 {
-    font-family: var(--mono);
-    font-size: clamp(1.15rem, 2.4vw, 1.42rem);
-    font-weight: 600;
-    letter-spacing: -0.022em;
-    margin: 0;
-    text-wrap: balance;
+    font-family: var(--mono); font-size: clamp(1.15rem, 2.4vw, 1.42rem); font-weight: 600;
+    letter-spacing: -0.022em; margin: 0; text-wrap: balance;
   }
-  .sec-note { max-width: 60ch; color: var(--muted); font-size: 0.94rem; margin: 0; }
+  .sec-note { max-width: 62ch; color: var(--muted); font-size: 0.94rem; margin: 0; }
+  code {
+    font-family: var(--mono); font-size: 0.85em; color: var(--text);
+    background: var(--panel-2); padding: 0.05rem 0.3rem;
+  }
 
   /* ---- graph ---- */
   .chart-shell { position: relative; }
   .chart-scroll {
-    overflow-x: auto;
-    overflow-y: hidden;
-    border: 1px solid var(--rule);
-    background: var(--panel-2);
-    scrollbar-width: thin;
+    overflow-x: auto; overflow-y: hidden;
+    border: 1px solid var(--rule); background: var(--panel-2); scrollbar-width: thin;
   }
-  .chart-scroll svg { display: block; width: 1300px; height: auto; }
+  .chart-scroll svg { display: block; width: 1430px; height: auto; }
 
   .scroll-hint {
-    font-family: var(--mono);
-    font-size: 0.63rem;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--faint);
-    margin: 0;
+    font-family: var(--mono); font-size: 0.63rem; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--faint); margin: 0;
   }
-  @media (min-width: 1360px) { .scroll-hint { visibility: hidden; } }
+  @media (min-width: 1490px) { .scroll-hint { visibility: hidden; } }
 
   .l0 { color: var(--lane-0); } .l1 { color: var(--lane-1); } .l2 { color: var(--lane-2); }
   .l3 { color: var(--lane-3); } .l4 { color: var(--lane-4); } .l5 { color: var(--lane-5); }
@@ -195,20 +167,13 @@
   .node:hover .dot, .node:focus-visible .dot { r: 7.5; }
   .dot { transition: r 120ms ease; }
 
-  .colband  { fill: var(--panel); }
-  .colband.alt { fill: transparent; }
+  .colband { fill: var(--panel); }
 
   .tip {
-    position: absolute;
-    z-index: 5;
-    max-width: 20rem;
-    background: var(--panel);
-    border: 1px solid var(--rule);
-    border-left: 3px solid currentColor;
-    padding: 0.7rem 0.85rem 0.78rem;
-    pointer-events: none;
-    opacity: 0;
-    transform: translateY(4px);
+    position: absolute; z-index: 5; max-width: 20rem;
+    background: var(--panel); border: 1px solid var(--rule); border-left: 3px solid currentColor;
+    padding: 0.7rem 0.85rem 0.78rem; pointer-events: none;
+    opacity: 0; transform: translateY(4px);
     transition: opacity 120ms ease, transform 120ms ease;
     box-shadow: 0 12px 28px rgba(0,0,0,0.35);
   }
@@ -225,7 +190,7 @@
 
   .legend {
     display: flex; flex-wrap: wrap; gap: 0.4rem 1.15rem;
-    font-family: var(--mono); font-size: 0.68rem; color: var(--muted);
+    font-family: var(--mono); font-size: 0.68rem; color: var(--muted); margin: 0;
   }
   .legend span { display: inline-flex; align-items: center; gap: 0.4rem; }
   .swatch { width: 9px; height: 9px; background: currentColor; flex: none; }
@@ -239,9 +204,31 @@
   .turn p { margin: 0; font-size: 0.86rem; color: var(--muted); line-height: 1.6; }
   .turn .metric { font-family: var(--mono); font-size: 0.78rem; font-variant-numeric: tabular-nums; color: currentColor; letter-spacing: -0.01em; margin-top: auto; padding-top: 0.35rem; }
 
+  /* ---- scorecard ---- */
+  .score { display: grid; grid-template-columns: repeat(auto-fit, minmax(13.5rem, 1fr)); gap: 1px; background: var(--rule-2); border: 1px solid var(--rule-2); }
+  .score-col { background: var(--bg); padding: 1.05rem 1.05rem 1.25rem; display: flex; flex-direction: column; gap: 0.8rem; }
+  .score-col > h3 {
+    font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.13em; text-transform: uppercase;
+    margin: 0; color: currentColor; display: flex; align-items: baseline; gap: 0.45rem;
+  }
+  .score-col > h3 b { font-size: 1.35rem; font-weight: 600; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+  .score-col ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.7rem; }
+  .score-col li { font-size: 0.8rem; line-height: 1.5; color: var(--muted); }
+  .score-col li b { display: block; font-family: var(--mono); font-size: 0.79rem; font-weight: 600; color: var(--text); letter-spacing: -0.015em; }
+  .s-landed  { color: var(--lane-2); }
+  .s-pending { color: var(--lane-0); }
+  .s-unmoved { color: var(--faint); }
+  .s-missed  { color: var(--ember); }
+
+  .diagnosis {
+    border-left: 3px solid var(--ember); padding: 0.15rem 0 0.15rem 1rem;
+    max-width: 62ch; color: var(--muted); font-size: 0.94rem; margin: 0;
+  }
+  .diagnosis strong { color: var(--text); font-weight: 600; }
+
   /* ---- roadmap table ---- */
   .road-scroll { overflow-x: auto; border: 1px solid var(--rule-2); }
-  table { border-collapse: collapse; width: 100%; min-width: 40rem; font-size: 0.86rem; }
+  table { border-collapse: collapse; width: 100%; min-width: 42rem; font-size: 0.86rem; }
   thead th {
     text-align: left; font-family: var(--mono); font-weight: 500;
     font-size: 0.6rem; letter-spacing: 0.14em; text-transform: uppercase;
@@ -281,26 +268,16 @@
   }
   .signals ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.62rem; }
   .signals li { display: grid; grid-template-columns: auto 1fr; gap: 0.6rem; font-size: 0.8rem; color: var(--muted); line-height: 1.5; }
-  .signals code {
-    font-family: var(--mono); font-size: 0.73rem; color: var(--text);
-    background: var(--panel-2); padding: 0.05rem 0.3rem; white-space: nowrap;
-  }
-  .signals li::before { content: ""; }
+  .signals code { font-size: 0.73rem; white-space: nowrap; }
   .signals .mark { color: var(--ember); font-family: var(--mono); font-size: 0.72rem; line-height: 1.7; }
 
   footer {
-    border-top: 1px solid var(--rule);
-    padding-top: 1.15rem;
-    font-family: var(--mono);
-    font-size: 0.68rem;
-    color: var(--faint);
-    letter-spacing: 0.04em;
-    display: flex; flex-wrap: wrap; gap: 0.35rem 1.2rem;
+    border-top: 1px solid var(--rule); padding-top: 1.15rem;
+    font-family: var(--mono); font-size: 0.68rem; color: var(--faint);
+    letter-spacing: 0.04em; display: flex; flex-wrap: wrap; gap: 0.35rem 1.2rem;
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    * { animation: none !important; transition: none !important; }
-  }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 
 <div class="wrap">
@@ -309,24 +286,30 @@
     <p class="eyebrow">
       <span>turbo-deck</span>
       <span>2026-07-29 → 2026-08-06</span>
-      <span>head <b>8b40084</b></span>
+      <span>head <b>merged to main</b></span>
+      <span>rev. 2</span>
     </p>
     <h1>Nine days after the world went <em>3D</em></h1>
     <p class="deck">
       Spec 031 stood the flat top-down arena up into a blocked, flat-shaded isometric scene.
-      Everything in this repository's history since then is downstream of that one decision — and
-      what it actually produced was not a better-looking deckbuilder.
+      Everything since is downstream of that one decision — and what it produced was not a
+      better-looking deckbuilder.
       <strong>It was a different game, on a different architecture, with the deck deleted.</strong>
+    </p>
+    <p class="deck">
+      This revision folds in the last day's work: <strong>96 commits and twelve specs</strong>,
+      which is more than the first four days combined. Four of the projections in the previous
+      version landed inside it, so there is now a scorecard as well as a roadmap.
     </p>
   </header>
 
   <dl class="stats">
-    <div class="stat"><dt>Commits since 031</dt><dd>213</dd></div>
-    <div class="stat"><dt>Specs landed</dt><dd>40<span> / 71</span></dd></div>
+    <div class="stat"><dt>Commits since 031</dt><dd>307</dd></div>
+    <div class="stat"><dt>Specs landed</dt><dd>52<span> / 83</span></dd></div>
     <div class="stat"><dt>Elapsed</dt><dd>9<span> days</span></dd></div>
-    <div class="stat"><dt>TypeScript</dt><dd>50,662<span> lines</span></dd></div>
-    <div class="stat"><dt>Test cases</dt><dd>1,046</dd></div>
-    <div class="stat"><dt>Deleted in one commit</dt><dd>14,652</dd></div>
+    <div class="stat"><dt>TypeScript</dt><dd>63,627<span> lines</span></dd></div>
+    <div class="stat"><dt>Test cases</dt><dd>1,362</dd></div>
+    <div class="stat"><dt>Final day alone</dt><dd>96<span> commits</span></dd></div>
   </dl>
 
   <section>
@@ -334,14 +317,14 @@
       <h2>The graph</h2>
       <p class="sec-note">
         Seven threads, left to right. The time axis is scaled by commit volume rather than by
-        calendar, so the two-day lull on Aug 2–3 is a pinch and the Aug 4–5 surge is a plain.
-        Everything left of the ember rule has landed; everything right of it is dashed, and is
-        sourced in the next two sections. Hover any node.
+        calendar, so the two-day lull on Aug 2–3 is a pinch and the final day is a third of the
+        whole chart. Everything left of the ember rule has landed; everything right of it is
+        dashed and sourced from the specs' own <em>Out of scope</em> sections. Hover any node.
       </p>
     </div>
     <div class="chart-shell">
       <div class="chart-scroll" id="chart-scroll">
-        <svg id="graph" role="img" aria-label="Swimlane graph of turbo-deck development from spec 031 to spec 067, with a projected roadmap"></svg>
+        <svg id="graph" role="img" aria-label="Swimlane graph of turbo-deck development from spec 031 to spec 079, with a projected roadmap"></svg>
       </div>
       <div class="tip" id="tip" aria-hidden="true">
         <div class="tip-code"></div>
@@ -360,10 +343,10 @@
 
   <section>
     <div class="sec-head">
-      <h2>Four moments where the project stopped being what it was</h2>
+      <h2>Five moments where the project stopped being what it was</h2>
       <p class="sec-note">
-        Each of these is a deletion as much as an addition, which is the most distinctive thing
-        about how this codebase moves.
+        Each of these is a deletion as much as an addition, which remains the most distinctive
+        thing about how this codebase moves.
       </p>
     </div>
     <div class="turns">
@@ -373,7 +356,7 @@
         <p>
           A flat slab became layered heightfields, the arena walls came off, and trees were promoted
           from decoration to colliders. Every system written after this assumes a world, not a level —
-          which is why the pathfinder is still being taught new things about gaps a week later.
+          which is why the pathfinder was still being taught new things about gaps a week later.
         </p>
         <p class="metric">flat slab → heightfield chunks + scatter</p>
       </article>
@@ -402,25 +385,94 @@
       </article>
 
       <article class="turn l0">
-        <span class="when">Aug 5–6 · specs 063, 066, 067</span>
+        <span class="when">Aug 5–6 · specs 063, 066, 069</span>
         <h3>The client stopped being a viewer</h3>
         <p>
           The Play tab was repointed at <code>GameClient.view()</code>, the 2D Pixi renderer was
-          removed outright, and the client learned to predict — committing to a blow the moment you
-          ask rather than when it is told, and easing corrections instead of snapping.
+          removed outright, and the client learned to predict — first the walk, then the blow,
+          committing on screen the moment you ask rather than when it is told.
         </p>
         <p class="metric">pixi.js: still a dependency, zero imports</p>
+      </article>
+
+      <article class="turn l3">
+        <span class="when">Aug 6 · spec 072</span>
+        <h3>The editor's world became the played world</h3>
+        <p>
+          The renderer stopped building a world from a seed. The generated world is baked to
+          <code>maps/arena.json</code>, the server ticks that document, and the client holds the
+          chunks that arrived while asking for the ground underfoot. The editor's output is now
+          the game's input.
+        </p>
+        <p class="metric">seed → document → wire → screen</p>
       </article>
     </div>
   </section>
 
   <section>
     <div class="sec-head">
-      <h2>The roadmap is mostly already written down</h2>
+      <h2>How the last roadmap scored</h2>
       <p class="sec-note">
-        This project's specs each carry an explicit <em>Out of scope</em> section, and those sections
-        are unusually load-bearing: they name the next commitment rather than waving at it. Most of
-        the near roadmap below is transcribed, not guessed. Confidence is marked.
+        The previous revision of this page made twelve calls. Twelve specs landed in the day that
+        followed. This is what happened to each, and — more usefully — what the misses have in
+        common.
+      </p>
+    </div>
+    <div class="score">
+      <div class="score-col s-landed">
+        <h3><b>4</b> landed</h3>
+        <ul>
+          <li><b>Predict the cast</b>Spec 069. The client draws the wind-up on request, is told what it has left to spend, and dims a button it cannot pay for.</li>
+          <li><b>Play the map you drew</b>Spec 072. The world is a document on disk; the server ticks it and sends it.</li>
+          <li><b>Chunked mesh streaming</b>Specs 072 and 078 — including the seam a streamed chunk leaves against ground that has not arrived yet.</li>
+          <li><b>Markers that mean something</b>Spec 076. A marker names a monster id, and nine spawn points went on the arena.</li>
+        </ul>
+      </div>
+      <div class="score-col s-pending">
+        <h3><b>4</b> pending, more precisely</h3>
+        <ul>
+          <li><b>Gear on the rig</b>Half. Spec 079 added a weapon switch over an equip path that already existed — explicitly "not a bag, a paper doll, or a place items come from".</li>
+          <li><b>ws:// from the tab</b>Still out of scope, but 072 named the real blocker: collider paging, so a remote client can predict against ground it streamed.</li>
+          <li><b>Threat, CC, damage over time</b>Spec 076 leaves <code>aggroRange</code> and <code>passive</code> in the table, unread, "waiting for the spec that turns them back on".</li>
+          <li><b>Loot</b>Spec 076 lists corpses and loot together as the thing that does not yet stay behind when a monster dies.</li>
+        </ul>
+      </div>
+      <div class="score-col s-unmoved">
+        <h3><b>4</b> unmoved</h3>
+        <ul>
+          <li><b>Rate matching</b>Named out of scope in 067, and again in 069 — with the word "still".</li>
+          <li><b>A store that isn't memory</b><code>DataStore</code> is unchanged: one interface, one in-memory implementation.</li>
+          <li><b>Balance</b>Spec 079 declines it by name: "no <code>windupTicks</code>, damage or range in the current table moves".</li>
+          <li><b>A rename</b>Still turbo-deck. <code>package.json</code> still advertises a deckbuilding layer.</li>
+        </ul>
+      </div>
+      <div class="score-col s-missed">
+        <h3><b>4</b> missed entirely</h3>
+        <ul>
+          <li><b>Weather</b>Specs 074–075: one wind system driving tree sway, ground streaks and a stylized four-colour sea, plus a panel to blow it around.</li>
+          <li><b>A third tree</b>Spec 077. A lobed canopy walked as an outline — and a flat-leaved variant built, photographed, and deleted because it could not take light.</li>
+          <li><b>How the mouse feels</b>Specs 070–071: right-click a unit to fight it, and a click <em>near</em> a body counted as a click on it.</li>
+          <li><b>Routing failure</b>Spec 073. The nav grid learns which ground connects to which, so the router stops paying its worst price for its commonest failure.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="diagnosis">
+      The misses share a shape. Every one of them is about <strong>how the world looks or how the
+      mouse feels</strong>, and none of them leaves a structural trace in the tree the way a
+      <code>ZoneManager</code> or an unread <code>DataStore</code> interface does. The previous
+      roadmap was derived from interfaces and out-of-scope notes, so it could only ever see the
+      thread that writes them down. A third of this project's output is taste, and taste does not
+      declare itself in the type system.
+    </p>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>The revised roadmap</h2>
+      <p class="sec-note">
+        Re-sourced from the <em>Out of scope</em> sections of specs 069 through 079, which are
+        unusually load-bearing: they name the next commitment rather than waving at it. Confidence
+        is marked, and the "projected" rows are the ones the last revision proved I am worst at.
       </p>
     </div>
     <div class="road-scroll">
@@ -430,75 +482,75 @@
         </thead>
         <tbody>
           <tr>
-            <td class="item">Predict the cast</td>
-            <td>Movement is predicted; a wind-up still waits for the server before it draws. Both 062 and 067 name this as the deliberate next commitment.</td>
-            <td class="src">062, 067</td>
+            <td class="item">Collider paging</td>
+            <td>Building the predictor's colliders from streamed chunks and growing them as more arrive. 072 calls it out as needed before a remote client can predict correctly — which makes it the gate on everything multiplayer.</td>
+            <td class="src">072</td>
             <td><span class="pill p-stated">stated</span></td>
           </tr>
           <tr>
-            <td class="item">Play the map you drew</td>
-            <td>Spec 048 bakes a world to a document; spec 063 builds the world from a seed instead. Both halves exist and nothing joins them.</td>
-            <td class="src">063</td>
+            <td class="item">Predicting the hit</td>
+            <td>069 predicts the wind-up but no outcome — no health change, no projectile — because "a health bar that jumps back up is worse than one that moves late".</td>
+            <td class="src">069, 079</td>
+            <td><span class="pill p-stated">stated</span></td>
+          </tr>
+          <tr>
+            <td class="item">Aggro that isn't a grudge</td>
+            <td>Target selection is currently "whoever hit me first". Proximity aggro, herds and calls for help are named, and the fields for them already sit unread in the monster table.</td>
+            <td class="src">076</td>
+            <td><span class="pill p-stated">stated</span></td>
+          </tr>
+          <tr>
+            <td class="item">Corpses, then loot</td>
+            <td>Nothing stays behind when a monster dies. <code>ITEMS</code> and <code>MONSTERS</code> are still two populated tables with no path between them.</td>
+            <td class="src">076</td>
+            <td><span class="pill p-stated">stated</span></td>
+          </tr>
+          <tr>
+            <td class="item">Shots stopped by the world</td>
+            <td>A projectile is stopped by a body or by its lifetime and by nothing else. Terrain, walls and props do not block a shot, and the bow's arc is a look rather than a mechanic.</td>
+            <td class="src">079</td>
+            <td><span class="pill p-stated">stated</span></td>
+          </tr>
+          <tr>
+            <td class="item">Publish live from the editor</td>
+            <td>The map reaches the server as a file on disk. Hot-swapping the map on a server that is already ticking is the next join between the two halves.</td>
+            <td class="src">072</td>
             <td><span class="pill p-stated">stated</span></td>
           </tr>
           <tr>
             <td class="item">ws:// from the tab</td>
-            <td>Single-player is already a loopback server. Real multiplayer is a URL and a transport swap that was deliberately left unwired.</td>
-            <td class="src">063</td>
+            <td>Single-player is already a loopback server. Still a URL and a transport swap — now waiting on collider paging rather than on nothing.</td>
+            <td class="src">072</td>
             <td><span class="pill p-stated">stated</span></td>
           </tr>
           <tr>
-            <td class="item">Threat, crowd control, DoT</td>
-            <td>Named out of scope in that order, alongside loot. The combat resolver has damage but no reason for a monster to prefer one target.</td>
-            <td class="src">062</td>
+            <td class="item">Spawn tables and packs</td>
+            <td>One marker, one monster, one server-wide delay. Per-marker respawn, pack sizes, levels, elites and zone scaling are all named and all deferred.</td>
+            <td class="src">076</td>
             <td><span class="pill p-stated">stated</span></td>
           </tr>
           <tr>
-            <td class="item">Rate matching</td>
-            <td>The client estimates the server clock but does not steer by it, so the input queue drifts and drops. 067 scopes the fix out explicitly.</td>
-            <td class="src">067</td>
-            <td><span class="pill p-stated">stated</span></td>
-          </tr>
-          <tr>
-            <td class="item">Chunked mesh streaming</td>
-            <td>The world is meshed once at welcome. That holds until the world is bigger than one arena — and the chunk grid is already built for bigger.</td>
-            <td class="src">063</td>
-            <td><span class="pill p-stated">stated</span></td>
-          </tr>
-          <tr>
-            <td class="item">Loot, and a drop path</td>
-            <td><code>ITEMS</code> and <code>MONSTERS</code> are both populated tables with nothing connecting them. Stats already derive from ids and levels.</td>
-            <td class="src">062 · data/</td>
+            <td class="item">Interest-bounded spawners</td>
+            <td>The whole map's spawner state goes to every watching client — fine for tens of markers, named as the first thing to fix for thousands.</td>
+            <td class="src">076</td>
             <td><span class="pill p-implied">implied</span></td>
           </tr>
           <tr>
-            <td class="item">Markers that mean something</td>
-            <td>The editor places and persists markers; the sim never reads them. Spawns, zone bounds and encounter volumes are the obvious first meanings.</td>
-            <td class="src">052 · world/</td>
+            <td class="item">A real inventory</td>
+            <td>The weapon switch is three buttons over the equip path. A bag, a paper doll and a place items come from are each named as things it is not.</td>
+            <td class="src">079</td>
             <td><span class="pill p-implied">implied</span></td>
           </tr>
           <tr>
-            <td class="item">A store that is not memory</td>
-            <td><code>DataStore</code> is an interface with exactly one in-memory implementation. That seam is not cut by accident.</td>
-            <td class="src">state/</td>
-            <td><span class="pill p-implied">implied</span></td>
-          </tr>
-          <tr>
-            <td class="item">Gear on the rig</td>
-            <td>The critter system builds any species from data over one skeleton, with sockets. Sockets are where equipment goes.</td>
-            <td class="src">055</td>
+            <td class="item">More weather, more world</td>
+            <td>Wind, water and a third tree arrived unannounced in one day. The look thread has its own harness now, so expect it to keep producing — rain, seasons, a second biome.</td>
+            <td class="src">074–077</td>
             <td><span class="pill p-guess">projected</span></td>
           </tr>
           <tr>
             <td class="item">Balance, finally</td>
-            <td>062 says outright that the starting abilities exist to exercise each <code>AbilityKind</code>, not to be fun. The balance harness is still in <code>scripts/</code>.</td>
-            <td class="src">062</td>
-            <td><span class="pill p-guess">projected</span></td>
-          </tr>
-          <tr>
-            <td class="item">A rename</td>
-            <td>There is no deck. <code>package.json</code> still describes an "action-roguelite with a deckbuilding layer."</td>
-            <td class="src">—</td>
+            <td>062 said the abilities exist to exercise each <code>AbilityKind</code>, not to be fun; 079 declined to move a single number. The balance harness is still sitting in <code>scripts/</code>.</td>
+            <td class="src">062, 079</td>
             <td><span class="pill p-guess">projected</span></td>
           </tr>
         </tbody>
@@ -518,54 +570,56 @@
           deliberately not allowed to know any rules.
         </p>
         <p>
-          The roguelite framing is already gone and is not coming back. A roguelite does not need a
-          zone manager, a network chunk grid separate from the meshing one, a swappable
-          <code>DataStore</code>, a token-gated admin namespace with an audit log, or a wire protocol
-          that counts bytes. Those are all in the tree <strong>now</strong>, and every one of them is
-          load-bearing only for a world that persists and holds more than one person.
+          That call stands, and the last day strengthened it. The editor's output is now the
+          server's input and the client's stream; a marker in a map file spawns a monster in a
+          running game. Those were three separate systems a week ago and they are one pipeline now.
+          What remains between here and a genuinely multiplayer session is
+          <strong>collider paging and a URL</strong> — one real spec and one line.
         </p>
         <p>
-          The near term is convergence rather than expansion: the editor's output becoming the world
-          you actually play, prediction extending from movement to the cast, and <code>ws://</code>
-          getting wired to the tab. Each of those is a join between two systems that already exist —
-          which is why they will land fast. Expect the first genuinely multiplayer session within a
-          handful of days of work, not weeks.
+          The medium term is content, and this is where I was too pessimistic last time. I argued
+          that everything so far had been <strong>mechanism</strong> — the thing this workflow is
+          extraordinarily good at — and that taste could not be regression-tested. The weather work
+          answers that: there is now a preview rig that drives the real page, photographs it, and
+          keeps 46 screenshots in the repository, and it found a shader bug on the way. A
+          flat-leaved tree was built, photographed, judged against the light, and deleted. That is
+          taste running through exactly the same loop as mechanism — build it, look at it, keep the
+          record, remove what fails.
         </p>
         <p>
-          The medium term is content, and this is where the shape of the risk changes. Everything
-          built so far has been <strong>mechanism</strong>, and mechanism is what this workflow is
-          extraordinarily good at: 1,046 tests, a linter that mechanically enforces the determinism
-          rules, a headless harness that can screenshot the real rig without a screen. Loot tables,
-          encounter design and balance are not mechanism, they are taste, and they cannot be
-          regression-tested. The spec-first habit will keep producing correct systems; whether it
-          produces a game anyone wants to play for an hour is the open question the codebase has so
-          far been able to defer.
+          So the revised risk is narrower and more specific. Look and feel have a harness; combat
+          balance still does not, and it is the one thing on the roadmap that no screenshot and no
+          determinism test can settle. Two specs in a row have now declined to move a single
+          <code>windupTicks</code>. The project can keep adding systems indefinitely without ever
+          confronting whether the fight is fun, and nothing in the workflow will flag it.
         </p>
         <p>
-          The likeliest ceiling, honestly: an unusually well-engineered, unusually well-documented
-          sandbox — the kind of project whose <em>architecture</em> gets linked around more than its
-          gameplay does. The likeliest surprise: that the headless, deterministic, agent-verifiable
-          core turns out to be the actual product, and the game is what it was built to prove.
+          The likeliest outcome is still an unusually well-engineered sandbox whose architecture
+          gets linked around more than its gameplay does — but the gap is closing faster than I
+          credited. The likeliest surprise is unchanged: that the headless, deterministic,
+          agent-verifiable core turns out to be the actual product, and the game is what it was
+          built to prove.
         </p>
       </div>
       <aside class="signals">
         <h3>Already in the tree, only makes sense for the bigger thing</h3>
         <ul>
-          <li><span class="mark">→</span><span><code>ZoneManager</code> and <code>ChunkManager</code> — interest management for a world one arena does not have</span></li>
-          <li><span class="mark">→</span><span><code>DataStore</code> as an interface, with one memory implementation behind it</span></li>
+          <li><span class="mark">→</span><span><code>ZoneManager</code> and <code>ChunkManager</code> — interest management, now actually paging chunks on request</span></li>
+          <li><span class="mark">→</span><span><code>DataStore</code> as an interface, still with one memory implementation behind it</span></li>
           <li><span class="mark">→</span><span>Stats derived from <code>(id, level)</code> and never stored — the shape you use when you have many characters</span></li>
           <li><span class="mark">→</span><span>An admin namespace that re-verifies its token on <em>every</em> message, plus an audit log</span></li>
-          <li><span class="mark">→</span><span>A binary wire format with a written <code>PROTOCOL.md</code>, and per-client deltas that stay silent when nothing changed</span></li>
+          <li><span class="mark">→</span><span>A binary wire format with a written <code>PROTOCOL.md</code>, now carrying map info and requested chunks</span></li>
           <li><span class="mark">→</span><span><code>ABILITIES</code>, <code>SKILLS</code>, <code>ITEMS</code>, <code>MONSTERS</code> as tables — an entity only ever stores an id</span></li>
-          <li><span class="mark">→</span><span>A map editor with undo, nav baking and save/load, for a world currently generated from a seed</span></li>
-          <li><span class="mark">→</span><span>A species system where adding a playable animal is a data file and one line</span></li>
+          <li><span class="mark">→</span><span><code>aggroRange</code> and <code>passive</code> sitting in the monster table, deliberately unread</span></li>
+          <li><span class="mark">→</span><span>A map document on disk that a server ticks, and an editor that writes it</span></li>
+          <li><span class="mark">→</span><span>46 tracked screenshots and a rig that takes them — a regression harness for things you can only judge by eye</span></li>
         </ul>
       </aside>
     </div>
   </section>
 
   <footer>
-    <span>Read from 213 commits, 40 specs and the working tree at 8b40084.</span>
+    <span>Read from 307 commits, 52 specs and the working tree at spec 079.</span>
     <span>Roadmap sourced from spec <em>Out of scope</em> sections where marked stated.</span>
   </footer>
 
@@ -578,17 +632,18 @@
   /* ---------- data ---------- */
 
   var COLS = [
-    { label: "Jul 29", n: 37 },
+    { label: "Jul 29", n: 36 },
     { label: "Jul 30", n: 21 },
     { label: "Jul 31", n: 31 },
     { label: "Aug 1",  n: 11 },
     { label: "Aug 2–3", n: 3, lull: true },
     { label: "Aug 4",  n: 52 },
-    { label: "Aug 5–6", n: 58 }
+    { label: "Aug 5",  n: 57 },
+    { label: "Aug 6",  n: 96 }
   ];
 
   var LANES = [
-    { name: "Look & camera", sub: "renderer" },
+    { name: "Look & camera", sub: "renderer · weather" },
     { name: "Bodies",        sub: "rigs · cloth · species" },
     { name: "World",         sub: "terrain · routing" },
     { name: "Editor",        sub: "authoring" },
@@ -599,14 +654,17 @@
 
   var PHASES = ["Next", "Then", "After"];
 
-  // lane, column, fraction within column, code, short label, detail
+  // lane, column, fraction, code, label, detail, "below"?, kind?
   var NODES = [
     // Look & camera
     [0, 0, 0.25, "031", "the iso renderer", "Flat-shaded blocks, an orthographic camera locked to 2:1, a low-resolution buffer upscaled. The look was decided before there was a world to look at."],
     [0, 1, 0.35, "038–041", "dither and a full window", "An ordered dither over a quantized palette, a follow camera that trails the unit, and the game given the whole window with the HUD floated over it."],
     [0, 2, 0.55, "042·045", "the look pass", "Opened on a 27° pitch so vertical faces are what you see, gave the sun a shadow map, and replaced the stamped triangle with a real canopy.", "below"],
     [0, 3, 0.45, "047", "day/night, torches", "The sun put on a clock and stepped in 1/10s ticks so shadows never diverge — plus a torch that casts and an orb that deliberately does not."],
-    [0, 6, 0.30, "063", "Play draws the server", "The Play tab stops reading a local sim entirely and renders GameClient.view(): 20Hz deltas interpolated to a pose per frame."],
+    [0, 6, 0.20, "063", "Play draws the server", "The Play tab stops reading a local sim entirely and renders GameClient.view(): 20Hz deltas interpolated to a pose per frame."],
+    [0, 7, 0.15, "072", "the map it was sent", "The Play tab stops building a world from a seed and draws the chunks the server sent it — streamed in without freezing the page."],
+    [0, 7, 0.58, "074–075", "weather and water", "One wind system driving tree sway, ground streaks and a stylized four-colour sea, with shadows that lean with the trunks — and a second button to blow it around. The wind's direction and strength stop being constants.", "below"],
+    [0, 7, 0.95, "077–078", "a third tree", "A lobed canopy walked as an outline rather than sampled, a flat-leaved variant built and then deleted because it could not take light, and the seam a streamed chunk leaves against ground that has not arrived yet."],
 
     // Bodies
     [1, 0, 0.55, "032–035", "legs and two sandboxes", "Ground-locking spider legs where the legs lead and the body yaw follows — and two viewports built for nothing but watching one unit walk."],
@@ -618,57 +676,70 @@
     // World
     [2, 1, 0.15, "037", "hitboxes and a route", "Units get collision volumes, and a grid router to path around what blocks them."],
     [2, 2, 0.25, "043–044", "the ground stops being a slab", "Layered heightfields replace the flat plane, the walls come off the play area, and vegetation is grown where both halves of the game can see it.", "below"],
-    [2, 5, 0.12, "048", "the map is a document", "A world can be baked to JSON and loaded back as array-backed terrain — which is the single change that makes an editor possible at all."],
-    [2, 6, 0.95, "067", "gaps that walking threads", "The router had been refusing gaps a body actually fits through. It stops refusing them."],
+    [2, 5, 0.12, "048", "the map is a document", "A world can be baked to JSON and loaded back as array-backed terrain — the single change that makes an editor possible at all."],
+    [2, 6, 0.95, "067", "gaps that thread", "The router had been refusing gaps a body actually fits through. It stops refusing them.", "below"],
+    [2, 7, 0.12, "072", "a world on disk", "The generated world baked to maps/arena.json, and the server ticking that document rather than a closure."],
+    [2, 7, 0.50, "073", "no way through", "The nav grid learns which ground connects to which, so an unreachable target costs a lookup instead of a full search — and an empty path is read as a failed search, not a finished route.", "below"],
 
     // Editor
-    [3, 5, 0.45, "049–054", "six tools in one day", "A tab that renders only from a map document, a terrain brush with undo, prop scatter and eraser, markers, a walkability bake that says why a unit will not path — and save, load, survive a refresh."],
+    [3, 5, 0.38, "049–054", "six tools in one day", "A tab that renders only from a map document, a terrain brush with undo, prop scatter and eraser, markers, a walkability bake that says why a unit will not path — and save, load, survive a refresh."],
     [3, 6, 0.22, "058–061", "fences, walls, navigation", "Fence variants and a brick wall retiring the coursed one, tools armed from buttons, and the view moved onto the middle mouse button."],
+    [3, 7, 0.45, "076", "markers that spawn", "A marker names a monster id. Nine spawn points go on the arena, the Play tab stops placing its own, and a settings toggle shows every spawner and its timer."],
 
     // Server & wire
     [4, 5, 0.30, "056", "an authoritative tick", "A binary wire format because a position should cost bytes not JSON, a network chunk grid owing nothing to the meshing one, stats derived from ids and levels, and an admin token re-verified on every message."],
-    [4, 6, 0.12, "057", "one simulation", "60Hz for the game, 20Hz for the wire. The client's simulation is deleted; the server's becomes the only one."],
-    [4, 6, 0.78, "067", "prediction over a real wire", "Drift corrected as it happens rather than snapped, corrections adopted exactly but eased visually, and an ability request that says which input it was made on.", "below"],
+    [4, 6, 0.12, "057", "one simulation", "60Hz for the game, 20Hz for the wire. The client's simulation is deleted; the server's becomes the only one.", "below"],
+    [4, 6, 0.78, "067", "prediction over a wire", "Drift corrected as it happens rather than snapped, corrections adopted exactly but eased visually, and an ability request that says which input it was made on."],
+    [4, 7, 0.05, "068–069", "predict the blow", "The client stops waiting to be told: it draws the wind-up the moment you ask, is told what it has left to spend, and dims a button it cannot currently pay for.", "below"],
+    [4, 7, 0.85, "072", "the map on the wire", "The map document travels as info plus requested chunks; the client holds what arrived and asks for the ground underfoot."],
 
     // Combat
     [5, 0, 0.10, "028", "MOBA movement", "Click to move, attack-move, and a turn rate slow enough to read."],
     [5, 1, 0.75, "040", "queued orders", "Shift-click stacks the next destination behind the current one."],
     [5, 6, 0.05, "062", "the deck is deleted", "Wind-ups, projectiles and cooldowns replace the card hand, the poker combos and the parry window. 14,652 lines removed against 2,958 added, across 90 files.", null, "rupture"],
     [5, 6, 0.55, "064–065", "committing to a blow", "A body that turns to face a target before it swings, no displacement and no freeze on impact, and a cast that is not over when the blow lands.", "below"],
+    [5, 7, 0.08, "068", "a blow that frees", "A committed blow lands and releases the body when it does — nothing interrupts it and nothing recovers from it. A blow that lands on a corpse lands on nothing."],
+    [5, 7, 0.42, "070–071", "right-click to fight", "Right-click a unit to attack it, with a cursor that says which one — attackSpeed deciding the cadence, and a click near a body counted as a click on it.", "below"],
+    [5, 7, 0.92, "079", "withdraw, and shots", "A wind-up you can walk out of, an auto-attack that shoots, and a bow whose arc went back to being a look rather than a mechanic."],
 
     // Harness
     [6, 5, 0.55, "agents", "a delegation policy", "Sub-agents with pinned model versions, a notes directory so architecture is not re-derived, and a context budget made an explicit house rule."],
-    [6, 6, 0.35, "lint", "determinism, enforced", "ESLint fails the build on Math.random, on Date and DOM globals, and on importing three.js anywhere inside the deterministic core — and a session-start hook checks the branch base."]
+    [6, 6, 0.35, "lint", "determinism, enforced", "ESLint fails the build on Math.random, on Date and DOM globals, and on importing three.js anywhere inside the deterministic core — and a session-start hook checks the branch base."],
+    [6, 7, 0.50, "rigs", "photograph the weather", "A preview harness that drives the real page and photographs it — 46 tracked screenshots, a shader bug found by the rig built to take them, and a fix for the harness racing the camera it clicks through."]
   ];
 
   // lane, phase index, lines, detail
   var FUTURE = [
-    [0, 1, ["streamed", "chunks"], "The world is meshed once at welcome. Interest-driven chunk streaming is what a world larger than one arena requires — and 063 says so."],
-    [1, 1, ["gear on", "the rig"], "The species system already builds any body from data over one skeleton, with sockets. Sockets are where equipment hangs."],
-    [2, 0, ["play the map", "you drew"], "Spec 048's data path meeting spec 063's renderer. Both halves are built and tested; nothing yet joins them."],
-    [2, 2, ["zones, not", "an arena"], "ZoneManager and the network chunk grid are already written for a world that this one is too small to need."],
-    [3, 1, ["author spawns", "and encounters"], "Markers are placed, bounded and persisted, and the simulation never reads them. Spawn points are the obvious first meaning."],
-    [4, 0, ["predict", "the cast"], "Movement is predicted; a wind-up still waits for the server before it draws. Named as the next commitment by both 062 and 067."],
-    [4, 1, ["ws:// from", "the tab"], "Single-player is already a loopback server. Multiplayer is a URL and a transport swap, left deliberately unwired."],
-    [4, 2, ["a store that", "isn't memory"], "DataStore is an interface with exactly one in-memory implementation behind it. That seam was not cut by accident."],
-    [5, 0, ["threat, CC,", "damage over time"], "Named out of scope in 062, in that order. Combat resolves damage but a monster has no reason to prefer one target over another."],
-    [5, 1, ["loot, and a", "reason to fight"], "ITEMS and MONSTERS are both populated tables with no drop path between them."],
-    [5, 2, ["balance"], "062 states outright that the starting abilities exist to exercise each AbilityKind, not to be fun. The balance harness is still sitting in scripts/."]
+    [0, 0, ["a feint you", "can see"], "079 leaves it open: withdrawing replays the cast-ended the client already draws, and whether a body should visibly abort a swing is an animation question nobody has answered."],
+    [0, 2, ["rain, seasons,", "a second biome"], "Projected, and the category I was worst at last time. The look thread now has its own screenshot harness, which is what a thread that intends to keep producing builds first."],
+    [1, 1, ["a paper doll"], "079's weapon switch is three buttons over the existing equip path. A bag, a paper doll and a place items come from are each named as things it is not."],
+    [2, 0, ["shots stopped by", "walls and props"], "A projectile is stopped by a body or by its lifetime and by nothing else. Terrain does not block a shot, and the bow's arc is deliberately not mechanical yet."],
+    [2, 2, ["a world bigger", "than the arena"], "WORLD_BOUNDS and ARENA_OBSTACLES are still constants outside the document. Moving them in is what a second map needs."],
+    [3, 0, ["publish live to", "a running server"], "The map reaches the server as a file on disk. Hot-swapping the map on a server that is already ticking is named out of scope in 072."],
+    [3, 1, ["pack sizes and", "spawn tables"], "One marker, one monster, one server-wide delay. Per-marker respawn, pack sizes, levels, elites and zone scaling are all named and all deferred."],
+    [4, 0, ["collider paging", "on the client"], "Building the predictor's colliders from streamed chunks and growing them as more arrive. 072 says it is needed before a remote client can predict correctly — which makes it the gate on multiplayer."],
+    [4, 1, ["ws:// from", "the tab"], "Single-player is already a loopback server. Still a URL and a transport swap — now waiting on collider paging rather than on nothing."],
+    [4, 2, ["a store that", "isn't memory"], "DataStore is unchanged: one interface, one in-memory implementation. That seam was not cut by accident."],
+    [5, 0, ["aggro that", "isn't a grudge"], "Target selection is 'whoever hit me first'. aggroRange and passive sit in the monster table, unread, waiting for the spec that turns them back on."],
+    [5, 1, ["corpses,", "and loot"], "Nothing stays behind when a monster dies. ITEMS and MONSTERS remain two populated tables with no path between them."],
+    [5, 2, ["predicting", "the hit"], "069 predicts the wind-up but no outcome, because a health bar that jumps back up is worse than one that moves late."],
+    [6, 1, ["a harness for", "whether it is fun"], "Look and feel got a screenshot rig. Balance has the oldest harness in the repo and two consecutive specs declining to move a number."]
   ];
 
   // [fromLane, fromCol, fromFrac, toLane, toCol, toFrac, note]
   var ARCS = [
     [2, 2, 0.25, 0, 2, 0.55, "the look pass needed ground with vertical faces"],
-    [2, 5, 0.12, 3, 5, 0.45, "the editor exists because the map became a document"],
+    [2, 5, 0.12, 3, 5, 0.38, "the editor exists because the map became a document"],
     [4, 5, 0.30, 5, 6, 0.05, "abilities were built inside the server's sim, because it existed"],
-    [4, 6, 0.12, 0, 6, 0.30, "one simulation is what let the renderer be repointed at it"]
+    [4, 6, 0.12, 0, 6, 0.20, "one simulation is what let the renderer be repointed at it"],
+    [2, 7, 0.12, 0, 7, 0.15, "the renderer draws the document now, not a generator"]
   ];
 
   /* ---------- geometry ---------- */
 
-  var GUTTER = 168, HIST_W = 700, LULL_W = 20;
+  var GUTTER = 168, HIST_W = 860, LULL_W = 20;
   var LANE_TOP = 58, LANE_H = 62;
-  var PHASE_W = 112, PHASE_GAP = 22;
+  var PHASE_W = 104, PHASE_GAP = 22;
 
   var liveCommits = COLS.reduce(function (s, c) { return s + (c.lull ? 0 : c.n); }, 0);
   var perCommit = HIST_W / liveCommits;
@@ -684,6 +755,7 @@
   var PHASE_X0 = DIVIDER + PHASE_GAP;
   var W = PHASE_X0 + PHASES.length * PHASE_W + 24;
   var H = LANE_TOP + LANES.length * LANE_H + 26;
+  var END_ANCHOR = HIST_END - 105;
 
   function cx(col, frac) { return COLS[col].x0 + frac * COLS[col].w; }
   function ly(lane) { return LANE_TOP + lane * LANE_H + LANE_H / 2; }
@@ -709,26 +781,19 @@
   var gArcs  = add(svg, el("g"));
   var gNodes = add(svg, el("g"));
 
-  // column bands
   COLS.forEach(function (c, i) {
     if (i % 2 === 0) {
       add(gBands, el("rect", { x: c.x0, y: LANE_TOP - 12, width: c.w, height: LANES.length * LANE_H + 12, class: "colband" }));
     }
     add(gAxis, el("text", { x: c.x0 + c.w / 2, y: 26, "text-anchor": "middle", class: "g-axis" }, c.label.toUpperCase()));
-    if (c.w > 26) {
-      add(gAxis, el("text", { x: c.x0 + c.w / 2, y: 38, "text-anchor": "middle", class: "g-count" }, c.n + " commits"));
-    }
+    add(gAxis, el("text", { x: c.x0 + c.w / 2, y: 38, "text-anchor": "middle", class: "g-count" },
+      c.w > 34 ? c.n + " commits" : String(c.n)));
   });
-  // lull callout
-  var lull = COLS[4];
-  add(gAxis, el("text", { x: lull.x0 + lull.w / 2, y: 38, "text-anchor": "middle", class: "g-count" }, "3"));
 
-  // roadmap phase headers
   PHASES.forEach(function (p, i) {
     add(gAxis, el("text", { x: px(i), y: 26, "text-anchor": "middle", class: "g-axis" }, p.toUpperCase()));
   });
 
-  // lane labels + spines
   LANES.forEach(function (lane, i) {
     var y = ly(i);
     add(gSpine, el("rect", { x: 12, y: y - 4.5, width: 9, height: 9, class: "l" + i, fill: "currentColor" }));
@@ -754,7 +819,6 @@
     }
   });
 
-  // dependency arcs
   ARCS.forEach(function (a) {
     var x1 = cx(a[1], a[2]), y1 = ly(a[0]);
     var x2 = cx(a[4], a[5]), y2 = ly(a[3]);
@@ -769,7 +833,6 @@
     add(gArcs, el("circle", { cx: x2, cy: y2, r: 1.8, fill: "var(--muted)", "fill-opacity": 0.55 }));
   });
 
-  // now divider
   add(gAxis, el("line", {
     x1: DIVIDER, x2: DIVIDER, y1: 14, y2: H - 14,
     stroke: "var(--ember)", "stroke-width": 1.1, "stroke-opacity": 0.85
@@ -777,7 +840,6 @@
   add(gAxis, el("text", { x: DIVIDER - 7, y: H - 6, "text-anchor": "end", class: "g-now" }, "SHIPPED"));
   add(gAxis, el("text", { x: DIVIDER + 7, y: H - 6, class: "g-now" }, "PROJECTED"));
 
-  // nodes
   var tip = document.getElementById("tip");
   var scroller = document.getElementById("chart-scroll");
   var tipCode = tip.querySelector(".tip-code");
@@ -785,7 +847,7 @@
   var tipBody = tip.querySelector(".tip-body");
 
   function bindTip(g, laneIdx, code, title, body) {
-    function show(evt) {
+    function show() {
       tip.className = "tip on l" + laneIdx;
       tipCode.textContent = code;
       tipTitle.textContent = title;
@@ -798,7 +860,6 @@
       if (top < 4) { top = r.bottom - shellRect.top + 12; }
       tip.style.left = left + "px";
       tip.style.top = top + "px";
-      if (evt) { /* positioned from the node, not the pointer */ }
     }
     function hide() { tip.className = "tip"; }
     g.addEventListener("mouseenter", show);
@@ -807,7 +868,7 @@
     g.addEventListener("blur", hide);
   }
 
-  NODES.forEach(function (n, idx) {
+  NODES.forEach(function (n) {
     var lane = n[0], nx = cx(n[1], n[2]), ny = ly(lane);
     var code = n[3], label = n[4], detail = n[5];
     var below = n[6] === "below";
@@ -823,7 +884,7 @@
       add(g, el("circle", { cx: nx, cy: ny, r: 5.2, fill: "currentColor", class: "dot" }));
     }
 
-    var anchor = nx > 792 ? "end" : "start";
+    var anchor = nx > END_ANCHOR ? "end" : "start";
     var tx = anchor === "end" ? nx - 9 : nx + 9;
     var ty = below ? ny + 15 : ny - 12;
     add(g, el("text", { x: tx, y: ty, "text-anchor": anchor, class: "g-label" }, label));
@@ -846,16 +907,13 @@
     bindTip(g, lane, PHASES[f[1]].toUpperCase(), lines.join(" "), detail);
   });
 
-  // gentle staggered reveal, left to right
   if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
     var all = Array.prototype.slice.call(gNodes.querySelectorAll(".node"));
     all.forEach(function (g) { g.style.opacity = "0"; });
-    all.sort(function (a, b) {
-      return a.getBoundingClientRect().left - b.getBoundingClientRect().left;
-    });
+    all.sort(function (a, b) { return a.getBoundingClientRect().left - b.getBoundingClientRect().left; });
     all.forEach(function (g, i) {
       g.style.transition = "opacity 320ms ease";
-      setTimeout(function () { g.style.opacity = "1"; }, 90 + i * 22);
+      setTimeout(function () { g.style.opacity = "1"; }, 90 + i * 20);
     });
   }
 })();
