@@ -173,6 +173,8 @@ interface PendingCast {
   readonly abilityId: string;
   readonly targetX: number;
   readonly targetY: number;
+  /** The entity asked for by id, or 0 for a point aim (spec 070). */
+  readonly targetEntityId: number;
   /** Commit on the tick this input seq is applied, not on the tick it arrived. */
   readonly afterInputSeq: number;
 }
@@ -331,6 +333,7 @@ export class GameServer implements AdminHost {
           castAbilityId: '',
           castTargetX: 0,
           castTargetY: 0,
+          castTargetEntityId: 0,
           cancelCast: false,
         });
         break;
@@ -371,6 +374,7 @@ export class GameServer implements AdminHost {
           abilityId: message.abilityId,
           targetX: message.targetX,
           targetY: message.targetY,
+          targetEntityId: message.targetEntityId,
           afterInputSeq: message.afterInputSeq,
         });
         break;
@@ -624,6 +628,7 @@ export class GameServer implements AdminHost {
           castAbilityId: cast?.abilityId ?? '',
           castTargetX: cast?.targetX ?? 0,
           castTargetY: cast?.targetY ?? 0,
+          castTargetEntityId: cast?.targetEntityId ?? 0,
           cancelCast: cancel,
         });
         connection.appliedSeq = next.seq;
@@ -644,6 +649,7 @@ export class GameServer implements AdminHost {
           castAbilityId: cast?.abilityId ?? '',
           castTargetX: cast?.targetX ?? 0,
           castTargetY: cast?.targetY ?? 0,
+          castTargetEntityId: cast?.targetEntityId ?? 0,
           cancelCast: cancel,
         });
       }
@@ -840,6 +846,7 @@ export class GameServer implements AdminHost {
             endTick: event.endTick,
             targetX: event.targetX,
             targetY: event.targetY,
+            targetEntityId: event.targetEntityId,
           });
           this.sendToWatchersOf(event.entityId, bytes);
           break;

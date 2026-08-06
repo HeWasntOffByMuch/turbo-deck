@@ -56,6 +56,13 @@ export interface AbilityDefinition {
   readonly pulseIntervalTicks?: number;
   /** Negative damage heals; kept explicit so the sign is never a surprise. */
   readonly healing?: number;
+  /**
+   * The weapon swing (spec 070). Its cooldown is stamped from the caster's own
+   * `attackSpeed` rather than from {@link cooldownTicks}, which is what makes
+   * that stat mean anything; the table's number is the fallback for a caster
+   * whose stats say nothing. Exactly one ability per unit should carry it.
+   */
+  readonly basicAttack?: boolean;
   readonly description: string;
 }
 
@@ -75,6 +82,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     range: 70,
     damage: 14,
     arcCosSq: 0.5,
+    basicAttack: true,
     description: 'A quick forward cut. Free, and the fallback when nothing else is up.',
   },
   {
@@ -169,6 +177,9 @@ export const ALL_ABILITIES: readonly AbilityDefinition[] = DEFINITIONS;
 export function abilityById(id: string): AbilityDefinition | null {
   return ABILITIES.get(id) ?? null;
 }
+
+/** The swing a right-click attack and a monster's melee both use (spec 070). */
+export const BASIC_ATTACK_ID = 'melee.slash';
 
 /** What a fresh character can use. Everything else is unlocked elsewhere later. */
 export const STARTING_ABILITIES: readonly string[] = [

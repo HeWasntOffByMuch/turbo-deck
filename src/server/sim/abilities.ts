@@ -25,7 +25,7 @@ import {
   totalCastTicks,
   type AbilityDefinition,
 } from '../data/abilities.js';
-import { applyArmor } from '../player/stats.js';
+import { applyArmor, attackIntervalTicks } from '../player/stats.js';
 import { isInCone } from './combat.js';
 import {
   ActivityValue,
@@ -51,6 +51,23 @@ export interface CastAttempt {
   readonly abilityId: string;
   readonly targetX: number;
   readonly targetY: number;
+  /** The entity being attacked, or 0 to aim at the point alone (spec 070). */
+  readonly targetEntityId?: number;
+}
+
+/**
+ * How long before this caster may use this ability again (spec 070).
+ *
+ * A basic attack asks the caster's stats -- that is what `attackSpeed` is for,
+ * and it is why two units with the same weapon swing at different rates.
+ * Everything else asks the table: a heavy blow is slow because it is slow.
+ */
+export function cooldownTicksFor(
+  ability: AbilityDefinition,
+  entity: Pick<ServerEntity, 'stats'>,
+): number {
+  if (!ability.basicAttack) return ability.cooldownTicks;
+  return attackIntervalTicks(entity.stats);
 }
 
 export type CastStartResult =
@@ -107,6 +124,9 @@ export function startCast(
     phase,
     targetX: aim.x,
     targetY: aim.y,
+    // A self cast is aimed at the caster whatever id came with the request, so
+    // it can never be turned into an attack on somebody else by naming them.
+    targetEntityId: ability.targeting === 'self' ? 0 : (attempt.targetEntityId ?? 0),
     nextPulseTick: 0,
   };
 
@@ -116,7 +136,7 @@ export function startCast(
       ...entity,
       cast,
       resource: entity.resource - ability.cost,
-      cooldowns: { ...entity.cooldowns, [ability.id]: tick + ability.cooldownTicks },
+      cooldowns: { ...entity.cooldowns, [ability.id]: tick + cooldownTicksFor(ability, entity) },
       activity: ActivityValue.Casting,
       activityUntilTick: endTick,
       // Aim is captured here in `cast.targetX/Y` and never re-read, so turning
@@ -138,6 +158,7 @@ export function startCast(
         endTick,
         targetX: aim.x,
         targetY: aim.y,
+        targetEntityId: cast.targetEntityId,
       },
     ],
   };
@@ -321,6 +342,7 @@ export function advanceCast(
       endTick,
       targetX: cast.targetX,
       targetY: cast.targetY,
+      targetEntityId: cast.targetEntityId,
     });
     return { updated, spawns, events, rng: currentRng };
   }
@@ -362,6 +384,7 @@ export function advanceCast(
           endTick: channelling.endTick,
           targetX: channelling.targetX,
           targetY: channelling.targetY,
+          targetEntityId: channelling.targetEntityId,
         });
       }
     } else {
@@ -433,7 +456,13 @@ function landAbility(
 ): LandResult {
   switch (ability.kind) {
     case 'melee':
-      return landCone(ability, caster, cast, candidates, rng);
+      // A named target makes the swing single-target (spec 070): a right-click
+      // attack hits what it was pointed at, and the neighbour standing inside
+      // the same arc is a neighbour. Without one it is the cone it always was,
+      // which is what the cursor-aimed hotbar still uses.
+      return cast.targetEntityId > 0
+        ? landOnTarget(ability, caster, cast, candidates, rng)
+        : landCone(ability, caster, cast, candidates, rng);
     case 'channel':
       return landCone(ability, caster, cast, candidates, rng);
     case 'ground':
@@ -443,6 +472,46 @@ function landAbility(
     case 'projectile':
       return launchProjectile(ability, caster, cast, tick, rng);
   }
+}
+
+/**
+ * One blow, on one named body (spec 070).
+ *
+ * Range is measured at the *release*, not at the commit, and that is the whole
+ * decision this function encodes: a target that walked out of reach during the
+ * wind-up is a miss. The alternative -- checking at the commit and landing
+ * regardless -- would make the wind-up unreadable from the other side, which is
+ * exactly the thing spec 062 replaced the parry window to avoid.
+ *
+ * The facing is not re-checked. The body already turned into the aim before the
+ * wind-up started (spec 065), and a target that side-stepped without leaving
+ * reach is inside the swing.
+ */
+function landOnTarget(
+  ability: AbilityDefinition,
+  caster: ServerEntity,
+  cast: CastState,
+  candidates: readonly ServerEntity[],
+  rng: Rng,
+): LandResult {
+  // Only from `candidates`, which the caller has already filtered by hostility:
+  // naming an id is a request, not a licence to hit an ally or a projectile.
+  const target = candidates.find((candidate) => candidate.id === cast.targetEntityId);
+  const dx = target ? target.position.x - caster.position.x : 0;
+  const dy = target ? target.position.y - caster.position.y : 0;
+  const reach = target ? ability.range + target.radius : 0;
+
+  if (!target || target.health <= 0 || Math.hypot(dx, dy) > reach) {
+    return {
+      updated: new Map(),
+      spawns: [],
+      events: [{ kind: 'attackMissed', attackerId: caster.id }],
+      rng,
+    };
+  }
+
+  const hit = applyDamage(ability, caster, target, rng);
+  return { updated: new Map([[target.id, hit.target]]), spawns: [], events: hit.events, rng: hit.rng };
 }
 
 function landCone(

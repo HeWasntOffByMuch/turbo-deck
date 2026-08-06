@@ -34,7 +34,7 @@
 
 import { abilityById, totalCastTicks, type AbilityDefinition } from '../data/abilities.js';
 import { turnToward } from '../sim/movement.js';
-import { startCast, type CastRejection } from '../sim/abilities.js';
+import { cooldownTicksFor, startCast, type CastRejection } from '../sim/abilities.js';
 import { regenerated } from '../sim/resource.js';
 import { CastPhase, EntityKindValue, type CastState, type ServerEntity } from '../sim/types.js';
 import type { EffectiveStats } from '../state/types.js';
@@ -105,18 +105,22 @@ export type CastDecision =
  * expects to get. Straight through the sim's `startCast`, so the answer is the
  * server's answer given the same entity.
  *
- * Two ticks, because there are two questions and they want different answers.
+ * Two ticks, because there are two questions -- `decideAt` judges *readiness*
+ * and `stampAt` sets the cast's own clock -- though since spec 070 the caller
+ * passes the same tick for both, and the reason is worth keeping.
  *
- * `decideAt` judges *readiness*, and leans forward by a round trip. The two ways
- * of being wrong do not cost the same: predicting a commit the server refuses
- * shows a bar that vanishes, while failing to predict one it takes is a whole
- * wind-up of walking the server threw away. So a cooldown that will be up by the
- * time the request lands counts as up.
+ * 069 leaned `decideAt` forward by a round trip, on the argument that failing to
+ * predict a commit costs a whole wind-up of discarded walking while predicting
+ * one that is refused only shows a bar that vanishes. That is true, and it was
+ * still the wrong lever: a refusal stamps a cooldown too, and a stamped cooldown
+ * that belongs to a press the server threw away is what blocks the next press
+ * the server would have taken. Measured against the latency harness, leaning is
+ * worse than not leaning at every delay it was tried at.
  *
- * `stampAt` sets the cast's own clock, and does not lean. The bar is drawn
- * against the estimated server tick, so a cast stamped a round trip into the
- * future would sit empty until the clock caught up -- and, worse, would release
- * its root a round trip early.
+ * The tick worth judging at is the one the server will commit on. `stampAt` has
+ * always been that tick, and does not lean for a separate reason: the bar is
+ * drawn against the estimated server tick, so a cast stamped into the future
+ * would sit empty until the clock caught up and release its root early.
  */
 export function mayCast(
   mirror: Mirror,
@@ -124,12 +128,14 @@ export function mayCast(
   aim: Point,
   decideAt: number,
   stampAt: number,
+  targetEntityId = 0,
 ): CastDecision {
   const ability = abilityById(abilityId);
   if (!ability) return { ok: false, reason: 'unknownAbility' };
+  const entity = asEntity(mirror);
   const result = startCast(
-    asEntity(mirror),
-    { abilityId, targetX: aim.x, targetY: aim.y },
+    entity,
+    { abilityId, targetX: aim.x, targetY: aim.y, targetEntityId },
     decideAt,
   );
   if (!result.ok) return { ok: false, reason: result.reason };
@@ -147,7 +153,10 @@ export function mayCast(
       endTick: cast.endTick + shift,
     },
     cost: ability.cost,
-    readyAtTick: stampAt + ability.cooldownTicks,
+    // The same rule the sim stamps with, asked of the same stats (spec 070) --
+    // a basic attack's cooldown is the caster's own cadence, so a client that
+    // read the table would grey the button out for the wrong length of time.
+    readyAtTick: stampAt + cooldownTicksFor(ability, entity),
   };
 }
 

@@ -112,6 +112,7 @@ function input(entityId: number, seq: number, overrides: Partial<ServerInput> = 
     castAbilityId: '',
     castTargetX: 0,
     castTargetY: 0,
+    castTargetEntityId: 0,
     cancelCast: false,
     ...overrides,
   };

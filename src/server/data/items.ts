@@ -32,14 +32,16 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     name: 'Keen Longsword',
     slot: 'mainHand',
     levelRequirement: 5,
-    modifiers: { attackDamage: 8, attackRange: 6, attackCooldownTicks: -1 },
+    // Keen: the speed is the point of it (spec 070), so it says so as a
+    // percentage rather than by shaving a tick off the base interval.
+    modifiers: { attackDamage: 8, attackRange: 6, attackSpeedPct: 0.15 },
   },
   {
     id: 'maul.iron',
     name: 'Iron Maul',
     slot: 'mainHand',
     levelRequirement: 5,
-    modifiers: { attackDamage: 14, attackCooldownTicks: 4, attackRange: 10, strength: 2 },
+    modifiers: { attackDamage: 14, attackSpeedPct: -0.2, attackRange: 10, strength: 2 },
   },
   {
     id: 'staff.emberwood',
