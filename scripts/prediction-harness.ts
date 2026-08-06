@@ -165,11 +165,15 @@ interface Combat {
   readonly sweepMissing: number;
   /** Presses the server refused outright. */
   readonly refused: number;
-  /** Presses the server committed to. */
+  /**
+   * Casts the server actually began, counted from its own state rather than
+   * from `CastState` messages -- it sends that twice for one cast, once at the
+   * commit and again when a turn finishes and the wind-up clock restarts (spec
+   * 065), so counting messages reports roughly twice as many blows as happened.
+   */
   readonly committed: number;
-  /** Ticks between a press and a bar appearing for it: worst, and mean. */
-  readonly worstPressToBar: number;
-  readonly meanPressToBar: number;
+  /** Presses that lit a bar on the spot. At least one per cast is the goal. */
+  readonly instantBars: number;
 }
 
 /**
@@ -281,35 +285,14 @@ async function run(label: string, delayTicks: number, ticks: number): Promise<Ru
    * same tick-level disagreement means opposite things either side of it.
    */
   let serverCastSeenThisBar = false;
-  const pressToBar: number[] = [];
+  /** Whether the server had a cast last tick, so a new one can be counted once. */
+  let serverWasCasting = false;
   const timeline: string[] = [];
-  /**
-   * Presses sent and not yet answered, oldest first -- the same queue the client
-   * keeps, for the same reason: the server answers each request exactly once and
-   * in order, so the n-th answer belongs to the n-th press. Pairing them is what
-   * separates "the press did nothing for 20 ticks" from "that press was refused
-   * and the bar 20 ticks later belonged to a different one" -- without it a
-   * spam-clicker on cooldown looks unresponsive when it is merely being told no.
-   */
-  const pressQueue: number[] = [];
-  /** The tick a bar last appeared where there had been none. */
-  let barAppearedAt: number | null = null;
+  /** Presses that put a bar on screen on the very tick they were made. */
+  let instantBars = 0;
   let hadBar = false;
-  let atTick = 0;
   client.onCastRejected(() => {
     combat.refused += 1;
-    pressQueue.shift();
-  });
-  client.onCastStarted((cast) => {
-    if (cast.entityId !== client.view().selfEntityId) return;
-    combat.committed += 1;
-    const pressedAt = pressQueue.shift();
-    if (pressedAt === undefined) return;
-    // The bar for this commit is the one that went up at or after the press;
-    // anything earlier belonged to a previous cast. If none has appeared yet,
-    // it appears now, on the message that just landed.
-    const shownAt = barAppearedAt !== null && barAppearedAt >= pressedAt ? barAppearedAt : atTick;
-    pressToBar.push(Math.max(0, shownAt - pressedAt));
   });
 
   const planner = new RoutePlanner();
@@ -327,9 +310,6 @@ async function run(label: string, delayTicks: number, ticks: number): Promise<Ru
   let sampled = 0;
 
   for (let tick = 1; tick <= ticks; tick += 1) {
-    // Set before anything is delivered: the cast callbacks fire inside `pump`
-    // and need to know what tick they are being heard on.
-    atTick = tick;
     // Frames deliver; ticks in between run blind, exactly as they do in the tab.
     if (tick % TICKS_PER_FRAME === 1 || TICKS_PER_FRAME === 1) {
       line.pump(tick);
@@ -353,13 +333,15 @@ async function run(label: string, delayTicks: number, ticks: number): Promise<Ru
       // Committing cancels where you were going -- what `view.ts` does.
       destination = null;
       planner.clear();
-      // Queued before the call, so "how long until something happened" is
-      // measured from the press rather than from the answer to it.
-      pressQueue.push(tick);
-      // A queue that never drains would mismatch every later answer; the client
-      // gives up on an unanswered request too, and this follows it.
-      if (pressQueue.length > 32) pressQueue.shift();
+      // Counted only when the press puts up a bar that was not already there.
+      // A press made *during* a swing can see the bar of the swing already
+      // running, and counting that would score a client that predicts nothing
+      // as though it predicted everything.
+      const showedBefore = view.casts.some((cast) => cast.entityId === view.selfEntityId);
       client.useAbility('melee.slash', view.self.x + 100, view.self.y);
+      const pressed = client.view();
+      const showsAfter = pressed.casts.some((cast) => cast.entityId === pressed.selfEntityId);
+      if (!showedBefore && showsAfter) instantBars += 1;
     }
 
     // Read after the clicks, exactly as the view does: a root asked for this
@@ -393,15 +375,14 @@ async function run(label: string, delayTicks: number, ticks: number): Promise<Ru
     const mine = serverState().entities.get(view.selfEntityId);
     const serverCasting = Boolean(mine?.cast);
     if (serverCasting) castingTicks += 1;
+    if (serverCasting && !serverWasCasting) combat.committed += 1;
+    serverWasCasting = serverCasting;
 
     // What the player is looking at, against what the server is doing. Read from
     // `fresh` -- the view *after* this tick's press -- because a bar that only
     // appears on the next tick is a bar that appeared late.
     const hasBar = fresh.casts.some((cast) => cast.entityId === fresh.selfEntityId);
-    if (!hadBar && hasBar) {
-      barAppearedAt = tick;
-      serverCastSeenThisBar = false;
-    }
+    if (!hadBar && hasBar) serverCastSeenThisBar = false;
     if (serverCasting) serverCastSeenThisBar = true;
     hadBar = hasBar;
 
@@ -469,14 +450,7 @@ async function run(label: string, delayTicks: number, ticks: number): Promise<Ru
     worstResidual,
     rooted: sampled === 0 ? 0 : rootedTicks / sampled,
     casting: sampled === 0 ? 0 : castingTicks / sampled,
-    combat: {
-      ...combat,
-      worstPressToBar: pressToBar.length === 0 ? 0 : Math.max(...pressToBar),
-      meanPressToBar:
-        pressToBar.length === 0
-          ? 0
-          : pressToBar.reduce((sum, value) => sum + value, 0) / pressToBar.length,
-    },
+    combat: { ...combat, instantBars },
   };
 }
 
@@ -514,7 +488,7 @@ async function main(): Promise<void> {
   // player sees and what the server is doing, as a percentage of the session.
   console.log('\nwhat the blow felt like -- % of ticks the client disagreed with the server\n');
   console.log(
-    'round trip       no bar   early bar   lingering bar   under-root   dead sweep   press->bar   committed/refused',
+    'round trip       no bar   early bar   lingering bar   under-root   dead sweep   instant/cast   refused',
   );
   for (const row of rows) {
     const pct = (value: number): string =>
@@ -523,8 +497,8 @@ async function main(): Promise<void> {
       `${row.label.padEnd(17)}${pct(row.combat.barMissing).padEnd(9)}` +
         `${pct(row.combat.barEarly).padEnd(12)}${pct(row.combat.barLingering).padEnd(16)}` +
         `${pct(row.combat.underRoot).padEnd(13)}${pct(row.combat.sweepMissing).padEnd(13)}` +
-        `${`${row.combat.meanPressToBar.toFixed(1)} (${row.combat.worstPressToBar})`.padEnd(13)}` +
-        `${row.combat.committed} / ${row.combat.refused}`,
+        `${`${row.combat.instantBars} / ${row.combat.committed}`.padEnd(15)}` +
+        `${row.combat.refused}`,
     );
   }
   console.log('');

@@ -126,6 +126,42 @@ message rather than one per tick.
 Same principle as 067's drift correction, applied to a different number:
 silence means the prediction was right.
 
+### A cast is stamped for when the server will *reach* it
+
+Two ticks go into a prediction and they are not the same tick.
+
+Readiness is judged a round trip ahead, as in 067, because the two ways of being
+wrong cost differently. But the cast's own clock is stamped for the tick the
+server will **dequeue the input the request was stamped to** -- which is neither
+"now" nor "now plus the latency". Requests are held until their input is applied
+and the server applies exactly one per tick, so the wait is the *depth of the
+input queue*: on a loopback, with no latency at all, it is still three, because a
+renderer sends a frame's worth of inputs at once and the server spends them one
+at a time.
+
+Stamping at "now" instead runs the whole blow early, and the end is the
+dangerous end: the bar completes and the root releases while the server is still
+swinging, which is movement it discards. The depth is measured rather than
+assumed -- `ackInputSeq` says which input the server had reached, everything
+since is queued -- and read as the minimum of recent samples, because `seq - ack`
+climbs between deltas and read continuously is a sawtooth rather than a depth.
+
+The same future tick has to be used for the *gate*, or the tail of one swing
+refuses to predict the next: a blow that will have ended by the time the request
+is dequeued does not make that request `alreadyCasting`.
+
+### ...and held a little past its end
+
+`estimatedTick` is deliberately a forward-biased ratchet -- `max`ed upward, never
+walked back, carrying half a round trip -- so it can lead the server's real tick
+by a tick or two. A cast expired exactly on `endTick` therefore un-roots slightly
+early, so it is held a couple of ticks past it. Late costs a tick of stillness
+nobody notices; early costs a correction.
+
+A cast still *turning* is not expired on a clock at all: its `endTick` is
+explicitly provisional, re-stamped when the body comes round (spec 065), so
+there is no number there to time out against.
+
 ### A refusal rolls the whole thing back
 
 Every request is answered exactly once, and 067's FIFO queue of outstanding
@@ -143,6 +179,40 @@ an answer does:
 stand me still", and a predicted cast answers that better: it knows for how
 long. The queue itself stays, because matching answers to requests is what it
 was for.
+
+## Result
+
+The same ten seconds, after. `early bar` is split out from `lingering bar`
+because they are opposite things: a bar drawn across the window between the press
+and the commit is the honest answer to "did that register", while one still
+standing after the server's cast ended is stillness the player gets nothing for.
+
+| round trip | no bar | early bar | lingering | under-root | dead sweep | bars/casts |
+|---|---|---|---|---|---|---|
+| loopback | 0% | 8% | 2% | 0% | 0% | 15 / 15 |
+| 50ms | 0% | 7% | 7% | 0% | 0% | 15 / 15 |
+| 100ms | 0% | 12% | 7% | 0% | 0% | 27 / 14 |
+| 200ms | 12% | 14% | 7% | 12% | 10% | 38 / 14 |
+
+Against the before-table: `no bar` 8% → 0% at loopback and 37% → 12% at 200ms;
+`dead sweep` 12% → 0% and 37% → 10%; press-to-bar, which was six ticks with no
+network at all, is now zero by construction -- the bar is put up by the press
+rather than by a message.
+
+`bars/casts` is the honest measure of over-prediction: how many presses put up a
+bar that was not already there, against how many casts the server actually ran.
+**At loopback and on a LAN it is exactly one bar per cast** -- no swing undrawn,
+and nothing drawn that was not a swing. Past that the client starts showing bars
+it later withdraws, because its cooldown table is a round trip stale; those are
+the `early bar` ticks growing, and they are the deliberate lean.
+
+What is *not* fixed is the 200ms column's `no bar` and `under-root`. Both sit at
+12%, roughly where `under-root` was before (10%), and they are the same ticks:
+presses the client declines to predict from a stale mirror, which the server then
+accepts. The movement guarantee is untouched -- **no hard corrections at any
+latency** -- so this is a blow drawn late, not a body moved. Shrinking it means
+giving the mirror fresher cooldowns, which is a change to what the server sends
+rather than to how the client guesses, and is left for its own spec.
 
 ## Invariants tested
 
@@ -164,10 +234,18 @@ was for.
   modelled resource never exceeds `maxResource` and never falls below zero.
 - Round-tripping `Cooldowns` through the codec preserves `resource` and the tick.
 - **The regression:** the scripted walk-and-swing over 0, 3, 6 and 12 ticks of
-  delay produces **no bar-missing and no over-root ticks at loopback**, and no
-  hard corrections at any latency -- 067's guarantee is not spent to buy this
-  one. Asserted in `src/server/client/combat-latency.test.ts` against the real
-  server and the real client.
+  delay produces, at loopback, **no tick where the server was casting and no bar
+  was drawn**, **no tick where the client walked while the server held it
+  rooted**, and **exactly one new bar per cast the server ran**; and no hard
+  corrections at any latency, so 067's guarantee is not spent to buy this one.
+  Asserted in `src/server/client/combat-latency.test.ts` against the real server
+  and the real client. Each of those fails on the code before this spec.
+- A cast is counted from the server's own state, never from `CastState`
+  messages: the server sends that twice for one blow -- once at the commit and
+  again when a turn finishes and the wind-up clock restarts -- so counting
+  messages double-counts every cast, and pairing them one-to-one with presses
+  mis-attributes every other one. That mistake reported a four-tick delay on
+  alternate swings that the client was in fact drawing instantly.
 
 ## Out of scope
 
