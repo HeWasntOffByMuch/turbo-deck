@@ -119,6 +119,14 @@ Equip, unequip and skill spends each trigger a full server-side stat
 recalculation and are answered with a fresh `Stats` message, or with `Error`
 (`RejectedAction`) and no state change.
 
+### `0x0b WatchSpawners`
+`bool on`
+
+Turns the `SpawnerStates` readout on or off (spec 073). The only client message
+that changes nothing about the world: it subscribes to a debug readout, so a
+client that never sends it is never sent one, and the overlay costs nothing
+while it is switched off. Needs no player and no entity.
+
 ## Server → client
 
 ### `0x40 Welcome`
@@ -323,6 +331,21 @@ frame readable only after another frame would break that quietly.
 client can retire the request from its in-flight set rather than waiting
 forever. `unknown` is permanent and the client stops asking; the other two are
 temporary and the chunk goes back on the wanted list.
+
+### `0x51 SpawnerStates`
+`u32 tick` · `varuint count` · per spawner: `str id` · `str monsterId` ·
+`varint x` · `varint z` · `u8 state` · `varuint ticks`
+
+What every spawn point the map places is doing (spec 073). `state` is `0`
+occupied and `1` counting down; `ticks` is what is left of the timer, and `0`
+while occupied. Coordinates are thousandths, like every other coordinate since
+spec 072 — they come out of the document and an `f32` cannot hold most of them.
+
+Sent on the broadcast cadence, and **only to a connection that sent
+`WatchSpawners(true)`**. It carries the whole map rather than the player's
+interest set: these are markers a level designer placed, so there are tens of
+them, and an overlay that faded out at the interest radius would be worst at
+exactly the question it exists to answer.
 
 ## `admin:*` — client → server
 

@@ -56,6 +56,7 @@ import {
   encodeServerMessage,
   type RequestChunkMessage,
   type ServerMessage,
+  type SpawnerStatus,
 } from './net/messages.js';
 import {
   ChatChannel,
@@ -65,6 +66,7 @@ import {
   ErrorCode,
   isAdminRequest,
   ServerMessageType,
+  SpawnerStateValue,
 } from './net/protocol.js';
 import { DEFAULT_SPAWN, PlayerManager } from './player/player-manager.js';
 import { MemoryDataStore } from './state/memory-store.js';
@@ -155,6 +157,8 @@ interface Connection {
   sentResourceTick: number;
   /** Token bucket on map chunk sends (spec 072). */
   readonly chunkBudget: ChunkBudget;
+  /** Whether this client asked for the spawner readout (spec 073). */
+  watchingSpawners: boolean;
   /**
    * Abilities asked for and not yet committed, each stamped with the input it
    * was asked after (spec 067). Held here rather than on the input frame
@@ -291,6 +295,7 @@ export class GameServer implements AdminHost {
         SERVER_TICK_RATE,
         this.state.tick,
       ),
+      watchingSpawners: false,
     };
     this.connections.add(connection);
     channel.onMessage((bytes) => {
@@ -412,6 +417,12 @@ export class GameServer implements AdminHost {
 
       case ClientMessageType.RequestChunk:
         this.handleChunkRequest(connection, message);
+        break;
+      // A subscription to a readout, not an action: it changes nothing about
+      // the world, so it needs no player and no entity (spec 073).
+      case ClientMessageType.WatchSpawners:
+        connection.watchingSpawners = message.on;
+        if (message.on) this.sendSpawnerStates(connection);
         break;
       case ClientMessageType.CancelCast:
         if (connection.playerId === null || connection.entityId < 0) return;
@@ -816,7 +827,36 @@ export class GameServer implements AdminHost {
     // Cooldowns ride the same reasoning as corrections: rare, owner-only, and
     // the point of them is that the button greys out the moment it is spent.
     for (const connection of this.connections) this.sendCooldowns(connection, this.state.tick);
-    if (this.state.tick % BROADCAST_EVERY_N_TICKS === 0) this.broadcastDeltas();
+    if (this.state.tick % BROADCAST_EVERY_N_TICKS === 0) {
+      this.broadcastDeltas();
+      for (const connection of this.connections) {
+        if (connection.watchingSpawners) this.sendSpawnerStates(connection);
+      }
+    }
+  }
+
+  /**
+   * What every spawner is doing, for a client drawing the overlay (spec 073).
+   *
+   * Built from the map's spawn points rather than from the state map, so a
+   * spawner that has never been filled still appears -- an empty marker with a
+   * timer at zero is exactly the thing you turned the overlay on to look at.
+   */
+  private sendSpawnerStates(connection: Connection): void {
+    const tick = this.state.tick;
+    const spawners: SpawnerStatus[] = this.spawnPoints.map((point) => {
+      const live = this.state.spawners.get(point.id);
+      const occupied = live?.entityId != null && this.state.entities.has(live.entityId);
+      return {
+        id: point.id,
+        monsterId: point.monsterId,
+        x: point.x,
+        y: point.y,
+        state: occupied ? SpawnerStateValue.Occupied : SpawnerStateValue.Waiting,
+        ticks: occupied ? 0 : Math.max(0, (live?.readyAtTick ?? 0) - tick),
+      };
+    });
+    this.send(connection, { type: ServerMessageType.SpawnerStates, tick, spawners });
   }
 
   /**

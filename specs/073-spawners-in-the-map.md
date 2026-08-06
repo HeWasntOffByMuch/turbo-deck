@@ -195,25 +195,49 @@ the toggle is on.
 
 ### The toggle
 
-The Play tab has no settings surface at all; it gets a small one, in the HUD,
-because the HUD is already the tab's DOM layer and a debug overlay does not
-belong in the three.js scene graph any more than a damage number does.
+The Play tab already has a settings surface — the cog in the corner, built by
+`src/render/iso3d/view-controls.ts` — so the toggle is one more checkbox in it,
+under Terrain beside "Unwalkable terrain", off by default and read the same way
+every other one is: a getter on `ViewControls`.
 
 ```ts
-// src/render/iso3d/world/settings.ts   — pure, headlessly tested
-export interface PlaySettings { readonly showSpawners: boolean; }
-export const DEFAULT_SETTINGS: PlaySettings;
-export function readSettings(raw: string | null): PlaySettings;   // tolerant of junk
-export function writeSettings(s: PlaySettings): string;
+interface ViewControls {
+  // ...
+  /** Whether the map's spawn points and their timers are drawn. */
+  showSpawners(): boolean;
+}
 ```
 
-`createHud()` renders a gear button and a panel of checkboxes over it, one per
-key, and calls back on change; `view.ts` persists to `localStorage` and turns the
-watch on and off. The overlay itself is HUD DOM, positioned by the same
-`WorldScene.screenAnchors` projection the health bars use, reading
-`view.spawners`: the monster id, and either a dot for "alive" or `4.3s` counting
-down. No `if` in the renderer changes an outcome — the toggle asks the server for
-a readout and draws it.
+`view.ts` **watches** that getter rather than binding to a change event, because
+the panel's "Reset" button moves the checkbox too, and a subscription that
+survived a reset would be a leak. When it changes, it calls
+`client.watchSpawners(on)`; when it is on, it draws.
+
+The wording is pure and tested headlessly, because "what does this say" is the
+half worth asserting:
+
+```ts
+// src/render/iso3d/world/spawner-overlay.ts
+interface SpawnerLabel {
+  readonly id: string;
+  readonly x: number;
+  readonly y: number;
+  readonly text: string;    // "grazer", or "grazer · 4.3s"
+  readonly waiting: boolean;
+}
+function spawnerLabels(spawners: readonly SpawnerStatus[], tickRate: number): readonly SpawnerLabel[];
+```
+
+Seconds round **up**: a countdown that reaches zero before the monster does is
+the one number this overlay must not show. A timer already at zero says `due`
+rather than `0.0s`, because a spawner held up by the population cap is waiting
+on something a countdown cannot describe.
+
+Drawing is HUD DOM, like the health bars and for the same reason — text through
+the low-resolution buffer and the dither pass comes out as chewed pixels.
+`WorldScene` gains a `projectPoint(x, y)` alongside `screenAnchors()`, since a
+spawner is a world position rather than a body. No `if` in the renderer changes
+an outcome: the toggle asks the server for a readout and draws what comes back.
 
 ### The map
 
@@ -250,8 +274,9 @@ the tab stops placing monsters, because the map does.
   and stops receiving them when it sends `false`.
 - **The shipped map is valid.** `maps/arena.json` parses, and every spawner
   marker in it names a monster in `MONSTERS`.
-- **Settings are tolerant.** `readSettings` on null, on `"{"`, and on
-  `{"showSpawners":"yes"}` all return the defaults rather than throwing.
+- **The countdown never lies.** `spawnerLabels` rounds up, so one tick left
+  reads `0.1s` and never `0.0s`; a timer already at zero reads `due`; an
+  occupied spawner carries no timer at all.
 
 ## Out of scope
 

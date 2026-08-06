@@ -387,6 +387,28 @@ export class WorldScene {
     return this.anchors;
   }
 
+  /**
+   * Project a world point to a canvas pixel, the way {@link collectAnchors}
+   * does for a body (spec 073).
+   *
+   * The overlay is DOM for the same reason the health bars are: text through
+   * the low-res buffer and the dither pass comes out as chewed pixels, and a
+   * countdown is a number you are meant to read.
+   */
+  projectPoint(x: number, y: number, lift = 30): { x: number; y: number; onScreen: boolean } {
+    const width = this.canvas.clientWidth || 1;
+    const height = this.canvas.clientHeight || 1;
+    this.projected.set(x, this.ground(x, y) + lift, y);
+    this.projected.project(this.camera);
+    const px = (this.projected.x * 0.5 + 0.5) * width;
+    const py = (-this.projected.y * 0.5 + 0.5) * height;
+    return {
+      x: px,
+      y: py,
+      onScreen: this.projected.z < 1 && px >= -80 && px <= width + 80 && py >= -80 && py <= height + 80,
+    };
+  }
+
   /** A blast landed. Purely something to look at; the damage already happened. */
   addEffect(x: number, y: number, radius: number, durationTicks: number): void {
     const mesh = new THREE.Mesh(

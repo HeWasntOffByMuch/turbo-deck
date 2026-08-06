@@ -46,6 +46,7 @@ import { appearanceOf } from './appearance.js';
 import { moveIntent, MOVE_KEYS, RoutePlanner } from './intent.js';
 import { autoAttack } from './target.js';
 import { WorldScene } from './scene.js';
+import { spawnerLabels } from './spawner-overlay.js';
 
 const TICK_MS = 1000 / SERVER_TICK_RATE;
 
@@ -319,6 +320,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   let lastDeltaTick = 0;
   /** Whether the opening facing has been taken from the first delta. */
   let seeded = false;
+  /** Whether the spawner readout has been asked for (spec 073). */
+  let watchingSpawners = false;
 
   /**
    * Face the way the server says we are facing, once.
@@ -465,6 +468,24 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       targetEntityId: targetId,
     });
     hud.update(view, scene.screenAnchors(), drawnTick, client.correctionCount, targetId);
+
+    // The setting is the subscription (spec 073): turning it on is what asks
+    // the server for the timers, and turning it off is what stops them coming.
+    // Watched rather than wired to a change event because "Reset" moves the
+    // checkbox too, and a subscription that survived a reset would be a leak.
+    const wantSpawners = scene.controls.showSpawners();
+    if (wantSpawners !== watchingSpawners) {
+      watchingSpawners = wantSpawners;
+      client.watchSpawners(wantSpawners);
+    }
+    hud.showSpawners(
+      wantSpawners
+        ? spawnerLabels(view.spawners, SERVER_TICK_RATE).map((label) => ({
+            ...label,
+            ...scene.projectPoint(label.x, label.y),
+          }))
+        : [],
+    );
 
     raf = requestAnimationFrame(frame);
   }

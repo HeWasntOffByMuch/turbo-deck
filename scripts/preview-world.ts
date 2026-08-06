@@ -196,6 +196,24 @@ async function main(): Promise<void> {
 
     await shoot(page, 'world-play');
 
+    // The spawner overlay (spec 073): open the cog, tick "Spawners", and
+    // photograph what the map placed. Every enemy on screen came from one of
+    // these markers, so a frame with bodies and no marks would mean the
+    // overlay is lying about where they came from.
+    await page.click('button[aria-label="View settings"]');
+    await page.waitForTimeout(120);
+    await page.click('label:has-text("Spawners") input[type=checkbox]');
+    await page.waitForTimeout(400);
+    const marks = await page.$$eval('div', (nodes) =>
+      nodes.filter((n) => / · |^(grazer|stalker|ravager)$/.test(n.textContent ?? '')).length,
+    );
+    console.log(`  spawner marks drawn: ${marks}`);
+    if (marks === 0) problems.push('the spawner overlay drew nothing');
+    await shoot(page, 'world-spawners');
+    await page.click('label:has-text("Spawners") input[type=checkbox]');
+    await page.click('button[aria-label="View settings"]');
+    await page.waitForTimeout(120);
+
     // Right-click a point on the ground: the move order the game had before the
     // server existed (spec 064). The marker should appear and the figure walk to it.
     await page.mouse.click(420, 560, { button: 'right' });

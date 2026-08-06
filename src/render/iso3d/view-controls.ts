@@ -65,6 +65,8 @@ export interface ViewControls {
   lightOffset(): Vec3;
   /** Whether the unwalkable-terrain footprint overlay is shown. */
   showUnwalkable(): boolean;
+  /** Whether the map's spawn points and their timers are drawn (spec 073). */
+  showSpawners(): boolean;
   /** The retro dither/quantization filter's current settings (spec 038). */
   retro(): RetroSettings;
   /**
@@ -381,6 +383,10 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   // not the play area's few dozen, so opening with it on would carpet the ground.
   const unwalkable = makeCheckbox('Unwalkable terrain', false,
     "Toggle the overlay marking tree and bush footprints the unit can't walk onto.");
+  // Off by default, and it costs nothing while it is: turning it on is what
+  // asks the server for the timers in the first place (spec 073).
+  const spawners = makeCheckbox('Spawners', false,
+    'Mark every spawn point the map places, with what it spawns and how long until it comes back.');
 
   const retroOn = makeCheckbox('Retro filter', RETRO_DEFAULTS.enabled,
     'Quantize the image to a few colours per channel and dither across the bands, ' +
@@ -415,7 +421,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     const widgets = [camAz, camEl, zoom, followLag, lightAz, lightEl, unwalkable,
       dayNight, timeOfDay, clockRunning, dayLength,
       torchOn, torchRange, torchBright, torchFlickerDepth, torchShadows,
-      magicOn, magicRange, magicBright,
+      magicOn, magicRange, magicBright, spawners,
       retroOn, levels, dither, weave, weaveScale, pixelSize, gradeChoice, gradeStrength];
     for (const w of widgets) w.reset();
   });
@@ -441,6 +447,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   panel.append(
     section('Terrain'),
     unwalkable.row,
+    spawners.row,
     section('Retro'),
     retroOn.row,
     levels.row,
@@ -495,6 +502,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     lightOffset: () =>
       orbitToOffset({ azimuth: lightAz.value() * DEG, elevation: lightEl.value() * DEG, distance: lightOrbit.distance }),
     showUnwalkable: () => unwalkable.checked(),
+    showSpawners: () => spawners.checked(),
     retro: () => ({
       enabled: retroOn.checked(),
       levels: levels.value(),

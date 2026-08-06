@@ -28,6 +28,14 @@ export const ClientMessageType = {
   CancelCast: 0x09,
   /** Ask for one chunk of the map document (spec 072). */
   RequestChunk: 0x0a,
+  /**
+   * Turn the spawner readout on or off (spec 073).
+   *
+   * A debug channel, and opt-in for exactly that reason: a client that is not
+   * showing the overlay is sent nothing, so the toggle costs what it draws and
+   * nothing when it is off.
+   */
+  WatchSpawners: 0x0b,
 } as const;
 
 export const ServerMessageType = {
@@ -64,6 +72,20 @@ export const ServerMessageType = {
   MapChunk: 0x4f,
   /** A `RequestChunk` the server will not serve, and why. */
   ChunkDenied: 0x50,
+  /**
+   * Every map spawner and what its timer is doing (spec 073). Sent on the
+   * broadcast cadence, and only to a connection that asked with
+   * `WatchSpawners`.
+   */
+  SpawnerStates: 0x51,
+} as const;
+
+/** What a spawner is doing, as a byte (spec 073). */
+export const SpawnerStateValue = {
+  /** Its monster is alive; there is no timer running. */
+  Occupied: 0,
+  /** Empty, and counting down to the next one. */
+  Waiting: 1,
 } as const;
 
 /** Why a chunk request was refused (spec 072). */
@@ -82,7 +104,6 @@ export const MapPropFlag = {
   Uniform: 1 << 1,
 } as const;
 
-/** `MapMarkerKind` as a byte, in a fixed order the wire depends on. */
 /**
  * The marker kinds, in wire order: a marker's byte is its index here, so new
  * kinds are appended and none is ever reordered or removed in place.
