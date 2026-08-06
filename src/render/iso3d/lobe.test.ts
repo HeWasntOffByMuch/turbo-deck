@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { LOBED, lobeBlobs, lobeOutline, lobedCrownRadius, slabLayout, trunkProfile } from './lobe.js';
+import {
+  LOBED,
+  LOBED_FLAT,
+  LOBED_SHAPES,
+  lobeBlobs,
+  lobeOutline,
+  lobedCrownRadius,
+  slabDrop,
+  slabLayout,
+  slabRise,
+  trunkProfile,
+} from './lobe.js';
 
 /**
  * The lobed tree's shape as arithmetic (spec 076).
@@ -89,7 +100,9 @@ describe('the blob outline', () => {
   });
 });
 
-describe('the canopy layout', () => {
+describe.each(LOBED_SHAPES.map((shape) => [shape.slabPitch === 0 ? 'domed' : 'flat', shape] as const))(
+  'the canopy layout (%s)',
+  (_name, SHAPE) => {
   const slabs = slabLayout(SHAPE);
 
   it('climbs the upper trunk, largest at the bottom of the cluster', () => {
@@ -105,11 +118,27 @@ describe('the canopy layout', () => {
     expect((slabs[slabs.length - 1] as (typeof slabs)[number]).y).toBeLessThan(SHAPE.height);
   });
 
-  it('domes each slab by a tenth to a fifth of its own width', () => {
+  it('rises and drops by the dome and the pitch together', () => {
     for (const slab of slabs) {
+      // The dome is the brief's 10-20% of slab width where there is one at all,
+      // and the flat variant's is exactly nothing.
       const ofWidth = slab.rise / (2 * slab.radius);
-      expect(ofWidth).toBeGreaterThanOrEqual(0.1);
-      expect(ofWidth).toBeLessThanOrEqual(0.2);
+      if (SHAPE.domeRise > 0) {
+        expect(ofWidth).toBeGreaterThanOrEqual(0.1);
+        expect(ofWidth).toBeLessThanOrEqual(0.2);
+      } else {
+        expect(ofWidth).toBe(0);
+      }
+      // Whatever the dome does, the pitch lifts the far rim and drops the near
+      // one -- which is what the canopy's vertical extent is actually made of.
+      const pitched = slab.radius * Math.sin(SHAPE.slabPitch);
+      expect(slabRise(slab, SHAPE)).toBeCloseTo(slab.rise + pitched, 9);
+      expect(slabDrop(slab, SHAPE)).toBeCloseTo(SHAPE.slabThickness + pitched, 9);
+      // Neither is ever zero: a slab always occupies some height, by one route
+      // or the other, and something that occupied none would be invisible edge on
+      // from every bearing at once.
+      expect(slabRise(slab, SHAPE)).toBeGreaterThan(0);
+      expect(slabDrop(slab, SHAPE)).toBeGreaterThan(0);
     }
   });
 
@@ -164,7 +193,9 @@ describe('the canopy layout', () => {
   });
 });
 
-describe('the trunk profile', () => {
+describe.each(LOBED_SHAPES.map((shape) => [shape.slabPitch === 0 ? 'domed' : 'flat', shape] as const))(
+  'the trunk profile (%s)',
+  (_name, SHAPE) => {
   const rings = trunkProfile(SHAPE);
 
   it('stands on the ground and ends at the tree height', () => {
@@ -207,5 +238,42 @@ describe('the trunk profile', () => {
   it('is pure in the shape it was given', () => {
     expect(trunkProfile(SHAPE)).toEqual(trunkProfile(SHAPE));
     expect(trunkProfile({ ...SHAPE, seed: SHAPE.seed + 1 })).not.toEqual(rings);
+  });
+});
+
+describe('the flat variant', () => {
+  it('is the domed tree in every proportion but its leaves', () => {
+    // "Just like it, but flat." Everything that is not about the leaves is the
+    // same number, so the two read as one plant built two ways rather than as
+    // two plants -- and so that retuning the tree does not mean retuning it
+    // twice and discovering later that only one of them was done.
+    const leafFields = new Set(['domeRise', 'slabThickness', 'lobeRings', 'slabPitch', 'seed']);
+    for (const key of Object.keys(LOBED) as (keyof typeof LOBED)[]) {
+      if (leafFields.has(key)) continue;
+      expect(LOBED_FLAT[key]).toEqual(LOBED[key]);
+    }
+  });
+
+  it('has no dome, no thickness and no interior rings', () => {
+    expect(LOBED_FLAT.domeRise).toBe(0);
+    // Exactly zero, not merely small: the geometry builder reads it as "one
+    // sheet", and a hair above zero would be two coincident ones instead.
+    expect(LOBED_FLAT.slabThickness).toBe(0);
+    // Interior rings subdivide a curve, and a plane has none to subdivide.
+    expect(LOBED_FLAT.lobeRings).toBe(1);
+    for (const slab of slabLayout(LOBED_FLAT)) expect(slab.rise).toBe(0);
+  });
+
+  it('tips its leaves 30 degrees, and the domed one not at all', () => {
+    expect((LOBED_FLAT.slabPitch * 180) / Math.PI).toBeCloseTo(30, 9);
+    expect(LOBED.slabPitch).toBe(0);
+  });
+
+  it('draws its own outlines rather than the domed tree\'s', () => {
+    // Same proportions, different seed: the two stand side by side in the same
+    // wood, and identical blobs at two thicknesses would read as a mistake.
+    const domed = slabLayout(LOBED).map((slab) => lobeOutline(slab.blobs, LOBED.lobeSegments));
+    const flat = slabLayout(LOBED_FLAT).map((slab) => lobeOutline(slab.blobs, LOBED_FLAT.lobeSegments));
+    expect(flat).not.toEqual(domed);
   });
 });

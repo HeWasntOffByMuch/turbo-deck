@@ -141,8 +141,27 @@ export interface LobedShape {
   readonly slabOffset: number;
   /** Dome rise as a fraction of the slab's *width*. The brief asks for 10-20%. */
   readonly domeRise: number;
-  /** Slab thickness. Near zero: this is a sheet with a rim, not a slab of cake. */
+  /**
+   * Slab thickness. Near zero: this is a sheet with a rim, not a slab of cake.
+   *
+   * Exactly zero means something stronger -- a *single* sheet, with no underside
+   * and no rim at all. Two surfaces placed zero apart are not a very thin slab,
+   * they are two coincident sheets Z-fighting over every pixel they cover.
+   */
   readonly slabThickness: number;
+  /**
+   * Radians the slab is tipped toward the camera's bearing.
+   *
+   * Applied in world space when the instance is placed, never baked into the
+   * geometry: the prop carries a random yaw of its own, and a tilt baked into
+   * the mesh would be spun to a different direction on every tree.
+   *
+   * Static, and knowingly so. The camera's azimuth is a slider, so this faces
+   * the viewer at the default bearing and not at all of them -- a slab that
+   * tracked the camera would be a billboard, which is the thing this species is
+   * built not to be.
+   */
+  readonly slabPitch: number;
   /** How far a slab may swing off the axis at full instance asymmetry. */
   readonly driftMax: number;
   /** ...and how far it may lean, radians. */
@@ -195,10 +214,61 @@ export const LOBED: LobedShape = {
   // The middle of the 10-20% the brief asks for, measured against slab width.
   domeRise: 0.15,
   slabThickness: 2.2,
+  slabPitch: 0,
   driftMax: 6,
   leanMax: 0.12,
   seed: 0x10bed7,
 };
+
+/** How far toward the camera the flat variant's leaves are tipped. */
+const FLAT_PITCH = (30 * Math.PI) / 180;
+
+/**
+ * The same tree with flat leaves: no dome, no thickness, tipped 30 degrees
+ * toward the camera.
+ *
+ * Every proportion is {@link LOBED}'s -- the same trunk, the same slab heights,
+ * the same spread and taper -- because the two are meant to read as one plant
+ * built two ways, not as two plants. Only the leaves differ, which is the whole
+ * point of it being a variant.
+ *
+ * `lobeRings` drops to 1 with the dome. Interior rings exist to subdivide a
+ * curve, and a plane has no curve to subdivide, so a flat slab is one fan of
+ * `lobeSegments` triangles and nothing else -- an eighth of the domed one's
+ * geometry for a species that is on a quarter of the world's trees.
+ *
+ * The seed is its own, so the two stand side by side with different outlines
+ * rather than as the same blob at two thicknesses.
+ */
+export const LOBED_FLAT: LobedShape = {
+  ...LOBED,
+  domeRise: 0,
+  slabThickness: 0,
+  lobeRings: 1,
+  slabPitch: FLAT_PITCH,
+  seed: 0xf1a7ee,
+};
+
+/** Every shape built the lobed way, for the callers that must cover all of them. */
+export const LOBED_SHAPES = [LOBED, LOBED_FLAT] as const;
+
+/**
+ * How far a slab's surface stands above the plane it is nominally placed at.
+ *
+ * Not the dome alone: a pitched slab lifts its upwind rim by `radius * sin`, and
+ * for the flat variant that is the *only* thing it has. An upper bound rather
+ * than the exact maximum -- the two terms peak at different points of the disc,
+ * so adding them over-counts slightly, and over-counting is the safe direction
+ * for everything that reads this.
+ */
+export function slabRise(slab: SlabSpec, shape: LobedShape): number {
+  return slab.rise + slab.radius * Math.sin(shape.slabPitch);
+}
+
+/** ...and how far it hangs below it: its thickness, plus the pitched rim again. */
+export function slabDrop(slab: SlabSpec, shape: LobedShape): number {
+  return shape.slabThickness + slab.radius * Math.sin(shape.slabPitch);
+}
 
 /** One canopy slab, placed and shaped. */
 export interface SlabSpec {
