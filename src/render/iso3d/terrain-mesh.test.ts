@@ -356,6 +356,7 @@ describe('a map that streams in draws the same land', () => {
     layers: doc.layers.map((l) => ({
       id: l.id,
       seed: l.seed,
+      origin: l.origin,
       bounds: l.bounds,
       baseY: l.baseY,
       waterLevel: l.waterLevel,
@@ -565,5 +566,53 @@ describe('rebuilding one chunk', () => {
     expect(() => handle.rebuild({ ...target, layerId: 'nope' })).not.toThrow();
     expect(meshes(handle.group)).toHaveLength(before);
     handle.dispose();
+  });
+});
+
+/**
+ * Dropping one chunk's geometry (spec 085).
+ *
+ * Removing a map part deletes chunks, and until `remove` existed the only way
+ * to stop drawing them was to rebuild every mesh in the world -- which is what
+ * made a part commit cost the whole map rather than the part.
+ */
+describe('removing a chunk', () => {
+  function fresh(): { handle: TerrainMeshHandle; loaded: ReturnType<typeof loadMap> } {
+    const loaded = loadMap(parseMap(serializeMap(exportMap({ world: testWorld(), props: [], seed: 7, arena: ARENA, options: OPT }))));
+    return { handle: buildTerrainMeshFromChunks(loaded.meshLayers, loaded.chunks), loaded };
+  }
+
+  it('frees its meshes and takes its surface out of the raycast set', () => {
+    const { handle, loaded } = fresh();
+    const before = meshes(handle.group).length;
+    const picksBefore = handle.pickTargets.length;
+    const first = loaded.chunks[0];
+    expect(first).toBeDefined();
+    if (!first) return;
+
+    expect(handle.remove(first.layerId, first.coord.cx, first.coord.cz)).toBe(true);
+    expect(meshes(handle.group).length).toBeLessThan(before);
+    expect(handle.pickTargets).toHaveLength(picksBefore - 1);
+    // The array is edited in place, because callers capture it once.
+    expect(handle.pickTargets).not.toContain(undefined);
+  });
+
+  it('says so when there is nothing drawn there', () => {
+    const { handle } = fresh();
+    expect(handle.remove('ground', 999, 999)).toBe(false);
+  });
+
+  it('can be put back by rebuilding it, with the same geometry', () => {
+    const { handle, loaded } = fresh();
+    const first = loaded.chunks[0];
+    if (!first) return;
+    const before = meshes(handle.group).length;
+
+    handle.remove(first.layerId, first.coord.cx, first.coord.cz);
+    handle.rebuild(first);
+    // Exactly back where it started: `rebuild` creates a slot when there is
+    // none, which is what lets an added chunk use the same path as an edited
+    // one.
+    expect(meshes(handle.group).length).toBe(before);
   });
 });

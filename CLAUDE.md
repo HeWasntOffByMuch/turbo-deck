@@ -108,12 +108,21 @@ maps/            the world, as a map document (spec 072). arena.json is what the
                  server loads at boot and streams to clients; regenerate it with
                  `npx tsx scripts/bake-map.ts`, or edit it in the Map editor tab
                  and save over it. Checked in so the world reviews as a diff.
+                 recipes/ are the feature lists parts are grown from (spec 083) --
+                 `npx tsx scripts/grow-map.ts --recipe maps/recipes/<n>.json
+                 --rect minCx,minCz,maxCx,maxCz --seed N` adds one to the map
+                 rather than regenerating it. A recipe is the only place natural
+                 language enters: an agent writes one, it is reviewed as JSON,
+                 and nothing at runtime reads a model.
 src/shared/      PRNG, spatial hash, world extent — dependency-free helpers
                  shared by the server, the geometry helpers and terrain
 src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  and where the vegetation stands. No three.js, no DOM. Also the
                  map document (spec 048): map.ts bakes a world to JSON,
-                 map-world.ts loads one back as array-backed terrain.
+                 map-world.ts loads one back as array-backed terrain, and part.ts
+                 grows an existing one by a chunk-snapped rectangle (spec 083),
+                 stitching the join by copying shared corners exactly and easing
+                 the recipe's field in over a short skirt.
 src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
                  collision and pathfinding helpers the server collides against
 src/render/      the client: a tab shell over the play view, the two tuning
@@ -128,11 +137,22 @@ src/render/critters/ playable animal characters as pure data (spec 055): one
                  `src/render/iso3d/critter.ts` already knows how to build it.
                  `npx tsx scripts/preview-critters.ts` renders the real rig to
                  .claude/screenshots/critters.png to check it reads at 64px.
-src/render/iso3d/editor/  the map editor tab (specs 049-052). Renders only from
-                 a loaded map document, never from the world generator. camera.ts,
-                 brush.ts, scatter.ts, markers.ts and history.ts are pure and
-                 tested headlessly; view.ts, cursor.ts and marker-view.ts are the
-                 three.js scene; panel.ts is the lil-gui surface.
+src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
+                 from a loaded map document, never from the world generator.
+                 camera.ts, brush.ts, scatter.ts, markers.ts, parts.ts and
+                 history.ts are pure and tested headlessly; view.ts, cursor.ts and
+                 marker-view.ts are the three.js scene; panel.ts is the lil-gui
+                 surface. parts.ts adds and removes map parts (spec 084) through
+                 the same bakePart the grow script uses, and history.ts records
+                 created and deleted chunks, the layer's bounds and the parts list
+                 so growth undoes like any other stroke, naming which chunks
+                 went away so a commit costs the part and its ring rather than
+                 the whole map (spec 085). The prop field invalidates by region
+                 for the same reason (spec 086): props.ts groups props into
+                 square batches for culling, and an edit rebuilds only the
+                 batches over the ground it touched.
+                 `npx tsx scripts/preview-parts.ts` drives the tools in a real
+                 browser, since the drag and the commit live in view.ts.
 src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim runs on
                  the same fixed 60Hz timestep as src/sim/ and broadcasts deltas
                  every third tick (20Hz) -- one rate for the game, another for the

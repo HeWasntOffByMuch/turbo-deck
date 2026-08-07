@@ -293,7 +293,8 @@ Why the server would not start an ability. Sent only to the client that asked:
 ### `0x4e MapInfo`
 `str mapId` · `u32 seed` · `varint cellSize` · `varuint chunkCells` · `rect arena` ·
 `varuint speciesCount` · `str × speciesCount` ·
-`varuint layerCount`, then per layer: `str id` · `u32 seed` · `rect bounds` ·
+`varuint layerCount`, then per layer: `str id` · `u32 seed` ·
+`varint originX` · `varint originZ` · `rect bounds` ·
 `varint baseY` · `bool hasWater` · `varint waterLevel` ·
 `varuint coordCount` · (`varint cx` · `varint cz`) × coordCount
 
@@ -303,7 +304,18 @@ never asks for one that does not exist. The species list is advisory — for
 building one instanced mesh per species up front — since each chunk carries its
 own table.
 
-A `rect` is four `varint`s: `minX` · `minZ` · `maxX` · `maxZ`.
+`origin` is the world point of the layer's chunk `(0, 0)`, and every `cx`/`cz`
+below is measured from it (spec 083). It is sent rather than inferred from
+`bounds.min` because a map that has grown west or north has chunks at negative
+coordinates and an origin that no longer sits at its corner — a client that
+assumed the two were the same would place every streamed chunk at an offset.
+
+`bounds` is what the layer *declares*, which on a partially streamed map is
+wider than the chunks in hand. The client's world edge comes from it, so the
+wall does not move as chunks arrive.
+
+A `rect` is four `varint`s: `minX` · `minZ` · `maxX` · `maxZ`. `cx` and `cz` are
+zigzag varints throughout, so a negative chunk coordinate still costs one byte.
 
 ### `0x4f MapChunk`
 `str mapId` · `varuint layer` · `varint cx` · `varint cz` · `varuint cols` · `varuint rows` ·

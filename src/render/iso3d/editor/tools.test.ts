@@ -36,7 +36,7 @@ describe('which settings a mode shows', () => {
   it('shows exactly one tool group per mode, and covers every mode', () => {
     for (const mode of EDITOR_MODES) {
       const show = visibleGroups(mode);
-      const groups = [show.terrain, show.scatter, show.fence, show.marker].filter(Boolean).length;
+      const groups = [show.terrain, show.scatter, show.fence, show.marker, show.part].filter(Boolean).length;
       // The eraser has no settings of its own beyond the shared radius; every
       // other mode has exactly one group, and none has two.
       expect(groups).toBe(mode === 'erase' ? 0 : 1);

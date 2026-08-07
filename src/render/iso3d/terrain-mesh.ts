@@ -76,6 +76,14 @@ export interface TerrainMeshHandle {
    * under it, not all 56.
    */
   rebuild(chunk: TerrainChunk): void;
+  /**
+   * Drop one chunk's geometry, for ground that has stopped existing (spec 085).
+   *
+   * The counterpart to `rebuild`: removing a map part deletes chunks, and
+   * without this the only way to stop drawing them was to rebuild every mesh in
+   * the world. Returns false if nothing was drawn there.
+   */
+  remove(layerId: string, cx: number, cz: number): boolean;
   dispose(): void;
 }
 
@@ -354,6 +362,40 @@ export function buildTerrainMeshFromChunks(
     }
   }
 
+  /** Free one chunk's meshes and forget it, the inverse of `draw` (spec 085). */
+  const erase = (layerId: string, cx: number, cz: number): boolean => {
+    const key = keyOf(layerId, cx, cz);
+    const slot = drawn.get(key);
+    if (!slot) return false;
+    for (const mesh of [slot.surface, slot.walls]) {
+      if (!mesh) continue;
+      group.remove(mesh);
+      mesh.geometry.dispose();
+    }
+    if (slot.water) {
+      group.remove(slot.water);
+      disposeWaterQuad(slot.water);
+    }
+    const stale = slot.surface ? pickTargets.indexOf(slot.surface) : -1;
+    if (stale >= 0) pickTargets.splice(stale, 1);
+    drawn.delete(key);
+
+    // The neighbours' shore fields were baked against ground that has just
+    // gone, exactly as `draw` re-bakes them against ground that has just
+    // arrived. Same eight distance transforms, opposite direction.
+    const layer = byId.get(layerId);
+    if (layer) {
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dz === 0) continue;
+          const neighbour = drawn.get(keyOf(layerId, cx + dx, cz + dz));
+          if (neighbour) drawWater(layer, neighbour);
+        }
+      }
+    }
+    return true;
+  };
+
   return {
     group,
     pickTargets,
@@ -361,6 +403,7 @@ export function buildTerrainMeshFromChunks(
       const layer = byId.get(chunk.layerId);
       if (layer) draw(layer, chunk);
     },
+    remove: erase,
     dispose(): void {
       // Water owns a material and a shore texture of its own, so it is freed
       // first and taken out of the group; the surface and wall materials are

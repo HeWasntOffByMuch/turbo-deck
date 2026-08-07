@@ -43,6 +43,19 @@ import {
  */
 const REGION_SIZE = 1100;
 
+/**
+ * The square the prop field batches by, in world units.
+ *
+ * Exported since spec 086: the editor rebuilds the regions an edit touched
+ * rather than the whole field, so it has to be able to name them.
+ */
+export const PROP_REGION_SIZE = REGION_SIZE;
+
+/** Which batching region a world point falls in. */
+export function propRegionKey(x: number, z: number): string {
+  return `${Math.floor(x / REGION_SIZE)},${Math.floor(z / REGION_SIZE)}`;
+}
+
 /** Seeds for the per-instance variation hashes, so the draws stay independent. */
 const HASH_SPECIES = 0x5eed01;
 const HASH_TIERS = 0x5eed02;
@@ -1256,7 +1269,20 @@ export interface PropFieldHandle {
    * are placed, saved and reloaded correctly and simply never appear. Surfaced
    * so the editor can say so rather than leaving you to guess.
    */
-  readonly undrawn: number;
+  undrawn: number;
+  /**
+   * Rebuild only the batching regions overlapping a world rectangle (spec 086).
+   *
+   * The field is already grouped into regions so the camera can cull them; this
+   * makes that grouping the unit of *invalidation* too. Adding a map part used
+   * to rebuild every batch in the world -- 402 of them and 143k vertices on the
+   * shipped map, ~330ms and rising with the map -- to redraw the handful of
+   * trees the part had just planted.
+   *
+   * `props` is the full, current list: the region is re-bucketed from it, so a
+   * caller never has to work out which props belong where.
+   */
+  rebuildWithin(props: readonly Prop[], rect: { minX: number; minZ: number; maxX: number; maxZ: number }): void;
   dispose(): void;
 }
 
@@ -1282,8 +1308,21 @@ export function buildPropField(
   normalAt?: NormalAt,
 ): PropFieldHandle {
   const group = new THREE.Group();
-  const geometries: THREE.BufferGeometry[] = [];
-  const materials: THREE.Material[] = [];
+
+  /**
+   * One batching region's meshes and the resources only it owns.
+   *
+   * Kept per region rather than in one flat list, so a region can be freed and
+   * rebuilt on its own (spec 086). The geometries and materials are built per
+   * batch, so each belongs to exactly one region and freeing it frees them.
+   */
+  interface Region {
+    readonly group: THREE.Group;
+    readonly geometries: THREE.BufferGeometry[];
+    readonly materials: THREE.Material[];
+  }
+  const regions = new Map<string, Region>();
+  let current: Region = { group, geometries: [], materials: [] };
 
   // Reused across every instance of every part.
   const matrix = new THREE.Matrix4();
@@ -1449,9 +1488,9 @@ export function buildPropField(
           reach: swayReach,
         });
       }
-      group.add(mesh);
-      geometries.push(part.geometry);
-      materials.push(material);
+      current.group.add(mesh);
+      current.geometries.push(part.geometry);
+      current.materials.push(material);
     });
   };
 
@@ -1459,16 +1498,22 @@ export function buildPropField(
   // species) and bushes separately, so each batch's bounds stay small enough for
   // the camera to cull. Two species is two more batches per region, not two more
   // per tree: the count is set by (region x species x part), never by the props.
-  const regions = new Map<string, Prop[]>();
-  for (const prop of props) {
-    const key = `${Math.floor(prop.x / REGION_SIZE)},${Math.floor(prop.y / REGION_SIZE)}`;
-    const bucket = regions.get(key);
-    if (bucket) bucket.push(prop);
-    else regions.set(key, [prop]);
-  }
-  // Sorted, so the scene graph is built in the same order for the same input.
-  for (const key of [...regions.keys()].sort()) {
-    const bucket = regions.get(key) ?? [];
+  /** Bucket props by the region they stand in. */
+  const bucketize = (of: readonly Prop[]): Map<string, Prop[]> => {
+    const out = new Map<string, Prop[]>();
+    for (const prop of of) {
+      const key = propRegionKey(prop.x, prop.y);
+      const bucket = out.get(key);
+      if (bucket) bucket.push(prop);
+      else out.set(key, [prop]);
+    }
+    return out;
+  };
+
+  /** Build one region's batches into a group of its own. */
+  const buildRegion = (key: string, bucket: readonly Prop[]): void => {
+    const region: Region = { group: new THREE.Group(), geometries: [], materials: [] };
+    current = region;
     // Hashed once per tree rather than once per part per tree.
     const variants = new Map<Prop, TreeVariant>();
     const trees = bucket.filter((p) => p.kind === 'tree');
@@ -1483,27 +1528,67 @@ export function buildPropField(
     for (const kind of FENCE_KINDS) {
       build(fenceParts(kind), bucket.filter((p) => p.kind === kind));
     }
-  }
+    regions.set(key, region);
+    group.add(region.group);
+  };
 
-  const undrawn = props.filter((prop) => !DRAWN_KINDS.has(prop.kind)).length;
-  if (undrawn > 0) {
-    const kinds = [...new Set(props.filter((p) => !DRAWN_KINDS.has(p.kind)).map((p) => p.kind))];
-    // Loud, because the alternative is silence: nothing on screen and no error.
-    console.warn(`buildPropField: no geometry for ${kinds.join(', ')} -- ${undrawn} props not drawn`);
-  }
+  /** Free one region's meshes, the sway patch included. */
+  const disposeRegion = (region: Region): void => {
+    // The sway patch hangs two shadow materials off each swaying batch that
+    // nothing else owns (spec 074), so they are freed with the batch.
+    for (const child of region.group.children) {
+      if (child instanceof THREE.InstancedMesh) disposeSway(child);
+    }
+    for (const geo of region.geometries) geo.dispose();
+    for (const mat of region.materials) mat.dispose();
+    region.group.clear();
+    group.remove(region.group);
+  };
 
-  return {
+  const countUndrawn = (of: readonly Prop[]): number => {
+    const missing = of.filter((prop) => !DRAWN_KINDS.has(prop.kind));
+    if (missing.length > 0) {
+      const kinds = [...new Set(missing.map((p) => p.kind))];
+      // Loud, because the alternative is silence: nothing on screen and no error.
+      console.warn(`buildPropField: no geometry for ${kinds.join(', ')} -- ${missing.length} props not drawn`);
+    }
+    return missing.length;
+  };
+
+  const buckets = bucketize(props);
+  // Sorted, so the scene graph is built in the same order for the same input.
+  for (const key of [...buckets.keys()].sort()) buildRegion(key, buckets.get(key) ?? []);
+
+  const handle: PropFieldHandle = {
     group,
-    undrawn,
-    dispose(): void {
-      // The sway patch hangs two shadow materials off each swaying batch that
-      // nothing else owns (spec 074), so they are freed with the batch.
-      for (const child of group.children) {
-        if (child instanceof THREE.InstancedMesh) disposeSway(child);
+    undrawn: countUndrawn(props),
+    rebuildWithin(next, rect): void {
+      const lo = propRegionKey(rect.minX, rect.minZ).split(',').map(Number) as [number, number];
+      const hi = propRegionKey(rect.maxX, rect.maxZ).split(',').map(Number) as [number, number];
+      const wanted = new Set<string>();
+      for (let rz = lo[1]; rz <= hi[1]; rz++) {
+        for (let rx = lo[0]; rx <= hi[0]; rx++) wanted.add(`${rx},${rz}`);
       }
-      for (const geo of geometries) geo.dispose();
-      for (const mat of materials) mat.dispose();
+
+      const fresh = bucketize(next);
+      for (const key of [...wanted].sort()) {
+        const region = regions.get(key);
+        if (region) {
+          disposeRegion(region);
+          regions.delete(key);
+        }
+        const bucket = fresh.get(key);
+        // A region emptied by an erase or a removed part is dropped rather than
+        // rebuilt as nothing, so the scene graph does not fill with empty groups.
+        if (bucket && bucket.length > 0) buildRegion(key, bucket);
+      }
+      handle.undrawn = countUndrawn(next);
+    },
+    dispose(): void {
+      for (const region of regions.values()) disposeRegion(region);
+      regions.clear();
       group.clear();
     },
   };
+  return handle;
 }

@@ -2,12 +2,13 @@ import { cornerJitter, type ChunkCoord, type TerrainChunk } from './chunk.js';
 import {
   decodeRuns,
   encodeRuns,
-  layerCellCounts,
   materialName,
   quantize,
   type MapChunk,
   type MapDocument,
   type MapMarker,
+  type MapPart,
+  type MapPoint,
   type MapRect,
 } from './map.js';
 import { createWorld, type TerrainLayer, type TerrainMaterial, type TerrainSample, type TerrainWorld } from './types.js';
@@ -35,18 +36,52 @@ import type { Prop, PropKind } from './vegetation.js';
  * re-exported entirely in Node.
  */
 
-/** A layer's grid geometry, derived once from its bounds and the cell size. */
-export interface LayerGrid {
-  readonly totalCols: number;
-  readonly totalRows: number;
+/** A half-open span of global cell indices, `[min, max)`. */
+export interface CellExtent {
+  readonly minCol: number;
+  readonly minRow: number;
+  readonly maxCol: number;
+  readonly maxRow: number;
+}
+
+/**
+ * A layer's grid geometry: where its chunks actually are, in chunk and cell
+ * indices measured from the layer's `origin`.
+ *
+ * Derived from the chunks held rather than from the bounds rectangle (spec
+ * 083), because a growable layer is a sparse set of chunks and its indices run
+ * negative once it has grown west or north. `totalCols`/`chunksX` are sizes, not
+ * limits -- a loop over the grid runs `minCol` to `maxCol`, and a loop from zero
+ * is only right for a map that has never grown.
+ */
+export interface LayerGrid extends CellExtent {
+  /** Chunk coordinates held, inclusive. A layer with no chunks has `maxCx < minCx`. */
+  readonly minCx: number;
+  readonly minCz: number;
+  readonly maxCx: number;
+  readonly maxCz: number;
   readonly chunksX: number;
   readonly chunksZ: number;
+  readonly totalCols: number;
+  readonly totalRows: number;
+  /**
+   * The cell extent the layer *declares* through its bounds, which is a
+   * superset of what is held while a client is still streaming.
+   *
+   * The two differ only on a partial map, and the difference is exactly the
+   * question `meshLayers`' `solidAt` has to answer: inside the declared extent
+   * with no chunk behind it is "unknown, don't grow a cliff", outside it is
+   * "the world ends here and the wall is real" (spec 078).
+   */
+  readonly declared: CellExtent;
 }
 
 /** A layer's scalars and grid, without the arrays behind them. */
 export interface LayerInfo {
   readonly id: string;
   readonly seed: number;
+  /** World point of chunk `(0, 0)`; every index below is measured from it. */
+  readonly origin: MapPoint;
   readonly bounds: MapRect;
   readonly baseY: number;
   readonly waterLevel: number | null;
@@ -71,19 +106,79 @@ interface StoredChunk {
   nav: Uint8Array | null;
 }
 
-interface StoredLayer extends LayerInfo {
+interface StoredLayer extends Omit<LayerInfo, 'grid' | 'bounds'> {
   readonly chunks: Map<string, StoredChunk>;
+  /** Recomputed whenever a chunk is added, since the extent can grow. */
+  grid: LayerGrid;
+  /** Widened by `declareBounds` when the layer grows (spec 083). */
+  bounds: MapRect;
 }
 
 const key = (cx: number, cz: number): string => `${cx},${cz}`;
 
-function grid(bounds: MapRect, cellSize: number, chunkCells: number): LayerGrid {
-  const { totalCols, totalRows } = layerCellCounts(bounds, cellSize);
+/** A layer's chunk coordinates in row-major order — the document's own order. */
+function sortedCoords(layer: StoredLayer): ChunkCoord[] {
+  return [...layer.chunks.values()]
+    .map((c) => ({ cx: c.cx, cz: c.cz }))
+    .sort((a, b) => a.cz - b.cz || a.cx - b.cx);
+}
+
+/**
+ * The grid a layer's chunks describe, plus the extent its bounds declare.
+ *
+ * Both halves come out of `origin`: a chunk's cells start at `cx * chunkCells`
+ * regardless of sign, and the declared extent is the bounds rectangle measured
+ * off the same anchor. `Math.round` rather than `Math.floor` on the declared
+ * edges because bounds and origin are both quantised to thousandths, so the
+ * division lands a hair either side of a whole number rather than on it.
+ */
+function grid(
+  chunks: Iterable<StoredChunk>,
+  origin: MapPoint,
+  bounds: MapRect,
+  cellSize: number,
+): LayerGrid {
+  let minCx = Infinity;
+  let minCz = Infinity;
+  let maxCx = -Infinity;
+  let maxCz = -Infinity;
+  let minCol = Infinity;
+  let minRow = Infinity;
+  let maxCol = -Infinity;
+  let maxRow = -Infinity;
+  for (const chunk of chunks) {
+    minCx = Math.min(minCx, chunk.cx);
+    minCz = Math.min(minCz, chunk.cz);
+    maxCx = Math.max(maxCx, chunk.cx);
+    maxCz = Math.max(maxCz, chunk.cz);
+    minCol = Math.min(minCol, chunk.startCol);
+    minRow = Math.min(minRow, chunk.startRow);
+    // The chunk's own `cols`/`rows`, because the last chunk of a row is short
+    // and a full extent would claim cells that are not there.
+    maxCol = Math.max(maxCol, chunk.startCol + chunk.cols);
+    maxRow = Math.max(maxRow, chunk.startRow + chunk.rows);
+  }
+  const empty = minCx === Infinity;
+  const cell = (world: number, from: number): number => Math.round((world - from) / cellSize);
   return {
-    totalCols,
-    totalRows,
-    chunksX: Math.ceil(totalCols / chunkCells),
-    chunksZ: Math.ceil(totalRows / chunkCells),
+    minCx: empty ? 0 : minCx,
+    minCz: empty ? 0 : minCz,
+    maxCx: empty ? -1 : maxCx,
+    maxCz: empty ? -1 : maxCz,
+    chunksX: empty ? 0 : maxCx - minCx + 1,
+    chunksZ: empty ? 0 : maxCz - minCz + 1,
+    minCol: empty ? 0 : minCol,
+    minRow: empty ? 0 : minRow,
+    maxCol: empty ? 0 : maxCol,
+    maxRow: empty ? 0 : maxRow,
+    totalCols: empty ? 0 : maxCol - minCol,
+    totalRows: empty ? 0 : maxRow - minRow,
+    declared: {
+      minCol: cell(bounds.minX, origin.x),
+      minRow: cell(bounds.minZ, origin.z),
+      maxCol: cell(bounds.maxX, origin.x),
+      maxRow: cell(bounds.maxZ, origin.z),
+    },
   };
 }
 
@@ -119,31 +214,41 @@ export class MapChunkStore {
   private readonly layers = new Map<string, StoredLayer>();
   readonly cellSize: number;
   readonly chunkCells: number;
+  /**
+   * Where each piece of the world came from (spec 083), held here rather than
+   * left on the document.
+   *
+   * `toDocument()` is the editor's save path, so anything the document carries
+   * has to live somewhere that call can reach. Left on `doc` it was dropped on
+   * every save, which quietly threw away the provenance of every grown part.
+   */
+  private partList: readonly MapPart[];
 
   constructor(private readonly doc: MapDocument) {
     this.cellSize = doc.grid.cellSize;
     this.chunkCells = doc.grid.chunkCells;
+    this.partList = doc.parts ?? [];
     for (const layer of doc.layers) {
-      const g = grid(layer.bounds, this.cellSize, this.chunkCells);
       const chunks = new Map<string, StoredChunk>();
-      for (const chunk of layer.chunks) chunks.set(key(chunk.cx, chunk.cz), this.storeChunk(chunk, layer.bounds));
+      for (const chunk of layer.chunks) chunks.set(key(chunk.cx, chunk.cz), this.storeChunk(chunk, layer.origin));
       this.layers.set(layer.id, {
         id: layer.id,
         seed: layer.seed,
+        origin: layer.origin,
         bounds: layer.bounds,
         baseY: layer.baseY,
         waterLevel: layer.waterLevel,
-        grid: g,
+        grid: grid(chunks.values(), layer.origin, layer.bounds, this.cellSize),
         chunks,
       });
     }
   }
 
-  private storeChunk(chunk: MapChunk, bounds: MapRect): StoredChunk {
+  private storeChunk(chunk: MapChunk, origin: MapPoint): StoredChunk {
     const startCol = chunk.cx * this.chunkCells;
     const startRow = chunk.cz * this.chunkCells;
-    const originX = bounds.minX + startCol * this.cellSize;
-    const originZ = bounds.minZ + startRow * this.cellSize;
+    const originX = origin.x + startCol * this.cellSize;
+    const originZ = origin.z + startRow * this.cellSize;
     const cells = chunk.cols * chunk.rows;
     return {
       cx: chunk.cx,
@@ -198,8 +303,86 @@ export class MapChunkStore {
   insertChunk(layerId: string, chunk: MapChunk): boolean {
     const layer = this.layers.get(layerId);
     if (!layer) return false;
-    layer.chunks.set(key(chunk.cx, chunk.cz), this.storeChunk(chunk, layer.bounds));
+    layer.chunks.set(key(chunk.cx, chunk.cz), this.storeChunk(chunk, layer.origin));
+    // The extent is a property of the chunks held, so it moves when they do --
+    // a chunk arriving at a negative coordinate widens the grid rather than
+    // being quietly unaddressable (spec 083).
+    layer.grid = grid(layer.chunks.values(), layer.origin, layer.bounds, this.cellSize);
     return true;
+  }
+
+  /**
+   * Drop a chunk, so the ground it held stops existing (spec 084).
+   *
+   * The inverse of `insertChunk` and just as blunt: a layer is a sparse map, so
+   * removing an entry is all that "this ground is gone" means. The grid extent
+   * is recomputed, which is what shrinks the world back when a part is removed
+   * from its edge.
+   */
+  removeChunk(layerId: string, cx: number, cz: number): boolean {
+    const layer = this.layers.get(layerId);
+    if (!layer?.chunks.delete(key(cx, cz))) return false;
+    layer.grid = grid(layer.chunks.values(), layer.origin, layer.bounds, this.cellSize);
+    return true;
+  }
+
+  /**
+   * One chunk in document form, or null if the layer does not hold it.
+   *
+   * Exists so a chunk can be taken out and put back byte-identically: undo for
+   * a delete cannot be a snapshot-and-restore, because there is nothing left to
+   * restore *into* (spec 084).
+   */
+  exportChunk(layerId: string, cx: number, cz: number): MapChunk | null {
+    const layer = this.layers.get(layerId);
+    const chunk = layer?.chunks.get(key(cx, cz));
+    if (!layer || !chunk) return null;
+    return this.chunkToDocument(chunk);
+  }
+
+  /**
+   * Set the declared extent exactly, including smaller than it was.
+   *
+   * `declareBounds` only ever widens, because growing the world cannot shrink
+   * it. Undo and removal both need the other direction, and both know the exact
+   * rectangle they want rather than a rectangle to union in.
+   */
+  setBounds(layerId: string, bounds: MapRect): boolean {
+    const layer = this.layers.get(layerId);
+    if (!layer) return false;
+    layer.bounds = bounds;
+    layer.grid = grid(layer.chunks.values(), layer.origin, bounds, this.cellSize);
+    return true;
+  }
+
+  /** The smallest rectangle covering every chunk the layer holds. Null if none. */
+  heldBounds(layerId: string): MapRect | null {
+    const layer = this.layers.get(layerId);
+    if (!layer || layer.chunks.size === 0) return null;
+    const span = this.cellSize;
+    return {
+      minX: layer.origin.x + layer.grid.minCol * span,
+      minZ: layer.origin.z + layer.grid.minRow * span,
+      maxX: layer.origin.x + layer.grid.maxCol * span,
+      maxZ: layer.origin.z + layer.grid.maxRow * span,
+    };
+  }
+
+  /** How many chunks the layer holds, or the whole store if no layer is named. */
+  chunkCount(layerId?: string): number {
+    if (layerId !== undefined) return this.layers.get(layerId)?.chunks.size ?? 0;
+    let total = 0;
+    for (const layer of this.layers.values()) total += layer.chunks.size;
+    return total;
+  }
+
+  /** Where each piece of the world came from (spec 083). */
+  get parts(): readonly MapPart[] {
+    return this.partList;
+  }
+
+  setParts(parts: readonly MapPart[]): void {
+    this.partList = [...parts];
   }
 
   get document(): MapDocument {
@@ -257,18 +440,61 @@ export class MapChunkStore {
    * Continuing the last two corners' slope instead reproduces the sampler to
    * within the same quantum as everywhere else.
    */
+  /**
+   * The height stored at a global corner, or null if no chunk holds it.
+   *
+   * The distinction `cornerHeight` deliberately hides -- it extrapolates rather
+   * than admitting it ran out of ground, which is right for the mesher's apron
+   * and wrong for stitching. A part being baked has to know exactly which of its
+   * corners already exist, because those are the ones it must copy rather than
+   * invent (spec 083).
+   */
+  heldCornerHeight(layerId: string, col: number, row: number): number | null {
+    const layer = this.layers.get(layerId);
+    if (!layer) return null;
+    const chunk = this.chunksAtCorner(layer, col, row)[0];
+    if (!chunk) return null;
+    return chunk.heights[(row - chunk.startRow) * (chunk.cols + 1) + (col - chunk.startCol)] ?? null;
+  }
+
+  /**
+   * Widen the extent this layer declares (spec 083).
+   *
+   * Bounds are declared rather than derived, so growing the world is an
+   * explicit act: `bakePart` computes the new rectangle and this is where it
+   * lands. Only ever widens -- a layer that has grown cannot un-grow, and a
+   * caller passing a smaller rectangle would otherwise put the sim's edge wall
+   * inside ground that exists.
+   */
+  declareBounds(layerId: string, bounds: MapRect): boolean {
+    const layer = this.layers.get(layerId);
+    if (!layer) return false;
+    layer.bounds = {
+      minX: Math.min(layer.bounds.minX, bounds.minX),
+      minZ: Math.min(layer.bounds.minZ, bounds.minZ),
+      maxX: Math.max(layer.bounds.maxX, bounds.maxX),
+      maxZ: Math.max(layer.bounds.maxZ, bounds.maxZ),
+    };
+    layer.grid = grid(layer.chunks.values(), layer.origin, layer.bounds, this.cellSize);
+    return true;
+  }
+
   cornerHeight(layerId: string, col: number, row: number): number {
     const layer = this.layers.get(layerId);
     if (!layer) return 0;
-    const { totalCols, totalRows } = layer.grid;
+    const { minCol, minRow, maxCol, maxRow } = layer.grid;
+    // Nothing to extrapolate from: a layer with no chunks yet -- a streaming
+    // client before its first arrival -- has a zero-width extent, and the
+    // two-corner recurrence below would bounce between the same pair forever.
+    if (maxCol <= minCol || maxRow <= minRow) return this.storedHeight(layer, col, row);
     // One axis at a time, so an apron corner outside on both is handled by the
     // same two lines. The apron only ever reaches one corner past the grid, so
     // this bottoms out immediately.
     const h = (c: number, r: number): number => this.cornerHeight(layerId, c, r);
-    if (col < 0) return 2 * h(0, row) - h(1, row);
-    if (col > totalCols) return 2 * h(totalCols, row) - h(totalCols - 1, row);
-    if (row < 0) return 2 * h(col, 0) - h(col, 1);
-    if (row > totalRows) return 2 * h(col, totalRows) - h(col, totalRows - 1);
+    if (col < minCol) return 2 * h(minCol, row) - h(minCol + 1, row);
+    if (col > maxCol) return 2 * h(maxCol, row) - h(maxCol - 1, row);
+    if (row < minRow) return 2 * h(col, minRow) - h(col, minRow + 1);
+    if (row > maxRow) return 2 * h(col, maxRow) - h(col, maxRow - 1);
     return this.storedHeight(layer, col, row);
   }
 
@@ -279,7 +505,9 @@ export class MapChunkStore {
   setCornerHeight(layerId: string, col: number, row: number, y: number): void {
     const layer = this.layers.get(layerId);
     if (!layer) return;
-    if (col < 0 || row < 0 || col > layer.grid.totalCols || row > layer.grid.totalRows) return;
+    // No range test: `chunksAtCorner` finds nothing for a corner no chunk holds,
+    // which is the same answer a grid bound gave and stays right once the grid
+    // is sparse and can run negative.
     for (const chunk of this.chunksAtCorner(layer, col, row)) {
       chunk.heights[(row - chunk.startRow) * (chunk.cols + 1) + (col - chunk.startCol)] = y;
     }
@@ -287,7 +515,8 @@ export class MapChunkStore {
 
   /** The chunk owning a global *cell*, and the cell's index within it. */
   private cellSlot(layer: StoredLayer, col: number, row: number): { chunk: StoredChunk; index: number } | null {
-    if (col < 0 || row < 0 || col >= layer.grid.totalCols || row >= layer.grid.totalRows) return null;
+    // `Math.floor` and not a truncating divide: the chunk holding cell -1 is
+    // chunk -1, and truncation would put it in chunk 0 alongside cell 0.
     const chunk = layer.chunks.get(key(Math.floor(col / this.chunkCells), Math.floor(row / this.chunkCells)));
     if (!chunk) return null;
     const i = col - chunk.startCol;
@@ -313,6 +542,19 @@ export class MapChunkStore {
   /** Is the layer's global cell solid? What the mesher asks to find real coastlines. */
   cellSolid(layerId: string, col: number, row: number): boolean {
     return this.cellAt(layerId, col, row)?.solid === true;
+  }
+
+  /**
+   * A chunk's size in cells, or null if the layer holds no such chunk.
+   *
+   * A chunk on the layer's far edge is *short* when the bounds are not a whole
+   * number of chunks across, so "how big is this one" is a real question rather
+   * than a constant -- and completing a short chunk is how a map grows past one
+   * (spec 083).
+   */
+  chunkShape(layerId: string, cx: number, cz: number): { cols: number; rows: number } | null {
+    const chunk = this.layers.get(layerId)?.chunks.get(key(cx, cz));
+    return chunk ? { cols: chunk.cols, rows: chunk.rows } : null;
   }
 
   /** A chunk's baked walkability, or null if it has not been baked (spec 053). */
@@ -377,13 +619,18 @@ export class MapChunkStore {
     chunk.markers.push(...snapshot.markers);
   }
 
-  /** The chunk that owns a world point, clamped to the layer's grid. */
+  /**
+   * The chunk that owns a world point, or undefined if no chunk covers it.
+   *
+   * Not clamped into the grid any more (spec 083): on a sparse, growable layer
+   * the nearest chunk to a point outside the map is not a meaningful answer --
+   * it can be on the far side of a hole -- so a point with no chunk under it is
+   * a miss, and the callers that already handled null keep working.
+   */
   private chunkAtPoint(layer: StoredLayer, x: number, z: number): StoredChunk | undefined {
-    const col = Math.floor((x - layer.bounds.minX) / this.cellSize);
-    const row = Math.floor((z - layer.bounds.minZ) / this.cellSize);
-    const cx = Math.min(layer.grid.chunksX - 1, Math.max(0, Math.floor(col / this.chunkCells)));
-    const cz = Math.min(layer.grid.chunksZ - 1, Math.max(0, Math.floor(row / this.chunkCells)));
-    return layer.chunks.get(key(cx, cz));
+    const col = Math.floor((x - layer.origin.x) / this.cellSize);
+    const row = Math.floor((z - layer.origin.z) / this.cellSize);
+    return layer.chunks.get(key(Math.floor(col / this.chunkCells), Math.floor(row / this.chunkCells)));
   }
 
   /**
@@ -462,11 +709,13 @@ export class MapChunkStore {
   /** Every chunk a circle can reach, so a radius spanning a seam finds both. */
   private chunksOverlapping(layer: StoredLayer, x: number, z: number, radius: number): StoredChunk[] {
     const span = this.cellSize * this.chunkCells;
-    const lo = (world: number, min: number): number => Math.floor((world - radius - min) / span);
-    const hi = (world: number, min: number): number => Math.floor((world + radius - min) / span);
+    const lo = (world: number, from: number): number => Math.floor((world - radius - from) / span);
+    const hi = (world: number, from: number): number => Math.floor((world + radius - from) / span);
     const out: StoredChunk[] = [];
-    for (let cz = Math.max(0, lo(z, layer.bounds.minZ)); cz <= Math.min(layer.grid.chunksZ - 1, hi(z, layer.bounds.minZ)); cz++) {
-      for (let cx = Math.max(0, lo(x, layer.bounds.minX)); cx <= Math.min(layer.grid.chunksX - 1, hi(x, layer.bounds.minX)); cx++) {
+    // Bounded by the radius rather than by the grid: a miss is skipped, so
+    // clamping to an extent would only have hidden chunks past a hole.
+    for (let cz = lo(z, layer.origin.z); cz <= hi(z, layer.origin.z); cz++) {
+      for (let cx = lo(x, layer.origin.x); cx <= hi(x, layer.origin.x); cx++) {
         const chunk = layer.chunks.get(key(cx, cz));
         if (chunk) out.push(chunk);
       }
@@ -574,13 +823,22 @@ export class MapChunkStore {
     const cornerZ = new Float32Array(corners);
     const normals = new Float32Array(corners * 3);
 
-    /** Global corner (col, row) as a jittered world position plus its height. */
+    /**
+     * Global corner (col, row) as a jittered world position plus its height.
+     *
+     * Measured from `origin`, not from `bounds.min`. The two were the same
+     * point until a map could grow, and using the wrong one is invisible right
+     * up until the day the world is extended *west* or *north*: the bounds
+     * move, the origin does not, and every chunk in the map is then meshed a
+     * few thousand units from where its ground actually is -- the terrain
+     * slides out from under its own trees (spec 084).
+     */
     const at = (col: number, row: number): [x: number, y: number, z: number] => {
       const [jx, jz] = cornerJitter(col, row, layer.seed, this.cellSize);
       return [
-        layer.bounds.minX + col * this.cellSize + jx,
+        layer.origin.x + col * this.cellSize + jx,
         this.cornerHeight(layerId, col, row),
-        layer.bounds.minZ + row * this.cellSize + jz,
+        layer.origin.z + row * this.cellSize + jz,
       ];
     };
 
@@ -644,18 +902,58 @@ export class MapChunkStore {
     };
   }
 
-  /** Every chunk of every layer, in a stable order. */
+  /**
+   * Every chunk of every layer, in a stable order.
+   *
+   * Iterates the chunks held and sorts them, rather than sweeping a rectangle
+   * of coordinates: a grown layer's rectangle is mostly holes, and a sweep over
+   * it costs the whole bounding box to find the same chunks (spec 083).
+   */
   buildChunks(): TerrainChunk[] {
     const out: TerrainChunk[] = [];
     for (const layer of this.layers.values()) {
-      for (let cz = 0; cz < layer.grid.chunksZ; cz++) {
-        for (let cx = 0; cx < layer.grid.chunksX; cx++) {
-          const chunk = this.buildChunk(layer.id, cx, cz);
-          if (chunk) out.push(chunk);
-        }
+      for (const coord of sortedCoords(layer)) {
+        const chunk = this.buildChunk(layer.id, coord.cx, coord.cz);
+        if (chunk) out.push(chunk);
       }
     }
     return out;
+  }
+
+  /**
+   * One stored chunk, back in document form.
+   *
+   * The single place the store's arrays become JSON, so `toDocument` and
+   * `exportChunk` cannot disagree about what a chunk is -- world-space props
+   * back to chunk-local, typed arrays back to numbers, everything quantised.
+   */
+  private chunkToDocument(chunk: StoredChunk): MapChunk {
+    return {
+      cx: chunk.cx,
+      cz: chunk.cz,
+      cols: chunk.cols,
+      rows: chunk.rows,
+      heights: Array.from(chunk.heights, quantize),
+      solid: encodeRuns(chunk.solid),
+      materials: encodeRuns(chunk.materials),
+      tones: encodeRuns(chunk.tones),
+      props: chunk.props.map((p) => ({
+        species: p.kind as string,
+        x: quantize(p.x - chunk.originX),
+        z: quantize(p.y - chunk.originZ),
+        rotation: quantize(p.rotation),
+        scale: quantize(p.scale),
+        tint: quantize(p.tint),
+        ...(p.alignToNormal ? { align: true } : {}),
+        ...(p.uniform ? { uniform: true } : {}),
+      })),
+      markers: chunk.markers.map((m) => ({
+        ...m,
+        x: quantize(m.x - chunk.originX),
+        z: quantize(m.z - chunk.originZ),
+      })),
+      nav: chunk.nav === null ? null : Array.from(chunk.nav),
+    };
   }
 
   /**
@@ -669,44 +967,27 @@ export class MapChunkStore {
       seed: this.doc.seed,
       grid: { cellSize: this.cellSize, chunkCells: this.chunkCells },
       arena: this.doc.arena,
+      // Held here rather than read off `this.doc`, so a part added since
+      // construction survives a save (spec 084).
+      ...(this.partList.length === 0 ? {} : { parts: this.partList }),
       layers: this.doc.layers.map((docLayer) => {
         const layer = this.layers.get(docLayer.id);
         if (!layer) return docLayer;
         return {
           id: layer.id,
           seed: layer.seed,
+          origin: layer.origin,
           bounds: layer.bounds,
           baseY: layer.baseY,
           waterLevel: layer.waterLevel,
-          chunks: docLayer.chunks.map((docChunk) => {
-            const chunk = layer.chunks.get(key(docChunk.cx, docChunk.cz));
-            if (!chunk) return docChunk;
-            return {
-              cx: chunk.cx,
-              cz: chunk.cz,
-              cols: chunk.cols,
-              rows: chunk.rows,
-              heights: Array.from(chunk.heights, quantize),
-              solid: encodeRuns(chunk.solid),
-              materials: encodeRuns(chunk.materials),
-              tones: encodeRuns(chunk.tones),
-              props: chunk.props.map((p) => ({
-                species: p.kind as string,
-                x: quantize(p.x - chunk.originX),
-                z: quantize(p.y - chunk.originZ),
-                rotation: quantize(p.rotation),
-                scale: quantize(p.scale),
-                tint: quantize(p.tint),
-                ...(p.alignToNormal ? { align: true } : {}),
-                ...(p.uniform ? { uniform: true } : {}),
-              })),
-              markers: chunk.markers.map((m) => ({
-                ...m,
-                x: quantize(m.x - chunk.originX),
-                z: quantize(m.z - chunk.originZ),
-              })),
-              nav: chunk.nav === null ? null : Array.from(chunk.nav),
-            };
+          // The chunks *held*, not the ones the document arrived with: a store
+          // can gain chunks after construction (spec 072's streaming, spec
+          // 080's growth), and emitting the constructor's list would silently
+          // drop every one of them on save.
+          chunks: sortedCoords(layer).map((coord) => {
+            const chunk = layer.chunks.get(key(coord.cx, coord.cz));
+            if (!chunk) throw new Error(`chunk ${coord.cx},${coord.cz} vanished mid-export`);
+            return this.chunkToDocument(chunk);
           }),
         };
       }),
@@ -792,15 +1073,21 @@ const MIN_TRIANGLE_AREA = 0.05;
 function bakedLayer(store: MapChunkStore, layerId: string): TerrainLayer | null {
   const info = store.layerInfo(layerId);
   if (!info) return null;
-  const { bounds, grid: g } = info;
+  const { bounds, origin } = info;
   const cell = store.cellSize;
+  // Read live rather than destructured: `info` is the store's own layer record
+  // and its grid is *replaced* on every insert, so a snapshot taken here would
+  // be the extent at load time. On a streaming client that is the empty extent,
+  // and every sample would then clamp to a cell that never gains corners
+  // (spec 083).
+  const g = (): LayerGrid => info.grid;
 
   const corner = (col: number, row: number): CornerPoint => {
     const [jx, jz] = cornerJitter(col, row, info.seed, cell);
     return [
-      bounds.minX + col * cell + jx,
+      origin.x + col * cell + jx,
       store.cornerHeight(layerId, col, row),
-      bounds.minZ + row * cell + jz,
+      origin.z + row * cell + jz,
     ];
   };
 
@@ -839,8 +1126,13 @@ function bakedLayer(store: MapChunkStore, layerId: string): TerrainLayer | null 
     baseY: info.baseY,
     waterLevel: info.waterLevel,
     sample(x: number, z: number): TerrainSample {
-      const i0 = Math.min(g.totalCols - 1, Math.max(0, Math.floor((x - bounds.minX) / cell)));
-      const j0 = Math.min(g.totalRows - 1, Math.max(0, Math.floor((z - bounds.minZ) / cell)));
+      // Clamped to the cells actually held, so a query off the map reads the
+      // outermost real cell's plane rather than an index with no corners behind
+      // it. On a grown layer that range starts wherever the westmost chunk does,
+      // which is why it is not simply zero (spec 083).
+      const grid = g();
+      const i0 = Math.min(grid.maxCol - 1, Math.max(grid.minCol, Math.floor((x - origin.x) / cell)));
+      const j0 = Math.min(grid.maxRow - 1, Math.max(grid.minRow, Math.floor((z - origin.z) / cell)));
 
       // The nominal cell is where the point falls on the *lattice*, but corners
       // are jittered off it, so a point near a cell edge can belong to the
@@ -857,7 +1149,7 @@ function bakedLayer(store: MapChunkStore, layerId: string): TerrainLayer | null 
             if (di === 0 && dj === 0) continue;
             const ci = i0 + di;
             const cj = j0 + dj;
-            if (ci < 0 || cj < 0 || ci >= g.totalCols || cj >= g.totalRows) continue;
+            if (ci < grid.minCol || cj < grid.minRow || ci >= grid.maxCol || cj >= grid.maxRow) continue;
             const hit = cellSurface(ci, cj, x, z);
             if (hit?.inside) {
               col = ci;
@@ -940,18 +1232,34 @@ export function loadMap(doc: MapDocument): LoadedMap {
     world: createWorld(layers),
     chunks: store.buildChunks(),
     meshLayers: doc.layers.map((l) => {
-      const g = store.layerInfo(l.id)?.grid;
-      const onGrid = (col: number, row: number): boolean =>
-        g !== undefined && col >= 0 && row >= 0 && col < g.totalCols && row < g.totalRows;
+      // The extent the layer *declares*, not the one its chunks describe: on a
+      // streaming client those differ by exactly the chunks still in flight,
+      // and that gap is what has to read as "unknown" rather than "no ground".
+      // The declared extent is known from `MapInfo` before any chunk lands, so
+      // this answers correctly from the first frame (specs 078, 083).
+      //
+      // Read through the store on every call rather than captured once: the
+      // grid is *replaced* when a chunk arrives or a part is grown (spec 084),
+      // so a snapshot taken here freezes the world's edge where it was at load
+      // time. Everything past it then answers `false` -- "no ground" -- and the
+      // mesher walls off ground that exists, which is a map with a hole in it.
+      const declared = (col: number, row: number): boolean => {
+        const d = store.layerInfo(l.id)?.grid.declared;
+        return d !== undefined && col >= d.minCol && row >= d.minRow && col < d.maxCol && row < d.maxRow;
+      };
       return {
         id: l.id,
-        bounds: l.bounds,
+        // Live too, and for the same reason: a grown layer covers more than the
+        // rectangle the document was loaded with.
+        get bounds(): MapRect {
+          return store.layerInfo(l.id)?.bounds ?? l.bounds;
+        },
         waterLevel: l.waterLevel,
-        // Off the grid is a definite no -- that is the world's edge, and the
-        // wall there is real. On the grid with no chunk behind it is `null`:
-        // unknown, and not something to grow a cliff along (spec 078).
+        // Outside the declared extent is a definite no -- that is the world's
+        // edge, and the wall there is real. Inside it with no chunk behind it is
+        // `null`: unknown, and not something to grow a cliff along (spec 078).
         solidAt: (col: number, row: number): boolean | null =>
-          onGrid(col, row) ? (store.cellAt(l.id, col, row)?.solid ?? null) : false,
+          declared(col, row) ? (store.cellAt(l.id, col, row)?.solid ?? null) : false,
         materialAt: (col: number, row: number): number | null => store.cellAt(l.id, col, row)?.materialIndex ?? null,
       };
     }),
