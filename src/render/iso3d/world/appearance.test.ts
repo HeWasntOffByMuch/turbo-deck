@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { appearanceOf, displayName } from './appearance.js';
+import { appearanceOf, displayName, PLAYER_CRITTER, PLAYER_FIGURE } from './appearance.js';
 import { ALL_MONSTERS } from '../../../server/data/monsters.js';
 import { ALL_ABILITIES } from '../../../server/data/abilities.js';
 import { EntityKind } from '../../../server/net/protocol.js';
+import { CRITTER_IDS, CRITTERS } from '../../critters/index.js';
 
 describe('appearanceOf', () => {
   it('gives every monster in the table a rig and its own radius', () => {
@@ -28,6 +29,21 @@ describe('appearanceOf', () => {
     const look = appearanceOf({ kind: EntityKind.Player, typeId: '' });
     expect(look.rig).toBe('player');
     expect(look.radius).toBeGreaterThan(0);
+  });
+
+  /**
+   * The wire carries no species for a player, so `PLAYER_CRITTER` is the only
+   * thing standing between the play view and a rig it cannot build. A rename in
+   * `critters/` has to fail here rather than at the first frame.
+   */
+  it('names a species the critter table actually has (spec 081)', () => {
+    expect(CRITTER_IDS).toContain(PLAYER_CRITTER);
+    expect(CRITTERS[PLAYER_CRITTER]).toBeDefined();
+    expect(PLAYER_CRITTER).toBe('cow');
+  });
+
+  it('starts the cow at the figure spec 081 asked for', () => {
+    expect(PLAYER_FIGURE).toEqual({ bodyScale: 0.7, strideScale: 1.3 });
   });
 
   /**

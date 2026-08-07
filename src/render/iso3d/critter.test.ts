@@ -4,7 +4,8 @@ import type { Vec2 } from '../../sim/types.js';
 import { CRITTERS, CRITTER_IDS } from '../critters/index.js';
 import { resolveParts } from '../critters/resolve.js';
 import type { CritterSpecies, HullRing } from '../critters/types.js';
-import { CritterRig, defaultCritterTuning } from './critter.js';
+import { CRITTER_BOUNDS, CritterRig, defaultCritterTuning, type CritterTuning } from './critter.js';
+import { PLAYER_CRITTER, PLAYER_FIGURE } from './world/appearance.js';
 import { flatMaterial } from './meshes.js';
 import { PALETTE } from './palette.js';
 
@@ -622,5 +623,23 @@ describe('critter rig: determinism', () => {
     // A respawn across the arena must not read as a 100,000 unit/s run.
     rig.update(1 / 60, { x: 9000, y: 9000 }, 0);
     expect(rig.locomotionState).toBe('idle');
+  });
+
+  /**
+   * The play view builds the player's cow from `PLAYER_FIGURE` (spec 081), which
+   * bypasses the panel that would otherwise have clamped it. Nothing catches a
+   * figure the sandbox could never have produced except this.
+   */
+  it('starts the player inside the tuning the panel allows', () => {
+    const tuning: CritterTuning = { ...defaultCritterTuning(), ...PLAYER_FIGURE };
+    for (const key of Object.keys(tuning) as (keyof CritterTuning)[]) {
+      const [lo, hi] = CRITTER_BOUNDS[key];
+      expect(tuning[key], key).toBeGreaterThanOrEqual(lo);
+      expect(tuning[key], key).toBeLessThanOrEqual(hi);
+    }
+    // And it is a real rig, not just a legal record of numbers.
+    const rig = new CritterRig(CRITTERS[PLAYER_CRITTER], { tuning });
+    rig.update(1 / 60, { x: 0, y: 0 }, 0);
+    expect(rig.species.id).toBe(PLAYER_CRITTER);
   });
 });

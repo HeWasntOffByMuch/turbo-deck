@@ -17,6 +17,8 @@
 import { monsterById } from '../../../server/data/monsters.js';
 import { abilityById } from '../../../server/data/abilities.js';
 import { EntityKind } from '../../../server/net/protocol.js';
+import type { FigureTuning } from '../../cloth/params.js';
+import type { CritterId } from '../../critters/index.js';
 
 export type RigKind = 'player' | 'monster' | 'projectile' | 'prop';
 
@@ -35,6 +37,30 @@ const DEFAULT_MONSTER_RADIUS = 20;
 const DEFAULT_PROJECTILE_RADIUS = 6;
 /** Matches `SERVER_PLAYER_RADIUS`; a player's look is not a content-table entry. */
 const PLAYER_RADIUS = 16;
+
+/**
+ * The species the play view draws a player as (spec 081).
+ *
+ * A renderer decision, and only that: the wire says `EntityKind.Player` and
+ * carries no species, so this is the whole of "what a player looks like". It
+ * lives here rather than in the scene because that keeps it a plain value the
+ * tests can check against the critter table without a WebGL context.
+ */
+export const PLAYER_CRITTER: CritterId = 'cow';
+
+/**
+ * Where the player's figure differs from the critter default (spec 081).
+ *
+ * Two knobs, both cosmetic. `bodyScale` shrinks the cow's ~86-unit standing
+ * height to something that sits under the health bar without covering what it
+ * is walking toward; `strideScale` gives back the ground coverage that shrinking
+ * took away, so the legs still land where the movement speed says they should
+ * instead of skating.
+ */
+export const PLAYER_FIGURE: Pick<FigureTuning, 'bodyScale' | 'strideScale'> = {
+  bodyScale: 0.7,
+  strideScale: 1.3,
+};
 
 export interface AppearanceInput {
   readonly kind: number;
