@@ -15,8 +15,15 @@ export interface Character {
 
 // Speeds are half the original HoN-tuned values (spec 028): the faster pace read
 // as too twitchy for the isometric view, so both walk and turn rates were halved.
+//
+// The first entry is not just "archetype zero": `src/server/player/stats.ts`
+// reads it as the base every character's effective move speed and turn rate is
+// derived from, so it is the player's movement, and the play view now draws it
+// as a cow (spec 081). A short animal on four-beat legs reads as sluggish at the
+// Warden's 180 deg/s -- it looks like it is deciding rather than turning -- so the
+// pivot is quick and the walk a touch faster to match the longer stride.
 export const CHARACTERS: readonly Character[] = [
-  { name: 'Warden', moveSpeed: 147.5, turnRate: 180 },
+  { name: 'Cow', moveSpeed: 155, turnRate: 540 },
   { name: 'Zephyr', moveSpeed: 137.5, turnRate: 450 },
 ];
 

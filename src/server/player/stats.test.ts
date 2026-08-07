@@ -3,7 +3,13 @@ import { MemoryDataStore } from '../state/memory-store.js';
 import { abilityById } from '../data/abilities.js';
 import { EMPTY_EQUIPMENT, type PersistedPlayer } from '../state/types.js';
 import { ZoneManager } from '../world/zone-manager.js';
-import { PlayerManager } from './player-manager.js';
+import { CHARACTERS, type Character } from '../../sim/characters.js';
+import {
+  MOVE_SPEED_HARD_MAX,
+  MOVE_SPEED_HARD_MIN,
+  TURN_RATE_PER_AGILITY,
+} from '../../sim/constants.js';
+import { PlayerManager, STARTER_EQUIPMENT } from './player-manager.js';
 import {
   attackIntervalTicks,
   clampHealthToStats,
@@ -83,6 +89,27 @@ describe('effective stats', () => {
       }),
     );
     expect(stats).toEqual(computeEffectiveStats(player()));
+  });
+
+  /**
+   * The player's movement is `CHARACTERS[0]` and nothing else (spec 081): the
+   * cow's 155/540 is what a character walks and pivots at before a single point
+   * of dexterity or an item is counted. Asserted against the table rather than
+   * against literals, so the day someone reorders the archetypes this fails here
+   * instead of silently handing every player a different body's speed.
+   */
+  it('derives a fresh character from the cow, plus dexterity (spec 081)', () => {
+    const cow = CHARACTERS[0] as Character;
+    expect(cow.moveSpeed).toBe(155);
+    expect(cow.turnRate).toBe(540);
+    expect(cow.moveSpeed).toBeGreaterThanOrEqual(MOVE_SPEED_HARD_MIN);
+    expect(cow.moveSpeed).toBeLessThanOrEqual(MOVE_SPEED_HARD_MAX);
+
+    // The starter kit is a worn sword and a leather jerkin, neither of which
+    // touches movement, so the base survives to the wire unmodified.
+    const fresh = computeEffectiveStats(player({ equipment: STARTER_EQUIPMENT }));
+    expect(fresh.moveSpeed).toBe(cow.moveSpeed);
+    expect(fresh.turnRate).toBe(cow.turnRate + TURN_RATE_PER_AGILITY * 5);
   });
 
   it('keeps armour under the sim-wide damage-reduction ceiling', () => {
