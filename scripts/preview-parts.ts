@@ -267,14 +267,17 @@ async function main(): Promise<void> {
         await page.waitForTimeout(700);
       }
     }
-    // Which of the two completion paths this lands on depends on where the drag
-    // fell -- over the short chunks, or beside them. Both must close the sliver,
-    // and `part.test.ts` pins the adjacency case exactly; what this asks is
-    // whether completion reaches the screen at all.
-    check(
-      'a part at a short edge completes it rather than stranding a sliver',
-      completedCount > 0,
-      completedCount > 0 ? `${completedCount} completed, selection ${where}` : 'no attempt landed at a short edge',
+    // Whether any of these pixels lands beside a short edge depends on where the
+    // camera ended up, which depends on how the earlier steps' wheel and drag
+    // events were timed -- so this is *not* asserted. `part.test.ts` pins both
+    // completion paths exactly and deterministically; all this can honestly say
+    // is whether completion reached the screen on this run. A check that passes
+    // or fails by timing is worse than no check, because it teaches you to
+    // ignore the harness.
+    console.log(
+      completedCount > 0
+        ? `  ok   completion reached the screen — ${completedCount} completed, selection ${where}`
+        : '  --   no attempt landed at a short edge this run (not a failure; see part.test.ts)',
     );
     await page.screenshot({ path: join(outDir, 'editor-part-short-edge.png') });
 

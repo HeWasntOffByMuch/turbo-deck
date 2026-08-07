@@ -4,6 +4,8 @@ import {
   bareTrunkHeight,
   buildPropField,
   crownRadius,
+  PROP_REGION_SIZE,
+  propRegionKey,
   speciesHeight,
   speciesTierCounts,
   treeVariant,
@@ -768,5 +770,98 @@ describe('the lobed canopy tree, as built', () => {
     expect((slab.mesh.material as THREE.Material).customProgramCacheKey?.()).toBe(
       (conifer.mesh.material as THREE.Material).customProgramCacheKey?.(),
     );
+  });
+});
+
+/**
+ * Rebuilding one batching region (spec 086).
+ *
+ * The field has always been grouped into regions so the camera can cull them.
+ * This makes that grouping the unit of *invalidation* too: an edit rebuilds the
+ * regions it touched instead of every batch in the world, which is what stops a
+ * map part costing the whole map to draw.
+ */
+describe('rebuildWithin', () => {
+  const R = PROP_REGION_SIZE;
+  /** A tree in region 0,0 and one two regions east, so they never share a batch. */
+  const near = tree(R * 0.5, R * 0.5);
+  const far = tree(R * 2.5, R * 0.5);
+
+  const meshCount = (o: THREE.Object3D): number => {
+    let n = 0;
+    o.traverse((child) => {
+      if ((child as THREE.InstancedMesh).isInstancedMesh) n++;
+    });
+    return n;
+  };
+
+  it('names the region a point falls in', () => {
+    expect(propRegionKey(R * 0.5, R * 0.5)).toBe('0,0');
+    expect(propRegionKey(R * 2.5, R * 0.5)).toBe('2,0');
+    // Negative coordinates floor away from zero, so a grown map's west side
+    // does not fold onto its east.
+    expect(propRegionKey(-R * 0.5, -R * 1.5)).toBe('-1,-2');
+  });
+
+  it('leaves the batches of regions it did not touch alone, object for object', () => {
+    const field = buildPropField([near, far], () => 0);
+    const before: THREE.Object3D[] = [];
+    field.group.traverse((c) => {
+      if ((c as THREE.InstancedMesh).isInstancedMesh) before.push(c);
+    });
+    expect(before.length).toBeGreaterThan(1);
+
+    // Rebuild only region 0,0.
+    field.rebuildWithin([near, far], { minX: R * 0.1, minZ: R * 0.1, maxX: R * 0.9, maxZ: R * 0.9 });
+
+    const after: THREE.Object3D[] = [];
+    field.group.traverse((c) => {
+      if ((c as THREE.InstancedMesh).isInstancedMesh) after.push(c);
+    });
+    // The far region's meshes are the *same objects*: untouched, not rebuilt.
+    expect(after.length).toBe(before.length);
+    const shared = after.filter((m) => before.includes(m));
+    expect(shared.length).toBeGreaterThan(0);
+    field.dispose();
+  });
+
+  it('draws a prop added to a region it rebuilds', () => {
+    const field = buildPropField([far], () => 0);
+    const before = meshCount(field.group);
+
+    field.rebuildWithin([far, near], { minX: 0, minZ: 0, maxX: R * 0.9, maxZ: R * 0.9 });
+    expect(meshCount(field.group)).toBeGreaterThan(before);
+    field.dispose();
+  });
+
+  it('drops a region emptied by an erase rather than leaving an empty group', () => {
+    const field = buildPropField([near, far], () => 0);
+    const before = meshCount(field.group);
+
+    field.rebuildWithin([far], { minX: 0, minZ: 0, maxX: R * 0.9, maxZ: R * 0.9 });
+    expect(meshCount(field.group)).toBeLessThan(before);
+    // The far tree is still drawn: only the named region was rebuilt.
+    expect(meshCount(field.group)).toBeGreaterThan(0);
+    field.dispose();
+  });
+
+  it('recounts what it could not draw', () => {
+    const unknown = { kind: 'fence-wattle' as Prop['kind'], x: R * 0.5, y: R * 0.5, scale: 1, rotation: 0, tint: 0 };
+    const field = buildPropField([near], () => 0);
+    expect(field.undrawn).toBe(0);
+
+    field.rebuildWithin([near, unknown], { minX: 0, minZ: 0, maxX: R * 0.9, maxZ: R * 0.9 });
+    expect(field.undrawn).toBe(1);
+    field.dispose();
+  });
+
+  it('rebuilds every region a wide rectangle covers', () => {
+    const field = buildPropField([near, far], () => 0);
+    const all = meshCount(field.group);
+    // A rectangle spanning both regions, with both props removed: nothing left.
+    field.rebuildWithin([], { minX: 0, minZ: 0, maxX: R * 2.9, maxZ: R * 0.9 });
+    expect(all).toBeGreaterThan(0);
+    expect(meshCount(field.group)).toBe(0);
+    field.dispose();
   });
 });

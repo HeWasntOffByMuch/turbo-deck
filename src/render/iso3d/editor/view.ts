@@ -4,6 +4,7 @@ import {
   loadMap,
   parseMap,
   type ChunkCoord,
+  type ChunkRect,
   type LoadedMap,
   type MapDocument,
   type PartRecipe,
@@ -229,6 +230,19 @@ class EditorScene {
     this.scene.remove(this.propField.group);
     this.propField.dispose();
     this.propField = this.buildProps();
+  }
+
+  /**
+   * Re-batch only the prop regions overlapping a world rectangle (spec 086).
+   *
+   * The counterpart to `rebuildChunk`: a part plants trees over the ground it
+   * made and nowhere else, so rebuilding every batch in the world to draw them
+   * costs the map rather than the part. `refreshProps` stays for the cases that
+   * really do move everything -- a load, or a height brush that re-settles every
+   * prop standing on the ground it moved.
+   */
+  refreshPropsWithin(rect: { minX: number; minZ: number; maxX: number; maxZ: number }): void {
+    this.propField.rebuildWithin(this.map.store.props(this.layerId), rect);
   }
 
   /**
@@ -494,6 +508,22 @@ export function mountEditor(container: HTMLElement): ViewHandle {
    * silently invalidates the four chunks around it as well as itself. The
    * mesher already re-bakes the eight neighbours' water; the walls are this.
    */
+  /** The smallest chunk rectangle covering a set of coordinates, or null if none. */
+  const boundingChunkRect = (coords: readonly ChunkCoord[]): ChunkRect | null => {
+    if (coords.length === 0) return null;
+    let minCx = Infinity;
+    let minCz = Infinity;
+    let maxCx = -Infinity;
+    let maxCz = -Infinity;
+    for (const c of coords) {
+      minCx = Math.min(minCx, c.cx);
+      minCz = Math.min(minCz, c.cz);
+      maxCx = Math.max(maxCx, c.cx);
+      maxCz = Math.max(maxCz, c.cz);
+    }
+    return { minCx, minCz, maxCx, maxCz };
+  };
+
   const withNeighbours = (touched: readonly ChunkCoord[]): ChunkCoord[] => {
     const seen = new Set<string>();
     const out: ChunkCoord[] = [];
@@ -536,7 +566,13 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     // pan to (spec 084).
     scene.camera3 = withMapBounds(scene.camera3, scene.map.store.layerInfo(layerId)?.bounds ?? null);
     rebakeNav(scene.map.store, layerId, touched, settings.walkSlope);
-    scene.refreshProps();
+    // Only the batches over the ground that changed, not every batch in the
+    // world: the field is grouped into regions for culling, and this makes that
+    // grouping the unit of invalidation too (spec 086).
+    const span = boundingChunkRect([...touched, ...gone]);
+    const world = span && chunkRectWorld(scene.map.store, layerId, span);
+    if (world) scene.refreshPropsWithin(world);
+    else scene.refreshProps();
     refreshMarkers();
     refreshNav();
     revision.touch();
@@ -918,7 +954,10 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       }
 
       if (strokeChangedProps && time - propsRebuiltAt > PROP_REBUILD_MS) {
-        scene.refreshProps();
+        const span = boundingChunkRect(strokeDirty);
+        const world = span && chunkRectWorld(scene.map.store, layerId, span);
+        if (world) scene.refreshPropsWithin(world);
+        else scene.refreshProps();
         propsRebuiltAt = time;
       }
       // The ring reads the surface it may just have moved, so redraw it after.
@@ -932,8 +971,16 @@ export function mountEditor(container: HTMLElement): ViewHandle {
         if (rect) commitPart(rect);
         partAnchor = null;
       } else history.endStroke();
-      // Trees stand on the ground, and either the ground or the trees just moved.
-      if (strokeMovedGround || strokeChangedProps) scene.refreshProps();
+      // Trees stand on the ground, and either the ground or the trees just
+      // moved -- but only over the chunks the stroke actually touched, which is
+      // what makes an erase or a height brush cost the stroke rather than the
+      // map (spec 086).
+      if (strokeMovedGround || strokeChangedProps) {
+        const span = boundingChunkRect(strokeDirty);
+        const world = span && chunkRectWorld(scene.map.store, layerId, span);
+        if (world) scene.refreshPropsWithin(world);
+        else scene.refreshProps();
+      }
       // Markers and the arena outline sit on the ground too.
       if (strokeMovedGround || strokeChangedMarkers) refreshMarkers();
       // Nav is re-baked for exactly the chunks the stroke dirtied, so the

@@ -147,7 +147,10 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  created and deleted chunks, the layer's bounds and the parts list
                  so growth undoes like any other stroke, naming which chunks
                  went away so a commit costs the part and its ring rather than
-                 the whole map (spec 085).
+                 the whole map (spec 085). The prop field invalidates by region
+                 for the same reason (spec 086): props.ts groups props into
+                 square batches for culling, and an edit rebuilds only the
+                 batches over the ground it touched.
                  `npx tsx scripts/preview-parts.ts` drives the tools in a real
                  browser, since the drag and the commit live in view.ts.
 src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim runs on
