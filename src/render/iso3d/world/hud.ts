@@ -25,7 +25,6 @@ import {
 import { ALL_ITEMS } from '../../../server/data/items.js';
 import { EntityKind } from '../../../server/net/protocol.js';
 import { SERVER_TICK_RATE } from '../../../server/config.js';
-import { attackIntervalTicks } from '../../../server/player/stats.js';
 import { castBar } from './cast.js';
 import { aimGesture } from './aim.js';
 import { appearanceOf, displayName } from './appearance.js';
@@ -407,7 +406,7 @@ export function createHud(): HudHandle {
       const total = Math.max(
         1,
         slot.ability?.basicAttack && view.stats
-          ? attackIntervalTicks(view.stats)
+          ? view.stats.attackDelayTicks
           : (slot.ability?.cooldownTicks ?? 1),
       );
       if (left > 0) {

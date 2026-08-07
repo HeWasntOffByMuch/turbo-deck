@@ -6,16 +6,22 @@ import { EMPTY_EQUIPMENT, type PersistedPlayer } from '../state/types.js';
 import { ZoneManager } from '../world/zone-manager.js';
 import { PlayerManager } from './player-manager.js';
 import {
-  attackIntervalTicks,
+  attackDelayTicksFrom,
+  BASE_ATTACK_DELAY_TICKS,
   clampHealthToStats,
   computeEffectiveStats,
-  MAX_ATTACK_SPEED,
-  MIN_ATTACK_SPEED,
+  MAX_ATTACK_DELAY_TICKS,
+  MIN_ATTACK_DELAY_TICKS,
   PROJECTILE_SPEED_SCALE,
   projectileLifetimeTicks,
   projectileSpeedFor,
   simTicksToServerTicks,
 } from './stats.js';
+
+/** The delay produced by a bare body carrying `pct` worth of "percent faster". */
+function computeDelayWith(pct: number): number {
+  return attackDelayTicksFrom(0, 1 + pct);
+}
 
 function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
   return {
@@ -99,118 +105,122 @@ describe('effective stats', () => {
     expect(tank.armor).toBeLessThanOrEqual(0.85);
     expect(tank.moveSpeed).toBeLessThanOrEqual(550);
     expect(tank.moveSpeed).toBeGreaterThanOrEqual(100);
-    expect(tank.attackCooldownTicks).toBeGreaterThanOrEqual(1);
+    expect(tank.attackDelayTicks).toBeGreaterThanOrEqual(1);
   });
 
-  it('turns dexterity into attack speed, not into a shorter base swing', () => {
+  it('waits 1.2 seconds between attacks with nothing on (spec 082)', () => {
+    const bare = computeEffectiveStats(player());
+    expect(bare.attackDelayTicks).toBe(BASE_ATTACK_DELAY_TICKS);
+    expect(bare.attackDelayTicks).toBe(Math.round(SERVER_TICK_RATE * 1.2));
+  });
+
+  it('does not let dexterity shorten the delay any more (spec 082)', () => {
     const slow = computeEffectiveStats(player());
     const quick = computeEffectiveStats(
-      player({ baseStats: { strength: 5, dexterity: 40, intelligence: 5, vitality: 5 } }),
+      player({ baseStats: { strength: 5, dexterity: 500, intelligence: 5, vitality: 5 } }),
     );
-    expect(quick.attackSpeed).toBeGreaterThan(slow.attackSpeed);
-    // The base cadence is untouched by it: one lever, in one place (spec 070).
-    expect(quick.attackCooldownTicks).toBe(slow.attackCooldownTicks);
-    expect(attackIntervalTicks(quick)).toBeLessThan(attackIntervalTicks(slow));
+    expect(quick.attackDelayTicks).toBe(slow.attackDelayTicks);
+    // Unhooked from cadence rather than deleted: it still does everything else
+    // it did, which is what makes this a change of meaning and not a nerf.
+    expect(quick.armor).toBeGreaterThan(slow.armor);
+    expect(quick.critChance).toBeGreaterThan(slow.critChance);
+    expect(quick.turnRate).toBeGreaterThan(slow.turnRate);
   });
 
   it('takes attack speed from equipment, in both directions', () => {
     const bare = computeEffectiveStats(player());
-    const keen = computeEffectiveStats(
-      player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'sword.keen' } }),
-    );
-    const maul = computeEffectiveStats(
-      player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'maul.iron' } }),
-    );
-    expect(keen.attackSpeed).toBeGreaterThan(bare.attackSpeed);
-    expect(maul.attackSpeed).toBeLessThan(bare.attackSpeed);
-    expect(attackIntervalTicks(keen)).toBeLessThan(attackIntervalTicks(maul));
+    const delayWith = (mainHand: string): number =>
+      computeEffectiveStats(player({ equipment: { ...EMPTY_EQUIPMENT, mainHand } })).attackDelayTicks;
+
+    // `attackSpeedPct` still means *percent faster*, so it shortens the wait.
+    expect(delayWith('sword.keen')).toBeLessThan(bare.attackDelayTicks);
+    expect(delayWith('stars.weighted')).toBeLessThan(bare.attackDelayTicks);
+    expect(delayWith('maul.iron')).toBeGreaterThan(bare.attackDelayTicks);
+    expect(delayWith('bow.hunting')).toBeGreaterThan(bare.attackDelayTicks);
   });
 
-  it('holds attack speed between its floor and its ceiling', () => {
-    const wild = computeEffectiveStats(
-      player({ baseStats: { strength: 5, dexterity: 100000, intelligence: 5, vitality: 5 } }),
+  it('takes a flat shortening from a skill', () => {
+    const bare = computeEffectiveStats(player());
+    // Precision is `attackCooldownTicks: -0.4` a level: flat ticks off the wait.
+    const trained = computeEffectiveStats(
+      player({ skills: [{ skillId: 'finesse.precision', level: 5 }] }),
     );
-    expect(wild.attackSpeed).toBeLessThanOrEqual(MAX_ATTACK_SPEED);
-    expect(wild.attackSpeed).toBeGreaterThanOrEqual(MIN_ATTACK_SPEED);
-    expect(attackIntervalTicks(wild)).toBeGreaterThanOrEqual(1);
+    expect(trained.attackDelayTicks).toBeLessThan(bare.attackDelayTicks);
   });
 
-  it('halves the swing interval when attack speed doubles', () => {
-    const base = computeEffectiveStats(player());
-    const once = { ...base, attackCooldownTicks: 40, attackSpeed: 1 };
-    const twice = { ...once, attackSpeed: 2 };
-    expect(attackIntervalTicks(once)).toBe(40);
-    expect(attackIntervalTicks(twice)).toBe(20);
-    // Never zero, whatever a modifier says: the interval divides by this.
-    expect(attackIntervalTicks({ ...once, attackSpeed: 0 })).toBeGreaterThanOrEqual(1);
-    expect(attackIntervalTicks({ ...once, attackSpeed: Number.NaN })).toBe(40);
+  it('holds the delay between its floor and its ceiling', () => {
+    // Poked in directly, because no item in the table is this broken -- and the
+    // point of a clamp is the item somebody adds tomorrow.
+    for (const pct of [-1, -5, 0, 50, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const delay = computeDelayWith(pct);
+      expect(Number.isFinite(delay), String(pct)).toBe(true);
+      expect(delay, String(pct)).toBeGreaterThanOrEqual(MIN_ATTACK_DELAY_TICKS);
+      expect(delay, String(pct)).toBeLessThanOrEqual(MAX_ATTACK_DELAY_TICKS);
+    }
+    // Slowed to a standstill is the ceiling, not a negative wait.
+    expect(computeDelayWith(-1)).toBe(MAX_ATTACK_DELAY_TICKS);
+    // And an absurd amount of haste is the floor, not a swing every tick.
+    expect(computeDelayWith(Number.POSITIVE_INFINITY)).toBe(MIN_ATTACK_DELAY_TICKS);
+    // A flat modifier cannot drive it under the floor either.
+    expect(attackDelayTicksFrom(-100000, 1)).toBe(MIN_ATTACK_DELAY_TICKS);
+    expect(attackDelayTicksFrom(Number.NaN, 1)).toBe(BASE_ATTACK_DELAY_TICKS);
   });
 
-  it('flies a shot at a fraction of its table speed, scaled by the weapon', () => {
-    const base = computeEffectiveStats(player());
-    const even = { ...base, attackSpeed: 1 };
-    expect(projectileSpeedFor(1000, even)).toBeCloseTo(1000 * PROJECTILE_SPEED_SCALE, 9);
-    // The stat is the arm behind the shot: twice the weapon speed, twice the
-    // speed out of it.
-    expect(projectileSpeedFor(1000, { ...even, attackSpeed: 2 })).toBeCloseTo(
-      2 * projectileSpeedFor(1000, even),
-      9,
-    );
-    expect(projectileSpeedFor(1000, { ...even, attackSpeed: 0.5 })).toBeLessThan(
-      projectileSpeedFor(1000, even),
-    );
+  it('halves the delay when the haste doubles the rate', () => {
+    expect(computeDelayWith(0)).toBe(BASE_ATTACK_DELAY_TICKS);
+    expect(computeDelayWith(1)).toBe(Math.round(BASE_ATTACK_DELAY_TICKS / 2));
+    expect(computeDelayWith(-0.5)).toBe(Math.round(BASE_ATTACK_DELAY_TICKS / 0.5));
   });
 
-  it('takes a shot speed from equipment, in both directions', () => {
+  it('flies a shot at a fraction of its table speed (spec 081)', () => {
+    expect(projectileSpeedFor(1000)).toBeCloseTo(1000 * PROJECTILE_SPEED_SCALE, 9);
+    expect(projectileSpeedFor(500)).toBeCloseTo(projectileSpeedFor(1000) / 2, 9);
+  });
+
+  it('does not ask the shooter how fast its shot flies (spec 082)', () => {
+    // Two weapons whose *delays* differ as much as the table allows. What comes
+    // off them is the same shot: how soon the next one may be thrown is the
+    // weapon's business, how fast this one travels is the row's.
     const bow = computeEffectiveStats(
       player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'bow.hunting' } }),
     );
     const stars = computeEffectiveStats(
       player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'stars.weighted' } }),
     );
-    // The Weighted Stars say `attackSpeedPct: 0.2` and the Hunting Bow -0.1, so
-    // the same shot leaves the two weapons at different speeds.
-    expect(projectileSpeedFor(900, stars)).toBeGreaterThan(projectileSpeedFor(900, bow));
-  });
+    expect(stars.attackDelayTicks).toBeLessThan(bow.attackDelayTicks);
 
-  it('never lets a pathological stat freeze a shot or teleport it', () => {
-    const base = computeEffectiveStats(player());
     const spec = { speed: 900, lifetimeTicks: 120 };
-    for (const attackSpeed of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
-      const stats = { ...base, attackSpeed };
-      const speed = projectileSpeedFor(spec.speed, stats);
-      expect(Number.isFinite(speed)).toBe(true);
-      expect(speed).toBeGreaterThan(0);
-      const ticks = projectileLifetimeTicks(spec, stats);
-      expect(Number.isFinite(ticks)).toBe(true);
-      expect(ticks).toBeGreaterThanOrEqual(1);
-    }
-    // A row that says nothing sensible still expires rather than flying forever.
-    expect(projectileLifetimeTicks({ speed: 0, lifetimeTicks: 120 }, base)).toBeGreaterThanOrEqual(1);
+    expect(projectileSpeedFor(spec.speed)).toBe(projectileSpeedFor(spec.speed));
+    expect(projectileLifetimeTicks(spec)).toBe(projectileLifetimeTicks(spec));
+    // The signatures are the assertion: neither function can be handed a body.
+    expect(projectileSpeedFor.length).toBe(1);
+    expect(projectileLifetimeTicks.length).toBe(1);
   });
 
-  it("keeps a shot's reach where the table put it, whoever looses it", () => {
-    const base = computeEffectiveStats(player());
+  it('never lets a nonsensical row freeze a shot or teleport it', () => {
+    for (const speed of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const ticks = projectileLifetimeTicks({ speed, lifetimeTicks: 120 });
+      expect(Number.isFinite(ticks), String(speed)).toBe(true);
+      expect(ticks, String(speed)).toBeGreaterThanOrEqual(1);
+    }
+    expect(projectileSpeedFor(Number.NaN)).toBe(0);
+    expect(projectileLifetimeTicks({ speed: 900, lifetimeTicks: Number.NaN })).toBeGreaterThanOrEqual(1);
+  });
+
+  it("keeps a shot's reach where the table put it", () => {
     for (const ability of ALL_ABILITIES) {
       const spec = ability.projectile;
       if (!spec) continue;
       // The distance the row describes: its own speed for its own lifetime.
       const tabled = (spec.speed / SERVER_TICK_RATE) * spec.lifetimeTicks;
       // A shot has to be able to reach what `startCast` will let you aim at.
-      expect(tabled).toBeGreaterThanOrEqual(ability.range);
+      expect(tabled, ability.id).toBeGreaterThanOrEqual(ability.range);
 
-      for (const attackSpeed of [MIN_ATTACK_SPEED, 0.9, 1, 1.6, MAX_ATTACK_SPEED]) {
-        const stats = { ...base, attackSpeed };
-        const flown =
-          (projectileSpeedFor(spec.speed, stats) / SERVER_TICK_RATE) *
-          projectileLifetimeTicks(spec, stats);
-        // Within a tick of travel, which is all the rounding of the lifetime
-        // can cost it.
-        expect(flown).toBeGreaterThan(ability.range);
-        expect(Math.abs(flown - tabled)).toBeLessThan(
-          projectileSpeedFor(spec.speed, stats) / SERVER_TICK_RATE + 1e-6,
-        );
-      }
+      const perTick = projectileSpeedFor(spec.speed) / SERVER_TICK_RATE;
+      const flown = perTick * projectileLifetimeTicks(spec);
+      expect(flown, ability.id).toBeGreaterThan(ability.range);
+      // Within a tick of travel, which is all the lifetime's rounding can cost.
+      expect(Math.abs(flown - tabled), ability.id).toBeLessThan(perTick + 1e-6);
     }
   });
 

@@ -25,12 +25,7 @@ import {
   totalCastTicks,
   type AbilityDefinition,
 } from '../data/abilities.js';
-import {
-  applyArmor,
-  attackIntervalTicks,
-  projectileLifetimeTicks,
-  projectileSpeedFor,
-} from '../player/stats.js';
+import { applyArmor, projectileLifetimeTicks, projectileSpeedFor } from '../player/stats.js';
 import { isInCone } from './combat.js';
 import {
   ActivityValue,
@@ -75,7 +70,7 @@ export interface CastAttempt {
 /**
  * How long before this caster may use this ability again (spec 070).
  *
- * A basic attack asks the caster's stats -- that is what `attackSpeed` is for,
+ * A basic attack asks the caster's stats -- that is what `attackDelayTicks` is,
  * and it is why two units with the same weapon swing at different rates.
  * Everything else asks the table: a heavy blow is slow because it is slow.
  */
@@ -84,7 +79,8 @@ export function cooldownTicksFor(
   entity: Pick<ServerEntity, 'stats'>,
 ): number {
   if (!ability.basicAttack) return ability.cooldownTicks;
-  return attackIntervalTicks(entity.stats);
+  // The delay is the stat, resolved already (spec 082): nothing to divide here.
+  return entity.stats.attackDelayTicks;
 }
 
 export type CastStartResult =
@@ -707,15 +703,16 @@ function launchProjectile(
     targetX: caster.position.x + dirX * distance,
     targetY: caster.position.y + dirY * distance,
     targetEntityId: cast.targetEntityId,
-    // The row says how fast this shot is; the arm behind it says the rest
-    // (spec 081). The lifetime moves with the speed so the reach does not --
-    // a slower shot takes longer to cover the same ground, it does not stop
-    // short of it.
-    speed: projectileSpeedFor(spec.speed, caster.stats) / SERVER_TICK_RATE,
+    // The row says how fast this shot is, and nothing else does (spec 082):
+    // how soon the next one may be loosed is the weapon's business, how fast
+    // this one flies is the shot's. The lifetime moves with the global scale so
+    // the reach does not -- a slower shot takes longer to cover the same
+    // ground, it does not stop short of it.
+    speed: projectileSpeedFor(spec.speed) / SERVER_TICK_RATE,
     arcHeight: spec.arcHeight,
     totalDistance: Math.max(1e-6, distance),
     travelled: 0,
-    expiresAtTick: tick + projectileLifetimeTicks(spec, caster.stats),
+    expiresAtTick: tick + projectileLifetimeTicks(spec),
   };
 
   return {

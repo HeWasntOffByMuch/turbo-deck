@@ -79,7 +79,7 @@ Keen Longsword already does. What each main hand comes out at:
 | main hand | | delay |
 |---|---|---|
 | (empty), Worn Sword | | 1.20s |
-| Keen Longsword | `+15%` | 1.04s |
+| Keen Longsword | `+15%` | 1.05s |
 | Weighted Stars | `+20%` | 1.00s |
 | Hunting Bow | `-10%` | 1.33s |
 | Iron Maul | `-20%` | 1.50s |

@@ -19,9 +19,9 @@ export interface StatModifier {
   readonly turnRate?: number;
   readonly attackDamage?: number;
   readonly attackRange?: number;
-  /** Negative shortens the swing; the result is floored at 1 tick. */
+  /** Flat ticks added to the attack delay; negative shortens it (spec 082). */
   readonly attackCooldownTicks?: number;
-  /** Flat addition to attacks per second (spec 070). +0.2 is a fifth faster. */
+  /** Flat haste. +0.2 is a fifth faster, and so a fifth less delay (spec 082). */
   readonly attackSpeed?: number;
   readonly armor?: number;
   readonly spellPower?: number;

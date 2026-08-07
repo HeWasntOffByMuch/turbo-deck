@@ -13,12 +13,10 @@
 
 import {
   ARMOR_PER_AGILITY,
-  ATTACK_SPEED_PER_AGILITY,
   HP_PER_STRENGTH,
   MAX_DAMAGE_REDUCTION,
   MOVE_SPEED_HARD_MAX,
   MOVE_SPEED_HARD_MIN,
-  PLAYER_ATTACK_COOLDOWN_TICKS,
   PLAYER_ATTACK_DAMAGE,
   PLAYER_ATTACK_RANGE,
   PLAYER_MAX_HEALTH,
@@ -50,15 +48,44 @@ export const HP_PER_LEVEL = 8;
 /** Attack damage per point of strength. */
 export const DAMAGE_PER_STRENGTH = 0.6;
 /**
- * Bounds on attacks per second (spec 070).
+ * What a body with nothing on it waits between basic attacks (spec 082).
  *
- * A floor as well as a ceiling, because `attackSpeed` divides: an item that
- * managed to drive it to zero would not make a unit slow, it would make its
- * swing interval infinite, and a stat that can produce a division by zero is a
- * stat that will.
+ * Slow on purpose. Spec 065 built this game around a commitment being long
+ * enough to be read, and the old cadence -- about a third of a second, against
+ * a 0.2s wind-up -- left nothing between one blow and the next to read anything
+ * in.
  */
-export const MIN_ATTACK_SPEED = 0.25;
-export const MAX_ATTACK_SPEED = 3;
+export const BASE_ATTACK_DELAY_TICKS = Math.round(SERVER_TICK_RATE * 1.2);
+
+/**
+ * Bounds on that delay.
+ *
+ * A floor as well as a ceiling, for the reason the old attacks-per-second
+ * bounds existed: haste is still a divisor, and a modifier that managed to
+ * drive it to zero would not make a unit fast, it would make its delay
+ * infinite or negative.
+ */
+export const MIN_ATTACK_DELAY_TICKS = Math.round(SERVER_TICK_RATE * 0.2);
+export const MAX_ATTACK_DELAY_TICKS = Math.round(SERVER_TICK_RATE * 5);
+
+/**
+ * The delay a set of modifiers produces (spec 082) -- the one place it is
+ * worked out, and the whole of what `attackDelayTicks` means.
+ *
+ * `flatTicks` are added to the base; `haste` divides it, because a modifier
+ * that says *percent faster* is talking about a rate and this is a duration.
+ * Exported so the bounds can be tested against numbers no item in the table is
+ * broken enough to produce -- the point of a clamp is the item added tomorrow.
+ */
+export function attackDelayTicksFrom(flatTicks: number, haste: number): number {
+  const base = BASE_ATTACK_DELAY_TICKS + (Number.isFinite(flatTicks) ? flatTicks : 0);
+  // A stat that says nothing is a stat that changes nothing.
+  const scale = Number.isNaN(haste) ? 1 : haste;
+  // Zero or negative haste is not "instantly", it is "never", so it lands on
+  // the ceiling rather than dividing into a negative or an infinite delay.
+  if (scale <= 0) return MAX_ATTACK_DELAY_TICKS;
+  return clamp(Math.round(base / scale), MIN_ATTACK_DELAY_TICKS, MAX_ATTACK_DELAY_TICKS);
+}
 /** Critical-hit chance per point of dexterity, and its ceiling. */
 export const CRIT_PER_DEXTERITY = 0.008;
 export const MAX_CRIT_CHANCE = 0.5;
@@ -142,17 +169,15 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
 
   const attackRange = Math.max(1, PLAYER_ATTACK_RANGE + bonus.attackRange);
 
-  // The base cadence carries only flat modifiers (spec 070). Dexterity used to
-  // shorten it directly; it now feeds `attackSpeed` instead, so a point of
-  // dexterity and a +10% haste item are added in one place rather than two that
-  // silently multiply.
-  const baseCooldown = simTicksToServerTicks(PLAYER_ATTACK_COOLDOWN_TICKS);
-  const attackCooldownTicks = Math.max(1, Math.round(baseCooldown + bonus.attackCooldownTicks));
-
-  const attackSpeed = clamp(
-    (1 + ATTACK_SPEED_PER_AGILITY * dexterity + bonus.attackSpeed) * (1 + bonus.attackSpeedPct),
-    MIN_ATTACK_SPEED,
-    MAX_ATTACK_SPEED,
+  // How soon the next blow may begin, resolved here and nowhere else (spec 082).
+  // Flat modifiers add ticks; the proportional ones are still *percent faster*,
+  // so they divide. Dexterity is deliberately absent: it is a base stat rather
+  // than a modifier, and its old haste link was the last of the indirection this
+  // replaced -- a weapon that wants to be quick says `attackSpeedPct`, as the
+  // Keen Longsword already does.
+  const attackDelayTicks = attackDelayTicksFrom(
+    bonus.attackCooldownTicks,
+    (1 + bonus.attackSpeed) * (1 + bonus.attackSpeedPct),
   );
 
   const armor = clamp(ARMOR_PER_AGILITY * dexterity + bonus.armor, 0, MAX_DAMAGE_REDUCTION);
@@ -179,8 +204,7 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
     turnRate,
     attackDamage,
     attackRange,
-    attackCooldownTicks,
-    attackSpeed,
+    attackDelayTicks,
     armor,
     spellPower,
     critChance,
@@ -206,32 +230,6 @@ export function basicAttackFor(player: PersistedPlayer): string {
 }
 
 /**
- * Ticks between one basic attack and the next, for these stats (spec 070).
- *
- * The one place the swing cadence is worked out, called by the sim when it
- * stamps a basic attack's cooldown and by the client's mirror of the same gate.
- * Floored at a tick, because a cadence faster than the sim runs is not a
- * cadence -- it is a swing every tick with the remainder thrown away.
- */
-export function attackIntervalTicks(stats: EffectiveStats): number {
-  return Math.max(1, Math.round(stats.attackCooldownTicks / weaponSpeed(stats)));
-}
-
-/**
- * The weapon speed multiplier, clamped, for every use of it (spec 081).
- *
- * Both halves of what a weapon's speed means -- how often it swings and how
- * fast what it throws travels -- run through this, so a stat driven to zero or
- * to `NaN` by some future item can never mean one thing to a swing and another
- * to a shot.
- */
-function weaponSpeed(stats: EffectiveStats): number {
-  return Number.isFinite(stats.attackSpeed)
-    ? clamp(stats.attackSpeed, MIN_ATTACK_SPEED, MAX_ATTACK_SPEED)
-    : 1;
-}
-
-/**
  * Every shot flies at this fraction of the speed its ability row states
  * (spec 081).
  *
@@ -243,17 +241,17 @@ function weaponSpeed(stats: EffectiveStats): number {
 export const PROJECTILE_SPEED_SCALE = 0.3;
 
 /**
- * World units per second for a shot this body looses (spec 081).
+ * World units per second for a shot of this row (spec 082).
  *
- * `attackSpeed` is *the* weapon speed stat here -- it is what `attackSpeedPct`
- * on the Keen Longsword and the Weighted Stars feeds -- so a weapon that swings
- * fast throws fast, and the Iron Maul's penalty reads as heft in both halves of
- * what it does. The ability row is the shot's own character; the stat is the
- * arm behind it.
+ * The shooter is deliberately not asked. Spec 081 scaled this by the weapon's
+ * speed stat, which read correctly while that stat was a multiplier and stopped
+ * reading at all once it became a delay -- a *longer* wait between shots would
+ * have meant a *faster* one. How soon the next arrow may be loosed and how fast
+ * the last one flies are two questions, and only the first is the weapon's.
  */
-export function projectileSpeedFor(baseSpeed: number, stats: EffectiveStats): number {
+export function projectileSpeedFor(baseSpeed: number): number {
   const base = Number.isFinite(baseSpeed) && baseSpeed > 0 ? baseSpeed : 0;
-  return base * weaponSpeed(stats) * PROJECTILE_SPEED_SCALE;
+  return base * PROJECTILE_SPEED_SCALE;
 }
 
 /**
@@ -264,13 +262,13 @@ export function projectileSpeedFor(baseSpeed: number, stats: EffectiveStats): nu
  * expired `bolt.arcane` at 372 units of its 700-unit range and `bolt.lob` at
  * 360 of 520 -- two abilities that can no longer reach what `startCast` will
  * happily let you aim at. That is not a speed change, it is a silent range
- * nerf. So the only thing a shooter moves is how long the flight takes.
+ * nerf. So the only thing the scale moves is how long the flight takes.
  */
-export function projectileLifetimeTicks(
-  spec: { readonly speed: number; readonly lifetimeTicks: number },
-  stats: EffectiveStats,
-): number {
-  const speed = projectileSpeedFor(spec.speed, stats);
+export function projectileLifetimeTicks(spec: {
+  readonly speed: number;
+  readonly lifetimeTicks: number;
+}): number {
+  const speed = projectileSpeedFor(spec.speed);
   if (speed <= 0 || !Number.isFinite(spec.lifetimeTicks)) {
     return Math.max(1, Math.round(spec.lifetimeTicks) || 1);
   }

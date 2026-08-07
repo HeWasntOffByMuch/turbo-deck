@@ -29,6 +29,8 @@ import { turnToward } from '../../../server/sim/movement.js';
 import { CastEndReason, type ServerEntity } from '../../../server/sim/types.js';
 import { FLAT_TERRAIN } from '../../../server/world/terrain.js';
 import { GameClient } from '../../../server/client/game-client.js';
+import { computeEffectiveStats } from '../../../server/player/stats.js';
+import { EMPTY_EQUIPMENT } from '../../../server/state/types.js';
 import { createWorldPredictor } from '../../../server/client/prediction.js';
 import { moveIntent } from './intent.js';
 import { autoAttack } from './target.js';
@@ -210,6 +212,37 @@ async function play(options: {
 /** Every basic attack in the game, and the one a bare hand falls back to. */
 const WEAPONS: readonly (string | null)[] = [null, 'bow.hunting', 'stars.weighted'];
 
+/** How many swings a run has to contain for the guards below to mean anything. */
+const SWINGS = 30;
+
+/**
+ * Long enough for this weapon to take {@link SWINGS} swings, asked rather than
+ * written down.
+ *
+ * Since spec 082 the cadence is `attackDelayTicks` -- 1.2 seconds bare, and
+ * moved by whatever the weapon says -- so a fixed tick budget silently becomes
+ * a different number of swings every time that constant moves. This run has to
+ * be a *fight*; how many ticks that takes is the stat's business.
+ */
+function ticksFor(weapon: string | null): number {
+  const stats = computeEffectiveStats({
+    id: 'p',
+    displayName: 'P',
+    baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
+    skills: [],
+    equipment: { ...EMPTY_EQUIPMENT, ...(weapon ? { mainHand: weapon } : {}) },
+    position: { x: 0, y: 0, z: 0 },
+    facing: 0,
+    currentZone: 'greenmarch',
+    level: 1,
+    experience: 0,
+    unspentSkillPoints: 0,
+    health: 100,
+    resource: 20,
+  });
+  return stats.attackDelayTicks * SWINGS;
+}
+
 /**
  * One tick a frame is a machine keeping up; ten is one that is not, and it is
  * where the seam opens widest -- ten ticks of deciding and sending go by with
@@ -224,7 +257,7 @@ describe('a standing attack order, over a real session (spec 080)', () => {
       const name = `${weapon ?? 'empty hands'} at ${cadence.join('/')} ticks a frame`;
 
       it(`withdraws from nothing and asks once a swing: ${name}`, async () => {
-        const result = await play({ ticks: 600, weapon, monster: 'grazer', cadence });
+        const result = await play({ ticks: ticksFor(weapon), weapon, monster: 'grazer', cadence });
         const seen = JSON.stringify(result);
 
         // The run has to have been a fight, or everything below is vacuous.
@@ -256,7 +289,12 @@ describe('a standing attack order, over a real session (spec 080)', () => {
    */
   it('holds up against something that fights back', async () => {
     for (const weapon of WEAPONS) {
-      const result = await play({ ticks: 600, weapon, monster: 'stalker', cadence: [2, 1, 1, 0, 3] });
+      const result = await play({
+        ticks: ticksFor(weapon),
+        weapon,
+        monster: 'stalker',
+        cadence: [2, 1, 1, 0, 3],
+      });
       const seen = `${weapon ?? 'empty hands'}: ${JSON.stringify(result)}`;
       expect(result.kills, seen).toBeGreaterThan(2);
       expect(result.cancels, seen).toBe(0);

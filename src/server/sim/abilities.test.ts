@@ -1319,8 +1319,8 @@ describe('a named target (spec 070)', () => {
   });
 
   it('stamps a basic attack from the caster, and everything else from the table', () => {
-    const quick: EffectiveStats = { ...STATS, attackCooldownTicks: 40, attackSpeed: 2 };
-    const slow: EffectiveStats = { ...STATS, attackCooldownTicks: 40, attackSpeed: 1 };
+    const quick: EffectiveStats = { ...STATS, attackDelayTicks: 20 };
+    const slow: EffectiveStats = { ...STATS, attackDelayTicks: 40 };
 
     let state = createWorldState(6);
     const fast = withPlayer(state, 600, 450, quick);

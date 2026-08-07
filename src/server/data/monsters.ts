@@ -4,9 +4,11 @@
  *
  * Stats are expressed as a full {@link EffectiveStats} because the resolver does
  * not care whether an attacker is a player or not -- one shape, one code path.
- * That now includes `attackSpeed` (spec 070), which is where a darting stalker
+ * That includes `attackDelayTicks` (spec 082), which is where a darting stalker
  * and a lumbering ravager stop feeling like the same fight at different damage
- * numbers: they swing at visibly different rates off the same swing.
+ * numbers: they swing at visibly different rates off the same swing. It is the
+ * delay itself, in ticks -- a row says how long this body waits, rather than a
+ * base cadence and a multiplier over it that had to be divided to mean anything.
  *
  * Since spec 079 it also includes `basicAttackId`, which is where the monster's
  * `ability` field went. Two places naming what a body swings with was one too
@@ -48,8 +50,7 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
       turnRate: 120,
       attackDamage: 6,
       attackRange: 60,
-      attackCooldownTicks: seconds(1.6),
-      attackSpeed: 1,
+      attackDelayTicks: seconds(1.6),
       armor: 0,
       spellPower: 1,
       critChance: 0,
@@ -71,8 +72,7 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
       turnRate: 240,
       attackDamage: 11,
       attackRange: 70,
-      attackCooldownTicks: seconds(1.2),
-      attackSpeed: 1.35,
+      attackDelayTicks: seconds(0.9),
       armor: 0.05,
       spellPower: 1,
       critChance: 0.05,
@@ -94,8 +94,7 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
       turnRate: 150,
       attackDamage: 24,
       attackRange: 95,
-      attackCooldownTicks: seconds(1.8),
-      attackSpeed: 0.8,
+      attackDelayTicks: seconds(2.25),
       armor: 0.18,
       spellPower: 1,
       critChance: 0.1,
@@ -121,8 +120,7 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
       // `monsterIntent` stands off at the *ability's* range, so this number only
       // matters to a body that has lost its throwing arm. The star reaches 300.
       attackRange: 300,
-      attackCooldownTicks: seconds(1.4),
-      attackSpeed: 1,
+      attackDelayTicks: seconds(1.4),
       armor: 0,
       spellPower: 1,
       critChance: 0.05,
@@ -146,8 +144,7 @@ const DUMMY: MonsterDefinition = {
     turnRate: 0,
     attackDamage: 0,
     attackRange: 0,
-    attackCooldownTicks: 1,
-    attackSpeed: 1,
+    attackDelayTicks: 1,
     armor: 0,
     spellPower: 1,
     critChance: 0,

@@ -685,7 +685,11 @@ describe('cooldowns', () => {
 
     client.useAbility('melee.slash', 900, 500);
     await settle();
-    for (let i = 0; i < slash.cooldownTicks + slash.windupTicks + 10; i++) {
+    // The basic attack's cooldown is the caster's own delay, not the table's
+    // number (spec 070, and since spec 082 the delay *is* the stat), so the
+    // wait is asked for rather than assumed.
+    const cadence = client.view().stats?.attackDelayTicks ?? slash.cooldownTicks;
+    for (let i = 0; i < cadence + slash.windupTicks + 10; i++) {
       test.server.tick();
       await settle();
     }
@@ -742,7 +746,11 @@ describe('committing before the server has answered', () => {
     expect(slash).toBeDefined();
     if (!slash) return;
     // Run past the end of the cast and its cooldown; nothing may still root us.
-    for (let i = 0; i < slash.cooldownTicks + slash.windupTicks + 10; i++) {
+    // The basic attack's cooldown is the caster's own delay, not the table's
+    // number (spec 070, and since spec 082 the delay *is* the stat), so the
+    // wait is asked for rather than assumed.
+    const cadence = client.view().stats?.attackDelayTicks ?? slash.cooldownTicks;
+    for (let i = 0; i < cadence + slash.windupTicks + 10; i++) {
       test.server.tick();
       await settle();
     }

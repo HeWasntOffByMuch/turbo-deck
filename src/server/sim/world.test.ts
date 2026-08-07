@@ -936,21 +936,21 @@ describe('shots that travel', () => {
    * How far a shot of `abilityId` covers in one tick, in this player's hands.
    *
    * Asked rather than written down, because since spec 081 a shot's speed is
-   * the table's number through the shooter's weapon speed and a global scale.
-   * A test that hard-codes "slower than the arrow" as a number is a test that
-   * silently stops meaning that the next time the scale moves.
+   * the table's number through a global scale. A test that hard-codes "slower
+   * than the arrow" as a number is a test that silently stops meaning that the
+   * next time the scale moves.
    */
   function flightPerTick(abilityId: string): number {
     const spec = abilityById(abilityId)?.projectile;
     if (!spec) throw new Error(`no projectile on ${abilityId}`);
-    return projectileSpeedFor(spec.speed, PLAYER_STATS) / SERVER_TICK_RATE;
+    return projectileSpeedFor(spec.speed) / SERVER_TICK_RATE;
   }
 
   /** Ticks that shot stays in the air before it expires, for the same reason. */
   function flightTicks(abilityId: string): number {
     const spec = abilityById(abilityId)?.projectile;
     if (!spec) throw new Error(`no projectile on ${abilityId}`);
-    return projectileLifetimeTicks(spec, PLAYER_STATS);
+    return projectileLifetimeTicks(spec);
   }
 
   it('spawns nothing before the release, and a projectile on it', () => {
@@ -1016,11 +1016,11 @@ describe('shots that travel', () => {
     expect(running ?? 0).toBeGreaterThan(standing ?? 0);
   });
 
-  it('lands later out of a slower weapon, and still lands (spec 081)', () => {
-    /** The tick a shot from a body with this weapon speed arrives on. */
-    function arrival(attackSpeed: number): number | null {
+  it('lands on the same tick however fast the weapon attacks (spec 082)', () => {
+    /** The tick a shot from a body with this attack delay arrives on. */
+    function arrival(attackDelayTicks: number): number | null {
       let state = createWorldState(4);
-      const player = withPlayer(state, 600, 450, { ...PLAYER_STATS, attackSpeed });
+      const player = withPlayer(state, 600, 450, { ...PLAYER_STATS, attackDelayTicks });
       state = player.state;
       const mark = withMonster(state, 'dummy', 900, 450);
       state = mark.state;
@@ -1030,9 +1030,7 @@ describe('shots that travel', () => {
 
       const shoot = shootAt('ranged.shot', player.id, mark.id, 900, 450);
       let current = state;
-      // Generous enough for the slowest weapon in the comparison; the point is
-      // the ordering of the two arrivals, not either number.
-      for (let i = 0; i < SERVER_TICK_RATE * 8; i++) {
+      for (let i = 0; i < flightTicks('ranged.shot'); i++) {
         const result = step(current, shoot(i), ctx);
         current = result.state;
         if (result.events.some((event) => event.kind === 'hit')) return current.tick;
@@ -1040,13 +1038,13 @@ describe('shots that travel', () => {
       return null;
     }
 
-    // The wind-up is the ability's, so both loose on the same tick and the only
-    // difference between the two fights is the speed of what was loosed.
-    const quick = arrival(2);
-    const slow = arrival(0.5);
+    // A body that may attack every twelve ticks and one that must wait five
+    // seconds loose the same arrow: the delay governs when the *next* one may
+    // be thrown, and nothing about the one already in the air.
+    const quick = arrival(12);
+    const slow = arrival(300);
     expect(quick).not.toBeNull();
-    expect(slow).not.toBeNull();
-    expect(slow ?? 0).toBeGreaterThan(quick ?? 0);
+    expect(quick).toBe(slow);
   });
 
   it('lets a target outrun a shot entirely, and the shot expires', () => {

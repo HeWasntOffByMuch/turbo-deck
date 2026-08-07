@@ -43,7 +43,7 @@ export type AbilityTargeting = 'direction' | 'point' | 'unit' | 'self';
 export type ProjectileLook = 'orb' | 'arrow' | 'shuriken';
 
 export interface ProjectileSpec {
-  /** World units per second, before the shooter's weapon speed (spec 081). */
+  /** World units per second, before `PROJECTILE_SPEED_SCALE` (spec 082). */
   readonly speed: number;
   /**
    * Peak height above the straight line, in world units. 0 is a flat bolt; a
@@ -53,8 +53,8 @@ export interface ProjectileSpec {
   readonly radius: number;
   /**
    * The distance a shot may cover before it expires, written as ticks at the
-   * speed above. A shooter who flies it slower flies it for longer rather than
-   * stopping short of the same ground (spec 081).
+   * speed above. Slowing every shot by a global scale lengthens this to match,
+   * so a row's *reach* is what it says whatever the scale is (spec 081).
    */
   readonly lifetimeTicks: number;
   /** What it draws as. Absent is an orb -- the look every shot had before. */
@@ -88,7 +88,7 @@ export interface AbilityDefinition {
   readonly healing?: number;
   /**
    * The weapon swing (spec 070). Its cooldown is stamped from the caster's own
-   * `attackSpeed` rather than from {@link cooldownTicks}, which is what makes
+   * `attackDelayTicks` rather than from {@link cooldownTicks}, which is what makes
    * that stat mean anything; the table's number is the fallback for a caster
    * whose stats say nothing. Exactly one ability per unit should carry it.
    */
@@ -141,8 +141,10 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     range: 420,
     damage: 12,
     // Lobbed, which is what makes it unblockable: an arcing shot flies over
-    // whatever is between the archer and the body it named (spec 079).
-    projectile: { speed: 900, arcHeight: 55, radius: 7, lifetimeTicks: seconds(2), look: 'arrow' },
+    // whatever is between the archer and the body it named (spec 079). How
+    // *high* it goes over is a look and nothing else -- both travel types reach
+    // the same body on the same tick -- so spec 082 doubling it is a picture.
+    projectile: { speed: 900, arcHeight: 110, radius: 7, lifetimeTicks: seconds(2), look: 'arrow' },
     basicAttack: true,
     description: 'An arrow, lobbed over whatever is in the way. Lands where the target is, not where it was.',
   },

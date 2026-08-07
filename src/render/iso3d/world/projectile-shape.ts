@@ -49,11 +49,23 @@ export interface ArrowProfile {
   readonly centreOffset: number;
 }
 
+/**
+ * How large the drawn arrow is against the proportions below (spec 082).
+ *
+ * The arrow was drawn at about seven times its collision radius -- longer than
+ * a player is wide -- which read as a javelin crossing the screen rather than
+ * as an arrow. This is the counterpart of {@link SHURIKEN_DRAW_SCALE}, which
+ * exists for the opposite reason: the two thrown weapons are at opposite ends
+ * of what survives being drawn at life size.
+ */
+export const ARROW_DRAW_SCALE = 0.3;
+
 /** An arrow sized for a shot of this radius. */
 export function arrowProfile(radius: number): ArrowProfile {
   // Floored so a radius the table forgot, or a zero, still yields an arrow
   // rather than a degenerate mesh that renders as nothing.
-  const r = Number.isFinite(radius) && radius > 0 ? radius : 1;
+  const given = Number.isFinite(radius) && radius > 0 ? radius : 1;
+  const r = given * ARROW_DRAW_SCALE;
 
   const headLength = r * 2.2;
   const headRadius = r * 0.95;
