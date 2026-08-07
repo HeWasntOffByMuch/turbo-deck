@@ -456,6 +456,54 @@ describe('growing the shipped map', () => {
     expect(seamMismatches(grown)).toEqual([]);
   });
 
+  it('joins on all four sides with no crack, whichever edge it grows from', () => {
+    // A chunk is a rectangle, so a map whose bounds do not land on a cell
+    // boundary stores a last row or column that is *outside* them. The original
+    // bake marked those cells hollow -- `arena.json`'s south edge cuts through
+    // row 186 -- and carrying them over when completing a short chunk preserved
+    // a one-cell crack along the entire join.
+    const before = shipped();
+    const layer = before.layers[0];
+    if (!layer) throw new Error('no layer');
+    const cells = before.grid.chunkCells;
+    const loCx = Math.min(...layer.chunks.map((c) => c.cx));
+    const hiCx = Math.max(...layer.chunks.map((c) => c.cx));
+    const loCz = Math.min(...layer.chunks.map((c) => c.cz));
+    const hiCz = Math.max(...layer.chunks.map((c) => c.cz));
+
+    const sides = [
+      ['west', { minCx: loCx - 2, minCz: 1, maxCx: loCx - 1, maxCz: 3 }, 'col', loCx * cells],
+      ['east', { minCx: hiCx + 1, minCz: 1, maxCx: hiCx + 2, maxCz: 3 }, 'col', (hiCx + 1) * cells],
+      ['north', { minCx: 1, minCz: loCz - 2, maxCx: 3, maxCz: loCz - 1 }, 'row', loCz * cells],
+      ['south', { minCx: 1, minCz: hiCz + 1, maxCx: 3, maxCz: hiCz + 2 }, 'row', (hiCz + 1) * cells],
+    ] as const;
+
+    for (const [name, rect, axis, line] of sides) {
+      const grown = growMap(before, {
+        id: name,
+        layerId: layer.id,
+        rect,
+        recipe: { features: [{ kind: 'rolling', amplitude: 40 }] },
+        seed: 4242,
+      });
+      const mesh = loadMap(grown).meshLayers[0];
+
+      // Every cell for forty either side of the join, across the part's span.
+      const holes: number[] = [];
+      for (let d = -40; d < 40; d++) {
+        const from = axis === 'col' ? rect.minCz * cells : rect.minCx * cells;
+        const to = axis === 'col' ? (rect.maxCz + 1) * cells : (rect.maxCx + 1) * cells;
+        for (let a = from; a < to; a++) {
+          const col = axis === 'col' ? line + d : a;
+          const row = axis === 'col' ? a : line + d;
+          if (mesh?.solidAt(col, row) !== true) holes.push(line + d);
+        }
+      }
+      expect({ side: name, holes: [...new Set(holes)] }).toEqual({ side: name, holes: [] });
+      expect(seamMismatches(grown)).toEqual([]);
+    }
+  });
+
   it('is continuous across the join when sampled as the sim samples it', () => {
     const { doc, before } = grownEast();
     const bounds = before.layers[0]?.bounds;

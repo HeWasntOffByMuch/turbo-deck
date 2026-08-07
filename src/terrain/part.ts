@@ -15,7 +15,7 @@ import {
   type MapRect,
   type PartRecipe,
 } from './map.js';
-import { materialIndex, type TerrainLayer } from './types.js';
+import { materialIndex, rectContains, type TerrainLayer } from './types.js';
 import { scatterInBounds, type Prop } from './vegetation.js';
 
 /**
@@ -253,6 +253,7 @@ export function bakePart(input: BakePartInput): BakedPart {
       bands,
       stitchedHeight,
       existing: existing.get(`${cx},${cz}`) ?? null,
+      oldBounds: info.bounds,
     }),
   );
 
@@ -342,6 +343,8 @@ interface BakeChunkContext {
   readonly stitchedHeight: (col: number, row: number, x: number, z: number) => number;
   /** Set when this chunk exists but is short, and is being completed. */
   readonly existing: ChunkCells | null;
+  /** The layer's declared extent *before* this part: what counts as old ground. */
+  readonly oldBounds: MapRect;
 }
 
 function bakeChunk(cx: number, cz: number, ctx: BakeChunkContext): MapChunk {
@@ -379,8 +382,17 @@ function bakeChunk(cx: number, cz: number, ctx: BakeChunkContext): MapChunk {
       // A cell the short chunk already had is carried over verbatim -- its
       // solidity, its material and its tone. Completing a chunk must not
       // reclassify the ground that was already in it.
+      //
+      // "Had" means *inside the bounds the layer declared*, not merely present
+      // in the array. A chunk is a rectangle, so its last row or column can sit
+      // partly outside the map: those cells are stored, and the original bake
+      // marked them hollow because their centres fell past the edge. Carrying
+      // them over verbatim preserves a row of nothing exactly where the new
+      // ground meets the old -- a one-cell crack along the whole join, which is
+      // what `arena.json`'s south edge does at z 2500 (it cuts through row 186).
+      // They were never ground, so they are baked like any other new cell.
       const old = ctx.existing;
-      if (old && i < old.cols && j < old.rows) {
+      if (old && i < old.cols && j < old.rows && rectContains(ctx.oldBounds, x, z)) {
         const o = j * old.cols + i;
         solid[k] = old.solid[o] ?? 0;
         materials[k] = old.materials[o] ?? 0;

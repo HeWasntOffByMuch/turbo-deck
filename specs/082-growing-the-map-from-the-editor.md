@@ -121,6 +121,14 @@ Omitted when empty, which is the ordinary case. `removePart` deletes only the
 created chunks and **refuses outright** when `completed` is non-empty, saying
 which chunks it would have orphaned.
 
+Completing one also means deciding what "already there" means. A chunk is a
+rectangle, so a map whose bounds do not land on a cell boundary stores a last
+row or column that falls *outside* them — the original bake marked those cells
+hollow, because their centres are past the edge. They are present in the array
+and were never ground, so completing a chunk re-bakes them rather than carrying
+them over: preserved, they leave a one-cell crack running the whole length of
+the join. `arena.json`'s south edge does exactly this, cutting through row 186.
+
 A part also **absorbs** short chunks immediately west or north of its rectangle,
 whether or not they were selected. A short chunk's ground stops before its own
 footprint ends, so a full-size part starting at the next coordinate — which is
@@ -181,6 +189,8 @@ has, and it is what puts empty ground on screen to grow into.
   ending. Both are invisible until a map grows west or north — until then a
   layer's origin and its `bounds.min` are the same point — and both were live
   bugs found by driving the real editor.
+- **A part joins cleanly on all four sides**, whichever edge it grows from:
+  no missing cell for forty either side of the join, and the seam still holds.
 - **No sliver survives a part dragged clear of a short edge**: the short chunks
   beside it are absorbed and completed, there is ground under every cell from
   the old map to the part's far edge, and the seam still holds.
