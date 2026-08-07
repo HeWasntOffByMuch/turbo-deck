@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
-import { isKnownPropKind, parseMap, type MapChunk } from '../../terrain/map.js';
+import { MAP_VERSION, isKnownPropKind, parseMap, type MapChunk } from '../../terrain/map.js';
 import { BufferReader } from './codec.js';
 import {
   decodeChunkDenied,
@@ -38,7 +38,7 @@ function payload(bytes: Uint8Array): BufferReader {
 
 describe('the shipped map', () => {
   it('parses, and has chunks', () => {
-    expect(doc.version).toBe(1);
+    expect(doc.version).toBe(MAP_VERSION);
     expect(doc.layers.length).toBeGreaterThan(0);
     expect(index.layers[0]?.coords.length).toBeGreaterThan(0);
   });
@@ -75,6 +75,20 @@ describe('MapChunk round trip', () => {
       // nav bytes, the props with their optional flags, and the markers.
       expect(back.chunk).toEqual(chunk);
     }
+  });
+
+  it('reproduces a chunk sitting west and north of the origin', () => {
+    // A grown map's chunks have negative coordinates (spec 083). They are
+    // zigzag varints, so this costs no more bytes than a positive one -- but
+    // only if the sign actually survives.
+    const chunk = chunks[0]?.chunk;
+    expect(chunk).toBeDefined();
+    if (!chunk) return;
+    const west = { ...chunk, cx: -3, cz: -11 };
+    const back = decodeMapChunk(
+      payload(encodeMapChunk({ type: ServerMessageType.MapChunk, mapId: index.mapId, layer: 0, chunk: west })),
+    );
+    expect(back.chunk).toEqual(west);
   });
 
   it('reproduces heights bit for bit, not merely close', () => {
@@ -131,6 +145,7 @@ describe('MapInfo round trip', () => {
     layers: index.layers.map((l) => ({
       id: l.id,
       seed: l.seed,
+      origin: l.origin,
       bounds: l.bounds,
       baseY: l.baseY,
       waterLevel: l.waterLevel,
@@ -154,6 +169,36 @@ describe('MapInfo round trip', () => {
         for (const prop of chunk.props) expect(message.species).toContain(prop.species);
       }
     }
+  });
+
+  /**
+   * A grown map has chunks west and north of its origin (spec 083), and the
+   * origin itself no longer sits at the layer's corner. Both travel, and both
+   * stay exact: an offset dropped here would land every streamed chunk a chunk
+   * away from where the server put it.
+   */
+  it('carries an origin that is not the layer corner, and negative coordinates', () => {
+    const first = message.layers[0];
+    if (!first) throw new Error('the shipped map has no layers');
+    const grown = {
+      ...message,
+      layers: [
+        {
+          ...first,
+          origin: { x: 120.5, z: -80.25 },
+          bounds: { minX: -2000, minZ: -2000, maxX: 2800, maxZ: 2500 },
+          coords: [
+            { cx: -4, cz: -7 },
+            { cx: 0, cz: 0 },
+            { cx: 13, cz: 6 },
+          ],
+        },
+      ],
+    };
+    const back = decodeMapInfo(payload(encodeMapInfo(grown))).layers[0];
+    expect(back?.origin).toEqual({ x: 120.5, z: -80.25 });
+    expect(back?.coords).toEqual(grown.layers[0]?.coords);
+    expect(back?.bounds).toEqual(grown.layers[0]?.bounds);
   });
 
   it('announces a null water level as null, not as zero', () => {

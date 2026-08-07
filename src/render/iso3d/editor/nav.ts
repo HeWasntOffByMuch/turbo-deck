@@ -93,8 +93,8 @@ export function bakeLayerNav(
   const layer = store.layerInfo(layerId);
   if (!layer) return 0;
   let baked = 0;
-  for (let cz = 0; cz < layer.grid.chunksZ; cz++) {
-    for (let cx = 0; cx < layer.grid.chunksX; cx++) {
+  for (let cz = layer.grid.minCz; cz <= layer.grid.maxCz; cz++) {
+    for (let cx = layer.grid.minCx; cx <= layer.grid.maxCx; cx++) {
       if (bakeChunkNavInto(store, layerId, cx, cz, walkSlope)) baked++;
     }
   }

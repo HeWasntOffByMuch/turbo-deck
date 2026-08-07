@@ -4,6 +4,7 @@ import {
   type ChunkOptions,
   type TerrainChunk,
 } from './chunk.js';
+import type { TerrainFeature } from './features.js';
 import { TERRAIN_MATERIALS, rectContains, type Rect, type TerrainWorld } from './types.js';
 import { FENCE_KINDS, type Prop, type PropKind } from './vegetation.js';
 
@@ -40,7 +41,10 @@ import { FENCE_KINDS, type Prop, type PropKind } from './vegetation.js';
  * `classify`, and in a baked map the materials are authoritative.
  */
 
-export const MAP_VERSION = 1;
+export const MAP_VERSION = 2;
+
+/** The oldest document `parseMap` will read. Anything older has no migration. */
+export const MIN_MAP_VERSION = 1;
 
 /**
  * Decimal places kept for every stored coordinate. Terrain relief here spans a
@@ -67,6 +71,19 @@ export interface MapRect {
   readonly minZ: number;
   readonly maxX: number;
   readonly maxZ: number;
+}
+
+export interface MapPoint {
+  readonly x: number;
+  readonly z: number;
+}
+
+/** A rectangle of chunk coordinates, inclusive on both ends (spec 083). */
+export interface ChunkRect {
+  readonly minCx: number;
+  readonly minCz: number;
+  readonly maxCx: number;
+  readonly maxCz: number;
 }
 
 /** A prop instance, positioned in its chunk's local space. */
@@ -120,10 +137,88 @@ export interface MapLayer {
   readonly id: string;
   /** Seeds the corner jitter, so it has to survive the round trip. */
   readonly seed: number;
+  /**
+   * The world point chunk `(0, 0)`'s low corner sits on, and the anchor every
+   * chunk and cell index is measured from (spec 083).
+   *
+   * Split out from `bounds` because a map that can grow needs an anchor that
+   * does *not* move. Indices used to be relative to `bounds.minX/minZ`, which
+   * meant extending the world west or north renumbered every chunk in the file:
+   * a whole-document rewrite, an unreadable diff, and every client's cached
+   * chunk silently pointing at different ground. With an origin the indices are
+   * absolute, growth only ever adds coordinates -- negative ones, going west or
+   * north -- and nothing already baked is touched.
+   *
+   * Fixed for the life of a map. Changing it renumbers everything, which is the
+   * one thing it exists to prevent.
+   */
+  readonly origin: MapPoint;
+  /**
+   * The rectangle this layer covers. **Declared, not derived on load**: it is
+   * computed when a map is baked or saved, and after that it is read as-is.
+   *
+   * A streaming client holds a handful of chunks and has to know how big the
+   * world is anyway -- the sim's edge wall comes from here (spec 083). Deriving
+   * the extent from the chunks in hand would put that wall wherever streaming
+   * happened to have got to, and the client would predict a barrier in open
+   * ground and then be corrected through it.
+   */
   readonly bounds: MapRect;
   readonly baseY: number;
   readonly waterLevel: number | null;
   readonly chunks: readonly MapChunk[];
+}
+
+/**
+ * What a part is grown from (spec 083): a feature list in the authored terrain
+ * vocabulary, plus how thickly to plant it.
+ *
+ * `features` is `TerrainFeature[]`, the same literal a generated world is
+ * written in -- `features.ts` says features are data "so a world reads as a
+ * literal that can be reviewed, diffed, and one day loaded from a file or
+ * emitted by a generator", and this is that file. Coordinates are world-space,
+ * as they are everywhere else in that vocabulary.
+ *
+ * There is deliberately no `waterLevel`: one sea per layer, so the shore
+ * distance transform the water shader steps on (spec 074) stays a single
+ * continuous field rather than stepping at every part boundary.
+ */
+export interface PartRecipe {
+  readonly features: readonly TerrainFeature[];
+  /** Constant added to every height: the part's nominal ground level. */
+  readonly elevation?: number;
+  /** Quantises the composed height into flat treads, as `LayerDef.terrace` does. */
+  readonly terrace?: { readonly step: number; readonly strength: number };
+  /** Planting, as a multiple of the world's own density. 0 leaves it bare. */
+  readonly vegetation?: { readonly density: number };
+}
+
+/**
+ * A piece of world, and where it came from (spec 083).
+ *
+ * Metadata, not truth: the chunks are the map, and nothing at load time reads a
+ * part. It is here so a piece can be reviewed as a diff, re-rolled with another
+ * seed, or re-baked after its recipe changes -- and so the answer to "why does
+ * the world look like that over there" is in the file rather than in somebody's
+ * memory of a command they ran.
+ */
+export interface MapPart {
+  readonly id: string;
+  readonly layer: string;
+  /** Which chunks it baked, in the layer's own chunk coordinates. */
+  readonly rect: ChunkRect;
+  readonly seed: number;
+  /**
+   * Chunks inside `rect` that already existed and were completed rather than
+   * created -- a short edge chunk filled out to full size (spec 083).
+   *
+   * Omitted when empty, which is the ordinary case. Recorded because removing a
+   * part may only delete ground that part made: deleting a completed chunk
+   * would punch a hole in terrain somebody else baked (spec 084).
+   */
+  readonly completed?: readonly { readonly cx: number; readonly cz: number }[];
+  readonly recipe: PartRecipe;
+  readonly note?: string;
 }
 
 export interface MapDocument {
@@ -134,6 +229,8 @@ export interface MapDocument {
   readonly layers: readonly MapLayer[];
   /** The sim's play rectangle, in world space -- see the note on `arena` above. */
   readonly arena: MapRect;
+  /** Where each piece of the world came from (spec 083). Provenance only. */
+  readonly parts?: readonly MapPart[];
 }
 
 /** Round to the document's quantum, normalising `-0` so serialisation is stable. */
@@ -313,6 +410,9 @@ export function exportMap(input: ExportMapInput): MapDocument {
     layers.push({
       id: layer.id,
       seed: layer.seed,
+      // A freshly baked world anchors its grid at its own corner. Growth later
+      // moves `bounds` and leaves this alone -- that is the whole point of it.
+      origin: { x: quantize(layer.bounds.minX), z: quantize(layer.bounds.minZ) },
       bounds: {
         minX: quantize(layer.bounds.minX),
         minZ: quantize(layer.bounds.minZ),
@@ -433,10 +533,43 @@ function writeLayer(layer: MapLayer, indent: string): string {
     [
       ['id', writeScalar(layer.id)],
       ['seed', String(layer.seed)],
+      ['origin', `{ "x": ${layer.origin.x}, "z": ${layer.origin.z} }`],
       ['bounds', writeRect(layer.bounds)],
       ['baseY', String(layer.baseY)],
       ['waterLevel', layer.waterLevel === null ? 'null' : String(layer.waterLevel)],
       ['chunks', writeList(layer.chunks.map((c) => writeChunk(c, inner + INDENT)), inner)],
+    ],
+    indent,
+  );
+}
+
+/**
+ * A part, as JSON (spec 083).
+ *
+ * The recipe goes through `JSON.stringify` rather than a hand-written emitter:
+ * a feature list is a small, irregular union, and enumerating every member here
+ * would be a second definition of the vocabulary that could fall behind the
+ * first. Key order is whatever the object has, which is stable because the
+ * object was either parsed from this file or built by the baker.
+ */
+function writePart(part: MapPart, indent: string): string {
+  return writeObject(
+    [
+      ['id', writeScalar(part.id)],
+      ['layer', writeScalar(part.layer)],
+      [
+        'rect',
+        `{ "minCx": ${part.rect.minCx}, "minCz": ${part.rect.minCz}, ` +
+          `"maxCx": ${part.rect.maxCx}, "maxCz": ${part.rect.maxCz} }`,
+      ],
+      ['seed', String(part.seed)],
+      ...(part.note === undefined ? [] : [['note', writeScalar(part.note)] as const]),
+      ...(part.completed === undefined || part.completed.length === 0
+        ? []
+        : ([
+            ['completed', `[${part.completed.map((c) => `{ "cx": ${c.cx}, "cz": ${c.cz} }`).join(', ')}]`],
+          ] as const)),
+      ['recipe', JSON.stringify(part.recipe)],
     ],
     indent,
   );
@@ -448,6 +581,7 @@ function writeLayer(layer: MapLayer, indent: string): string {
  * is the property the round-trip test rests on.
  */
 export function serializeMap(doc: MapDocument): string {
+  const parts = doc.parts ?? [];
   return (
     writeObject(
       [
@@ -455,6 +589,11 @@ export function serializeMap(doc: MapDocument): string {
         ['seed', String(doc.seed)],
         ['grid', `{ "cellSize": ${doc.grid.cellSize}, "chunkCells": ${doc.grid.chunkCells} }`],
         ['arena', writeRect(doc.arena)],
+        // Omitted entirely when there are none, so a map that has never grown
+        // serialises exactly as it did before parts existed.
+        ...(parts.length === 0
+          ? []
+          : ([['parts', writeList(parts.map((p) => writePart(p, INDENT + INDENT)), INDENT)]] as const)),
         ['layers', writeList(doc.layers.map((l) => writeLayer(l, INDENT + INDENT)), INDENT)],
       ],
       '',
@@ -496,6 +635,54 @@ function asRect(value: unknown, what: string): MapRect {
     maxX: asNumber(r['maxX'], `${what}.maxX`),
     maxZ: asNumber(r['maxZ'], `${what}.maxZ`),
   };
+}
+
+/**
+ * A part, read back.
+ *
+ * The recipe's *contents* are not validated here, and that is deliberate: it is
+ * provenance, nothing at load time reads it, and the chunks it produced are
+ * already in the file. It is checked when it is used -- baking runs it through
+ * `createLayer`, which is the only thing that can meaningfully say whether a
+ * feature list means anything. Validating it twice, in two places, is how the
+ * two definitions drift.
+ */
+function parsePart(value: unknown, what: string): MapPart {
+  const r = asRecord(value, what);
+  const rect = asRecord(r['rect'], `${what}.rect`);
+  const note = r['note'];
+  return {
+    id: asString(r['id'], `${what}.id`),
+    layer: asString(r['layer'], `${what}.layer`),
+    rect: {
+      minCx: asNumber(rect['minCx'], `${what}.rect.minCx`),
+      minCz: asNumber(rect['minCz'], `${what}.rect.minCz`),
+      maxCx: asNumber(rect['maxCx'], `${what}.rect.maxCx`),
+      maxCz: asNumber(rect['maxCz'], `${what}.rect.maxCz`),
+    },
+    seed: asNumber(r['seed'], `${what}.seed`),
+    ...(note === undefined ? {} : { note: asString(note, `${what}.note`) }),
+    ...(r['completed'] === undefined
+      ? {}
+      : {
+          completed: (Array.isArray(r['completed'])
+            ? r['completed']
+            : fail(`${what}.completed must be an array`)
+          ).map((c, i) => {
+            const coord = asRecord(c, `${what}.completed[${i}]`);
+            return {
+              cx: asNumber(coord['cx'], `${what}.completed[${i}].cx`),
+              cz: asNumber(coord['cz'], `${what}.completed[${i}].cz`),
+            };
+          }),
+        }),
+    recipe: asRecord(r['recipe'], `${what}.recipe`) as unknown as PartRecipe,
+  };
+}
+
+function asPoint(value: unknown, what: string): MapPoint {
+  const r = asRecord(value, what);
+  return { x: asNumber(r['x'], `${what}.x`), z: asNumber(r['z'], `${what}.z`) };
 }
 
 const MARKER_KINDS: readonly MapMarkerKind[] = ['spawn', 'objective', 'campfire', 'trigger', 'spawner'];
@@ -574,10 +761,16 @@ function parseChunk(value: unknown, what: string): MapChunk {
 function parseLayer(value: unknown, what: string): MapLayer {
   const r = asRecord(value, what);
   const waterLevel = r['waterLevel'];
+  const bounds = asRect(r['bounds'], `${what}.bounds`);
+  const origin = r['origin'];
   return {
     id: asString(r['id'], `${what}.id`),
     seed: asNumber(r['seed'], `${what}.seed`),
-    bounds: asRect(r['bounds'], `${what}.bounds`),
+    // A v1 layer has no origin because its grid was anchored at its own corner.
+    // Reading it as `bounds.min` leaves every index in the file meaning exactly
+    // what it meant before, so the migration changes no numbers at all.
+    origin: origin === undefined ? { x: bounds.minX, z: bounds.minZ } : asPoint(origin, `${what}.origin`),
+    bounds,
     baseY: asNumber(r['baseY'], `${what}.baseY`),
     waterLevel: waterLevel === null || waterLevel === undefined ? null : asNumber(waterLevel, `${what}.waterLevel`),
     chunks: (Array.isArray(r['chunks']) ? r['chunks'] : fail(`${what}.chunks must be an array`)).map((c, i) =>
@@ -602,16 +795,28 @@ export function parseMap(text: string): MapDocument {
   }
   const r = asRecord(raw, 'document');
   const version = asNumber(r['version'], 'document.version');
-  if (version !== MAP_VERSION) fail(`unsupported version ${version}, expected ${MAP_VERSION}`);
+  // Older documents are read forward, not rejected: v1 predates the grid origin
+  // (spec 083) and `parseLayer` fills it in. A document is always *emitted* at
+  // the current version, so loading and re-saving a v1 file upgrades it.
+  if (version < MIN_MAP_VERSION || version > MAP_VERSION) {
+    fail(`unsupported version ${version}, expected ${MIN_MAP_VERSION}..${MAP_VERSION}`);
+  }
   const grid = asRecord(r['grid'], 'document.grid');
   return {
-    version,
+    version: MAP_VERSION,
     seed: asNumber(r['seed'], 'document.seed'),
     grid: {
       cellSize: asNumber(grid['cellSize'], 'document.grid.cellSize'),
       chunkCells: asNumber(grid['chunkCells'], 'document.grid.chunkCells'),
     },
     arena: asRect(r['arena'], 'document.arena'),
+    ...(r['parts'] === undefined
+      ? {}
+      : {
+          parts: (Array.isArray(r['parts']) ? r['parts'] : fail('document.parts must be an array')).map((p, i) =>
+            parsePart(p, `document.parts[${i}]`),
+          ),
+        }),
     layers: (Array.isArray(r['layers']) ? r['layers'] : fail('document.layers must be an array')).map((l, i) =>
       parseLayer(l, `document.layers[${i}]`),
     ),

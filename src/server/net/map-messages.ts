@@ -19,6 +19,7 @@ import {
   type MapChunk,
   type MapMarker,
   type MapMarkerKind,
+  type MapPoint,
   type MapProp,
   type MapRect,
 } from '../../terrain/map.js';
@@ -49,6 +50,14 @@ export interface ChunkCoordMsg {
 export interface MapLayerInfoMsg {
   readonly id: string;
   readonly seed: number;
+  /**
+   * The world point the layer's chunk grid is anchored at (spec 083).
+   *
+   * Sent rather than inferred from `bounds`: since a map can grow, the two are
+   * no longer the same point, and a client that assumed they were would place
+   * every streamed chunk at an offset from where the server put it.
+   */
+  readonly origin: MapPoint;
   readonly bounds: MapRect;
   readonly baseY: number;
   readonly waterLevel: number | null;
@@ -145,6 +154,7 @@ export function encodeMapInfo(msg: MapInfoMessage): Uint8Array {
   for (const layer of msg.layers) {
     w.str(layer.id);
     w.u32(layer.seed >>> 0);
+    w.varint(q(layer.origin.x)).varint(q(layer.origin.z));
     writeRect(w, layer.bounds);
     w.varint(q(layer.baseY));
     w.bool(layer.waterLevel !== null);
@@ -171,6 +181,7 @@ export function decodeMapInfo(r: BufferReader): MapInfoMessage {
   for (let i = 0; i < layerCount; i++) {
     const id = r.str();
     const layerSeed = r.u32();
+    const origin = { x: unq(r.varint()), z: unq(r.varint()) };
     const bounds = readRect(r);
     const baseY = unq(r.varint());
     const hasWater = r.bool();
@@ -181,6 +192,7 @@ export function decodeMapInfo(r: BufferReader): MapInfoMessage {
     layers[i] = {
       id,
       seed: layerSeed,
+      origin,
       bounds,
       baseY,
       waterLevel: hasWater ? water : null,

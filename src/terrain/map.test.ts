@@ -442,8 +442,8 @@ describe('parseMap validation', () => {
 
   it('rejects an unknown version', () => {
     const doc = raw();
-    doc['version'] = 2;
-    expect(() => parseMap(JSON.stringify(doc))).toThrow(/unsupported version 2/);
+    doc['version'] = 99;
+    expect(() => parseMap(JSON.stringify(doc))).toThrow(/unsupported version 99/);
   });
 
   it('rejects a missing version', () => {

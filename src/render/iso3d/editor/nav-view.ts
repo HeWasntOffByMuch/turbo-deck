@@ -72,8 +72,8 @@ export function createNavView(): NavViewHandle {
         for (let i = 0; i < 3; i++) colors.push(colour.r, colour.g, colour.b);
       };
 
-      for (let cz = 0; cz < layer.grid.chunksZ; cz++) {
-        for (let cx = 0; cx < layer.grid.chunksX; cx++) {
+      for (let cz = layer.grid.minCz; cz <= layer.grid.maxCz; cz++) {
+        for (let cx = layer.grid.minCx; cx <= layer.grid.maxCx; cx++) {
           const nav = store.chunkNav(layerId, cx, cz);
           const chunk = nav ? store.buildChunk(layerId, cx, cz) : null;
           if (!nav || !chunk) continue;

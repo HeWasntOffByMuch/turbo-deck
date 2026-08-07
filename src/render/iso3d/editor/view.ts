@@ -1,5 +1,14 @@
 import * as THREE from 'three';
-import { arenaBounds, loadMap, parseMap, type LoadedMap, type MapDocument } from '../../../terrain/index.js';
+import {
+  arenaBounds,
+  loadMap,
+  parseMap,
+  type ChunkCoord,
+  type ChunkRect,
+  type LoadedMap,
+  type MapDocument,
+  type PartRecipe,
+} from '../../../terrain/index.js';
 import { PLAY_HEIGHT, PLAY_WIDTH } from '../../../shared/world.js';
 import type { ViewHandle } from '../view-handle.js';
 import { PALETTE } from '../palette.js';
@@ -13,6 +22,7 @@ import {
   editorCameraPosition,
   orbitEditorCamera,
   trackEditorCamera,
+  withMapBounds,
   zoomEditorCamera,
   type EditorCameraState,
 } from './camera.js';
@@ -35,8 +45,17 @@ import {
   writeAutosave,
 } from './persistence.js';
 import { bakeEditorMap } from './map-source.js';
-import { buildEditorPanel } from './panel.js';
+import { buildEditorPanel, type EditorPanel } from './panel.js';
 import { createEditorSettings, cursorColor, cursorRadius } from './tools.js';
+import {
+  addPart,
+  chunkRectArea,
+  chunkRectFrom,
+  chunkRectWorld,
+  partAt,
+  removePart,
+  uniquePartId,
+} from './parts.js';
 import { fenceStroke, NO_FENCE_PATH, type FencePath } from './fence.js';
 import { eraseStroke, scatterStroke, terrainNormalAt } from './scatter.js';
 
@@ -75,6 +94,30 @@ const FILL_INTENSITY = 1.1;
 const SUN_DISTANCE = 3000;
 
 /** The editor's scene: a baked map, lit, with a free camera over it. */
+/**
+ * The recipes a part may be grown from (spec 083), bundled at build time.
+ *
+ * `import.meta.glob` rather than a fetch: the editor has to work from a file://
+ * page and with no server behind it, and a recipe is a committed file whose set
+ * is known when the bundle is made. The same JSON `scripts/grow-map.ts` reads
+ * from disk, so a part grown in the editor and one grown from the shell are the
+ * same part.
+ *
+ * The path is relative for the same reason `world/view.ts` imports the map
+ * relatively: Vite's root is `src/render`, so a root-absolute glob would look
+ * for `src/render/maps/` and silently match nothing at all.
+ */
+const RECIPE_MODULES = import.meta.glob('../../../../maps/recipes/*.json', { eager: true }) as Record<
+  string,
+  { default: PartRecipe }
+>;
+
+const RECIPES: ReadonlyMap<string, PartRecipe> = new Map(
+  Object.entries(RECIPE_MODULES)
+    .map(([path, module]) => [path.replace(/^.*\//, '').replace(/\.json$/, ''), module.default] as const)
+    .sort(([a], [b]) => a.localeCompare(b)),
+);
+
 class EditorScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
@@ -90,6 +133,9 @@ class EditorScene {
   private readonly raycaster = new THREE.Raycaster();
   private readonly ndc = new THREE.Vector2();
   private readonly hits: THREE.Intersection[] = [];
+  // Reused by `pickPlane`, so aiming off the map allocates nothing either.
+  private readonly plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  private readonly planeHit = new THREE.Vector3();
 
   /** The loaded document everything in this scene was built from. */
   map: LoadedMap;
@@ -187,6 +233,19 @@ class EditorScene {
   }
 
   /**
+   * Re-batch only the prop regions overlapping a world rectangle (spec 086).
+   *
+   * The counterpart to `rebuildChunk`: a part plants trees over the ground it
+   * made and nowhere else, so rebuilding every batch in the world to draw them
+   * costs the map rather than the part. `refreshProps` stays for the cases that
+   * really do move everything -- a load, or a height brush that re-settles every
+   * prop standing on the ground it moved.
+   */
+  refreshPropsWithin(rect: { minX: number; minZ: number; maxX: number; maxZ: number }): void {
+    this.propField.rebuildWithin(this.map.store.props(this.layerId), rect);
+  }
+
+  /**
    * Swap in a different map: a loaded file, or a restored autosave.
    *
    * Everything derived is rebuilt, because everything derived belongs to the map
@@ -230,6 +289,31 @@ class EditorScene {
   rebuildChunk(layerId: string, cx: number, cz: number): void {
     const chunk = this.map.store.buildChunk(layerId, cx, cz);
     if (chunk) this.terrainMesh.rebuild(chunk);
+  }
+
+  /** Stop drawing a chunk whose ground has gone (spec 085). */
+  dropChunk(layerId: string, cx: number, cz: number): void {
+    this.terrainMesh.remove(layerId, cx, cz);
+  }
+
+  /**
+   * Where the cursor ray meets a horizontal plane, for aiming at ground that
+   * does not exist yet (spec 084).
+   *
+   * `pick` raycasts the terrain, which is exactly right for every tool that
+   * edits ground that is there -- and useless for the one tool whose whole job
+   * is to select ground that is not. Off the map's edge the ray hits nothing at
+   * all, so a part could only ever be dragged over terrain that already
+   * existed, which is the opposite of growing the world.
+   */
+  pickPlane(cssX: number, cssY: number, y = 0): { x: number; z: number } | null {
+    const rect = this.canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return null;
+    this.ndc.set((cssX / rect.width) * 2 - 1, -((cssY / rect.height) * 2 - 1));
+    this.raycaster.setFromCamera(this.ndc, this.camera);
+    this.plane.constant = -y;
+    const hit = this.raycaster.ray.intersectPlane(this.plane, this.planeHit);
+    return hit ? { x: hit.x, z: hit.z } : null;
   }
 
   /** Add an overlay (the brush cursor, markers) above the terrain. */
@@ -349,6 +433,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   const input = new EditorInputCapture(canvas);
   const history = new EditHistory();
   const settings = createEditorSettings();
+  settings.recipe = [...RECIPES.keys()][0] ?? '';
 
   const cursor: BrushCursorHandle = createBrushCursor(cursorColor(settings));
   scene.addOverlay(cursor.object);
@@ -357,6 +442,11 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   scene.addOverlay(markerView.group);
   const arenaOutline = createArenaOutline();
   scene.addOverlay(arenaOutline.object);
+  // The chunk rectangle a part drag has selected, in the part tool's own colour
+  // so it is not mistaken for the arena box.
+  const partOutline = createArenaOutline(0x9fb8e8);
+  partOutline.object.visible = false;
+  scene.addOverlay(partOutline.object);
   const navView = createNavView();
   scene.addOverlay(navView.object);
 
@@ -369,6 +459,8 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   // Where the fence run has got to; see `fenceStroke`. Reset on every press, so
   // one stroke is one run rather than a line drawn from the last one's end.
   let fencePath: FencePath = NO_FENCE_PATH;
+  /** Where a part drag started, in world space. Null when none is in progress. */
+  let partAnchor: { x: number; z: number } | null = null;
 
   /** Re-mesh a set of chunks, skipping the duplicates a drag produces. */
   const remesh = (dirty: readonly { cx: number; cz: number }[]): void => {
@@ -400,13 +492,159 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     arenaOutline.refresh(scene.document.arena, groundAt);
   };
 
-  const undo = (): void => {
-    const restored = history.undo(scene.map.store);
-    if (restored.length === 0) return;
+  /**
+   * Set once the panel exists, since the commit helpers are defined before it
+   * and the panel needs them.
+   */
+  let onPartsChanged: () => void = () => {
+    // Replaced the moment the panel exists; nothing calls this before then.
+  };
+
+  /**
+   * The chunks a change to `touched` makes stale, including the neighbours.
+   *
+   * A chunk's walls are grown where its solid ground meets air, which is a
+   * question about the chunk *next to* it -- so ground appearing or vanishing
+   * silently invalidates the four chunks around it as well as itself. The
+   * mesher already re-bakes the eight neighbours' water; the walls are this.
+   */
+  /** The smallest chunk rectangle covering a set of coordinates, or null if none. */
+  const boundingChunkRect = (coords: readonly ChunkCoord[]): ChunkRect | null => {
+    if (coords.length === 0) return null;
+    let minCx = Infinity;
+    let minCz = Infinity;
+    let maxCx = -Infinity;
+    let maxCz = -Infinity;
+    for (const c of coords) {
+      minCx = Math.min(minCx, c.cx);
+      minCz = Math.min(minCz, c.cz);
+      maxCx = Math.max(maxCx, c.cx);
+      maxCz = Math.max(maxCz, c.cz);
+    }
+    return { minCx, minCz, maxCx, maxCz };
+  };
+
+  const withNeighbours = (touched: readonly ChunkCoord[]): ChunkCoord[] => {
+    const seen = new Set<string>();
+    const out: ChunkCoord[] = [];
+    for (const c of touched) {
+      for (const [dx, dz] of [
+        [0, 0],
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ] as const) {
+        const cx = c.cx + dx;
+        const cz = c.cz + dz;
+        const key = `${cx},${cz}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ cx, cz });
+      }
+    }
+    return out;
+  };
+
+  /**
+   * Everything a part changes, and nothing it does not (spec 085).
+   *
+   * This used to re-mesh every chunk in the world and re-bake nav for the whole
+   * layer. On a 74-chunk map that was ~730ms of which ~36ms was the new ground,
+   * and both halves grew with the map -- so the editor got slower the more you
+   * built, which is precisely backwards. Now the work is proportional to the
+   * part: the chunks it wrote, the chunks it deleted, and the ring around both.
+   */
+  const rebuiltAfterParts = (touched: readonly ChunkCoord[], gone: readonly ChunkCoord[] = []): void => {
+    for (const c of gone) scene.dropChunk(layerId, c.cx, c.cz);
+    // Both sets are re-meshed through the same call: a coordinate with no chunk
+    // behind it simply draws nothing, which is what the ring around a deletion
+    // needs anyway.
+    for (const c of withNeighbours([...touched, ...gone])) scene.rebuildChunk(layerId, c.cx, c.cz);
+    // The camera was fenced to the map as it was when the view opened, so a
+    // world that just grew would otherwise be ground you can see and cannot
+    // pan to (spec 084).
+    scene.camera3 = withMapBounds(scene.camera3, scene.map.store.layerInfo(layerId)?.bounds ?? null);
+    rebakeNav(scene.map.store, layerId, touched, settings.walkSlope);
+    // Only the batches over the ground that changed, not every batch in the
+    // world: the field is grouped into regions for culling, and this makes that
+    // grouping the unit of invalidation too (spec 086).
+    const span = boundingChunkRect([...touched, ...gone]);
+    const world = span && chunkRectWorld(scene.map.store, layerId, span);
+    if (world) scene.refreshPropsWithin(world);
+    else scene.refreshProps();
+    refreshMarkers();
+    refreshNav();
     revision.touch();
-    for (const c of restored) scene.rebuildChunk(c.layerId, c.cx, c.cz);
+    onPartsChanged();
+  };
+
+  /** How much ground the layer claims but has no chunk for; 0 is a rectangle. */
+  const unfilled = (): number => {
+    const info = scene.map.store.layerInfo(layerId);
+    if (!info) return 0;
+    const cell = scene.map.store.cellSize;
+    const declared =
+      Math.round((info.bounds.maxX - info.bounds.minX) / cell) *
+      Math.round((info.bounds.maxZ - info.bounds.minZ) / cell);
+    return Math.max(0, declared - info.grid.totalCols * info.grid.totalRows);
+  };
+
+  /** Bake the armed recipe into a chunk rectangle. */
+  const commitPart = (rect: { minCx: number; minCz: number; maxCx: number; maxCz: number }): void => {
+    const recipe = RECIPES.get(settings.recipe);
+    if (!recipe) {
+      status = settings.recipe ? `no recipe called ${settings.recipe}` : 'no recipes are bundled';
+      return;
+    }
+    // A typed id is taken at its word; a blank one is derived and made unique,
+    // so growing a run of parts from one recipe is a run of drags rather than a
+    // drag and a rename each time.
+    const typed = settings.partId.trim();
+    const id = typed || uniquePartId(scene.map.store, settings.recipe);
+    const added = addPart(scene.map.store, history, {
+      id,
+      layerId,
+      rect,
+      recipe,
+      seed: Math.round(settings.partSeed),
+    });
+    if (!added.ok) {
+      status = `part refused: ${added.reason}`;
+      return;
+    }
+    rebuiltAfterParts([...added.created, ...added.completed]);
+    const gap = unfilled();
+    status =
+      `added part "${id}" (${added.created.length} chunks` +
+      (added.completed.length > 0 ? `, ${added.completed.length} completed` : '') +
+      ')' +
+      (gap > 0 ? ` — ${gap} declared cells have no ground yet` : '');
+  };
+
+  const commitRemove = (partId: string): void => {
+    const removed = removePart(scene.map.store, history, partId);
+    if (!removed.ok) {
+      status = `remove refused: ${removed.reason}`;
+      return;
+    }
+    rebuiltAfterParts([], removed.removed);
+    status = `removed part "${removed.part.id}" (${removed.removed.length} chunks)`;
+  };
+
+  const undo = (): void => {
+    const { remeshed, removed, structural } = history.undo(scene.map.store);
+    if (remeshed.length === 0 && removed.length === 0) return;
+    // Undoing a part is the same shape of work as making one, so it goes
+    // through the same targeted path rather than rebuilding the world (spec 085).
+    if (structural) {
+      rebuiltAfterParts(remeshed, removed);
+      return;
+    }
+    revision.touch();
+    for (const c of remeshed) scene.rebuildChunk(c.layerId, c.cx, c.cz);
     // Nav describes the ground, so undoing the ground has to undo nav with it.
-    rebakeNav(scene.map.store, layerId, restored, settings.walkSlope);
+    rebakeNav(scene.map.store, layerId, remeshed, settings.walkSlope);
     scene.refreshProps();
     refreshMarkers();
     refreshNav();
@@ -418,6 +656,8 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     scene.refreshProps();
     refreshMarkers();
     refreshNav();
+    scene.camera3 = withMapBounds(scene.camera3, scene.map.store.layerInfo(layerId)?.bounds ?? null);
+    onPartsChanged();
   };
 
   const saveToFile = (): void => {
@@ -491,8 +731,14 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   root.addEventListener('dragover', onDragOver);
   root.addEventListener('drop', onDrop);
 
-  const panel = buildEditorPanel({
+  const panel: EditorPanel = buildEditorPanel({
     settings,
+    recipeNames: [...RECIPES.keys()],
+    partIds: () => scene.map.store.parts.map((p) => p.id),
+    onRemoveNamedPart: () => {
+      if (settings.removePartId) commitRemove(settings.removePartId);
+      else status = 'no part selected to remove';
+    },
     onUndo: undo,
     onSave: saveToFile,
     onLoad: () => fileInput.click(),
@@ -510,6 +756,8 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       refreshNav();
     },
   });
+  onPartsChanged = (): void => panel.refreshParts();
+  onPartsChanged();
   panelHost.appendChild(panel.element);
 
   /** Whether the focused element is somewhere a person is typing. */
@@ -530,7 +778,10 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     e.preventDefault();
   };
 
-  const chunks = scene.document.layers.reduce((n, layer) => n + layer.chunks.length, 0);
+  // Read from the store every frame rather than counted once at mount: parts
+  // add and remove chunks, so a number fixed at load time reports a world that
+  // has not existed since (spec 084).
+  const chunkCount = (): number => scene.map.store.chunkCount();
 
   // Sampled once when a stroke begins, so `flatten` levels to the ground it was
   // aimed at rather than chasing the surface it is changing.
@@ -588,7 +839,12 @@ export function mountEditor(container: HTMLElement): ViewHandle {
 
     // The cursor goes where the ray lands, and the brush follows it. Both read
     // the same pick, so the ring always marks the ground that is about to move.
-    const at = scene.pick(input.mouseCanvas().x, input.mouseCanvas().y);
+    const mouse = input.mouseCanvas();
+    const onTerrain = scene.pick(mouse.x, mouse.y);
+    // Only the part tool falls back to the plane: every other tool edits ground
+    // that is there, and letting them aim into the void would silently do
+    // nothing at a point they could not have meant.
+    const at = onTerrain ?? (settings.mode === 'part' ? scene.pickPlane(mouse.x, mouse.y) : null);
     if (at) {
       cursor.moveTo(at.x, at.z, cursorRadius(settings), (x, z) => scene.map.world.heightAt(x, z));
       cursor.setVisible(true);
@@ -602,7 +858,10 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     };
 
     if (input.takePaintStart()) {
-      history.beginStroke();
+      // A part opens and closes its own history entry, atomically on commit --
+      // there is no drag for a stroke to span, and an entry left open here
+      // would swallow the one `addPart` opens.
+      if (settings.mode !== 'part') history.beginStroke();
       strokeMovedGround = false;
       strokeChangedProps = false;
       strokeChangedMarkers = false;
@@ -614,6 +873,14 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       if (at) flattenTo = scene.map.world.heightAt(at.x, at.z);
       // A marker is placed on the press, not the drag: a spawn point is not a
       // bulk thing, and dragging would leave a trail of forty of them.
+      partAnchor = settings.mode === 'part' && settings.partTool === 'add' && at ? { x: at.x, z: at.z } : null;
+      // Remove happens on the press, like a marker: it names a thing already on
+      // the ground rather than describing a region to fill.
+      if (at && settings.mode === 'part' && settings.partTool === 'remove') {
+        const under = partAt(scene.map.store, at.x, at.z);
+        if (under) commitRemove(under.id);
+        else status = 'no part under the cursor';
+      }
       if (at && settings.mode === 'marker') {
         const placed = placeMarker(
           scene.map.store,
@@ -663,6 +930,16 @@ export function mountEditor(container: HTMLElement): ViewHandle {
         rng = out.rng;
         fencePath = out.path;
         if (out.added.length > 0) strokeChangedProps = true;
+      } else if (settings.mode === 'part' && partAnchor) {
+        // The outline is the selection: chunk-snapped from the first frame, so
+        // what you see is exactly the ground that will be baked.
+        const rect = chunkRectFrom(scene.map.store, layerId, partAnchor, at);
+        const world = rect ? chunkRectWorld(scene.map.store, layerId, rect) : null;
+        if (rect && world) {
+          partOutline.refresh(world, groundAt);
+          partOutline.object.visible = true;
+          status = `${chunkRectArea(rect)} chunks: ${rect.minCx},${rect.minCz}..${rect.maxCx},${rect.maxCz}`;
+        }
       } else if (settings.mode === 'erase') {
         const circle = { x: at.x, z: at.z, radius: settings.radius };
         const props = eraseStroke(scene.map.store, layerId, circle, capture);
@@ -677,7 +954,10 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       }
 
       if (strokeChangedProps && time - propsRebuiltAt > PROP_REBUILD_MS) {
-        scene.refreshProps();
+        const span = boundingChunkRect(strokeDirty);
+        const world = span && chunkRectWorld(scene.map.store, layerId, span);
+        if (world) scene.refreshPropsWithin(world);
+        else scene.refreshProps();
         propsRebuiltAt = time;
       }
       // The ring reads the surface it may just have moved, so redraw it after.
@@ -685,9 +965,22 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     }
 
     if (input.takePaintEnd()) {
-      history.endStroke();
-      // Trees stand on the ground, and either the ground or the trees just moved.
-      if (strokeMovedGround || strokeChangedProps) scene.refreshProps();
+      if (settings.mode === 'part') {
+        partOutline.object.visible = false;
+        const rect = at && partAnchor ? chunkRectFrom(scene.map.store, layerId, partAnchor, at) : null;
+        if (rect) commitPart(rect);
+        partAnchor = null;
+      } else history.endStroke();
+      // Trees stand on the ground, and either the ground or the trees just
+      // moved -- but only over the chunks the stroke actually touched, which is
+      // what makes an erase or a height brush cost the stroke rather than the
+      // map (spec 086).
+      if (strokeMovedGround || strokeChangedProps) {
+        const span = boundingChunkRect(strokeDirty);
+        const world = span && chunkRectWorld(scene.map.store, layerId, span);
+        if (world) scene.refreshPropsWithin(world);
+        else scene.refreshProps();
+      }
       // Markers and the arena outline sit on the ground too.
       if (strokeMovedGround || strokeChangedMarkers) refreshMarkers();
       // Nav is re-baked for exactly the chunks the stroke dirtied, so the
@@ -716,9 +1009,11 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       `at <b>${Math.round(c.target.x)}, ${Math.round(c.target.z)}</b> &middot; ` +
       `span <b>${Math.round(c.halfWidth)}</b> &middot; ` +
       `pitch <b>${Math.round((c.elevation * 180) / Math.PI)}&deg;</b><br>` +
-      `<span style="color:#7a7a90;">${chunks} chunks &middot; ` +
+      `<span style="color:#7a7a90;">${chunkCount()} chunks &middot; ` +
       `${scene.map.store.props(layerId).length} props${scene.undrawnProps > 0 ? ` (<b style="color:#e08f8f;">${scene.undrawnProps} not drawn</b>)` : ''} &middot; ` +
-      `${scene.map.store.markers(layerId).length} markers &middot; ${history.depth} undo` +
+      `${scene.map.store.markers(layerId).length} markers &middot; ` +
+      `${scene.map.store.parts.length} part${scene.map.store.parts.length === 1 ? '' : 's'} &middot; ` +
+      `${history.depth} undo` +
       `${status ? ` &middot; ${status}` : ''}</span>`;
 
     requestAnimationFrame(frame);

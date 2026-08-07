@@ -33,6 +33,7 @@ export function chunksToDocument(
   const layers: MapLayer[] = info.layers.map((layer, index) => ({
     id: layer.id,
     seed: layer.seed,
+    origin: layer.origin,
     bounds: layer.bounds,
     baseY: layer.baseY,
     waterLevel: layer.waterLevel,

@@ -187,8 +187,8 @@ export function fenceStroke(
     fromX += dirX * length;
     fromZ += dirZ * length;
 
-    const col = Math.floor((midX - layer.bounds.minX) / store.cellSize);
-    const row = Math.floor((midZ - layer.bounds.minZ) / store.cellSize);
+    const col = Math.floor((midX - layer.origin.x) / store.cellSize);
+    const row = Math.floor((midZ - layer.origin.z) / store.cellSize);
     if (!store.cellSolid(layerId, col, row)) continue;
     // Half a tile of clearance: the gap between two tiles of a run is exactly a
     // tile, so this rejects a second pass over the same ground and nothing else.

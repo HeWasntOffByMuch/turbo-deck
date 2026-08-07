@@ -196,7 +196,7 @@ describe('staying current with the ground', () => {
     rebakeNav(map.store, LAYER, dirty);
     expect(walkableAt(map, 60, 0)).toBe(false);
 
-    const restored = history.undo(map.store);
+    const { remeshed: restored } = history.undo(map.store);
     rebakeNav(map.store, LAYER, restored);
     expect(walkableAt(map, 60, 0)).toBe(true);
   });

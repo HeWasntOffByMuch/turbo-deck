@@ -544,6 +544,7 @@ export class GameServer implements AdminHost {
       layers: index.layers.map((layer) => ({
         id: layer.id,
         seed: layer.seed,
+        origin: layer.origin,
         bounds: layer.bounds,
         baseY: layer.baseY,
         waterLevel: layer.waterLevel,
