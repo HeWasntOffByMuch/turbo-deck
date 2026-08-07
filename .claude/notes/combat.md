@@ -294,3 +294,35 @@ transform; `activity`/`activityUntilTick` drive animation state on the wire.
 - **Flat vs arcing** — `arcHeight === 0` takes the first hostile body it
   overlaps; `arcHeight > 0` flies over everything and resolves only against the
   body it was fired at.
+
+---
+
+## Spec 081 additions
+
+- **A shot's speed is no longer a table constant.** `launchProjectile` runs
+  `spec.speed` through `projectileSpeedFor(baseSpeed, stats)` in
+  `player/stats.ts`: `baseSpeed * clamp(attackSpeed) * PROJECTILE_SPEED_SCALE`,
+  where the scale is a deliberate global 30% knob and `attackSpeed` is the same
+  clamped weapon stat `attackIntervalTicks` divides by. One weapon speed, both
+  halves of what it means.
+- **`lifetimeTicks` is a reach, not a duration.** `projectileLifetimeTicks`
+  re-times it as `lifetimeTicks * spec.speed / actualSpeed`, so every row keeps
+  the exact distance the table describes for every shooter. Do not "simplify"
+  this back to a raw tick count: at 30% speed that expires `bolt.arcane` at 372
+  units of its 700-unit range and `bolt.lob` at 360 of 520.
+- **`ProjectileSpec.look`** (`'orb' | 'arrow' | 'shuriken'`, default orb) is a
+  *picture*. Nothing under `src/server/sim/` reads it, and it rides no wire — a
+  projectile entity's `typeId` is already its ability id and the table is shared
+  code, so `appearanceOf` looks it up client-side. `PROTOCOL_VERSION` stays 9.
+- **Render**: `world/projectile-shape.ts` (arrow proportions, shuriken outline)
+  and `world/trail.ts` (distance-sampled ring buffer + tapered ribbon) are pure
+  and headlessly tested; `world/shot.ts` is the three.js `ShotRig` that builds
+  them, pitches the arrow from its drawn positions, spins the star, and owns the
+  streak. The streak is added to the *scene root*, not to the shot's group, and
+  must be removed and disposed on every body-teardown path in `scene.ts`.
+- A star is drawn at `SHURIKEN_DRAW_SCALE` (1.9x) its collision radius. That is
+  the one place a projectile's drawn extent and its hit radius part company on
+  purpose; `projectileHits` is untouched.
+- `npx tsx scripts/preview-shots.ts` → `.claude/screenshots/shots.png` flies the
+  real rig through a real `arcHeightAt` arc, with a software rasteriser that
+  blends vertex alpha so the streak's fade is actually visible.

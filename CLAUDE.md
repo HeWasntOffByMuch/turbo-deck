@@ -155,11 +155,15 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
 src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometric
                  world drawn from GameClient.view() and nothing else. interpolate.ts
                  (20Hz deltas to a pose per frame), intent.ts, target.ts (the
-                 right-click attack order, spec 072), cast.ts, appearance.ts
+                 right-click attack order, spec 072), cast.ts, appearance.ts,
+                 projectile-shape.ts and trail.ts (an arrow's and a shuriken's
+                 silhouettes, and the streak a thrown star leaves, spec 081)
                  and pixel-font.ts (a 5x7 glyph table, since nothing may be fetched)
-                 are pure and tested headlessly; scene.ts, hud.ts and
+                 are pure and tested headlessly; scene.ts, shot.ts, hud.ts and
                  view.ts are the three.js/DOM half. `npx tsx scripts/preview-world.ts`
-                 photographs the real page into .claude/screenshots/world-*.png.
+                 photographs the real page into .claude/screenshots/world-*.png,
+                 and `npx tsx scripts/preview-shots.ts` flies the real ShotRig
+                 through a real arc into .claude/screenshots/shots.png.
 src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
                  read by the tree sway, the water and the streak layer over the
                  ground, plus the shore distance transform the water's bands step
