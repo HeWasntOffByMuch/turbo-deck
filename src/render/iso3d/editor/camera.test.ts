@@ -192,7 +192,7 @@ describe('track and dolly (spec 058)', () => {
 
   it('holds the pivot over the map however far the drag runs', () => {
     const s = { ...fresh(), halfWidth: EDITOR_MAX_HALF_WIDTH };
-    // The allowance is the fixed margin plus the span on screen (spec 082), so
+    // The allowance is the fixed margin plus the span on screen (spec 084), so
     // it is bounded but scales with the zoom -- a pulled-back camera may look
     // further past the edge, which is what makes room to grow into visible.
     const slack = EDITOR_MAX_HALF_WIDTH + 1000;
@@ -224,7 +224,7 @@ describe('zoom', () => {
     let s = fresh();
     for (let i = 0; i < 200; i++) s = zoomEditorCamera(s, 100);
     // The ceiling is the map's, not the constant: this fixture's map is 4400
-    // across, so it may be framed whole (spec 082).
+    // across, so it may be framed whole (spec 084).
     expect(s.halfWidth).toBeCloseTo(maxHalfWidthFor(BOUNDS), 6);
     for (let i = 0; i < 400; i++) s = zoomEditorCamera(s, -100);
     expect(s.halfWidth).toBeCloseTo(EDITOR_MIN_HALF_WIDTH, 6);
@@ -304,7 +304,7 @@ describe('the opening state', () => {
 });
 
 /**
- * The limits have to follow the map (spec 082).
+ * The limits have to follow the map (spec 084).
  *
  * Both were fixed at the moment the camera was made, which was fine while the
  * world was one fixed rectangle. A growable map turns them into a fence around

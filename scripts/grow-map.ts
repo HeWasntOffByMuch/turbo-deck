@@ -1,5 +1,5 @@
 /**
- * Grow the map by one part (spec 081).
+ * Grow the map by one part (spec 083).
  *
  * Where `bake-map.ts` regenerates the world from a seed and throws away every
  * hand edit, this *adds* to the world already on disk:
@@ -124,7 +124,7 @@ export function grow(doc: MapDocument, args: GrowArgs, recipe: PartRecipe): MapD
 
   const { store } = loadMap(grown);
   for (const layer of grown.layers) bakeLayerNav(store, layer.id);
-  // `toDocument` is exact, and since spec 082 the store carries `parts` too, so
+  // `toDocument` is exact, and since spec 084 the store carries `parts` too, so
   // the nav bake is the only thing this changes.
   return store.toDocument();
 }

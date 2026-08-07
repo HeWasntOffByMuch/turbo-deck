@@ -1,8 +1,8 @@
-# 082 — Growing the map from the editor
+# 084 — Growing the map from the editor
 
 ## Problem
 
-Spec 081 made the map growable, but only from a shell: `scripts/grow-map.ts`
+Spec 083 made the map growable, but only from a shell: `scripts/grow-map.ts`
 adds a part, and the editor — the thing you are actually looking at the world in
 — cannot. Worse, it silently *loses* parts: `MapChunkStore.toDocument()` does
 not carry `parts`, so opening a grown map in the editor and saving it drops
@@ -103,7 +103,7 @@ selection outline are the only untested half.
 
 ### What Remove refuses
 
-A part's rect can include chunks it did not create: spec 081's *completion* of a
+A part's rect can include chunks it did not create: spec 083's *completion* of a
 short edge chunk, where the map's flank was 4 cells wide against a 28-cell chunk
 and growing past it meant filling the rest in. Deleting those would punch a hole
 in ground the part did not make.
@@ -203,7 +203,7 @@ has, and it is what puts empty ground on screen to grow into.
 
 - Editing a part's recipe in place, or re-rolling its seed. Remove and add
   again; the recipe is a file.
-- Authoring recipes in the editor. They are committed JSON (spec 081), and the
+- Authoring recipes in the editor. They are committed JSON (spec 083), and the
   editor picks from them.
 - Removing a part that completed pre-existing chunks. Named above, refused.
 - Overlapping parts. `bakePart` already refuses to bake over full chunks, so two

@@ -5,7 +5,7 @@ import { parseMap, serializeMap, type MapDocument } from './map.js';
 import { grow, parseArgs, parseRect, unfilledCells, type GrowArgs } from '../../scripts/grow-map.js';
 
 /**
- * The headless half of growing a map (spec 081).
+ * The headless half of growing a map (spec 083).
  *
  * The bake itself is covered in `part.test.ts`; what is checked here is that the
  * script wraps it without changing the answer -- and that it reports the one

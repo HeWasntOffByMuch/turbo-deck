@@ -49,7 +49,7 @@ export interface CellExtent {
  * indices measured from the layer's `origin`.
  *
  * Derived from the chunks held rather than from the bounds rectangle (spec
- * 080), because a growable layer is a sparse set of chunks and its indices run
+ * 083), because a growable layer is a sparse set of chunks and its indices run
  * negative once it has grown west or north. `totalCols`/`chunksX` are sizes, not
  * limits -- a loop over the grid runs `minCol` to `maxCol`, and a loop from zero
  * is only right for a map that has never grown.
@@ -110,7 +110,7 @@ interface StoredLayer extends Omit<LayerInfo, 'grid' | 'bounds'> {
   readonly chunks: Map<string, StoredChunk>;
   /** Recomputed whenever a chunk is added, since the extent can grow. */
   grid: LayerGrid;
-  /** Widened by `declareBounds` when the layer grows (spec 081). */
+  /** Widened by `declareBounds` when the layer grows (spec 083). */
   bounds: MapRect;
 }
 
@@ -215,7 +215,7 @@ export class MapChunkStore {
   readonly cellSize: number;
   readonly chunkCells: number;
   /**
-   * Where each piece of the world came from (spec 081), held here rather than
+   * Where each piece of the world came from (spec 083), held here rather than
    * left on the document.
    *
    * `toDocument()` is the editor's save path, so anything the document carries
@@ -306,13 +306,13 @@ export class MapChunkStore {
     layer.chunks.set(key(chunk.cx, chunk.cz), this.storeChunk(chunk, layer.origin));
     // The extent is a property of the chunks held, so it moves when they do --
     // a chunk arriving at a negative coordinate widens the grid rather than
-    // being quietly unaddressable (spec 081).
+    // being quietly unaddressable (spec 083).
     layer.grid = grid(layer.chunks.values(), layer.origin, layer.bounds, this.cellSize);
     return true;
   }
 
   /**
-   * Drop a chunk, so the ground it held stops existing (spec 082).
+   * Drop a chunk, so the ground it held stops existing (spec 084).
    *
    * The inverse of `insertChunk` and just as blunt: a layer is a sparse map, so
    * removing an entry is all that "this ground is gone" means. The grid extent
@@ -331,7 +331,7 @@ export class MapChunkStore {
    *
    * Exists so a chunk can be taken out and put back byte-identically: undo for
    * a delete cannot be a snapshot-and-restore, because there is nothing left to
-   * restore *into* (spec 082).
+   * restore *into* (spec 084).
    */
   exportChunk(layerId: string, cx: number, cz: number): MapChunk | null {
     const layer = this.layers.get(layerId);
@@ -376,7 +376,7 @@ export class MapChunkStore {
     return total;
   }
 
-  /** Where each piece of the world came from (spec 081). */
+  /** Where each piece of the world came from (spec 083). */
   get parts(): readonly MapPart[] {
     return this.partList;
   }
@@ -447,7 +447,7 @@ export class MapChunkStore {
    * than admitting it ran out of ground, which is right for the mesher's apron
    * and wrong for stitching. A part being baked has to know exactly which of its
    * corners already exist, because those are the ones it must copy rather than
-   * invent (spec 081).
+   * invent (spec 083).
    */
   heldCornerHeight(layerId: string, col: number, row: number): number | null {
     const layer = this.layers.get(layerId);
@@ -458,7 +458,7 @@ export class MapChunkStore {
   }
 
   /**
-   * Widen the extent this layer declares (spec 081).
+   * Widen the extent this layer declares (spec 083).
    *
    * Bounds are declared rather than derived, so growing the world is an
    * explicit act: `bakePart` computes the new rectangle and this is where it
@@ -550,7 +550,7 @@ export class MapChunkStore {
    * A chunk on the layer's far edge is *short* when the bounds are not a whole
    * number of chunks across, so "how big is this one" is a real question rather
    * than a constant -- and completing a short chunk is how a map grows past one
-   * (spec 081).
+   * (spec 083).
    */
   chunkShape(layerId: string, cx: number, cz: number): { cols: number; rows: number } | null {
     const chunk = this.layers.get(layerId)?.chunks.get(key(cx, cz));
@@ -622,7 +622,7 @@ export class MapChunkStore {
   /**
    * The chunk that owns a world point, or undefined if no chunk covers it.
    *
-   * Not clamped into the grid any more (spec 081): on a sparse, growable layer
+   * Not clamped into the grid any more (spec 083): on a sparse, growable layer
    * the nearest chunk to a point outside the map is not a meaningful answer --
    * it can be on the far side of a hole -- so a point with no chunk under it is
    * a miss, and the callers that already handled null keep working.
@@ -831,7 +831,7 @@ export class MapChunkStore {
      * up until the day the world is extended *west* or *north*: the bounds
      * move, the origin does not, and every chunk in the map is then meshed a
      * few thousand units from where its ground actually is -- the terrain
-     * slides out from under its own trees (spec 082).
+     * slides out from under its own trees (spec 084).
      */
     const at = (col: number, row: number): [x: number, y: number, z: number] => {
       const [jx, jz] = cornerJitter(col, row, layer.seed, this.cellSize);
@@ -907,7 +907,7 @@ export class MapChunkStore {
    *
    * Iterates the chunks held and sorts them, rather than sweeping a rectangle
    * of coordinates: a grown layer's rectangle is mostly holes, and a sweep over
-   * it costs the whole bounding box to find the same chunks (spec 081).
+   * it costs the whole bounding box to find the same chunks (spec 083).
    */
   buildChunks(): TerrainChunk[] {
     const out: TerrainChunk[] = [];
@@ -968,7 +968,7 @@ export class MapChunkStore {
       grid: { cellSize: this.cellSize, chunkCells: this.chunkCells },
       arena: this.doc.arena,
       // Held here rather than read off `this.doc`, so a part added since
-      // construction survives a save (spec 082).
+      // construction survives a save (spec 084).
       ...(this.partList.length === 0 ? {} : { parts: this.partList }),
       layers: this.doc.layers.map((docLayer) => {
         const layer = this.layers.get(docLayer.id);
@@ -1079,7 +1079,7 @@ function bakedLayer(store: MapChunkStore, layerId: string): TerrainLayer | null 
   // and its grid is *replaced* on every insert, so a snapshot taken here would
   // be the extent at load time. On a streaming client that is the empty extent,
   // and every sample would then clamp to a cell that never gains corners
-  // (spec 081).
+  // (spec 083).
   const g = (): LayerGrid => info.grid;
 
   const corner = (col: number, row: number): CornerPoint => {
@@ -1129,7 +1129,7 @@ function bakedLayer(store: MapChunkStore, layerId: string): TerrainLayer | null 
       // Clamped to the cells actually held, so a query off the map reads the
       // outermost real cell's plane rather than an index with no corners behind
       // it. On a grown layer that range starts wherever the westmost chunk does,
-      // which is why it is not simply zero (spec 081).
+      // which is why it is not simply zero (spec 083).
       const grid = g();
       const i0 = Math.min(grid.maxCol - 1, Math.max(grid.minCol, Math.floor((x - origin.x) / cell)));
       const j0 = Math.min(grid.maxRow - 1, Math.max(grid.minRow, Math.floor((z - origin.z) / cell)));
@@ -1236,10 +1236,10 @@ export function loadMap(doc: MapDocument): LoadedMap {
       // streaming client those differ by exactly the chunks still in flight,
       // and that gap is what has to read as "unknown" rather than "no ground".
       // The declared extent is known from `MapInfo` before any chunk lands, so
-      // this answers correctly from the first frame (specs 078, 081).
+      // this answers correctly from the first frame (specs 078, 083).
       //
       // Read through the store on every call rather than captured once: the
-      // grid is *replaced* when a chunk arrives or a part is grown (spec 082),
+      // grid is *replaced* when a chunk arrives or a part is grown (spec 084),
       // so a snapshot taken here freezes the world's edge where it was at load
       // time. Everything past it then answers `false` -- "no ground" -- and the
       // mesher walls off ground that exists, which is a map with a hole in it.

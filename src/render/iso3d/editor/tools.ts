@@ -22,7 +22,7 @@ export type EditorMode = 'terrain' | 'scatter' | 'fence' | 'marker' | 'erase' | 
 
 export const EDITOR_MODES: readonly EditorMode[] = ['terrain', 'scatter', 'fence', 'marker', 'erase', 'part'];
 
-/** What the part mode's drag does (spec 082). */
+/** What the part mode's drag does (spec 084). */
 export type PartTool = 'add' | 'remove';
 
 export const PART_TOOLS: readonly PartTool[] = ['add', 'remove'];
@@ -82,7 +82,7 @@ export interface EditorSettings {
   // Nav
   showNav: boolean;
   walkSlope: number;
-  // Parts (spec 082)
+  // Parts (spec 084)
   partTool: PartTool;
   /** Which of `maps/recipes/` the add tool bakes. */
   recipe: string;

@@ -70,7 +70,7 @@ describe('buildWorld', () => {
 });
 
 /**
- * The world's edge, since spec 081.
+ * The world's edge, since spec 083.
  *
  * It used to be `WORLD_BOUNDS`, compiled in from `PLAY_WIDTH + WORLD_BLEED`.
  * That is a wall a wider map cannot move, so a grown world stopped players dead

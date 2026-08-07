@@ -78,7 +78,7 @@ describe('MapChunk round trip', () => {
   });
 
   it('reproduces a chunk sitting west and north of the origin', () => {
-    // A grown map's chunks have negative coordinates (spec 081). They are
+    // A grown map's chunks have negative coordinates (spec 083). They are
     // zigzag varints, so this costs no more bytes than a positive one -- but
     // only if the sign actually survives.
     const chunk = chunks[0]?.chunk;
@@ -172,7 +172,7 @@ describe('MapInfo round trip', () => {
   });
 
   /**
-   * A grown map has chunks west and north of its origin (spec 081), and the
+   * A grown map has chunks west and north of its origin (spec 083), and the
    * origin itself no longer sits at the layer's corner. Both travel, and both
    * stay exact: an offset dropped here would land every streamed chunk a chunk
    * away from where the server put it.

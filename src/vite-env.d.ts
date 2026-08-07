@@ -16,7 +16,7 @@ declare module '*?raw' {
  * Vite's `import.meta.glob`, typed just far enough for the eager JSON case.
  *
  * The map editor bundles every recipe under `maps/recipes/` so a part can be
- * grown with no server behind the page (spec 082). Declared here rather than by
+ * grown with no server behind the page (spec 084). Declared here rather than by
  * pulling in `vite/client`, which would bring the whole ambient surface along
  * with it for one function.
  */

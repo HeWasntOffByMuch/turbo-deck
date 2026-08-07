@@ -93,7 +93,7 @@ const SUN_DISTANCE = 3000;
 
 /** The editor's scene: a baked map, lit, with a free camera over it. */
 /**
- * The recipes a part may be grown from (spec 081), bundled at build time.
+ * The recipes a part may be grown from (spec 083), bundled at build time.
  *
  * `import.meta.glob` rather than a fetch: the editor has to work from a file://
  * page and with no server behind it, and a recipe is a committed file whose set
@@ -272,7 +272,7 @@ class EditorScene {
 
   /**
    * Rebuild every terrain mesh from the chunks the store holds *now*, keeping
-   * the store itself (spec 082).
+   * the store itself (spec 084).
    *
    * `replaceMap` cannot be used for this: it builds a new `MapChunkStore`, and
    * the undo stack holds snapshots that belong to the old one -- one Ctrl+Z
@@ -297,7 +297,7 @@ class EditorScene {
 
   /**
    * Where the cursor ray meets a horizontal plane, for aiming at ground that
-   * does not exist yet (spec 082).
+   * does not exist yet (spec 084).
    *
    * `pick` raycasts the terrain, which is exactly right for every tool that
    * edits ground that is there -- and useless for the one tool whose whole job
@@ -504,7 +504,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     scene.rebuildTerrain();
     // The camera was fenced to the map as it was when the view opened, so a
     // world that just grew would otherwise be ground you can see and cannot
-    // pan to (spec 082).
+    // pan to (spec 084).
     scene.camera3 = withMapBounds(scene.camera3, scene.map.store.layerInfo(layerId)?.bounds ?? null);
     bakeLayerNav(scene.map.store, layerId, settings.walkSlope);
     scene.refreshProps();
@@ -572,7 +572,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     if (remeshed.length === 0 && !structural) return;
     revision.touch();
     // Chunks appearing or vanishing changes which meshes exist, so patching the
-    // ones by name would leave the others behind (spec 082).
+    // ones by name would leave the others behind (spec 084).
     if (structural) scene.rebuildTerrain();
     else for (const c of remeshed) scene.rebuildChunk(c.layerId, c.cx, c.cz);
     // Nav describes the ground, so undoing the ground has to undo nav with it.
@@ -582,7 +582,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     refreshMarkers();
     refreshNav();
     // Undo can put a part back or take one away, and it moves the bounds with
-    // it, so the panel and the camera both have to be told (spec 082).
+    // it, so the panel and the camera both have to be told (spec 084).
     if (structural) {
       scene.camera3 = withMapBounds(scene.camera3, scene.map.store.layerInfo(layerId)?.bounds ?? null);
       onPartsChanged();
@@ -719,7 +719,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
 
   // Read from the store every frame rather than counted once at mount: parts
   // add and remove chunks, so a number fixed at load time reports a world that
-  // has not existed since (spec 082).
+  // has not existed since (spec 084).
   const chunkCount = (): number => scene.map.store.chunkCount();
 
   // Sampled once when a stroke begins, so `flatten` levels to the ground it was

@@ -16,7 +16,7 @@ import { EditHistory } from './history.js';
 import { addPart, chunkRectArea, chunkRectFrom, partAt, partWorldRect, removePart } from './parts.js';
 
 /**
- * Adding and removing parts from the editor (spec 082).
+ * Adding and removing parts from the editor (spec 084).
  *
  * The assertion that carries the most weight is the round trip: serialize, do
  * the thing, undo, serialize, and compare the *text*. That covers the chunks,

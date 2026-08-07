@@ -1,5 +1,5 @@
 /**
- * Drive the map editor's part tools in a real browser (spec 082).
+ * Drive the map editor's part tools in a real browser (spec 084).
  *
  * `parts.ts` is tested headlessly and covers what a part *does* to the store.
  * What it cannot cover is whether any of it is wired to the mouse: the drag,
@@ -180,7 +180,7 @@ async function main(): Promise<void> {
 
     // A second part from the same recipe, without touching the id field: the
     // name is made unique rather than colliding, so growing a run of ground is
-    // a run of drags (spec 082).
+    // a run of drags (spec 084).
     await drag(page, [120, 250], [250, 320]);
     await page.mouse.up();
     await page.waitForTimeout(1200);
@@ -226,7 +226,7 @@ async function main(): Promise<void> {
     await page.waitForTimeout(900);
     await page.screenshot({ path: join(outDir, 'editor-part-restored.png') });
 
-    // The shipped map's east column and south row are *short* (spec 082): their
+    // The shipped map's east column and south row are *short* (spec 084): their
     // ground stops before their own chunk footprint ends. A part dragged clear
     // of one must absorb and complete it, or it strands a 528-unit strip of
     // nothing too narrow to select and impossible to fill by dragging.

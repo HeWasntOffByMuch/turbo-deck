@@ -77,7 +77,7 @@ export function brushCorners(
   radius: number,
 ): CornerRange {
   // Clamped to the cells the layer actually holds, which on a grown layer does
-  // not start at zero (spec 081).
+  // not start at zero (spec 083).
   const g = layer.grid;
   const toCol = (world: number): number => (world - layer.origin.x) / cellSize;
   const toRow = (world: number): number => (world - layer.origin.z) / cellSize;

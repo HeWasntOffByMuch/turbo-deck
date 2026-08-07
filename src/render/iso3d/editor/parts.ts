@@ -10,7 +10,7 @@ import {
 import type { EditHistory } from './history.js';
 
 /**
- * Adding and removing map parts from the editor (spec 082).
+ * Adding and removing map parts from the editor (spec 084).
  *
  * The bake itself is `bakePart` and is not reimplemented here -- what this
  * module owns is the *editing* half: turning a drag into a chunk rectangle,

@@ -129,7 +129,7 @@ export interface EditorPanelOptions {
   readonly onSave: () => void;
   readonly onLoad: () => void;
   readonly onDiscardAutosave: () => void;
-  /** The recipes a part may be grown from, by name (spec 082). */
+  /** The recipes a part may be grown from, by name (spec 084). */
   readonly recipeNames: readonly string[];
   /** Remove the part named in the dropdown, for when clicking one is awkward. */
   readonly onRemoveNamedPart: () => void;
@@ -140,7 +140,7 @@ export interface EditorPanelOptions {
 export interface EditorPanel {
   readonly element: HTMLElement;
   refresh(): void;
-  /** Re-read the parts list, after one has been added or removed (spec 082). */
+  /** Re-read the parts list, after one has been added or removed (spec 084). */
   refreshParts(): void;
   destroy(): void;
 }

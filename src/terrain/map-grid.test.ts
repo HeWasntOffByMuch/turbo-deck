@@ -5,7 +5,7 @@ import { MAP_VERSION, parseMap, serializeMap, type MapChunk, type MapDocument } 
 import { loadMap, MapChunkStore } from './map-world.js';
 
 /**
- * The grid a map is indexed on (spec 081).
+ * The grid a map is indexed on (spec 083).
  *
  * Two properties are load-bearing once a map can grow, and neither was
  * expressible before the grid gained an origin:

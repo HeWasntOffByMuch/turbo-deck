@@ -19,7 +19,7 @@ import { materialIndex, rectContains, type TerrainLayer } from './types.js';
 import { scatterInBounds, type Prop } from './vegetation.js';
 
 /**
- * Growing the world by parts (spec 081).
+ * Growing the world by parts (spec 083).
  *
  * A part is a chunk-snapped rectangle baked into an existing layer from a
  * recipe. The map stops being something regenerated whole and becomes something
@@ -86,7 +86,7 @@ export interface BakedPart {
    *
    * Reported because it is the difference between ground this part made and
    * ground it merely finished, and removing a part may only delete the former
-   * (spec 082).
+   * (spec 084).
    */
   readonly completed: readonly ChunkCoord[];
 }

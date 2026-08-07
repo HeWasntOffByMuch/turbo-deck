@@ -78,7 +78,7 @@ export interface MapPoint {
   readonly z: number;
 }
 
-/** A rectangle of chunk coordinates, inclusive on both ends (spec 081). */
+/** A rectangle of chunk coordinates, inclusive on both ends (spec 083). */
 export interface ChunkRect {
   readonly minCx: number;
   readonly minCz: number;
@@ -139,7 +139,7 @@ export interface MapLayer {
   readonly seed: number;
   /**
    * The world point chunk `(0, 0)`'s low corner sits on, and the anchor every
-   * chunk and cell index is measured from (spec 081).
+   * chunk and cell index is measured from (spec 083).
    *
    * Split out from `bounds` because a map that can grow needs an anchor that
    * does *not* move. Indices used to be relative to `bounds.minX/minZ`, which
@@ -158,7 +158,7 @@ export interface MapLayer {
    * computed when a map is baked or saved, and after that it is read as-is.
    *
    * A streaming client holds a handful of chunks and has to know how big the
-   * world is anyway -- the sim's edge wall comes from here (spec 081). Deriving
+   * world is anyway -- the sim's edge wall comes from here (spec 083). Deriving
    * the extent from the chunks in hand would put that wall wherever streaming
    * happened to have got to, and the client would predict a barrier in open
    * ground and then be corrected through it.
@@ -170,7 +170,7 @@ export interface MapLayer {
 }
 
 /**
- * What a part is grown from (spec 081): a feature list in the authored terrain
+ * What a part is grown from (spec 083): a feature list in the authored terrain
  * vocabulary, plus how thickly to plant it.
  *
  * `features` is `TerrainFeature[]`, the same literal a generated world is
@@ -194,7 +194,7 @@ export interface PartRecipe {
 }
 
 /**
- * A piece of world, and where it came from (spec 081).
+ * A piece of world, and where it came from (spec 083).
  *
  * Metadata, not truth: the chunks are the map, and nothing at load time reads a
  * part. It is here so a piece can be reviewed as a diff, re-rolled with another
@@ -210,11 +210,11 @@ export interface MapPart {
   readonly seed: number;
   /**
    * Chunks inside `rect` that already existed and were completed rather than
-   * created -- a short edge chunk filled out to full size (spec 081).
+   * created -- a short edge chunk filled out to full size (spec 083).
    *
    * Omitted when empty, which is the ordinary case. Recorded because removing a
    * part may only delete ground that part made: deleting a completed chunk
-   * would punch a hole in terrain somebody else baked (spec 082).
+   * would punch a hole in terrain somebody else baked (spec 084).
    */
   readonly completed?: readonly { readonly cx: number; readonly cz: number }[];
   readonly recipe: PartRecipe;
@@ -229,7 +229,7 @@ export interface MapDocument {
   readonly layers: readonly MapLayer[];
   /** The sim's play rectangle, in world space -- see the note on `arena` above. */
   readonly arena: MapRect;
-  /** Where each piece of the world came from (spec 081). Provenance only. */
+  /** Where each piece of the world came from (spec 083). Provenance only. */
   readonly parts?: readonly MapPart[];
 }
 
@@ -544,7 +544,7 @@ function writeLayer(layer: MapLayer, indent: string): string {
 }
 
 /**
- * A part, as JSON (spec 081).
+ * A part, as JSON (spec 083).
  *
  * The recipe goes through `JSON.stringify` rather than a hand-written emitter:
  * a feature list is a small, irregular union, and enumerating every member here
@@ -796,7 +796,7 @@ export function parseMap(text: string): MapDocument {
   const r = asRecord(raw, 'document');
   const version = asNumber(r['version'], 'document.version');
   // Older documents are read forward, not rejected: v1 predates the grid origin
-  // (spec 081) and `parseLayer` fills it in. A document is always *emitted* at
+  // (spec 083) and `parseLayer` fills it in. A document is always *emitted* at
   // the current version, so loading and re-saving a v1 file upgrades it.
   if (version < MIN_MAP_VERSION || version > MAP_VERSION) {
     fail(`unsupported version ${version}, expected ${MIN_MAP_VERSION}..${MAP_VERSION}`);

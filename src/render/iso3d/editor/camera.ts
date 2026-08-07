@@ -37,7 +37,7 @@ export const EDITOR_ELEVATION_MAX = (89 * Math.PI) / 180;
  *
  * The far end is a **floor on the limit**, not the limit itself. 3200 held the
  * 4400-unit world it was written for, and stopped dead there -- which was fine
- * until the map could grow (spec 082). A world you cannot zoom out far enough
+ * until the map could grow (spec 084). A world you cannot zoom out far enough
  * to see is a world you cannot choose where to extend, so the real limit is
  * computed from the map by {@link maxHalfWidthFor}.
  */
@@ -154,7 +154,7 @@ export function createEditorCamera(opts: EditorCameraOptions = {}): EditorCamera
 }
 
 /**
- * Re-aim the limits at a map that has changed size (spec 082).
+ * Re-aim the limits at a map that has changed size (spec 084).
  *
  * The bounds and the zoom ceiling are captured when the camera is made, so a
  * world that grows afterwards leaves the camera fenced into the rectangle the
