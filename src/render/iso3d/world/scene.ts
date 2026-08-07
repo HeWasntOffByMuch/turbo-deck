@@ -34,7 +34,9 @@ import { ARENA_OBSTACLES } from '../../../sim/constants.js';
 import { vegetationColliders } from '../../../terrain/vegetation.js';
 import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-mesh.js';
 import { buildPropField, type PropFieldHandle } from '../props.js';
-import { MechRig, PlayerRig, Poofs } from '../rigs.js';
+import { MechRig, Poofs } from '../rigs.js';
+import { CritterRig, defaultCritterTuning } from '../critter.js';
+import { CRITTERS } from '../../critters/index.js';
 import { attachOutline, type OutlineHandle } from '../outline.js';
 import { pickHoveredUnit, type HoverTarget, type ScreenBox } from '../hover.js';
 import { createViewControls, type ViewControls } from '../view-controls.js';
@@ -69,7 +71,7 @@ import {
   pointIntensity,
   torchFlicker,
 } from '../player-lights.js';
-import { appearanceOf, type Appearance } from './appearance.js';
+import { appearanceOf, PLAYER_CRITTER, PLAYER_FIGURE, type Appearance } from './appearance.js';
 import { ShotRig } from './shot.js';
 import type { AimShape } from './aim.js';
 import { castBar } from './cast.js';
@@ -147,13 +149,26 @@ export interface AimIndicator {
 interface Body {
   readonly group: THREE.Group;
   readonly kind: 'player' | 'monster' | 'projectile';
-  readonly player?: PlayerRig;
+  readonly player?: CritterRig;
   readonly mech?: MechRig;
   readonly shot?: ShotRig;
   readonly outline?: OutlineHandle;
-  /** Last drawn ground position, for the gait's distance-moved input. */
-  previous: Vec2 | null;
+  /** World units above the feet to hang the health bar; see {@link Body.headroom}. */
+  readonly headroom: number;
 }
+
+/**
+ * Where a health bar floats, for a body whose height nothing else knows.
+ *
+ * Tuned against the mech rigs, which is every monster and the projectiles that
+ * never show one anyway. The player is taller than this and asks for its own
+ * (spec 081) -- a shared constant was fine while the player was a knee-high
+ * bird, and put the bar straight across the cow's face the moment it was not.
+ */
+const DEFAULT_HEADROOM = 46;
+
+/** Clearance between the top of a critter's head and the bar hanging over it. */
+const HEADROOM_GAP = 12;
 
 /** A blast that has landed and is fading out. Presentation only. */
 interface LiveEffect {
@@ -671,10 +686,9 @@ export class WorldScene {
       // A mesh built facing +x sits at world heading `theta` when yawed -theta.
       body.group.rotation.y = -facing;
 
-      const moved = body.previous ? Math.hypot(x - body.previous.x, y - body.previous.y) : 0;
-      body.previous = { x, y };
-
-      body.player?.update(dt, moved);
+      // Both rigs read their own gait out of the positions they are handed, so
+      // neither needs the scene to remember where it drew them last frame.
+      body.player?.update(dt, { x, y }, -facing);
       body.mech?.update(dt, { x, y }, -facing);
       // Fed the *drawn* pose, so an arrow's nose follows the curve the eye is
       // following rather than the one the deltas describe (spec 081).
@@ -893,16 +907,40 @@ export class WorldScene {
     const { rig, typeId, radius, look } = appearance;
     let body: Body;
     if (rig === 'player') {
-      const player = new PlayerRig();
-      body = { group: player.group, kind: 'player', player, outline: attachOutline(player.group), previous: null };
+      // Every player gets its own tuning object rather than sharing one: the
+      // panel that edits a figure lives in the sandbox, and a shared record here
+      // would be one player's coat-picker session resizing the whole server.
+      const species = CRITTERS[PLAYER_CRITTER];
+      const player = new CritterRig(species, {
+        tuning: { ...defaultCritterTuning(), ...PLAYER_FIGURE },
+      });
+      body = {
+        group: player.group,
+        kind: 'player',
+        player,
+        outline: attachOutline(player.group),
+        // Read off the species rather than measured: the metrics are what the
+        // skeleton is built from, so a taller animal moves its own bar.
+        headroom:
+          (species.metrics.headY + species.metrics.headRadius) * PLAYER_FIGURE.bodyScale +
+          HEADROOM_GAP,
+      };
     } else if (rig === 'projectile') {
       // The silhouette comes from the ability that threw it (spec 081), so a
       // thrown weapon reads as one in the air rather than as a bead of light.
       const shot = new ShotRig(look ?? 'orb', radius);
-      body = { group: shot.group, kind: 'projectile', shot, previous: null };
+      // A shot never shows a bar, so its headroom is the shared default rather
+      // than anything measured off the mesh.
+      body = { group: shot.group, kind: 'projectile', shot, headroom: DEFAULT_HEADROOM };
     } else {
       const mech = new MechRig(typeId);
-      body = { group: mech.group, kind: 'monster', mech, outline: attachOutline(mech.group), previous: null };
+      body = {
+        group: mech.group,
+        kind: 'monster',
+        mech,
+        outline: attachOutline(mech.group),
+        headroom: DEFAULT_HEADROOM,
+      };
     }
 
     this.scene.add(body.group);
@@ -1155,7 +1193,7 @@ export class WorldScene {
 
     for (const [id, body] of this.bodies) {
       this.projected.copy(body.group.position);
-      this.projected.y += 46;
+      this.projected.y += body.headroom;
       this.projected.project(this.camera);
       const x = (this.projected.x * 0.5 + 0.5) * width;
       const y = (-this.projected.y * 0.5 + 0.5) * height;
