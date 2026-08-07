@@ -55,22 +55,29 @@ interface Entry {
   parts: readonly MapPart[] | null;
 }
 
-/** What an undo changed, so the view knows how much to rebuild. */
+/** What an undo changed, so the view knows exactly what to rebuild. */
 export interface UndoResult {
-  /** Chunks whose arrays changed and whose mesh needs rebuilding. */
+  /** Chunks whose arrays changed, or which came back: re-mesh these. */
   readonly remeshed: readonly ChunkRef[];
+  /**
+   * Chunks that no longer exist: stop drawing these.
+   *
+   * Named rather than implied, so undoing a part costs the ring around it and
+   * not the whole world (spec 085). Undoing an *add* removes ground, which is
+   * the only way a chunk ever disappears.
+   */
+  readonly removed: readonly ChunkRef[];
   /**
    * Whether chunks appeared or vanished.
    *
-   * A stroke that only moved corners re-meshes the chunks it names; one that
-   * added or removed ground changes *which* meshes exist, and the view has to
-   * rebuild the terrain wholesale. Worth distinguishing because the first case
-   * is every brush stroke and has to stay cheap.
+   * A stroke that only moved corners touches nothing but the chunks it names;
+   * one that changed *which* chunks exist also moved the layer's bounds and
+   * possibly its parts list, so the camera and the panel have to be told.
    */
   readonly structural: boolean;
 }
 
-const EMPTY_UNDO: UndoResult = { remeshed: [], structural: false };
+const EMPTY_UNDO: UndoResult = { remeshed: [], removed: [], structural: false };
 
 const key = (layerId: string, cx: number, cz: number): string => `${layerId}:${cx},${cz}`;
 
@@ -199,11 +206,14 @@ export class EditHistory {
     if (!entry) return EMPTY_UNDO;
 
     const remeshed: ChunkRef[] = [];
+    const removed: ChunkRef[] = [];
     for (const snapshot of entry.modified.values()) {
       store.restoreChunk(snapshot);
       remeshed.push({ layerId: snapshot.layerId, cx: snapshot.cx, cz: snapshot.cz });
     }
-    for (const ref of entry.created.values()) store.removeChunk(ref.layerId, ref.cx, ref.cz);
+    for (const ref of entry.created.values()) {
+      if (store.removeChunk(ref.layerId, ref.cx, ref.cz)) removed.push(ref);
+    }
     for (const { layerId, chunk } of entry.deleted.values()) {
       store.insertChunk(layerId, chunk);
       remeshed.push({ layerId, cx: chunk.cx, cz: chunk.cz });
@@ -211,7 +221,7 @@ export class EditHistory {
     for (const [layerId, bounds] of entry.bounds) store.setBounds(layerId, bounds);
     if (entry.parts !== null) store.setParts(entry.parts);
 
-    return { remeshed, structural: entry.created.size > 0 || entry.deleted.size > 0 };
+    return { remeshed, removed, structural: entry.created.size > 0 || entry.deleted.size > 0 };
   }
 
   /** Forget everything, e.g. after loading a different map. */

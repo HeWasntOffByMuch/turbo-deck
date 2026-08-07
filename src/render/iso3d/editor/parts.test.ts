@@ -230,6 +230,52 @@ describe('removePart', () => {
   });
 });
 
+/**
+ * What an undo tells the view to rebuild (spec 085).
+ *
+ * A part commit used to re-mesh every chunk in the world and re-bake nav for
+ * the whole layer, so the editor got slower the more you built. The work is
+ * bounded now, which means undo has to say *which* chunks went away rather than
+ * merely that something did.
+ */
+describe('undo names the ground it took away', () => {
+  it('reports created chunks as removed, not as re-meshed', () => {
+    const { store, history } = fresh();
+    addPart(store, history, EAST);
+
+    const undone = history.undo(store);
+    const removed = undone.removed.map((c) => `${c.cx},${c.cz}`).sort();
+    expect(removed).toEqual(['2,0', '2,1', '3,0', '3,1']);
+    // Nothing to re-mesh: the part touched no chunk that already existed.
+    expect(undone.remeshed).toEqual([]);
+    expect(undone.structural).toBe(true);
+  });
+
+  it('reports restored chunks as re-meshed, not as removed', () => {
+    const doc = growMap(baseDoc(), { id: EAST.id, layerId: LAYER, rect: EAST.rect, recipe: RECIPE, seed: 11 });
+    const { store } = loadMap(parseMap(serializeMap(doc)));
+    const history = new EditHistory();
+
+    removePart(store, history, EAST.id);
+    const undone = history.undo(store);
+    expect(undone.removed).toEqual([]);
+    expect(undone.remeshed.map((c) => `${c.cx},${c.cz}`).sort()).toEqual(['2,0', '2,1', '3,0', '3,1']);
+  });
+
+  it('leaves an ordinary edit non-structural, so it keeps the cheap path', () => {
+    const { store, history } = fresh();
+    history.beginStroke();
+    history.captureChunk(store, LAYER, 0, 0);
+    store.setCornerHeight(LAYER, 2, 2, 40);
+    history.endStroke();
+
+    const undone = history.undo(store);
+    expect(undone.structural).toBe(false);
+    expect(undone.removed).toEqual([]);
+    expect(undone.remeshed).toHaveLength(1);
+  });
+});
+
 describe('partAt', () => {
   it('finds the part under a point and nothing outside one', () => {
     const { store, history } = fresh();

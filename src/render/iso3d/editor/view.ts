@@ -3,6 +3,7 @@ import {
   arenaBounds,
   loadMap,
   parseMap,
+  type ChunkCoord,
   type LoadedMap,
   type MapDocument,
   type PartRecipe,
@@ -270,29 +271,15 @@ class EditorScene {
     return ground ? { x: ground.point.x, z: ground.point.z } : null;
   }
 
-  /**
-   * Rebuild every terrain mesh from the chunks the store holds *now*, keeping
-   * the store itself (spec 084).
-   *
-   * `replaceMap` cannot be used for this: it builds a new `MapChunkStore`, and
-   * the undo stack holds snapshots that belong to the old one -- one Ctrl+Z
-   * after that writes into a store nothing is drawing. Adding or removing a
-   * part changes *which* chunks exist rather than what is in them, so the patch
-   * rebuild has nothing to patch; a full remesh is the honest answer, and it is
-   * the same work a file load already does, once per commit rather than per
-   * frame.
-   */
-  rebuildTerrain(): void {
-    this.scene.remove(this.terrainMesh.group);
-    this.terrainMesh.dispose();
-    this.terrainMesh = buildTerrainMeshFromChunks(this.map.meshLayers, this.map.store.buildChunks());
-    this.scene.add(this.terrainMesh.group);
-  }
-
   /** Re-mesh one chunk after an edit -- the whole point of the patch rebuild. */
   rebuildChunk(layerId: string, cx: number, cz: number): void {
     const chunk = this.map.store.buildChunk(layerId, cx, cz);
     if (chunk) this.terrainMesh.rebuild(chunk);
+  }
+
+  /** Stop drawing a chunk whose ground has gone (spec 085). */
+  dropChunk(layerId: string, cx: number, cz: number): void {
+    this.terrainMesh.remove(layerId, cx, cz);
   }
 
   /**
@@ -499,14 +486,56 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     // Replaced the moment the panel exists; nothing calls this before then.
   };
 
-  /** Everything a part changes at once: the meshes, the props, nav, the overlays. */
-  const rebuiltAfterParts = (): void => {
-    scene.rebuildTerrain();
+  /**
+   * The chunks a change to `touched` makes stale, including the neighbours.
+   *
+   * A chunk's walls are grown where its solid ground meets air, which is a
+   * question about the chunk *next to* it -- so ground appearing or vanishing
+   * silently invalidates the four chunks around it as well as itself. The
+   * mesher already re-bakes the eight neighbours' water; the walls are this.
+   */
+  const withNeighbours = (touched: readonly ChunkCoord[]): ChunkCoord[] => {
+    const seen = new Set<string>();
+    const out: ChunkCoord[] = [];
+    for (const c of touched) {
+      for (const [dx, dz] of [
+        [0, 0],
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ] as const) {
+        const cx = c.cx + dx;
+        const cz = c.cz + dz;
+        const key = `${cx},${cz}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ cx, cz });
+      }
+    }
+    return out;
+  };
+
+  /**
+   * Everything a part changes, and nothing it does not (spec 085).
+   *
+   * This used to re-mesh every chunk in the world and re-bake nav for the whole
+   * layer. On a 74-chunk map that was ~730ms of which ~36ms was the new ground,
+   * and both halves grew with the map -- so the editor got slower the more you
+   * built, which is precisely backwards. Now the work is proportional to the
+   * part: the chunks it wrote, the chunks it deleted, and the ring around both.
+   */
+  const rebuiltAfterParts = (touched: readonly ChunkCoord[], gone: readonly ChunkCoord[] = []): void => {
+    for (const c of gone) scene.dropChunk(layerId, c.cx, c.cz);
+    // Both sets are re-meshed through the same call: a coordinate with no chunk
+    // behind it simply draws nothing, which is what the ring around a deletion
+    // needs anyway.
+    for (const c of withNeighbours([...touched, ...gone])) scene.rebuildChunk(layerId, c.cx, c.cz);
     // The camera was fenced to the map as it was when the view opened, so a
     // world that just grew would otherwise be ground you can see and cannot
     // pan to (spec 084).
     scene.camera3 = withMapBounds(scene.camera3, scene.map.store.layerInfo(layerId)?.bounds ?? null);
-    bakeLayerNav(scene.map.store, layerId, settings.walkSlope);
+    rebakeNav(scene.map.store, layerId, touched, settings.walkSlope);
     scene.refreshProps();
     refreshMarkers();
     refreshNav();
@@ -548,7 +577,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       status = `part refused: ${added.reason}`;
       return;
     }
-    rebuiltAfterParts();
+    rebuiltAfterParts([...added.created, ...added.completed]);
     const gap = unfilled();
     status =
       `added part "${id}" (${added.created.length} chunks` +
@@ -563,30 +592,26 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       status = `remove refused: ${removed.reason}`;
       return;
     }
-    rebuiltAfterParts();
+    rebuiltAfterParts([], removed.removed);
     status = `removed part "${removed.part.id}" (${removed.removed.length} chunks)`;
   };
 
   const undo = (): void => {
-    const { remeshed, structural } = history.undo(scene.map.store);
-    if (remeshed.length === 0 && !structural) return;
+    const { remeshed, removed, structural } = history.undo(scene.map.store);
+    if (remeshed.length === 0 && removed.length === 0) return;
+    // Undoing a part is the same shape of work as making one, so it goes
+    // through the same targeted path rather than rebuilding the world (spec 085).
+    if (structural) {
+      rebuiltAfterParts(remeshed, removed);
+      return;
+    }
     revision.touch();
-    // Chunks appearing or vanishing changes which meshes exist, so patching the
-    // ones by name would leave the others behind (spec 084).
-    if (structural) scene.rebuildTerrain();
-    else for (const c of remeshed) scene.rebuildChunk(c.layerId, c.cx, c.cz);
+    for (const c of remeshed) scene.rebuildChunk(c.layerId, c.cx, c.cz);
     // Nav describes the ground, so undoing the ground has to undo nav with it.
-    if (structural) bakeLayerNav(scene.map.store, layerId, settings.walkSlope);
-    else rebakeNav(scene.map.store, layerId, remeshed, settings.walkSlope);
+    rebakeNav(scene.map.store, layerId, remeshed, settings.walkSlope);
     scene.refreshProps();
     refreshMarkers();
     refreshNav();
-    // Undo can put a part back or take one away, and it moves the bounds with
-    // it, so the panel and the camera both have to be told (spec 084).
-    if (structural) {
-      scene.camera3 = withMapBounds(scene.camera3, scene.map.store.layerInfo(layerId)?.bounds ?? null);
-      onPartsChanged();
-    }
   };
 
   /** Everything derived from the map, rebuilt after a load or a restore. */
