@@ -280,6 +280,68 @@ describe('growMap', () => {
   });
 });
 
+/**
+ * What growth must not disturb about the ground that was already there.
+ *
+ * Both of these were live bugs, and both are invisible until a map grows *west*
+ * or *north* -- until then a layer's origin and its `bounds.min` are the same
+ * point, so reading the wrong one is indistinguishable from reading the right
+ * one.
+ */
+describe('growing does not move the world that was already there', () => {
+  it('meshes a chunk at the same world position after the map grows west', () => {
+    const store = new MapChunkStore(seedDoc((col, row) => col * 2 + row));
+    const before = store.buildChunk(LAYER, 0, 0);
+    expect(before).not.toBeNull();
+
+    bakePart({
+      store,
+      layerId: LAYER,
+      rect: { minCx: -2, minCz: 0, maxCx: -1, maxCz: 0 },
+      recipe: HILL,
+      seed: 5,
+    }).chunks.forEach((chunk) => store.insertChunk(LAYER, chunk));
+    store.declareBounds(LAYER, { minX: -2 * SPAN, minZ: 0, maxX: SPAN, maxZ: SPAN });
+
+    const after = store.buildChunk(LAYER, 0, 0);
+    expect(after).not.toBeNull();
+    // Corner positions are measured from the layer's origin, which does not
+    // move. Measured from `bounds.min` instead they would all slide west by the
+    // width of the new part, and the terrain would part company with the trees
+    // standing on it.
+    expect(Array.from(after?.cornerX ?? [])).toEqual(Array.from(before?.cornerX ?? []));
+    expect(Array.from(after?.cornerZ ?? [])).toEqual(Array.from(before?.cornerZ ?? []));
+    expect(after?.originX).toBe(before?.originX);
+  });
+
+  it('reports new ground as solid to the mesher, not as the world ending', () => {
+    const doc = seedDoc();
+    const loaded = loadMap(doc);
+    const layer = loaded.meshLayers[0];
+    expect(layer).toBeDefined();
+    if (!layer) return;
+
+    // Before the growth this cell is past the declared extent: the world ends.
+    expect(layer.solidAt(CHUNK_CELLS + 2, 2)).toBe(false);
+
+    const baked = bakePart({
+      store: loaded.store,
+      layerId: LAYER,
+      rect: { minCx: 1, minCz: 0, maxCx: 1, maxCz: 0 },
+      recipe: HILL,
+      seed: 5,
+    });
+    for (const chunk of baked.chunks) loaded.store.insertChunk(LAYER, chunk);
+    loaded.store.declareBounds(LAYER, baked.bounds);
+
+    // The same `MeshLayer` object, now answering for ground that has arrived --
+    // it reads the store rather than a copy of the extent taken at load time.
+    // Captured, it would still say `false` and the mesher would wall off real
+    // ground.
+    expect(layer.solidAt(CHUNK_CELLS + 2, 2)).toBe(true);
+  });
+});
+
 describe('growing the shipped map', () => {
   /**
    * The real thing, not a fixture: 56 chunks of hand-checked terrain with a sea

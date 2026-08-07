@@ -125,6 +125,24 @@ export function chunkRectFrom(
   };
 }
 
+/**
+ * A part id not already taken, from a base name.
+ *
+ * Growing a run of parts from one recipe is the ordinary way to extend a world
+ * -- an east shelf is three drags, not one -- and making the user retype the id
+ * between each of them turns "add ground" into "add ground, then think of a
+ * name". The base is used bare when it is free, so a single part is still just
+ * called after its recipe.
+ */
+export function uniquePartId(store: MapChunkStore, base: string): string {
+  const taken = new Set(store.parts.map((p) => p.id));
+  if (!taken.has(base)) return base;
+  for (let n = 2; ; n++) {
+    const candidate = `${base}-${n}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
+
 /** How many chunks a rect covers, for a size readout before committing. */
 export function chunkRectArea(rect: ChunkRect): number {
   return Math.max(0, rect.maxCx - rect.minCx + 1) * Math.max(0, rect.maxCz - rect.minCz + 1);

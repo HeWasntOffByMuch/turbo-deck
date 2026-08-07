@@ -20,6 +20,7 @@ import {
   editorCameraPosition,
   orbitEditorCamera,
   trackEditorCamera,
+  withMapBounds,
   zoomEditorCamera,
   type EditorCameraState,
 } from './camera.js';
@@ -42,9 +43,17 @@ import {
   writeAutosave,
 } from './persistence.js';
 import { bakeEditorMap } from './map-source.js';
-import { buildEditorPanel } from './panel.js';
+import { buildEditorPanel, type EditorPanel } from './panel.js';
 import { createEditorSettings, cursorColor, cursorRadius } from './tools.js';
-import { addPart, chunkRectArea, chunkRectFrom, chunkRectWorld, partAt, removePart } from './parts.js';
+import {
+  addPart,
+  chunkRectArea,
+  chunkRectFrom,
+  chunkRectWorld,
+  partAt,
+  removePart,
+  uniquePartId,
+} from './parts.js';
 import { fenceStroke, NO_FENCE_PATH, type FencePath } from './fence.js';
 import { eraseStroke, scatterStroke, terrainNormalAt } from './scatter.js';
 
@@ -482,14 +491,27 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     arenaOutline.refresh(scene.document.arena, groundAt);
   };
 
+  /**
+   * Set once the panel exists, since the commit helpers are defined before it
+   * and the panel needs them.
+   */
+  let onPartsChanged: () => void = () => {
+    // Replaced the moment the panel exists; nothing calls this before then.
+  };
+
   /** Everything a part changes at once: the meshes, the props, nav, the overlays. */
   const rebuiltAfterParts = (): void => {
     scene.rebuildTerrain();
+    // The camera was fenced to the map as it was when the view opened, so a
+    // world that just grew would otherwise be ground you can see and cannot
+    // pan to (spec 082).
+    scene.camera3 = withMapBounds(scene.camera3, scene.map.store.layerInfo(layerId)?.bounds ?? null);
     bakeLayerNav(scene.map.store, layerId, settings.walkSlope);
     scene.refreshProps();
     refreshMarkers();
     refreshNav();
     revision.touch();
+    onPartsChanged();
   };
 
   /** How much ground the layer claims but has no chunk for; 0 is a rectangle. */
@@ -510,7 +532,11 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       status = settings.recipe ? `no recipe called ${settings.recipe}` : 'no recipes are bundled';
       return;
     }
-    const id = (settings.partId.trim() || settings.recipe).trim();
+    // A typed id is taken at its word; a blank one is derived and made unique,
+    // so growing a run of parts from one recipe is a run of drags rather than a
+    // drag and a rename each time.
+    const typed = settings.partId.trim();
+    const id = typed || uniquePartId(scene.map.store, settings.recipe);
     const added = addPart(scene.map.store, history, {
       id,
       layerId,
@@ -525,8 +551,9 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     rebuiltAfterParts();
     const gap = unfilled();
     status =
-      `grew "${id}": ${added.created.length} new chunk(s)` +
+      `added part "${id}" (${added.created.length} chunks` +
       (added.completed.length > 0 ? `, ${added.completed.length} completed` : '') +
+      ')' +
       (gap > 0 ? ` — ${gap} declared cells have no ground yet` : '');
   };
 
@@ -537,7 +564,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       return;
     }
     rebuiltAfterParts();
-    status = `removed "${removed.part.id}": ${removed.removed.length} chunk(s)`;
+    status = `removed part "${removed.part.id}" (${removed.removed.length} chunks)`;
   };
 
   const undo = (): void => {
@@ -554,6 +581,12 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     scene.refreshProps();
     refreshMarkers();
     refreshNav();
+    // Undo can put a part back or take one away, and it moves the bounds with
+    // it, so the panel and the camera both have to be told (spec 082).
+    if (structural) {
+      scene.camera3 = withMapBounds(scene.camera3, scene.map.store.layerInfo(layerId)?.bounds ?? null);
+      onPartsChanged();
+    }
   };
 
   /** Everything derived from the map, rebuilt after a load or a restore. */
@@ -562,6 +595,8 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     scene.refreshProps();
     refreshMarkers();
     refreshNav();
+    scene.camera3 = withMapBounds(scene.camera3, scene.map.store.layerInfo(layerId)?.bounds ?? null);
+    onPartsChanged();
   };
 
   const saveToFile = (): void => {
@@ -635,7 +670,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   root.addEventListener('dragover', onDragOver);
   root.addEventListener('drop', onDrop);
 
-  const panel = buildEditorPanel({
+  const panel: EditorPanel = buildEditorPanel({
     settings,
     recipeNames: [...RECIPES.keys()],
     partIds: () => scene.map.store.parts.map((p) => p.id),
@@ -660,6 +695,8 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       refreshNav();
     },
   });
+  onPartsChanged = (): void => panel.refreshParts();
+  onPartsChanged();
   panelHost.appendChild(panel.element);
 
   /** Whether the focused element is somewhere a person is typing. */

@@ -140,6 +140,8 @@ export interface EditorPanelOptions {
 export interface EditorPanel {
   readonly element: HTMLElement;
   refresh(): void;
+  /** Re-read the parts list, after one has been added or removed (spec 082). */
+  refreshParts(): void;
   destroy(): void;
 }
 
@@ -286,17 +288,31 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   parts.add(s, 'partId').name('Id (blank = recipe)');
   // Removing by name as well as by click, because a part can be entirely
   // off-screen once the world is a few thousand units across.
-  const removeName = parts.add(s, 'removePartId', ['']).name('Remove named');
-  parts.add({ remove: opts.onRemoveNamedPart }, 'remove').name('Remove that part');
+  //
+  // Both controllers are rebuilt together, and only when the list actually
+  // changes. `options()` does not update a dropdown -- it destroys the
+  // controller and appends a replacement (lil-gui's own docs call this out), so
+  // the handle goes stale after one call and the panel reorders itself. These
+  // two are the last controls in the folder, so re-appending them in order
+  // leaves the layout exactly where it was.
+  let removeName = parts.add(s, 'removePartId', ['']).name('Remove named');
+  let removeButton = parts.add({ remove: opts.onRemoveNamedPart }, 'remove').name('Remove that part');
+  let shownIds = '';
 
   /** Re-read the parts list into the dropdown; the map gains and loses them. */
   const refreshPartIds = (): void => {
     const ids = opts.partIds();
+    const signature = ids.join('\u0000');
+    if (signature === shownIds) return;
+    shownIds = signature;
+
     const options = ids.length > 0 ? [...ids] : [''];
     if (!options.includes(s.removePartId)) s.removePartId = options[0] ?? '';
-    removeName.options(options).setValue(s.removePartId);
+    removeName.destroy();
+    removeButton.destroy();
+    removeName = parts.add(s, 'removePartId', options).name('Remove named');
+    removeButton = parts.add({ remove: opts.onRemoveNamedPart }, 'remove').name('Remove that part');
   };
-  refreshPartIds();
 
   const view = gui.addFolder('View');
   view.add(s, 'showArena').name('Arena bounds').onChange(opts.onArmChange);
@@ -337,6 +353,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
 
   return {
     element: gui.domElement,
+    refreshParts: refreshPartIds,
     refresh(): void {
       gui.controllersRecursive().forEach((c) => c.updateDisplay());
       for (const each of strips) each.refresh();

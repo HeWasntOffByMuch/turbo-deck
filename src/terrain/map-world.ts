@@ -823,13 +823,22 @@ export class MapChunkStore {
     const cornerZ = new Float32Array(corners);
     const normals = new Float32Array(corners * 3);
 
-    /** Global corner (col, row) as a jittered world position plus its height. */
+    /**
+     * Global corner (col, row) as a jittered world position plus its height.
+     *
+     * Measured from `origin`, not from `bounds.min`. The two were the same
+     * point until a map could grow, and using the wrong one is invisible right
+     * up until the day the world is extended *west* or *north*: the bounds
+     * move, the origin does not, and every chunk in the map is then meshed a
+     * few thousand units from where its ground actually is -- the terrain
+     * slides out from under its own trees (spec 082).
+     */
     const at = (col: number, row: number): [x: number, y: number, z: number] => {
       const [jx, jz] = cornerJitter(col, row, layer.seed, this.cellSize);
       return [
-        layer.bounds.minX + col * this.cellSize + jx,
+        layer.origin.x + col * this.cellSize + jx,
         this.cornerHeight(layerId, col, row),
-        layer.bounds.minZ + row * this.cellSize + jz,
+        layer.origin.z + row * this.cellSize + jz,
       ];
     };
 
@@ -1228,12 +1237,23 @@ export function loadMap(doc: MapDocument): LoadedMap {
       // and that gap is what has to read as "unknown" rather than "no ground".
       // The declared extent is known from `MapInfo` before any chunk lands, so
       // this answers correctly from the first frame (specs 078, 081).
-      const d = store.layerInfo(l.id)?.grid.declared;
-      const declared = (col: number, row: number): boolean =>
-        d !== undefined && col >= d.minCol && row >= d.minRow && col < d.maxCol && row < d.maxRow;
+      //
+      // Read through the store on every call rather than captured once: the
+      // grid is *replaced* when a chunk arrives or a part is grown (spec 082),
+      // so a snapshot taken here freezes the world's edge where it was at load
+      // time. Everything past it then answers `false` -- "no ground" -- and the
+      // mesher walls off ground that exists, which is a map with a hole in it.
+      const declared = (col: number, row: number): boolean => {
+        const d = store.layerInfo(l.id)?.grid.declared;
+        return d !== undefined && col >= d.minCol && row >= d.minRow && col < d.maxCol && row < d.maxRow;
+      };
       return {
         id: l.id,
-        bounds: l.bounds,
+        // Live too, and for the same reason: a grown layer covers more than the
+        // rectangle the document was loaded with.
+        get bounds(): MapRect {
+          return store.layerInfo(l.id)?.bounds ?? l.bounds;
+        },
         waterLevel: l.waterLevel,
         // Outside the declared extent is a definite no -- that is the world's
         // edge, and the wall there is real. Inside it with no chunk behind it is

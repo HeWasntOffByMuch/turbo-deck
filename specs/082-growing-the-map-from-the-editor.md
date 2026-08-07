@@ -124,6 +124,26 @@ the session, because the snapshot of the pre-completion chunk is on the stack �
 it is only the after-the-fact removal of a committed part that cannot be
 reconstructed.
 
+### The camera has to follow the map
+
+Both of the editor camera's limits were fixed when the camera was made: the
+pivot is held to the map's rectangle, and the zoom ceiling was a constant sized
+for the 4400-unit world. On a growable map that is a fence around the world as
+it *used* to be — ground appears that you can neither pan to nor pull back far
+enough to see, and a part can only be aimed at empty space you can get on
+screen.
+
+```ts
+export function maxHalfWidthFor(bounds: MapRect | null): number;
+export function withMapBounds(state, bounds): EditorCameraState;
+```
+
+The ceiling becomes the larger of the old constant and the map's own span, so
+any map can be framed whole. The pivot's allowance becomes `PIVOT_MARGIN +
+halfWidth` rather than a flat 600, so the further out you are the further past
+the edge you may look — which is the same relationship the pan speed already
+has, and it is what puts empty ground on screen to grow into.
+
 ## Invariants tested
 
 - **Add then undo is the identity.** Serialize, add a part, undo, serialize:
@@ -144,6 +164,16 @@ reconstructed.
 - **`chunkRectFrom` snaps outward** and is orientation-free: dragging
   bottom-right to top-left gives the same rect as the reverse.
 - **`partAt` picks the part under a point**, and null outside every part.
+- **A part's id is made unique** when it is left blank, so a run of parts from
+  one recipe is a run of drags rather than a rename each time.
+- **Growth does not move ground that was already there.** A chunk meshed before
+  the map grew west meshes at the identical world position afterwards, and a
+  `MeshLayer` reports newly arrived ground as solid rather than as the world
+  ending. Both are invisible until a map grows west or north — until then a
+  layer's origin and its `bounds.min` are the same point — and both were live
+  bugs found by driving the real editor.
+- **The camera reaches the new ground**: the zoom ceiling rises with the map,
+  and the pivot may be tracked onto ground that only just appeared.
 - **A stroke that captured nothing costs no undo slot** — the existing rule,
   still true when a part add fails.
 

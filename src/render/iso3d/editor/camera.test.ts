@@ -9,8 +9,10 @@ import {
   EDITOR_MAX_HALF_WIDTH,
   EDITOR_MIN_HALF_WIDTH,
   lookAtEditorCamera,
+  maxHalfWidthFor,
   orbitEditorCamera,
   trackEditorCamera,
+  withMapBounds,
   wrapAngle,
   zoomEditorCamera,
   type EditorCameraState,
@@ -190,13 +192,17 @@ describe('track and dolly (spec 058)', () => {
 
   it('holds the pivot over the map however far the drag runs', () => {
     const s = { ...fresh(), halfWidth: EDITOR_MAX_HALF_WIDTH };
+    // The allowance is the fixed margin plus the span on screen (spec 082), so
+    // it is bounded but scales with the zoom -- a pulled-back camera may look
+    // further past the edge, which is what makes room to grow into visible.
+    const slack = EDITOR_MAX_HALF_WIDTH + 1000;
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1]] as const) {
       let run = s;
       for (let i = 0; i < 400; i++) run = trackEditorCamera(run, dx * 60, dy * 60, WIDTH);
-      expect(run.target.x).toBeGreaterThan(BOUNDS.minX - 1000);
-      expect(run.target.x).toBeLessThan(BOUNDS.maxX + 1000);
-      expect(run.target.z).toBeGreaterThan(BOUNDS.minZ - 1000);
-      expect(run.target.z).toBeLessThan(BOUNDS.maxZ + 1000);
+      expect(run.target.x).toBeGreaterThan(BOUNDS.minX - slack);
+      expect(run.target.x).toBeLessThan(BOUNDS.maxX + slack);
+      expect(run.target.z).toBeGreaterThan(BOUNDS.minZ - slack);
+      expect(run.target.z).toBeLessThan(BOUNDS.maxZ + slack);
     }
   });
 
@@ -217,7 +223,9 @@ describe('zoom', () => {
   it('stays inside the editor band', () => {
     let s = fresh();
     for (let i = 0; i < 200; i++) s = zoomEditorCamera(s, 100);
-    expect(s.halfWidth).toBeCloseTo(EDITOR_MAX_HALF_WIDTH, 6);
+    // The ceiling is the map's, not the constant: this fixture's map is 4400
+    // across, so it may be framed whole (spec 082).
+    expect(s.halfWidth).toBeCloseTo(maxHalfWidthFor(BOUNDS), 6);
     for (let i = 0; i < 400; i++) s = zoomEditorCamera(s, -100);
     expect(s.halfWidth).toBeCloseTo(EDITOR_MIN_HALF_WIDTH, 6);
   });
@@ -270,8 +278,9 @@ describe('camera placement', () => {
 
   it('holds a look-at outside the map back over it', () => {
     const s = lookAtEditorCamera(fresh(), 1e6, 0, -1e6);
-    expect(s.target.x).toBeLessThan(BOUNDS.maxX + 1000);
-    expect(s.target.z).toBeGreaterThan(BOUNDS.minZ - 1000);
+    const slack = s.halfWidth + 1000;
+    expect(s.target.x).toBeLessThan(BOUNDS.maxX + slack);
+    expect(s.target.z).toBeGreaterThan(BOUNDS.minZ - slack);
   });
 });
 
@@ -291,5 +300,58 @@ describe('the opening state', () => {
     expect(Number.isFinite(s.target.x)).toBe(true);
     expect(Number.isFinite(s.target.z)).toBe(true);
     expect(Number.isFinite(s.halfWidth)).toBe(true);
+  });
+});
+
+/**
+ * The limits have to follow the map (spec 082).
+ *
+ * Both were fixed at the moment the camera was made, which was fine while the
+ * world was one fixed rectangle. A growable map turns them into a fence around
+ * the world as it used to be: ground appears that you can neither pan to nor
+ * zoom out far enough to see.
+ */
+describe('a camera over a map that can grow', () => {
+  const WIDE: MapRect = { minX: -6000, minZ: -6000, maxX: 6000, maxZ: 6000 };
+
+  it('lets a big map zoom out further than the fixed floor', () => {
+    expect(maxHalfWidthFor(null)).toBe(EDITOR_MAX_HALF_WIDTH);
+    // A map smaller than the floor keeps it; a bigger one raises the ceiling to
+    // its own span, so it can always be framed whole.
+    expect(maxHalfWidthFor({ minX: 0, minZ: 0, maxX: 500, maxZ: 500 })).toBe(EDITOR_MAX_HALF_WIDTH);
+    expect(maxHalfWidthFor(BOUNDS)).toBe(4400);
+    expect(maxHalfWidthFor(WIDE)).toBe(12_000);
+  });
+
+  it('raises the zoom ceiling when the map grows under it', () => {
+    let state = createEditorCamera({ target: { x: 0, z: 0 }, bounds: BOUNDS });
+    // Wheel out hard: it stops at this map's ceiling.
+    for (let i = 0; i < 60; i++) state = zoomEditorCamera(state, 240);
+    expect(state.halfWidth).toBe(4400);
+
+    state = withMapBounds(state, WIDE);
+    for (let i = 0; i < 60; i++) state = zoomEditorCamera(state, 240);
+    expect(state.halfWidth).toBe(12_000);
+  });
+
+  it('lets the pivot reach ground the map only just gained', () => {
+    const before = createEditorCamera({ target: { x: 0, z: 0 }, bounds: BOUNDS });
+    const pushedWest = trackEditorCamera(before, 4000, 0, 800);
+    // Fenced to the old rectangle: nowhere near the new ground.
+    expect(pushedWest.target.x).toBeGreaterThan(WIDE.minX);
+
+    const after = withMapBounds(before, WIDE);
+    const reaches = trackEditorCamera(after, 4000, 0, 800);
+    expect(reaches.target.x).toBeLessThan(BOUNDS.minX);
+  });
+
+  it('allows a wider roam the further out the camera is pulled', () => {
+    const close = createEditorCamera({ target: { x: 0, z: 0 }, halfWidth: 100, bounds: BOUNDS });
+    const far = createEditorCamera({ target: { x: 0, z: 0 }, halfWidth: 3000, bounds: BOUNDS });
+    // Same drag in pixels; the pulled-back camera may take its pivot further,
+    // because the margin it is held to grows with the span on screen.
+    const nearLimit = trackEditorCamera(close, 100_000, 0, 800).target.x;
+    const farLimit = trackEditorCamera(far, 100_000, 0, 800).target.x;
+    expect(farLimit).toBeLessThan(nearLimit);
   });
 });

@@ -57,7 +57,7 @@ async function waitForServer(url: string, timeoutMs = 30_000): Promise<void> {
  */
 async function readStatus(page: Page): Promise<string> {
   const body = (await page.textContent('body')) ?? '';
-  return /((?:grew|removed|part refused|remove refused|no part|no recipe)[^\n]*)/.exec(body)?.[1] ?? '';
+  return /((?:added part|removed part|part refused|remove refused|no part|no recipe)[^\n]*)/.exec(body)?.[1] ?? '';
 }
 
 /** Drag across the ground, slowly enough that the loop sees the intermediate frames. */
@@ -153,7 +153,7 @@ async function main(): Promise<void> {
     await page.mouse.up();
     await page.waitForTimeout(1200);
     const afterAdd = await readStatus(page);
-    const grew = /grew "([^"]+)": (\d+) new chunk/.exec(afterAdd);
+    const grew = /added part "([^"]+)" \((\d+) chunks/.exec(afterAdd);
     check('releasing commits the part', grew !== null, grew ? `${grew[1]}, ${grew[2]} chunks` : afterAdd);
     // Track the camera west so the new ground is in frame rather than off the
     // corner it was grown into -- the screenshot is the point of this script.
@@ -175,15 +175,45 @@ async function main(): Promise<void> {
     await drag(page, [120, 130], [250, 200]);
     await page.mouse.up();
     await page.waitForTimeout(1200);
-    const readded = /grew "([^"]+)"/.exec(await readStatus(page));
+    const readded = /added part "([^"]+)"/.exec(await readStatus(page));
     check('the same part can be grown again after an undo', readded !== null, readded?.[1] ?? '');
+
+    // A second part from the same recipe, without touching the id field: the
+    // name is made unique rather than colliding, so growing a run of ground is
+    // a run of drags (spec 082).
+    await drag(page, [120, 250], [250, 320]);
+    await page.mouse.up();
+    await page.waitForTimeout(1200);
+    const second = /added part "([^"]+)"/.exec(await readStatus(page));
+    check(
+      'a second part from the same recipe gets its own id',
+      second !== null && second[1] !== 'east-shelf',
+      second?.[1] ?? (await readStatus(page)),
+    );
+
+    const namedOptions = await page.$$eval('select', (nodes) =>
+      nodes.flatMap((n) => Array.from((n as HTMLSelectElement).options, (o) => o.value)),
+    );
+    check(
+      'the remove dropdown lists the parts in the map',
+      namedOptions.includes('east-shelf') && namedOptions.includes('east-shelf-2'),
+      namedOptions.filter((o) => o).join(', '),
+    );
+
+    // Remove the second one by name, since clicking a part off-screen is not
+    // always possible once the world is a few thousand units across.
+    await page.selectOption('select >> nth=-1', 'east-shelf-2');
+    await page.click('button:has-text("Remove that part")');
+    await page.waitForTimeout(1200);
+    const byName = /removed part "([^"]+)"/.exec(await readStatus(page));
+    check('the named part can be removed from the panel', byName?.[1] === 'east-shelf-2', byName?.[1] ?? '');
 
     await page.click('button:has-text("remove")');
     await page.waitForTimeout(300);
     await page.mouse.click(185, 165);
     await page.waitForTimeout(1200);
     const afterRemove = await readStatus(page);
-    const removed = /removed "([^"]+)": (\d+) chunk/.exec(afterRemove);
+    const removed = /removed part "([^"]+)" \((\d+) chunks/.exec(afterRemove);
     check(
       'clicking inside a part removes it',
       removed !== null,

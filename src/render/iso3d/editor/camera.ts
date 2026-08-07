@@ -33,12 +33,32 @@ export const EDITOR_ELEVATION_MAX = (89 * Math.PI) / 180;
 /**
  * The zoom band, world units of half-span. Much wider than the game's 200-1400:
  * 40 puts a couple of terrain cells across the screen, which is the scale a
- * height brush is used at, and 3200 holds the whole 4400-unit world with room
- * around it.
+ * height brush is used at.
+ *
+ * The far end is a **floor on the limit**, not the limit itself. 3200 held the
+ * 4400-unit world it was written for, and stopped dead there -- which was fine
+ * until the map could grow (spec 082). A world you cannot zoom out far enough
+ * to see is a world you cannot choose where to extend, so the real limit is
+ * computed from the map by {@link maxHalfWidthFor}.
  */
 export const EDITOR_MIN_HALF_WIDTH = 40;
 export const EDITOR_MAX_HALF_WIDTH = 3200;
 export const EDITOR_DEFAULT_HALF_WIDTH = 640;
+
+/**
+ * How far out the camera may pull for a given map: far enough to frame the
+ * whole thing with room around it, and never less than the fixed floor.
+ *
+ * The margin matters as much as the span. Growing the world means aiming at
+ * ground that is not there yet, so the useful framing is the map *plus* empty
+ * space beside it -- a limit that exactly fitted the map would leave nowhere to
+ * put the next part.
+ */
+export function maxHalfWidthFor(bounds: MapRect | null): number {
+  if (!bounds) return EDITOR_MAX_HALF_WIDTH;
+  const span = Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ);
+  return Math.max(EDITOR_MAX_HALF_WIDTH, span);
+}
 
 /**
  * How far the camera sits from its pivot. With an orthographic projection this
@@ -77,6 +97,8 @@ export interface EditorCameraState {
   readonly azimuth: number;
   /** Elevation above the ground plane, radians, held inside the band. */
   readonly elevation: number;
+  /** How far out this map lets the camera pull; see {@link maxHalfWidthFor}. */
+  readonly maxHalfWidth: number;
   /** Orthographic half-span, world units. */
   readonly halfWidth: number;
   /** The rectangle the pivot is held over. */
@@ -110,33 +132,61 @@ export interface EditorCameraOptions {
 
 export function createEditorCamera(opts: EditorCameraOptions = {}): EditorCameraState {
   const bounds = opts.bounds ?? null;
+  const maxHalfWidth = maxHalfWidthFor(bounds);
+  const halfWidth = hold(
+    opts.halfWidth ?? EDITOR_DEFAULT_HALF_WIDTH,
+    EDITOR_MIN_HALF_WIDTH,
+    maxHalfWidth,
+    EDITOR_DEFAULT_HALF_WIDTH,
+  );
   return {
     target: holdPivot(
       { x: opts.target?.x ?? 0, y: opts.target?.y ?? 0, z: opts.target?.z ?? 0 },
       bounds,
+      halfWidth,
     ),
     azimuth: DEFAULT_AZIMUTH,
     elevation: DEFAULT_ELEVATION,
-    halfWidth: hold(
-      opts.halfWidth ?? EDITOR_DEFAULT_HALF_WIDTH,
-      EDITOR_MIN_HALF_WIDTH,
-      EDITOR_MAX_HALF_WIDTH,
-      EDITOR_DEFAULT_HALF_WIDTH,
-    ),
+    halfWidth,
+    maxHalfWidth,
     bounds,
   };
 }
 
-/** Hold the pivot over the map, so a long pan cannot lose the world entirely. */
-function holdPivot(target: Vec3, bounds: MapRect | null): Vec3 {
+/**
+ * Re-aim the limits at a map that has changed size (spec 082).
+ *
+ * The bounds and the zoom ceiling are captured when the camera is made, so a
+ * world that grows afterwards leaves the camera fenced into the rectangle the
+ * map used to be -- you can watch ground appear that you cannot then pan to.
+ * Called whenever a part lands or a document is loaded.
+ */
+export function withMapBounds(state: EditorCameraState, bounds: MapRect | null): EditorCameraState {
+  const maxHalfWidth = maxHalfWidthFor(bounds);
+  const halfWidth = hold(state.halfWidth, EDITOR_MIN_HALF_WIDTH, maxHalfWidth, EDITOR_DEFAULT_HALF_WIDTH);
+  return { ...state, bounds, maxHalfWidth, halfWidth, target: holdPivot(state.target, bounds, halfWidth) };
+}
+
+/**
+ * Hold the pivot over the map, so a long pan cannot lose the world entirely.
+ *
+ * The allowance grows with the zoom. A fixed 600 units past the edge is right
+ * when you are close in and sculpting, and far too tight when you are pulled
+ * back looking for somewhere to grow into -- at a 3000-unit half-span the
+ * whole reachable margin was a fifth of a screen. Adding the half-span means
+ * the further out you are, the further out you may look, which is the same
+ * relationship the pan speed already has.
+ */
+function holdPivot(target: Vec3, bounds: MapRect | null, halfWidth: number): Vec3 {
   const y = Number.isFinite(target.y) ? target.y : 0;
   if (!bounds) {
     return { x: Number.isFinite(target.x) ? target.x : 0, y, z: Number.isFinite(target.z) ? target.z : 0 };
   }
+  const margin = PIVOT_MARGIN + (Number.isFinite(halfWidth) ? Math.max(0, halfWidth) : 0);
   return {
-    x: hold(target.x, bounds.minX - PIVOT_MARGIN, bounds.maxX + PIVOT_MARGIN, bounds.minX),
+    x: hold(target.x, bounds.minX - margin, bounds.maxX + margin, bounds.minX),
     y,
-    z: hold(target.z, bounds.minZ - PIVOT_MARGIN, bounds.maxZ + PIVOT_MARGIN, bounds.minZ),
+    z: hold(target.z, bounds.minZ - margin, bounds.maxZ + margin, bounds.minZ),
   };
 }
 
@@ -220,6 +270,7 @@ export function trackEditorCamera(
         z: state.target.z - rightZ * across + forwardZ * along,
       },
       state.bounds,
+      state.halfWidth,
     ),
   };
 }
@@ -237,7 +288,7 @@ export function zoomEditorCamera(
       Number.isFinite(deltaY) ? deltaY : 0,
       deltaMode,
       EDITOR_MIN_HALF_WIDTH,
-      EDITOR_MAX_HALF_WIDTH,
+      state.maxHalfWidth,
       EDITOR_DEFAULT_HALF_WIDTH,
     ),
   };
@@ -245,7 +296,7 @@ export function zoomEditorCamera(
 
 /** Drop the pivot onto a world point, keeping the angles and the zoom. */
 export function lookAtEditorCamera(state: EditorCameraState, x: number, y: number, z: number): EditorCameraState {
-  return { ...state, target: holdPivot({ x, y, z }, state.bounds) };
+  return { ...state, target: holdPivot({ x, y, z }, state.bounds, state.halfWidth) };
 }
 
 /** Where the camera stands: the pivot plus its orbit offset. */
