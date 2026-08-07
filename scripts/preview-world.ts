@@ -26,15 +26,23 @@ const outDir = join(root, '.claude', 'screenshots');
 const PORT = 4319;
 
 /**
- * How far beside a body the deliberately-sloppy click lands, in CSS pixels.
+ * How far beside a body the deliberately-sloppy clicks land, in CSS pixels,
+ * widest first.
  *
- * Outside the body at the default framing, and comfortably short of the ~110px
- * the seeded grazers stand apart -- so a hit is this body being forgiving
- * rather than the neighbour being picked instead. What the budget *is* belongs
- * to `hover.test.ts`, which pins it exactly; this asks only whether the
- * forgiveness is wired to the mouse at all.
+ * Tried in turn until one of them names the body, so what this reports is the
+ * widest miss the pick still forgives -- a number to read, not a threshold this
+ * file had to guess. It used to be a single 40, which spec 081's quarter off the
+ * snap left straddling the budget: the same click picked the body on one run and
+ * missed on the next, depending on how wide the monster the map happened to
+ * place was drawn. A harness whose answer moves between runs cannot tell a
+ * regression from a Tuesday.
+ *
+ * All of them stay comfortably short of the ~110px the seeded monsters stand
+ * apart, so a hit is this body being forgiving rather than the neighbour being
+ * picked instead. What the budget *is* belongs to `hover.test.ts`, which pins it
+ * exactly; this asks what it comes to on screen.
  */
-const SLOPPY_OFFSET = 40;
+const SLOPPY_OFFSETS = [40, 30, 20, 12];
 
 /**
  * A Chromium to drive. Prefers a browser already on the box (an agent container
@@ -84,6 +92,8 @@ interface Bar {
   readonly id: string;
   readonly x: number;
   readonly y: number;
+  /** True for the local player's own bar; see `world-hover-self.png`. */
+  readonly self: boolean;
 }
 
 /**
@@ -98,7 +108,12 @@ async function bodiesOnScreen(page: Page): Promise<Bar[]> {
   return page.$$eval('[data-entity]', (nodes) =>
     nodes.map((node) => {
       const element = node as HTMLElement;
-      return { id: element.dataset['entity'] ?? '', x: element.offsetLeft, y: element.offsetTop };
+      return {
+        id: element.dataset['entity'] ?? '',
+        x: element.offsetLeft,
+        y: element.offsetTop,
+        self: element.dataset['self'] === 'true',
+      };
     }),
   );
 }
@@ -120,15 +135,46 @@ function bodyPoint(bar: Bar): { x: number; y: number } {
  */
 async function findUnit(page: Page): Promise<Bar | null> {
   for (const bar of await bodiesOnScreen(page)) {
+    // Our own bar is in this list, and since spec 081 a right-click there is an
+    // ordinary move order -- so trying it would not find a target *and* would
+    // send the player walking off the pixels the next attempt is aimed at.
+    if (bar.self) continue;
     const point = bodyPoint(bar);
     await page.mouse.click(point.x, point.y, { button: 'right' });
     await page.waitForTimeout(90);
-    // The click that found it has *already* targeted it. The player's own bar
-    // is in this list too, and right-clicking yourself is a move order -- so a
-    // miss here is an answer, not a failure.
+    // The click that found it has *already* targeted it.
     if ((await readTarget(page)).startsWith('target ')) return bar;
   }
   return null;
+}
+
+/**
+ * Lets the standing attack order go by right-clicking bare grass, and says
+ * whether it worked.
+ *
+ * Aimed a short step from the player, directly *away* from the body it is
+ * holding -- not across the frame, and not next to it either. A far corner used
+ * to be harmless because the field was hand-seeded a couple of body-lengths
+ * away; since the map places the monsters (spec 076) that walk carried the body
+ * clean off screen. Stepping the other way keeps the frame still *and* keeps the
+ * click off the body, which a step toward it would not: the forgiving pick would
+ * simply take it again, and "let go" would never have happened.
+ *
+ * Tried in four directions rather than once, because the body moves and the one
+ * place to step is whichever way it is not. A single guess that landed back on
+ * it left the target still held, and every later measurement then re-picked a
+ * unit it had never let go of.
+ */
+async function dropTarget(page: Page, id: string): Promise<boolean> {
+  for (const turn of [0, 0.5, 1, 1.5]) {
+    if (!(await readTarget(page)).startsWith('target ')) return true;
+    const bar = (await bodiesOnScreen(page)).find((candidate) => candidate.id === id);
+    const from = bar ? bodyPoint(bar) : { x: 640, y: 400 };
+    const angle = Math.atan2(400 - from.y, 640 - from.x) + turn * Math.PI;
+    await page.mouse.click(640 + Math.cos(angle) * 110, 400 + Math.sin(angle) * 110, { button: 'right' });
+    await page.waitForTimeout(400);
+  }
+  return !(await readTarget(page)).startsWith('target ');
 }
 
 /**
@@ -264,6 +310,22 @@ async function main(): Promise<void> {
     await waitForTick(page, 150);
 
     await shoot(page, 'world-play');
+
+    // The cursor on our own body, which since spec 081 must light nothing: the
+    // camera keeps the player under the cursor, and an outline there advertises
+    // an attack order that can never be given. Taken now, before anything has
+    // been targeted and while nothing else is standing on top of us -- a shell
+    // in this frame belongs to the player and to nobody else. Photographed
+    // rather than asserted: "no white shell" is a thing to look at, and a live
+    // world is far too noisy to count pixels in.
+    const own = (await bodiesOnScreen(page)).find((bar) => bar.self);
+    if (own) {
+      await page.mouse.move(bodyPoint(own).x, bodyPoint(own).y);
+      await page.waitForTimeout(150);
+      await shoot(page, 'world-hover-self');
+    } else {
+      problems.push('the local player has no health bar to aim the self-hover frame at');
+    }
 
     // The spawner overlay (spec 076): open the cog, tick "Spawners", and
     // photograph what the map placed. Every enemy on screen came from one of
@@ -402,44 +464,42 @@ async function main(): Promise<void> {
       // is taken before anything else moves.
       const opened = await readTarget(page);
 
-      // Now the same order, given badly (spec 071): let the body go, then take
-      // it again from a pixel that is beside it rather than on it. Done here,
-      // before the screenshots, because the alternative is measuring how long
-      // the body survived being attacked -- an earlier version of this waited,
-      // and reported a failure that was really a dead grazer.
-      // Dropped onto grass a short step from the player, directly *away* from
-      // the body -- not across the frame, and not next to it either.
-      //
-      // Letting a target go is a move order, so wherever this click lands is
-      // where the player then walks, and the camera follows with 130ms of lag
-      // (spec 039): a bar read mid-walk is a pixel the body has already left.
-      // A far corner used to be harmless because the field was hand-seeded a
-      // couple of body-lengths away; since the map places the monsters (spec
-      // 076) that walk carried the body clean off screen. Stepping the other
-      // way keeps the frame still *and* keeps the click off the body, which a
-      // step toward it would not -- the forgiving pick would simply take it
-      // again, and "let go" would never have happened.
-      const away = (() => {
-        const from = bodyPoint(unit);
-        const dx = 640 - from.x;
-        const dy = 400 - from.y;
-        const len = Math.max(1, Math.hypot(dx, dy));
-        return { x: 640 + (dx / len) * 110, y: 400 + (dy / len) * 110 };
-      })();
-      await page.mouse.click(away.x, away.y, { button: 'right' });
-      await page.waitForTimeout(400);
-      const dropped = await readTarget(page);
+      // Now the same order, given badly (spec 071, tightened by 081): let the
+      // body go, then take it again from a pixel that is beside it rather than
+      // on it, widening the miss until one of them lands. Done here, before the
+      // screenshots, because the alternative is measuring how long the body
+      // survived being attacked -- an earlier version of this waited, and
+      // reported a failure that was really a dead grazer.
+      const dropped = (await dropTarget(page, unit.id)) ? await readTarget(page) : 'still held';
+      if (dropped === 'still held') problems.push('no right-click on bare grass would let the target go');
 
-      let sloppy = 'the body left the screen before it could be tried';
-      const beside = await settledBar(page, unit.id);
-      if (beside) {
-        const point = bodyPoint(beside);
-        await page.mouse.click(point.x + SLOPPY_OFFSET, point.y, { button: 'right' });
-        await page.waitForTimeout(130);
-        sloppy = await readTarget(page);
-        if (!sloppy.startsWith('target ')) {
-          problems.push(`a right-click ${SLOPPY_OFFSET}px beside a body picked nothing`);
+      const sloppy: string[] = [];
+      let widest = 0;
+      for (const offset of SLOPPY_OFFSETS) {
+        // Every attempt starts from nothing targeted, or a click that picked
+        // nothing would look exactly like one that re-picked the same unit.
+        if (!(await dropTarget(page, unit.id))) break;
+        // The drop is a move order, so the player is walking and the camera is
+        // following it with 130ms of lag (spec 039): a bar read mid-walk names
+        // a pixel the body has already left.
+        const beside = await settledBar(page, unit.id);
+        if (!beside) {
+          sloppy.push(`${offset}px: the body left the screen`);
+          break;
         }
+        const point = bodyPoint(beside);
+        await page.mouse.click(point.x + offset, point.y, { button: 'right' });
+        await page.waitForTimeout(150);
+        const hit = (await readTarget(page)).startsWith('target ');
+        sloppy.push(`${offset}px: ${hit ? 'picked it' : 'nothing'}`);
+        if (hit) {
+          widest = offset;
+          break;
+        }
+      }
+      const narrowest = SLOPPY_OFFSETS[SLOPPY_OFFSETS.length - 1] ?? 0;
+      if (widest === 0) {
+        problems.push(`no right-click beside a body picked it, down to ${narrowest}px`);
       }
       await shoot(page, 'world-target');
 
@@ -455,6 +515,12 @@ async function main(): Promise<void> {
         await shoot(page, 'world-hover');
       }
 
+
+      // The sweep above ends with the target let go whenever none of the misses
+      // landed, and an auto-attack with nothing named proves nothing. Take a
+      // body back the easy way before timing it.
+      if (!(await readTarget(page)).startsWith('target ')) await findUnit(page);
+
       // Long enough to walk into reach and land several blows without a second
       // press: the auto-attack is the whole point.
       await page.waitForTimeout(4000);
@@ -463,7 +529,8 @@ async function main(): Promise<void> {
 
       console.log(`  target on the click:            ${opened}`);
       console.log(`  after letting go on bare grass: ${dropped}`);
-      console.log(`  after a click ${SLOPPY_OFFSET}px beside it:   ${sloppy}`);
+      console.log(`  clicks beside it:               ${sloppy.join(', ')}`);
+      console.log(`  widest miss the pick forgives:  ${widest > 0 ? `${widest}px` : 'none of them'}`);
       console.log(`  ...four seconds later:          ${later}`);
       // The order runs itself: no press was made between the last two lines.
       // "no target" means the body it named is dead and the client dropped it,

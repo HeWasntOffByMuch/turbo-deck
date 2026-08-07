@@ -54,7 +54,16 @@ exported precisely so the next pass is an edit to two lines.
 - The pick is strictly tighter than before: a cursor at the old apron's edge
   (`radius + 12`) or the old snap's edge (22px) now picks nothing.
 - The local player is never returned by `pickUnitAt`, so its outline never
-  shows and a right-click on it is a move order.
+  shows and a right-click on it is a move order. Checked on screen rather than
+  in Node: `hoverTargets` is built inside `WorldScene`, which is the three.js
+  half, and a one-line condition there is not worth a seam to test it through.
+  `scripts/preview-world.ts` parks the cursor on the player's own body before
+  anything has been targeted and commits the frame as `world-hover-self.png`,
+  so "nothing lit up" is a thing on the branch to look at.
+- The same harness stops asserting a guessed pixel threshold and *reports* one:
+  it widens a deliberately-sloppy right-click until the pick forgives it, and
+  prints the widest miss that still names the body. That number is what the
+  next pass at these constants gets to argue with.
 
 ## Out of scope
 

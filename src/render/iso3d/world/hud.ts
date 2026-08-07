@@ -317,6 +317,11 @@ export function createHud(): HudHandle {
 
       live.add(anchor.id);
       const element = barFor(anchor.id);
+      // Which of these bars is ours, for the same reason `data-entity` exists:
+      // the harness needs to point the cursor at the player's own body to
+      // photograph that it does *not* light up (spec 081), and every bar looks
+      // alike from the outside.
+      element.root.dataset['self'] = entity.id === view.selfEntityId ? 'true' : 'false';
       element.root.style.left = `${anchor.x}px`;
       element.root.style.top = `${anchor.y}px`;
 
