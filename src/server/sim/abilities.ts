@@ -25,7 +25,12 @@ import {
   totalCastTicks,
   type AbilityDefinition,
 } from '../data/abilities.js';
-import { applyArmor, attackIntervalTicks } from '../player/stats.js';
+import {
+  applyArmor,
+  attackIntervalTicks,
+  projectileLifetimeTicks,
+  projectileSpeedFor,
+} from '../player/stats.js';
 import { isInCone } from './combat.js';
 import {
   ActivityValue,
@@ -702,11 +707,15 @@ function launchProjectile(
     targetX: caster.position.x + dirX * distance,
     targetY: caster.position.y + dirY * distance,
     targetEntityId: cast.targetEntityId,
-    speed: spec.speed / SERVER_TICK_RATE,
+    // The row says how fast this shot is; the arm behind it says the rest
+    // (spec 081). The lifetime moves with the speed so the reach does not --
+    // a slower shot takes longer to cover the same ground, it does not stop
+    // short of it.
+    speed: projectileSpeedFor(spec.speed, caster.stats) / SERVER_TICK_RATE,
     arcHeight: spec.arcHeight,
     totalDistance: Math.max(1e-6, distance),
     travelled: 0,
-    expiresAtTick: tick + spec.lifetimeTicks,
+    expiresAtTick: tick + projectileLifetimeTicks(spec, caster.stats),
   };
 
   return {

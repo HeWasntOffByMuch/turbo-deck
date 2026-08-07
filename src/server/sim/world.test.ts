@@ -5,7 +5,11 @@ import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE, type LiveConfig } from '../confi
 import { abilityById } from '../data/abilities.js';
 import { monsterById } from '../data/monsters.js';
 import { CorrectionReason } from '../net/protocol.js';
-import { computeEffectiveStats } from '../player/stats.js';
+import {
+  computeEffectiveStats,
+  projectileLifetimeTicks,
+  projectileSpeedFor,
+} from '../player/stats.js';
 import { EMPTY_EQUIPMENT, type EffectiveStats, type PersistedPlayer } from '../state/types.js';
 import { chunkKeyOf } from '../world/chunks.js';
 import { FLAT_TERRAIN, type TerrainSampler } from '../world/terrain.js';
@@ -928,6 +932,27 @@ describe('shots that travel', () => {
         : [];
   }
 
+  /**
+   * How far a shot of `abilityId` covers in one tick, in this player's hands.
+   *
+   * Asked rather than written down, because since spec 081 a shot's speed is
+   * the table's number through the shooter's weapon speed and a global scale.
+   * A test that hard-codes "slower than the arrow" as a number is a test that
+   * silently stops meaning that the next time the scale moves.
+   */
+  function flightPerTick(abilityId: string): number {
+    const spec = abilityById(abilityId)?.projectile;
+    if (!spec) throw new Error(`no projectile on ${abilityId}`);
+    return projectileSpeedFor(spec.speed, PLAYER_STATS) / SERVER_TICK_RATE;
+  }
+
+  /** Ticks that shot stays in the air before it expires, for the same reason. */
+  function flightTicks(abilityId: string): number {
+    const spec = abilityById(abilityId)?.projectile;
+    if (!spec) throw new Error(`no projectile on ${abilityId}`);
+    return projectileLifetimeTicks(spec, PLAYER_STATS);
+  }
+
   it('spawns nothing before the release, and a projectile on it', () => {
     let state = createWorldState(4);
     const player = withPlayer(state, 600, 450);
@@ -974,7 +999,7 @@ describe('shots that travel', () => {
 
       const shoot = shootAt('ranged.shot', player.id, mark.id, 900, 450);
       let current = state;
-      for (let i = 0; i < 200; i++) {
+      for (let i = 0; i < flightTicks('ranged.shot'); i++) {
         const result = step(current, shoot(i), ctx);
         current = result.state;
         if (result.events.some((event) => event.kind === 'hit')) return current.tick;
@@ -984,11 +1009,44 @@ describe('shots that travel', () => {
     }
 
     const standing = fight(0);
-    // Slower than the arrow, so it is caught -- but not before it has run.
-    const running = fight(8);
+    // Half the arrow's speed, so it is caught -- but not before it has run.
+    const running = fight(flightPerTick('ranged.shot') / 2);
     expect(standing).not.toBeNull();
     expect(running).not.toBeNull();
     expect(running ?? 0).toBeGreaterThan(standing ?? 0);
+  });
+
+  it('lands later out of a slower weapon, and still lands (spec 081)', () => {
+    /** The tick a shot from a body with this weapon speed arrives on. */
+    function arrival(attackSpeed: number): number | null {
+      let state = createWorldState(4);
+      const player = withPlayer(state, 600, 450, { ...PLAYER_STATS, attackSpeed });
+      state = player.state;
+      const mark = withMonster(state, 'dummy', 900, 450);
+      state = mark.state;
+      const ctx = quiet({
+        activeChunks: activeAround({ x: 600, y: 450 }, { x: 900, y: 450 }),
+      });
+
+      const shoot = shootAt('ranged.shot', player.id, mark.id, 900, 450);
+      let current = state;
+      // Generous enough for the slowest weapon in the comparison; the point is
+      // the ordering of the two arrivals, not either number.
+      for (let i = 0; i < SERVER_TICK_RATE * 8; i++) {
+        const result = step(current, shoot(i), ctx);
+        current = result.state;
+        if (result.events.some((event) => event.kind === 'hit')) return current.tick;
+      }
+      return null;
+    }
+
+    // The wind-up is the ability's, so both loose on the same tick and the only
+    // difference between the two fights is the speed of what was loosed.
+    const quick = arrival(2);
+    const slow = arrival(0.5);
+    expect(quick).not.toBeNull();
+    expect(slow).not.toBeNull();
+    expect(slow ?? 0).toBeGreaterThan(quick ?? 0);
   });
 
   it('lets a target outrun a shot entirely, and the shot expires', () => {
@@ -1004,12 +1062,13 @@ describe('shots that travel', () => {
     const shoot = shootAt('ranged.star', player.id, mark.id, 900, 450);
     let current = state;
     let hits = 0;
-    for (let i = 0; i < 200; i++) {
+    // Long enough for the star to have burned out, whatever its speed is.
+    for (let i = 0; i < flightTicks('ranged.star') + SERVER_TICK_RATE; i++) {
       const result = step(current, shoot(i), ctx);
       current = result.state;
       hits += result.events.filter((event) => event.kind === 'hit').length;
-      // Faster than the star, so it is never caught.
-      current = nudge(current, mark.id, 30);
+      // Twice the star's speed, so it is never caught.
+      current = nudge(current, mark.id, flightPerTick('ranged.star') * 2);
     }
     expect(hits).toBe(0);
     expect([...current.entities.values()].some((e) => e.projectile !== null)).toBe(false);

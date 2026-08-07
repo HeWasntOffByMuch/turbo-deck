@@ -1477,7 +1477,7 @@ describe('an ability aimed at a body (spec 080)', () => {
     state = mark.state;
     const full = monsterById('dummy')?.stats.maxHealth ?? 0;
 
-    const result = run(state, seek.windupTicks + 40, {
+    const result = run(state, seek.windupTicks + SERVER_TICK_RATE * 3, {
       0: [
         input(player.id, {
           castAbilityId: 'bolt.seek',
@@ -1504,7 +1504,7 @@ describe('an ability aimed at a body (spec 080)', () => {
     state = mark.state;
     const full = monsterById('dummy')?.stats.maxHealth ?? 0;
 
-    const result = run(state, seek.windupTicks + 40, {
+    const result = run(state, seek.windupTicks + SERVER_TICK_RATE * 3, {
       0: [
         input(player.id, {
           castAbilityId: 'bolt.seek',

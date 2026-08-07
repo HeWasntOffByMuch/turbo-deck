@@ -214,10 +214,67 @@ export function basicAttackFor(player: PersistedPlayer): string {
  * cadence -- it is a swing every tick with the remainder thrown away.
  */
 export function attackIntervalTicks(stats: EffectiveStats): number {
-  const speed = Number.isFinite(stats.attackSpeed)
+  return Math.max(1, Math.round(stats.attackCooldownTicks / weaponSpeed(stats)));
+}
+
+/**
+ * The weapon speed multiplier, clamped, for every use of it (spec 081).
+ *
+ * Both halves of what a weapon's speed means -- how often it swings and how
+ * fast what it throws travels -- run through this, so a stat driven to zero or
+ * to `NaN` by some future item can never mean one thing to a swing and another
+ * to a shot.
+ */
+function weaponSpeed(stats: EffectiveStats): number {
+  return Number.isFinite(stats.attackSpeed)
     ? clamp(stats.attackSpeed, MIN_ATTACK_SPEED, MAX_ATTACK_SPEED)
     : 1;
-  return Math.max(1, Math.round(stats.attackCooldownTicks / speed));
+}
+
+/**
+ * Every shot flies at this fraction of the speed its ability row states
+ * (spec 081).
+ *
+ * A deliberate global knob rather than a per-row retune: shots were crossing
+ * their whole range in a handful of frames, which makes a travelling attack
+ * indistinguishable from a scheduled one. One line to move when the flight has
+ * been watched for long enough to know what the number should be.
+ */
+export const PROJECTILE_SPEED_SCALE = 0.3;
+
+/**
+ * World units per second for a shot this body looses (spec 081).
+ *
+ * `attackSpeed` is *the* weapon speed stat here -- it is what `attackSpeedPct`
+ * on the Keen Longsword and the Weighted Stars feeds -- so a weapon that swings
+ * fast throws fast, and the Iron Maul's penalty reads as heft in both halves of
+ * what it does. The ability row is the shot's own character; the stat is the
+ * arm behind it.
+ */
+export function projectileSpeedFor(baseSpeed: number, stats: EffectiveStats): number {
+  const base = Number.isFinite(baseSpeed) && baseSpeed > 0 ? baseSpeed : 0;
+  return base * weaponSpeed(stats) * PROJECTILE_SPEED_SCALE;
+}
+
+/**
+ * Ticks before that shot expires, so its *reach* is what the table says.
+ *
+ * `lifetimeTicks` is read as the distance it describes at the row's own speed,
+ * not as a duration. Scaling the speed and leaving the ticks alone would have
+ * expired `bolt.arcane` at 372 units of its 700-unit range and `bolt.lob` at
+ * 360 of 520 -- two abilities that can no longer reach what `startCast` will
+ * happily let you aim at. That is not a speed change, it is a silent range
+ * nerf. So the only thing a shooter moves is how long the flight takes.
+ */
+export function projectileLifetimeTicks(
+  spec: { readonly speed: number; readonly lifetimeTicks: number },
+  stats: EffectiveStats,
+): number {
+  const speed = projectileSpeedFor(spec.speed, stats);
+  if (speed <= 0 || !Number.isFinite(spec.lifetimeTicks)) {
+    return Math.max(1, Math.round(spec.lifetimeTicks) || 1);
+  }
+  return Math.max(1, Math.round((spec.lifetimeTicks * spec.speed) / speed));
 }
 
 /** Ability resource after a recalculation, held under the fresh ceiling. */

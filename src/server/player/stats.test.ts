@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MemoryDataStore } from '../state/memory-store.js';
-import { abilityById } from '../data/abilities.js';
+import { SERVER_TICK_RATE } from '../config.js';
+import { abilityById, ALL_ABILITIES } from '../data/abilities.js';
 import { EMPTY_EQUIPMENT, type PersistedPlayer } from '../state/types.js';
 import { ZoneManager } from '../world/zone-manager.js';
 import { PlayerManager } from './player-manager.js';
@@ -10,6 +11,9 @@ import {
   computeEffectiveStats,
   MAX_ATTACK_SPEED,
   MIN_ATTACK_SPEED,
+  PROJECTILE_SPEED_SCALE,
+  projectileLifetimeTicks,
+  projectileSpeedFor,
   simTicksToServerTicks,
 } from './stats.js';
 
@@ -140,6 +144,74 @@ describe('effective stats', () => {
     // Never zero, whatever a modifier says: the interval divides by this.
     expect(attackIntervalTicks({ ...once, attackSpeed: 0 })).toBeGreaterThanOrEqual(1);
     expect(attackIntervalTicks({ ...once, attackSpeed: Number.NaN })).toBe(40);
+  });
+
+  it('flies a shot at a fraction of its table speed, scaled by the weapon', () => {
+    const base = computeEffectiveStats(player());
+    const even = { ...base, attackSpeed: 1 };
+    expect(projectileSpeedFor(1000, even)).toBeCloseTo(1000 * PROJECTILE_SPEED_SCALE, 9);
+    // The stat is the arm behind the shot: twice the weapon speed, twice the
+    // speed out of it.
+    expect(projectileSpeedFor(1000, { ...even, attackSpeed: 2 })).toBeCloseTo(
+      2 * projectileSpeedFor(1000, even),
+      9,
+    );
+    expect(projectileSpeedFor(1000, { ...even, attackSpeed: 0.5 })).toBeLessThan(
+      projectileSpeedFor(1000, even),
+    );
+  });
+
+  it('takes a shot speed from equipment, in both directions', () => {
+    const bow = computeEffectiveStats(
+      player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'bow.hunting' } }),
+    );
+    const stars = computeEffectiveStats(
+      player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'stars.weighted' } }),
+    );
+    // The Weighted Stars say `attackSpeedPct: 0.2` and the Hunting Bow -0.1, so
+    // the same shot leaves the two weapons at different speeds.
+    expect(projectileSpeedFor(900, stars)).toBeGreaterThan(projectileSpeedFor(900, bow));
+  });
+
+  it('never lets a pathological stat freeze a shot or teleport it', () => {
+    const base = computeEffectiveStats(player());
+    const spec = { speed: 900, lifetimeTicks: 120 };
+    for (const attackSpeed of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const stats = { ...base, attackSpeed };
+      const speed = projectileSpeedFor(spec.speed, stats);
+      expect(Number.isFinite(speed)).toBe(true);
+      expect(speed).toBeGreaterThan(0);
+      const ticks = projectileLifetimeTicks(spec, stats);
+      expect(Number.isFinite(ticks)).toBe(true);
+      expect(ticks).toBeGreaterThanOrEqual(1);
+    }
+    // A row that says nothing sensible still expires rather than flying forever.
+    expect(projectileLifetimeTicks({ speed: 0, lifetimeTicks: 120 }, base)).toBeGreaterThanOrEqual(1);
+  });
+
+  it("keeps a shot's reach where the table put it, whoever looses it", () => {
+    const base = computeEffectiveStats(player());
+    for (const ability of ALL_ABILITIES) {
+      const spec = ability.projectile;
+      if (!spec) continue;
+      // The distance the row describes: its own speed for its own lifetime.
+      const tabled = (spec.speed / SERVER_TICK_RATE) * spec.lifetimeTicks;
+      // A shot has to be able to reach what `startCast` will let you aim at.
+      expect(tabled).toBeGreaterThanOrEqual(ability.range);
+
+      for (const attackSpeed of [MIN_ATTACK_SPEED, 0.9, 1, 1.6, MAX_ATTACK_SPEED]) {
+        const stats = { ...base, attackSpeed };
+        const flown =
+          (projectileSpeedFor(spec.speed, stats) / SERVER_TICK_RATE) *
+          projectileLifetimeTicks(spec, stats);
+        // Within a tick of travel, which is all the rounding of the lifetime
+        // can cost it.
+        expect(flown).toBeGreaterThan(ability.range);
+        expect(Math.abs(flown - tabled)).toBeLessThan(
+          projectileSpeedFor(spec.speed, stats) / SERVER_TICK_RATE + 1e-6,
+        );
+      }
+    }
   });
 
   it('clamps health to the ceiling but never heals on recalculation', () => {
