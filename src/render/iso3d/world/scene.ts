@@ -69,7 +69,8 @@ import {
   pointIntensity,
   torchFlicker,
 } from '../player-lights.js';
-import { appearanceOf } from './appearance.js';
+import { appearanceOf, type Appearance } from './appearance.js';
+import { ShotRig } from './shot.js';
 import type { AimShape } from './aim.js';
 import { castBar } from './cast.js';
 import { EntityMotion } from './interpolate.js';
@@ -148,6 +149,7 @@ interface Body {
   readonly kind: 'player' | 'monster' | 'projectile';
   readonly player?: PlayerRig;
   readonly mech?: MechRig;
+  readonly shot?: ShotRig;
   readonly outline?: OutlineHandle;
   /** Last drawn ground position, for the gait's distance-moved input. */
   previous: Vec2 | null;
@@ -645,7 +647,7 @@ export class WorldScene {
     for (const entity of view.entities) {
       live.add(entity.id);
       const look = appearanceOf(entity);
-      const body = this.bodyFor(entity.id, look.rig, look.typeId, look.radius);
+      const body = this.bodyFor(entity.id, look);
       const isSelf = entity.id === view.selfEntityId;
 
       // The local player is drawn at its prediction; everything else at its
@@ -670,6 +672,9 @@ export class WorldScene {
 
       body.player?.update(dt, moved);
       body.mech?.update(dt, { x, y }, -facing);
+      // Fed the *drawn* pose, so an arrow's nose follows the curve the eye is
+      // following rather than the one the deltas describe (spec 081).
+      body.shot?.update(dt, x, y, ground);
 
       // A corpse lies where it fell and stops animating, so a kill reads.
       const dead = entity.maxHealth > 0 && entity.health <= 0;
@@ -696,6 +701,9 @@ export class WorldScene {
     for (const [id, body] of this.bodies) {
       if (live.has(id)) continue;
       this.scene.remove(body.group);
+      // A shot builds its own geometry and is gone within a second or two, so
+      // this is a leak that would run at the rate of the fighting.
+      body.shot?.dispose();
       this.bodies.delete(id);
     }
   }
@@ -873,22 +881,20 @@ export class WorldScene {
     parent.add(this.torch, this.torchFlame);
   }
 
-  private bodyFor(id: number, rig: string, typeId: string, radius: number): Body {
+  private bodyFor(id: number, appearance: Appearance): Body {
     const existing = this.bodies.get(id);
     if (existing) return existing;
 
+    const { rig, typeId, radius, look } = appearance;
     let body: Body;
     if (rig === 'player') {
       const player = new PlayerRig();
       body = { group: player.group, kind: 'player', player, outline: attachOutline(player.group), previous: null };
     } else if (rig === 'projectile') {
-      const group = new THREE.Group();
-      const mesh = new THREE.Mesh(
-        new THREE.IcosahedronGeometry(Math.max(3, radius), 0),
-        new THREE.MeshBasicMaterial({ color: PALETTE.magicCore }),
-      );
-      group.add(mesh);
-      body = { group, kind: 'projectile', previous: null };
+      // The silhouette comes from the ability that threw it (spec 081), so a
+      // thrown weapon reads as one in the air rather than as a bead of light.
+      const shot = new ShotRig(look ?? 'orb', radius);
+      body = { group: shot.group, kind: 'projectile', shot, previous: null };
     } else {
       const mech = new MechRig(typeId);
       body = { group: mech.group, kind: 'monster', mech, outline: attachOutline(mech.group), previous: null };

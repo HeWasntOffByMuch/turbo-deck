@@ -31,8 +31,19 @@ export type AbilityKind = 'melee' | 'projectile' | 'ground' | 'self' | 'channel'
  */
 export type AbilityTargeting = 'direction' | 'point' | 'unit' | 'self';
 
+/**
+ * What a shot draws as (spec 081).
+ *
+ * A picture and nothing more, exactly as `arcHeight` became one in spec 079:
+ * nothing under `src/server/sim/` reads this, and two shots with the same
+ * numbers and different looks behave identically. It rides no wire either -- a
+ * projectile entity's `typeId` is already its ability id, and this table is
+ * shared code the client imports, so the look is a lookup rather than a field.
+ */
+export type ProjectileLook = 'orb' | 'arrow' | 'shuriken';
+
 export interface ProjectileSpec {
-  /** World units per second. */
+  /** World units per second, before the shooter's weapon speed (spec 081). */
   readonly speed: number;
   /**
    * Peak height above the straight line, in world units. 0 is a flat bolt; a
@@ -40,8 +51,14 @@ export interface ProjectileSpec {
    */
   readonly arcHeight: number;
   readonly radius: number;
-  /** Ticks before it expires in flight, so a missed shot cannot live forever. */
+  /**
+   * The distance a shot may cover before it expires, written as ticks at the
+   * speed above. A shooter who flies it slower flies it for longer rather than
+   * stopping short of the same ground (spec 081).
+   */
   readonly lifetimeTicks: number;
+  /** What it draws as. Absent is an orb -- the look every shot had before. */
+  readonly look?: ProjectileLook;
 }
 
 export interface AbilityDefinition {
@@ -125,7 +142,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     damage: 12,
     // Lobbed, which is what makes it unblockable: an arcing shot flies over
     // whatever is between the archer and the body it named (spec 079).
-    projectile: { speed: 900, arcHeight: 55, radius: 7, lifetimeTicks: seconds(2) },
+    projectile: { speed: 900, arcHeight: 55, radius: 7, lifetimeTicks: seconds(2), look: 'arrow' },
     basicAttack: true,
     description: 'An arrow, lobbed over whatever is in the way. Lands where the target is, not where it was.',
   },
@@ -140,7 +157,13 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     range: 300,
     damage: 8,
     // Flat, and therefore stoppable by anything that steps into the line.
-    projectile: { speed: 1150, arcHeight: 0, radius: 6, lifetimeTicks: seconds(1.5) },
+    projectile: {
+      speed: 1150,
+      arcHeight: 0,
+      radius: 6,
+      lifetimeTicks: seconds(1.5),
+      look: 'shuriken',
+    },
     basicAttack: true,
     description: 'A fast flat star. Whatever wanders into the line takes it instead.',
   },
