@@ -32,6 +32,8 @@ interface Tri {
   readonly b: THREE.Vector3;
   readonly c: THREE.Vector3;
   readonly color: THREE.Color;
+  /** 1 for an opaque mesh; the face's mean vertex alpha for a vertex-coloured one. */
+  readonly alpha: number;
 }
 
 function collectTriangles(root: THREE.Object3D): Tri[] {
@@ -41,20 +43,37 @@ function collectTriangles(root: THREE.Object3D): Tri[] {
   root.traverse((node) => {
     const mesh = node as THREE.Mesh;
     if (!mesh.isMesh) return;
+    const material = mesh.material as THREE.MeshBasicMaterial;
     const pos = mesh.geometry.getAttribute('position');
+    // A vertex-coloured mesh carries its own rgba; the streak is the only one,
+    // and drawing it at the material's white would say nothing about the fade.
+    const vertexColor = material.vertexColors ? mesh.geometry.getAttribute('color') : null;
     const index = mesh.geometry.getIndex();
-    const count = index ? index.count : pos.count;
-    const color = new THREE.Color().copy((mesh.material as THREE.MeshBasicMaterial).color);
+    const total = index ? index.count : pos.count;
+    // A streak only fills part of its buffer; the rest is a degenerate tail.
+    const count = Math.min(total, mesh.geometry.drawRange.count === Infinity ? total : mesh.geometry.drawRange.count);
+    const base = new THREE.Color().copy(material.color);
     for (let i = 0; i < count; i += 3) {
-      const corners = [0, 1, 2].map((k) => {
-        const vi = index ? index.getX(i + k) : i + k;
-        return point.set(pos.getX(vi), pos.getY(vi), pos.getZ(vi)).applyMatrix4(mesh.matrixWorld).clone();
-      });
+      const vis = [0, 1, 2].map((k) => (index ? index.getX(i + k) : i + k));
+      const corners = vis.map((vi) =>
+        point.set(pos.getX(vi), pos.getY(vi), pos.getZ(vi)).applyMatrix4(mesh.matrixWorld).clone(),
+      );
+      const color = base.clone();
+      let alpha = 1;
+      if (vertexColor) {
+        color.setRGB(
+          vis.reduce((sum, vi) => sum + vertexColor.getX(vi), 0) / 3,
+          vis.reduce((sum, vi) => sum + vertexColor.getY(vi), 0) / 3,
+          vis.reduce((sum, vi) => sum + vertexColor.getZ(vi), 0) / 3,
+        );
+        alpha = vis.reduce((sum, vi) => sum + vertexColor.getW(vi), 0) / 3;
+      }
       tris.push({
         a: corners[0] as THREE.Vector3,
         b: corners[1] as THREE.Vector3,
         c: corners[2] as THREE.Vector3,
-        color: color.clone(),
+        color,
+        alpha,
       });
     }
   });
@@ -132,10 +151,15 @@ function render(tris: readonly Tri[], size: number, forward: THREE.Vector3, fit:
         const d = az + w1 * (bz - az) + w0 * (cz - az);
         const at = y * size + x;
         if (d >= (depth[at] as number)) continue;
-        depth[at] = d;
-        out[at * 4] = encode(tri.color.r * shade);
-        out[at * 4 + 1] = encode(tri.color.g * shade);
-        out[at * 4 + 2] = encode(tri.color.b * shade);
+        // Depth-tested but not depth-written when it is see-through, the same
+        // pairing the streak's material asks the real renderer for.
+        if (tri.alpha >= 1) depth[at] = d;
+        const blend = Math.max(0, Math.min(1, tri.alpha));
+        for (let c = 0; c < 3; c++) {
+          const channel = c === 0 ? tri.color.r : c === 1 ? tri.color.g : tri.color.b;
+          const over = encode(channel * shade);
+          out[at * 4 + c] = over * blend + (out[at * 4 + c] as number) * (1 - blend);
+        }
       }
     }
   }
@@ -149,7 +173,11 @@ function render(tris: readonly Tri[], size: number, forward: THREE.Vector3, fit:
  * rig owns -- the arrow's chased pitch and the shuriken's spin -- are integrated
  * over frames. Jumping to the sample would photograph neither of them.
  */
-function flown(abilityId: string, progress: number): { rig: ShotRig; tris: Tri[] } {
+function flown(
+  abilityId: string,
+  progress: number,
+  withTrace: boolean,
+): { rig: ShotRig; tris: Tri[] } {
   const ability = abilityById(abilityId);
   const spec = ability?.projectile;
   if (!ability || !spec) throw new Error(`no projectile on ${abilityId}`);
@@ -158,19 +186,30 @@ function flown(abilityId: string, progress: number): { rig: ShotRig; tris: Tri[]
   // Along +x at the ability's own range, rising on its own arc. The group's yaw
   // is the caller's job in the game; here the flight is along +x, so it is 0.
   const steps = Math.max(1, Math.round(progress * 90));
+  let at = { x: 0, z: 0 };
   for (let i = 0; i <= steps; i++) {
     const t = (i / 90) || 0;
     const x = t * ability.range;
     const z = arcHeightAt(t, spec.arcHeight);
     rig.update(STEP, x, 0, z);
-    rig.group.position.set(x, z, 0);
+    at = { x, z };
   }
-  rig.group.position.set(0, 0, 0);
-  return { rig, tris: collectTriangles(rig.group) };
+  // The body is drawn wherever the sim put it; the streak is already in world
+  // space, so the two only line up if the body is placed there too.
+  rig.group.position.set(at.x, at.z, 0);
+
+  const tris = collectTriangles(rig.group);
+  if (withTrace && rig.trace) tris.push(...collectTriangles(rig.trace));
+  return { rig, tris };
 }
 
-function panel(abilityId: string, progress: number, fit: number): Uint8ClampedArray {
-  const { rig, tris } = flown(abilityId, progress);
+function panel(
+  abilityId: string,
+  progress: number,
+  fit: number,
+  withTrace = false,
+): Uint8ClampedArray {
+  const { rig, tris } = flown(abilityId, progress, withTrace);
   const pixels = render(tris, SIZE, VIEW_DIR, fit);
   rig.dispose();
   return pixels;
@@ -216,6 +255,17 @@ LOOKS.forEach((entry, column) => {
     column,
     pixels: panel('ranged.star', progress, FIT * 0.6),
     label: `star @ ${progress}`,
+  });
+});
+
+// Row 3: the star with its streak, which is the thing that cannot be judged
+// from the plate alone -- how long it is, and whether it ends in air.
+[0.04, 0.1, 0.3, 0.6, 0.9].forEach((progress, column) => {
+  cells.push({
+    row: 3,
+    column,
+    pixels: panel('ranged.star', progress, FIT * 2.4, true),
+    label: `star + trace @ ${progress}`,
   });
 });
 

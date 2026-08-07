@@ -560,7 +560,11 @@ export class WorldScene {
   }
 
   dispose(): void {
-    for (const body of this.bodies.values()) this.scene.remove(body.group);
+    for (const body of this.bodies.values()) {
+      this.scene.remove(body.group);
+      if (body.shot?.trace) this.scene.remove(body.shot.trace);
+      body.shot?.dispose();
+    }
     this.bodies.clear();
     for (const effect of this.effects) this.scene.remove(effect.mesh);
     this.effects.length = 0;
@@ -701,6 +705,7 @@ export class WorldScene {
     for (const [id, body] of this.bodies) {
       if (live.has(id)) continue;
       this.scene.remove(body.group);
+      if (body.shot?.trace) this.scene.remove(body.shot.trace);
       // A shot builds its own geometry and is gone within a second or two, so
       // this is a leak that would run at the rate of the fighting.
       body.shot?.dispose();
@@ -901,6 +906,9 @@ export class WorldScene {
     }
 
     this.scene.add(body.group);
+    // The streak is a record of where the shot has been, so it belongs to the
+    // world rather than to the body that is laying it down (spec 081).
+    if (body.shot?.trace) this.scene.add(body.shot.trace);
     // A projectile is unlit and moving; giving it a shadow caster costs a pass
     // over the scene for something a few pixels across.
     if (body.kind !== 'projectile') castsShadows(body.group);

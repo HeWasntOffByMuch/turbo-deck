@@ -23,17 +23,46 @@ import {
   shurikenOutline,
   shurikenThickness,
 } from './projectile-shape.js';
+import { Trail } from './trail.js';
 
 /** How fast the drawn pitch chases the measured one, per second. */
 const PITCH_CHASE = 12;
 
+/**
+ * The shuriken's streak: how many points it holds, how far apart it lays them,
+ * how wide it starts and how far it floats above the shot.
+ *
+ * The spacing and the width are fractions of the plate, so a bigger star leaves
+ * a proportionally bigger streak. The lift is what keeps the strip off the
+ * terrain a flat shot skims -- `arcHeight` is 0 for a star, so its own height
+ * *is* the ground.
+ */
+const TRACE_SAMPLES = 16;
+const TRACE_SPACING = 0.55;
+const TRACE_WIDTH = 0.42;
+const TRACE_LIFT = 2.5;
+
 export class ShotRig {
   readonly group = new THREE.Group();
+
+  /**
+   * The streak this shot leaves, or null for one that leaves none.
+   *
+   * Not a child of {@link group}: the streak is a record of where the shot has
+   * *been*, in world space, and parenting it to something that moves and yaws
+   * would drag the trail along behind the star like a scarf. The caller adds it
+   * to the scene root beside the body, and takes it away again with the body.
+   */
+  readonly trace: THREE.Object3D | null;
 
   /** Yawed by the caller; this is what pitches and spins inside that. */
   private readonly pivot = new THREE.Group();
   private readonly spinner: THREE.Object3D | null;
   private readonly disposables: (THREE.BufferGeometry | THREE.Material)[] = [];
+
+  private readonly trail: Trail | null;
+  private readonly traceGeometry: THREE.BufferGeometry | null = null;
+  private readonly traceWidth: number;
 
   private pitch = 0;
   private spin = 0;
@@ -58,6 +87,21 @@ export class ShotRig {
         this.buildOrb(radius);
         break;
     }
+
+    // Only the star traces. An arrow is long enough to show its own direction,
+    // and a conjured orb streaking would read as a second spell.
+    if (look === 'shuriken') {
+      const plate = shurikenDrawRadius(radius);
+      this.trail = new Trail(TRACE_SAMPLES, plate * TRACE_SPACING);
+      this.traceWidth = plate * TRACE_WIDTH;
+      const built = this.buildTrace();
+      this.traceGeometry = built.geometry;
+      this.trace = built.mesh;
+    } else {
+      this.trail = null;
+      this.traceWidth = 0;
+      this.trace = null;
+    }
   }
 
   /**
@@ -72,6 +116,10 @@ export class ShotRig {
     if (this.spinner) {
       this.spin += dt * SHURIKEN_SPIN_TURNS_PER_SECOND * Math.PI * 2;
       this.spinner.rotation.z = this.spin;
+    }
+    if (this.trail) {
+      this.trail.push({ x, y, z });
+      this.updateTrace();
     }
 
     const from = this.previous;
@@ -100,6 +148,74 @@ export class ShotRig {
   private track<T extends THREE.BufferGeometry | THREE.Material>(item: T): T {
     this.disposables.push(item);
     return item;
+  }
+
+  /**
+   * The streak's mesh, allocated once at full capacity.
+   *
+   * The buffers never grow: `Trail` is bounded, so the geometry is sized for a
+   * full one on the first frame and the draw range is what moves. A shot lives
+   * a second or two, and reallocating a buffer per frame per arrow in the air
+   * is the kind of cost that only shows up once a fight is worth watching.
+   */
+  private buildTrace(): { mesh: THREE.Mesh; geometry: THREE.BufferGeometry } {
+    const vertices = TRACE_SAMPLES * 2;
+    const geometry = this.track(new THREE.BufferGeometry());
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertices * 3), 3));
+    // Four components, so the alpha rides the colour: the taper is what makes
+    // the tail end in air rather than in a cut edge.
+    geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(vertices * 4), 4));
+    geometry.setIndex(new THREE.BufferAttribute(new Uint16Array((TRACE_SAMPLES - 1) * 6), 1));
+    geometry.setDrawRange(0, 0);
+
+    const mesh = new THREE.Mesh(
+      geometry,
+      this.track(
+        new THREE.MeshBasicMaterial({
+          vertexColors: true,
+          transparent: true,
+          // Written into by nothing and behind nothing: a streak that wrote
+          // depth would punch a fading hole through whatever it crossed.
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        }),
+      ),
+    );
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 1;
+    return { mesh, geometry };
+  }
+
+  /** Refill the streak's buffers from the trail, in three.js's axis order. */
+  private updateTrace(): void {
+    const geometry = this.traceGeometry;
+    if (!this.trail || !geometry) return;
+
+    const ribbon = this.trail.ribbon(this.traceWidth, TRACE_LIFT);
+    const position = geometry.getAttribute('position') as THREE.BufferAttribute;
+    const color = geometry.getAttribute('color') as THREE.BufferAttribute;
+    const index = geometry.getIndex();
+    if (!index) return;
+
+    const tint = new THREE.Color(PALETTE.shurikenTrace);
+    const vertices = ribbon.alphas.length;
+    for (let i = 0; i < vertices; i++) {
+      // The ribbon is world-space (x, y across the ground, z up); three.js puts
+      // height in y, so the last two swap on the way in.
+      position.setXYZ(
+        i,
+        ribbon.positions[i * 3] as number,
+        ribbon.positions[i * 3 + 2] as number,
+        ribbon.positions[i * 3 + 1] as number,
+      );
+      color.setXYZW(i, tint.r, tint.g, tint.b, ribbon.alphas[i] as number);
+    }
+    for (let i = 0; i < ribbon.indices.length; i++) index.setX(i, ribbon.indices[i] as number);
+
+    position.needsUpdate = true;
+    color.needsUpdate = true;
+    index.needsUpdate = true;
+    geometry.setDrawRange(0, ribbon.indices.length);
   }
 
   /** The look every shot had before this spec, and what an unknown one gets. */
