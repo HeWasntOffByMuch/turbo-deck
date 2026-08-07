@@ -135,13 +135,13 @@ describe('effective stats', () => {
     expect(tank.attackDelayTicks).toBeGreaterThanOrEqual(1);
   });
 
-  it('waits 1.2 seconds between attacks with nothing on (spec 082)', () => {
+  it('waits 1.2 seconds between attacks with nothing on (spec 084)', () => {
     const bare = computeEffectiveStats(player());
     expect(bare.attackDelayTicks).toBe(BASE_ATTACK_DELAY_TICKS);
     expect(bare.attackDelayTicks).toBe(Math.round(SERVER_TICK_RATE * 1.2));
   });
 
-  it('does not let dexterity shorten the delay any more (spec 082)', () => {
+  it('does not let dexterity shorten the delay any more (spec 084)', () => {
     const slow = computeEffectiveStats(player());
     const quick = computeEffectiveStats(
       player({ baseStats: { strength: 5, dexterity: 500, intelligence: 5, vitality: 5 } }),
@@ -199,12 +199,12 @@ describe('effective stats', () => {
     expect(computeDelayWith(-0.5)).toBe(Math.round(BASE_ATTACK_DELAY_TICKS / 0.5));
   });
 
-  it('flies a shot at a fraction of its table speed (spec 081)', () => {
+  it('flies a shot at a fraction of its table speed (spec 083)', () => {
     expect(projectileSpeedFor(1000)).toBeCloseTo(1000 * PROJECTILE_SPEED_SCALE, 9);
     expect(projectileSpeedFor(500)).toBeCloseTo(projectileSpeedFor(1000) / 2, 9);
   });
 
-  it('does not ask the shooter how fast its shot flies (spec 082)', () => {
+  it('does not ask the shooter how fast its shot flies (spec 084)', () => {
     // Two weapons whose *delays* differ as much as the table allows. What comes
     // off them is the same shot: how soon the next one may be thrown is the
     // weapon's business, how fast this one travels is the row's.

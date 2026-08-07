@@ -935,7 +935,7 @@ describe('shots that travel', () => {
   /**
    * How far a shot of `abilityId` covers in one tick, in this player's hands.
    *
-   * Asked rather than written down, because since spec 081 a shot's speed is
+   * Asked rather than written down, because since spec 083 a shot's speed is
    * the table's number through a global scale. A test that hard-codes "slower
    * than the arrow" as a number is a test that silently stops meaning that the
    * next time the scale moves.
@@ -1016,7 +1016,7 @@ describe('shots that travel', () => {
     expect(running ?? 0).toBeGreaterThan(standing ?? 0);
   });
 
-  it('lands on the same tick however fast the weapon attacks (spec 082)', () => {
+  it('lands on the same tick however fast the weapon attacks (spec 084)', () => {
     /** The tick a shot from a body with this attack delay arrives on. */
     function arrival(attackDelayTicks: number): number | null {
       let state = createWorldState(4);

@@ -297,7 +297,7 @@ transform; `activity`/`activityUntilTick` drive animation state on the wire.
 
 ---
 
-## Spec 081 additions
+## Spec 083 additions
 
 - **A shot's speed is no longer a table constant.** `launchProjectile` runs
   `spec.speed` through `projectileSpeedFor(baseSpeed, stats)` in

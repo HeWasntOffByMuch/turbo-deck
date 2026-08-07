@@ -1,4 +1,4 @@
-# 082 — Attack speed is a delay, and a shot's speed is its own
+# 084 — Attack speed is a delay, and a shot's speed is its own
 
 ## Problem
 
@@ -20,7 +20,7 @@ numbers do not mean what they say.
    commitment being long enough to be read; at that rate there is nothing
    between one blow and the next to read anything in.
 
-3. **A shot's speed was tied to that same stat** (spec 081), which made sense
+3. **A shot's speed was tied to that same stat** (spec 083), which made sense
    while `attackSpeed` meant "how fast this weapon is" in general. It does not
    survive the stat becoming a duration: a *longer* delay would mean a *faster*
    arrow. How quickly the next shot can come and how fast the last one flies are
@@ -94,7 +94,7 @@ On the wire, `0x44 Stats` loses a `f32` and keeps a `u16`;
 
 `projectileSpeedFor` and `projectileLifetimeTicks` lose their `stats` argument.
 Speed is `spec.speed * PROJECTILE_SPEED_SCALE`, the lifetime is re-timed by the
-same constant so the reach is still exactly what the table describes (spec 081's
+same constant so the reach is still exactly what the table describes (spec 083's
 rule, and its reason, are unchanged), and `attackSpeed` decides only how soon
 the next shot may be thrown.
 
@@ -132,7 +132,7 @@ Two numbers, both look and neither mechanical:
   differ loose projectiles at identical speeds and with identical lifetimes,
   and the speed is `spec.speed * PROJECTILE_SPEED_SCALE`.
 - **Reach is still the table's**, for every projectile row, and still at least
-  the ability's own range — the assertion spec 081 added, now with the shooter
+  the ability's own range — the assertion spec 083 added, now with the shooter
   out of it.
 - `arrowProfile` still scales linearly and still puts the head in front, at the
   new scale; the drawn arrow is strictly shorter than it was and still longer

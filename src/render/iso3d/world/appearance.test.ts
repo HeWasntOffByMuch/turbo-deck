@@ -33,7 +33,7 @@ describe('appearanceOf', () => {
     for (const id of ['bolt.arcane', 'bolt.lob', 'bolt.seek']) {
       expect(appearanceOf({ kind: EntityKind.Projectile, typeId: id }).look, id).toBe('orb');
     }
-    // A row that says nothing draws as what every shot drew before spec 081.
+    // A row that says nothing draws as what every shot drew before spec 083.
     expect(appearanceOf({ kind: EntityKind.Projectile, typeId: 'nothing.like.this' }).look).toBe(
       'orb',
     );

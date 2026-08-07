@@ -691,7 +691,7 @@ export class WorldScene {
       body.player?.update(dt, { x, y }, -facing);
       body.mech?.update(dt, { x, y }, -facing);
       // Fed the *drawn* pose, so an arrow's nose follows the curve the eye is
-      // following rather than the one the deltas describe (spec 081).
+      // following rather than the one the deltas describe (spec 083).
       body.shot?.update(dt, x, y, ground);
 
       // A corpse lies where it fell and stops animating, so a kill reads.
@@ -926,7 +926,7 @@ export class WorldScene {
           HEADROOM_GAP,
       };
     } else if (rig === 'projectile') {
-      // The silhouette comes from the ability that threw it (spec 081), so a
+      // The silhouette comes from the ability that threw it (spec 083), so a
       // thrown weapon reads as one in the air rather than as a bead of light.
       const shot = new ShotRig(look ?? 'orb', radius);
       // A shot never shows a bar, so its headroom is the shared default rather
@@ -945,7 +945,7 @@ export class WorldScene {
 
     this.scene.add(body.group);
     // The streak is a record of where the shot has been, so it belongs to the
-    // world rather than to the body that is laying it down (spec 081).
+    // world rather than to the body that is laying it down (spec 083).
     if (body.shot?.trace) this.scene.add(body.shot.trace);
     // A projectile is unlit and moving; giving it a shadow caster costs a pass
     // over the scene for something a few pixels across.

@@ -118,7 +118,7 @@ export interface EffectiveStats {
   readonly attackRange: number;
   /**
    * Ticks that must pass after a basic attack before the next may begin
-   * (spec 082).
+   * (spec 084).
    *
    * The whole answer, and the only one: nothing divides it and nothing else is
    * consulted. It replaced a base cadence, a multiplier over that base, and a

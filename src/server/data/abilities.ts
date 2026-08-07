@@ -32,7 +32,7 @@ export type AbilityKind = 'melee' | 'projectile' | 'ground' | 'self' | 'channel'
 export type AbilityTargeting = 'direction' | 'point' | 'unit' | 'self';
 
 /**
- * What a shot draws as (spec 081).
+ * What a shot draws as (spec 083).
  *
  * A picture and nothing more, exactly as `arcHeight` became one in spec 079:
  * nothing under `src/server/sim/` reads this, and two shots with the same
@@ -43,7 +43,7 @@ export type AbilityTargeting = 'direction' | 'point' | 'unit' | 'self';
 export type ProjectileLook = 'orb' | 'arrow' | 'shuriken';
 
 export interface ProjectileSpec {
-  /** World units per second, before `PROJECTILE_SPEED_SCALE` (spec 082). */
+  /** World units per second, before `PROJECTILE_SPEED_SCALE` (spec 084). */
   readonly speed: number;
   /**
    * Peak height above the straight line, in world units. 0 is a flat bolt; a
@@ -54,7 +54,7 @@ export interface ProjectileSpec {
   /**
    * The distance a shot may cover before it expires, written as ticks at the
    * speed above. Slowing every shot by a global scale lengthens this to match,
-   * so a row's *reach* is what it says whatever the scale is (spec 081).
+   * so a row's *reach* is what it says whatever the scale is (spec 083).
    */
   readonly lifetimeTicks: number;
   /** What it draws as. Absent is an orb -- the look every shot had before. */
@@ -143,7 +143,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // Lobbed, which is what makes it unblockable: an arcing shot flies over
     // whatever is between the archer and the body it named (spec 079). How
     // *high* it goes over is a look and nothing else -- both travel types reach
-    // the same body on the same tick -- so spec 082 doubling it is a picture.
+    // the same body on the same tick -- so spec 084 doubling it is a picture.
     projectile: { speed: 900, arcHeight: 110, radius: 7, lifetimeTicks: seconds(2), look: 'arrow' },
     basicAttack: true,
     description: 'An arrow, lobbed over whatever is in the way. Lands where the target is, not where it was.',

@@ -1,5 +1,5 @@
 /**
- * What an arrow and a shuriken are shaped like (spec 081).
+ * What an arrow and a shuriken are shaped like (spec 083).
  *
  * Pure -- no three.js, no DOM -- for the same reason `lobe.ts` is: at the size
  * a shot crosses the frame at, the silhouette is the entire difference between
@@ -50,7 +50,7 @@ export interface ArrowProfile {
 }
 
 /**
- * How large the drawn arrow is against the proportions below (spec 082).
+ * How large the drawn arrow is against the proportions below (spec 084).
  *
  * The arrow was drawn at about seven times its collision radius -- longer than
  * a player is wide -- which read as a javelin crossing the screen rather than

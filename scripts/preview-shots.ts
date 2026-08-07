@@ -1,4 +1,4 @@
-// Dev-only: photograph the projectiles in flight (spec 081) so a human -- or an
+// Dev-only: photograph the projectiles in flight (spec 083) so a human -- or an
 // agent with no screen -- can see whether an arrow reads as an arrow at the size
 // it crosses the frame at. Not part of the app. `npx tsx scripts/preview-shots.ts`
 //

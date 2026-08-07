@@ -1,4 +1,8 @@
-# 081 — Arrows, shuriken, and a shot slow enough to watch
+# 083 — Arrows, shuriken, and a shot slow enough to watch
+
+*Renumbered from 081 on the way in: the player becoming a cow took that number
+while this branch was still open, and two live specs sharing one are referenced
+from the same files here.*
 
 ## Problem
 

@@ -48,7 +48,7 @@ export const HP_PER_LEVEL = 8;
 /** Attack damage per point of strength. */
 export const DAMAGE_PER_STRENGTH = 0.6;
 /**
- * What a body with nothing on it waits between basic attacks (spec 082).
+ * What a body with nothing on it waits between basic attacks (spec 084).
  *
  * Slow on purpose. Spec 065 built this game around a commitment being long
  * enough to be read, and the old cadence -- about a third of a second, against
@@ -69,7 +69,7 @@ export const MIN_ATTACK_DELAY_TICKS = Math.round(SERVER_TICK_RATE * 0.2);
 export const MAX_ATTACK_DELAY_TICKS = Math.round(SERVER_TICK_RATE * 5);
 
 /**
- * The delay a set of modifiers produces (spec 082) -- the one place it is
+ * The delay a set of modifiers produces (spec 084) -- the one place it is
  * worked out, and the whole of what `attackDelayTicks` means.
  *
  * `flatTicks` are added to the base; `haste` divides it, because a modifier
@@ -169,7 +169,7 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
 
   const attackRange = Math.max(1, PLAYER_ATTACK_RANGE + bonus.attackRange);
 
-  // How soon the next blow may begin, resolved here and nowhere else (spec 082).
+  // How soon the next blow may begin, resolved here and nowhere else (spec 084).
   // Flat modifiers add ticks; the proportional ones are still *percent faster*,
   // so they divide. Dexterity is deliberately absent: it is a base stat rather
   // than a modifier, and its old haste link was the last of the indirection this
@@ -231,7 +231,7 @@ export function basicAttackFor(player: PersistedPlayer): string {
 
 /**
  * Every shot flies at this fraction of the speed its ability row states
- * (spec 081).
+ * (spec 083).
  *
  * A deliberate global knob rather than a per-row retune: shots were crossing
  * their whole range in a handful of frames, which makes a travelling attack
@@ -241,7 +241,7 @@ export function basicAttackFor(player: PersistedPlayer): string {
 export const PROJECTILE_SPEED_SCALE = 0.3;
 
 /**
- * World units per second for a shot of this row (spec 082).
+ * World units per second for a shot of this row (spec 084).
  *
  * The shooter is deliberately not asked. Spec 081 scaled this by the weapon's
  * speed stat, which read correctly while that stat was a multiplier and stopped

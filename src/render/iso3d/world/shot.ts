@@ -1,5 +1,5 @@
 /**
- * The three.js half of a projectile in flight (spec 081).
+ * The three.js half of a projectile in flight (spec 083).
  *
  * `projectile-shape.ts` says where the vertices go; this turns that into
  * meshes and moves them. Everything in here is presentation: a shot's position

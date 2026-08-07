@@ -157,7 +157,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  (20Hz deltas to a pose per frame), intent.ts, target.ts (the
                  right-click attack order, spec 072), cast.ts, appearance.ts,
                  projectile-shape.ts and trail.ts (an arrow's and a shuriken's
-                 silhouettes, and the streak a thrown star leaves, spec 081)
+                 silhouettes, and the streak a thrown star leaves, spec 083)
                  and pixel-font.ts (a 5x7 glyph table, since nothing may be fetched)
                  are pure and tested headlessly; scene.ts, shot.ts, hud.ts and
                  view.ts are the three.js/DOM half. `npx tsx scripts/preview-world.ts`
