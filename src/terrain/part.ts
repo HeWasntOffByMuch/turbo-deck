@@ -137,8 +137,10 @@ export function bakePart(input: BakePartInput): BakedPart {
    * and its corners are carried over untouched and the rest of it is baked.
    */
   const existing = new Map<string, ChunkCells>();
+  const targets: ChunkCoord[] = [];
   for (let cz = rect.minCz; cz <= rect.maxCz; cz++) {
     for (let cx = rect.minCx; cx <= rect.maxCx; cx++) {
+      targets.push({ cx, cz });
       const held = readChunkCells(store, layerId, cx, cz, cells);
       if (!held) continue;
       if (held.cols === cells && held.rows === cells) {
@@ -147,6 +149,50 @@ export function bakePart(input: BakePartInput): BakedPart {
       existing.set(`${cx},${cz}`, held);
     }
   }
+
+  /**
+   * Short chunks just outside the rect that the part would otherwise strand.
+   *
+   * A short chunk's ground stops before its own footprint ends, so a full-size
+   * part starting at the *next* coordinate leaves a strip of nothing between
+   * them -- 528 units wide on the shipped map, inside chunk 7's own footprint,
+   * which is far too narrow to select and impossible to fill by dragging.
+   *
+   * Only the west and north neighbours can do this, and only when they are
+   * short on the axis facing the part. A short chunk on the far side is
+   * harmless: the part is full-size, so its edge lands exactly on that chunk's
+   * start and the two meet.
+   *
+   * These are completed but never *refused* over: they were not asked for, so a
+   * full one is simply left alone rather than being an error.
+   */
+  for (let cz = rect.minCz; cz <= rect.maxCz; cz++) {
+    const west = readChunkCells(store, layerId, rect.minCx - 1, cz, cells);
+    if (west && west.cols < cells) {
+      existing.set(`${rect.minCx - 1},${cz}`, west);
+      targets.push({ cx: rect.minCx - 1, cz });
+    }
+  }
+  for (let cx = rect.minCx; cx <= rect.maxCx; cx++) {
+    const north = readChunkCells(store, layerId, cx, rect.minCz - 1, cells);
+    if (north && north.rows < cells) {
+      existing.set(`${cx},${rect.minCz - 1}`, north);
+      targets.push({ cx, cz: rect.minCz - 1 });
+    }
+  }
+  // The north-west diagonal, when both edges are being closed: without it the
+  // corner chunk stays short and the hole survives where the two strips meet.
+  const corner = readChunkCells(store, layerId, rect.minCx - 1, rect.minCz - 1, cells);
+  if (
+    corner &&
+    (corner.cols < cells || corner.rows < cells) &&
+    existing.has(`${rect.minCx - 1},${rect.minCz}`) &&
+    existing.has(`${rect.minCx},${rect.minCz - 1}`)
+  ) {
+    existing.set(`${rect.minCx - 1},${rect.minCz - 1}`, corner);
+    targets.push({ cx: rect.minCx - 1, cz: rect.minCz - 1 });
+  }
+  targets.sort((a, b) => a.cz - b.cz || a.cx - b.cx);
 
   // The recipe as a field, in the same vocabulary a generated world is written
   // in. `waterLevel` and `baseY` come from the *layer*, not the recipe: one sea,
@@ -198,32 +244,39 @@ export function bakePart(input: BakePartInput): BakedPart {
     return anchor + (own - anchor) * smoothstep(nearest / SKIRT_CELLS);
   };
 
-  const chunks: MapChunk[] = [];
-  for (let cz = rect.minCz; cz <= rect.maxCz; cz++) {
-    for (let cx = rect.minCx; cx <= rect.maxCx; cx++) {
-      chunks.push(
-        bakeChunk(cx, cz, {
-          cell,
-          cells,
-          info,
-          field,
-          bands,
-          stitchedHeight,
-          existing: existing.get(`${cx},${cz}`) ?? null,
-        }),
-      );
-    }
-  }
+  const chunks: MapChunk[] = targets.map(({ cx, cz }) =>
+    bakeChunk(cx, cz, {
+      cell,
+      cells,
+      info,
+      field,
+      bands,
+      stitchedHeight,
+      existing: existing.get(`${cx},${cz}`) ?? null,
+    }),
+  );
 
   const planted = plant(chunks, { seed, recipe, worldRect, cell, cells, info, existing });
+
+  // Over every chunk baked, not just the rect that was asked for: completing a
+  // short chunk fills it out to its whole footprint, which can reach past the
+  // rectangle and past the bounds the layer declared. Ground outside the
+  // declaration reads as "the world ends here" and gets walled off, so the two
+  // have to move together.
+  let maxX = Math.max(info.bounds.maxX, worldRect.maxX);
+  let maxZ = Math.max(info.bounds.maxZ, worldRect.maxZ);
+  for (const { cx, cz } of targets) {
+    maxX = Math.max(maxX, info.origin.x + (cx + 1) * span);
+    maxZ = Math.max(maxZ, info.origin.z + (cz + 1) * span);
+  }
 
   return {
     chunks: planted,
     bounds: {
       minX: Math.min(info.bounds.minX, worldRect.minX),
       minZ: Math.min(info.bounds.minZ, worldRect.minZ),
-      maxX: Math.max(info.bounds.maxX, worldRect.maxX),
-      maxZ: Math.max(info.bounds.maxZ, worldRect.maxZ),
+      maxX,
+      maxZ,
     },
     worldRect,
     completed: [...existing.keys()]

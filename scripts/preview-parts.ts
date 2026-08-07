@@ -226,6 +226,58 @@ async function main(): Promise<void> {
     await page.waitForTimeout(900);
     await page.screenshot({ path: join(outDir, 'editor-part-restored.png') });
 
+    // The shipped map's east column and south row are *short* (spec 082): their
+    // ground stops before their own chunk footprint ends. A part dragged clear
+    // of one must absorb and complete it, or it strands a 528-unit strip of
+    // nothing too narrow to select and impossible to fill by dragging.
+    //
+    // Which pixels land next to a short edge depends on the camera, and aiming
+    // world coordinates through an isometric projection from this harness would
+    // be testing this file's copy of the projection rather than the editor's.
+    // So it tries a ring of drags around the map and asks which one did it --
+    // the same way `preview-world.ts` hunts for a body to right-click.
+    await page.click('button:has-text("add")');
+    await page.waitForTimeout(200);
+
+    const attempts: [[number, number], [number, number]][] = [
+      [[700, 470], [860, 600]],
+      [[820, 380], [960, 500]],
+      [[560, 560], [700, 680]],
+      [[880, 300], [1000, 420]],
+      [[420, 520], [560, 650]],
+    ];
+    let completedCount = 0;
+    let where = '';
+    for (const [from, to] of attempts) {
+      await drag(page, from, to);
+      const selection = /(\d+ chunks: [-\d,.]+)/.exec((await page.textContent('body')) ?? '')?.[1] ?? '?';
+      await page.mouse.up();
+      await page.waitForTimeout(1400);
+      const status = await readStatus(page);
+      const completed = /added part "[^"]+" \(\d+ chunks, (\d+) completed\)/.exec(status);
+      if (completed) {
+        completedCount = Number(completed[1]);
+        where = selection;
+        break;
+      }
+      // Not next to a short edge: take it back and try elsewhere, so the
+      // attempts do not pile up into a map nobody meant to build.
+      if (/added part/.test(status)) {
+        await page.keyboard.press('Control+z');
+        await page.waitForTimeout(700);
+      }
+    }
+    // Which of the two completion paths this lands on depends on where the drag
+    // fell -- over the short chunks, or beside them. Both must close the sliver,
+    // and `part.test.ts` pins the adjacency case exactly; what this asks is
+    // whether completion reaches the screen at all.
+    check(
+      'a part at a short edge completes it rather than stranding a sliver',
+      completedCount > 0,
+      completedCount > 0 ? `${completedCount} completed, selection ${where}` : 'no attempt landed at a short edge',
+    );
+    await page.screenshot({ path: join(outDir, 'editor-part-short-edge.png') });
+
     check('the page logged no errors', problems.length === 0, problems.slice(0, 3).join(' | '));
   } finally {
     await browser.close();

@@ -119,7 +119,16 @@ interface MapPart {
 
 Omitted when empty, which is the ordinary case. `removePart` deletes only the
 created chunks and **refuses outright** when `completed` is non-empty, saying
-which chunks it would have orphaned. Undo still takes such an add back inside
+which chunks it would have orphaned.
+
+A part also **absorbs** short chunks immediately west or north of its rectangle,
+whether or not they were selected. A short chunk's ground stops before its own
+footprint ends, so a full-size part starting at the next coordinate — which is
+what a drag over open space gives you — strands the remainder: 528 units on the
+shipped map, inside a chunk far too narrow to select and impossible to fill by
+dragging. Only those two sides can do it; a short chunk on the far side meets
+the part's edge exactly. Absorbed chunks are completed but never *refused* over:
+they were not asked for, so a full one is left alone rather than being an error. Undo still takes such an add back inside
 the session, because the snapshot of the pre-completion chunk is on the stack —
 it is only the after-the-fact removal of a committed part that cannot be
 reconstructed.
@@ -172,6 +181,9 @@ has, and it is what puts empty ground on screen to grow into.
   ending. Both are invisible until a map grows west or north — until then a
   layer's origin and its `bounds.min` are the same point — and both were live
   bugs found by driving the real editor.
+- **No sliver survives a part dragged clear of a short edge**: the short chunks
+  beside it are absorbed and completed, there is ground under every cell from
+  the old map to the part's far edge, and the seam still holds.
 - **The camera reaches the new ground**: the zoom ceiling rises with the map,
   and the pivot may be tracked onto ground that only just appeared.
 - **A stroke that captured nothing costs no undo slot** — the existing rule,

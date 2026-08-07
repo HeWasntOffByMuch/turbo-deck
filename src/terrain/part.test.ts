@@ -415,6 +415,47 @@ describe('growing the shipped map', () => {
     return worst;
   }
 
+  it('leaves no sliver of missing ground when the drag clears the short edge', () => {
+    // The shipped map's bounds are 7.14 x 6.66 chunks, so its east column is 4
+    // cells wide against a 28-cell chunk: its ground stops 528 units short of
+    // its own footprint. A full-size part starting at the *next* coordinate --
+    // which is what a drag over open space gives you -- would leave that 528
+    // units empty, inside a chunk too narrow to select and impossible to fill.
+    const before = shipped();
+    const layer = before.layers[0];
+    if (!layer) throw new Error('no layer');
+    const cells = before.grid.chunkCells;
+    const shortCx = Math.max(...layer.chunks.map((c) => c.cx));
+
+    const grown = growMap(before, {
+      id: 'east',
+      layerId: layer.id,
+      // Starts one chunk clear of the short column, as a drag in open space does.
+      rect: { minCx: shortCx + 1, minCz: 0, maxCx: shortCx + 2, maxCz: 2 },
+      recipe: { features: [{ kind: 'rolling', amplitude: 40 }] },
+      seed: 4242,
+    });
+
+    // The short column was absorbed and completed for exactly the rows the part
+    // spans, and recorded as such.
+    const completed = grown.parts?.[0]?.completed?.map((c) => `${c.cx},${c.cz}`) ?? [];
+    expect(completed).toEqual([`${shortCx},0`, `${shortCx},1`, `${shortCx},2`]);
+    for (const cz of [0, 1, 2]) {
+      expect(grown.layers[0]?.chunks.find((c) => c.cx === shortCx && c.cz === cz)?.cols).toBe(cells);
+    }
+
+    // And there is ground under every cell from the old map out to the new
+    // part's far edge, across every row the part covers.
+    const mesh = loadMap(grown).meshLayers[0];
+    const lastCol = (shortCx + 3) * cells;
+    let holes = 0;
+    for (let row = 0; row < 3 * cells; row++) {
+      for (let col = 0; col < lastCol; col++) if (mesh?.solidAt(col, row) !== true) holes++;
+    }
+    expect(holes).toBe(0);
+    expect(seamMismatches(grown)).toEqual([]);
+  });
+
   it('is continuous across the join when sampled as the sim samples it', () => {
     const { doc, before } = grownEast();
     const bounds = before.layers[0]?.bounds;
