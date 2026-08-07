@@ -1,5 +1,5 @@
 /**
- * The shape of a thrown thing's path (spec 085).
+ * The shape of a thrown thing's path (spec 089).
  *
  * Pure arithmetic, no state, no clock -- part of the deterministic core, and
  * headlessly tested, because an arc is the kind of thing that looks plausible
@@ -92,7 +92,7 @@ export function arcHeightAt(progress: number, peak: number): number {
 }
 
 /**
- * Where a shot is, vertically, at a point in its flight (spec 085).
+ * Where a shot is, vertically, at a point in its flight (spec 089).
  *
  * The chord from launch to target, plus the arc over it. **Terrain between the
  * two ends is not an input, and cannot be**: that is the whole point of this
@@ -117,7 +117,7 @@ export function shotHeightAt(
  *
  * A shot that starts and finishes at ankle height cannot read as an arc however
  * right the curve is, and the flat ones ploughed the dirt -- which is why spec
- * 083's shuriken trace had to be lifted clear of the ground it was skimming.
+ * 087's shuriken trace had to be lifted clear of the ground it was skimming.
  * Roughly a hand at one end and a body's middle at the other.
  */
 export const SHOT_LAUNCH_HEIGHT = 26;

@@ -4,7 +4,7 @@
  *
  * Stats are expressed as a full {@link EffectiveStats} because the resolver does
  * not care whether an attacker is a player or not -- one shape, one code path.
- * That includes `attackDelayTicks` (spec 084), which is where a darting stalker
+ * That includes `attackDelayTicks` (spec 088), which is where a darting stalker
  * and a lumbering ravager stop feeling like the same fight at different damage
  * numbers: they swing at visibly different rates off the same swing. It is the
  * delay itself, in ticks -- a row says how long this body waits, rather than a

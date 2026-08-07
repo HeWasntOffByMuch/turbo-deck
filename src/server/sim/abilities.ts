@@ -80,7 +80,7 @@ export function cooldownTicksFor(
   entity: Pick<ServerEntity, 'stats'>,
 ): number {
   if (!ability.basicAttack) return ability.cooldownTicks;
-  // The delay is the stat, resolved already (spec 084): nothing to divide here.
+  // The delay is the stat, resolved already (spec 088): nothing to divide here.
   return entity.stats.attackDelayTicks;
 }
 
@@ -704,13 +704,13 @@ function launchProjectile(
     targetX: caster.position.x + dirX * distance,
     targetY: caster.position.y + dirY * distance,
     targetEntityId: cast.targetEntityId,
-    // The row says how fast this shot is, and nothing else does (spec 084):
+    // The row says how fast this shot is, and nothing else does (spec 088):
     // how soon the next one may be loosed is the weapon's business, how fast
     // this one flies is the shot's. The lifetime moves with the global scale so
     // the reach does not -- a slower shot takes longer to cover the same
     // ground, it does not stop short of it.
     speed: projectileSpeedFor(spec.speed) / SERVER_TICK_RATE,
-    // The launch angle is the distance's, and it is settled here (spec 085):
+    // The launch angle is the distance's, and it is settled here (spec 089):
     // the shallow ballistic solution for how far this shot has to go, which is
     // 45 degrees only at the weapon's own maximum range and near enough flat
     // at arm's length. A row states a *fraction* of that arc, not a height,

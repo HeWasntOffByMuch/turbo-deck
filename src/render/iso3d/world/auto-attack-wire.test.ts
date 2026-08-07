@@ -219,7 +219,7 @@ const SWINGS = 30;
  * Long enough for this weapon to take {@link SWINGS} swings, asked rather than
  * written down.
  *
- * Since spec 084 the cadence is `attackDelayTicks` -- 1.2 seconds bare, and
+ * Since spec 088 the cadence is `attackDelayTicks` -- 1.2 seconds bare, and
  * moved by whatever the weapon says -- so a fixed tick budget silently becomes
  * a different number of swings every time that constant moves. This run has to
  * be a *fight*; how many ticks that takes is the stat's business.

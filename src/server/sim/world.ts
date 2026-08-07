@@ -523,7 +523,7 @@ export function step(
     const x = entity.position.x + dirX * stride;
     const y = entity.position.y + dirY * stride;
     // The chord from where it was loosed to where it is aimed, plus the arc it
-    // left with (spec 085). Terrain is read at the *aim* and nowhere along the
+    // left with (spec 089). Terrain is read at the *aim* and nowhere along the
     // way: sampling it under the shot made the ground steer something that had
     // already left the bow, so an arrow crossing a dip dived into the dip.
     // A tracked mark running uphill still moves this end, which is why it is

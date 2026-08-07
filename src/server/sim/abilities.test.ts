@@ -582,7 +582,7 @@ describe('projectiles', () => {
     }
 
     // Flat is level between the hand it left and the height it lands at
-    // (spec 085) -- not zero, and above all not the ground it is crossing.
+    // (spec 089) -- not zero, and above all not the ground it is crossing.
     const level = heights('bolt.arcane', flat.windupTicks + 30);
     expect(level.length).toBeGreaterThan(4);
     for (const z of level) {

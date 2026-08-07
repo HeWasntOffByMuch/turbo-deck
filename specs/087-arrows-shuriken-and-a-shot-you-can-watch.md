@@ -1,8 +1,8 @@
-# 083 — Arrows, shuriken, and a shot slow enough to watch
+# 087 — Arrows, shuriken, and a shot slow enough to watch
 
-*Renumbered from 081 on the way in: the player becoming a cow took that number
-while this branch was still open, and two live specs sharing one are referenced
-from the same files here.*
+*Renumbered twice while this branch waited -- from 081 when the player became a
+cow, and from 083 when the map learned to grow. Its siblings moved with it: the
+attack delay is 088 and the arc is 089.*
 
 ## Problem
 

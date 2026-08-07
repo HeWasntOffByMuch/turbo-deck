@@ -1,4 +1,4 @@
-# 085 — A shot that arcs like a shot
+# 089 — A shot that arcs like a shot
 
 ## Problem
 
@@ -121,7 +121,7 @@ is what "flat" meant all along.
 
 Both ends move up by a constant, because a shot that starts and finishes at
 ankle height cannot read as an arc however correct the curve is — and the flat
-ones currently *plough the dirt*, which is why spec 083's shuriken trace needed
+ones currently *plough the dirt*, which is why spec 087's shuriken trace needed
 lifting clear of the ground it was skimming.
 
 ```ts
@@ -178,7 +178,7 @@ looks like and nothing about what it hits — the same division of labour
   mortar arc to clear an obstacle is a real mechanic and would need the
   obstacle to exist first.
 - **Air drag, or a speed that varies with the angle.** A shot's speed is still
-  `PROJECTILE_SPEED_SCALE` times its row's, unchanged by spec 084; only the
+  `PROJECTILE_SPEED_SCALE` times its row's, unchanged by spec 088; only the
   *shape* of the path is ballistic, and the travel is still at constant
   horizontal speed along it.
 - **Retuning ranges, damage or lifetimes.** The only numbers that move are the

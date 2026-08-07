@@ -177,7 +177,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  (20Hz deltas to a pose per frame), intent.ts, target.ts (the
                  right-click attack order, spec 072), cast.ts, appearance.ts,
                  projectile-shape.ts and trail.ts (an arrow's and a shuriken's
-                 silhouettes, and the streak a thrown star leaves, spec 083)
+                 silhouettes, and the streak a thrown star leaves, spec 087)
                  and pixel-font.ts (a 5x7 glyph table, since nothing may be fetched)
                  are pure and tested headlessly; scene.ts, shot.ts, hud.ts and
                  view.ts are the three.js/DOM half. `npx tsx scripts/preview-world.ts`
@@ -187,7 +187,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  `npx tsx scripts/preview-arcs.ts` plots what a shot's path
                  actually is, flown through the real step: one weapon at a
                  spread of distances, and the same shot over flat and broken
-                 ground overlaid (spec 085).
+                 ground overlaid (spec 089).
 src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
                  read by the tree sway, the water and the streak layer over the
                  ground, plus the shore distance transform the water's bands step

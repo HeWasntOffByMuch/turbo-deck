@@ -936,7 +936,7 @@ describe('shots that travel', () => {
   /**
    * How far a shot of `abilityId` covers in one tick, in this player's hands.
    *
-   * Asked rather than written down, because since spec 083 a shot's speed is
+   * Asked rather than written down, because since spec 087 a shot's speed is
    * the table's number through a global scale. A test that hard-codes "slower
    * than the arrow" as a number is a test that silently stops meaning that the
    * next time the scale moves.
@@ -1017,7 +1017,7 @@ describe('shots that travel', () => {
     expect(running ?? 0).toBeGreaterThan(standing ?? 0);
   });
 
-  it('lands on the same tick however fast the weapon attacks (spec 084)', () => {
+  it('lands on the same tick however fast the weapon attacks (spec 088)', () => {
     /** The tick a shot from a body with this attack delay arrives on. */
     function arrival(attackDelayTicks: number): number | null {
       let state = createWorldState(4);
@@ -1145,11 +1145,11 @@ describe('shots that travel', () => {
     expect(flat.struck).toBe(3);
   });
 
-  it('flies the same arc over broken ground as over flat (spec 085)', () => {
+  it('flies the same arc over broken ground as over flat (spec 089)', () => {
     /**
      * Every height a shot passes through, over this terrain.
      *
-     * The decisive test for spec 085: before it, height was the heightfield
+     * The decisive test for spec 089: before it, height was the heightfield
      * *under the shot* plus a bump, so the two runs below differed wildly and
      * an arrow crossing a dip dived into the dip. Now terrain is read at the
      * launch and at the aim and nowhere between, so the ground the shot passes
@@ -1198,7 +1198,7 @@ describe('shots that travel', () => {
     expect(rough).toEqual(flat);
   });
 
-  it('meets a target standing above it, and one standing below (spec 085)', () => {
+  it('meets a target standing above it, and one standing below (spec 089)', () => {
     /** The last height the shot was seen at, flying at a mark on this ground. */
     function arrivalHeight(markHeight: number): number {
       // Flat under the archer, `markHeight` from halfway out: the shot has to
@@ -1234,7 +1234,7 @@ describe('shots that travel', () => {
     expect(arrivalHeight(-200)).toBeLessThan(arrivalHeight(0) - 100);
   });
 
-  it('throws a near shot flat and a far one high (spec 085)', () => {
+  it('throws a near shot flat and a far one high (spec 089)', () => {
     /** The highest the shot got, flying at a mark this far away. */
     function apex(distance: number): number {
       let state = createWorldState(4);
@@ -1270,7 +1270,7 @@ describe('shots that travel', () => {
     const far = apex(shot.range - 20);
 
     // The near shot barely rises above the height it was loosed at; the far one
-    // goes up like a lob. Before spec 085 both peaked at the same 110.
+    // goes up like a lob. Before spec 089 both peaked at the same 110.
     expect(near).toBeLessThan(SHOT_LAUNCH_HEIGHT + 10);
     expect(far).toBeGreaterThan(near * 3);
   });

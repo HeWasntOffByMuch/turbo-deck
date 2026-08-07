@@ -55,7 +55,7 @@ export const PALETTE = {
   torchCore: 0xffe9a8,
   magicOrb: 0x9fd8ff,
   magicCore: 0xe8f6ff,
-  // Thrown weapons (spec 083). A conjured shot stays the pale magic core above;
+  // Thrown weapons (spec 087). A conjured shot stays the pale magic core above;
   // these are objects, so they are wood, steel and a dyed feather -- the point
   // being that an arrow crossing the frame reads as a *thing* and not as light.
   arrowShaft: 0x9a7442,

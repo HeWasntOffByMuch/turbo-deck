@@ -1,4 +1,4 @@
-// Dev-only: photograph the projectiles in flight (spec 083) so a human -- or an
+// Dev-only: photograph the projectiles in flight (spec 087) so a human -- or an
 // agent with no screen -- can see whether an arrow reads as an arrow at the size
 // it crosses the frame at. Not part of the app. `npx tsx scripts/preview-shots.ts`
 //
@@ -187,7 +187,7 @@ function flown(
   // is the caller's job in the game; here the flight is along +x, so it is 0.
   const steps = Math.max(1, Math.round(progress * 90));
   // Flown at the ability's full range, so what is photographed is the 45-degree
-  // end of the arc where the row asks for one (spec 085).
+  // end of the arc where the row asks for one (spec 089).
   const peak = ballisticPeak(ability.range, ability.range, spec.arc);
   let at = { x: 0, z: 0 };
   for (let i = 0; i <= steps; i++) {

@@ -29,7 +29,7 @@ describe('arrowProfile', () => {
     expect(arrow.length).toBeGreaterThan(arrow.headRadius * 3);
   });
 
-  it('draws smaller than it collides, and still reads as an arrow (spec 084)', () => {
+  it('draws smaller than it collides, and still reads as an arrow (spec 088)', () => {
     const arrow = arrowProfile(7);
     expect(ARROW_DRAW_SCALE).toBeLessThan(1);
     // Small, but not a speck: still clearly longer than it is thick, or the

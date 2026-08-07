@@ -1,4 +1,4 @@
-// Dev-only: plot the path a shot actually flies (spec 085), so the two claims
+// Dev-only: plot the path a shot actually flies (spec 089), so the two claims
 // that spec makes can be looked at rather than taken on trust.
 // Not part of the app. `npx tsx scripts/preview-arcs.ts`
 //

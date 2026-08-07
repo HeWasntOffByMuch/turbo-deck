@@ -104,7 +104,7 @@ interface Played {
 }
 
 /**
- * Long enough to contain a dozen swings at the cadence spec 084 set (1.2s bare,
+ * Long enough to contain a dozen swings at the cadence spec 088 set (1.2s bare,
  * and a press every seventh tick only lands when the delay has expired). The
  * assertions below are all "this many swings happened, and every one of them
  * was drawn right", so the run has to hold enough of them to mean something.
@@ -170,7 +170,7 @@ async function play(options: {
   // has time to become a swing the server began. Without it a run can end
   // between a press lighting a bar and the server starting the cast, and
   // `instantBars` reads one high -- a boundary artifact rather than a fault, and
-  // one that got much easier to hit when spec 084 made swings rarer.
+  // one that got much easier to hit when spec 088 made swings rarer.
   const tail = options.delayTicks * 2 + options.ticksPerFrame + 6;
   for (let tick = 1; tick <= options.ticks + tail; tick++) {
     if (tick % options.ticksPerFrame === 1 || options.ticksPerFrame === 1) {
@@ -252,7 +252,7 @@ describe('a swing, over a wire', () => {
     // cooldown expiring can be predicted and then refused -- a bar that flashes
     // and goes. It takes a press to land on that boundary: at the cadence this
     // test was written against, presses every seventh tick never did, and at
-    // spec 084's 1.2s delay one press per run does. At most one, though: a
+    // spec 088's 1.2s delay one press per run does. At most one, though: a
     // client predicting swings it has not earned would run far ahead of this.
     expect(played.instantBars - played.commits).toBeGreaterThanOrEqual(0);
     expect(played.instantBars - played.commits).toBeLessThanOrEqual(1);

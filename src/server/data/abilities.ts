@@ -32,7 +32,7 @@ export type AbilityKind = 'melee' | 'projectile' | 'ground' | 'self' | 'channel'
 export type AbilityTargeting = 'direction' | 'point' | 'unit' | 'self';
 
 /**
- * What a shot draws as (spec 083).
+ * What a shot draws as (spec 087).
  *
  * A picture and nothing more, exactly as the arc became one in spec 079:
  * nothing under `src/server/sim/` reads this, and two shots with the same
@@ -43,10 +43,10 @@ export type AbilityTargeting = 'direction' | 'point' | 'unit' | 'self';
 export type ProjectileLook = 'orb' | 'arrow' | 'shuriken';
 
 export interface ProjectileSpec {
-  /** World units per second, before `PROJECTILE_SPEED_SCALE` (spec 084). */
+  /** World units per second, before `PROJECTILE_SPEED_SCALE` (spec 088). */
   readonly speed: number;
   /**
-   * How much of the optimal arc this weapon throws, 0..1 (spec 085).
+   * How much of the optimal arc this weapon throws, 0..1 (spec 089).
    *
    * `1` leaves at the range-maximising 45 degrees when thrown its full
    * {@link AbilityDefinition.range}, and proportionally shallower at anything
@@ -61,7 +61,7 @@ export interface ProjectileSpec {
   /**
    * The distance a shot may cover before it expires, written as ticks at the
    * speed above. Slowing every shot by a global scale lengthens this to match,
-   * so a row's *reach* is what it says whatever the scale is (spec 083).
+   * so a row's *reach* is what it says whatever the scale is (spec 087).
    */
   readonly lifetimeTicks: number;
   /** What it draws as. Absent is an orb -- the look every shot had before. */
@@ -150,7 +150,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // Lobbed, which is what makes it unblockable: an arcing shot flies over
     // whatever is between the archer and the body it named (spec 079). A full
     // arc, so a shot at the edge of its range leaves at 45 degrees and one at a
-    // body's length leaves almost flat (spec 085).
+    // body's length leaves almost flat (spec 089).
     projectile: { speed: 900, arc: 1, radius: 7, lifetimeTicks: seconds(2), look: 'arrow' },
     basicAttack: true,
     description: 'An arrow, lobbed over whatever is in the way. Lands where the target is, not where it was.',
@@ -196,7 +196,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     radius: 90,
     // A full arc: at its 520-unit range that peaks at 130, which is exactly the
     // constant it replaces -- the tell that the constant was always a 45-degree
-    // shot with the distance filed off (spec 085).
+    // shot with the distance filed off (spec 089).
     projectile: { speed: 300, arc: 1, radius: 12, lifetimeTicks: seconds(4) },
     description: 'A slow lobbed pot that bursts where it lands.',
   },

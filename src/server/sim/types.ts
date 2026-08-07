@@ -110,7 +110,7 @@ export interface ProjectileState {
   readonly speed: number;
   /**
    * Peak height above the launch-to-target line, committed at the loose
-   * (spec 085).
+   * (spec 089).
    *
    * Worked out once, from the distance at launch, and never again. A tracking
    * shot still follows its mark sideways, but the arc it left with is the arc
@@ -120,7 +120,7 @@ export interface ProjectileState {
   readonly arcHeight: number;
   /**
    * Height the shot left at. The other end of the chord its arc rides on; the
-   * ground *between* the two is never consulted (spec 085).
+   * ground *between* the two is never consulted (spec 089).
    */
   readonly originZ: number;
   /**

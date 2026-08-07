@@ -31,7 +31,7 @@ export interface Appearance {
   /** Whether this body has a health bar over it. */
   readonly showsHealth: boolean;
   /**
-   * Which shot to draw, or null for a body that is not one (spec 083).
+   * Which shot to draw, or null for a body that is not one (spec 087).
    *
    * Read off the ability the shot was thrown by, the same lookup the radius
    * already came from -- so a new row in the table brings its own silhouette
@@ -43,7 +43,7 @@ export interface Appearance {
 /** Fallbacks, sized so an unknown body reads as a body rather than as a speck. */
 const DEFAULT_MONSTER_RADIUS = 20;
 const DEFAULT_PROJECTILE_RADIUS = 6;
-/** The look every shot had before spec 083, and what an unknown one still gets. */
+/** The look every shot had before spec 087, and what an unknown one still gets. */
 const DEFAULT_PROJECTILE_LOOK: ProjectileLook = 'orb';
 /** Matches `SERVER_PLAYER_RADIUS`; a player's look is not a content-table entry. */
 const PLAYER_RADIUS = 16;

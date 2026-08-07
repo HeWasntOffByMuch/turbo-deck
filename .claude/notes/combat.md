@@ -297,7 +297,7 @@ transform; `activity`/`activityUntilTick` drive animation state on the wire.
 
 ---
 
-## Spec 083 additions
+## spec 087 additions
 
 - **A shot's speed is no longer a table constant.** `launchProjectile` runs
   `spec.speed` through `projectileSpeedFor(baseSpeed, stats)` in
@@ -330,7 +330,7 @@ transform; `activity`/`activityUntilTick` drive animation state on the wire.
 
 ---
 
-## Spec 085 additions
+## spec 089 additions
 
 - **`src/server/sim/ballistics.ts`** is where a shot's *shape* now lives, pure and
   headlessly tested: `ballisticPeak(distance, maxRange, arc)`,

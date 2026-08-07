@@ -1,5 +1,5 @@
 /**
- * The streak a thrown weapon leaves behind it (spec 083).
+ * The streak a thrown weapon leaves behind it (spec 087).
  *
  * Pure -- no three.js, no DOM. It is a ring buffer of where something has been
  * and the strip built over those points; `shot.ts` turns that into buffers.
