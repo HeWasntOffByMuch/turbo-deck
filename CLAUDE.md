@@ -164,6 +164,10 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  photographs the real page into .claude/screenshots/world-*.png,
                  and `npx tsx scripts/preview-shots.ts` flies the real ShotRig
                  through a real arc into .claude/screenshots/shots.png.
+                 `npx tsx scripts/preview-arcs.ts` plots what a shot's path
+                 actually is, flown through the real step: one weapon at a
+                 spread of distances, and the same shot over flat and broken
+                 ground overlaid (spec 085).
 src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
                  read by the tree sway, the water and the streak layer over the
                  ground, plus the shore distance transform the water's bands step

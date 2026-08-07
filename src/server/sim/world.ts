@@ -38,7 +38,6 @@ import type { ZoneManager } from '../world/zone-manager.js';
 import { abilityById } from '../data/abilities.js';
 import {
   advanceCast,
-  arcHeightAt,
   applyDamage,
   cancelCast,
   projectileHits,
@@ -46,6 +45,7 @@ import {
   type CastAttempt,
   type ProjectileSpawn,
 } from './abilities.js';
+import { shotHeightAt, SHOT_IMPACT_HEIGHT } from './ballistics.js';
 import { resolveMovement, type MovementContext } from './movement.js';
 import { regenerated } from './resource.js';
 import {
@@ -522,9 +522,17 @@ export function step(
     const dirY = toGo > 1e-6 ? (aimY - entity.position.y) / toGo : Math.sin(entity.facing);
     const x = entity.position.x + dirX * stride;
     const y = entity.position.y + dirY * stride;
+    // The chord from where it was loosed to where it is aimed, plus the arc it
+    // left with (spec 085). Terrain is read at the *aim* and nowhere along the
+    // way: sampling it under the shot made the ground steer something that had
+    // already left the bow, so an arrow crossing a dip dived into the dip.
+    // A tracked mark running uphill still moves this end, which is why it is
+    // re-read each tick rather than stamped beside `originZ`.
+    const targetZ = context.terrain.heightAt(aimX, aimY) + SHOT_IMPACT_HEIGHT;
+    const z = shotHeightAt(progress, flight.originZ, targetZ, flight.arcHeight);
     const moved: ServerEntity = {
       ...entity,
-      position: { x, y, z: context.terrain.heightAt(x, y) + arcHeightAt(progress, flight.arcHeight) },
+      position: { x, y, z },
       facing: toGo > 1e-6 ? Math.atan2(dirY, dirX) : entity.facing,
       projectile: { ...flight, targetX: aimX, targetY: aimY, totalDistance, travelled },
     };

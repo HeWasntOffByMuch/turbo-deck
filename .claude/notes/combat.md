@@ -326,3 +326,34 @@ transform; `activity`/`activityUntilTick` drive animation state on the wire.
 - `npx tsx scripts/preview-shots.ts` → `.claude/screenshots/shots.png` flies the
   real rig through a real `arcHeightAt` arc, with a software rasteriser that
   blends vertex alpha so the streak's fade is actually visible.
+
+
+---
+
+## Spec 085 additions
+
+- **`src/server/sim/ballistics.ts`** is where a shot's *shape* now lives, pure and
+  headlessly tested: `ballisticPeak(distance, maxRange, arc)`,
+  `launchAngle(...)`, `arcHeightAt(progress, peak)` (moved here out of
+  `abilities.ts`) and `shotHeightAt(progress, launchZ, targetZ, peak)`.
+- **The launch angle comes from the distance.** The shallow ballistic solution:
+  `peak = arc * (Rmax/4) * (1 - sqrt(1 - (d/Rmax)^2))`, which is exactly 45
+  degrees at `d == Rmax` and near enough flat at point-blank. `Rmax` is the
+  ability's own `range`, so a weapon states one number rather than two.
+- **`ProjectileSpec.arcHeight` is gone; `arc` (0..1) replaces it** -- a fraction
+  of the optimal arc, not a height. A height without a distance beside it is what
+  made the old 110-unit constant an 84-degree mortar at four paces.
+  `ranged.shot` and `bolt.lob` are 1, `bolt.seek` 0.35, the flat rows 0.
+- **The peak is committed at launch** into `ProjectileState.arcHeight`, from the
+  distance at launch, and never recomputed -- a tracking shot follows its mark
+  sideways but keeps the arc it left with.
+- **Height is a chord, not the heightfield.** `ProjectileState.originZ` is stamped
+  at the loose; `targetZ` is re-read each tick under the current aim; everything
+  between is `shotHeightAt`. Do not reintroduce a `terrain.heightAt(x, y)` in the
+  projectile pass -- that is the bug this replaced, and it made an arrow crossing
+  a dip dive into the dip. The `world.test.ts` case that flies the same shot over
+  flat and over ridged ground and asserts bit-identical heights is the guard.
+- `SHOT_LAUNCH_HEIGHT` (26) and `SHOT_IMPACT_HEIGHT` (18) lift both ends off the
+  floor. A "flat" shot is now level between them rather than at z = 0.
+- `npx tsx scripts/preview-arcs.ts` -> `.claude/screenshots/arcs.png` plots real
+  flights: distances stacked, and flat-vs-broken terrain overlaid.

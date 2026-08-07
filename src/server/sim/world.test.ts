@@ -13,6 +13,7 @@ import {
 import { EMPTY_EQUIPMENT, type EffectiveStats, type PersistedPlayer } from '../state/types.js';
 import { chunkKeyOf } from '../world/chunks.js';
 import { FLAT_TERRAIN, type TerrainSampler } from '../world/terrain.js';
+import { SHOT_LAUNCH_HEIGHT } from './ballistics.js';
 import { ZoneManager } from '../world/zone-manager.js';
 import {
   EntityKindValue,
@@ -1144,13 +1145,143 @@ describe('shots that travel', () => {
     expect(flat.struck).toBe(3);
   });
 
+  it('flies the same arc over broken ground as over flat (spec 085)', () => {
+    /**
+     * Every height a shot passes through, over this terrain.
+     *
+     * The decisive test for spec 085: before it, height was the heightfield
+     * *under the shot* plus a bump, so the two runs below differed wildly and
+     * an arrow crossing a dip dived into the dip. Now terrain is read at the
+     * launch and at the aim and nowhere between, so the ground the shot passes
+     * over cannot reach it.
+     */
+    function heights(terrain: TerrainSampler): number[] {
+      let state = createWorldState(4);
+      const player = withPlayer(state, 600, 450);
+      state = player.state;
+      const mark = withMonster(state, 'dummy', 900, 450);
+      state = mark.state;
+      const ctx = quiet({
+        terrain,
+        activeChunks: activeAround({ x: 600, y: 450 }, { x: 900, y: 450 }),
+      });
+
+      const shoot = shootAt('ranged.shot', player.id, mark.id, 900, 450);
+      let current = state;
+      const seen: number[] = [];
+      for (let i = 0; i < flightTicks('ranged.shot'); i++) {
+        const result = step(current, shoot(i), ctx);
+        current = result.state;
+        for (const entity of current.entities.values()) {
+          if (entity.projectile) seen.push(entity.position.z);
+        }
+        if (result.events.some((event) => event.kind === 'hit')) break;
+      }
+      return seen;
+    }
+
+    // A ridge and a trench *between* the archer and the mark, violent enough
+    // that riding it would be unmistakable -- and flat at both ends, because
+    // the endpoints are exactly the two places terrain is still allowed to
+    // matter. It is the ground in between that must not be able to reach the
+    // shot.
+    const broken: TerrainSampler = {
+      heightAt: (x) => (x > 660 && x < 840 ? Math.sin((x - 660) / 30) * 160 : 0),
+    };
+    const flat = heights(FLAT_TERRAIN);
+    const rough = heights(broken);
+
+    // The flight happened at all, and it is an arc rather than a flat line.
+    expect(flat.length).toBeGreaterThan(4);
+    expect(Math.max(...flat)).toBeGreaterThan(Math.min(...flat) + 20);
+    // And the ground under it changed nothing whatsoever.
+    expect(rough).toEqual(flat);
+  });
+
+  it('meets a target standing above it, and one standing below (spec 085)', () => {
+    /** The last height the shot was seen at, flying at a mark on this ground. */
+    function arrivalHeight(markHeight: number): number {
+      // Flat under the archer, `markHeight` from halfway out: the shot has to
+      // finish on the mark's ground rather than on its own.
+      const terrain: TerrainSampler = { heightAt: (x) => (x > 750 ? markHeight : 0) };
+      let state = createWorldState(4);
+      const player = withPlayer(state, 600, 450);
+      state = player.state;
+      const mark = withMonster(state, 'dummy', 900, 450);
+      state = mark.state;
+      const ctx = quiet({
+        terrain,
+        activeChunks: activeAround({ x: 600, y: 450 }, { x: 900, y: 450 }),
+      });
+
+      const shoot = shootAt('ranged.shot', player.id, mark.id, 900, 450);
+      let current = state;
+      let last = 0;
+      for (let i = 0; i < flightTicks('ranged.shot'); i++) {
+        const result = step(current, shoot(i), ctx);
+        current = result.state;
+        for (const entity of current.entities.values()) {
+          if (entity.projectile) last = entity.position.z;
+        }
+        if (result.events.some((event) => event.kind === 'hit')) break;
+      }
+      return last;
+    }
+
+    // Uphill finishes high and downhill finishes low, tracking the ground the
+    // *target* stands on rather than the ground under the flight.
+    expect(arrivalHeight(200)).toBeGreaterThan(arrivalHeight(0) + 100);
+    expect(arrivalHeight(-200)).toBeLessThan(arrivalHeight(0) - 100);
+  });
+
+  it('throws a near shot flat and a far one high (spec 085)', () => {
+    /** The highest the shot got, flying at a mark this far away. */
+    function apex(distance: number): number {
+      let state = createWorldState(4);
+      const player = withPlayer(state, 600, 450);
+      state = player.state;
+      const mark = withMonster(state, 'dummy', 600 + distance, 450);
+      state = mark.state;
+      const ctx = quiet({
+        activeChunks: activeAround(
+          { x: 600, y: 450 },
+          { x: 600 + distance, y: 450 },
+          { x: 600 + distance / 2, y: 450 },
+        ),
+      });
+
+      const shoot = shootAt('ranged.shot', player.id, mark.id, 600 + distance, 450);
+      let current = state;
+      let high = 0;
+      for (let i = 0; i < flightTicks('ranged.shot'); i++) {
+        const result = step(current, shoot(i), ctx);
+        current = result.state;
+        for (const entity of current.entities.values()) {
+          if (entity.projectile) high = Math.max(high, entity.position.z);
+        }
+        if (result.events.some((event) => event.kind === 'hit')) break;
+      }
+      return high;
+    }
+
+    const shot = abilityById('ranged.shot');
+    if (!shot) throw new Error('no ranged.shot');
+    const near = apex(60);
+    const far = apex(shot.range - 20);
+
+    // The near shot barely rises above the height it was loosed at; the far one
+    // goes up like a lob. Before spec 085 both peaked at the same 110.
+    expect(near).toBeLessThan(SHOT_LAUNCH_HEIGHT + 10);
+    expect(far).toBeGreaterThan(near * 3);
+  });
+
   it('does not care how high a shot flew, only that it arrived', () => {
-    // The same shot at the same speed, differing only in `arcHeight`, reaches
-    // the same body on the same tick.
+    // The same shot at the same speed, differing only in how high it flew,
+    // reaches the same body on the same tick.
     const flat = { ...(abilityById('ranged.star') ?? { projectile: null }) };
     const lobbed = { ...(abilityById('ranged.shot') ?? { projectile: null }) };
-    expect(flat.projectile?.arcHeight).toBe(0);
-    expect(lobbed.projectile?.arcHeight ?? 0).toBeGreaterThan(0);
+    expect(flat.projectile?.arc).toBe(0);
+    expect(lobbed.projectile?.arc ?? 0).toBeGreaterThan(0);
 
     function arrivalOf(arcHeight: number): number | null {
       let state = createWorldState(4);

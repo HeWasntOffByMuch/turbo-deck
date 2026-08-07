@@ -3,7 +3,7 @@
 // it crosses the frame at. Not part of the app. `npx tsx scripts/preview-shots.ts`
 //
 // It builds the **real `ShotRig`** and drives its real `update()` along a real
-// flight: the arc is `arcHeightAt`, the same parabola the server flies, sampled
+// flight: the arc is the server's own `ballisticPeak`/`shotHeightAt`, sampled
 // at 60Hz. So the pitch in these frames is the pitch the rig computes, not a
 // pose set by hand for the photograph. The only thing faked is the rasteriser,
 // which is here because there is no GPU in a container.
@@ -14,7 +14,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { PNG } from 'pngjs';
 import * as THREE from 'three';
 import { abilityById, type ProjectileLook } from '../src/server/data/abilities.js';
-import { arcHeightAt } from '../src/server/sim/abilities.js';
+import { ballisticPeak, shotHeightAt, SHOT_IMPACT_HEIGHT, SHOT_LAUNCH_HEIGHT } from '../src/server/sim/ballistics.js';
 import { ShotRig } from '../src/render/iso3d/world/shot.js';
 
 const SIZE = Number(process.env['SIZE'] ?? 240);
@@ -186,11 +186,14 @@ function flown(
   // Along +x at the ability's own range, rising on its own arc. The group's yaw
   // is the caller's job in the game; here the flight is along +x, so it is 0.
   const steps = Math.max(1, Math.round(progress * 90));
+  // Flown at the ability's full range, so what is photographed is the 45-degree
+  // end of the arc where the row asks for one (spec 085).
+  const peak = ballisticPeak(ability.range, ability.range, spec.arc);
   let at = { x: 0, z: 0 };
   for (let i = 0; i <= steps; i++) {
     const t = (i / 90) || 0;
     const x = t * ability.range;
-    const z = arcHeightAt(t, spec.arcHeight);
+    const z = shotHeightAt(t, SHOT_LAUNCH_HEIGHT, SHOT_IMPACT_HEIGHT, peak);
     rig.update(STEP, x, 0, z);
     at = { x, z };
   }

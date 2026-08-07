@@ -25,6 +25,7 @@ import {
   type ServerSimEvent,
   type ServerWorldState,
 } from './types.js';
+import { SHOT_IMPACT_HEIGHT, SHOT_LAUNCH_HEIGHT } from './ballistics.js';
 import { createWorldState, replaceEntity, spawnEntity, step, type StepContext } from './world.js';
 
 const RECORD: PersistedPlayer = {
@@ -560,13 +561,42 @@ describe('projectiles', () => {
     const lob = abilityById('bolt.lob');
     if (!flat || !lob) throw new Error('missing projectiles');
 
-    const flatRun = run(state, flat.windupTicks + 4, {
-      0: [input(player.id, { castAbilityId: 'bolt.arcane', castTargetX: 1200, castTargetY: 450 })],
-    });
-    const flatShot = [...flatRun.state.entities.values()].find(
-      (entity) => entity.kind === EntityKindValue.Projectile,
-    );
-    expect(flatShot?.position.z).toBeCloseTo(0, 6);
+    /** Every height this ability's shot passes through, over flat ground. */
+    function heights(abilityId: string, ticks: number): number[] {
+      const seen: number[] = [];
+      let current = state;
+      for (let tick = 0; tick < ticks; tick++) {
+        const result = step(
+          current,
+          tick === 0
+            ? [input(player.id, { castAbilityId: abilityId, castTargetX: 1100, castTargetY: 450 })]
+            : [],
+          context({ activeChunks: activeAround(850, 450) }),
+        );
+        current = result.state;
+        for (const entity of current.entities.values()) {
+          if (entity.projectile) seen.push(entity.position.z);
+        }
+      }
+      return seen;
+    }
+
+    // Flat is level between the hand it left and the height it lands at
+    // (spec 085) -- not zero, and above all not the ground it is crossing.
+    const level = heights('bolt.arcane', flat.windupTicks + 30);
+    expect(level.length).toBeGreaterThan(4);
+    for (const z of level) {
+      expect(z).toBeLessThanOrEqual(SHOT_LAUNCH_HEIGHT + 1e-6);
+      expect(z).toBeGreaterThanOrEqual(SHOT_IMPACT_HEIGHT - 1e-6);
+    }
+    // And it only ever descends along that chord: no hump anywhere in it.
+    for (let i = 1; i < level.length; i++) {
+      expect(level[i]).toBeLessThanOrEqual((level[i - 1] as number) + 1e-6);
+    }
+
+    // The lob genuinely rises above where it left, which is the difference.
+    const arced = heights('bolt.lob', lob.windupTicks + 30);
+    expect(Math.max(...arced)).toBeGreaterThan(SHOT_LAUNCH_HEIGHT + 20);
   });
 });
 

@@ -108,7 +108,21 @@ export interface ProjectileState {
   readonly targetEntityId: number;
   /** World units per tick along the ground line. */
   readonly speed: number;
+  /**
+   * Peak height above the launch-to-target line, committed at the loose
+   * (spec 085).
+   *
+   * Worked out once, from the distance at launch, and never again. A tracking
+   * shot still follows its mark sideways, but the arc it left with is the arc
+   * it flies -- one that grew because its target ran would be climbing after it
+   * had left the bow.
+   */
   readonly arcHeight: number;
+  /**
+   * Height the shot left at. The other end of the chord its arc rides on; the
+   * ground *between* the two is never consulted (spec 085).
+   */
+  readonly originZ: number;
   /**
    * Ground distance this flight will cover: `travelled` plus what is left to
    * run. Re-stamped every tick, because a tracked target moves the finish line;

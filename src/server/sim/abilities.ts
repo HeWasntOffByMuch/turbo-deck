@@ -26,6 +26,7 @@ import {
   type AbilityDefinition,
 } from '../data/abilities.js';
 import { applyArmor, projectileLifetimeTicks, projectileSpeedFor } from '../player/stats.js';
+import { ballisticPeak, SHOT_LAUNCH_HEIGHT } from './ballistics.js';
 import { isInCone } from './combat.js';
 import {
   ActivityValue,
@@ -709,7 +710,14 @@ function launchProjectile(
     // the reach does not -- a slower shot takes longer to cover the same
     // ground, it does not stop short of it.
     speed: projectileSpeedFor(spec.speed) / SERVER_TICK_RATE,
-    arcHeight: spec.arcHeight,
+    // The launch angle is the distance's, and it is settled here (spec 085):
+    // the shallow ballistic solution for how far this shot has to go, which is
+    // 45 degrees only at the weapon's own maximum range and near enough flat
+    // at arm's length. A row states a *fraction* of that arc, not a height,
+    // because a height without a distance beside it is what made the old
+    // constant a mortar at four paces.
+    arcHeight: ballisticPeak(distance, ability.range, spec.arc),
+    originZ: caster.position.z + SHOT_LAUNCH_HEIGHT,
     totalDistance: Math.max(1e-6, distance),
     travelled: 0,
     expiresAtTick: tick + projectileLifetimeTicks(spec),
@@ -790,17 +798,6 @@ export function applyDamage(
       cast: killed ? null : target.cast,
     },
   };
-}
-
-/**
- * Height above the ground line at a point in a projectile's flight. A parabola
- * peaking at the midpoint -- pure, and identical on client and server, so the
- * client's interpolation between 20Hz deltas draws the same arc the server flew.
- */
-export function arcHeightAt(progress: number, arcHeight: number): number {
-  if (arcHeight <= 0) return 0;
-  const t = Math.min(1, Math.max(0, progress));
-  return 4 * arcHeight * t * (1 - t);
 }
 
 /** Whether a projectile entity may hit `target`. Owners never hit themselves. */
