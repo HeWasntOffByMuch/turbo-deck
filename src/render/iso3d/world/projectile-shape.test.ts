@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ARROW_DRAW_SCALE,
   arrowProfile,
   SHURIKEN_DRAW_SCALE,
   SHURIKEN_POINTS,
@@ -26,6 +27,18 @@ describe('arrowProfile', () => {
     expect(arrow.centreOffset).toBeCloseTo(arrow.length / 2, 9);
     // Long enough to read as pointing somewhere at the size it flies at.
     expect(arrow.length).toBeGreaterThan(arrow.headRadius * 3);
+  });
+
+  it('draws smaller than it collides, and still reads as an arrow (spec 082)', () => {
+    const arrow = arrowProfile(7);
+    expect(ARROW_DRAW_SCALE).toBeLessThan(1);
+    // Small, but not a speck: still clearly longer than it is thick, or the
+    // shape stops being what tells it from a bolt.
+    expect(arrow.length).toBeGreaterThan(arrow.headRadius * 4);
+    // And smaller than the shot's own hit radius suggests -- it was drawn at
+    // about seven times it, which read as a javelin.
+    expect(arrow.length).toBeLessThan(7 * 3);
+    expect(arrowProfile(Number.NaN).length).toBeGreaterThan(0);
   });
 
   it('scales linearly, so a bigger arrow is the same arrow bigger', () => {
