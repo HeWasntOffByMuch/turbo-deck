@@ -217,6 +217,16 @@ describe('forgiving picking (spec 071)', () => {
     expect(pickHoveredUnit(NO_RAY, [unit], { x: 600, y: 600 }, { x: 900, y: 700 })).toBeNull();
   });
 
+  it('is strictly tighter than the slack spec 071 shipped with (spec 081)', () => {
+    // The values, not just the constants: every test above states its bounds in
+    // terms of FOOTPRINT_PAD and SNAP_PIXELS, so all of them would keep passing
+    // if the pick were widened back. These two are the ratchet.
+    const beside = ghost(1, { x: 9999, y: 9999 }, BOX);
+    expect(pickHoveredUnit(NO_RAY, [beside], null, { x: 140 + 22, y: 150 })).toBeNull();
+    const underfoot = ghost(1, { x: 0, y: 0 }, null, 20);
+    expect(pickHoveredUnit(NO_RAY, [underfoot], { x: 20 + 12, y: 0 })).toBeNull();
+  });
+
   it('falls back to spec 041\'s pick when nothing has been projected', () => {
     // A caller that passes no cursor pixels gets the model-and-footprint answer,
     // unchanged -- which is what keeps this function usable from a test, and

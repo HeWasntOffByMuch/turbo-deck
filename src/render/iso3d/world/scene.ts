@@ -678,10 +678,16 @@ export class WorldScene {
       // ever outlined however many frames ago the cursor last moved.
       body.outline?.setVisible(false);
 
-      // Only living units are pickable. A corpse is scenery, and a projectile
-      // is a few pixels of geometry crossing the frame -- outlining either is a
-      // cursor that catches on things nothing can be done about.
-      if (body.outline && !dead) {
+      // Only living units *other than us* are pickable. A corpse is scenery and
+      // a projectile is a few pixels of geometry crossing the frame -- outlining
+      // either is a cursor that catches on things nothing can be done about --
+      // and our own body is the same case in its worst form (spec 081): the
+      // camera keeps it under the cursor, a right-click on it can never be an
+      // attack, so an outline there promises an order that will not be given.
+      // Leaving it out of the candidate set is both what removes the outline and
+      // what lets a click on our own feet fall through to being a move order,
+      // rather than being picked here and refused by the view.
+      if (body.outline && !dead && !isSelf) {
         this.hoverTargets.push({
           id: entity.id,
           object: body.group,

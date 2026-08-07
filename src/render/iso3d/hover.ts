@@ -44,11 +44,14 @@ export const HOVER_PLAYER_ID = -1;
 /**
  * How far past its body a unit's ground footprint picks it up, in world units.
  *
- * A little under a body radius. Enough that the earth immediately around a
+ * Well under a body radius. Enough that the earth immediately around a
  * unit belongs to it, and not so much that two monsters standing a stride apart
  * have overlapping aprons that make which one you get a coin flip.
+ *
+ * Cut a quarter by spec 081: at 12 the apron reached past where the player was
+ * looking, so a click meant for the grass beside a mob named the mob.
  */
-export const FOOTPRINT_PAD = 12;
+export const FOOTPRINT_PAD = 9;
 
 /**
  * How far from a unit's drawn silhouette the cursor may be and still pick it,
@@ -59,8 +62,11 @@ export const FOOTPRINT_PAD = 12;
  * so a fixed number of pixels is the same amount of help at every zoom, which
  * in world units means more help exactly when the target is smaller. A world
  * radius does the opposite of that.
+ *
+ * Cut a quarter by spec 081, for the reason {@link FOOTPRINT_PAD} was: aiming
+ * error is worth paying for, and 22px was paying for more than aiming error.
  */
-export const SNAP_PIXELS = 22;
+export const SNAP_PIXELS = 16;
 
 /** A unit's drawn extent on screen, in CSS pixels within the canvas box. */
 export interface ScreenBox {
