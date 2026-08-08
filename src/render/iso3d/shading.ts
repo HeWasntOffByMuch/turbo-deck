@@ -290,3 +290,91 @@ vec3 rotateAboutWind(vec3 v, float angle) {
 }
 `;
 }
+
+// --- octahedral normal encoding (spec 090) -----------------------------------
+
+/**
+ * A unit normal packed into two values in [0, 1], for storage in two bytes of an
+ * RGBA8 render target.
+ *
+ * Two channels rather than three, and RGBA8 rather than a float target, because
+ * a float colour attachment needs `EXT_color_buffer_float` and a normal does not
+ * need one: it has two degrees of freedom, so spending three channels on it is
+ * paying for a redundancy. The octahedral mapping is the standard way to use
+ * both of them evenly -- it folds the sphere onto an octahedron and unwraps that
+ * into the unit square, which distributes the error far better than storing xy
+ * and recovering z (that one loses the sign of z entirely, and this world is
+ * seen from above at an angle where back-facing normals matter).
+ *
+ * The remaining two bytes are left alone here; the depth comes from a real depth
+ * texture instead, so they are free for whatever step 5 onward wants.
+ */
+export function encodeOctahedral(
+  normal: readonly [number, number, number],
+): readonly [number, number] {
+  const [x, y, z] = normal;
+  const sum = Math.abs(x) + Math.abs(y) + Math.abs(z);
+  // A zero normal has no direction to encode; the centre of the square decodes
+  // to +z, which is as good an answer as any and better than a NaN.
+  if (sum === 0) return [0.5, 0.5];
+
+  let px = x / sum;
+  let py = y / sum;
+  if (z <= 0) {
+    // The lower hemisphere folds outward across the octahedron's equator.
+    const fx = (1 - Math.abs(py)) * (px >= 0 ? 1 : -1);
+    const fy = (1 - Math.abs(px)) * (py >= 0 ? 1 : -1);
+    px = fx;
+    py = fy;
+  }
+  return [px * 0.5 + 0.5, py * 0.5 + 0.5];
+}
+
+/** The inverse of {@link encodeOctahedral}, returning a unit normal. */
+export function decodeOctahedral(encoded: readonly [number, number]): readonly [number, number, number] {
+  const fx = encoded[0] * 2 - 1;
+  const fy = encoded[1] * 2 - 1;
+  let x = fx;
+  let y = fy;
+  const z = 1 - Math.abs(fx) - Math.abs(fy);
+  // Below the equator, unfold: the same operation as the encode's fold, which is
+  // its own inverse.
+  const t = Math.max(-z, 0);
+  x += x >= 0 ? -t : t;
+  y += y >= 0 ? -t : t;
+  const len = Math.hypot(x, y, z);
+  if (len === 0) return [0, 0, 1];
+  return [x / len, y / len, z / len];
+}
+
+/**
+ * The GLSL for the pair above, for the normal-writing material and for whatever
+ * later pass reads the buffer back. Mirrors the TypeScript term for term;
+ * `shading.test.ts` holds the two to the same numbers, because a normal that
+ * decodes slightly wrong is an edge threshold that means something slightly
+ * different everywhere.
+ */
+export function glslOctahedralChunk(): string {
+  return /* glsl */ `
+// Unit normal -> two channels in [0, 1]. See encodeOctahedral in shading.ts.
+vec2 encodeOctahedral(vec3 n) {
+  float sum = abs(n.x) + abs(n.y) + abs(n.z);
+  if (sum == 0.0) return vec2(0.5);
+  vec2 p = n.xy / sum;
+  if (n.z <= 0.0) {
+    p = (1.0 - abs(p.yx)) * vec2(p.x >= 0.0 ? 1.0 : -1.0, p.y >= 0.0 ? 1.0 : -1.0);
+  }
+  return p * 0.5 + 0.5;
+}
+
+// Two channels in [0, 1] -> unit normal.
+vec3 decodeOctahedral(vec2 e) {
+  vec2 f = e * 2.0 - 1.0;
+  vec3 n = vec3(f.x, f.y, 1.0 - abs(f.x) - abs(f.y));
+  float t = max(-n.z, 0.0);
+  n.x += n.x >= 0.0 ? -t : t;
+  n.y += n.y >= 0.0 ? -t : t;
+  return normalize(n);
+}
+`;
+}

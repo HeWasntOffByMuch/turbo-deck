@@ -3,6 +3,8 @@ import type { Prop } from '../../terrain/vegetation.js';
 import { buildPropField } from './props.js';
 import { DEFAULT_CREASE_ANGLE } from './shading.js';
 import { advanceWind, setWindStrength } from './wind-uniforms.js';
+import { decodeOctahedral } from './shading.js';
+import { HikeBuffers, type BufferView } from './hike-buffers.js';
 
 /**
  * A dev-server-only rig that proves the shading switches' shaders actually
@@ -83,12 +85,46 @@ export interface ShadingProbeCase {
   readonly radius: number;
 }
 
+/** What one depth/normal buffer check found (spec 090). */
+export interface BufferProbeCase {
+  readonly label: string;
+  readonly view: BufferView;
+  /** Distinct values in the buffer. One means it is a constant, i.e. not bound. */
+  readonly distinct: number;
+  /**
+   * Fraction of the frame with no surface in it. Zero means the check that a
+   * background is even distinguishable never ran.
+   */
+  readonly backgroundFraction: number;
+  /** Fraction of the frame that is not background. */
+  readonly covered: number;
+  /**
+   * Depth only: the nearest and furthest values written, 0..255. A depth texture
+   * that never got bound reads as a flat 0 or a flat 255.
+   */
+  readonly nearest: number;
+  readonly furthest: number;
+  /**
+   * Normals only: of the pixels that are surfaces, the fraction whose decoded
+   * normal points toward the camera. Most of a frame does, so a number near zero
+   * means the encode, the decode or the view-space transform is inverted.
+   */
+  readonly facingCamera: number;
+  /**
+   * Whether a translucent ground decal changed the buffer. It must not: removing
+   * it from the scene has to leave the frame byte-identical.
+   */
+  readonly decalLeaked: boolean;
+}
+
 declare global {
   interface Window {
     /** Filled once every case has drawn; `probe-shading.ts` polls for it. */
     shadingProbe?: readonly ShadingProbeCase[];
     /** The four buffers as one labelled PNG data URL. Written before `shadingProbe`. */
     shadingProbeSheet?: string;
+    /** What the depth and normal buffers came back with (spec 090). */
+    bufferProbe?: readonly BufferProbeCase[];
   }
 }
 
@@ -108,9 +144,10 @@ const CELL_H = 240;
 function contactSheet(): string {
   const pad = 10;
   const label = 18;
+  const rows = Math.ceil(frames.length / 2);
   const sheet = document.createElement('canvas');
   sheet.width = pad + 2 * (CELL_W + pad);
-  sheet.height = pad + 2 * (CELL_H + label + pad);
+  sheet.height = pad + rows * (CELL_H + label + pad);
   const ctx = sheet.getContext('2d');
   if (!ctx) return '';
   ctx.fillStyle = '#16161e';
@@ -226,6 +263,146 @@ function runCase(smooth: boolean, swayNormals: boolean, label: string): ShadingP
 setWindStrength(2);
 advanceWind(7.3);
 
+/**
+ * Capture the depth/normal buffers for the same scene and read one of them back
+ * through the debug blit (spec 090).
+ *
+ * Through the blit, not by reading the target: a depth attachment cannot be
+ * `readPixels`'d at all, so sampling it in a shader and writing the result
+ * somewhere readable is the only way to find out whether the depth texture is
+ * bound and carries anything. Which is exactly the step "verify the depth texture
+ * path works before building anything on it" asks for -- and the first thing that
+ * would silently be a flat grey rectangle if it were not.
+ */
+function runBuffers(view: BufferView): BufferProbeCase {
+  const canvas = document.createElement('canvas');
+  canvas.width = CELL_W;
+  canvas.height = CELL_H;
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, preserveDrawingBuffer: true });
+
+  const scene = new THREE.Scene();
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const field = buildPropField(PROPS, () => 0, undefined, {
+    smooth: false,
+    creaseAngle: DEFAULT_CREASE_ANGLE,
+    swayNormals: false,
+  });
+  scene.add(field.group);
+
+  // A big flat floor, so there is a surface whose normal is known: world up. In
+  // view space that has to come back pointing toward the camera, which is the
+  // claim that catches an inverted encode.
+  // Deliberately smaller than the view: the checks below need somewhere in the
+  // frame with no surface in it, and a floor to the horizon leaves none.
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(520, 520),
+    new THREE.MeshLambertMaterial({ color: 0x556633, flatShading: true }),
+  );
+  floor.rotation.x = -Math.PI / 2;
+  scene.add(floor);
+
+  // A translucent unlit decal of the kind the world puts on the ground -- a
+  // target ring, a telegraph, a move marker. It must not appear in the buffers at
+  // all: it is not a surface, and an outline pass that saw it would ring every
+  // telegraph in the game.
+  //
+  // Placed over the floor and lifted well clear of it, so that if it *did* leak
+  // it would be unmistakable: a ring of much nearer depth in the middle of a flat
+  // gradient. A decal lying on the ground would differ by less than one
+  // quantization step and the check would pass whatever happened.
+  const decal = new THREE.Mesh(
+    new THREE.RingGeometry(60, 90, 24),
+    new THREE.MeshBasicMaterial({ color: 0xff6a5a, transparent: true, opacity: 0.8, depthWrite: false }),
+  );
+  decal.rotation.x = -Math.PI / 2;
+  decal.position.set(-60, 120, -60);
+  scene.add(decal);
+
+  const half = 240;
+  const camera = new THREE.OrthographicCamera(-half, half, half * 0.75, -half * 0.75, 1, 4000);
+  camera.position.set(700, 620, 700);
+  camera.lookAt(27, 95, 30);
+  camera.updateMatrixWorld(true);
+
+  const buffers = new HikeBuffers(CELL_W, CELL_H);
+  const gl = renderer.getContext();
+  const grab = (): Uint8Array => {
+    buffers.capture(renderer, scene, camera);
+    buffers.blit(renderer, view);
+    const out = new Uint8Array(CELL_W * CELL_H * 4);
+    gl.readPixels(0, 0, CELL_W, CELL_H, gl.RGBA, gl.UNSIGNED_BYTE, out);
+    return out;
+  };
+
+  const pixels = grab();
+  // The decal claim, stated as the thing it actually means: taking it out of the
+  // scene must change nothing. Comparing frames is a stronger check than looking
+  // for its shape, and it cannot pass by accident.
+  scene.remove(decal);
+  const withoutDecal = grab();
+  let decalLeaked = false;
+  for (let i = 0; i < pixels.length; i++) {
+    if (pixels[i] !== withoutDecal[i]) {
+      decalLeaked = true;
+      break;
+    }
+  }
+
+  frames.push({ label: `${view} buffer`, pixels });
+
+  // What "nothing here" looks like after the blit, which is not what it looks
+  // like in the buffer. Depth clears to the far plane, so 255. The normal target
+  // clears to black, and the blit *decodes* that: (0,0) unfolds to (0,0,-1),
+  // which is written out as (0.5, 0.5, 0) -- a direction pointing away from the
+  // camera, which no visible surface has, so it doubles as the marker.
+  const isBackground = (r: number, g: number, b: number): boolean =>
+    view === 'depth' ? r === 255 : Math.abs(r - 128) <= 1 && Math.abs(g - 128) <= 1 && b <= 1;
+
+  const seen = new Set<number>();
+  let nearest = 255;
+  let furthest = 0;
+  let background = 0;
+  let facing = 0;
+  let surfaces = 0;
+  for (let i = 0; i < pixels.length; i += 4) {
+    const r = pixels[i] ?? 0;
+    const g = pixels[i + 1] ?? 0;
+    const b = pixels[i + 2] ?? 0;
+    seen.add((r << 16) | (g << 8) | b);
+    if (isBackground(r, g, b)) {
+      background++;
+      continue;
+    }
+    surfaces++;
+    if (view === 'depth') {
+      nearest = Math.min(nearest, r);
+      furthest = Math.max(furthest, r);
+    } else {
+      const n = decodeOctahedral([r / 255, g / 255]);
+      // +z in view space is toward the camera.
+      if (n[2] > 0) facing++;
+    }
+  }
+  const total = CELL_W * CELL_H;
+
+  field.dispose();
+  buffers.dispose();
+  renderer.dispose();
+
+  return {
+    label: `${view} buffer`,
+    view,
+    distinct: seen.size,
+    backgroundFraction: background / total,
+    covered: surfaces / total,
+    nearest,
+    furthest,
+    facingCamera: surfaces === 0 ? 0 : facing / surfaces,
+    decalLeaked,
+  };
+}
+
 const results = CASES.map(({ smooth, swayNormals, label }) => runCase(smooth, swayNormals, label));
+window.bufferProbe = [runBuffers('depth'), runBuffers('normals')];
 window.shadingProbeSheet = contactSheet();
 window.shadingProbe = results;

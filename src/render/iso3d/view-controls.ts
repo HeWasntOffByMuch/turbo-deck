@@ -1,9 +1,11 @@
 import { RETRO_DEFAULTS, type BayerSize, type RetroSettings } from './retro.js';
 import {
   DEFAULT_VIRTUAL_SIZE,
+  HIKE_DEBUG_VIEWS,
   HIKE_OFF,
   VIRTUAL_SIZES,
   virtualSizeById,
+  type HikeDebugView,
   type HikeSettings,
 } from './hike.js';
 import {
@@ -449,6 +451,14 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     'rows as the view follows. Applied only to the drawn frame -- clicks are still resolved against ' +
     'the unsnapped camera, so a cell under a stationary cursor cannot change identity as you walk.');
 
+  // Step 4: the depth and normal buffers, and the only way to look at them.
+  const buffers = makeCheckbox('Depth + normal buffers', HIKE_OFF.buffers,
+    'Render depth and view-space normals at the virtual resolution, for the outline pass to read. ' +
+    'Costs a second geometry pass; draws nothing on its own.');
+  const debugView = makeTextChoice('Debug view',
+    HIKE_DEBUG_VIEWS.map((v) => [v, v] as const), HIKE_OFF.debug,
+    'Draw one intermediate buffer on its own instead of the finished frame. Needs the buffers above.');
+
   const swayNormals = makeCheckbox('Sway rotates normals', HIKE_OFF.swayNormals,
     'Turn the vertex normal with the wind bend. Does nothing while normals are flat-shaded; with ' +
     'smooth normals on, leaving it off is what makes a leaning canopy light as though it were upright.');
@@ -465,7 +475,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
       torchOn, torchRange, torchBright, torchFlickerDepth, torchShadows,
       magicOn, magicRange, magicBright, spawners,
       retroOn, levels, dither, weave, weaveScale, pixelSize, gradeChoice, gradeStrength,
-      smoothNormals, creaseAngle, swayNormals, lowRes, virtualSize, snapCamera];
+      smoothNormals, creaseAngle, swayNormals, lowRes, virtualSize, snapCamera, buffers, debugView];
     for (const w of widgets) w.reset();
   });
 
@@ -508,6 +518,8 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     smoothNormals.row,
     creaseAngle.row,
     swayNormals.row,
+    buffers.row,
+    debugView.row,
   );
   panel.append(reset);
 
@@ -574,6 +586,8 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
         smoothNormals: smoothNormals.checked(),
         creaseAngle: (creaseAngle.value() * Math.PI) / 180,
         swayNormals: swayNormals.checked(),
+        buffers: buffers.checked(),
+        debug: debugView.value() as HikeDebugView,
       };
     },
     dayNightEnabled: () => dayNight.checked(),

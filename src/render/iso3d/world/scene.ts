@@ -68,6 +68,7 @@ import {
   type HorizonShadow,
 } from '../shadow.js';
 import { RetroPass } from '../retro-pass.js';
+import { HikeBuffers } from '../hike-buffers.js';
 import { advanceWind } from '../wind-uniforms.js';
 import { FIXED_DAYLIGHT } from '../daynight.js';
 import {
@@ -199,6 +200,11 @@ export class WorldScene {
 
   private readonly renderer: THREE.WebGLRenderer;
   private readonly retro = new RetroPass(1, 1);
+  /**
+   * Depth and view-space normals at the virtual resolution (spec 090). Built lazily,
+   * because until the switch is thrown it would be a render target nothing reads.
+   */
+  private buffers: HikeBuffers | null = null;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
   private readonly sun = new THREE.DirectionalLight(
@@ -327,6 +333,8 @@ export class WorldScene {
     // a canvas.
     this.controls = createViewControls();
     this.controls.attachWheelZoom(canvas);
+    canvas.addEventListener('webglcontextlost', this.onContextLost);
+    canvas.addEventListener('webglcontextrestored', this.onContextRestored);
 
     this.resize();
 
@@ -644,9 +652,24 @@ export class WorldScene {
     const unsnap = this.applyPixelSnap(hike);
     this.collectAnchors();
 
-    this.retro.set(this.controls.retro());
-    this.retro.setGrade(this.controls.grade());
-    this.retro.render(this.renderer, this.scene, this.camera);
+    // Captured with the snapped camera, so the buffers line up with the frame
+    // they will be composited over rather than being half a pixel out from it.
+    const debugging = hike.debug === 'depth' || hike.debug === 'normals';
+    if (hike.buffers) {
+      const buffers = this.ensureBuffers();
+      buffers.capture(this.renderer, this.scene, this.camera);
+    }
+
+    if (hike.buffers && debugging) {
+      // One buffer on its own, instead of the frame. The only way to look at a
+      // depth texture at all: a depth attachment cannot be read back, so it has
+      // to be sampled in a shader and written somewhere visible.
+      this.ensureBuffers().blit(this.renderer, hike.debug === 'depth' ? 'depth' : 'normals');
+    } else {
+      this.retro.set(this.controls.retro());
+      this.retro.setGrade(this.controls.grade());
+      this.retro.render(this.renderer, this.scene, this.camera);
+    }
     unsnap?.();
   }
 
@@ -659,8 +682,36 @@ export class WorldScene {
     this.telegraphs.clear();
     this.terrainMesh?.dispose();
     this.propField?.dispose();
+    this.buffers?.dispose();
+    this.canvas.removeEventListener('webglcontextlost', this.onContextLost);
+    this.canvas.removeEventListener('webglcontextrestored', this.onContextRestored);
     this.renderer.dispose();
   }
+
+  /**
+   * A lost context takes every GPU-side object with it, including the render
+   * targets and the depth texture, and leaves three.js holding handles to things
+   * that no longer exist (spec 090).
+   *
+   * Unhandled since spec 038 put the first render target on screen, and survivable
+   * until now only because nothing read one back. Preventing the default is what
+   * makes `webglcontextrestored` fire at all -- without it the browser never
+   * offers a new context and the canvas stays blank for good.
+   */
+  private readonly onContextLost = (event: Event): void => {
+    event.preventDefault();
+  };
+
+  private readonly onContextRestored = (): void => {
+    this.buffers?.recreate();
+    // Re-measured from scratch: the swap chain is new, so the sizes three.js
+    // thinks it set are not the sizes it has.
+    this.renderW = 0;
+    this.renderH = 0;
+    this.frame = null;
+    this.lastHalfWidth = -1;
+    this.resize();
+  };
 
   // --- world ------------------------------------------------------------
 
@@ -1165,6 +1216,23 @@ export class WorldScene {
     style.top = `${next.offsetY}px`;
     style.width = `${next.cssWidth}px`;
     style.height = `${next.cssHeight}px`;
+  }
+
+  /**
+   * The depth/normal buffers, built on first use and kept at the render size.
+   *
+   * Lazily, so a session that never throws the switch never allocates a render
+   * target and a depth texture it will not read.
+   */
+  private ensureBuffers(): HikeBuffers {
+    const width = Math.max(1, this.renderW);
+    const height = Math.max(1, this.renderH);
+    if (!this.buffers) {
+      this.buffers = new HikeBuffers(width, height);
+    } else {
+      this.buffers.setSize(width, height);
+    }
+    return this.buffers;
   }
 
   /** Give the canvas the whole box back, for a frame drawn the old way. */

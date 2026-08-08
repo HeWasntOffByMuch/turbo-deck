@@ -195,11 +195,17 @@ src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
                  `src/render/wind-probe.html` are a dev-server-only measuring rig
                  (never in a build) driven by `npx tsx scripts/preview-wind.ts`,
                  which photographs the frame and reports the acceptance numbers.
-src/render/iso3d/hike.ts, shading.ts  the stylized look (specs 087-088): hike.ts is
-                 the one settings object every step of the arc is switched from
-                 (all off by default) plus the sRGB transfer the passes mirror;
-                 shading.ts welds vertex normals across a crease angle and rotates
-                 one to follow the wind's bend. Both pure and tested headlessly.
+src/render/iso3d/hike.ts, shading.ts, hike-buffers.ts  the stylized look (specs
+                 087-090): hike.ts is the one settings object every step of the arc
+                 is switched from (all off by default) plus the sRGB transfer the
+                 passes mirror; shading.ts welds vertex normals across a crease
+                 angle, rotates one to follow the wind's bend, and packs one
+                 octahedrally into two bytes. Both pure and tested headlessly.
+                 hike-buffers.ts is the three.js half: a second geometry pass
+                 writing depth and view-space normals at the virtual resolution,
+                 plus the blit that draws one of them on its own -- which is the
+                 only way to see a depth texture at all, since a depth attachment
+                 cannot be read back.
                  `shading-probe.ts` plus `src/render/shading-probe.html` are a
                  dev-server-only rig (never in a build) driven by `npx tsx
                  scripts/probe-shading.ts`, which is the only thing here that can

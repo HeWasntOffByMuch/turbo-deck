@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { glslWindChunk, maxTipDisplacement, WIND, WIND_LIMITS, WIND_MAX } from './wind.js';
 import { WIND_UNIFORMS } from './wind-uniforms.js';
 import { glslBendNormalChunk } from './shading.js';
+import { makeNormalMaterial, setNormalMaterial } from './hike-buffers.js';
 
 /**
  * Tree sway, as a patch on the materials the prop field already uses (spec 074).
@@ -92,9 +93,6 @@ vec3 swingAbout(vec3 p, vec3 base, float angle) {
 // neighbours out of step, and this stops two trees the wave happens to reach
 // together from beating in exact unison for the rest of the session.
 //
-// uSwayLag and uSwayTilt are this *batch's* -- one part of one species -- and
-// are both zero for every batch that existed before spec 077, so the conifers
-// take exactly the path they always did.
 // This vertex's bend angle. Split out of windBend so the normal rotation can be
 // driven by exactly the same number rather than by a second copy of it.
 float windBendAngle() {
@@ -103,6 +101,9 @@ float windBendAngle() {
   return uWindStrength * gust * aWindTune.x * w * w;
 }
 
+// uSwayLag and uSwayTilt are this *batch's* -- one part of one species -- and
+// are both zero for every batch that existed before spec 077, so the conifers
+// take exactly the path they always did.
 vec3 windBend(vec3 worldPos) {
   float angle = windBendAngle();
   vec3 bent = swingAbout(worldPos, aWindBase, angle);
@@ -256,6 +257,19 @@ export function applySway(
   patchMaterial(distance, lag, tilt, false);
   mesh.customDistanceMaterial = distance;
 
+  // And a fourth copy for the depth/normal buffers (spec 090). Same reasoning as
+  // the shadow materials one line up: that pass renders with a material of its
+  // own, and a batch whose visible geometry leans while its normal buffer stands
+  // upright would have its outline drawn where the tree used to be.
+  //
+  // This one *does* want the normal splice, whatever the caller asked for the
+  // visible material: the buffer's whole content is normals, so a bent position
+  // with an unbent normal is the one combination that is never right here.
+  const visible = mesh.material as THREE.MeshLambertMaterial;
+  const buffers = makeNormalMaterial(visible.flatShading === true, visible.side);
+  patchMaterial(buffers, lag, tilt, true);
+  setNormalMaterial(mesh, buffers);
+
   // A crown that leans out of its batch's bounding sphere would take the whole
   // batch off screen with it the moment the sphere left the frustum -- trees
   // popping out at the edge of the view, which is the classic tell.
@@ -367,4 +381,5 @@ function patchMaterial(material: THREE.Material, lag: number, tilt: number, norm
 export function disposeSway(mesh: THREE.InstancedMesh): void {
   mesh.customDepthMaterial?.dispose();
   mesh.customDistanceMaterial?.dispose();
+  (mesh.userData['hikeNormalMaterial'] as THREE.Material | undefined)?.dispose();
 }

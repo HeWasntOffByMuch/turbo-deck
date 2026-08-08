@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   bendNormal,
+  decodeOctahedral,
   DEFAULT_CREASE_ANGLE,
+  encodeOctahedral,
   facetAngle,
   glslBendNormalChunk,
+  glslOctahedralChunk,
   rotateAboutWind,
   weldedNormals,
 } from './shading.js';
@@ -276,5 +279,98 @@ describe('glslBendNormalChunk', () => {
     expect(glsl).toContain('float along = dot(v.xz, uWindDir);');
     expect(glsl).toContain('r.xz += uWindDir * (along * ca + v.y * sa - along);');
     expect(glsl).toContain('r.y = v.y * ca - along * sa;');
+  });
+});
+
+describe('octahedral normal encoding (spec 090)', () => {
+  const dirs: [number, number, number][] = [
+    [0, 0, 1], [0, 0, -1], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0],
+  ];
+
+  it('round-trips the six axes exactly enough to matter', () => {
+    for (const dir of dirs) {
+      const back = decodeOctahedral(encodeOctahedral(dir));
+      for (let i = 0; i < 3; i++) expect(back[i] as number).toBeCloseTo(dir[i] as number, 6);
+    }
+  });
+
+  it('round-trips both hemispheres, which is the whole reason for the fold', () => {
+    // Storing xy and recovering z loses the sign of z. This world is seen from
+    // above at an angle, so back-facing normals are half the buffer.
+    let worst = 0;
+    for (let i = 0; i < 400; i++) {
+      // A deterministic spiral over the sphere -- no PRNG needed and no clock.
+      const t = (i + 0.5) / 400;
+      const z = 1 - 2 * t;
+      const r = Math.sqrt(Math.max(0, 1 - z * z));
+      const phi = i * 2.399963229728653;
+      const n: [number, number, number] = [r * Math.cos(phi), r * Math.sin(phi), z];
+      const back = decodeOctahedral(encodeOctahedral(n));
+      const dot = n[0] * back[0] + n[1] * back[1] + n[2] * back[2];
+      worst = Math.max(worst, Math.acos(Math.min(1, dot)));
+    }
+    expect(worst).toBeLessThan(1e-6);
+  });
+
+  it('stays inside the unit square, so nothing clips on the way into a byte', () => {
+    for (let i = 0; i < 200; i++) {
+      const t = (i + 0.5) / 200;
+      const z = 1 - 2 * t;
+      const r = Math.sqrt(Math.max(0, 1 - z * z));
+      const phi = i * 2.399963229728653;
+      const [u, v] = encodeOctahedral([r * Math.cos(phi), r * Math.sin(phi), z]);
+      expect(u).toBeGreaterThanOrEqual(0);
+      expect(u).toBeLessThanOrEqual(1);
+      expect(v).toBeGreaterThanOrEqual(0);
+      expect(v).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('survives eight-bit quantization to under a degree', () => {
+    // The claim that decides whether two bytes is enough. Anything much worse
+    // than a degree and the normal edge threshold starts finding edges in flat
+    // ground.
+    let worst = 0;
+    for (let i = 0; i < 400; i++) {
+      const t = (i + 0.5) / 400;
+      const z = 1 - 2 * t;
+      const r = Math.sqrt(Math.max(0, 1 - z * z));
+      const phi = i * 2.399963229728653;
+      const n: [number, number, number] = [r * Math.cos(phi), r * Math.sin(phi), z];
+      const [u, v] = encodeOctahedral(n);
+      const quantized: [number, number] = [Math.round(u * 255) / 255, Math.round(v * 255) / 255];
+      const back = decodeOctahedral(quantized);
+      const dot = n[0] * back[0] + n[1] * back[1] + n[2] * back[2];
+      worst = Math.max(worst, Math.acos(Math.min(1, Math.max(-1, dot))));
+    }
+    expect((worst * 180) / Math.PI).toBeLessThan(1);
+  });
+
+  it('always decodes to a unit vector', () => {
+    for (let u = 0; u <= 1.0001; u += 0.1) {
+      for (let v = 0; v <= 1.0001; v += 0.1) {
+        const n = decodeOctahedral([Math.min(1, u), Math.min(1, v)]);
+        expect(Math.hypot(...n)).toBeCloseTo(1, 9);
+      }
+    }
+  });
+
+  it('gives a zero normal something rather than a NaN', () => {
+    expect(encodeOctahedral([0, 0, 0])).toEqual([0.5, 0.5]);
+    expect(decodeOctahedral([0.5, 0.5])).toEqual([0, 0, 1]);
+  });
+});
+
+describe('glslOctahedralChunk', () => {
+  it('declares both directions', () => {
+    const glsl = glslOctahedralChunk();
+    expect(glsl).toContain('vec2 encodeOctahedral(vec3 n)');
+    expect(glsl).toContain('vec3 decodeOctahedral(vec2 e)');
+  });
+
+  it('folds the lower hemisphere the same way the reference does', () => {
+    // The one line that is easy to write subtly differently -- note the .yx swap.
+    expect(glslOctahedralChunk()).toContain('p = (1.0 - abs(p.yx))');
+    expect(glslOctahedralChunk()).toContain('1.0 - abs(f.x) - abs(f.y)');
   });
 });

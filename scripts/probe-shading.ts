@@ -18,6 +18,18 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
+interface BufferProbeCase {
+  readonly label: string;
+  readonly view: 'depth' | 'normals';
+  readonly distinct: number;
+  readonly backgroundFraction: number;
+  readonly covered: number;
+  readonly nearest: number;
+  readonly furthest: number;
+  readonly facingCamera: number;
+  readonly decalLeaked: boolean;
+}
+
 interface ShadingProbeCase {
   readonly label: string;
   readonly programs: number;
@@ -77,6 +89,7 @@ try {
   await page.goto(`http://localhost:${PORT}/shading-probe.html`, { waitUntil: 'load' });
   await page.waitForFunction(() => window.shadingProbe !== undefined, undefined, { timeout: 120_000 });
   const cases = (await page.evaluate(() => window.shadingProbe)) as readonly ShadingProbeCase[];
+  const buffers = (await page.evaluate(() => window.bufferProbe)) as readonly BufferProbeCase[];
 
   // Anything mentioning a shader, a program, a compile or a link is a hard
   // failure; the rest is printed but tolerated.
@@ -92,6 +105,53 @@ try {
         `${probe.flatShaded ? '' : ' -- WRONG flatShading on a material'}` +
         `${probe.litPixels === 0 ? `, bounds [${probe.bounds.map((v) => Math.round(v)).join(', ')}] r=${Math.round(probe.radius)}` : ''}`,
     );
+  }
+
+  // The depth/normal buffers (spec 090). Read back through the debug blit,
+  // because a depth attachment cannot be read any other way -- which is also why
+  // the first thing checked is simply that it is not a constant.
+  for (const probe of buffers) {
+    const problems: string[] = [];
+    if (probe.distinct < 8) {
+      problems.push(`only ${probe.distinct} distinct values -- the buffer is a constant, so nothing is bound`);
+    }
+    if (probe.covered < 0.05) problems.push(`only ${(probe.covered * 100).toFixed(1)}% of the frame is surface`);
+
+    if (probe.decalLeaked) {
+      problems.push('a translucent ground decal changed the buffer -- it must contribute nothing');
+    }
+    // There has to be somewhere with nothing in it, or "the background reads as
+    // background" is a claim about a frame that has no background.
+    if (probe.backgroundFraction < 0.02) {
+      problems.push(`only ${(probe.backgroundFraction * 100).toFixed(1)}% background -- nothing to compare against`);
+    }
+
+    if (probe.view === 'depth') {
+      // A depth texture that never bound reads as a constant, which the distinct
+      // check catches; one bound but never written reads as all far plane, which
+      // this does.
+      if (probe.nearest >= probe.furthest) problems.push('depth has no range: near and far are the same');
+      if (probe.furthest >= 255) problems.push('nothing was written in front of the far plane');
+    } else {
+      if (probe.facingCamera < 0.6) {
+        problems.push(
+          `only ${(probe.facingCamera * 100).toFixed(0)}% of surfaces face the camera -- ` +
+            'the encode, the decode or the view-space transform is inverted',
+        );
+      }
+    }
+
+    if (problems.length > 0) failed = true;
+    const detail =
+      probe.view === 'depth'
+        ? `near ${probe.nearest}, far ${probe.furthest}`
+        : `${(probe.facingCamera * 100).toFixed(0)}% facing camera`;
+    console.log(
+      `${problems.length === 0 ? 'ok  ' : 'FAIL'}  ${probe.label}\n` +
+        `        ${probe.distinct} distinct, ${(probe.covered * 100).toFixed(0)}% surface, ` +
+        `${(probe.backgroundFraction * 100).toFixed(0)}% background, ${detail}`,
+    );
+    for (const problem of problems) console.log(`        ${problem}`);
   }
 
   if (shaderErrors.length > 0) {
