@@ -237,13 +237,19 @@ export function basicAttackFor(player: PersistedPlayer): string {
  * their whole range in a handful of frames, which makes a travelling attack
  * indistinguishable from a scheduled one. One line to move when the flight has
  * been watched for long enough to know what the number should be.
+ *
+ * Watched, and moved once: 0.3 was a third again too slow to read as a *shot*
+ * rather than as a thrown pebble, so this is that number a third faster. The
+ * reach does not move with it -- {@link projectileLifetimeTicks} divides the
+ * lifetime by the same scale, so a row still covers exactly the ground it says
+ * and only the time it takes changes.
  */
-export const PROJECTILE_SPEED_SCALE = 0.3;
+export const PROJECTILE_SPEED_SCALE = 0.39;
 
 /**
  * World units per second for a shot of this row (spec 088).
  *
- * The shooter is deliberately not asked. Spec 081 scaled this by the weapon's
+ * The shooter is deliberately not asked. Spec 087 scaled this by the weapon's
  * speed stat, which read correctly while that stat was a multiplier and stopped
  * reading at all once it became a delay -- a *longer* wait between shots would
  * have meant a *faster* one. How soon the next arrow may be loosed and how fast

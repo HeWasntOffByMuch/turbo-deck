@@ -302,14 +302,16 @@ transform; `activity`/`activityUntilTick` drive animation state on the wire.
 - **A shot's speed is no longer a table constant.** `launchProjectile` runs
   `spec.speed` through `projectileSpeedFor(baseSpeed, stats)` in
   `player/stats.ts`: `baseSpeed * clamp(attackSpeed) * PROJECTILE_SPEED_SCALE`,
-  where the scale is a deliberate global 30% knob and `attackSpeed` is the same
+  where the scale is a deliberate global knob (0.3 as first written, 0.39 since
+  the flight was watched) and `attackSpeed` is the same
   clamped weapon stat `attackIntervalTicks` divides by. One weapon speed, both
   halves of what it means.
 - **`lifetimeTicks` is a reach, not a duration.** `projectileLifetimeTicks`
   re-times it as `lifetimeTicks * spec.speed / actualSpeed`, so every row keeps
   the exact distance the table describes for every shooter. Do not "simplify"
-  this back to a raw tick count: at 30% speed that expires `bolt.arcane` at 372
-  units of its 700-unit range and `bolt.lob` at 360 of 520.
+  this back to a raw tick count: at any scale under 1 it expires a shot short of
+  its own range -- at 0.3 that was `bolt.arcane` at 372 units of its 700 and
+  `bolt.lob` at 360 of 520.
 - **`ProjectileSpec.look`** (`'orb' | 'arrow' | 'shuriken'`, default orb) is a
   *picture*. Nothing under `src/server/sim/` reads it, and it rides no wire — a
   projectile entity's `typeId` is already its ability id and the table is shared

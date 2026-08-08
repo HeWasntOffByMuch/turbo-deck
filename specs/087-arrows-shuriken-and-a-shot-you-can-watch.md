@@ -154,7 +154,7 @@ run through":
  * knob, not a per-row retune: one line to move when the flight has been
  * watched enough to know what it should be.
  */
-export const PROJECTILE_SPEED_SCALE = 0.3;
+export const PROJECTILE_SPEED_SCALE = 0.39;   // 0.3 as first written; retuned once
 
 /** World units per second, for a shot this body looses. */
 export function projectileSpeedFor(baseSpeed: number, stats: EffectiveStats): number;
@@ -172,7 +172,7 @@ shot to it means the fast weapon both swings and looses fast, and the Iron
 Maul's `-0.2` reads as heft in both halves of what it does.
 
 **Reach is preserved, and that is not a nicety.** A projectile's reach in world
-units is `speed / 60 * lifetimeTicks`. Cut the speed to 30% and leave the ticks
+units is `speed / 60 * lifetimeTicks`. Cut the speed to a third and leave the ticks
 alone, and `bolt.arcane` expires at 372 units of its 700-unit range, `bolt.lob`
 at 360 of 520 — two abilities that can no longer reach what `startCast` will
 happily let you aim at. That is not a speed change, it is a silent range nerf.
@@ -195,8 +195,10 @@ only thing that moves is how long the flight takes — which is the whole point.
 - **Every projectile ability can still reach its own range**: that reach is
   `>= ability.range` for every row, which is the assertion that would have
   caught the naive speed cut.
-- **A shot flies at 30% of its table speed** for a body whose `attackSpeed` is
-  1, and `PROJECTILE_SPEED_SCALE` is the only place that fraction is written.
+- **A shot flies at `PROJECTILE_SPEED_SCALE` of its table speed** for a body
+  whose `attackSpeed` is 1, and that constant is the only place the fraction is
+  written -- the assertion names it rather than a literal, because it is a knob
+  and has already been turned once (0.3 to 0.39, after watching the flight).
 - **The weapon decides.** A caster with a higher `attackSpeed` looses a
   proportionally faster shot and a proportionally shorter-lived one; the same
   shot from a slower caster arrives strictly later, and both arrive.
