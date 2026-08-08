@@ -73,7 +73,7 @@ describe('cursor to NDC (spec 041)', () => {
   });
 });
 
-describe('pixelFrame (spec 089)', () => {
+describe('pixelFrame (spec 095)', () => {
   it('picks the factor from device pixels, not CSS pixels', () => {
     // The whole point. Both boxes are 1920x1080 real pixels and must both come
     // out at 4x; choosing from the CSS box would give the retina one 2x, throw
@@ -150,7 +150,7 @@ describe('pixelFrame (spec 089)', () => {
   });
 });
 
-describe('snapToPixelGrid (spec 089)', () => {
+describe('snapToPixelGrid (spec 095)', () => {
   const right = { x: 1, y: 0, z: 0 };
   const up = { x: 0, y: 1, z: 0 };
 
@@ -200,7 +200,7 @@ describe('snapToPixelGrid (spec 089)', () => {
   });
 });
 
-describe('worldPerPixel (spec 089)', () => {
+describe('worldPerPixel (spec 095)', () => {
   it('divides the span across the virtual buffer', () => {
     expect(worldPerPixel(960, 480)).toBe(2);
   });

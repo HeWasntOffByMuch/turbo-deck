@@ -4,7 +4,7 @@ import { glslOctahedralChunk } from './shading.js';
 import type { HikeSettings } from './hike.js';
 
 /**
- * The outline pass (spec 091): a Roberts cross over the depth and normal buffers,
+ * The outline pass (spec 097): a Roberts cross over the depth and normal buffers,
  * drawn over the finished frame as a constant dark line.
  *
  * Everything interesting about *what* it computes is in `edges.ts`, which is pure

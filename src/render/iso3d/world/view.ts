@@ -748,7 +748,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       targetEntityId: targetId,
       aim: aimIndicator(view, view.self ?? { x: 0, y: 0 }),
     });
-    // The overlay is laid over the *drawn image*, not over the window (spec 089).
+    // The overlay is laid over the *drawn image*, not over the window (spec 095).
     // Every anchor it positions from is in canvas space, so under a letterbox an
     // overlay spanning the whole view would sit the health bars off their bodies
     // by the size of the bars -- and the hotbar would hang in the letterbox

@@ -282,7 +282,7 @@ describe('glslBendNormalChunk', () => {
   });
 });
 
-describe('octahedral normal encoding (spec 090)', () => {
+describe('octahedral normal encoding (spec 096)', () => {
   const dirs: [number, number, number][] = [
     [0, 0, 1], [0, 0, -1], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0],
   ];

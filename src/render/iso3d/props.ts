@@ -1294,7 +1294,7 @@ const DRAWN_KINDS: ReadonlySet<string> = new Set<string>(['tree', 'bush', ...FEN
 export type NormalAt = (x: number, z: number) => readonly [number, number, number];
 
 /**
- * How the prop field shades itself (spec 087, step 2).
+ * How the prop field shades itself (spec 093, step 2).
  *
  * Props are where this question has an answer worth asking: they are the only
  * curved surfaces in the world that are not the terrain. The terrain's surface is

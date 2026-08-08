@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { glslOctahedralChunk } from './shading.js';
 
 /**
- * The depth and view-space-normal buffers the outline pass reads (spec 090).
+ * The depth and view-space-normal buffers the outline pass reads (spec 096).
  *
  * ## Why a second geometry pass rather than MRT
  *
@@ -346,17 +346,22 @@ export class HikeBuffers {
 
     const material = mesh.material;
     if (Array.isArray(material)) return null;
-    // Lit geometry only. The unlit `MeshBasicMaterial` pieces are flat ground
-    // decals and screen overlays: they never wrote depth and must not start
-    // contributing normals. This is the same test `hover.ts` and `outline.ts` use
-    // to mean "part of the world".
-    const lit = material instanceof THREE.MeshLambertMaterial;
-    // The water is a hand-written shader rather than a Lambert, and it is a real
-    // opaque surface that occludes the ground behind it (spec 074).
-    const water = material instanceof THREE.ShaderMaterial && material.uniforms['uShoreField'] !== undefined;
-    if (!lit && !water) return null;
+    // A surface is anything that writes depth and is not blended.
+    //
+    // This used to test for `MeshLambertMaterial`, on the reasoning that lit
+    // geometry is the world and unlit geometry is decoration. That was true when
+    // it was written and stopped being true the moment projectiles arrived: an
+    // arrow in flight is `MeshBasicMaterial` because it is meant to read bright,
+    // not because it is not a surface, and it was silently flying without an
+    // outline. Depth is the property that actually means "this occludes things",
+    // which is the same question the outline pass is asking.
+    if (material.transparent === true || material.depthWrite === false) return null;
+    // Except for the handful of things that are drawn in the world but are not
+    // *of* it -- a facing arrow under a unit's feet is a readout, and giving it a
+    // silhouette would trace the indicator rather than the thing it points from.
+    if (mesh.userData['isOverlay'] === true) return null;
 
-    const flat = lit ? material.flatShading === true : false;
+    const flat = material instanceof THREE.MeshLambertMaterial && material.flatShading === true;
     const side = material.side;
     const key = `${flat ? 'flat' : 'smooth'}:${String(side)}`;
     let stand = this.sharedNormal.get(key);

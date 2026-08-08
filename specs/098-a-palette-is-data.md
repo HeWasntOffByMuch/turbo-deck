@@ -1,4 +1,4 @@
-# 092 — A palette is data
+# 098 — A palette is data
 
 ## Problem
 

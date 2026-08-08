@@ -89,7 +89,7 @@ vec3 grade(vec3 c) {
 
 // The nearest entry of the palette texture, by squared distance. Mirrors
 // nearestPaletteColor in retro.ts; the colours are texels rather than constants
-// so a palette is data the panel supplies and never shader source (spec 092).
+// so a palette is data the panel supplies and never shader source (spec 098).
 vec3 nearestPaletteColor(vec3 c) {
   vec3 best = c;
   float bestDistance = 1e9;
@@ -265,7 +265,7 @@ export class RetroPass {
   }
 
   /**
-   * Quantize onto a palette instead of onto even steps (spec 092), or pass null
+   * Quantize onto a palette instead of onto even steps (spec 098), or pass null
    * to go back to steps.
    *
    * The colours travel as a texture rather than as shader source, which is the

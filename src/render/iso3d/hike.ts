@@ -1,5 +1,5 @@
 /**
- * The settings behind the *A Short Hike* look (spec 087), and the colour
+ * The settings behind the *A Short Hike* look (spec 093), and the colour
  * transfer the passes that read them are built on.
  *
  * Pure -- no three.js and no DOM -- so it runs and is tested headlessly, the
@@ -32,7 +32,7 @@ import { DEFAULT_CREASE_ANGLE } from './shading.js';
 
 /**
  * A single buffer the debug view may draw on its own, instead of the finished
- * frame (spec 087). Wired by step 4 onward, as each buffer starts to exist.
+ * frame (spec 093). Wired by step 4 onward, as each buffer starts to exist.
  */
 export const HIKE_DEBUG_VIEWS = [
   /** The finished frame. */
@@ -51,7 +51,7 @@ export const HIKE_DEBUG_VIEWS = [
 export type HikeDebugView = (typeof HIKE_DEBUG_VIEWS)[number];
 
 /**
- * The virtual buffers the panel offers (spec 089).
+ * The virtual buffers the panel offers (spec 095).
  *
  * Data rather than a pair of sliders, because only a handful of sizes are worth
  * looking at and an arbitrary one is mostly a way to end up at an aspect the
@@ -76,7 +76,7 @@ export function virtualSizeById(id: string): { readonly width: number; readonly 
 }
 
 /**
- * The palettes the frame can be quantized onto (spec 092).
+ * The palettes the frame can be quantized onto (spec 098).
  *
  * Data, and deliberately not shader source: the pass uploads whichever of these
  * is chosen as a texture, so trying another one is a dropdown rather than a
@@ -319,7 +319,7 @@ export interface HikeSettings {
  * Everything off, and every threshold at the value its step will open at.
  *
  * This is the state the build ships in until a switch is thrown, and it must
- * render identically to the build before any of spec 087 landed -- identically
+ * render identically to the build before any of spec 093 landed -- identically
  * in the strong sense, since with every pass skipped there is nothing between
  * the scene and the canvas that was not there before.
  */

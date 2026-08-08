@@ -1,4 +1,4 @@
-# 087 — One config for the hike look, and the colour under it
+# 093 — One config for the hike look, and the colour under it
 
 ## Problem
 
@@ -51,7 +51,7 @@ panel edits, plus the reference maths the shaders transcribe.
 export interface HikeSettings { /* one field per numbered step, below */ }
 
 /** Every switch off. This state must render identically to the build before
- *  any of spec 087's work landed. */
+ *  any of spec 093's work landed. */
 export const HIKE_OFF: HikeSettings;
 
 /** The sRGB transfer function, both directions, as the reference the GLSL

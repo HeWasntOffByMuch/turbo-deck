@@ -145,7 +145,7 @@ describe('the retro defaults the view opens at (spec 044)', () => {
   });
 });
 
-describe('palette quantization (spec 092)', () => {
+describe('palette quantization (spec 098)', () => {
   /** Three primaries plus black and white, as flat 0..1 triples. */
   const simple = paletteChannels([0x000000, 0xff0000, 0x00ff00, 0x0000ff, 0xffffff]);
 
@@ -175,7 +175,7 @@ describe('palette quantization (spec 092)', () => {
   });
 });
 
-describe('paletteSpacing (spec 092)', () => {
+describe('paletteSpacing (spec 098)', () => {
   it('measures the typical gap between neighbouring colours', () => {
     // Two colours a known distance apart: each one's nearest neighbour is the
     // other, so the mean is that distance.
@@ -197,7 +197,7 @@ describe('paletteSpacing (spec 092)', () => {
   });
 });
 
-describe('palette upload (spec 092)', () => {
+describe('palette upload (spec 098)', () => {
   it('packs each colour into a fully opaque texel', () => {
     const data = paletteTextureData([0xff8000, 0x0080ff]);
     expect(Array.from(data)).toEqual([255, 128, 0, 255, 0, 128, 255, 255]);

@@ -59,7 +59,7 @@ const PURE_RENDER = [
   // than by eye.
   'src/render/iso3d/lobe.ts',
   'src/render/iso3d/lobe.test.ts',
-  // The hike look's settings and the sRGB transfer under them (spec 087). The
+  // The hike look's settings and the sRGB transfer under them (spec 093). The
   // settings are plain data and the transfer is arithmetic the passes'
   // shaders transcribe -- and a shader expression nobody can execute is where
   // a typo lives forever, so the reference is held somewhere it can be run.
@@ -68,7 +68,7 @@ const PURE_RENDER = [
   'src/render/iso3d/hike.ts',
   'src/render/iso3d/hike.test.ts',
   // Welding normals across a crease angle, and turning one to follow the wind
-  // (spec 087, step 2). Both are arithmetic, and the second is the reference the
+  // (spec 093, step 2). Both are arithmetic, and the second is the reference the
   // sway shader's GLSL is a transcription of -- so it has to be somewhere that
   // can actually be run against it.
   'src/render/iso3d/shading.ts',
@@ -80,7 +80,7 @@ const PURE_RENDER = [
   // wrong in a way nobody sees -- it just quietly resamples.
   'src/render/iso3d/view-frame.ts',
   'src/render/iso3d/view-frame.test.ts',
-  // Finding outlines in the depth and normal buffers (spec 091). The plane
+  // Finding outlines in the depth and normal buffers (spec 097). The plane
   // reconstruction is the expression this arc most depends on being right and
   // least able to check by eye -- a wrong sign draws lines down every hillside,
   // which looks like a threshold that needs tuning rather than like a bug.

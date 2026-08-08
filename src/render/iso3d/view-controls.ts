@@ -82,7 +82,7 @@ export interface ViewControls {
   /** The retro dither/quantization filter's current settings (spec 038). */
   retro(): RetroSettings;
   /**
-   * The hike look's settings (spec 087). Every switch off by default, so the
+   * The hike look's settings (spec 093). Every switch off by default, so the
    * frame is the one that shipped before the arc started until one is thrown.
    *
    * Fields belonging to steps that have not landed sit at their `HIKE_OFF`
@@ -431,7 +431,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   const gradeStrength = makeSlider('Filter strength', 0, 100, 5, DEFAULT_GRADE_STRENGTH * 100, '%',
     'How strongly the colour filter is applied. 0 is off whichever preset is chosen.');
 
-  // The hike look (spec 087). One switch per step, all off, so each can be
+  // The hike look (spec 093). One switch per step, all off, so each can be
   // turned on alone -- these two are step 2's.
   const smoothNormals = makeCheckbox('Smooth normals', HIKE_OFF.smoothNormals,
     'Average vertex normals across surfaces gentler than the crease angle instead of shading every ' +

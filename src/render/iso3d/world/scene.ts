@@ -204,11 +204,11 @@ export class WorldScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly retro = new RetroPass(1, 1);
   /**
-   * Depth and view-space normals at the virtual resolution (spec 090). Built lazily,
+   * Depth and view-space normals at the virtual resolution (spec 096). Built lazily,
    * because until the switch is thrown it would be a render target nothing reads.
    */
   private buffers: HikeBuffers | null = null;
-  /** The outline pass (spec 091). Built with the buffers it reads. */
+  /** The outline pass (spec 097). Built with the buffers it reads. */
   private edges: HikeEdges | null = null;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
@@ -286,7 +286,7 @@ export class WorldScene {
   private elapsed = 0;
   /**
    * How the fixed virtual buffer is being shown, or null while the view is drawn
-   * the pre-spec-089 way (spec 089).
+   * the pre-spec-095 way (spec 095).
    */
   private frame: PixelFrame | null = null;
   /** Scratch for the pixel snap, so a per-frame snap allocates nothing. */
@@ -329,7 +329,7 @@ export class WorldScene {
       CAMERA_FAR,
     );
 
-    // Before the first resize, and it has to stay there: since spec 089 `resize`
+    // Before the first resize, and it has to stay there: since spec 095 `resize`
     // asks the panel whether the frame is drawn at a fixed virtual resolution, so
     // a panel built afterwards is a panel that does not exist the first time it
     // is read. Nothing here depends on the scene, so this is only an ordering
@@ -434,7 +434,7 @@ export class WorldScene {
   }
 
   /**
-   * How the prop field is shaded (spec 087, step 2), as the panel last asked
+   * How the prop field is shaded (spec 093, step 2), as the panel last asked
    * for it.
    *
    * Held rather than read at build time because it is baked into the geometry's
@@ -446,7 +446,7 @@ export class WorldScene {
 
   /**
    * Adopt the panel's shading settings, rebuilding the prop field if they moved
-   * (spec 087, step 2).
+   * (spec 093, step 2).
    *
    * Compared rather than applied every frame, because applying means rebuilding
    * every batch in the world -- a few hundred milliseconds. So this costs three
@@ -712,7 +712,7 @@ export class WorldScene {
   /**
    * A lost context takes every GPU-side object with it, including the render
    * targets and the depth texture, and leaves three.js holding handles to things
-   * that no longer exist (spec 090).
+   * that no longer exist (spec 096).
    *
    * Unhandled since spec 038 put the first render target on screen, and survivable
    * until now only because nothing read one back. Preventing the default is what
@@ -1192,7 +1192,7 @@ export class WorldScene {
 
   /**
    * Draw at a fixed virtual resolution and let CSS blow it up by a whole number
-   * of device pixels, letterboxing what is left over (spec 089).
+   * of device pixels, letterboxing what is left over (spec 095).
    *
    * There is no blit shader here on purpose. Sizing the canvas's backing store to
    * exactly the virtual buffer and giving it a CSS size of `scale` device pixels

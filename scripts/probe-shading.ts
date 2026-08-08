@@ -1,5 +1,5 @@
 // Dev-only: prove the smooth-normal and sway-normal shader paths actually
-// compile and link on a real GL context (spec 087, step 2).
+// compile and link on a real GL context (spec 093, step 2).
 // Not part of the app. `npx tsx scripts/probe-shading.ts`
 //
 // Drives `src/render/shading-probe.html` (dev-server only, never in a build),
@@ -28,6 +28,8 @@ interface BufferProbeCase {
   readonly furthest: number;
   readonly facingCamera: number;
   readonly decalLeaked: boolean;
+  readonly shotMissing: boolean;
+  readonly readoutLeaked: boolean;
 }
 
 interface EdgeProbeCase {
@@ -126,7 +128,7 @@ try {
     );
   }
 
-  // The depth/normal buffers (spec 090). Read back through the debug blit,
+  // The depth/normal buffers (spec 096). Read back through the debug blit,
   // because a depth attachment cannot be read any other way -- which is also why
   // the first thing checked is simply that it is not a constant.
   for (const probe of buffers) {
@@ -138,6 +140,12 @@ try {
 
     if (probe.decalLeaked) {
       problems.push('a translucent ground decal changed the buffer -- it must contribute nothing');
+    }
+    if (probe.shotMissing) {
+      problems.push('an opaque unlit solid is missing from the buffer -- projectiles would fly without outlines');
+    }
+    if (probe.readoutLeaked) {
+      problems.push('a marked in-world readout reached the buffer -- it would be outlined like a surface');
     }
     // There has to be somewhere with nothing in it, or "the background reads as
     // background" is a claim about a frame that has no background.
@@ -173,7 +181,7 @@ try {
     for (const problem of problems) console.log(`        ${problem}`);
   }
 
-  // The outline pass (spec 091).
+  // The outline pass (spec 097).
   if (edges) {
     const problems: string[] = [];
     if (edges.edgeFraction < 0.01) problems.push('found no edges at all');
@@ -222,7 +230,7 @@ try {
     for (const problem of problems) console.log(`        ${problem}`);
   }
 
-  // Quantizing onto a palette (spec 092).
+  // Quantizing onto a palette (spec 098).
   if (palette) {
     const problems: string[] = [];
     // The claim, stated the only way it can be. A quantizer that is subtly wrong

@@ -1,5 +1,5 @@
 // Dev-only: photograph the Play tab with the hike switches thrown, the way a
-// player throws them (specs 091-092). `npx tsx scripts/preview-hike.ts`
+// player throws them (specs 097-092). `npx tsx scripts/preview-hike.ts`
 //
 // Exists because the outline pass shipped broken in a way none of the offscreen
 // checks could see: the mask was correct, and the pass cleared the canvas before

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { NORMAL_SPLICE, SPLICES } from './sway.js';
 
 /**
- * Regression guards on how three.js lights and shades (spec 087, step 2).
+ * Regression guards on how three.js lights and shades (spec 093, step 2).
  *
  * Three of step 2's requirements turned out to be satisfied already, by r160
  * rather than by anything in this repo: lighting is computed per fragment,

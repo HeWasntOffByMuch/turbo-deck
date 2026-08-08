@@ -12,7 +12,7 @@ import { RETRO_DEFAULTS } from './retro.js';
 
 /**
  * A dev-server-only rig that proves the shading switches' shaders actually
- * compile and link (spec 087, step 2). Never in a build: `vite build` bundles
+ * compile and link (spec 093, step 2). Never in a build: `vite build` bundles
  * `index.html` and nothing else.
  *
  * ## Why this exists, when there are already 1600 unit tests
@@ -89,7 +89,7 @@ export interface ShadingProbeCase {
   readonly radius: number;
 }
 
-/** What one depth/normal buffer check found (spec 090). */
+/** What one depth/normal buffer check found (spec 096). */
 export interface BufferProbeCase {
   readonly label: string;
   readonly view: BufferView;
@@ -119,9 +119,13 @@ export interface BufferProbeCase {
    * it from the scene has to leave the frame byte-identical.
    */
   readonly decalLeaked: boolean;
+  /** Whether an opaque unlit solid -- a projectile -- reached the buffer. It must. */
+  readonly shotMissing: boolean;
+  /** Whether a marked in-world readout reached the buffer. It must not. */
+  readonly readoutLeaked: boolean;
 }
 
-/** What the outline pass found (spec 091). */
+/** What the outline pass found (spec 097). */
 export interface EdgeProbeCase {
   /** Fraction of the frame marked as edge, with the sky masked out. */
   readonly edgeFraction: number;
@@ -151,7 +155,7 @@ export interface EdgeProbeCase {
   readonly floorEdgeFraction: number;
 }
 
-/** What quantizing onto a palette produced (spec 092). */
+/** What quantizing onto a palette produced (spec 098). */
 export interface PaletteProbeCase {
   /** Distinct colours in the frame. Must not exceed the palette's size. */
   readonly distinct: number;
@@ -175,11 +179,11 @@ declare global {
     shadingProbe?: readonly ShadingProbeCase[];
     /** The four buffers as one labelled PNG data URL. Written before `shadingProbe`. */
     shadingProbeSheet?: string;
-    /** What the depth and normal buffers came back with (spec 090). */
+    /** What the depth and normal buffers came back with (spec 096). */
     bufferProbe?: readonly BufferProbeCase[];
-    /** What the outline pass found (spec 091). */
+    /** What the outline pass found (spec 097). */
     edgeProbe?: EdgeProbeCase;
-    /** What quantizing onto a palette produced (spec 092). */
+    /** What quantizing onto a palette produced (spec 098). */
     paletteProbe?: PaletteProbeCase;
   }
 }
@@ -321,7 +325,7 @@ advanceWind(7.3);
 
 /**
  * Capture the depth/normal buffers for the same scene and read one of them back
- * through the debug blit (spec 090).
+ * through the debug blit (spec 096).
  *
  * Through the blit, not by reading the target: a depth attachment cannot be
  * `readPixels`'d at all, so sampling it in a shader and writing the result
@@ -374,6 +378,26 @@ function runBuffers(view: BufferView): BufferProbeCase {
   decal.position.set(-60, 120, -60);
   scene.add(decal);
 
+  // An opaque *unlit* solid, which is what a projectile is: bright by design, and
+  // still a surface. It has to be in the buffers. The rule used to be "is it
+  // Lambert", which excluded every arrow in the game the day they landed.
+  const shot = new THREE.Mesh(
+    new THREE.BoxGeometry(28, 28, 28),
+    new THREE.MeshBasicMaterial({ color: 0xffe9a8 }),
+  );
+  shot.position.set(120, 150, -120);
+  scene.add(shot);
+
+  // And an opaque unlit thing that is *not* a surface: a facing readout drawn in
+  // the world. Marked, and must stay out.
+  const readout = new THREE.Mesh(
+    new THREE.ConeGeometry(20, 40, 4),
+    new THREE.MeshBasicMaterial({ color: 0xffe08a }),
+  );
+  readout.position.set(-140, 150, 120);
+  readout.userData['isOverlay'] = true;
+  scene.add(readout);
+
   const half = 240;
   const camera = new THREE.OrthographicCamera(-half, half, half * 0.75, -half * 0.75, 1, 4000);
   camera.position.set(700, 620, 700);
@@ -394,15 +418,24 @@ function runBuffers(view: BufferView): BufferProbeCase {
   // The decal claim, stated as the thing it actually means: taking it out of the
   // scene must change nothing. Comparing frames is a stronger check than looking
   // for its shape, and it cannot pass by accident.
+  const differs = (a: Uint8Array, b: Uint8Array): boolean => {
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return true;
+    return false;
+  };
+
   scene.remove(decal);
-  const withoutDecal = grab();
-  let decalLeaked = false;
-  for (let i = 0; i < pixels.length; i++) {
-    if (pixels[i] !== withoutDecal[i]) {
-      decalLeaked = true;
-      break;
-    }
-  }
+  const decalLeaked = differs(pixels, grab());
+  scene.add(decal);
+
+  // The same comparison, both ways round. An opaque unlit solid must change the
+  // buffer; a marked readout must not.
+  scene.remove(shot);
+  const shotMissing = !differs(pixels, grab());
+  scene.add(shot);
+
+  scene.remove(readout);
+  const readoutLeaked = differs(pixels, grab());
+  scene.add(readout);
 
   frames.push({ label: `${view} buffer`, pixels });
 
@@ -455,6 +488,8 @@ function runBuffers(view: BufferView): BufferProbeCase {
     furthest,
     facingCamera: surfaces === 0 ? 0 : facing / surfaces,
     decalLeaked,
+    shotMissing,
+    readoutLeaked,
   };
 }
 

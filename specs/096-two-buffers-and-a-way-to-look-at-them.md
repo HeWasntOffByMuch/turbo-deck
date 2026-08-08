@@ -1,4 +1,4 @@
-# 090 — Two buffers, and a way to look at them
+# 096 — Two buffers, and a way to look at them
 
 ## Problem
 
