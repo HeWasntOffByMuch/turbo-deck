@@ -22,6 +22,7 @@ import { mountWorld } from './world/view.js';
 import { mountMovement } from './movement.js';
 import { mountDebug } from './debug-view.js';
 import type { ViewHandle } from './view-handle.js';
+import { createFullscreenButton } from './fullscreen.js';
 
 interface Tab {
   readonly label: string;
@@ -50,7 +51,11 @@ function main(): void {
   // the container beneath it is the full viewport, and the sandbox tabs scroll
   // inside it with enough headroom to clear the bar.
   const bar = document.createElement('div');
-  bar.style.cssText = 'position:fixed;top:0;left:0;z-index:50;display:flex;gap:6px;padding:6px 8px 0;';
+  // The inset keeps the bar out from under a notch in landscape, where the
+  // cutout is on the left edge rather than the top (spec 093).
+  bar.style.cssText =
+    'position:fixed;top:0;left:0;z-index:50;display:flex;gap:6px;flex-wrap:wrap;' +
+    'padding:calc(6px + env(safe-area-inset-top)) 8px 0 calc(8px + env(safe-area-inset-left));';
   const container = document.createElement('div');
   container.style.cssText = 'position:absolute;inset:0;overflow:auto;';
   app.append(container, bar);
@@ -98,6 +103,12 @@ function main(): void {
     bar.appendChild(btn);
     buttons.push(btn);
   });
+
+  // On a phone the browser chrome is a third of a landscape screen (spec 093).
+  // Null on anything that cannot go fullscreen or is not driven by a finger, so
+  // the desktop bar keeps its four buttons.
+  const fullscreen = createFullscreenButton(app, { style: (btn) => styleButton(btn, false) });
+  if (fullscreen) bar.appendChild(fullscreen);
 
   activate(0);
 }
