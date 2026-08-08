@@ -398,3 +398,147 @@ describe('withdrawing over a wire that takes time (spec 090)', () => {
     expect(result.ended).toBe('Released');
   }, 30_000);
 });
+
+/**
+ * A withdrawal that catches up with the commit it is withdrawing from (spec
+ * 092).
+ *
+ * Casts and cancels wait in separate queues on the connection, each held until
+ * the input frame it was stamped after has been applied. `due` turns true for a
+ * whole backlog at once -- and on any tick the input queue empties, `starved`
+ * makes *everything* due -- so a request and a withdrawal issued a moment apart
+ * routinely come due on the same tick. They then rode the same input, and one
+ * of them was swallowed:
+ *
+ * - with nothing in progress, `cancelCast` found no cast, reported that it had
+ *   cancelled nothing, and the commit went ahead on the same tick. The player
+ *   clicked away, watched the bar vanish, and the arrow flew.
+ * - with a cast in progress, the cancel worked and the *request* was dropped
+ *   without a word -- no `castStarted`, no `castRejected`. The client pairs the
+ *   n-th reply with the n-th request (spec 080), so every answer after it was
+ *   attributed to the wrong press.
+ *
+ * Both go through the real server, because the collision is made by the two
+ * queues and cannot be seen from `step` alone.
+ */
+describe('a withdrawal that shares a tick with its own commit (spec 092)', () => {
+  const SHOT = 'ranged.shot';
+
+  async function session(): Promise<{
+    readonly server: GameServer;
+    readonly client: GameClient;
+    readonly advance: () => Promise<void>;
+  }> {
+    const transport = new LoopbackTransport();
+    const server = new GameServer({
+      seed: 11,
+      transport,
+      world: createWorldColliders([], []),
+      terrain: FLAT_TERRAIN,
+    });
+    server.liveConfig.set('spawnRateMultiplier', 0);
+    transport.onConnection((channel) => server.accept(channel));
+    const client = new GameClient(transport.connect(), {
+      playerId: 'you',
+      predictor: (stats, tickRate) =>
+        createWorldPredictor({
+          world: createWorldColliders([], []),
+          terrain: FLAT_TERRAIN,
+          radius: SERVER_PLAYER_RADIUS,
+          speed: stats.moveSpeed,
+          tickRate,
+        }),
+    });
+    client.connect();
+    await settle();
+    const advance = async (): Promise<void> => {
+      server.tick();
+      client.advanceTick();
+      if (client.view().self) client.sendInput({ moveX: 0, moveY: 0, facing: 0, buttons: 0 });
+      await settle();
+    };
+    for (let i = 0; i < 30; i++) await advance();
+    return { server, client, advance };
+  }
+
+  it('throws nothing when the cancel comes second', async () => {
+    const { server, client, advance } = await session();
+    const me = client.view().self;
+    expect(me).not.toBeNull();
+    if (!me) return;
+    const ability = abilityById(SHOT);
+    expect(ability).toBeDefined();
+    if (!ability) return;
+
+    // The order the report describes, compressed to its essentials: the swing is
+    // asked for, and the player says no before the server has got to it.
+    client.useAbility(SHOT, me.x + ability.range * 0.5, me.y);
+    client.cancelCast();
+
+    let shotFlew = false;
+    for (let i = 0; i < ability.windupTicks + 60; i++) {
+      await advance();
+      for (const entity of server.world.entities.values()) {
+        if (entity.projectile) shotFlew = true;
+      }
+    }
+
+    expect(shotFlew, 'a withdrawn shot flew').toBe(false);
+    expect(server.world.entities.get(client.view().selfEntityId)?.cast ?? null).toBeNull();
+    // And the request was answered, so the next press is paired with its own
+    // reply rather than this one's.
+    expect(client.view().awaitingCast).toBe(false);
+    client.disconnect();
+  }, 30_000);
+
+  it('still starts a cast when the cancel came first', async () => {
+    const { server, client, advance } = await session();
+    const me = client.view().self;
+    expect(me).not.toBeNull();
+    if (!me) return;
+    const ability = abilityById(SHOT);
+    expect(ability).toBeDefined();
+    if (!ability) return;
+
+    // Changing your mind and then committing to something is not the same as
+    // committing and then changing your mind, and the tick they collide on is
+    // not allowed to blur the two.
+    client.cancelCast();
+    client.useAbility(SHOT, me.x + ability.range * 0.5, me.y);
+
+    let shotFlew = false;
+    for (let i = 0; i < ability.windupTicks + 60; i++) {
+      await advance();
+      for (const entity of server.world.entities.values()) {
+        if (entity.projectile) shotFlew = true;
+      }
+    }
+
+    expect(shotFlew, 'a committed shot was eaten by an older cancel').toBe(true);
+    expect(client.view().awaitingCast).toBe(false);
+    client.disconnect();
+  }, 30_000);
+
+  it('answers a request that arrives with a cancel for a cast already running', async () => {
+    const { server, client, advance } = await session();
+    const me = client.view().self;
+    expect(me).not.toBeNull();
+    if (!me) return;
+    const ability = abilityById(SHOT);
+    expect(ability).toBeDefined();
+    if (!ability) return;
+
+    client.useAbility(SHOT, me.x + ability.range * 0.5, me.y);
+    for (let i = 0; i < 4; i++) await advance();
+    expect(server.world.entities.get(client.view().selfEntityId)?.cast ?? null).not.toBeNull();
+
+    // Withdraw and immediately ask for another. Whatever the server decides
+    // about the second press, it owes exactly one answer for it.
+    client.cancelCast();
+    client.useAbility(SHOT, me.x + ability.range * 0.5, me.y);
+    for (let i = 0; i < ability.windupTicks + 60; i++) await advance();
+
+    expect(client.view().awaitingCast, 'a request went unanswered').toBe(false);
+    client.disconnect();
+  }, 30_000);
+});

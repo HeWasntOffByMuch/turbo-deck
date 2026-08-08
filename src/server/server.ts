@@ -170,8 +170,10 @@ interface Connection {
    * made rather than something to overwrite the first with.
    */
   readonly pendingCasts: PendingCast[];
-  /** Cancels, stamped the same way; `-1` means none outstanding. */
-  readonly pendingCancels: number[];
+  /** Cancels, stamped the same way. */
+  readonly pendingCancels: PendingCancel[];
+  /** Bumped by every cast or cancel, so the two queues can be put back in order. */
+  asks: number;
   /** The last input seq handed to the sim, so a gap in the stream is visible. */
   appliedSeq: number;
   /**
@@ -191,6 +193,20 @@ interface PendingCast {
   readonly targetEntityId: number;
   /** Commit on the tick this input seq is applied, not on the tick it arrived. */
   readonly afterInputSeq: number;
+  /**
+   * Where this sat in the connection's own stream of asks (spec 092). Casts and
+   * cancels queue separately, so the order *between* the two queues is lost
+   * unless it is written down -- and it is the whole question when both come
+   * due on the same tick: a cancel that arrived after a request means "not that
+   * one", and one that arrived before it means "not the last one, and now this".
+   */
+  readonly arrivedAt: number;
+}
+
+/** A withdrawal waiting for its place in the input stream, stamped like a cast. */
+interface PendingCancel {
+  readonly afterInputSeq: number;
+  readonly arrivedAt: number;
 }
 
 export class GameServer implements AdminHost {
@@ -284,6 +300,7 @@ export class GameServer implements AdminHost {
       respawnAtTick: 0,
       pendingCasts: [],
       pendingCancels: [],
+      asks: 0,
       appliedSeq: 0,
       lastDriftTick: 0,
       sentCooldowns: null,
@@ -406,12 +423,14 @@ export class GameServer implements AdminHost {
 
       case ClientMessageType.UseAbility:
         if (connection.playerId === null || connection.entityId < 0) return;
+        connection.asks += 1;
         connection.pendingCasts.push({
           abilityId: message.abilityId,
           targetX: message.targetX,
           targetY: message.targetY,
           targetEntityId: message.targetEntityId,
           afterInputSeq: message.afterInputSeq,
+          arrivedAt: connection.asks,
         });
         break;
 
@@ -426,7 +445,11 @@ export class GameServer implements AdminHost {
         break;
       case ClientMessageType.CancelCast:
         if (connection.playerId === null || connection.entityId < 0) return;
-        connection.pendingCancels.push(message.afterInputSeq);
+        connection.asks += 1;
+        connection.pendingCancels.push({
+          afterInputSeq: message.afterInputSeq,
+          arrivedAt: connection.asks,
+        });
         break;
 
       case ClientMessageType.Chat: {
@@ -736,8 +759,29 @@ export class GameServer implements AdminHost {
       const applied = next ? next.seq : connection.lastSeq;
       const starved = connection.inputs.length === 0;
       const due = (afterSeq: number): boolean => afterSeq <= applied || starved;
-      const cast = takeWhere(connection.pendingCasts, (pending) => due(pending.afterInputSeq));
-      const cancel = takeWhere(connection.pendingCancels, due) !== null;
+      // At most one of each per tick, and never both in the same input (spec
+      // 092). A cast request and a withdrawal riding one input is a question
+      // with no good answer -- the sim has to guess which the player meant
+      // first, and guessing wrong either throws a blow they called off or eats a
+      // press. They queue separately and `due` turns true for a whole backlog at
+      // once (any tick the input queue empties, `starved` makes everything due),
+      // so the collision is ordinary rather than exotic.
+      //
+      // So they go out in the order the player asked for them, a tick apart. The
+      // one held back is still first in its queue and comes due next tick,
+      // costing a tick of wind-up that is refunded either way.
+      const nextCast = connection.pendingCasts.find((pending) => due(pending.afterInputSeq));
+      const nextCancel = connection.pendingCancels.find((pending) => due(pending.afterInputSeq));
+      const castFirst =
+        nextCast !== undefined &&
+        (nextCancel === undefined || nextCast.arrivedAt < nextCancel.arrivedAt);
+      const cast = castFirst
+        ? takeWhere(connection.pendingCasts, (pending) => pending === nextCast)
+        : null;
+      const cancel =
+        !castFirst &&
+        nextCancel !== undefined &&
+        takeWhere(connection.pendingCancels, (pending) => pending === nextCancel) !== null;
 
       if (next) {
         if (connection.playerId !== null) {
