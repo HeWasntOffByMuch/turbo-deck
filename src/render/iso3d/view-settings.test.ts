@@ -15,6 +15,7 @@ import {
   DEFAULT_CAMERA_ORBIT,
   offsetToOrbit,
   orbitToOffset,
+  pinchViewHalfWidth,
   zoomViewHalfWidth,
   type Vec3,
 } from './view-settings.js';
@@ -180,6 +181,53 @@ describe('zoomViewHalfWidth', () => {
 
   it('is pure', () => {
     expect(zoomViewHalfWidth(640, -100)).toBe(zoomViewHalfWidth(640, -100));
+  });
+});
+
+describe('pinchViewHalfWidth (spec 093)', () => {
+  it('narrows the span as the fingers spread', () => {
+    // The opposite sign to the wheel: a pinch is direct manipulation, so the
+    // ground between the fingers grows as they separate.
+    expect(pinchViewHalfWidth(640, 2)).toBe(320);
+    expect(pinchViewHalfWidth(320, 0.5)).toBe(640);
+    expect(pinchViewHalfWidth(640, 1)).toBe(640);
+  });
+
+  it('round-trips a ratio and its reciprocal inside the band', () => {
+    for (const ratio of [1.05, 1.4, 2, 0.8, 0.5]) {
+      expect(pinchViewHalfWidth(pinchViewHalfWidth(640, ratio), 1 / ratio)).toBeCloseTo(640, 8);
+    }
+  });
+
+  it('is proportional, so the same spread reframes by the same amount anywhere', () => {
+    // Both far enough inside the band that neither result clamps -- a clamped
+    // end would be measuring the bound rather than the proportion.
+    const a = 400;
+    const b = 900;
+    expect(pinchViewHalfWidth(a, 1.5) / a).toBeCloseTo(pinchViewHalfWidth(b, 1.5) / b, 10);
+  });
+
+  it('settles on the bounds instead of overshooting', () => {
+    expect(pinchViewHalfWidth(640, 1e9)).toBe(MIN_VIEW_HALF_WIDTH);
+    expect(pinchViewHalfWidth(640, 1e-9)).toBe(MAX_VIEW_HALF_WIDTH);
+    let span = DEFAULT_VIEW_HALF_WIDTH;
+    for (let i = 0; i < 200; i++) span = pinchViewHalfWidth(span, 1.1);
+    expect(span).toBe(MIN_VIEW_HALF_WIDTH);
+  });
+
+  it('leaves the span alone for a ratio that is not a usable multiplier', () => {
+    // The recogniser already refuses a zero separation; this is the second wall,
+    // because a single bad frame here would slam the zoom to a bound.
+    expect(pinchViewHalfWidth(640, 0)).toBe(640);
+    expect(pinchViewHalfWidth(640, -2)).toBe(640);
+    expect(pinchViewHalfWidth(640, NaN)).toBe(640);
+    expect(pinchViewHalfWidth(640, Infinity)).toBe(640);
+  });
+
+  it('pulls a wild span into the band, like every other path to the zoom', () => {
+    expect(pinchViewHalfWidth(4000, 1)).toBe(MAX_VIEW_HALF_WIDTH);
+    expect(pinchViewHalfWidth(10, 1)).toBe(MIN_VIEW_HALF_WIDTH);
+    expect(pinchViewHalfWidth(NaN, 1)).toBe(DEFAULT_VIEW_HALF_WIDTH);
   });
 });
 
