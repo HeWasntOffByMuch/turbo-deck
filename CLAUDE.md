@@ -210,6 +210,11 @@ src/render/iso3d/hike.ts, shading.ts, hike-buffers.ts  the stylized look (specs
                  resolution, the blit that draws one of them on its own -- the only
                  way to see a depth texture at all, since a depth attachment cannot
                  be read back -- and the Roberts cross over both.
+                 `npx tsx scripts/probe-shading.ts` checks all of it offscreen;
+                 `npx tsx scripts/preview-outlines.ts` throws the switch in the
+                 real page, because the outline pass once shipped with a correct
+                 mask and a pass that cleared the canvas before blending it, and
+                 every offscreen measurement was right while the screen was black.
                  `shading-probe.ts` plus `src/render/shading-probe.html` are a
                  dev-server-only rig (never in a build) driven by `npx tsx
                  scripts/probe-shading.ts`, which is the only thing here that can

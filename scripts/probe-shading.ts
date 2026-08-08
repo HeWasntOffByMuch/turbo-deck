@@ -34,6 +34,9 @@ interface EdgeProbeCase {
   readonly edgeFraction: number;
   readonly edgeFractionSky: number;
   readonly floorEdgeFraction: number;
+  readonly frameMean: number;
+  readonly compositeMean: number;
+  readonly compositeLines: number;
 }
 
 interface ShadingProbeCase {
@@ -184,12 +187,28 @@ try {
     if (edges.edgeFractionSky <= edges.edgeFraction) {
       problems.push('allowing the sky changed nothing, so the background mask is not doing anything');
     }
+
+    // The composite. Turning outlines on must draw lines *over* the picture and
+    // not replace it -- the failure that shipped, where the pass cleared the
+    // canvas before blending and the world went black with a few lines on it.
+    // Everything above measures the mask, and the mask was never the problem.
+    if (edges.compositeMean < edges.frameMean * 0.75) {
+      problems.push(
+        `the frame went from ${(edges.frameMean * 100).toFixed(0)}% to ` +
+          `${(edges.compositeMean * 100).toFixed(0)}% brightness -- the outline pass is ` +
+          'replacing the picture rather than drawing over it',
+      );
+    }
+    if (edges.compositeLines < 0.005) problems.push('no pixel got darker, so no line was actually composited');
     if (problems.length > 0) failed = true;
     console.log(
       `${problems.length === 0 ? 'ok  ' : 'FAIL'}  edge mask\n` +
         `        ${(edges.edgeFraction * 100).toFixed(1)}% edge, ` +
         `${(edges.edgeFractionSky * 100).toFixed(1)}% with sky, ` +
-        `${(edges.floorEdgeFraction * 100).toFixed(1)}% of the flat floor`,
+        `${(edges.floorEdgeFraction * 100).toFixed(1)}% of the flat floor\n` +
+        `        composite: ${(edges.frameMean * 100).toFixed(0)}% -> ` +
+        `${(edges.compositeMean * 100).toFixed(0)}% brightness, ` +
+        `${(edges.compositeLines * 100).toFixed(1)}% of pixels darkened`,
     );
     for (const problem of problems) console.log(`        ${problem}`);
   }

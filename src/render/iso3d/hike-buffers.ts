@@ -308,6 +308,13 @@ export class HikeBuffers {
     });
 
     const previousTarget = renderer.getRenderTarget();
+    // Saved and put back: the clear colour is renderer-wide state, and leaving it
+    // black means every later pass that clears -- the frame itself included --
+    // clears to black instead of to whatever it wanted.
+    const previousClear = new THREE.Color();
+    renderer.getClearColor(previousClear);
+    const previousClearAlpha = renderer.getClearAlpha();
+
     renderer.setRenderTarget(this.target);
     // Normals encode to (0.5, 0.5) at the centre of the square, which decodes to
     // +z -- straight at the camera. Clearing to black instead means the
@@ -318,6 +325,7 @@ export class HikeBuffers {
     renderer.clear(true, true, false);
     renderer.render(scene, camera);
     renderer.setRenderTarget(previousTarget);
+    renderer.setClearColor(previousClear, previousClearAlpha);
 
     for (const { mesh, material } of this.swapped) mesh.material = material;
     for (const node of this.hidden) node.visible = true;

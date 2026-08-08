@@ -658,17 +658,21 @@ export class WorldScene {
     // Captured with the snapped camera, so the buffers line up with the frame
     // they will be composited over rather than being half a pixel out from it.
     const debugging = hike.debug === 'depth' || hike.debug === 'normals';
-    if (hike.buffers) {
+    // Outlines need the buffers they are found in, so asking for outlines asks
+    // for the buffers. Two switches where one implies the other is a switch that
+    // silently does nothing, which is worse than no switch at all.
+    const wantsBuffers = hike.buffers || hike.edges;
+    if (wantsBuffers) {
       const buffers = this.ensureBuffers();
       buffers.capture(this.renderer, this.scene, this.camera);
     }
 
-    if (hike.buffers && debugging) {
+    if (wantsBuffers && debugging) {
       // One buffer on its own, instead of the frame. The only way to look at a
       // depth texture at all: a depth attachment cannot be read back, so it has
       // to be sampled in a shader and written somewhere visible.
       this.ensureBuffers().blit(this.renderer, hike.debug === 'depth' ? 'depth' : 'normals');
-    } else if (hike.buffers && hike.edges && hike.debug === 'edges') {
+    } else if (hike.edges && hike.debug === 'edges') {
       this.drawEdges(hike, true);
     } else {
       this.retro.set(this.controls.retro());
@@ -677,7 +681,7 @@ export class WorldScene {
       // Over the finished frame, which is where a line belongs: the fills are
       // settled, so the outline is a constant dark value rather than something
       // the quantizer gets to round.
-      if (hike.buffers && hike.edges) this.drawEdges(hike, false);
+      if (hike.edges) this.drawEdges(hike, false);
     }
     unsnap?.();
   }

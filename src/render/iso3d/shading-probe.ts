@@ -126,6 +126,20 @@ export interface EdgeProbeCase {
   /** The same with the far plane allowed to take part. */
   readonly edgeFractionSky: number;
   /**
+   * Mean brightness of the *composited* frame -- the lit scene with the outlines
+   * drawn over it.
+   *
+   * The check that was missing when "turn on outlines" turned the world black.
+   * Everything else here measures the mask, and the mask was right the whole
+   * time; what was wrong was the pass clearing the canvas before blending over
+   * it, which no amount of looking at a mask would reveal.
+   */
+  readonly compositeMean: number;
+  /** The same frame without the outline pass, for comparison. */
+  readonly frameMean: number;
+  /** Fraction of the composited frame that is outline-dark. */
+  readonly compositeLines: number;
+  /**
    * Fraction of the *floor* marked as edge.
    *
    * The number the plane reconstruction exists for. The floor is a single flat
@@ -502,6 +516,51 @@ function runEdges(): EdgeProbeCase {
   const maskSky = maskFor(true);
   frames.push({ label: 'edge mask', pixels: mask });
 
+  // And the composite: the lit frame, then the outline pass over it. Measured
+  // against the same frame without the pass, because "did the outlines eat the
+  // picture" is a comparison and not a threshold.
+  const sun = new THREE.DirectionalLight(0xffffff, 1);
+  sun.position.set(300, 600, 300);
+  scene.add(sun);
+  scene.background = new THREE.Color(0x8fd6c8);
+
+  const litFrame = (withOutlines: boolean): Uint8Array => {
+    renderer.setRenderTarget(null);
+    renderer.render(scene, camera);
+    if (withOutlines) {
+      buffers.capture(renderer, scene, camera);
+      edges.render(
+        renderer,
+        buffers.normalTexture,
+        buffers.depthTexture,
+        camera,
+        CELL_W,
+        CELL_H,
+        { ...HIKE_OFF, buffers: true, edges: true },
+        false,
+      );
+    }
+    const out = new Uint8Array(CELL_W * CELL_H * 4);
+    gl.readPixels(0, 0, CELL_W, CELL_H, gl.RGBA, gl.UNSIGNED_BYTE, out);
+    return out;
+  };
+
+  const plain = litFrame(false);
+  const composited = litFrame(true);
+  frames.push({ label: 'outlines over the frame', pixels: composited });
+
+  const meanOf = (px: Uint8Array): number => {
+    let sum = 0;
+    for (let i = 0; i < px.length; i += 4) sum += ((px[i] ?? 0) + (px[i + 1] ?? 0) + (px[i + 2] ?? 0)) / 3;
+    return sum / (px.length / 4) / 255;
+  };
+  let darkened = 0;
+  for (let i = 0; i < composited.length; i += 4) {
+    const before = ((plain[i] ?? 0) + (plain[i + 1] ?? 0) + (plain[i + 2] ?? 0)) / 3;
+    const after = ((composited[i] ?? 0) + (composited[i + 1] ?? 0) + (composited[i + 2] ?? 0)) / 3;
+    if (before - after > 20) darkened++;
+  }
+
   const total = CELL_W * CELL_H;
   let edgePixels = 0;
   let edgePixelsSky = 0;
@@ -527,6 +586,9 @@ function runEdges(): EdgeProbeCase {
     edgeFraction: edgePixels / total,
     edgeFractionSky: edgePixelsSky / total,
     floorEdgeFraction: floorPixels === 0 ? 1 : floorEdges / floorPixels,
+    frameMean: meanOf(plain),
+    compositeMean: meanOf(composited),
+    compositeLines: darkened / total,
   };
 }
 

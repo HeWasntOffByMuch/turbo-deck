@@ -208,7 +208,16 @@ export class HikeEdges {
     this.material.transparent = !maskOnly;
 
     renderer.setRenderTarget(null);
+    // The line goes *over* the frame, so the frame has to survive being drawn
+    // over. `autoClear` defaults to true, and a fullscreen pass that clears
+    // before it blends does not composite anything -- it replaces the picture
+    // with the clear colour and a few dark pixels, which is a black screen with
+    // outlines on it. Restored rather than left off, because the retro pass and
+    // the shadow maps rely on the renderer clearing for them.
+    const previousAutoClear = renderer.autoClear;
+    renderer.autoClear = maskOnly;
     renderer.render(this.scene, this.camera);
+    renderer.autoClear = previousAutoClear;
   }
 
   dispose(): void {
