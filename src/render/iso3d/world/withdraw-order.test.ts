@@ -1,5 +1,5 @@
 /**
- * Walking out of a blow, on both sides of the tick it commits (spec 093).
+ * Walking out of a blow, on both sides of the tick it commits (spec 094).
  *
  * The first half is the scenario the bug report describes, end to end and with
  * nothing faked: a body in range of its mark, facing it, with a standing attack
@@ -337,7 +337,7 @@ async function commitWhileStepping(options: {
   return { started, shotFlew, rejects };
 }
 
-describe('a commit that rides the same input as a step (spec 093)', () => {
+describe('a commit that rides the same input as a step (spec 094)', () => {
   for (const stepsAfter of [30, 45, 60]) {
     it(`throws nothing, and says why: asked ${stepsAfter} ticks in`, async () => {
       const result = await commitWhileStepping({ stepsAfter });

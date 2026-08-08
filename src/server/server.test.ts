@@ -372,7 +372,7 @@ describe('combat over the wire', () => {
       }),
     );
     // Run out the wind-up: nothing lands on the tick the button is pressed. Its
-    // length is the table's to say and got longer in spec 093, so it is asked
+    // length is the table's to say and got longer in spec 094, so it is asked
     // for rather than assumed.
     const swing = abilityById('melee.slash');
     for (let i = 0; i < (swing?.windupTicks ?? 0) + 30; i++) game.tick();
@@ -424,7 +424,7 @@ describe('a cast commits on the input it was asked for', () => {
   });
 
   /**
-   * The same, with the stamped frame asking to walk (spec 093).
+   * The same, with the stamped frame asking to walk (spec 094).
    *
    * A step and a commit may not ride one input -- `step` reads that pair as a
    * withdrawal and refuses the commit -- so the frame goes out on its own and

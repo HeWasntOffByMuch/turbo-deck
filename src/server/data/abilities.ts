@@ -78,7 +78,7 @@ export interface AbilityDefinition {
    * the cast can be cancelled at any point inside it -- this window *is* the
    * commitment the old parry system used to read.
    *
-   * Deliberately long since spec 093. Every number here used to be a fifth of a
+   * Deliberately long since spec 094. Every number here used to be a fifth of a
    * second or so, which is a delay before a blow rather than a decision anybody
    * can act inside: a player has to *see* the wind-up, decide, and step out of
    * it, and on a real connection most of 200ms is the round trip. Every basic

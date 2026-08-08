@@ -775,7 +775,7 @@ export class GameServer implements AdminHost {
       const nextCancel = connection.pendingCancels.find((pending) => due(pending.afterInputSeq));
       // A step is a withdrawal too (spec 079), so an input that asks to walk
       // must not carry a commit either -- `step` reads the pair as "not that
-      // one" and refuses it (spec 093). Which is right when the step is the
+      // one" and refuses it (spec 094). Which is right when the step is the
       // newer ask, and wrong when it is older: a request stamped *after* this
       // frame was sent is a press made once the walking had stopped, and the
       // stale vector on the frame it would ride is not the player changing

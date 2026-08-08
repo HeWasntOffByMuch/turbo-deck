@@ -437,7 +437,7 @@ export function step(
     // asked for first. This is the rule for everyone who calls `step` directly.
     //
     // Asking to *walk* is the same withdrawal (spec 079) and gets the same
-    // answer (spec 093). The movement pass above has already taken any cast off
+    // answer (spec 094). The movement pass above has already taken any cast off
     // this body, which is exactly what hid the gap: by the time the cast pass
     // runs there is nothing left to withdraw from, so a commit riding that input
     // sailed through and put a fresh wind-up on a body that had asked, on that

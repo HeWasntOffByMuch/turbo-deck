@@ -1043,7 +1043,7 @@ describe('shots that travel', () => {
   /**
    * Ticks to wait for the loose: the wind-up, plus room for the turn in front of
    * it. Asked rather than written down, for the same reason as the two above --
-   * wind-ups are the table's to say and got a good deal longer in spec 093.
+   * wind-ups are the table's to say and got a good deal longer in spec 094.
    */
   function looseTicks(abilityId: string): number {
     const ability = abilityById(abilityId);

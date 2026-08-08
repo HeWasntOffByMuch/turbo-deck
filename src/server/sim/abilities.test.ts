@@ -312,7 +312,7 @@ describe('wind-up', () => {
   });
 
   /**
-   * Spec 093, and the same rule read through spec 079's other withdrawal.
+   * Spec 094, and the same rule read through spec 079's other withdrawal.
    *
    * Asking to *move* is how a body calls a blow off; the movement pass settles
    * that before the cast pass runs, so on the tick a commit rides the same input
@@ -813,7 +813,7 @@ describe('turning before the wind-up', () => {
    *
    * `turnRate` is an override rather than a constant because one test below
    * needs a turn that outlasts the wind-up, and how long a wind-up is moves
-   * (spec 093): a body that turns at its ordinary 690 deg/s comes round in 16
+   * (spec 094): a body that turns at its ordinary 690 deg/s comes round in 16
    * ticks, so pinning "still turning after the release tick has passed" against
    * the table's numbers is pinning it against a coincidence.
    */
@@ -1575,7 +1575,7 @@ describe('a named target (spec 070)', () => {
     });
 
     // A second to close and turn, plus the swing's own wind-up -- asked rather
-    // than written down, since how long a wind-up is moves (spec 093).
+    // than written down, since how long a wind-up is moves (spec 094).
     const swing = abilityById(definition.stats.basicAttackId);
     const result = run(spawned.state, SERVER_TICK_RATE + (swing?.windupTicks ?? 0));
     const struck = hits(result.events).filter((hit) => hit.attackerId === spawned.entity.id);
