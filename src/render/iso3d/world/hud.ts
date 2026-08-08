@@ -29,6 +29,7 @@ import { castBar } from './cast.js';
 import { aimGesture } from './aim.js';
 import { appearanceOf, displayName } from './appearance.js';
 import { pixelTextSvg } from './pixel-font.js';
+import { isCoarsePointer } from '../fullscreen.js';
 
 /** The slot being aimed (spec 080). The aim indicator's colour, in the DOM. */
 const AIM_HIGHLIGHT = '#7fd4ff';
@@ -530,12 +531,40 @@ function targetLine(view: ClientView, targetId: number | null): string {
  * player was in the middle of. While a skill is aimed there is exactly one
  * question on screen, and this is it.
  */
+/**
+ * Whether the hint line should name gestures rather than mouse buttons.
+ *
+ * Answered once and remembered: `aimLine` runs every frame, and this is a media
+ * query about the hardware rather than about the window.
+ */
+let touchHintsCache: boolean | null = null;
+function touchHints(): boolean {
+  touchHintsCache ??= isCoarsePointer();
+  return touchHintsCache;
+}
+
 function aimLine(aiming: { readonly abilityId: string | null; readonly pending: boolean }): string {
   const ability = aiming.abilityId === null ? null : abilityById(aiming.abilityId);
+  // A phone has no right button and no Escape key, so naming them would be
+  // instructions for a machine the player is not holding (spec 093).
+  const touch = touchHints();
   if (!ability) {
-    return 'right-click ground to move, a unit to attack · WASD · 1-8 abilities · Esc cancel';
+    return touch
+      ? 'tap ground to move, a unit to attack · pinch to zoom · 1-8 abilities on the bar'
+      : 'right-click ground to move, a unit to attack · WASD · 1-8 abilities · Esc cancel';
   }
-  if (!aiming.pending) return `${ability.name}: moving into range · right-click to call it off`;
+  if (!aiming.pending) {
+    return touch
+      ? `${ability.name}: moving into range`
+      : `${ability.name}: moving into range · right-click to call it off`;
+  }
+  if (touch) {
+    // The unit case is the one place the two disagree, and it is worth saying
+    // out loud: on touch, tapping anywhere but a body is how you back out.
+    return aimGesture(ability) === 'unit'
+      ? `aiming ${ability.name} — tap a unit, tap the ground to cancel`
+      : `aiming ${ability.name} — tap to place`;
+  }
   const pick = aimGesture(ability) === 'unit' ? 'left-click a unit' : 'left-click to place';
   return `aiming ${ability.name} — ${pick}, right-click to cancel`;
 }
