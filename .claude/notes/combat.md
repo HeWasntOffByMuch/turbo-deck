@@ -359,3 +359,19 @@ transform; `activity`/`activityUntilTick` drive animation state on the wire.
   floor. A "flat" shot is now level between them rather than at z = 0.
 - `npx tsx scripts/preview-arcs.ts` -> `.claude/screenshots/arcs.png` plots real
   flights: distances stacked, and flat-vs-broken terrain overlaid.
+
+## Open bug: a withdrawal that does not withdraw (specs 090, 092)
+
+**Unfixed.** Reported repeatedly and still live: right-click the ground during a
+wind-up, the bar disappears, and the shot flies anyway. Read
+`specs/092-a-withdrawal-that-catches-up-with-its-own-commit.md` — its "Still
+open" section lists what has been ruled out by measurement and what has not been
+tried, so the next attempt does not re-derive four rounds of negatives.
+
+The short version: the client sends the cancel, latency is not the cause, the
+same-tick cast/cancel collision was real and is fixed, and the bar's clock is
+honest. No harness reproduces the report, which now points at something only the
+browser does. The cheapest untried checks are whether the right-click is even
+reaching the ground branch of `onMouseDown` (`scene.pickUnitAt` catching the
+target makes it an attack order, which deliberately does not withdraw) and a
+trace of `cancelCast`'s stamped seq against the tick the server dequeues it on.

@@ -115,6 +115,53 @@ export type CastRejection = /* ... */ | 'withdrawn';
   with `withdrawn`, and charges neither cost nor cooldown; with a cast already
   running it withdraws from that one and still refuses the new request.
 
+## Still open
+
+**The reported bug is not fixed.** After all of the above, the player reports the
+same thing: click away on the ground mid-wind-up, the bar goes, the shot still
+flies. What is here is real — it reproduces on demand and the tests fail without
+it — but it is not the whole of it, or not it at all. Left standing so the next
+attempt starts from the negatives rather than re-deriving them.
+
+Ruled out, each by measurement rather than by reading:
+
+- **The client not sending the withdrawal.** The right-click-on-ground branch
+  calls `client.cancelCast()` (spec 090), the message is encoded, sent, and
+  queued on the connection.
+- **Latency pushing the withdrawal past the release.** 27 combinations in
+  `cancel-latency.test.ts` — Esc and walking away, 0 to 15 ticks each way,
+  pressed at 30/66/90% of the wind-up. All withdraw. The commit and the
+  withdrawal take the same trip, so the interval between them survives.
+- **The cast and the cancel colliding on one tick.** This spec. Fixed, and the
+  symptom persists.
+- **The wind-up bar's clock.** `estimatedTick` is corrected forward on every
+  delta and never runs backwards; after the server confirms a cast the bar is
+  drawn from the server's own `releaseTick`. `.claude/notes/windup-bar.md` has
+  the per-tick numbers from `scripts/probe-windup.ts`: the bar stalls ~2 ticks at
+  each end and runs ~10% fast in between, which is a presentation flaw and far
+  too small to explain a shot at half a bar.
+- **A standing attack order re-committing after the withdrawal** (spec 090).
+  Every route that withdraws clears `targetId` first.
+
+What has *not* been tried, roughly in order of what it would cost:
+
+- **Instrumenting the real Play tab.** Everything above is a harness. The one
+  thing no harness has reproduced is the report itself, which is now the strongest
+  evidence that the fault is in something only the browser does — the pointer
+  event's timing against the frame loop, a second handler, or the click not
+  reaching the ground branch at all. A `console` trace on `onMouseDown`
+  (which branch was taken) and on `cancelCast` (the tick and seq it was stamped
+  with), read against the server's own log of when it dequeued them, would settle
+  in one session what four rounds of inference have not.
+- **Whether the click is hitting the ground branch.** `scene.pickUnitAt` decides,
+  and a right-click that catches the target's silhouette is an attack order —
+  which deliberately does *not* withdraw (retargeting is not stepping away). If
+  the pick radius is generous, "clicked away" and "clicked on the mark" are the
+  same gesture to the code and there is no cancel at all. Cheap to check and it
+  fits the report's "often".
+- **`pendingAim` swallowing the click.** The first branch of `onMouseDown`
+  returns early with no cancel.
+
 ## Out of scope
 
 - **Merging the two queues into one.** One ordered queue of asks would make
