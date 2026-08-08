@@ -67,6 +67,12 @@ const PURE_RENDER = [
   // three's own behaviour is what it guards.
   'src/render/iso3d/hike.ts',
   'src/render/iso3d/hike.test.ts',
+  // Welding normals across a crease angle, and turning one to follow the wind
+  // (spec 087, step 2). Both are arithmetic, and the second is the reference the
+  // sway shader's GLSL is a transcription of -- so it has to be somewhere that
+  // can actually be run against it.
+  'src/render/iso3d/shading.ts',
+  'src/render/iso3d/shading.test.ts',
   'src/render/iso3d/world/appearance.ts',
   'src/render/iso3d/world/cast.ts',
   'src/render/iso3d/world/intent.ts',

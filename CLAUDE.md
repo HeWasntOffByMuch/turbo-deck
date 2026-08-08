@@ -195,6 +195,18 @@ src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
                  `src/render/wind-probe.html` are a dev-server-only measuring rig
                  (never in a build) driven by `npx tsx scripts/preview-wind.ts`,
                  which photographs the frame and reports the acceptance numbers.
+src/render/iso3d/hike.ts, shading.ts  the stylized look (specs 087-088): hike.ts is
+                 the one settings object every step of the arc is switched from
+                 (all off by default) plus the sRGB transfer the passes mirror;
+                 shading.ts welds vertex normals across a crease angle and rotates
+                 one to follow the wind's bend. Both pure and tested headlessly.
+                 `shading-probe.ts` plus `src/render/shading-probe.html` are a
+                 dev-server-only rig (never in a build) driven by `npx tsx
+                 scripts/probe-shading.ts`, which is the only thing here that can
+                 tell whether a shader actually compiled -- it asserts on pixels
+                 read out of the drawing buffer, because three.js logs a failed
+                 compile and carries on, and because preview-trees.ts rasterises
+                 in software and never makes a GL context at all.
 src/render/iso3d/lobe.ts  the lobed canopy tree's shape (spec 077): the union of
                  circles a canopy slab's outline is, where the slabs sit, and the
                  trunk's taper to a single vertex. Pure and tested headlessly --

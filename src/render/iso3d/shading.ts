@@ -79,11 +79,20 @@ function weldKey(x: number, y: number, z: number): string {
  * a position whose normal is within `creaseCos` of the others, and split where
  * they are not.
  *
- * `positions` is flat xyz, and `index` is optional -- without it the triangles
- * are consecutive triples. Either way the *sharing* is re-derived from position
- * rather than taken from the index buffer, which is the only thing that works
- * here: the prop geometry is non-indexed precisely so its facets stay separate,
- * so an index buffer would tell us every vertex is its own island.
+ * `positions` is flat xyz and **must be non-indexed** -- consecutive triples,
+ * one vertex slot per triangle corner. Sharing is re-derived from position, not
+ * from an index buffer, which is the only thing that works here: the prop
+ * geometry is non-indexed precisely so its facets stay separate, so an index
+ * buffer would claim every vertex is its own island.
+ *
+ * Indexed input is refused rather than handled, and that is not fussiness. A
+ * split is *expressed* by two slots at one position carrying different normals,
+ * and an indexed mesh has only one slot there -- so a crease it is asked to keep
+ * cannot be written down, and the honest-looking implementation (assign per
+ * slot, last group wins) silently smooths every crease it was told to split.
+ * That is exactly the bug this signature now prevents: it made three.js's
+ * 7-segment cones come out smooth under a 30-degree crease. Callers with indexed
+ * geometry expand it first -- see `props.ts`.
  *
  * Faces are accumulated **unnormalized**, so a big triangle counts for more than
  * the sliver next to it -- area weighting, which is what stops a fan of thin
@@ -100,14 +109,10 @@ function weldKey(x: number, y: number, z: number): string {
  * here. It is not the only defensible grouping, and it is the one every
  * modelling tool uses, for the same reason.
  */
-export function weldedNormals(
-  positions: ArrayLike<number>,
-  creaseCos: number,
-  index?: ArrayLike<number> | null,
-): Float32Array {
+export function weldedNormals(positions: ArrayLike<number>, creaseCos: number): Float32Array {
   const vertexCount = Math.floor(positions.length / 3);
   const normals = new Float32Array(vertexCount * 3);
-  const faceCount = index ? Math.floor(index.length / 3) : Math.floor(vertexCount / 3);
+  const faceCount = Math.floor(vertexCount / 3);
 
   /** Each face's unnormalized normal (area-weighted) and its unit direction. */
   const faceNormal = new Float64Array(faceCount * 3);
@@ -116,9 +121,9 @@ export function weldedNormals(
   const faceSlots: number[][] = [];
 
   for (let f = 0; f < faceCount; f++) {
-    const a = index ? (index[f * 3] ?? 0) : f * 3;
-    const b = index ? (index[f * 3 + 1] ?? 0) : f * 3 + 1;
-    const c = index ? (index[f * 3 + 2] ?? 0) : f * 3 + 2;
+    const a = f * 3;
+    const b = f * 3 + 1;
+    const c = f * 3 + 2;
     faceSlots.push([a, b, c]);
 
     const ax = positions[a * 3] ?? 0;

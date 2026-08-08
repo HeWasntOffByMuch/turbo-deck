@@ -33,7 +33,8 @@ import { castsShadows, makeMoveMarker, makeUnwalkableField, makeWall } from '../
 import { ARENA_OBSTACLES } from '../../../sim/constants.js';
 import { vegetationColliders } from '../../../terrain/vegetation.js';
 import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-mesh.js';
-import { buildPropField, type PropFieldHandle } from '../props.js';
+import { buildPropField, FLAT_SHADING, type PropFieldHandle, type PropShading } from '../props.js';
+import { type HikeSettings } from '../hike.js';
 import { MechRig, Poofs } from '../rigs.js';
 import { CritterRig, defaultCritterTuning } from '../critter.js';
 import { CRITTERS } from '../../critters/index.js';
@@ -389,8 +390,46 @@ export class WorldScene {
     this.map = map;
     this.terrainMesh = buildTerrainMeshFromChunks(map.meshLayers, []);
     this.scene.add(this.terrainMesh.group);
-    this.propField = buildPropField([], (x, z) => this.ground(x, z));
+    this.propField = buildPropField([], (x, z) => this.ground(x, z), undefined, this.propShading);
     this.scene.add(this.propField.group);
+  }
+
+  /**
+   * How the prop field is shaded (spec 087, step 2), as the panel last asked
+   * for it.
+   *
+   * Held rather than read at build time because it is baked into the geometry's
+   * normals and into each batch's material: changing it means rebuilding the
+   * field, so the frame has to notice the change rather than pick it up on the
+   * next rebuild that happens for some other reason.
+   */
+  private propShading: PropShading = FLAT_SHADING;
+
+  /**
+   * Adopt the panel's shading settings, rebuilding the prop field if they moved
+   * (spec 087, step 2).
+   *
+   * Compared rather than applied every frame, because applying means rebuilding
+   * every batch in the world -- a few hundred milliseconds. So this costs three
+   * comparisons per frame and does the work only on the frame a switch is
+   * actually thrown.
+   */
+  private applyPropShading(hike: HikeSettings): void {
+    const wanted: PropShading = {
+      smooth: hike.smoothNormals,
+      creaseAngle: hike.creaseAngle,
+      swayNormals: hike.swayNormals,
+    };
+    const current = this.propShading;
+    if (
+      wanted.smooth === current.smooth &&
+      wanted.creaseAngle === current.creaseAngle &&
+      wanted.swayNormals === current.swayNormals
+    ) {
+      return;
+    }
+    this.propShading = wanted;
+    this.refreshProps();
   }
 
   /** Ground height, or 0 before there is any ground to ask about. */
@@ -426,7 +465,7 @@ export class WorldScene {
 
     this.scene.remove(this.propField.group);
     this.propField.dispose();
-    this.propField = buildPropField(props, heightAt);
+    this.propField = buildPropField(props, heightAt, undefined, this.propShading);
     this.scene.add(this.propField.group);
 
     this.unwalkable.clear();
@@ -566,6 +605,8 @@ export class WorldScene {
     // After the matrices are fresh: a pick made against last frame's camera
     // lags the outline behind a moving view by a frame.
     this.syncHover(frame);
+
+    this.applyPropShading(this.controls.hike());
 
     this.retro.set(this.controls.retro());
     this.retro.setGrade(this.controls.grade());

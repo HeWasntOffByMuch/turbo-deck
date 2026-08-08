@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>turbo-deck · shading probe</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #16161e; overflow: hidden; }
+      #app { display: grid; grid-template-columns: repeat(2, max-content); gap: 10px; padding: 10px; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <!-- Spec 087 step 2's shader rig. Dev-server only: `vite build` bundles
+         index.html and nothing else, so this never ships. See
+         iso3d/shading-probe.ts for what it proves and why a unit test cannot. -->
+    <script type="module" src="./iso3d/shading-probe.ts"></script>
+  </body>
+</html>

@@ -187,12 +187,14 @@ describe('weldedNormals', () => {
     expect(normalAt(normals, 0)[1]).toBeGreaterThan(0.9);
   });
 
-  it('welds through an index buffer as well as a soup', () => {
-    // A cone from three.js arrives indexed. Sharing is re-derived from position
-    // either way, so the two forms must agree.
-    const positions = [0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0];
-    const indexed = weldedNormals(positions, crease(30), [0, 1, 2, 0, 2, 3]);
-    for (let v = 0; v < 4; v++) expect(normalAt(indexed, v)[1]).toBeCloseTo(1, 6);
+  it('welds coincident slots written by different expressions', () => {
+    // The ring-closing case the weld grid exists for: `cos(2 pi)` against
+    // `cos(0)` are the same corner and need not be the same double.
+    const wrapped = tube(24);
+    const normals = weldedNormals(wrapped, Math.cos(DEFAULT_CREASE_ANGLE));
+    // The last segment's far corner is the first segment's near corner.
+    const last = tube(24).length / 3 - 4;
+    expect(Math.hypot(...normalAt(normals, last))).toBeCloseTo(1, 6);
   });
 
   it('ignores degenerate triangles rather than being dragged to zero by them', () => {

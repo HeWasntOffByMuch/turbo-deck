@@ -1,4 +1,5 @@
 import { RETRO_DEFAULTS, type BayerSize, type RetroSettings } from './retro.js';
+import { HIKE_OFF, type HikeSettings } from './hike.js';
 import {
   DEFAULT_DAY_LENGTH_MINUTES,
   DEFAULT_TIME_OF_DAY,
@@ -69,6 +70,14 @@ export interface ViewControls {
   showSpawners(): boolean;
   /** The retro dither/quantization filter's current settings (spec 038). */
   retro(): RetroSettings;
+  /**
+   * The hike look's settings (spec 087). Every switch off by default, so the
+   * frame is the one that shipped before the arc started until one is thrown.
+   *
+   * Fields belonging to steps that have not landed sit at their `HIKE_OFF`
+   * values; the panel only carries widgets for the ones that are wired.
+   */
+  hike(): HikeSettings;
   /**
    * Whether the day/night cycle owns the sun (spec 047). When false the
    * `Direction`/`Elevation` sliders above drive it, exactly as in spec 033.
@@ -411,6 +420,19 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   const gradeStrength = makeSlider('Filter strength', 0, 100, 5, DEFAULT_GRADE_STRENGTH * 100, '%',
     'How strongly the colour filter is applied. 0 is off whichever preset is chosen.');
 
+  // The hike look (spec 087). One switch per step, all off, so each can be
+  // turned on alone -- these two are step 2's.
+  const smoothNormals = makeCheckbox('Smooth normals', HIKE_OFF.smoothNormals,
+    'Average vertex normals across surfaces gentler than the crease angle instead of shading every ' +
+    'face flat. Reaches almost nothing on this geometry: only the canopy slabs are modelled finer ' +
+    'than the crease, so trunks, cones and stones keep their facets.');
+  const creaseAngle = makeSlider('Crease angle', 5, 80, 5, Math.round((HIKE_OFF.creaseAngle * 180) / Math.PI), '°',
+    'Faces meeting sharper than this stay split. Above ~52° a 7-sided trunk welds its whole tip into ' +
+    'one normal and the taper reads as a melted dome.');
+  const swayNormals = makeCheckbox('Sway rotates normals', HIKE_OFF.swayNormals,
+    'Turn the vertex normal with the wind bend. Does nothing while normals are flat-shaded; with ' +
+    'smooth normals on, leaving it off is what makes a leaning canopy light as though it were upright.');
+
   const reset = document.createElement('button');
   reset.textContent = 'Reset';
   reset.title = 'Restore the camera, light, and terrain overlay to their defaults.';
@@ -422,7 +444,8 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
       dayNight, timeOfDay, clockRunning, dayLength,
       torchOn, torchRange, torchBright, torchFlickerDepth, torchShadows,
       magicOn, magicRange, magicBright, spawners,
-      retroOn, levels, dither, weave, weaveScale, pixelSize, gradeChoice, gradeStrength];
+      retroOn, levels, dither, weave, weaveScale, pixelSize, gradeChoice, gradeStrength,
+      smoothNormals, creaseAngle, swayNormals];
     for (const w of widgets) w.reset();
   });
 
@@ -457,6 +480,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     pixelSize.row,
   );
   if (lighting) panel.append(gradeChoice.row, gradeStrength.row);
+  panel.append(section('Hike'), smoothNormals.row, creaseAngle.row, swayNormals.row);
   panel.append(reset);
 
   // The cog button toggles the popover; a highlighted state marks it open.
@@ -510,6 +534,12 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
       matrixSize: weave.value() as BayerSize,
       ditherScale: weaveScale.value(),
       pixelSize: pixelSize.value(),
+    }),
+    hike: () => ({
+      ...HIKE_OFF,
+      smoothNormals: smoothNormals.checked(),
+      creaseAngle: (creaseAngle.value() * Math.PI) / 180,
+      swayNormals: swayNormals.checked(),
     }),
     dayNightEnabled: () => dayNight.checked(),
     sky: () => (dayNight.checked() ? skyAt(timeOfDay.value()) : null),

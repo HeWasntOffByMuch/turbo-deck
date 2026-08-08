@@ -28,6 +28,8 @@
  * from a rebuild.
  */
 
+import { DEFAULT_CREASE_ANGLE } from './shading.js';
+
 /**
  * A single buffer the debug view may draw on its own, instead of the finished
  * frame (spec 087). Wired by step 4 onward, as each buffer starts to exist.
@@ -69,6 +71,15 @@ export interface HikeSettings {
    * than assumed.
    */
   readonly smoothNormals: boolean;
+  /**
+   * Faces meeting at a sharper angle than this stay split rather than averaging
+   * together, in radians. Only consulted while `smoothNormals` is on.
+   *
+   * The tessellation, not this number, is what decides whether smoothing reaches
+   * anything -- `shading.ts` carries the table of what meets at what angle, and
+   * why going much above the default turns a tapered trunk into a dome.
+   */
+  readonly creaseAngle: number;
   /**
    * Rotate the normal along with the wind's vertex displacement.
    *
@@ -231,6 +242,7 @@ export interface HikeSettings {
  */
 export const HIKE_OFF: HikeSettings = {
   smoothNormals: false,
+  creaseAngle: DEFAULT_CREASE_ANGLE,
   swayNormals: false,
 
   lowRes: false,
