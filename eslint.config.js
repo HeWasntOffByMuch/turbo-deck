@@ -59,6 +59,14 @@ const PURE_RENDER = [
   // than by eye.
   'src/render/iso3d/lobe.ts',
   'src/render/iso3d/lobe.test.ts',
+  // The hike look's settings and the sRGB transfer under them (spec 087). The
+  // settings are plain data and the transfer is arithmetic the passes'
+  // shaders transcribe -- and a shader expression nobody can execute is where
+  // a typo lives forever, so the reference is held somewhere it can be run.
+  // `color-space.test.ts` is deliberately *not* here: it imports three because
+  // three's own behaviour is what it guards.
+  'src/render/iso3d/hike.ts',
+  'src/render/iso3d/hike.test.ts',
   'src/render/iso3d/world/appearance.ts',
   'src/render/iso3d/world/cast.ts',
   'src/render/iso3d/world/intent.ts',

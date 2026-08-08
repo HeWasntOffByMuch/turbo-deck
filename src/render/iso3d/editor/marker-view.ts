@@ -37,6 +37,12 @@ function markerTexture(kind: MapMarkerKind): THREE.Texture {
   canvas.height = TEXTURE_PX;
   const ctx = canvas.getContext('2d');
   const texture = new THREE.CanvasTexture(canvas);
+  // The canvas is painted with sRGB colours -- `MARKER_COLORS` as a CSS hex --
+  // and a texture's colour space defaults to none, meaning "already linear". So
+  // without this the bytes skip the decode every other use of the same constant
+  // gets, and the disc comes out the one place in the renderer where
+  // MARKER_COLORS does not draw as MARKER_COLORS (spec 087).
+  texture.colorSpace = THREE.SRGBColorSpace;
   if (!ctx) return texture;
 
   const mid = TEXTURE_PX / 2;

@@ -1,0 +1,138 @@
+import { describe, expect, it } from 'vitest';
+import {
+  HIKE_DEBUG_VIEWS,
+  HIKE_OFF,
+  srgbDecode,
+  srgbEncode,
+  unpackLinear,
+  type HikeSettings,
+} from './hike.js';
+
+describe('the hike settings', () => {
+  it('opens with every switch off', () => {
+    // Walked rather than listed on purpose: a switch added later without an off
+    // default has to fail here, not ship turned on.
+    const on = Object.entries(HIKE_OFF).filter(([, value]) => value === true);
+    expect(on).toEqual([]);
+  });
+
+  it('has a switch for every step of the arc', () => {
+    // The point of the object is that each piece can be A/B'd alone, which only
+    // holds if each piece actually has its own switch.
+    const switches: (keyof HikeSettings)[] = [
+      'smoothNormals',
+      'swayNormals',
+      'lowRes',
+      'snapCamera',
+      'buffers',
+      'edges',
+      'posterize',
+      'dither',
+      'ink',
+      'curvature',
+      'softShadows',
+    ];
+    for (const name of switches) expect(typeof HIKE_OFF[name]).toBe('boolean');
+  });
+
+  it('draws the finished frame until a debug view is asked for', () => {
+    expect(HIKE_OFF.debug).toBe('off');
+  });
+
+  it('names each debug view once', () => {
+    expect(new Set(HIKE_DEBUG_VIEWS).size).toBe(HIKE_DEBUG_VIEWS.length);
+  });
+
+  it('quantizes onto even steps until given a palette', () => {
+    // Null rather than a baked-in list: the palette is data the panel supplies,
+    // never a constant compiled into shader source.
+    expect(HIKE_OFF.palette).toBeNull();
+    expect(HIKE_OFF.levels).toBeGreaterThan(1);
+  });
+
+  it('opens at a virtual resolution that does not depend on the window', () => {
+    expect(HIKE_OFF.virtualWidth).toBe(480);
+    expect(HIKE_OFF.virtualHeight).toBe(270);
+  });
+
+  it('reaches full ink strength somewhere beyond where it starts', () => {
+    expect(HIKE_OFF.inkEnd).toBeGreaterThan(HIKE_OFF.inkStart);
+  });
+});
+
+describe('the sRGB transfer', () => {
+  it('pins black exactly', () => {
+    // Exactly, not nearly: black that came back above zero would lift every
+    // shadow in the frame, and the ink treatment spends most of its range down
+    // here. Both directions take the linear foot at 0, so both are exact.
+    expect(srgbEncode(0)).toBe(0);
+    expect(srgbDecode(0)).toBe(0);
+  });
+
+  it('pins white to within a rounding step', () => {
+    // `1.055 * pow(1, 1/2.4) - 0.055` is one ulp short of 1, because neither
+    // 1.055 nor 0.055 is exact in binary. It could be rearranged to land on 1
+    // exactly -- but this function's job is to be the expression the GLSL
+    // mirrors term for term, and a reference written in a form no shader would
+    // use has stopped being a reference. One ulp cannot cross an 8-bit step, so
+    // it costs nothing where the number is actually spent.
+    expect(srgbEncode(1)).toBeCloseTo(1, 12);
+    expect(srgbDecode(1)).toBe(1);
+  });
+
+  it('round-trips across the range', () => {
+    for (let i = 0; i <= 100; i++) {
+      const v = i / 100;
+      expect(srgbDecode(srgbEncode(v))).toBeCloseTo(v, 10);
+      expect(srgbEncode(srgbDecode(v))).toBeCloseTo(v, 10);
+    }
+  });
+
+  it('puts mid-grey where the real curve puts it', () => {
+    // The number that separates the true piecewise transfer from a pow(2.2)
+    // approximation of it: 0.5^2.2 is 0.2176, and the difference is a whole
+    // palette step at twelve levels.
+    expect(srgbDecode(0.5)).toBeCloseTo(0.2140, 4);
+    expect(srgbEncode(0.2140)).toBeCloseTo(0.5, 3);
+  });
+
+  it('uses the linear foot below the knee, not the power curve', () => {
+    // Below 0.0031308 the transfer is a straight multiply. A curve that used
+    // the power term all the way down would be visibly wrong in exactly the
+    // darks the ink treatment spends its range on.
+    expect(srgbEncode(0.001)).toBeCloseTo(0.001 * 12.92, 12);
+    expect(srgbDecode(0.02)).toBeCloseTo(0.02 / 12.92, 12);
+  });
+
+  it('is monotonic, so quantizing after it cannot reorder two shades', () => {
+    let previous = -1;
+    for (let i = 0; i <= 256; i++) {
+      const v = srgbEncode(i / 256);
+      expect(v).toBeGreaterThan(previous);
+      previous = v;
+    }
+  });
+});
+
+describe('unpackLinear', () => {
+  it('splits a packed hex into its three channels', () => {
+    const [r, g, b] = unpackLinear(0xff8000);
+    expect(r).toBeCloseTo(srgbDecode(1), 12);
+    expect(g).toBeCloseTo(srgbDecode(0x80 / 255), 12);
+    expect(b).toBe(0);
+  });
+
+  it('sends white to white and black to black', () => {
+    expect(unpackLinear(0xffffff)).toEqual([1, 1, 1]);
+    expect(unpackLinear(0x000000)).toEqual([0, 0, 0]);
+  });
+
+  it('darkens every mid-tone, which is what the decode is for', () => {
+    // A palette hex read straight as linear would light the scene too brightly
+    // everywhere but the ends. This is the whole reason the decode exists.
+    const [r, g, b] = unpackLinear(0x7fae3f);
+    expect(r).toBeLessThan(0x7f / 255);
+    expect(g).toBeLessThan(0xae / 255);
+    expect(b).toBeLessThan(0x3f / 255);
+  });
+});
