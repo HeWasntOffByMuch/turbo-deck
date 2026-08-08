@@ -36,6 +36,7 @@ import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-m
 import { buildPropField, FLAT_SHADING, type PropFieldHandle, type PropShading } from '../props.js';
 import { type HikeSettings } from '../hike.js';
 import { CURVATURE_UNIFORMS } from '../terrain-curvature.js';
+import { installPoissonShadows, shadowRadiusFor } from '../shadow-pcf.js';
 import { MechRig, Poofs } from '../rigs.js';
 import { CritterRig, defaultCritterTuning } from '../critter.js';
 import { CRITTERS } from '../../critters/index.js';
@@ -346,6 +347,10 @@ export class WorldScene {
 
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+    // Before any material compiles: the filter lives in three's own shadow chunk,
+    // and a chunk edited after a program is built does not reach that program.
+    installPoissonShadows();
+    this.sun.shadow.radius = 0;
     this.scene.add(this.sun, this.sun.target, this.ambient);
 
     // No terrain yet. The ground and the trees are the ones the server *sent*
@@ -666,6 +671,10 @@ export class WorldScene {
     const hike = this.controls.hike();
     this.applyPropShading(hike);
     this.applyCurvature(hike);
+    // Written every frame, and written even when the feature is off: three's own
+    // default for `radius` is 1, so leaving it alone would soften every shadow in
+    // the world without anything having been switched on (spec 101).
+    this.sun.shadow.radius = shadowRadiusFor(hike.softShadows, hike.shadowPcfRadius);
 
     // Snapped for everything that has to agree with the drawn image: the frame
     // itself, and the screen anchors the DOM overlay hangs bars from. An anchor

@@ -86,6 +86,17 @@ interface CurvatureProbeCase {
   readonly streakAlive: boolean;
 }
 
+interface ShadowProbeCase {
+  readonly shadowPixels: number;
+  readonly litPixels: number;
+  readonly partialHard: number;
+  readonly partialSoft: number;
+  readonly areaHard: number;
+  readonly areaSoft: number;
+  readonly openGroundChanged: number;
+  readonly castingWorked: boolean;
+}
+
 interface ShadingProbeCase {
   readonly label: string;
   readonly programs: number;
@@ -153,6 +164,7 @@ try {
   const palette = (await page.evaluate(() => window.paletteProbe)) as PaletteProbeCase | undefined;
   const ink = (await page.evaluate(() => window.inkProbe)) as InkProbeCase | undefined;
   const curvature = (await page.evaluate(() => window.curvatureProbe)) as CurvatureProbeCase | undefined;
+  const shadows = (await page.evaluate(() => window.shadowProbe)) as ShadowProbeCase | undefined;
 
   // Anything mentioning a shader, a program, a compile or a link is a hard
   // failure; the rest is printed but tolerated.
@@ -438,6 +450,57 @@ try {
         `${(curvature.flatChanged * 100).toFixed(2)}% of flat ground moved, ` +
         `${curvature.brightened} brightened\n` +
         `        hollow bakes ${curvature.centreCavity.toFixed(3)} vs rim ${curvature.rimCavity.toFixed(3)}`,
+    );
+    for (const problem of problems) console.log(`        ${problem}`);
+  }
+
+  // The soft shadow filter (spec 101).
+  if (shadows) {
+    const problems: string[] = [];
+    if (!shadows.castingWorked) {
+      problems.push(
+        `the scene cast no measurable shadow: ${shadows.shadowPixels} shadowed px, ` +
+          `${shadows.litPixels} lit px -- nothing below is about the filter`,
+      );
+    }
+    // An unfiltered lookup has essentially no penumbra: a pixel is inside the
+    // shadow or outside it. This rising by an order of magnitude *is* the effect.
+    const widened = shadows.partialHard === 0 ? Infinity : shadows.partialSoft / shadows.partialHard;
+    if (shadows.partialSoft < 400) {
+      problems.push(`only ${shadows.partialSoft} partially shadowed pixels with the filter on`);
+    }
+    if (widened < 5) {
+      problems.push(
+        `the penumbra went from ${shadows.partialHard} to ${shadows.partialSoft} pixels -- ` +
+          'the filter is barely widening the edge, so it is probably not running',
+      );
+    }
+    // A filter softens an edge; it must not grow or shrink the shape.
+    const drift =
+      shadows.areaHard === 0 ? 1 : Math.abs(shadows.areaSoft - shadows.areaHard) / shadows.areaHard;
+    if (drift > 0.15) {
+      problems.push(
+        `the shadow's area moved ${(drift * 100).toFixed(0)}% -- ` +
+          'a filter should soften the edge, not resize the shadow',
+      );
+    }
+    // And ground the shadow never reached must be untouched, exactly. A filter
+    // that dims open ground is sampling past its own frustum test, which reads as
+    // the scene having got darker rather than as a shadow bug.
+    if (shadows.openGroundChanged > 0) {
+      problems.push(
+        `${shadows.openGroundChanged} pixels of open ground changed -- ` +
+          'the filter is reaching ground no blocker is near',
+      );
+    }
+    if (problems.length > 0) failed = true;
+    console.log(
+      `${problems.length === 0 ? 'ok  ' : 'FAIL'}  soft shadows\n` +
+        `        ${shadows.shadowPixels} shadowed px, ${shadows.litPixels} lit px; ` +
+        `penumbra ${shadows.partialHard} -> ${shadows.partialSoft} px ` +
+        `(${widened === Infinity ? 'from nothing' : `${widened.toFixed(0)}x`})\n` +
+        `        area ${shadows.areaHard.toFixed(0)} -> ${shadows.areaSoft.toFixed(0)} px ` +
+        `(${(drift * 100).toFixed(1)}% drift), ${shadows.openGroundChanged} open-ground px changed`,
     );
     for (const problem of problems) console.log(`        ${problem}`);
   }

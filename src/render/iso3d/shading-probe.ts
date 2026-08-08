@@ -12,6 +12,7 @@ import { RetroPass } from './retro-pass.js';
 import { RETRO_DEFAULTS } from './retro.js';
 import { buildTerrainMeshFromChunks } from './terrain-mesh.js';
 import { CURVATURE_UNIFORMS } from './terrain-curvature.js';
+import { installPoissonShadows } from './shadow-pcf.js';
 import type { TerrainChunk } from '../../terrain/index.js';
 import type { MeshLayer } from '../../terrain/map-world.js';
 
@@ -278,6 +279,29 @@ export interface CurvatureProbeCase {
   readonly streakAlive: boolean;
 }
 
+/** What the soft-shadow filter did (spec 101). */
+export interface ShadowProbeCase {
+  /** Pixels fully in shadow, and fully lit, with the filter off. */
+  readonly shadowPixels: number;
+  readonly litPixels: number;
+  /**
+   * Pixels sitting between the two, hard and soft.
+   *
+   * The penumbra, counted. With an unfiltered lookup there is essentially none --
+   * a pixel is inside the shadow or outside it -- so this rising by an order of
+   * magnitude is the effect, stated as the thing it is.
+   */
+  readonly partialHard: number;
+  readonly partialSoft: number;
+  /** Mean shadowed area, off and on. A filter softens an edge; it must not move it. */
+  readonly areaHard: number;
+  readonly areaSoft: number;
+  /** Pixels of open ground far from any caster that changed. Must be zero. */
+  readonly openGroundChanged: number;
+  /** Whether the scene had any shadow in it at all, so a null result is visible. */
+  readonly castingWorked: boolean;
+}
+
 declare global {
   interface Window {
     /** Filled once every case has drawn; `probe-shading.ts` polls for it. */
@@ -294,6 +318,8 @@ declare global {
     inkProbe?: InkProbeCase;
     /** What baking the ground's creases did (spec 100). */
     curvatureProbe?: CurvatureProbeCase;
+    /** What the soft-shadow filter did (spec 101). */
+    shadowProbe?: ShadowProbeCase;
   }
 }
 
@@ -1328,11 +1354,188 @@ function runCurvature(): CurvatureProbeCase {
   };
 }
 
+/**
+ * Cast a hard-edged shadow onto flat ground and measure what the filter does to
+ * its edge (spec 101).
+ *
+ * The claim is narrow and worth keeping narrow: a filter widens the band of
+ * partially-shadowed pixels and does nothing else. It must not move the shadow,
+ * and it must not touch ground the shadow never reached -- a filter that dims
+ * open ground is one that is sampling outside its own frustum test, which looks
+ * like the scene got darker rather than like a shadow bug.
+ */
+function runShadows(): ShadowProbeCase {
+  installPoissonShadows();
+
+  const canvas = document.createElement('canvas');
+  canvas.width = CELL_W;
+  canvas.height = CELL_H;
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, preserveDrawingBuffer: true });
+  renderer.shadowMap.enabled = true;
+  // The type this project actually ships (spec 045): no filtering at all, so the
+  // branch the patch replaced is the branch being exercised.
+  renderer.shadowMap.type = THREE.BasicShadowMap;
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x101018);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+
+  const sun = new THREE.DirectionalLight(0xffffff, 1);
+  sun.position.set(260, 700, 200);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(512, 512);
+  const shadowCamera = sun.shadow.camera;
+  shadowCamera.left = -400;
+  shadowCamera.right = 400;
+  shadowCamera.top = 400;
+  shadowCamera.bottom = -400;
+  shadowCamera.near = 1;
+  shadowCamera.far = 2000;
+  shadowCamera.updateProjectionMatrix();
+  scene.add(sun);
+
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(1400, 1400),
+    new THREE.MeshLambertMaterial({ color: 0x8a8a78 }),
+  );
+  floor.rotation.x = -Math.PI / 2;
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  // One blocky caster, well clear of the ground, so its shadow has long straight
+  // edges -- the easiest possible thing to measure the width of.
+  const caster = new THREE.Mesh(
+    new THREE.BoxGeometry(120, 120, 120),
+    new THREE.MeshLambertMaterial({ color: 0x99553c }),
+  );
+  caster.position.set(-40, 190, -30);
+  caster.castShadow = true;
+  scene.add(caster);
+
+  const half = 320;
+  const camera = new THREE.OrthographicCamera(-half, half, half * 0.75, -half * 0.75, 1, 4000);
+  camera.position.set(0, 1200, 0.001);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld(true);
+
+  const gl = renderer.getContext();
+  const shoot = (radius: number): Uint8Array => {
+    sun.shadow.radius = radius;
+    renderer.setRenderTarget(null);
+    renderer.render(scene, camera);
+    const out = new Uint8Array(CELL_W * CELL_H * 4);
+    gl.readPixels(0, 0, CELL_W, CELL_H, gl.RGBA, gl.UNSIGNED_BYTE, out);
+    return out;
+  };
+
+  const hard = shoot(0);
+  const soft = shoot(4);
+  frames.push({ label: 'soft shadow (Poisson disc)', pixels: soft });
+
+  const value = (px: Uint8Array, i: number): number =>
+    ((px[i] ?? 0) + (px[i + 1] ?? 0) + (px[i + 2] ?? 0)) / 3;
+
+  /**
+   * Whether a pixel is floor rather than the caster's own lit top face.
+   *
+   * By hue, not by brightness. Lambert scales all three channels by the same
+   * number, so the ratio between two of them survives being lit or shadowed and
+   * identifies the material: the floor is a warm grey (blue/red about 0.87) and
+   * the caster is a strong red-brown (about 0.39).
+   *
+   * The first version of this took the frame's brightest pixel as "fully lit
+   * floor" -- which was the caster's top face, so every lit floor pixel then
+   * scored as partially shadowed and the unfiltered frame reported a 3,600-pixel
+   * penumbra it does not have.
+   */
+  const isFloor = (px: Uint8Array, i: number): boolean => {
+    const r = px[i] ?? 0;
+    const b = px[i + 2] ?? 0;
+    if (r < 8) return false;
+    return b / r > 0.7;
+  };
+
+  // The floor's two levels, read out of the hard frame rather than assumed: fully
+  // lit and fully shadowed are whatever this light and this albedo produce.
+  let lit = 0;
+  let shade = 255;
+  for (let i = 0; i < hard.length; i += 4) {
+    if (!isFloor(hard, i)) continue;
+    const v = value(hard, i);
+    lit = Math.max(lit, v);
+    shade = Math.min(shade, v);
+  }
+  const band = lit - shade;
+
+  let shadowPixels = 0;
+  let litPixels = 0;
+  let partialHard = 0;
+  let partialSoft = 0;
+  let areaHard = 0;
+  let areaSoft = 0;
+  let openGroundChanged = 0;
+
+  for (let i = 0; i < hard.length; i += 4) {
+    if (!isFloor(hard, i)) continue;
+    const h = value(hard, i);
+    const s = value(soft, i);
+    const hFrac = band > 0 ? (h - shade) / band : 1;
+    const sFrac = band > 0 ? (s - shade) / band : 1;
+
+    if (hFrac < 0.08) {
+      shadowPixels++;
+      areaHard++;
+    } else if (hFrac > 0.92) {
+      litPixels++;
+    } else {
+      partialHard++;
+      areaHard += 1 - hFrac;
+    }
+    if (sFrac < 0.08) areaSoft++;
+    else if (sFrac <= 0.92) {
+      partialSoft++;
+      areaSoft += 1 - sFrac;
+    }
+
+    // Open ground: lit in the hard frame and nowhere near the edge, so no tap of
+    // a four-texel kernel could legitimately reach a blocker.
+    if (hFrac > 0.99) {
+      let nearEdge = false;
+      for (let dy = -6; dy <= 6 && !nearEdge; dy += 2) {
+        for (let dx = -6; dx <= 6; dx += 2) {
+          const j = i + (dy * CELL_W + dx) * 4;
+          if (j < 0 || j >= hard.length || !isFloor(hard, j)) continue;
+          const n = value(hard, j);
+          if (band > 0 && (n - shade) / band < 0.99) {
+            nearEdge = true;
+            break;
+          }
+        }
+      }
+      if (!nearEdge && Math.abs(h - s) > 0.5) openGroundChanged++;
+    }
+  }
+
+  renderer.dispose();
+
+  return {
+    shadowPixels,
+    litPixels,
+    partialHard,
+    partialSoft,
+    areaHard,
+    areaSoft,
+    openGroundChanged,
+    castingWorked: shadowPixels > 200 && litPixels > 200,
+  };
+}
+
 const results = CASES.map(({ smooth, swayNormals, label }) => runCase(smooth, swayNormals, label));
 window.bufferProbe = [runBuffers('depth'), runBuffers('normals')];
 window.edgeProbe = runEdges();
 window.paletteProbe = runPalette();
 window.inkProbe = runInk();
 window.curvatureProbe = runCurvature();
+window.shadowProbe = runShadows();
 window.shadingProbeSheet = contactSheet();
 window.shadingProbe = results;

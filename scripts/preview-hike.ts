@@ -238,6 +238,53 @@ try {
     console.log('  ok: folds darkened, the rest of the ground left alone');
   }
 
+  // Soft shadows, on the real map (spec 101).
+  //
+  // The offscreen probe measures a synthetic box on a plane, where the penumbra
+  // can be counted exactly. This asks the question that scene cannot: whether the
+  // patched chunk survives the *real* set of materials -- ground, walls, props,
+  // units -- since it was spliced into a chunk all of them include and a shader
+  // that fails to compile is a logged message rather than an exception.
+  await page.click('button[aria-label="View settings"]');
+  await page.locator('label', { hasText: 'Creases' }).first().locator('input[type=checkbox]').uncheck();
+  await page.click('button[aria-label="View settings"]');
+  await page.waitForTimeout(800);
+  const shadowOff = await page.screenshot({ path: join(outDir, 'world-shadows-hard.png'), clip: await canvasRect() });
+
+  await page.click('button[aria-label="View settings"]');
+  await page.locator('label', { hasText: 'Soft shadows' }).first().locator('input[type=checkbox]').check();
+  await page.click('button[aria-label="View settings"]');
+  await page.waitForTimeout(1200);
+  const shadowOn = await page.screenshot({ path: join(outDir, 'world-shadows-soft.png'), clip: await canvasRect() });
+
+  const changed = (before: Buffer, after: Buffer): number => {
+    const a = PNG.sync.read(before);
+    const b = PNG.sync.read(after);
+    let count = 0;
+    for (let i = 0; i < a.data.length; i += 4) {
+      const va = ((a.data[i] ?? 0) + (a.data[i + 1] ?? 0) + (a.data[i + 2] ?? 0)) / 3;
+      const vb = ((b.data[i] ?? 0) + (b.data[i + 1] ?? 0) + (b.data[i + 2] ?? 0)) / 3;
+      if (Math.abs(va - vb) > 2) count++;
+    }
+    return count / (a.data.length / 4);
+  };
+
+  const softened = changed(shadowOff, shadowOn);
+  const meanSoft = await brightness(join(outDir, 'world-shadows-soft.png'));
+  console.log(
+    `soft shadows: ${(softened * 100).toFixed(1)}% of the frame changed, ` +
+      `mean brightness ${(meanSoft * 100).toFixed(1)}%`,
+  );
+  if (softened < 0.005) {
+    failed = true;
+    console.log('  FAIL: nothing changed, so the filter never reached the real materials');
+  } else if (softened > 0.5) {
+    failed = true;
+    console.log('  FAIL: half the frame changed -- that is not a shadow edge');
+  } else {
+    console.log('  ok: shadow edges softened, the rest of the frame left alone');
+  }
+
   const distinct = await page.evaluate(async () => {
     const canvas = document.querySelector('canvas');
     if (!canvas) return 0;

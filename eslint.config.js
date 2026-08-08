@@ -98,6 +98,12 @@ const PURE_RENDER = [
   // is asserted against a real paraboloid in Node rather than judged by eye.
   'src/render/iso3d/curvature.ts',
   'src/render/iso3d/curvature.test.ts',
+  // The soft shadow's sampling kernel (spec 101). Every Poisson disc in every
+  // shader is a pasted table of magic vec2s that nobody can tell a good one from
+  // a bad one by looking at -- so this one is grown from the seeded PRNG and its
+  // minimum separation is asserted, which only works if it runs in Node.
+  'src/render/iso3d/poisson.ts',
+  'src/render/iso3d/poisson.test.ts',
   'src/render/iso3d/world/appearance.ts',
   'src/render/iso3d/world/cast.ts',
   'src/render/iso3d/world/intent.ts',

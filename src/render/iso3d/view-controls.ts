@@ -487,6 +487,15 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     'Edge neighbours a pixel needs before its line draws at full strength. Fades the one- and ' +
     'two-pixel specks that blink as geometry crosses a sample boundary. 0 disables it.');
 
+  // Step 9: a softer shadow edge, which the look deliberately does not want
+  // (spec 101) -- the switch exists so the choice can be seen.
+  const softShadows = makeCheckbox('Soft shadows', HIKE_OFF.softShadows,
+    'Filter the shadow map with a Poisson disc instead of taking one unfiltered comparison. Off by ' +
+    'choice rather than by caution: hard shadow edges land on texel boundaries and match a ' +
+    'posterized frame, and a penumbra is the one smooth gradient in the picture.');
+  const shadowRadius = makeSlider('Penumbra', 0.5, 6, 0.5, HIKE_OFF.shadowPcfRadius, ' texels',
+    'How wide the filter reaches, in shadow-map texels.');
+
   // Step 8: the fold that is already in the data (spec 100).
   const curvature = makeCheckbox('Creases', HIKE_OFF.curvature,
     'Darken the ground where it folds. Measured once at mesh time from the corner normals each ' +
@@ -534,7 +543,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
       magicOn, magicRange, magicBright, spawners,
       retroOn, levels, dither, weave, weaveScale, pixelSize, gradeChoice, gradeStrength,
       smoothNormals, creaseAngle, swayNormals, lowRes, virtualSize, snapCamera, buffers, edges, depthThreshold, normalThreshold, skyOutline, paletteChoice, ink, inkStart, inkEnd, inkFlatten, inkDesat, inkFog, inkEdgeGain,
-      minNeighbours, curvature, curvatureStrength, debugView];
+      minNeighbours, curvature, curvatureStrength, softShadows, shadowRadius, debugView];
     for (const w of widgets) w.reset();
   });
 
@@ -593,6 +602,8 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     minNeighbours.row,
     curvature.row,
     curvatureStrength.row,
+    softShadows.row,
+    shadowRadius.row,
     debugView.row,
   );
   panel.append(reset);
@@ -676,6 +687,8 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
         outlineMinNeighbours: minNeighbours.value(),
         curvature: curvature.checked(),
         curvatureStrength: curvatureStrength.value() / 100,
+        softShadows: softShadows.checked(),
+        shadowPcfRadius: shadowRadius.value(),
         debug: debugView.value() as HikeDebugView,
       };
     },
