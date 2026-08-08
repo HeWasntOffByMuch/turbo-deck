@@ -37,8 +37,8 @@ import { buildPropField, type PropFieldHandle } from '../props.js';
 import { MechRig, Poofs } from '../rigs.js';
 import { CritterRig, defaultCritterTuning } from '../critter.js';
 import { CRITTERS } from '../../critters/index.js';
-import { attachOutline, type OutlineHandle } from '../outline.js';
-import { pickHoveredUnit, type HoverTarget, type ScreenBox } from '../hover.js';
+import { attachHighlight, type HighlightHandle } from '../highlight.js';
+import { pickHoveredUnit, type HoverTarget } from '../hover.js';
 import { createViewControls, type ViewControls } from '../view-controls.js';
 import {
   CAMERA_FAR,
@@ -117,7 +117,7 @@ export interface FrameInfo {
   readonly destination: { readonly x: number; readonly y: number } | null;
   /**
    * Where the mouse is inside the canvas, in CSS pixels, or null when it has
-   * left. Drives the hover outline (spec 070) and nothing else -- the pick is
+   * left. Drives the hover highlight (spec 070) and nothing else -- the pick is
    * redone per frame because bodies move under a cursor that is standing still.
    */
   readonly cursor: { readonly x: number; readonly y: number } | null;
@@ -152,7 +152,7 @@ interface Body {
   readonly player?: CritterRig;
   readonly mech?: MechRig;
   readonly shot?: ShotRig;
-  readonly outline?: OutlineHandle;
+  readonly highlight?: HighlightHandle;
   /** World units above the feet to hang the health bar; see {@link Body.headroom}. */
   readonly headroom: number;
 }
@@ -228,7 +228,7 @@ export class WorldScene {
   private readonly bodies = new Map<number, Body>();
   private readonly telegraphs = new Map<number, THREE.Mesh>();
   /** Units the cursor may pick this frame, rebuilt as bodies are placed. */
-  private readonly hoverTargets: (HoverTarget & { screen: ScreenBox | null })[] = [];
+  private readonly hoverTargets: HoverTarget[] = [];
   private hovered: number | null = null;
   /** The ring under the body being attacked (spec 070). */
   private readonly targetRing: THREE.Mesh;
@@ -273,8 +273,6 @@ export class WorldScene {
   private readonly hit = new THREE.Vector3();
   private readonly terrainHits: THREE.Intersection[] = [];
   private readonly projected = new THREE.Vector3();
-  private readonly hoverBox = new THREE.Box3();
-  private readonly boxCorner = new THREE.Vector3();
 
   constructor(readonly canvas: HTMLCanvasElement) {
     canvas.style.width = '100%';
@@ -470,18 +468,7 @@ export class WorldScene {
     const rect = this.canvas.getBoundingClientRect();
     const point = cursorToNdc(cssX, cssY, rect.width || 1, rect.height || 1);
     this.raycaster.setFromCamera(this.ndc.set(point.x, point.y), this.camera);
-    // Where each body is *drawn*, which is what the forgiving half of the pick
-    // measures against (spec 071). Projected here rather than during the frame
-    // so that a click never depends on a hover having happened first: the very
-    // first click after the pointer enters the canvas arrives in the same task
-    // as the `mousemove`, with no frame in between to have prepared anything.
-    for (const target of this.hoverTargets) target.screen = this.screenBoxOf(target.object);
-    return pickHoveredUnit(
-      this.raycaster,
-      this.hoverTargets,
-      this.screenToWorld(cssX, cssY),
-      { x: cssX, y: cssY },
-    );
+    return pickHoveredUnit(this.raycaster, this.hoverTargets, this.screenToWorld(cssX, cssY));
   }
 
   /** Where the bodies drawn last frame are on screen, for the DOM overlay. */
@@ -566,7 +553,7 @@ export class WorldScene {
     this.scene.updateMatrixWorld();
     this.collectAnchors();
     // After the matrices are fresh: a pick made against last frame's camera
-    // lags the outline behind a moving view by a frame.
+    // lags the highlight behind a moving view by a frame.
     this.syncHover(frame);
 
     this.retro.set(this.controls.retro());
@@ -698,20 +685,23 @@ export class WorldScene {
       const dead = entity.maxHealth > 0 && entity.health <= 0;
       body.group.scale.setScalar(dead ? 0.6 : 1);
       // Cleared here and turned back on by `syncHover`, so exactly one body is
-      // ever outlined however many frames ago the cursor last moved.
-      body.outline?.setVisible(false);
+      // ever lit however many frames ago the cursor last moved.
+      body.highlight?.setHighlighted(false);
 
       // Only living units are pickable. A corpse is scenery, and a projectile
-      // is a few pixels of geometry crossing the frame -- outlining either is a
-      // cursor that catches on things nothing can be done about.
-      if (body.outline && !dead) {
+      // is a few pixels of geometry crossing the frame -- lighting either up is
+      // a cursor that catches on things nothing can be done about.
+      if (body.highlight && !dead) {
         this.hoverTargets.push({
           id: entity.id,
           object: body.group,
           position: { x, y },
           radius: look.radius,
-          // Filled in once the camera matrices are current; see `syncHover`.
-          screen: null,
+          // The volume the cursor may pick the unit by (spec 095): its footprint
+          // swept from the ground it is standing on to the top of its head. The
+          // headroom was measured for the health bar and is the same number.
+          base: ground,
+          height: body.headroom,
         });
       }
     }
@@ -728,20 +718,19 @@ export class WorldScene {
   }
 
   /**
-   * Outline the unit under the cursor, and ring the one being attacked
+   * Brighten the unit under the cursor, and ring the one being attacked
    * (spec 070).
    *
-   * `pickHoveredUnit` is spec 041's, unchanged: the model's meshes first, its
-   * ground footprint as a fallback, so a body is pickable both by pointing at
-   * it and by pointing at where it stands. Cosmetic in the strict sense -- what
-   * it returns decides which mesh is white, and the *view* decides whether a
-   * click acts on it.
+   * `pickHoveredUnit` answers with the unit whose body the cursor is on or
+   * whose ground it is standing on, and nothing looser (spec 095). Cosmetic in
+   * the strict sense -- what it returns decides which rig is lit, and the *view*
+   * decides whether a click acts on it.
    */
   private syncHover(frame: FrameInfo): void {
     const cursor = frame.cursor;
     this.hovered = cursor ? this.pickUnitAt(cursor.x, cursor.y) : null;
 
-    if (this.hovered !== null) this.bodies.get(this.hovered)?.outline?.setVisible(true);
+    if (this.hovered !== null) this.bodies.get(this.hovered)?.highlight?.setHighlighted(true);
 
     const target =
       frame.targetEntityId === null
@@ -844,50 +833,6 @@ export class WorldScene {
     this.aimShapeMesh.geometry = buildAimGeometry(shape);
   }
 
-  /**
-   * A body's drawn extent, in CSS pixels, or null for one with no geometry.
-   *
-   * The world-space box projected corner by corner rather than a projected
-   * centre with an assumed size: a rig is taller than it is wide and the
-   * isometric camera leans, so a circle around the feet is not the shape the
-   * player sees. Eight projections of a cached-geometry box, per body, per
-   * frame the cursor is on the canvas -- next to a cloth solve it is nothing.
-   *
-   * The outline shells are inside the box, which inflates it by up to their own
-   * scale. Left alone deliberately: this box is a target area, and an area that
-   * matches the *outlined* silhouette is if anything the more honest one, since
-   * the outline is what the player is being shown.
-   */
-  private screenBoxOf(object: THREE.Object3D): ScreenBox | null {
-    this.hoverBox.setFromObject(object);
-    if (this.hoverBox.isEmpty()) return null;
-
-    const width = this.canvas.clientWidth || 1;
-    const height = this.canvas.clientHeight || 1;
-    const { min, max } = this.hoverBox;
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-
-    for (let corner = 0; corner < 8; corner++) {
-      this.boxCorner.set(
-        (corner & 1) === 0 ? min.x : max.x,
-        (corner & 2) === 0 ? min.y : max.y,
-        (corner & 4) === 0 ? min.z : max.z,
-      );
-      this.boxCorner.project(this.camera);
-      const x = (this.boxCorner.x * 0.5 + 0.5) * width;
-      const y = (-this.boxCorner.y * 0.5 + 0.5) * height;
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
-    }
-
-    return { minX, minY, maxX, maxY };
-  }
-
   /** Hang the torch off the local player's rig; see {@link applyPlayerLights}. */
   private carryTorch(selfEntityId: number): void {
     const host = this.bodies.get(selfEntityId)?.group ?? null;
@@ -918,7 +863,7 @@ export class WorldScene {
         group: player.group,
         kind: 'player',
         player,
-        outline: attachOutline(player.group),
+        highlight: attachHighlight(player.group),
         // Read off the species rather than measured: the metrics are what the
         // skeleton is built from, so a taller animal moves its own bar.
         headroom:
@@ -938,7 +883,7 @@ export class WorldScene {
         group: mech.group,
         kind: 'monster',
         mech,
-        outline: attachOutline(mech.group),
+        highlight: attachHighlight(mech.group),
         headroom: DEFAULT_HEADROOM,
       };
     }
