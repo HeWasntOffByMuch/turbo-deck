@@ -294,3 +294,84 @@ transform; `activity`/`activityUntilTick` drive animation state on the wire.
 - **Flat vs arcing** — `arcHeight === 0` takes the first hostile body it
   overlaps; `arcHeight > 0` flies over everything and resolves only against the
   body it was fired at.
+
+---
+
+## spec 087 additions
+
+- **A shot's speed is no longer a table constant.** `launchProjectile` runs
+  `spec.speed` through `projectileSpeedFor(baseSpeed, stats)` in
+  `player/stats.ts`: `baseSpeed * clamp(attackSpeed) * PROJECTILE_SPEED_SCALE`,
+  where the scale is a deliberate global knob (0.3 as first written, 0.39 since
+  the flight was watched) and `attackSpeed` is the same
+  clamped weapon stat `attackIntervalTicks` divides by. One weapon speed, both
+  halves of what it means.
+- **`lifetimeTicks` is a reach, not a duration.** `projectileLifetimeTicks`
+  re-times it as `lifetimeTicks * spec.speed / actualSpeed`, so every row keeps
+  the exact distance the table describes for every shooter. Do not "simplify"
+  this back to a raw tick count: at any scale under 1 it expires a shot short of
+  its own range -- at 0.3 that was `bolt.arcane` at 372 units of its 700 and
+  `bolt.lob` at 360 of 520.
+- **`ProjectileSpec.look`** (`'orb' | 'arrow' | 'shuriken'`, default orb) is a
+  *picture*. Nothing under `src/server/sim/` reads it, and it rides no wire — a
+  projectile entity's `typeId` is already its ability id and the table is shared
+  code, so `appearanceOf` looks it up client-side. `PROTOCOL_VERSION` stays 9.
+- **Render**: `world/projectile-shape.ts` (arrow proportions, shuriken outline)
+  and `world/trail.ts` (distance-sampled ring buffer + tapered ribbon) are pure
+  and headlessly tested; `world/shot.ts` is the three.js `ShotRig` that builds
+  them, pitches the arrow from its drawn positions, spins the star, and owns the
+  streak. The streak is added to the *scene root*, not to the shot's group, and
+  must be removed and disposed on every body-teardown path in `scene.ts`.
+- A star is drawn at `SHURIKEN_DRAW_SCALE` (1.9x) its collision radius. That is
+  the one place a projectile's drawn extent and its hit radius part company on
+  purpose; `projectileHits` is untouched.
+- `npx tsx scripts/preview-shots.ts` → `.claude/screenshots/shots.png` flies the
+  real rig through a real `arcHeightAt` arc, with a software rasteriser that
+  blends vertex alpha so the streak's fade is actually visible.
+
+
+---
+
+## spec 089 additions
+
+- **`src/server/sim/ballistics.ts`** is where a shot's *shape* now lives, pure and
+  headlessly tested: `ballisticPeak(distance, maxRange, arc)`,
+  `launchAngle(...)`, `arcHeightAt(progress, peak)` (moved here out of
+  `abilities.ts`) and `shotHeightAt(progress, launchZ, targetZ, peak)`.
+- **The launch angle comes from the distance.** The shallow ballistic solution:
+  `peak = arc * (Rmax/4) * (1 - sqrt(1 - (d/Rmax)^2))`, which is exactly 45
+  degrees at `d == Rmax` and near enough flat at point-blank. `Rmax` is the
+  ability's own `range`, so a weapon states one number rather than two.
+- **`ProjectileSpec.arcHeight` is gone; `arc` (0..1) replaces it** -- a fraction
+  of the optimal arc, not a height. A height without a distance beside it is what
+  made the old 110-unit constant an 84-degree mortar at four paces.
+  `ranged.shot` and `bolt.lob` are 1, `bolt.seek` 0.35, the flat rows 0.
+- **The peak is committed at launch** into `ProjectileState.arcHeight`, from the
+  distance at launch, and never recomputed -- a tracking shot follows its mark
+  sideways but keeps the arc it left with.
+- **Height is a chord, not the heightfield.** `ProjectileState.originZ` is stamped
+  at the loose; `targetZ` is re-read each tick under the current aim; everything
+  between is `shotHeightAt`. Do not reintroduce a `terrain.heightAt(x, y)` in the
+  projectile pass -- that is the bug this replaced, and it made an arrow crossing
+  a dip dive into the dip. The `world.test.ts` case that flies the same shot over
+  flat and over ridged ground and asserts bit-identical heights is the guard.
+- `SHOT_LAUNCH_HEIGHT` (26) and `SHOT_IMPACT_HEIGHT` (18) lift both ends off the
+  floor. A "flat" shot is now level between them rather than at z = 0.
+- `npx tsx scripts/preview-arcs.ts` -> `.claude/screenshots/arcs.png` plots real
+  flights: distances stacked, and flat-vs-broken terrain overlaid.
+
+## Open bug: a withdrawal that does not withdraw (specs 090, 092)
+
+**Unfixed.** Reported repeatedly and still live: right-click the ground during a
+wind-up, the bar disappears, and the shot flies anyway. Read
+`specs/092-a-withdrawal-that-catches-up-with-its-own-commit.md` — its "Still
+open" section lists what has been ruled out by measurement and what has not been
+tried, so the next attempt does not re-derive four rounds of negatives.
+
+The short version: the client sends the cancel, latency is not the cause, the
+same-tick cast/cancel collision was real and is fixed, and the bar's clock is
+honest. No harness reproduces the report, which now points at something only the
+browser does. The cheapest untried checks are whether the right-click is even
+reaching the ground branch of `onMouseDown` (`scene.pickUnitAt` catching the
+target makes it an attack order, which deliberately does not withdraw) and a
+trace of `cancelCast`'s stamped seq against the tick the server dequeues it on.

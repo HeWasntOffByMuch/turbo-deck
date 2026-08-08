@@ -33,7 +33,7 @@ import { createWorldColliders } from '../src/sim/collision.js';
 import { FLAT_TERRAIN } from '../src/server/world/terrain.js';
 import { MemoryDataStore } from '../src/server/state/memory-store.js';
 import { DEFAULT_SPAWN } from '../src/server/player/player-manager.js';
-import { attackIntervalTicks, computeEffectiveStats } from '../src/server/player/stats.js';
+import { computeEffectiveStats } from '../src/server/player/stats.js';
 import { EMPTY_EQUIPMENT } from '../src/server/state/types.js';
 import type { PersistedPlayer } from '../src/server/state/types.js';
 
@@ -180,11 +180,11 @@ async function main(): Promise<void> {
   // A basic attack's cadence comes from the caster's stats, never from the
   // ability's own `cooldownTicks` -- `cooldownTicksFor` says so. So this, not
   // the table, is the number that decides whether two casts touch.
-  const interval = ability.basicAttack ? attackIntervalTicks(stats) : ability.cooldownTicks;
+  const interval = ability.basicAttack ? stats.attackDelayTicks : ability.cooldownTicks;
   console.log(
     `# ${ability.name} (${ability.id}): windup ${ability.windupTicks}t, ` +
-      `interval ${interval}t (attackSpeed ${stats.attackSpeed.toFixed(2)}, ` +
-      `base ${stats.attackCooldownTicks}t), delay ${delayTicks}t`,
+      `interval ${interval}t (attack delay ${stats.attackDelayTicks}t), ` +
+      `delay ${delayTicks}t`,
   );
   if (interval <= ability.windupTicks) {
     console.log(

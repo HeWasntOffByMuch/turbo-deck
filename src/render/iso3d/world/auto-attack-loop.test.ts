@@ -26,6 +26,7 @@ import { ZoneManager } from '../../../server/world/zone-manager.js';
 import { EntityKindValue, type ServerWorldState } from '../../../server/sim/types.js';
 import { createWorldState, spawnEntity, step, type StepContext } from '../../../server/sim/world.js';
 import { autoAttack } from './target.js';
+import { facesAim } from '../../../server/sim/abilities.js';
 import { moveIntent } from './intent.js';
 
 const RECORD: PersistedPlayer = {
@@ -134,6 +135,13 @@ function fight(mainHand: string | null, monsterId: string, startX: number, ticks
     finalDistance = Math.hypot(target.position.x - me.position.x, target.position.y - me.position.y);
 
     const decision = autoAttack({
+      // Driven against the server's own entity here, so its heading *is* the
+      // authoritative one (spec 090).
+      aligned: facesAim(
+        { x: me.position.x, y: me.position.y },
+        me.facing,
+        { x: target.position.x, y: target.position.y },
+      ),
       self: { x: me.position.x, y: me.position.y },
       selfHealth: me.health,
       target: {

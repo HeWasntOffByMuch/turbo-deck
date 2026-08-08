@@ -55,6 +55,16 @@ export const PALETTE = {
   torchCore: 0xffe9a8,
   magicOrb: 0x9fd8ff,
   magicCore: 0xe8f6ff,
+  // Thrown weapons (spec 087). A conjured shot stays the pale magic core above;
+  // these are objects, so they are wood, steel and a dyed feather -- the point
+  // being that an arrow crossing the frame reads as a *thing* and not as light.
+  arrowShaft: 0x9a7442,
+  arrowHead: 0xd3d9df,
+  arrowFletch: 0xbc4a3c,
+  shurikenSteel: 0xb4bfca,
+  // The streak a shuriken leaves. Cooler and paler than the plate, so the trace
+  // reads as air rather than as more metal.
+  shurikenTrace: 0xdce8f4,
   // Warning red marking an unwalkable terrain footprint (toggleable overlay).
   blocked: 0xd6483f,
   // The arena's walls (spec 037): grey stone, with a lighter lit cap on top.

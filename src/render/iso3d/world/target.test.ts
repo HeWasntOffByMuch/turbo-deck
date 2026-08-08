@@ -30,6 +30,10 @@ function ask(overrides: Partial<AutoAttackInput> = {}): ReturnType<typeof autoAt
     selfHealth: 100,
     target: TARGET,
     range: RANGE,
+    // Facing it, unless a case says otherwise: alignment is a separate question
+    // from reach and cooldown, and every case written before spec 090 was about
+    // one of those.
+    aligned: true,
     rooted: false,
     pending: false,
     readyAtTick: 0,
@@ -324,5 +328,52 @@ describe('auto-attacking a named target (spec 070)', () => {
       expect(decision.attack).toBe(false);
       expect(decision.chaseTo).toBeNull();
     }
+  });
+});
+
+/**
+ * Asking to swing only once the body is facing the mark (spec 090).
+ *
+ * Reported as two wind-up bars: one filling to about a fifth and vanishing, then
+ * a second running to the end. It is one cast, drawn twice. The client turns its
+ * own body a tick or two ahead of the server, so with a mark off to the side its
+ * local heading reads as aligned while the server is still coming round; the
+ * client predicts `Windup` and fills a bar, the server starts the cast in
+ * `Turning`, and `castBar` -- correctly -- draws a turning cast as empty. The
+ * fill is thrown away and starts again when the real wind-up begins.
+ *
+ * Fixed at the source: do not ask until the *replica* says the body is facing
+ * it. Both sides then agree on the phase, and there is one bar.
+ */
+describe('a swing waits to be facing its mark (spec 090)', () => {
+  /** Well inside the standoff, so reach and cooldown are both satisfied. */
+  const NEAR = { ...TARGET, x: RANGE * 0.5 };
+
+  it('holds while the body is still coming round, then asks', () => {
+    // In reach and off cooldown -- the only thing missing is the heading.
+    expect(ask({ target: NEAR, aligned: false, readyAtTick: 0, tick: 100 }).attack).toBe(false);
+    expect(ask({ target: NEAR, aligned: true, readyAtTick: 0, tick: 100 }).attack).toBe(true);
+  });
+
+  it('does not confuse waiting to turn with letting the order go', () => {
+    // The order stands and nothing is dropped: the body is turning into it.
+    const turning = ask({ target: NEAR, aligned: false, readyAtTick: 0, tick: 100 });
+    expect(turning.drop).toBe(false);
+    // And in reach there is no chase to give back either, so the body simply
+    // stands and turns rather than shuffling toward a mark it is already at.
+    expect(turning.chaseTo).toBeNull();
+  });
+
+  it('still chases an out-of-reach mark it is not yet facing', () => {
+    // Alignment gates the *swing*, not the walk -- a body that had to be facing
+    // its target before it would approach one would never close the gap.
+    const far = ask({
+      aligned: false,
+      target: { ...TARGET, x: RANGE * 6 },
+      readyAtTick: 0,
+      tick: 100,
+    });
+    expect(far.chaseTo).not.toBeNull();
+    expect(far.attack).toBe(false);
   });
 });

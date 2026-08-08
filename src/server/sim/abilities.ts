@@ -25,7 +25,8 @@ import {
   totalCastTicks,
   type AbilityDefinition,
 } from '../data/abilities.js';
-import { applyArmor, attackIntervalTicks } from '../player/stats.js';
+import { applyArmor, projectileLifetimeTicks, projectileSpeedFor } from '../player/stats.js';
+import { ballisticPeak, SHOT_LAUNCH_HEIGHT } from './ballistics.js';
 import { isInCone } from './combat.js';
 import {
   ActivityValue,
@@ -47,7 +48,13 @@ export type CastRejection =
   | 'dead'
   | 'outOfRange'
   /** A `targeting: 'unit'` ability asked for with nothing named (spec 080). */
-  | 'noTarget';
+  | 'noTarget'
+  /**
+   * Asked for on a tick that also carries a withdrawal, so it never began
+   * (spec 092). Not a refusal of the request on its merits -- it is the answer
+   * that keeps the reply stream paired when the two arrive together.
+   */
+  | 'withdrawn';
 
 export interface CastAttempt {
   readonly abilityId: string;
@@ -70,7 +77,7 @@ export interface CastAttempt {
 /**
  * How long before this caster may use this ability again (spec 070).
  *
- * A basic attack asks the caster's stats -- that is what `attackSpeed` is for,
+ * A basic attack asks the caster's stats -- that is what `attackDelayTicks` is,
  * and it is why two units with the same weapon swing at different rates.
  * Everything else asks the table: a heavy blow is slow because it is slow.
  */
@@ -79,7 +86,8 @@ export function cooldownTicksFor(
   entity: Pick<ServerEntity, 'stats'>,
 ): number {
   if (!ability.basicAttack) return ability.cooldownTicks;
-  return attackIntervalTicks(entity.stats);
+  // The delay is the stat, resolved already (spec 088): nothing to divide here.
+  return entity.stats.attackDelayTicks;
 }
 
 export type CastStartResult =
@@ -88,12 +96,17 @@ export type CastStartResult =
 
 /**
  * Whether `entity` may begin `attempt` this tick, and the entity that results
- * if so. The cost is spent and the cooldown started *at commit*, not at release
- * -- otherwise a cast cancelled at the last moment would be free, which makes
- * cancelling strictly better than not casting.
+ * if so. The cost is spent *at commit*, not at release -- otherwise a cast
+ * cancelled at the last moment would be free, which makes cancelling strictly
+ * better than not casting. Cancelling refunds it (see {@link cancelCast}), so
+ * the cost of a withdrawn cast is exactly the time spent, which is the intended
+ * trade.
  *
- * Cancelling refunds both (see {@link cancelCast}), so the cost of a withdrawn
- * cast is exactly the time spent, which is the intended trade.
+ * The cooldown is *not* started here (spec 091). It is the price of a blow that
+ * went off, so it is stamped at the release instead -- see `advanceCast`. That
+ * is the same trade read the other way round: a wind-up withdrawn from costs
+ * the time it took and nothing else, and the button does not grey out for a
+ * swing that never happened.
  */
 export function startCast(
   entity: ServerEntity,
@@ -137,7 +150,15 @@ export function startCast(
   // face what it is swinging at has not begun the swing -- the wind-up clock
   // starts at alignment, and until then `releaseTick` is provisional and gets
   // re-stamped by `advanceCast`.
-  const turning = !facingAim(entity, aim);
+  // Generous at the commit, and only at the commit (spec 090): see
+  // `commitAlignEps`. `advanceCast` still holds the wind-up back at the strict
+  // tolerance, so a body that genuinely has to come round still pays for it.
+  const turning = !facesAim(
+    entity.position,
+    entity.facing,
+    aim,
+    commitAlignEps(entity.stats.turnRate, SERVER_TICK_RATE),
+  );
   const phase = turning ? CastPhase.Turning : CastPhase.Windup;
   const releaseTick = tick + ability.windupTicks;
   const endTick = tick + totalCastTicks(ability);
@@ -162,7 +183,12 @@ export function startCast(
       ...entity,
       cast,
       resource: entity.resource - ability.cost,
-      cooldowns: { ...entity.cooldowns, [ability.id]: tick + cooldownTicksFor(ability, entity) },
+      // The cooldown is *not* stamped here (spec 091). It starts when the blow
+      // goes off, so a wind-up withdrawn from costs the time it took and
+      // nothing else -- and the button does not grey out for a swing that never
+      // happened. Spec 062 stamped it at the commit to stop a last-moment
+      // cancel being free; the refund in `cancelCast` was already doing that
+      // job, so all the early stamp bought was a cooldown to hand back.
       activity: ActivityValue.Casting,
       activityUntilTick: endTick,
       // Aim is captured here in `cast.targetX/Y` and never re-read, so turning
@@ -198,18 +224,63 @@ export function startCast(
  * turn -- this is slack against float drift, not a tolerance anybody plays
  * against. Half a degree.
  */
-const TURN_ALIGN_EPS = (0.5 * Math.PI) / 180;
+/** Half a degree. Closer than this is facing it, as far as starting a blow goes. */
+export const TURN_ALIGN_EPS = (0.5 * Math.PI) / 180;
+
+/**
+ * Whether a body at `from`, pointing `facing`, counts as facing `aim`.
+ *
+ * Exported in this shape -- loose numbers rather than a `ServerEntity` -- so the
+ * client can ask the same question of a *replica* (spec 090). It has to be the
+ * same predicate: the client decides when to ask for a swing, and the server
+ * decides whether that swing starts in `Turning` or in `Windup`. Two spellings
+ * of "is it facing yet" is how a bar comes to fill for a wind-up that had not
+ * started.
+ */
+export function facesAim(
+  from: { readonly x: number; readonly y: number },
+  facing: number,
+  aim: { readonly x: number; readonly y: number },
+  tolerance: number = TURN_ALIGN_EPS,
+): boolean {
+  const dx = aim.x - from.x;
+  const dy = aim.y - from.y;
+  // A self cast, or an aim on top of the caster, has no direction to face.
+  if (Math.hypot(dx, dy) < 1e-6) return true;
+  let delta = (Math.atan2(dy, dx) - facing) % (Math.PI * 2);
+  if (delta > Math.PI) delta -= Math.PI * 2;
+  if (delta <= -Math.PI) delta += Math.PI * 2;
+  return Math.abs(delta) <= Math.max(TURN_ALIGN_EPS, tolerance);
+}
+
+/**
+ * Ticks of turning that still counts as "already facing it", at the commit
+ * (spec 090).
+ *
+ * Half a degree is the right tolerance for asking *has the turn finished*, and
+ * the wrong one for asking *should this cast start in `Turning`*. The client
+ * turns its own body a tick or two ahead of the server and asks to swing when
+ * it is aligned; judged at half a degree the server is still short, starts the
+ * cast in `Turning`, and the client -- which predicted `Windup` -- fills a bar
+ * for a wind-up that has not begun and then empties it. Judged at a couple of
+ * ticks of the body's own turn rate, the two agree, because a couple of ticks is
+ * exactly how far apart their clocks are.
+ *
+ * It costs nothing: the body finishes coming round inside the first ticks of the
+ * wind-up, and where the blow lands was captured at the commit and never re-read
+ * from the heading (spec 065).
+ */
+export const COMMIT_ALIGN_TICKS = 3;
+
+/** That tolerance in radians, for a body that turns this fast. */
+export function commitAlignEps(turnRateDegrees: number, tickRate: number): number {
+  const perTick = (Math.abs(turnRateDegrees) * Math.PI) / 180 / Math.max(1, tickRate);
+  return Math.max(TURN_ALIGN_EPS, perTick * COMMIT_ALIGN_TICKS);
+}
 
 /** Whether `entity` is already pointing at `aim` closely enough to swing. */
 function facingAim(entity: ServerEntity, aim: { readonly x: number; readonly y: number }): boolean {
-  const dx = aim.x - entity.position.x;
-  const dy = aim.y - entity.position.y;
-  // A self cast, or an aim on top of the caster, has no direction to face.
-  if (Math.hypot(dx, dy) < 1e-6) return true;
-  let delta = (Math.atan2(dy, dx) - entity.facing) % (Math.PI * 2);
-  if (delta > Math.PI) delta -= Math.PI * 2;
-  if (delta <= -Math.PI) delta += Math.PI * 2;
-  return Math.abs(delta) <= TURN_ALIGN_EPS;
+  return facesAim(entity.position, entity.facing, aim);
 }
 
 /** A self cast aims at itself; everything else aims where it was told. */
@@ -414,6 +485,10 @@ export function advanceCast(
       ...caster,
       cast: isChannel ? { ...cast, phase: CastPhase.Channel, nextPulseTick: tick } : cast,
       activity: ActivityValue.Casting,
+      // The blow is going off, so now it costs a cooldown (spec 091). This is
+      // the one place it is stamped: a cast that was withdrawn from never
+      // reaches here, which is the whole point.
+      cooldowns: { ...caster.cooldowns, [ability.id]: tick + cooldownTicksFor(ability, caster) },
     };
 
     if (!isChannel) {
@@ -702,11 +777,23 @@ function launchProjectile(
     targetX: caster.position.x + dirX * distance,
     targetY: caster.position.y + dirY * distance,
     targetEntityId: cast.targetEntityId,
-    speed: spec.speed / SERVER_TICK_RATE,
-    arcHeight: spec.arcHeight,
+    // The row says how fast this shot is, and nothing else does (spec 088):
+    // how soon the next one may be loosed is the weapon's business, how fast
+    // this one flies is the shot's. The lifetime moves with the global scale so
+    // the reach does not -- a slower shot takes longer to cover the same
+    // ground, it does not stop short of it.
+    speed: projectileSpeedFor(spec.speed) / SERVER_TICK_RATE,
+    // The launch angle is the distance's, and it is settled here (spec 089):
+    // the shallow ballistic solution for how far this shot has to go, which is
+    // 45 degrees only at the weapon's own maximum range and near enough flat
+    // at arm's length. A row states a *fraction* of that arc, not a height,
+    // because a height without a distance beside it is what made the old
+    // constant a mortar at four paces.
+    arcHeight: ballisticPeak(distance, ability.range, spec.arc),
+    originZ: caster.position.z + SHOT_LAUNCH_HEIGHT,
     totalDistance: Math.max(1e-6, distance),
     travelled: 0,
-    expiresAtTick: tick + spec.lifetimeTicks,
+    expiresAtTick: tick + projectileLifetimeTicks(spec),
   };
 
   return {
@@ -784,17 +871,6 @@ export function applyDamage(
       cast: killed ? null : target.cast,
     },
   };
-}
-
-/**
- * Height above the ground line at a point in a projectile's flight. A parabola
- * peaking at the midpoint -- pure, and identical on client and server, so the
- * client's interpolation between 20Hz deltas draws the same arc the server flew.
- */
-export function arcHeightAt(progress: number, arcHeight: number): number {
-  if (arcHeight <= 0) return 0;
-  const t = Math.min(1, Math.max(0, progress));
-  return 4 * arcHeight * t * (1 - t);
 }
 
 /** Whether a projectile entity may hit `target`. Owners never hit themselves. */

@@ -62,6 +62,15 @@ export interface AutoAttackInput {
   readonly pending: boolean;
   /** The tick the basic attack is ready again, from the server's own table. */
   readonly readyAtTick: number;
+  /**
+   * Whether the body is facing the mark, as the *server* last reported it
+   * (spec 090).
+   *
+   * The same predicate the sim starts a cast with (`facesAim`), asked of the
+   * replica rather than of the local prediction: the client leads the turn, so
+   * its own heading says "aligned" while the server is still coming round.
+   */
+  readonly aligned: boolean;
   /** The client's estimate of the server's tick. */
   readonly tick: number;
 }
@@ -158,7 +167,16 @@ export function autoAttack(input: AutoAttackInput): AutoAttack {
     // Asking across that window is not wrong so much as futile: the server
     // refuses the repeats, and every refusal is a notice on the HUD and a
     // cooldown guess to take back again.
-    attack: !input.pending && input.tick >= input.readyAtTick,
+    // ...and only once the body is actually facing it (spec 090).
+    //
+    // Judged on the *replica's* heading, never the local one. The client turns
+    // its own body a tick or two ahead of the server, so asking while only the
+    // client is aligned commits a cast the server starts in `Turning` -- and the
+    // client, having predicted `Windup`, fills a bar for a wind-up that has not
+    // begun, then empties it when the truth arrives. One bar to 20% and gone,
+    // then the real one. Asking a tick later costs nothing, because the turn is
+    // happening during the cooldown anyway.
+    attack: !input.pending && input.tick >= input.readyAtTick && input.aligned,
     drop: false,
   };
 }

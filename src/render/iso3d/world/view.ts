@@ -42,6 +42,7 @@ import { StreamedMap } from '../../../server/client/streamed-map.js';
 import type { ViewHandle } from '../view-handle.js';
 import { createWeatherControls } from '../weather-controls.js';
 import { turnToward } from '../../../server/sim/movement.js';
+import { facesAim } from '../../../server/sim/abilities.js';
 import { createHud, HOTBAR } from './hud.js';
 import { appearanceOf } from './appearance.js';
 import { moveIntent, MOVE_KEYS, RoutePlanner } from './intent.js';
@@ -433,6 +434,15 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // same button.
     targetId = null;
     destination = scene.screenToWorld(cursor.x, cursor.y);
+    // And it withdraws from a blow, explicitly, rather than by implication
+    // (spec 090). Spec 079's rule is that *asking to move* withdraws, and the
+    // server reads that off the input's move vector -- but `moveIntent` yields
+    // no vector at all for a destination inside `ARRIVE_EPS`, and while rooted
+    // it asks for the heading of the *aim* rather than of the click. So an order
+    // to step aside could turn the body into its own swing and then land it.
+    // Whether an order happens to produce a vector this tick is not something a
+    // player can see; the order is the thing they gave.
+    client.cancelCast();
   };
   const onContextMenu = (event: Event): void => event.preventDefault();
   const onBlur = (): void => held.clear();
@@ -472,6 +482,20 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * order, a cancel -- because those are all the player saying they would like
    * to be doing something else.
    */
+  /**
+   * Where the standing attack order's mark is, or null (spec 090).
+   *
+   * The body faces this while waiting for the swing to come off cooldown, so the
+   * turn happens during the wait rather than after it. Read off the replica each
+   * tick rather than remembered, because a mark that walks takes its bearing
+   * with it.
+   */
+  function aimedMark(view: ReturnType<typeof client.view>): { x: number; y: number } | null {
+    if (targetId === null) return null;
+    const entity = view.entities.find((candidate) => candidate.id === targetId);
+    return entity ? { x: entity.x, y: entity.y } : null;
+  }
+
   function driveAutoAttack(view: ReturnType<typeof client.view>, me: { x: number; y: number }): void {
     if (targetId === null) return;
     const entity = view.entities.find((candidate) => candidate.id === targetId);
@@ -486,9 +510,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // (spec 080). It used to be read here and left out of the request, which
     // made the client's own gate stricter than the server's by exactly a body.
     const targetRadius = entity ? appearanceOf(entity).radius : 0;
+    const replica = view.entities.find((e) => e.id === view.selfEntityId);
     const decision = autoAttack({
       self: me,
-      selfHealth: view.entities.find((e) => e.id === view.selfEntityId)?.health ?? 1,
+      selfHealth: replica?.health ?? 1,
       target: entity
         ? { id: entity.id, x: entity.x, y: entity.y, radius: targetRadius, health: entity.health }
         : null,
@@ -500,6 +525,15 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // which has no cast behind it and so shows up in neither of those.
       pending: view.awaitingCast,
       readyAtTick: view.cooldowns[swingId] ?? 0,
+      // Judged on the heading the *player is looking at* -- the local one, the
+      // one the body is drawn with -- so that "off cooldown and fully turned"
+      // means the wind-up starts now (spec 090). Judging it off the replica
+      // instead was correct about the server and a fifth of a second late,
+      // which reads as the wind-up being delayed after the turn has visibly
+      // finished. What makes asking here safe is the other end of the same fix:
+      // `startCast` counts a body within a few ticks of turning as facing its
+      // aim, so the server -- which is those few ticks behind -- agrees.
+      aligned: !entity ? true : facesAim(me, facing, { x: entity.x, y: entity.y }),
       tick: view.estimatedTick,
     });
 
@@ -642,6 +676,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // server has confirmed and one we have only asked for (spec 067) -- and it
       // can end without us asking, because being hit interrupts one.
       castAim: view.selfRoot,
+      // Face the mark while the swing is still on cooldown (spec 090). Without
+      // it the body stood facing wherever it happened to be looking for up to a
+      // whole attack delay, and only turned once the blow committed -- so the
+      // turn was paid for *after* the wait instead of during it.
+      targetAim: aimedMark(view),
     });
     if (intent.arrived) {
       destination = null;
