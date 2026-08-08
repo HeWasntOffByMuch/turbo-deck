@@ -6,6 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { createHmacAdminVerifier, signToken } from './admin/auth.js';
+import { abilityById } from './data/abilities.js';
 import { BROADCAST_EVERY_N_TICKS, PROTOCOL_VERSION, SERVER_TICK_RATE } from './config.js';
 import { encodeAdminRequest, decodeAdminReply, type AdminReply } from './net/admin-messages.js';
 import { decodeServerMessage, encodeClientMessage, type ServerMessage } from './net/messages.js';
@@ -370,8 +371,11 @@ describe('combat over the wire', () => {
         afterInputSeq: 0,
       }),
     );
-    // Run out the wind-up: nothing lands on the tick the button is pressed.
-    for (let i = 0; i < 30; i++) game.tick();
+    // Run out the wind-up: nothing lands on the tick the button is pressed. Its
+    // length is the table's to say and got longer in spec 093, so it is asked
+    // for rather than assumed.
+    const swing = abilityById('melee.slash');
+    for (let i = 0; i < (swing?.windupTicks ?? 0) + 30; i++) game.tick();
 
     const result = client.of(ServerMessageType.CombatResult)[0];
     expect(result).toBeDefined();

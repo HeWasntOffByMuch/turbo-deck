@@ -734,12 +734,29 @@ describe('self abilities', () => {
  * still halfway round.
  */
 describe('turning before the wind-up', () => {
-  function committedFacingAway(abilityId: string): {
+  /**
+   * A body committed to `abilityId` while facing the other way.
+   *
+   * `turnRate` is an override rather than a constant because one test below
+   * needs a turn that outlasts the wind-up, and how long a wind-up is moves
+   * (spec 093): a body that turns at its ordinary 690 deg/s comes round in 16
+   * ticks, so pinning "still turning after the release tick has passed" against
+   * the table's numbers is pinning it against a coincidence.
+   */
+  function committedFacingAway(
+    abilityId: string,
+    turnRate?: number,
+  ): {
     state: ReturnType<typeof createWorldState>;
     playerId: number;
   } {
     let state = createWorldState(1);
-    const player = withPlayer(state, 600, 450);
+    const player = withPlayer(
+      state,
+      600,
+      450,
+      turnRate === undefined ? STATS : { ...STATS, turnRate },
+    );
     state = player.state;
     state = withDummy(state, 640, 450).state;
     // Face due west, and swing due east: a half turn before anything happens.
@@ -852,7 +869,9 @@ describe('turning before the wind-up', () => {
   it('is still cancellable after turning for longer than the wind-up', () => {
     const ability = abilityById('melee.slash');
     if (!ability) throw new Error('no melee.slash');
-    const { state, playerId } = committedFacingAway('melee.slash');
+    // Slow enough that the half turn outlasts the wind-up whatever the table
+    // says it is: 180 degrees at 60 deg/s is three seconds.
+    const { state, playerId } = committedFacingAway('melee.slash', 60);
 
     const wellPast = run(state, ability.windupTicks + 2);
     expect(wellPast.state.entities.get(playerId)?.cast?.phase).toBe(CastPhase.Turning);
@@ -1481,7 +1500,10 @@ describe('a named target (spec 070)', () => {
       targetId: player.id,
     });
 
-    const result = run(spawned.state, SERVER_TICK_RATE);
+    // A second to close and turn, plus the swing's own wind-up -- asked rather
+    // than written down, since how long a wind-up is moves (spec 093).
+    const swing = abilityById(definition.stats.basicAttackId);
+    const result = run(spawned.state, SERVER_TICK_RATE + (swing?.windupTicks ?? 0));
     const struck = hits(result.events).filter((hit) => hit.attackerId === spawned.entity.id);
     expect(struck.length).toBeGreaterThan(0);
     expect(struck.every((hit) => hit.targetId === player.id)).toBe(true);
