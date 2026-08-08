@@ -3,11 +3,16 @@
  * numbers, the hotbar and a status line.
  *
  * DOM rather than geometry, and positioned by projecting each body to a canvas
- * pixel (`WorldScene.screenAnchors`). The scene renders into a low-resolution
- * buffer and puts the result through the dither pass (spec 038), which is
- * exactly right for the world and exactly wrong for a number you are supposed to
- * read -- text through that filter comes out as chewed pixels. Floating it over
- * the canvas keeps the world chunky and the readout crisp.
+ * pixel (`WorldScene.screenAnchors`) -- except the damage numbers, which are
+ * projected from a world point of their own (spec 094), because they belong to
+ * the ground a blow landed on rather than to a body that may be walking away
+ * from it or gone.
+ *
+ * The scene renders into a low-resolution buffer and puts the result through
+ * the dither pass (spec 038), which is exactly right for the world and exactly
+ * wrong for a number you are supposed to read -- text through that filter comes
+ * out as chewed pixels. Floating it over the canvas keeps the world chunky and
+ * the readout crisp.
  *
  * Everything here is a function of what the server said. The bars are drawn from
  * replicated health and from `CastState`; the hotbar's lit/unlit is whether a
@@ -30,29 +35,10 @@ import { aimGesture } from './aim.js';
 import { appearanceOf, displayName } from './appearance.js';
 import { pixelTextSvg } from './pixel-font.js';
 import { isCoarsePointer } from '../fullscreen.js';
+import { DamagePopups, type Projector, type WorldAnchor } from './damage-popup.js';
 
 /** The slot being aimed (spec 080). The aim indicator's colour, in the DOM. */
 const AIM_HIGHLIGHT = '#7fd4ff';
-
-/** How long a damage number floats, in frames. */
-const NUMBER_LIFE = 48;
-/** How far one rises over its life, in CSS pixels. */
-const NUMBER_RISE = 46;
-/**
- * Sideways lanes for numbers landing on the same body in quick succession.
- *
- * Without this they stack on one anchor, and once each carries a hard outline
- * the pile reads as a solid dark block with a couple of legible digits at the
- * bottom -- which is exactly what it looked like. Cycling lanes fans them out so
- * three hits in half a second are three numbers.
- */
-const NUMBER_LANES: readonly { readonly x: number; readonly y: number }[] = [
-  { x: 0, y: 0 },
-  { x: -46, y: -12 },
-  { x: 46, y: -12 },
-  { x: -24, y: -26 },
-  { x: 24, y: -26 },
-];
 
 /** Which abilities the hotbar offers, in order. Keys 1..n. */
 export const HOTBAR: readonly string[] = [
@@ -89,22 +75,6 @@ export const WEAPON_SWITCH: readonly {
   return [...byAttack.values()];
 })();
 
-interface FloatingNumber {
-  readonly entityId: number;
-  readonly text: string;
-  readonly crit: boolean;
-  readonly heal: boolean;
-  age: number;
-  /**
-   * Offset from the body's anchor. Wider than a number is, so two in the same
-   * lane cycle never touch, and stepped upward so a burst separates on the frame
-   * it lands rather than after it has drifted.
-   */
-  readonly offsetX: number;
-  readonly offsetY: number;
-  readonly element: HTMLElement;
-}
-
 interface Bar {
   readonly root: HTMLElement;
   readonly health: HTMLElement;
@@ -128,8 +98,16 @@ export interface HudHandle {
      */
     aiming: { readonly abilityId: string | null; readonly pending: boolean },
   ): void;
-  /** A hit landed on `entityId`. Presentation of something already resolved. */
-  addDamage(entityId: number, damage: number, crit: boolean): void;
+  /**
+   * A hit landed on `entityId`, at the world point `at` (spec 094).
+   * Presentation of something already resolved.
+   *
+   * The point is taken once and kept: the number marks the ground the blow
+   * landed on, so it neither walks off with a victim that survived nor follows
+   * the camera once one that did not has despawned. `entityId` is only there to
+   * fan a burst out into lanes.
+   */
+  addDamage(entityId: number, at: WorldAnchor, damage: number, crit: boolean): void;
   /** The server refused a cast, and said why. */
   notice(text: string): void;
   /**
@@ -160,7 +138,13 @@ export interface HudHandle {
   onEquip(handler: (itemId: string) => void): void;
 }
 
-export function createHud(): HudHandle {
+/**
+ * @param project How to turn a world point into a canvas pixel --
+ * `WorldScene.projectPoint`. Taken once at construction rather than per frame,
+ * because it is the same function every frame; it reads the camera as it stands
+ * when it is called, which is why `update` must run after the scene has drawn.
+ */
+export function createHud(project: Projector): HudHandle {
   const root = document.createElement('div');
   root.style.cssText = 'position:absolute;inset:0;pointer-events:none;overflow:hidden;';
 
@@ -257,9 +241,9 @@ export function createHud(): HudHandle {
   });
 
   const bars = new Map<number, Bar>();
-  const numbers: FloatingNumber[] = [];
-  /** How many numbers each body has been given, for lane assignment. */
-  const numberCount = new Map<number, number>();
+  /** The numbers' whole life lives in the pure field; this holds their elements. */
+  const popups = new DamagePopups();
+  const popupElements = new Map<number, HTMLElement>();
   let notice = '';
   let noticeAge = 999;
 
@@ -294,6 +278,11 @@ export function createHud(): HudHandle {
     return made;
   }
 
+  function dropPopup(id: number): void {
+    popupElements.get(id)?.remove();
+    popupElements.delete(id);
+  }
+
   function update(
     view: ClientView,
     anchors: readonly ScreenAnchor[],
@@ -304,7 +293,6 @@ export function createHud(): HudHandle {
   ): void {
     const byId = new Map(view.entities.map((entity) => [entity.id, entity]));
     const casts = new Map(view.casts.map((cast) => [cast.entityId, cast]));
-    const anchorById = new Map(anchors.map((anchor) => [anchor.id, anchor]));
     const live = new Set<number>();
 
     for (const anchor of anchors) {
@@ -348,24 +336,18 @@ export function createHud(): HudHandle {
       bars.delete(id);
     }
 
-    // Damage numbers ride the body they belong to until it despawns, then hold
-    // where they were rather than snapping to the origin.
-    for (let i = numbers.length - 1; i >= 0; i--) {
-      const number = numbers[i];
-      if (!number) continue;
-      number.age += 1;
-      const life = 1 - number.age / NUMBER_LIFE;
-      if (life <= 0) {
-        number.element.remove();
-        numbers.splice(i, 1);
-        continue;
-      }
-      const anchor = anchorById.get(number.entityId);
-      if (anchor) {
-        number.element.style.left = `${anchor.x + number.offsetX}px`;
-        number.element.style.top = `${anchor.y + number.offsetY - (1 - life) * NUMBER_RISE}px`;
-      }
-      number.element.style.opacity = life.toFixed(3);
+    // Damage numbers stay on the ground the blow landed on (spec 094): the
+    // field holds a world point each and re-projects it, so nothing here needs
+    // the body -- or needs it to still exist.
+    const step = popups.step(project);
+    for (const id of step.expired) dropPopup(id);
+    for (const placement of step.live) {
+      const element = popupElements.get(placement.id);
+      if (!element) continue;
+      element.style.display = placement.onScreen ? 'block' : 'none';
+      element.style.left = `${placement.left}px`;
+      element.style.top = `${placement.top}px`;
+      element.style.opacity = placement.opacity.toFixed(3);
     }
 
     noticeAge += 1;
@@ -452,6 +434,11 @@ export function createHud(): HudHandle {
             'position:absolute;transform:translate(-50%,-100%);white-space:nowrap;' +
             'font:11px ui-monospace,Menlo,monospace;padding:2px 6px;border-radius:5px;' +
             'background:rgba(10,14,20,.72);border:1px solid rgba(224,96,92,.7);';
+          // Which spawner this is, for the same reason a bar says which body it
+          // belongs to: `scripts/preview-world.ts` needs a handful of *fixed*
+          // world points on screen to measure a damage number against, and a
+          // spawner is the only thing in the overlay that never moves.
+          element.dataset['spawner'] = mark.id;
           spawnerLayer.append(element);
           spawnerMarks.set(mark.id, element);
         }
@@ -468,11 +455,14 @@ export function createHud(): HudHandle {
         spawnerMarks.delete(id);
       }
     },
-    addDamage(entityId, damage, crit) {
+    addDamage(entityId, at, damage, crit) {
       const heal = damage < 0;
       const text = (heal ? '+' : '') + Math.round(Math.abs(damage)).toString();
       const element = document.createElement('div');
-      element.style.cssText = 'position:absolute;transform:translate(-50%,-100%);';
+      // Hidden until the first `update` places it: a number is spawned from a
+      // message, which is not a frame, so until one has been drawn there is no
+      // camera to ask and the only honest position is nowhere.
+      element.style.cssText = 'position:absolute;transform:translate(-50%,-100%);display:none;';
       // The pixel font (spec 065) rather than the browser's UI face: these float
       // over a posterized, low-resolution world, and system text over it read
       // like a debug overlay that had been left switched on.
@@ -482,21 +472,16 @@ export function createHud(): HudHandle {
         outline: '#0a0d14',
       });
       root.append(element);
-      const index = numberCount.get(entityId) ?? 0;
-      numberCount.set(entityId, index + 1);
-      const lane = NUMBER_LANES[index % NUMBER_LANES.length] ?? { x: 0, y: 0 };
-      numbers.push({
-        entityId,
-        text,
-        crit,
-        heal,
-        age: 0,
-        offsetX: lane.x,
-        offsetY: lane.y,
-        element,
-      });
-      // A long fight should not grow the DOM without bound.
-      while (numbers.length > 40) numbers.shift()?.element.remove();
+      const added = popups.add(entityId, at);
+      // Stamped so one number can be followed across frames from outside, the
+      // way `data-entity` lets a bar be. `preview-world.ts` reads it to check
+      // that a number pans with the ground rather than with the camera, which
+      // is a fact only a real browser with a real camera can settle.
+      element.dataset['damageId'] = String(added.id);
+      popupElements.set(added.id, element);
+      // The field caps how many float at once; whatever it dropped to make room
+      // is an element nobody will place again.
+      for (const id of added.expired) dropPopup(id);
     },
     notice(text) {
       notice = text;
