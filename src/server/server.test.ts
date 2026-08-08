@@ -399,7 +399,7 @@ describe('a cast commits on the input it was asked for', () => {
     const entityId = client.of(ServerMessageType.Welcome)[0]?.entityId ?? -1;
 
     // Five inputs queued, so the stream is well behind what has arrived.
-    for (let seq = 1; seq <= 5; seq++) await client.input(seq, { moveX: 1 });
+    for (let seq = 1; seq <= 5; seq++) await client.input(seq);
     // ...and a request made after the fifth of them.
     await game.receive(
       client.connection,
@@ -421,6 +421,48 @@ describe('a cast commits on the input it was asked for', () => {
     // The fifth applies input 5, which is what the request was stamped to.
     game.tick();
     expect(game.world.entities.get(entityId)?.cast?.abilityId).toBe('melee.slash');
+  });
+
+  /**
+   * The same, with the stamped frame asking to walk (spec 093).
+   *
+   * A step and a commit may not ride one input -- `step` reads that pair as a
+   * withdrawal and refuses the commit -- so the frame goes out on its own and
+   * the request follows a tick behind it, the same way a commit yields to a
+   * cancel it arrived after (spec 092). It must *not* be refused: this walking
+   * frame was sent before the press, which is what the end of every chase looks
+   * like, and the player has stopped by the time they ask.
+   */
+  it('lets the walking frame it was stamped after go out alone, and commits behind it', async () => {
+    const game = server();
+    const client = new Client(game);
+    await client.hello('alice');
+    const entityId = client.of(ServerMessageType.Welcome)[0]?.entityId ?? -1;
+
+    for (let seq = 1; seq <= 5; seq++) await client.input(seq, { moveX: 1 });
+    await game.receive(
+      client.connection,
+      encodeClientMessage({
+        type: ClientMessageType.UseAbility,
+        abilityId: 'melee.slash',
+        targetEntityId: 0,
+        targetX: 900,
+        targetY: 500,
+        afterInputSeq: 5,
+      }),
+    );
+
+    // Inputs 1-5 apply, the fifth of them carrying the walk and nothing else.
+    for (let i = 0; i < 5; i++) {
+      game.tick();
+      expect(game.world.entities.get(entityId)?.cast).toBeNull();
+    }
+    // And the commit lands on the tick after it, unrefused.
+    game.tick();
+    expect(game.world.entities.get(entityId)?.cast?.abilityId).toBe('melee.slash');
+    expect(
+      client.of(ServerMessageType.CastRejected).map((message) => message.reason),
+    ).toEqual([]);
   });
 
   it('still fires for a client that sends no movement at all', async () => {

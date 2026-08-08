@@ -311,6 +311,80 @@ describe('wind-up', () => {
     expect(both.state.entities.get(player.id)?.cooldowns['melee.heavy']).toBeUndefined();
   });
 
+  /**
+   * Spec 093, and the same rule read through spec 079's other withdrawal.
+   *
+   * Asking to *move* is how a body calls a blow off; the movement pass settles
+   * that before the cast pass runs, so on the tick a commit rides the same input
+   * there is nothing on the body to withdraw from -- and the cast pass used to
+   * put a fresh wind-up on a body that had asked, that very tick, to be
+   * somewhere else. It looked harmless because the next input carrying a vector
+   * called it off again; when none followed, the blow landed.
+   *
+   * Reachable from the shipped client with an ordinary gesture: `castNow` clears
+   * the move order and the attack order before asking, but not the held keys, so
+   * a hotbar press while walking is exactly this input.
+   */
+  it('lets a step outrank a commit that shares its tick, and answers it', () => {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const before = state.entities.get(player.id)?.position.x ?? 0;
+
+    const both = run(state, 1, {
+      0: [
+        input(player.id, {
+          moveX: -1,
+          moveY: 0,
+          castAbilityId: 'melee.heavy',
+          castTargetX: 700,
+          castTargetY: 450,
+        }),
+      ],
+    });
+
+    // The step happened...
+    expect(both.state.entities.get(player.id)?.position.x ?? 0).toBeLessThan(before);
+    // ...and nothing was committed to, so there is nothing left to go off.
+    expect(both.state.entities.get(player.id)?.cast ?? null).toBeNull();
+    // Answered, not dropped, for spec 080's pairing.
+    expect(
+      both.events.filter((event) => event.kind === 'castRejected' && event.reason === 'withdrawn'),
+    ).toHaveLength(1);
+    // And charged for neither: a withdrawal costs the time it took, and this one
+    // took none.
+    expect(both.state.entities.get(player.id)?.cooldowns['melee.heavy']).toBeUndefined();
+    expect(both.state.entities.get(player.id)?.resource ?? 0).toBe(STATS.maxResource);
+  });
+
+  /**
+   * The other half of it, and the reason this is an ordering rule rather than
+   * "movement always wins": an input that asks for nothing but the blow commits
+   * to it exactly as it always did.
+   */
+  it('starts a commit that shares its tick with no step at all', () => {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+
+    const commit = run(state, 1, {
+      0: [
+        input(player.id, {
+          moveX: 0,
+          moveY: 0,
+          castAbilityId: 'melee.heavy',
+          castTargetX: 700,
+          castTargetY: 450,
+        }),
+      ],
+    });
+
+    expect(commit.state.entities.get(player.id)?.cast).not.toBeNull();
+    expect(
+      commit.events.filter((event) => event.kind === 'castRejected'),
+    ).toHaveLength(0);
+  });
+
   it('answers a commit that shares its tick with a cancel for a cast in progress', () => {
     let state = createWorldState(1);
     const player = withPlayer(state, 600, 450);

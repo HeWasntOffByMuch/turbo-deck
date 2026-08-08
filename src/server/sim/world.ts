@@ -435,7 +435,16 @@ export function step(
     // `server.ts` never builds such an input -- it delivers the two in arrival
     // order, a tick apart, which is the only place that knows which the player
     // asked for first. This is the rule for everyone who calls `step` directly.
-    if (intent?.cancelCast) {
+    //
+    // Asking to *walk* is the same withdrawal (spec 079) and gets the same
+    // answer (spec 093). The movement pass above has already taken any cast off
+    // this body, which is exactly what hid the gap: by the time the cast pass
+    // runs there is nothing left to withdraw from, so a commit riding that input
+    // sailed through and put a fresh wind-up on a body that had asked, on that
+    // very tick, to be somewhere else. It survived only until the next input
+    // carrying a vector called it off -- and when none followed, the blow landed.
+    const withdrawing = intent?.cancelCast === true || asksToMove(intent);
+    if (intent && withdrawing) {
       const cancelled = cancelCast(caster, tick, CastEndReason.Cancelled);
       if (cancelled.cancelled) {
         working.set(casterId, cancelled.entity);
@@ -709,7 +718,7 @@ export function mergeInputs(older: ServerInput, newer: ServerInput): ServerInput
   };
 }
 
-function asksToMove(intent: ServerInput | null): boolean {
+export function asksToMove(intent: Pick<ServerInput, 'moveX' | 'moveY'> | null): boolean {
   if (!intent) return false;
   return Math.hypot(intent.moveX, intent.moveY) > 1e-6;
 }
