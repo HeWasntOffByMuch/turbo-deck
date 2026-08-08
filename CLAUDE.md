@@ -181,7 +181,11 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  pixel-font.ts (a 5x7 glyph table, since nothing may be fetched)
                  and touch.ts (taps and pinches, spec 093 -- bounded by distance
                  and never by time, because an event's stamp measures the
-                 renderer's load rather than the finger)
+                 renderer's load rather than the finger), hud-layout.ts and
+                 icons.ts (how big the HUD is on a finger and what the weapon
+                 switch draws, spec 094 -- the sizes are a sum, so "eight buttons
+                 still fit across a phone" fails in Node rather than in a
+                 screenshot)
                  are pure and tested headlessly; scene.ts, shot.ts, hud.ts and
                  view.ts are the three.js/DOM half. `npx tsx scripts/preview-world.ts`
                  photographs the real page into .claude/screenshots/world-*.png,
