@@ -117,17 +117,19 @@ export interface EffectiveStats {
   readonly attackDamage: number;
   readonly attackRange: number;
   /**
-   * The *base* interval between basic attacks, in ticks, before speed. Flat
-   * modifiers land here; everything proportional lands on {@link attackSpeed},
-   * so the two never double-count.
+   * Ticks that must pass after a basic attack before the next may begin
+   * (spec 088).
+   *
+   * The whole answer, and the only one: nothing divides it and nothing else is
+   * consulted. It replaced a base cadence, a multiplier over that base, and a
+   * helper that divided one by the other at every call site -- three names for
+   * one number, which is why asking "when can this body swing again" used to
+   * have no field to read.
+   *
+   * Modifiers are resolved on the way in, in `computeEffectiveStats`: a weapon
+   * that says `attackSpeedPct` still means *percent faster*, and shortens this.
    */
-  readonly attackCooldownTicks: number;
-  /**
-   * Attacks per second, as a multiplier on that base cadence (spec 070). 1 is
-   * unmodified. The one number that decides how often a unit -- player or
-   * monster -- can swing; see `attackIntervalTicks`.
-   */
-  readonly attackSpeed: number;
+  readonly attackDelayTicks: number;
   /** Fraction of incoming damage removed, 0..MAX_ARMOR. */
   readonly armor: number;
   /** Multiplier on ability damage. */

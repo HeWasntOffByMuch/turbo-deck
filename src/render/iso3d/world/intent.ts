@@ -100,6 +100,22 @@ export interface IntentInput {
    * withdraws from the cast on the server, so it has to steer here too.
    */
   readonly castAim: Point | null;
+  /**
+   * The mark of a standing attack order, or null (spec 090).
+   *
+   * Faced while *waiting* to swing at it. With a target in reach and the attack
+   * still on cooldown, `autoAttack` asks for nothing at all -- no cast, no chase
+   * -- and without this the body keeps whatever heading it had until the blow
+   * finally commits. The turn then happens *after* the wait rather than during
+   * it: click, stand facing the wrong way for up to a whole attack delay, turn,
+   * and only then wind up. At spec 088's 1.2s that is most of two seconds, and
+   * nearly all of it dead.
+   *
+   * Outranked by {@link castAim}, because a committed blow's aim was captured at
+   * the commit and is the authority on where the body is pointing, and by any
+   * direction, because walking decides its own heading.
+   */
+  readonly targetAim?: Point | null;
 }
 
 export function moveIntent(input: IntentInput): MoveIntent {
@@ -126,6 +142,18 @@ export function moveIntent(input: IntentInput): MoveIntent {
   if (input.castAim && !direction) {
     const dx = input.castAim.x - input.self.x;
     const dy = input.castAim.y - input.self.y;
+    const facing = Math.hypot(dx, dy) < 1e-6 ? input.facing : Math.atan2(dy, dx);
+    return { moveX: 0, moveY: 0, facing, arrived };
+  }
+
+  // Standing over a mark, waiting for the swing to come off cooldown. Turning
+  // now is free -- the wait is dead time -- and it means the wind-up starts
+  // already aligned rather than paying for the turn once the clock has run
+  // (spec 090). The server turns the body from this at its own rate, so it is
+  // the same turn every other player sees.
+  if (!direction && input.targetAim) {
+    const dx = input.targetAim.x - input.self.x;
+    const dy = input.targetAim.y - input.self.y;
     const facing = Math.hypot(dx, dy) < 1e-6 ? input.facing : Math.atan2(dy, dx);
     return { moveX: 0, moveY: 0, facing, arrived };
   }

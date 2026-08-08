@@ -25,6 +25,30 @@ describe('appearanceOf', () => {
     }
   });
 
+  it('draws a thrown weapon as one and a conjured shot as an orb', () => {
+    expect(appearanceOf({ kind: EntityKind.Projectile, typeId: 'ranged.shot' }).look).toBe('arrow');
+    expect(appearanceOf({ kind: EntityKind.Projectile, typeId: 'ranged.star' }).look).toBe(
+      'shuriken',
+    );
+    for (const id of ['bolt.arcane', 'bolt.lob', 'bolt.seek']) {
+      expect(appearanceOf({ kind: EntityKind.Projectile, typeId: id }).look, id).toBe('orb');
+    }
+    // A row that says nothing draws as what every shot drew before spec 087.
+    expect(appearanceOf({ kind: EntityKind.Projectile, typeId: 'nothing.like.this' }).look).toBe(
+      'orb',
+    );
+  });
+
+  it('gives a look only to things that are shots', () => {
+    for (const kind of [EntityKind.Player, EntityKind.Monster, EntityKind.Prop]) {
+      expect(appearanceOf({ kind, typeId: 'grazer' }).look).toBeNull();
+    }
+    for (const ability of ALL_ABILITIES) {
+      if (!ability.projectile) continue;
+      expect(appearanceOf({ kind: EntityKind.Projectile, typeId: ability.id }).look).not.toBeNull();
+    }
+  });
+
   it('draws players as players', () => {
     const look = appearanceOf({ kind: EntityKind.Player, typeId: '' });
     expect(look.rig).toBe('player');

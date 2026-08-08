@@ -162,10 +162,11 @@ export function mayCast(
       endTick: cast.endTick + shift,
     },
     cost: ability.cost,
-    // The same rule the sim stamps with, asked of the same stats (spec 070) --
-    // a basic attack's cooldown is the caster's own cadence, so a client that
-    // read the table would grey the button out for the wrong length of time.
-    readyAtTick: stampAt + cooldownTicksFor(ability, entity),
+    // From the *release*, not the commit (spec 091): the cooldown starts when
+    // the blow goes off, so a wind-up that is withdrawn from costs none of it.
+    // Predicting it from the commit would grey the button out for a swing that
+    // may never happen, and then have to hand it back.
+    readyAtTick: stampAt + ability.windupTicks + cooldownTicksFor(ability, entity),
   };
 }
 

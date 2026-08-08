@@ -32,6 +32,7 @@ import {
   type SpawnerStatus,
 } from '../net/messages.js';
 import {
+  CastEndReasonValue,
   CastPhaseValue,
   ChunkDeniedReason,
   ClientMessageType,
@@ -366,8 +367,19 @@ export class GameClient {
    * server's own value the moment it lands. Predicting a cooldown decides
    * nothing -- the server refuses or does not -- it only decides whether this
    * client expects to be rooted.
+   *
+   * `fromTick` is when the server will stamp it: the release, not the press
+   * (spec 091). The guess is made at the press because that is when there is
+   * something to guess, but it is not *shown* until the blow has gone off --
+   * a sweep that starts during the wind-up would be drawing a cooldown the
+   * withdrawal is about to make untrue. {@link mirror} takes it from the press
+   * regardless, because that half asks "may I start another one", where being
+   * early is the safe direction.
    */
-  private readonly predictedCooldowns = new Map<string, number>();
+  private readonly predictedCooldowns = new Map<
+    string,
+    { readonly readyAtTick: number; readonly fromTick: number }
+  >();
   /**
    * The cast this client has committed to locally and is drawing (spec 069).
    *
@@ -583,7 +595,10 @@ export class GameClient {
     if (decision?.ok) {
       stampedCooldown = decision.readyAtTick;
       spentResource = decision.cost;
-      this.predictedCooldowns.set(abilityId, stampedCooldown);
+      this.predictedCooldowns.set(abilityId, {
+        readyAtTick: stampedCooldown,
+        fromTick: decision.cast.releaseTick,
+      });
       // Stamped against the estimated clock rather than the lookahead one: the
       // bar the player is about to watch is drawn against `estimatedTick`, and a
       // cast stamped a round trip into the future would start empty and stay
@@ -651,8 +666,8 @@ export class GameClient {
     const self = this.welcome ? this.world.get(this.welcome.entityId) : null;
     if (!self || !this.stats || !this.prediction) return null;
     const cooldowns: Record<string, number> = { ...this.cooldowns };
-    for (const [abilityId, readyAtTick] of this.predictedCooldowns) {
-      cooldowns[abilityId] = Math.max(cooldowns[abilityId] ?? 0, readyAtTick);
+    for (const [abilityId, guess] of this.predictedCooldowns) {
+      cooldowns[abilityId] = Math.max(cooldowns[abilityId] ?? 0, guess.readyAtTick);
     }
     return {
       position: this.prediction.position,
@@ -704,8 +719,16 @@ export class GameClient {
    * withdrawn standing still until `CastEnded` came back a round trip later. The
    * server's own message still arrives and is still what makes it final; this
    * only stops the wait from being visible.
+   *
+   * The guessed cooldown goes with it (spec 091). Since the server stamps at the
+   * release, a wind-up that is withdrawn from is never announced at all, so
+   * there is no later message for the ordinary retirement rule to catch: a guess
+   * left behind here would grey the button out until its own number expired, for
+   * a swing that never happened.
    */
   private withdrawLocally(): void {
+    const live = this.predictedCast ?? (this.welcome ? this.casts.get(this.welcome.entityId) : null);
+    if (live) this.predictedCooldowns.delete(live.abilityId);
     this.predictedCast = null;
     this.predictedCastRequestId = -1;
     if (this.welcome) this.casts.delete(this.welcome.entityId);
@@ -1017,8 +1040,9 @@ export class GameClient {
   private visibleCooldowns(): Readonly<Record<string, number>> {
     if (this.predictedCooldowns.size === 0) return this.cooldowns;
     const merged: Record<string, number> = { ...this.cooldowns };
-    for (const [abilityId, readyAtTick] of this.predictedCooldowns) {
-      merged[abilityId] = Math.max(merged[abilityId] ?? 0, readyAtTick);
+    for (const [abilityId, guess] of this.predictedCooldowns) {
+      if (this.estimated < guess.fromTick) continue;
+      merged[abilityId] = Math.max(merged[abilityId] ?? 0, guess.readyAtTick);
     }
     return merged;
   }
@@ -1186,7 +1210,16 @@ export class GameClient {
         this.casts.delete(message.entityId);
         // Deliberately does not retire a request: a cast ending is not an answer
         // to anything, and a request made *during* it is still waiting for one.
-        if (message.entityId === this.welcome?.entityId) this.requestedAbilityId = null;
+        if (message.entityId === this.welcome?.entityId) {
+          this.requestedAbilityId = null;
+          // A blow that did not go off never stamps a cooldown (spec 091), so
+          // the guess made at the press has nothing to be retired by. This is
+          // the half `withdrawLocally` cannot cover: an interrupt is the
+          // server's decision, and the first this client hears of it is here.
+          if (message.reason !== CastEndReasonValue.Released) {
+            this.predictedCooldowns.delete(message.abilityId);
+          }
+        }
         for (const listener of this.castEndListeners) listener(message);
         break;
 
@@ -1203,7 +1236,7 @@ export class GameClient {
           if (
             refused?.stampedCooldown !== null &&
             refused !== null &&
-            this.predictedCooldowns.get(refused.abilityId) === refused.stampedCooldown
+            this.predictedCooldowns.get(refused.abilityId)?.readyAtTick === refused.stampedCooldown
           ) {
             this.predictedCooldowns.delete(refused.abilityId);
           }
@@ -1238,7 +1271,7 @@ export class GameClient {
         // server was always going to refuse.
         for (const entry of message.entries) {
           const predicted = this.predictedCooldowns.get(entry.abilityId);
-          if (predicted !== undefined && entry.readyAtTick >= predicted) {
+          if (predicted !== undefined && entry.readyAtTick >= predicted.readyAtTick) {
             this.predictedCooldowns.delete(entry.abilityId);
           }
         }

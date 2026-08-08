@@ -578,8 +578,7 @@ function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
     .f32(stats.turnRate)
     .f32(stats.attackDamage)
     .f32(stats.attackRange)
-    .u16(stats.attackCooldownTicks)
-    .f32(stats.attackSpeed)
+    .u16(stats.attackDelayTicks)
     .f32(stats.armor)
     .f32(stats.spellPower)
     .f32(stats.critChance)
@@ -595,8 +594,7 @@ function readStats(reader: BufferReader): EffectiveStats {
     turnRate: reader.f32(),
     attackDamage: reader.f32(),
     attackRange: reader.f32(),
-    attackCooldownTicks: reader.u16(),
-    attackSpeed: reader.f32(),
+    attackDelayTicks: reader.u16(),
     armor: reader.f32(),
     spellPower: reader.f32(),
     critChance: reader.f32(),

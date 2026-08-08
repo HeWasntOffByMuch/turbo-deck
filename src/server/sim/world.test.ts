@@ -5,10 +5,15 @@ import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE, type LiveConfig } from '../confi
 import { abilityById } from '../data/abilities.js';
 import { monsterById } from '../data/monsters.js';
 import { CorrectionReason } from '../net/protocol.js';
-import { computeEffectiveStats } from '../player/stats.js';
+import {
+  computeEffectiveStats,
+  projectileLifetimeTicks,
+  projectileSpeedFor,
+} from '../player/stats.js';
 import { EMPTY_EQUIPMENT, type EffectiveStats, type PersistedPlayer } from '../state/types.js';
 import { chunkKeyOf } from '../world/chunks.js';
 import { FLAT_TERRAIN, type TerrainSampler } from '../world/terrain.js';
+import { SHOT_LAUNCH_HEIGHT } from './ballistics.js';
 import { ZoneManager } from '../world/zone-manager.js';
 import {
   EntityKindValue,
@@ -19,6 +24,7 @@ import {
 import {
   createWorldState,
   LEASH_RADIUS,
+  mergeInputs,
   replaceEntity,
   spawnEntity,
   step,
@@ -890,6 +896,91 @@ describe('monsters find their way round', () => {
  * is measured in ticks between the release and the hit rather than asserted
  * against a schedule.
  */
+describe('two inputs in one tick (spec 090)', () => {
+  function quiet(overrides: Partial<StepContext> = {}): StepContext {
+    return context({
+      config: { ...DEFAULT_LIVE_CONFIG, spawnRateMultiplier: 0 } as LiveConfig,
+      ...overrides,
+    });
+  }
+
+  /**
+   * A cancel that shares a tick with a later input still calls the blow off.
+   *
+   * Last-write-wins dropped it: `cancelCast` is an edge, true on exactly the
+   * frame the key went down, so the very next frame -- which asks for nothing --
+   * used to erase it and the shot flew. The controls either side are what make
+   * this test mean something: without a cancel the shot flies, with one alone it
+   * does not, and the two-input case has to match the second.
+   */
+  function fire(frameAtTick2: readonly ServerInput[]): boolean {
+    let state = createWorldState(3);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const mark = withMonster(state, 'dummy', 800, 450);
+    state = mark.state;
+    const ctx = quiet({ activeChunks: activeAround({ x: 600, y: 450 }, { x: 800, y: 450 }) });
+
+    const shot = abilityById('ranged.shot');
+    if (!shot) throw new Error('no ranged.shot');
+
+    state = step(
+      state,
+      [
+        input(player.id, 1, {
+          castAbilityId: 'ranged.shot',
+          castTargetX: 800,
+          castTargetY: 450,
+          castTargetEntityId: mark.id,
+          predictedX: 600,
+          predictedY: 450,
+        }),
+      ],
+      ctx,
+    ).state;
+    expect(state.entities.get(player.id)?.cast).not.toBeNull();
+
+    let flew = false;
+    for (let i = 0; i < shot.windupTicks + 40; i++) {
+      const frame = i === 2 ? frameAtTick2 : [input(player.id, 10 + i)];
+      state = step(state, frame, ctx).state;
+      if ([...state.entities.values()].some((entity) => entity.projectile)) flew = true;
+    }
+    return flew;
+  }
+
+  it('keeps a cancel that a later input in the same tick used to erase', () => {
+    const id = 1;
+    // Controls: the rule works when the cancel is the only input that tick.
+    expect(fire([input(id, 2)]), 'no cancel asked for').toBe(true);
+    expect(fire([input(id, 2, { cancelCast: true })]), 'cancel alone').toBe(false);
+    // The bug: the same cancel, with an ordinary idle frame behind it.
+    expect(fire([input(id, 2, { cancelCast: true }), input(id, 3)]), 'cancel then idle').toBe(false);
+    // And in either order, since a merge must not depend on arrival order.
+    expect(fire([input(id, 2), input(id, 3, { cancelCast: true })]), 'idle then cancel').toBe(false);
+  });
+
+  it('merges the continuous fields forward and the edges across', () => {
+    const older = input(7, 1, { moveX: 1, facing: 0.5, cancelCast: true, castAbilityId: 'melee.slash', castTargetX: 10 });
+    const newer = input(7, 2, { moveX: 0, facing: 1.25 });
+    const merged = mergeInputs(older, newer);
+
+    // Where the body is heading is the newest word on it.
+    expect(merged.moveX).toBe(0);
+    expect(merged.facing).toBe(1.25);
+    expect(merged.seq).toBe(2);
+    // The edges are not undone by a frame that simply did not repeat them.
+    expect(merged.cancelCast).toBe(true);
+    expect(merged.castAbilityId).toBe('melee.slash');
+    expect(merged.castTargetX).toBe(10);
+
+    // A later request replaces an earlier one outright, aim included.
+    const recast = mergeInputs(older, input(7, 3, { castAbilityId: 'melee.heavy', castTargetX: 99 }));
+    expect(recast.castAbilityId).toBe('melee.heavy');
+    expect(recast.castTargetX).toBe(99);
+  });
+});
+
 describe('shots that travel', () => {
   /**
    * The ambient spawner off, because these tests count `hit` events and a
@@ -926,6 +1017,27 @@ describe('shots that travel', () => {
             }),
           ]
         : [];
+  }
+
+  /**
+   * How far a shot of `abilityId` covers in one tick, in this player's hands.
+   *
+   * Asked rather than written down, because since spec 087 a shot's speed is
+   * the table's number through a global scale. A test that hard-codes "slower
+   * than the arrow" as a number is a test that silently stops meaning that the
+   * next time the scale moves.
+   */
+  function flightPerTick(abilityId: string): number {
+    const spec = abilityById(abilityId)?.projectile;
+    if (!spec) throw new Error(`no projectile on ${abilityId}`);
+    return projectileSpeedFor(spec.speed) / SERVER_TICK_RATE;
+  }
+
+  /** Ticks that shot stays in the air before it expires, for the same reason. */
+  function flightTicks(abilityId: string): number {
+    const spec = abilityById(abilityId)?.projectile;
+    if (!spec) throw new Error(`no projectile on ${abilityId}`);
+    return projectileLifetimeTicks(spec);
   }
 
   it('spawns nothing before the release, and a projectile on it', () => {
@@ -974,7 +1086,7 @@ describe('shots that travel', () => {
 
       const shoot = shootAt('ranged.shot', player.id, mark.id, 900, 450);
       let current = state;
-      for (let i = 0; i < 200; i++) {
+      for (let i = 0; i < flightTicks('ranged.shot'); i++) {
         const result = step(current, shoot(i), ctx);
         current = result.state;
         if (result.events.some((event) => event.kind === 'hit')) return current.tick;
@@ -984,11 +1096,42 @@ describe('shots that travel', () => {
     }
 
     const standing = fight(0);
-    // Slower than the arrow, so it is caught -- but not before it has run.
-    const running = fight(8);
+    // Half the arrow's speed, so it is caught -- but not before it has run.
+    const running = fight(flightPerTick('ranged.shot') / 2);
     expect(standing).not.toBeNull();
     expect(running).not.toBeNull();
     expect(running ?? 0).toBeGreaterThan(standing ?? 0);
+  });
+
+  it('lands on the same tick however fast the weapon attacks (spec 088)', () => {
+    /** The tick a shot from a body with this attack delay arrives on. */
+    function arrival(attackDelayTicks: number): number | null {
+      let state = createWorldState(4);
+      const player = withPlayer(state, 600, 450, { ...PLAYER_STATS, attackDelayTicks });
+      state = player.state;
+      const mark = withMonster(state, 'dummy', 900, 450);
+      state = mark.state;
+      const ctx = quiet({
+        activeChunks: activeAround({ x: 600, y: 450 }, { x: 900, y: 450 }),
+      });
+
+      const shoot = shootAt('ranged.shot', player.id, mark.id, 900, 450);
+      let current = state;
+      for (let i = 0; i < flightTicks('ranged.shot'); i++) {
+        const result = step(current, shoot(i), ctx);
+        current = result.state;
+        if (result.events.some((event) => event.kind === 'hit')) return current.tick;
+      }
+      return null;
+    }
+
+    // A body that may attack every twelve ticks and one that must wait five
+    // seconds loose the same arrow: the delay governs when the *next* one may
+    // be thrown, and nothing about the one already in the air.
+    const quick = arrival(12);
+    const slow = arrival(300);
+    expect(quick).not.toBeNull();
+    expect(quick).toBe(slow);
   });
 
   it('lets a target outrun a shot entirely, and the shot expires', () => {
@@ -1004,12 +1147,13 @@ describe('shots that travel', () => {
     const shoot = shootAt('ranged.star', player.id, mark.id, 900, 450);
     let current = state;
     let hits = 0;
-    for (let i = 0; i < 200; i++) {
+    // Long enough for the star to have burned out, whatever its speed is.
+    for (let i = 0; i < flightTicks('ranged.star') + SERVER_TICK_RATE; i++) {
       const result = step(current, shoot(i), ctx);
       current = result.state;
       hits += result.events.filter((event) => event.kind === 'hit').length;
-      // Faster than the star, so it is never caught.
-      current = nudge(current, mark.id, 30);
+      // Twice the star's speed, so it is never caught.
+      current = nudge(current, mark.id, flightPerTick('ranged.star') * 2);
     }
     expect(hits).toBe(0);
     expect([...current.entities.values()].some((e) => e.projectile !== null)).toBe(false);
@@ -1087,13 +1231,143 @@ describe('shots that travel', () => {
     expect(flat.struck).toBe(3);
   });
 
+  it('flies the same arc over broken ground as over flat (spec 089)', () => {
+    /**
+     * Every height a shot passes through, over this terrain.
+     *
+     * The decisive test for spec 089: before it, height was the heightfield
+     * *under the shot* plus a bump, so the two runs below differed wildly and
+     * an arrow crossing a dip dived into the dip. Now terrain is read at the
+     * launch and at the aim and nowhere between, so the ground the shot passes
+     * over cannot reach it.
+     */
+    function heights(terrain: TerrainSampler): number[] {
+      let state = createWorldState(4);
+      const player = withPlayer(state, 600, 450);
+      state = player.state;
+      const mark = withMonster(state, 'dummy', 900, 450);
+      state = mark.state;
+      const ctx = quiet({
+        terrain,
+        activeChunks: activeAround({ x: 600, y: 450 }, { x: 900, y: 450 }),
+      });
+
+      const shoot = shootAt('ranged.shot', player.id, mark.id, 900, 450);
+      let current = state;
+      const seen: number[] = [];
+      for (let i = 0; i < flightTicks('ranged.shot'); i++) {
+        const result = step(current, shoot(i), ctx);
+        current = result.state;
+        for (const entity of current.entities.values()) {
+          if (entity.projectile) seen.push(entity.position.z);
+        }
+        if (result.events.some((event) => event.kind === 'hit')) break;
+      }
+      return seen;
+    }
+
+    // A ridge and a trench *between* the archer and the mark, violent enough
+    // that riding it would be unmistakable -- and flat at both ends, because
+    // the endpoints are exactly the two places terrain is still allowed to
+    // matter. It is the ground in between that must not be able to reach the
+    // shot.
+    const broken: TerrainSampler = {
+      heightAt: (x) => (x > 660 && x < 840 ? Math.sin((x - 660) / 30) * 160 : 0),
+    };
+    const flat = heights(FLAT_TERRAIN);
+    const rough = heights(broken);
+
+    // The flight happened at all, and it is an arc rather than a flat line.
+    expect(flat.length).toBeGreaterThan(4);
+    expect(Math.max(...flat)).toBeGreaterThan(Math.min(...flat) + 20);
+    // And the ground under it changed nothing whatsoever.
+    expect(rough).toEqual(flat);
+  });
+
+  it('meets a target standing above it, and one standing below (spec 089)', () => {
+    /** The last height the shot was seen at, flying at a mark on this ground. */
+    function arrivalHeight(markHeight: number): number {
+      // Flat under the archer, `markHeight` from halfway out: the shot has to
+      // finish on the mark's ground rather than on its own.
+      const terrain: TerrainSampler = { heightAt: (x) => (x > 750 ? markHeight : 0) };
+      let state = createWorldState(4);
+      const player = withPlayer(state, 600, 450);
+      state = player.state;
+      const mark = withMonster(state, 'dummy', 900, 450);
+      state = mark.state;
+      const ctx = quiet({
+        terrain,
+        activeChunks: activeAround({ x: 600, y: 450 }, { x: 900, y: 450 }),
+      });
+
+      const shoot = shootAt('ranged.shot', player.id, mark.id, 900, 450);
+      let current = state;
+      let last = 0;
+      for (let i = 0; i < flightTicks('ranged.shot'); i++) {
+        const result = step(current, shoot(i), ctx);
+        current = result.state;
+        for (const entity of current.entities.values()) {
+          if (entity.projectile) last = entity.position.z;
+        }
+        if (result.events.some((event) => event.kind === 'hit')) break;
+      }
+      return last;
+    }
+
+    // Uphill finishes high and downhill finishes low, tracking the ground the
+    // *target* stands on rather than the ground under the flight.
+    expect(arrivalHeight(200)).toBeGreaterThan(arrivalHeight(0) + 100);
+    expect(arrivalHeight(-200)).toBeLessThan(arrivalHeight(0) - 100);
+  });
+
+  it('throws a near shot flat and a far one high (spec 089)', () => {
+    /** The highest the shot got, flying at a mark this far away. */
+    function apex(distance: number): number {
+      let state = createWorldState(4);
+      const player = withPlayer(state, 600, 450);
+      state = player.state;
+      const mark = withMonster(state, 'dummy', 600 + distance, 450);
+      state = mark.state;
+      const ctx = quiet({
+        activeChunks: activeAround(
+          { x: 600, y: 450 },
+          { x: 600 + distance, y: 450 },
+          { x: 600 + distance / 2, y: 450 },
+        ),
+      });
+
+      const shoot = shootAt('ranged.shot', player.id, mark.id, 600 + distance, 450);
+      let current = state;
+      let high = 0;
+      for (let i = 0; i < flightTicks('ranged.shot'); i++) {
+        const result = step(current, shoot(i), ctx);
+        current = result.state;
+        for (const entity of current.entities.values()) {
+          if (entity.projectile) high = Math.max(high, entity.position.z);
+        }
+        if (result.events.some((event) => event.kind === 'hit')) break;
+      }
+      return high;
+    }
+
+    const shot = abilityById('ranged.shot');
+    if (!shot) throw new Error('no ranged.shot');
+    const near = apex(60);
+    const far = apex(shot.range - 20);
+
+    // The near shot barely rises above the height it was loosed at; the far one
+    // goes up like a lob. Before spec 089 both peaked at the same 110.
+    expect(near).toBeLessThan(SHOT_LAUNCH_HEIGHT + 10);
+    expect(far).toBeGreaterThan(near * 3);
+  });
+
   it('does not care how high a shot flew, only that it arrived', () => {
-    // The same shot at the same speed, differing only in `arcHeight`, reaches
-    // the same body on the same tick.
+    // The same shot at the same speed, differing only in how high it flew,
+    // reaches the same body on the same tick.
     const flat = { ...(abilityById('ranged.star') ?? { projectile: null }) };
     const lobbed = { ...(abilityById('ranged.shot') ?? { projectile: null }) };
-    expect(flat.projectile?.arcHeight).toBe(0);
-    expect(lobbed.projectile?.arcHeight ?? 0).toBeGreaterThan(0);
+    expect(flat.projectile?.arc).toBe(0);
+    expect(lobbed.projectile?.arc ?? 0).toBeGreaterThan(0);
 
     function arrivalOf(arcHeight: number): number | null {
       let state = createWorldState(4);

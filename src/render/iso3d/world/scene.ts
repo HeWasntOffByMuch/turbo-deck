@@ -82,7 +82,8 @@ import {
   pointIntensity,
   torchFlicker,
 } from '../player-lights.js';
-import { appearanceOf, PLAYER_CRITTER, PLAYER_FIGURE } from './appearance.js';
+import { appearanceOf, PLAYER_CRITTER, PLAYER_FIGURE, type Appearance } from './appearance.js';
+import { ShotRig } from './shot.js';
 import type { AimShape } from './aim.js';
 import { castBar } from './cast.js';
 import { EntityMotion } from './interpolate.js';
@@ -161,6 +162,7 @@ interface Body {
   readonly kind: 'player' | 'monster' | 'projectile';
   readonly player?: CritterRig;
   readonly mech?: MechRig;
+  readonly shot?: ShotRig;
   readonly outline?: OutlineHandle;
   /** World units above the feet to hang the health bar; see {@link Body.headroom}. */
   readonly headroom: number;
@@ -688,7 +690,11 @@ export class WorldScene {
   }
 
   dispose(): void {
-    for (const body of this.bodies.values()) this.scene.remove(body.group);
+    for (const body of this.bodies.values()) {
+      this.scene.remove(body.group);
+      if (body.shot?.trace) this.scene.remove(body.shot.trace);
+      body.shot?.dispose();
+    }
     this.bodies.clear();
     for (const effect of this.effects) this.scene.remove(effect.mesh);
     this.effects.length = 0;
@@ -804,7 +810,7 @@ export class WorldScene {
     for (const entity of view.entities) {
       live.add(entity.id);
       const look = appearanceOf(entity);
-      const body = this.bodyFor(entity.id, look.rig, look.typeId, look.radius);
+      const body = this.bodyFor(entity.id, look);
       const isSelf = entity.id === view.selfEntityId;
 
       // The local player is drawn at its prediction; everything else at its
@@ -828,6 +834,9 @@ export class WorldScene {
       // neither needs the scene to remember where it drew them last frame.
       body.player?.update(dt, { x, y }, -facing);
       body.mech?.update(dt, { x, y }, -facing);
+      // Fed the *drawn* pose, so an arrow's nose follows the curve the eye is
+      // following rather than the one the deltas describe (spec 087).
+      body.shot?.update(dt, x, y, ground);
 
       // A corpse lies where it fell and stops animating, so a kill reads.
       const dead = entity.maxHealth > 0 && entity.health <= 0;
@@ -854,6 +863,10 @@ export class WorldScene {
     for (const [id, body] of this.bodies) {
       if (live.has(id)) continue;
       this.scene.remove(body.group);
+      if (body.shot?.trace) this.scene.remove(body.shot.trace);
+      // A shot builds its own geometry and is gone within a second or two, so
+      // this is a leak that would run at the rate of the fighting.
+      body.shot?.dispose();
       this.bodies.delete(id);
     }
   }
@@ -1031,10 +1044,11 @@ export class WorldScene {
     parent.add(this.torch, this.torchFlame);
   }
 
-  private bodyFor(id: number, rig: string, typeId: string, radius: number): Body {
+  private bodyFor(id: number, appearance: Appearance): Body {
     const existing = this.bodies.get(id);
     if (existing) return existing;
 
+    const { rig, typeId, radius, look } = appearance;
     let body: Body;
     if (rig === 'player') {
       // Every player gets its own tuning object rather than sharing one: the
@@ -1056,13 +1070,12 @@ export class WorldScene {
           HEADROOM_GAP,
       };
     } else if (rig === 'projectile') {
-      const group = new THREE.Group();
-      const mesh = new THREE.Mesh(
-        new THREE.IcosahedronGeometry(Math.max(3, radius), 0),
-        new THREE.MeshBasicMaterial({ color: PALETTE.magicCore }),
-      );
-      group.add(mesh);
-      body = { group, kind: 'projectile', headroom: DEFAULT_HEADROOM };
+      // The silhouette comes from the ability that threw it (spec 087), so a
+      // thrown weapon reads as one in the air rather than as a bead of light.
+      const shot = new ShotRig(look ?? 'orb', radius);
+      // A shot never shows a bar, so its headroom is the shared default rather
+      // than anything measured off the mesh.
+      body = { group: shot.group, kind: 'projectile', shot, headroom: DEFAULT_HEADROOM };
     } else {
       const mech = new MechRig(typeId);
       body = {
@@ -1075,6 +1088,9 @@ export class WorldScene {
     }
 
     this.scene.add(body.group);
+    // The streak is a record of where the shot has been, so it belongs to the
+    // world rather than to the body that is laying it down (spec 087).
+    if (body.shot?.trace) this.scene.add(body.shot.trace);
     // A projectile is unlit and moving; giving it a shadow caster costs a pass
     // over the scene for something a few pixels across.
     if (body.kind !== 'projectile') castsShadows(body.group);

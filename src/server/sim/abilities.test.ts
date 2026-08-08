@@ -25,6 +25,8 @@ import {
   type ServerSimEvent,
   type ServerWorldState,
 } from './types.js';
+import { SHOT_IMPACT_HEIGHT, SHOT_LAUNCH_HEIGHT } from './ballistics.js';
+import { COMMIT_ALIGN_TICKS, commitAlignEps, facesAim, TURN_ALIGN_EPS } from './abilities.js';
 import { createWorldState, replaceEntity, spawnEntity, step, type StepContext } from './world.js';
 
 const RECORD: PersistedPlayer = {
@@ -232,12 +234,14 @@ describe('wind-up', () => {
     const committed = commit.state.entities.get(player.id);
     expect(committed?.cast).not.toBeNull();
     expect(committed?.resource).toBeLessThan(resource);
-    expect(committed?.cooldowns['melee.heavy']).toBeGreaterThan(0);
+    // No cooldown yet: it is the price of the blow, not of the commitment
+    // (spec 091).
+    expect(committed?.cooldowns['melee.heavy']).toBeUndefined();
 
     const away = run(commit.state, 1, { 0: [input(player.id, { moveX: 0, moveY: 1 })] });
     const withdrawn = away.state.entities.get(player.id);
     expect(withdrawn?.cast).toBeNull();
-    // Everything back but the time: cost refunded, cooldown gone.
+    // Everything back but the time: cost refunded, no cooldown ever taken.
     expect(withdrawn?.resource).toBeCloseTo(resource, 3);
     expect(withdrawn?.cooldowns['melee.heavy']).toBeUndefined();
     // And the step away is the same tick, not the one after it.
@@ -266,6 +270,80 @@ describe('wind-up', () => {
     const away = run(commit.state, 1, { 0: [input(player.id, { moveX: 0, moveY: 1 })] });
     expect(away.state.entities.get(player.id)?.cast).toBeNull();
     expect(away.state.entities.get(player.id)?.cooldowns['melee.heavy']).toBeUndefined();
+  });
+
+  /**
+   * Spec 092. One input can carry both a commit and a withdrawal -- `server.ts`
+   * no longer builds one, but `mergeInputs` folds a batch of client frames into
+   * a single frame and or-s `cancelCast` across it, and the bots and these tests
+   * call `step` directly. The rule has to live in `step`, which is the lesson
+   * spec 090 already paid for once.
+   *
+   * Two readings, and they do not cost the same: swallowing the cancel throws a
+   * blow the player called off, which is the bug the report described.
+   * Swallowing the commit costs a press.
+   */
+  it('lets a withdrawal outrank a commit that shares its tick, and answers both', () => {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+
+    const both = run(state, 1, {
+      0: [
+        input(player.id, {
+          castAbilityId: 'melee.heavy',
+          castTargetX: 700,
+          castTargetY: 450,
+          cancelCast: true,
+        }),
+      ],
+    });
+
+    // Nothing began, so nothing can go off.
+    expect(both.state.entities.get(player.id)?.cast ?? null).toBeNull();
+    // And the request was refused rather than dropped in silence: the client
+    // pairs the n-th reply with the n-th request (spec 080), so a request thrown
+    // away without a word mis-attributes every answer after it.
+    expect(
+      both.events.filter((event) => event.kind === 'castRejected' && event.reason === 'withdrawn'),
+    ).toHaveLength(1);
+    // Nothing was charged for it either.
+    expect(both.state.entities.get(player.id)?.cooldowns['melee.heavy']).toBeUndefined();
+  });
+
+  it('answers a commit that shares its tick with a cancel for a cast in progress', () => {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+
+    const commit = run(state, 1, {
+      0: [input(player.id, { castAbilityId: 'melee.heavy', castTargetX: 700, castTargetY: 450 })],
+    });
+    expect(commit.state.entities.get(player.id)?.cast).not.toBeNull();
+
+    const both = run(commit.state, 1, {
+      0: [
+        input(player.id, {
+          castAbilityId: 'melee.slash',
+          castTargetX: 700,
+          castTargetY: 450,
+          cancelCast: true,
+        }),
+      ],
+    });
+
+    // The withdrawal lands, as it always did...
+    expect(both.state.entities.get(player.id)?.cast ?? null).toBeNull();
+    expect(
+      both.events.some(
+        (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Cancelled,
+      ),
+    ).toBe(true);
+    // ...and the second press is answered, which it was not: it used to be
+    // dropped between the cancel and the commit with no event of any kind.
+    expect(
+      both.events.filter((event) => event.kind === 'castRejected' && event.reason === 'withdrawn'),
+    ).toHaveLength(1);
   });
 
   it('does not withdraw from a blow that has already landed', () => {
@@ -560,13 +638,42 @@ describe('projectiles', () => {
     const lob = abilityById('bolt.lob');
     if (!flat || !lob) throw new Error('missing projectiles');
 
-    const flatRun = run(state, flat.windupTicks + 4, {
-      0: [input(player.id, { castAbilityId: 'bolt.arcane', castTargetX: 1200, castTargetY: 450 })],
-    });
-    const flatShot = [...flatRun.state.entities.values()].find(
-      (entity) => entity.kind === EntityKindValue.Projectile,
-    );
-    expect(flatShot?.position.z).toBeCloseTo(0, 6);
+    /** Every height this ability's shot passes through, over flat ground. */
+    function heights(abilityId: string, ticks: number): number[] {
+      const seen: number[] = [];
+      let current = state;
+      for (let tick = 0; tick < ticks; tick++) {
+        const result = step(
+          current,
+          tick === 0
+            ? [input(player.id, { castAbilityId: abilityId, castTargetX: 1100, castTargetY: 450 })]
+            : [],
+          context({ activeChunks: activeAround(850, 450) }),
+        );
+        current = result.state;
+        for (const entity of current.entities.values()) {
+          if (entity.projectile) seen.push(entity.position.z);
+        }
+      }
+      return seen;
+    }
+
+    // Flat is level between the hand it left and the height it lands at
+    // (spec 089) -- not zero, and above all not the ground it is crossing.
+    const level = heights('bolt.arcane', flat.windupTicks + 30);
+    expect(level.length).toBeGreaterThan(4);
+    for (const z of level) {
+      expect(z).toBeLessThanOrEqual(SHOT_LAUNCH_HEIGHT + 1e-6);
+      expect(z).toBeGreaterThanOrEqual(SHOT_IMPACT_HEIGHT - 1e-6);
+    }
+    // And it only ever descends along that chord: no hump anywhere in it.
+    for (let i = 1; i < level.length; i++) {
+      expect(level[i]).toBeLessThanOrEqual((level[i - 1] as number) + 1e-6);
+    }
+
+    // The lob genuinely rises above where it left, which is the difference.
+    const arced = heights('bolt.lob', lob.windupTicks + 30);
+    expect(Math.max(...arced)).toBeGreaterThan(SHOT_LAUNCH_HEIGHT + 20);
   });
 });
 
@@ -1319,8 +1426,8 @@ describe('a named target (spec 070)', () => {
   });
 
   it('stamps a basic attack from the caster, and everything else from the table', () => {
-    const quick: EffectiveStats = { ...STATS, attackCooldownTicks: 40, attackSpeed: 2 };
-    const slow: EffectiveStats = { ...STATS, attackCooldownTicks: 40, attackSpeed: 1 };
+    const quick: EffectiveStats = { ...STATS, attackDelayTicks: 20 };
+    const slow: EffectiveStats = { ...STATS, attackDelayTicks: 40 };
 
     let state = createWorldState(6);
     const fast = withPlayer(state, 600, 450, quick);
@@ -1328,28 +1435,33 @@ describe('a named target (spec 070)', () => {
     const plodder = withPlayer(state, 600, 470, slow);
     state = plodder.state;
 
-    const commit = run(state, 1, {
+    // Run past the release, because that is where the stamp happens now (spec
+    // 091) -- read at the commit, both of these are still undefined.
+    const swung = run(state, slash.windupTicks + 2, {
       0: [
         input(fast.id, { castAbilityId: 'melee.slash', castTargetX: 700, castTargetY: 450 }),
         input(plodder.id, { castAbilityId: 'melee.slash', castTargetX: 700, castTargetY: 470 }),
       ],
     });
 
-    const at = (id: number): number => commit.state.entities.get(id)?.cooldowns['melee.slash'] ?? 0;
-    // Same weapon, same tick, twice the speed: half the wait.
-    expect(at(fast.id) - 1).toBe(20);
-    expect(at(plodder.id) - 1).toBe(40);
+    const at = (id: number): number => swung.state.entities.get(id)?.cooldowns['melee.slash'] ?? 0;
+    // Same weapon, same loose, twice the speed: half the wait. Both are stamped
+    // from the same release, so the difference is the stat and nothing else.
+    expect(at(fast.id)).toBeGreaterThan(0);
+    expect(at(plodder.id) - at(fast.id)).toBe(20);
     // Neither of them is the table's number, which is what the swing used to
     // cost everybody.
     expect(slash.cooldownTicks).not.toBe(20);
 
     // A non-basic ability ignores the stat entirely.
-    const heavy = run(state, 1, {
+    const heavyAbility = abilityById('melee.heavy');
+    expect(heavyAbility).toBeDefined();
+    if (!heavyAbility) return;
+    const heavy = run(state, heavyAbility.windupTicks + 2, {
       0: [input(fast.id, { castAbilityId: 'melee.heavy', castTargetX: 700, castTargetY: 450 })],
     });
-    expect(heavy.state.entities.get(fast.id)?.cooldowns['melee.heavy']).toBe(
-      1 + (abilityById('melee.heavy')?.cooldownTicks ?? 0),
-    );
+    const heavyReadyAt = heavy.state.entities.get(fast.id)?.cooldowns['melee.heavy'] ?? 0;
+    expect(heavyReadyAt).toBe(1 + heavyAbility.windupTicks + heavyAbility.cooldownTicks);
   });
 
   it('lets a monster swing at the player it is chasing, by id', () => {
@@ -1477,7 +1589,7 @@ describe('an ability aimed at a body (spec 080)', () => {
     state = mark.state;
     const full = monsterById('dummy')?.stats.maxHealth ?? 0;
 
-    const result = run(state, seek.windupTicks + 40, {
+    const result = run(state, seek.windupTicks + SERVER_TICK_RATE * 3, {
       0: [
         input(player.id, {
           castAbilityId: 'bolt.seek',
@@ -1504,7 +1616,7 @@ describe('an ability aimed at a body (spec 080)', () => {
     state = mark.state;
     const full = monsterById('dummy')?.stats.maxHealth ?? 0;
 
-    const result = run(state, seek.windupTicks + 40, {
+    const result = run(state, seek.windupTicks + SERVER_TICK_RATE * 3, {
       0: [
         input(player.id, {
           castAbilityId: 'bolt.seek',
@@ -1553,5 +1665,35 @@ describe('an ability aimed at a body (spec 080)', () => {
     const b = once();
     expect(JSON.stringify([...b.state.entities])).toBe(JSON.stringify([...a.state.entities]));
     expect(JSON.stringify(b.events)).toBe(JSON.stringify(a.events));
+  });
+});
+
+describe('commit alignment (spec 090)', () => {
+  it('counts a body within a few ticks of turning as facing its aim', () => {
+    const at = { x: 0, y: 0 };
+    const aim = { x: 100, y: 0 };
+    const turnRate = 540;
+    const eps = commitAlignEps(turnRate, SERVER_TICK_RATE);
+
+    // Three ticks of this body's own turn, and no more.
+    expect(eps).toBeCloseTo(((turnRate * Math.PI) / 180 / SERVER_TICK_RATE) * COMMIT_ALIGN_TICKS, 9);
+
+    // Strictly: half a degree off is not facing it. At the commit: it is, because
+    // the client that asked is exactly this far ahead of the server.
+    const off = eps * 0.8;
+    expect(facesAim(at, off, aim)).toBe(false);
+    expect(facesAim(at, off, aim, eps)).toBe(true);
+
+    // But a body genuinely turned away is still turning, however generous the
+    // tolerance -- this widens the last fraction of a turn, not the whole thing.
+    expect(facesAim(at, Math.PI / 2, aim, eps)).toBe(false);
+    expect(facesAim(at, Math.PI, aim, eps)).toBe(false);
+  });
+
+  it('never widens below the strict tolerance, whatever the body', () => {
+    // A body that cannot turn gets the plain half-degree rather than zero.
+    expect(commitAlignEps(0, SERVER_TICK_RATE)).toBe(TURN_ALIGN_EPS);
+    expect(commitAlignEps(-90, SERVER_TICK_RATE)).toBeGreaterThan(0);
+    expect(facesAim({ x: 0, y: 0 }, 0, { x: 10, y: 0 }, -5)).toBe(true);
   });
 });
