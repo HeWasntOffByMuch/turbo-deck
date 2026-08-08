@@ -103,6 +103,37 @@ The rule is safe for monsters by construction: `monsterIntent` only sets
 `castAbilityId` when `!closing`, and only steers when `closing`, so it never
 emits both.
 
+### 3. …and `server.ts` stops building the ambiguous input
+
+The rule above cannot be the whole of it, because `step` sees one struct and
+cannot tell *when* the vector on it was asked for. Two very different gestures
+arrive looking identical:
+
+- The player was walking and pressed an ability. The step is the newer word, or
+  at least a standing one — refuse.
+- The player's chase **arrived**, and they asked to swing on the frame after it.
+  `useAbility` stamps `afterInputSeq` with the last input already sent, so the
+  commit is stamped to ride the final frame of the approach — which still
+  carries a vector. Refusing that refuses the ordinary end of every chase, and
+  spec 080's own suite says so: 3 of 23 swings came back `withdrawn`.
+
+`server.ts` is where the answer lives, because it is the half that knows arrival
+order — the same place, and the same argument, as spec 092's `arrivedAt`:
+
+```ts
+// server.ts
+const stepsFirst =
+  nextCast !== undefined && next !== undefined &&
+  asksToMove(next) && next.seq <= nextCast.afterInputSeq;
+```
+
+A frame the request was stamped *after* is older than the request, so it goes out
+alone and the commit follows a tick behind it — by which time the client's own
+next frame says whether it is still walking. A frame *newer* than the request
+carries a step the player asked for after pressing, and is folded as before for
+`step` to refuse. Both readings are preserved because both are real, which is the
+sentence spec 092 already wrote about the other withdrawal.
+
 ## Invariants tested
 
 - **In `step`, one input carrying both a move and a commit** starts no cast,
@@ -113,6 +144,9 @@ emits both.
   walking immediately afterwards so nothing arrives later to call the cast off.
 - **A commit on an input that does not ask to move is untouched** — the ordinary
   case, and the one a "cancels always win" reading would break.
+- **A commit stamped after a walking frame still commits**, one tick behind that
+  frame and with no refusal — the end of a chase, and spec 080's suite over a
+  real session is the guard that it stayed that way.
 - **The reported scenario stays fixed**: attack order, in range, facing, mark
   named, wind-up part-way through, walked out of — nothing thrown, cast ended
   `Cancelled`, body actually moved. Run at 30/50/80% of the wind-up and at 1 and
