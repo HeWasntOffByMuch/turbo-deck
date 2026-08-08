@@ -608,13 +608,16 @@ async function main(): Promise<void> {
  */
 async function litWeapon(page: Page): Promise<string> {
   return page.evaluate(() => {
-    const buttons = Array.from(document.querySelectorAll('button'));
-    const lit = buttons.find(
-      (button) =>
-        button.style.borderColor === 'rgb(255, 207, 107)' &&
-        button.style.textAlign === 'left',
-    );
-    return lit?.textContent ?? 'nothing';
+    // Found by `data-weapon` rather than by a style the switch happens to use
+    // (spec 094): the compact switch centres its icons and has no text at all,
+    // so "the button whose text-align is left" named nothing and the button's
+    // own text is not always its name. The lit *border* is still what is being
+    // read, because that border is the claim -- it is written from
+    // `stats.basicAttackId`, so a button that lights is the server having
+    // answered.
+    const buttons = Array.from(document.querySelectorAll<HTMLElement>('[data-weapon]'));
+    const lit = buttons.find((button) => button.style.borderColor === 'rgb(255, 207, 107)');
+    return lit?.getAttribute('aria-label') ?? 'nothing';
   });
 }
 
