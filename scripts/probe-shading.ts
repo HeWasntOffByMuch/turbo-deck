@@ -72,6 +72,20 @@ interface InkProbeCase {
   readonly lineColorWanted: readonly number[];
 }
 
+interface CurvatureProbeCase {
+  readonly creasedCells: number;
+  readonly flatCells: number;
+  readonly creasedDarkened: number;
+  readonly creasedAmount: number;
+  readonly flatChanged: number;
+  readonly brightened: number;
+  readonly halfAmount: number;
+  readonly debugDistinct: number;
+  readonly centreCavity: number;
+  readonly rimCavity: number;
+  readonly streakAlive: boolean;
+}
+
 interface ShadingProbeCase {
   readonly label: string;
   readonly programs: number;
@@ -138,6 +152,7 @@ try {
   const edges = (await page.evaluate(() => window.edgeProbe)) as EdgeProbeCase | undefined;
   const palette = (await page.evaluate(() => window.paletteProbe)) as PaletteProbeCase | undefined;
   const ink = (await page.evaluate(() => window.inkProbe)) as InkProbeCase | undefined;
+  const curvature = (await page.evaluate(() => window.curvatureProbe)) as CurvatureProbeCase | undefined;
 
   // Anything mentioning a shader, a program, a compile or a link is a hard
   // failure; the rest is printed but tolerated.
@@ -356,6 +371,73 @@ try {
         `shading spread ${ink.farSpreadOff.toFixed(3)} -> ${ink.farSpread.toFixed(3)}\n` +
         `        lines: ${ink.nearLine.toFixed(1)} near vs ${ink.farLine.toFixed(1)} far ` +
         `(${ink.nearLinePixels}/${ink.farLinePixels} px), drawn rgb(${ink.lineColor.join(', ')})`,
+    );
+    for (const problem of problems) console.log(`        ${problem}`);
+  }
+
+  // Baked creases (spec 100).
+  if (curvature) {
+    const problems: string[] = [];
+    if (curvature.creasedCells < 200 || curvature.flatCells < 200) {
+      problems.push(
+        `nothing to compare: ${curvature.creasedCells} creased px, ${curvature.flatCells} flat px`,
+      );
+    }
+    if (curvature.debugDistinct < 8) {
+      problems.push(
+        `the baked value takes only ${curvature.debugDistinct} distinct levels -- ` +
+          'the attribute is a constant, so it never reached the shader',
+      );
+    }
+    if (curvature.creasedDarkened < 0.95) {
+      problems.push(`only ${(curvature.creasedDarkened * 100).toFixed(0)}% of folded ground darkened`);
+    }
+    // Flat ground must be untouched *exactly*. A cavity term that leaks onto a
+    // plain is a global dimmer, and a dimmer is indistinguishable from this
+    // effect by eye while being the wrong thing entirely.
+    if (curvature.flatChanged > 0) {
+      problems.push(
+        `${(curvature.flatChanged * 100).toFixed(2)}% of flat ground changed -- ` +
+          'the cavity term is not zero on a plane',
+      );
+    }
+    if (curvature.brightened > 0) {
+      problems.push(`${curvature.brightened} pixels got brighter -- a cavity only ever darkens`);
+    }
+    // Half the strength, about half the darkening: the setting is a dial and not
+    // a second switch.
+    const ratio = curvature.creasedAmount === 0 ? 0 : curvature.halfAmount / curvature.creasedAmount;
+    if (ratio < 0.4 || ratio > 0.6) {
+      problems.push(`half strength gave ${(ratio * 100).toFixed(0)}% of the darkening, not about half`);
+    }
+    // Where the darkening landed, asked of the geometry rather than of the
+    // shader's own attribute. Everything above compares the frame against the
+    // debug view, which is the same number twice -- a measure with its sign
+    // flipped would shade the rim instead of the hollow and agree with itself
+    // perfectly throughout.
+    if (curvature.centreCavity <= curvature.rimCavity * 2) {
+      problems.push(
+        `the dip's middle bakes ${curvature.centreCavity.toFixed(3)} and its rim ` +
+          `${curvature.rimCavity.toFixed(3)} -- the cavity is not landing in the hollow`,
+      );
+    }
+
+    // And the patch composed. `onBeforeCompile` is one slot, so a curvature patch
+    // that assigned rather than wrapped would silently stop the grass moving.
+    if (!curvature.streakAlive) {
+      problems.push('flat ground is a single flat colour -- the wind streak patch was overwritten');
+    }
+    if (problems.length > 0) failed = true;
+    console.log(
+      `${problems.length === 0 ? 'ok  ' : 'FAIL'}  baked creases\n` +
+        `        ${curvature.creasedCells} creased px, ${curvature.flatCells} flat px, ` +
+        `${curvature.debugDistinct} baked levels\n` +
+        `        ${(curvature.creasedDarkened * 100).toFixed(0)}% of folds darkened by ` +
+        `${(curvature.creasedAmount * 100).toFixed(1)}% (half strength: ` +
+        `${(curvature.halfAmount * 100).toFixed(1)}%), ` +
+        `${(curvature.flatChanged * 100).toFixed(2)}% of flat ground moved, ` +
+        `${curvature.brightened} brightened\n` +
+        `        hollow bakes ${curvature.centreCavity.toFixed(3)} vs rim ${curvature.rimCavity.toFixed(3)}`,
     );
     for (const problem of problems) console.log(`        ${problem}`);
   }

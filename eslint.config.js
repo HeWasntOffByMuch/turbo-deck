@@ -92,6 +92,12 @@ const PURE_RENDER = [
   // remembered.
   'src/render/iso3d/ink.ts',
   'src/render/iso3d/ink.test.ts',
+  // How much a cell of ground folds (spec 100). The sign is the whole measure --
+  // backwards it shades the ridges instead of the hollows, which still looks like
+  // curvature shading and simply reads as light from somewhere impossible -- so it
+  // is asserted against a real paraboloid in Node rather than judged by eye.
+  'src/render/iso3d/curvature.ts',
+  'src/render/iso3d/curvature.test.ts',
   'src/render/iso3d/world/appearance.ts',
   'src/render/iso3d/world/cast.ts',
   'src/render/iso3d/world/intent.ts',

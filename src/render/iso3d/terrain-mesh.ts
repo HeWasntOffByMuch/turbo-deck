@@ -17,6 +17,8 @@ import { shoreField } from './shore-sdf.js';
 import { WATER } from './wind.js';
 import { buildWaterQuad, disposeWaterQuad } from './water-material.js';
 import { patchTerrainStreak } from './terrain-streak.js';
+import { patchTerrainCurvature } from './terrain-curvature.js';
+import { cellCavity, type CornerSample } from './curvature.js';
 
 /**
  * The only thing that turns terrain data into geometry (spec 043). Everything
@@ -58,6 +60,10 @@ const wallMaterial = new THREE.MeshLambertMaterial({
 });
 patchTerrainStreak(surfaceMaterial);
 patchTerrainStreak(wallMaterial);
+// Only the surface. The walls are flat vertical skirts with no curvature to
+// measure, and a material that reads a `cavity` attribute the geometry does not
+// carry is a GL error rather than a zero (spec 100).
+patchTerrainCurvature(surfaceMaterial);
 
 /** The material index water cells carry, resolved once. */
 const WATER_MATERIAL = materialIndex('water');
@@ -109,31 +115,42 @@ class MeshBuffer {
   readonly positions: number[] = [];
   readonly colors: number[] = [];
   readonly normals: number[] = [];
+  /**
+   * How much the ground folds at this vertex, 0..1 (spec 100).
+   *
+   * Constant across a quad, like the colour: it is a property of the cell, and
+   * the ground's whole look is flat bands one cell wide. Emitted only for the
+   * surface -- `build` writes the attribute only when asked, so the walls carry
+   * no column of zeroes for a material that never reads them.
+   */
+  readonly cavities: number[] = [];
 
-  private vertex(v: Corner, c: THREE.Color): void {
+  private vertex(v: Corner, c: THREE.Color, cavity: number): void {
     this.positions.push(v[0], v[1], v[2]);
     this.colors.push(c.r, c.g, c.b);
     this.normals.push(v[3] ?? 0, v[4] ?? 0, v[5] ?? 0);
+    this.cavities.push(cavity);
   }
 
   /** A quad as two triangles, wound a-b-c / a-c-d. */
-  quad(a: Corner, b: Corner, c: Corner, d: Corner, color: THREE.Color): void {
-    this.vertex(a, color);
-    this.vertex(b, color);
-    this.vertex(c, color);
-    this.vertex(a, color);
-    this.vertex(c, color);
-    this.vertex(d, color);
+  quad(a: Corner, b: Corner, c: Corner, d: Corner, color: THREE.Color, cavity = 0): void {
+    this.vertex(a, color, cavity);
+    this.vertex(b, color, cavity);
+    this.vertex(c, color, cavity);
+    this.vertex(a, color, cavity);
+    this.vertex(c, color, cavity);
+    this.vertex(d, color, cavity);
   }
 
   /** `smooth` geometries carry the normals they were given; the rest derive flat ones. */
-  build(smooth: boolean): THREE.BufferGeometry | null {
+  build(smooth: boolean, cavity = false): THREE.BufferGeometry | null {
     if (this.positions.length === 0) return null;
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(this.positions, 3));
     geo.setAttribute('color', new THREE.Float32BufferAttribute(this.colors, 3));
     if (smooth) geo.setAttribute('normal', new THREE.Float32BufferAttribute(this.normals, 3));
     else geo.computeVertexNormals();
+    if (cavity) geo.setAttribute('cavity', new THREE.Float32BufferAttribute(this.cavities, 1));
     return geo;
   }
 }
@@ -166,6 +183,26 @@ function buildChunk(
     ];
   };
 
+  /**
+   * The same corner as a sample the cavity measure can read (spec 100).
+   *
+   * Everything it needs is already here: the corner's jittered world position and
+   * the smooth normal the field has there, both stored by every chunk that shares
+   * the corner. Which is why this needs no apron and no neighbour lookup -- a
+   * cell's four corners are always inside its own chunk.
+   */
+  const sample = (i: number, j: number): CornerSample => {
+    const k = j * stride + i;
+    return {
+      x: cornerX[k] ?? 0,
+      y: heights[k] ?? 0,
+      z: cornerZ[k] ?? 0,
+      nx: normals[k * 3] ?? 0,
+      ny: normals[k * 3 + 1] ?? 1,
+      nz: normals[k * 3 + 2] ?? 0,
+    };
+  };
+
   /** True, false, or `null` for a cell across a seam that has not streamed in. */
   const solidAt = (i: number, j: number): boolean | null =>
     i >= 0 && j >= 0 && i < cols && j < rows
@@ -187,8 +224,16 @@ function buildChunk(
       const c01 = corner(i, j + 1);
       const c11 = corner(i + 1, j + 1);
 
+      const cavity = cellCavity(
+        sample(i, j),
+        sample(i + 1, j),
+        sample(i, j + 1),
+        sample(i + 1, j + 1),
+        chunk.cellSize,
+      );
+
       // Wound so the face normal points +Y (up) for the flat case.
-      surface.quad(c00, c01, c11, c10, color);
+      surface.quad(c00, c01, c11, c10, color, cavity);
 
       // Skirt every edge that faces open air, dropped to the layer's underside.
       const cliff = linearColor(TERRAIN_CLIFF_COLORS[tone] ?? TERRAIN_CLIFF_COLORS[0]);
@@ -206,7 +251,7 @@ function buildChunk(
     }
   }
 
-  return { surface: surface.build(true), walls: walls.build(false) };
+  return { surface: surface.build(true, true), walls: walls.build(false) };
 }
 
 /**

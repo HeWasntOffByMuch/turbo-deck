@@ -179,6 +179,65 @@ try {
     console.log('  ok: the distance drains and the foreground keeps its colour');
   }
 
+  // Baked creases, on the real map (spec 100).
+  //
+  // The offscreen probe uses a synthetic bowl where the answer is known. This
+  // asks the only question that scene cannot: whether real terrain has folds in
+  // it at all. A measure that is perfectly correct and fires on nothing would
+  // pass every check in the probe.
+  await page.click('button[aria-label="View settings"]');
+  await page.locator('label', { hasText: 'Distance ink' }).first().locator('input[type=checkbox]').uncheck();
+  await page.locator('label', { hasText: 'Outlines' }).first().locator('input[type=checkbox]').uncheck();
+  await page.click('button[aria-label="View settings"]');
+  await page.waitForTimeout(800);
+  const creaseOff = await page.screenshot({ path: join(outDir, 'world-creases-off.png'), clip: await canvasRect() });
+
+  await page.click('button[aria-label="View settings"]');
+  await page.locator('label', { hasText: 'Creases' }).first().locator('input[type=checkbox]').check();
+  await page.click('button[aria-label="View settings"]');
+  await page.waitForTimeout(1200);
+  const creaseOn = await page.screenshot({ path: join(outDir, 'world-creases.png'), clip: await canvasRect() });
+
+  const creaseChange = (before: Buffer, after: Buffer): { darker: number; lighter: number; depth: number } => {
+    const a = PNG.sync.read(before);
+    const b = PNG.sync.read(after);
+    let darker = 0;
+    let lighter = 0;
+    let depth = 0;
+    for (let i = 0; i < a.data.length; i += 4) {
+      const va = ((a.data[i] ?? 0) + (a.data[i + 1] ?? 0) + (a.data[i + 2] ?? 0)) / 3;
+      const vb = ((b.data[i] ?? 0) + (b.data[i + 1] ?? 0) + (b.data[i + 2] ?? 0)) / 3;
+      if (vb < va - 2) {
+        darker++;
+        depth += (va - vb) / 255;
+      } else if (vb > va + 2) {
+        lighter++;
+      }
+    }
+    const total = a.data.length / 4;
+    return { darker: darker / total, lighter: lighter / total, depth: darker === 0 ? 0 : depth / darker };
+  };
+
+  const creases = creaseChange(creaseOff, creaseOn);
+  // The lightened fraction is the world moving between the two shots -- trees
+  // sway, monsters walk, the sun turns -- and not the feature, which multiplies
+  // by at most one and cannot brighten anything. That claim is asserted properly
+  // in the offscreen probe, on a scene that holds still.
+  console.log(
+    `creases: ${(creases.darker * 100).toFixed(1)}% of the frame darkened by ` +
+      `${(creases.depth * 100).toFixed(1)}% ` +
+      `(${(creases.lighter * 100).toFixed(1)}% lightened by the world moving between shots)`,
+  );
+  if (creases.darker < 0.01) {
+    failed = true;
+    console.log('  FAIL: the real map has no folds the measure can find');
+  } else if (creases.darker > 0.6) {
+    failed = true;
+    console.log('  FAIL: over half the frame darkened -- that is a dimmer, not a crease');
+  } else {
+    console.log('  ok: folds darkened, the rest of the ground left alone');
+  }
+
   const distinct = await page.evaluate(async () => {
     const canvas = document.querySelector('canvas');
     if (!canvas) return 0;

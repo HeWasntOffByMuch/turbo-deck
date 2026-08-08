@@ -35,6 +35,7 @@ import { vegetationColliders } from '../../../terrain/vegetation.js';
 import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-mesh.js';
 import { buildPropField, FLAT_SHADING, type PropFieldHandle, type PropShading } from '../props.js';
 import { type HikeSettings } from '../hike.js';
+import { CURVATURE_UNIFORMS } from '../terrain-curvature.js';
 import { MechRig, Poofs } from '../rigs.js';
 import { CritterRig, defaultCritterTuning } from '../critter.js';
 import { CRITTERS } from '../../critters/index.js';
@@ -471,6 +472,22 @@ export class WorldScene {
     this.refreshProps();
   }
 
+  /**
+   * Hand the ground materials the crease settings (spec 100).
+   *
+   * A uniform write, every frame, costing nothing: the measure itself was baked
+   * into a vertex attribute when the chunk was meshed. That is the whole reason
+   * it is carried in its own channel rather than folded into the vertex colours
+   * -- toggling it would otherwise mean re-meshing every chunk in the world.
+   */
+  private applyCurvature(hike: HikeSettings): void {
+    CURVATURE_UNIFORMS.uCavityStrength.value = hike.curvature ? hike.curvatureStrength : 0;
+    // The debug view draws what was baked at full scale, which is a different
+    // question from what is currently applied -- and it stands on its own rather
+    // than needing the feature switched on to be looked at.
+    CURVATURE_UNIFORMS.uCavityOnly.value = hike.debug === 'curvature' ? 1 : 0;
+  }
+
   /** Ground height, or 0 before there is any ground to ask about. */
   private ground(x: number, z: number): number {
     return this.map?.world.heightAt(x, z) ?? 0;
@@ -648,6 +665,7 @@ export class WorldScene {
 
     const hike = this.controls.hike();
     this.applyPropShading(hike);
+    this.applyCurvature(hike);
 
     // Snapped for everything that has to agree with the drawn image: the frame
     // itself, and the screen anchors the DOM overlay hangs bars from. An anchor

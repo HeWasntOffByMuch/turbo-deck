@@ -487,6 +487,14 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     'Edge neighbours a pixel needs before its line draws at full strength. Fades the one- and ' +
     'two-pixel specks that blink as geometry crosses a sample boundary. 0 disables it.');
 
+  // Step 8: the fold that is already in the data (spec 100).
+  const curvature = makeCheckbox('Creases', HIKE_OFF.curvature,
+    'Darken the ground where it folds. Measured once at mesh time from the corner normals each ' +
+    'chunk already carries, so it costs a uniform to switch and nothing per frame.');
+  const curvatureStrength = makeSlider('Crease depth', 0, 100, 5, Math.round(HIKE_OFF.curvatureStrength * 100), '%',
+    'How dark the deepest fold goes. Full strength is a cell that turns through about 20 degrees ' +
+    'across its own width; open ground is nowhere near that and stays put.');
+
   // Step 6: quantize onto a named palette instead of onto even steps. The steps,
   // the dither and its strength are the retro filter's own sliders above -- this
   // is only the choice between the two.
@@ -526,7 +534,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
       magicOn, magicRange, magicBright, spawners,
       retroOn, levels, dither, weave, weaveScale, pixelSize, gradeChoice, gradeStrength,
       smoothNormals, creaseAngle, swayNormals, lowRes, virtualSize, snapCamera, buffers, edges, depthThreshold, normalThreshold, skyOutline, paletteChoice, ink, inkStart, inkEnd, inkFlatten, inkDesat, inkFog, inkEdgeGain,
-      minNeighbours, debugView];
+      minNeighbours, curvature, curvatureStrength, debugView];
     for (const w of widgets) w.reset();
   });
 
@@ -583,6 +591,8 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     inkFog.row,
     inkEdgeGain.row,
     minNeighbours.row,
+    curvature.row,
+    curvatureStrength.row,
     debugView.row,
   );
   panel.append(reset);
@@ -664,6 +674,8 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
         inkFog: inkFog.value() / 100,
         inkEdgeGain: inkEdgeGain.value() / 100,
         outlineMinNeighbours: minNeighbours.value(),
+        curvature: curvature.checked(),
+        curvatureStrength: curvatureStrength.value() / 100,
         debug: debugView.value() as HikeDebugView,
       };
     },

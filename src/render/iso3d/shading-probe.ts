@@ -10,6 +10,10 @@ import { HIKE_OFF, paletteById } from './hike.js';
 import type { InkSettings } from './ink.js';
 import { RetroPass } from './retro-pass.js';
 import { RETRO_DEFAULTS } from './retro.js';
+import { buildTerrainMeshFromChunks } from './terrain-mesh.js';
+import { CURVATURE_UNIFORMS } from './terrain-curvature.js';
+import type { TerrainChunk } from '../../terrain/index.js';
+import type { MeshLayer } from '../../terrain/map-world.js';
 
 /**
  * A dev-server-only rig that proves the shading switches' shaders actually
@@ -241,6 +245,39 @@ export interface InkProbeCase {
   readonly lineColorWanted: readonly [number, number, number];
 }
 
+/** What baking the ground's creases did (spec 100). */
+export interface CurvatureProbeCase {
+  /** Cells the synthetic chunk marked as folded, and as flat. */
+  readonly creasedCells: number;
+  readonly flatCells: number;
+  /** Fraction of pixels over folded ground that got darker with the switch on. */
+  readonly creasedDarkened: number;
+  /** Mean darkening there, 0..1. */
+  readonly creasedAmount: number;
+  /** Fraction of pixels over flat ground that changed at all. Must be zero. */
+  readonly flatChanged: number;
+  /** Pixels anywhere that got *brighter*. Must be zero -- a cavity only darkens. */
+  readonly brightened: number;
+  /** The same measurement at half strength, to check it tracks the setting. */
+  readonly halfAmount: number;
+  /** Distinct greys in the debug view. One means the attribute never reached the shader. */
+  readonly debugDistinct: number;
+  /**
+   * Mean baked cavity in the middle of the dip, and out on its rim.
+   *
+   * The one claim here that does not come from the shader's own attribute. Every
+   * other number compares the frame against the debug view, which is the same
+   * quantity twice -- so a measure with its sign flipped, darkening ridges
+   * instead of hollows, would agree with itself perfectly and pass. This asks
+   * where in the picture the darkening actually landed, and the answer is known
+   * from the geometry: the dip is in the middle of the frame.
+   */
+  readonly centreCavity: number;
+  readonly rimCavity: number;
+  /** Whether the wind streak patch survived being composed with this one. */
+  readonly streakAlive: boolean;
+}
+
 declare global {
   interface Window {
     /** Filled once every case has drawn; `probe-shading.ts` polls for it. */
@@ -255,6 +292,8 @@ declare global {
     paletteProbe?: PaletteProbeCase;
     /** What the distance treatment did (spec 099). */
     inkProbe?: InkProbeCase;
+    /** What baking the ground's creases did (spec 100). */
+    curvatureProbe?: CurvatureProbeCase;
   }
 }
 
@@ -1058,10 +1097,242 @@ function runInk(): InkProbeCase {
   };
 }
 
+/**
+ * A chunk with a smooth round dip in the middle of it and flat ground around it.
+ *
+ * Built by hand rather than sampled, so the answer is known before the frame is
+ * drawn, and analytically rather than by finite difference, so the normals are
+ * the ones the surface actually has instead of the ones a stencil approximates.
+ *
+ * A Gaussian dip rather than a trench, for two reasons found by trying the
+ * trench first:
+ *
+ *  - a fold that varies in only one direction has half the *mean* curvature of
+ *    its profile, since the other two edges of every cell are dead flat. That is
+ *    correct behaviour and it halves the signal, which made the fixture weaker
+ *    than it looked.
+ *  - eight cells across a symmetric trench produce about three distinct cavity
+ *    values, so "the baked attribute varies" could not be asserted at all. A
+ *    round dip gives a different value at almost every cell.
+ *
+ * It also has a convex rim, which is the part that must come out as *no* cavity.
+ */
+function bowlChunk(cols: number, rows: number, cellSize: number): TerrainChunk {
+  const stride = cols + 1;
+  const corners = stride * (rows + 1);
+  const heights = new Float32Array(corners);
+  const cornerX = new Float32Array(corners);
+  const cornerZ = new Float32Array(corners);
+  const normals = new Float32Array(corners * 3);
+
+  const centreX = (cols * cellSize) / 2;
+  const centreZ = (rows * cellSize) / 2;
+  // Sized so the deepest cell turns through about 0.3 radians across its own
+  // width -- under CAVITY_FULL_TURN, so the measure ramps instead of clamping.
+  const radius = 110;
+  const depth = 80;
+
+  for (let j = 0; j <= rows; j++) {
+    for (let i = 0; i <= cols; i++) {
+      const k = j * stride + i;
+      const x = i * cellSize;
+      const z = j * cellSize;
+      const dx = x - centreX;
+      const dz = z - centreZ;
+      const fall = Math.exp(-(dx * dx + dz * dz) / (radius * radius));
+      cornerX[k] = x;
+      cornerZ[k] = z;
+      heights[k] = -depth * fall;
+      // dy/dx = 2*depth*dx*fall/radius², and likewise for z.
+      const slopeX = (2 * depth * dx * fall) / (radius * radius);
+      const slopeZ = (2 * depth * dz * fall) / (radius * radius);
+      const length = Math.hypot(slopeX, 1, slopeZ);
+      normals[k * 3] = -slopeX / length;
+      normals[k * 3 + 1] = 1 / length;
+      normals[k * 3 + 2] = -slopeZ / length;
+    }
+  }
+
+  const cells = cols * rows;
+  return {
+    layerId: 'probe',
+    coord: { cx: 0, cz: 0 },
+    originX: 0,
+    originZ: 0,
+    cols,
+    rows,
+    startCol: 0,
+    startRow: 0,
+    cellSize,
+    heights,
+    cornerX,
+    cornerZ,
+    normals,
+    solid: new Uint8Array(cells).fill(1),
+    materials: new Uint8Array(cells),
+    tones: new Uint8Array(cells),
+    baseY: -400,
+    waterLevel: null,
+  };
+}
+
+/**
+ * Mesh that chunk through the real mesher and measure what the crease switch does
+ * to the frame (spec 100).
+ *
+ * The real mesher and the real material on purpose. The measure itself is already
+ * pinned in `curvature.test.ts`; what cannot be checked in Node is whether the
+ * baked attribute survives the trip -- and in particular whether this patch
+ * composes with the wind streak that is already on the same material, since
+ * `onBeforeCompile` is a single slot and overwriting it would silently stop the
+ * grass moving.
+ */
+function runCurvature(): CurvatureProbeCase {
+  const canvas = document.createElement('canvas');
+  canvas.width = CELL_W;
+  canvas.height = CELL_H;
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, preserveDrawingBuffer: true });
+
+  const cols = 24;
+  const rows = 24;
+  const cellSize = 22;
+  const chunk = bowlChunk(cols, rows, cellSize);
+  const span = cols * cellSize;
+  const layer: MeshLayer = {
+    id: 'probe',
+    bounds: { minX: 0, minZ: 0, maxX: span, maxZ: rows * cellSize },
+    waterLevel: null,
+    solidAt: (col, row) => col >= 0 && row >= 0 && col < cols && row < rows,
+    materialAt: () => 0,
+  };
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x101018);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const sun = new THREE.DirectionalLight(0xffffff, 1);
+  sun.position.set(300, 600, 300);
+  scene.add(sun);
+  const terrain = buildTerrainMeshFromChunks([layer], [chunk]);
+  scene.add(terrain.group);
+
+  // Straight down, so every cell is seen the same way and the only thing that can
+  // differ between two pixels is the ground under them.
+  const half = span / 2;
+  const camera = new THREE.OrthographicCamera(-half, half, half * 0.75, -half * 0.75, 1, 4000);
+  camera.position.set(half, 900, (rows * cellSize) / 2);
+  camera.lookAt(half, 0, (rows * cellSize) / 2);
+  camera.updateMatrixWorld(true);
+
+  const gl = renderer.getContext();
+  const shoot = (strength: number, only: number): Uint8Array => {
+    CURVATURE_UNIFORMS.uCavityStrength.value = strength;
+    CURVATURE_UNIFORMS.uCavityOnly.value = only;
+    renderer.setRenderTarget(null);
+    renderer.render(scene, camera);
+    const out = new Uint8Array(CELL_W * CELL_H * 4);
+    gl.readPixels(0, 0, CELL_W, CELL_H, gl.RGBA, gl.UNSIGNED_BYTE, out);
+    return out;
+  };
+
+  const off = shoot(0, 0);
+  const on = shoot(0.6, 0);
+  const half6 = shoot(0.3, 0);
+  const debug = shoot(0, 1);
+  CURVATURE_UNIFORMS.uCavityStrength.value = 0;
+  CURVATURE_UNIFORMS.uCavityOnly.value = 0;
+  frames.push({ label: 'creases baked from corner normals', pixels: debug });
+
+  // Which pixels are over folded ground is read out of the debug frame rather
+  // than reasoned about from the geometry: it is the very quantity the shader
+  // used, so a disagreement between the two cannot hide here.
+  const value = (px: Uint8Array, i: number): number =>
+    ((px[i] ?? 0) + (px[i + 1] ?? 0) + (px[i + 2] ?? 0)) / 3;
+
+  let centreCavity = 0;
+  let centrePixels = 0;
+  let rimCavity = 0;
+  let rimPixels = 0;
+  let creasedCells = 0;
+  let flatCells = 0;
+  let creasedDarkened = 0;
+  let creasedAmount = 0;
+  let halfAmount = 0;
+  let flatChanged = 0;
+  let brightened = 0;
+  const greys = new Set<number>();
+
+  for (let i = 0; i < off.length; i += 4) {
+    // Background is very dark and identical in every frame; skip it.
+    if (value(off, i) < 12) continue;
+    const cavity = 255 - (debug[i] ?? 255);
+
+    // Where in the frame this pixel is. The camera looks straight down at the
+    // centre of the dip, so distance from the middle of the image is distance
+    // from the middle of the dip -- and that holds however the degenerate
+    // straight-down `lookAt` ends up rotating the frame about its own axis.
+    const pixel = i / 4;
+    const px = pixel % CELL_W;
+    const py = Math.floor(pixel / CELL_W);
+    const radius = Math.hypot(px - CELL_W / 2, py - CELL_H / 2);
+    if (radius < 40) {
+      centreCavity += cavity;
+      centrePixels++;
+    } else if (radius > 90 && radius < 130) {
+      rimCavity += cavity;
+      rimPixels++;
+    }
+
+    greys.add(debug[i] ?? 0);
+    const before = value(off, i);
+    const after = value(on, i);
+    if (after > before + 0.5) brightened++;
+
+    if (cavity > 24) {
+      creasedCells++;
+      if (before - after > 1) creasedDarkened++;
+      creasedAmount += (before - after) / Math.max(1, before);
+      halfAmount += (before - value(half6, i)) / Math.max(1, before);
+    } else if (cavity === 0) {
+      flatCells++;
+      if (before !== after) flatChanged++;
+    }
+  }
+
+  // The streak patch has to have survived being composed with this one. Its
+  // signature is that the ground is not perfectly uniform across cells that share
+  // a colour and a normal -- which the flat half of this chunk is, apart from it.
+  let streakGreys = 0;
+  const seenFlat = new Set<number>();
+  for (let i = 0; i < off.length; i += 4) {
+    if (value(off, i) < 12) continue;
+    if ((255 - (debug[i] ?? 255)) !== 0) continue;
+    seenFlat.add(off[i] ?? 0);
+  }
+  streakGreys = seenFlat.size;
+
+  terrain.dispose();
+  renderer.dispose();
+
+  return {
+    creasedCells,
+    flatCells,
+    creasedDarkened: creasedCells === 0 ? 0 : creasedDarkened / creasedCells,
+    creasedAmount: creasedCells === 0 ? 0 : creasedAmount / creasedCells,
+    halfAmount: creasedCells === 0 ? 0 : halfAmount / creasedCells,
+    flatChanged: flatCells === 0 ? 1 : flatChanged / flatCells,
+    brightened,
+    debugDistinct: greys.size,
+    centreCavity: centrePixels === 0 ? 0 : centreCavity / centrePixels / 255,
+    rimCavity: rimPixels === 0 ? 0 : rimCavity / rimPixels / 255,
+    streakAlive: streakGreys > 1,
+  };
+}
+
 const results = CASES.map(({ smooth, swayNormals, label }) => runCase(smooth, swayNormals, label));
 window.bufferProbe = [runBuffers('depth'), runBuffers('normals')];
 window.edgeProbe = runEdges();
 window.paletteProbe = runPalette();
 window.inkProbe = runInk();
+window.curvatureProbe = runCurvature();
 window.shadingProbeSheet = contactSheet();
 window.shadingProbe = results;
