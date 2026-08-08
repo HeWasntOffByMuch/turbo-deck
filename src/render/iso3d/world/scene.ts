@@ -37,6 +37,7 @@ import { buildPropField, FLAT_SHADING, type PropFieldHandle, type PropShading } 
 import { type HikeSettings } from '../hike.js';
 import { CURVATURE_UNIFORMS } from '../terrain-curvature.js';
 import { installPoissonShadows, shadowRadiusFor } from '../shadow-pcf.js';
+import { DETAIL_UNIFORMS, buildDetailTexture } from '../terrain-detail.js';
 import { MechRig, Poofs } from '../rigs.js';
 import { CritterRig, defaultCritterTuning } from '../critter.js';
 import { CRITTERS } from '../../critters/index.js';
@@ -493,6 +494,30 @@ export class WorldScene {
     CURVATURE_UNIFORMS.uCavityOnly.value = hike.debug === 'curvature' ? 1 : 0;
   }
 
+  /**
+   * Hand the ground materials the surface-detail settings (spec 102).
+   *
+   * Uniform writes, like the creases: the tile is generated once at startup and
+   * nothing here rebuilds geometry or recompiles a shader. The texture is built
+   * lazily, so a session that never throws the switch never spends the 64KB or
+   * the mipmap chain on it.
+   */
+  private applyDetail(hike: HikeSettings): void {
+    const wanted = hike.triplanar || hike.materialBlend;
+    if (wanted && !DETAIL_UNIFORMS.uDetailMap.value) {
+      // The driver's maximum, which is what makes the ground readable at the
+      // 27-degree grazing angle this camera looks along.
+      DETAIL_UNIFORMS.uDetailMap.value = buildDetailTexture(
+        this.renderer.capabilities.getMaxAnisotropy(),
+      );
+    }
+    DETAIL_UNIFORMS.uDetailStrength.value = hike.triplanar ? hike.detailStrength : 0;
+    DETAIL_UNIFORMS.uDetailScale.value = 1 / Math.max(1, hike.detailScale);
+    DETAIL_UNIFORMS.uDetailSharpness.value = Math.max(1, hike.detailSharpness);
+    DETAIL_UNIFORMS.uBlendStrength.value = hike.materialBlend ? hike.blendStrength : 0;
+    DETAIL_UNIFORMS.uBlendNoise.value = hike.blendNoise;
+  }
+
   /** Ground height, or 0 before there is any ground to ask about. */
   private ground(x: number, z: number): number {
     return this.map?.world.heightAt(x, z) ?? 0;
@@ -675,6 +700,7 @@ export class WorldScene {
     // default for `radius` is 1, so leaving it alone would soften every shadow in
     // the world without anything having been switched on (spec 101).
     this.sun.shadow.radius = shadowRadiusFor(hike.softShadows, hike.shadowPcfRadius);
+    this.applyDetail(hike);
 
     // Snapped for everything that has to agree with the drawn image: the frame
     // itself, and the screen anchors the DOM overlay hangs bars from. An anchor

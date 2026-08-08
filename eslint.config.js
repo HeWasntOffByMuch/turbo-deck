@@ -104,6 +104,14 @@ const PURE_RENDER = [
   // minimum separation is asserted, which only works if it runs in Node.
   'src/render/iso3d/poisson.ts',
   'src/render/iso3d/poisson.test.ts',
+  // The renderer's one texture and the maths its projection uses (spec 102). The
+  // tile is generated rather than fetched, so what it *is* -- that it tiles, that
+  // it spans its range, that it is the same tile every time -- is arithmetic, and
+  // a tile that only nearly wraps draws a grid across every cliff in the world.
+  'src/render/iso3d/detail-texture.ts',
+  'src/render/iso3d/detail-texture.test.ts',
+  'src/render/iso3d/surface-detail.ts',
+  'src/render/iso3d/surface-detail.test.ts',
   'src/render/iso3d/world/appearance.ts',
   'src/render/iso3d/world/cast.ts',
   'src/render/iso3d/world/intent.ts',

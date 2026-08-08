@@ -285,6 +285,41 @@ try {
     console.log('  ok: shadow edges softened, the rest of the frame left alone');
   }
 
+  // Surface detail on the real map (spec 102). The offscreen probe uses a
+  // synthetic plateau where the cliff is a known rectangle; this asks whether the
+  // patched materials survive the real world's set of them.
+  await page.click('button[aria-label="View settings"]');
+  await page.locator('label', { hasText: 'Soft shadows' }).first().locator('input[type=checkbox]').uncheck();
+  await page.click('button[aria-label="View settings"]');
+  await page.waitForTimeout(800);
+  const detailOff = await page.screenshot({ path: join(outDir, 'world-detail-off.png'), clip: await canvasRect() });
+
+  await page.click('button[aria-label="View settings"]');
+  await page.locator('label', { hasText: 'Surface detail' }).first().locator('input[type=checkbox]').check();
+  await page.locator('label', { hasText: 'Rock by slope' }).first().locator('input[type=checkbox]').check();
+  await page.click('button[aria-label="View settings"]');
+  await page.waitForTimeout(1200);
+  const detailOn = await page.screenshot({ path: join(outDir, 'world-detail.png'), clip: await canvasRect() });
+
+  const tones = (shot: Buffer): number => {
+    const png = PNG.sync.read(shot);
+    const seen = new Set<number>();
+    for (let i = 0; i < png.data.length; i += 4) {
+      seen.add(((png.data[i] ?? 0) << 16) | ((png.data[i + 1] ?? 0) << 8) | (png.data[i + 2] ?? 0));
+    }
+    return seen.size;
+  };
+
+  const tonesOff = tones(detailOff);
+  const tonesOn = tones(detailOn);
+  console.log(`surface detail: ${tonesOff} distinct colours -> ${tonesOn}`);
+  if (tonesOn <= tonesOff) {
+    failed = true;
+    console.log('  FAIL: the texture reached nothing on the real materials');
+  } else {
+    console.log('  ok: the ground and cliffs carry detail');
+  }
+
   const distinct = await page.evaluate(async () => {
     const canvas = document.querySelector('canvas');
     if (!canvas) return 0;

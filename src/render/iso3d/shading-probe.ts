@@ -13,6 +13,7 @@ import { RETRO_DEFAULTS } from './retro.js';
 import { buildTerrainMeshFromChunks } from './terrain-mesh.js';
 import { CURVATURE_UNIFORMS } from './terrain-curvature.js';
 import { installPoissonShadows } from './shadow-pcf.js';
+import { DETAIL_UNIFORMS, buildDetailTexture } from './terrain-detail.js';
 import type { TerrainChunk } from '../../terrain/index.js';
 import type { MeshLayer } from '../../terrain/map-world.js';
 
@@ -302,6 +303,37 @@ export interface ShadowProbeCase {
   readonly castingWorked: boolean;
 }
 
+/** What the generated detail texture did (spec 102). */
+export interface DetailProbeCase {
+  /** Distinct colours over the cliff face, with the switch off and on. */
+  readonly cliffTonesOff: number;
+  readonly cliffTonesOn: number;
+  /**
+   * Variation measured *down* a vertical face against variation *across* it.
+   *
+   * The claim triplanar exists for. A ground-plane UV smears one row of texels
+   * down the whole height, so this ratio comes out in the tens; a triplanar
+   * projection samples a vertical face from the horizontal projections and the
+   * two are comparable.
+   */
+  readonly smearRatio: number;
+  /** Flat ground below the slope threshold, which the blend must leave untouched. */
+  readonly flatGroundChanged: number;
+  /** Pixels the rock blend moved at all, so a blend that did nothing is visible. */
+  readonly blendChanged: number;
+  /** Read off the uploaded texture, not off the code that set it. */
+  readonly mipmapped: boolean;
+  readonly anisotropy: number;
+  readonly minFilterIsMipmap: boolean;
+  /** Whether all three ground patches survived being composed. */
+  readonly streakAlive: boolean;
+  readonly creasesAlive: boolean;
+  /** The LOD measurement the spec declines to act on, re-run so it stays honest. */
+  readonly mapInstances: number;
+  readonly mapBatches: number;
+  readonly mapTriangles: number;
+}
+
 declare global {
   interface Window {
     /** Filled once every case has drawn; `probe-shading.ts` polls for it. */
@@ -320,6 +352,8 @@ declare global {
     curvatureProbe?: CurvatureProbeCase;
     /** What the soft-shadow filter did (spec 101). */
     shadowProbe?: ShadowProbeCase;
+    /** What the generated detail texture did (spec 102). */
+    detailProbe?: DetailProbeCase;
   }
 }
 
@@ -1530,6 +1564,233 @@ function runShadows(): ShadowProbeCase {
   };
 }
 
+/**
+ * Draw a terrain chunk with a tall cliff in it and measure what the generated
+ * texture does to it (spec 102).
+ *
+ * The measurement that matters is the smear. Any texture at all makes a cliff
+ * more interesting than one flat tone, so "there are more colours now" would pass
+ * with a mapping that is completely wrong. What separates triplanar from a
+ * ground-plane UV is what happens *down* a vertical face: the wrong mapping
+ * stretches a single row of texels over the whole drop, so the face varies across
+ * its width and not at all down its height.
+ */
+function runDetail(): DetailProbeCase {
+  const canvas = document.createElement('canvas');
+  canvas.width = CELL_W;
+  canvas.height = CELL_H;
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, preserveDrawingBuffer: true });
+
+  const cols = 24;
+  const rows = 24;
+  const cellSize = 22;
+  // A plateau: flat low ground, one tall step, flat high ground. The step becomes
+  // a wall in the mesher, which is the surface under test.
+  const stride = cols + 1;
+  const corners = stride * (rows + 1);
+  const heights = new Float32Array(corners);
+  const cornerX = new Float32Array(corners);
+  const cornerZ = new Float32Array(corners);
+  const normals = new Float32Array(corners * 3);
+  for (let j = 0; j <= rows; j++) {
+    for (let i = 0; i <= cols; i++) {
+      const k = j * stride + i;
+      cornerX[k] = i * cellSize;
+      cornerZ[k] = j * cellSize;
+      heights[k] = j >= rows / 2 ? 300 : 0;
+      normals[k * 3] = 0;
+      normals[k * 3 + 1] = 1;
+      normals[k * 3 + 2] = 0;
+    }
+  }
+  const cells = cols * rows;
+  const solid = new Uint8Array(cells).fill(1);
+  // A hole along the step, so the mesher skirts it and builds a real wall.
+  for (let i = 0; i < cols; i++) solid[Math.floor(rows / 2) * cols + i] = 0;
+
+  const chunk: TerrainChunk = {
+    layerId: 'probe',
+    coord: { cx: 0, cz: 0 },
+    originX: 0,
+    originZ: 0,
+    cols,
+    rows,
+    startCol: 0,
+    startRow: 0,
+    cellSize,
+    heights,
+    cornerX,
+    cornerZ,
+    normals,
+    solid,
+    materials: new Uint8Array(cells),
+    tones: new Uint8Array(cells),
+    baseY: -200,
+    waterLevel: null,
+  };
+  const layer: MeshLayer = {
+    id: 'probe',
+    bounds: { minX: 0, minZ: 0, maxX: cols * cellSize, maxZ: rows * cellSize },
+    waterLevel: null,
+    solidAt: (col, row) =>
+      col >= 0 && row >= 0 && col < cols && row < rows && solid[row * cols + col] === 1,
+    materialAt: () => 0,
+  };
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0a0a10);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+  const terrain = buildTerrainMeshFromChunks([layer], [chunk]);
+  scene.add(terrain.group);
+
+  // Square on to the cliff face, so "down the face" is straight down the image
+  // and "across it" is straight across -- which is what makes the smear ratio a
+  // measurement rather than a projection exercise.
+  const half = 200;
+  const camera = new THREE.OrthographicCamera(-half, half, half * 0.75, -half * 0.75, 1, 4000);
+  camera.position.set((cols * cellSize) / 2, 150, (rows * cellSize) / 2 - 500);
+  camera.lookAt((cols * cellSize) / 2, 100, (rows * cellSize) / 2);
+  camera.updateMatrixWorld(true);
+
+  const texture = buildDetailTexture(renderer.capabilities.getMaxAnisotropy());
+  DETAIL_UNIFORMS.uDetailMap.value = texture;
+
+  const gl = renderer.getContext();
+  const shoot = (detail: number, blend: number): Uint8Array => {
+    DETAIL_UNIFORMS.uDetailStrength.value = detail;
+    DETAIL_UNIFORMS.uBlendStrength.value = blend;
+    renderer.setRenderTarget(null);
+    renderer.render(scene, camera);
+    const out = new Uint8Array(CELL_W * CELL_H * 4);
+    gl.readPixels(0, 0, CELL_W, CELL_H, gl.RGBA, gl.UNSIGNED_BYTE, out);
+    return out;
+  };
+
+  const off = shoot(0, 0);
+  const on = shoot(0.35, 0);
+  const blended = shoot(0, 0.9);
+  DETAIL_UNIFORMS.uDetailStrength.value = 0;
+  DETAIL_UNIFORMS.uBlendStrength.value = 0;
+  frames.push({ label: 'triplanar detail on a cliff', pixels: on });
+
+  const value = (px: Uint8Array, i: number): number =>
+    ((px[i] ?? 0) + (px[i + 1] ?? 0) + (px[i + 2] ?? 0)) / 3;
+
+  // The cliff, found by hue rather than by geometry: the wall material is a grey
+  // stone and the surface above and below it is a warm green.
+  const isCliff = (i: number): boolean => {
+    const r = off[i] ?? 0;
+    const g = off[i + 1] ?? 0;
+    const b = off[i + 2] ?? 0;
+    if (r < 20) return false;
+    return b / Math.max(1, g) > 0.75 && Math.abs(r - g) < 40;
+  };
+
+  const cliffTones = (px: Uint8Array): number => {
+    const seen = new Set<number>();
+    for (let i = 0; i < px.length; i += 4) {
+      if (!isCliff(i)) continue;
+      seen.add(((px[i] ?? 0) << 16) | ((px[i + 1] ?? 0) << 8) | (px[i + 2] ?? 0));
+    }
+    return seen.size;
+  };
+
+  // Variation down the face against variation across it. A ground-plane UV gives
+  // a column that never changes and a row that changes fast.
+  let downSteps = 0;
+  let downCount = 0;
+  let acrossSteps = 0;
+  let acrossCount = 0;
+  for (let y = 1; y < CELL_H - 1; y++) {
+    for (let x = 1; x < CELL_W - 1; x++) {
+      const i = (y * CELL_W + x) * 4;
+      if (!isCliff(i)) continue;
+      const below = i - CELL_W * 4;
+      const right = i + 4;
+      if (isCliff(below)) {
+        downSteps += Math.abs(value(on, i) - value(on, below));
+        downCount++;
+      }
+      if (isCliff(right)) {
+        acrossSteps += Math.abs(value(on, i) - value(on, right));
+        acrossCount++;
+      }
+    }
+  }
+  const down = downCount === 0 ? 0 : downSteps / downCount;
+  const across = acrossCount === 0 ? 0 : acrossSteps / acrossCount;
+
+  // The blend must leave flat ground alone: it is the slope and the height that
+  // earn bare rock, and the low plateau has neither.
+  let flatGroundChanged = 0;
+  let blendChanged = 0;
+  for (let i = 0; i < off.length; i += 4) {
+    if (value(off, i) < 20) continue;
+    if (Math.abs(value(off, i) - value(blended, i)) > 0.5) blendChanged++;
+    // Low flat ground: the green surface in the bottom half of the frame.
+    const pixel = i / 4;
+    const y = Math.floor(pixel / CELL_W);
+    if (!isCliff(i) && y < CELL_H * 0.35) {
+      if (off[i] !== blended[i] || off[i + 1] !== blended[i + 1] || off[i + 2] !== blended[i + 2]) {
+        flatGroundChanged++;
+      }
+    }
+  }
+
+  // Whether the other two ground patches survived being composed with this one.
+  // `onBeforeCompile` is a single slot; assigning instead of wrapping would drop
+  // the weather and the creases silently.
+  const surfaceShader = terrain.group.children.find(
+    (c) => c instanceof THREE.Mesh && (c.material as THREE.Material).name !== 'wall',
+  );
+  const programs = renderer.info.programs ?? [];
+  const source = programs.map((p) => (p as unknown as { cacheKey?: string }).cacheKey ?? '').join('|');
+
+  // The LOD measurement the spec declines to act on, re-run so the numbers in it
+  // stay true as the map grows.
+  const lodField = buildPropField(INK_PROPS, () => 0, undefined, {
+    smooth: false,
+    creaseAngle: DEFAULT_CREASE_ANGLE,
+    swayNormals: false,
+  });
+  let mapBatches = 0;
+  let mapInstances = 0;
+  let mapTriangles = 0;
+  lodField.group.traverse((node) => {
+    if (!(node instanceof THREE.InstancedMesh)) return;
+    mapBatches++;
+    mapInstances += node.count;
+    const position = node.geometry.getAttribute('position');
+    const perInstance = node.geometry.index
+      ? node.geometry.index.count / 3
+      : (position?.count ?? 0) / 3;
+    mapTriangles += perInstance * node.count;
+  });
+  lodField.dispose();
+
+  const result: DetailProbeCase = {
+    cliffTonesOff: cliffTones(off),
+    cliffTonesOn: cliffTones(on),
+    smearRatio: down === 0 ? 0 : across / down,
+    flatGroundChanged,
+    blendChanged,
+    mipmapped: texture.generateMipmaps,
+    anisotropy: texture.anisotropy,
+    minFilterIsMipmap: texture.minFilter === THREE.LinearMipmapLinearFilter,
+    streakAlive: source.includes('wind-streak'),
+    creasesAlive: source.includes('curvature') && surfaceShader !== undefined,
+    mapInstances,
+    mapBatches,
+    mapTriangles: Math.round(mapTriangles),
+  };
+
+  terrain.dispose();
+  texture.dispose();
+  DETAIL_UNIFORMS.uDetailMap.value = null;
+  renderer.dispose();
+  return result;
+}
+
 const results = CASES.map(({ smooth, swayNormals, label }) => runCase(smooth, swayNormals, label));
 window.bufferProbe = [runBuffers('depth'), runBuffers('normals')];
 window.edgeProbe = runEdges();
@@ -1537,5 +1798,6 @@ window.paletteProbe = runPalette();
 window.inkProbe = runInk();
 window.curvatureProbe = runCurvature();
 window.shadowProbe = runShadows();
+window.detailProbe = runDetail();
 window.shadingProbeSheet = contactSheet();
 window.shadingProbe = results;

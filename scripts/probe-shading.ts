@@ -97,6 +97,22 @@ interface ShadowProbeCase {
   readonly castingWorked: boolean;
 }
 
+interface DetailProbeCase {
+  readonly cliffTonesOff: number;
+  readonly cliffTonesOn: number;
+  readonly smearRatio: number;
+  readonly flatGroundChanged: number;
+  readonly blendChanged: number;
+  readonly mipmapped: boolean;
+  readonly anisotropy: number;
+  readonly minFilterIsMipmap: boolean;
+  readonly streakAlive: boolean;
+  readonly creasesAlive: boolean;
+  readonly mapInstances: number;
+  readonly mapBatches: number;
+  readonly mapTriangles: number;
+}
+
 interface ShadingProbeCase {
   readonly label: string;
   readonly programs: number;
@@ -165,6 +181,7 @@ try {
   const ink = (await page.evaluate(() => window.inkProbe)) as InkProbeCase | undefined;
   const curvature = (await page.evaluate(() => window.curvatureProbe)) as CurvatureProbeCase | undefined;
   const shadows = (await page.evaluate(() => window.shadowProbe)) as ShadowProbeCase | undefined;
+  const detail = (await page.evaluate(() => window.detailProbe)) as DetailProbeCase | undefined;
 
   // Anything mentioning a shader, a program, a compile or a link is a hard
   // failure; the rest is printed but tolerated.
@@ -501,6 +518,66 @@ try {
         `(${widened === Infinity ? 'from nothing' : `${widened.toFixed(0)}x`})\n` +
         `        area ${shadows.areaHard.toFixed(0)} -> ${shadows.areaSoft.toFixed(0)} px ` +
         `(${(drift * 100).toFixed(1)}% drift), ${shadows.openGroundChanged} open-ground px changed`,
+    );
+    for (const problem of problems) console.log(`        ${problem}`);
+  }
+
+  // Surface detail (spec 102).
+  if (detail) {
+    const problems: string[] = [];
+    if (detail.cliffTonesOn < detail.cliffTonesOff * 4) {
+      problems.push(
+        `the cliff went from ${detail.cliffTonesOff} to ${detail.cliffTonesOn} tones -- ` +
+          'the texture is barely reaching it',
+      );
+    }
+    // The claim triplanar exists for. A ground-plane UV smears one row of texels
+    // down the whole face, so variation across it dwarfs variation down it.
+    // "There are more colours now" would pass with a completely wrong mapping.
+    if (detail.smearRatio > 4 || detail.smearRatio === 0) {
+      problems.push(
+        `the cliff varies ${detail.smearRatio.toFixed(1)}x more across than down -- ` +
+          'that is a smear, so the projection is not triplanar',
+      );
+    }
+    // The blend earns bare rock from slope and height; low flat ground has neither.
+    if (detail.flatGroundChanged > 0) {
+      problems.push(
+        `${detail.flatGroundChanged} pixels of flat low ground changed -- ` +
+          'the rock blend is a tint rather than a slope term',
+      );
+    }
+    if (detail.blendChanged < 200) {
+      problems.push(`the rock blend moved only ${detail.blendChanged} pixels`);
+    }
+    // The brief's sampling constraint, read off the uploaded texture rather than
+    // off the code that set it. It had nothing to bind to before this step.
+    if (!detail.mipmapped || !detail.minFilterIsMipmap) {
+      problems.push('the texture is not mipmapped -- only the framebuffer upscale may be nearest');
+    }
+    if (detail.anisotropy < 2) {
+      problems.push(
+        `anisotropy is ${detail.anisotropy} -- the ground is seen at a grazing angle, ` +
+          'which is the exact case trilinear alone blurs away',
+      );
+    }
+    if (!detail.streakAlive || !detail.creasesAlive) {
+      problems.push(
+        `a ground patch was dropped (streak ${detail.streakAlive}, creases ${detail.creasesAlive}) -- ` +
+          'onBeforeCompile is one slot and this one has to wrap, not assign',
+      );
+    }
+    if (problems.length > 0) failed = true;
+    console.log(
+      `${problems.length === 0 ? 'ok  ' : 'FAIL'}  surface detail\n` +
+        `        cliff tones ${detail.cliffTonesOff} -> ${detail.cliffTonesOn}, ` +
+        `across/down variation ${detail.smearRatio.toFixed(2)}x ` +
+        `(a smear would be tens)\n` +
+        `        rock blend moved ${detail.blendChanged} px, ` +
+        `${detail.flatGroundChanged} of them flat low ground; ` +
+        `mipmaps ${detail.mipmapped}, anisotropy ${detail.anisotropy}\n` +
+        `        LOD measurement (declined, spec 102): ${detail.mapInstances} instances in ` +
+        `${detail.mapBatches} batches, ${detail.mapTriangles} triangles`,
     );
     for (const problem of problems) console.log(`        ${problem}`);
   }

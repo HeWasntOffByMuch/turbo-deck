@@ -487,6 +487,31 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     'Edge neighbours a pixel needs before its line draws at full strength. Fades the one- and ' +
     'two-pixel specks that blink as geometry crosses a sample boundary. 0 disables it.');
 
+  // Step 10: the renderer's first texture, generated rather than fetched
+  // (spec 102), and the boundary the ground's materials meet along.
+  const triplanar = makeCheckbox('Surface detail', HIKE_OFF.triplanar,
+    'Modulate the ground and cliff colours with a generated noise tile, projected on all three ' +
+    'world axes so a vertical face is not smeared. Off by default: spec 018 says flat blocks of ' +
+    'colour and no textures, and this is the one place that rule runs out.');
+  const detailStrength = makeSlider('Detail', 0, 60, 2, Math.round(HIKE_OFF.detailStrength * 100), '%',
+    'How far the tile darkens and lightens the colour underneath it.');
+  const detailScale = makeSlider('Detail size', 20, 300, 10, HIKE_OFF.detailScale, 'u',
+    'World units per repeat of the tile.');
+  const detailSharpness = makeSlider('Projection blend', 1, 12, 1, HIKE_OFF.detailSharpness, '',
+    'How hard a surface commits to one projection axis. Low is a soft blend that loses contrast ' +
+    'where two projections average each other out; high is a narrow seam.');
+
+  const materialBlend = makeCheckbox('Rock by slope', HIKE_OFF.materialBlend,
+    'Blend the ground toward bare rock where it is steep or high, with the boundary displaced by ' +
+    'noise. Colour only -- the cell still knows what it is made of.');
+  const blendStrength = makeSlider('Rock amount', 0, 100, 5, Math.round(HIKE_OFF.blendStrength * 100), '%',
+    'How far the colour moves toward stone where the blend is full.');
+  // Stops at 40%, which is not a round number but the point past which the
+  // displacement reaches ground with no slope at all -- see maxNoiseForFlatGround.
+  const blendNoise = makeSlider('Ragged edge', 0, 40, 5, Math.round(HIKE_OFF.blendNoise * 100), '%',
+    'How far the noise displaces the boundary. At zero it is a contour line, which is as regular ' +
+    'as the lattice underneath it.');
+
   // Step 9: a softer shadow edge, which the look deliberately does not want
   // (spec 101) -- the switch exists so the choice can be seen.
   const softShadows = makeCheckbox('Soft shadows', HIKE_OFF.softShadows,
@@ -543,7 +568,9 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
       magicOn, magicRange, magicBright, spawners,
       retroOn, levels, dither, weave, weaveScale, pixelSize, gradeChoice, gradeStrength,
       smoothNormals, creaseAngle, swayNormals, lowRes, virtualSize, snapCamera, buffers, edges, depthThreshold, normalThreshold, skyOutline, paletteChoice, ink, inkStart, inkEnd, inkFlatten, inkDesat, inkFog, inkEdgeGain,
-      minNeighbours, curvature, curvatureStrength, softShadows, shadowRadius, debugView];
+      minNeighbours, curvature, curvatureStrength, softShadows, shadowRadius,
+      triplanar, detailStrength, detailScale, detailSharpness, materialBlend, blendStrength, blendNoise,
+      debugView];
     for (const w of widgets) w.reset();
   });
 
@@ -604,6 +631,13 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     curvatureStrength.row,
     softShadows.row,
     shadowRadius.row,
+    triplanar.row,
+    detailStrength.row,
+    detailScale.row,
+    detailSharpness.row,
+    materialBlend.row,
+    blendStrength.row,
+    blendNoise.row,
     debugView.row,
   );
   panel.append(reset);
@@ -689,6 +723,13 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
         curvatureStrength: curvatureStrength.value() / 100,
         softShadows: softShadows.checked(),
         shadowPcfRadius: shadowRadius.value(),
+        triplanar: triplanar.checked(),
+        detailStrength: detailStrength.value() / 100,
+        detailScale: detailScale.value(),
+        detailSharpness: detailSharpness.value(),
+        materialBlend: materialBlend.checked(),
+        blendStrength: blendStrength.value() / 100,
+        blendNoise: blendNoise.value() / 100,
         debug: debugView.value() as HikeDebugView,
       };
     },

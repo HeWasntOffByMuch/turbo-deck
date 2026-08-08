@@ -343,6 +343,45 @@ export interface HikeSettings {
   /** PCF kernel radius in shadow-map texels. */
   readonly shadowPcfRadius: number;
 
+  // --- step 10: surface detail ----------------------------------------------
+
+  /**
+   * Sample a generated noise tile by triplanar projection and modulate the
+   * ground and cliff colours with it.
+   *
+   * The renderer's first texture, and a deliberate exception to spec 018's
+   * "flat blocks of colour, no textures" -- which is why it is off by default. A
+   * cliff face is the one place that rule visibly runs out: a tall stone wall in
+   * a single tone reads as a cut-out.
+   *
+   * Triplanar rather than a UV mapping because a cliff is vertical, and any
+   * mapping taken from the ground plane smears one row of texels down its whole
+   * height.
+   */
+  readonly triplanar: boolean;
+  /** How far the detail darkens and lightens the surface colour, 0..1. */
+  readonly detailStrength: number;
+  /** World units per repeat of the tile. */
+  readonly detailScale: number;
+  /** How hard a surface commits to one projection axis. */
+  readonly detailSharpness: number;
+
+  /**
+   * Blend the ground's colour toward bare rock by slope and height, with the
+   * boundary displaced by noise.
+   *
+   * The noise is the point. A pure slope threshold draws a contour line on a
+   * heightfield, and a contour line is as regular as the lattice under it.
+   *
+   * Colour only: the per-cell material still decides what the ground *is*, what
+   * walks on it and what it costs to cross. Nothing here reaches the sim.
+   */
+  readonly materialBlend: boolean;
+  /** How far the colour moves toward rock where the blend is full, 0..1. */
+  readonly blendStrength: number;
+  /** How far the noise displaces the boundary, as a fraction of the ramp. */
+  readonly blendNoise: number;
+
   // --- debugging -------------------------------------------------------------
 
   /** Draw one intermediate buffer on its own instead of the finished frame. */
@@ -402,6 +441,17 @@ export const HIKE_OFF: HikeSettings = {
 
   softShadows: false,
   shadowPcfRadius: 1.5,
+
+  triplanar: false,
+  detailStrength: 0.18,
+  // A repeat every 90 units: about four cells, so the pattern reads as surface
+  // rather than as terrain features of its own.
+  detailScale: 90,
+  detailSharpness: 4,
+
+  materialBlend: false,
+  blendStrength: 0.7,
+  blendNoise: 0.25,
 
   debug: 'off',
 };

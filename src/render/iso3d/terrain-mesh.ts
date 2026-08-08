@@ -18,6 +18,7 @@ import { WATER } from './wind.js';
 import { buildWaterQuad, disposeWaterQuad } from './water-material.js';
 import { patchTerrainStreak } from './terrain-streak.js';
 import { patchTerrainCurvature } from './terrain-curvature.js';
+import { patchTerrainDetail } from './terrain-detail.js';
 import { cellCavity, type CornerSample } from './curvature.js';
 
 /**
@@ -64,6 +65,12 @@ patchTerrainStreak(wallMaterial);
 // measure, and a material that reads a `cavity` attribute the geometry does not
 // carry is a GL error rather than a zero (spec 100).
 patchTerrainCurvature(surfaceMaterial);
+// Both ground materials (spec 102). The cliff wall is the surface that most
+// needs it -- a tall vertical face in a single tone reads as a cut-out -- and it
+// is also the one a ground-plane UV would smear, which is why the projection is
+// triplanar.
+patchTerrainDetail(surfaceMaterial);
+patchTerrainDetail(wallMaterial);
 
 /** The material index water cells carry, resolved once. */
 const WATER_MATERIAL = materialIndex('water');
