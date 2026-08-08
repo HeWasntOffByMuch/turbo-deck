@@ -34,6 +34,7 @@ import {
   MIN_VIEW_HALF_WIDTH,
   offsetToOrbit,
   orbitToOffset,
+  pinchViewHalfWidth,
   zoomViewHalfWidth,
   type Vec3,
 } from './view-settings.js';
@@ -59,6 +60,15 @@ export interface ViewControls {
   viewHalfWidth(): number;
   /** Let the wheel over `target` zoom the view span, as well as the slider (spec 042). */
   attachWheelZoom(target: HTMLElement): void;
+  /**
+   * Zoom by a pinch's spread ratio (spec 093). Writes the same slider the wheel
+   * writes, because the slider *is* the zoom -- a pinch that kept its own number
+   * would be silently overwritten the next time the panel was touched.
+   *
+   * The gesture itself is recognised in `world/touch.ts` and bound in
+   * `world/view.ts`; this is only the way in.
+   */
+  pinchZoom(ratio: number): void;
   /** How long the camera takes to catch up to the unit it follows, ms (spec 039). */
   followLagMs(): number;
   /** Directional-light position/direction, world units. */
@@ -495,6 +505,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
         { passive: false },
       );
     },
+    pinchZoom: (ratio: number) => zoom.setValue(pinchViewHalfWidth(zoom.value(), ratio)),
     cameraOffset: () =>
       orbitToOffset({ azimuth: camAz.value() * DEG, elevation: camEl.value() * DEG, distance: camOrbit.distance }),
     viewHalfWidth: () => zoom.value(),

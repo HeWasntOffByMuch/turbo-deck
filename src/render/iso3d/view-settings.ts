@@ -130,6 +130,23 @@ export function zoomViewHalfWidth(current: number, deltaY: number, deltaMode = 0
 }
 
 /**
+ * The view span a pinch lands on, given the span it started at and how much the
+ * fingers' separation changed since the last report (spec 093).
+ *
+ * Fingers spreading (`ratio > 1`) *narrows* the span, because a pinch is direct
+ * manipulation rather than a control: the ground between the fingers has to grow
+ * as they separate, which is the opposite sign to the wheel's. Clamped to the
+ * same band the wheel and the slider are held to, so no gesture frames outside
+ * it. A ratio that is not a usable multiplier leaves the span alone -- the
+ * recogniser already refuses a zero separation, and this is the second wall.
+ */
+export function pinchViewHalfWidth(current: number, ratio: number): number {
+  const start = clampViewHalfWidth(current);
+  if (!Number.isFinite(ratio) || ratio <= 0) return start;
+  return clampViewHalfWidth(start / ratio);
+}
+
+/**
  * The same wheel step over an arbitrary band. The editor frames a different
  * range of the world than the game does -- close enough to work on one cell, wide
  * enough to hold all of it -- and gets its own bounds rather than a second copy
