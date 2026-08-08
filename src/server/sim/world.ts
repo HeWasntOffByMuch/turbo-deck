@@ -422,13 +422,34 @@ export function step(
 
     // A cancel is honoured before anything else this tick, so releasing the key
     // on the last tick of a wind-up still calls the cast off.
+    //
+    // And it outranks a commit asked for on the same tick (spec 092). One input
+    // can carry both -- `mergeInputs` folds a whole batch of client frames into
+    // one, and `cancelCast` is or-ed across it -- and the two readings are not
+    // symmetric: swallowing the cancel lands a blow the player asked not to
+    // throw, while swallowing the commit costs a press. So the withdrawal wins,
+    // and the request is *answered* rather than dropped, because the client
+    // pairs the n-th reply with the n-th request (spec 080) and a request thrown
+    // away in silence skews every answer after it.
+    //
+    // `server.ts` never builds such an input -- it delivers the two in arrival
+    // order, a tick apart, which is the only place that knows which the player
+    // asked for first. This is the rule for everyone who calls `step` directly.
     if (intent?.cancelCast) {
       const cancelled = cancelCast(caster, tick, CastEndReason.Cancelled);
       if (cancelled.cancelled) {
         working.set(casterId, cancelled.entity);
         events.push(...cancelled.events);
-        continue;
       }
+      if (intent.castAbilityId) {
+        events.push({
+          kind: 'castRejected',
+          entityId: casterId,
+          abilityId: intent.castAbilityId,
+          reason: 'withdrawn',
+        });
+      }
+      if (cancelled.cancelled || intent.castAbilityId) continue;
     }
 
     // A new commit, if one was asked for and nothing is in progress.

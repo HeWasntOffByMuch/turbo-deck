@@ -272,6 +272,80 @@ describe('wind-up', () => {
     expect(away.state.entities.get(player.id)?.cooldowns['melee.heavy']).toBeUndefined();
   });
 
+  /**
+   * Spec 092. One input can carry both a commit and a withdrawal -- `server.ts`
+   * no longer builds one, but `mergeInputs` folds a batch of client frames into
+   * a single frame and or-s `cancelCast` across it, and the bots and these tests
+   * call `step` directly. The rule has to live in `step`, which is the lesson
+   * spec 090 already paid for once.
+   *
+   * Two readings, and they do not cost the same: swallowing the cancel throws a
+   * blow the player called off, which is the bug the report described.
+   * Swallowing the commit costs a press.
+   */
+  it('lets a withdrawal outrank a commit that shares its tick, and answers both', () => {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+
+    const both = run(state, 1, {
+      0: [
+        input(player.id, {
+          castAbilityId: 'melee.heavy',
+          castTargetX: 700,
+          castTargetY: 450,
+          cancelCast: true,
+        }),
+      ],
+    });
+
+    // Nothing began, so nothing can go off.
+    expect(both.state.entities.get(player.id)?.cast ?? null).toBeNull();
+    // And the request was refused rather than dropped in silence: the client
+    // pairs the n-th reply with the n-th request (spec 080), so a request thrown
+    // away without a word mis-attributes every answer after it.
+    expect(
+      both.events.filter((event) => event.kind === 'castRejected' && event.reason === 'withdrawn'),
+    ).toHaveLength(1);
+    // Nothing was charged for it either.
+    expect(both.state.entities.get(player.id)?.cooldowns['melee.heavy']).toBeUndefined();
+  });
+
+  it('answers a commit that shares its tick with a cancel for a cast in progress', () => {
+    let state = createWorldState(1);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+
+    const commit = run(state, 1, {
+      0: [input(player.id, { castAbilityId: 'melee.heavy', castTargetX: 700, castTargetY: 450 })],
+    });
+    expect(commit.state.entities.get(player.id)?.cast).not.toBeNull();
+
+    const both = run(commit.state, 1, {
+      0: [
+        input(player.id, {
+          castAbilityId: 'melee.slash',
+          castTargetX: 700,
+          castTargetY: 450,
+          cancelCast: true,
+        }),
+      ],
+    });
+
+    // The withdrawal lands, as it always did...
+    expect(both.state.entities.get(player.id)?.cast ?? null).toBeNull();
+    expect(
+      both.events.some(
+        (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Cancelled,
+      ),
+    ).toBe(true);
+    // ...and the second press is answered, which it was not: it used to be
+    // dropped between the cancel and the commit with no event of any kind.
+    expect(
+      both.events.filter((event) => event.kind === 'castRejected' && event.reason === 'withdrawn'),
+    ).toHaveLength(1);
+  });
+
   it('does not withdraw from a blow that has already landed', () => {
     let state = createWorldState(1);
     const player = withPlayer(state, 600, 450);

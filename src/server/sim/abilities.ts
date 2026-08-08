@@ -48,7 +48,13 @@ export type CastRejection =
   | 'dead'
   | 'outOfRange'
   /** A `targeting: 'unit'` ability asked for with nothing named (spec 080). */
-  | 'noTarget';
+  | 'noTarget'
+  /**
+   * Asked for on a tick that also carries a withdrawal, so it never began
+   * (spec 092). Not a refusal of the request on its merits -- it is the answer
+   * that keeps the reply stream paired when the two arrive together.
+   */
+  | 'withdrawn';
 
 export interface CastAttempt {
   readonly abilityId: string;
