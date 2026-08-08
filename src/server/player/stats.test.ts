@@ -154,25 +154,29 @@ describe('effective stats', () => {
     expect(quick.turnRate).toBeGreaterThan(slow.turnRate);
   });
 
-  it('takes attack speed from equipment, in both directions', () => {
+  it('does not let the weapon change the attack cadence (spec 091)', () => {
     const bare = computeEffectiveStats(player());
     const delayWith = (mainHand: string): number =>
       computeEffectiveStats(player({ equipment: { ...EMPTY_EQUIPMENT, mainHand } })).attackDelayTicks;
 
-    // `attackSpeedPct` still means *percent faster*, so it shortens the wait.
-    expect(delayWith('sword.keen')).toBeLessThan(bare.attackDelayTicks);
-    expect(delayWith('stars.weighted')).toBeLessThan(bare.attackDelayTicks);
-    expect(delayWith('maul.iron')).toBeGreaterThan(bare.attackDelayTicks);
-    expect(delayWith('bow.hunting')).toBeGreaterThan(bare.attackDelayTicks);
+    // The cadence is a property of attacking, not of what is held: a bow, a
+    // maul and a bare hand are all on the same clock. `attackSpeedPct` still
+    // exists and still means percent faster -- nothing reads it for *this*.
+    for (const weapon of ['sword.keen', 'stars.weighted', 'maul.iron', 'bow.hunting']) {
+      expect(delayWith(weapon), weapon).toBe(bare.attackDelayTicks);
+    }
+    expect(bare.attackDelayTicks).toBe(BASE_ATTACK_DELAY_TICKS);
   });
 
-  it('takes a flat shortening from a skill', () => {
+  it('does not let a skill change it either (spec 091)', () => {
     const bare = computeEffectiveStats(player());
-    // Precision is `attackCooldownTicks: -0.4` a level: flat ticks off the wait.
+    // Precision is `attackCooldownTicks: -0.4` a level. It still modifies the
+    // stat it names; the cadence simply stopped being derived from it, which is
+    // a real loss for two Finesse skills and is recorded rather than hidden.
     const trained = computeEffectiveStats(
       player({ skills: [{ skillId: 'finesse.precision', level: 5 }] }),
     );
-    expect(trained.attackDelayTicks).toBeLessThan(bare.attackDelayTicks);
+    expect(trained.attackDelayTicks).toBe(bare.attackDelayTicks);
   });
 
   it('holds the delay between its floor and its ceiling', () => {
@@ -205,17 +209,9 @@ describe('effective stats', () => {
   });
 
   it('does not ask the shooter how fast its shot flies (spec 088)', () => {
-    // Two weapons whose *delays* differ as much as the table allows. What comes
-    // off them is the same shot: how soon the next one may be thrown is the
-    // weapon's business, how fast this one travels is the row's.
-    const bow = computeEffectiveStats(
-      player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'bow.hunting' } }),
-    );
-    const stars = computeEffectiveStats(
-      player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'stars.weighted' } }),
-    );
-    expect(stars.attackDelayTicks).toBeLessThan(bow.attackDelayTicks);
-
+    // Since spec 091 the cadence is the same whatever is held, so this can no
+    // longer be shown by contrasting two weapons -- it is shown by the
+    // signatures, which have nowhere to put a body.
     const spec = { speed: 900, lifetimeTicks: 120 };
     expect(projectileSpeedFor(spec.speed)).toBe(projectileSpeedFor(spec.speed));
     expect(projectileLifetimeTicks(spec)).toBe(projectileLifetimeTicks(spec));

@@ -175,10 +175,13 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
   // than a modifier, and its old haste link was the last of the indirection this
   // replaced -- a weapon that wants to be quick says `attackSpeedPct`, as the
   // Keen Longsword already does.
-  const attackDelayTicks = attackDelayTicksFrom(
-    bonus.attackCooldownTicks,
-    (1 + bonus.attackSpeed) * (1 + bonus.attackSpeedPct),
-  );
+  // Flat, and independent of what the body is holding (spec 091). The attack
+  // cadence is a property of *attacking*, not of the weapon: a bow and a sword
+  // put you on the same clock, and picking one up cannot buy a faster one.
+  // `attackSpeedPct` and the flat `attackCooldownTicks` still exist as
+  // modifiers and still mean what they say -- nothing reads them for this any
+  // more, which is why the two Finesse skills no longer shorten the cadence.
+  const attackDelayTicks = attackDelayTicksFrom(0, 1);
 
   const armor = clamp(ARMOR_PER_AGILITY * dexterity + bonus.armor, 0, MAX_DAMAGE_REDUCTION);
 
