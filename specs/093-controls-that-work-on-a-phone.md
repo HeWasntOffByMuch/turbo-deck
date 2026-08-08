@@ -45,7 +45,7 @@ Mouse behaviour is untouched.
 
 ```ts
 // src/render/iso3d/world/touch.ts
-export interface TouchSample { readonly id: number; readonly x: number; readonly y: number; readonly t: number; }
+export interface TouchSample { readonly id: number; readonly x: number; readonly y: number; }
 export type TouchGesture =
   | { readonly kind: 'tap'; readonly x: number; readonly y: number }
   | { readonly kind: 'pinch'; readonly ratio: number };
@@ -60,15 +60,23 @@ export class TouchGestures {
 }
 ```
 
-Time arrives as `event.timeStamp` on the sample rather than being read from a
-clock, which is the whole reason this is testable in Node: a tap is a fact about
-a sequence of timed samples, not about when the test ran. It goes in
-`PURE_RENDER` alongside `intent.ts`, and `view.ts` keeps the listeners.
+A tap is one pointer, up within `TAP_SLOP_PX` of where it went down. A second
+finger landing ends any tap in progress — those two fingers are a pinch, and
+neither of them may also post an order when it lifts. There is no time in the
+recogniser at all, so it goes in `PURE_RENDER` alongside `intent.ts`; `view.ts`
+keeps the listeners.
 
-A tap is one pointer, up within `TAP_MAX_MS` of its own down and never further
-than `TAP_SLOP_PX` from where it started. A second finger landing ends any tap
-in progress — those two fingers are a pinch, and neither of them may also post
-an order when it lifts.
+**A tap is bounded by distance and not by duration**, which is worth stating
+because every other implementation of this has a millisecond budget in it. This
+one had one too, until `scripts/preview-touch.ts` drove the real page and a 60ms
+tap arrived with **735ms between its `pointerdown` and its `pointerup`**. The
+finger was not slow — the page was. Events are stamped when they are created, and
+a busy main thread creates them late, so under load the gap measures how loaded
+the renderer is rather than how long anybody held anything. The recogniser cannot
+tell those apart, and every wrong guess is an order the player gave and the game
+silently dropped, on exactly the slow devices this spec exists for. Nothing here
+is waiting on a long press to disambiguate against, so the budget bought nothing
+and cost orders.
 
 ### Pinch reuses the wheel's band, not a second set of numbers
 
@@ -122,8 +130,11 @@ inset by `env(safe-area-inset-*)` so a notch does not sit on the cog.
 
 - A down/up pair inside the slop and the time budget yields one tap, at the
   position the finger went **down** — that is the point that was aimed at.
-- A pointer that travels past `TAP_SLOP_PX` yields no tap, and one held past
-  `TAP_MAX_MS` yields no tap, whichever way it ends.
+- A pointer that travels past `TAP_SLOP_PX` yields no tap, whether it wandered
+  during the gesture or only turned up somewhere else at the end.
+- A pointer held for any length of time still yields a tap. This is the
+  regression the millisecond budget caused, so it is asserted rather than left
+  as an absence.
 - A second finger landing suppresses the tap for **both** fingers: neither the
   first nor the second posts one when it lifts, and lifting back to one finger
   does not re-arm a tap.
