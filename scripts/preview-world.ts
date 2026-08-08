@@ -26,15 +26,41 @@ const outDir = join(root, '.claude', 'screenshots');
 const PORT = 4319;
 
 /**
- * How far beside a body the deliberately-sloppy click lands, in CSS pixels.
+ * How far beside a body the "this is bare ground" click lands, in CSS pixels.
  *
- * Outside the body at the default framing, and comfortably short of the ~110px
- * the seeded grazers stand apart -- so a hit is this body being forgiving
- * rather than the neighbour being picked instead. What the budget *is* belongs
- * to `hover.test.ts`, which pins it exactly; this asks only whether the
- * forgiveness is wired to the mouse at all.
+ * A body twenty world units across is about eighty pixels wide at the default
+ * framing, so this is comfortably past its edge -- and the click is only made
+ * when no other bar is within reach of it, so picking nothing means the ground
+ * is free rather than that the neighbour was missed too. What the pick's reach
+ * *is* belongs to `hover.test.ts`, which pins it exactly; this asks only whether
+ * the ground beside a body is still ground once a browser is delivering the
+ * clicks (spec 095).
  */
-const SLOPPY_OFFSET = 40;
+const GAP_OFFSET = 70;
+
+/**
+ * How far a candidate pixel must be from every *other* body's bar, in CSS
+ * pixels, for a pick there to mean anything.
+ *
+ * A body is about eighty pixels across at the default framing, so a neighbour
+ * whose bar is merely {@link GAP_OFFSET} away still has half its body over the
+ * pixel being tried. This is that width plus the offset, which is the distance
+ * at which "nothing was picked" is a statement about the ground rather than
+ * about which of two bodies got there first.
+ */
+const GAP_CLEARANCE = 110;
+
+/**
+ * How near a body's click point another body may be and still plausibly own it,
+ * in CSS pixels.
+ *
+ * A twenty-unit footprint is forty pixels across the middle at the default
+ * framing, so anything nearer than this could legitimately have been what the
+ * click picked. Used only to tell "the pick reached too far" apart from "a
+ * monster walked onto the pixel between the read and the click" -- the world
+ * does not hold still for a screenshot harness.
+ */
+const DRIFT_MARGIN = 50;
 
 /**
  * A Chromium to drive. Prefers a browser already on the box (an agent container
@@ -84,6 +110,8 @@ interface Bar {
   readonly id: string;
   readonly x: number;
   readonly y: number;
+  /** True for the local player's own bar, which no click may attack. */
+  readonly self: boolean;
 }
 
 /**
@@ -98,15 +126,94 @@ async function bodiesOnScreen(page: Page): Promise<Bar[]> {
   return page.$$eval('[data-entity]', (nodes) =>
     nodes.map((node) => {
       const element = node as HTMLElement;
-      return { id: element.dataset['entity'] ?? '', x: element.offsetLeft, y: element.offsetTop };
+      return {
+        id: element.dataset['entity'] ?? '',
+        x: element.offsetLeft,
+        y: element.offsetTop,
+        self: element.dataset['self'] !== undefined,
+      };
     }),
   );
 }
 
 /** The pixel to point at for a body, given the bar floating over its head. */
 function bodyPoint(bar: Bar): { x: number; y: number } {
-  // The footprint fallback in the pick makes the exact offset forgiving.
+  // The bar hangs at the top of the head, so a drop of forty pixels is inside
+  // the column the body stands in whichever monster the field seeded.
   return { x: bar.x, y: bar.y + 40 };
+}
+
+/**
+ * Click a body at the pixel it is on *now*, and say whether it was still there.
+ *
+ * The bar is re-read immediately before the click rather than carried over from
+ * a screenshot or a readout poll. A body being chased and swung at moves tens of
+ * pixels while this harness is reading text off the page, and since spec 095 a
+ * pick is the body itself rather than a budget around it -- so a pixel that is a
+ * fifth of a second old is a miss, and a miss here is the harness's fault rather
+ * than the game's.
+ */
+async function clickBody(page: Page, id: string, button: 'left' | 'right'): Promise<boolean> {
+  const bar = (await bodiesOnScreen(page)).find((candidate) => candidate.id === id);
+  if (!bar) return false;
+  const point = bodyPoint(bar);
+  await page.mouse.click(point.x, point.y, { button });
+  return true;
+}
+
+/**
+ * A pixel {@link GAP_OFFSET} to one side of `bar`, clear of every body including
+ * `bar` itself, or null when this frame has no such pixel beside it.
+ *
+ * Both sides are offered because the monsters are placed by the map (spec 076)
+ * rather than seeded in a row, so which side is clear is not knowable in advance.
+ */
+function gapBeside(bar: Bar, others: readonly Bar[]): { x: number; y: number } | null {
+  const point = bodyPoint(bar);
+  for (const side of [1, -1]) {
+    const candidate = { x: point.x + side * GAP_OFFSET, y: point.y };
+    // The body this is beside is excluded: being GAP_OFFSET from it is the
+    // whole point, and it is the neighbours that would spoil the answer.
+    const neighbours = others.filter((other) => other.id !== bar.id);
+    if (nearestBody(candidate, neighbours).distance >= GAP_CLEARANCE) return candidate;
+  }
+  return null;
+}
+
+/**
+ * A monster the player's own body is not standing in front of, or null.
+ *
+ * The player stands in melee contact with whatever it is fighting, and its rig
+ * is between the camera and that body -- so the pixel over the monster is a
+ * pixel over the *player*, and a click there is a move order however forgiving
+ * the pick is. Picking the body furthest from the player's own bar is how this
+ * harness asks its question about a monster rather than about occlusion.
+ */
+function unoccludedBody(bars: readonly Bar[]): Bar | null {
+  const me = bars.find((bar) => bar.self);
+  let best: Bar | null = null;
+  let bestDistance = -1;
+  for (const bar of bars) {
+    if (bar.self) continue;
+    const point = bodyPoint(bar);
+    // On screen with room to spare: a bar at the edge is a body half off it.
+    if (point.x < 60 || point.x > 1220 || point.y < 60 || point.y > 740) continue;
+    const distance = me ? Math.hypot(me.x - bar.x, me.y - bar.y) : 0;
+    if (distance <= bestDistance) continue;
+    best = bar;
+    bestDistance = distance;
+  }
+  return best;
+}
+
+/** The body whose click point is nearest a pixel, and how far off it is. */
+function nearestBody(point: { x: number; y: number }, bars: readonly Bar[]): { who: string; distance: number } {
+  let best = { who: 'nobody', distance: Infinity };
+  for (const bar of bars) {
+    const distance = Math.hypot(bar.x - point.x, bar.y + 40 - point.y);
+    if (distance < best.distance) best = { who: bar.id, distance };
+  }
+  return best;
 }
 
 /**
@@ -211,6 +318,35 @@ function differingPixels(a: PNG, b: PNG): number {
     if (Math.max(dr, dg, db) > 8) n++;
   }
   return n;
+}
+
+/** Mean channel value over a box of a decoded frame, 0-255. */
+function meanBrightness(png: PNG, left: number, top: number, width: number, height: number): number {
+  let total = 0;
+  let n = 0;
+  for (let y = Math.max(0, Math.round(top)); y < Math.min(png.height, Math.round(top + height)); y++) {
+    for (let x = Math.max(0, Math.round(left)); x < Math.min(png.width, Math.round(left + width)); x++) {
+      const i = (y * png.width + x) * 4;
+      total += ((png.data[i] ?? 0) + (png.data[i + 1] ?? 0) + (png.data[i + 2] ?? 0)) / 3;
+      n++;
+    }
+  }
+  return n > 0 ? total / n : 0;
+}
+
+/** A pixel with no body anywhere near it, for parking the cursor. */
+function emptyPixel(bars: readonly Bar[]): { x: number; y: number } {
+  let best = { x: 640, y: 400 };
+  let bestDistance = -1;
+  for (let y = 120; y <= 620; y += 40) {
+    for (let x = 120; x <= 1160; x += 40) {
+      const distance = nearestBody({ x, y }, bars).distance;
+      if (distance <= bestDistance) continue;
+      best = { x, y };
+      bestDistance = distance;
+    }
+  }
+  return best;
 }
 
 async function shoot(page: Page, name: string): Promise<void> {
@@ -417,8 +553,8 @@ async function main(): Promise<void> {
       // couple of body-lengths away; since the map places the monsters (spec
       // 076) that walk carried the body clean off screen. Stepping the other
       // way keeps the frame still *and* keeps the click off the body, which a
-      // step toward it would not -- the forgiving pick would simply take it
-      // again, and "let go" would never have happened.
+      // step toward it would not -- the pick would simply take it again, and
+      // "let go" would never have happened.
       const away = (() => {
         const from = bodyPoint(unit);
         const dx = 640 - from.x;
@@ -430,28 +566,87 @@ async function main(): Promise<void> {
       await page.waitForTimeout(400);
       const dropped = await readTarget(page);
 
+      // And the squeeze (spec 095): the ground beside a body belongs to nobody,
+      // so a click on it is a move order. This is the half of picking that a
+      // player feels as "I cannot walk there", and it only exists once a real
+      // browser is delivering the clicks -- the reach itself is pinned in
+      // `hover.test.ts`.
       let sloppy = 'the body left the screen before it could be tried';
-      const beside = await settledBar(page, unit.id);
-      if (beside) {
-        const point = bodyPoint(beside);
-        await page.mouse.click(point.x + SLOPPY_OFFSET, point.y, { button: 'right' });
-        await page.waitForTimeout(130);
-        sloppy = await readTarget(page);
-        if (!sloppy.startsWith('target ')) {
-          problems.push(`a right-click ${SLOPPY_OFFSET}px beside a body picked nothing`);
+      // Waited out first: a body still walking is a body whose pixel is stale
+      // before the click reaches it.
+      if (await settledBar(page, unit.id)) {
+        const bars = await bodiesOnScreen(page);
+        const now = bars.find((bar) => bar.id === unit.id);
+        const gap = now ? gapBeside(now, bars) : null;
+        if (!gap) {
+          sloppy = 'no body on screen had a clear side to try';
+        } else {
+          // Nothing is targeted at this point -- the click onto bare grass above
+          // let the last one go -- so "no target" here is the ground answering.
+          // The click *on* the body that follows is what says the aim was real.
+          await page.mouse.click(gap.x, gap.y, { button: 'right' });
+          await page.waitForTimeout(130);
+          sloppy = await readTarget(page);
+          // Re-read before judging: the monsters walk, and a body that stepped
+          // onto the pixel between the read and the click is this harness
+          // missing rather than the pick reaching.
+          const after = nearestBody(gap, await bodiesOnScreen(page));
+          console.log(`  the pixel tried was ${Math.round(gap.x)},${Math.round(gap.y)}; nearest body when it landed: ${after.who} at ${Math.round(after.distance)}px`);
+          if (sloppy.startsWith('target ')) {
+            if (after.distance < DRIFT_MARGIN) {
+              sloppy = `${sloppy} -- but ${after.who} had walked to within ${Math.round(after.distance)}px of the pixel`;
+            } else {
+              problems.push(`a right-click ${GAP_OFFSET}px clear of every body picked ${sloppy}`);
+            }
+          }
+
+          // And the other direction: a click *on* a body still takes it, so the
+          // "no target" above is the ground answering rather than the mouse
+          // having stopped working.
+          // The click above was a move order, so the player is walking and the
+          // camera is following it: every bar on the page is a pixel that is
+          // already out of date. Let it come to rest before aiming at one.
+          const me = (await bodiesOnScreen(page)).find((bar) => bar.self);
+          if (me) await settledBar(page, me.id);
+          const onBody = unoccludedBody(await bodiesOnScreen(page));
+          if (onBody && (await clickBody(page, onBody.id, 'right'))) {
+            await page.waitForTimeout(130);
+            const line = await readTarget(page);
+            console.log(`  a click on body ${onBody.id} at ${Math.round(onBody.x)},${Math.round(onBody.y + 40)}: ${line}`);
+            if (!line.startsWith('target ')) {
+              problems.push('a right-click on a body picked nothing');
+            }
+          }
         }
       }
       await shoot(page, 'world-target');
 
-      // The cursor sitting on a body outlines it -- the thing that says what a
-      // click would pick before it is made. Aimed at where the body is *now*:
-      // the player is already walking toward it, so the pixel that was over it
-      // a screenshot ago is over the grass behind it.
-      const moved = (await bodiesOnScreen(page)).find((bar) => bar.id === unit.id);
-      if (moved) {
-        const point = bodyPoint(moved);
+      // The cursor sitting on a body brightens it (spec 095) -- the thing that
+      // says what a click would pick before it is made. Photographed twice, with
+      // the cursor off the body and then on it, and the two frames measured:
+      // "it looks brighter" is exactly the claim a screenshot alone cannot check,
+      // and a highlight nobody can see is the same as no highlight at all. A body
+      // the player is not standing in front of, for the same reason the clicks
+      // above use one.
+      const bars = await bodiesOnScreen(page);
+      const lit = unoccludedBody(bars);
+      if (lit) {
+        const point = bodyPoint(lit);
+        const away = emptyPixel(bars);
+        await page.mouse.move(away.x, away.y);
+        await page.waitForTimeout(200);
+        const cold = await pixelsOf(page);
         await page.mouse.move(point.x, point.y);
-        await page.waitForTimeout(120);
+        await page.waitForTimeout(200);
+        const warm = await pixelsOf(page);
+        // The body's own pixels: a box the width of its footprint, from over its
+        // head down to its feet.
+        const before = meanBrightness(cold, point.x - 40, point.y - 40, 80, 90);
+        const after = meanBrightness(warm, point.x - 40, point.y - 40, 80, 90);
+        console.log(`  body brightness with the cursor off it: ${before.toFixed(1)}, on it: ${after.toFixed(1)}`);
+        if (after <= before) {
+          problems.push(`hovering a body did not brighten it (${before.toFixed(1)} -> ${after.toFixed(1)})`);
+        }
         await shoot(page, 'world-hover');
       }
 
@@ -463,7 +658,7 @@ async function main(): Promise<void> {
 
       console.log(`  target on the click:            ${opened}`);
       console.log(`  after letting go on bare grass: ${dropped}`);
-      console.log(`  after a click ${SLOPPY_OFFSET}px beside it:   ${sloppy}`);
+      console.log(`  after a click ${GAP_OFFSET}px beside it:   ${sloppy}`);
       console.log(`  ...four seconds later:          ${later}`);
       // The order runs itself: no press was made between the last two lines.
       // "no target" means the body it named is dead and the client dropped it,
@@ -534,7 +729,15 @@ async function main(): Promise<void> {
         await page.mouse.move(point.x, point.y);
         await page.waitForTimeout(160);
         await shoot(page, 'world-aim-unit');
-        await page.mouse.click(point.x, point.y);
+        // Re-read for the click itself: the screenshot above cost a sixth of a
+        // second, and the body has been walking through all of it. And aimed at
+        // a body the player is not standing in front of -- confirming a
+        // unit-named aim needs a unit under the cursor, and the cursor over a
+        // body in melee contact is over the player's own rig.
+        const clear = unoccludedBody(await bodiesOnScreen(page)) ?? nowAt;
+        await page.mouse.move(bodyPoint(clear).x, bodyPoint(clear).y);
+        await page.waitForTimeout(120);
+        await clickBody(page, clear.id, 'left');
         const taken = await waitForAim(page, /^(right-click ground|Seeking Bolt: moving)/);
         if (/^aiming /.test(taken)) {
           problems.push('a left-click on a body did not confirm the unit aim');

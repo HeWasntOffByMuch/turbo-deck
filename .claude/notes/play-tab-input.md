@@ -108,12 +108,15 @@
   `THREE.Raycaster.setFromCamera` → intersect against `terrainMesh.pickTargets` (real
   terrain height, so aiming at a hillside lands on the hillside) → falls back to intersecting
   the flat `groundPlane` if no terrain mesh has streamed in yet or nothing was hit.
-- Unit picking is `WorldScene.pickUnitAt(cssX, cssY)` (`scene.ts:469-483`): same NDC/raycast
-  setup, but projects every tracked entity's screen-space box fresh (not the cached per-frame
-  hover) and hands off to the pure `pickHoveredUnit` in `hover.ts` (forgiving hit-testing,
-  spec 071). Re-projecting per click rather than reusing the frame's hover exists specifically
-  so a click arriving in the same task as its `mousemove` (synthetic clicks, fast flicks,
-  taps) still resolves — noted at `scene.ts:458-467`.
+- Unit picking is `WorldScene.pickUnitAt(cssX, cssY)`: same NDC/raycast setup, handed off to
+  the pure `pickHoveredUnit` in `hover.ts`. Since spec 095 that is two world-space tests and
+  nothing in pixels — the body (the rig's meshes, or the cylinder of `radius` × `height`
+  standing on its feet, whichever the ray meets first) and then the footprint at exactly
+  `radius`. Spec 071's screen-space box, its 22px snap and its 12-unit footprint apron are
+  gone, along with `WorldScene.screenBoxOf`: the view asks for a pick *before* it falls back
+  to a move order, so every unit of forgiveness was ground the player could not walk to.
+  Picking afresh per click rather than reusing the frame's hover still holds, so a click
+  arriving in the same task as its `mousemove` (synthetic clicks, fast flicks, taps) resolves.
 
 ## 5. CSS / touch-action / user-select
 
