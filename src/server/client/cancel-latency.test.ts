@@ -231,6 +231,106 @@ async function withdraw(options: {
   return { pressedAfter: options.pressAfter, barGone, shotFlew, damaged, ended };
 }
 
+/**
+ * A cast that has to turn first, with nobody withdrawing from anything.
+ *
+ * Spec 065 starts a cast in `Turning`, and the wind-up clock does not start
+ * until the body is facing its aim -- so `releaseTick` is provisional and gets
+ * re-stamped later. The client predicts a release at `now + windupTicks` with no
+ * turn in it at all. If it also *stops drawing* at that predicted release, the
+ * bar vanishes while the server is still winding up, and the shot lands after.
+ *
+ * That is the reported symptom exactly, and it needs no latency and no cancel.
+ */
+async function turnThenShoot(aimBehind: boolean): Promise<{
+  readonly barGoneAtTick: number | null;
+  readonly firedAtTick: number | null;
+}> {
+  const transport = new LoopbackTransport();
+  const server = new GameServer({
+    seed: 7,
+    transport,
+    world: createWorldColliders([], []),
+    terrain: FLAT_TERRAIN,
+  });
+  server.liveConfig.set('spawnRateMultiplier', 0);
+  transport.onConnection((channel) => server.accept(channel));
+
+  const line = new DelayLine(transport.connect(), 0, () => undefined);
+  const client = new GameClient(line, {
+    playerId: 'you',
+    predictor: (stats, tickRate) =>
+      createWorldPredictor({
+        world: createWorldColliders([], []),
+        terrain: FLAT_TERRAIN,
+        radius: SERVER_PLAYER_RADIUS,
+        speed: stats.moveSpeed,
+        tickRate,
+      }),
+  });
+  client.connect();
+  await settle();
+
+  const ability = abilityById('ranged.shot');
+  if (!ability) throw new Error('no ranged.shot');
+
+  let tick = 0;
+  const advance = async (facing: number): Promise<void> => {
+    tick += 1;
+    line.deliver(tick);
+    await settle();
+    server.tick();
+    client.advanceTick();
+    if (client.view().self) client.sendInput({ moveX: 0, moveY: 0, facing, buttons: 0 });
+    line.deliver(tick);
+    await settle();
+  };
+  // Settled, and facing +x.
+  for (let i = 0; i < 30; i++) await advance(0);
+
+  const me = client.view().self;
+  if (!me) throw new Error('never spawned');
+
+  // Aimed behind the body, so the server has to turn all the way round before
+  // the wind-up starts; or straight ahead, as the control.
+  const aimX = aimBehind ? me.x - ability.range * 0.5 : me.x + ability.range * 0.5;
+  client.useAbility('ranged.shot', aimX, me.y);
+
+  let barGoneAtTick: number | null = null;
+  let firedAtTick: number | null = null;
+  let sawBar = false;
+  for (let i = 0; i < ability.windupTicks + 200; i++) {
+    await advance(0);
+    const view = client.view();
+    const drawn = view.casts.some((cast) => cast.entityId === view.selfEntityId);
+    if (drawn) sawBar = true;
+    if (sawBar && !drawn && barGoneAtTick === null) barGoneAtTick = tick;
+    for (const entity of server.world.entities.values()) {
+      if (entity.projectile && firedAtTick === null) firedAtTick = tick;
+    }
+  }
+  client.disconnect();
+  return { barGoneAtTick, firedAtTick };
+}
+
+describe('a wind-up that has to turn first (spec 090)', () => {
+  it('keeps the bar up until the blow actually lands', async () => {
+    const ahead = await turnThenShoot(false);
+    const behind = await turnThenShoot(true);
+    console.log('aimed ahead ->', JSON.stringify(ahead));
+    console.log('aimed behind ->', JSON.stringify(behind));
+
+    for (const [label, result] of [['ahead', ahead], ['behind', behind]] as const) {
+      expect(result.firedAtTick, `${label}: the shot flew`).not.toBeNull();
+      expect(result.barGoneAtTick, `${label}: the bar was drawn then dropped`).not.toBeNull();
+      // The bar must not vanish while the blow is still coming.
+      expect(result.barGoneAtTick ?? 0, `${label}: bar outlasts the loose`).toBeGreaterThanOrEqual(
+        result.firedAtTick ?? 0,
+      );
+    }
+  }, 60_000);
+});
+
 describe('withdrawing over a wire that takes time (spec 090)', () => {
   const SHOT = 'ranged.shot';
   const windup = abilityById(SHOT)?.windupTicks ?? 0;
