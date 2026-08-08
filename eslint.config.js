@@ -73,6 +73,13 @@ const PURE_RENDER = [
   // can actually be run against it.
   'src/render/iso3d/shading.ts',
   'src/render/iso3d/shading.test.ts',
+  // The window framing maths (specs 041, 089): what size buffer a CSS box wants,
+  // the camera's orthographic box at that aspect, cursor-to-NDC, and the integer
+  // upscale and pixel snap the virtual resolution is shown through. All
+  // arithmetic, and the upscale factor is the one number in the renderer that is
+  // wrong in a way nobody sees -- it just quietly resamples.
+  'src/render/iso3d/view-frame.ts',
+  'src/render/iso3d/view-frame.test.ts',
   'src/render/iso3d/world/appearance.ts',
   'src/render/iso3d/world/cast.ts',
   'src/render/iso3d/world/intent.ts',

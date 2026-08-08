@@ -1,5 +1,11 @@
 import { RETRO_DEFAULTS, type BayerSize, type RetroSettings } from './retro.js';
-import { HIKE_OFF, type HikeSettings } from './hike.js';
+import {
+  DEFAULT_VIRTUAL_SIZE,
+  HIKE_OFF,
+  VIRTUAL_SIZES,
+  virtualSizeById,
+  type HikeSettings,
+} from './hike.js';
 import {
   DEFAULT_DAY_LENGTH_MINUTES,
   DEFAULT_TIME_OF_DAY,
@@ -429,6 +435,20 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   const creaseAngle = makeSlider('Crease angle', 5, 80, 5, Math.round((HIKE_OFF.creaseAngle * 180) / Math.PI), '°',
     'Faces meeting sharper than this stay split. Above ~52° a 7-sided trunk welds its whole tip into ' +
     'one normal and the taper reads as a melted dome.');
+  // Step 3: the fixed virtual buffer, upscaled by whole device pixels.
+  const lowRes = makeCheckbox('Low-res buffer', HIKE_OFF.lowRes,
+    'Draw at a fixed virtual resolution and blow it up by a whole number of device pixels, ' +
+    'letterboxing the remainder. Off, the buffer is a fixed 300px tall at the window aspect and ' +
+    'CSS stretches it by whatever fraction happens to fit.');
+  const virtualSize = makeTextChoice('Virtual size',
+    VIRTUAL_SIZES.map((v) => [v.id, v.id] as const), DEFAULT_VIRTUAL_SIZE,
+    'The buffer the world is drawn into. Fixed: it never changes with the window, which is what ' +
+    'letterboxing is for.');
+  const snapCamera = makeCheckbox('Snap camera to pixels', HIKE_OFF.snapCamera,
+    'Move the camera onto whole virtual pixels each frame, so edges stop shimmering between two ' +
+    'rows as the view follows. Applied only to the drawn frame -- clicks are still resolved against ' +
+    'the unsnapped camera, so a cell under a stationary cursor cannot change identity as you walk.');
+
   const swayNormals = makeCheckbox('Sway rotates normals', HIKE_OFF.swayNormals,
     'Turn the vertex normal with the wind bend. Does nothing while normals are flat-shaded; with ' +
     'smooth normals on, leaving it off is what makes a leaning canopy light as though it were upright.');
@@ -445,7 +465,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
       torchOn, torchRange, torchBright, torchFlickerDepth, torchShadows,
       magicOn, magicRange, magicBright, spawners,
       retroOn, levels, dither, weave, weaveScale, pixelSize, gradeChoice, gradeStrength,
-      smoothNormals, creaseAngle, swayNormals];
+      smoothNormals, creaseAngle, swayNormals, lowRes, virtualSize, snapCamera];
     for (const w of widgets) w.reset();
   });
 
@@ -480,7 +500,15 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     pixelSize.row,
   );
   if (lighting) panel.append(gradeChoice.row, gradeStrength.row);
-  panel.append(section('Hike'), smoothNormals.row, creaseAngle.row, swayNormals.row);
+  panel.append(
+    section('Hike'),
+    lowRes.row,
+    virtualSize.row,
+    snapCamera.row,
+    smoothNormals.row,
+    creaseAngle.row,
+    swayNormals.row,
+  );
   panel.append(reset);
 
   // The cog button toggles the popover; a highlighted state marks it open.
@@ -535,12 +563,19 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
       ditherScale: weaveScale.value(),
       pixelSize: pixelSize.value(),
     }),
-    hike: () => ({
-      ...HIKE_OFF,
-      smoothNormals: smoothNormals.checked(),
-      creaseAngle: (creaseAngle.value() * Math.PI) / 180,
-      swayNormals: swayNormals.checked(),
-    }),
+    hike: () => {
+      const size = virtualSizeById(virtualSize.value());
+      return {
+        ...HIKE_OFF,
+        lowRes: lowRes.checked(),
+        virtualWidth: size.width,
+        virtualHeight: size.height,
+        snapCamera: snapCamera.checked(),
+        smoothNormals: smoothNormals.checked(),
+        creaseAngle: (creaseAngle.value() * Math.PI) / 180,
+        swayNormals: swayNormals.checked(),
+      };
+    },
     dayNightEnabled: () => dayNight.checked(),
     sky: () => (dayNight.checked() ? skyAt(timeOfDay.value()) : null),
     // The slider *is* the clock: writing the advanced hour back to it keeps one

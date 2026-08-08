@@ -50,7 +50,15 @@ import {
   offsetToOrbit,
   orbitToOffset,
 } from '../view-settings.js';
-import { cameraFrustum, cursorToNdc, internalRenderSize } from '../view-frame.js';
+import {
+  cameraFrustum,
+  cursorToNdc,
+  internalRenderSize,
+  pixelFrame,
+  snapToPixelGrid,
+  worldPerPixel,
+  type PixelFrame,
+} from '../view-frame.js';
 import {
   horizonShadow,
   shadowFillBoost,
@@ -265,6 +273,16 @@ export class WorldScene {
   private renderH = 0;
   private aspect = 1;
   private elapsed = 0;
+  /**
+   * How the fixed virtual buffer is being shown, or null while the view is drawn
+   * the pre-spec-089 way (spec 089).
+   */
+  private frame: PixelFrame | null = null;
+  /** Scratch for the pixel snap, so a per-frame snap allocates nothing. */
+  private readonly snapRight = new THREE.Vector3();
+  private readonly snapUp = new THREE.Vector3();
+  private readonly snapForward = new THREE.Vector3();
+  private readonly snapBefore = new THREE.Vector3();
 
   private readonly raycaster = new THREE.Raycaster();
   private readonly ndc = new THREE.Vector2();
@@ -299,6 +317,17 @@ export class WorldScene {
       CAMERA_NEAR,
       CAMERA_FAR,
     );
+
+    // Before the first resize, and it has to stay there: since spec 089 `resize`
+    // asks the panel whether the frame is drawn at a fixed virtual resolution, so
+    // a panel built afterwards is a panel that does not exist the first time it
+    // is read. Nothing here depends on the scene, so this is only an ordering
+    // requirement, not a design one -- but it is a real one, and it took a
+    // browser to notice: no unit test constructs a WorldScene, because it needs
+    // a canvas.
+    this.controls = createViewControls();
+    this.controls.attachWheelZoom(canvas);
+
     this.resize();
 
     this.sun.castShadow = true;
@@ -374,9 +403,6 @@ export class WorldScene {
     this.aimUnitRing.rotation.x = -Math.PI / 2;
     this.aimUnitRing.visible = false;
     this.scene.add(this.aimUnitRing);
-
-    this.controls = createViewControls();
-    this.controls.attachWheelZoom(canvas);
   }
 
   /**
@@ -601,16 +627,27 @@ export class WorldScene {
 
     this.camera.updateMatrixWorld();
     this.scene.updateMatrixWorld();
-    this.collectAnchors();
-    // After the matrices are fresh: a pick made against last frame's camera
+    // Before the snap, because this is a pick: which body is under the cursor is
+    // answered against the same unsnapped camera every other pick uses. After
+    // the matrices are fresh, though -- a pick made against last frame's camera
     // lags the outline behind a moving view by a frame.
     this.syncHover(frame);
 
-    this.applyPropShading(this.controls.hike());
+    const hike = this.controls.hike();
+    this.applyPropShading(hike);
+
+    // Snapped for everything that has to agree with the drawn image: the frame
+    // itself, and the screen anchors the DOM overlay hangs bars from. An anchor
+    // computed off the unsnapped camera would jitter against the body it labels
+    // by up to half a virtual pixel -- which at a 4x upscale is two CSS pixels
+    // of health bar wobble, exactly the shimmer the snap exists to remove.
+    const unsnap = this.applyPixelSnap(hike);
+    this.collectAnchors();
 
     this.retro.set(this.controls.retro());
     this.retro.setGrade(this.controls.grade());
     this.retro.render(this.renderer, this.scene, this.camera);
+    unsnap?.();
   }
 
   dispose(): void {
@@ -1052,6 +1089,13 @@ export class WorldScene {
   // --- camera, sun and lights -------------------------------------------
 
   private resize(): void {
+    const hike = this.controls.hike();
+    if (hike.lowRes) {
+      this.resizeToVirtual(hike);
+      return;
+    }
+    if (this.frame) this.releaseVirtual();
+
     const cssWidth = this.canvas.clientWidth || this.canvas.width || 1;
     const cssHeight = this.canvas.clientHeight || this.canvas.height || 1;
     const size = internalRenderSize(cssWidth, cssHeight);
@@ -1062,6 +1106,126 @@ export class WorldScene {
     this.renderer.setSize(size.width, size.height, false);
     this.retro.setSize(size.width, size.height);
     this.lastHalfWidth = -1;
+  }
+
+  /**
+   * Draw at a fixed virtual resolution and let CSS blow it up by a whole number
+   * of device pixels, letterboxing what is left over (spec 089).
+   *
+   * There is no blit shader here on purpose. Sizing the canvas's backing store to
+   * exactly the virtual buffer and giving it a CSS size of `scale` device pixels
+   * per virtual pixel makes the browser's own upscale the integer one --
+   * `image-rendering: pixelated` is defined as nearest-neighbour, and there is
+   * nothing a quad of our own would do differently.
+   *
+   * It also buys the thing that would otherwise be the risky part of this change:
+   * because the letterbox is the *canvas element's own box* rather than an inset
+   * inside a full-bleed canvas, every cursor-to-world conversion in the renderer
+   * keeps working untouched. They all derive NDC from `canvas.getBoundingClientRect()`,
+   * which is now the letterboxed rect, so the offsets cancel without anybody
+   * having to know they exist.
+   *
+   * The available box has to come from the *parent*, since the canvas is about to
+   * stop filling it -- measuring the canvas would feed its own new size back in
+   * and ratchet the scale down a step per frame.
+   */
+  private resizeToVirtual(hike: HikeSettings): void {
+    const host = this.canvas.parentElement;
+    const availWidth = (host?.clientWidth ?? this.canvas.clientWidth) || 1;
+    const availHeight = (host?.clientHeight ?? this.canvas.clientHeight) || 1;
+    const dpr = globalThis.devicePixelRatio || 1;
+    const next = pixelFrame(availWidth, availHeight, dpr, hike.virtualWidth, hike.virtualHeight);
+    const width = Math.max(1, Math.round(hike.virtualWidth));
+    const height = Math.max(1, Math.round(hike.virtualHeight));
+
+    const unchanged =
+      this.frame !== null &&
+      this.frame.scale === next.scale &&
+      this.frame.cssWidth === next.cssWidth &&
+      this.frame.cssHeight === next.cssHeight &&
+      this.frame.offsetX === next.offsetX &&
+      this.frame.offsetY === next.offsetY &&
+      this.renderW === width &&
+      this.renderH === height;
+    if (unchanged) return;
+
+    this.frame = next;
+    this.renderW = width;
+    this.renderH = height;
+    // Fixed, and deliberately not the window's: a virtual resolution that took
+    // the window's aspect would not be a fixed virtual resolution.
+    this.aspect = width / height;
+    this.renderer.setSize(width, height, false);
+    this.retro.setSize(width, height);
+    this.lastHalfWidth = -1;
+
+    const style = this.canvas.style;
+    style.inset = '';
+    style.left = `${next.offsetX}px`;
+    style.top = `${next.offsetY}px`;
+    style.width = `${next.cssWidth}px`;
+    style.height = `${next.cssHeight}px`;
+  }
+
+  /** Give the canvas the whole box back, for a frame drawn the old way. */
+  private releaseVirtual(): void {
+    this.frame = null;
+    const style = this.canvas.style;
+    style.left = '';
+    style.top = '';
+    style.inset = '0';
+    style.width = '100%';
+    style.height = '100%';
+    this.renderW = 0;
+    this.renderH = 0;
+  }
+
+  /**
+   * Where the drawn image sits inside the view, in CSS pixels.
+   *
+   * The DOM overlay has to be laid over *this* and not over the whole view, or
+   * every health bar is displaced by the letterbox -- the anchors it positions
+   * from are in canvas space.
+   */
+  viewport(): { x: number; y: number; width: number; height: number } {
+    if (!this.frame) {
+      return { x: 0, y: 0, width: this.canvas.clientWidth, height: this.canvas.clientHeight };
+    }
+    return {
+      x: this.frame.offsetX,
+      y: this.frame.offsetY,
+      width: this.frame.cssWidth,
+      height: this.frame.cssHeight,
+    };
+  }
+
+  /**
+   * Put the camera on the virtual pixel lattice for the draw, and hand back the
+   * undo.
+   *
+   * Restored immediately afterwards because picking must not see it: a snapped
+   * matrix answers "which cell is under the cursor" with up to a pixel of error,
+   * and flips that error from one side to the other as the camera crosses a snap
+   * boundary -- so a cell under a stationary cursor would change identity while
+   * the player walks past. Everything the sim is told comes through those
+   * conversions, which makes this the one place in the renderer where a rounding
+   * choice could change an outcome.
+   */
+  private applyPixelSnap(hike: HikeSettings): (() => void) | null {
+    if (!hike.snapCamera || this.renderW <= 0) return null;
+
+    const step = worldPerPixel(this.camera.right - this.camera.left, this.renderW);
+    this.camera.matrixWorld.extractBasis(this.snapRight, this.snapUp, this.snapForward);
+    const snapped = snapToPixelGrid(this.camera.position, this.snapRight, this.snapUp, step);
+    const before = this.snapBefore.copy(this.camera.position);
+    if (snapped === this.camera.position) return null;
+
+    this.camera.position.set(snapped.x, snapped.y, snapped.z);
+    this.camera.updateMatrixWorld(true);
+    return () => {
+      this.camera.position.copy(before);
+      this.camera.updateMatrixWorld(true);
+    };
   }
 
   /**

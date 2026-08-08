@@ -51,6 +51,31 @@ export const HIKE_DEBUG_VIEWS = [
 export type HikeDebugView = (typeof HIKE_DEBUG_VIEWS)[number];
 
 /**
+ * The virtual buffers the panel offers (spec 089).
+ *
+ * Data rather than a pair of sliders, because only a handful of sizes are worth
+ * looking at and an arbitrary one is mostly a way to end up at an aspect the
+ * camera framing was never tuned for. All 16:9, so the letterbox is the only
+ * thing that changes shape with the window.
+ */
+export const VIRTUAL_SIZES = [
+  { id: '320x180', width: 320, height: 180 },
+  { id: '384x216', width: 384, height: 216 },
+  { id: '480x270', width: 480, height: 270 },
+  { id: '640x360', width: 640, height: 360 },
+] as const;
+
+/** The size step 3 opens at, and the one `HIKE_OFF` carries. */
+export const DEFAULT_VIRTUAL_SIZE = '480x270';
+
+/** A named virtual size, falling back to the default rather than throwing. */
+export function virtualSizeById(id: string): { readonly width: number; readonly height: number } {
+  const found = VIRTUAL_SIZES.find((size) => size.id === id);
+  if (found) return found;
+  return VIRTUAL_SIZES.find((size) => size.id === DEFAULT_VIRTUAL_SIZE) ?? { width: 480, height: 270 };
+}
+
+/**
  * Every switch and every threshold in the hike look.
  *
  * Read once per frame and applied; nothing here is game state and nothing here

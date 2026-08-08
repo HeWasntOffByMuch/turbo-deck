@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_VIRTUAL_SIZE,
   HIKE_DEBUG_VIEWS,
   HIKE_OFF,
   srgbDecode,
   srgbEncode,
   unpackLinear,
+  VIRTUAL_SIZES,
+  virtualSizeById,
   type HikeSettings,
 } from './hike.js';
 
@@ -57,6 +60,32 @@ describe('the hike settings', () => {
 
   it('reaches full ink strength somewhere beyond where it starts', () => {
     expect(HIKE_OFF.inkEnd).toBeGreaterThan(HIKE_OFF.inkStart);
+  });
+
+  it('opens at the size the panel calls the default', () => {
+    // Two places name it; this is what stops them drifting apart, which would
+    // show up as the panel silently resizing the buffer on first read.
+    const size = virtualSizeById(DEFAULT_VIRTUAL_SIZE);
+    expect(size.width).toBe(HIKE_OFF.virtualWidth);
+    expect(size.height).toBe(HIKE_OFF.virtualHeight);
+  });
+});
+
+describe('the virtual sizes', () => {
+  it('are all 16:9, so only the letterbox changes shape', () => {
+    for (const size of VIRTUAL_SIZES) {
+      expect(size.width / size.height).toBeCloseTo(16 / 9, 6);
+    }
+  });
+
+  it('name themselves consistently', () => {
+    for (const size of VIRTUAL_SIZES) {
+      expect(size.id).toBe(`${size.width}x${size.height}`);
+    }
+  });
+
+  it('falls back rather than throwing on an unknown id', () => {
+    expect(virtualSizeById('nonsense')).toEqual(virtualSizeById(DEFAULT_VIRTUAL_SIZE));
   });
 });
 
