@@ -330,3 +330,52 @@ describe('following a route', () => {
     expect(result.moveY).toBe(0);
   });
 });
+
+/**
+ * A click that produces no movement vector withdraws from nothing (spec 090).
+ *
+ * The reported bug, and the player's own diagnosis of it: click to the side
+ * mid-wind-up, watch the body turn, and the blow lands anyway. Spec 079's rule
+ * is that *asking to move* withdraws -- and `asksToMove` on the server is
+ * `hypot(moveX, moveY) > 1e-6`, so a turn is not asking. `steerTo` returns null
+ * inside `ARRIVE_EPS`, so a click close to the body produces no vector at all,
+ * and what the player sees turning is the body coming round into its own aim
+ * (the `castAim` branch below), not a response to the click.
+ *
+ * The order was unmistakable; whether it happened to yield a vector this tick is
+ * an implementation detail no player can see.
+ */
+describe('a move order that yields no vector (spec 090)', () => {
+  const self = { x: 600, y: 450 };
+  const castAim = { x: 900, y: 450 };
+
+  it('asks for nothing when the click lands inside the arrival radius', () => {
+    const near = moveIntent({
+      held: new Set(),
+      self,
+      destination: { x: self.x + ARRIVE_EPS * 0.5, y: self.y },
+      route: null,
+      facing: 0,
+      castAim,
+    });
+    // Nothing to withdraw with: the server's `asksToMove` reads exactly this.
+    expect(Math.hypot(near.moveX, near.moveY)).toBe(0);
+    // And the heading asked for is the *aim*, not the click -- which is the turn
+    // the player sees and reads as the click being obeyed.
+    expect(near.facing).toBeCloseTo(Math.atan2(castAim.y - self.y, castAim.x - self.x), 9);
+  });
+
+  it('does ask to move when the click is far enough to steer to', () => {
+    const far = moveIntent({
+      held: new Set(),
+      self,
+      destination: { x: self.x, y: self.y + ARRIVE_EPS * 8 },
+      route: null,
+      facing: 0,
+      castAim,
+    });
+    expect(Math.hypot(far.moveX, far.moveY)).toBeGreaterThan(1e-6);
+    // Which is what makes the walk, and the withdrawal, happen at all.
+    expect(far.facing).toBeCloseTo(Math.PI / 2, 9);
+  });
+});

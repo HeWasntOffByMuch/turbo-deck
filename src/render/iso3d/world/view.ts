@@ -433,6 +433,15 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // same button.
     targetId = null;
     destination = scene.screenToWorld(cursor.x, cursor.y);
+    // And it withdraws from a blow, explicitly, rather than by implication
+    // (spec 090). Spec 079's rule is that *asking to move* withdraws, and the
+    // server reads that off the input's move vector -- but `moveIntent` yields
+    // no vector at all for a destination inside `ARRIVE_EPS`, and while rooted
+    // it asks for the heading of the *aim* rather than of the click. So an order
+    // to step aside could turn the body into its own swing and then land it.
+    // Whether an order happens to produce a vector this tick is not something a
+    // player can see; the order is the thing they gave.
+    client.cancelCast();
   };
   const onContextMenu = (event: Event): void => event.preventDefault();
   const onBlur = (): void => held.clear();
