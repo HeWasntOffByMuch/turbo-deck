@@ -174,6 +174,16 @@ export interface HikeSettings {
    * look wants that.
    */
   readonly outlineAgainstSky: boolean;
+  /**
+   * The line's colour, as a packed `0xRRGGBB`.
+   *
+   * A constant, composited over the frame rather than multiplied into it: a line
+   * whose colour depends on what it crosses fades out over dark ground, which is
+   * exactly where a silhouette needs it most.
+   */
+  readonly outlineColor: number;
+  /** How opaque the line is, 0..1. */
+  readonly outlineStrength: number;
 
   // --- step 6: posterize and dither ---------------------------------------
 
@@ -281,6 +291,8 @@ export const HIKE_OFF: HikeSettings = {
   depthEdgeThreshold: 6,
   normalEdgeThreshold: 0.35,
   outlineAgainstSky: false,
+  outlineColor: 0x1a1a22,
+  outlineStrength: 1,
 
   posterize: false,
   palette: null,

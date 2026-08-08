@@ -80,6 +80,12 @@ const PURE_RENDER = [
   // wrong in a way nobody sees -- it just quietly resamples.
   'src/render/iso3d/view-frame.ts',
   'src/render/iso3d/view-frame.test.ts',
+  // Finding outlines in the depth and normal buffers (spec 091). The plane
+  // reconstruction is the expression this arc most depends on being right and
+  // least able to check by eye -- a wrong sign draws lines down every hillside,
+  // which looks like a threshold that needs tuning rather than like a bug.
+  'src/render/iso3d/edges.ts',
+  'src/render/iso3d/edges.test.ts',
   'src/render/iso3d/world/appearance.ts',
   'src/render/iso3d/world/cast.ts',
   'src/render/iso3d/world/intent.ts',

@@ -69,6 +69,7 @@ import {
 } from '../shadow.js';
 import { RetroPass } from '../retro-pass.js';
 import { HikeBuffers } from '../hike-buffers.js';
+import { HikeEdges } from '../hike-edges.js';
 import { advanceWind } from '../wind-uniforms.js';
 import { FIXED_DAYLIGHT } from '../daynight.js';
 import {
@@ -205,6 +206,8 @@ export class WorldScene {
    * because until the switch is thrown it would be a render target nothing reads.
    */
   private buffers: HikeBuffers | null = null;
+  /** The outline pass (spec 091). Built with the buffers it reads. */
+  private edges: HikeEdges | null = null;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
   private readonly sun = new THREE.DirectionalLight(
@@ -665,10 +668,16 @@ export class WorldScene {
       // depth texture at all: a depth attachment cannot be read back, so it has
       // to be sampled in a shader and written somewhere visible.
       this.ensureBuffers().blit(this.renderer, hike.debug === 'depth' ? 'depth' : 'normals');
+    } else if (hike.buffers && hike.edges && hike.debug === 'edges') {
+      this.drawEdges(hike, true);
     } else {
       this.retro.set(this.controls.retro());
       this.retro.setGrade(this.controls.grade());
       this.retro.render(this.renderer, this.scene, this.camera);
+      // Over the finished frame, which is where a line belongs: the fills are
+      // settled, so the outline is a constant dark value rather than something
+      // the quantizer gets to round.
+      if (hike.buffers && hike.edges) this.drawEdges(hike, false);
     }
     unsnap?.();
   }
@@ -683,6 +692,7 @@ export class WorldScene {
     this.terrainMesh?.dispose();
     this.propField?.dispose();
     this.buffers?.dispose();
+    this.edges?.dispose();
     this.canvas.removeEventListener('webglcontextlost', this.onContextLost);
     this.canvas.removeEventListener('webglcontextrestored', this.onContextRestored);
     this.renderer.dispose();
@@ -1216,6 +1226,22 @@ export class WorldScene {
     style.top = `${next.offsetY}px`;
     style.width = `${next.cssWidth}px`;
     style.height = `${next.cssHeight}px`;
+  }
+
+  /** Draw the outlines over the frame, or the edge mask on its own. */
+  private drawEdges(hike: HikeSettings, maskOnly: boolean): void {
+    const buffers = this.ensureBuffers();
+    this.edges ??= new HikeEdges();
+    this.edges.render(
+      this.renderer,
+      buffers.normalTexture,
+      buffers.depthTexture,
+      this.camera,
+      this.renderW,
+      this.renderH,
+      hike,
+      maskOnly,
+    );
   }
 
   /**

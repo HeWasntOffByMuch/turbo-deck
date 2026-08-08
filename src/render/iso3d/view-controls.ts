@@ -459,6 +459,20 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     HIKE_DEBUG_VIEWS.map((v) => [v, v] as const), HIKE_OFF.debug,
     'Draw one intermediate buffer on its own instead of the finished frame. Needs the buffers above.');
 
+  // Step 5: the outlines the buffers exist for.
+  const edges = makeCheckbox('Outlines', HIKE_OFF.edges,
+    'Find edges in the depth and normal buffers and draw them over the frame. Needs the buffers above.');
+  const depthThreshold = makeSlider('Depth edge', 1, 60, 1, HIKE_OFF.depthEdgeThreshold, 'u',
+    'How far a pixel must sit off its neighbour\'s surface to count as an edge, in world units. ' +
+    'Measured against the plane the neighbour lies in, so a hillside at a glancing angle reads as ' +
+    'flat -- and the camera being orthographic is what lets one number serve the whole frame.');
+  const normalThreshold = makeSlider('Normal edge', 5, 100, 5, Math.round(HIKE_OFF.normalEdgeThreshold * 100), '%',
+    'How far two neighbouring normals must diverge to count as an edge. 200% is a full reversal.');
+  const skyOutline = makeCheckbox('Outline against sky', HIKE_OFF.outlineAgainstSky,
+    'Let the far plane take part. Off, nothing is traced against the background -- on, every ' +
+    'silhouette against the sky gets a line, at full strength, because the far plane is thousands ' +
+    'of units from anything.');
+
   const swayNormals = makeCheckbox('Sway rotates normals', HIKE_OFF.swayNormals,
     'Turn the vertex normal with the wind bend. Does nothing while normals are flat-shaded; with ' +
     'smooth normals on, leaving it off is what makes a leaning canopy light as though it were upright.');
@@ -475,7 +489,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
       torchOn, torchRange, torchBright, torchFlickerDepth, torchShadows,
       magicOn, magicRange, magicBright, spawners,
       retroOn, levels, dither, weave, weaveScale, pixelSize, gradeChoice, gradeStrength,
-      smoothNormals, creaseAngle, swayNormals, lowRes, virtualSize, snapCamera, buffers, debugView];
+      smoothNormals, creaseAngle, swayNormals, lowRes, virtualSize, snapCamera, buffers, edges, depthThreshold, normalThreshold, skyOutline, debugView];
     for (const w of widgets) w.reset();
   });
 
@@ -519,6 +533,10 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     creaseAngle.row,
     swayNormals.row,
     buffers.row,
+    edges.row,
+    depthThreshold.row,
+    normalThreshold.row,
+    skyOutline.row,
     debugView.row,
   );
   panel.append(reset);
@@ -587,6 +605,10 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
         creaseAngle: (creaseAngle.value() * Math.PI) / 180,
         swayNormals: swayNormals.checked(),
         buffers: buffers.checked(),
+        edges: edges.checked(),
+        depthEdgeThreshold: depthThreshold.value(),
+        normalEdgeThreshold: normalThreshold.value() / 100,
+        outlineAgainstSky: skyOutline.checked(),
         debug: debugView.value() as HikeDebugView,
       };
     },

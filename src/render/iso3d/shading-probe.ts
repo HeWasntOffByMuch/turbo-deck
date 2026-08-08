@@ -5,6 +5,8 @@ import { DEFAULT_CREASE_ANGLE } from './shading.js';
 import { advanceWind, setWindStrength } from './wind-uniforms.js';
 import { decodeOctahedral } from './shading.js';
 import { HikeBuffers, type BufferView } from './hike-buffers.js';
+import { HikeEdges } from './hike-edges.js';
+import { HIKE_OFF } from './hike.js';
 
 /**
  * A dev-server-only rig that proves the shading switches' shaders actually
@@ -117,6 +119,22 @@ export interface BufferProbeCase {
   readonly decalLeaked: boolean;
 }
 
+/** What the outline pass found (spec 091). */
+export interface EdgeProbeCase {
+  /** Fraction of the frame marked as edge, with the sky masked out. */
+  readonly edgeFraction: number;
+  /** The same with the far plane allowed to take part. */
+  readonly edgeFractionSky: number;
+  /**
+   * Fraction of the *floor* marked as edge.
+   *
+   * The number the plane reconstruction exists for. The floor is a single flat
+   * surface seen at a glancing angle: a raw depth-difference test covers it in
+   * lines, and measuring against each neighbour's own plane leaves it clean.
+   */
+  readonly floorEdgeFraction: number;
+}
+
 declare global {
   interface Window {
     /** Filled once every case has drawn; `probe-shading.ts` polls for it. */
@@ -125,6 +143,8 @@ declare global {
     shadingProbeSheet?: string;
     /** What the depth and normal buffers came back with (spec 090). */
     bufferProbe?: readonly BufferProbeCase[];
+    /** What the outline pass found (spec 091). */
+    edgeProbe?: EdgeProbeCase;
   }
 }
 
@@ -402,7 +422,116 @@ function runBuffers(view: BufferView): BufferProbeCase {
   };
 }
 
+/**
+ * Run the outline pass over the same scene and measure what it marked.
+ *
+ * The floor is the interesting part. It is one flat plane seen at a glancing
+ * angle and it fills most of the frame -- exactly the surface a naive
+ * depth-difference test covers in lines, and exactly the surface the plane
+ * reconstruction is there to leave alone. So "how much of the floor is edge" is
+ * the number that says whether the depth test works, and no amount of looking at
+ * a tree silhouette would tell you.
+ */
+function runEdges(): EdgeProbeCase {
+  const canvas = document.createElement('canvas');
+  canvas.width = CELL_W;
+  canvas.height = CELL_H;
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, preserveDrawingBuffer: true });
+
+  const scene = new THREE.Scene();
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const field = buildPropField(PROPS, () => 0, undefined, {
+    smooth: false,
+    creaseAngle: DEFAULT_CREASE_ANGLE,
+    swayNormals: false,
+  });
+  scene.add(field.group);
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(520, 520),
+    new THREE.MeshLambertMaterial({ color: 0x556633, flatShading: true }),
+  );
+  floor.rotation.x = -Math.PI / 2;
+  scene.add(floor);
+
+  const half = 240;
+  const camera = new THREE.OrthographicCamera(-half, half, half * 0.75, -half * 0.75, 1, 4000);
+  camera.position.set(700, 620, 700);
+  camera.lookAt(27, 95, 30);
+  camera.updateMatrixWorld(true);
+
+  const buffers = new HikeBuffers(CELL_W, CELL_H);
+  const edges = new HikeEdges();
+  const gl = renderer.getContext();
+
+  const depthShot = (): Uint8Array => {
+    buffers.capture(renderer, scene, camera);
+    buffers.blit(renderer, 'depth');
+    const out = new Uint8Array(CELL_W * CELL_H * 4);
+    gl.readPixels(0, 0, CELL_W, CELL_H, gl.RGBA, gl.UNSIGNED_BYTE, out);
+    return out;
+  };
+
+  // Which pixels are *bare* floor: solid with the props gone, and at the same
+  // depth once they are back. The second half matters -- without it every tree
+  // outline drawn over the floor counts as a floor edge, and the measurement
+  // stops being about the floor at all. It reported 8% that way, and the floor
+  // is visibly spotless.
+  scene.remove(field.group);
+  const floorOnly = depthShot();
+  scene.add(field.group);
+  const withProps = depthShot();
+
+  const maskFor = (sky: boolean): Uint8Array => {
+    buffers.capture(renderer, scene, camera);
+    edges.render(
+      renderer,
+      buffers.normalTexture,
+      buffers.depthTexture,
+      camera,
+      CELL_W,
+      CELL_H,
+      { ...HIKE_OFF, buffers: true, edges: true, outlineAgainstSky: sky },
+      true,
+    );
+    const out = new Uint8Array(CELL_W * CELL_H * 4);
+    gl.readPixels(0, 0, CELL_W, CELL_H, gl.RGBA, gl.UNSIGNED_BYTE, out);
+    return out;
+  };
+
+  const mask = maskFor(false);
+  const maskSky = maskFor(true);
+  frames.push({ label: 'edge mask', pixels: mask });
+
+  const total = CELL_W * CELL_H;
+  let edgePixels = 0;
+  let edgePixelsSky = 0;
+  let floorPixels = 0;
+  let floorEdges = 0;
+  for (let i = 0; i < mask.length; i += 4) {
+    const lit = (mask[i] ?? 0) > 127;
+    if (lit) edgePixels++;
+    if ((maskSky[i] ?? 0) > 127) edgePixelsSky++;
+    const isFloor = (floorOnly[i] ?? 255) < 250 && floorOnly[i] === withProps[i];
+    if (isFloor) {
+      floorPixels++;
+      if (lit) floorEdges++;
+    }
+  }
+
+  field.dispose();
+  buffers.dispose();
+  edges.dispose();
+  renderer.dispose();
+
+  return {
+    edgeFraction: edgePixels / total,
+    edgeFractionSky: edgePixelsSky / total,
+    floorEdgeFraction: floorPixels === 0 ? 1 : floorEdges / floorPixels,
+  };
+}
+
 const results = CASES.map(({ smooth, swayNormals, label }) => runCase(smooth, swayNormals, label));
 window.bufferProbe = [runBuffers('depth'), runBuffers('normals')];
+window.edgeProbe = runEdges();
 window.shadingProbeSheet = contactSheet();
 window.shadingProbe = results;

@@ -30,6 +30,12 @@ interface BufferProbeCase {
   readonly decalLeaked: boolean;
 }
 
+interface EdgeProbeCase {
+  readonly edgeFraction: number;
+  readonly edgeFractionSky: number;
+  readonly floorEdgeFraction: number;
+}
+
 interface ShadingProbeCase {
   readonly label: string;
   readonly programs: number;
@@ -90,6 +96,7 @@ try {
   await page.waitForFunction(() => window.shadingProbe !== undefined, undefined, { timeout: 120_000 });
   const cases = (await page.evaluate(() => window.shadingProbe)) as readonly ShadingProbeCase[];
   const buffers = (await page.evaluate(() => window.bufferProbe)) as readonly BufferProbeCase[];
+  const edges = (await page.evaluate(() => window.edgeProbe)) as EdgeProbeCase | undefined;
 
   // Anything mentioning a shader, a program, a compile or a link is a hard
   // failure; the rest is printed but tolerated.
@@ -150,6 +157,39 @@ try {
       `${problems.length === 0 ? 'ok  ' : 'FAIL'}  ${probe.label}\n` +
         `        ${probe.distinct} distinct, ${(probe.covered * 100).toFixed(0)}% surface, ` +
         `${(probe.backgroundFraction * 100).toFixed(0)}% background, ${detail}`,
+    );
+    for (const problem of problems) console.log(`        ${problem}`);
+  }
+
+  // The outline pass (spec 091).
+  if (edges) {
+    const problems: string[] = [];
+    if (edges.edgeFraction < 0.01) problems.push('found no edges at all');
+    if (edges.edgeFraction > 0.35) {
+      problems.push(`${(edges.edgeFraction * 100).toFixed(0)}% of the frame is edge -- that is a fill, not an outline`);
+    }
+    // The claim the plane reconstruction exists to make. A raw depth-difference
+    // test covers a glancing floor in lines and would score near 100 here;
+    // measured against each neighbour's own plane the floor comes back clean.
+    //
+    // Not zero, and it should not be: a floor pixel one tap away from a trunk has
+    // a trunk in its neighbourhood and is correctly an edge. That contact line is
+    // the whole of what remains, and it is about 2%.
+    if (edges.floorEdgeFraction > 0.06) {
+      problems.push(
+        `${(edges.floorEdgeFraction * 100).toFixed(0)}% of the flat floor is marked -- ` +
+          'the depth test is measuring raw difference, not deviation from the neighbour plane',
+      );
+    }
+    if (edges.edgeFractionSky <= edges.edgeFraction) {
+      problems.push('allowing the sky changed nothing, so the background mask is not doing anything');
+    }
+    if (problems.length > 0) failed = true;
+    console.log(
+      `${problems.length === 0 ? 'ok  ' : 'FAIL'}  edge mask\n` +
+        `        ${(edges.edgeFraction * 100).toFixed(1)}% edge, ` +
+        `${(edges.edgeFractionSky * 100).toFixed(1)}% with sky, ` +
+        `${(edges.floorEdgeFraction * 100).toFixed(1)}% of the flat floor`,
     );
     for (const problem of problems) console.log(`        ${problem}`);
   }

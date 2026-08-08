@@ -201,11 +201,15 @@ src/render/iso3d/hike.ts, shading.ts, hike-buffers.ts  the stylized look (specs
                  passes mirror; shading.ts welds vertex normals across a crease
                  angle, rotates one to follow the wind's bend, and packs one
                  octahedrally into two bytes. Both pure and tested headlessly.
-                 hike-buffers.ts is the three.js half: a second geometry pass
-                 writing depth and view-space normals at the virtual resolution,
-                 plus the blit that draws one of them on its own -- which is the
-                 only way to see a depth texture at all, since a depth attachment
-                 cannot be read back.
+                 edges.ts finds outlines in those buffers: the depth term measures
+                 deviation from the plane each neighbour lies in rather than a raw
+                 difference, because a hillside at a glancing angle changes depth
+                 fast with no edge present, and no single threshold survives that.
+                 hike-buffers.ts and hike-edges.ts are the three.js halves: a second
+                 geometry pass writing depth and view-space normals at the virtual
+                 resolution, the blit that draws one of them on its own -- the only
+                 way to see a depth texture at all, since a depth attachment cannot
+                 be read back -- and the Roberts cross over both.
                  `shading-probe.ts` plus `src/render/shading-probe.html` are a
                  dev-server-only rig (never in a build) driven by `npx tsx
                  scripts/probe-shading.ts`, which is the only thing here that can
