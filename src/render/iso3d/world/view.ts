@@ -481,6 +481,20 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * order, a cancel -- because those are all the player saying they would like
    * to be doing something else.
    */
+  /**
+   * Where the standing attack order's mark is, or null (spec 090).
+   *
+   * The body faces this while waiting for the swing to come off cooldown, so the
+   * turn happens during the wait rather than after it. Read off the replica each
+   * tick rather than remembered, because a mark that walks takes its bearing
+   * with it.
+   */
+  function aimedMark(view: ReturnType<typeof client.view>): { x: number; y: number } | null {
+    if (targetId === null) return null;
+    const entity = view.entities.find((candidate) => candidate.id === targetId);
+    return entity ? { x: entity.x, y: entity.y } : null;
+  }
+
   function driveAutoAttack(view: ReturnType<typeof client.view>, me: { x: number; y: number }): void {
     if (targetId === null) return;
     const entity = view.entities.find((candidate) => candidate.id === targetId);
@@ -651,6 +665,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // server has confirmed and one we have only asked for (spec 067) -- and it
       // can end without us asking, because being hit interrupts one.
       castAim: view.selfRoot,
+      // Face the mark while the swing is still on cooldown (spec 090). Without
+      // it the body stood facing wherever it happened to be looking for up to a
+      // whole attack delay, and only turned once the blow committed -- so the
+      // turn was paid for *after* the wait instead of during it.
+      targetAim: aimedMark(view),
     });
     if (intent.arrived) {
       destination = null;

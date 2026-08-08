@@ -379,3 +379,65 @@ describe('a move order that yields no vector (spec 090)', () => {
     expect(far.facing).toBeCloseTo(Math.PI / 2, 9);
   });
 });
+
+/**
+ * Facing the mark while waiting to swing at it (spec 090).
+ *
+ * `autoAttack` asks for nothing while the swing is on cooldown and the target is
+ * in reach -- no cast, no chase -- so without this the body kept whatever
+ * heading it had until the blow committed, and paid for the turn *after* the
+ * wait instead of during it. At spec 088's 1.2s delay that was most of two
+ * seconds from the click to the shot, nearly all of it dead.
+ */
+describe('a body faces what it was told to attack (spec 090)', () => {
+  const self = { x: 600, y: 450 };
+  /** Directly behind: the worst case, and the one that was reported. */
+  const behind = { x: self.x - 300, y: self.y };
+
+  function intentWith(over: Partial<IntentInput>): ReturnType<typeof moveIntent> {
+    return moveIntent({
+      held: new Set(),
+      self,
+      destination: null,
+      route: null,
+      facing: 0,
+      castAim: null,
+      targetAim: null,
+      ...over,
+    });
+  }
+
+  it('turns toward a mark it is waiting to hit, rather than holding its heading', () => {
+    const waiting = intentWith({ targetAim: behind });
+    // Still asking for nothing -- a wait is not a walk, and asking to move here
+    // would withdraw from the very blow being queued up (spec 079).
+    expect(Math.hypot(waiting.moveX, waiting.moveY)).toBe(0);
+    // But pointing at the mark, so the wind-up starts already aligned.
+    expect(waiting.facing).toBeCloseTo(Math.PI, 9);
+    // Which is the whole change: without a mark it keeps facing where it was.
+    expect(intentWith({}).facing).toBe(0);
+  });
+
+  it('lets a committed blow outrank the mark', () => {
+    // A cast's aim was captured at the commit and is the authority on where the
+    // body points -- a mark that has since walked must not drag the blow round.
+    const aim = { x: self.x, y: self.y + 300 };
+    const casting = intentWith({ castAim: aim, targetAim: behind });
+    expect(casting.facing).toBeCloseTo(Math.PI / 2, 9);
+  });
+
+  it('lets a walk outrank the mark, so withdrawing still works', () => {
+    const walking = intentWith({
+      held: new Set(['KeyD']),
+      targetAim: behind,
+    });
+    // Asking to move is how a blow is withdrawn from; a mark cannot veto it.
+    expect(walking.moveX).toBeCloseTo(1, 9);
+    expect(walking.facing).toBeCloseTo(0, 9);
+  });
+
+  it('keeps its heading when it is standing on top of the mark', () => {
+    const onTop = intentWith({ facing: 1.25, targetAim: { x: self.x, y: self.y } });
+    expect(onTop.facing).toBe(1.25);
+  });
+});
