@@ -158,9 +158,6 @@ async function play(options: {
       const swing = abilityById(swingId);
       const entity = view.entities.find((e) => e.id === targetId);
       const radius = mob?.radius ?? 22;
-      // The same question the sim asks when it decides `Turning` vs `Windup`,
-      // off the replica's heading rather than the local one (spec 090).
-      const mine = view.entities.find((e) => e.id === view.selfEntityId);
       const decision = autoAttack({
         self: view.self,
         selfHealth: view.entities.find((e) => e.id === view.selfEntityId)?.health ?? 1,
@@ -171,8 +168,8 @@ async function play(options: {
         rooted: view.selfRoot !== null,
         pending: view.awaitingCast,
         readyAtTick: view.cooldowns[swingId] ?? 0,
-        aligned:
-          !entity || !mine ? true : facesAim({ x: mine.x, y: mine.y }, mine.facing, { x: entity.x, y: entity.y }),
+        // The local heading, as the shipped client asks it (spec 090).
+        aligned: !entity ? true : facesAim(view.self, facing, { x: entity.x, y: entity.y }),
         tick: view.estimatedTick,
       });
       if (decision.drop || !entity) {

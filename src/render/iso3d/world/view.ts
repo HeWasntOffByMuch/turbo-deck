@@ -510,12 +510,6 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // (spec 080). It used to be read here and left out of the request, which
     // made the client's own gate stricter than the server's by exactly a body.
     const targetRadius = entity ? appearanceOf(entity).radius : 0;
-    // The body as the *server* last described it. Alignment is judged off this
-    // and never off the local heading (spec 090): the client turns a tick or two
-    // ahead, so its own facing says "aligned" while the server is still coming
-    // round -- and a cast asked for there starts in `Turning` while the client
-    // has already predicted `Windup`, which fills a bar for a wind-up that has
-    // not begun and then empties it when the truth lands.
     const replica = view.entities.find((e) => e.id === view.selfEntityId);
     const decision = autoAttack({
       self: me,
@@ -531,10 +525,15 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // which has no cast behind it and so shows up in neither of those.
       pending: view.awaitingCast,
       readyAtTick: view.cooldowns[swingId] ?? 0,
-      aligned:
-        !entity || !replica
-          ? true
-          : facesAim({ x: replica.x, y: replica.y }, replica.facing, { x: entity.x, y: entity.y }),
+      // Judged on the heading the *player is looking at* -- the local one, the
+      // one the body is drawn with -- so that "off cooldown and fully turned"
+      // means the wind-up starts now (spec 090). Judging it off the replica
+      // instead was correct about the server and a fifth of a second late,
+      // which reads as the wind-up being delayed after the turn has visibly
+      // finished. What makes asking here safe is the other end of the same fix:
+      // `startCast` counts a body within a few ticks of turning as facing its
+      // aim, so the server -- which is those few ticks behind -- agrees.
+      aligned: !entity ? true : facesAim(me, facing, { x: entity.x, y: entity.y }),
       tick: view.estimatedTick,
     });
 

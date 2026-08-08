@@ -13,7 +13,9 @@ the projectile still fires and deals damage."* Then, after the first fix:
 *"there is a big delay when the player is facing away, the target is clicked,
 and then — pause, turn, shot."* Then, after the second: *"sometimes there are two
 wind-up bars — one goes around 20% and vanishes, the second goes until the
-end."*
+end."* And after the third: *"turning is no longer delayed, but the wind-up is —
+if the auto attack is off cooldown and the unit is fully turned, the wind-up
+should begin without delay."*
 
 ### What was actually wrong
 
@@ -125,14 +127,37 @@ facing the mark:
 attack: !input.pending && input.tick >= input.readyAtTick && input.aligned,
 ```
 
-`aligned` is judged on the **replica's** heading, never the local one, using the
-sim's own predicate — `facesAim`, exported from `abilities.ts` in a shape that
-takes loose numbers so both sides can ask it rather than keeping a third copy of
-`TURN_ALIGN_EPS`. The client leads the turn, so its own facing says "aligned"
-while the server is still coming round; the replica's saying so is a fact about
-the server. Both ends then agree on the phase, the cast starts in `Windup`, and
-there is one bar. It costs nothing, because the turn is already happening during
-the cooldown.
+`aligned` is judged on the **local** heading — the one the body is drawn with,
+the one the player is watching — through the sim's own predicate, `facesAim`,
+exported from `abilities.ts` in a shape that takes loose numbers so both sides
+ask it rather than keeping a third copy of `TURN_ALIGN_EPS`.
+
+Judging it on the *replica's* heading was tried first and is wrong, though it
+takes a report to see why: the replica is the server's word at 20Hz, so it is
+right about the server and a fifth of a second late. The swing then waits after
+the turn has visibly finished — trading the double bar for a delay, which is no
+better than the delay it replaced.
+
+What makes asking on the local heading safe is the other end of the same fix:
+
+```ts
+// abilities.ts -- at the commit, and only at the commit
+export const COMMIT_ALIGN_TICKS = 3;
+export function commitAlignEps(turnRateDegrees: number, tickRate: number): number;
+```
+
+Half a degree is the right tolerance for *has the turn finished* and the wrong
+one for *should this cast start in `Turning`*. The client turns a tick or two
+ahead and asks when it is aligned; judged at half a degree the server is still
+short and starts the cast in `Turning`, and the fill-then-empty is back. Judged
+at a few ticks of the body's own turn rate the two agree, because a few ticks is
+exactly how far apart their clocks are. `advanceCast` keeps the strict tolerance,
+so a body that genuinely has to come round still pays for it, and where the blow
+lands was captured at the commit and is never re-read from the heading (spec
+065).
+
+So: off cooldown and fully turned, the wind-up starts on that tick. One bar, and
+no pause in front of it.
 
 Alignment gates the *swing* and not the walk: a body that had to face its target
 before it would approach one would never close the gap.
@@ -153,6 +178,9 @@ before it would approach one would never close the gap.
 - **A swing waits to be facing its mark**: in reach and off cooldown but not yet
   aligned, nothing is asked for and nothing is dropped; aligned, it asks. An
   out-of-reach mark is still chased while unaligned.
+- **The commit tolerance is a few ticks of the body's own turn**, never less than
+  the strict one, and it does not widen far enough to call a body turned away
+  "facing it" — a right angle and a full reversal both still turn.
 - **A withdrawal lands over a wire that takes time**: Esc and walking away, at
   up to 15 ticks each way, with the press up to 90% through the wind-up.
 - **A shot already loosed is never called back** — the boundary the above must

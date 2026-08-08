@@ -26,6 +26,7 @@ import {
   type ServerWorldState,
 } from './types.js';
 import { SHOT_IMPACT_HEIGHT, SHOT_LAUNCH_HEIGHT } from './ballistics.js';
+import { COMMIT_ALIGN_TICKS, commitAlignEps, facesAim, TURN_ALIGN_EPS } from './abilities.js';
 import { createWorldState, replaceEntity, spawnEntity, step, type StepContext } from './world.js';
 
 const RECORD: PersistedPlayer = {
@@ -1583,5 +1584,35 @@ describe('an ability aimed at a body (spec 080)', () => {
     const b = once();
     expect(JSON.stringify([...b.state.entities])).toBe(JSON.stringify([...a.state.entities]));
     expect(JSON.stringify(b.events)).toBe(JSON.stringify(a.events));
+  });
+});
+
+describe('commit alignment (spec 090)', () => {
+  it('counts a body within a few ticks of turning as facing its aim', () => {
+    const at = { x: 0, y: 0 };
+    const aim = { x: 100, y: 0 };
+    const turnRate = 540;
+    const eps = commitAlignEps(turnRate, SERVER_TICK_RATE);
+
+    // Three ticks of this body's own turn, and no more.
+    expect(eps).toBeCloseTo(((turnRate * Math.PI) / 180 / SERVER_TICK_RATE) * COMMIT_ALIGN_TICKS, 9);
+
+    // Strictly: half a degree off is not facing it. At the commit: it is, because
+    // the client that asked is exactly this far ahead of the server.
+    const off = eps * 0.8;
+    expect(facesAim(at, off, aim)).toBe(false);
+    expect(facesAim(at, off, aim, eps)).toBe(true);
+
+    // But a body genuinely turned away is still turning, however generous the
+    // tolerance -- this widens the last fraction of a turn, not the whole thing.
+    expect(facesAim(at, Math.PI / 2, aim, eps)).toBe(false);
+    expect(facesAim(at, Math.PI, aim, eps)).toBe(false);
+  });
+
+  it('never widens below the strict tolerance, whatever the body', () => {
+    // A body that cannot turn gets the plain half-degree rather than zero.
+    expect(commitAlignEps(0, SERVER_TICK_RATE)).toBe(TURN_ALIGN_EPS);
+    expect(commitAlignEps(-90, SERVER_TICK_RATE)).toBeGreaterThan(0);
+    expect(facesAim({ x: 0, y: 0 }, 0, { x: 10, y: 0 }, -5)).toBe(true);
   });
 });

@@ -139,7 +139,15 @@ export function startCast(
   // face what it is swinging at has not begun the swing -- the wind-up clock
   // starts at alignment, and until then `releaseTick` is provisional and gets
   // re-stamped by `advanceCast`.
-  const turning = !facingAim(entity, aim);
+  // Generous at the commit, and only at the commit (spec 090): see
+  // `commitAlignEps`. `advanceCast` still holds the wind-up back at the strict
+  // tolerance, so a body that genuinely has to come round still pays for it.
+  const turning = !facesAim(
+    entity.position,
+    entity.facing,
+    aim,
+    commitAlignEps(entity.stats.turnRate, SERVER_TICK_RATE),
+  );
   const phase = turning ? CastPhase.Turning : CastPhase.Windup;
   const releaseTick = tick + ability.windupTicks;
   const endTick = tick + totalCastTicks(ability);
@@ -217,6 +225,7 @@ export function facesAim(
   from: { readonly x: number; readonly y: number },
   facing: number,
   aim: { readonly x: number; readonly y: number },
+  tolerance: number = TURN_ALIGN_EPS,
 ): boolean {
   const dx = aim.x - from.x;
   const dy = aim.y - from.y;
@@ -225,7 +234,32 @@ export function facesAim(
   let delta = (Math.atan2(dy, dx) - facing) % (Math.PI * 2);
   if (delta > Math.PI) delta -= Math.PI * 2;
   if (delta <= -Math.PI) delta += Math.PI * 2;
-  return Math.abs(delta) <= TURN_ALIGN_EPS;
+  return Math.abs(delta) <= Math.max(TURN_ALIGN_EPS, tolerance);
+}
+
+/**
+ * Ticks of turning that still counts as "already facing it", at the commit
+ * (spec 090).
+ *
+ * Half a degree is the right tolerance for asking *has the turn finished*, and
+ * the wrong one for asking *should this cast start in `Turning`*. The client
+ * turns its own body a tick or two ahead of the server and asks to swing when
+ * it is aligned; judged at half a degree the server is still short, starts the
+ * cast in `Turning`, and the client -- which predicted `Windup` -- fills a bar
+ * for a wind-up that has not begun and then empties it. Judged at a couple of
+ * ticks of the body's own turn rate, the two agree, because a couple of ticks is
+ * exactly how far apart their clocks are.
+ *
+ * It costs nothing: the body finishes coming round inside the first ticks of the
+ * wind-up, and where the blow lands was captured at the commit and never re-read
+ * from the heading (spec 065).
+ */
+export const COMMIT_ALIGN_TICKS = 3;
+
+/** That tolerance in radians, for a body that turns this fast. */
+export function commitAlignEps(turnRateDegrees: number, tickRate: number): number {
+  const perTick = (Math.abs(turnRateDegrees) * Math.PI) / 180 / Math.max(1, tickRate);
+  return Math.max(TURN_ALIGN_EPS, perTick * COMMIT_ALIGN_TICKS);
 }
 
 /** Whether `entity` is already pointing at `aim` closely enough to swing. */
