@@ -181,6 +181,22 @@ before it would approach one would never close the gap.
 - **The commit tolerance is a few ticks of the body's own turn**, never less than
   the strict one, and it does not widen far enough to call a body turned away
   "facing it" — a right angle and a full reversal both still turn.
+- **Two shots from a body that had to turn 180 degrees.** The measurement that
+  covers the whole feature rather than one function: the mark is placed behind
+  the body, so the first shot pays for a half-turn and the second for nothing.
+  The first lands within turn-plus-wind-up, and the interval between them is the
+  attack delay — no turn paid twice, no pause in front of either. Measured on a
+  loopback and bit-stable across runs (nothing here reads a clock), so the
+  budgets sit two or three ticks above the real numbers rather than being padded
+  until they cannot fail.
+
+  What it provably catches, checked by breaking each in turn: the body no longer
+  turning during the cooldown (no shots at all), and any turn or pause added to
+  the interval. What it does *not* catch: judging alignment off the replica
+  costs two ticks here and lands inside the slack, and the phase disagreement
+  behind the two-bar report does not reproduce on a loopback at all — the clocks
+  have to be a tick or two apart for it, which needs the delay line. Recorded so
+  the next reader does not mistake a green run for cover it does not give.
 - **A withdrawal lands over a wire that takes time**: Esc and walking away, at
   up to 15 ticks each way, with the press up to 90% through the wind-up.
 - **A shot already loosed is never called back** — the boundary the above must

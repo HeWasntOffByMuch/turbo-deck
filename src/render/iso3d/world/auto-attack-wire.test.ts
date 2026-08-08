@@ -23,6 +23,7 @@ import { describe, expect, it } from 'vitest';
 import { createWorldColliders } from '../../../sim/collision.js';
 import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../../../server/config.js';
 import { abilityById } from '../../../server/data/abilities.js';
+import { CastPhaseValue } from '../../../server/net/protocol.js';
 import { facesAim } from '../../../server/sim/abilities.js';
 import { LoopbackTransport } from '../../../server/net/transport-loop.js';
 import { GameServer } from '../../../server/server.js';
@@ -312,4 +313,228 @@ describe('a standing attack order, over a real session (spec 080)', () => {
       expect(result.unrooted / result.ticks, seen).toBeLessThan(0.01);
     }
   }, 60_000);
+});
+
+/**
+ * Two shots from a body that had to turn 180 degrees first (spec 090).
+ *
+ * The measurement that would have caught all four of spec 090's defects, because
+ * it times the *gap* rather than any one moment. The mark is placed behind the
+ * body, so the first shot pays for a half-turn and the second pays for nothing:
+ *
+ *   order ──turn──windup──> shot 1 ────attack delay────windup──> shot 2
+ *
+ * So the first shot is late by the turn and no more -- a dead pause in front of
+ * it is the "click, wait, turn, shoot" report -- and the interval between the
+ * two is exactly `attackDelayTicks`, because the cooldown is stamped at the
+ * commit and the body is already facing its mark by then. Anything that makes
+ * the second shot wait -- a turn it should not need, an alignment gate reading a
+ * stale replica, a phase both ends disagree about -- shows up as that interval
+ * growing.
+ */
+async function twoShots(): Promise<{
+  readonly turnTicks: number;
+  readonly windupTicks: number;
+  readonly delayTicks: number;
+  readonly orderedAt: number;
+  readonly firstAt: number;
+  readonly secondAt: number;
+  /**
+   * True if a cast the client was already drawing as winding up went back to
+   * turning -- the "two bars" report, which is not a timing fault and so is
+   * invisible to the intervals above.
+   */
+  readonly reverted: boolean;
+}> {
+  const transport = new LoopbackTransport();
+  const server = new GameServer({
+    seed: 11,
+    transport,
+    world: createWorldColliders([], []),
+    terrain: FLAT_TERRAIN,
+  });
+  server.liveConfig.set('spawnRateMultiplier', 0);
+  transport.onConnection((channel) => server.accept(channel));
+
+  const client = new GameClient(transport.connect(), {
+    playerId: 'you',
+    predictor: (stats, tickRate) =>
+      createWorldPredictor({
+        world: createWorldColliders([], []),
+        terrain: FLAT_TERRAIN,
+        radius: SERVER_PLAYER_RADIUS,
+        speed: stats.moveSpeed,
+        tickRate,
+      }),
+  });
+  void client.connect();
+
+  let targetId: number | null = null;
+  let facing = 0;
+  let orderedAt = 0;
+  let turnTicks = 0;
+  let windupTicks = 0;
+  let delayTicks = 0;
+  const shots: number[] = [];
+  /** Projectile entity ids already counted, so each shot is timed once. */
+  const seenShots = new Set<number>();
+  let ticks = 0;
+  let reverted = false;
+  let windingUp = false;
+
+  while (ticks < 400 && shots.length < 2) {
+    ticks += 1;
+    server.tick();
+    client.advanceTick();
+    // Every tick, before anything reads the view: the loopback delivers on a
+    // microtask, and the equip that picks the bow is a round trip.
+    await settle();
+
+    const view = client.view();
+    if (!view.self || !view.stats) continue;
+
+    // A bar that has begun filling must not go back to empty. `castBar` draws a
+    // turning cast as empty and a winding-up one as filling, so `Windup` giving
+    // way to `Turning` inside one cast *is* the fill-then-vanish the player sees
+    // as a second bar.
+    const drawn = view.casts.find((cast) => cast.entityId === view.selfEntityId);
+    if (!drawn) windingUp = false;
+    else if (drawn.phase === CastPhaseValue.Windup) windingUp = true;
+    else if (windingUp && drawn.phase === CastPhaseValue.Turning) reverted = true;
+
+    const live = server.world.entities as Map<number, ServerEntity>;
+
+    // The tick each of our shots appeared, once each. Keyed by entity id: the
+    // timestamp has to be *now*, not anything carried on the projectile, or the
+    // measurement picks up the flight rather than the wait in front of it.
+    for (const entity of live.values()) {
+      if (!entity.projectile || entity.projectile.ownerId !== view.selfEntityId) continue;
+      if (seenShots.has(entity.id)) continue;
+      seenShots.add(entity.id);
+      shots.push(ticks);
+    }
+
+    if (targetId === null) {
+      client.equip('mainHand', 'bow.hunting');
+      const self = live.get(view.selfEntityId);
+      if (!self || view.stats.basicAttackId !== 'ranged.shot') continue;
+      // The body spawns facing +x. The mark goes *behind* it, well inside reach,
+      // so the only thing between the order and the first shot is a half-turn --
+      // no chase, no approach.
+      server.spawnEntities('dummy', self.position.x - 200, self.position.y, 1);
+      targetId = [...live.values()].find((e) => e.id !== view.selfEntityId)?.id ?? null;
+      orderedAt = ticks;
+      facing = self.facing;
+      windupTicks = abilityById('ranged.shot')?.windupTicks ?? 0;
+      delayTicks = view.stats.attackDelayTicks;
+      // Half a revolution at this body's own rate, in ticks.
+      turnTicks = Math.ceil(180 / (view.stats.turnRate / SERVER_TICK_RATE));
+      continue;
+    }
+
+    const mob = live.get(targetId);
+    const me = live.get(view.selfEntityId);
+    // Immortal on both sides: the dummy must survive to be shot at twice.
+    if (me) live.set(view.selfEntityId, { ...me, health: me.stats.maxHealth });
+    if (mob) live.set(targetId, { ...mob, health: mob.stats.maxHealth });
+
+    const entity = view.entities.find((e) => e.id === targetId);
+    const swing = abilityById(view.stats.basicAttackId || 'melee.slash');
+    const decision = autoAttack({
+      self: view.self,
+      selfHealth: view.entities.find((e) => e.id === view.selfEntityId)?.health ?? 1,
+      target: entity
+        ? { id: entity.id, x: entity.x, y: entity.y, radius: 22, health: entity.health }
+        : null,
+      range: swing?.range ?? 0,
+      rooted: view.selfRoot !== null,
+      pending: view.awaitingCast,
+      readyAtTick: view.cooldowns[view.stats.basicAttackId] ?? 0,
+      aligned: !entity ? true : facesAim(view.self, facing, { x: entity.x, y: entity.y }),
+      tick: view.estimatedTick,
+    });
+
+    const intent = moveIntent({
+      held: new Set<string>(),
+      self: view.self,
+      destination: decision.chaseTo,
+      route: null,
+      facing,
+      castAim: view.selfRoot,
+      targetAim: entity ? { x: entity.x, y: entity.y } : null,
+    });
+    facing = turnToward(facing, intent.facing, view.stats.turnRate, SERVER_TICK_RATE);
+    client.sendInput({ moveX: intent.moveX, moveY: intent.moveY, facing, buttons: 0 });
+    if (decision.attack && entity) {
+      client.useAbility(view.stats.basicAttackId, entity.x, entity.y, entity.id);
+    }
+    await settle();
+  }
+
+  client.disconnect();
+  return {
+    turnTicks,
+    windupTicks,
+    delayTicks,
+    orderedAt,
+    firstAt: shots[0] ?? -1,
+    secondAt: shots[1] ?? -1,
+    reverted,
+  };
+}
+
+describe('two shots, from a body that had to turn right round (spec 090)', () => {
+  it('pays for the turn once, and then only for the attack delay', async () => {
+    const run = await twoShots();
+    const seen = JSON.stringify(run);
+
+    // One bar per cast, filling once (spec 090). Not a timing property, so
+    // neither interval below covers it -- it is the same run asked a second
+    // question, because the same turn provokes both faults.
+    //
+    // Honest about its reach: this loopback has no latency, and the two clocks
+    // only disagree about the phase when they are a tick or two apart. Reverting
+    // the commit tolerance does *not* trip this here -- it needs the delay line
+    // `cancel-latency.test.ts` has. Kept because the invariant is right and the
+    // check is free, not because it is currently load-bearing.
+    expect(run.reverted, `a wind-up went back to turning: ${seen}`).toBe(false);
+
+    expect(run.firstAt, seen).toBeGreaterThan(0);
+    expect(run.secondAt, seen).toBeGreaterThan(run.firstAt);
+
+    // The request rides the input queue and the server dequeues one input per
+    // tick, so a couple of ticks of overhead is real. Measured, and bit-stable
+    // across runs because nothing here reads a clock: the first shot lands two
+    // ticks over turn-plus-wind-up, the second exactly one tick over the
+    // cadence. The budgets sit just above that on purpose. A slack wide enough
+    // to absorb a turn paid twice (16 ticks) or a dead pause in front of one (a
+    // whole attack delay) is a test that cannot fail for the reasons it exists.
+    //
+    // It is not tight enough to catch everything: judging alignment off the
+    // *replica* rather than the local heading costs two ticks here, and lands
+    // inside `SLACK`. That regression is a fifth of a second in the real client,
+    // where the delta interval and the interpolator add what a loopback does
+    // not -- so this is the wrong instrument for it, rather than a budget to
+    // shave until it happens to bite.
+    const SLACK = 3;
+    const INTERVAL_SLACK = 4;
+
+    // The first shot pays for the half-turn and the wind-up, and nothing else.
+    // A dead pause in front of the turn -- the "click, wait, turn, shoot" report
+    // -- lands here.
+    expect(run.firstAt - run.orderedAt, `first shot: ${seen}`).toBeLessThanOrEqual(
+      run.turnTicks + run.windupTicks + SLACK,
+    );
+
+    // And the second pays for the attack delay alone. This is the headline: the
+    // body is already facing its mark, so nothing may be spent turning, waiting
+    // for a stale replica to agree, or restarting a wind-up both ends disagreed
+    // about.
+    expect(run.secondAt - run.firstAt, `interval: ${seen}`).toBeLessThanOrEqual(
+      run.delayTicks + INTERVAL_SLACK,
+    );
+    // Nor may it be *shorter* than the cadence: the delay is a floor, and a
+    // second shot that beat it would mean the cooldown was not being served.
+    expect(run.secondAt - run.firstAt, `interval: ${seen}`).toBeGreaterThanOrEqual(run.delayTicks);
+  }, 30_000);
 });
