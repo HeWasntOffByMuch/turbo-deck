@@ -76,6 +76,59 @@ export function virtualSizeById(id: string): { readonly width: number; readonly 
 }
 
 /**
+ * The palettes the frame can be quantized onto (spec 092).
+ *
+ * Data, and deliberately not shader source: the pass uploads whichever of these
+ * is chosen as a texture, so trying another one is a dropdown rather than a
+ * rebuild. Sixteen entries is the ceiling the shader loops to.
+ *
+ * ## A palette needs values, not just hues
+ *
+ * The first version of these was the world's albedo colours straight out of
+ * `palette.ts` -- the foliage greens, trunk brown, stone, water, sky. It
+ * destroyed the picture, and the reason is worth writing down because it is not
+ * obvious and the frame still looked stylized: those are the colours a surface
+ * is *painted*, and the frame being quantized is the colours a surface is *lit*.
+ * Lighting spends most of its range below the albedo, so nearly every pixel fell
+ * beneath the darkest entry and snapped to the same green -- trees and ground
+ * came out one flat shape.
+ *
+ * So each palette is a few hue families across a few values: the world's own
+ * colours scaled toward black for shadow and mixed toward white for highlight.
+ * The hues are still the game's; what is added is the range the lighting
+ * actually occupies.
+ */
+export const HIKE_PALETTES = [
+  { id: 'none', colors: null },
+  {
+    // Four families -- foliage, earth, stone, water -- across four values each.
+    id: 'world',
+    colors: [
+      0x2c3d16, 0x4c6826, 0x7fae3f, 0xa5c779,
+      0x462e16, 0x784e26, 0xc8823f, 0xd9a479,
+      0x45423b, 0x777165, 0xc6bda9, 0xd8d2c4,
+      0x1b444a, 0x2f757f, 0x4ec3d4, 0x8ad8e3,
+    ],
+  },
+  {
+    // The same four families at two values each: fewer colours, harder steps.
+    id: 'eight',
+    colors: [
+      0x3f5a30, 0xa8c25a, 0x6b4a28, 0xc8823f,
+      0x5a5750, 0xc6bda9, 0x2f757f, 0x8ad8e3,
+    ],
+  },
+] as const;
+
+/** The palette id the panel opens at: none, so the frame is the one that shipped. */
+export const DEFAULT_PALETTE_ID = 'none';
+
+/** A named palette's colours, or null for even steps. Unknown ids fall back to null. */
+export function paletteById(id: string): readonly number[] | null {
+  return HIKE_PALETTES.find((p) => p.id === id)?.colors ?? null;
+}
+
+/**
  * Every switch and every threshold in the hike look.
  *
  * Read once per frame and applied; nothing here is game state and nothing here
@@ -187,25 +240,20 @@ export interface HikeSettings {
 
   // --- step 6: posterize and dither ---------------------------------------
 
-  /** Quantize the frame to a limited palette. */
-  readonly posterize: boolean;
   /**
-   * The palette to quantize onto, as packed `0xRRGGBB`, or null for evenly
-   * spaced steps per channel.
+   * The palette to quantize onto, as packed `0xRRGGBB`, or null for the evenly
+   * spaced steps per channel the retro filter has always used.
    *
    * Data, never shader source: a palette compiled into GLSL is a palette that
-   * needs a rebuild to try.
+   * needs a rebuild to try. The pass uploads it as a one-row texture.
+   *
+   * There is no separate `posterize` switch, and no `levels`, `dither` or
+   * `ditherStrength` here either. Spec 038's filter already owns all four and
+   * already has sliders for them; a second set in this object would be two knobs
+   * for one thing, and the interesting question -- steps or palette -- is
+   * answered by whether this is null.
    */
   readonly palette: readonly number[] | null;
-  /** Steps per channel when `palette` is null. */
-  readonly levels: number;
-  /**
-   * Apply the ordered 4x4 Bayer dither before quantizing, to break up the
-   * banding a hard quantize leaves on a gradient.
-   */
-  readonly dither: boolean;
-  /** How far the dither may push a value, in band edges. 1 is a full edge. */
-  readonly ditherStrength: number;
 
   // --- step 7: the distance / ink treatment -------------------------------
 
@@ -294,11 +342,7 @@ export const HIKE_OFF: HikeSettings = {
   outlineColor: 0x1a1a22,
   outlineStrength: 1,
 
-  posterize: false,
   palette: null,
-  levels: 12,
-  dither: false,
-  ditherStrength: 0.05,
 
   ink: false,
   inkStart: 1200,

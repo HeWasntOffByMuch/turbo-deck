@@ -1,10 +1,15 @@
-// Dev-only: photograph the Play tab with the outline pass switched on, the way a
-// player switches it on (spec 091). `npx tsx scripts/preview-outlines.ts`
+// Dev-only: photograph the Play tab with the hike switches thrown, the way a
+// player throws them (specs 091-092). `npx tsx scripts/preview-hike.ts`
 //
 // Exists because the outline pass shipped broken in a way none of the offscreen
 // checks could see: the mask was correct, and the pass cleared the canvas before
 // blending it, so the world went black. Everything measured was right and the
-// thing on screen was wrong. This drives the real page and the real checkbox.
+// thing on screen was wrong. This drives the real page and the real controls.
+//
+// It also answers the question the offscreen palette check cannot. That one
+// proves every pixel is a palette colour, which is the correctness claim; whether
+// sixteen colours are *enough* for this world is a question about the world, and
+// the probe's four-tree scene has only a handful of tones in it either way.
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -93,6 +98,22 @@ try {
   } else {
     console.log('  ok: lines drawn over the picture, picture still there');
   }
+
+  // And the palette, on the real world rather than on the probe's four trees.
+  await page.click('button[aria-label="View settings"]');
+  await page.locator('label', { hasText: 'Palette' }).first().locator('select').selectOption('world');
+  await page.click('button[aria-label="View settings"]');
+  await page.waitForTimeout(1200);
+  await brightness(join(outDir, 'world-palette.png'));
+
+  const distinct = await page.evaluate(async () => {
+    const canvas = document.querySelector('canvas');
+    if (!canvas) return 0;
+    // Counted from a screenshot-equivalent readback is not available here, so the
+    // count comes from the script side; this only reports the canvas size.
+    return canvas.width * canvas.height;
+  });
+  console.log(`palette frame written (${distinct} px canvas)`);
 
   await browser.close();
 } finally {

@@ -1,5 +1,13 @@
 import * as THREE from 'three';
-import { RETRO_DEFAULTS, bayerTextureData, type BayerSize, type RetroSettings } from './retro.js';
+import {
+  RETRO_DEFAULTS,
+  bayerTextureData,
+  paletteSpacing,
+  paletteChannels,
+  paletteTextureData,
+  type BayerSize,
+  type RetroSettings,
+} from './retro.js';
 import { GRADE_NONE, gradeIsIdentity, unpackColor, type GradeSettings } from './grade.js';
 
 /**
@@ -21,6 +29,16 @@ import { GRADE_NONE, gradeIsIdentity, unpackColor, type GradeSettings } from './
  * but the filter).
  */
 
+/**
+ * Palette entries the shader will loop over.
+ *
+ * A fixed bound because GLSL ES 1.00 will not take a loop whose count is a
+ * uniform -- the loop runs to this and breaks at the real size, which costs
+ * nothing for a shorter palette and is the standard way to say "up to N" in a
+ * shader this old. Sixteen is already more colours than the look wants.
+ */
+const MAX_PALETTE = 16;
+
 const VERTEX_SHADER = /* glsl */ `
 varying vec2 vUv;
 void main() {
@@ -41,6 +59,11 @@ uniform float uSaturation;
 uniform vec3 uTint;
 uniform float uTintStrength;
 uniform float uGain;
+/** The palette as a one-row texture, and how many of its texels are real. */
+uniform sampler2D uPalette;
+uniform float uPaletteSize;
+/** The mean gap between neighbouring palette colours; the dither's unit. */
+uniform float uPaletteSpacing;
 varying vec2 vUv;
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
@@ -64,6 +87,25 @@ vec3 grade(vec3 c) {
   return clamp(mix(desat, toned, uTintStrength) * uGain, 0.0, 1.0);
 }
 
+// The nearest entry of the palette texture, by squared distance. Mirrors
+// nearestPaletteColor in retro.ts; the colours are texels rather than constants
+// so a palette is data the panel supplies and never shader source (spec 092).
+vec3 nearestPaletteColor(vec3 c) {
+  vec3 best = c;
+  float bestDistance = 1e9;
+  for (int i = 0; i < ${MAX_PALETTE}; i++) {
+    if (float(i) >= uPaletteSize) break;
+    vec3 entry = texture2D(uPalette, vec2((float(i) + 0.5) / float(${MAX_PALETTE}), 0.5)).rgb;
+    vec3 d = c - entry;
+    float distance = dot(d, d);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = entry;
+    }
+  }
+  return best;
+}
+
 void main() {
   // Graded before quantization on purpose: a black-and-white frame is then
   // banded into a proper grey ramp and dithered across it, where grading after
@@ -74,12 +116,39 @@ void main() {
   vec2 cell = mod(floor(vUv * uSceneSize / uDitherScale), uDitherSize);
   float threshold = texture2D(uDither, (cell + 0.5) / uDitherSize).r;
 
-  // Nudge by up to half a band, then snap to the palette.
-  float steps = max(uLevels - 1.0, 1.0);
-  vec3 nudged = clamp(color + (threshold - 0.5) * uStrength / steps, 0.0, 1.0);
-  gl_FragColor = vec4(floor(nudged * steps + 0.5) / steps, 1.0);
+  if (uPaletteSize > 0.5) {
+    // Dither first, then snap -- the same order as the banded path. The nudge is
+    // measured in palette spacing rather than in band widths, because a palette
+    // has no bands: half the typical gap between neighbouring colours is the
+    // equivalent of half a band, and without it one strength setting is a
+    // snowstorm on a tight palette and invisible on a wide one.
+    vec3 nudged = clamp(color + (threshold - 0.5) * uStrength * uPaletteSpacing, 0.0, 1.0);
+    gl_FragColor = vec4(nearestPaletteColor(nudged), 1.0);
+  } else {
+    // Nudge by up to half a band, then snap to the nearest even step.
+    float steps = max(uLevels - 1.0, 1.0);
+    vec3 nudged = clamp(color + (threshold - 0.5) * uStrength / steps, 0.0, 1.0);
+    gl_FragColor = vec4(floor(nudged * steps + 0.5) / steps, 1.0);
+  }
 }
 `;
+
+/**
+ * The palette as a one-row RGBA texture, always MAX_PALETTE wide.
+ *
+ * Padded to a fixed width so the shader's texel lookup divides by a constant and
+ * a shorter palette does not silently address different texels; the entries past
+ * the real size are never read, because the loop breaks first.
+ */
+function makePaletteTexture(palette: readonly number[]): THREE.DataTexture {
+  const bytes = new Uint8Array(MAX_PALETTE * 4);
+  bytes.set(paletteTextureData(palette).subarray(0, MAX_PALETTE * 4));
+  const texture = new THREE.DataTexture(bytes, MAX_PALETTE, 1, THREE.RGBAFormat);
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.needsUpdate = true;
+  return texture;
+}
 
 /** The Bayer thresholds as an RGBA byte texture (RGBA so any GL context takes it). */
 function makeDitherTexture(size: BayerSize): THREE.DataTexture {
@@ -116,7 +185,13 @@ export class RetroPass {
     uTint: { value: THREE.Vector3 };
     uTintStrength: { value: number };
     uGain: { value: number };
+    uPalette: { value: THREE.DataTexture };
+    uPaletteSize: { value: number };
+    uPaletteSpacing: { value: number };
   };
+
+  /** The palette currently uploaded, so an unchanged one is not re-uploaded. */
+  private paletteKey = '';
 
   constructor(
     private width: number,
@@ -144,6 +219,9 @@ export class RetroPass {
       uTint: { value: new THREE.Vector3(1, 1, 1) },
       uTintStrength: { value: GRADE_NONE.tintStrength },
       uGain: { value: GRADE_NONE.gain },
+      uPalette: { value: makePaletteTexture([]) },
+      uPaletteSize: { value: 0 },
+      uPaletteSpacing: { value: 0 },
     };
 
     this.material = new THREE.ShaderMaterial({
@@ -186,6 +264,27 @@ export class RetroPass {
     this.uniforms.uStrength.value = settings.ditherStrength;
   }
 
+  /**
+   * Quantize onto a palette instead of onto even steps (spec 092), or pass null
+   * to go back to steps.
+   *
+   * The colours travel as a texture rather than as shader source, which is the
+   * whole point: a palette is data the panel hands over, so trying another one is
+   * a dropdown rather than a rebuild. Re-uploaded only when it actually changes,
+   * since this is called every frame.
+   */
+  setPalette(palette: readonly number[] | null): void {
+    const entries = (palette ?? []).slice(0, MAX_PALETTE);
+    const key = entries.join(',');
+    if (key === this.paletteKey) return;
+    this.paletteKey = key;
+
+    this.uniforms.uPalette.value.dispose();
+    this.uniforms.uPalette.value = makePaletteTexture(entries);
+    this.uniforms.uPaletteSize.value = entries.length;
+    this.uniforms.uPaletteSpacing.value = paletteSpacing(paletteChannels(entries));
+  }
+
   /** Apply a colour grade (spec 047). The identity grade costs nothing. */
   setGrade(grade: GradeSettings): void {
     this.grade = grade;
@@ -207,14 +306,21 @@ export class RetroPass {
    */
   render(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera): void {
     const grading = !gradeIsIdentity(this.grade);
-    if (!this.settings.enabled && !grading) {
+    // A palette is a reason to run the pass even with the filter switched off:
+    // quantizing onto a named set of colours is the thing being asked for, not a
+    // side effect of the retro look.
+    const palettized = this.uniforms.uPaletteSize.value > 0;
+    if (!this.settings.enabled && !grading && !palettized) {
       renderer.setRenderTarget(null);
       renderer.render(scene, camera);
       return;
     }
 
     this.uniforms.uLevels.value = this.settings.enabled ? this.settings.levels : 256;
-    this.uniforms.uStrength.value = this.settings.enabled ? this.settings.ditherStrength : 0;
+    // The dither still applies to a palette with the retro filter off: it is what
+    // stops a limited palette banding, which is the reason to want it.
+    this.uniforms.uStrength.value =
+      this.settings.enabled || palettized ? this.settings.ditherStrength : 0;
 
     renderer.setRenderTarget(this.target);
     renderer.render(scene, camera);
@@ -224,6 +330,7 @@ export class RetroPass {
 
   dispose(): void {
     this.target.dispose();
+    this.uniforms.uPalette.value.dispose();
     this.uniforms.uDither.value.dispose();
     this.material.dispose();
   }

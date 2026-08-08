@@ -1,8 +1,11 @@
 import { RETRO_DEFAULTS, type BayerSize, type RetroSettings } from './retro.js';
 import {
+  DEFAULT_PALETTE_ID,
   DEFAULT_VIRTUAL_SIZE,
   HIKE_DEBUG_VIEWS,
   HIKE_OFF,
+  HIKE_PALETTES,
+  paletteById,
   VIRTUAL_SIZES,
   virtualSizeById,
   type HikeDebugView,
@@ -459,6 +462,14 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     HIKE_DEBUG_VIEWS.map((v) => [v, v] as const), HIKE_OFF.debug,
     'Draw one intermediate buffer on its own instead of the finished frame. Needs the buffers above.');
 
+  // Step 6: quantize onto a named palette instead of onto even steps. The steps,
+  // the dither and its strength are the retro filter's own sliders above -- this
+  // is only the choice between the two.
+  const paletteChoice = makeTextChoice('Palette',
+    HIKE_PALETTES.map((p) => [p.id, p.id] as const), DEFAULT_PALETTE_ID,
+    'Snap every pixel to the nearest colour of a fixed set, instead of to the nearest even step ' +
+    'per channel. The dither above still applies, measured in palette spacing rather than in bands.');
+
   // Step 5: the outlines the buffers exist for.
   const edges = makeCheckbox('Outlines', HIKE_OFF.edges,
     'Find edges in the depth and normal buffers and draw them over the frame. Needs the buffers above.');
@@ -489,7 +500,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
       torchOn, torchRange, torchBright, torchFlickerDepth, torchShadows,
       magicOn, magicRange, magicBright, spawners,
       retroOn, levels, dither, weave, weaveScale, pixelSize, gradeChoice, gradeStrength,
-      smoothNormals, creaseAngle, swayNormals, lowRes, virtualSize, snapCamera, buffers, edges, depthThreshold, normalThreshold, skyOutline, debugView];
+      smoothNormals, creaseAngle, swayNormals, lowRes, virtualSize, snapCamera, buffers, edges, depthThreshold, normalThreshold, skyOutline, paletteChoice, debugView];
     for (const w of widgets) w.reset();
   });
 
@@ -537,6 +548,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     depthThreshold.row,
     normalThreshold.row,
     skyOutline.row,
+    paletteChoice.row,
     debugView.row,
   );
   panel.append(reset);
@@ -609,6 +621,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
         depthEdgeThreshold: depthThreshold.value(),
         normalEdgeThreshold: normalThreshold.value() / 100,
         outlineAgainstSky: skyOutline.checked(),
+        palette: paletteById(paletteChoice.value()),
         debug: debugView.value() as HikeDebugView,
       };
     },

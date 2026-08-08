@@ -677,6 +677,7 @@ export class WorldScene {
     } else {
       this.retro.set(this.controls.retro());
       this.retro.setGrade(this.controls.grade());
+      this.retro.setPalette(hike.palette);
       this.retro.render(this.renderer, this.scene, this.camera);
       // Over the finished frame, which is where a line belongs: the fills are
       // settled, so the outline is a constant dark value rather than something

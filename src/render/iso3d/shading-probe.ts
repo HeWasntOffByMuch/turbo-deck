@@ -6,7 +6,9 @@ import { advanceWind, setWindStrength } from './wind-uniforms.js';
 import { decodeOctahedral } from './shading.js';
 import { HikeBuffers, type BufferView } from './hike-buffers.js';
 import { HikeEdges } from './hike-edges.js';
-import { HIKE_OFF } from './hike.js';
+import { HIKE_OFF, paletteById } from './hike.js';
+import { RetroPass } from './retro-pass.js';
+import { RETRO_DEFAULTS } from './retro.js';
 
 /**
  * A dev-server-only rig that proves the shading switches' shaders actually
@@ -149,6 +151,24 @@ export interface EdgeProbeCase {
   readonly floorEdgeFraction: number;
 }
 
+/** What quantizing onto a palette produced (spec 092). */
+export interface PaletteProbeCase {
+  /** Distinct colours in the frame. Must not exceed the palette's size. */
+  readonly distinct: number;
+  readonly paletteSize: number;
+  /**
+   * Fraction of pixels that are exactly a palette entry.
+   *
+   * The claim a palette makes, stated the only way it can be: not "it looks
+   * limited" but "every pixel is one of these sixteen colours".
+   */
+  readonly onPalette: number;
+  /** Distinct colours in the same frame quantized onto even steps instead. */
+  readonly distinctStepped: number;
+  /** Whether the two frames differ at all. */
+  readonly changedFrame: boolean;
+}
+
 declare global {
   interface Window {
     /** Filled once every case has drawn; `probe-shading.ts` polls for it. */
@@ -159,6 +179,8 @@ declare global {
     bufferProbe?: readonly BufferProbeCase[];
     /** What the outline pass found (spec 091). */
     edgeProbe?: EdgeProbeCase;
+    /** What quantizing onto a palette produced (spec 092). */
+    paletteProbe?: PaletteProbeCase;
   }
 }
 
@@ -592,8 +614,89 @@ function runEdges(): EdgeProbeCase {
   };
 }
 
+/**
+ * Render a frame through the retro pass with a palette, and check that the
+ * palette is what came out.
+ *
+ * Not "does it look limited" -- the frame is read back and every pixel is looked
+ * up in the palette. A quantizer that is subtly wrong, or a palette texture that
+ * never uploaded, produces a frame that still looks stylized and is not on the
+ * palette at all.
+ */
+function runPalette(): PaletteProbeCase {
+  const canvas = document.createElement('canvas');
+  canvas.width = CELL_W;
+  canvas.height = CELL_H;
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, preserveDrawingBuffer: true });
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x8fd6c8);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const sun = new THREE.DirectionalLight(0xffffff, 1);
+  sun.position.set(300, 600, 300);
+  scene.add(sun);
+  const field = buildPropField(PROPS, () => 0, undefined, {
+    smooth: false,
+    creaseAngle: DEFAULT_CREASE_ANGLE,
+    swayNormals: false,
+  });
+  scene.add(field.group);
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(1400, 1400),
+    new THREE.MeshLambertMaterial({ color: 0x556633, flatShading: true }),
+  );
+  floor.rotation.x = -Math.PI / 2;
+  scene.add(floor);
+
+  const half = 240;
+  const camera = new THREE.OrthographicCamera(-half, half, half * 0.75, -half * 0.75, 1, 4000);
+  camera.position.set(700, 620, 700);
+  camera.lookAt(27, 95, 30);
+
+  const retro = new RetroPass(CELL_W, CELL_H, RETRO_DEFAULTS);
+  const gl = renderer.getContext();
+  const shoot = (palette: readonly number[] | null): Uint8Array => {
+    retro.setPalette(palette);
+    retro.render(renderer, scene, camera);
+    const out = new Uint8Array(CELL_W * CELL_H * 4);
+    gl.readPixels(0, 0, CELL_W, CELL_H, gl.RGBA, gl.UNSIGNED_BYTE, out);
+    return out;
+  };
+
+  const colors = paletteById('world') ?? [];
+  const stepped = shoot(null);
+  const painted = shoot(colors);
+  frames.push({ label: 'palette: world', pixels: painted });
+
+  const allowed = new Set(colors);
+  const seen = new Set<number>();
+  const seenStepped = new Set<number>();
+  let onPalette = 0;
+  let changed = false;
+  for (let i = 0; i < painted.length; i += 4) {
+    const hex = ((painted[i] ?? 0) << 16) | ((painted[i + 1] ?? 0) << 8) | (painted[i + 2] ?? 0);
+    seen.add(hex);
+    if (allowed.has(hex)) onPalette++;
+    seenStepped.add(((stepped[i] ?? 0) << 16) | ((stepped[i + 1] ?? 0) << 8) | (stepped[i + 2] ?? 0));
+    if (painted[i] !== stepped[i]) changed = true;
+  }
+
+  field.dispose();
+  retro.dispose();
+  renderer.dispose();
+
+  return {
+    distinct: seen.size,
+    paletteSize: colors.length,
+    onPalette: onPalette / (painted.length / 4),
+    distinctStepped: seenStepped.size,
+    changedFrame: changed,
+  };
+}
+
 const results = CASES.map(({ smooth, swayNormals, label }) => runCase(smooth, swayNormals, label));
 window.bufferProbe = [runBuffers('depth'), runBuffers('normals')];
 window.edgeProbe = runEdges();
+window.paletteProbe = runPalette();
 window.shadingProbeSheet = contactSheet();
 window.shadingProbe = results;

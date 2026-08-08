@@ -122,3 +122,105 @@ export function ditherChannel(v: number, threshold: number, levels: number, stre
   const steps = Math.max(1, levels - 1);
   return quantizeChannel(v + ((threshold - 0.5) * strength) / steps, levels);
 }
+
+// --- quantizing onto a palette (spec 092) ------------------------------------
+
+/**
+ * Snap a colour to the nearest entry of a palette, in the same display space the
+ * palette is authored in.
+ *
+ * Nearest by squared distance in RGB. Not a perceptual metric, deliberately: a
+ * limited palette is chosen *as* a set of colours that look right together, so
+ * the useful question is which of them a pixel is closest to, and a perceptual
+ * distance mostly redistributes error toward hues the palette was picked to
+ * avoid. Squared, because the square root is monotonic and would change nothing
+ * but the cost.
+ *
+ * `palette` is a flat run of r, g, b triples in 0..1. An empty palette leaves the
+ * colour alone rather than returning black.
+ */
+export function nearestPaletteColor(
+  r: number,
+  g: number,
+  b: number,
+  palette: ArrayLike<number>,
+): readonly [number, number, number] {
+  const count = Math.floor(palette.length / 3);
+  if (count === 0) return [r, g, b];
+
+  let best = 0;
+  let bestDistance = Infinity;
+  for (let i = 0; i < count; i++) {
+    const dr = r - (palette[i * 3] ?? 0);
+    const dg = g - (palette[i * 3 + 1] ?? 0);
+    const db = b - (palette[i * 3 + 2] ?? 0);
+    const distance = dr * dr + dg * dg + db * db;
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = i;
+    }
+  }
+  return [palette[best * 3] ?? 0, palette[best * 3 + 1] ?? 0, palette[best * 3 + 2] ?? 0];
+}
+
+/**
+ * How far apart the palette's colours are: the mean distance from each entry to
+ * its nearest neighbour.
+ *
+ * This is what the dither is measured in. With evenly spaced levels a band is
+ * `1 / (levels - 1)` wide and the dither nudges by up to half of one, but a
+ * palette has no bands -- so the equivalent nudge is half the typical gap
+ * between neighbouring colours. Without this the dither is either invisible on a
+ * wide palette or a snowstorm on a tight one, and the strength slider means
+ * something different for every palette.
+ *
+ * Zero for a palette of fewer than two colours, which correctly disables the
+ * dither: there is nothing to mix between.
+ */
+export function paletteSpacing(palette: ArrayLike<number>): number {
+  const count = Math.floor(palette.length / 3);
+  if (count < 2) return 0;
+
+  let total = 0;
+  for (let i = 0; i < count; i++) {
+    let nearest = Infinity;
+    for (let j = 0; j < count; j++) {
+      if (i === j) continue;
+      const dr = (palette[i * 3] ?? 0) - (palette[j * 3] ?? 0);
+      const dg = (palette[i * 3 + 1] ?? 0) - (palette[j * 3 + 1] ?? 0);
+      const db = (palette[i * 3 + 2] ?? 0) - (palette[j * 3 + 2] ?? 0);
+      nearest = Math.min(nearest, Math.hypot(dr, dg, db));
+    }
+    total += nearest;
+  }
+  return total / count;
+}
+
+/**
+ * A palette of packed `0xRRGGBB` values as a flat run of 0..1 triples.
+ *
+ * The form both {@link nearestPaletteColor} and the shader want -- the shader
+ * gets it as a one-row texture, so the colours stay data the panel supplies and
+ * never constants compiled into GLSL.
+ */
+export function paletteChannels(palette: readonly number[]): Float32Array {
+  const out = new Float32Array(palette.length * 3);
+  palette.forEach((hex, i) => {
+    out[i * 3] = ((hex >> 16) & 0xff) / 255;
+    out[i * 3 + 1] = ((hex >> 8) & 0xff) / 255;
+    out[i * 3 + 2] = (hex & 0xff) / 255;
+  });
+  return out;
+}
+
+/** The same, as the bytes a one-row RGBA texture is uploaded from. */
+export function paletteTextureData(palette: readonly number[]): Uint8Array {
+  const out = new Uint8Array(Math.max(1, palette.length) * 4);
+  palette.forEach((hex, i) => {
+    out[i * 4] = (hex >> 16) & 0xff;
+    out[i * 4 + 1] = (hex >> 8) & 0xff;
+    out[i * 4 + 2] = hex & 0xff;
+    out[i * 4 + 3] = 255;
+  });
+  return out;
+}

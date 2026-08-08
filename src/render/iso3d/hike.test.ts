@@ -3,6 +3,9 @@ import {
   DEFAULT_VIRTUAL_SIZE,
   HIKE_DEBUG_VIEWS,
   HIKE_OFF,
+  paletteById,
+  DEFAULT_PALETTE_ID,
+  HIKE_PALETTES,
   srgbDecode,
   srgbEncode,
   unpackLinear,
@@ -29,8 +32,6 @@ describe('the hike settings', () => {
       'snapCamera',
       'buffers',
       'edges',
-      'posterize',
-      'dither',
       'ink',
       'curvature',
       'softShadows',
@@ -48,9 +49,11 @@ describe('the hike settings', () => {
 
   it('quantizes onto even steps until given a palette', () => {
     // Null rather than a baked-in list: the palette is data the panel supplies,
-    // never a constant compiled into shader source.
+    // never a constant compiled into shader source. Null also means "the frame
+    // that shipped", since the retro filter's own steps are what it has always
+    // used.
     expect(HIKE_OFF.palette).toBeNull();
-    expect(HIKE_OFF.levels).toBeGreaterThan(1);
+    expect(paletteById(DEFAULT_PALETTE_ID)).toBeNull();
   });
 
   it('opens at a virtual resolution that does not depend on the window', () => {
@@ -68,6 +71,42 @@ describe('the hike settings', () => {
     const size = virtualSizeById(DEFAULT_VIRTUAL_SIZE);
     expect(size.width).toBe(HIKE_OFF.virtualWidth);
     expect(size.height).toBe(HIKE_OFF.virtualHeight);
+  });
+});
+
+describe('the palettes', () => {
+  it('offers a way back to even steps', () => {
+    expect(paletteById('none')).toBeNull();
+  });
+
+  it('stays inside the shader\'s loop bound', () => {
+    // The GLSL loops to a fixed 16, because GLSL ES 1.00 will not take a
+    // uniform loop count. A longer palette would be silently truncated.
+    for (const palette of HIKE_PALETTES) {
+      expect(palette.colors?.length ?? 0).toBeLessThanOrEqual(16);
+    }
+  });
+
+  it('holds every colour to a real 24-bit hex', () => {
+    for (const palette of HIKE_PALETTES) {
+      for (const hex of palette.colors ?? []) {
+        expect(Number.isInteger(hex)).toBe(true);
+        expect(hex).toBeGreaterThanOrEqual(0);
+        expect(hex).toBeLessThanOrEqual(0xffffff);
+      }
+    }
+  });
+
+  it('names each palette once, and has no duplicate colours within one', () => {
+    expect(new Set(HIKE_PALETTES.map((p) => p.id)).size).toBe(HIKE_PALETTES.length);
+    for (const palette of HIKE_PALETTES) {
+      const colors = palette.colors ?? [];
+      expect(new Set(colors).size).toBe(colors.length);
+    }
+  });
+
+  it('falls back rather than throwing on an unknown id', () => {
+    expect(paletteById('nonsense')).toBeNull();
   });
 });
 

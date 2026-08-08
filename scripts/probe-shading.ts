@@ -39,6 +39,14 @@ interface EdgeProbeCase {
   readonly compositeLines: number;
 }
 
+interface PaletteProbeCase {
+  readonly distinct: number;
+  readonly paletteSize: number;
+  readonly onPalette: number;
+  readonly distinctStepped: number;
+  readonly changedFrame: boolean;
+}
+
 interface ShadingProbeCase {
   readonly label: string;
   readonly programs: number;
@@ -100,6 +108,7 @@ try {
   const cases = (await page.evaluate(() => window.shadingProbe)) as readonly ShadingProbeCase[];
   const buffers = (await page.evaluate(() => window.bufferProbe)) as readonly BufferProbeCase[];
   const edges = (await page.evaluate(() => window.edgeProbe)) as EdgeProbeCase | undefined;
+  const palette = (await page.evaluate(() => window.paletteProbe)) as PaletteProbeCase | undefined;
 
   // Anything mentioning a shader, a program, a compile or a link is a hard
   // failure; the rest is printed but tolerated.
@@ -209,6 +218,31 @@ try {
         `        composite: ${(edges.frameMean * 100).toFixed(0)}% -> ` +
         `${(edges.compositeMean * 100).toFixed(0)}% brightness, ` +
         `${(edges.compositeLines * 100).toFixed(1)}% of pixels darkened`,
+    );
+    for (const problem of problems) console.log(`        ${problem}`);
+  }
+
+  // Quantizing onto a palette (spec 092).
+  if (palette) {
+    const problems: string[] = [];
+    // The claim, stated the only way it can be. A quantizer that is subtly wrong
+    // still produces a stylized-looking frame.
+    if (palette.onPalette < 0.999) {
+      problems.push(
+        `only ${(palette.onPalette * 100).toFixed(2)}% of pixels are a palette colour -- ` +
+          'the frame is not on the palette',
+      );
+    }
+    if (palette.distinct > palette.paletteSize) {
+      problems.push(`${palette.distinct} distinct colours from a palette of ${palette.paletteSize}`);
+    }
+    if (!palette.changedFrame) problems.push('the palette changed nothing, so it never reached the shader');
+    if (problems.length > 0) failed = true;
+    console.log(
+      `${problems.length === 0 ? 'ok  ' : 'FAIL'}  palette\n` +
+        `        ${palette.distinct} of ${palette.paletteSize} colours used, ` +
+        `${(palette.onPalette * 100).toFixed(2)}% on palette ` +
+        `(even steps gave ${palette.distinctStepped})`,
     );
     for (const problem of problems) console.log(`        ${problem}`);
   }
