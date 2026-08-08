@@ -24,6 +24,7 @@ import { createWorldColliders } from '../../../sim/collision.js';
 import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../../../server/config.js';
 import { abilityById } from '../../../server/data/abilities.js';
 import { CastPhaseValue } from '../../../server/net/protocol.js';
+import { castBar } from './cast.js';
 import { facesAim } from '../../../server/sim/abilities.js';
 import { LoopbackTransport } from '../../../server/net/transport-loop.js';
 import { GameServer } from '../../../server/server.js';
@@ -345,6 +346,8 @@ async function twoShots(): Promise<{
    * invisible to the intervals above.
    */
   readonly reverted: boolean;
+  /** How full the bar was drawn, the last tick before each shot appeared. */
+  readonly barAtShot: readonly number[];
 }> {
   const transport = new LoopbackTransport();
   const server = new GameServer({
@@ -381,6 +384,8 @@ async function twoShots(): Promise<{
   let ticks = 0;
   let reverted = false;
   let windingUp = false;
+  let lastProgress = 0;
+  const atShot: number[] = [];
 
   while (ticks < 400 && shots.length < 2) {
     ticks += 1;
@@ -398,6 +403,9 @@ async function twoShots(): Promise<{
     // way to `Turning` inside one cast *is* the fill-then-vanish the player sees
     // as a second bar.
     const drawn = view.casts.find((cast) => cast.entityId === view.selfEntityId);
+    if (drawn) {
+      lastProgress = castBar(drawn, view.estimatedTick, abilityById(drawn.abilityId)).progress;
+    }
     if (!drawn) windingUp = false;
     else if (drawn.phase === CastPhaseValue.Windup) windingUp = true;
     else if (windingUp && drawn.phase === CastPhaseValue.Turning) reverted = true;
@@ -412,6 +420,7 @@ async function twoShots(): Promise<{
       if (seenShots.has(entity.id)) continue;
       seenShots.add(entity.id);
       shots.push(ticks);
+      atShot.push(lastProgress);
     }
 
     if (targetId === null) {
@@ -480,6 +489,7 @@ async function twoShots(): Promise<{
     firstAt: shots[0] ?? -1,
     secondAt: shots[1] ?? -1,
     reverted,
+    barAtShot: atShot,
   };
 }
 
@@ -526,15 +536,22 @@ describe('two shots, from a body that had to turn right round (spec 090)', () =>
       run.turnTicks + run.windupTicks + SLACK,
     );
 
-    // And the second pays for the attack delay alone. This is the headline: the
-    // body is already facing its mark, so nothing may be spent turning, waiting
-    // for a stale replica to agree, or restarting a wind-up both ends disagreed
-    // about.
+    // And the second pays for the attack delay and one wind-up, and nothing
+    // else. This is the headline: the body is already facing its mark, so
+    // nothing may be spent turning, waiting for a stale replica to agree, or
+    // restarting a wind-up both ends disagreed about.
+    //
+    // The wind-up is in the interval because the cooldown starts at the release
+    // rather than the commit (spec 091), so the clock the second shot waits on
+    // does not start until the first arrow is away. That is the cadence a player
+    // sees between two loosed shots; `attackDelayTicks` on its own is the gap
+    // between one shot and the *start* of the next draw.
+    const cadence = run.delayTicks + run.windupTicks;
     expect(run.secondAt - run.firstAt, `interval: ${seen}`).toBeLessThanOrEqual(
-      run.delayTicks + INTERVAL_SLACK,
+      cadence + INTERVAL_SLACK,
     );
-    // Nor may it be *shorter* than the cadence: the delay is a floor, and a
-    // second shot that beat it would mean the cooldown was not being served.
-    expect(run.secondAt - run.firstAt, `interval: ${seen}`).toBeGreaterThanOrEqual(run.delayTicks);
+    // Nor may it be *shorter* than that: the delay is a floor, and a second shot
+    // that beat it would mean the cooldown was not being served.
+    expect(run.secondAt - run.firstAt, `interval: ${seen}`).toBeGreaterThanOrEqual(cadence);
   }, 30_000);
 });
