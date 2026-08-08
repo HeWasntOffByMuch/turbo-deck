@@ -42,6 +42,7 @@ import { StreamedMap } from '../../../server/client/streamed-map.js';
 import type { ViewHandle } from '../view-handle.js';
 import { createWeatherControls } from '../weather-controls.js';
 import { turnToward } from '../../../server/sim/movement.js';
+import { facesAim } from '../../../server/sim/abilities.js';
 import { createHud, HOTBAR } from './hud.js';
 import { appearanceOf } from './appearance.js';
 import { moveIntent, MOVE_KEYS, RoutePlanner } from './intent.js';
@@ -509,9 +510,16 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // (spec 080). It used to be read here and left out of the request, which
     // made the client's own gate stricter than the server's by exactly a body.
     const targetRadius = entity ? appearanceOf(entity).radius : 0;
+    // The body as the *server* last described it. Alignment is judged off this
+    // and never off the local heading (spec 090): the client turns a tick or two
+    // ahead, so its own facing says "aligned" while the server is still coming
+    // round -- and a cast asked for there starts in `Turning` while the client
+    // has already predicted `Windup`, which fills a bar for a wind-up that has
+    // not begun and then empties it when the truth lands.
+    const replica = view.entities.find((e) => e.id === view.selfEntityId);
     const decision = autoAttack({
       self: me,
-      selfHealth: view.entities.find((e) => e.id === view.selfEntityId)?.health ?? 1,
+      selfHealth: replica?.health ?? 1,
       target: entity
         ? { id: entity.id, x: entity.x, y: entity.y, radius: targetRadius, health: entity.health }
         : null,
@@ -523,6 +531,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // which has no cast behind it and so shows up in neither of those.
       pending: view.awaitingCast,
       readyAtTick: view.cooldowns[swingId] ?? 0,
+      aligned:
+        !entity || !replica
+          ? true
+          : facesAim({ x: replica.x, y: replica.y }, replica.facing, { x: entity.x, y: entity.y }),
       tick: view.estimatedTick,
     });
 

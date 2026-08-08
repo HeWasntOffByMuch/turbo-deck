@@ -2,7 +2,7 @@
 
 Written after the implementation rather than before it, which is not this repo's
 habit — it began as a bug report and the shape of the fix was not knowable until
-the cause was. What is here is the record: three defects, and three hypotheses
+the cause was. What is here is the record: four defects, and three hypotheses
 that measurement killed. The negatives are the more useful half, because each
 one is a plausible story about this code that is now known to be false.
 
@@ -11,7 +11,9 @@ one is a plausible story about this code that is now known to be false.
 Reported: *"I can cancel a wind-up, the bar disappears before it finishes, and
 the projectile still fires and deals damage."* Then, after the first fix:
 *"there is a big delay when the player is facing away, the target is clicked,
-and then — pause, turn, shot."*
+and then — pause, turn, shot."* Then, after the second: *"sometimes there are two
+wind-up bars — one goes around 20% and vanishes, the second goes until the
+end."*
 
 ### What was actually wrong
 
@@ -42,6 +44,20 @@ and then — pause, turn, shot."*
    still facing the wrong way, then a turn, then the wind-up. At spec 088's 1.2s
    delay that is close to two seconds from click to shot, most of it dead. It was
    always wrong; a 0.32s cadence just hid it.
+
+4. **The client predicted a phase it could not know.** Reported as *two* wind-up
+   bars: one filling to about a fifth and vanishing, then a second running to the
+   end. It is one cast, drawn twice. `autoAttack` asked to swing the moment the
+   cooldown expired, whatever the body was facing; the client turns its own body
+   a tick or two ahead of the server, so with a mark off to the side its *local*
+   heading reads as aligned while the server is still coming round. The client
+   predicts `Windup` and fills a bar; the server starts the cast in `Turning`;
+   `castBar` draws a turning cast as empty, which is right and honest, so the
+   fill is thrown away and begins again when the real wind-up starts. `castBar`
+   was already correct — the lie was upstream of it, in asking to swing before
+   the body was facing anything. Fix (3) made this common by leaving the body
+   *almost* aligned exactly when the attack fires, which is the one regime where
+   the two clocks disagree.
 
 ### What was not wrong
 
@@ -80,7 +96,7 @@ The newer frame wins everything continuous; `cancelCast` is or-ed across the
 batch; a cast request survives a later frame that asks for nothing, and is
 replaced outright by a later frame that asks for something else.
 
-### 3. A body faces what it has been told to attack
+### 3. A body faces what it has been told to attack, and waits until it does
 
 `IntentInput` gains one field, and `moveIntent` one branch:
 
@@ -102,6 +118,25 @@ rate from the input's facing, exactly as before, so other players see the same
 turn (facing is its own `EntityDelta` field, and `lerpAngle` takes the short way
 round).
 
+And `autoAttack` gains the other half of it — it does not ask until the body is
+facing the mark:
+
+```ts
+attack: !input.pending && input.tick >= input.readyAtTick && input.aligned,
+```
+
+`aligned` is judged on the **replica's** heading, never the local one, using the
+sim's own predicate — `facesAim`, exported from `abilities.ts` in a shape that
+takes loose numbers so both sides can ask it rather than keeping a third copy of
+`TURN_ALIGN_EPS`. The client leads the turn, so its own facing says "aligned"
+while the server is still coming round; the replica's saying so is a fact about
+the server. Both ends then agree on the phase, the cast starts in `Windup`, and
+there is one bar. It costs nothing, because the turn is already happening during
+the cooldown.
+
+Alignment gates the *swing* and not the walk: a body that had to face its target
+before it would approach one would never close the gap.
+
 ## Invariants tested
 
 - **A click inside the arrival radius asks for nothing** and faces the aim —
@@ -115,6 +150,9 @@ round).
 - **A standing attack order turns the body**: with a target behind it and
   nothing else asked for, `moveIntent` asks for the target's bearing; with a
   live `castAim` the aim still wins; with a direction the walk still wins.
+- **A swing waits to be facing its mark**: in reach and off cooldown but not yet
+  aligned, nothing is asked for and nothing is dropped; aligned, it asks. An
+  out-of-reach mark is still chased while unaligned.
 - **A withdrawal lands over a wire that takes time**: Esc and walking away, at
   up to 15 ticks each way, with the press up to 90% through the wind-up.
 - **A shot already loosed is never called back** — the boundary the above must

@@ -23,6 +23,7 @@ import { describe, expect, it } from 'vitest';
 import { createWorldColliders } from '../../../sim/collision.js';
 import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../../../server/config.js';
 import { abilityById } from '../../../server/data/abilities.js';
+import { facesAim } from '../../../server/sim/abilities.js';
 import { LoopbackTransport } from '../../../server/net/transport-loop.js';
 import { GameServer } from '../../../server/server.js';
 import { turnToward } from '../../../server/sim/movement.js';
@@ -157,6 +158,9 @@ async function play(options: {
       const swing = abilityById(swingId);
       const entity = view.entities.find((e) => e.id === targetId);
       const radius = mob?.radius ?? 22;
+      // The same question the sim asks when it decides `Turning` vs `Windup`,
+      // off the replica's heading rather than the local one (spec 090).
+      const mine = view.entities.find((e) => e.id === view.selfEntityId);
       const decision = autoAttack({
         self: view.self,
         selfHealth: view.entities.find((e) => e.id === view.selfEntityId)?.health ?? 1,
@@ -167,6 +171,8 @@ async function play(options: {
         rooted: view.selfRoot !== null,
         pending: view.awaitingCast,
         readyAtTick: view.cooldowns[swingId] ?? 0,
+        aligned:
+          !entity || !mine ? true : facesAim({ x: mine.x, y: mine.y }, mine.facing, { x: entity.x, y: entity.y }),
         tick: view.estimatedTick,
       });
       if (decision.drop || !entity) {
@@ -182,6 +188,11 @@ async function play(options: {
         route: null,
         facing,
         castAim: view.selfRoot,
+        // What the shipped client passes (spec 090): the mark is faced while the
+        // swing is on cooldown, so the body is aligned by the time it asks. A
+        // harness that left this out would be exercising a client nobody runs --
+        // and it is the half that makes `aligned` above reachable at all.
+        targetAim: entity ? { x: entity.x, y: entity.y } : null,
       });
       facing = turnToward(facing, intent.facing, view.stats.turnRate, SERVER_TICK_RATE);
       client.sendInput({

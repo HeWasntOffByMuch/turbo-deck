@@ -200,18 +200,37 @@ export function startCast(
  * turn -- this is slack against float drift, not a tolerance anybody plays
  * against. Half a degree.
  */
-const TURN_ALIGN_EPS = (0.5 * Math.PI) / 180;
+/** Half a degree. Closer than this is facing it, as far as starting a blow goes. */
+export const TURN_ALIGN_EPS = (0.5 * Math.PI) / 180;
 
-/** Whether `entity` is already pointing at `aim` closely enough to swing. */
-function facingAim(entity: ServerEntity, aim: { readonly x: number; readonly y: number }): boolean {
-  const dx = aim.x - entity.position.x;
-  const dy = aim.y - entity.position.y;
+/**
+ * Whether a body at `from`, pointing `facing`, counts as facing `aim`.
+ *
+ * Exported in this shape -- loose numbers rather than a `ServerEntity` -- so the
+ * client can ask the same question of a *replica* (spec 090). It has to be the
+ * same predicate: the client decides when to ask for a swing, and the server
+ * decides whether that swing starts in `Turning` or in `Windup`. Two spellings
+ * of "is it facing yet" is how a bar comes to fill for a wind-up that had not
+ * started.
+ */
+export function facesAim(
+  from: { readonly x: number; readonly y: number },
+  facing: number,
+  aim: { readonly x: number; readonly y: number },
+): boolean {
+  const dx = aim.x - from.x;
+  const dy = aim.y - from.y;
   // A self cast, or an aim on top of the caster, has no direction to face.
   if (Math.hypot(dx, dy) < 1e-6) return true;
-  let delta = (Math.atan2(dy, dx) - entity.facing) % (Math.PI * 2);
+  let delta = (Math.atan2(dy, dx) - facing) % (Math.PI * 2);
   if (delta > Math.PI) delta -= Math.PI * 2;
   if (delta <= -Math.PI) delta += Math.PI * 2;
   return Math.abs(delta) <= TURN_ALIGN_EPS;
+}
+
+/** Whether `entity` is already pointing at `aim` closely enough to swing. */
+function facingAim(entity: ServerEntity, aim: { readonly x: number; readonly y: number }): boolean {
+  return facesAim(entity.position, entity.facing, aim);
 }
 
 /** A self cast aims at itself; everything else aims where it was told. */
