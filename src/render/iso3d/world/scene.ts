@@ -663,7 +663,7 @@ export class WorldScene {
     // Outlines need the buffers they are found in, so asking for outlines asks
     // for the buffers. Two switches where one implies the other is a switch that
     // silently does nothing, which is worse than no switch at all.
-    const wantsBuffers = hike.buffers || hike.edges;
+    const wantsBuffers = hike.buffers || hike.edges || hike.ink;
     if (wantsBuffers) {
       const buffers = this.ensureBuffers();
       buffers.capture(this.renderer, this.scene, this.camera);
@@ -680,6 +680,18 @@ export class WorldScene {
       this.retro.set(this.controls.retro());
       this.retro.setGrade(this.controls.grade());
       this.retro.setPalette(hike.palette);
+      // The distance treatment reads the same depth buffer the outlines do, so
+      // it needs the buffers whether or not the outlines are on (spec 099). The
+      // fog colour is the live sky rather than a setting: the day/night cycle
+      // moves it, and a fixed haze under a sunset is a grey band on the horizon.
+      this.retro.setInk(
+        hike.ink ? this.ensureBuffers().depthTexture : null,
+        this.camera.near,
+        this.camera.far,
+        this.inkOrigin(),
+        this.background,
+        hike.ink ? hike : null,
+      );
       this.retro.render(this.renderer, this.scene, this.camera);
       // Over the finished frame, which is where a line belongs: the fills are
       // settled, so the outline is a constant dark value rather than something
@@ -1262,7 +1274,23 @@ export class WorldScene {
       this.renderH,
       hike,
       maskOnly,
+      this.inkOrigin(),
     );
+  }
+
+  /**
+   * The depth the distance treatment counts from: the camera's own distance to
+   * what it is looking at.
+   *
+   * An orthographic camera parked 6,000 units back makes every pixel in the frame
+   * about 6,000 units away, so a ramp measured from the camera is a ramp measured
+   * from a constant. Measured from the focus, 0 is the ground under the player and
+   * the settings are distances into the scene -- which is what they are named for,
+   * and what survives the Distance slider moving the camera without moving the
+   * world.
+   */
+  private inkOrigin(): number {
+    return this.camOffsetCurrent.length();
   }
 
   /**

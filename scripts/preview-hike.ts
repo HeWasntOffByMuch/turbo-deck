@@ -106,6 +106,79 @@ try {
   await page.waitForTimeout(1200);
   await brightness(join(outDir, 'world-palette.png'));
 
+  // The distance treatment, on the real world (spec 099).
+  //
+  // The claim measured offscreen is that far fills move and near fills do not.
+  // On the real page there is no depth buffer to classify by, but there does not
+  // need to be: the camera looks down at the ground, so up the screen *is*
+  // further away. Comparing the top of the frame with the bottom is the same
+  // claim in the only terms a screenshot has.
+  await page.click('button[aria-label="View settings"]');
+  await page.locator('label', { hasText: 'Palette' }).first().locator('select').selectOption('none');
+  await page.click('button[aria-label="View settings"]');
+  await page.waitForTimeout(800);
+  const inkOff = await page.screenshot({ path: join(outDir, 'world-ink-off.png'), clip: await canvasRect() });
+
+  await page.click('button[aria-label="View settings"]');
+  await page.locator('label', { hasText: 'Distance ink' }).first().locator('input[type=checkbox]').check();
+  await page.click('button[aria-label="View settings"]');
+  await page.waitForTimeout(1200);
+  const inkOn = await page.screenshot({ path: join(outDir, 'world-ink.png'), clip: await canvasRect() });
+
+  /**
+   * Mean chroma in the far third of the frame and in the near third.
+   *
+   * A *statistic per frame* rather than a difference between two, because the
+   * world is live: trees sway, the light moves, monsters walk. Differencing two
+   * screenshots taken a second apart showed about 19% change everywhere with the
+   * treatment off, which says nothing about the treatment at all. Chroma is
+   * something the animation barely moves across a whole third of the frame and
+   * that draining colour moves a great deal, so it separates the two.
+   */
+  const bandChroma = (shot: Buffer): { far: number; near: number } => {
+    const png = PNG.sync.read(shot);
+    let far = 0;
+    let farN = 0;
+    let near = 0;
+    let nearN = 0;
+    for (let y = 0; y < png.height; y++) {
+      const isFar = y < png.height / 3;
+      const isNear = y > (png.height * 2) / 3;
+      if (!isFar && !isNear) continue;
+      for (let x = 0; x < png.width; x++) {
+        const i = (y * png.width + x) * 4;
+        const r = png.data[i] ?? 0;
+        const g = png.data[i + 1] ?? 0;
+        const b = png.data[i + 2] ?? 0;
+        const chroma = (Math.max(r, g, b) - Math.min(r, g, b)) / 255;
+        if (isFar) {
+          far += chroma;
+          farN++;
+        } else {
+          near += chroma;
+          nearN++;
+        }
+      }
+    }
+    return { far: farN === 0 ? 0 : far / farN, near: nearN === 0 ? 0 : near / nearN };
+  };
+
+  const chromaOff = bandChroma(inkOff);
+  const chromaOn = bandChroma(inkOn);
+  console.log(
+    `distance ink chroma: far ${(chromaOff.far * 100).toFixed(1)}% -> ${(chromaOn.far * 100).toFixed(1)}%, ` +
+      `near ${(chromaOff.near * 100).toFixed(1)}% -> ${(chromaOn.near * 100).toFixed(1)}%`,
+  );
+  if (chromaOn.far > chromaOff.far * 0.85) {
+    failed = true;
+    console.log('  FAIL: the far third kept its colour, so the treatment did nothing there');
+  } else if (chromaOn.near < chromaOff.near * 0.9) {
+    failed = true;
+    console.log('  FAIL: the near third drained too -- that is a filter, not a distance effect');
+  } else {
+    console.log('  ok: the distance drains and the foreground keeps its colour');
+  }
+
   const distinct = await page.evaluate(async () => {
     const canvas = document.querySelector('canvas');
     if (!canvas) return 0;

@@ -86,6 +86,12 @@ const PURE_RENDER = [
   // which looks like a threshold that needs tuning rather than like a bug.
   'src/render/iso3d/edges.ts',
   'src/render/iso3d/edges.test.ts',
+  // What distance does to a fill (spec 099). The order the three terms are
+  // applied in is the effect, and the order is the sort of thing that reads as
+  // correct whichever way round it is written -- so it is asserted rather than
+  // remembered.
+  'src/render/iso3d/ink.ts',
+  'src/render/iso3d/ink.test.ts',
   'src/render/iso3d/world/appearance.ts',
   'src/render/iso3d/world/cast.ts',
   'src/render/iso3d/world/intent.ts',

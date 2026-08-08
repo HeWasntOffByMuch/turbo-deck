@@ -7,6 +7,7 @@ import { decodeOctahedral } from './shading.js';
 import { HikeBuffers, type BufferView } from './hike-buffers.js';
 import { HikeEdges } from './hike-edges.js';
 import { HIKE_OFF, paletteById } from './hike.js';
+import type { InkSettings } from './ink.js';
 import { RetroPass } from './retro-pass.js';
 import { RETRO_DEFAULTS } from './retro.js';
 
@@ -55,6 +56,27 @@ const PROPS: readonly Prop[] = [
   { kind: 'tree', x: 180, y: 60, scale: 1.2, rotation: 1, tint: 0.4 },
   { kind: 'tree', x: -160, y: 120, scale: 0.8, rotation: 2, tint: -0.3 },
   { kind: 'bush', x: 90, y: -80, scale: 1, rotation: 0.5, tint: 0.2 },
+];
+
+/**
+ * The same props, spread along the axis the camera looks down.
+ *
+ * The ink case needs geometry -- and therefore outlines -- at both ends of the
+ * depth range, or "the far lines are as dark as the near ones" is a claim about
+ * a band with no lines in it. The camera looks along roughly (-0.71, -0.71) in
+ * the ground plane, so that is the axis the clusters walk.
+ */
+const INK_PROPS: readonly Prop[] = [
+  { kind: 'tree', x: 270, y: 250, scale: 1, rotation: 0, tint: 0 },
+  { kind: 'tree', x: 200, y: 320, scale: 1.15, rotation: 1.3, tint: 0.3 },
+  { kind: 'bush', x: 320, y: 180, scale: 1, rotation: 0.5, tint: 0.2 },
+
+  { kind: 'tree', x: 20, y: -10, scale: 1.1, rotation: 2.1, tint: -0.2 },
+  { kind: 'bush', x: -60, y: 60, scale: 0.9, rotation: 0.9, tint: 0.1 },
+
+  { kind: 'tree', x: -250, y: -270, scale: 1, rotation: 0.4, tint: 0.15 },
+  { kind: 'tree', x: -330, y: -190, scale: 1.2, rotation: 2.6, tint: -0.3 },
+  { kind: 'bush', x: -190, y: -330, scale: 1, rotation: 1.7, tint: 0 },
 ];
 
 /** What one case reported. */
@@ -173,6 +195,52 @@ export interface PaletteProbeCase {
   readonly changedFrame: boolean;
 }
 
+/** What the distance treatment did to the frame (spec 099). */
+export interface InkProbeCase {
+  /** Where the treatment was ramped, in world units, and the depth range of the frame. */
+  readonly inkStart: number;
+  readonly inkEnd: number;
+  readonly depthNearest: number;
+  readonly depthFurthest: number;
+  readonly nearPixels: number;
+  readonly farPixels: number;
+  /**
+   * Fraction of near fill pixels that changed at all.
+   *
+   * Must be ~0: in front of the ramp the treatment is the identity, and a
+   * distance effect that touches the foreground is a filter over the whole frame
+   * wearing a distance effect's name.
+   */
+  readonly nearFillChanged: number;
+  /** The same for the far band, which must be nearly all of it. */
+  readonly farFillChanged: number;
+  /** Mean distance from the sky colour, 0..1, before and after, in each band. */
+  readonly nearFogGapOff: number;
+  readonly nearFogGap: number;
+  readonly farFogGapOff: number;
+  readonly farFogGap: number;
+  /**
+   * Standard deviation of luminance across the far band's fills, before and
+   * after. The shading gradient, measured: the claim is that distant geometry
+   * stops being lit surfaces and becomes single-tone shapes.
+   */
+  readonly farSpreadOff: number;
+  readonly farSpread: number;
+  /**
+   * Mean value of a full-strength outline pixel in the composited frame, near and
+   * far. **The core of the effect**: the fills recede, and these two numbers stay
+   * the same. If distance reached the lines, the far one would be lighter.
+   */
+  readonly nearLine: number;
+  readonly farLine: number;
+  readonly nearLinePixels: number;
+  readonly farLinePixels: number;
+  /** The colour a line actually landed at, so the setting can be held to it. */
+  readonly lineColor: readonly [number, number, number];
+  /** What `outlineColor` says it should be. */
+  readonly lineColorWanted: readonly [number, number, number];
+}
+
 declare global {
   interface Window {
     /** Filled once every case has drawn; `probe-shading.ts` polls for it. */
@@ -185,6 +253,8 @@ declare global {
     edgeProbe?: EdgeProbeCase;
     /** What quantizing onto a palette produced (spec 098). */
     paletteProbe?: PaletteProbeCase;
+    /** What the distance treatment did (spec 099). */
+    inkProbe?: InkProbeCase;
   }
 }
 
@@ -729,9 +799,269 @@ function runPalette(): PaletteProbeCase {
   };
 }
 
+/**
+ * Run the distance treatment over a scene deep enough to have a near and a far
+ * end, and measure the one claim that separates this effect from ordinary fog
+ * (spec 099).
+ *
+ * Fog everything and the far hills go soft. What is being built instead is fills
+ * that recede under lines that do not: the treatment runs inside the retro pass,
+ * on colour, and the outline pass composites afterwards at a constant. So the
+ * measurement is not "did the frame change" -- it is *which parts* changed. Far
+ * fills must move and far lines must not, and the two are measured in the same
+ * frame at the same time so no bookkeeping error can make them agree by accident.
+ *
+ * `inkEdgeGain` is pinned at 1 here on purpose. It is a real setting and it does
+ * something, but it changes *which pixels* are edges with distance -- and this
+ * check is about what an edge pixel is *worth*. Leaving it on would let a changed
+ * mask masquerade as a changed line.
+ */
+function runInk(): InkProbeCase {
+  const canvas = document.createElement('canvas');
+  canvas.width = CELL_W;
+  canvas.height = CELL_H;
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, preserveDrawingBuffer: true });
+
+  const sky = new THREE.Color(0x8fd6c8);
+  const scene = new THREE.Scene();
+  scene.background = sky;
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const sun = new THREE.DirectionalLight(0xffffff, 1);
+  sun.position.set(300, 600, 300);
+  scene.add(sun);
+
+  const field = buildPropField(INK_PROPS, () => 0, undefined, {
+    smooth: false,
+    creaseAngle: DEFAULT_CREASE_ANGLE,
+    swayNormals: false,
+  });
+  scene.add(field.group);
+  // Wide enough that the frame is ground from top to bottom, so every depth band
+  // has a surface in it rather than a hole.
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(3000, 3000),
+    new THREE.MeshLambertMaterial({ color: 0x556633, flatShading: true }),
+  );
+  floor.rotation.x = -Math.PI / 2;
+  scene.add(floor);
+
+  const half = 240;
+  const camera = new THREE.OrthographicCamera(-half, half, half * 0.75, -half * 0.75, 1, 4000);
+  camera.position.set(700, 620, 700);
+  camera.lookAt(27, 95, 30);
+  camera.updateMatrixWorld(true);
+
+  const buffers = new HikeBuffers(CELL_W, CELL_H);
+  const edges = new HikeEdges();
+  const retro = new RetroPass(CELL_W, CELL_H, { ...RETRO_DEFAULTS, enabled: false });
+  const gl = renderer.getContext();
+  const read = (): Uint8Array => {
+    const out = new Uint8Array(CELL_W * CELL_H * 4);
+    gl.readPixels(0, 0, CELL_W, CELL_H, gl.RGBA, gl.UNSIGNED_BYTE, out);
+    return out;
+  };
+
+  buffers.capture(renderer, scene, camera);
+  buffers.blit(renderer, 'depth');
+  const depthBytes = read();
+
+  // The same origin the play view uses: the camera's distance to what it is
+  // looking at. Everything below is therefore depth *past the focus*, which is
+  // what the settings are in -- and exercising it here is the point, since the
+  // first version of this measured from the camera and the whole frame came out
+  // past the far end of the ramp.
+  const origin = camera.position.distanceTo(new THREE.Vector3(27, 95, 30));
+  const toWorld = (byte: number): number =>
+    camera.near + (byte / 255) * (camera.far - camera.near) - origin;
+  let lo = 255;
+  let hi = 0;
+  for (let i = 0; i < depthBytes.length; i += 4) {
+    const b = depthBytes[i] ?? 255;
+    if (b >= 255) continue;
+    lo = Math.min(lo, b);
+    hi = Math.max(hi, b);
+  }
+  const depthNearest = toWorld(lo);
+  const depthFurthest = toWorld(hi);
+  const span = depthFurthest - depthNearest;
+  const inkStart = depthNearest + span * 0.3;
+  const inkEnd = depthNearest + span * 0.7;
+
+  const off: InkSettings = { inkStart, inkEnd, inkFlatten: 0, inkDesaturate: 0, inkFog: 0 };
+  // The values the build ships with, not 1.0 across the board: what is being
+  // checked here is the frame the panel produces. `ink.test.ts` already pins the
+  // arithmetic at its extremes.
+  const on: InkSettings = {
+    inkStart,
+    inkEnd,
+    inkFlatten: HIKE_OFF.inkFlatten,
+    inkDesaturate: HIKE_OFF.inkDesaturate,
+    inkFog: HIKE_OFF.inkFog,
+  };
+  const hike = {
+    ...HIKE_OFF,
+    buffers: true,
+    edges: true,
+    ink: true,
+    inkStart,
+    inkEnd,
+    inkEdgeGain: 1,
+    outlineMinNeighbours: 0,
+  };
+
+  const shoot = (ink: InkSettings, withLines: boolean): Uint8Array => {
+    buffers.capture(renderer, scene, camera);
+    retro.setInk(buffers.depthTexture, camera.near, camera.far, origin, sky, ink);
+    retro.render(renderer, scene, camera);
+    if (withLines) {
+      edges.render(
+        renderer, buffers.normalTexture, buffers.depthTexture, camera, CELL_W, CELL_H, hike, false, origin,
+      );
+    }
+    return read();
+  };
+
+  // The baseline goes through the same quad with the three amounts at zero,
+  // rather than skipping the pass: comparing against a frame that took a
+  // different path would fold every difference between the paths into the
+  // measurement of the effect.
+  const plain = shoot(off, false);
+  const inked = shoot(on, false);
+  const composited = shoot(on, true);
+
+  buffers.capture(renderer, scene, camera);
+  edges.render(
+    renderer, buffers.normalTexture, buffers.depthTexture, camera, CELL_W, CELL_H, hike, true, origin,
+  );
+  const mask = read();
+
+  frames.push({ label: 'ink: fills recede', pixels: inked });
+  frames.push({ label: 'ink + outlines composited', pixels: composited });
+
+  const skyRgb = [(0x8f), (0xd6), (0xc8)];
+  const value = (px: Uint8Array, i: number): number =>
+    ((px[i] ?? 0) + (px[i + 1] ?? 0) + (px[i + 2] ?? 0)) / 3;
+  const luma = (px: Uint8Array, i: number): number =>
+    ((px[i] ?? 0) * 0.2126 + (px[i + 1] ?? 0) * 0.7152 + (px[i + 2] ?? 0) * 0.0722) / 255;
+  const fogGap = (px: Uint8Array, i: number): number => {
+    let sum = 0;
+    for (let c = 0; c < 3; c++) sum += Math.abs((px[i + c] ?? 0) - (skyRgb[c] ?? 0));
+    return sum / 3 / 255;
+  };
+
+  // Two depth steps of slack at each boundary: the bands are classified from an
+  // 8-bit blit while the shader ramps from the full-precision depth texture, and
+  // a pixel that straddles the difference belongs to neither band.
+  const margin = ((camera.far - camera.near) / 255) * 2;
+
+  let nearPixels = 0;
+  let farPixels = 0;
+  let nearChanged = 0;
+  let farChanged = 0;
+  let nearGapOff = 0;
+  let nearGapOn = 0;
+  let farGapOff = 0;
+  let farGapOn = 0;
+  const farLumaOff: number[] = [];
+  const farLumaOn: number[] = [];
+  let nearLine = 0;
+  let farLine = 0;
+  let nearLinePixels = 0;
+  let farLinePixels = 0;
+  const lineSum = [0, 0, 0];
+
+  for (let i = 0; i < depthBytes.length; i += 4) {
+    const b = depthBytes[i] ?? 255;
+    if (b >= 255) continue;
+    const depth = toWorld(b);
+    const isNear = depth < inkStart - margin;
+    const isFar = depth > inkEnd + margin;
+    if (!isNear && !isFar) continue;
+    // Full strength only: a partially covered edge pixel is a blend of the line
+    // and the fill underneath, and the fill is the thing that changes.
+    const isLine = (mask[i] ?? 0) >= 250;
+
+    if (isLine) {
+      const v = value(composited, i);
+      for (let c = 0; c < 3; c++) lineSum[c] = (lineSum[c] ?? 0) + (composited[i + c] ?? 0);
+      if (isNear) {
+        nearLine += v;
+        nearLinePixels++;
+      } else {
+        farLine += v;
+        farLinePixels++;
+      }
+      continue;
+    }
+
+    const changed =
+      plain[i] !== inked[i] || plain[i + 1] !== inked[i + 1] || plain[i + 2] !== inked[i + 2];
+    if (isNear) {
+      nearPixels++;
+      if (changed) nearChanged++;
+      nearGapOff += fogGap(plain, i);
+      nearGapOn += fogGap(inked, i);
+    } else {
+      farPixels++;
+      if (changed) farChanged++;
+      farGapOff += fogGap(plain, i);
+      farGapOn += fogGap(inked, i);
+      farLumaOff.push(luma(plain, i));
+      farLumaOn.push(luma(inked, i));
+    }
+  }
+
+  const stdDev = (values: readonly number[]): number => {
+    if (values.length === 0) return 0;
+    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+    return Math.sqrt(values.reduce((a, b) => a + (b - mean) ** 2, 0) / values.length);
+  };
+  const lines = nearLinePixels + farLinePixels;
+
+  field.dispose();
+  buffers.dispose();
+  edges.dispose();
+  retro.dispose();
+  renderer.dispose();
+
+  return {
+    inkStart,
+    inkEnd,
+    depthNearest,
+    depthFurthest,
+    nearPixels,
+    farPixels,
+    nearFillChanged: nearPixels === 0 ? 1 : nearChanged / nearPixels,
+    farFillChanged: farPixels === 0 ? 0 : farChanged / farPixels,
+    nearFogGapOff: nearPixels === 0 ? 0 : nearGapOff / nearPixels,
+    nearFogGap: nearPixels === 0 ? 0 : nearGapOn / nearPixels,
+    farFogGapOff: farPixels === 0 ? 0 : farGapOff / farPixels,
+    farFogGap: farPixels === 0 ? 0 : farGapOn / farPixels,
+    farSpreadOff: stdDev(farLumaOff),
+    farSpread: stdDev(farLumaOn),
+    nearLine: nearLinePixels === 0 ? 0 : nearLine / nearLinePixels,
+    farLine: farLinePixels === 0 ? 0 : farLine / farLinePixels,
+    nearLinePixels,
+    farLinePixels,
+    lineColor: lines === 0
+      ? [0, 0, 0]
+      : [
+          Math.round((lineSum[0] ?? 0) / lines),
+          Math.round((lineSum[1] ?? 0) / lines),
+          Math.round((lineSum[2] ?? 0) / lines),
+        ],
+    lineColorWanted: [
+      (HIKE_OFF.outlineColor >> 16) & 0xff,
+      (HIKE_OFF.outlineColor >> 8) & 0xff,
+      HIKE_OFF.outlineColor & 0xff,
+    ],
+  };
+}
+
 const results = CASES.map(({ smooth, swayNormals, label }) => runCase(smooth, swayNormals, label));
 window.bufferProbe = [runBuffers('depth'), runBuffers('normals')];
 window.edgeProbe = runEdges();
 window.paletteProbe = runPalette();
+window.inkProbe = runInk();
 window.shadingProbeSheet = contactSheet();
 window.shadingProbe = results;

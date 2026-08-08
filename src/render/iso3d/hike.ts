@@ -267,24 +267,58 @@ export interface HikeSettings {
    * by ink, which is the thing being imitated.
    */
   readonly ink: boolean;
-  /** Distance from the camera at which the treatment starts, in world units. */
+  /**
+   * How far *past the camera's focus point* the treatment starts, in world units.
+   *
+   * Past the focus, not away from the camera, and the difference is the whole
+   * setting. This camera is orthographic and parked a fixed 6,000 units back
+   * however close it is looking; a frame at the default zoom spans about 700
+   * units of depth, all of it near 6,000. So distance-from-the-camera is
+   * dominated by a constant that has nothing to do with the scene, and a ramp
+   * expressed in it either misses the whole frame or swallows it -- which is what
+   * the first version of this did, treating every pixel at full strength and
+   * reading as a filter over the picture rather than as distance.
+   *
+   * Measured from the focus, 0 is the ground under the player and the numbers
+   * mean what they say. It also survives the Distance slider and the zoom, both
+   * of which move the absolute depth of everything without changing what is near
+   * or far *in the frame*.
+   */
   readonly inkStart: number;
-  /** Distance at which it reaches full strength. */
+  /** How far past the focus it reaches full strength. */
   readonly inkEnd: number;
   /** How far toward grey the fills go at full strength, 0..1. */
   readonly inkDesaturate: number;
-  /** How far toward flat albedo the lit colour goes at full strength, 0..1. */
+  /**
+   * How far the lit colour is flattened toward one tone at full strength, 0..1.
+   *
+   * Named for "lerp toward flat albedo", which is what it is for; what it does is
+   * hold the hue and normalize the luminance, because a surface whose pixels
+   * share a luminance has no shading gradient left. See `ink.ts` for why that is
+   * the goal met rather than the method followed.
+   */
   readonly inkFlatten: number;
+  /** How far the fill drifts toward the sky at full strength, 0..1. */
+  readonly inkFog: number;
   /** Multiplier on normal-edge sensitivity at full strength, so far-off shapes keep their line. */
   readonly inkEdgeGain: number;
   /**
-   * On-screen size in virtual pixels below which an outline fades out.
+   * Edge neighbours a pixel needs before its outline is drawn at full strength,
+   * counted in the eight around it. 0 disables the test.
    *
-   * A prop small enough that its outline lands on one pixel flickers between
-   * drawn and not as the camera moves a fraction of a pixel. Fading it below a
-   * threshold is cheaper than trying to make that stable.
+   * The brief asked for this as an *on-screen size* threshold, to stop small
+   * distant props flickering. Under an orthographic camera there is no such
+   * thing: screen size does not change with distance, so a pebble is the same
+   * few pixels at the back of the map as at the player's feet and "small because
+   * distant" is not a category that exists here.
+   *
+   * The flicker it names is real, though, and it is about *isolation*: an outline
+   * a pixel or two long has nothing holding it steady, so it blinks as the
+   * geometry crosses a sample boundary. A line belonging to a real silhouette has
+   * neighbours along it. So the test is coherence rather than size, which targets
+   * the same artefact by the property that actually predicts it.
    */
-  readonly inkMinScreenSize: number;
+  readonly outlineMinNeighbours: number;
 
   // --- step 8: baked curvature / cavity ------------------------------------
 
@@ -337,7 +371,12 @@ export const HIKE_OFF: HikeSettings = {
 
   edges: false,
   depthEdgeThreshold: 6,
-  normalEdgeThreshold: 0.35,
+  // 0.55, not the 0.35 spec 097 opened at. The terrain surface is a lattice of
+  // quads whose corners are jittered off the grid, so neighbouring cells differ
+  // by a few degrees everywhere -- enough to fire at 0.35 and speckle open ground
+  // with lines that belong to no feature. 0.55 is above that chatter and well
+  // below the ~90 degrees a real crease turns through.
+  normalEdgeThreshold: 0.55,
   outlineAgainstSky: false,
   outlineColor: 0x1a1a22,
   outlineStrength: 1,
@@ -345,12 +384,18 @@ export const HIKE_OFF: HikeSettings = {
   palette: null,
 
   ink: false,
-  inkStart: 1200,
-  inkEnd: 5200,
+  // Relative to the focus, and sized to the frame: at the default zoom the view
+  // reaches about 350 units past the player before the top edge, so the ramp
+  // starts just beyond them and is nearly complete at the horizon. Zooming out
+  // widens the frame without moving these, which is right -- a wider view should
+  // show more of the far treatment, not rescale it.
+  inkStart: 80,
+  inkEnd: 380,
   inkDesaturate: 0.55,
   inkFlatten: 0.8,
+  inkFog: 0.45,
   inkEdgeGain: 2.2,
-  inkMinScreenSize: 3,
+  outlineMinNeighbours: 2,
 
   curvature: false,
   curvatureStrength: 0.35,
@@ -390,6 +435,27 @@ const SRGB_GAMMA = 2.4;
 export function srgbEncode(linear: number): number {
   if (linear <= SRGB_KNEE_LINEAR) return linear * SRGB_SLOPE;
   return (1 + SRGB_ALPHA) * Math.pow(linear, 1 / SRGB_GAMMA) - SRGB_ALPHA;
+}
+
+/**
+ * `srgbEncode` as GLSL, for the passes that write display-space pixels.
+ *
+ * One definition rather than a copy per pass, because there are now several and
+ * they have to agree: the retro pass encodes the lit frame, and the outline pass
+ * has to encode its constants to lay them over the result. Every number is
+ * interpolated from the constants above, so the shader cannot drift from the
+ * reference by someone editing one of them.
+ */
+export function glslSrgbEncodeChunk(): string {
+  return /* glsl */ `
+// Linear working space -> sRGB display space (the exact piecewise transfer,
+// matching what the renderer would have applied drawing straight to the canvas).
+vec3 toSRGB(vec3 c) {
+  vec3 low = c * ${SRGB_SLOPE};
+  vec3 high = pow(c, vec3(${(1 / SRGB_GAMMA).toFixed(8)})) * ${1 + SRGB_ALPHA} - ${SRGB_ALPHA};
+  return mix(high, low, step(c, vec3(${SRGB_KNEE_LINEAR})));
+}
+`;
 }
 
 /** sRGB display space -> linear working space. The exact inverse of `srgbEncode`. */

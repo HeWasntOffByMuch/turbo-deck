@@ -49,6 +49,29 @@ interface PaletteProbeCase {
   readonly changedFrame: boolean;
 }
 
+interface InkProbeCase {
+  readonly inkStart: number;
+  readonly inkEnd: number;
+  readonly depthNearest: number;
+  readonly depthFurthest: number;
+  readonly nearPixels: number;
+  readonly farPixels: number;
+  readonly nearFillChanged: number;
+  readonly farFillChanged: number;
+  readonly nearFogGapOff: number;
+  readonly nearFogGap: number;
+  readonly farFogGapOff: number;
+  readonly farFogGap: number;
+  readonly farSpreadOff: number;
+  readonly farSpread: number;
+  readonly nearLine: number;
+  readonly farLine: number;
+  readonly nearLinePixels: number;
+  readonly farLinePixels: number;
+  readonly lineColor: readonly number[];
+  readonly lineColorWanted: readonly number[];
+}
+
 interface ShadingProbeCase {
   readonly label: string;
   readonly programs: number;
@@ -85,7 +108,10 @@ async function waitForServer(url: string, timeoutMs = 40_000): Promise<void> {
   throw new Error(`server at ${url} never came up`);
 }
 
-const vite = spawn('npx', ['vite', '--port', String(PORT), '--strictPort'], {
+// The binary directly rather than through `npx`: killing the wrapper leaves the
+// server it spawned running, and the next run's readiness check is answered by a
+// stale process serving stale modules.
+const vite = spawn(join(root, 'node_modules', '.bin', 'vite'), ['--port', String(PORT), '--strictPort'], {
   cwd: root,
   stdio: 'ignore',
 });
@@ -111,6 +137,7 @@ try {
   const buffers = (await page.evaluate(() => window.bufferProbe)) as readonly BufferProbeCase[];
   const edges = (await page.evaluate(() => window.edgeProbe)) as EdgeProbeCase | undefined;
   const palette = (await page.evaluate(() => window.paletteProbe)) as PaletteProbeCase | undefined;
+  const ink = (await page.evaluate(() => window.inkProbe)) as InkProbeCase | undefined;
 
   // Anything mentioning a shader, a program, a compile or a link is a hard
   // failure; the rest is printed but tolerated.
@@ -251,6 +278,84 @@ try {
         `        ${palette.distinct} of ${palette.paletteSize} colours used, ` +
         `${(palette.onPalette * 100).toFixed(2)}% on palette ` +
         `(even steps gave ${palette.distinctStepped})`,
+    );
+    for (const problem of problems) console.log(`        ${problem}`);
+  }
+
+  // The distance treatment (spec 099).
+  if (ink) {
+    const problems: string[] = [];
+    if (ink.nearPixels < 500 || ink.farPixels < 500) {
+      problems.push(
+        `bands too small to measure: ${ink.nearPixels} near, ${ink.farPixels} far -- ` +
+          'the scene does not span the ramp',
+      );
+    }
+    // In front of the ramp the treatment is the identity. A distance effect that
+    // touches the foreground is a filter over the whole frame under another name.
+    if (ink.nearFillChanged > 0.01) {
+      problems.push(
+        `${(ink.nearFillChanged * 100).toFixed(1)}% of near fills changed -- ` +
+          'the treatment is reaching in front of where it starts',
+      );
+    }
+    if (ink.farFillChanged < 0.9) {
+      problems.push(`only ${(ink.farFillChanged * 100).toFixed(0)}% of far fills changed`);
+    }
+    // Far fills drift toward the sky, and near fills do not move at all.
+    if (ink.farFogGap > ink.farFogGapOff * 0.8) {
+      problems.push(
+        `far fills are still ${(ink.farFogGap * 100).toFixed(1)}% from the sky ` +
+          `(was ${(ink.farFogGapOff * 100).toFixed(1)}%) -- the fog term is barely moving them`,
+      );
+    }
+    if (Math.abs(ink.nearFogGap - ink.nearFogGapOff) > 0.002) {
+      problems.push('near fills moved toward the sky, which is the one thing the near band must not do');
+    }
+    // The gradient, measured. Distant geometry is supposed to stop being lit
+    // surfaces and become single-tone shapes bounded by line.
+    if (ink.farSpread > ink.farSpreadOff * 0.7) {
+      problems.push(
+        `far shading spread only fell from ${ink.farSpreadOff.toFixed(3)} to ${ink.farSpread.toFixed(3)} -- ` +
+          'the fills kept their gradient',
+      );
+    }
+
+    // **The core of the effect.** The fills recede; the lines do not. Both are
+    // read out of one composited frame, so there is no way for the two halves to
+    // agree except by the pass actually behaving this way.
+    if (ink.nearLinePixels < 50 || ink.farLinePixels < 50) {
+      problems.push(`too few full-strength outline pixels to compare: ${ink.nearLinePixels} near, ${ink.farLinePixels} far`);
+    } else if (Math.abs(ink.nearLine - ink.farLine) > 0.5) {
+      problems.push(
+        `an outline is ${ink.nearLine.toFixed(1)} near and ${ink.farLine.toFixed(1)} far -- ` +
+          'distance is reaching the lines, which is haze rather than ink',
+      );
+    }
+    // And the line is the colour the setting names. It was not: written linear
+    // over a display-space frame, 0x1a1a22 landed as 0x030304 and still looked
+    // like "a constant dark value", which is why nothing gave it away.
+    const wanted = ink.lineColorWanted;
+    const drift = ink.lineColor.reduce((worst, c, i) => Math.max(worst, Math.abs(c - (wanted[i] ?? 0))), 0);
+    if (drift > 2) {
+      problems.push(
+        `the line drew as rgb(${ink.lineColor.join(', ')}) but the setting says ` +
+          `rgb(${wanted.join(', ')}) -- a colour-space conversion is missing`,
+      );
+    }
+
+    if (problems.length > 0) failed = true;
+    console.log(
+      `${problems.length === 0 ? 'ok  ' : 'FAIL'}  distance ink\n` +
+        `        depth ${ink.depthNearest.toFixed(0)}..${ink.depthFurthest.toFixed(0)}, ` +
+        `ramp ${ink.inkStart.toFixed(0)}..${ink.inkEnd.toFixed(0)} ` +
+        `(${ink.nearPixels} near px, ${ink.farPixels} far px)\n` +
+        `        fills: ${(ink.nearFillChanged * 100).toFixed(1)}% of near changed, ` +
+        `${(ink.farFillChanged * 100).toFixed(0)}% of far; ` +
+        `sky gap ${(ink.farFogGapOff * 100).toFixed(1)}% -> ${(ink.farFogGap * 100).toFixed(1)}%; ` +
+        `shading spread ${ink.farSpreadOff.toFixed(3)} -> ${ink.farSpread.toFixed(3)}\n` +
+        `        lines: ${ink.nearLine.toFixed(1)} near vs ${ink.farLine.toFixed(1)} far ` +
+        `(${ink.nearLinePixels}/${ink.farLinePixels} px), drawn rgb(${ink.lineColor.join(', ')})`,
     );
     for (const problem of problems) console.log(`        ${problem}`);
   }

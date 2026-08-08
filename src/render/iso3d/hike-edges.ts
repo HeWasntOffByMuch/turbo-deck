@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { glslEdgeChunk } from './edges.js';
 import { glslOctahedralChunk } from './shading.js';
-import type { HikeSettings } from './hike.js';
+import { glslInkChunk } from './ink.js';
+import { glslSrgbEncodeChunk, type HikeSettings } from './hike.js';
 
 /**
  * The outline pass (spec 097): a Roberts cross over the depth and normal buffers,
@@ -55,11 +56,20 @@ uniform vec3 uOutlineColor;
 uniform float uOutlineStrength;
 /** 0 draws the line over the frame, 1 draws the mask on its own. */
 uniform float uMaskOnly;
+/** The distance terms (spec 099). */
+uniform float uInkOn;
+uniform float uInkOrigin;
+uniform float uInkStart;
+uniform float uInkEnd;
+uniform float uInkEdgeGain;
+uniform float uMinNeighbours;
 
 varying vec2 vUv;
 
 ${glslOctahedralChunk()}
 ${glslEdgeChunk()}
+${glslInkChunk()}
+${glslSrgbEncodeChunk()}
 
 /**
  * A tap: where it is on screen in world units, how far away, its normal, and
@@ -86,19 +96,20 @@ Tap tapAt(vec2 uv) {
   return t;
 }
 
-void main() {
-  Tap c = tapAt(vUv);
-  Tap tl = tapAt(vUv + vec2(-uTexel.x, -uTexel.y));
-  Tap br = tapAt(vUv + vec2(uTexel.x, uTexel.y));
-  Tap tr = tapAt(vUv + vec2(uTexel.x, -uTexel.y));
-  Tap bl = tapAt(vUv + vec2(-uTexel.x, uTexel.y));
+/**
+ * The edge at one pixel, without the coherence test. Called for the centre and,
+ * when coherence is on, for its eight neighbours.
+ */
+float edgeAt(vec2 uv) {
+  Tap c = tapAt(uv);
+  Tap tl = tapAt(uv + vec2(-uTexel.x, -uTexel.y));
+  Tap br = tapAt(uv + vec2(uTexel.x, uTexel.y));
+  Tap tr = tapAt(uv + vec2(uTexel.x, -uTexel.y));
+  Tap bl = tapAt(uv + vec2(-uTexel.x, uTexel.y));
 
-  // Every tap solid, or the sky is allowed to take part.
   float solid = min(min(tl.solid, br.solid), min(tr.solid, bl.solid)) * c.solid;
   float allowed = max(solid, uOutlineAgainstSky);
 
-  // Depth, measured against each neighbour's own plane rather than against its
-  // depth -- so a hillside at a glancing angle reads as flat, which it is.
   float dTL = planeDeviation(c.xy, c.depth, tl.xy, tl.depth, tl.normal);
   float dBR = planeDeviation(c.xy, c.depth, br.xy, br.depth, br.normal);
   float dTR = planeDeviation(c.xy, c.depth, tr.xy, tr.depth, tr.normal);
@@ -107,12 +118,43 @@ void main() {
 
   float normalEdge = normalRobertsCross(tl.normal, br.normal, tr.normal, bl.normal);
 
-  // max, not a sum. A corner fires on both terms; adding them makes it twice an
-  // edge, so a threshold thin enough for lines blobs every corner.
-  float edge = max(
-    step(uDepthThreshold, depthEdge),
-    step(uNormalThreshold, normalEdge)
-  ) * allowed;
+  // Distance makes the normal term more sensitive, not less. A far-off shape has
+  // lost its shading to the ink treatment, so the only thing left describing it
+  // is its line -- and the creases that line is made of are the same size on
+  // screen as they ever were, since the camera is orthographic. Dividing the
+  // threshold is what raises sensitivity.
+  // Past the focus rather than from the camera, the same origin the fill
+  // treatment ramps on -- the two have to agree about where "far" starts, or the
+  // lines sharpen over ground that has not yet begun to recede.
+  float t = uInkOn > 0.5 ? inkAmount(c.depth - uInkOrigin, uInkStart, uInkEnd) : 0.0;
+  float normalThreshold = uNormalThreshold / mix(1.0, uInkEdgeGain, t);
+
+  return max(step(uDepthThreshold, depthEdge), step(normalThreshold, normalEdge)) * allowed;
+}
+
+void main() {
+  float edge = edgeAt(vUv);
+
+  // Fade an outline that has nothing beside it.
+  //
+  // A line one or two pixels long has nothing holding it steady, so it blinks as
+  // the geometry crosses a sample boundary; a line belonging to a real
+  // silhouette has neighbours running along it. Counting them is a cheaper and
+  // more direct test than the screen-size one the brief asks for -- and under an
+  // orthographic camera screen size does not change with distance at all, so
+  // "small because far away" is not a thing that happens here.
+  if (edge > 0.0 && uMinNeighbours > 0.0) {
+    float neighbours = 0.0;
+    for (int dy = -1; dy <= 1; dy++) {
+      for (int dx = -1; dx <= 1; dx++) {
+        if (dx == 0 && dy == 0) continue;
+        neighbours += edgeAt(vUv + vec2(float(dx) * uTexel.x, float(dy) * uTexel.y));
+      }
+    }
+    // Smooth rather than a cliff: a hard cut-off makes the fade itself flicker,
+    // which is the artefact being removed.
+    edge *= clamp(neighbours / uMinNeighbours, 0.0, 1.0);
+  }
 
   if (uMaskOnly > 0.5) {
     gl_FragColor = vec4(vec3(edge), 1.0);
@@ -121,9 +163,21 @@ void main() {
     // darkening of the pixel underneath: a line whose colour depends on what it
     // crosses is a line that fades out over dark ground, which is where it is
     // most needed.
-    gl_FragColor = vec4(uOutlineColor, edge * uOutlineStrength);
+    //
+    // Constant with distance too, which is the point of the whole step: the
+    // fills recede and the lines do not.
+    //
+    // Encoded, because this is one of the few passes that writes to the canvas
+    // without three.js appending its own output conversion -- a ShaderMaterial
+    // gets no colorspace_fragment. The colour is held linear like every other
+    // colour here, and the frame underneath is already display space, so writing
+    // it raw drew the line at about a tenth of the value the setting names:
+    // 0x1a1a22 landed as 0x030304. Still "a constant dark value", which is why
+    // nothing about the look gave it away.
+    gl_FragColor = vec4(toSRGB(clamp(uOutlineColor, 0.0, 1.0)), edge * uOutlineStrength);
   }
 }
+
 `;
 
 export class HikeEdges {
@@ -143,6 +197,12 @@ export class HikeEdges {
     uOutlineColor: { value: THREE.Color };
     uOutlineStrength: { value: number };
     uMaskOnly: { value: number };
+    uInkOn: { value: number };
+    uInkOrigin: { value: number };
+    uInkStart: { value: number };
+    uInkEnd: { value: number };
+    uInkEdgeGain: { value: number };
+    uMinNeighbours: { value: number };
   };
 
   constructor() {
@@ -159,6 +219,12 @@ export class HikeEdges {
       uOutlineColor: { value: new THREE.Color(0x1a1a22) },
       uOutlineStrength: { value: 1 },
       uMaskOnly: { value: 0 },
+      uInkOn: { value: 0 },
+      uInkOrigin: { value: 0 },
+      uInkStart: { value: 80 },
+      uInkEnd: { value: 380 },
+      uInkEdgeGain: { value: 1 },
+      uMinNeighbours: { value: 0 },
     };
     this.material = new THREE.ShaderMaterial({
       uniforms: this.uniforms,
@@ -188,6 +254,7 @@ export class HikeEdges {
     height: number,
     hike: HikeSettings,
     maskOnly: boolean,
+    inkOrigin = 0,
   ): void {
     this.uniforms.uNormals.value = normals;
     this.uniforms.uDepth.value = depth;
@@ -204,6 +271,12 @@ export class HikeEdges {
     this.uniforms.uOutlineColor.value.setHex(hike.outlineColor, THREE.SRGBColorSpace);
     this.uniforms.uOutlineStrength.value = hike.outlineStrength;
     this.uniforms.uMaskOnly.value = maskOnly ? 1 : 0;
+    this.uniforms.uInkOn.value = hike.ink ? 1 : 0;
+    this.uniforms.uInkOrigin.value = inkOrigin;
+    this.uniforms.uInkStart.value = hike.inkStart;
+    this.uniforms.uInkEnd.value = hike.inkEnd;
+    this.uniforms.uInkEdgeGain.value = hike.inkEdgeGain;
+    this.uniforms.uMinNeighbours.value = hike.outlineMinNeighbours;
     // Opaque when it is the whole picture, blended when it is a line over one.
     this.material.transparent = !maskOnly;
 

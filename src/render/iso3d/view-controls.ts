@@ -462,6 +462,31 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     HIKE_DEBUG_VIEWS.map((v) => [v, v] as const), HIKE_OFF.debug,
     'Draw one intermediate buffer on its own instead of the finished frame. Needs the buffers above.');
 
+  // Step 7: what distance does to a fill. The outlines are deliberately not part
+  // of it -- they stay at a constant dark value, which is the whole effect.
+  const ink = makeCheckbox('Distance ink', HIKE_OFF.ink,
+    'Flatten, drain and fog the fills as they recede, while the outlines over them stay exactly as ' +
+    'dark. Distant geometry loses its gradient and becomes flat shapes bounded by line.');
+  const inkStart = makeSlider('Ink start', 0, 800, 20, HIKE_OFF.inkStart, 'u',
+    'How far past the player the treatment begins, in world units. Measured from what the camera ' +
+    'is looking at, not from the camera -- an orthographic camera sits a fixed distance back, so ' +
+    'depth from it is mostly that constant.');
+  const inkEnd = makeSlider('Ink full', 40, 2000, 20, HIKE_OFF.inkEnd, 'u',
+    'How far past the player it reaches full strength. The view reaches about 350u past the ' +
+    'player at the default zoom.');
+  const inkFlatten = makeSlider('Flatten', 0, 100, 5, Math.round(HIKE_OFF.inkFlatten * 100), '%',
+    'How far the shading gradient is removed at full strength. 100% gives a surface one tone.');
+  const inkDesat = makeSlider('Drain', 0, 100, 5, Math.round(HIKE_OFF.inkDesaturate * 100), '%',
+    'How far the colour drains toward grey at full strength.');
+  const inkFog = makeSlider('Haze', 0, 100, 5, Math.round(HIKE_OFF.inkFog * 100), '%',
+    'How far the fill drifts toward the sky at full strength. The sky colour is the live one.');
+  const inkEdgeGain = makeSlider('Far line gain', 100, 400, 10, Math.round(HIKE_OFF.inkEdgeGain * 100), '%',
+    'How much more sensitive the normal edge gets at full distance. A far shape has lost its ' +
+    'shading, so its line is the only thing left describing it.');
+  const minNeighbours = makeSlider('Line coherence', 0, 6, 1, HIKE_OFF.outlineMinNeighbours, '',
+    'Edge neighbours a pixel needs before its line draws at full strength. Fades the one- and ' +
+    'two-pixel specks that blink as geometry crosses a sample boundary. 0 disables it.');
+
   // Step 6: quantize onto a named palette instead of onto even steps. The steps,
   // the dither and its strength are the retro filter's own sliders above -- this
   // is only the choice between the two.
@@ -500,7 +525,8 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
       torchOn, torchRange, torchBright, torchFlickerDepth, torchShadows,
       magicOn, magicRange, magicBright, spawners,
       retroOn, levels, dither, weave, weaveScale, pixelSize, gradeChoice, gradeStrength,
-      smoothNormals, creaseAngle, swayNormals, lowRes, virtualSize, snapCamera, buffers, edges, depthThreshold, normalThreshold, skyOutline, paletteChoice, debugView];
+      smoothNormals, creaseAngle, swayNormals, lowRes, virtualSize, snapCamera, buffers, edges, depthThreshold, normalThreshold, skyOutline, paletteChoice, ink, inkStart, inkEnd, inkFlatten, inkDesat, inkFog, inkEdgeGain,
+      minNeighbours, debugView];
     for (const w of widgets) w.reset();
   });
 
@@ -549,6 +575,14 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     normalThreshold.row,
     skyOutline.row,
     paletteChoice.row,
+    ink.row,
+    inkStart.row,
+    inkEnd.row,
+    inkFlatten.row,
+    inkDesat.row,
+    inkFog.row,
+    inkEdgeGain.row,
+    minNeighbours.row,
     debugView.row,
   );
   panel.append(reset);
@@ -622,6 +656,14 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
         normalEdgeThreshold: normalThreshold.value() / 100,
         outlineAgainstSky: skyOutline.checked(),
         palette: paletteById(paletteChoice.value()),
+        ink: ink.checked(),
+        inkStart: inkStart.value(),
+        inkEnd: inkEnd.value(),
+        inkFlatten: inkFlatten.value() / 100,
+        inkDesaturate: inkDesat.value() / 100,
+        inkFog: inkFog.value() / 100,
+        inkEdgeGain: inkEdgeGain.value() / 100,
+        outlineMinNeighbours: minNeighbours.value(),
         debug: debugView.value() as HikeDebugView,
       };
     },

@@ -7,6 +7,7 @@ import {
   DEFAULT_PALETTE_ID,
   HIKE_PALETTES,
   srgbDecode,
+  glslSrgbEncodeChunk,
   srgbEncode,
   unpackLinear,
   VIRTUAL_SIZES,
@@ -179,6 +180,33 @@ describe('the sRGB transfer', () => {
       expect(v).toBeGreaterThan(previous);
       previous = v;
     }
+  });
+});
+
+describe('the sRGB transfer as GLSL', () => {
+  it('computes the same curve as the reference, constant for constant', () => {
+    // Not a string match. The constants are pulled back out of the shader source
+    // and the expression is rebuilt from them, so the check is that the GLSL
+    // *evaluates* to the reference rather than that it looks like it -- which is
+    // the only version of this claim worth making about a shader nobody can run.
+    const glsl = glslSrgbEncodeChunk();
+    const numbers = (glsl.match(/\d+\.\d+/g) ?? []).map(Number);
+    expect(numbers).toHaveLength(5);
+    const [slope, exponent, scale, offset, knee] = numbers as [number, number, number, number, number];
+
+    // `mix(high, low, step(c, knee))` takes `low` when knee >= c, which is the
+    // reference's `<=`. Getting that backwards is the classic way to write this.
+    const transcribed = (c: number): number =>
+      c <= knee ? c * slope : Math.pow(c, exponent) * scale - offset;
+
+    for (let i = 0; i <= 512; i++) {
+      const v = i / 512;
+      expect(transcribed(v)).toBeCloseTo(srgbEncode(v), 6);
+    }
+  });
+
+  it('declares the function the passes call it by', () => {
+    expect(glslSrgbEncodeChunk()).toContain('vec3 toSRGB(vec3 c)');
   });
 });
 

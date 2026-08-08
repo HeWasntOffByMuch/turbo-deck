@@ -9,6 +9,8 @@ import {
   type RetroSettings,
 } from './retro.js';
 import { GRADE_NONE, gradeIsIdentity, unpackColor, type GradeSettings } from './grade.js';
+import { glslInkChunk, type InkSettings } from './ink.js';
+import { glslSrgbEncodeChunk } from './hike.js';
 
 /**
  * The retro post-processing pass (spec 038): draws the scene into a low
@@ -64,17 +66,26 @@ uniform sampler2D uPalette;
 uniform float uPaletteSize;
 /** The mean gap between neighbouring palette colours; the dither's unit. */
 uniform float uPaletteSpacing;
+/** The distance treatment (spec 099). uInkOn is 0 when there is nothing to do. */
+uniform highp sampler2D uDepth;
+uniform float uInkOn;
+uniform float uNear;
+uniform float uFar;
+uniform vec3 uFogColor;
+uniform float uInkOrigin;
+uniform float uInkStart;
+uniform float uInkEnd;
+uniform float uInkFlatten;
+uniform float uInkDesaturate;
+uniform float uInkFog;
+uniform float uInkTarget;
 varying vec2 vUv;
+
+${glslInkChunk()}
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 
-// Linear working space -> sRGB display space (the exact transfer function,
-// matching what the renderer would have applied drawing straight to the canvas).
-vec3 toSRGB(vec3 c) {
-  vec3 low = c * 12.92;
-  vec3 high = pow(c, vec3(0.41666666)) * 1.055 - 0.055;
-  return mix(high, low, step(c, vec3(0.0031308)));
-}
+${glslSrgbEncodeChunk()}
 
 // The colour grade (spec 047), mirroring gradeColor in grade.ts term for term:
 // desaturate toward luma, blend toward the tint at matched luminance, then
@@ -107,10 +118,41 @@ vec3 nearestPaletteColor(vec3 c) {
 }
 
 void main() {
+  vec3 lit = toSRGB(clamp(texture2D(uScene, vUv).rgb, 0.0, 1.0));
+
+  // The distance treatment, on the fill and before everything else (spec 099).
+  //
+  // Before the grade and the quantize because it is part of what the surface
+  // *is*, not a filter over the finished image -- and, more to the point, before
+  // the outline pass, which runs after this whole pass and lays its line down at
+  // a constant dark value. That ordering is the entire effect: the fills recede
+  // and the lines do not, so distant geometry becomes flat shapes bounded by ink
+  // rather than a soft haze.
+  if (uInkOn > 0.5) {
+    float raw = texture2D(uDepth, vUv).r;
+    // The background is at the far plane and is already the sky; treating it
+    // would fog the sky toward itself and flatten a colour with no surface under
+    // it.
+    if (raw < 0.999999) {
+      // Depth past the camera's focus, not depth from the camera: the camera is
+      // orthographic and sits a fixed distance back, so the raw number is mostly
+      // that constant. See inkStart in hike.ts.
+      float depth = uNear + raw * (uFar - uNear) - uInkOrigin;
+      // The fog colour arrives as the live sky, which -- like every colour in
+      // this renderer -- is held linear. The lit colour is display space by this
+      // line, so mixing the two directly would drag every distant fill toward a sky about
+      // twice as dark as the one behind it, and the horizon would read as a band
+      // rather than as a vanishing. Encode it into the space it is being mixed in.
+      vec3 fog = toSRGB(clamp(uFogColor, 0.0, 1.0));
+      lit = inkFill(lit, fog, depth, uInkTarget,
+                    uInkStart, uInkEnd, uInkFlatten, uInkDesaturate, uInkFog);
+    }
+  }
+
   // Graded before quantization on purpose: a black-and-white frame is then
   // banded into a proper grey ramp and dithered across it, where grading after
   // would spend the palette on colours about to be thrown away.
-  vec3 color = grade(toSRGB(clamp(texture2D(uScene, vUv).rgb, 0.0, 1.0)));
+  vec3 color = grade(lit);
 
   // This pixel's threshold, tiled across the screen in low-resolution pixels.
   vec2 cell = mod(floor(vUv * uSceneSize / uDitherScale), uDitherSize);
@@ -188,6 +230,18 @@ export class RetroPass {
     uPalette: { value: THREE.DataTexture };
     uPaletteSize: { value: number };
     uPaletteSpacing: { value: number };
+    uDepth: { value: THREE.Texture | null };
+    uInkOn: { value: number };
+    uNear: { value: number };
+    uFar: { value: number };
+    uFogColor: { value: THREE.Color };
+    uInkOrigin: { value: number };
+    uInkStart: { value: number };
+    uInkEnd: { value: number };
+    uInkFlatten: { value: number };
+    uInkDesaturate: { value: number };
+    uInkFog: { value: number };
+    uInkTarget: { value: number };
   };
 
   /** The palette currently uploaded, so an unchanged one is not re-uploaded. */
@@ -222,6 +276,19 @@ export class RetroPass {
       uPalette: { value: makePaletteTexture([]) },
       uPaletteSize: { value: 0 },
       uPaletteSpacing: { value: 0 },
+      uDepth: { value: null },
+      uInkOn: { value: 0 },
+      uNear: { value: 1 },
+      uFar: { value: 12000 },
+      uFogColor: { value: new THREE.Color(0x8fd6c8) },
+      uInkOrigin: { value: 0 },
+      uInkStart: { value: 80 },
+      uInkEnd: { value: 380 },
+      uInkFlatten: { value: 0 },
+      uInkDesaturate: { value: 0 },
+      uInkFog: { value: 0 },
+      // Mid-grey in display space: the luminance a flattened surface settles on.
+      uInkTarget: { value: 0.45 },
     };
 
     this.material = new THREE.ShaderMaterial({
@@ -285,6 +352,35 @@ export class RetroPass {
     this.uniforms.uPaletteSpacing.value = paletteSpacing(paletteChannels(entries));
   }
 
+  /**
+   * Switch the distance treatment on, with the depth buffer it reads (spec 099).
+   *
+   * Pass null to switch it off. The fog colour is the *live* sky rather than a
+   * setting: the day/night cycle moves it, and a fixed haze colour under a sunset
+   * is a grey band across the horizon.
+   */
+  setInk(
+    depth: THREE.Texture | null,
+    near: number,
+    far: number,
+    origin: number,
+    fog: THREE.Color,
+    settings: InkSettings | null,
+  ): void {
+    this.uniforms.uDepth.value = depth;
+    this.uniforms.uInkOn.value = depth && settings ? 1 : 0;
+    if (!settings) return;
+    this.uniforms.uNear.value = near;
+    this.uniforms.uFar.value = far;
+    this.uniforms.uInkOrigin.value = origin;
+    this.uniforms.uFogColor.value.copy(fog);
+    this.uniforms.uInkStart.value = settings.inkStart;
+    this.uniforms.uInkEnd.value = settings.inkEnd;
+    this.uniforms.uInkFlatten.value = settings.inkFlatten;
+    this.uniforms.uInkDesaturate.value = settings.inkDesaturate;
+    this.uniforms.uInkFog.value = settings.inkFog;
+  }
+
   /** Apply a colour grade (spec 047). The identity grade costs nothing. */
   setGrade(grade: GradeSettings): void {
     this.grade = grade;
@@ -310,7 +406,9 @@ export class RetroPass {
     // quantizing onto a named set of colours is the thing being asked for, not a
     // side effect of the retro look.
     const palettized = this.uniforms.uPaletteSize.value > 0;
-    if (!this.settings.enabled && !grading && !palettized) {
+    // And the ink, which is a third reason to run the quad at all.
+    const inking = this.uniforms.uInkOn.value > 0;
+    if (!this.settings.enabled && !grading && !palettized && !inking) {
       renderer.setRenderTarget(null);
       renderer.render(scene, camera);
       return;
