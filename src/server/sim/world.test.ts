@@ -24,6 +24,7 @@ import {
 import {
   createWorldState,
   LEASH_RADIUS,
+  mergeInputs,
   replaceEntity,
   spawnEntity,
   step,
@@ -895,6 +896,91 @@ describe('monsters find their way round', () => {
  * is measured in ticks between the release and the hit rather than asserted
  * against a schedule.
  */
+describe('two inputs in one tick (spec 090)', () => {
+  function quiet(overrides: Partial<StepContext> = {}): StepContext {
+    return context({
+      config: { ...DEFAULT_LIVE_CONFIG, spawnRateMultiplier: 0 } as LiveConfig,
+      ...overrides,
+    });
+  }
+
+  /**
+   * A cancel that shares a tick with a later input still calls the blow off.
+   *
+   * Last-write-wins dropped it: `cancelCast` is an edge, true on exactly the
+   * frame the key went down, so the very next frame -- which asks for nothing --
+   * used to erase it and the shot flew. The controls either side are what make
+   * this test mean something: without a cancel the shot flies, with one alone it
+   * does not, and the two-input case has to match the second.
+   */
+  function fire(frameAtTick2: readonly ServerInput[]): boolean {
+    let state = createWorldState(3);
+    const player = withPlayer(state, 600, 450);
+    state = player.state;
+    const mark = withMonster(state, 'dummy', 800, 450);
+    state = mark.state;
+    const ctx = quiet({ activeChunks: activeAround({ x: 600, y: 450 }, { x: 800, y: 450 }) });
+
+    const shot = abilityById('ranged.shot');
+    if (!shot) throw new Error('no ranged.shot');
+
+    state = step(
+      state,
+      [
+        input(player.id, 1, {
+          castAbilityId: 'ranged.shot',
+          castTargetX: 800,
+          castTargetY: 450,
+          castTargetEntityId: mark.id,
+          predictedX: 600,
+          predictedY: 450,
+        }),
+      ],
+      ctx,
+    ).state;
+    expect(state.entities.get(player.id)?.cast).not.toBeNull();
+
+    let flew = false;
+    for (let i = 0; i < shot.windupTicks + 40; i++) {
+      const frame = i === 2 ? frameAtTick2 : [input(player.id, 10 + i)];
+      state = step(state, frame, ctx).state;
+      if ([...state.entities.values()].some((entity) => entity.projectile)) flew = true;
+    }
+    return flew;
+  }
+
+  it('keeps a cancel that a later input in the same tick used to erase', () => {
+    const id = 1;
+    // Controls: the rule works when the cancel is the only input that tick.
+    expect(fire([input(id, 2)]), 'no cancel asked for').toBe(true);
+    expect(fire([input(id, 2, { cancelCast: true })]), 'cancel alone').toBe(false);
+    // The bug: the same cancel, with an ordinary idle frame behind it.
+    expect(fire([input(id, 2, { cancelCast: true }), input(id, 3)]), 'cancel then idle').toBe(false);
+    // And in either order, since a merge must not depend on arrival order.
+    expect(fire([input(id, 2), input(id, 3, { cancelCast: true })]), 'idle then cancel').toBe(false);
+  });
+
+  it('merges the continuous fields forward and the edges across', () => {
+    const older = input(7, 1, { moveX: 1, facing: 0.5, cancelCast: true, castAbilityId: 'melee.slash', castTargetX: 10 });
+    const newer = input(7, 2, { moveX: 0, facing: 1.25 });
+    const merged = mergeInputs(older, newer);
+
+    // Where the body is heading is the newest word on it.
+    expect(merged.moveX).toBe(0);
+    expect(merged.facing).toBe(1.25);
+    expect(merged.seq).toBe(2);
+    // The edges are not undone by a frame that simply did not repeat them.
+    expect(merged.cancelCast).toBe(true);
+    expect(merged.castAbilityId).toBe('melee.slash');
+    expect(merged.castTargetX).toBe(10);
+
+    // A later request replaces an earlier one outright, aim included.
+    const recast = mergeInputs(older, input(7, 3, { castAbilityId: 'melee.heavy', castTargetX: 99 }));
+    expect(recast.castAbilityId).toBe('melee.heavy');
+    expect(recast.castTargetX).toBe(99);
+  });
+});
+
 describe('shots that travel', () => {
   /**
    * The ambient spawner off, because these tests count `hit` events and a

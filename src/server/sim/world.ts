@@ -260,7 +260,10 @@ export function step(
   let rng = state.rng;
 
   const inputByEntity = new Map<number, ServerInput>();
-  for (const input of inputs) inputByEntity.set(input.entityId, input);
+  for (const input of inputs) {
+    const held = inputByEntity.get(input.entityId);
+    inputByEntity.set(input.entityId, held ? mergeInputs(held, input) : input);
+  }
 
   const movement: MovementContext = {
     world: context.world,
@@ -649,6 +652,42 @@ export function step(
  * -- `moveIntent`, `monsterIntent`, the bots -- emits either a unit vector or an
  * exact zero, so anything with length at all is somebody asking to go somewhere.
  */
+/**
+ * Two inputs for one body in one tick, as one input (spec 090).
+ *
+ * `step` takes a *list*, and it used to keep only the last input per entity.
+ * That is right for the continuous fields -- where a body is heading, where it
+ * claims to be -- and silently wrong for the rest, because some of them are
+ * **edges**: `cancelCast` is true on exactly the frame the key went down. A
+ * withdrawal that shared a tick with any later input disappeared, and the blow
+ * the player had called off landed anyway.
+ *
+ * Today's `server.ts` dequeues one input per connection per tick, so this cannot
+ * fire from a live session -- but that invariant lives in the caller and was
+ * never in this function's contract, and the bots and the tests both call `step`
+ * directly. An edge that can go missing on a rule about who called us is worth
+ * closing rather than documenting.
+ */
+export function mergeInputs(older: ServerInput, newer: ServerInput): ServerInput {
+  return {
+    // The newer frame wins everything continuous: heading, aim, claim, seq.
+    ...newer,
+    // Edges survive. Asking to call a blow off is not undone by the next frame
+    // failing to ask again.
+    cancelCast: older.cancelCast || newer.cancelCast,
+    // Only one cast may begin in a tick, so the later request stands -- but a
+    // frame that asks for nothing must not erase one that asked for something.
+    ...(newer.castAbilityId
+      ? {}
+      : {
+          castAbilityId: older.castAbilityId,
+          castTargetX: older.castTargetX,
+          castTargetY: older.castTargetY,
+          castTargetEntityId: older.castTargetEntityId,
+        }),
+  };
+}
+
 function asksToMove(intent: ServerInput | null): boolean {
   if (!intent) return false;
   return Math.hypot(intent.moveX, intent.moveY) > 1e-6;
