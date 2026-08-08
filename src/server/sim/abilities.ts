@@ -90,12 +90,17 @@ export type CastStartResult =
 
 /**
  * Whether `entity` may begin `attempt` this tick, and the entity that results
- * if so. The cost is spent and the cooldown started *at commit*, not at release
- * -- otherwise a cast cancelled at the last moment would be free, which makes
- * cancelling strictly better than not casting.
+ * if so. The cost is spent *at commit*, not at release -- otherwise a cast
+ * cancelled at the last moment would be free, which makes cancelling strictly
+ * better than not casting. Cancelling refunds it (see {@link cancelCast}), so
+ * the cost of a withdrawn cast is exactly the time spent, which is the intended
+ * trade.
  *
- * Cancelling refunds both (see {@link cancelCast}), so the cost of a withdrawn
- * cast is exactly the time spent, which is the intended trade.
+ * The cooldown is *not* started here (spec 091). It is the price of a blow that
+ * went off, so it is stamped at the release instead -- see `advanceCast`. That
+ * is the same trade read the other way round: a wind-up withdrawn from costs
+ * the time it took and nothing else, and the button does not grey out for a
+ * swing that never happened.
  */
 export function startCast(
   entity: ServerEntity,
@@ -172,7 +177,12 @@ export function startCast(
       ...entity,
       cast,
       resource: entity.resource - ability.cost,
-      cooldowns: { ...entity.cooldowns, [ability.id]: tick + cooldownTicksFor(ability, entity) },
+      // The cooldown is *not* stamped here (spec 091). It starts when the blow
+      // goes off, so a wind-up withdrawn from costs the time it took and
+      // nothing else -- and the button does not grey out for a swing that never
+      // happened. Spec 062 stamped it at the commit to stop a last-moment
+      // cancel being free; the refund in `cancelCast` was already doing that
+      // job, so all the early stamp bought was a cooldown to hand back.
       activity: ActivityValue.Casting,
       activityUntilTick: endTick,
       // Aim is captured here in `cast.targetX/Y` and never re-read, so turning
@@ -469,6 +479,10 @@ export function advanceCast(
       ...caster,
       cast: isChannel ? { ...cast, phase: CastPhase.Channel, nextPulseTick: tick } : cast,
       activity: ActivityValue.Casting,
+      // The blow is going off, so now it costs a cooldown (spec 091). This is
+      // the one place it is stamped: a cast that was withdrawn from never
+      // reaches here, which is the whole point.
+      cooldowns: { ...caster.cooldowns, [ability.id]: tick + cooldownTicksFor(ability, caster) },
     };
 
     if (!isChannel) {

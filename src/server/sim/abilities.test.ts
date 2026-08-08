@@ -234,12 +234,14 @@ describe('wind-up', () => {
     const committed = commit.state.entities.get(player.id);
     expect(committed?.cast).not.toBeNull();
     expect(committed?.resource).toBeLessThan(resource);
-    expect(committed?.cooldowns['melee.heavy']).toBeGreaterThan(0);
+    // No cooldown yet: it is the price of the blow, not of the commitment
+    // (spec 091).
+    expect(committed?.cooldowns['melee.heavy']).toBeUndefined();
 
     const away = run(commit.state, 1, { 0: [input(player.id, { moveX: 0, moveY: 1 })] });
     const withdrawn = away.state.entities.get(player.id);
     expect(withdrawn?.cast).toBeNull();
-    // Everything back but the time: cost refunded, cooldown gone.
+    // Everything back but the time: cost refunded, no cooldown ever taken.
     expect(withdrawn?.resource).toBeCloseTo(resource, 3);
     expect(withdrawn?.cooldowns['melee.heavy']).toBeUndefined();
     // And the step away is the same tick, not the one after it.
@@ -1359,28 +1361,33 @@ describe('a named target (spec 070)', () => {
     const plodder = withPlayer(state, 600, 470, slow);
     state = plodder.state;
 
-    const commit = run(state, 1, {
+    // Run past the release, because that is where the stamp happens now (spec
+    // 091) -- read at the commit, both of these are still undefined.
+    const swung = run(state, slash.windupTicks + 2, {
       0: [
         input(fast.id, { castAbilityId: 'melee.slash', castTargetX: 700, castTargetY: 450 }),
         input(plodder.id, { castAbilityId: 'melee.slash', castTargetX: 700, castTargetY: 470 }),
       ],
     });
 
-    const at = (id: number): number => commit.state.entities.get(id)?.cooldowns['melee.slash'] ?? 0;
-    // Same weapon, same tick, twice the speed: half the wait.
-    expect(at(fast.id) - 1).toBe(20);
-    expect(at(plodder.id) - 1).toBe(40);
+    const at = (id: number): number => swung.state.entities.get(id)?.cooldowns['melee.slash'] ?? 0;
+    // Same weapon, same loose, twice the speed: half the wait. Both are stamped
+    // from the same release, so the difference is the stat and nothing else.
+    expect(at(fast.id)).toBeGreaterThan(0);
+    expect(at(plodder.id) - at(fast.id)).toBe(20);
     // Neither of them is the table's number, which is what the swing used to
     // cost everybody.
     expect(slash.cooldownTicks).not.toBe(20);
 
     // A non-basic ability ignores the stat entirely.
-    const heavy = run(state, 1, {
+    const heavyAbility = abilityById('melee.heavy');
+    expect(heavyAbility).toBeDefined();
+    if (!heavyAbility) return;
+    const heavy = run(state, heavyAbility.windupTicks + 2, {
       0: [input(fast.id, { castAbilityId: 'melee.heavy', castTargetX: 700, castTargetY: 450 })],
     });
-    expect(heavy.state.entities.get(fast.id)?.cooldowns['melee.heavy']).toBe(
-      1 + (abilityById('melee.heavy')?.cooldownTicks ?? 0),
-    );
+    const heavyReadyAt = heavy.state.entities.get(fast.id)?.cooldowns['melee.heavy'] ?? 0;
+    expect(heavyReadyAt).toBe(1 + heavyAbility.windupTicks + heavyAbility.cooldownTicks);
   });
 
   it('lets a monster swing at the player it is chasing, by id', () => {
