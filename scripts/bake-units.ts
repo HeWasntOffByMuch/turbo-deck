@@ -29,6 +29,15 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readGlbJson } from '../src/units/glb.js';
 import {
+  readInverseBindMatrices,
+  readNodeTree,
+  readSkinnedMesh,
+  skinnedPrimitiveCount,
+  splitGlb,
+} from '../src/units/glb-read.js';
+import { formatIssue, type Issue } from '../src/units/issues.js';
+import { checkBindPose, checkDeformation, checkSkinning, classifyBindPose } from '../src/units/mesh-check.js';
+import {
   manifestHash,
   type UnitAssetEntry,
   type UnitManifest,
@@ -98,8 +107,63 @@ interface Problem {
   readonly message: string;
 }
 
+/**
+ * What the vertices say (spec 115).
+ *
+ * The bake already opens every mesh, so this is where the mesh checks belong.
+ * Errors fail the build -- a weight set that does not sum, a joint index that
+ * names nothing, a bind pose that is somebody's idle -- because each is a fact
+ * about the file rather than a matter of taste. Warnings are printed and do not:
+ * a lumpy elbow is a judgement, and `npx tsx scripts/preview-deform.ts` is where
+ * a person makes it.
+ *
+ * A mesh this cannot read at all is a problem, not a pass. A file that fails to
+ * parse here is one three's loader will also choke on, and letting it through
+ * with "could not check" would put it in a manifest that claims it was checked.
+ */
+function inspectMesh(
+  bytes: Uint8Array,
+  meshRef: string,
+  label: string,
+  problems: Problem[],
+  notes: string[],
+): void {
+  let issues: readonly Issue[];
+  try {
+    const glb = splitGlb(bytes);
+    const nodes = readNodeTree(glb);
+    const mesh = readSkinnedMesh(glb);
+    if (mesh === null) {
+      problems.push({ unit: label, message: `${meshRef} has no skinned mesh in it` });
+      return;
+    }
+    if (skinnedPrimitiveCount(glb) > 1) {
+      notes.push(`${label}: ${meshRef} has more than one skinned primitive; only the first is checked`);
+    }
+    const bindPose = classifyBindPose(nodes);
+    issues = [
+      ...checkSkinning(mesh, meshRef),
+      ...checkBindPose(bindPose, meshRef),
+      ...checkDeformation(mesh, nodes, readInverseBindMatrices(glb), undefined, meshRef).issues,
+    ];
+  } catch (cause) {
+    problems.push({
+      unit: label,
+      message: `${meshRef} could not be read: ${cause instanceof Error ? cause.message : String(cause)}`,
+    });
+    return;
+  }
+
+  for (const issue of issues) {
+    if (issue.severity === 'error') problems.push({ unit: label, message: formatIssue(issue) });
+    else notes.push(`${label}: ${formatIssue(issue)}`);
+  }
+}
+
 function main(): void {
   const problems: Problem[] = [];
+  /** Findings worth printing that must not fail the build. */
+  const notes: string[] = [];
   const units: UnitManifestUnit[] = [];
   const entries: UnitAssetEntry[] = [];
 
@@ -141,7 +205,9 @@ function main(): void {
     push(meshEntry);
 
     if (meshEntry) {
-      const triangles = triangleCount(readGlbJson(new Uint8Array(readFileSync(mesh))));
+      const meshBytes = new Uint8Array(readFileSync(mesh));
+      inspectMesh(meshBytes, unit.meshRef, label, problems, notes);
+      const triangles = triangleCount(readGlbJson(meshBytes));
       const target = unit.import.targetTris;
       if (triangles === null) {
         problems.push({ unit: label, message: `${unit.meshRef} has no indexed geometry to count` });
@@ -173,6 +239,8 @@ function main(): void {
 
     units.push({ id: unit.id, family: unit.skeletonRef.replace(/\.skeleton\.json$/, ''), entries: own });
   }
+
+  for (const note of notes) console.warn(`warn  ${note}`);
 
   if (problems.length > 0) {
     for (const problem of problems) console.error(`FAIL ${problem.unit}: ${problem.message}`);

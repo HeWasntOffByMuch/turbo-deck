@@ -133,17 +133,38 @@ function addLimb(
   joint: number,
 ): void {
   const base = out.positions.length / 3;
-  // Axis-aligned in the two directions that are not the limb's length: enough
-  // for a mannequin, and it keeps every face's normal exact.
+  /**
+   * Axis-aligned, inflated on the two axes that are **not** the limb's length.
+   *
+   * Which axis that is has to be derived, not assumed. This inflated X and Z and
+   * left Y alone, which is right for a leg and wrong for an arm: the arms run
+   * along Z at a constant height, so the box came out with zero Y extent -- a
+   * flat card whose four side faces were degenerate triangles. That is 32 of the
+   * mannequin's 156 triangles drawing nothing, and arms that vanish edge-on. It
+   * was invisible until spec 115 gave something the ability to read a vertex.
+   */
+  const span: [number, number, number] = [
+    Math.abs(to[0] - from[0]),
+    Math.abs(to[1] - from[1]),
+    Math.abs(to[2] - from[2]),
+  ];
+  const along = span.indexOf(Math.max(...span));
+  // First cross axis takes the depth, second takes the width -- which for a
+  // vertical limb is X and Z, exactly what this did before.
+  const cross = [0, 1, 2].filter((axis) => axis !== along);
+  const inflate: [number, number, number] = [0, 0, 0];
+  inflate[cross[0] ?? 0] = halfDepth;
+  inflate[cross[1] ?? 2] = halfWidth;
+
   const lo: [number, number, number] = [
-    Math.min(from[0], to[0]) - halfDepth,
-    Math.min(from[1], to[1]),
-    Math.min(from[2], to[2]) - halfWidth,
+    Math.min(from[0], to[0]) - inflate[0],
+    Math.min(from[1], to[1]) - inflate[1],
+    Math.min(from[2], to[2]) - inflate[2],
   ];
   const hi: [number, number, number] = [
-    Math.max(from[0], to[0]) + halfDepth,
-    Math.max(from[1], to[1]),
-    Math.max(from[2], to[2]) + halfWidth,
+    Math.max(from[0], to[0]) + inflate[0],
+    Math.max(from[1], to[1]) + inflate[1],
+    Math.max(from[2], to[2]) + inflate[2],
   ];
 
   const corners: [number, number, number][] = [
