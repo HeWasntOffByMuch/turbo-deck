@@ -76,6 +76,7 @@ import { ShotRig } from './shot.js';
 import type { AimShape } from './aim.js';
 import { castBar } from './cast.js';
 import { EntityMotion } from './interpolate.js';
+import type { WorldAnchor } from './damage-popup.js';
 
 /** Fraction of the gap to the target framing closed each frame (spec 034). */
 const CAMERA_SMOOTH = 0.15;
@@ -165,7 +166,7 @@ interface Body {
  * (spec 081) -- a shared constant was fine while the player was a knee-high
  * bird, and put the bar straight across the cow's face the moment it was not.
  */
-const DEFAULT_HEADROOM = 46;
+export const DEFAULT_HEADROOM = 46;
 
 /** Clearance between the top of a critter's head and the bar hanging over it. */
 const HEADROOM_GAP = 12;
@@ -474,6 +475,25 @@ export class WorldScene {
   /** Where the bodies drawn last frame are on screen, for the DOM overlay. */
   screenAnchors(): readonly ScreenAnchor[] {
     return this.anchors;
+  }
+
+  /**
+   * Where a body is standing and how far over its head a number hangs, in the
+   * world (spec 096).
+   *
+   * The point a damage number is nailed to, read once when the blow lands. Two
+   * details make it the right one to read. It is the *drawn* position -- the
+   * interpolated pose the player is actually looking at, not the replica's
+   * three-ticks-ago one -- so the number lands on the body rather than behind
+   * it. And a `CombatResult` is delivered while the frame that killed the
+   * victim is still the last frame drawn, so the body is still pooled here: a
+   * killing blow gets the ground the victim fell on, which is the case the old
+   * entity-id anchor could not answer at all.
+   */
+  bodyAnchor(id: number): WorldAnchor | null {
+    const body = this.bodies.get(id);
+    if (!body) return null;
+    return { x: body.group.position.x, y: body.group.position.z, lift: body.headroom };
   }
 
   /**

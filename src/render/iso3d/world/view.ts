@@ -49,8 +49,9 @@ import { moveIntent, MOVE_KEYS, RoutePlanner } from './intent.js';
 import { autoAttack } from './target.js';
 import { aimShape, castOrder, startAim, type AimGesture, type AimOrder } from './aim.js';
 import { TouchGestures, type TouchSample } from './touch.js';
-import { WorldScene, type AimIndicator } from './scene.js';
+import { DEFAULT_HEADROOM, WorldScene, type AimIndicator } from './scene.js';
 import { spawnerLabels } from './spawner-overlay.js';
+import type { WorldAnchor } from './damage-popup.js';
 
 const TICK_MS = 1000 / SERVER_TICK_RATE;
 
@@ -172,7 +173,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     }
   }
 
-  const hud = createHud();
+  const hud = createHud((x, y, lift) => scene.projectPoint(x, y, lift));
   hud.onUse((abilityId) => pressAbility(abilityId));
   // Picking a weapon is an ordinary equip (spec 079): the server puts it in the
   // hand, recomputes the stat block, and the new `basicAttackId` comes back on
@@ -196,7 +197,13 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   root.append(hud.element, buttons);
 
   client.onCombatResult((result) => {
-    hud.addDamage(result.targetId, result.damage, (result.flags & 2) !== 0);
+    // Where it landed, asked for now and never again (spec 096). The scene is
+    // the better answer -- it knows the pose actually on screen, and it still
+    // holds the body of something this very blow killed -- and the replica is
+    // the fallback for a hit on a body no frame has drawn yet.
+    const at = scene.bodyAnchor(result.targetId) ?? replicaAnchor(result.targetId);
+    if (!at) return;
+    hud.addDamage(result.targetId, at, result.damage, (result.flags & 2) !== 0);
   });
   client.onEffect((effect) => {
     scene.addEffect(effect.x, effect.y, effect.radius, effect.durationTicks);
@@ -204,6 +211,12 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   client.onCastRejected((abilityId, reason) => {
     hud.notice(`${abilityById(abilityId)?.name ?? abilityId}: ${reason}`);
   });
+
+  /** The world point of a body the scene has not drawn, out of the last delta. */
+  function replicaAnchor(entityId: number): WorldAnchor | null {
+    const entity = client.view().entities.find((candidate) => candidate.id === entityId);
+    return entity ? { x: entity.x, y: entity.y, lift: DEFAULT_HEADROOM } : null;
+  }
 
   // --- input -------------------------------------------------------------
   const held = new Set<string>();

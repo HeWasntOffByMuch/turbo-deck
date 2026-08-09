@@ -136,6 +136,34 @@ async function bodiesOnScreen(page: Page): Promise<Bar[]> {
   );
 }
 
+/**
+ * Every overlay element carrying `attribute`, by the value of it.
+ *
+ * Read off `style.left` rather than `offsetLeft` because these are placed to
+ * fractions of a pixel and the drift being measured is a few of them; elements
+ * the HUD has hidden are dropped, since a hidden number's last position is not
+ * a position.
+ */
+async function overlayPoints(
+  page: Page,
+  attribute: string,
+): Promise<Map<string, { x: number; y: number }>> {
+  const found = await page.$$eval(
+    `[${attribute}]`,
+    (nodes, name) =>
+      nodes
+        .map((node) => node as HTMLElement)
+        .filter((element) => element.style.display !== 'none')
+        .map((element) => ({
+          key: element.getAttribute(name) ?? '',
+          x: parseFloat(element.style.left || '0'),
+          y: parseFloat(element.style.top || '0'),
+        })),
+    attribute,
+  );
+  return new Map(found.map((point) => [point.key, { x: point.x, y: point.y }]));
+}
+
 /** The pixel to point at for a body, given the bar floating over its head. */
 function bodyPoint(bar: Bar): { x: number; y: number } {
   // The bar hangs at the top of the head, so a drop of forty pixels is inside
@@ -779,6 +807,8 @@ async function main(): Promise<void> {
     await page.waitForTimeout(900);
     await shoot(page, 'world-cooldowns');
 
+    await damageNumbersHoldTheirGround(page, problems);
+
     // The player must still be able to walk after all that. Attacking used to
     // root them permanently: being hit cleared the cast server-side without
     // telling the client, which then believed it was casting for good.
@@ -822,6 +852,132 @@ async function litWeapon(page: Page): Promise<string> {
     const lit = buttons.find((button) => button.style.borderColor === 'rgb(255, 207, 107)');
     return lit?.getAttribute('aria-label') ?? 'nothing';
   });
+}
+
+/**
+ * A damage number belongs to the ground it landed on, not to the glass
+ * (spec 096).
+ *
+ * The one fact only a real browser can settle, because it needs a real camera
+ * that really moves. The spawner marks are the ruler: fixed world points with a
+ * DOM element each, so whatever the pan did to them it must have done to every
+ * number too. Horizontally only -- a number is also rising up the screen over
+ * its own life, and that motion is deliberate.
+ *
+ * The old bug is a `drift` equal to the pan: numbers that stayed exactly where
+ * they were on the glass while the world slid out from under them.
+ *
+ * Measured on a **killing** blow specifically, because that is the only case
+ * the old anchor could not answer at all. A number over a body that is still
+ * alive and standing still panned correctly even then -- it was riding the
+ * body's own anchor -- so a fight in progress is not a test of anything. The
+ * moment the victim despawns there is no anchor left, and the number the player
+ * most wants to read is the one that starts sliding across the map.
+ */
+async function damageNumbersHoldTheirGround(page: Page, problems: string[]): Promise<void> {
+  // The overlay off means no ruler, so switch it back on for the measurement.
+  await page.click('button[aria-label="View settings"]');
+  await page.waitForTimeout(120);
+  await page.click('label:has-text("Spawners") input[type=checkbox]');
+  await page.click('button[aria-label="View settings"]');
+  await page.waitForTimeout(300);
+
+  const unit = await findUnit(page);
+  if (!unit) {
+    console.log('  no body left to land a damage number on');
+    return;
+  }
+
+  // The fight has to start before it can end. Without this, a `findUnit` that
+  // picked nothing leaves the readout already saying "no target", and the wait
+  // below would take that for a kill and measure an empty screen.
+  let engaged = false;
+  for (let waited = 0; waited < 3000 && !engaged; waited += 60) {
+    await page.waitForTimeout(60);
+    engaged = (await readTarget(page)).startsWith('target ');
+  }
+  if (!engaged) {
+    console.log('  no measurement: the attack order never took');
+    return;
+  }
+
+  // Now wait for the order to finish the body off. The client drops a target
+  // the moment it dies, so "no target" is the kill -- and polled this closely,
+  // the blow that did it is a number a few frames old and good for half a
+  // second yet, which is the window the pan has to happen in.
+  let before = new Map<string, { x: number; y: number }>();
+  for (let waited = 0; waited < 20_000; waited += 60) {
+    await page.waitForTimeout(60);
+    if (!(await readTarget(page)).startsWith('no target')) continue;
+    before = await overlayPoints(page, 'data-damage-id');
+    break;
+  }
+  const marksBefore = await overlayPoints(page, 'data-spawner');
+  if (before.size === 0 || marksBefore.size === 0) {
+    console.log(
+      `  no measurement: ${before.size} numbers over the kill, ${marksBefore.size} spawner marks`,
+    );
+    return;
+  }
+
+  const moved = (
+    from: Map<string, { x: number; y: number }>,
+    to: Map<string, { x: number; y: number }>,
+  ): number[] => {
+    const deltas: number[] = [];
+    for (const [key, start] of from) {
+      const end = to.get(key);
+      if (end) deltas.push(end.x - start.x);
+    }
+    return deltas;
+  };
+
+  // Walk, which is what pans the camera. Held keys rather than a move order: a
+  // right-click has to find a pixel that is neither a HUD button nor ground the
+  // route planner refuses, and either one reads here as a camera that did not
+  // move. Escape first, because the blow that did the killing is a wind-up the
+  // body is still standing in, and since spec 094 those are long.
+  await page.keyboard.press('Escape');
+  await page.keyboard.down('KeyW');
+  await page.keyboard.down('KeyD');
+
+  // Sampled until the camera has actually moved rather than after a fixed wait:
+  // how far a step gets in 400ms depends on the machine, and this one is running
+  // the world on software WebGL.
+  let pan: number[] = [];
+  let numbers: number[] = [];
+  let camera = 0;
+  for (let waited = 0; waited < 1500 && Math.abs(camera) < 12; waited += 150) {
+    await page.waitForTimeout(150);
+    pan = moved(marksBefore, await overlayPoints(page, 'data-spawner'));
+    numbers = moved(before, await overlayPoints(page, 'data-damage-id'));
+    if (pan.length === 0 || numbers.length === 0) break;
+    camera = pan.reduce((sum, delta) => sum + delta, 0) / pan.length;
+  }
+  await page.keyboard.up('KeyW');
+  await page.keyboard.up('KeyD');
+
+  if (pan.length === 0 || numbers.length === 0) {
+    console.log('  no measurement: nothing survived the pan to compare');
+    return;
+  }
+  console.log(`  camera panned ${camera.toFixed(1)}px, over ${numbers.length} damage numbers`);
+  if (Math.abs(camera) < 12) {
+    console.log('  no measurement: the camera barely moved');
+    return;
+  }
+  const drift = Math.max(...numbers.map((delta) => Math.abs(delta - camera)));
+  console.log(`  worst number drift against the ground: ${drift.toFixed(1)}px`);
+  if (drift > 6) {
+    problems.push(
+      `a damage number drifted ${drift.toFixed(1)}px against the ground during a ${camera.toFixed(0)}px pan`,
+    );
+  }
+
+  await page.click('button[aria-label="View settings"]');
+  await page.waitForTimeout(120);
+  await page.click('label:has-text("Spawners") input[type=checkbox]');
+  await page.click('button[aria-label="View settings"]');
 }
 
 await main();
