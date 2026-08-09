@@ -71,13 +71,16 @@ async function waitForServer(url: string, timeoutMs = 40_000): Promise<void> {
 
 /**
  * Turn the switch on through the panel the player uses, rather than by reaching
- * into the scene. If the cog or the label moves, this should break.
+ * into the scene. If the button or the label moves, this should break.
+ *
+ * That button is the hike look's own since spec 107, not the view cog: the ten
+ * switches moved out of the drawer they were sharing with the camera.
  */
 async function enableLowRes(page: import('playwright').Page): Promise<void> {
-  await page.click('button[aria-label="View settings"]');
+  await page.click('button[aria-label="Hike look"]');
   const row = page.locator('label', { hasText: 'Low-res buffer' }).first();
   await row.locator('input[type=checkbox]').check();
-  await page.click('button[aria-label="View settings"]');
+  await page.click('button[aria-label="Hike look"]');
 }
 
 /**
