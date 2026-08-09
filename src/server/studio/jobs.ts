@@ -190,6 +190,26 @@ export function blockJob(job: Job, stage: Stage, message: string, nowMs: number)
   return { ...job, status: 'blocked', stage, message, updatedAtMs: nowMs };
 }
 
+/**
+ * Lifts a block so the job can carry on where it stopped.
+ *
+ * **Only a blocked job**, never a failed one, and the distinction is the whole
+ * reason the two states are separate. `blocked` means the ceiling check refused
+ * *before* anything was sent: nothing was attempted, nothing was charged, and the
+ * stages already done are on disk. Continuing is not a retry -- it is the rest of
+ * a job that was deliberately paused, and it costs exactly what it would have
+ * cost had the ceiling been higher to begin with.
+ *
+ * `failed` stays terminal. A paid call that failed for a reason nobody
+ * understands must not be repeatable by pressing a button.
+ */
+export function resumeBlocked(job: Job, nowMs: number): Job | null {
+  if (job.status !== 'blocked') return null;
+  // The stage that was refused never reached `beginStep`, so its record is still
+  // pending and `nextStage` will hand it back. Nothing needs rewinding.
+  return { ...job, status: 'queued', stage: null, message: null, updatedAtMs: nowMs };
+}
+
 export function cancelJob(job: Job, nowMs: number): Job {
   if (isTerminal(job)) return job;
   return { ...job, status: 'cancelled', message: 'cancelled', updatedAtMs: nowMs };

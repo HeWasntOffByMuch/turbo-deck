@@ -39,17 +39,23 @@ export const RETARGET_BATCH_SIZE = 1;
 /**
  * Defaults, overridable from the environment.
  *
- * Deliberately not "0 until we know": a projection of zero would sail through
- * every ceiling and show the user a free generation, which is the one wrong
- * answer a cost estimate must never give. These are placeholders sized to be
- * *pessimistic*, and `STUDIO_PRICE_*` overrides them once the real numbers are
- * known from a first run's `credits_consumed`.
+ * The first two are **measured**, off a real run's `credits_consumed`: an
+ * image-to-model at the default face limit charged 50 and the auto-rig charged
+ * 25. They were placeholders at 20 and 10, which is how a job that was quoted
+ * 60 got two thirds of the way through a 100 ceiling on its first two calls --
+ * a projection that reads low does not just mislead, it makes the ceiling fire
+ * in the middle of a job instead of before it.
+ *
+ * `retargetPerCall` is still unmeasured and is pitched at the rig's price, which
+ * is the nearest thing to evidence there is. It will be a real number after the
+ * first retarget, and it is deliberately not lower: a projection that flatters
+ * is the one failure mode a cost estimate must never have.
  */
 export const DEFAULT_PRICES: PriceList = {
-  imageToModel: 20,
+  imageToModel: 50,
   rigCheck: 0,
-  rig: 10,
-  retargetPerCall: 10,
+  rig: 25,
+  retargetPerCall: 25,
 };
 
 export interface PlannedStep {

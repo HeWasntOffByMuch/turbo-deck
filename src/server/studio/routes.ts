@@ -394,6 +394,31 @@ export function studioRoutes(deps: RouteDeps): readonly Route[] {
       },
     },
 
+    /**
+     * Carries a blocked job on from where the ceiling stopped it.
+     *
+     * Only ever a blocked job. A failed one stays failed: `resumeBlocked`
+     * returns null for it and this answers 409, because a paid call that failed
+     * for an unknown reason must not be repeatable by pressing a button.
+     */
+    {
+      method: 'POST',
+      pattern: '/api/studio/jobs/:id/resume',
+      handler: ({ response, params }) => {
+        const id = params['id'] ?? '';
+        const job = pipeline.unblock(id);
+        if (job) return sendJson(response, 202, jobView(job));
+        const existing = store.getJob(id);
+        if (!existing) return sendJson(response, 404, { error: 'no such job' });
+        return sendJson(response, 409, {
+          error:
+            existing.status === 'failed'
+              ? 'this job failed rather than being blocked, and a failed paid call is never repeated. Start a new job.'
+              : `this job is ${existing.status}; only a blocked job can be resumed`,
+        });
+      },
+    },
+
     {
       method: 'POST',
       pattern: '/api/studio/jobs/:id/cancel',

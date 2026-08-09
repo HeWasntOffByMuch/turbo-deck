@@ -243,6 +243,11 @@ export class StudioApi {
     return this.json('/jobs', { ...request, confirmationToken }) as Promise<{ cached: boolean; job: JobView }>;
   }
 
+  /** Carries a blocked job on. Refused for anything that is not blocked. */
+  resume(jobId: string): Promise<JobView> {
+    return this.call(`/jobs/${encodeURIComponent(jobId)}/resume`, { method: 'POST' }) as Promise<JobView>;
+  }
+
   cancel(jobId: string): Promise<JobView> {
     return this.call(`/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }) as Promise<JobView>;
   }

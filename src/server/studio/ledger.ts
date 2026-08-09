@@ -125,7 +125,9 @@ export function checkCeilings(check: CeilingCheck): CeilingVerdict {
       return {
         ok: false,
         ceiling: 'perRun',
-        reason: `this run has spent ${spent} and would reach ${after}, over the per-run ceiling of ${ceilings.perRun}`,
+        reason:
+          `this run has spent ${spent} and would reach ${after}, over the per-run ceiling of ${ceilings.perRun}. ` +
+          `Nothing was sent and nothing was charged: raise STUDIO_CEILING_PER_RUN past ${after}, restart the server, and resume the job.`,
       };
     }
   }
@@ -138,7 +140,9 @@ export function checkCeilings(check: CeilingCheck): CeilingVerdict {
       return {
         ok: false,
         ceiling: 'perDay',
-        reason: `${today} has spent ${spent} and would reach ${after}, over the per-day ceiling of ${ceilings.perDay}`,
+        reason:
+          `${today} has spent ${spent} and would reach ${after}, over the per-day ceiling of ${ceilings.perDay}. ` +
+          `Nothing was sent and nothing was charged: raise STUDIO_CEILING_PER_DAY past ${after}, restart the server, and resume the job.`,
       };
     }
   }

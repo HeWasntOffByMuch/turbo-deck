@@ -117,13 +117,19 @@ function seedJob(h: Harness, patch: { establishesRigFamily?: boolean; id?: strin
   return job;
 }
 
-/** The happy path's script: every task succeeds and hands back a model URL. */
+/**
+ * The happy path's script: every task succeeds and hands back a model URL.
+ *
+ * The credit figures are the ones a real run reported -- 50 for the mesh, 0 for
+ * the free check, 25 for the rig -- so the ceiling tests below exercise the
+ * arithmetic that actually fires rather than a friendlier version of it.
+ */
 function scriptSuccess(fake: FakeTripo): void {
   fake
-    .script('/generation/image-to-model', { creditsConsumed: 20, modelUrl: MESH_URL })
+    .script('/generation/image-to-model', { creditsConsumed: 50, modelUrl: MESH_URL })
     .script('/animations/rig-check', { creditsConsumed: 0, riggable: true, rigType: 'biped' })
-    .script('/animations/rig', { creditsConsumed: 10, modelUrl: RIG_URL })
-    .script('/animations/retarget', { creditsConsumed: 10, modelUrl: CLIP_URL });
+    .script('/animations/rig', { creditsConsumed: 25, modelUrl: RIG_URL })
+    .script('/animations/retarget', { creditsConsumed: 25, modelUrl: CLIP_URL });
 }
 
 beforeEach(() => {
@@ -171,9 +177,9 @@ describe('the happy path', () => {
 
     const ledger = harness.store.listLedger();
     // Two clips is two retarget calls now, not one batch.
-    expect(ledger.map((entry) => entry.credits)).toEqual([20, 0, 10, 10, 10]);
+    expect(ledger.map((entry) => entry.credits)).toEqual([50, 0, 25, 25, 25]);
     expect(ledger.every((entry) => entry.reported)).toBe(true);
-    expect(harness.store.getJob('job-1')?.creditsSpent).toBe(50);
+    expect(harness.store.getJob('job-1')?.creditsSpent).toBe(125);
   });
 
   it('sends the key on every API call and never in a download', async () => {
@@ -337,8 +343,8 @@ describe('the interlocks', () => {
   });
 
   it('blocks part-way through when the run creeps past its ceiling', async () => {
-    // Image-to-model at 20 fits under 25; the rig at 10 would reach 30.
-    const tight = build({ STUDIO_CEILING_PER_RUN: '25' });
+    // The mesh at 50 fits under 60; the rig would take the run to 75.
+    const tight = build({ STUDIO_CEILING_PER_RUN: '60' });
     scriptSuccess(tight.fake);
     seedJob(tight);
 
@@ -365,9 +371,9 @@ describe('the interlocks', () => {
 
   it('never retries a failed paid call', async () => {
     harness.fake
-      .script('/generation/image-to-model', { creditsConsumed: 20, modelUrl: MESH_URL })
+      .script('/generation/image-to-model', { creditsConsumed: 50, modelUrl: MESH_URL })
       .script('/animations/rig-check', { creditsConsumed: 0, riggable: true, rigType: 'biped' })
-      .script('/animations/rig', { status: 'failed', message: 'internal error', creditsConsumed: 10 });
+      .script('/animations/rig', { status: 'failed', message: 'internal error', creditsConsumed: 25 });
     seedJob(harness);
 
     const job = await harness.pipeline.run('job-1');
@@ -432,6 +438,94 @@ describe('the interlocks', () => {
     seedJob(harness);
     await Promise.all([harness.pipeline.run('job-1'), harness.pipeline.run('job-1')]);
     expect(harness.fake.callsTo('/generation/image-to-model')).toHaveLength(1);
+  });
+
+  it('resumes a blocked job from where the ceiling stopped it, without re-spending', async () => {
+    // The real case: image-to-model and the rig succeed, the retarget is refused
+    // for want of headroom, the ceiling is raised, and the rest runs. The two
+    // paid calls already made must not be made again.
+    // 100 is exactly the case that turned up in real use: the mesh (50) and the
+    // rig (25) both fit, and the two retargets projected at 25 each would not.
+    const tight = build({ STUDIO_CEILING_PER_RUN: '100' });
+    scriptSuccess(tight.fake);
+    seedJob(tight);
+
+    const blocked = await tight.pipeline.run('job-1');
+    expect(blocked?.status).toBe('blocked');
+    expect(blocked?.stage).toBe('retarget');
+    const spentBefore = blocked?.creditsSpent ?? 0;
+    expect(tight.fake.callsTo('/animations/retarget')).toHaveLength(0);
+
+    // Raising the ceiling is a restart in real life; here it is a new pipeline
+    // over the same store, which is the same thing from the job's point of view.
+    const roomier = loadStudioConfig(
+      { TRIPO_API_KEY: 'tsk_secret', STUDIO_DATA_DIR: tight.dir, STUDIO_CEILING_PER_RUN: '500' } as NodeJS.ProcessEnv,
+      tight.dir,
+    );
+    const client = new TripoClient({
+      apiKey: 'tsk_secret',
+      baseUrl: 'https://openapi.example/v3',
+      fetch: tight.fake.fetch,
+    });
+    const resumed = new StudioPipeline({
+      client,
+      store: tight.store,
+      config: roomier,
+      now: () => 0,
+      sleep: () => Promise.resolve(),
+      writeArtifact: (jobId, filename, bytes) => tight.store.writeArtifact(jobId, filename, bytes),
+    });
+
+    expect(resumed.unblock('job-1')).not.toBeNull();
+    await resumed.run('job-1');
+
+    const finished = tight.store.getJob('job-1');
+    expect(finished?.status).toBe('succeeded');
+    // The stages already paid for were not repeated.
+    expect(tight.fake.callsTo('/generation/image-to-model')).toHaveLength(1);
+    expect(tight.fake.callsTo('/animations/rig')).toHaveLength(1);
+    expect(tight.fake.callsTo('/animations/retarget')).toHaveLength(2);
+    expect(finished?.creditsSpent).toBeGreaterThan(spentBefore);
+    rmSync(tight.dir, { recursive: true, force: true });
+  });
+
+  it('blocks again on resume when the ceiling was not actually raised', async () => {
+    // Pressing the button is not an authorisation to spend.
+    const tight = build({ STUDIO_CEILING_PER_RUN: '100' });
+    scriptSuccess(tight.fake);
+    seedJob(tight);
+    await tight.pipeline.run('job-1');
+
+    tight.pipeline.unblock('job-1');
+    await tight.pipeline.run('job-1');
+    expect(tight.store.getJob('job-1')?.status).toBe('blocked');
+    expect(tight.fake.callsTo('/animations/retarget')).toHaveLength(0);
+    rmSync(tight.dir, { recursive: true, force: true });
+  });
+
+  it('never resumes a failed job', async () => {
+    // The whole reason blocked and failed are different states. A paid call that
+    // failed for a reason nobody understands must not be repeatable by pressing
+    // a button.
+    harness.fake
+      .script('/generation/image-to-model', { creditsConsumed: 20, modelUrl: MESH_URL })
+      .script('/animations/rig-check', { creditsConsumed: 0, riggable: true, rigType: 'biped' })
+      .script('/animations/rig', { status: 'failed', message: 'internal error' });
+    seedJob(harness);
+    await harness.pipeline.run('job-1');
+    expect(harness.store.getJob('job-1')?.status).toBe('failed');
+
+    expect(harness.pipeline.unblock('job-1')).toBeNull();
+    expect(harness.store.getJob('job-1')?.status).toBe('failed');
+    expect(harness.fake.callsTo('/animations/rig')).toHaveLength(1);
+  });
+
+  it('will not resume a job that is merely running or already done', async () => {
+    scriptSuccess(harness.fake);
+    seedJob(harness);
+    await harness.pipeline.run('job-1');
+    expect(harness.pipeline.unblock('job-1')).toBeNull();
+    expect(harness.pipeline.unblock('no-such-job')).toBeNull();
   });
 
   it('cancels a job that is mid-flight', async () => {

@@ -32,6 +32,7 @@ import {
   nextStage,
   recordTaskId,
   resumable,
+  resumeBlocked,
   stepOf,
 } from './jobs.js';
 import { Pacer } from './pacing.js';
@@ -61,8 +62,16 @@ export const DEFAULT_TASK_TIMEOUT_MS = 20 * 60 * 1000;
 
 export class StudioPipeline {
   private readonly pacer: Pacer;
-  /** Job ids currently being driven, so a double start is a no-op. */
-  private readonly running = new Set<string>();
+  /**
+   * Jobs currently being driven, and the promise for each.
+   *
+   * A map rather than a set of ids so a second caller *awaits the run in
+   * flight* instead of being handed the record as it is right now. Returning
+   * early looks like a no-op and is one, but it means anything that starts a job
+   * and then awaits it -- resuming a blocked one, a test -- gets an answer from
+   * before the work happened.
+   */
+  private readonly running = new Map<string, Promise<Job | null>>();
   private stopped = false;
 
   constructor(private readonly deps: PipelineDeps) {
@@ -390,20 +399,22 @@ export class StudioPipeline {
   }
 
   /** Drives a job to a terminal state. Safe to call twice; the second is a no-op. */
-  async run(jobId: string): Promise<Job | null> {
-    if (this.running.has(jobId)) return this.deps.store.getJob(jobId);
-    this.running.add(jobId);
-    try {
-      let job = this.deps.store.getJob(jobId);
-      while (job && !isTerminal(job) && !this.stopped) {
-        const stage = nextStage(job);
-        if (stage === null) break;
-        job = await this.runStage(job, stage);
-      }
-      return job;
-    } finally {
-      this.running.delete(jobId);
+  run(jobId: string): Promise<Job | null> {
+    const inFlight = this.running.get(jobId);
+    if (inFlight) return inFlight;
+    const started = this.drive(jobId).finally(() => this.running.delete(jobId));
+    this.running.set(jobId, started);
+    return started;
+  }
+
+  private async drive(jobId: string): Promise<Job | null> {
+    let job = this.deps.store.getJob(jobId);
+    while (job && !isTerminal(job) && !this.stopped) {
+      const stage = nextStage(job);
+      if (stage === null) break;
+      job = await this.runStage(job, stage);
     }
+    return job;
   }
 
   /**
@@ -420,6 +431,23 @@ export class StudioPipeline {
       void this.run(job.id);
     }
     return pending;
+  }
+
+  /**
+   * Lifts a block and carries on. Returns null when the job is not blocked.
+   *
+   * The ceiling is re-checked on the way through like any other stage, so
+   * resuming without having raised it simply blocks again -- rather than
+   * spending on the strength of a button press.
+   */
+  unblock(jobId: string): Job | null {
+    const job = this.deps.store.getJob(jobId);
+    if (!job) return null;
+    const resumed = resumeBlocked(job, this.deps.now());
+    if (resumed === null) return null;
+    this.save(resumed);
+    void this.run(jobId);
+    return resumed;
   }
 
   cancel(jobId: string): Job | null {

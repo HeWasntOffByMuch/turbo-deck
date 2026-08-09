@@ -61,9 +61,20 @@ function ceiling(raw: string | undefined, fallback: number): number | null {
   return Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
-/** Conservative enough that a typo in a face limit cannot empty an account. */
-export const DEFAULT_PER_RUN_CEILING = 100;
-export const DEFAULT_PER_DAY_CEILING = 500;
+/**
+ * Sized off what a unit actually costs, now that that is known.
+ *
+ * A biped with three clips is 50 + 0 + 25 + 3x25 = 150 at the measured prices,
+ * so the old per-run 100 stopped a perfectly ordinary job two calls in. A limit
+ * that cannot let one normal unit through is not protecting anything -- it just
+ * leaves half-finished paid work and something to go and fix.
+ *
+ * 250 covers one unit with room for a few more clips; 1000 is about six units in
+ * a day. Both are the runaway guard they were meant to be rather than a speed
+ * bump, and both are still overridable, including to `none`.
+ */
+export const DEFAULT_PER_RUN_CEILING = 250;
+export const DEFAULT_PER_DAY_CEILING = 1000;
 
 export function loadStudioConfig(env: NodeJS.ProcessEnv, repoRoot: string): StudioConfig {
   const key = env['TRIPO_API_KEY']?.trim();

@@ -451,6 +451,16 @@ export function mountStudio(container: HTMLElement): ViewHandle {
       }));
       head.appendChild(cancel);
     }
+    // Only a blocked job. A failed one has no button, because a paid call that
+    // failed for an unknown reason must not be repeatable by pressing one.
+    if (job.status === 'blocked') {
+      const resume = button('Resume', 'primary');
+      resume.addEventListener('click', () => void run(async () => {
+        await api.resume(job.id);
+        await refresh();
+      }));
+      head.appendChild(resume);
+    }
     card.appendChild(head);
 
     for (const step of job.steps) {
