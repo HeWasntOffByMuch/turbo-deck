@@ -18,6 +18,9 @@
  */
 
 import { WebSocket } from 'ws';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { GameClient } from '../src/server/client/game-client.js';
 import { SERVER_TICK_RATE } from '../src/server/config.js';
 import { channelFromSocket } from '../src/server/net/transport-ws.js';
@@ -44,7 +47,15 @@ function startBot(index: number): Bot {
   socket.binaryType = 'nodebuffer';
 
   socket.on('open', () => {
-    const client = new GameClient(channelFromSocket(socket), { playerId: name, displayName: name });
+    const client = new GameClient(channelFromSocket(socket), {
+      playerId: name,
+      displayName: name,
+      // The bots are the one client here that crosses a real socket to a real
+      // server, so they are the one that can actually catch a stale-asset
+      // mismatch (spec 113). Empty when the bake has never run, which the
+      // server allows.
+      assetManifest: assetManifestHash(),
+    });
     bot.client = client;
 
     client.onError((code, message) => console.error(`[${name}] server error ${code}: ${message}`));
@@ -98,3 +109,14 @@ process.on('SIGINT', () => {
   for (const bot of bots) bot.client?.disconnect();
   process.exit(0);
 });
+
+/** The manifest this checkout was baked to, or '' when it has not been. */
+function assetManifestHash(): string {
+  try {
+    const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+    const text = readFileSync(join(root, 'assets', 'units', 'manifest.json'), 'utf8');
+    return String((JSON.parse(text) as { hash?: unknown }).hash ?? '');
+  } catch {
+    return '';
+  }
+}

@@ -95,6 +95,16 @@ export interface GameClientOptions {
   readonly displayName?: string;
   readonly token?: string;
   /**
+   * The asset manifest hash this build was made against (spec 113).
+   *
+   * Omitted means "I have no manifest", which the server allows and logs. A
+   * hash that is present and differs from the server's is a refused connection:
+   * a client on stale assets draws a fight that is not the one being played, and
+   * nothing about that is visible until somebody notices a hit landing on the
+   * wrong frame.
+   */
+  readonly assetManifest?: string;
+  /**
    * Local movement used for prediction. Defaults to the open-ground walk, which
    * matches the server exactly away from walls, water and cliffs. Stage 3 can
    * pass the server's own movement instead for a closer match.
@@ -451,6 +461,10 @@ export class GameClient {
         playerId: this.options.playerId,
         displayName: this.options.displayName ?? this.options.playerId,
         token: this.options.token ?? '',
+        // What this build's assets hash to, or empty when the caller has no
+        // manifest -- the in-tab server and the bot harness share a process
+        // with the thing they are connecting to (spec 113).
+        assetManifest: this.options.assetManifest ?? '',
       }),
     );
     return pending;

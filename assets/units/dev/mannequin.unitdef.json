@@ -20,7 +20,7 @@
   },
   "import": {
     "normals": "flat",
-    "targetTris": 2000,
+    "targetTris": 156,
     "scale": 32.35465116279069,
     "upAxis": "+Y"
   },

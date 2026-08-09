@@ -59,6 +59,7 @@ change a game outcome.
 | `npm run typecheck` | `tsc --noEmit` against the strict tsconfig |
 | `npm run lint` | ESLint over the whole repo |
 | `npm run validate:units` | Validate every authored unit document in `assets/units/` |
+| `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
@@ -144,6 +145,15 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  through this one parser. The rule the format exists to enforce is
                  that gameplay timing is authoritative and the clip is rescaled to
                  fit, bounded in both directions. `npm run validate:units`.
+                 manifest.ts is what both ends agree on (spec 113): a sha256
+                 over every asset, exchanged at connect, and a mismatch is a
+                 refused connection -- a client on stale assets draws a fight
+                 that is not the one being played and nothing looks wrong until
+                 somebody notices. An *absent* client hash is allowed, because
+                 the in-tab server and the bot harness share a process with what
+                 they connect to. `npm run bake:units` writes it; decimation,
+                 meshopt and KTX2 are deferred rather than faked, and
+                 `builtStages` records what actually ran.
                  scaffold.ts derives a first unitdef for a unit that has just
                  been generated (spec 112) -- a clip library over what was
                  actually retargeted, and a machine reaching only the states the

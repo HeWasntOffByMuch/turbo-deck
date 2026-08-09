@@ -53,6 +53,15 @@ function listJson(dir: string): string[] {
   return found;
 }
 
+/**
+ * Files under `assets/units/` that are deliberately not unit documents.
+ *
+ * `manifest.json` is written by `npm run bake:units` and is a record of what the
+ * assets hash to (spec 113). Warning about it on every run would train people to
+ * ignore this runner's warnings, which are otherwise all worth reading.
+ */
+const NOT_A_DOCUMENT: ReadonlySet<string> = new Set(['manifest.json']);
+
 /** Which document a file is, by its name. The suffix is the declaration. */
 function kindOf(path: string): 'skeleton' | 'cliplib' | 'unitdef' | null {
   if (path.endsWith('.skeleton.json')) return 'skeleton';
@@ -123,6 +132,7 @@ function main(): void {
   const pendingBundles: { path: string; doc: ReturnType<typeof validateUnitDef> }[] = [];
 
   for (const path of files) {
+    if (NOT_A_DOCUMENT.has(path.split('/').pop() ?? '')) continue;
     const kind = kindOf(path);
     if (kind === null) {
       reports.push({

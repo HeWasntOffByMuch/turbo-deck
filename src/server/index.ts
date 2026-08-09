@@ -22,6 +22,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
@@ -106,10 +107,28 @@ const http = createServer((request, response) => {
   });
 });
 
+/**
+ * The asset manifest this server is serving (spec 113).
+ *
+ * Read here rather than in `server.ts`, which is the portable half. Absent is
+ * allowed and means every client is let through -- a repo where the bake has
+ * never been run is still a repo somebody can play.
+ */
+function assetManifestHash(): string {
+  try {
+    const text = readFileSync(join(here, '..', '..', 'assets', 'units', 'manifest.json'), 'utf8');
+    return (JSON.parse(text) as { hash?: unknown }).hash as string;
+  } catch {
+    console.log('[server] no assets/units/manifest.json; not checking client assets. Run `npm run bake:units`.');
+    return '';
+  }
+}
+
 const server = new GameServer({
   built: world,
   transport: new WebSocketTransport({ port, httpServer: http }),
   adminVerifier: createHmacAdminVerifier(adminSecret),
+  assetManifestHash: assetManifestHash(),
 });
 
 http.listen(port, () => {

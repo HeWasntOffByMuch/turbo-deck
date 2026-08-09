@@ -18,3 +18,9 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run validate:units
+      # The manifest is committed so it reviews as a diff, which means it can go
+      # stale: change an asset, forget the bake, and the file still claims the
+      # old hash. Re-baking and requiring no diff makes that a red build rather
+      # than a client refused at connect for reasons nobody can explain.
+      - run: npm run bake:units
+      - run: git diff --exit-code assets/units/manifest.json

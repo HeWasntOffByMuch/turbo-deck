@@ -931,6 +931,14 @@ export function mountStudio(container: HTMLElement): ViewHandle {
         result.appendChild(el('div', `${BODY}color:${exported.ok ? '#7bc47f' : '#e5c07b'};`, `assets/units/${job.unitId}/`));
         for (const file of exported.written) result.appendChild(el('div', `${MUTED}color:#7bc47f;`, `  wrote ${file}`));
         for (const note of exported.pending) result.appendChild(el('div', `${MUTED}color:#e5c07b;`, `  pending: ${note}`));
+        if (exported.ok) {
+          // The hand-off step 7 asks for. Staged is not built: the manifest the
+          // server checks clients against is only rewritten by the bake, so a
+          // unit that stops here is one the game will not agree about.
+          result.appendChild(
+            el('div', `${MUTED}color:#6fa8dc;`, '  next: run `npm run bake:units` to rehash the manifest, then `npm run build`'),
+          );
+        }
         for (const issue of exported.issues) {
           result.appendChild(
             el('div', `${MUTED}color:${issue.severity === 'error' ? '#e06c75' : '#e5c07b'};`, `  ${issue.severity} ${issue.path} ${issue.message}`),

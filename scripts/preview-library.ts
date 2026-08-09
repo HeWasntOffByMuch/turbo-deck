@@ -170,9 +170,16 @@ async function main(): Promise<void> {
       failures.push('no Preview button on the library card');
     } else {
       await previewButton.first().click();
-      // Long enough to fetch four clips through the authenticated client, decode
-      // them, measure, derive the documents and rebuild the panels.
-      await page.waitForTimeout(6000);
+      // Waited for, not slept through. Fetching four clips, decoding them,
+      // measuring and rebuilding the panels takes as long as the machine takes,
+      // and under software GL on a loaded box that is well past any fixed number
+      // worth writing down.
+      await page
+        .locator('#app')
+        .filter({ hasText: /triangles, \d+ bones/ })
+        .first()
+        .waitFor({ timeout: 40_000 })
+        .catch(() => undefined);
 
       const after = await page.locator('#app').innerText();
       const stats = /(\d+) triangles, (\d+) bones, (\d+) vertices/.exec(after);

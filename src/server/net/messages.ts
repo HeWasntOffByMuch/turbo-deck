@@ -41,6 +41,14 @@ export interface HelloMessage {
   readonly displayName: string;
   /** Empty for a plain player; an admin token promotes the connection. */
   readonly token: string;
+  /**
+   * The asset manifest hash this client was built against (spec 113).
+   *
+   * Empty from a client that has none -- the bot harness and the in-tab server
+   * share a process with the thing they connect to and cannot be stale with
+   * respect to it. A hash that is present and *different* is refused.
+   */
+  readonly assetManifest: string;
 }
 
 /**
@@ -156,7 +164,12 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
   writer.u8(message.type);
   switch (message.type) {
     case ClientMessageType.Hello:
-      writer.u16(message.protocolVersion).str(message.playerId).str(message.displayName).str(message.token);
+      writer
+        .u16(message.protocolVersion)
+        .str(message.playerId)
+        .str(message.displayName)
+        .str(message.token)
+        .str(message.assetManifest);
       break;
     case ClientMessageType.Input:
       writer
@@ -215,6 +228,7 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
         playerId: reader.str(),
         displayName: reader.str(),
         token: reader.str(),
+        assetManifest: reader.str(),
       };
     case ClientMessageType.Input:
       return {

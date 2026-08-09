@@ -69,6 +69,10 @@ function main(): void {
    * 1 somewhere would put a body in this world the size of a coin.
    */
   const scale = skeletonDoc.canonicalHeight / unit.authoredHeight;
+  /** Counted off the mesh just written, so the document cannot claim otherwise. */
+  const meshData = unit.meshGlb.mesh;
+  if (!meshData) throw new Error('the reference unit built no mesh to count');
+  const triangles = Math.round(meshData.indices.length / 3);
 
   const unitDef: UnitDef = {
     $comment:
@@ -88,7 +92,12 @@ function main(): void {
       creditsSpent: 0,
       generatedAt: GENERATED_AT,
     },
-    import: { normals: 'flat', targetTris: 2000, scale, upAxis: '+Y' },
+    // Counted off the mesh this script just built, never declared.
+    // `provenance.faceLimit` above is what a generation would have been *asked*
+    // for; `targetTris` is what the asset actually is, and the bake gates on the
+    // difference. They were both 2000 here, and the mannequin has 156 -- the
+    // first thing `npm run bake:units` ever did was refuse it.
+    import: { normals: 'flat', targetTris: triangles, scale, upAxis: '+Y' },
     maxTimeScale: 2,
     stateMachine: {
       parameters: [
