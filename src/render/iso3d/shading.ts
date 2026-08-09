@@ -1,6 +1,6 @@
 /**
  * Vertex normals: welding and averaging them across a crease angle, and
- * rotating one to follow the wind's bend (spec 093, step 2).
+ * rotating one to follow the wind's bend (spec 097, step 2).
  *
  * Pure -- no three.js and no DOM -- so both halves run and are tested
  * headlessly, the arrangement `wind.ts` already uses: the arithmetic lives here
@@ -291,7 +291,7 @@ vec3 rotateAboutWind(vec3 v, float angle) {
 `;
 }
 
-// --- octahedral normal encoding (spec 096) -----------------------------------
+// --- octahedral normal encoding (spec 100) -----------------------------------
 
 /**
  * A unit normal packed into two values in [0, 1], for storage in two bytes of an

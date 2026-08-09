@@ -217,7 +217,7 @@ src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
                  (never in a build) driven by `npx tsx scripts/preview-wind.ts`,
                  which photographs the frame and reports the acceptance numbers.
 src/render/iso3d/hike.ts, shading.ts, hike-buffers.ts  the stylized look (specs
-                 093-098): hike.ts is the one settings object every step of the arc
+                 097-106): hike.ts is the one settings object every step of the arc
                  is switched from (all off by default) plus the sRGB transfer the
                  passes mirror; shading.ts welds vertex normals across a crease
                  angle, rotates one to follow the wind's bend, and packs one

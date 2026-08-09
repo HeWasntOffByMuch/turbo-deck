@@ -3,7 +3,7 @@ import { DETAIL_TILE_SIZE, detailTile } from './detail-texture.js';
 import { glslSurfaceDetail } from './surface-detail.js';
 
 /**
- * The three.js half of spec 102: upload the generated tile and splice the
+ * The three.js half of spec 106: upload the generated tile and splice the
  * triplanar detail and the slope/height blend into the ground materials.
  *
  * The maths is in `surface-detail.ts` and the tile in `detail-texture.ts`, both

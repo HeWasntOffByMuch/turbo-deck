@@ -1,5 +1,5 @@
 /**
- * The distance treatment (spec 099): what happens to a *fill* as it recedes.
+ * The distance treatment (spec 103): what happens to a *fill* as it recedes.
  *
  * Pure -- no three.js and no DOM -- so the composition can be run against
  * numbers; `glslInkChunk()` is the transcription the retro pass executes.

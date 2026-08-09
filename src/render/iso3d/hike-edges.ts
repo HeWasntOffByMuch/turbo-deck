@@ -5,7 +5,7 @@ import { glslInkChunk } from './ink.js';
 import { glslSrgbEncodeChunk, type HikeSettings } from './hike.js';
 
 /**
- * The outline pass (spec 097): a Roberts cross over the depth and normal buffers,
+ * The outline pass (spec 101): a Roberts cross over the depth and normal buffers,
  * drawn over the finished frame as a constant dark line.
  *
  * Everything interesting about *what* it computes is in `edges.ts`, which is pure
@@ -56,7 +56,7 @@ uniform vec3 uOutlineColor;
 uniform float uOutlineStrength;
 /** 0 draws the line over the frame, 1 draws the mask on its own. */
 uniform float uMaskOnly;
-/** The distance terms (spec 099). */
+/** The distance terms (spec 103). */
 uniform float uInkOn;
 uniform float uInkOrigin;
 uniform float uInkStart;

@@ -123,7 +123,7 @@ export function ditherChannel(v: number, threshold: number, levels: number, stre
   return quantizeChannel(v + ((threshold - 0.5) * strength) / steps, levels);
 }
 
-// --- quantizing onto a palette (spec 098) ------------------------------------
+// --- quantizing onto a palette (spec 102) ------------------------------------
 
 /**
  * Snap a colour to the nearest entry of a palette, in the same display space the

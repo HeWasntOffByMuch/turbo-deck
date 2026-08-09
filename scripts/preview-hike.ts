@@ -1,5 +1,5 @@
 // Dev-only: photograph the Play tab with the hike switches thrown, the way a
-// player throws them (specs 097-092). `npx tsx scripts/preview-hike.ts`
+// player throws them (specs 097-106). `npx tsx scripts/preview-hike.ts`
 //
 // Exists because the outline pass shipped broken in a way none of the offscreen
 // checks could see: the mask was correct, and the pass cleared the canvas before
@@ -106,7 +106,7 @@ try {
   await page.waitForTimeout(1200);
   await brightness(join(outDir, 'world-palette.png'));
 
-  // The distance treatment, on the real world (spec 099).
+  // The distance treatment, on the real world (spec 103).
   //
   // The claim measured offscreen is that far fills move and near fills do not.
   // On the real page there is no depth buffer to classify by, but there does not
@@ -179,7 +179,7 @@ try {
     console.log('  ok: the distance drains and the foreground keeps its colour');
   }
 
-  // Baked creases, on the real map (spec 100).
+  // Baked creases, on the real map (spec 104).
   //
   // The offscreen probe uses a synthetic bowl where the answer is known. This
   // asks the only question that scene cannot: whether real terrain has folds in
@@ -238,7 +238,7 @@ try {
     console.log('  ok: folds darkened, the rest of the ground left alone');
   }
 
-  // Soft shadows, on the real map (spec 101).
+  // Soft shadows, on the real map (spec 105).
   //
   // The offscreen probe measures a synthetic box on a plane, where the penumbra
   // can be counted exactly. This asks the question that scene cannot: whether the
@@ -285,7 +285,7 @@ try {
     console.log('  ok: shadow edges softened, the rest of the frame left alone');
   }
 
-  // Surface detail on the real map (spec 102). The offscreen probe uses a
+  // Surface detail on the real map (spec 106). The offscreen probe uses a
   // synthetic plateau where the cliff is a known rectangle; this asks whether the
   // patched materials survive the real world's set of them.
   await page.click('button[aria-label="View settings"]');

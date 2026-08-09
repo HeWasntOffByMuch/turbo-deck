@@ -1,6 +1,6 @@
 # 102 — Detail on a world with no textures
 
-Step 10 of the hike arc (spec 093), the one the brief marked optional. Behind
+Step 10 of the hike arc (spec 097), the one the brief marked optional. Behind
 `HikeSettings.triplanar` and `HikeSettings.materialBlend`, both off by default.
 
 ## What was asked for

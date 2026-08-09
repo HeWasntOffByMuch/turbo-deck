@@ -1,5 +1,5 @@
 /**
- * Finding outlines in the depth and normal buffers (spec 097).
+ * Finding outlines in the depth and normal buffers (spec 101).
  *
  * Pure -- no three.js and no DOM -- so the two expressions that are easy to get
  * silently wrong can be run against numbers instead of eyeballed in a frame.

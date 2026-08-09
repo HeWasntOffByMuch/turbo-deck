@@ -1,6 +1,6 @@
 # 101 — A softer edge nobody asked the scene for
 
-Step 9 of the hike arc (spec 093). Behind `HikeSettings.softShadows`, off by
+Step 9 of the hike arc (spec 097). Behind `HikeSettings.softShadows`, off by
 default, with `shadowPcfRadius`.
 
 ## What the brief asked for, and what was already there

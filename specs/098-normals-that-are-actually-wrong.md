@@ -2,7 +2,7 @@
 
 ## Problem
 
-Step 2 of the hike arc (spec 093) asks for six things. Auditing them first found
+Step 2 of the hike arc (spec 097) asks for six things. Auditing them first found
 that **three were already true**, by three r160's defaults rather than by
 anything here: `MeshLambertMaterial` resolves its normal and accumulates light in
 the *fragment* shader, `normal_fragment_begin` normalizes the interpolated
@@ -177,4 +177,4 @@ without a symptom.
 - **Changing any tessellation.** If the trunks are wanted round the change is
   `trunkSegments`, and that is an art decision, not this spec's.
 - **Making smooth normals the default.** It stays off; see the table.
-- **The remaining eight steps of spec 093.**
+- **The remaining eight steps of spec 097.**

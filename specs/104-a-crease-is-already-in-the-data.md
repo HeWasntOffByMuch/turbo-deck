@@ -1,6 +1,6 @@
 # 100 — A crease is already in the data
 
-Step 8 of the hike arc (spec 093). Behind `HikeSettings.curvature`, off by
+Step 8 of the hike arc (spec 097). Behind `HikeSettings.curvature`, off by
 default, with `curvatureStrength`.
 
 ## Problem

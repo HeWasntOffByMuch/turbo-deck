@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { glslOctahedralChunk } from './shading.js';
 
 /**
- * The depth and view-space-normal buffers the outline pass reads (spec 096).
+ * The depth and view-space-normal buffers the outline pass reads (spec 100).
  *
  * ## Why a second geometry pass rather than MRT
  *

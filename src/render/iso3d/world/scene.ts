@@ -208,11 +208,11 @@ export class WorldScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly retro = new RetroPass(1, 1);
   /**
-   * Depth and view-space normals at the virtual resolution (spec 096). Built lazily,
+   * Depth and view-space normals at the virtual resolution (spec 100). Built lazily,
    * because until the switch is thrown it would be a render target nothing reads.
    */
   private buffers: HikeBuffers | null = null;
-  /** The outline pass (spec 097). Built with the buffers it reads. */
+  /** The outline pass (spec 101). Built with the buffers it reads. */
   private edges: HikeEdges | null = null;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
@@ -290,7 +290,7 @@ export class WorldScene {
   private elapsed = 0;
   /**
    * How the fixed virtual buffer is being shown, or null while the view is drawn
-   * the pre-spec-095 way (spec 095).
+   * the pre-spec-099 way (spec 099).
    */
   private frame: PixelFrame | null = null;
   /** Scratch for the pixel snap, so a per-frame snap allocates nothing. */
@@ -331,7 +331,7 @@ export class WorldScene {
       CAMERA_FAR,
     );
 
-    // Before the first resize, and it has to stay there: since spec 095 `resize`
+    // Before the first resize, and it has to stay there: since spec 099 `resize`
     // asks the panel whether the frame is drawn at a fixed virtual resolution, so
     // a panel built afterwards is a panel that does not exist the first time it
     // is read. Nothing here depends on the scene, so this is only an ordering
@@ -440,7 +440,7 @@ export class WorldScene {
   }
 
   /**
-   * How the prop field is shaded (spec 093, step 2), as the panel last asked
+   * How the prop field is shaded (spec 097, step 2), as the panel last asked
    * for it.
    *
    * Held rather than read at build time because it is baked into the geometry's
@@ -452,7 +452,7 @@ export class WorldScene {
 
   /**
    * Adopt the panel's shading settings, rebuilding the prop field if they moved
-   * (spec 093, step 2).
+   * (spec 097, step 2).
    *
    * Compared rather than applied every frame, because applying means rebuilding
    * every batch in the world -- a few hundred milliseconds. So this costs three
@@ -478,7 +478,7 @@ export class WorldScene {
   }
 
   /**
-   * Hand the ground materials the crease settings (spec 100).
+   * Hand the ground materials the crease settings (spec 104).
    *
    * A uniform write, every frame, costing nothing: the measure itself was baked
    * into a vertex attribute when the chunk was meshed. That is the whole reason
@@ -494,7 +494,7 @@ export class WorldScene {
   }
 
   /**
-   * Hand the ground materials the surface-detail settings (spec 102).
+   * Hand the ground materials the surface-detail settings (spec 106).
    *
    * Uniform writes, like the creases: the tile is generated once at startup and
    * nothing here rebuilds geometry or recompiles a shader. The texture is built
@@ -709,7 +709,7 @@ export class WorldScene {
     this.applyCurvature(hike);
     // Written every frame, and written even when the feature is off: three's own
     // default for `radius` is 1, so leaving it alone would soften every shadow in
-    // the world without anything having been switched on (spec 101).
+    // the world without anything having been switched on (spec 105).
     this.sun.shadow.radius = shadowRadiusFor(hike.softShadows, hike.shadowPcfRadius);
     this.applyDetail(hike);
 
@@ -745,7 +745,7 @@ export class WorldScene {
       this.retro.setGrade(this.controls.grade());
       this.retro.setPalette(hike.palette);
       // The distance treatment reads the same depth buffer the outlines do, so
-      // it needs the buffers whether or not the outlines are on (spec 099). The
+      // it needs the buffers whether or not the outlines are on (spec 103). The
       // fog colour is the live sky rather than a setting: the day/night cycle
       // moves it, and a fixed haze under a sunset is a grey band on the horizon.
       this.retro.setInk(
@@ -788,7 +788,7 @@ export class WorldScene {
   /**
    * A lost context takes every GPU-side object with it, including the render
    * targets and the depth texture, and leaves three.js holding handles to things
-   * that no longer exist (spec 096).
+   * that no longer exist (spec 100).
    *
    * Unhandled since spec 038 put the first render target on screen, and survivable
    * until now only because nothing read one back. Preventing the default is what
@@ -1226,7 +1226,7 @@ export class WorldScene {
 
   /**
    * Draw at a fixed virtual resolution and let CSS blow it up by a whole number
-   * of device pixels, letterboxing what is left over (spec 095).
+   * of device pixels, letterboxing what is left over (spec 099).
    *
    * There is no blit shader here on purpose. Sizing the canvas's backing store to
    * exactly the virtual buffer and giving it a CSS size of `scale` device pixels

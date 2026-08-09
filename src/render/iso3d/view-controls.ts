@@ -92,7 +92,7 @@ export interface ViewControls {
   /** The retro dither/quantization filter's current settings (spec 038). */
   retro(): RetroSettings;
   /**
-   * The hike look's settings (spec 093). Every switch off by default, so the
+   * The hike look's settings (spec 097). Every switch off by default, so the
    * frame is the one that shipped before the arc started until one is thrown.
    *
    * Fields belonging to steps that have not landed sit at their `HIKE_OFF`
@@ -441,7 +441,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   const gradeStrength = makeSlider('Filter strength', 0, 100, 5, DEFAULT_GRADE_STRENGTH * 100, '%',
     'How strongly the colour filter is applied. 0 is off whichever preset is chosen.');
 
-  // The hike look (spec 093). One switch per step, all off, so each can be
+  // The hike look (spec 097). One switch per step, all off, so each can be
   // turned on alone -- these two are step 2's.
   const smoothNormals = makeCheckbox('Smooth normals', HIKE_OFF.smoothNormals,
     'Average vertex normals across surfaces gentler than the crease angle instead of shading every ' +
@@ -498,7 +498,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     'two-pixel specks that blink as geometry crosses a sample boundary. 0 disables it.');
 
   // Step 10: the renderer's first texture, generated rather than fetched
-  // (spec 102), and the boundary the ground's materials meet along.
+  // (spec 106), and the boundary the ground's materials meet along.
   const triplanar = makeCheckbox('Surface detail', HIKE_OFF.triplanar,
     'Modulate the ground and cliff colours with a generated noise tile, projected on all three ' +
     'world axes so a vertical face is not smeared. Off by default: it is the only step here that ' +
@@ -523,7 +523,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     'as the lattice underneath it.');
 
   // Step 9: a softer shadow edge, which the look deliberately does not want
-  // (spec 101) -- the switch exists so the choice can be seen.
+  // (spec 105) -- the switch exists so the choice can be seen.
   const softShadows = makeCheckbox('Soft shadows', HIKE_OFF.softShadows,
     'Filter the shadow map with a Poisson disc instead of taking one unfiltered comparison. Off by ' +
     'choice rather than by caution: hard shadow edges land on texel boundaries and match a ' +
@@ -531,7 +531,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   const shadowRadius = makeSlider('Penumbra', 0.5, 6, 0.5, HIKE_OFF.shadowPcfRadius, ' texels',
     'How wide the filter reaches, in shadow-map texels.');
 
-  // Step 8: the fold that is already in the data (spec 100).
+  // Step 8: the fold that is already in the data (spec 104).
   const curvature = makeCheckbox('Creases', HIKE_OFF.curvature,
     'Darken the ground where it folds. Measured once at mesh time from the corner normals each ' +
     'chunk already carries, so it costs a uniform to switch and nothing per frame.');

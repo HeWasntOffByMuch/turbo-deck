@@ -4,7 +4,7 @@ import { srgbDecode, unpackLinear } from './hike.js';
 import { PALETTE, TERRAIN_CLIFF_COLORS, TERRAIN_COLORS } from './palette.js';
 
 /**
- * Regression guards on three.js's colour management (spec 093).
+ * Regression guards on three.js's colour management (spec 097).
  *
  * The audit that opened this arc found the colour pipeline already correct:
  * lighting runs in linear working space, the sRGB encode happens once at
@@ -16,7 +16,7 @@ import { PALETTE, TERRAIN_CLIFF_COLORS, TERRAIN_COLORS } from './palette.js';
  * `renderer.outputColorSpace =`, or `ColorManagement.enabled = false` slipped in
  * to "fix" a colour that looked off, flips any of these with no visible symptom
  * at all: the frame still renders, and only the edge thresholds and palette
- * steps that every later step of spec 093 is tuned against quietly stop meaning
+ * steps that every later step of spec 097 is tuned against quietly stop meaning
  * what they meant. A wrong transfer function does not look like a bug. It looks
  * like every number needing to be a little different than it should be.
  *

@@ -127,7 +127,7 @@ vec3 windBend(vec3 worldPos) {
   return hinge + rotateAboutWind(bent - hinge, angle * uSwayTilt);
 }
 
-// The normal that goes with the bend above (spec 093).
+// The normal that goes with the bend above (spec 097).
 //
 // Both the swing and the slab's tilt are rotations in the same (downwind, up)
 // plane, so the two compose by adding their angles -- which is why one rotation
@@ -220,7 +220,7 @@ export function applySway(
   height: number,
   trail: SwayLag = {},
   /**
-   * Rotate the vertex normal along with the vertex (spec 093). Off by default,
+   * Rotate the vertex normal along with the vertex (spec 097). Off by default,
    * because it does nothing at all while the batch is flat-shaded and three.js
    * is deriving face normals from the displaced position anyway.
    */
@@ -257,7 +257,7 @@ export function applySway(
   patchMaterial(distance, lag, tilt, false);
   mesh.customDistanceMaterial = distance;
 
-  // And a fourth copy for the depth/normal buffers (spec 096). Same reasoning as
+  // And a fourth copy for the depth/normal buffers (spec 100). Same reasoning as
   // the shadow materials one line up: that pass renders with a material of its
   // own, and a batch whose visible geometry leans while its normal buffer stands
   // upright would have its outline drawn where the tree used to be.
@@ -319,7 +319,7 @@ export const SPLICES: readonly { readonly include: string; readonly source: stri
 
 /**
  * The normal's splice, kept apart from the three above because it is applied
- * only when asked for (spec 093, step 2).
+ * only when asked for (spec 097, step 2).
  *
  * Separate rather than always-on so the difference can be seen: with normals
  * interpolated and this left off, a leaning canopy is lit as though it were

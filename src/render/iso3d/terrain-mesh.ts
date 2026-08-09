@@ -63,9 +63,9 @@ patchTerrainStreak(surfaceMaterial);
 patchTerrainStreak(wallMaterial);
 // Only the surface. The walls are flat vertical skirts with no curvature to
 // measure, and a material that reads a `cavity` attribute the geometry does not
-// carry is a GL error rather than a zero (spec 100).
+// carry is a GL error rather than a zero (spec 104).
 patchTerrainCurvature(surfaceMaterial);
-// Both ground materials (spec 102). The cliff wall is the surface that most
+// Both ground materials (spec 106). The cliff wall is the surface that most
 // needs it -- a tall vertical face in a single tone reads as a cut-out -- and it
 // is also the one a ground-plane UV would smear, which is why the projection is
 // triplanar.
@@ -123,7 +123,7 @@ class MeshBuffer {
   readonly colors: number[] = [];
   readonly normals: number[] = [];
   /**
-   * How much the ground folds at this vertex, 0..1 (spec 100).
+   * How much the ground folds at this vertex, 0..1 (spec 104).
    *
    * Constant across a quad, like the colour: it is a property of the cell, and
    * the ground's whole look is flat bands one cell wide. Emitted only for the
@@ -191,7 +191,7 @@ function buildChunk(
   };
 
   /**
-   * The same corner as a sample the cavity measure can read (spec 100).
+   * The same corner as a sample the cavity measure can read (spec 104).
    *
    * Everything it needs is already here: the corner's jittered world position and
    * the smooth normal the field has there, both stored by every chunk that shares

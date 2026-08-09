@@ -1,7 +1,7 @@
 import { Rng } from '../../shared/prng.js';
 
 /**
- * The one texture in this renderer, generated rather than fetched (spec 102).
+ * The one texture in this renderer, generated rather than fetched (spec 106).
  *
  * Pure -- no three.js and no DOM -- so what the tile *is* can be asserted in
  * Node; `terrain-detail.ts` uploads whatever this returns.

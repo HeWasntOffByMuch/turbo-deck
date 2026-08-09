@@ -41,7 +41,7 @@ function markerTexture(kind: MapMarkerKind): THREE.Texture {
   // and a texture's colour space defaults to none, meaning "already linear". So
   // without this the bytes skip the decode every other use of the same constant
   // gets, and the disc comes out the one place in the renderer where
-  // MARKER_COLORS does not draw as MARKER_COLORS (spec 093).
+  // MARKER_COLORS does not draw as MARKER_COLORS (spec 097).
   texture.colorSpace = THREE.SRGBColorSpace;
   if (!ctx) return texture;
 

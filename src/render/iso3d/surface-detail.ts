@@ -1,6 +1,6 @@
 /**
  * Triplanar projection weights, and the slope/height blend the ground's material
- * boundary is softened with (spec 102).
+ * boundary is softened with (spec 106).
  *
  * Pure -- no three.js and no DOM -- and the GLSL below is a transcription of the
  * functions above it, held together by `surface-detail.test.ts`. Same arrangement

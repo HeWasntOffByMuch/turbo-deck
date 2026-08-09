@@ -1,6 +1,6 @@
 # 099 — What distance does to a fill
 
-Step 7 of the hike arc (spec 093). Behind `HikeSettings.ink`, off by default.
+Step 7 of the hike arc (spec 097). Behind `HikeSettings.ink`, off by default.
 
 ## Problem
 
@@ -150,7 +150,7 @@ nothing about the feature.
 
 ## Out of scope
 
-- The outline colour and strength stay spec 097's; this step only fixed what
+- The outline colour and strength stay spec 101's; this step only fixed what
   space they were written in.
 - No albedo buffer, for the reason above.
 - Nothing here touches the server, the protocol, the sim, or picking.

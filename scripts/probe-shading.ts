@@ -1,5 +1,5 @@
 // Dev-only: prove the smooth-normal and sway-normal shader paths actually
-// compile and link on a real GL context (spec 093, step 2).
+// compile and link on a real GL context (spec 097, step 2).
 // Not part of the app. `npx tsx scripts/probe-shading.ts`
 //
 // Drives `src/render/shading-probe.html` (dev-server only, never in a build),
@@ -199,7 +199,7 @@ try {
     );
   }
 
-  // The depth/normal buffers (spec 096). Read back through the debug blit,
+  // The depth/normal buffers (spec 100). Read back through the debug blit,
   // because a depth attachment cannot be read any other way -- which is also why
   // the first thing checked is simply that it is not a constant.
   for (const probe of buffers) {
@@ -252,7 +252,7 @@ try {
     for (const problem of problems) console.log(`        ${problem}`);
   }
 
-  // The outline pass (spec 097).
+  // The outline pass (spec 101).
   if (edges) {
     const problems: string[] = [];
     if (edges.edgeFraction < 0.01) problems.push('found no edges at all');
@@ -301,7 +301,7 @@ try {
     for (const problem of problems) console.log(`        ${problem}`);
   }
 
-  // Quantizing onto a palette (spec 098).
+  // Quantizing onto a palette (spec 102).
   if (palette) {
     const problems: string[] = [];
     // The claim, stated the only way it can be. A quantizer that is subtly wrong
@@ -326,7 +326,7 @@ try {
     for (const problem of problems) console.log(`        ${problem}`);
   }
 
-  // The distance treatment (spec 099).
+  // The distance treatment (spec 103).
   if (ink) {
     const problems: string[] = [];
     if (ink.nearPixels < 500 || ink.farPixels < 500) {
@@ -404,7 +404,7 @@ try {
     for (const problem of problems) console.log(`        ${problem}`);
   }
 
-  // Baked creases (spec 100).
+  // Baked creases (spec 104).
   if (curvature) {
     const problems: string[] = [];
     if (curvature.creasedCells < 200 || curvature.flatCells < 200) {
@@ -471,7 +471,7 @@ try {
     for (const problem of problems) console.log(`        ${problem}`);
   }
 
-  // The soft shadow filter (spec 101).
+  // The soft shadow filter (spec 105).
   if (shadows) {
     const problems: string[] = [];
     if (!shadows.castingWorked) {
@@ -522,7 +522,7 @@ try {
     for (const problem of problems) console.log(`        ${problem}`);
   }
 
-  // Surface detail (spec 102).
+  // Surface detail (spec 106).
   if (detail) {
     const problems: string[] = [];
     if (detail.cliffTonesOn < detail.cliffTonesOff * 4) {
@@ -576,7 +576,7 @@ try {
         `        rock blend moved ${detail.blendChanged} px, ` +
         `${detail.flatGroundChanged} of them flat low ground; ` +
         `mipmaps ${detail.mipmapped}, anisotropy ${detail.anisotropy}\n` +
-        `        LOD measurement (declined, spec 102): ${detail.mapInstances} instances in ` +
+        `        LOD measurement (declined, spec 106): ${detail.mapInstances} instances in ` +
         `${detail.mapBatches} batches, ${detail.mapTriangles} triangles`,
     );
     for (const problem of problems) console.log(`        ${problem}`);

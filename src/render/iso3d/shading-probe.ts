@@ -19,7 +19,7 @@ import type { MeshLayer } from '../../terrain/map-world.js';
 
 /**
  * A dev-server-only rig that proves the shading switches' shaders actually
- * compile and link (spec 093, step 2). Never in a build: `vite build` bundles
+ * compile and link (spec 097, step 2). Never in a build: `vite build` bundles
  * `index.html` and nothing else.
  *
  * ## Why this exists, when there are already 1600 unit tests
@@ -117,7 +117,7 @@ export interface ShadingProbeCase {
   readonly radius: number;
 }
 
-/** What one depth/normal buffer check found (spec 096). */
+/** What one depth/normal buffer check found (spec 100). */
 export interface BufferProbeCase {
   readonly label: string;
   readonly view: BufferView;
@@ -153,7 +153,7 @@ export interface BufferProbeCase {
   readonly readoutLeaked: boolean;
 }
 
-/** What the outline pass found (spec 097). */
+/** What the outline pass found (spec 101). */
 export interface EdgeProbeCase {
   /** Fraction of the frame marked as edge, with the sky masked out. */
   readonly edgeFraction: number;
@@ -183,7 +183,7 @@ export interface EdgeProbeCase {
   readonly floorEdgeFraction: number;
 }
 
-/** What quantizing onto a palette produced (spec 098). */
+/** What quantizing onto a palette produced (spec 102). */
 export interface PaletteProbeCase {
   /** Distinct colours in the frame. Must not exceed the palette's size. */
   readonly distinct: number;
@@ -201,7 +201,7 @@ export interface PaletteProbeCase {
   readonly changedFrame: boolean;
 }
 
-/** What the distance treatment did to the frame (spec 099). */
+/** What the distance treatment did to the frame (spec 103). */
 export interface InkProbeCase {
   /** Where the treatment was ramped, in world units, and the depth range of the frame. */
   readonly inkStart: number;
@@ -247,7 +247,7 @@ export interface InkProbeCase {
   readonly lineColorWanted: readonly [number, number, number];
 }
 
-/** What baking the ground's creases did (spec 100). */
+/** What baking the ground's creases did (spec 104). */
 export interface CurvatureProbeCase {
   /** Cells the synthetic chunk marked as folded, and as flat. */
   readonly creasedCells: number;
@@ -280,7 +280,7 @@ export interface CurvatureProbeCase {
   readonly streakAlive: boolean;
 }
 
-/** What the soft-shadow filter did (spec 101). */
+/** What the soft-shadow filter did (spec 105). */
 export interface ShadowProbeCase {
   /** Pixels fully in shadow, and fully lit, with the filter off. */
   readonly shadowPixels: number;
@@ -303,7 +303,7 @@ export interface ShadowProbeCase {
   readonly castingWorked: boolean;
 }
 
-/** What the generated detail texture did (spec 102). */
+/** What the generated detail texture did (spec 106). */
 export interface DetailProbeCase {
   /** Distinct colours over the cliff face, with the switch off and on. */
   readonly cliffTonesOff: number;
@@ -340,19 +340,19 @@ declare global {
     shadingProbe?: readonly ShadingProbeCase[];
     /** The four buffers as one labelled PNG data URL. Written before `shadingProbe`. */
     shadingProbeSheet?: string;
-    /** What the depth and normal buffers came back with (spec 096). */
+    /** What the depth and normal buffers came back with (spec 100). */
     bufferProbe?: readonly BufferProbeCase[];
-    /** What the outline pass found (spec 097). */
+    /** What the outline pass found (spec 101). */
     edgeProbe?: EdgeProbeCase;
-    /** What quantizing onto a palette produced (spec 098). */
+    /** What quantizing onto a palette produced (spec 102). */
     paletteProbe?: PaletteProbeCase;
-    /** What the distance treatment did (spec 099). */
+    /** What the distance treatment did (spec 103). */
     inkProbe?: InkProbeCase;
-    /** What baking the ground's creases did (spec 100). */
+    /** What baking the ground's creases did (spec 104). */
     curvatureProbe?: CurvatureProbeCase;
-    /** What the soft-shadow filter did (spec 101). */
+    /** What the soft-shadow filter did (spec 105). */
     shadowProbe?: ShadowProbeCase;
-    /** What the generated detail texture did (spec 102). */
+    /** What the generated detail texture did (spec 106). */
     detailProbe?: DetailProbeCase;
   }
 }
@@ -494,7 +494,7 @@ advanceWind(7.3);
 
 /**
  * Capture the depth/normal buffers for the same scene and read one of them back
- * through the debug blit (spec 096).
+ * through the debug blit (spec 100).
  *
  * Through the blit, not by reading the target: a depth attachment cannot be
  * `readPixels`'d at all, so sampling it in a shader and writing the result
@@ -901,7 +901,7 @@ function runPalette(): PaletteProbeCase {
 /**
  * Run the distance treatment over a scene deep enough to have a near and a far
  * end, and measure the one claim that separates this effect from ordinary fog
- * (spec 099).
+ * (spec 103).
  *
  * Fog everything and the far hills go soft. What is being built instead is fills
  * that recede under lines that do not: the treatment runs inside the retro pass,
@@ -1238,7 +1238,7 @@ function bowlChunk(cols: number, rows: number, cellSize: number): TerrainChunk {
 
 /**
  * Mesh that chunk through the real mesher and measure what the crease switch does
- * to the frame (spec 100).
+ * to the frame (spec 104).
  *
  * The real mesher and the real material on purpose. The measure itself is already
  * pinned in `curvature.test.ts`; what cannot be checked in Node is whether the
@@ -1390,7 +1390,7 @@ function runCurvature(): CurvatureProbeCase {
 
 /**
  * Cast a hard-edged shadow onto flat ground and measure what the filter does to
- * its edge (spec 101).
+ * its edge (spec 105).
  *
  * The claim is narrow and worth keeping narrow: a filter widens the band of
  * partially-shadowed pixels and does nothing else. It must not move the shadow,
@@ -1566,7 +1566,7 @@ function runShadows(): ShadowProbeCase {
 
 /**
  * Draw a terrain chunk with a tall cliff in it and measure what the generated
- * texture does to it (spec 102).
+ * texture does to it (spec 106).
  *
  * The measurement that matters is the smear. Any texture at all makes a cliff
  * more interesting than one flat tone, so "there are more colours now" would pass

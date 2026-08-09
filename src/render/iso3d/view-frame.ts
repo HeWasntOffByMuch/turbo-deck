@@ -56,7 +56,7 @@ export function cursorToNdc(cssX: number, cssY: number, cssWidth: number, cssHei
   return { x: (cssX / width) * 2 - 1, y: -((cssY / height) * 2 - 1) };
 }
 
-// --- the fixed virtual resolution (spec 095) ---------------------------------
+// --- the fixed virtual resolution (spec 099) ---------------------------------
 
 /**
  * Where the canvas sits, and how big, to show a fixed virtual buffer upscaled by

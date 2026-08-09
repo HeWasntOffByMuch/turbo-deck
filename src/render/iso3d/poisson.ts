@@ -1,7 +1,7 @@
 import { Rng } from '../../shared/prng.js';
 
 /**
- * The sampling kernel the soft-shadow filter takes its taps on (spec 101).
+ * The sampling kernel the soft-shadow filter takes its taps on (spec 105).
  *
  * Pure -- no three.js and no DOM -- so the disc's properties can be asserted
  * rather than trusted. `shadow-pcf.ts` emits it into the shader from this same
@@ -134,7 +134,7 @@ export function glslPoissonShadow(points: readonly Point[]): string {
     .join('\n');
   const weight = points.length > 0 ? (1 / points.length).toFixed(8) : '1.0';
   return /* glsl */ `
-// Poisson-disc PCF (spec 101). Reached only when shadowRadius is above zero,
+// Poisson-disc PCF (spec 105). Reached only when shadowRadius is above zero,
 // which is how the switch is thrown -- three.js already uploads that number for
 // every light, so this needs no uniform of its own.
 float hikePoissonShadow( sampler2D shadowMap, vec2 shadowMapSize, vec2 uv, float compare, float radius ) {

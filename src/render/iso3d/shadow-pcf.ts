@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { SHADOW_POISSON_DISK, glslPoissonShadow } from './poisson.js';
 
 /**
- * Poisson-disc PCF for the sun's shadow (spec 101), installed once into three's
+ * Poisson-disc PCF for the sun's shadow (spec 105), installed once into three's
  * own shadow chunk.
  *
  * ## Why one global patch and not a patch per material
@@ -10,7 +10,7 @@ import { SHADOW_POISSON_DISK, glslPoissonShadow } from './poisson.js';
  * The filter has to reach everything that receives a shadow -- the ground, the
  * cliff walls, the props, the units, the critters -- and those are many materials
  * with patches already on them. `onBeforeCompile` is a single slot, so each one
- * would have to compose (spec 100 had to do that dance for one material, and got
+ * would have to compose (spec 104 had to do that dance for one material, and got
  * it wrong first). Patching `ShaderChunk.shadowmap_pars_fragment` reaches all of
  * them at once, because they all `#include` it.
  *

@@ -1,5 +1,5 @@
 /**
- * How much a cell of ground folds, from the normals it already carries (spec 100).
+ * How much a cell of ground folds, from the normals it already carries (spec 104).
  *
  * Pure -- no three.js and no DOM -- so the measure can be run against numbers.
  * `terrain-mesh.ts` bakes it into a vertex attribute at mesh time and

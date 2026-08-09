@@ -1,5 +1,5 @@
 // Dev-only: check the fixed virtual resolution actually lands on whole device
-// pixels, at several window sizes and several device pixel ratios (spec 095).
+// pixels, at several window sizes and several device pixel ratios (spec 099).
 // Not part of the app. `npx tsx scripts/probe-lowres.ts`
 //
 // Requires a build first (`npm run build`); it serves `dist/` rather than the dev

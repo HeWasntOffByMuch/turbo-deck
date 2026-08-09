@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 /**
- * The three.js half of spec 100: carry the baked cavity through to the fragment
+ * The three.js half of spec 104: carry the baked cavity through to the fragment
  * stage and darken the ground with it.
  *
  * The measure itself is in `curvature.ts`, which is pure and tested; the mesher

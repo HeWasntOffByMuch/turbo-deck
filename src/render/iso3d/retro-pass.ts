@@ -66,7 +66,7 @@ uniform sampler2D uPalette;
 uniform float uPaletteSize;
 /** The mean gap between neighbouring palette colours; the dither's unit. */
 uniform float uPaletteSpacing;
-/** The distance treatment (spec 099). uInkOn is 0 when there is nothing to do. */
+/** The distance treatment (spec 103). uInkOn is 0 when there is nothing to do. */
 uniform highp sampler2D uDepth;
 uniform float uInkOn;
 uniform float uNear;
@@ -100,7 +100,7 @@ vec3 grade(vec3 c) {
 
 // The nearest entry of the palette texture, by squared distance. Mirrors
 // nearestPaletteColor in retro.ts; the colours are texels rather than constants
-// so a palette is data the panel supplies and never shader source (spec 098).
+// so a palette is data the panel supplies and never shader source (spec 102).
 vec3 nearestPaletteColor(vec3 c) {
   vec3 best = c;
   float bestDistance = 1e9;
@@ -120,7 +120,7 @@ vec3 nearestPaletteColor(vec3 c) {
 void main() {
   vec3 lit = toSRGB(clamp(texture2D(uScene, vUv).rgb, 0.0, 1.0));
 
-  // The distance treatment, on the fill and before everything else (spec 099).
+  // The distance treatment, on the fill and before everything else (spec 103).
   //
   // Before the grade and the quantize because it is part of what the surface
   // *is*, not a filter over the finished image -- and, more to the point, before
@@ -332,7 +332,7 @@ export class RetroPass {
   }
 
   /**
-   * Quantize onto a palette instead of onto even steps (spec 098), or pass null
+   * Quantize onto a palette instead of onto even steps (spec 102), or pass null
    * to go back to steps.
    *
    * The colours travel as a texture rather than as shader source, which is the
@@ -353,7 +353,7 @@ export class RetroPass {
   }
 
   /**
-   * Switch the distance treatment on, with the depth buffer it reads (spec 099).
+   * Switch the distance treatment on, with the depth buffer it reads (spec 103).
    *
    * Pass null to switch it off. The fog colour is the *live* sky rather than a
    * setting: the day/night cycle moves it, and a fixed haze colour under a sunset
