@@ -229,8 +229,10 @@ src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
                  which photographs the frame and reports the acceptance numbers.
 src/render/iso3d/hike.ts, shading.ts, hike-buffers.ts  the stylized look (specs
                  097-106): hike.ts is the one settings object every step of the arc
-                 is switched from (all off by default) plus the sRGB transfer the
-                 passes mirror; shading.ts welds vertex normals across a crease
+                 is switched from -- HIKE_OFF is the frame before the arc started
+                 and HIKE_DEFAULTS is what the tab opens at, which of the ten
+                 steps is smooth normals and the distance ink -- plus the sRGB
+                 transfer the passes mirror; shading.ts welds vertex normals across a crease
                  angle, rotates one to follow the wind's bend, and packs one
                  octahedrally into two bytes. Both pure and tested headlessly.
                  edges.ts finds outlines in those buffers: the depth term measures
