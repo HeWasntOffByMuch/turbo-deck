@@ -27,6 +27,7 @@ import { summarize } from './ledger.js';
 import type { StudioPipeline } from './pipeline.js';
 import { projectCost } from './pricing.js';
 import type { StudioStore } from './store.js';
+import { knownPresetsFor, unknownPresets } from './tripo.js';
 import type { GenerationParams, Job } from './types.js';
 
 /** A reference image is a picture, not a payload. */
@@ -69,6 +70,26 @@ function paramsFrom(body: Record<string, unknown>, config: StudioConfig): Genera
     clipIntents,
     outFormat: 'glb',
   };
+}
+
+/**
+ * Why these clip names cannot be retargeted, or null when they can.
+ *
+ * Checked here as well as in the pipeline, and the two are not redundant: the
+ * pipeline's check is the one that guards the money, but it only runs after the
+ * mesh and the rig have been bought. This one runs before a price is even
+ * quoted, which is the difference between a typo costing nothing and a typo
+ * costing a generation.
+ *
+ * Keyed on the skeleton id, since the rig check has not happened yet. `biped`
+ * has a confirmed vocabulary; anything else is passed through unchecked rather
+ * than refused against a list nobody has verified.
+ */
+function clipVocabularyProblem(skeletonId: string, params: GenerationParams): string | null {
+  const unknown = unknownPresets(skeletonId, params.clipIntents);
+  if (unknown.length === 0) return null;
+  const known = knownPresetsFor(skeletonId) ?? [];
+  return `no ${skeletonId} animation preset is called ${unknown.map((name) => `"${name}"`).join(', ')}. The ones there are: ${known.join(', ')}.`;
 }
 
 /**
@@ -209,6 +230,13 @@ export function studioRoutes(deps: RouteDeps): readonly Route[] {
           });
         }
 
+        // Before the price, not after: a set that cannot be retargeted should
+        // never get as far as having a confirmation token issued for it.
+        if (establishesRigFamily) {
+          const problem = clipVocabularyProblem(asStringField(body, 'skeletonId') ?? 'biped', params);
+          if (problem !== null) return sendJson(response, 400, { error: problem });
+        }
+
         const projection = projectCost({ params, establishesRigFamily, prices: config.prices });
         const confirmation = confirmations.issue(randomUUID(), projection, key, now());
         confirmations.sweep(now());
@@ -257,6 +285,11 @@ export function studioRoutes(deps: RouteDeps): readonly Route[] {
 
         const hit = cacheHit(store.listJobs(), key);
         if (hit) return sendJson(response, 200, { cached: true, job: jobView(hit) });
+
+        if (establishesRigFamily) {
+          const problem = clipVocabularyProblem(skeletonId, params);
+          if (problem !== null) return sendJson(response, 400, { error: problem });
+        }
 
         const redeemed = confirmations.redeem(token, key, now());
         if (!redeemed.ok) return sendJson(response, 409, { error: redeemed.reason });

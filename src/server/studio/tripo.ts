@@ -43,10 +43,11 @@
  *  - **`model`, not `model_version`.** And the rig takes its *own* model
  *    version, which is not the generation one -- see {@link RigRequest}.
  *  - **Retarget takes one animation per call.** The v2-era batching this was
- *    written around does not exist, and the presets are namespaced by the
- *    rig type the check returned. That is a *cost* correction, not a shape one:
- *    five clips are five calls, and {@link RETARGET_BATCH_SIZE} moving to 1 is
- *    what keeps the projection and the ceilings honest about it.
+ *    written around does not exist. That is a *cost* correction, not a shape
+ *    one: five clips are five calls, and {@link RETARGET_BATCH_SIZE} moving to 1
+ *    is what keeps the projection and the ceilings honest about it. The preset
+ *    is a bare `preset:walk` -- see {@link BIPED_ANIMATION_PRESETS} for the
+ *    names a biped actually has.
  *
  * ## The key
  *
@@ -91,9 +92,10 @@ export interface TaskResult {
    * The rig the check recommends: `biped`, `quadruped`, `avian` and so on.
    *
    * Read rather than assumed, and then carried all the way to the retarget --
-   * animation presets are namespaced by it, and a bare `preset:walk` is
-   * rejected. Assuming `biped` would work until the first non-humanoid and then
-   * fail one paid call per clip.
+   * not into the preset name, which is bare, but into *which vocabulary the
+   * names are checked against*. A biped's presets are known
+   * ({@link BIPED_ANIMATION_PRESETS}); anything else is passed through
+   * unchecked rather than refused against a list nobody has confirmed.
    */
   readonly rigType: string | null;
   readonly error: string | null;
@@ -127,7 +129,7 @@ export interface RigRequest {
 export interface RetargetRequest {
   readonly sourceTaskId: string;
   /**
-   * Exactly one, namespaced by rig type: `preset:biped:walk`.
+   * Exactly one, as a bare preset name: `preset:walk`.
    *
    * An array because the field is one, not because more than one fits. See
    * {@link RETARGET_BATCH_SIZE}.
@@ -137,14 +139,61 @@ export interface RetargetRequest {
 }
 
 /**
+ * The animations a biped rig can actually be given.
+ *
+ * The real vocabulary, and the reason it is written down rather than left to
+ * whatever somebody types: retarget is a paid call per clip, so a name the API
+ * does not know is not a validation error, it is a charge for nothing. Holding
+ * the list here lets an unknown intent be refused *before* anything is sent.
+ *
+ * Note what is not in it. There is no `attack` and no `death` -- the nearest are
+ * `slash` and `fall`, and those are the names to use rather than a mapping
+ * somebody invented. `fall` in particular is a fall, not necessarily a death, and
+ * quietly aliasing one to the other would put the wrong animation on a corpse.
+ */
+export const BIPED_ANIMATION_PRESETS: readonly string[] = [
+  'idle',
+  'walk',
+  'run',
+  'dive',
+  'climb',
+  'jump',
+  'slash',
+  'shoot',
+  'hurt',
+  'fall',
+  'turn',
+];
+
+/**
  * A clip intent turned into the preset name the API wants.
  *
- * Namespaced by the rig type the *check* recommended, never by an assumption --
- * `preset:walk` without the namespace is rejected, and guessing `biped` for a
- * quadruped would fail one paid call per clip.
+ * Just `preset:<name>` -- **not** namespaced by rig type. An earlier draft sent
+ * `preset:biped:walk` on the strength of a third-party integration note; the
+ * real API takes the bare form.
  */
-export function presetFor(rigType: string, intent: string): string {
-  return `preset:${rigType}:${intent}`;
+export function presetFor(intent: string): string {
+  return `preset:${intent}`;
+}
+
+/**
+ * The presets a rig type is known to have, or null when we do not know.
+ *
+ * Null is a real answer and is treated as one: only the biped list has been
+ * confirmed, so a quadruped's intents are passed through unchecked rather than
+ * refused against a list that was guessed. Refusing on an invented list would
+ * block work that would have succeeded, which is the opposite failure but still
+ * a failure.
+ */
+export function knownPresetsFor(rigType: string | null): readonly string[] | null {
+  return rigType === null || rigType === 'biped' ? BIPED_ANIMATION_PRESETS : null;
+}
+
+/** Intents this rig has no preset for. Empty when the vocabulary is unknown. */
+export function unknownPresets(rigType: string | null, intents: readonly string[]): readonly string[] {
+  const known = knownPresetsFor(rigType);
+  if (known === null) return [];
+  return intents.filter((intent) => !known.includes(intent));
 }
 
 export class TripoError extends Error {

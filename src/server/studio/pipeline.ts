@@ -44,7 +44,16 @@ import { Pacer } from './pacing.js';
 import { projectCost, type PlannedStep } from './pricing.js';
 import type { StudioConfig } from './config.js';
 import type { StudioStore } from './store.js';
-import { batchClips, presetFor, TripoError, type TaskHandle, type TaskResult, type TripoClient } from './tripo.js';
+import {
+  batchClips,
+  knownPresetsFor,
+  presetFor,
+  TripoError,
+  unknownPresets,
+  type TaskHandle,
+  type TaskResult,
+  type TripoClient,
+} from './tripo.js';
 import type { Job, Stage } from './types.js';
 
 export type Clock = () => number;
@@ -392,12 +401,32 @@ export class StudioPipeline {
     const source = stepOf(job, 'rig')?.taskId;
     if (!source) throw new TripoError('retarget has no rigged model to animate', null, null);
 
+    // A name the API does not know is not a validation error, it is a paid call
+    // that buys nothing -- the task is submitted, charged and fails. So the
+    // vocabulary is checked against the rig type the check reported, before any
+    // of it is sent. Blocked rather than failed, because nothing was attempted;
+    // and the fix is a new job with real names rather than a resume, which is
+    // what the message has to say.
+    const unknown = unknownPresets(job.rigType, job.params.clipIntents);
+    if (unknown.length > 0) {
+      const known = knownPresetsFor(job.rigType) ?? [];
+      return this.save(
+        blockJob(
+          job,
+          'retarget',
+          `no ${job.rigType ?? 'biped'} animation preset is called ${unknown.map((name) => `"${name}"`).join(', ')}. ` +
+            `The ones there are: ${known.join(', ')}. Nothing was sent, so nothing was charged -- ` +
+            `start a new generation with names from that list.`,
+          this.deps.now(),
+        ),
+      );
+    }
+
     // One clip per call: the API rejects a multi-preset batch, so a five-clip
     // library is five paid calls. `batchClips` is what the cost projection used
     // too, so the number here and the number the ceiling was checked against
     // cannot drift apart.
     const batches = batchClips(job.params.clipIntents);
-    const rigType = job.rigType ?? 'biped';
     let current = job;
 
     // What is left to buy, checked once before any of it is: better to refuse a
@@ -433,7 +462,7 @@ export class StudioPipeline {
         () =>
           this.deps.client.retarget({
             sourceTaskId: source,
-            animations: [presetFor(rigType, intent)],
+            animations: [presetFor(intent)],
             outFormat: job.params.outFormat,
           }),
         deadline,

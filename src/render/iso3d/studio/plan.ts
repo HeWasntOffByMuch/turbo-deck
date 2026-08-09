@@ -23,26 +23,40 @@ export interface JobSummary {
 }
 
 /**
- * The clips a humanoid roster needs, as intents rather than as file names.
+ * The clips a biped can be given, as the API's own preset names.
  *
- * An intent is what the game asks for; which Tripo preset satisfies it is the
- * service's business. Keeping the two apart means renaming a preset is not a
- * change to every unitdef in the repo.
+ * An earlier draft of this list was a wish list -- `attack`, `hit`, `death`,
+ * `cast` -- on the theory that an intent is what the game asks for and the
+ * service maps it onto whatever preset satisfies it. That indirection is only
+ * worth having if there is something to map *onto*, and there is not: the
+ * retarget takes a fixed vocabulary and every clip is one paid call, so a name
+ * outside it is not a mapping problem, it is a charge for a task that fails.
+ * The tick boxes are therefore the real names, and the game's own naming happens
+ * later, in the unitdef, where it is free.
  *
- * **Every clip is one paid call.** The default set was five when this was
- * written around a five-per-call batch that turned out not to exist; each tick
- * now costs a retarget, so the default is the smallest set a unit needs to read
- * as alive and to fight, and the rest are opted into deliberately.
+ * There is no `attack` and no `death`. `slash` is the swing; `fall` is a fall,
+ * which is *near* a death without being one, so nothing here quietly aliases the
+ * two.
+ *
+ * Duplicated from `BIPED_ANIMATION_PRESETS` on the server rather than imported,
+ * because this file is bundled into the browser and that one is the module that
+ * holds the API key's client. `plan.test.ts` asserts the two agree, so the copy
+ * cannot drift in silence.
+ *
+ * The defaults are the smallest set a unit needs to stand, move and fight.
  */
 export const CLIP_INTENTS: readonly { readonly id: string; readonly label: string; readonly byDefault: boolean }[] = [
   { id: 'idle', label: 'Idle', byDefault: true },
   { id: 'walk', label: 'Walk', byDefault: true },
-  { id: 'attack', label: 'Attack swing', byDefault: true },
   { id: 'run', label: 'Run', byDefault: false },
-  { id: 'hit', label: 'Take a hit', byDefault: false },
-  { id: 'death', label: 'Death', byDefault: false },
-  { id: 'cast', label: 'Cast', byDefault: false },
+  { id: 'dive', label: 'Dive', byDefault: false },
+  { id: 'climb', label: 'Climb', byDefault: false },
   { id: 'jump', label: 'Jump', byDefault: false },
+  { id: 'slash', label: 'Slash (the attack swing)', byDefault: true },
+  { id: 'shoot', label: 'Shoot', byDefault: false },
+  { id: 'hurt', label: 'Hurt (taking a hit)', byDefault: false },
+  { id: 'fall', label: 'Fall', byDefault: false },
+  { id: 'turn', label: 'Turn', byDefault: false },
 ];
 
 export function defaultClipIntents(): readonly string[] {

@@ -9,6 +9,7 @@ import {
   type JobSummary,
 } from './plan.js';
 import { RETARGET_BATCH_SIZE } from '../../../server/studio/pricing.js';
+import { BIPED_ANIMATION_PRESETS } from '../../../server/studio/tripo.js';
 
 function job(patch: Partial<JobSummary> = {}): JobSummary {
   return { id: 'j', skeletonId: 'biped', status: 'succeeded', establishesRigFamily: true, ...patch };
@@ -66,7 +67,26 @@ describe('clip intents', () => {
 
   it('defaults to the clips a unit cannot do without', () => {
     // Catalogue order, not sorted -- the cache key is what canonicalises.
-    expect(defaultClipIntents()).toEqual(['idle', 'walk', 'attack']);
+    expect(defaultClipIntents()).toEqual(['idle', 'walk', 'slash']);
+  });
+
+  it('offers exactly the presets a biped has, and no invented ones', () => {
+    // The list is duplicated rather than imported, because this file is bundled
+    // into the browser and the server's copy sits next to the API key's client.
+    // This is what stops the copy drifting: a preset added on the server that
+    // never reaches the tick boxes cannot be asked for, and a tick box with no
+    // preset behind it is a paid call that buys nothing.
+    expect(CLIP_INTENTS.map((intent) => intent.id)).toEqual([...BIPED_ANIMATION_PRESETS]);
+  });
+
+  it('has no attack and no death, whatever a game programmer would reach for', () => {
+    // The two names most likely to be re-added by hand. `slash` is the swing and
+    // `fall` is a fall -- aliasing `fall` to a death would put a stumble on a
+    // corpse, so neither alias exists.
+    const ids = CLIP_INTENTS.map((intent) => intent.id);
+    expect(ids).not.toContain('attack');
+    expect(ids).not.toContain('death');
+    expect(ids).toContain('slash');
   });
 
   it('has unique ids', () => {

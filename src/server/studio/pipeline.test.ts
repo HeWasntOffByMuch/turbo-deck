@@ -215,7 +215,7 @@ describe('the happy path', () => {
         skeletonId: 'biped',
         establishesRigFamily: true,
         referenceImageSha256: HASH,
-        params: params({ clipIntents: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] }),
+        params: params({ clipIntents: ['idle', 'walk', 'run', 'jump', 'slash', 'shoot', 'turn'] }),
       },
       0,
     );
@@ -226,9 +226,11 @@ describe('the happy path', () => {
     expect(harness.fake.callsTo('/animations/retarget')).toHaveLength(7);
   });
 
-  it('namespaces each animation preset by the rig type the check returned', () => {
-    // `preset:walk` without the namespace is rejected, and assuming `biped`
-    // would fail one paid call per clip on the first non-humanoid.
+  it('sends a bare preset name, not one namespaced by rig type', () => {
+    // An earlier draft sent `preset:biped:walk` on the strength of a third-party
+    // integration note. The real API takes `preset:walk`, and the rig type is
+    // read for a different purpose entirely: choosing which vocabulary the names
+    // are checked against.
     scriptSuccess(harness.fake);
     harness.fake.script('/animations/rig-check', { creditsConsumed: 0, riggable: true, rigType: 'quadruped' });
     seedJob(harness);
@@ -236,8 +238,61 @@ describe('the happy path', () => {
       const sent = harness.fake
         .callsTo('/animations/retarget')
         .map((call) => (call.body as { animations: string[] }).animations);
-      expect(sent).toEqual([['preset:quadruped:idle'], ['preset:quadruped:run']]);
+      expect(sent).toEqual([['preset:idle'], ['preset:run']]);
     });
+  });
+
+  it('refuses a clip name the rig has no preset for, before spending on it', async () => {
+    // A name the API does not know is not a validation error, it is a paid call
+    // that buys nothing. So the whole set is checked before any of it is sent.
+    scriptSuccess(harness.fake);
+    const wrong = createJob(
+      {
+        id: 'job-wrong',
+        unitId: 'grunt',
+        skeletonId: 'biped',
+        establishesRigFamily: true,
+        referenceImageSha256: HASH,
+        params: params({ clipIntents: ['idle', 'attack'] }),
+      },
+      0,
+    );
+    harness.store.saveReferenceImage('job-wrong', 'ref.png', 'image/png', new Uint8Array([1]));
+    harness.store.saveJob(wrong);
+
+    const job = await harness.pipeline.run('job-wrong');
+    expect(harness.fake.callsTo('/animations/retarget')).toHaveLength(0);
+    // Blocked, not failed: nothing was attempted at this stage, and the two want
+    // different words and different next actions.
+    expect(job?.status).toBe('blocked');
+    expect(job?.message).toContain('"attack"');
+    // And the message names the ones that do exist, since the fix is a rename.
+    expect(job?.message).toContain('slash');
+  });
+
+  it('passes the clips of an unknown rig type through unchecked', async () => {
+    // Only the biped vocabulary has been confirmed. Refusing a quadruped's
+    // intents against a guessed list would block work that would have succeeded
+    // -- the opposite failure, but still a failure.
+    scriptSuccess(harness.fake);
+    harness.fake.script('/animations/rig-check', { creditsConsumed: 0, riggable: true, rigType: 'quadruped' });
+    const exotic = createJob(
+      {
+        id: 'job-exotic',
+        unitId: 'hound',
+        skeletonId: 'quadruped',
+        establishesRigFamily: true,
+        referenceImageSha256: HASH,
+        params: params({ clipIntents: ['pounce'] }),
+      },
+      0,
+    );
+    harness.store.saveReferenceImage('job-exotic', 'ref.png', 'image/png', new Uint8Array([1]));
+    harness.store.saveJob(exotic);
+
+    const job = await harness.pipeline.run('job-exotic');
+    expect(job?.status).toBe('succeeded');
+    expect(harness.fake.callsTo('/animations/retarget')).toHaveLength(1);
   });
 
   it('names each clip file for its intent', () => {
@@ -588,7 +643,7 @@ describe('resuming without paying twice', () => {
         skeletonId: 'biped',
         establishesRigFamily: true,
         referenceImageSha256: HASH,
-        params: params({ clipIntents: ['a', 'b', 'c', 'd', 'e'] }),
+        params: params({ clipIntents: ['idle', 'walk', 'run', 'jump', 'slash'] }),
       },
       0,
     );
@@ -605,7 +660,7 @@ describe('resuming without paying twice', () => {
         skeletonId: 'biped',
         establishesRigFamily: true,
         referenceImageSha256: HASH,
-        params: params({ clipIntents: ['a', 'b', 'c', 'd', 'e'] }),
+        params: params({ clipIntents: ['idle', 'walk', 'run', 'jump', 'slash'] }),
       },
       0,
     );
@@ -624,7 +679,10 @@ describe('resuming without paying twice', () => {
       artifacts: {
         meshGlb: done.artifacts.meshGlb,
         riggedGlb: done.artifacts.riggedGlb,
-        clipGlbs: { a: done.artifacts.clipGlbs['a'] ?? '', b: done.artifacts.clipGlbs['b'] ?? '' },
+        clipGlbs: {
+          idle: done.artifacts.clipGlbs['idle'] ?? '',
+          walk: done.artifacts.clipGlbs['walk'] ?? '',
+        },
       },
     });
 
@@ -633,11 +691,11 @@ describe('resuming without paying twice', () => {
     const bought = harness.fake.callsTo('/animations/retarget').length - before;
     expect(bought).toBe(3);
     expect(Object.keys((harness.store.getJob('job-partial') as Job).artifacts.clipGlbs).sort()).toEqual([
-      'a',
-      'b',
-      'c',
-      'd',
-      'e',
+      'idle',
+      'jump',
+      'run',
+      'slash',
+      'walk',
     ]);
   });
 

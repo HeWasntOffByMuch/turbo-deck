@@ -12,6 +12,7 @@ import { ConfirmationStore, DEFAULT_CONFIRMATION_TTL_MS } from './confirm.js';
 import { checkCeilings, dayKeyOf, dayTotal, runTotal, summarize, type Ceilings, type LedgerEntry } from './ledger.js';
 import { DEFAULT_MIN_INTERVAL_MS, Pacer } from './pacing.js';
 import { DEFAULT_PRICES, projectCost, retargetCalls, RETARGET_BATCH_SIZE } from './pricing.js';
+import { BIPED_ANIMATION_PRESETS, knownPresetsFor, presetFor, unknownPresets } from './tripo.js';
 import type { GenerationParams } from './types.js';
 
 function params(patch: Partial<GenerationParams> = {}): GenerationParams {
@@ -332,5 +333,38 @@ describe('Pacer', () => {
 
   it('stays under one request per second by default', () => {
     expect(DEFAULT_MIN_INTERVAL_MS).toBeGreaterThanOrEqual(1000);
+  });
+});
+
+describe('the animation vocabulary', () => {
+  // Not a validation concern but a spending one: retarget is a paid call per
+  // clip, so a name the API does not know is charged for and returns nothing.
+  it('sends a bare preset name', () => {
+    expect(presetFor('walk')).toBe('preset:walk');
+  });
+
+  it('knows what a biped has, and admits when it does not know', () => {
+    expect(knownPresetsFor('biped')).toEqual(BIPED_ANIMATION_PRESETS);
+    // Null when the rig check has not run yet: the biped list is the one that
+    // has been confirmed, and it is the only rig this repo authors today.
+    expect(knownPresetsFor(null)).toEqual(BIPED_ANIMATION_PRESETS);
+    expect(knownPresetsFor('quadruped')).toBeNull();
+  });
+
+  it('names the intents a biped has no preset for', () => {
+    // The four a game programmer reaches for first, and none of them exist.
+    expect(unknownPresets('biped', ['idle', 'attack', 'death', 'cast', 'hit'])).toEqual([
+      'attack',
+      'death',
+      'cast',
+      'hit',
+    ]);
+    expect(unknownPresets('biped', ['idle', 'walk', 'slash', 'fall', 'hurt'])).toEqual([]);
+  });
+
+  it('refuses nothing when the vocabulary is unknown', () => {
+    // Refusing against a guessed list would block work that would have
+    // succeeded -- the opposite failure, but still a failure.
+    expect(unknownPresets('quadruped', ['pounce', 'nonsense'])).toEqual([]);
   });
 });
