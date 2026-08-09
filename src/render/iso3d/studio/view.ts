@@ -20,6 +20,15 @@ import { StudioApi, StudioApiError, type EstimateResult, type JobView, type Stud
 import { formatBytes, formatCredits, formatDuration, formatTimestamp, STAGE_LABELS, STATUS_COLORS, STATUS_LABELS } from './format.js';
 import { checkImage, MANUAL_CHECKS, measureImage, worstSeverity, type ImageFinding } from './image-check.js';
 import { CLIP_INTENTS, defaultClipIntents, establishesRigFamily, unitIdProblem } from './plan.js';
+import { mountPreview, type PreviewHandle } from './preview-panel.js';
+import mannequinUrl from '../../../../assets/units/dev/mannequin.glb?url';
+import idleUrl from '../../../../assets/units/dev/clips/idle.glb?url';
+import walkUrl from '../../../../assets/units/dev/clips/walk.glb?url';
+import runUrl from '../../../../assets/units/dev/clips/run.glb?url';
+import attackUrl from '../../../../assets/units/dev/clips/attack.glb?url';
+import devUnitDef from '../../../../assets/units/dev/mannequin.unitdef.json' with { type: 'json' };
+import devClipLib from '../../../../assets/units/dev/biped-dev.core.cliplib.json' with { type: 'json' };
+import type { ClipLib, UnitDef } from '../../../units/types.js';
 
 /** How often the queue is re-read while the tab is open. */
 const POLL_MS = 2000;
@@ -142,13 +151,54 @@ export function mountStudio(container: HTMLElement): ViewHandle {
   const exporter = section('5 · Export', 'Stages a finished job into assets/units/ and validates what it wrote.');
   root.append(ingest.root, generate.root, library.root, preview.root, exporter.root);
 
+  /**
+   * The reference unit (spec 110), bundled so the preview works from a fresh
+   * clone with no server and nothing generated. `?url` rather than inlined:
+   * a skinned mesh in the main bundle would be paid for by every session,
+   * including the ones that never open this tab.
+   */
+  let previewHandle: PreviewHandle | null = null;
+  const previewMount = el('div');
   preview.body.append(
     el(
       'p',
       MUTED,
-      'Not built yet. This will render through the same pipeline the game uses -- the same HikeSettings object the Play tab writes -- with a turntable, a scrubber, event markers you can drag, the state machine as a graph and the windup/active/recovery bars.',
+      'The reference unit (assets/units/dev/) -- a real skinned biped on the mixamo contract, so this screen works before anything has been generated. Rendered through the game\'s own retro pass and its cog; edits write back to the JSON on disk.',
     ),
+    previewMount,
   );
+
+  function startPreview(): void {
+    if (previewHandle) return;
+    previewHandle = mountPreview(
+      {
+        unitPath: 'dev/mannequin.unitdef.json',
+        clipLibPath: 'dev/biped-dev.core.cliplib.json',
+        unit: devUnitDef as unknown as UnitDef,
+        clipLib: devClipLib as unknown as ClipLib,
+        assets: {
+          meshUrl: mannequinUrl,
+          clipUrls: { idle: idleUrl, walk: walkUrl, run: runUrl, attack: attackUrl },
+          importScale: (devUnitDef as unknown as UnitDef).import.scale,
+        },
+      },
+      // Writes go through the server when one is reachable, and say so plainly
+      // when it is not -- an edit that silently lived in the tab would be the
+      // hidden state this whole road exists to avoid.
+      async (path, doc) => {
+        try {
+          const result = await api.saveDocument(path, doc);
+          return result.ok
+            ? `saved assets/units/${result.path}`
+            : `refused: ${result.issues.map((issue) => `${issue.path} ${issue.message}`).join('; ')}`;
+        } catch (cause) {
+          return cause instanceof StudioApiError ? `not saved -- ${cause.remedy}` : `not saved -- ${String(cause)}`;
+        }
+      },
+    );
+    previewMount.appendChild(previewHandle.element);
+    previewHandle.start();
+  }
 
   // --- ingest ---------------------------------------------------------------
   const drop = el(
@@ -651,6 +701,10 @@ export function mountStudio(container: HTMLElement): ViewHandle {
   return {
     element: root,
     start(): void {
+      // Mounted on first activation, so a session that never opens Studio never
+      // builds a second WebGL context or fetches a mesh.
+      startPreview();
+      previewHandle?.start();
       tokenInput.placeholder = api.hasToken
         ? 'a token is stored; paste a new one to replace it'
         : 'admin token (printed by `npm run server` at boot)';
@@ -663,6 +717,7 @@ export function mountStudio(container: HTMLElement): ViewHandle {
     stop(): void {
       if (timer !== null) clearInterval(timer);
       timer = null;
+      previewHandle?.stop();
     },
   };
 }

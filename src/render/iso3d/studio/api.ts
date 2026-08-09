@@ -247,6 +247,16 @@ export class StudioApi {
     return this.call(`/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }) as Promise<JobView>;
   }
 
+  /** Writes an authored document back to disk, validated server-side first. */
+  async saveDocument(path: string, doc: unknown): Promise<ExportResultView & { path: string }> {
+    const body = (await this.call(`/documents?path=${encodeURIComponent(path)}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ doc }),
+    })) as { ok: boolean; path: string; issues: readonly Issue[] };
+    return { ...body, written: [], pending: [], unitDir: '' };
+  }
+
   exportJob(jobId: string, options: { skeletonRef?: string; clipLibId?: string } = {}): Promise<ExportResultView> {
     return this.json('/export', { jobId, ...options }) as Promise<ExportResultView>;
   }

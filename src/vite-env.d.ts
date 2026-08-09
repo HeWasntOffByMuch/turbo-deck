@@ -23,3 +23,17 @@ declare module '*?raw' {
 interface ImportMeta {
   glob(pattern: string, options: { eager: true }): Record<string, unknown>;
 }
+
+/**
+ * Vite's `?url` imports, typed (spec 110).
+ *
+ * The Studio tab's preview loads real `.glb` files, and they are binary: `?raw`
+ * would mangle them and inlining a skinned mesh as base64 would put it in the
+ * main bundle for a tab most sessions never open. `?url` emits the file as an
+ * asset and hands back a path, so the browser fetches it only when the preview
+ * is actually mounted.
+ */
+declare module '*?url' {
+  const url: string;
+  export default url;
+}

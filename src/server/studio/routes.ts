@@ -360,6 +360,40 @@ export function studioRoutes(deps: RouteDeps): readonly Route[] {
       },
     },
 
+    /**
+     * The authored documents, read and written (spec 110).
+     *
+     * Everything the Preview tab edits -- a dragged event marker, a retuned
+     * wind-up, a transition's blend duration -- comes back through here, so
+     * nothing tuned lives only in a browser session. The write validates first
+     * and is atomic, both in `documents.ts`.
+     */
+    {
+      method: 'GET',
+      pattern: '/api/studio/documents',
+      handler: async ({ response, url }) => {
+        const { listDocuments, readDocument } = await import('./documents.js');
+        const wanted = url.searchParams.get('path');
+        if (wanted === null) return sendJson(response, 200, { documents: listDocuments(deps.unitsDir) });
+        const result = readDocument(deps.unitsDir, wanted);
+        if ('error' in result) return sendJson(response, 404, { error: result.error });
+        return sendJson(response, 200, { path: wanted, doc: result.doc });
+      },
+    },
+
+    {
+      method: 'PUT',
+      pattern: '/api/studio/documents',
+      handler: async ({ request, response, url }) => {
+        const { writeDocument } = await import('./documents.js');
+        const wanted = url.searchParams.get('path');
+        if (wanted === null) return sendJson(response, 400, { error: 'a ?path= is required' });
+        const body = asRecord(await readJsonBody(request, MAX_JSON_BYTES));
+        const result = writeDocument(deps.unitsDir, wanted, body['doc']);
+        return sendJson(response, result.ok ? 200 : 422, result);
+      },
+    },
+
     {
       method: 'POST',
       pattern: '/api/studio/jobs/:id/cancel',

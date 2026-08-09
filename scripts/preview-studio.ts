@@ -114,9 +114,36 @@ async function main(): Promise<void> {
 
     // --- the new tab ---------------------------------------------------------
     await openTab(page, 'Studio');
+    // The preview loads a real .glb and compiles the retro pass, which takes
+    // longer than a tab switch.
+    await page.waitForTimeout(2000);
     const studio = await mountedSize(page);
     if (studio.nodes < 20) failures.push(`Studio mounted only ${studio.nodes} nodes`);
-    console.log(`  Studio: ${studio.nodes} nodes`);
+    console.log(`  Studio: ${studio.nodes} nodes, ${studio.canvases} canvas(es)`);
+
+    // --- the preview actually loaded a model ---------------------------------
+    //
+    // The one thing that cannot be checked in Node: whether three's GLTFLoader
+    // accepts the .glb this repo writes by hand. A wrong buffer offset or a
+    // mismatched inverse bind matrix loads as an exploded cloud of triangles and
+    // every headless assertion about the file still passes.
+    const previewStatus = await page.locator('#app').innerText();
+    const stats = /(\d+) triangles, (\d+) bones, (\d+) vertices/.exec(previewStatus);
+    if (!stats) {
+      failures.push(`the preview reported no model stats -- it did not load. Panel said: ${previewStatus.slice(0, 300)}`);
+    } else {
+      console.log(`  reference unit: ${stats[1]} triangles, ${stats[2]} bones, ${stats[3]} vertices`);
+      if (Number(stats[2]) !== 25) failures.push(`expected 25 bones on the mixamo contract, got ${stats[2]}`);
+      if (Number(stats[1]) < 50) failures.push(`only ${stats[1]} triangles -- the mesh did not come through`);
+    }
+    for (const [needle, why] of [
+      ['state machine', 'the state graph is missing'],
+      ['action timings', 'the timing panel is missing'],
+      ['parameters', 'the parameter panel is missing'],
+      ['trigger basic.attack', 'the action trigger button is missing'],
+    ] as const) {
+      if (!previewStatus.toLowerCase().includes(needle)) failures.push(why);
+    }
 
     const text = (await page.locator('#app').innerText()).toLowerCase();
     for (const [needle, why] of [
@@ -135,15 +162,22 @@ async function main(): Promise<void> {
       failures.push('the manual checklist is not shown');
     }
 
-    // --- the offline path is legible ----------------------------------------
-    // No authoring server is running behind this preview, so pasting a token has
-    // to produce "start the server" rather than silence or a stack trace.
+    // --- a bad token produces an actionable message, not silence -------------
+    //
+    // Which message depends on the environment, and deliberately so: with no
+    // authoring server behind the preview it is "start `npm run server`", and
+    // with one running it is "paste a token". Both are correct and both are the
+    // point -- what is being checked is that a failure names its remedy rather
+    // than leaving a blank panel or a stack trace in the console. Asserting one
+    // exact string would make this pass or fail on whether a server happens to
+    // be up, which is a property of the machine and not of the code.
     await page.locator('input[type=password]').fill('not-a-real-token');
     await page.getByRole('button', { name: 'Connect', exact: true }).click();
-    await page.waitForTimeout(1200);
+    await page.waitForTimeout(1500);
     const afterConnect = (await page.locator('#app').innerText()).toLowerCase();
-    if (!afterConnect.includes('npm run server')) {
-      failures.push('with no server running, the panel does not say to start one');
+    const remedies = ['npm run server', 'paste the admin token'];
+    if (!remedies.some((remedy) => afterConnect.includes(remedy))) {
+      failures.push('a rejected token produces no message saying what to do about it');
     }
 
     await page.screenshot({ path: join(outDir, 'studio.png'), fullPage: true });

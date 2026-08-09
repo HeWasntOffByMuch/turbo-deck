@@ -159,6 +159,15 @@ const PURE_RENDER = [
   'src/render/iso3d/studio/image-check.test.ts',
   'src/render/iso3d/studio/plan.ts',
   'src/render/iso3d/studio/plan.test.ts',
+  // The tuning panels' arithmetic (spec 110). The scrubber, the stacked timing
+  // bar and the state graph's layout are all answerable in Node, and all three
+  // are the sort of code that looks obviously right and is off by one -- a
+  // marker that drifts a frame per drag, a bar with a gap in it, a graph that
+  // draws four arrows where the author wrote one.
+  'src/render/iso3d/studio/timeline.ts',
+  'src/render/iso3d/studio/timing-bar.ts',
+  'src/render/iso3d/studio/graph-layout.ts',
+  'src/render/iso3d/studio/panels.test.ts',
   'src/render/iso3d/editor/brush.ts',
   'src/render/iso3d/editor/camera.ts',
   'src/render/iso3d/editor/history.ts',

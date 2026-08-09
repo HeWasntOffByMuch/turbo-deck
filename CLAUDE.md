@@ -59,6 +59,7 @@ change a game outcome.
 | `npm run typecheck` | `tsc --noEmit` against the strict tsconfig |
 | `npm run lint` | ESLint over the whole repo |
 | `npm run validate:units` | Validate every authored unit document in `assets/units/` |
+| `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
 | `npm run server` | The authoritative server, plus the admin console |
@@ -143,6 +144,20 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  through this one parser. The rule the format exists to enforce is
                  that gameplay timing is authoritative and the clip is rescaled to
                  fit, bounded in both directions. `npm run validate:units`.
+                 machine.ts is the state machine BOTH the Studio tab and the game
+                 drive (specs 110-111) -- one machine, two callers, which is what
+                 makes "the tool and the game read the same files" a fact about
+                 the module graph rather than a promise. It advances in whole
+                 60Hz ticks and fires events on integer frame crossing, walking
+                 one tick at a time, so an overshooting step cannot skip an event
+                 or fire one twice. glb.ts writes a .glb (glTF is JSON plus a
+                 binary chunk; a writer for the subset we emit is smaller than
+                 the argument for a dependency) and reference-unit.ts is the
+                 mannequin it writes: a real skinned biped on the mixamo
+                 contract, authored at ~1.7 units like a real rig so the ~32x
+                 import scale is measured rather than invented. It exists so the
+                 preview, the deformation checks and the screenshot baselines
+                 have a subject before a credit is spent.
 src/server/studio/  the unit authoring service (spec 108). Node-only, wired in from
                  src/server/index.ts and imported by nothing in the server's
                  portable half, because this is where the Tripo API key lives.
@@ -185,9 +200,22 @@ src/render/iso3d/studio/  the Studio tab (spec 109), the fifth entry in the tab
                  tells "no server", "no token" and "wrong token" apart, because
                  they have three different fixes. view.ts renders the projected
                  cost before the button that spends it exists.
+                 preview.ts is the viewport (spec 110): the game's own RetroPass
+                 and its cog, an isometric preset, a turntable and free orbit, and
+                 a ground plane with a silhouette at the height a player is really
+                 drawn -- a unit that is subtly the wrong size looks fine alone and
+                 wrong beside something. The mixer is driven with update(0) after
+                 each action's time is written from the machine's integer tick, so
+                 the pose is a pure function of a tick count. Caveat worth knowing:
+                 this is the same control-panel TYPE as Play's, not a shared
+                 instance, so a switch has to be thrown in both places.
+                 timeline.ts, timing-bar.ts and graph-layout.ts are the panels'
+                 arithmetic, pure and tested; preview-panel.ts is the DOM over
+                 them and writes every edit back through the server.
                  `npx tsx scripts/preview-studio.ts` clicks all five tabs in a
                  real browser, since a fifth array entry cannot fail a typecheck
-                 and cannot fail a headless test.
+                 and cannot fail a headless test -- and it is the only thing that
+                 can tell whether three's GLTFLoader accepts the .glb we write.
 src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  from a loaded map document, never from the world generator.
                  camera.ts, brush.ts, scatter.ts, markers.ts, parts.ts and
