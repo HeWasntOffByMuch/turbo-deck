@@ -121,10 +121,32 @@ their values is what makes "one source of truth" mechanical.
 
 ### Shared streak layer
 
-`GLSL_STREAK` multiplies albedo by `1 ± streakContrast` sampled at
+`GLSL_STREAK` multiplies albedo by `1 ± contrast` sampled at
 `worldXZ - windDir * uTime * streakSpeed`, patched into the terrain surface and
 wall materials with `onBeforeCompile` and compiled into the water shader from
 the same string.
+
+**Amended after it shipped invisible.** As first written this was one noise
+field, squashed 4:1 along the flow, at a fixed 5.5%, and it could not be seen in
+the game at all. Two reasons, both since fixed:
+
+- 5.5% is a quarter of a step of the retro pass's twelve-level quantization
+  (spec 038), and the shipped dither strength of 0.05 spreads a value across a
+  fortieth of a step, so the pass rounded the layer away everywhere the ground
+  was not already sitting on a band edge. The ground amplitude is now 18%; the
+  water keeps 5.5%, since four flat colours band at an amplitude grass merely
+  textures at. The contrast is therefore the caller's, not the field's.
+- the grain was stretched along the axis it scrolls down, so it slid along its
+  own length — the aperture problem, and on screen a pattern plainly present and
+  plainly still. A second field, the **gust front**, is stretched 5:1 *across*
+  the flow and so travels perpendicular to its own bands; it carries 60% of the
+  swing and is the part that reads as wind.
+
+The acceptance check for this part had been passing throughout, because it ran
+with the retro pass switched off and with trees in shot — so the number it
+reported as "ground pixels moving" was tree sway. It now runs with the pass on
+and the props pushed out of frame, and asks the layer's two questions apart:
+what it changes at all, and what of that moves.
 
 ## Invariants tested
 

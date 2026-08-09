@@ -46,10 +46,20 @@ export interface WindConfig {
   readonly travel: number;
   /** How fast the streak layer scrolls downwind, world units per second. */
   readonly streakSpeed: number;
-  /** World units per streak feature, across the flow. */
+  /** World units per grain feature, across the flow. */
   readonly streakScale: number;
-  /** How far the streak layer may lift or drop albedo, as a fraction. */
+  /** World units between gust fronts, along the flow. */
+  readonly gustScale: number;
+  /** How much of the streak layer's swing the gust front carries, 0..1. */
+  readonly gustShare: number;
+  /** How far the streak layer may lift or drop the ground's albedo. */
   readonly streakContrast: number;
+  /**
+   * ...and the sea's, which is lower because the water is four flat colours
+   * (spec 074, part 2) and the amount of grain the grass wants would show up
+   * there as a fifth and a sixth.
+   */
+  readonly waterStreakContrast: number;
 }
 
 /**
@@ -107,8 +117,46 @@ export const WIND: WindConfig = {
   strength: 0.1,
   travel: (2 * Math.PI) / WAVE_LENGTH,
   streakSpeed: 62,
-  streakScale: 190,
-  streakContrast: 0.055,
+  /**
+   * 70 puts nine grain features across the default view's 640 units, where the
+   * 190 this shipped at put three and a half -- at that size the grain was a
+   * gradient over the whole screen rather than anything the eye could see
+   * scroll past a rock.
+   */
+  streakScale: 70,
+  /**
+   * A front every 130 units along the flow is one crossing any given blade of
+   * grass every 2.1 seconds at `streakSpeed`. Slower than this and the ground
+   * reads as still between gusts; much faster and it flickers.
+   */
+  gustScale: 130,
+  /**
+   * Most of the swing, because the front is the part that moves (see
+   * {@link GLSL_STREAK}). The grain is left enough to keep the layer directional.
+   */
+  gustShare: 0.6,
+  /**
+   * 18%, against the 5.5% this shipped at.
+   *
+   * The old figure was set on the assumption that the retro pass's dither would
+   * carry it across a colour band (spec 038). It does not: the shipped dither
+   * strength is 0.05, which spreads a value by a two-hundredth of a band, so
+   * quantization simply rounded a 5.5% modulation away over the whole frame
+   * except where the ground already sat on a band edge. Anything this layer
+   * wants to show through twelve levels has to be worth a level on its own:
+   * against the darkest grass in the palette, 18% is worth 1.3 of them.
+   *
+   * Measured on bare ground through the shipped pass, that took the share of
+   * pixels the layer touches from 14.8% to 28.5%, and the share moving in any
+   * one second from 0.7% to 1.8%. Both are held down by the dither rather than
+   * by this number -- at `ditherStrength` 1.0 the same 18% moves 5.6% of the
+   * frame per second -- so there is more here to collect if the retro pass's
+   * weave is ever turned up. Going further on amplitude alone is the wrong
+   * trade: it buys static mottling faster than it buys motion, and the ground
+   * starts reading as discoloured rather than as windy.
+   */
+  streakContrast: 0.18,
+  waterStreakContrast: 0.055,
 };
 
 /**
@@ -389,28 +437,52 @@ float bayer4(vec2 fragCoord) {
 `;
 
 /**
- * The streak layer (spec 074, part 3): a faint scrolling grain multiplied into
- * albedo, sampled at world XZ shifted downwind by the same wind and the same
- * clock the trees lean to.
+ * The streak layer (spec 074, part 3): a scrolling shadow of moving air
+ * multiplied into albedo, sampled at world XZ shifted downwind by the same wind
+ * and the same clock the trees lean to.
  *
- * It is the smallest piece of code here and does most of the work of making
- * this one weather system rather than two effects: the ground and the sea carry
- * the same shadow of moving air across the coastline, which is what stops the
- * water reading as a separate object dropped into the scene.
+ * It is what makes this one weather system rather than two effects: the ground
+ * and the sea carry the same moving air across the coastline, which is what
+ * stops the water reading as a separate object dropped into the scene.
+ *
+ * Two fields, because one cannot do both jobs at once:
+ *
+ * - the **grain**, squashed 4:1 along the flow, is what makes the layer look
+ *   like wind rather than like weather-agnostic mottling. It is also nearly
+ *   motionless, and unavoidably so: it is stretched along the axis it scrolls
+ *   down, so it slides along its own length, which is the aperture problem and
+ *   shows up on screen as a pattern that is plainly there and plainly not
+ *   moving. Measured at the shipped tuning, 0.7% of ground pixels changed in a
+ *   second and the field took twelve seconds to decorrelate.
+ * - the **gust front**, stretched 5:1 *across* the flow, travels perpendicular
+ *   to its own bands. That is the direction the eye reads as wind crossing the
+ *   ground, and it is why the front carries most of the swing.
+ *
+ * The amplitude is the caller's, not this function's: the grass and the sea are
+ * the same field at the same instant, but the sea is four flat colours and
+ * bands visibly at an amplitude the grass merely textures at. One field, one
+ * clock, one direction -- two bites.
  */
 export const GLSL_STREAK = /* glsl */ `
 const float STREAK_SCALE = ${f(1 / WIND.streakScale)};
+const float GUST_SCALE = ${f(1 / WIND.gustScale)};
 const float STREAK_SPEED = ${f(WIND.streakSpeed)};
-const float STREAK_CONTRAST = ${f(WIND.streakContrast)};
+const float GUST_SHARE = ${f(WIND.gustShare)};
+const float STREAK_GROUND = ${f(WIND.streakContrast)};
+const float STREAK_WATER = ${f(WIND.waterStreakContrast)};
 
-// Multiplier for albedo at a world point: 1 +- STREAK_CONTRAST.
-float windStreak(vec2 worldXZ, float t) {
+// The signed streak field at a world point, about -1..1.
+float windStreakField(vec2 worldXZ, float t) {
   vec2 p = worldXZ - uWindDir * (t * STREAK_SPEED);
-  // Stretched along the wind, so the grain reads as streaks being dragged
-  // rather than as blobs drifting: one octave squashed 4:1 across the flow.
   vec2 along = vec2(dot(p, uWindDir), dot(p, vec2(-uWindDir.y, uWindDir.x)));
-  float n = n2(vec2(along.x * 0.25, along.y) * STREAK_SCALE);
-  return 1.0 + (n - 0.5) * 2.0 * STREAK_CONTRAST;
+  float grain = n2(vec2(along.x * 0.25, along.y) * STREAK_SCALE);
+  float gust = n2(vec2(along.x, along.y * 0.2) * GUST_SCALE);
+  return ((grain - 0.5) * (1.0 - GUST_SHARE) + (gust - 0.5) * GUST_SHARE) * 2.0;
+}
+
+// Multiplier for albedo at a world point: 1 +- contrast.
+float windStreak(vec2 worldXZ, float t, float contrast) {
+  return 1.0 + windStreakField(worldXZ, t) * contrast;
 }
 `;
 

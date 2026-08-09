@@ -108,7 +108,7 @@ void main() {
 
   // The same streak layer the ground carries, at the same speed and in the same
   // direction. This is the piece that makes the coastline read as one place.
-  col *= windStreak(vWorld.xz, uWindTime);
+  col *= windStreak(vWorld.xz, uWindTime, STREAK_WATER);
 
   gl_FragColor = vec4(col, 1.0);
   #include <colorspace_fragment>
