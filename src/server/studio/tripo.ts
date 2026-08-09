@@ -99,6 +99,14 @@ export interface TaskResult {
    */
   readonly rigType: string | null;
   readonly error: string | null;
+  /**
+   * The raw task record on a failure, trimmed and redacted.
+   *
+   * Kept because the alternative is a support conversation that begins "it says
+   * task failed". A field we did not think to read is still in here, and it is
+   * written onto the job so it survives the process that saw it.
+   */
+  readonly detail: string | null;
 }
 
 export interface ImageToModelRequest {
@@ -274,6 +282,68 @@ function toState(status: unknown): TaskState {
   }
 }
 
+/**
+ * What a terminal status means, in words that name a different fix each.
+ *
+ * `toState` collapses four of them into `failed`, which is right for the
+ * pipeline -- there is nothing to do but stop -- and wrong for the person
+ * reading it. "banned" is moderation refusing the content and no amount of
+ * retrying will move it; "expired" means the *input* task aged out, so the fix
+ * is a fresh generation rather than another rig; "cancelled" means somebody or
+ * something stopped it. Reporting all four as "task failed" is how a job that
+ * needs a new photograph looks identical to one that needs a retry.
+ */
+const TERMINAL_MEANING: Readonly<Record<string, string>> = {
+  failed: 'the task failed',
+  cancelled: 'the task was cancelled',
+  banned: 'the task was banned -- content moderation refused it, and retrying will not change that',
+  expired: 'the task expired -- its input aged out server-side, so this needs a fresh generation rather than a retry',
+};
+
+/**
+ * The best failure reason the task record actually carries.
+ *
+ * Several fields are tried because the one that is populated varies by which
+ * stage failed, and the alternative -- what this used to do -- was to read
+ * `message`, find it absent, and report the literal string "task failed" to
+ * somebody trying to work out what to do next. A wrong guess about which field
+ * to read costs nothing here; missing all of them costs an afternoon.
+ */
+function failureReason(data: Record<string, unknown>, output: Record<string, unknown>): string | null {
+  for (const value of [
+    data['message'],
+    data['error'],
+    data['error_msg'],
+    data['error_message'],
+    data['reason'],
+    data['detail'],
+    output['message'],
+    output['error'],
+  ]) {
+    const text = asString(value);
+    if (text !== null) return text;
+  }
+  return null;
+}
+
+/**
+ * The whole task record, trimmed and redacted, for when none of that helped.
+ *
+ * The last resort and the reason this exists at all: a failure whose cause is
+ * not in any field we thought to read is exactly the failure worth keeping the
+ * raw record for. Bounded, because it ends up in a job file and on a screen.
+ */
+function taskDetail(data: Record<string, unknown>, apiKey: string, limit = 600): string {
+  let text: string;
+  try {
+    text = JSON.stringify(data);
+  } catch {
+    return '';
+  }
+  const trimmed = text.length > limit ? `${text.slice(0, limit)}…` : text;
+  return redact(trimmed, apiKey);
+}
+
 export interface TripoClientOptions {
   readonly apiKey: string;
   readonly baseUrl?: string;
@@ -425,8 +495,43 @@ export class TripoClient {
       modelUrl: asString(output['model_url']) ?? asString(output['model']) ?? asString(output['pbr_model']),
       riggable: typeof output['riggable'] === 'boolean' ? output['riggable'] : null,
       rigType: asString(output['rig_type']),
-      error: state === 'failed' ? (asString(data['message']) ?? 'task failed') : null,
+      error: state === 'failed' ? this.describeFailure(taskId, data, output) : null,
+      detail: state === 'failed' ? taskDetail(data, this.apiKey) : null,
     };
+  }
+
+  /**
+   * One line naming the status, the reason and the task.
+   *
+   * The task id is in it deliberately. A failure nobody can explain is a failure
+   * somebody is going to want to ask the API about directly, and the id is the
+   * only handle for that -- leaving it out meant reading it back out of
+   * `.studio/jobs.json` by hand.
+   */
+  private describeFailure(
+    taskId: string,
+    data: Record<string, unknown>,
+    output: Record<string, unknown>,
+  ): string {
+    const status = asString(data['status']) ?? 'failed';
+    const meaning = TERMINAL_MEANING[status] ?? `the task ended as "${status}"`;
+    const reason = failureReason(data, output);
+    return reason === null ? `${meaning} (task ${taskId})` : `${meaning}: ${reason} (task ${taskId})`;
+  }
+
+  /**
+   * The task record exactly as the API returned it, for diagnosis.
+   *
+   * A free call, and the one thing that answers "why did it fail" when none of
+   * the fields {@link failureReason} knows about were populated. Deliberately
+   * unmapped: the whole value here is seeing what is actually there rather than
+   * what this file expected to be there. Redaction still applies -- a record
+   * that echoed the request would otherwise carry the key into whatever the
+   * operator pastes it into.
+   */
+  async rawTask(taskId: string): Promise<unknown> {
+    const envelope = await this.request(`/tasks/${encodeURIComponent(taskId)}`, { method: 'GET' });
+    return JSON.parse(redact(JSON.stringify(envelope.data ?? {}), this.apiKey)) as unknown;
   }
 
   /**

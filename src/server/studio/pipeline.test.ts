@@ -681,6 +681,95 @@ describe('the interlocks', () => {
     expect(harness.store.getJob('job-1')?.status).toBe('succeeded');
   });
 
+  it('reports why a task failed, not the word "failed"', async () => {
+    // The reported problem: "Auto-rig · failed · 31s / task failed", and that
+    // was the whole explanation. Everything the API said about it was being
+    // dropped on the floor.
+    scriptSuccess(harness.fake);
+    harness.fake.script('/animations/rig', {
+      status: 'failed',
+      message: 'mesh has disconnected components',
+    });
+    seedJob(harness);
+    const job = await harness.pipeline.run('job-1');
+
+    const step = job?.steps.find((entry) => entry.stage === 'rig');
+    expect(step?.error).toContain('mesh has disconnected components');
+    // And the task id, because a failure nobody can explain is one somebody
+    // will want to ask the API about directly.
+    expect(step?.error).toMatch(/task task-\d+/);
+  });
+
+  it('tells the four terminal statuses apart, because they need different fixes', async () => {
+    for (const [rawStatus, needle] of [
+      ['banned', 'content moderation'],
+      ['expired', 'aged out'],
+      ['cancelled', 'cancelled'],
+    ] as const) {
+      const one = build();
+      scriptSuccess(one.fake);
+      one.fake.script('/animations/rig', { rawStatus });
+      seedJob(one);
+      const job = await one.pipeline.run('job-1');
+      expect(job?.steps.find((entry) => entry.stage === 'rig')?.error, rawStatus).toContain(needle);
+      rmSync(one.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to the raw record when no field it knows about is filled in', async () => {
+    // The failure worth keeping the record for is exactly the one whose cause is
+    // not in any field we thought to read.
+    scriptSuccess(harness.fake);
+    harness.fake.script('/animations/rig', { status: 'failed', extra: { unexpected_field: 'the real reason' } });
+    seedJob(harness);
+    const job = await harness.pipeline.run('job-1');
+    expect(job?.steps.find((entry) => entry.stage === 'rig')?.error).toContain('the real reason');
+  });
+
+  it('reads a reason out of a field other than `message`', async () => {
+    scriptSuccess(harness.fake);
+    harness.fake.script('/animations/rig', { status: 'failed', extra: { error_msg: 'rig backend unavailable' } });
+    seedJob(harness);
+    const job = await harness.pipeline.run('job-1');
+    expect(job?.steps.find((entry) => entry.stage === 'rig')?.error).toContain('rig backend unavailable');
+  });
+
+  it('says whether the source mesh is still alive, since the fixes differ', async () => {
+    // A stale input means "start again from the image" and a mesh the rig
+    // cannot handle means "generate another mesh". Identical from the outside.
+    scriptSuccess(harness.fake);
+    harness.fake.script('/animations/rig', { status: 'failed', message: 'boom' });
+    seedJob(harness);
+    const alive = await harness.pipeline.run('job-1');
+    expect(alive?.steps.find((entry) => entry.stage === 'rig')?.error).toContain('still fine');
+
+    // And now with the mesh task itself aged out, which is the case a retry
+    // cannot fix and would keep paying to discover. Seeded straight to the rig
+    // rather than played through, so the mesh task is one this test named and
+    // can age out on purpose.
+    const stale = build();
+    scriptSuccess(stale.fake);
+    stale.fake.script('/animations/rig', { status: 'failed', message: 'boom' });
+    stale.fake.rescript('task-mesh', { rawStatus: 'expired' });
+    seedJob(stale);
+    stale.store.saveJob({
+      ...(stale.store.getJob('job-1') as Job),
+      status: 'running',
+      steps: (stale.store.getJob('job-1') as Job).steps.map((step) =>
+        step.stage === 'imageToModel'
+          ? { ...step, status: 'done' as const, taskId: 'task-mesh' }
+          : step.stage === 'rigCheck'
+            ? { ...step, status: 'done' as const, taskId: 'task-check' }
+            : step,
+      ),
+    });
+    await stale.pipeline.run('job-1');
+    const failure = stale.store.getJob('job-1')?.steps.find((entry) => entry.stage === 'rig')?.error ?? '';
+    expect(failure).toContain('no longer usable');
+    expect(failure).toContain('Start a new generation');
+    rmSync(stale.dir, { recursive: true, force: true });
+  });
+
   it('cancels a job that is mid-flight', async () => {
     scriptSuccess(harness.fake);
     seedJob(harness);

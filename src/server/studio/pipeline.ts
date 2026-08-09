@@ -93,6 +93,22 @@ export class StudioPipeline {
     this.pacer = new Pacer(deps.config.minRequestIntervalMs);
   }
 
+  /**
+   * Everything the API said about a failure, in one line.
+   *
+   * The raw record is appended rather than logged and dropped. A failure whose
+   * cause is not in any field the client thought to read is precisely the one
+   * worth keeping the record for, and "task failed" with nothing after it is how
+   * an afternoon goes. Logged too, because the record on disk is behind a token
+   * and the console is right there.
+   */
+  private failureText(job: Job, stage: Stage, result: TaskResult, fallback: string): string {
+    const head = result.error ?? fallback;
+    const text = result.detail === null ? head : `${head} · raw: ${result.detail}`;
+    this.say(`${job.id}/${stage}: ${text}`);
+    return text;
+  }
+
   private say(message: string): void {
     this.deps.log?.(`[studio] ${message}`);
   }
@@ -324,7 +340,7 @@ export class StudioPipeline {
 
     const { job: polled, result } = await this.paidCall(job, 'imageToModel', 'imageToModel', submit, deadline);
     if (result.state === 'failed') {
-      return this.save(failJob(polled, 'imageToModel', result.error ?? 'generation failed', this.deps.now()));
+      return this.save(failJob(polled, 'imageToModel', this.failureText(polled, 'imageToModel', result, 'generation failed'), this.deps.now()));
     }
 
     const meshGlb = await this.pull(polled, result, 'mesh.glb');
@@ -363,7 +379,7 @@ export class StudioPipeline {
       deadline,
     );
     if (result.state === 'failed') {
-      return this.save(failJob(polled, 'rigCheck', result.error ?? 'rig-check failed', this.deps.now()));
+      return this.save(failJob(polled, 'rigCheck', this.failureText(polled, 'rigCheck', result, 'rig-check failed'), this.deps.now()));
     }
     if (result.riggable === false) {
       return this.save(
@@ -409,7 +425,17 @@ export class StudioPipeline {
       deadline,
     );
     if (result.state === 'failed') {
-      return this.save(failJob(polled, 'rig', result.error ?? 'rig failed', this.deps.now()));
+      // Two very different things look identical from here, and they have
+      // opposite fixes: the source mesh aged out server-side (start again from
+      // the image -- a retry will fail the same way forever, at 25 credits a
+      // go), or the mesh is simply one auto-rig cannot handle (rig-check is a
+      // predictor, not a guarantee, and a second generation from the same photo
+      // is a different mesh). One free call tells them apart, and it is worth
+      // making at exactly the moment somebody is about to ask why.
+      const why = await this.sourceHint(source);
+      return this.save(
+        failJob(polled, 'rig', `${this.failureText(polled, 'rig', result, 'rig failed')}${why}`, this.deps.now()),
+      );
     }
 
     const riggedGlb = await this.pull(polled, result, 'rigged.glb');
@@ -499,7 +525,12 @@ export class StudioPipeline {
         // Terminal, but everything bought before this clip is recorded and on
         // disk -- so a wrong preset name costs one call, not the whole set.
         return this.save(
-          failJob(current, 'retarget', `${intent}: ${result.error ?? 'retarget failed'}`, this.deps.now()),
+          failJob(
+            current,
+            'retarget',
+            `${intent}: ${this.failureText(current, 'retarget', result, 'retarget failed')}`,
+            this.deps.now(),
+          ),
         );
       }
 
@@ -611,6 +642,31 @@ export class StudioPipeline {
     this.save(retried);
     void this.run(jobId);
     return retried;
+  }
+
+  /**
+   * Whether the input task is still alive, as a clause to append to a failure.
+   *
+   * Free, and best-effort: if this call itself fails, the rig's own failure is
+   * still the thing being reported and this must not replace it with a second,
+   * less relevant error.
+   */
+  private async sourceHint(sourceTaskId: string): Promise<string> {
+    try {
+      await this.gate();
+      const source = await this.deps.client.task(sourceTaskId);
+      if (source.state === 'failed') {
+        return ` · the source mesh (task ${sourceTaskId}) is no longer usable server-side: ${source.error ?? 'gone'}. Start a new generation from the image rather than retrying this one -- a retry will fail the same way.`;
+      }
+      return ` · the source mesh (task ${sourceTaskId}) is still fine, so this is the rig refusing this particular mesh rather than a stale input. Rig-check is a predictor, not a guarantee; a fresh generation from the same image is a different mesh and may well rig.`;
+    } catch {
+      return '';
+    }
+  }
+
+  /** The API's own record for a task, unmapped. See the route that calls it. */
+  rawTask(taskId: string): Promise<unknown> {
+    return this.deps.client.rawTask(taskId);
   }
 
   cancel(jobId: string): Job | null {

@@ -534,6 +534,29 @@ export function studioRoutes(deps: RouteDeps): readonly Route[] {
       },
     },
 
+    /**
+     * The raw task record, for a failure that explained nothing.
+     *
+     * A read, free, and behind the same admin gate as everything else. It exists
+     * because "task failed" with no reason is a real outcome of a paid call, and
+     * without this the only way to see what the API actually said was to go and
+     * ask it by hand with the key.
+     */
+    {
+      method: 'GET',
+      pattern: '/api/studio/tasks/:id',
+      handler: async (context) => {
+        const { response, params } = context;
+        if (!requireKey(context)) return;
+        const id = params['id'] ?? '';
+        try {
+          return sendJson(response, 200, { taskId: id, task: await pipeline.rawTask(id) });
+        } catch (cause) {
+          return sendJson(response, 502, { error: cause instanceof Error ? cause.message : String(cause) });
+        }
+      },
+    },
+
     {
       method: 'POST',
       pattern: '/api/studio/jobs/:id/cancel',

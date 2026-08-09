@@ -23,6 +23,16 @@ export interface ScriptedTask {
   readonly riggable?: boolean;
   readonly rigType?: string;
   readonly message?: string;
+  /**
+   * The literal `status` string, when a test needs one the mapper collapses.
+   *
+   * `failed`, `cancelled`, `banned` and `expired` are all one state to the
+   * pipeline and four different fixes to a person, so a test has to be able to
+   * produce each of them.
+   */
+  readonly rawStatus?: string;
+  /** Extra fields on the task record, for the ones the client reads besides `message`. */
+  readonly extra?: Readonly<Record<string, unknown>>;
 }
 
 export interface RecordedCall {
@@ -50,6 +60,20 @@ export class FakeTripo {
   /** Scripts what a task created by `endpoint` will do. */
   script(endpoint: string, task: ScriptedTask): this {
     this.byEndpoint.set(endpoint, task);
+    return this;
+  }
+
+  /**
+   * Rewrites what an *existing* task will say from now on.
+   *
+   * For the case a per-endpoint script cannot express: a task that succeeded and
+   * has since aged out server-side. That is a real failure mode -- a rig whose
+   * source mesh expired fails identically to a rig that cannot handle the mesh,
+   * and they have opposite fixes -- so it has to be reachable in a test.
+   */
+  rescript(taskId: string, task: ScriptedTask): this {
+    this.scripts.set(taskId, task);
+    this.polls.delete(taskId);
     return this;
   }
 
@@ -115,7 +139,7 @@ export class FakeTripo {
       if (seen <= (script.pollsBeforeDone ?? 0)) {
         return this.json({ code: 0, data: { task_id: taskId, status: 'running', progress: 0.5 } });
       }
-      const status = script.status ?? 'success';
+      const status = script.rawStatus ?? script.status ?? 'success';
       const output: Record<string, unknown> = {};
       if (script.modelUrl !== undefined && script.modelUrl !== null) output['model_url'] = script.modelUrl;
       if (script.riggable !== undefined) output['riggable'] = script.riggable;
@@ -126,6 +150,7 @@ export class FakeTripo {
       // not tell us what it charged" path is genuinely exercised.
       if (script.creditsConsumed !== null) data['credits_consumed'] = script.creditsConsumed ?? 5;
       if (script.message !== undefined) data['message'] = script.message;
+      for (const [key, value] of Object.entries(script.extra ?? {})) data[key] = value;
       return this.json({ code: 0, data });
     }
 
