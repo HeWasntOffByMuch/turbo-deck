@@ -1,28 +1,27 @@
 /**
- * The probe, checked against a unit whose facing is known.
+ * The probe, checked against a unit whose facing is known (spec 116).
  *
  * A measurement that reports "everything agrees" is worthless until something
  * has been made to disagree with it. So each estimator is run twice: once over
  * the reference unit, which is authored facing +X on purpose, and once over the
  * same unit with one specific fault introduced -- the mesh turned around inside
- * its rig, the clip played backwards, the clip's rest pose yawed, the legs
- * swapped. Those four are the four causes of a backwards walk, and each has a
- * different fix, so the probe earns its keep only if it tells them apart.
+ * its rig, the pose mirrored front to back, the clip's rest pose yawed, the
+ * legs swapped. Those four are the four causes of a backwards walk, and each
+ * has a different fix, so the probe earns its keep only if it tells them apart.
  */
 
 import { describe, expect, it } from 'vitest';
 import {
   angleBetween,
   clipFacing,
+  facingIsClean,
+  facingReport,
   meshFacing,
-  meshPoints,
-  openGlb,
   restPoseDeltas,
-  restSkeleton,
   rigFacing,
-  type Model,
   type Vec3,
 } from './facing.js';
+import { readNodeTree, readSkinnedMesh, splitGlb } from './glb-read.js';
 import { writeGlb, type GlbAnimation, type GlbDocument, type GlbMesh } from './glb.js';
 import { buildReferenceUnit } from './reference-unit.js';
 
@@ -30,8 +29,12 @@ const FORWARD: Vec3 = [1, 0, 0];
 
 const unit = buildReferenceUnit(55.65);
 
-function model(document: GlbDocument): Model {
-  return openGlb(writeGlb(document));
+function bytes(document: GlbDocument): Uint8Array {
+  return writeGlb(document);
+}
+
+function opened(document: GlbDocument): ReturnType<typeof splitGlb> {
+  return splitGlb(bytes(document));
 }
 
 function clipDocument(id: string): GlbDocument {
@@ -79,55 +82,75 @@ function mirroredFrontBack(animation: GlbAnimation): GlbAnimation {
 }
 
 describe('the reference unit, which faces +X on purpose', () => {
-  const mesh = model(unit.meshGlb);
-  const skeleton = restSkeleton(mesh);
+  const mesh = opened(unit.meshGlb);
+  const nodes = readNodeTree(mesh);
 
   it('has a rig whose toes point the way the project draws', () => {
-    const rig = rigFacing(skeleton);
+    const rig = rigFacing(nodes);
     expect(angleBetween(rig.forward, FORWARD)).toBeLessThan(5);
     expect(rig.handednessOk).toBe(true);
   });
 
   it('has geometry that agrees with its rig', () => {
-    const geometry = meshFacing(meshPoints(mesh));
-    expect(angleBetween(geometry.fromFeet, rigFacing(skeleton).forward)).toBeLessThan(5);
+    const geometry = meshFacing(readSkinnedMesh(mesh));
+    expect(angleBetween(geometry.fromFeet, rigFacing(nodes).forward)).toBeLessThan(5);
   });
 
   it('walks and runs forwards', () => {
     for (const id of ['walk', 'run']) {
-      const clip = clipFacing(model(clipDocument(id)));
+      const clip = clipFacing(opened(clipDocument(id)));
       expect(clip?.strideLength ?? 0).toBeGreaterThan(0.1);
       expect(angleBetween(clip?.strideForward ?? null, FORWARD)).toBeLessThan(10);
     }
   });
 
   it('says nothing about which way an idle goes, because an idle does not go', () => {
-    const clip = clipFacing(model(clipDocument('idle')));
+    const clip = clipFacing(opened(clipDocument('idle')));
     expect(clip?.strideLength ?? 1).toBeLessThan(0.02);
   });
 
   it('has a clip rest pose identical to its mesh, so binding by name is safe', () => {
-    const drift = restPoseDeltas(mesh, model(clipDocument('walk')));
+    const drift = restPoseDeltas(nodes, readNodeTree(opened(clipDocument('walk'))));
     expect(Math.max(...drift.map((delta) => delta.degrees))).toBeLessThan(1);
+  });
+
+  it('reports clean end to end, which is what makes it the control', () => {
+    const report = facingReport(
+      { name: 'mannequin.glb', bytes: bytes(unit.meshGlb) },
+      ['idle', 'walk', 'run'].map((id) => ({ name: `${id}.glb`, bytes: bytes(clipDocument(id)) })),
+    );
+    expect(report.error).toBeNull();
+    expect(facingIsClean(report)).toBe(true);
+    // The idle is in the report but is not asked which way it goes.
+    expect(report.clips.find((clip) => clip.source === 'idle.glb')?.moving).toBe(false);
+    expect(report.clips.find((clip) => clip.source === 'walk.glb')?.moving).toBe(true);
   });
 });
 
 describe('a fault introduced on purpose', () => {
   it('catches a rig fitted into the mesh backwards', () => {
-    const broken = model({ ...unit.meshGlb, mesh: turnedAround(unit.meshGlb.mesh ?? ({} as GlbMesh)) });
-    const geometry = meshFacing(meshPoints(broken));
-    const rig = rigFacing(restSkeleton(broken));
+    const broken = opened({ ...unit.meshGlb, mesh: turnedAround(unit.meshGlb.mesh ?? ({} as GlbMesh)) });
+    const geometry = meshFacing(readSkinnedMesh(broken));
+    const rig = rigFacing(readNodeTree(broken));
     // The symptom exactly: nothing fails to load, the rig still points the way
     // the project expects, and the body it is inside points the other way.
     expect(angleBetween(rig.forward, FORWARD)).toBeLessThan(5);
     expect(angleBetween(geometry.fromFeet, rig.forward)).toBeGreaterThan(170);
   });
 
-  it('catches a clip that strides the wrong way', () => {
+  it('catches a clip that strides the wrong way, and says it is the clip', () => {
     const walk = clipDocument('walk');
-    const backwards = model({ ...walk, animations: walk.animations.map(mirroredFrontBack) });
-    const clip = clipFacing(backwards);
-    expect(angleBetween(clip?.strideForward ?? null, FORWARD)).toBeGreaterThan(170);
+    const backwards = { ...walk, animations: walk.animations.map(mirroredFrontBack) };
+    expect(angleBetween(clipFacing(opened(backwards))?.strideForward ?? null, FORWARD)).toBeGreaterThan(170);
+
+    const report = facingReport({ name: 'mannequin.glb', bytes: bytes(unit.meshGlb) }, [
+      { name: 'walk.glb', bytes: bytes(backwards) },
+    ]);
+    expect(facingIsClean(report)).toBe(false);
+    // The mesh and the rig still agree: the finding has to name the clip, or it
+    // sends somebody off to regenerate a model that is fine.
+    expect(report.findings.find((finding) => finding.title === 'mesh vs rig')?.severity).toBe('ok');
+    expect(report.findings.find((finding) => finding.title === 'walk.glb: stride vs rig')?.severity).toBe('error');
   });
 
   it('catches a clip whose rest pose is yawed away from the mesh it will bind to', () => {
@@ -138,8 +161,12 @@ describe('a fault introduced on purpose', () => {
     const nodes = walk.nodes.map((node, index) =>
       index === 0 ? { ...node, rotation: [0, 1, 0, 0] as const } : node,
     );
-    const drift = restPoseDeltas(model(unit.meshGlb), model({ ...walk, nodes }));
+    const report = facingReport({ name: 'mannequin.glb', bytes: bytes(unit.meshGlb) }, [
+      { name: 'walk.glb', bytes: bytes({ ...walk, nodes }) },
+    ]);
+    const drift = report.clips[0]?.restDrift ?? [];
     expect(drift[0]?.degrees ?? 0).toBeGreaterThan(170);
+    expect(report.findings.some((finding) => finding.title === 'walk.glb: rest pose')).toBe(true);
   });
 
   it('catches legs whose names are swapped', () => {
@@ -148,7 +175,13 @@ describe('a fault introduced on purpose', () => {
       if (node.name === 'mixamorig:RightUpLeg') return { ...node, name: 'mixamorig:LeftUpLeg' };
       return node;
     });
-    const rig = rigFacing(restSkeleton(model({ ...unit.meshGlb, nodes })));
+    const rig = rigFacing(readNodeTree(opened({ ...unit.meshGlb, nodes })));
     expect(rig.handednessOk).toBe(false);
+  });
+
+  it('reports a file it cannot read rather than measuring it', () => {
+    const report = facingReport({ name: 'mesh.glb', bytes: new Uint8Array([1, 2, 3, 4]) }, []);
+    expect(report.error).toContain('mesh.glb');
+    expect(facingIsClean(report)).toBe(false);
   });
 });
