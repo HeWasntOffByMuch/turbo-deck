@@ -188,21 +188,39 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
   }
 
   function renderStatus(): void {
-    statusLine.textContent = status;
+    // The status line carries validation failures, which are the thing most
+    // worth selecting and copying out of this panel.
+    if (statusLine.textContent !== status) statusLine.textContent = status;
     statusLine.style.color = /error|invalid|refus|not/i.test(status) ? '#e5c07b' : '#8a8aa0';
   }
 
   // --- timeline -------------------------------------------------------------
 
+  /**
+   * The timeline's furniture: ruler, markers, labels.
+   *
+   * Rebuilt only when the clip or its markers change. It used to be rebuilt on
+   * every animation frame, which is sixty DOM teardowns a second -- nothing in
+   * this panel could be selected, and an event name could not be read, let alone
+   * copied. The playhead is the only thing that moves per frame and it is one
+   * attribute; {@link movePlayhead} writes it.
+   */
+  let playhead: SVGLineElement | null = null;
+
   function renderTimeline(): void {
     const clip = clipById(selectedClipId);
-    timelineSvg.replaceChildren();
-    if (!clip) return;
-
     const width = timelineBox.clientWidth || 600;
-    const frames = frameCount(clip.durationMs);
-    const snapshot = primary.machine.snapshot();
-    const showing = scrub ?? (snapshot.stateId && isClipShowing(snapshot, clip.id) ? snapshot.normalizedTime : 0);
+    const key = clip
+      ? `${clip.id}:${clip.durationMs}:${width}:${clip.events.map((e) => `${e.name}@${e.normalizedTime}`).join(',')}`
+      : 'none';
+    if (timelineSvg.dataset['key'] === key) {
+      movePlayhead();
+      return;
+    }
+    timelineSvg.dataset['key'] = key;
+    timelineSvg.replaceChildren();
+    playhead = null;
+    if (!clip) return;
 
     timelineSvg.appendChild(svg('rect', { x: 0, y: 14, width, height: 12, fill: '#22222e' }));
     for (const tick of rulerTicks(clip.durationMs)) {
@@ -226,9 +244,24 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
       void index;
     });
 
-    const playheadX = timeToX(showing, width);
-    timelineSvg.appendChild(svg('line', { x1: playheadX, y1: 4, x2: playheadX, y2: 36, stroke: '#7bc47f', 'stroke-width': 2 }));
-    frameLabel.textContent = `frame ${timeToFrame(showing, frames)} / ${frames - 1} · ${clip.durationMs}ms · ${frames} ticks`;
+    playhead = svg('line', { x1: 0, y1: 4, x2: 0, y2: 36, stroke: '#7bc47f', 'stroke-width': 2 });
+    timelineSvg.appendChild(playhead);
+    movePlayhead();
+  }
+
+  /** The one thing that changes every frame: two attributes and a label. */
+  function movePlayhead(): void {
+    const clip = clipById(selectedClipId);
+    if (!clip || !playhead) return;
+    const width = timelineBox.clientWidth || 600;
+    const frames = frameCount(clip.durationMs);
+    const snapshot = primary.machine.snapshot();
+    const showing = scrub ?? (isClipShowing(snapshot, clip.id) ? snapshot.normalizedTime : 0);
+    const x = timeToX(showing, width);
+    playhead.setAttribute('x1', String(x));
+    playhead.setAttribute('x2', String(x));
+    const label = `frame ${timeToFrame(showing, frames)} / ${frames - 1} · ${clip.durationMs}ms · ${frames} ticks`;
+    if (frameLabel.textContent !== label) frameLabel.textContent = label;
   }
 
   function isClipShowing(snapshot: MachineSnapshot, clipId: string): boolean {
@@ -324,9 +357,30 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
 
   let graph: Graph = layoutGraph(unit.stateMachine);
 
+  /** The node rectangles, so the live highlight is an attribute and not a rebuild. */
+  const nodeRects = new Map<string, SVGRectElement>();
+  let highlighted: string | null = null;
+
+  /**
+   * Rebuilds the graph.
+   *
+   * Only when the machine's shape or the selection changes -- never for the live
+   * state highlight, which is what moves every frame. This was rebuilt sixty
+   * times a second, which made the condition labels impossible to select and put
+   * a full layout pass in the frame budget for no reason.
+   */
   function renderGraph(): void {
     graph = layoutGraph(unit.stateMachine);
-    const active = primary.machine.stateId;
+    const key = `${JSON.stringify(unit.stateMachine.transitions)}:${JSON.stringify(
+      unit.stateMachine.states.map((state) => [state.id, state.category]),
+    )}:${selectedTransition ?? -1}`;
+    if (graphBox.dataset['key'] === key) {
+      highlightState();
+      return;
+    }
+    graphBox.dataset['key'] = key;
+    nodeRects.clear();
+    highlighted = null;
     graphBox.replaceChildren();
     graphBox.appendChild(el('div', `${BODY}margin-bottom:6px;`, 'State machine'));
 
@@ -361,19 +415,18 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
     }
 
     for (const node of graph.nodes) {
-      const isActive = node.id === active;
-      canvas.appendChild(
-        svg('rect', {
-          x: node.x,
-          y: node.y,
-          width: node.width,
-          height: node.height,
-          rx: 3,
-          fill: CATEGORY_COLORS[node.category],
-          stroke: isActive ? '#7bc47f' : '#2a2a38',
-          'stroke-width': isActive ? 2.5 : 1,
-        }),
-      );
+      const rect = svg('rect', {
+        x: node.x,
+        y: node.y,
+        width: node.width,
+        height: node.height,
+        rx: 3,
+        fill: CATEGORY_COLORS[node.category],
+        stroke: '#2a2a38',
+        'stroke-width': 1,
+      });
+      nodeRects.set(node.id, rect);
+      canvas.appendChild(rect);
       const name = svg('text', {
         x: node.x + node.width / 2,
         y: node.y + 16,
@@ -405,6 +458,24 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
     });
     graphBox.appendChild(canvas);
     graphBox.appendChild(transitionEditor);
+    highlightState();
+  }
+
+  /** The live current state: two attributes on at most two rectangles. */
+  function highlightState(): void {
+    const active = primary.machine.stateId;
+    if (active === highlighted) return;
+    const previous = highlighted === null ? undefined : nodeRects.get(highlighted);
+    if (previous) {
+      previous.setAttribute('stroke', '#2a2a38');
+      previous.setAttribute('stroke-width', '1');
+    }
+    const current = nodeRects.get(active);
+    if (current) {
+      current.setAttribute('stroke', '#7bc47f');
+      current.setAttribute('stroke-width', '2.5');
+    }
+    highlighted = active;
   }
 
   const transitionEditor = el('div', 'margin-top:8px;');
@@ -643,9 +714,12 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
     secondary?.preview.render(elapsed / 1000);
 
     const snapshot = primary.machine.snapshot();
-    primary.label.textContent =
+    const label =
       `A — ${snapshot.stateId}${snapshot.previousStateId ? ` ← ${snapshot.previousStateId} (${Math.round(snapshot.blend * 100)}%)` : ''}` +
       `${snapshot.actionPhase ? ` · ${snapshot.actionPhase}` : ''}`;
+    if (primary.label.textContent !== label) primary.label.textContent = label;
+    // Both of these are guarded: they move a playhead and a highlight, and only
+    // rebuild when the clip or the machine's shape has actually changed.
     renderTimeline();
     renderGraph();
     raf = requestAnimationFrame(frame);

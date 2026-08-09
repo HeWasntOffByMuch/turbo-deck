@@ -36,6 +36,8 @@ const POLL_MS = 2000;
 const MONO = "'Courier New',ui-monospace,monospace";
 
 interface PendingImage {
+  /** Stable for the card's lifetime, so the list's key is its structure alone. */
+  readonly id: string;
   readonly name: string;
   readonly bytes: number;
   readonly width: number;
@@ -99,6 +101,30 @@ function section(title: string, subtitle = ''): { root: HTMLElement; body: HTMLE
 
 const SEVERITY_COLOR = { blocker: '#e06c75', warning: '#e5c07b', note: '#8a8aa0' } as const;
 
+/**
+ * Replaces a container's children only when what it is showing has changed.
+ *
+ * The queue is polled every couple of seconds, and rebuilding the DOM on every
+ * poll destroys anything the reader was doing with it: a half-made text
+ * selection vanishes, and the one time anybody selects text here is to copy an
+ * error message out of it. Which is to say the repaint was hardest on exactly
+ * the case the panel exists to serve.
+ *
+ * A signature rather than a diff. The rendered content is small and derived from
+ * plain data, so "has anything visible changed" is a string comparison, and a
+ * poll that finds nothing new touches no nodes at all.
+ */
+function repaint(node: HTMLElement, key: string, build: () => readonly Node[]): void {
+  if (node.dataset['key'] === key) return;
+  node.dataset['key'] = key;
+  node.replaceChildren(...build());
+}
+
+/** Sets text only when it differs, so an unchanged line keeps its selection. */
+function setText(node: HTMLElement, text: string): void {
+  if (node.textContent !== text) node.textContent = text;
+}
+
 /** Decodes an image far enough to measure it. Returns null for anything undecodable. */
 async function decode(file: File): Promise<{ width: number; height: number; data: Uint8ClampedArray } | null> {
   try {
@@ -119,10 +145,20 @@ async function decode(file: File): Promise<{ width: number; height: number; data
 
 export function mountStudio(container: HTMLElement): ViewHandle {
   const api = new StudioApi();
-  const root = el('div', 'max-width:1100px;margin:0 auto;');
+  /**
+   * Text in this tab is selectable.
+   *
+   * `index.html` switches selection off across the whole app, and rightly so:
+   * the game is dragged on, and a drag that highlights the HUD is a bug. But
+   * this tab is a report -- hashes, task ids, validation failures, the reason a
+   * paid call was refused -- and the whole point of those is that somebody can
+   * take them somewhere else. Opted back in once here rather than per element.
+   */
+  const root = el('div', 'max-width:1100px;margin:0 auto;user-select:text;-webkit-user-select:text;');
   container.appendChild(root);
 
   const pending: PendingImage[] = [];
+  let nextImageId = 1;
   let jobs: readonly JobView[] = [];
   let config: StudioConfigView | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
@@ -227,106 +263,133 @@ export function mountStudio(container: HTMLElement): ViewHandle {
   // --- rendering ------------------------------------------------------------
 
   function renderBanner(): void {
-    bannerBox.replaceChildren();
-    if (!banner) return;
-    const box = el(
-      'div',
-      `${BODY}border-left:3px solid #e5c07b;background:rgba(60,50,20,.4);padding:8px 10px;`,
-    );
-    box.appendChild(el('div', `${BODY}color:#e5c07b;`, banner.text));
-    if (banner.remedy) box.appendChild(el('div', MUTED, banner.remedy));
-    bannerBox.appendChild(box);
+    // The banner is the thing most likely to be selected and copied, so it is
+    // rebuilt only when its wording actually changes.
+    repaint(bannerBox, banner === null ? '' : `${banner.text}|${banner.remedy}`, () => {
+      if (!banner) return [];
+      const box = el(
+        'div',
+        `${BODY}border-left:3px solid #e5c07b;background:rgba(60,50,20,.4);padding:8px 10px;`,
+      );
+      box.appendChild(el('div', `${BODY}color:#e5c07b;`, banner.text));
+      if (banner.remedy) box.appendChild(el('div', MUTED, banner.remedy));
+      return [box];
+    });
   }
 
   function renderStatus(credits: string): void {
-    statusLine.replaceChildren();
     if (!config) {
-      statusLine.textContent = api.hasToken ? 'connecting…' : 'not connected';
+      repaint(statusLine, api.hasToken ? 'connecting' : 'idle', () => [
+        document.createTextNode(api.hasToken ? 'connecting…' : 'not connected'),
+      ]);
       return;
     }
     const perRun = config.ceilings.perRun === null ? 'none' : String(config.ceilings.perRun);
     const perDay = config.ceilings.perDay === null ? 'none' : String(config.ceilings.perDay);
-    statusLine.textContent =
-      `model ${config.modelVersion} · faces ${config.defaultFaceLimit} · ceilings run ${perRun} / day ${perDay} · ${credits}`;
-    if (!config.keyConfigured) {
-      const warn = el('div', `${BODY}color:#e5c07b;margin-top:6px;`, 'TRIPO_API_KEY is not set on the server. Everything here is read-only until it is.');
-      statusLine.appendChild(warn);
-    }
+    const line = `model ${config.modelVersion} · faces ${config.defaultFaceLimit} · ceilings run ${perRun} / day ${perDay} · ${credits}`;
+    repaint(statusLine, `${line}|${config.keyConfigured}`, () => {
+      const nodes: Node[] = [document.createTextNode(line)];
+      if (!config?.keyConfigured) {
+        nodes.push(
+          el(
+            'div',
+            `${BODY}color:#e5c07b;margin-top:6px;`,
+            'TRIPO_API_KEY is not set on the server. Everything here is read-only until it is.',
+          ),
+        );
+      }
+      return nodes;
+    });
   }
 
+  /**
+   * The dropped images.
+   *
+   * The list's *structure* is keyed on which images exist, and nothing else.
+   * Everything that changes while a card is on screen -- the hash arriving, a
+   * price, the clip choices -- is a targeted update inside the card, because the
+   * alternative is rebuilding the form somebody is typing into and throwing away
+   * their caret on the next poll.
+   */
   function renderImages(): void {
-    imageList.replaceChildren();
-    if (pending.length === 0) {
-      imageList.appendChild(el('p', MUTED, 'No images yet.'));
-      return;
+    repaint(imageList, pending.map((image) => image.id).join('|'), () =>
+      pending.length === 0 ? [el('p', MUTED, 'No images yet.')] : pending.map(imageCard),
+    );
+    for (const refresh of cardRefreshers.values()) refresh();
+  }
+
+  /** Per-card update functions, so a poll can refresh content without rebuilding. */
+  const cardRefreshers = new Map<string, () => void>();
+
+  function imageCard(image: PendingImage): HTMLElement {
+    const card = el('div', 'border:1px solid #2f2f40;padding:10px;margin-bottom:10px;display:flex;gap:12px;');
+    const thumb = el('img', 'width:120px;height:120px;object-fit:contain;background:#0a0a10;border:1px solid #2a2a38;') as HTMLImageElement;
+    thumb.src = image.previewUrl;
+    const right = el('div', 'flex:1;min-width:0;');
+
+    const worst = worstSeverity(image.findings);
+    right.appendChild(
+      el(
+        'div',
+        `${BODY}color:${worst ? SEVERITY_COLOR[worst] : '#7bc47f'};`,
+        `${image.name} · ${image.width}x${image.height} · ${formatBytes(image.bytes)}`,
+      ),
+    );
+    const hashLine = el('div', MUTED);
+    right.appendChild(hashLine);
+    for (const finding of image.findings) {
+      right.appendChild(
+        el('div', `${MUTED}color:${SEVERITY_COLOR[finding.severity]};`, `${finding.severity}: ${finding.message}`),
+      );
+    }
+    if (image.findings.length === 0) {
+      right.appendChild(el('div', `${MUTED}color:#7bc47f;`, 'nothing measurable to flag'));
     }
 
-    for (const image of pending) {
-      const card = el('div', 'border:1px solid #2f2f40;padding:10px;margin-bottom:10px;display:flex;gap:12px;');
-      const thumb = el('img', 'width:120px;height:120px;object-fit:contain;background:#0a0a10;border:1px solid #2a2a38;') as HTMLImageElement;
-      thumb.src = image.previewUrl;
-      const right = el('div', 'flex:1;min-width:0;');
+    // --- the per-image form ---
+    const form = el('div', 'display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;');
+    const unitInput = el('input', `${INPUT}width:150px;`) as HTMLInputElement;
+    unitInput.placeholder = 'unit id';
+    unitInput.value = image.unitId;
+    const familyInput = el('input', `${INPUT}width:110px;`) as HTMLInputElement;
+    familyInput.value = image.skeletonId;
+    const faceInput = el('input', `${INPUT}width:90px;`) as HTMLInputElement;
+    faceInput.type = 'number';
+    faceInput.value = String(image.faceLimit);
 
-      const worst = worstSeverity(image.findings);
-      right.appendChild(
-        el(
-          'div',
-          `${BODY}color:${worst ? SEVERITY_COLOR[worst] : '#7bc47f'};`,
-          `${image.name} · ${image.width}x${image.height} · ${formatBytes(image.bytes)}`,
-        ),
-      );
-      right.appendChild(
-        el('div', MUTED, image.sha256 === null ? (image.uploadError ?? 'hashing…') : `sha256 ${image.sha256.slice(0, 16)}…`),
-      );
-      for (const finding of image.findings) {
-        right.appendChild(el('div', `${MUTED}color:${SEVERITY_COLOR[finding.severity]};`, `${finding.severity}: ${finding.message}`));
-      }
-      if (image.findings.length === 0) {
-        right.appendChild(el('div', `${MUTED}color:#7bc47f;`, 'nothing measurable to flag'));
-      }
+    form.append(
+      el('span', MUTED, 'unit'),
+      unitInput,
+      el('span', MUTED, 'family'),
+      familyInput,
+      el('span', MUTED, 'faces'),
+      faceInput,
+    );
+    right.appendChild(form);
 
-      // --- the per-image form ---
-      const form = el('div', 'display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;');
-      const unitInput = el('input', `${INPUT}width:150px;`) as HTMLInputElement;
-      unitInput.placeholder = 'unit id';
-      unitInput.value = image.unitId;
-      unitInput.addEventListener('input', () => {
-        image.unitId = unitInput.value.trim();
-        image.estimate = null;
-        renderImages();
-      });
+    const clips = el('div', 'display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;');
+    right.appendChild(clips);
+    const actions = el('div', 'display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;');
+    right.appendChild(actions);
+    const estimateBox = el('div');
+    right.appendChild(estimateBox);
 
-      const familyInput = el('input', `${INPUT}width:110px;`) as HTMLInputElement;
-      familyInput.value = image.skeletonId;
-      familyInput.addEventListener('input', () => {
-        image.skeletonId = familyInput.value.trim();
-        image.estimate = null;
-        renderImages();
-      });
+    const refresh = (): void => {
+      setText(hashLine, image.sha256 === null ? (image.uploadError ?? 'hashing…') : `sha256 ${image.sha256}`);
 
-      const faceInput = el('input', `${INPUT}width:90px;`) as HTMLInputElement;
-      faceInput.type = 'number';
-      faceInput.value = String(image.faceLimit);
-      faceInput.addEventListener('input', () => {
-        image.faceLimit = Number(faceInput.value) || image.faceLimit;
-        image.estimate = null;
-      });
-
-      form.append(
-        el('span', MUTED, 'unit'),
-        unitInput,
-        el('span', MUTED, 'family'),
-        familyInput,
-        el('span', MUTED, 'faces'),
-        faceInput,
-      );
-      right.appendChild(form);
-
-      // --- clip intents ---
       const establishes = establishesRigFamily(jobs, image.skeletonId);
-      const clips = el('div', 'display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;');
-      if (establishes) {
-        for (const intent of CLIP_INTENTS) {
+      repaint(clips, `${establishes}:${image.clipIntents.join(',')}:${image.skeletonId}`, () => {
+        if (!establishes) {
+          // The shared-skeleton rule, made visible rather than merely enforced.
+          return [
+            el(
+              'div',
+              `${MUTED}color:#7bc47f;`,
+              `"${image.skeletonId}" already has a clip library. This unit reuses it -- no retarget, and nothing to choose.`,
+            ),
+          ];
+        }
+        return CLIP_INTENTS.map((intent) => {
           const label = el('label', `${MUTED}display:flex;gap:4px;align-items:center;cursor:pointer;`);
           const box = el('input') as HTMLInputElement;
           box.type = 'checkbox';
@@ -336,41 +399,55 @@ export function mountStudio(container: HTMLElement): ViewHandle {
               ? [...image.clipIntents, intent.id]
               : image.clipIntents.filter((id) => id !== intent.id);
             image.estimate = null;
-            renderImages();
+            refresh();
           });
           label.append(box, document.createTextNode(intent.label));
-          clips.appendChild(label);
-        }
-      } else {
-        // The shared-skeleton rule, made visible rather than merely enforced.
-        clips.appendChild(
-          el(
-            'div',
-            `${MUTED}color:#7bc47f;`,
-            `"${image.skeletonId}" already has a clip library. This unit reuses it -- no retarget, and nothing to choose.`,
-          ),
-        );
-      }
-      right.appendChild(clips);
+          return label;
+        });
+      });
 
-      // --- estimate / confirm ---
-      const actions = el('div', 'display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;');
       const problem = unitIdProblem(image.unitId, jobs.map((job) => job.unitId));
-      const priceBtn = button('Price it');
-      priceBtn.disabled = image.sha256 === null || problem !== null || image.busy;
-      priceBtn.style.opacity = priceBtn.disabled ? '0.5' : '1';
-      priceBtn.addEventListener('click', () => void priceImage(image));
-      actions.append(priceBtn);
-      if (problem !== null) actions.appendChild(el('span', `${MUTED}color:#e5c07b;`, problem));
-      right.appendChild(actions);
+      const canPrice = image.sha256 !== null && problem === null && !image.busy;
+      repaint(actions, `${canPrice}:${problem ?? ''}`, () => {
+        const priceBtn = button('Price it');
+        priceBtn.disabled = !canPrice;
+        priceBtn.style.opacity = canPrice ? '1' : '0.5';
+        priceBtn.addEventListener('click', () => void priceImage(image));
+        const nodes: Node[] = [priceBtn];
+        if (problem !== null) nodes.push(el('span', `${MUTED}color:#e5c07b;`, problem));
+        return nodes;
+      });
 
-      if (image.estimate) {
-        right.appendChild(renderEstimate(image, image.estimate, establishes));
-      }
+      const estimate = image.estimate;
+      const key = estimate
+        ? `${estimate.cached}:${estimate.projection.totalCredits}:${estimate.confirmationToken ?? ''}:${image.busy}`
+        : 'none';
+      repaint(estimateBox, key, () => (estimate ? [renderEstimate(image, estimate, establishes)] : []));
+    };
 
-      card.append(thumb, right);
-      imageList.appendChild(card);
-    }
+    // Typing updates the model and then only the parts that depend on it. It
+    // must never rebuild the field being typed into -- which is what calling the
+    // whole list renderer from here used to do.
+    unitInput.addEventListener('input', () => {
+      image.unitId = unitInput.value.trim();
+      image.estimate = null;
+      refresh();
+    });
+    familyInput.addEventListener('input', () => {
+      image.skeletonId = familyInput.value.trim();
+      image.estimate = null;
+      refresh();
+    });
+    faceInput.addEventListener('input', () => {
+      image.faceLimit = Number(faceInput.value) || image.faceLimit;
+      image.estimate = null;
+      refresh();
+    });
+
+    cardRefreshers.set(image.id, refresh);
+    refresh();
+    card.append(thumb, right);
+    return card;
   }
 
   /**
@@ -424,15 +501,27 @@ export function mountStudio(container: HTMLElement): ViewHandle {
     return box;
   }
 
+  /**
+   * Everything about a job that is drawn, as one string.
+   *
+   * Deliberately narrow: `updatedAtMs` moves on every save the pipeline makes,
+   * including ones that change nothing visible, so keying on it would repaint as
+   * often as not keying on anything.
+   */
+  function jobKey(job: JobView): string {
+    const steps = job.steps
+      .map((step) => `${step.stage}:${step.status}:${step.creditsConsumed}:${step.error ?? ''}`)
+      .join(',');
+    return `${job.id}:${job.status}:${job.stage ?? ''}:${job.creditsSpent}:${job.message ?? ''}:${steps}`;
+  }
+
   function renderJobs(): void {
-    jobQueue.replaceChildren();
     const live = jobs.filter((job) => job.status === 'queued' || job.status === 'running');
     const recent = jobs.filter((job) => job.status !== 'queued' && job.status !== 'running').slice(-8).reverse();
-    if (jobs.length === 0) {
-      jobQueue.appendChild(el('p', MUTED, 'No jobs yet.'));
-      return;
-    }
-    for (const job of [...live, ...recent]) jobQueue.appendChild(renderJob(job));
+    const shown = [...live, ...recent];
+    repaint(jobQueue, shown.map(jobKey).join('|'), () =>
+      jobs.length === 0 ? [el('p', MUTED, 'No jobs yet.')] : shown.map(renderJob),
+    );
   }
 
   function renderJob(job: JobView): HTMLElement {
@@ -499,13 +588,15 @@ export function mountStudio(container: HTMLElement): ViewHandle {
   }
 
   function renderLibrary(): void {
-    libraryList.replaceChildren();
     const done = jobs.filter((job) => job.status === 'succeeded');
-    if (done.length === 0) {
-      libraryList.appendChild(el('p', MUTED, 'Nothing generated yet.'));
-      return;
-    }
-    for (const job of done) {
+    repaint(libraryList, done.map(jobKey).join('|'), () => {
+      if (done.length === 0) return [el('p', MUTED, 'Nothing generated yet.')];
+      return done.map(libraryCard);
+    });
+  }
+
+  function libraryCard(job: JobView): HTMLElement {
+    {
       const card = el('div', 'border:1px solid #2f2f40;padding:10px;margin-bottom:10px;');
       card.appendChild(el('div', BODY, `${job.unitId}  ·  ${job.skeletonId}${job.establishesRigFamily ? ' (owns the clip library)' : ''}`));
       card.appendChild(
@@ -526,18 +617,22 @@ export function mountStudio(container: HTMLElement): ViewHandle {
       // Tri and bone counts need a parsed .glb, which is the preview's job. Said
       // plainly rather than shown as a blank column that looks like zero.
       card.appendChild(el('div', `${MUTED}color:#6a6a80;`, 'tri and bone counts are read off the .glb — spec 110'));
-      libraryList.appendChild(card);
+      return card;
     }
   }
 
   function renderExport(): void {
-    exportList.replaceChildren();
     const done = jobs.filter((job) => job.status === 'succeeded');
-    if (done.length === 0) {
-      exportList.appendChild(el('p', MUTED, 'Nothing to export yet.'));
-      return;
-    }
-    for (const job of done) {
+    // Keyed on the units alone, not on their step detail: an export result is
+    // written into a row by hand and a repaint would throw it away.
+    repaint(exportList, done.map((job) => `${job.id}:${job.unitId}`).join('|'), () => {
+      if (done.length === 0) return [el('p', MUTED, 'Nothing to export yet.')];
+      return done.map(exportRow);
+    });
+  }
+
+  function exportRow(job: JobView): HTMLElement {
+    {
       const row = el('div', 'display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap;');
       const go = button(`Export ${job.unitId}`);
       const result = el('div', `${MUTED}width:100%;`);
@@ -554,7 +649,7 @@ export function mountStudio(container: HTMLElement): ViewHandle {
         }
       }));
       row.append(go, el('span', MUTED, job.id.slice(0, 8)), result);
-      exportList.appendChild(row);
+      return row;
     }
   }
 
@@ -647,6 +742,7 @@ export function mountStudio(container: HTMLElement): ViewHandle {
       const buffer = await file.arrayBuffer();
       const stats = measureImage(decoded.width, decoded.height, decoded.data);
       const image: PendingImage = {
+        id: `img-${nextImageId++}`,
         name: file.name,
         bytes: file.size,
         width: decoded.width,

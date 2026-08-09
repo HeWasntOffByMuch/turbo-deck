@@ -28,6 +28,7 @@ import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, type Page } from 'playwright';
+import { PNG } from 'pngjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = join(root, '.claude', 'screenshots');
@@ -74,6 +75,23 @@ async function mountedSize(page: Page): Promise<{ nodes: number; canvases: numbe
     for (const child of visible) nodes += child.querySelectorAll('*').length;
     return { nodes, canvases: app.querySelectorAll('canvas').length };
   });
+}
+
+/** A plausible reference image: a pale figure on a plain dark backdrop. */
+function referencePng(size = 640): Buffer {
+  const png = new PNG({ width: size, height: size });
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const index = (y * size + x) << 2;
+      const inside = Math.abs(x - size / 2) < size * 0.18 && Math.abs(y - size / 2) < size * 0.34;
+      const [r, g, b] = inside ? [225, 205, 170] : [18, 18, 26];
+      png.data[index] = r;
+      png.data[index + 1] = g;
+      png.data[index + 2] = b;
+      png.data[index + 3] = 255;
+    }
+  }
+  return PNG.sync.write(png);
 }
 
 async function main(): Promise<void> {
@@ -178,6 +196,57 @@ async function main(): Promise<void> {
     const remedies = ['npm run server', 'paste the admin token'];
     if (!remedies.some((remedy) => afterConnect.includes(remedy))) {
       failures.push('a rejected token produces no message saying what to do about it');
+    }
+
+    // --- a poll must not repaint what somebody is reading or typing ----------
+    //
+    // The queue is re-read every couple of seconds, and rebuilding the DOM on
+    // each poll wiped any selection in progress -- which meant the one thing
+    // this panel is for, copying an error out of it, was the thing it broke.
+    // Two seconds is longer than the poll interval, so if a repaint were still
+    // happening it would happen inside this window.
+    await page.evaluate(() => {
+      const target = document.querySelector('#app section p');
+      if (!target) return;
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      const selection = getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    });
+    const selectedBefore = await page.evaluate(() => getSelection()?.toString() ?? '');
+    if (selectedBefore.length < 10) failures.push('could not select text in the studio panel at all');
+    await page.waitForTimeout(2600);
+    const selectedAfter = await page.evaluate(() => getSelection()?.toString() ?? '');
+    if (selectedAfter !== selectedBefore) {
+      failures.push(`a poll destroyed the text selection: "${selectedBefore.slice(0, 40)}" became "${selectedAfter.slice(0, 40)}"`);
+    }
+
+    // The same for a field being typed into: a rebuilt input loses focus and
+    // the caret, which on a form somebody is filling in is maddening. Needs a
+    // real image, since the form only exists once one has been dropped -- and
+    // dropping one also exercises decode, measure and check in a real browser.
+    await page.locator('#app input[type=file][accept="image/*"]').setInputFiles({
+      name: 'reference.png',
+      mimeType: 'image/png',
+      buffer: referencePng(),
+    });
+    await page.waitForTimeout(1200);
+    const ingested = await page.locator('#app').innerText();
+    if (!ingested.includes('640x640')) failures.push('the dropped image was not measured');
+    if (!ingested.includes('no transparency')) failures.push('the image checker said nothing about a clean opaque image');
+
+    const unitField = page.locator('#app input[placeholder="unit id"]').first();
+    if ((await unitField.count()) === 0) {
+      failures.push('no unit id field after dropping an image');
+    } else {
+      await unitField.fill('grunt');
+      await page.waitForTimeout(2600);
+      const stillFocused = await page.evaluate(
+        () => (document.activeElement as HTMLInputElement | null)?.placeholder === 'unit id',
+      );
+      if (!stillFocused) failures.push('a poll stole focus from the unit id field');
+      if ((await unitField.inputValue()) !== 'grunt') failures.push('a poll cleared what was typed into the unit id field');
     }
 
     await page.screenshot({ path: join(outDir, 'studio.png'), fullPage: true });
