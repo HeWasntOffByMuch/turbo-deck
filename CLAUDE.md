@@ -154,6 +154,34 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  they connect to. `npm run bake:units` writes it; decimation,
                  meshopt and KTX2 are deferred rather than faked, and
                  `builtStages` records what actually ran.
+                 glb-read.ts, skin.ts and mesh-check.ts are the half that reads
+                 the *vertices* (spec 115), because every other check here reads
+                 a document and none of the ways a generated rig actually fails
+                 are in a schema. The reader takes the binary chunk and refuses
+                 what it cannot honestly decode; skin.ts is linear blend skinning
+                 on the CPU and deliberately does not renormalize weights, since
+                 a mesh that shrinks as it poses is the thing being looked for;
+                 mesh-check.ts is weight sums, a second influence set the runtime
+                 silently drops, joint indices, vertices bound to nothing or drawn
+                 by nothing, degenerate triangles, whether the bind pose is a T/A
+                 or somebody's idle, and what four extreme poses do to the body.
+                 Two rules learned the hard way: pose axes are the *body's*,
+                 measured off the hips, because "rotate the shoulder about Z"
+                 assumes the mixamo arm axis and on a rig whose arms run along Z
+                 it rolls each arm about its own length and scores a flawless zero
+                 on a pose it never applied; and deformation is measured by area,
+                 never by normal direction, because a triangle carried rigidly by
+                 a bone that turns 100 degrees has a normal that turned 100
+                 degrees and nothing about it inverted. Errors fail
+                 `npm run bake:units`, deformation findings warn, and
+                 `npx tsx scripts/preview-deform.ts` is the picture a person
+                 decides from. skeleton-from-rig.ts turns a rigged .glb into a
+                 family's skeleton document, which is what lets a new rig family
+                 be exported at all and what finally fills in a provisional one;
+                 compareToFamily is the shared-skeleton rule as a check, since the
+                 family's one clip library animates every unit in it.
+                 canonical-height.ts is the height a body is drawn at, in one
+                 place rather than inside one hand-written asset.
                  scaffold.ts derives a first unitdef for a unit that has just
                  been generated (spec 112) -- a clip library over what was
                  actually retargeted, and a machine reaching only the states the
@@ -200,6 +228,17 @@ src/server/studio/  the unit authoring service (spec 108). Node-only, wired in f
                  stage that failed, priced at what is left rather than at the
                  job's original cost, because a retarget that dies on its third
                  clip must not cost a fresh mesh and rig to recover from.
+                 A family's clip library can be handed back (spec 114): the first
+                 job to succeed owned it forever, including when its clips were
+                 the ones you would not ship, and the only escape was inventing a
+                 second family name. Releasing is free and never touches what was
+                 paid for; it changes the price of the *next* generation, which is
+                 what the button says rather than saying "this is free".
+                 family.ts is where a skeleton document comes from at export time
+                 (spec 115) -- measured off the rig when there is none, filled in
+                 when the one there is provisional, and never overwritten once it
+                 has a bind pose, because from then on it is the contract the next
+                 rig of the family is checked against.
                  jobs.json is rewritten
                  atomically; ledger.jsonl is append-only. State lives in
                  .studio/ and is gitignored.
