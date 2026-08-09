@@ -48,8 +48,10 @@ import { appearanceOf } from './appearance.js';
 import { moveIntent, MOVE_KEYS, RoutePlanner } from './intent.js';
 import { autoAttack } from './target.js';
 import { aimShape, castOrder, startAim, type AimGesture, type AimOrder } from './aim.js';
-import { WorldScene, type AimIndicator } from './scene.js';
+import { TouchGestures, type TouchSample } from './touch.js';
+import { DEFAULT_HEADROOM, WorldScene, type AimIndicator } from './scene.js';
 import { spawnerLabels } from './spawner-overlay.js';
+import type { WorldAnchor } from './damage-popup.js';
 
 const TICK_MS = 1000 / SERVER_TICK_RATE;
 
@@ -171,7 +173,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     }
   }
 
-  const hud = createHud();
+  const hud = createHud((x, y, lift) => scene.projectPoint(x, y, lift));
   /** The overlay's current box, so it is only rewritten when the letterbox moves. */
   let hudBox = { x: -1, y: -1, width: -1, height: -1 };
   hud.onUse((abilityId) => pressAbility(abilityId));
@@ -188,12 +190,22 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // is a different question from how it is being looked at.
   const weather = createWeatherControls();
   const buttons = document.createElement('div');
-  buttons.style.cssText = 'position:absolute;top:8px;right:10px;z-index:30;display:flex;gap:6px;';
+  // Inset against the notch and the home indicator (spec 093): in landscape the
+  // cutout is on a side edge, which is exactly where these sit.
+  buttons.style.cssText =
+    'position:absolute;top:calc(8px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));' +
+    'z-index:30;display:flex;gap:6px;';
   buttons.append(weather.element, scene.controls.element);
   root.append(hud.element, buttons);
 
   client.onCombatResult((result) => {
-    hud.addDamage(result.targetId, result.damage, (result.flags & 2) !== 0);
+    // Where it landed, asked for now and never again (spec 096). The scene is
+    // the better answer -- it knows the pose actually on screen, and it still
+    // holds the body of something this very blow killed -- and the replica is
+    // the fallback for a hit on a body no frame has drawn yet.
+    const at = scene.bodyAnchor(result.targetId) ?? replicaAnchor(result.targetId);
+    if (!at) return;
+    hud.addDamage(result.targetId, at, result.damage, (result.flags & 2) !== 0);
   });
   client.onEffect((effect) => {
     scene.addEffect(effect.x, effect.y, effect.radius, effect.durationTicks);
@@ -201,6 +213,12 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   client.onCastRejected((abilityId, reason) => {
     hud.notice(`${abilityById(abilityId)?.name ?? abilityId}: ${reason}`);
   });
+
+  /** The world point of a body the scene has not drawn, out of the last delta. */
+  function replicaAnchor(entityId: number): WorldAnchor | null {
+    const entity = client.view().entities.find((candidate) => candidate.id === entityId);
+    return entity ? { x: entity.x, y: entity.y, lift: DEFAULT_HEADROOM } : null;
+  }
 
   // --- input -------------------------------------------------------------
   const held = new Set<string>();
@@ -415,7 +433,20 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       pendingAim = null;
       return;
     }
-    // A confirmed order is already walking, so a right-click is an ordinary
+    issueOrder();
+  };
+
+  /**
+   * The order itself: attack the body under the cursor, or walk to the ground
+   * under it (spec 070).
+   *
+   * Its own function because a tap reaches it too (spec 093), and a second copy
+   * of "which of these two things did you mean" is exactly the copy that drifts.
+   * The caller has already placed `cursor` and dealt with any pending aim.
+   */
+  function issueOrder(): void {
+    if (!cursor) return;
+    // A confirmed order is already walking, so a new order is an ordinary
     // change of orders and replaces it, the way a new move order replaces an
     // attack target.
     order = null;
@@ -445,9 +476,84 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // Whether an order happens to produce a vector this tick is not something a
     // player can see; the order is the thing they gave.
     client.cancelCast();
+  }
+
+  // --- touch (spec 093) --------------------------------------------------
+  //
+  // One gesture has to carry both mouse buttons, so a tap is answered by
+  // whatever is being asked rather than meaning one fixed thing.
+  const gestures = new TouchGestures();
+
+  /**
+   * A tap: the order, or the answer to an aim, depending on what is pending.
+   *
+   * The one place touch and mouse deliberately disagree is the last branch. A
+   * mouse *ignores* a unit-aim click that missed, because the other button is
+   * right there to back out with and throwing the aim away would punish a near
+   * miss (spec 080). On touch there is no other button, so ignoring it would
+   * leave a unit-gesture aim with no way out. Tapping the thing the aim asked
+   * for confirms; tapping anywhere else means no.
+   */
+  function onTap(x: number, y: number): void {
+    cursor = { x, y };
+    if (pendingAim) {
+      const gesture = pendingAim.gesture;
+      // Answers it, or -- for a unit aim that found only grass -- leaves it
+      // pending, which is how we can tell the tap answered nothing.
+      confirmAim();
+      if (gesture === 'unit' && pendingAim) pendingAim = null;
+      return;
+    }
+    issueOrder();
+  }
+
+  const onPointerDown = (event: PointerEvent): void => {
+    if (event.pointerType !== 'touch') {
+      onMouseDown(event);
+      return;
+    }
+    // Keeps the browser's own tap behaviours -- double-tap zoom, selection, the
+    // compatibility mouse events that would reach nothing anyway -- off a canvas
+    // that has its own reading of the gesture.
+    event.preventDefault();
+    gestures.down(sampleOf(event));
   };
+
+  const onPointerMove = (event: PointerEvent): void => {
+    if (event.pointerType !== 'touch') {
+      onMove(event);
+      return;
+    }
+    const gesture = gestures.move(sampleOf(event));
+    // The pinch is the only thing a touch drag does. Deliberately not a camera
+    // pan: the camera follows the player (spec 039), and a view that could be
+    // dragged off them would need a way back that this spec does not add.
+    if (gesture?.kind === 'pinch') scene.controls.pinchZoom(gesture.ratio);
+  };
+
+  const onPointerUp = (event: PointerEvent): void => {
+    if (event.pointerType !== 'touch') return;
+    const gesture = gestures.up(sampleOf(event));
+    if (gesture?.kind === 'tap') onTap(gesture.x, gesture.y);
+  };
+
+  const onPointerCancel = (event: PointerEvent): void => {
+    if (event.pointerType === 'touch') gestures.cancel(event.pointerId);
+  };
+
+  /** A pointer event as the recogniser's plain, canvas-relative sample. */
+  function sampleOf(event: PointerEvent): TouchSample {
+    const rect = canvas.getBoundingClientRect();
+    return { id: event.pointerId, x: event.clientX - rect.left, y: event.clientY - rect.top };
+  }
+
   const onContextMenu = (event: Event): void => event.preventDefault();
-  const onBlur = (): void => held.clear();
+  const onBlur = (): void => {
+    held.clear();
+    // A gesture interrupted by losing focus never sends its pointerup, and the
+    // next finger down would otherwise land mid-pinch.
+    gestures.clear();
+  };
 
   // --- the loop ----------------------------------------------------------
   let raf = 0;
@@ -799,9 +905,14 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       window.addEventListener('keydown', onKeyDown);
       window.addEventListener('keyup', onKeyUp);
       window.addEventListener('blur', onBlur);
-      canvas.addEventListener('mousemove', onMove);
+      // Pointer events rather than mouse events, so a tap is read once: the
+      // compatibility `mousedown` a touch also fires would arrive as button 0
+      // and confirm an aim nobody asked about (spec 093).
+      canvas.addEventListener('pointermove', onPointerMove);
+      canvas.addEventListener('pointerdown', onPointerDown);
+      canvas.addEventListener('pointerup', onPointerUp);
+      canvas.addEventListener('pointercancel', onPointerCancel);
       canvas.addEventListener('mouseleave', onLeave);
-      canvas.addEventListener('mousedown', onMouseDown);
       document.documentElement.addEventListener('contextmenu', onContextMenu);
 
       void client.connect();
@@ -815,11 +926,15 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
-      canvas.removeEventListener('mousemove', onMove);
+      canvas.removeEventListener('pointermove', onPointerMove);
+      canvas.removeEventListener('pointerdown', onPointerDown);
+      canvas.removeEventListener('pointerup', onPointerUp);
+      canvas.removeEventListener('pointercancel', onPointerCancel);
       canvas.removeEventListener('mouseleave', onLeave);
-      canvas.removeEventListener('mousedown', onMouseDown);
       document.documentElement.removeEventListener('contextmenu', onContextMenu);
       held.clear();
+      // A tab switched away mid-pinch must not leave fingers down.
+      gestures.clear();
     },
   };
 }

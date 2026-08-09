@@ -2,6 +2,20 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Spec 093. `viewport-fit=cover` puts the page under the notch so the
+         world fills a landscape screen; the overlays inset themselves back out
+         with env(safe-area-inset-*). `user-scalable=no` because the pinch is the
+         game's zoom -- without it the browser scales the page instead. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <!-- The only real fullscreen iPhone Safari offers, since it has no element
+         Fullscreen API: installed to the home screen, it runs without chrome. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#16161e" />
     <title>turbo-deck · isometric 3D</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🌲</text></svg>" />
 
@@ -10,6 +24,22 @@
          element and tooltip is an overlay positioned on top of it. */
       html, body { margin: 0; height: 100%; background: #16161e; overflow: hidden; }
       #app { position: fixed; inset: 0; }
+
+      /* Spec 093. Both of these are load-bearing rather than polish: without
+         `touch-action` the browser claims the pinch and the pan before a
+         pointermove is ever delivered, and without `overscroll-behavior` a
+         downward drag is pull-to-refresh instead of a move order. The tap
+         highlight and the selection are what a phone does to a long press on
+         something it thinks is text. */
+      #app {
+        touch-action: none;
+        overscroll-behavior: none;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      /* Buttons opt back in, so the hotbar and the tab bar still feel tappable. */
+      #app button { touch-action: manipulation; }
     </style>
   </head>
   <body>

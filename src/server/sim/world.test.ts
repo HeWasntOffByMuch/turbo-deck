@@ -1040,6 +1040,17 @@ describe('shots that travel', () => {
     return projectileLifetimeTicks(spec);
   }
 
+  /**
+   * Ticks to wait for the loose: the wind-up, plus room for the turn in front of
+   * it. Asked rather than written down, for the same reason as the two above --
+   * wind-ups are the table's to say and got a good deal longer in spec 094.
+   */
+  function looseTicks(abilityId: string): number {
+    const ability = abilityById(abilityId);
+    if (!ability) throw new Error(`no ${abilityId}`);
+    return ability.windupTicks + SERVER_TICK_RATE / 2;
+  }
+
   it('spawns nothing before the release, and a projectile on it', () => {
     let state = createWorldState(4);
     const player = withPlayer(state, 600, 450);
@@ -1051,7 +1062,7 @@ describe('shots that travel', () => {
     const shoot = shootAt('ranged.shot', player.id, dummy.id, 800, 450);
     let current = state;
     let releaseTick: number | null = null;
-    for (let i = 0; i < 40 && releaseTick === null; i++) {
+    for (let i = 0; i < looseTicks('ranged.shot') && releaseTick === null; i++) {
       const result = step(current, shoot(i), ctx);
       current = result.state;
       const projectiles = [...current.entities.values()].filter((e) => e.projectile !== null);
@@ -1172,7 +1183,7 @@ describe('shots that travel', () => {
     const shoot = shootAt('ranged.shot', player.id, mark.id, 900, 450);
     let current = state;
     let loosed = false;
-    for (let i = 0; i < 40 && !loosed; i++) {
+    for (let i = 0; i < looseTicks('ranged.shot') && !loosed; i++) {
       current = step(current, shoot(i), ctx).state;
       loosed = [...current.entities.values()].some((e) => e.projectile !== null);
     }

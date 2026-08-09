@@ -118,6 +118,16 @@ const PURE_RENDER = [
   'src/render/iso3d/world/interpolate.ts',
   'src/render/iso3d/world/pixel-font.ts',
   'src/render/iso3d/world/spawner-overlay.ts',
+  // Touch gesture recognition (spec 093). A tap is a fact about a sequence of
+  // timed samples -- the timestamps are passed in on the sample rather than read
+  // from a clock here, which is exactly what lets the rules be replayed in Node
+  // instead of checked by hand on a phone.
+  'src/render/iso3d/world/touch.ts',
+  // The HUD's metrics and its weapon icons (spec 094). The HUD is DOM and can
+  // only be checked by photographing it; whether eight buttons still fit across
+  // a phone is a sum, and an icon is a string.
+  'src/render/iso3d/world/hud-layout.ts',
+  'src/render/iso3d/world/icons.ts',
   'src/render/iso3d/world/*.test.ts',
   'src/render/iso3d/editor/brush.ts',
   'src/render/iso3d/editor/camera.ts',

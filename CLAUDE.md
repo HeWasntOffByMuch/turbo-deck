@@ -178,7 +178,14 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  right-click attack order, spec 072), cast.ts, appearance.ts,
                  projectile-shape.ts and trail.ts (an arrow's and a shuriken's
                  silhouettes, and the streak a thrown star leaves, spec 087)
-                 and pixel-font.ts (a 5x7 glyph table, since nothing may be fetched)
+                 pixel-font.ts (a 5x7 glyph table, since nothing may be fetched)
+                 and touch.ts (taps and pinches, spec 093 -- bounded by distance
+                 and never by time, because an event's stamp measures the
+                 renderer's load rather than the finger), hud-layout.ts and
+                 icons.ts (how big the HUD is on a finger and what the weapon
+                 switch draws, spec 094 -- the sizes are a sum, so "eight buttons
+                 still fit across a phone" fails in Node rather than in a
+                 screenshot)
                  are pure and tested headlessly; scene.ts, shot.ts, hud.ts and
                  view.ts are the three.js/DOM half. `npx tsx scripts/preview-world.ts`
                  photographs the real page into .claude/screenshots/world-*.png,
@@ -188,6 +195,12 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  actually is, flown through the real step: one weapon at a
                  spread of distances, and the same shot over flat and broken
                  ground overlaid (spec 089).
+                 `npx tsx scripts/preview-touch.ts` drives the built page in a
+                 phone-shaped landscape viewport with real touch events over CDP
+                 (spec 093), since the tap and the pinch only exist once a
+                 browser is delivering pointer events. `fullscreen.ts` beside it
+                 is the tab bar's fullscreen button -- DOM only, and absent on
+                 anything that cannot go fullscreen or is not a coarse pointer.
 src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
                  read by the tree sway, the water and the streak layer over the
                  ground, plus the shore distance transform the water's bands step
