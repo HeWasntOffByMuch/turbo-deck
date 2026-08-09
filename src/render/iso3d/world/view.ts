@@ -183,19 +183,19 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // frame simply reads the stat and asks for whatever it names.
   hud.onEquip((itemId) => client.equip('mainHand', itemId));
 
-  // The two settings buttons float over the top-right corner of the game
-  // window: the camera/light cog (spec 034) and the weather beside it
-  // (spec 075). Separate popovers rather than one -- the cog's is already
-  // twenty rows deep and scrolls on a short window, and what the world is doing
-  // is a different question from how it is being looked at.
-  const weather = createWeatherControls();
+  // The settings buttons float over the top-right corner of the game window: the
+  // view cog (spec 034), the day/night clock, the player's lights, the retro
+  // filter and the hike look (spec 107), then the weather (spec 075). A popover
+  // each rather than one drawer for all of them -- and one group, so opening any
+  // of them closes the rest instead of stacking six panels into one corner.
+  const weather = createWeatherControls({ group: scene.controls.menus });
   const buttons = document.createElement('div');
   // Inset against the notch and the home indicator (spec 093): in landscape the
   // cutout is on a side edge, which is exactly where these sit.
   buttons.style.cssText =
     'position:absolute;top:calc(8px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));' +
     'z-index:30;display:flex;gap:6px;';
-  buttons.append(weather.element, scene.controls.element);
+  buttons.append(scene.controls.element, weather.element);
   root.append(hud.element, buttons);
 
   client.onCombatResult((result) => {

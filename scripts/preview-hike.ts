@@ -6,6 +6,10 @@
 // blending it, so the world went black. Everything measured was right and the
 // thing on screen was wrong. This drives the real page and the real controls.
 //
+// Every switch it throws lives behind the "Hike look" button since spec 107 --
+// the ten steps got a popover of their own rather than sharing the view cog's
+// with the camera, the clock, the lights and the filter.
+//
 // It also answers the question the offscreen palette check cannot. That one
 // proves every pixel is a palette colour, which is the correctness claim; whether
 // sixteen colours are *enough* for this world is a question about the world, and
@@ -81,9 +85,9 @@ try {
 
   const before = await brightness(join(outDir, 'world-outlines-off.png'));
 
-  await page.click('button[aria-label="View settings"]');
+  await page.click('button[aria-label="Hike look"]');
   await page.locator('label', { hasText: 'Outlines' }).first().locator('input[type=checkbox]').check();
-  await page.click('button[aria-label="View settings"]');
+  await page.click('button[aria-label="Hike look"]');
   await page.waitForTimeout(1200);
 
   const after = await brightness(join(outDir, 'world-outlines.png'));
@@ -100,9 +104,9 @@ try {
   }
 
   // And the palette, on the real world rather than on the probe's four trees.
-  await page.click('button[aria-label="View settings"]');
+  await page.click('button[aria-label="Hike look"]');
   await page.locator('label', { hasText: 'Palette' }).first().locator('select').selectOption('world');
-  await page.click('button[aria-label="View settings"]');
+  await page.click('button[aria-label="Hike look"]');
   await page.waitForTimeout(1200);
   await brightness(join(outDir, 'world-palette.png'));
 
@@ -113,15 +117,15 @@ try {
   // need to be: the camera looks down at the ground, so up the screen *is*
   // further away. Comparing the top of the frame with the bottom is the same
   // claim in the only terms a screenshot has.
-  await page.click('button[aria-label="View settings"]');
+  await page.click('button[aria-label="Hike look"]');
   await page.locator('label', { hasText: 'Palette' }).first().locator('select').selectOption('none');
-  await page.click('button[aria-label="View settings"]');
+  await page.click('button[aria-label="Hike look"]');
   await page.waitForTimeout(800);
   const inkOff = await page.screenshot({ path: join(outDir, 'world-ink-off.png'), clip: await canvasRect() });
 
-  await page.click('button[aria-label="View settings"]');
+  await page.click('button[aria-label="Hike look"]');
   await page.locator('label', { hasText: 'Distance ink' }).first().locator('input[type=checkbox]').check();
-  await page.click('button[aria-label="View settings"]');
+  await page.click('button[aria-label="Hike look"]');
   await page.waitForTimeout(1200);
   const inkOn = await page.screenshot({ path: join(outDir, 'world-ink.png'), clip: await canvasRect() });
 
@@ -185,16 +189,16 @@ try {
   // asks the only question that scene cannot: whether real terrain has folds in
   // it at all. A measure that is perfectly correct and fires on nothing would
   // pass every check in the probe.
-  await page.click('button[aria-label="View settings"]');
+  await page.click('button[aria-label="Hike look"]');
   await page.locator('label', { hasText: 'Distance ink' }).first().locator('input[type=checkbox]').uncheck();
   await page.locator('label', { hasText: 'Outlines' }).first().locator('input[type=checkbox]').uncheck();
-  await page.click('button[aria-label="View settings"]');
+  await page.click('button[aria-label="Hike look"]');
   await page.waitForTimeout(800);
   const creaseOff = await page.screenshot({ path: join(outDir, 'world-creases-off.png'), clip: await canvasRect() });
 
-  await page.click('button[aria-label="View settings"]');
+  await page.click('button[aria-label="Hike look"]');
   await page.locator('label', { hasText: 'Creases' }).first().locator('input[type=checkbox]').check();
-  await page.click('button[aria-label="View settings"]');
+  await page.click('button[aria-label="Hike look"]');
   await page.waitForTimeout(1200);
   const creaseOn = await page.screenshot({ path: join(outDir, 'world-creases.png'), clip: await canvasRect() });
 
@@ -245,15 +249,15 @@ try {
   // patched chunk survives the *real* set of materials -- ground, walls, props,
   // units -- since it was spliced into a chunk all of them include and a shader
   // that fails to compile is a logged message rather than an exception.
-  await page.click('button[aria-label="View settings"]');
+  await page.click('button[aria-label="Hike look"]');
   await page.locator('label', { hasText: 'Creases' }).first().locator('input[type=checkbox]').uncheck();
-  await page.click('button[aria-label="View settings"]');
+  await page.click('button[aria-label="Hike look"]');
   await page.waitForTimeout(800);
   const shadowOff = await page.screenshot({ path: join(outDir, 'world-shadows-hard.png'), clip: await canvasRect() });
 
-  await page.click('button[aria-label="View settings"]');
+  await page.click('button[aria-label="Hike look"]');
   await page.locator('label', { hasText: 'Soft shadows' }).first().locator('input[type=checkbox]').check();
-  await page.click('button[aria-label="View settings"]');
+  await page.click('button[aria-label="Hike look"]');
   await page.waitForTimeout(1200);
   const shadowOn = await page.screenshot({ path: join(outDir, 'world-shadows-soft.png'), clip: await canvasRect() });
 
@@ -288,16 +292,16 @@ try {
   // Surface detail on the real map (spec 106). The offscreen probe uses a
   // synthetic plateau where the cliff is a known rectangle; this asks whether the
   // patched materials survive the real world's set of them.
-  await page.click('button[aria-label="View settings"]');
+  await page.click('button[aria-label="Hike look"]');
   await page.locator('label', { hasText: 'Soft shadows' }).first().locator('input[type=checkbox]').uncheck();
-  await page.click('button[aria-label="View settings"]');
+  await page.click('button[aria-label="Hike look"]');
   await page.waitForTimeout(800);
   const detailOff = await page.screenshot({ path: join(outDir, 'world-detail-off.png'), clip: await canvasRect() });
 
-  await page.click('button[aria-label="View settings"]');
+  await page.click('button[aria-label="Hike look"]');
   await page.locator('label', { hasText: 'Surface detail' }).first().locator('input[type=checkbox]').check();
   await page.locator('label', { hasText: 'Rock by slope' }).first().locator('input[type=checkbox]').check();
-  await page.click('button[aria-label="View settings"]');
+  await page.click('button[aria-label="Hike look"]');
   await page.waitForTimeout(1200);
   const detailOn = await page.screenshot({ path: join(outDir, 'world-detail.png'), clip: await canvasRect() });
 

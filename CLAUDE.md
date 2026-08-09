@@ -201,6 +201,16 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  browser is delivering pointer events. `fullscreen.ts` beside it
                  is the tab bar's fullscreen button -- DOM only, and absent on
                  anything that cannot go fullscreen or is not a coarse pointer.
+src/render/iso3d/view-controls.ts, menu-group.ts, settings-menu.ts  the Play
+                 tab's settings (specs 033/034/107): six buttons in the top-right
+                 corner -- view, day and night, player lights, retro filter, hike
+                 look and the weather -- each with a popover of its own and its
+                 own Reset. menu-group.ts is the rule that only one is open at a
+                 time, and is pure and tested headlessly because it is a state
+                 machine rather than a document; settings-menu.ts is the button,
+                 the popover and the heading the panels share. The widgets
+                 themselves are the state: nothing is persisted and every session
+                 opens at defaults.
 src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
                  read by the tree sway, the water and the streak layer over the
                  ground, plus the shore distance transform the water's bands step
@@ -210,8 +220,9 @@ src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
                  sway.ts, water-material.ts, terrain-streak.ts and
                  wind-uniforms.ts are the three.js half -- the last of those owns
                  the uniform objects every weather material shares by reference,
-                 and weather-controls.ts (spec 075, the second button beside the
-                 view cog) writes straight into them rather than being polled.
+                 and weather-controls.ts (spec 075, one of the six buttons in the
+                 Play tab's corner) writes straight into them rather than being
+                 polled.
                  `wind-probe.ts` plus
                  `src/render/wind-probe.html` are a dev-server-only measuring rig
                  (never in a build) driven by `npx tsx scripts/preview-wind.ts`,
