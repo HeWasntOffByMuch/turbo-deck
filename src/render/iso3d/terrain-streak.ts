@@ -12,10 +12,13 @@ import { WIND_UNIFORMS } from './wind-uniforms.js';
  * the water's does and in the same direction the trees lean, is enough to make
  * the coastline read as one place under one sky.
  *
- * Deliberately low contrast (5.5%). It has to survive the retro pass's colour
- * quantization (spec 038) without becoming a second set of visible bands: at
- * this amplitude it mostly moves pixels across a dither boundary, which is what
- * the rest of the frame already looks like.
+ * Sized against the retro pass rather than against taste. That pass quantizes
+ * each channel to twelve levels (spec 038), so a band step is a twelfth of the
+ * range and the dither -- at the 0.05 strength the view ships with -- can only
+ * shift a value by a two-hundredth of one. There is no amount of dithering that
+ * carries sub-step detail here: the layer either swings far enough to cross a
+ * band on its own or it is rounded away. It shipped at 5.5%, which is a quarter
+ * of a step, and was invisible over 85% of the frame for exactly that reason.
  *
  * A patch on the existing Lambert materials rather than a material of its own,
  * so the ground keeps its vertex colours, its shadows and its lights.
@@ -32,7 +35,7 @@ ${glslWindChunk()}
  * that point, so this rides on top of the material rather than replacing it.
  */
 const STREAK_APPLY = /* glsl */ `
-  diffuseColor.rgb *= windStreak(vWindWorld.xz, uWindTime);
+  diffuseColor.rgb *= windStreak(vWindWorld.xz, uWindTime, STREAK_GROUND);
 `;
 
 /**
