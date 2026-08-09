@@ -138,9 +138,25 @@ the game at all. Two reasons, both since fixed:
   textures at. The contrast is therefore the caller's, not the field's.
 - the grain was stretched along the axis it scrolls down, so it slid along its
   own length — the aperture problem, and on screen a pattern plainly present and
-  plainly still. A second field, the **gust front**, is stretched 5:1 *across*
-  the flow and so travels perpendicular to its own bands; it carries 60% of the
+  plainly still. A second field, the **gust front**, is stretched across the
+  flow and so travels perpendicular to its own bands; it carries 70% of the
   swing and is the part that reads as wind.
+
+**Amended again, because amplitude was the wrong lever.** Raising the contrast
+alone made the layer detectable and still too subtle to notice in play: the
+front was smooth value noise, and a posterizing pass is precisely the thing that
+destroys a gradient — a ramp spends most of its length inside one colour band,
+invisible, then crosses to the next in a single jump somewhere in the middle.
+An **edge**, by contrast, already *is* that jump, so the pass keeps it intact.
+The front is therefore pushed through a cubic fade over a narrow window
+(`gustEdge`) into a band with flat ground either side, and widened across the
+flow (`gustAspect`) so several fit across the view rather than one spanning it.
+That change alone roughly doubled the moving share of the frame at *half* the
+amplitude increase, and it costs no mottling, where amplitude does. The rule it
+leaves behind: against a quantizing pass, sharpen before you amplify.
+
+Measured on bare ground through the shipped pass, share of ground pixels moving
+during a three-second loop: **1.6% → 4.9% (amplitude only) → 9.7% (sharpened)**.
 
 The acceptance check for this part had been passing throughout, because it ran
 with the retro pass switched off and with trees in shot — so the number it

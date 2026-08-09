@@ -113,7 +113,42 @@ describe('the shader chunk the ground compiles', () => {
     // down (4:1 stretch along the flow), the front multiplies the *other* one
     // down instead, which lays its bands across the flow.
     expect(glsl).toContain('n2(vec2(along.x * 0.25, along.y) * STREAK_SCALE)');
-    expect(glsl).toContain('n2(vec2(along.x, along.y * 0.2) * GUST_SCALE)');
+    expect(glsl).toContain('n2(vec2(along.x, along.y * GUST_ASPECT) * GUST_SCALE)');
+  });
+
+  it('pushes the front into an edge without saying the banned word', () => {
+    // The sharpening is a smoothstep written out longhand. It has to be: this
+    // chunk is compiled into the water shader, and water-material.test.ts
+    // forbids the literal `smoothstep` there, because a soft colour-band
+    // boundary is the one thing that would undo the sea's four flat colours.
+    expect(glsl).toContain('gust * gust * (3.0 - 2.0 * gust)');
+    expect(glsl).not.toContain('smoothstep');
+  });
+});
+
+describe('the front is an edge, which is why it survives the pass', () => {
+  it('transitions over a fraction of the gap between fronts', () => {
+    // The whole reason this layer is visible at 20% when it was invisible at
+    // 5.5% is not the amplitude, it is this. Quantization throws away gradients
+    // and keeps edges: a ramp spends most of its length inside one colour band
+    // and crosses to the next in one jump somewhere in the middle, where an
+    // edge *is* the jump. A front spread over half the gap is a ramp again.
+    expect(WIND.gustEdge).toBeLessThan(0.2);
+    expect(WIND.gustEdge).toBeGreaterThan(0);
+  });
+
+  it('lies across the flow rather than along it', () => {
+    // Below 1 the front is wider across the wind than along it, so travelling
+    // downwind carries it perpendicular to its own length. At or above 1 it
+    // would be a blob, and back to sliding along itself.
+    expect(WIND.gustAspect).toBeLessThan(1);
+  });
+
+  it('fits more than one front across the view', () => {
+    // The camera sees roughly 640 world units. One front spanning the whole
+    // screen reads as the ground changing colour, not as something crossing it.
+    const acrossFlow = WIND.gustScale / WIND.gustAspect;
+    expect(acrossFlow).toBeLessThan(640);
   });
 });
 

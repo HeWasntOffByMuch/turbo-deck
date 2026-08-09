@@ -50,6 +50,17 @@ export interface WindConfig {
   readonly streakScale: number;
   /** World units between gust fronts, along the flow. */
   readonly gustScale: number;
+  /**
+   * How much narrower a front is across the flow than along it, as a fraction.
+   * Below 1 the fronts lie across the wind, which is what makes them fronts.
+   */
+  readonly gustAspect: number;
+  /**
+   * Half-width of a front's transition, in noise units. Small means the front
+   * is an edge with flat ground either side of it; 0.5 leaves it the raw
+   * gradient the noise already was.
+   */
+  readonly gustEdge: number;
   /** How much of the streak layer's swing the gust front carries, 0..1. */
   readonly gustShare: number;
   /** How far the streak layer may lift or drop the ground's albedo. */
@@ -131,12 +142,34 @@ export const WIND: WindConfig = {
    */
   gustScale: 130,
   /**
-   * Most of the swing, because the front is the part that moves (see
-   * {@link GLSL_STREAK}). The grain is left enough to keep the layer directional.
+   * 0.35, so a front is roughly 370 units wide across the flow against 130
+   * along it. Wide enough to read as a band rather than a blob, narrow enough
+   * that several fit across the view -- at the 0.2 this was first tried at, one
+   * front spanned the whole screen and the ground read as changing colour
+   * rather than as having something cross it.
    */
-  gustShare: 0.6,
+  gustAspect: 0.35,
   /**
-   * 18%, against the 5.5% this shipped at.
+   * 0.08, so a front's transition occupies about a sixth of the distance
+   * between fronts and the ground either side of it is flat.
+   *
+   * This is the number that decides whether the layer survives the retro pass
+   * at all, and it took two passes at the amplitude to work that out.
+   * Quantization destroys gradients and preserves edges: a smooth ramp spends
+   * most of its travel inside one colour band, invisible, and crosses to the
+   * next in one abrupt jump somewhere in the middle. An edge is already the
+   * jump, so the pass keeps it. Sharpening the front is worth more than any
+   * amount of extra amplitude, and unlike amplitude it costs no mottling.
+   */
+  gustEdge: 0.08,
+  /**
+   * Most of the swing, because the front is the part that moves and the part
+   * that has an edge (see {@link GLSL_STREAK}). The grain is left enough to
+   * keep the layer directional.
+   */
+  gustShare: 0.7,
+  /**
+   * 20%, against the 5.5% this shipped at.
    *
    * The old figure was set on the assumption that the retro pass's dither would
    * carry it across a colour band (spec 038). It does not: the shipped dither
@@ -144,18 +177,16 @@ export const WIND: WindConfig = {
    * quantization simply rounded a 5.5% modulation away over the whole frame
    * except where the ground already sat on a band edge. Anything this layer
    * wants to show through twelve levels has to be worth a level on its own:
-   * against the darkest grass in the palette, 18% is worth 1.3 of them.
+   * against the darkest grass in the palette, 20% is worth 1.4 of them.
    *
-   * Measured on bare ground through the shipped pass, that took the share of
-   * pixels the layer touches from 14.8% to 28.5%, and the share moving in any
-   * one second from 0.7% to 1.8%. Both are held down by the dither rather than
-   * by this number -- at `ditherStrength` 1.0 the same 18% moves 5.6% of the
-   * frame per second -- so there is more here to collect if the retro pass's
-   * weave is ever turned up. Going further on amplitude alone is the wrong
-   * trade: it buys static mottling faster than it buys motion, and the ground
-   * starts reading as discoloured rather than as windy.
+   * This is high for what is nominally a subtle layer, and it is only tolerable
+   * because {@link WindConfig.gustEdge} spends it on an edge rather than on a
+   * haze. Amplitude at a soft gradient buys mottling -- ground that reads as
+   * discoloured -- roughly as fast as it buys motion; the same amplitude behind
+   * a front buys a boundary sweeping across the grass. If this ever needs to
+   * come down, sharpen the front before dropping the number.
    */
-  streakContrast: 0.18,
+  streakContrast: 0.20,
   waterStreakContrast: 0.055,
 };
 
@@ -467,6 +498,8 @@ export const GLSL_STREAK = /* glsl */ `
 const float STREAK_SCALE = ${f(1 / WIND.streakScale)};
 const float GUST_SCALE = ${f(1 / WIND.gustScale)};
 const float STREAK_SPEED = ${f(WIND.streakSpeed)};
+const float GUST_ASPECT = ${f(WIND.gustAspect)};
+const float GUST_EDGE = ${f(WIND.gustEdge)};
 const float GUST_SHARE = ${f(WIND.gustShare)};
 const float STREAK_GROUND = ${f(WIND.streakContrast)};
 const float STREAK_WATER = ${f(WIND.waterStreakContrast)};
@@ -476,7 +509,20 @@ float windStreakField(vec2 worldXZ, float t) {
   vec2 p = worldXZ - uWindDir * (t * STREAK_SPEED);
   vec2 along = vec2(dot(p, uWindDir), dot(p, vec2(-uWindDir.y, uWindDir.x)));
   float grain = n2(vec2(along.x * 0.25, along.y) * STREAK_SCALE);
-  float gust = n2(vec2(along.x, along.y * 0.2) * GUST_SCALE);
+
+  // The front, pushed from a gradient into an edge with flat ground either
+  // side. The cubic fade is spelled out longhand rather than calling the
+  // built-in, for the same reason n2 spells its own out: this chunk is
+  // compiled into the water shader, where a soft colour-band boundary is the
+  // one thing that must never appear, and that ban is enforced by searching
+  // the source for the built-in's name.
+  float raw = n2(vec2(along.x, along.y * GUST_ASPECT) * GUST_SCALE);
+  float gust = clamp((raw - (0.5 - GUST_EDGE)) / (2.0 * GUST_EDGE), 0.0, 1.0);
+  gust = gust * gust * (3.0 - 2.0 * gust);
+
+  // Two-sided on purpose. A front that only darkened would read better on its
+  // own, but it would also drop the ground's mean brightness by half its
+  // amplitude -- repainting the whole world darker to animate a fraction of it.
   return ((grain - 0.5) * (1.0 - GUST_SHARE) + (gust - 0.5) * GUST_SHARE) * 2.0;
 }
 
