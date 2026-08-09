@@ -394,6 +394,12 @@ export function createHud(): HudHandle {
 
       live.add(anchor.id);
       const element = barFor(anchor.id);
+      // Says whether this bar is the local player's. Nothing in the game reads
+      // it either; it is how `scripts/preview-world.ts` avoids aiming a click at
+      // a monster its own body is standing in front of, which since spec 095 is
+      // a miss rather than a forgiven near-miss.
+      if (anchor.id === view.selfEntityId) element.root.dataset['self'] = '';
+      else delete element.root.dataset['self'];
       element.root.style.left = `${anchor.x}px`;
       element.root.style.top = `${anchor.y}px`;
 
