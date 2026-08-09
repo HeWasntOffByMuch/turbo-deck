@@ -29,15 +29,17 @@ export interface JobSummary {
  * service's business. Keeping the two apart means renaming a preset is not a
  * change to every unitdef in the repo.
  *
- * Ordered by how much they are missed: the first five are one retarget batch,
- * which is deliberate -- the default set costs exactly one call.
+ * **Every clip is one paid call.** The default set was five when this was
+ * written around a five-per-call batch that turned out not to exist; each tick
+ * now costs a retarget, so the default is the smallest set a unit needs to read
+ * as alive and to fight, and the rest are opted into deliberately.
  */
 export const CLIP_INTENTS: readonly { readonly id: string; readonly label: string; readonly byDefault: boolean }[] = [
   { id: 'idle', label: 'Idle', byDefault: true },
   { id: 'walk', label: 'Walk', byDefault: true },
-  { id: 'run', label: 'Run', byDefault: true },
   { id: 'attack', label: 'Attack swing', byDefault: true },
-  { id: 'hit', label: 'Take a hit', byDefault: true },
+  { id: 'run', label: 'Run', byDefault: false },
+  { id: 'hit', label: 'Take a hit', byDefault: false },
   { id: 'death', label: 'Death', byDefault: false },
   { id: 'cast', label: 'Cast', byDefault: false },
   { id: 'jump', label: 'Jump', byDefault: false },

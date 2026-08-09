@@ -15,8 +15,14 @@
 /** The documented ceiling is 1/sec; this leaves a little room under it. */
 export const DEFAULT_MIN_INTERVAL_MS = 1100;
 
-/** How often a task is polled once it is in flight. */
-export const DEFAULT_POLL_INTERVAL_MS = 2000;
+/**
+ * How often a task is polled once it is in flight.
+ *
+ * Three seconds rather than two: the published guidance for this API is no
+ * faster than ~3s per poll against a 1/sec overall limit, and a 429 from our own
+ * impatience is indistinguishable from a flaky service.
+ */
+export const DEFAULT_POLL_INTERVAL_MS = 3000;
 
 export class Pacer {
   /** Null until the first send, so a cold start does not wait for nothing. */

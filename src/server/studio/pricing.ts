@@ -20,16 +20,21 @@ export interface PriceList {
   readonly imageToModel: number;
   readonly rigCheck: number;
   readonly rig: number;
-  /** Per retarget *call*, which batches up to {@link RETARGET_BATCH_SIZE} clips. */
+  /** Per retarget call, and a call is one clip. */
   readonly retargetPerCall: number;
 }
 
 /**
- * Clips per retarget call. The API batches up to five, so nine clips is two
- * calls and not nine -- getting this wrong makes the projection wrong in the
- * expensive direction and the ceiling check useless.
+ * Clips per retarget call.
+ *
+ * **One.** This was written as five, from the v2-era batching in the brief, and
+ * the live API rejects a multi-preset batch outright. The correction is a cost
+ * one rather than a shape one: five clips are five calls, so the projection this
+ * feeds -- and the ceiling checked against it -- were understating a clip set by
+ * a factor of five. A number that is wrong in the cheap direction is exactly the
+ * kind that makes a spending limit decorative.
  */
-export const RETARGET_BATCH_SIZE = 5;
+export const RETARGET_BATCH_SIZE = 1;
 
 /**
  * Defaults, overridable from the environment.

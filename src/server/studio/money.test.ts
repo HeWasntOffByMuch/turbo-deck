@@ -73,19 +73,33 @@ describe('cacheKey', () => {
 // --- pricing -----------------------------------------------------------------
 
 describe('projectCost', () => {
-  it('batches retargets at five clips per call', () => {
+  it('is one retarget call per clip', () => {
+    // Was five-per-call, from the brief's v2-era batching. The live API rejects
+    // a multi-preset batch, and pricing a clip set at a fifth of its cost is the
+    // direction of error that makes a ceiling decorative.
+    expect(RETARGET_BATCH_SIZE).toBe(1);
     expect(retargetCalls(0)).toBe(0);
     expect(retargetCalls(1)).toBe(1);
-    expect(retargetCalls(RETARGET_BATCH_SIZE)).toBe(1);
-    expect(retargetCalls(RETARGET_BATCH_SIZE + 1)).toBe(2);
-    expect(retargetCalls(9)).toBe(2);
+    expect(retargetCalls(5)).toBe(5);
+    expect(retargetCalls(9)).toBe(9);
   });
 
   it('prices the whole plan for a unit establishing a rig family', () => {
+    // Three clips is three retarget calls.
     const projection = projectCost({ params: params(), establishesRigFamily: true, prices: DEFAULT_PRICES });
     expect(projection.totalCredits).toBe(
-      DEFAULT_PRICES.imageToModel + DEFAULT_PRICES.rigCheck + DEFAULT_PRICES.rig + DEFAULT_PRICES.retargetPerCall,
+      DEFAULT_PRICES.imageToModel + DEFAULT_PRICES.rigCheck + DEFAULT_PRICES.rig + 3 * DEFAULT_PRICES.retargetPerCall,
     );
+  });
+
+  it('scales the retarget cost with the clip count', () => {
+    const one = projectCost({ params: params({ clipIntents: ['idle'] }), establishesRigFamily: true, prices: DEFAULT_PRICES });
+    const five = projectCost({
+      params: params({ clipIntents: ['idle', 'walk', 'run', 'attack', 'hit'] }),
+      establishesRigFamily: true,
+      prices: DEFAULT_PRICES,
+    });
+    expect(five.totalCredits - one.totalCredits).toBe(4 * DEFAULT_PRICES.retargetPerCall);
   });
 
   it('charges nothing for retargeting a unit that reuses a rig family', () => {

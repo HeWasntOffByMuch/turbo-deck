@@ -17,7 +17,8 @@
  * The unit authoring service reads its own (spec 108); see `studio/config.ts`.
  * The one that matters is TRIPO_API_KEY, which lives here and never reaches a
  * bundle, a log line or a response body. Without it the studio routes mount and
- * refuse rather than disappearing.
+ * refuse rather than disappearing. TRIPO_RIG_MODEL_VERSION is the second
+ * date-stamped id in that pipeline and is not the generation one.
  */
 
 import { randomBytes } from 'node:crypto';

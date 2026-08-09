@@ -82,6 +82,14 @@ export interface Job {
    */
   readonly establishesRigFamily: boolean;
   readonly cacheKey: string;
+  /**
+   * What the (free) rig check recommended: `biped`, `quadruped`, `avian`...
+   *
+   * Null until the check has run. Carried rather than assumed because animation
+   * presets are namespaced by it, and guessing would fail one paid call per clip
+   * on the first non-humanoid.
+   */
+  readonly rigType: string | null;
   readonly referenceImageSha256: string;
   readonly params: GenerationParams;
   readonly status: JobStatus;

@@ -14,30 +14,39 @@
  * "the docs said `credits_consumed` and the API says `consumed_credits`" into a
  * day of archaeology instead of one line.
  *
- * ## What is assumed, and where it came from
+ * ## What the wire actually is, and how it was established
  *
- * From the brief and from the published endpoint list:
+ * The first real call corrected most of this file, which is exactly what the
+ * quarantine was for. `POST /upload` came back `No endpoint found`, and the
+ * shapes below were then cross-checked against several independent published
+ * v3 integrations that agree with each other:
  *
- * | assumption | value |
+ * | call | shape |
  * |---|---|
  * | base URL | `https://openapi.tripo3d.ai/v3` |
  * | auth | `Authorization: Bearer <key>` |
- * | image to model | `POST /generation/image-to-model` |
- * | rig check (free) | `POST /animations/rig-check` |
- * | rig | `POST /animations/rig`, `spec: "mixamo"`, `out_format: "glb"` |
- * | retarget | `POST /animations/retarget`, batched, <= 5 clips per call |
- * | poll | `GET /tasks/{task_id}` |
+ * | upload (free) | `POST /files`, multipart field `file` -> `data.file_token` |
+ * | image to model | `POST /generation/image-to-model` `{input, model, face_limit, texture, pbr}` |
+ * | rig check (free) | `POST /animations/rig-check` `{input}` -> `output.{riggable, rig_type}` |
+ * | rig | `POST /animations/rig` `{input, model, spec, out_format}` |
+ * | retarget | `POST /animations/retarget` `{input, animations, out_format}` |
+ * | poll | `GET /tasks/{task_id}`, plural, no faster than ~3s |
  * | envelope | `{ code, data }`, `code === 0` on success |
- * | task id | `data.task_id` |
- * | status | `data.status`: queued / running / success / failed / cancelled / banned |
  * | spend | `data.credits_consumed` |
- * | model url | `data.output.model` (or `.pbr_model`) |
- * | riggable | `data.output.riggable` |
+ * | model url | `data.output.model_url`, expiring in ~5 minutes |
  *
- * Anything the API returns that is not in that table is ignored rather than
- * guessed at. `credits_consumed` in particular is surfaced as `null` when it is
- * absent rather than defaulted to zero: a ledger that quietly records nothing
- * for a call that was billed is worse than one that says it does not know.
+ * Four of these were wrong in the first draft and are worth naming, because
+ * each is a different kind of mistake:
+ *
+ *  - **`/upload` is `/files`.** A guessed path, and the one that failed first.
+ *  - **`input` is a bare token or task id**, not an object wrapping one.
+ *  - **`model`, not `model_version`.** And the rig takes its *own* model
+ *    version, which is not the generation one -- see {@link RigRequest}.
+ *  - **Retarget takes one animation per call.** The v2-era batching this was
+ *    written around does not exist, and the presets are namespaced by the
+ *    rig type the check returned. That is a *cost* correction, not a shape one:
+ *    five clips are five calls, and {@link RETARGET_BATCH_SIZE} moving to 1 is
+ *    what keeps the projection and the ceilings honest about it.
  *
  * ## The key
  *
@@ -78,6 +87,15 @@ export interface TaskResult {
   readonly modelUrl: string | null;
   /** Only on a rig-check result. */
   readonly riggable: boolean | null;
+  /**
+   * The rig the check recommends: `biped`, `quadruped`, `avian` and so on.
+   *
+   * Read rather than assumed, and then carried all the way to the retarget --
+   * animation presets are namespaced by it, and a bare `preset:walk` is
+   * rejected. Assuming `biped` would work until the first non-humanoid and then
+   * fail one paid call per clip.
+   */
+  readonly rigType: string | null;
   readonly error: string | null;
 }
 
@@ -93,14 +111,40 @@ export interface ImageToModelRequest {
 export interface RigRequest {
   /** The task whose model output is being rigged. */
   readonly sourceTaskId: string;
+  /**
+   * The **rig** model version, which is not the generation model version.
+   *
+   * Two different date-stamped ids in one pipeline, and passing the generation
+   * one here is rejected -- as is letting the server pick its own default. It is
+   * configuration rather than a constant for the same reason the prices are.
+   */
+  readonly modelVersion: string;
+  /** `mixamo` for a biped: the naming contract the whole roster shares. */
+  readonly spec: string;
   readonly outFormat: 'glb';
 }
 
 export interface RetargetRequest {
   readonly sourceTaskId: string;
-  /** At most {@link RETARGET_BATCH_SIZE}; {@link batchClips} does the splitting. */
+  /**
+   * Exactly one, namespaced by rig type: `preset:biped:walk`.
+   *
+   * An array because the field is one, not because more than one fits. See
+   * {@link RETARGET_BATCH_SIZE}.
+   */
   readonly animations: readonly string[];
   readonly outFormat: 'glb';
+}
+
+/**
+ * A clip intent turned into the preset name the API wants.
+ *
+ * Namespaced by the rig type the *check* recommended, never by an assumption --
+ * `preset:walk` without the namespace is rejected, and guessing `biped` for a
+ * quadruped would fail one paid call per clip.
+ */
+export function presetFor(rigType: string, intent: string): string {
+  return `preset:${rigType}:${intent}`;
 }
 
 export class TripoError extends Error {
@@ -115,11 +159,13 @@ export class TripoError extends Error {
 }
 
 /**
- * Splits a clip list into calls of at most five.
+ * Splits a clip list into calls.
  *
- * Exported and pure because the cost projection has to agree with what the
- * client actually does -- nine clips is two calls, and a projection that priced
- * nine would be wrong in the direction that makes the ceiling useless.
+ * One clip per call, since {@link RETARGET_BATCH_SIZE} is 1 -- the API rejects a
+ * multi-preset batch. Kept as a split rather than collapsed into a map because
+ * the cost projection calls the same function: what the client does and what the
+ * ceiling was checked against have to be the same number, and a batch size that
+ * changes again should change both at once.
  */
 export function batchClips(intents: readonly string[]): readonly (readonly string[])[] {
   const ordered = canonicalClipIntents(intents);
@@ -258,16 +304,21 @@ export class TripoClient {
   async uploadImage(bytes: Uint8Array, filename: string, contentType: string): Promise<string> {
     const form = new FormData();
     form.append('file', new Blob([bytes as unknown as BlobPart], { type: contentType }), filename);
-    const envelope = await this.request('/upload', { method: 'POST', body: form });
-    const token = asString(envelope.data?.['image_token'] ?? envelope.data?.['file_token']);
-    if (token === null) throw new TripoError('/upload: response carried no file token', null, null);
+    // `/files`, not `/upload` -- the latter is what the first real attempt tried
+    // and it answered "No endpoint found". The only call here that returns
+    // something other than a task id.
+    const envelope = await this.request('/files', { method: 'POST', body: form });
+    const token = asString(envelope.data?.['file_token']);
+    if (token === null) throw new TripoError('/files: response carried no file_token', null, null);
     return token;
   }
 
   imageToModel(request: ImageToModelRequest): Promise<TaskHandle> {
     return this.submit('/generation/image-to-model', {
-      model_version: request.modelVersion,
-      file: { type: 'image', file_token: request.fileToken },
+      // `input` is the bare file token and `model` is the field name -- both
+      // were wrong in the first draft, which had the v2 shapes.
+      input: request.fileToken,
+      model: request.modelVersion,
       face_limit: request.faceLimit,
       texture: request.texture,
       pbr: request.pbr,
@@ -276,15 +327,16 @@ export class TripoClient {
 
   /** Free, so it is never skipped: it is what stops a rig call that cannot work. */
   rigCheck(sourceTaskId: string): Promise<TaskHandle> {
-    return this.submit('/animations/rig-check', { input: { task_id: sourceTaskId } });
+    return this.submit('/animations/rig-check', { input: sourceTaskId });
   }
 
   rig(request: RigRequest): Promise<TaskHandle> {
     return this.submit('/animations/rig', {
-      input: { task_id: request.sourceTaskId },
+      input: request.sourceTaskId,
+      model: request.modelVersion,
       // The shared-skeleton constraint starts here: one naming spec for the
       // whole roster, so clips bind by bone name across every unit.
-      spec: 'mixamo',
+      spec: request.spec,
       out_format: request.outFormat,
     });
   }
@@ -292,14 +344,16 @@ export class TripoClient {
   retarget(request: RetargetRequest): Promise<TaskHandle> {
     if (request.animations.length > RETARGET_BATCH_SIZE) {
       throw new TripoError(
-        `retarget takes at most ${RETARGET_BATCH_SIZE} animations per call, got ${request.animations.length}`,
+        `retarget takes ${RETARGET_BATCH_SIZE} animation per call, got ${request.animations.length}`,
         null,
         null,
       );
     }
     return this.submit('/animations/retarget', {
-      input: { task_id: request.sourceTaskId },
-      animations: request.animations.map((animation) => ({ animation, bake_animation: true })),
+      input: request.sourceTaskId,
+      // Plain preset strings. The `{animation, bake_animation}` objects the
+      // first draft sent were a v2-era shape.
+      animations: [...request.animations],
       out_format: request.outFormat,
     });
   }
@@ -314,8 +368,14 @@ export class TripoClient {
       state,
       progress: asNumber(data['progress']),
       creditsConsumed: asNumber(data['credits_consumed']),
-      modelUrl: asString(output['model']) ?? asString(output['pbr_model']),
+      // `model_url` is the v3 spelling; the other two are accepted because the
+      // cost of being wrong here is asymmetric. Missing the URL turns a paid
+      // success into "nothing was saved" five minutes later, and accepting a
+      // second spelling costs nothing. Credits get no such latitude -- a wrong
+      // default there would quietly corrupt the ledger instead of failing.
+      modelUrl: asString(output['model_url']) ?? asString(output['model']) ?? asString(output['pbr_model']),
       riggable: typeof output['riggable'] === 'boolean' ? output['riggable'] : null,
+      rigType: asString(output['rig_type']),
       error: state === 'failed' ? (asString(data['message']) ?? 'task failed') : null,
     };
   }

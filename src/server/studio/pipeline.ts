@@ -38,7 +38,7 @@ import { Pacer } from './pacing.js';
 import { projectCost, type PlannedStep } from './pricing.js';
 import type { StudioConfig } from './config.js';
 import type { StudioStore } from './store.js';
-import { batchClips, TripoError, type TaskResult, type TripoClient } from './tripo.js';
+import { batchClips, presetFor, TripoError, type TaskResult, type TripoClient } from './tripo.js';
 import type { Job, Stage } from './types.js';
 
 export type Clock = () => number;
@@ -268,8 +268,18 @@ export class StudioPipeline {
       );
     }
 
+    // The rig type the check *recommends*, kept rather than assumed: it
+    // namespaces every animation preset the retarget will ask for.
+    if (result.rigType === null) {
+      this.say(`${job.id}/rigCheck: riggable, but the API named no rig_type; presets will fall back to biped`);
+    }
     return this.save(
-      completeStep(submitted, 'rigCheck', { creditsConsumed: result.creditsConsumed ?? 0 }, this.deps.now()),
+      completeStep(
+        submitted,
+        'rigCheck',
+        { creditsConsumed: result.creditsConsumed ?? 0, rigType: result.rigType },
+        this.deps.now(),
+      ),
     );
   }
 
@@ -278,7 +288,12 @@ export class StudioPipeline {
     if (!source) throw new TripoError('rig has no generated model to rig', null, null);
 
     await this.gate();
-    const handle = await this.deps.client.rig({ sourceTaskId: source, outFormat: job.params.outFormat });
+    const handle = await this.deps.client.rig({
+      sourceTaskId: source,
+      modelVersion: this.deps.config.rigModelVersion,
+      spec: this.deps.config.rigSpec,
+      outFormat: job.params.outFormat,
+    });
     const submitted = this.save(recordTaskId(job, 'rig', handle.taskId, this.deps.now()));
 
     const result = await this.awaitTask(handle.taskId, deadline);
@@ -309,7 +324,12 @@ export class StudioPipeline {
     const source = stepOf(job, 'rig')?.taskId;
     if (!source) throw new TripoError('retarget has no rigged model to animate', null, null);
 
+    // One clip per call: the API rejects a multi-preset batch, so a five-clip
+    // library is five paid calls. `batchClips` is what the cost projection used
+    // too, so the number here and the number the ceiling was checked against
+    // cannot drift apart.
     const batches = batchClips(job.params.clipIntents);
+    const rigType = job.rigType ?? 'biped';
     let current = job;
     let credits = 0;
     const clipGlbs: Record<string, string> = {};
@@ -318,7 +338,7 @@ export class StudioPipeline {
       await this.gate();
       const handle = await this.deps.client.retarget({
         sourceTaskId: source,
-        animations,
+        animations: animations.map((intent) => presetFor(rigType, intent)),
         outFormat: job.params.outFormat,
       });
       current = this.save(recordTaskId(current, 'retarget', handle.taskId, this.deps.now()));
@@ -330,12 +350,11 @@ export class StudioPipeline {
       }
       credits += result.creditsConsumed ?? 0;
 
-      // One file per *call*, with every animation in the batch baked into it.
-      // If the API turns out to return one file per animation instead, this is
-      // the only place that changes: the map below becomes one-to-one and the
-      // filename gains the intent.
-      const path = await this.pull(current, result, `clips-${index}.glb`);
-      if (path !== null) for (const animation of animations) clipGlbs[animation] = path;
+      // One call, one clip, one file -- named for the intent rather than for the
+      // call index, now that the two are the same thing.
+      const intent = animations[0] ?? `clip-${index}`;
+      const path = await this.pull(current, result, `${intent}.glb`);
+      if (path !== null) clipGlbs[intent] = path;
     }
 
     return this.save(

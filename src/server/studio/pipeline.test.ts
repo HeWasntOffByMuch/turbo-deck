@@ -121,7 +121,7 @@ function seedJob(h: Harness, patch: { establishesRigFamily?: boolean; id?: strin
 function scriptSuccess(fake: FakeTripo): void {
   fake
     .script('/generation/image-to-model', { creditsConsumed: 20, modelUrl: MESH_URL })
-    .script('/animations/rig-check', { creditsConsumed: 0, riggable: true })
+    .script('/animations/rig-check', { creditsConsumed: 0, riggable: true, rigType: 'biped' })
     .script('/animations/rig', { creditsConsumed: 10, modelUrl: RIG_URL })
     .script('/animations/retarget', { creditsConsumed: 10, modelUrl: CLIP_URL });
 }
@@ -144,7 +144,8 @@ describe('the happy path', () => {
     expect(harness.fake.callsTo('/generation/image-to-model')).toHaveLength(1);
     expect(harness.fake.callsTo('/animations/rig-check')).toHaveLength(1);
     expect(harness.fake.callsTo('/animations/rig')).toHaveLength(1);
-    expect(harness.fake.callsTo('/animations/retarget')).toHaveLength(1);
+    // Two clips, two retarget calls: the API takes one preset per call.
+    expect(harness.fake.callsTo('/animations/retarget')).toHaveLength(2);
   });
 
   it('downloads every artifact rather than storing a URL', async () => {
@@ -169,9 +170,10 @@ describe('the happy path', () => {
     await harness.pipeline.run('job-1');
 
     const ledger = harness.store.listLedger();
-    expect(ledger.map((entry) => entry.credits)).toEqual([20, 0, 10, 10]);
+    // Two clips is two retarget calls now, not one batch.
+    expect(ledger.map((entry) => entry.credits)).toEqual([20, 0, 10, 10, 10]);
     expect(ledger.every((entry) => entry.reported)).toBe(true);
-    expect(harness.store.getJob('job-1')?.creditsSpent).toBe(40);
+    expect(harness.store.getJob('job-1')?.creditsSpent).toBe(50);
   });
 
   it('sends the key on every API call and never in a download', async () => {
@@ -184,7 +186,7 @@ describe('the happy path', () => {
     expect(api.every((call) => call.authorization === 'Bearer tsk_secret')).toBe(true);
     // A pre-signed CDN URL must not be handed a credential.
     const downloads = harness.fake.calls.filter((call) => call.url.startsWith('https://cdn.example'));
-    expect(downloads.length).toBe(3);
+    expect(downloads.length).toBe(4);
     expect(downloads.every((call) => call.authorization === undefined)).toBe(true);
   });
 
@@ -198,7 +200,7 @@ describe('the happy path', () => {
     expect(job?.status).toBe('succeeded');
   });
 
-  it('batches retargets at five clips per call', async () => {
+  it('makes one retarget call per clip, because the API takes one preset', async () => {
     scriptSuccess(harness.fake);
     const many = createJob(
       {
@@ -215,13 +217,65 @@ describe('the happy path', () => {
     harness.store.saveJob(many);
 
     await harness.pipeline.run('job-many');
-    expect(harness.fake.callsTo('/animations/retarget')).toHaveLength(2);
+    expect(harness.fake.callsTo('/animations/retarget')).toHaveLength(7);
+  });
+
+  it('namespaces each animation preset by the rig type the check returned', () => {
+    // `preset:walk` without the namespace is rejected, and assuming `biped`
+    // would fail one paid call per clip on the first non-humanoid.
+    scriptSuccess(harness.fake);
+    harness.fake.script('/animations/rig-check', { creditsConsumed: 0, riggable: true, rigType: 'quadruped' });
+    seedJob(harness);
+    return harness.pipeline.run('job-1').then(() => {
+      const sent = harness.fake
+        .callsTo('/animations/retarget')
+        .map((call) => (call.body as { animations: string[] }).animations);
+      expect(sent).toEqual([['preset:quadruped:idle'], ['preset:quadruped:run']]);
+    });
+  });
+
+  it('names each clip file for its intent', () => {
+    scriptSuccess(harness.fake);
+    seedJob(harness);
+    return harness.pipeline.run('job-1').then((job) => {
+      expect(job?.artifacts.clipGlbs['idle']).toContain('idle.glb');
+      expect(job?.artifacts.clipGlbs['run']).toContain('run.glb');
+    });
+  });
+
+  it('uploads to /files and sends the token as a bare `input`', () => {
+    // The call that failed first: `/upload` answered "No endpoint found", and
+    // the body shape around it was the v2 one.
+    scriptSuccess(harness.fake);
+    seedJob(harness);
+    return harness.pipeline.run('job-1').then(() => {
+      expect(harness.fake.callsTo('/files')).toHaveLength(1);
+      const body = harness.fake.callsTo('/generation/image-to-model')[0]?.body as Record<string, unknown>;
+      expect(body['input']).toBe('file-token-1');
+      expect(body['model']).toBe('P1-20260311');
+      expect(body).not.toHaveProperty('model_version');
+      expect(body).not.toHaveProperty('file');
+    });
+  });
+
+  it('sends the rig its own model version, not the generation one', () => {
+    // Two date-stamped ids in one pipeline; the server's own default is
+    // rejected, so it has to be sent and it has to be the right one.
+    scriptSuccess(harness.fake);
+    seedJob(harness);
+    return harness.pipeline.run('job-1').then(() => {
+      const body = harness.fake.callsTo('/animations/rig')[0]?.body as Record<string, unknown>;
+      expect(body['model']).toBe('v2.5-20260210');
+      expect(body['model']).not.toBe('P1-20260311');
+      expect(body['spec']).toBe('mixamo');
+      expect(body['input']).toBe('task-1');
+    });
   });
 
   it('polls until a task finishes', async () => {
     harness.fake
       .script('/generation/image-to-model', { pollsBeforeDone: 3, creditsConsumed: 20, modelUrl: MESH_URL })
-      .script('/animations/rig-check', { creditsConsumed: 0, riggable: true })
+      .script('/animations/rig-check', { creditsConsumed: 0, riggable: true, rigType: 'biped' })
       .script('/animations/rig', { creditsConsumed: 10, modelUrl: RIG_URL })
       .script('/animations/retarget', { creditsConsumed: 10, modelUrl: CLIP_URL });
     seedJob(harness);
@@ -312,7 +366,7 @@ describe('the interlocks', () => {
   it('never retries a failed paid call', async () => {
     harness.fake
       .script('/generation/image-to-model', { creditsConsumed: 20, modelUrl: MESH_URL })
-      .script('/animations/rig-check', { creditsConsumed: 0, riggable: true })
+      .script('/animations/rig-check', { creditsConsumed: 0, riggable: true, rigType: 'biped' })
       .script('/animations/rig', { status: 'failed', message: 'internal error', creditsConsumed: 10 });
     seedJob(harness);
 
@@ -349,7 +403,7 @@ describe('the interlocks', () => {
   it('marks the total a lower bound when the API does not say what it charged', async () => {
     harness.fake
       .script('/generation/image-to-model', { creditsConsumed: null, modelUrl: MESH_URL })
-      .script('/animations/rig-check', { creditsConsumed: 0, riggable: true })
+      .script('/animations/rig-check', { creditsConsumed: 0, riggable: true, rigType: 'biped' })
       .script('/animations/rig', { creditsConsumed: 10, modelUrl: RIG_URL })
       .script('/animations/retarget', { creditsConsumed: 10, modelUrl: CLIP_URL });
     seedJob(harness);
@@ -363,7 +417,7 @@ describe('the interlocks', () => {
   it('fails rather than succeeding when a task finished but nothing was saved', async () => {
     harness.fake
       .script('/generation/image-to-model', { creditsConsumed: 20, modelUrl: null })
-      .script('/animations/rig-check', { creditsConsumed: 0, riggable: true })
+      .script('/animations/rig-check', { creditsConsumed: 0, riggable: true, rigType: 'biped' })
       .script('/animations/rig', { creditsConsumed: 10, modelUrl: null })
       .script('/animations/retarget', { creditsConsumed: 10, modelUrl: null });
     seedJob(harness);

@@ -55,11 +55,18 @@ describe('establishedFamilies', () => {
 });
 
 describe('clip intents', () => {
-  it('has a default set that costs exactly one retarget call', () => {
-    // Five per call is what the API batches at, and the default set is chosen to
-    // land on one call rather than one-and-a-bit.
-    expect(defaultClipIntents().length).toBeLessThanOrEqual(RETARGET_BATCH_SIZE);
+  it('keeps the default set small, because every clip is a paid call', () => {
+    // The API takes one preset per call, so the tick boxes are the bill. Three
+    // is the smallest set a unit needs to read as alive and to fight; anything
+    // more is opted into deliberately.
+    expect(RETARGET_BATCH_SIZE).toBe(1);
     expect(defaultClipIntents().length).toBeGreaterThan(0);
+    expect(defaultClipIntents().length).toBeLessThanOrEqual(3);
+  });
+
+  it('defaults to the clips a unit cannot do without', () => {
+    // Catalogue order, not sorted -- the cache key is what canonicalises.
+    expect(defaultClipIntents()).toEqual(['idle', 'walk', 'attack']);
   });
 
   it('has unique ids', () => {

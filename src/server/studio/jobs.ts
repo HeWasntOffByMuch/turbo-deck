@@ -47,6 +47,7 @@ export function createJob(input: CreateJobInput, nowMs: number): Job {
     skeletonId: input.skeletonId,
     establishesRigFamily: input.establishesRigFamily,
     cacheKey: cacheKey(input.referenceImageSha256, input.params),
+    rigType: null,
     referenceImageSha256: input.referenceImageSha256,
     params: input.params,
     status: 'queued',
@@ -122,6 +123,8 @@ export interface StepOutcome {
   /** What the API reported it charged. Never a projection. */
   readonly creditsConsumed: number;
   readonly artifacts?: Partial<Job['artifacts']>;
+  /** Set by the rig check; every later call needs it. */
+  readonly rigType?: string | null;
 }
 
 export function completeStep(job: Job, stage: Stage, outcome: StepOutcome, nowMs: number): Job {
@@ -142,6 +145,7 @@ export function completeStep(job: Job, stage: Stage, outcome: StepOutcome, nowMs
     }),
     creditsSpent: job.creditsSpent + outcome.creditsConsumed,
     artifacts,
+    rigType: outcome.rigType ?? job.rigType,
     updatedAtMs: nowMs,
   };
 

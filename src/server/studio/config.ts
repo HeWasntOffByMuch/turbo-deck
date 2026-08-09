@@ -22,6 +22,13 @@ export interface StudioConfig {
   readonly apiKey: string | null;
   readonly baseUrl: string;
   readonly modelVersion: string;
+  /**
+   * The **rig** model version, which is a different date-stamped id from the
+   * generation one. The server's own default is rejected, so it has to be sent.
+   */
+  readonly rigModelVersion: string;
+  /** The bone naming contract the rig is asked for. `mixamo` for a biped. */
+  readonly rigSpec: string;
   readonly defaultFaceLimit: number;
   readonly ceilings: Ceilings;
   readonly prices: PriceList;
@@ -64,6 +71,8 @@ export function loadStudioConfig(env: NodeJS.ProcessEnv, repoRoot: string): Stud
     apiKey: key === undefined || key === '' ? null : key,
     baseUrl: env['TRIPO_BASE_URL']?.trim() || DEFAULT_BASE_URL,
     modelVersion: env['TRIPO_MODEL_VERSION']?.trim() || 'P1-20260311',
+    rigModelVersion: env['TRIPO_RIG_MODEL_VERSION']?.trim() || 'v2.5-20260210',
+    rigSpec: env['TRIPO_RIG_SPEC']?.trim() || 'mixamo',
     defaultFaceLimit: num(env['STUDIO_FACE_LIMIT'], 8000),
     ceilings: {
       perRun: ceiling(env['STUDIO_CEILING_PER_RUN'], DEFAULT_PER_RUN_CEILING),
@@ -90,6 +99,7 @@ export function describeConfig(config: StudioConfig): string {
   return [
     `key ${config.apiKey === null ? 'NOT SET (generation disabled)' : 'set'}`,
     `model ${config.modelVersion}`,
+    `rig ${config.rigModelVersion}/${config.rigSpec}`,
     `ceilings run=${perRun} day=${perDay}`,
     `data ${config.dataDir}`,
     config.webhookUrl === undefined ? 'polling' : 'polling + webhook',

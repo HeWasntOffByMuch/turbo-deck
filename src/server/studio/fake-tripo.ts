@@ -21,6 +21,7 @@ export interface ScriptedTask {
   readonly creditsConsumed?: number | null;
   readonly modelUrl?: string | null;
   readonly riggable?: boolean;
+  readonly rigType?: string;
   readonly message?: string;
 }
 
@@ -100,8 +101,8 @@ export class FakeTripo {
       return new Response(served as unknown as BodyInit, { status: 200 });
     }
 
-    if (url.includes('/upload')) {
-      return this.json({ code: 0, data: { image_token: 'token-1' } });
+    if (url.includes('/files')) {
+      return this.json({ code: 0, data: { file_token: 'file-token-1' } });
     }
 
     const taskMatch = /\/tasks\/([^/?]+)$/.exec(url);
@@ -116,8 +117,9 @@ export class FakeTripo {
       }
       const status = script.status ?? 'success';
       const output: Record<string, unknown> = {};
-      if (script.modelUrl !== undefined && script.modelUrl !== null) output['model'] = script.modelUrl;
+      if (script.modelUrl !== undefined && script.modelUrl !== null) output['model_url'] = script.modelUrl;
       if (script.riggable !== undefined) output['riggable'] = script.riggable;
+      if (script.rigType !== undefined) output['rig_type'] = script.rigType;
 
       const data: Record<string, unknown> = { task_id: taskId, status, output };
       // Absent rather than zero when the script says null, so the "the API did
