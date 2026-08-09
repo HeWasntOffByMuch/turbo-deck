@@ -30,23 +30,22 @@
  */
 
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RetroPass } from '../retro-pass.js';
 import { createViewControls, type ViewControls } from '../view-controls.js';
 import { PALETTE } from '../palette.js';
 import { internalRenderSize } from '../view-frame.js';
+import { UnitRig, type UnitAssets, type UnitStats } from '../unit-rig.js';
 import type { PoseSample } from '../../../units/machine.js';
 
 /** The player's real drawn height, so the reference silhouette is not a guess. */
 export const PLAYER_REFERENCE_HEIGHT = 55.65;
 
-export interface PreviewAssets {
-  readonly meshUrl: string;
-  /** Clip id -> the animation-only .glb's URL. */
-  readonly clipUrls: Readonly<Record<string, string>>;
-  /** Applied to the loaded mesh so it stands at gameplay scale. */
-  readonly importScale: number;
-}
+/**
+ * What the preview needs to show a unit -- which is exactly what the game needs
+ * to draw one, so it is the same type rather than a parallel one that would
+ * drift.
+ */
+export type PreviewAssets = UnitAssets;
 
 export interface PreviewCamera {
   /** Degrees. The gameplay preset is a fixed isometric azimuth and elevation. */
@@ -70,17 +69,20 @@ export class UnitPreview {
   private readonly root = new THREE.Group();
   private readonly sun: THREE.DirectionalLight;
 
-  private mixer: THREE.AnimationMixer | null = null;
-  private readonly actions = new Map<string, THREE.AnimationAction>();
-  private readonly clipDurations = new Map<string, number>();
-  private model: THREE.Object3D | null = null;
+  /**
+   * The loaded unit.
+   *
+   * The same class the game builds its bodies from (spec 111), so the mesh, the
+   * clips, the root-motion strip and the pose write are one implementation with
+   * two callers rather than two that could disagree about what a unitdef means.
+   */
+  private readonly rig = new UnitRig();
 
   private cam: PreviewCamera = { ...ISO_PRESET };
   private turntable = false;
   private turntableAngle = 0;
   private dragging = false;
   private lastPointer = { x: 0, y: 0 };
-  private failure: string | null = null;
 
   constructor(width = 640, height = 420) {
     this.element = document.createElement('div');
@@ -115,6 +117,7 @@ export class UnitPreview {
     this.scene.add(this.sun, new THREE.AmbientLight(0x8899bb, 1.1));
     this.scene.background = new THREE.Color(0x1a1a24);
     this.scene.add(this.root);
+    this.root.add(this.rig.object);
 
     this.buildGround();
     this.controls = createViewControls({ lighting: true });
@@ -197,103 +200,44 @@ export class UnitPreview {
   }
 
   get error(): string | null {
-    return this.failure;
+    return this.rig.error;
+  }
+
+  /** Root translation the import removed, so the panel can say so out loud. */
+  get rootMotion(): readonly string[] {
+    return this.rig.rootMotion;
   }
 
   /**
-   * Loads the mesh and every clip.
+   * Loads the mesh and every clip, through the game's own loader.
    *
-   * Clips arrive as separate animation-only files bound by bone name -- one clip
-   * set serving N units is the whole architecture -- so each is parsed and its
-   * tracks retargeted onto this model's own skeleton by name, which is exactly
-   * what three's mixer does when the track paths match.
+   * Deliberately a delegation and not an implementation. Before spec 111 this
+   * method *was* the loader, which meant the preview was the only thing in the
+   * repo that knew how to turn a unitdef into something that moves -- and the
+   * moment the game grew a second one, the interesting question would have
+   * stopped being "is the format right" and become "which of these two is
+   * wrong".
    */
-  async load(assets: PreviewAssets): Promise<void> {
-    const loader = new GLTFLoader();
-    try {
-      const gltf = await loader.loadAsync(assets.meshUrl);
-      const model = gltf.scene;
-      model.scale.setScalar(assets.importScale);
-      model.traverse((object) => {
-        if (!(object instanceof THREE.Mesh)) return;
-        object.castShadow = true;
-        object.receiveShadow = true;
-        // The project's look, applied to the imported material rather than
-        // alongside it: flat shading and no specular, same as every other rig.
-        const source = object.material as THREE.Material & { color?: THREE.Color };
-        object.material = new THREE.MeshLambertMaterial({
-          color: source.color?.clone() ?? new THREE.Color(0xc9b79a),
-          flatShading: true,
-        });
-      });
-
-      this.root.clear();
-      this.root.add(model);
-      this.model = model;
-      this.mixer = new THREE.AnimationMixer(model);
-      this.actions.clear();
-      this.clipDurations.clear();
-
-      for (const [id, url] of Object.entries(assets.clipUrls)) {
-        const clipGltf = await loader.loadAsync(url);
-        const clip = clipGltf.animations[0];
-        if (!clip) continue;
-        // Root translation is stripped rather than tolerated: the server owns
-        // position, and a clip that moved the body would fight it every frame.
-        // Asserted loudly in spec 111; here it is simply removed.
-        clip.tracks = clip.tracks.filter((track) => !/\.position$/.test(track.name));
-        const action = this.mixer.clipAction(clip);
-        action.play();
-        // Paused with a weight of zero: the machine decides what plays, and
-        // three is only asked to evaluate a pose at a time we hand it.
-        action.paused = true;
-        action.setEffectiveWeight(0);
-        this.actions.set(id, action);
-        this.clipDurations.set(id, clip.duration);
-      }
-      this.failure = null;
-    } catch (cause) {
-      this.failure = cause instanceof Error ? cause.message : String(cause);
-    }
+  async load(assets: PreviewAssets, unitId = 'unit'): Promise<void> {
+    await this.rig.load(assets, unitId);
   }
 
   /**
    * Applies the machine's poses.
    *
-   * `mixer.update(0)` -- a zero delta. Every action's `time` is written from the
-   * machine's tick, so the mixer never advances a clock of its own and the pose
-   * is a pure function of an integer. That is what makes an event land on the
-   * same frame at 30fps as at 144.
+   * `mixer.update(0)` -- a zero delta, inside {@link UnitRig}. Every action's
+   * `time` is written from the machine's integer tick, so the mixer never
+   * advances a clock of its own and the pose is a pure function of a tick count.
+   * That is what makes an event land on the same frame at 30fps as at 144.
    */
   applyPoses(poses: readonly PoseSample[]): void {
-    if (!this.mixer) return;
-    for (const action of this.actions.values()) action.setEffectiveWeight(0);
-    for (const pose of poses) {
-      const action = this.actions.get(pose.clipId);
-      const duration = this.clipDurations.get(pose.clipId);
-      if (!action || duration === undefined) continue;
-      action.setEffectiveWeight(pose.weight);
-      action.time = Math.max(0, Math.min(duration, pose.normalizedTime * duration));
-    }
-    this.mixer.update(0);
+    this.rig.applyPoses(poses);
   }
 
   /** How many triangles and bones the loaded model actually has. */
-  stats(): { readonly triangles: number; readonly bones: number; readonly vertices: number } {
-    let triangles = 0;
-    let vertices = 0;
-    let bones = 0;
-    this.model?.traverse((object) => {
-      if (object instanceof THREE.SkinnedMesh) bones = Math.max(bones, object.skeleton.bones.length);
-      if (object instanceof THREE.Mesh) {
-        const geometry = object.geometry;
-        const index = geometry.getIndex();
-        const position = geometry.getAttribute('position');
-        triangles += index ? index.count / 3 : (position?.count ?? 0) / 3;
-        vertices += position?.count ?? 0;
-      }
-    });
-    return { triangles: Math.round(triangles), bones, vertices };
+  stats(): UnitStats {
+    const stats = this.rig.stats();
+    return { ...stats, triangles: Math.round(stats.triangles) };
   }
 
   render(dtSeconds: number): void {
@@ -347,6 +291,7 @@ export class UnitPreview {
   dispose(): void {
     this.retro.dispose();
     this.renderer.dispose();
+    this.rig.dispose();
     this.root.clear();
   }
 }

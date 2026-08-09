@@ -28,7 +28,9 @@ import runUrl from '../../../../assets/units/dev/clips/run.glb?url';
 import attackUrl from '../../../../assets/units/dev/clips/attack.glb?url';
 import devUnitDef from '../../../../assets/units/dev/mannequin.unitdef.json' with { type: 'json' };
 import devClipLib from '../../../../assets/units/dev/biped-dev.core.cliplib.json' with { type: 'json' };
-import type { ClipLib, UnitDef } from '../../../units/types.js';
+import devSkeleton from '../../../../assets/units/dev/biped-dev.skeleton.json' with { type: 'json' };
+import { bundleErrorText, loadUnitBundle } from '../../../units/bundle.js';
+import { validateSkeleton } from '../../../units/validate.js';
 
 /** How often the queue is re-read while the tab is open. */
 const POLL_MS = 2000;
@@ -202,6 +204,16 @@ export function mountStudio(container: HTMLElement): ViewHandle {
    * a skinned mesh in the main bundle would be paid for by every session,
    * including the ones that never open this tab.
    */
+  /**
+   * The rig's root bone, read off the skeleton document rather than assumed.
+   *
+   * Undefined turns the root-motion check off instead of pointing it at a
+   * guess: `mixamorig:Hips` is right for every rig here and would be wrong the
+   * first time it is not, and a wrong root either misses translation that is
+   * there or condemns a track the rig needed.
+   */
+  const devRootBone = validateSkeleton(devSkeleton).value?.bones.find((bone) => bone.parent === null)?.name;
+
   let previewHandle: PreviewHandle | null = null;
   const previewMount = el('div');
   preview.body.append(
@@ -215,16 +227,33 @@ export function mountStudio(container: HTMLElement): ViewHandle {
 
   function startPreview(): void {
     if (previewHandle) return;
+
+    // Parsed, not cast (spec 111). This used to be
+    // `devUnitDef as unknown as UnitDef`, which type-checks, runs, and makes
+    // this tab the one caller that never finds out a document is broken -- while
+    // the tab's whole job is telling somebody whether a document is good. The
+    // game calls the same function on the same files.
+    const bundle = loadUnitBundle(devUnitDef, devClipLib);
+    if (!bundle.value) {
+      previewMount.appendChild(
+        el('p', `${BODY}color:#e06c75;`, `The reference unit does not validate: ${bundleErrorText(bundle)}`),
+      );
+      return;
+    }
+
     previewHandle = mountPreview(
       {
         unitPath: 'dev/mannequin.unitdef.json',
         clipLibPath: 'dev/biped-dev.core.cliplib.json',
-        unit: devUnitDef as unknown as UnitDef,
-        clipLib: devClipLib as unknown as ClipLib,
+        unit: bundle.value.unit,
+        clipLib: bundle.value.clipLib,
         assets: {
           meshUrl: mannequinUrl,
           clipUrls: { idle: idleUrl, walk: walkUrl, run: runUrl, attack: attackUrl },
-          importScale: (devUnitDef as unknown as UnitDef).import.scale,
+          importScale: bundle.value.unit.import.scale,
+          // Spread rather than assigned: absent means "do not check", and under
+          // `exactOptionalPropertyTypes` a present `undefined` is another thing.
+          ...(devRootBone === undefined ? {} : { rootBone: devRootBone }),
         },
       },
       // Writes go through the server when one is reachable, and say so plainly

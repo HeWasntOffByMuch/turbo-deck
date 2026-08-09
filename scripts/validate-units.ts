@@ -20,6 +20,8 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { errorsOf, formatIssue, warningsOf, type Issue } from '../src/units/issues.js';
+import { readGlbJson } from '../src/units/glb.js';
+import { rootMotionChannels, rootMotionMessage } from '../src/units/root-motion.js';
 import { validateClipLib, validateSkeleton, validateUnitBundle, validateUnitDef } from '../src/units/validate.js';
 import type { ClipLib, Skeleton } from '../src/units/types.js';
 
@@ -65,6 +67,51 @@ function readJson(path: string): { doc: unknown } | { parseError: string } {
   } catch (cause) {
     return { parseError: cause instanceof Error ? cause.message : String(cause) };
   }
+}
+
+/**
+ * Root motion in the clip files a library points at (spec 111).
+ *
+ * The loud half of "root motion is stripped at import". The importer strips it
+ * and says so in a console nobody is reading; this fails the build, which is the
+ * only volume setting that reliably works. A clip authored with a two-metre
+ * stride and shipped as one that moon-walks in place is otherwise something you
+ * find out by watching it.
+ *
+ * A clip whose `.glb` is missing or unreadable is a warning rather than an
+ * error: the documents are the thing under test here, an author may legitimately
+ * be validating a library before the bakes land, and a runner that went red over
+ * an absent binary would make the JSON gate unusable during authoring.
+ */
+function checkClipBinaries(clipLibPath: string, clipLib: ClipLib, rootBone: string): readonly Issue[] {
+  const issues: Issue[] = [];
+  const base = dirname(clipLibPath);
+
+  for (const [index, clip] of clipLib.clips.entries()) {
+    const path = resolve(base, clip.source);
+    let gltf: unknown;
+    try {
+      gltf = readGlbJson(new Uint8Array(readFileSync(path)));
+    } catch (cause) {
+      issues.push({
+        severity: 'warning',
+        code: 'runner.clip.unreadable',
+        path: `/clips/${index}/source`,
+        message: `could not read ${relative(repoRoot, path)} (${cause instanceof Error ? cause.message : String(cause)}); root motion not checked`,
+      });
+      continue;
+    }
+
+    const offending = rootMotionChannels(gltf, rootBone);
+    if (offending.length === 0) continue;
+    issues.push({
+      severity: 'error',
+      code: 'runner.clip.rootMotion',
+      path: `/clips/${index}/source`,
+      message: rootMotionMessage(clipLib.id, clip.id, [...new Set(offending.map((channel) => channel.bone))]),
+    });
+  }
+  return issues;
 }
 
 function main(): void {
@@ -148,6 +195,13 @@ function main(): void {
     }
     if (skeleton && clipLib) {
       issues.push(...validateUnitBundle({ unit, skeleton, clipLib }));
+      // Needs both documents: the library says where the clips are and the
+      // skeleton says which bone is the root, and the check is meaningless
+      // without either. Read rather than assumed -- pointing it at a guessed
+      // root would either miss translation that is there or condemn a track
+      // the rig needed.
+      const root = skeleton.bones.find((bone) => bone.parent === null)?.name;
+      if (root !== undefined) issues.push(...checkClipBinaries(clipLibPath, clipLib, root));
       if (clipLib.skeletonRef !== '' && resolve(dirname(clipLibPath), clipLib.skeletonRef) !== skeletonPath) {
         issues.push({
           severity: 'error',

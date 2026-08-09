@@ -144,6 +144,13 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  through this one parser. The rule the format exists to enforce is
                  that gameplay timing is authoritative and the clip is rescaled to
                  fit, bounded in both directions. `npm run validate:units`.
+                 bundle.ts is the one way a unit is read (spec 111): the Studio
+                 tab and the game both call loadUnitBundle rather than casting
+                 their imports, so a broken document is refused at both ends
+                 instead of at neither. root-motion.ts names translation on the
+                 root bone, in a clip's glTF JSON for CI and in three.js track
+                 names for the importer -- one rule, so the gate and the loader
+                 cannot disagree about what counts.
                  machine.ts is the state machine BOTH the Studio tab and the game
                  drive (specs 110-111) -- one machine, two callers, which is what
                  makes "the tool and the game read the same files" a fact about
@@ -262,6 +269,12 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  right-click attack order, spec 072), cast.ts, appearance.ts,
                  projectile-shape.ts and trail.ts (an arrow's and a shuriken's
                  silhouettes, and the streak a thrown star leaves, spec 087)
+                 unit-catalog.ts, unit-driver.ts and unit-lod.ts (spec 111: which
+                 monsters are drawn from an authored unit, the pure function from
+                 replicated facts to machine commands -- handed a snapshot and not
+                 the GameClient, so animation has nothing it *could* call -- and
+                 how often a distant body's pose is applied; the machine itself is
+                 never throttled, because its events are authored on frame indices)
                  pixel-font.ts (a 5x7 glyph table, since nothing may be fetched)
                  and touch.ts (taps and pinches, spec 093 -- bounded by distance
                  and never by time, because an event's stamp measures the
@@ -275,6 +288,14 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  photographs the real page into .claude/screenshots/world-*.png,
                  and `npx tsx scripts/preview-shots.ts` flies the real ShotRig
                  through a real arc into .claude/screenshots/shots.png.
+                 `npx tsx scripts/preview-units.ts` puts authored units in the
+                 real arena (`?units=grazer:mannequin`) and asserts a skinned
+                 body with 25 bones is being posed -- the half of spec 111 that
+                 only exists once a browser has fetched a .glb and skinned it.
+                 `presentation-only.test.ts` beside them is the brief's
+                 assertion: the same seed and inputs twice, once with the
+                 animation layer driven and once without, and the authoritative
+                 state must be identical.
                  `npx tsx scripts/preview-arcs.ts` plots what a shot's path
                  actually is, flown through the real step: one weapon at a
                  spread of distances, and the same shot over flat and broken
@@ -285,6 +306,12 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  browser is delivering pointer events. `fullscreen.ts` beside it
                  is the tab bar's fullscreen button -- DOM only, and absent on
                  anything that cannot go fullscreen or is not a coarse pointer.
+src/render/iso3d/unit-rig.ts  a loaded authored unit, posed by a machine (spec
+                 111). The three.js half of "the tool and the game read the same
+                 files": load the .glb, strip root motion and say so, write a
+                 pose. `mixer.update(0)` always -- every action's time comes from
+                 an integer tick, so the pose is a pure function of a tick count
+                 and an event lands on the same frame at 30fps as at 144.
 src/render/iso3d/view-controls.ts, menu-group.ts, settings-menu.ts  the Play
                  tab's settings (specs 033/034/107): six buttons in the top-right
                  corner -- view, day and night, player lights, retro filter, hike

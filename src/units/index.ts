@@ -57,3 +57,9 @@ export {
 } from './timing.js';
 
 export { validateClipLib, validateSkeleton, validateUnitBundle, validateUnitDef } from './validate.js';
+
+export type { UnitBundleResult } from './bundle.js';
+export { bundleErrorText, loadUnitBundle } from './bundle.js';
+
+export type { RootMotionChannel } from './root-motion.js';
+export { rootMotionChannels, rootMotionMessage, rootMotionTrackNames } from './root-motion.js';

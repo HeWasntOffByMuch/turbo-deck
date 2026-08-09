@@ -735,11 +735,18 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
   return {
     element: root,
     start(): void {
-      void primary.preview.load(source.assets).then(() => {
+      void primary.preview.load(source.assets, source.unit.id).then(() => {
         const stats = primary.preview.stats();
+        // Root motion is reported here as well as in the console and in CI
+        // (spec 111). Stripping it is right; stripping it *quietly* is how a
+        // clip authored with a two-metre stride ships as one that moon-walks
+        // and nobody finds out until they watch it. This is the screen the
+        // person who could fix that is actually looking at.
+        const stripped = primary.preview.rootMotion;
         status = primary.preview.error
           ? `could not load the model: ${primary.preview.error}`
           : `${stats.triangles} triangles, ${stats.bones} bones, ${stats.vertices} vertices · reference silhouette is ${PLAYER_REFERENCE_HEIGHT} world units`;
+        if (stripped.length > 0) status = `${status} · ROOT MOTION STRIPPED — ${stripped.join(' ')}`;
         renderStatus();
       });
       last = 0;

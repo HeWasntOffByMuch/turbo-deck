@@ -155,6 +155,15 @@ const PURE_RENDER = [
   // reference image and plan.ts derives whether a generation establishes a rig
   // family -- the shared-skeleton rule, which is money, and so is a function of
   // the library rather than a checkbox somebody has to remember to tick.
+  // The game's unit runtime (spec 111): the catalogue, the driver that turns
+  // replicated facts into machine commands, and the distance LOD. Pure by
+  // construction and linted as such -- the driver in particular is where the
+  // "animation is presentation only" rule lives, and a `Date` or a
+  // `Math.random` in it would be exactly the kind of hidden input that makes
+  // two clients disagree about what they are watching.
+  'src/render/iso3d/world/unit-catalog.ts',
+  'src/render/iso3d/world/unit-driver.ts',
+  'src/render/iso3d/world/unit-lod.ts',
   'src/render/iso3d/studio/image-check.ts',
   'src/render/iso3d/studio/image-check.test.ts',
   'src/render/iso3d/studio/plan.ts',

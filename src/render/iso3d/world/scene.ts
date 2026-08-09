@@ -86,6 +86,12 @@ import {
   torchFlicker,
 } from '../player-lights.js';
 import { appearanceOf, PLAYER_CRITTER, PLAYER_FIGURE, type Appearance } from './appearance.js';
+import { UnitRig } from '../unit-rig.js';
+import { UnitMachine } from '../../../units/machine.js';
+import { authoredUnitFor } from './unit-catalog.js';
+import { authoredUnitAssets } from './unit-assets.js';
+import { driveUnit, speedBetween, type UnitFacts } from './unit-driver.js';
+import { mixerCadence, shouldApply } from './unit-lod.js';
 import { ShotRig } from './shot.js';
 import type { AimShape } from './aim.js';
 import { castBar } from './cast.js';
@@ -115,6 +121,19 @@ const ORB_RADIUS = 7;
 export interface FrameInfo {
   /** Real seconds since the last frame, for animation. */
   readonly dt: number;
+  /**
+   * Whole 60Hz sim steps the frame's accumulator drained (spec 111).
+   *
+   * What an authored unit's state machine advances by, and the reason `dt` is
+   * not: a machine stepped by a frame delta fires its events at whatever rate
+   * the browser happens to be painting, so a hit lands on a different frame of
+   * the swing at 30fps than at 144. Usually 1, zero on a frame that arrived
+   * early, and up to the catch-up cap after a pause.
+   *
+   * The procedural rigs keep reading `dt`. They are frame-rate toys with no
+   * events in them and always were.
+   */
+  readonly ticks: number;
   /** How far through the current delta interval this frame is, in [0, 1]. */
   readonly alpha: number;
   /**
@@ -160,12 +179,37 @@ export interface AimIndicator {
   readonly inRange: boolean;
 }
 
+/**
+ * An authored unit standing in the world (spec 111).
+ *
+ * The machine and the rig are one per body rather than one per unit type: two
+ * grunts mid-swing are at different points in the same clip, and a shared
+ * machine would put them in lockstep.
+ */
+interface DrivenUnit {
+  readonly rig: UnitRig;
+  readonly machine: UnitMachine;
+  /** Last tick's facts, so a cast's first tick can be told from its fifth. */
+  previous: UnitFacts | null;
+  /** Last drawn position, for the speed the blend tree reads. */
+  previousPosition: { x: number; y: number } | null;
+  /**
+   * Bone count, read once when the mesh lands.
+   *
+   * Cached rather than measured on demand: `stats()` walks the whole model, and
+   * the only caller is a per-frame debug readout. A number that cannot change
+   * after load has no business being recomputed sixty times a second.
+   */
+  bones: number;
+}
+
 /** A body on screen, pooled by entity id. */
 interface Body {
   readonly group: THREE.Group;
   readonly kind: 'player' | 'monster' | 'projectile';
   readonly player?: CritterRig;
   readonly mech?: MechRig;
+  readonly unit?: DrivenUnit;
   readonly shot?: ShotRig;
   readonly highlight?: HighlightHandle;
   /** World units above the feet to hang the health bar; see {@link Body.headroom}. */
@@ -184,6 +228,24 @@ export const DEFAULT_HEADROOM = 46;
 
 /** Clearance between the top of a critter's head and the bar hanging over it. */
 const HEADROOM_GAP = 12;
+
+/**
+ * The sphere a body is culled by for the skinning skip (spec 111).
+ *
+ * Generous rather than tight. Getting this wrong in the small direction pops a
+ * pose at the edge of the screen, which is exactly where the eye is; getting it
+ * wrong in the large direction costs one mixer update for a body that turned out
+ * not to be visible, which costs nothing anybody can perceive.
+ */
+const FRUSTUM_BODY_RADIUS = 90;
+
+// Reused across every body every frame. Allocating a Frustum and three vectors
+// per unit per frame is forty throwaway objects a frame in a fight, which is a
+// garbage collector pause with a schedule.
+const SCRATCH_FRUSTUM = new THREE.Frustum();
+const SCRATCH_MATRIX = new THREE.Matrix4();
+const SCRATCH_SPHERE = new THREE.Sphere();
+const SCRATCH_WORLD = new THREE.Vector3();
 
 /** A blast that has landed and is fading out. Presentation only. */
 interface LiveEffect {
@@ -251,6 +313,15 @@ export class WorldScene {
   private readonly telegraphs = new Map<number, THREE.Mesh>();
   /** Units the cursor may pick this frame, rebuilt as bodies are placed. */
   private readonly hoverTargets: HoverTarget[] = [];
+  /**
+   * Cast phase by entity id, refreshed each frame (spec 111).
+   *
+   * An authored unit starts its swing on the tick the wire says a cast began,
+   * and the phase is how "began" is told from "is still going" -- see
+   * `startedCasting`. Rebuilt rather than accumulated so a cast that ended
+   * leaves no entry behind to be read as a swing that never finished.
+   */
+  private readonly castPhases = new Map<number, number>();
   private hovered: number | null = null;
   /** The ring under the body being attacked (spec 070). */
   private readonly targetRing: THREE.Mesh;
@@ -882,6 +953,8 @@ export class WorldScene {
   private syncBodies(view: ClientView, frame: FrameInfo, dt: number): void {
     const live = new Set<number>();
     this.hoverTargets.length = 0;
+    this.castPhases.clear();
+    for (const cast of view.casts) this.castPhases.set(cast.entityId, cast.phase);
 
     for (const entity of view.entities) {
       live.add(entity.id);
@@ -910,6 +983,7 @@ export class WorldScene {
       // neither needs the scene to remember where it drew them last frame.
       body.player?.update(dt, { x, y }, -facing);
       body.mech?.update(dt, { x, y }, -facing);
+      if (body.unit) this.driveAuthoredUnit(body.unit, entity, { x, y }, frame, dt);
       // Fed the *drawn* pose, so an arrow's nose follows the curve the eye is
       // following rather than the one the deltas describe (spec 087).
       body.shot?.update(dt, x, y, ground);
@@ -948,6 +1022,77 @@ export class WorldScene {
       body.shot?.dispose();
       this.bodies.delete(id);
     }
+  }
+
+  /**
+   * Advances one authored unit's machine and, if it is worth it, its pose.
+   *
+   * The two halves are separate on purpose, and the separation is the LOD (spec
+   * 111). The **machine** always steps: its events are authored on frame
+   * indices, and one that skipped ticks would fire a footstep late, twice or
+   * not at all. The **pose** is what costs -- sampling every track, writing
+   * every bone, walking the skeleton's world matrices -- and a body four
+   * screens away does not need one every tick, nor any at all when it is behind
+   * the camera.
+   *
+   * Everything read here is either straight off the wire or something already
+   * computed for drawing. Nothing an animation produced is read back, which is
+   * the rule `unit-driver.ts` exists to make structural rather than careful.
+   */
+  private driveAuthoredUnit(
+    unit: DrivenUnit,
+    entity: ClientView['entities'][number],
+    at: { readonly x: number; readonly y: number },
+    frame: FrameInfo,
+    dt: number,
+  ): void {
+    const dead = entity.maxHealth > 0 && entity.health <= 0;
+    const facts: UnitFacts = {
+      speed: unit.previousPosition === null ? 0 : speedBetween(unit.previousPosition, at, dt),
+      activity: entity.activity,
+      castPhase: this.castPhases.get(entity.id) ?? null,
+      dead,
+    };
+    driveUnit(unit.machine, facts, unit.previous, frame.ticks);
+    unit.previous = facts;
+    unit.previousPosition = { x: at.x, y: at.y };
+
+    const cadence = mixerCadence(this.camera.position.distanceTo(unit.rig.object.getWorldPosition(SCRATCH_WORLD)), this.inFrustum(unit.rig.object));
+    if (shouldApply(cadence, unit.machine.tick, entity.id)) unit.rig.applyPoses(unit.machine.poses());
+  }
+
+  /**
+   * What the authored units are doing, for `preview-units.ts`.
+   *
+   * Everything else about spec 111 is checked in Node. What cannot be is the
+   * half that only exists once a browser has fetched a `.glb`, decoded it,
+   * built a skeleton and posed it -- and a mesh this repo writes by hand is
+   * exactly the thing not to take on trust. This is the smallest readout that
+   * distinguishes "loaded", "has the right skeleton" and "is being driven";
+   * `view.ts` puts it on a data attribute and nothing in the game reads it.
+   */
+  authoredUnitReadout(): { readonly loaded: number; readonly bones: number; readonly states: string } {
+    let loaded = 0;
+    let bones = 0;
+    const states: string[] = [];
+    for (const body of this.bodies.values()) {
+      if (!body.unit?.rig.loaded) continue;
+      loaded += 1;
+      bones = Math.max(bones, body.unit.bones);
+      states.push(`${body.unit.machine.stateId}@${body.unit.machine.tick}`);
+    }
+    return { loaded, bones, states: states.sort().join(',') };
+  }
+
+  /** Whether a body is anywhere the camera can see, for the skinning skip. */
+  private inFrustum(object: THREE.Object3D): boolean {
+    SCRATCH_MATRIX.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+    SCRATCH_FRUSTUM.setFromProjectionMatrix(SCRATCH_MATRIX);
+    // A sphere rather than a point: a body whose feet are off the bottom of the
+    // screen is still half on it, and popping its pose would be visible.
+    SCRATCH_SPHERE.center.copy(object.getWorldPosition(SCRATCH_WORLD));
+    SCRATCH_SPHERE.radius = FRUSTUM_BODY_RADIUS;
+    return SCRATCH_FRUSTUM.intersectsSphere(SCRATCH_SPHERE);
   }
 
   /**
@@ -1111,14 +1256,46 @@ export class WorldScene {
       // than anything measured off the mesh.
       body = { group: shot.group, kind: 'projectile', shot, headroom: DEFAULT_HEADROOM };
     } else {
-      const mech = new MechRig(typeId);
-      body = {
-        group: mech.group,
-        kind: 'monster',
-        mech,
-        highlight: attachHighlight(mech.group),
-        headroom: DEFAULT_HEADROOM,
-      };
+      // An authored unit if one has been made for this type, and the procedural
+      // rig otherwise (spec 111). Additive on purpose: the roster moves over
+      // when there is a roster, and until then nothing that draws today stops.
+      const authored = authoredUnitFor(appearance);
+      const built = authored === null ? null : authoredUnitAssets(authored);
+      if (built) {
+        const group = new THREE.Group();
+        const rig = new UnitRig();
+        group.add(rig.object);
+        // Fire and forget: the group is in the scene from this frame and the
+        // mesh appears in it whenever the fetch lands. Awaiting here would mean
+        // `bodyFor` could not answer a frame that is already drawing.
+        const driven: DrivenUnit = {
+          rig,
+          machine: new UnitMachine({ unit: built.unit, clipLib: built.clipLib }),
+          previous: null,
+          previousPosition: null,
+          bones: 0,
+        };
+        void rig.load(built.assets, built.unit.id).then(() => {
+          castsShadows(group);
+          driven.bones = rig.stats().bones;
+        });
+        body = {
+          group,
+          kind: 'monster',
+          unit: driven,
+          highlight: attachHighlight(group),
+          headroom: DEFAULT_HEADROOM,
+        };
+      } else {
+        const mech = new MechRig(typeId);
+        body = {
+          group: mech.group,
+          kind: 'monster',
+          mech,
+          highlight: attachHighlight(mech.group),
+          headroom: DEFAULT_HEADROOM,
+        };
+      }
     }
 
     this.scene.add(body.group);
