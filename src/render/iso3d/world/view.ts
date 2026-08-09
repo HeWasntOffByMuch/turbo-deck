@@ -197,7 +197,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   root.append(hud.element, buttons);
 
   client.onCombatResult((result) => {
-    // Where it landed, asked for now and never again (spec 094). The scene is
+    // Where it landed, asked for now and never again (spec 096). The scene is
     // the better answer -- it knows the pose actually on screen, and it still
     // holds the body of something this very blow killed -- and the replica is
     // the fallback for a hit on a body no frame has drawn yet.

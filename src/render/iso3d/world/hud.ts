@@ -4,7 +4,7 @@
  *
  * DOM rather than geometry, and positioned by projecting each body to a canvas
  * pixel (`WorldScene.screenAnchors`) -- except the damage numbers, which are
- * projected from a world point of their own (spec 094), because they belong to
+ * projected from a world point of their own (spec 096), because they belong to
  * the ground a blow landed on rather than to a body that may be walking away
  * from it or gone.
  *
@@ -36,6 +36,8 @@ import { appearanceOf, displayName } from './appearance.js';
 import { pixelTextSvg } from './pixel-font.js';
 import { isCoarsePointer } from '../fullscreen.js';
 import { DamagePopups, type Projector, type WorldAnchor } from './damage-popup.js';
+import { hudLayout } from './hud-layout.js';
+import { weaponIconSvg } from './icons.js';
 
 /** The slot being aimed (spec 080). The aim indicator's colour, in the DOM. */
 const AIM_HIGHLIGHT = '#7fd4ff';
@@ -99,7 +101,7 @@ export interface HudHandle {
     aiming: { readonly abilityId: string | null; readonly pending: boolean },
   ): void;
   /**
-   * A hit landed on `entityId`, at the world point `at` (spec 094).
+   * A hit landed on `entityId`, at the world point `at` (spec 096).
    * Presentation of something already resolved.
    *
    * The point is taken once and kept: the number marks the ground the blow
@@ -145,6 +147,11 @@ export interface HudHandle {
  * when it is called, which is why `update` must run after the scene has drawn.
  */
 export function createHud(project: Projector): HudHandle {
+  // The one device question, asked once (spec 094). Everything below reads sizes
+  // out of the table rather than deciding them, so what "compact" means is
+  // asserted in Node instead of measured on a phone.
+  const layout = hudLayout(isCoarsePointer());
+
   const root = document.createElement('div');
   root.style.cssText = 'position:absolute;inset:0;pointer-events:none;overflow:hidden;';
 
@@ -152,12 +159,23 @@ export function createHud(project: Projector): HudHandle {
   status.style.cssText =
     'position:absolute;left:12px;top:52px;font:12px ui-monospace,Menlo,monospace;color:#cfd6e0;' +
     'background:rgba(10,14,20,.72);padding:8px 10px;border-radius:6px;line-height:1.6;white-space:pre;';
+  if (!layout.showsReadout) {
+    // Hidden, not removed, and still written every frame. It is developer
+    // instrumentation and has no business on a 390px frame -- but it is also the
+    // only clock `scripts/preview-touch.ts` has: it reads the tick and the target
+    // line out of `document.body.textContent`, which includes a `display:none`
+    // subtree. Deleting it would leave the touch harness unable to tell "the tap
+    // did nothing" from "the frame had not run yet", which is the confusion
+    // spec 093 was debugged out of.
+    status.style.display = 'none';
+    status.setAttribute('aria-hidden', 'true');
+  }
   root.append(status);
 
   const notices = document.createElement('div');
   notices.style.cssText =
-    'position:absolute;left:50%;top:86px;transform:translateX(-50%);font:13px ui-monospace,Menlo,monospace;' +
-    'color:#ffa07a;text-shadow:0 1px 2px #000;';
+    'position:absolute;left:50%;transform:translateX(-50%);font:13px ui-monospace,Menlo,monospace;' +
+    `color:#ffa07a;text-shadow:0 1px 2px #000;top:${layout.showsReadout ? 86 : 12}px;`;
   root.append(notices);
 
   // The spawner overlay lives in its own layer so clearing it is one truncation
@@ -167,11 +185,35 @@ export function createHud(project: Projector): HudHandle {
   root.append(spawnerLayer);
   const spawnerMarks = new Map<string, HTMLElement>();
 
+  // Bottom edge insets are `env()` rather than a number: in landscape the home
+  // indicator runs along the bottom and the notch along a side, which is exactly
+  // where the hotbar and the weapon switch sit (spec 093).
+  const bottom = `calc(${layout.edge}px + env(safe-area-inset-bottom))`;
+
   const bar = document.createElement('div');
   bar.style.cssText =
-    'position:absolute;left:50%;bottom:16px;transform:translateX(-50%);display:flex;gap:6px;' +
-    'font:11px ui-monospace,Menlo,monospace;pointer-events:auto;';
+    `position:absolute;left:50%;bottom:${bottom};transform:translateX(-50%);display:flex;` +
+    `gap:${layout.slotGap}px;font:${layout.slotFontPx}px ui-monospace,Menlo,monospace;pointer-events:auto;`;
   root.append(bar);
+
+  /**
+   * What the next tap does, while a skill is aimed (spec 080).
+   *
+   * Only built on the compact HUD, and only ever shows the aim: that line used
+   * to ride along at the bottom of the readout, and the readout is the one thing
+   * spec 094 takes away. It is not debug output -- it is the question on screen
+   * -- so it gets its own place above the hotbar rather than going with the
+   * panel. Idle, it says nothing; the world is the hint.
+   */
+  const aimHint = document.createElement('div');
+  if (layout.compact) {
+    aimHint.style.cssText =
+      `position:absolute;left:50%;transform:translateX(-50%);white-space:nowrap;` +
+      `bottom:calc(${layout.edge + layout.slot.height + 6}px + env(safe-area-inset-bottom));` +
+      'font:11px ui-monospace,Menlo,monospace;color:#dbe3ee;background:rgba(10,14,20,.72);' +
+      'padding:3px 8px;border-radius:5px;pointer-events:none;';
+    root.append(aimHint);
+  }
 
   let useHandler: (abilityId: string) => void = () => undefined;
 
@@ -179,11 +221,21 @@ export function createHud(project: Projector): HudHandle {
     const ability = abilityById(abilityId);
     const button = document.createElement('button');
     button.style.cssText =
-      'width:92px;padding:6px 4px;border-radius:6px;border:1px solid #33405a;background:#182130;' +
-      'color:#cfd6e0;cursor:pointer;font:inherit;text-align:center;line-height:1.5;';
+      `width:${layout.slot.width}px;border-radius:6px;border:1px solid #33405a;background:#182130;` +
+      'color:#cfd6e0;cursor:pointer;font:inherit;text-align:center;' +
+      // Square and centred on a finger: the label is whatever fits inside the
+      // target rather than the target being whatever the label needs.
+      (layout.compact
+        ? `height:${layout.slot.height}px;padding:2px;line-height:1.15;display:flex;` +
+          'align-items:center;justify-content:center;'
+        : 'padding:6px 4px;line-height:1.5;');
     button.style.position = 'relative';
     button.style.overflow = 'hidden';
-    button.innerHTML = `<b>${index + 1}</b><br>${ability?.name ?? abilityId}`;
+    // The number is the key that casts it, so it goes where there are keys. A
+    // phone has none, and the digit was taking a third of the button to say so.
+    button.innerHTML = layout.showsKeyNumber
+      ? `<b>${index + 1}</b><br>${ability?.name ?? abilityId}`
+      : (ability?.name ?? abilityId);
     button.title = ability?.description ?? '';
     button.addEventListener('click', () => useHandler(abilityId));
 
@@ -199,8 +251,8 @@ export function createHud(project: Projector): HudHandle {
     const remaining = document.createElement('span');
     remaining.style.cssText =
       'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;' +
-      'font:700 15px ui-monospace,Menlo,monospace;color:#e8eef6;text-shadow:0 1px 2px #000;' +
-      'pointer-events:none;';
+      `font:700 ${layout.slotCountdownPx}px ui-monospace,Menlo,monospace;color:#e8eef6;` +
+      'text-shadow:0 1px 2px #000;pointer-events:none;';
     button.append(remaining);
 
     bar.append(button);
@@ -212,18 +264,22 @@ export function createHud(project: Projector): HudHandle {
   // answer -- so a refused equip simply leaves the old one lit.
   const weapons = document.createElement('div');
   weapons.style.cssText =
-    'position:absolute;left:12px;bottom:16px;display:flex;flex-direction:column;gap:4px;' +
+    `position:absolute;left:calc(${layout.edge}px + env(safe-area-inset-left));bottom:${bottom};` +
+    `display:flex;flex-direction:${layout.weaponDirection};gap:${layout.weaponGap}px;` +
     'font:11px ui-monospace,Menlo,monospace;pointer-events:auto;' +
     // Backed like the status readout: the caption is small grey text and the
     // world behind it is a bright green field, so unbacked it disappears over
-    // half the map.
-    'background:rgba(10,14,20,.72);padding:8px;border-radius:6px;';
+    // half the map. Icons carry their own backing, so the compact row drops the
+    // panel and the padding with the caption.
+    (layout.weaponIconOnly ? '' : 'background:rgba(10,14,20,.72);padding:8px;border-radius:6px;');
   root.append(weapons);
 
-  const weaponCaption = document.createElement('div');
-  weaponCaption.style.cssText = 'color:#8b97a8;letter-spacing:.08em;padding-left:2px;';
-  weaponCaption.textContent = 'WEAPON';
-  weapons.append(weaponCaption);
+  if (!layout.weaponIconOnly) {
+    const weaponCaption = document.createElement('div');
+    weaponCaption.style.cssText = 'color:#8b97a8;letter-spacing:.08em;padding-left:2px;';
+    weaponCaption.textContent = 'WEAPON';
+    weapons.append(weaponCaption);
+  }
 
   let equipHandler: (itemId: string) => void = () => undefined;
 
@@ -231,9 +287,30 @@ export function createHud(project: Projector): HudHandle {
     const ability = abilityById(weapon.abilityId);
     const button = document.createElement('button');
     button.style.cssText =
-      'width:132px;padding:5px 8px;border-radius:6px;border:1px solid #33405a;background:#182130;' +
-      'color:#cfd6e0;cursor:pointer;font:inherit;text-align:left;line-height:1.4;';
-    button.textContent = weapon.name;
+      // Fixed height on a finger, because the target is the point; a floor on
+      // desktop, because a long name that wraps should push the button open
+      // rather than spill out of it.
+      `width:${layout.weapon.width}px;border-radius:6px;` +
+      `${layout.weaponIconOnly ? 'height' : 'min-height'}:${layout.weapon.height}px;` +
+      'border:1px solid #33405a;background:#182130;color:#cfd6e0;cursor:pointer;font:inherit;' +
+      `display:flex;align-items:center;gap:6px;line-height:1.4;` +
+      (layout.weaponIconOnly ? 'justify-content:center;padding:0;' : 'padding:5px 8px;');
+    // The icon is the whole button on a phone, so the name has to survive as a
+    // label rather than as text: it is what a screen reader reads out, and what
+    // the harness reports when it says which weapon is lit.
+    button.innerHTML = weaponIconSvg(weapon.abilityId, { size: layout.weaponIconPx });
+    button.setAttribute('aria-label', weapon.name);
+    // Says which weapon this button is, for the same reason a health bar says
+    // which body it belongs to: `scripts/preview-world.ts` has to find the lit
+    // one, and it used to find it by `text-align:left` -- a style, which stopped
+    // being true the moment the compact switch centred its icons. A named handle
+    // is the honest version of that, and it survives the button having no text.
+    button.dataset['weapon'] = weapon.itemId;
+    if (!layout.weaponIconOnly) {
+      const name = document.createElement('span');
+      name.textContent = weapon.name;
+      button.append(name);
+    }
     button.title = ability ? `${ability.name} -- ${ability.description}` : weapon.itemId;
     button.addEventListener('click', () => equipHandler(weapon.itemId));
     weapons.append(button);
@@ -305,6 +382,12 @@ export function createHud(project: Projector): HudHandle {
 
       live.add(anchor.id);
       const element = barFor(anchor.id);
+      // Says whether this bar is the local player's. Nothing in the game reads
+      // it either; it is how `scripts/preview-world.ts` avoids aiming a click at
+      // a monster its own body is standing in front of, which since spec 095 is
+      // a miss rather than a forgiven near-miss.
+      if (anchor.id === view.selfEntityId) element.root.dataset['self'] = '';
+      else delete element.root.dataset['self'];
       element.root.style.left = `${anchor.x}px`;
       element.root.style.top = `${anchor.y}px`;
 
@@ -336,7 +419,7 @@ export function createHud(project: Projector): HudHandle {
       bars.delete(id);
     }
 
-    // Damage numbers stay on the ground the blow landed on (spec 094): the
+    // Damage numbers stay on the ground the blow landed on (spec 096): the
     // field holds a world point each and re-projects it, so nothing here needs
     // the body -- or needs it to still exist.
     const step = popups.step(project);
@@ -417,6 +500,15 @@ export function createHud(project: Projector): HudHandle {
       (view.connected ? '' : '   (disconnected)') +
       `\n${targetLine(view, targetId)}` +
       `\n${aimLine(aiming)}`;
+
+    // The compact HUD shows the aim line and nothing else from that block, and
+    // only while there is an aim to answer -- an empty box floating over the
+    // grass would be the panel back by another name.
+    if (layout.compact) {
+      const hint = aiming.abilityId === null ? '' : aimLine(aiming);
+      aimHint.textContent = hint;
+      aimHint.style.display = hint === '' ? 'none' : 'block';
+    }
   }
 
   return {
@@ -535,7 +627,8 @@ function aimLine(aiming: { readonly abilityId: string | null; readonly pending: 
   const touch = touchHints();
   if (!ability) {
     return touch
-      ? 'tap ground to move, a unit to attack · pinch to zoom · 1-8 abilities on the bar'
+      // No key numbers to name on a phone since spec 094 -- the bar is tapped.
+      ? 'tap ground to move, a unit to attack · pinch to zoom · tap a skill to cast it'
       : 'right-click ground to move, a unit to attack · WASD · 1-8 abilities · Esc cancel';
   }
   if (!aiming.pending) {

@@ -77,6 +77,13 @@ export interface AbilityDefinition {
    * Ticks between committing and the effect landing. The caster is rooted and
    * the cast can be cancelled at any point inside it -- this window *is* the
    * commitment the old parry system used to read.
+   *
+   * Deliberately long since spec 094. Every number here used to be a fifth of a
+   * second or so, which is a delay before a blow rather than a decision anybody
+   * can act inside: a player has to *see* the wind-up, decide, and step out of
+   * it, and on a real connection most of 200ms is the round trip. Every basic
+   * attack still sits under `BASE_ATTACK_DELAY_TICKS`, so how often a body can
+   * swing stays the stat's answer (spec 088) rather than this column's.
    */
   readonly windupTicks: number;
   readonly cooldownTicks: number;
@@ -113,7 +120,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     name: 'Slash',
     kind: 'melee',
     targeting: 'direction',
-    windupTicks: seconds(0.2),
+    windupTicks: seconds(0.5),
     cooldownTicks: seconds(0.6),
     cost: 0,
     range: 70,
@@ -127,7 +134,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     name: 'Heavy Blow',
     kind: 'melee',
     targeting: 'direction',
-    windupTicks: seconds(0.65),
+    windupTicks: seconds(1.1),
     cooldownTicks: seconds(3),
     cost: 2,
     range: 90,
@@ -142,7 +149,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // Point-targeted, so `startCast` refuses a shot at something out of range
     // rather than launching an arrow that was never going to reach.
     targeting: 'point',
-    windupTicks: seconds(0.35),
+    windupTicks: seconds(0.8),
     cooldownTicks: seconds(1),
     cost: 0,
     range: 420,
@@ -160,7 +167,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     name: 'Throwing Star',
     kind: 'projectile',
     targeting: 'point',
-    windupTicks: seconds(0.2),
+    windupTicks: seconds(0.45),
     cooldownTicks: seconds(0.7),
     cost: 0,
     range: 300,
@@ -175,7 +182,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     name: 'Arcane Bolt',
     kind: 'projectile',
     targeting: 'direction',
-    windupTicks: seconds(0.3),
+    windupTicks: seconds(0.6),
     cooldownTicks: seconds(0.8),
     cost: 3,
     range: 700,
@@ -188,7 +195,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     name: 'Firepot',
     kind: 'projectile',
     targeting: 'point',
-    windupTicks: seconds(0.5),
+    windupTicks: seconds(1.0),
     cooldownTicks: seconds(4),
     cost: 5,
     range: 520,
@@ -208,7 +215,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // (spec 080). Everything under it was already built: a projectile carrying
     // a target id tracks its mark and is disjointed by its death (spec 079).
     targeting: 'unit',
-    windupTicks: seconds(0.45),
+    windupTicks: seconds(0.9),
     cooldownTicks: seconds(2.5),
     cost: 4,
     range: 480,
@@ -223,7 +230,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     name: 'Quake',
     kind: 'ground',
     targeting: 'point',
-    windupTicks: seconds(0.9),
+    windupTicks: seconds(1.4),
     cooldownTicks: seconds(8),
     cost: 7,
     range: 420,
@@ -236,7 +243,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     name: 'Mend',
     kind: 'self',
     targeting: 'self',
-    windupTicks: seconds(0.8),
+    windupTicks: seconds(1.2),
     cooldownTicks: seconds(10),
     cost: 6,
     range: 0,
@@ -249,7 +256,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     name: 'Drain',
     kind: 'channel',
     targeting: 'direction',
-    windupTicks: seconds(0.25),
+    windupTicks: seconds(0.5),
     cooldownTicks: seconds(6),
     cost: 4,
     range: 220,

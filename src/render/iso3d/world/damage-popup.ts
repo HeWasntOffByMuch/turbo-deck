@@ -1,5 +1,5 @@
 /**
- * The floating damage numbers, as a field of world points (spec 094).
+ * The floating damage numbers, as a field of world points (spec 096).
  * Pure -- no three.js, no DOM.
  *
  * A number marks *where a blow landed*, and a place is a world point. It used

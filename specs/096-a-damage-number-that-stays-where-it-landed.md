@@ -1,4 +1,4 @@
-# 094 — A damage number that stays where it landed
+# 096 — A damage number that stays where it landed
 
 ## Problem
 

@@ -70,6 +70,11 @@ const PURE_RENDER = [
   // from a clock here, which is exactly what lets the rules be replayed in Node
   // instead of checked by hand on a phone.
   'src/render/iso3d/world/touch.ts',
+  // The HUD's metrics and its weapon icons (spec 094). The HUD is DOM and can
+  // only be checked by photographing it; whether eight buttons still fit across
+  // a phone is a sum, and an icon is a string.
+  'src/render/iso3d/world/hud-layout.ts',
+  'src/render/iso3d/world/icons.ts',
   'src/render/iso3d/world/*.test.ts',
   'src/render/iso3d/editor/brush.ts',
   'src/render/iso3d/editor/camera.ts',

@@ -225,10 +225,12 @@ describe('loopback session', () => {
       (entity) => entity.kind === EntityKindValue.Monster,
     )?.id;
 
-    // Commit to the basic melee, then run out its wind-up.
+    // Commit to the basic melee, then run out its wind-up -- the table's own
+    // number, since it moves (spec 094), plus room for the turn in front of it.
+    const swing = abilityById('melee.slash');
     client.useAbility('melee.slash', (self?.position.x ?? 0) + 40, self?.position.y ?? 0);
     await settle();
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < (swing?.windupTicks ?? 0) + 30; i++) {
       test.server.tick();
       await settle();
     }
