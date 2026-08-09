@@ -888,13 +888,26 @@ async function damageNumbersHoldTheirGround(page: Page, problems: string[]): Pro
     return;
   }
 
-  // Wait for the order to finish the body off. The client drops a target the
-  // moment it dies, so "no target" is the kill -- and polled this closely, the
-  // blow that did it is a number a few frames old and good for half a second
-  // yet, which is the window the pan has to happen in.
+  // The fight has to start before it can end. Without this, a `findUnit` that
+  // picked nothing leaves the readout already saying "no target", and the wait
+  // below would take that for a kill and measure an empty screen.
+  let engaged = false;
+  for (let waited = 0; waited < 3000 && !engaged; waited += 60) {
+    await page.waitForTimeout(60);
+    engaged = (await readTarget(page)).startsWith('target ');
+  }
+  if (!engaged) {
+    console.log('  no measurement: the attack order never took');
+    return;
+  }
+
+  // Now wait for the order to finish the body off. The client drops a target
+  // the moment it dies, so "no target" is the kill -- and polled this closely,
+  // the blow that did it is a number a few frames old and good for half a
+  // second yet, which is the window the pan has to happen in.
   let before = new Map<string, { x: number; y: number }>();
-  for (let waited = 0; waited < 20_000; waited += 80) {
-    await page.waitForTimeout(80);
+  for (let waited = 0; waited < 20_000; waited += 60) {
+    await page.waitForTimeout(60);
     if (!(await readTarget(page)).startsWith('no target')) continue;
     before = await overlayPoints(page, 'data-damage-id');
     break;
@@ -906,14 +919,6 @@ async function damageNumbersHoldTheirGround(page: Page, problems: string[]): Pro
     );
     return;
   }
-
-  // A move order across the frame, which is what pans the camera. It drops the
-  // attack order with it -- that is fine, the numbers already on screen are the
-  // subject and nothing is allowed to add to them mid-measurement.
-  await page.mouse.click(120, 620, { button: 'right' });
-  await page.waitForTimeout(320);
-  const after = await overlayPoints(page, 'data-damage-id');
-  const marksAfter = await overlayPoints(page, 'data-spawner');
 
   const moved = (
     from: Map<string, { x: number; y: number }>,
@@ -927,13 +932,35 @@ async function damageNumbersHoldTheirGround(page: Page, problems: string[]): Pro
     return deltas;
   };
 
-  const pan = moved(marksBefore, marksAfter);
-  const numbers = moved(before, after);
+  // Walk, which is what pans the camera. Held keys rather than a move order: a
+  // right-click has to find a pixel that is neither a HUD button nor ground the
+  // route planner refuses, and either one reads here as a camera that did not
+  // move. Escape first, because the blow that did the killing is a wind-up the
+  // body is still standing in, and since spec 094 those are long.
+  await page.keyboard.press('Escape');
+  await page.keyboard.down('KeyW');
+  await page.keyboard.down('KeyD');
+
+  // Sampled until the camera has actually moved rather than after a fixed wait:
+  // how far a step gets in 400ms depends on the machine, and this one is running
+  // the world on software WebGL.
+  let pan: number[] = [];
+  let numbers: number[] = [];
+  let camera = 0;
+  for (let waited = 0; waited < 1500 && Math.abs(camera) < 12; waited += 150) {
+    await page.waitForTimeout(150);
+    pan = moved(marksBefore, await overlayPoints(page, 'data-spawner'));
+    numbers = moved(before, await overlayPoints(page, 'data-damage-id'));
+    if (pan.length === 0 || numbers.length === 0) break;
+    camera = pan.reduce((sum, delta) => sum + delta, 0) / pan.length;
+  }
+  await page.keyboard.up('KeyW');
+  await page.keyboard.up('KeyD');
+
   if (pan.length === 0 || numbers.length === 0) {
     console.log('  no measurement: nothing survived the pan to compare');
     return;
   }
-  const camera = pan.reduce((sum, delta) => sum + delta, 0) / pan.length;
   console.log(`  camera panned ${camera.toFixed(1)}px, over ${numbers.length} damage numbers`);
   if (Math.abs(camera) < 12) {
     console.log('  no measurement: the camera barely moved');
