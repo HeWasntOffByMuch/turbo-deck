@@ -48,6 +48,7 @@ export function createJob(input: CreateJobInput, nowMs: number): Job {
     establishesRigFamily: input.establishesRigFamily,
     cacheKey: cacheKey(input.referenceImageSha256, input.params),
     rigType: null,
+    inFlight: {},
     referenceImageSha256: input.referenceImageSha256,
     params: input.params,
     status: 'queued',
@@ -105,11 +106,15 @@ export function nextStage(job: Job): Stage | null {
 
 /** Marks a stage as in flight. The task id is null until the submit returns one. */
 export function beginStep(job: Job, stage: Stage, nowMs: number): Job {
+  // `startedAtMs` is kept if the stage already has one: a resumed stage began
+  // when it began, and restamping it would make the elapsed time in the UI
+  // measure the resume rather than the work.
+  const existing = stepOf(job, stage)?.startedAtMs ?? null;
   return {
     ...job,
     status: 'running',
     stage,
-    steps: patchStep(job, stage, { status: 'running', startedAtMs: nowMs }),
+    steps: patchStep(job, stage, { status: 'running', startedAtMs: existing ?? nowMs }),
     updatedAtMs: nowMs,
   };
 }
@@ -119,32 +124,87 @@ export function recordTaskId(job: Job, stage: Stage, taskId: string, nowMs: numb
   return { ...job, steps: patchStep(job, stage, { taskId }), updatedAtMs: nowMs };
 }
 
+/**
+ * The in-flight map, tolerating a record written before the field existed.
+ *
+ * `jobs.json` is on somebody's disk from an earlier build, and a job that was
+ * *blocked* there is exactly the one they will come back and resume. Reading a
+ * missing field would throw on the way in and strand a job that has already
+ * been paid for -- which is the opposite of what this whole mechanism is for.
+ */
+function inFlightOf(job: Job): Readonly<Record<string, string>> {
+  return job.inFlight ?? {};
+}
+
+/** Notes a submitted task, so a restart polls it instead of buying another. */
+export function markInFlight(job: Job, key: string, taskId: string, nowMs: number): Job {
+  return { ...job, inFlight: { ...inFlightOf(job), [key]: taskId }, updatedAtMs: nowMs };
+}
+
+/** Forgets a call once its charge is recorded and its file is written. */
+export function clearInFlight(job: Job, key: string, nowMs: number): Job {
+  const current = inFlightOf(job);
+  if (!(key in current)) return job.inFlight === undefined ? { ...job, inFlight: {} } : job;
+  const remaining = Object.fromEntries(Object.entries(current).filter(([name]) => name !== key));
+  return { ...job, inFlight: remaining, updatedAtMs: nowMs };
+}
+
+export function inFlightTask(job: Job, key: string): string | null {
+  return inFlightOf(job)[key] ?? null;
+}
+
+/**
+ * Records what a call charged, the moment it is known.
+ *
+ * Separate from {@link completeStep}, and called before the download rather
+ * than after, because the charge is a fact as soon as the task succeeds. Folding
+ * it into completion would mean a process that died between the success and the
+ * file on disk had spent money the record does not show -- and a total that
+ * under-reads is the one that lets a ceiling be passed.
+ *
+ * Accumulates on the step rather than replacing, so a stage made of several
+ * calls -- the retarget, one per clip -- ends up with the sum of them.
+ */
+export function recordCredits(job: Job, stage: Stage, credits: number, nowMs: number): Job {
+  const previous = stepOf(job, stage)?.creditsConsumed ?? 0;
+  return {
+    ...job,
+    steps: patchStep(job, stage, { creditsConsumed: previous + credits }),
+    creditsSpent: job.creditsSpent + credits,
+    updatedAtMs: nowMs,
+  };
+}
+
+/** Records a downloaded file, immediately, so a restart never re-fetches it. */
+export function recordArtifacts(job: Job, patch: Partial<Job['artifacts']>, nowMs: number): Job {
+  return {
+    ...job,
+    artifacts: {
+      ...job.artifacts,
+      ...patch,
+      clipGlbs: { ...job.artifacts.clipGlbs, ...(patch.clipGlbs ?? {}) },
+    },
+    updatedAtMs: nowMs,
+  };
+}
+
 export interface StepOutcome {
-  /** What the API reported it charged. Never a projection. */
-  readonly creditsConsumed: number;
-  readonly artifacts?: Partial<Job['artifacts']>;
   /** Set by the rig check; every later call needs it. */
   readonly rigType?: string | null;
 }
 
+/**
+ * Marks a stage finished.
+ *
+ * Carries no money and no files any more -- {@link recordCredits} and
+ * {@link recordArtifacts} have already written those as they happened. All this
+ * does is close the stage, which is what makes the whole sequence resumable from
+ * wherever it stopped.
+ */
 export function completeStep(job: Job, stage: Stage, outcome: StepOutcome, nowMs: number): Job {
-  const artifacts = outcome.artifacts
-    ? {
-        ...job.artifacts,
-        ...outcome.artifacts,
-        clipGlbs: { ...job.artifacts.clipGlbs, ...(outcome.artifacts.clipGlbs ?? {}) },
-      }
-    : job.artifacts;
-
   const advanced: Job = {
     ...job,
-    steps: patchStep(job, stage, {
-      status: 'done',
-      creditsConsumed: outcome.creditsConsumed,
-      finishedAtMs: nowMs,
-    }),
-    creditsSpent: job.creditsSpent + outcome.creditsConsumed,
-    artifacts,
+    steps: patchStep(job, stage, { status: 'done', finishedAtMs: nowMs }),
     rigType: outcome.rigType ?? job.rigType,
     updatedAtMs: nowMs,
   };

@@ -4,11 +4,16 @@ import {
   blockJob,
   cacheHit,
   cancelJob,
+  clearInFlight,
   completeStep,
   createJob,
   failJob,
+  inFlightTask,
   isTerminal,
+  markInFlight,
   nextStage,
+  recordArtifacts,
+  recordCredits,
   recordTaskId,
   resumable,
   skipStep,
@@ -52,7 +57,7 @@ function runThrough(start: Job): { readonly job: Job; readonly visited: string[]
     const stage = nextStage(current);
     if (stage === null) break;
     visited.push(stage);
-    current = completeStep(beginStep(current, stage, 0), stage, { creditsConsumed: 1 }, 0);
+    current = completeStep(beginStep(current, stage, 0), stage, {}, 0);
   }
   return { job: current, visited };
 }
@@ -101,7 +106,7 @@ describe('nextStage', () => {
   it('reads the steps, so a resumed job picks up where it left off', () => {
     // A pure function of the record, not a cursor that could drift out of step
     // with what has actually been done.
-    const partway = completeStep(beginStep(job(), 'imageToModel', 0), 'imageToModel', { creditsConsumed: 20 }, 0);
+    const partway = completeStep(beginStep(job(), 'imageToModel', 0), 'imageToModel', {}, 0);
     const reloaded = JSON.parse(JSON.stringify(partway)) as Job;
     expect(nextStage(reloaded)).toBe('rigCheck');
   });
@@ -119,23 +124,71 @@ describe('step transitions', () => {
     expect(stepOf(started, 'imageToModel')?.taskId).toBe('task-9');
   });
 
-  it('accumulates credits across steps', () => {
+  it('accumulates credits as each call reports them, not at completion', () => {
+    // Recorded before the download rather than after: the charge is a fact the
+    // moment the task succeeds, and a total that under-reads is the one that
+    // lets a ceiling be passed.
     let current = job();
     for (const stage of ['imageToModel', 'rigCheck', 'rig'] as const) {
-      current = completeStep(beginStep(current, stage, 0), stage, { creditsConsumed: 7 }, 0);
+      current = recordCredits(beginStep(current, stage, 0), stage, 7, 0);
+      current = completeStep(current, stage, {}, 0);
     }
     expect(current.creditsSpent).toBe(21);
+    expect(stepOf(current, 'rig')?.creditsConsumed).toBe(7);
+  });
+
+  it('sums several calls within one stage', () => {
+    // The retarget is one call per clip; the step has to end up with the total.
+    let current = beginStep(job(), 'retarget', 0);
+    current = recordCredits(current, 'retarget', 25, 0);
+    current = recordCredits(current, 'retarget', 25, 0);
+    expect(stepOf(current, 'retarget')?.creditsConsumed).toBe(50);
+    expect(current.creditsSpent).toBe(50);
   });
 
   it('merges artifacts rather than replacing them', () => {
-    let current = completeStep(job(), 'imageToModel', { creditsConsumed: 0, artifacts: { meshGlb: '/m.glb' } }, 0);
-    current = completeStep(current, 'rig', { creditsConsumed: 0, artifacts: { riggedGlb: '/r.glb' } }, 0);
-    current = completeStep(current, 'retarget', { creditsConsumed: 0, artifacts: { clipGlbs: { idle: '/c.glb' } } }, 0);
-    expect(current.artifacts).toEqual({ meshGlb: '/m.glb', riggedGlb: '/r.glb', clipGlbs: { idle: '/c.glb' } });
+    let current = recordArtifacts(job(), { meshGlb: '/m.glb' }, 0);
+    current = recordArtifacts(current, { riggedGlb: '/r.glb' }, 0);
+    current = recordArtifacts(current, { clipGlbs: { idle: '/c.glb' } }, 0);
+    current = recordArtifacts(current, { clipGlbs: { walk: '/w.glb' } }, 0);
+    expect(current.artifacts).toEqual({
+      meshGlb: '/m.glb',
+      riggedGlb: '/r.glb',
+      clipGlbs: { idle: '/c.glb', walk: '/w.glb' },
+    });
+  });
+
+  it('remembers a submitted task until its result is recorded', () => {
+    // A task id is worth money the instant the submit returns, so it goes on
+    // disk before anything waits on it and is forgotten only once the charge is
+    // recorded and the file is written.
+    let current = markInFlight(job(), 'retarget:walk', 'task-9', 0);
+    expect(inFlightTask(current, 'retarget:walk')).toBe('task-9');
+    expect(inFlightTask(current, 'retarget:idle')).toBeNull();
+    current = clearInFlight(current, 'retarget:walk', 0);
+    expect(inFlightTask(current, 'retarget:walk')).toBeNull();
+  });
+
+  it('survives a round trip through JSON with its in-flight calls intact', () => {
+    const current = markInFlight(job(), 'rig', 'task-3', 0);
+    const reloaded = JSON.parse(JSON.stringify(current)) as Job;
+    expect(inFlightTask(reloaded, 'rig')).toBe('task-3');
+  });
+
+  it('reads a job written before the in-flight field existed', () => {
+    // Somebody has a jobs.json from an earlier build, and the job in it that
+    // they will come back to is the blocked one -- already paid for. Throwing on
+    // the way in would strand exactly the case this mechanism exists to save.
+    const old = JSON.parse(JSON.stringify(job())) as Record<string, unknown>;
+    delete old['inFlight'];
+    const legacy = old as unknown as Job;
+    expect(inFlightTask(legacy, 'rig')).toBeNull();
+    expect(() => clearInFlight(legacy, 'rig', 0)).not.toThrow();
+    expect(inFlightTask(markInFlight(legacy, 'rig', 'task-1', 0), 'rig')).toBe('task-1');
   });
 
   it('succeeds only when there is no stage left', () => {
-    const partway = completeStep(job(), 'imageToModel', { creditsConsumed: 1 }, 0);
+    const partway = completeStep(job(), 'imageToModel', {}, 0);
     expect(partway.status).toBe('running');
     expect(runThrough(job()).job.status).toBe('succeeded');
   });

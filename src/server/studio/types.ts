@@ -90,6 +90,17 @@ export interface Job {
    * on the first non-humanoid.
    */
   readonly rigType: string | null;
+  /**
+   * Calls that were **submitted and not yet finished**, keyed by what they are:
+   * `imageToModel`, `rig`, `retarget:walk`.
+   *
+   * The difference between resuming and re-paying. A task id is worth money the
+   * instant the submit returns -- the work is queued and will be billed whether
+   * or not this process lives to see it -- so it goes on disk immediately and a
+   * restart polls it rather than buying another one. An entry is cleared only
+   * once its result has been recorded and its file written.
+   */
+  readonly inFlight: Readonly<Record<string, string>>;
   readonly referenceImageSha256: string;
   readonly params: GenerationParams;
   readonly status: JobStatus;

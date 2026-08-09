@@ -82,6 +82,23 @@ export function dayKeyOf(atMs: number): string {
   return `${pad(year, 4)}-${pad(month, 2)}-${pad(day, 2)}`;
 }
 
+/**
+ * Whether this exact call is already in the ledger.
+ *
+ * A resumed job re-polls a task it already has an id for, and would otherwise
+ * append its charge a second time. The ledger is append-only and is the only
+ * record of what was actually spent, so a duplicate is not a cosmetic problem --
+ * it silently inflates every total and every ceiling check built on them.
+ */
+export function hasEntry(
+  entries: readonly LedgerEntry[],
+  jobId: string,
+  stage: Stage,
+  taskId: string | null,
+): boolean {
+  return entries.some((entry) => entry.jobId === jobId && entry.stage === stage && entry.taskId === taskId);
+}
+
 export function runTotal(entries: readonly LedgerEntry[], jobId: string): number {
   return entries.reduce((sum, entry) => (entry.jobId === jobId ? sum + entry.credits : sum), 0);
 }

@@ -538,6 +538,160 @@ describe('the interlocks', () => {
   });
 });
 
+describe('resuming without paying twice', () => {
+  /** Builds a second pipeline over the same store: a restart, from a job's view. */
+  function restart(h: Harness): StudioPipeline {
+    return new StudioPipeline({
+      client: new TripoClient({
+        apiKey: 'tsk_secret',
+        baseUrl: 'https://openapi.example/v3',
+        fetch: h.fake.fetch,
+      }),
+      store: h.store,
+      config: h.config,
+      now: () => 0,
+      sleep: () => Promise.resolve(),
+      writeArtifact: (jobId, filename, bytes) => h.store.writeArtifact(jobId, filename, bytes),
+    });
+  }
+
+  it('polls a task that was already submitted instead of buying another', async () => {
+    // The window that used to cost money: the submit returned, the id was on
+    // disk, and the process died during the poll. A restart re-submitted.
+    scriptSuccess(harness.fake);
+    seedJob(harness);
+    harness.store.saveJob({
+      ...(harness.store.getJob('job-1') as Job),
+      status: 'running',
+      stage: 'imageToModel',
+      steps: (harness.store.getJob('job-1') as Job).steps.map((step) =>
+        step.stage === 'imageToModel' ? { ...step, status: 'running', taskId: 'task-99' } : step,
+      ),
+      inFlight: { imageToModel: 'task-99' },
+    });
+
+    await restart(harness).run('job-1');
+    // Nothing was submitted to the generation endpoint at all -- the existing
+    // task was polled.
+    expect(harness.fake.callsTo('/generation/image-to-model')).toHaveLength(0);
+    expect(harness.fake.callsTo('/tasks/task-99').length).toBeGreaterThan(0);
+  });
+
+  it('keeps every clip it has already downloaded, and buys only the rest', async () => {
+    // A five-clip retarget interrupted after two. The old code re-ran the whole
+    // set; there is no more expensive bug in this pipeline.
+    scriptSuccess(harness.fake);
+    const many = createJob(
+      {
+        id: 'job-many',
+        unitId: 'grunt',
+        skeletonId: 'biped',
+        establishesRigFamily: true,
+        referenceImageSha256: HASH,
+        params: params({ clipIntents: ['a', 'b', 'c', 'd', 'e'] }),
+      },
+      0,
+    );
+    harness.store.saveReferenceImage('job-many', 'ref.png', 'image/png', new Uint8Array([1]));
+    harness.store.saveJob(many);
+    await harness.pipeline.run('job-many');
+    expect(harness.fake.callsTo('/animations/retarget')).toHaveLength(5);
+
+    // Now a second job that already has two of the five on disk.
+    const partial = createJob(
+      {
+        id: 'job-partial',
+        unitId: 'grunt2',
+        skeletonId: 'biped',
+        establishesRigFamily: true,
+        referenceImageSha256: HASH,
+        params: params({ clipIntents: ['a', 'b', 'c', 'd', 'e'] }),
+      },
+      0,
+    );
+    harness.store.saveReferenceImage('job-partial', 'ref.png', 'image/png', new Uint8Array([1]));
+    const done = harness.store.getJob('job-many') as Job;
+    harness.store.saveJob({
+      ...partial,
+      status: 'running',
+      stage: 'retarget',
+      rigType: 'biped',
+      steps: partial.steps.map((step) =>
+        step.stage === 'retarget'
+          ? { ...step, status: 'running' as const }
+          : { ...step, status: 'done' as const, taskId: `${step.stage}-task` },
+      ),
+      artifacts: {
+        meshGlb: done.artifacts.meshGlb,
+        riggedGlb: done.artifacts.riggedGlb,
+        clipGlbs: { a: done.artifacts.clipGlbs['a'] ?? '', b: done.artifacts.clipGlbs['b'] ?? '' },
+      },
+    });
+
+    const before = harness.fake.callsTo('/animations/retarget').length;
+    await restart(harness).run('job-partial');
+    const bought = harness.fake.callsTo('/animations/retarget').length - before;
+    expect(bought).toBe(3);
+    expect(Object.keys((harness.store.getJob('job-partial') as Job).artifacts.clipGlbs).sort()).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+      'e',
+    ]);
+  });
+
+  it('records a re-polled task charge once, not twice', async () => {
+    scriptSuccess(harness.fake);
+    seedJob(harness);
+    await harness.pipeline.run('job-1');
+    const entries = harness.store.listLedger().length;
+    const spent = (harness.store.getJob('job-1') as Job).creditsSpent;
+
+    // Re-running a finished job must add nothing; the ledger is the only record
+    // of what was spent and a duplicate inflates every ceiling check built on it.
+    await restart(harness).run('job-1');
+    expect(harness.store.listLedger()).toHaveLength(entries);
+    expect((harness.store.getJob('job-1') as Job).creditsSpent).toBe(spent);
+  });
+
+  it('has written the charge before the file, so a crash between them under-reports nothing', async () => {
+    // The ledger entry lands before the download. A process that died in the
+    // gap would leave a job whose spend is recorded and whose file is not --
+    // which is recoverable. The other order is not.
+    scriptSuccess(harness.fake);
+    seedJob(harness);
+    const order: string[] = [];
+    const spy = new StudioPipeline({
+      client: new TripoClient({
+        apiKey: 'tsk_secret',
+        baseUrl: 'https://openapi.example/v3',
+        fetch: async (url, init) => {
+          if (url.startsWith('https://cdn.example')) {
+            order.push(`download:${harness.store.listLedger().length}`);
+          }
+          return harness.fake.fetch(url, init);
+        },
+      }),
+      store: harness.store,
+      config: harness.config,
+      now: () => 0,
+      sleep: () => Promise.resolve(),
+      writeArtifact: (jobId, filename, bytes) => harness.store.writeArtifact(jobId, filename, bytes),
+    });
+    await spy.run('job-1');
+    // The first download happened with the mesh's charge already in the ledger.
+    expect(order[0]).toBe('download:1');
+  });
+
+  it('leaves nothing in flight once a job has succeeded', async () => {
+    scriptSuccess(harness.fake);
+    seedJob(harness);
+    const job = await harness.pipeline.run('job-1');
+    expect(job?.inFlight).toEqual({});
+  });
+});
+
 describe('durability', () => {
   it('round-trips every job field through the store', async () => {
     scriptSuccess(harness.fake);

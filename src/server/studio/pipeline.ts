@@ -21,15 +21,20 @@
  *     new job, priced and confirmed again by a person.
  */
 
-import { checkCeilings, type LedgerEntry } from './ledger.js';
+import { checkCeilings, hasEntry, type LedgerEntry } from './ledger.js';
 import {
   beginStep,
   blockJob,
   cancelJob,
+  clearInFlight,
   completeStep,
   failJob,
+  inFlightTask,
   isTerminal,
+  markInFlight,
   nextStage,
+  recordArtifacts,
+  recordCredits,
   recordTaskId,
   resumable,
   resumeBlocked,
@@ -39,7 +44,7 @@ import { Pacer } from './pacing.js';
 import { projectCost, type PlannedStep } from './pricing.js';
 import type { StudioConfig } from './config.js';
 import type { StudioStore } from './store.js';
-import { batchClips, presetFor, TripoError, type TaskResult, type TripoClient } from './tripo.js';
+import { batchClips, presetFor, TripoError, type TaskHandle, type TaskResult, type TripoClient } from './tripo.js';
 import type { Job, Stage } from './types.js';
 
 export type Clock = () => number;
@@ -93,12 +98,23 @@ export class StudioPipeline {
     return job;
   }
 
-  private record(job: Job, stage: Stage, taskId: string | null, result: TaskResult): void {
+  /**
+   * Writes a call's charge to the ledger and onto the job, once.
+   *
+   * Idempotent on the task id, because a resumed job re-polls a task it already
+   * has one for. The ledger is append-only and is the only record of what was
+   * actually spent -- a duplicate would inflate every total and every ceiling
+   * check built on them, silently and permanently.
+   */
+  private record(job: Job, stage: Stage, taskId: string | null, result: TaskResult): Job {
+    if (hasEntry(this.deps.store.listLedger(), job.id, stage, taskId)) return job;
+
+    const credits = result.creditsConsumed ?? 0;
     const entry: LedgerEntry = {
       jobId: job.id,
       stage,
       taskId,
-      credits: result.creditsConsumed ?? 0,
+      credits,
       reported: result.creditsConsumed !== null,
       atMs: this.deps.now(),
     };
@@ -106,6 +122,45 @@ export class StudioPipeline {
     if (!entry.reported) {
       this.say(`${job.id}/${stage}: the API reported no credits_consumed; the total is now a lower bound`);
     }
+    return this.save(recordCredits(job, stage, credits, this.deps.now()));
+  }
+
+  /**
+   * One paid call, made resumable.
+   *
+   * The whole point of this function is the first branch. A task id is worth
+   * money the moment the submit returns -- the work is queued and will be billed
+   * whether or not this process survives -- so a job that already has one for
+   * this key is *polled*, never re-submitted. Without it, a restart during the
+   * poll loop buys the same task again.
+   *
+   * The id goes on disk before the await, and the charge is written before the
+   * download, so every point this can be interrupted at leaves a record that is
+   * ahead of the spending rather than behind it.
+   */
+  private async paidCall(
+    job: Job,
+    stage: Stage,
+    key: string,
+    submit: () => Promise<TaskHandle>,
+    deadline: number,
+  ): Promise<{ readonly job: Job; readonly taskId: string; readonly result: TaskResult }> {
+    let current = job;
+    let taskId = inFlightTask(current, key);
+
+    if (taskId === null) {
+      await this.gate();
+      taskId = (await submit()).taskId;
+      // Persisted before anything waits on it. This save is the difference
+      // between resuming a paid task and paying for it twice.
+      current = this.save(markInFlight(recordTaskId(current, stage, taskId, this.deps.now()), key, taskId, this.deps.now()));
+    } else {
+      this.say(`${job.id}/${key}: task ${taskId} was already submitted; polling it rather than paying again`);
+    }
+
+    const result = await this.awaitTask(taskId, deadline);
+    current = this.record(current, stage, taskId, result);
+    return { job: current, taskId, result };
   }
 
   private plannedStep(job: Job, stage: Stage): PlannedStep | null {
@@ -117,10 +172,18 @@ export class StudioPipeline {
     return projection.steps.find((step) => step.stage === stage) ?? null;
   }
 
-  /** The ceiling gate. Returns the blocked job when it refuses, else null. */
-  private refuseOnCeiling(job: Job, stage: Stage): Job | null {
+  /**
+   * The ceiling gate. Returns the blocked job when it refuses, else null.
+   *
+   * `projectedOverride` exists for the retarget, which is several calls in one
+   * stage. Charging the whole stage's cost against the ceiling before *each* of
+   * its calls would count the same clips over and over and refuse a set it had
+   * already half paid for -- so the loop checks the remaining work once and then
+   * one call at a time.
+   */
+  private refuseOnCeiling(job: Job, stage: Stage, projectedOverride?: number): Job | null {
     const planned = this.plannedStep(job, stage);
-    const projected = planned?.credits ?? 0;
+    const projected = projectedOverride ?? planned?.credits ?? 0;
     if (projected <= 0) return null;
 
     const verdict = checkCeilings({
@@ -172,7 +235,9 @@ export class StudioPipeline {
    * marked `running` forever with nothing polling it.
    */
   private async runStage(job: Job, stage: Stage): Promise<Job> {
-    const blocked = this.refuseOnCeiling(job, stage);
+    // The retarget does its own, per clip and against what is left to buy, so it
+    // is skipped here rather than charged for the whole set twice.
+    const blocked = stage === 'retarget' ? null : this.refuseOnCeiling(job, stage);
     if (blocked) return blocked;
 
     const started = this.save(beginStep(job, stage, this.deps.now()));
@@ -207,32 +272,29 @@ export class StudioPipeline {
    * instantly is noise in a UI whose job is to show where the money went.
    */
   private async runImageToModel(job: Job, deadline: number): Promise<Job> {
-    const fileToken = await this.uploadReference(job);
+    // The upload is only needed for a submit; a resumed job already has its
+    // task and must not re-upload (free, but pointless) or re-submit (not).
+    const submit = async (): Promise<TaskHandle> => {
+      const fileToken = await this.uploadReference(job);
+      await this.gate();
+      return this.deps.client.imageToModel({
+        fileToken,
+        modelVersion: job.params.modelVersion,
+        faceLimit: job.params.faceLimit,
+        texture: job.params.texture,
+        pbr: job.params.pbr,
+      });
+    };
 
-    await this.gate();
-    const handle = await this.deps.client.imageToModel({
-      fileToken,
-      modelVersion: job.params.modelVersion,
-      faceLimit: job.params.faceLimit,
-      texture: job.params.texture,
-      pbr: job.params.pbr,
-    });
-    const submitted = this.save(recordTaskId(job, 'imageToModel', handle.taskId, this.deps.now()));
-
-    const result = await this.awaitTask(handle.taskId, deadline);
-    this.record(submitted, 'imageToModel', handle.taskId, result);
+    const { job: polled, result } = await this.paidCall(job, 'imageToModel', 'imageToModel', submit, deadline);
     if (result.state === 'failed') {
-      return this.save(failJob(submitted, 'imageToModel', result.error ?? 'generation failed', this.deps.now()));
+      return this.save(failJob(polled, 'imageToModel', result.error ?? 'generation failed', this.deps.now()));
     }
 
-    const meshGlb = await this.pull(submitted, result, 'mesh.glb');
+    const meshGlb = await this.pull(polled, result, 'mesh.glb');
+    const saved = this.save(recordArtifacts(polled, { meshGlb }, this.deps.now()));
     return this.save(
-      completeStep(
-        submitted,
-        'imageToModel',
-        { creditsConsumed: result.creditsConsumed ?? 0, artifacts: { meshGlb } },
-        this.deps.now(),
-      ),
+      completeStep(clearInFlight(saved, 'imageToModel', this.deps.now()), 'imageToModel', {}, this.deps.now()),
     );
   }
 
@@ -257,19 +319,20 @@ export class StudioPipeline {
     const source = stepOf(job, 'imageToModel')?.taskId;
     if (!source) throw new TripoError('rig-check has no generated model to check', null, null);
 
-    await this.gate();
-    const handle = await this.deps.client.rigCheck(source);
-    const submitted = this.save(recordTaskId(job, 'rigCheck', handle.taskId, this.deps.now()));
-
-    const result = await this.awaitTask(handle.taskId, deadline);
-    this.record(submitted, 'rigCheck', handle.taskId, result);
+    const { job: polled, result } = await this.paidCall(
+      job,
+      'rigCheck',
+      'rigCheck',
+      () => this.deps.client.rigCheck(source),
+      deadline,
+    );
     if (result.state === 'failed') {
-      return this.save(failJob(submitted, 'rigCheck', result.error ?? 'rig-check failed', this.deps.now()));
+      return this.save(failJob(polled, 'rigCheck', result.error ?? 'rig-check failed', this.deps.now()));
     }
     if (result.riggable === false) {
       return this.save(
         blockJob(
-          submitted,
+          polled,
           'rigCheck',
           'the generated model is not riggable; nothing was charged for a rig. Try a clearer reference image: a single figure, an A- or T-pose, limbs clear of the body.',
           this.deps.now(),
@@ -284,9 +347,9 @@ export class StudioPipeline {
     }
     return this.save(
       completeStep(
-        submitted,
+        clearInFlight(polled, 'rigCheck', this.deps.now()),
         'rigCheck',
-        { creditsConsumed: result.creditsConsumed ?? 0, rigType: result.rigType },
+        { rigType: result.rigType },
         this.deps.now(),
       ),
     );
@@ -296,30 +359,26 @@ export class StudioPipeline {
     const source = stepOf(job, 'imageToModel')?.taskId;
     if (!source) throw new TripoError('rig has no generated model to rig', null, null);
 
-    await this.gate();
-    const handle = await this.deps.client.rig({
-      sourceTaskId: source,
-      modelVersion: this.deps.config.rigModelVersion,
-      spec: this.deps.config.rigSpec,
-      outFormat: job.params.outFormat,
-    });
-    const submitted = this.save(recordTaskId(job, 'rig', handle.taskId, this.deps.now()));
-
-    const result = await this.awaitTask(handle.taskId, deadline);
-    this.record(submitted, 'rig', handle.taskId, result);
+    const { job: polled, result } = await this.paidCall(
+      job,
+      'rig',
+      'rig',
+      () =>
+        this.deps.client.rig({
+          sourceTaskId: source,
+          modelVersion: this.deps.config.rigModelVersion,
+          spec: this.deps.config.rigSpec,
+          outFormat: job.params.outFormat,
+        }),
+      deadline,
+    );
     if (result.state === 'failed') {
-      return this.save(failJob(submitted, 'rig', result.error ?? 'rig failed', this.deps.now()));
+      return this.save(failJob(polled, 'rig', result.error ?? 'rig failed', this.deps.now()));
     }
 
-    const riggedGlb = await this.pull(submitted, result, 'rigged.glb');
-    return this.save(
-      completeStep(
-        submitted,
-        'rig',
-        { creditsConsumed: result.creditsConsumed ?? 0, artifacts: { riggedGlb } },
-        this.deps.now(),
-      ),
-    );
+    const riggedGlb = await this.pull(polled, result, 'rigged.glb');
+    const saved = this.save(recordArtifacts(polled, { riggedGlb }, this.deps.now()));
+    return this.save(completeStep(clearInFlight(saved, 'rig', this.deps.now()), 'rig', {}, this.deps.now()));
   }
 
   /**
@@ -340,35 +399,62 @@ export class StudioPipeline {
     const batches = batchClips(job.params.clipIntents);
     const rigType = job.rigType ?? 'biped';
     let current = job;
-    let credits = 0;
-    const clipGlbs: Record<string, string> = {};
+
+    // What is left to buy, checked once before any of it is: better to refuse a
+    // set up front than to stop three clips into it. Clips already on disk are
+    // not counted -- a resumed job is only paying for what it has not got.
+    const remaining = batches.filter(([intent]) => current.artifacts.clipGlbs[intent ?? ''] === undefined).length;
+    const upFront = this.refuseOnCeiling(current, 'retarget', remaining * this.deps.config.prices.retargetPerCall);
+    if (upFront) return upFront;
 
     for (const [index, animations] of batches.entries()) {
-      await this.gate();
-      const handle = await this.deps.client.retarget({
-        sourceTaskId: source,
-        animations: animations.map((intent) => presetFor(rigType, intent)),
-        outFormat: job.params.outFormat,
-      });
-      current = this.save(recordTaskId(current, 'retarget', handle.taskId, this.deps.now()));
-
-      const result = await this.awaitTask(handle.taskId, deadline);
-      this.record(current, 'retarget', handle.taskId, result);
-      if (result.state === 'failed') {
-        return this.save(failJob(current, 'retarget', result.error ?? 'retarget failed', this.deps.now()));
-      }
-      credits += result.creditsConsumed ?? 0;
-
-      // One call, one clip, one file -- named for the intent rather than for the
-      // call index, now that the two are the same thing.
       const intent = animations[0] ?? `clip-${index}`;
+
+      // Already bought and already on disk. This is the check that makes a
+      // five-clip retarget resumable: an interrupted run picks up at the clip it
+      // was on rather than paying for the ones before it again.
+      if (current.artifacts.clipGlbs[intent] !== undefined) {
+        this.say(`${job.id}/retarget: ${intent} is already on disk; skipping`);
+        continue;
+      }
+
+      // And once more per clip, for this call alone. The up-front check was
+      // against projected prices; these are the real charges as they land, so a
+      // set that turns out dearer than quoted still stops at a clip boundary
+      // rather than running past the ceiling.
+      const blocked = this.refuseOnCeiling(current, 'retarget', this.deps.config.prices.retargetPerCall);
+      if (blocked) return blocked;
+
+      const key = `retarget:${intent}`;
+      const { job: polled, result } = await this.paidCall(
+        current,
+        'retarget',
+        key,
+        () =>
+          this.deps.client.retarget({
+            sourceTaskId: source,
+            animations: [presetFor(rigType, intent)],
+            outFormat: job.params.outFormat,
+          }),
+        deadline,
+      );
+      current = polled;
+      if (result.state === 'failed') {
+        // Terminal, but everything bought before this clip is recorded and on
+        // disk -- so a wrong preset name costs one call, not the whole set.
+        return this.save(
+          failJob(current, 'retarget', `${intent}: ${result.error ?? 'retarget failed'}`, this.deps.now()),
+        );
+      }
+
       const path = await this.pull(current, result, `${intent}.glb`);
-      if (path !== null) clipGlbs[intent] = path;
+      if (path !== null) {
+        current = this.save(recordArtifacts(current, { clipGlbs: { [intent]: path } }, this.deps.now()));
+      }
+      current = this.save(clearInFlight(current, key, this.deps.now()));
     }
 
-    return this.save(
-      completeStep(current, 'retarget', { creditsConsumed: credits, artifacts: { clipGlbs } }, this.deps.now()),
-    );
+    return this.save(completeStep(current, 'retarget', {}, this.deps.now()));
   }
 
   /**
@@ -395,7 +481,7 @@ export class StudioPipeline {
         ),
       );
     }
-    return this.save(completeStep(job, 'download', { creditsConsumed: 0 }, this.deps.now()));
+    return this.save(completeStep(job, 'download', {}, this.deps.now()));
   }
 
   /** Drives a job to a terminal state. Safe to call twice; the second is a no-op. */
