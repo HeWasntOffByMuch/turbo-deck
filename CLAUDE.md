@@ -143,6 +143,24 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  through this one parser. The rule the format exists to enforce is
                  that gameplay timing is authoritative and the clip is rescaled to
                  fit, bounded in both directions. `npm run validate:units`.
+src/server/studio/  the unit authoring service (spec 108). Node-only, wired in from
+                 src/server/index.ts and imported by nothing in the server's
+                 portable half, because this is where the Tripo API key lives.
+                 tripo.ts is the ONLY file that knows the API's paths and field
+                 names, so the first real call corrects one file; everything
+                 above it speaks TaskHandle/TaskResult. The half that decides
+                 whether to spend -- cache.ts, confirm.ts, jobs.ts, ledger.ts,
+                 pacing.ts, pricing.ts -- is pure, clock-injected and linted as
+                 part of the deterministic core, and is driven end to end in
+                 tests through a fake fetch. The interlocks: confirmation is a
+                 server-issued one-shot token rather than a browser boolean,
+                 ceilings are checked against spend-so-far plus the projection
+                 before anything is sent, the job record is written BEFORE the
+                 submit, a model URL is downloaded in the same handler that saw
+                 it succeed (they expire in ~5 minutes) and never stored, and a
+                 failed paid call is never retried. jobs.json is rewritten
+                 atomically; ledger.jsonl is append-only. State lives in
+                 .studio/ and is gitignored.
 src/render/      the client: a tab shell over the play view, the two tuning
                  sandboxes and the map editor
 src/render/cloth/ pure cloth simulation for the robed character (spec 046) --

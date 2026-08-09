@@ -35,6 +35,21 @@ const DETERMINISTIC_CORE = [
   // differently in a browser than in Node would make "the tool and the game read
   // the same files" false in exactly the way nobody would think to check.
   'src/units/**/*.ts',
+  // The studio's decision-making half (spec 108). Named file by file rather
+  // than by directory because the rest of `src/server/studio/` is the opposite
+  // of pure -- it is fetch, fs, timers and an API key.
+  //
+  // These are the modules that decide whether to spend money, and holding them
+  // to the core's rules is what makes that decision testable: no clock of their
+  // own, no ambient randomness, every timestamp an argument. `ledger.ts` even
+  // computes its UTC day boundary by hand rather than reach for `Date`.
+  'src/server/studio/cache.ts',
+  'src/server/studio/confirm.ts',
+  'src/server/studio/jobs.ts',
+  'src/server/studio/ledger.ts',
+  'src/server/studio/pacing.ts',
+  'src/server/studio/pricing.ts',
+  'src/server/studio/types.ts',
 ];
 
 /**

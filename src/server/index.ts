@@ -13,6 +13,11 @@
  *   TURBO_DECK_MAP   map document to serve (default maps/arena.json; `none`
  *                    falls back to the generator, for a bare load test)
  *   ADMIN_SECRET     HMAC secret for admin tokens (default: random per boot)
+ *
+ * The unit authoring service reads its own (spec 108); see `studio/config.ts`.
+ * The one that matters is TRIPO_API_KEY, which lives here and never reaches a
+ * bundle, a log line or a response body. Without it the studio routes mount and
+ * refuse rather than disappearing.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -24,6 +29,7 @@ import { createHmacAdminVerifier, signToken } from './admin/auth.js';
 import { BROADCAST_RATE, SERVER_TICK_RATE } from './config.js';
 import { WebSocketTransport } from './net/transport-ws.js';
 import { GameServer } from './server.js';
+import { createStudio } from './studio/index.js';
 import { buildWorld, buildWorldFromMap } from './world/build.js';
 import { loadMapFile, mapPathFromEnv } from './world/map-file.js';
 
@@ -64,20 +70,39 @@ const world =
         return buildWorldFromMap(file.doc, file.text);
       })();
 
+/**
+ * The unit authoring service (spec 108). Mounted unconditionally; it refuses to
+ * spend when `TRIPO_API_KEY` is unset, so the Studio tab gets a clear message
+ * rather than a 404 that reads like a broken build. This is the only place the
+ * key is reachable from, and `src/server/studio/` is imported from here and
+ * nowhere in the server's portable half.
+ */
+const studio = createStudio({
+  env: process.env,
+  repoRoot: join(here, '..', '..'),
+  adminSecret,
+});
+
 const http = createServer((request, response) => {
-  const url = request.url ?? '/';
-  if (url === '/' || url.startsWith('/admin')) {
-    readFile(join(here, 'admin-client', 'index.html'))
-      .then((body) => {
-        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-        response.end(body);
-      })
-      .catch(() => {
-        response.writeHead(404).end('admin client not found');
-      });
-    return;
-  }
-  response.writeHead(404).end('not found');
+  // The studio router answers first and reports whether the request was its
+  // own, so neither half has to know the other's paths.
+  void studio.handle(request, response).then((handled) => {
+    if (handled) return;
+
+    const url = request.url ?? '/';
+    if (url === '/' || url.startsWith('/admin')) {
+      readFile(join(here, 'admin-client', 'index.html'))
+        .then((body) => {
+          response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+          response.end(body);
+        })
+        .catch(() => {
+          response.writeHead(404).end('admin client not found');
+        });
+      return;
+    }
+    response.writeHead(404).end('not found');
+  });
 });
 
 const server = new GameServer({
@@ -88,6 +113,8 @@ const server = new GameServer({
 
 http.listen(port, () => {
   server.start();
+  // After the listen, so a resumed job's first poll cannot race the boot log.
+  studio.resume();
   console.log(
     `[server] listening on ws://localhost:${port} -- sim ${SERVER_TICK_RATE}Hz, deltas ${BROADCAST_RATE}Hz`,
   );
@@ -100,6 +127,7 @@ http.listen(port, () => {
 
 const shutdown = (): void => {
   console.log('\n[server] shutting down');
+  studio.stop();
   void server.stop().then(() => {
     http.close();
     process.exit(0);
