@@ -67,6 +67,10 @@ function paramsFrom(body: Record<string, unknown>, config: StudioConfig): Genera
     // they change the price and the look, and neither is a per-request whim.
     texture: true,
     pbr: false,
+    // Server-side like the two above, and for the same reason: it changes what
+    // comes back, so it is a property of the roster rather than a per-request
+    // whim. `TRIPO_ORIENTATION` moves it.
+    orientation: config.orientation,
     clipIntents,
     outFormat: 'glb',
   };
@@ -153,6 +157,7 @@ export function studioRoutes(deps: RouteDeps): readonly Route[] {
           keyConfigured: config.apiKey !== null,
           modelVersion: config.modelVersion,
           defaultFaceLimit: config.defaultFaceLimit,
+          orientation: config.orientation,
           ceilings: config.ceilings,
           prices: config.prices,
           maxTimeScale: config.maxTimeScale,

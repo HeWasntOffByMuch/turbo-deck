@@ -80,6 +80,8 @@ export interface StudioConfigView {
   readonly keyConfigured: boolean;
   readonly modelVersion: string;
   readonly defaultFaceLimit: number;
+  /** How generated meshes are oriented; see the server's `GenerationParams`. */
+  readonly orientation: 'default' | 'align_image';
   readonly ceilings: Ceilings;
   readonly prices: Record<string, number>;
   readonly maxTimeScale: number;

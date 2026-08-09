@@ -464,7 +464,12 @@ export function mountStudio(container: HTMLElement): ViewHandle {
     }
     const perRun = config.ceilings.perRun === null ? 'none' : String(config.ceilings.perRun);
     const perDay = config.ceilings.perDay === null ? 'none' : String(config.ceilings.perDay);
-    const line = `model ${config.modelVersion} · faces ${config.defaultFaceLimit} · ceilings run ${perRun} / day ${perDay} · ${credits}`;
+    // Orientation is on the line because it decides which way every generated
+    // mesh -- and therefore every rig fitted to one -- ends up facing, and it is
+    // set by the server's environment rather than by anything on this screen.
+    const line =
+      `model ${config.modelVersion} · orientation ${config.orientation} · faces ${config.defaultFaceLimit} ` +
+      `· ceilings run ${perRun} / day ${perDay} · ${credits}`;
     repaint(statusLine, `${line}|${config.keyConfigured}`, () => {
       const nodes: Node[] = [document.createTextNode(line)];
       if (!config?.keyConfigured) {

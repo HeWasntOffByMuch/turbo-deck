@@ -37,6 +37,7 @@ export function cacheKey(referenceImageSha256: string, params: GenerationParams)
     `faces=${params.faceLimit}`,
     `texture=${params.texture ? 1 : 0}`,
     `pbr=${params.pbr ? 1 : 0}`,
+    `orient=${params.orientation}`,
     `format=${params.outFormat}`,
     `clips=${clips}`,
   ].join('|');

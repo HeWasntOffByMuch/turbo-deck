@@ -30,6 +30,7 @@ function params(patch: Partial<GenerationParams> = {}): GenerationParams {
     faceLimit: 8000,
     texture: true,
     pbr: false,
+    orientation: 'default',
     clipIntents: ['idle', 'run'],
     outFormat: 'glb',
     ...patch,

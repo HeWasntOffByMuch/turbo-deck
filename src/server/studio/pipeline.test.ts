@@ -36,6 +36,7 @@ function params(patch: Partial<GenerationParams> = {}): GenerationParams {
     faceLimit: 8000,
     texture: true,
     pbr: false,
+    orientation: 'default',
     clipIntents: ['idle', 'run'],
     outFormat: 'glb',
     ...patch,
@@ -333,6 +334,41 @@ describe('the happy path', () => {
       expect(body).not.toHaveProperty('model_version');
       expect(body).not.toHaveProperty('file');
     });
+  });
+
+  it('sends the generation orientation explicitly', async () => {
+    // Whichever front the mesh ends up with is the front the auto-rig fits to,
+    // and every clip afterwards plays in that frame. Too consequential to leave
+    // to whatever the server defaults to this month.
+    scriptSuccess(harness.fake);
+    seedJob(harness);
+    await harness.pipeline.run('job-1');
+    const body = harness.fake.callsTo('/generation/image-to-model')[0]?.body as Record<string, unknown>;
+    expect(body['orientation']).toBe('default');
+  });
+
+  it('sends align_image when the server is configured for it', async () => {
+    const aligned = build({ TRIPO_ORIENTATION: 'align_image' });
+    scriptSuccess(aligned.fake);
+    // The job carries the orientation, so it is what the job was created with
+    // rather than what the config says at the moment the call goes out.
+    const job = createJob(
+      {
+        id: 'job-1',
+        unitId: 'grunt',
+        skeletonId: 'biped',
+        establishesRigFamily: true,
+        referenceImageSha256: HASH,
+        params: params({ orientation: 'align_image' }),
+      },
+      0,
+    );
+    aligned.store.saveReferenceImage('job-1', 'ref.png', 'image/png', new Uint8Array([1]));
+    aligned.store.saveJob(job);
+    await aligned.pipeline.run('job-1');
+    const body = aligned.fake.callsTo('/generation/image-to-model')[0]?.body as Record<string, unknown>;
+    expect(body['orientation']).toBe('align_image');
+    rmSync(aligned.dir, { recursive: true, force: true });
   });
 
   it('sends the rig its own model version, not the generation one', () => {

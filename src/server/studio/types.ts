@@ -47,6 +47,22 @@ export interface GenerationParams {
   readonly texture: boolean;
   readonly pbr: boolean;
   /**
+   * How the generated mesh is oriented in its own space.
+   *
+   * `default` lets Tripo normalise the model to a canonical front, which is what
+   * this pipeline got implicitly before the field existed. `align_image` instead
+   * rotates the model to match the *camera* of the reference image.
+   *
+   * Which is right depends entirely on the photograph, and the two fail in
+   * opposite directions. On an unusual or stylised subject Tripo's guess at
+   * "the front" can be off by an arbitrary yaw, and every clip then plays in a
+   * frame rotated by it. On a shot that is not square on, `align_image` bakes
+   * the camera's yaw into the rig just as surely.
+   *
+   * Part of the cache key because it changes the bytes that come back.
+   */
+  readonly orientation: 'default' | 'align_image';
+  /**
    * Which clips to retarget, by intent name. Ordered on write so the cache key
    * of the same set requested in a different order is the same key.
    */

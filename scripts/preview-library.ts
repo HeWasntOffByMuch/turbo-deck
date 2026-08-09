@@ -59,6 +59,7 @@ function seededJob(): Job {
     faceLimit: 2000,
     texture: true,
     pbr: false,
+    orientation: 'default',
     clipIntents: ['idle', 'walk', 'run', 'slash'],
     outFormat: 'glb',
   };

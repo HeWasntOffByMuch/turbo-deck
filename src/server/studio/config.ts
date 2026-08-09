@@ -29,6 +29,8 @@ export interface StudioConfig {
   readonly rigModelVersion: string;
   /** The bone naming contract the rig is asked for. `mixamo` for a biped. */
   readonly rigSpec: string;
+  /** How a generated mesh is oriented. See `GenerationParams.orientation`. */
+  readonly orientation: 'default' | 'align_image';
   readonly defaultFaceLimit: number;
   readonly ceilings: Ceilings;
   readonly prices: PriceList;
@@ -84,6 +86,10 @@ export function loadStudioConfig(env: NodeJS.ProcessEnv, repoRoot: string): Stud
     modelVersion: env['TRIPO_MODEL_VERSION']?.trim() || 'P1-20260311',
     rigModelVersion: env['TRIPO_RIG_MODEL_VERSION']?.trim() || 'v2.5-20260210',
     rigSpec: env['TRIPO_RIG_SPEC']?.trim() || 'mixamo',
+    // `default` preserves what this pipeline got implicitly before the field was
+    // sent at all, so turning it on changes nothing until somebody decides it
+    // should. See `GenerationParams.orientation` for which way each one fails.
+    orientation: env['TRIPO_ORIENTATION']?.trim() === 'align_image' ? 'align_image' : 'default',
     defaultFaceLimit: num(env['STUDIO_FACE_LIMIT'], 8000),
     ceilings: {
       perRun: ceiling(env['STUDIO_CEILING_PER_RUN'], DEFAULT_PER_RUN_CEILING),
@@ -111,6 +117,7 @@ export function describeConfig(config: StudioConfig): string {
     `key ${config.apiKey === null ? 'NOT SET (generation disabled)' : 'set'}`,
     `model ${config.modelVersion}`,
     `rig ${config.rigModelVersion}/${config.rigSpec}`,
+    `orientation ${config.orientation}`,
     `ceilings run=${perRun} day=${perDay}`,
     `data ${config.dataDir}`,
     config.webhookUrl === undefined ? 'polling' : 'polling + webhook',

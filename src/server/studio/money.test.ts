@@ -22,6 +22,7 @@ function params(patch: Partial<GenerationParams> = {}): GenerationParams {
     faceLimit: 8000,
     texture: true,
     pbr: false,
+    orientation: 'default',
     clipIntents: ['idle', 'run', 'swing'],
     outFormat: 'glb',
     ...patch,
@@ -59,6 +60,9 @@ describe('cacheKey', () => {
     expect(cacheKey(HASH, params({ texture: false }))).not.toBe(base);
     expect(cacheKey(HASH, params({ pbr: true }))).not.toBe(base);
     expect(cacheKey(HASH, params({ clipIntents: ['idle'] }))).not.toBe(base);
+    // Orientation changes which way the mesh faces, so it changes the bytes --
+    // and a cache that ignored it would hand back a model made the other way.
+    expect(cacheKey(HASH, params({ orientation: 'align_image' }))).not.toBe(base);
   });
 
   it('is readable, so a cache miss can be diagnosed by eye', () => {

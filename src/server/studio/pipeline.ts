@@ -335,6 +335,7 @@ export class StudioPipeline {
         faceLimit: job.params.faceLimit,
         texture: job.params.texture,
         pbr: job.params.pbr,
+        orientation: job.params.orientation,
       });
     };
 

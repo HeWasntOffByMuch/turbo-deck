@@ -116,6 +116,21 @@ export interface ImageToModelRequest {
   readonly faceLimit: number;
   readonly texture: boolean;
   readonly pbr: boolean;
+  /**
+   * `default` or `align_image`, sent as a top-level field.
+   *
+   * `align_image` rotates the generated model to match the *camera* of the
+   * reference image; `default` lets the generator normalise to its own idea of
+   * a front. Documented as taking effect only when `texture` is true, which it
+   * always is here.
+   *
+   * Sent explicitly rather than left off. The two behave differently and the
+   * difference lands in the rig -- whichever front the mesh ends up with is the
+   * front the auto-rig fits to, and every clip afterwards plays in that frame.
+   * A field this consequential should not be decided by whatever the server
+   * happens to default to this month.
+   */
+  readonly orientation: 'default' | 'align_image';
 }
 
 export interface RigRequest {
@@ -441,6 +456,7 @@ export class TripoClient {
       face_limit: request.faceLimit,
       texture: request.texture,
       pbr: request.pbr,
+      orientation: request.orientation,
     });
   }
 
