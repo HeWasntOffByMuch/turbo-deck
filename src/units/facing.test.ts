@@ -301,6 +301,40 @@ describe('a rig off the naming contract', () => {
     expect(clip?.degreesFromRig ?? 180).toBeLessThan(10);
   });
 
+  it('refuses to read a direction out of a leg that ends in a shin', () => {
+    // The same rig with the toes lopped off, so the lowest tip is the ankle and
+    // the segment above it points almost straight down. Flattening that to the
+    // ground leaves noise, and normalizing noise produces a confident direction
+    // pointing anywhere -- so this has to come back unmeasured, not measured.
+    // Both toe joints on each side: dropping only the tip leaves the ball of
+    // the foot, which is a real foot vector and should still measure.
+    const dropped = new Set([
+      'mixamorig:LeftToe_End',
+      'mixamorig:RightToe_End',
+      'mixamorig:LeftToeBase',
+      'mixamorig:RightToeBase',
+    ]);
+    const kept = tripoNamed.nodes.filter((_, index) => !dropped.has(unit.meshGlb.nodes[index]?.name ?? ''));
+    const oldToNew = new Map<number, number>();
+    unit.meshGlb.nodes.forEach((node, index) => {
+      if (!dropped.has(node.name)) oldToNew.set(index, oldToNew.size);
+    });
+    const shins: GlbDocument = {
+      ...tripoNamed,
+      nodes: kept.map((node) => ({
+        ...node,
+        parent: node.parent === null ? null : (oldToNew.get(node.parent) ?? null),
+      })),
+      joints: kept.map((_, index) => index),
+      // The mesh binds by joint index, and those have just moved. Dropped
+      // rather than remapped: this test is about the skeleton.
+      mesh: null,
+    };
+    const rig = rigFacing(readNodeTree(opened(shins)), null);
+    expect(rig.forward).toBeNull();
+    expect(rig.method).toBe('none');
+  });
+
   it('shouts when a clip shares no bone names with the mesh at all', () => {
     // The quietest catastrophe: three binds by name, so this animates nothing.
     const report = facingReport({ name: 'mesh.glb', bytes: bytes(unit.meshGlb) }, [

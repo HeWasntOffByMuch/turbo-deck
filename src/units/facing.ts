@@ -328,11 +328,26 @@ export function structuralBones(
   return { hips, ankles, toes };
 }
 
+/**
+ * How much of a foot segment must lie in the ground plane to be a direction.
+ *
+ * A foot points forwards and slightly down; a shin points straight down. When
+ * the bones are found by shape rather than by name there is no guarantee the
+ * last segment of a leg is a foot at all -- a rig whose leg ends at the ankle
+ * offers the shin, and flattening that to the ground leaves a millimetre of
+ * numerical noise which normalizes into a confident direction pointing
+ * anywhere. Same failure the head slice had, one axis over.
+ */
+const FOOT_HORIZONTAL_FLOOR = 0.25;
+
 /** The mean ankle-to-toe direction of a set of legs, flattened to the ground. */
 function toeForward(pairs: readonly (readonly [Vec3, Vec3])[]): Vec3 | null {
   const vectors: Vec3[] = [];
   for (const [ankle, toe] of pairs) {
-    const v = normalize(horizontal(subtract(toe, ankle)));
+    const segment = subtract(toe, ankle);
+    const flat = horizontal(segment);
+    if (length(flat) < FOOT_HORIZONTAL_FLOOR * length(segment)) continue;
+    const v = normalize(flat);
     if (v !== null) vectors.push(v);
   }
   return vectors.length === 0 ? null : normalize(vectors.reduce((acc, v) => add(acc, v), [0, 0, 0] as Vec3));
