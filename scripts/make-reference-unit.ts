@@ -20,7 +20,11 @@ import { buildReferenceUnit } from '../src/units/reference-unit.js';
 import { formatIssue } from '../src/units/issues.js';
 import { validateClipLib, validateSkeleton, validateUnitBundle, validateUnitDef } from '../src/units/validate.js';
 import type { ClipLib, UnitDef } from '../src/units/types.js';
-import skeletonDoc from '../assets/units/biped.skeleton.json' with { type: 'json' };
+// The constant rather than `biped.skeleton.json`, which is the *canonical
+// family's* document and is now rewritten by the Studio export the first time a
+// real rig is measured (spec 115). The reference unit must not depend on a file
+// somebody else's generation can change.
+import { DEFAULT_CANONICAL_HEIGHT } from '../src/units/canonical-height.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = join(root, 'assets', 'units', 'dev');
@@ -47,7 +51,7 @@ function json(value: unknown): string {
 
 function main(): void {
   mkdirSync(clipDir, { recursive: true });
-  const unit = buildReferenceUnit(skeletonDoc.canonicalHeight);
+  const unit = buildReferenceUnit(DEFAULT_CANONICAL_HEIGHT);
 
   write(join(outDir, 'mannequin.glb'), writeGlb(unit.meshGlb));
   for (const clip of unit.clipGlbs) write(join(clipDir, `${clip.id}.glb`), writeGlb(clip.document));
@@ -68,7 +72,7 @@ function main(): void {
    * real unit will need too, and it is around thirty -- which is why a hardcoded
    * 1 somewhere would put a body in this world the size of a coin.
    */
-  const scale = skeletonDoc.canonicalHeight / unit.authoredHeight;
+  const scale = DEFAULT_CANONICAL_HEIGHT / unit.authoredHeight;
   /** Counted off the mesh just written, so the document cannot claim otherwise. */
   const meshData = unit.meshGlb.mesh;
   if (!meshData) throw new Error('the reference unit built no mesh to count');
@@ -169,7 +173,7 @@ function main(): void {
   const errors = issues.filter((issue) => issue.severity === 'error');
   console.log(
     `\n  authored ${unit.authoredHeight.toFixed(3)} units tall, import scale ${scale.toFixed(2)}x ` +
-      `-> ${skeletonDoc.canonicalHeight} world units`,
+      `-> ${DEFAULT_CANONICAL_HEIGHT} world units`,
   );
   if (errors.length > 0) {
     console.error(`\n${errors.length} error(s); the reference unit is not valid`);

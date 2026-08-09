@@ -386,24 +386,32 @@ export function studioRoutes(deps: RouteDeps): readonly Route[] {
           });
         }
 
-        const { readFileSync, existsSync } = await import('node:fs');
-        const { join } = await import('node:path');
         const skeletonRef = asStringField(body, 'skeletonRef') ?? `${job.skeletonId}.skeleton.json`;
-        const skeletonPath = join(deps.unitsDir, skeletonRef);
-        if (!existsSync(skeletonPath)) {
-          return sendJson(response, 400, { error: `no skeleton at assets/units/${skeletonRef}` });
+        const { resolveFamilySkeleton } = await import('./family.js');
+        const family = resolveFamilySkeleton({
+          job,
+          unitsDir: deps.unitsDir,
+          skeletonRef,
+          canonicalHeight: config.canonicalHeight,
+        });
+        if (family.doc === null) {
+          return sendJson(response, 400, { error: family.problem ?? `no skeleton at assets/units/${skeletonRef}` });
         }
+        if (family.wrote !== null) deps.log?.(`[studio] measured the ${job.skeletonId} rig into ${family.wrote}`);
 
         const { exportJob } = await import('./export.js');
         const result = exportJob({
           job,
           unitsDir: deps.unitsDir,
           skeletonRef,
-          skeletonDoc: JSON.parse(readFileSync(skeletonPath, 'utf8')) as unknown,
+          skeletonDoc: family.doc,
           clipLibId: asStringField(body, 'clipLibId') ?? `${job.skeletonId}.core`,
           clips: Array.isArray(body['clips']) ? (body['clips'] as never) : undefined,
           stateMachine: body['stateMachine'] === undefined ? undefined : (body['stateMachine'] as never),
           maxTimeScale: config.maxTimeScale,
+          // Measured, so an exported unit stands at the height this world draws
+          // a body at rather than at 1/32 of it (spec 115).
+          importScale: family.importScale,
           nowIso: new Date(now()).toISOString(),
         });
         return sendJson(response, result.ok ? 200 : 422, result);

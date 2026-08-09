@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import skeletonDoc from '../../../../assets/units/biped.skeleton.json' with { type: 'json' };
 import { CRITTERS } from '../../critters/index.js';
+import { DEFAULT_CANONICAL_HEIGHT } from '../../../units/canonical-height.js';
 import { validateSkeleton } from '../../../units/validate.js';
 import { PLAYER_CRITTER, PLAYER_FIGURE } from './appearance.js';
 
@@ -27,7 +28,15 @@ describe('the biped skeleton canonical height', () => {
     // where it positions the health bar: the metrics are what the skeleton is
     // built from, so this is the height rather than a measurement of it.
     const drawnHeight = (species.metrics.headY + species.metrics.headRadius) * PLAYER_FIGURE.bodyScale;
-    expect(skeletonDoc.canonicalHeight).toBeCloseTo(drawnHeight, 6);
+    expect(DEFAULT_CANONICAL_HEIGHT).toBeCloseTo(drawnHeight, 6);
+  });
+
+  it('is the same number in the constant and in the committed document', () => {
+    // Three places now name this height: the renderer's figure, the constant the
+    // authoring server derives a family skeleton with, and the canonical
+    // family's own document. Two of them agreeing is not enough -- a generated
+    // unit is scaled by whichever one its export happened to read.
+    expect(skeletonDoc.canonicalHeight).toBe(DEFAULT_CANONICAL_HEIGHT);
   });
 
   it('is in world units, not metres', () => {

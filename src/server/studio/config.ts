@@ -12,6 +12,7 @@
  */
 
 import { DEFAULT_MAX_TIME_SCALE } from '../../units/timing.js';
+import { DEFAULT_CANONICAL_HEIGHT } from '../../units/canonical-height.js';
 import type { Ceilings } from './ledger.js';
 import { DEFAULT_MIN_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS } from './pacing.js';
 import { DEFAULT_PRICES, type PriceList } from './pricing.js';
@@ -41,6 +42,15 @@ export interface StudioConfig {
   /** Optional completion callback. Polling is the default and always runs. */
   readonly webhookUrl: string | undefined;
   readonly maxTimeScale: number;
+  /**
+   * The height a body is drawn at in this world (spec 115).
+   *
+   * A decision about the *game*, not a fact about any file, which is why it is
+   * configuration and why `skeletonFromRig` takes it rather than measuring
+   * something and calling it canonical. It is what a derived family skeleton
+   * records, and what the import scale is computed against.
+   */
+  readonly canonicalHeight: number;
 }
 
 function num(raw: string | undefined, fallback: number): number {
@@ -106,6 +116,7 @@ export function loadStudioConfig(env: NodeJS.ProcessEnv, repoRoot: string): Stud
     dataDir: env['STUDIO_DATA_DIR']?.trim() || `${repoRoot}/.studio`,
     webhookUrl: env['STUDIO_WEBHOOK_URL']?.trim() || undefined,
     maxTimeScale: num(env['STUDIO_MAX_TIME_SCALE'], DEFAULT_MAX_TIME_SCALE),
+    canonicalHeight: num(env['STUDIO_CANONICAL_HEIGHT'], DEFAULT_CANONICAL_HEIGHT),
   };
 }
 

@@ -36,6 +36,17 @@ export interface ExportRequest {
   /** Absent means no unitdef is written -- a unit with no states is not a unit. */
   readonly stateMachine?: StateMachine | undefined;
   readonly maxTimeScale: number;
+  /**
+   * The measured factor bringing this mesh to the skeleton's canonical height
+   * (spec 115).
+   *
+   * Absent means "not measured", and the document then records 1 -- which is
+   * honest and useless, since a generated rig arrives around 1.7 units tall in a
+   * world whose bodies are 55.65. The caller measures it off the rigged `.glb`
+   * with `meshHeight`; it is not computed here because this file does not read
+   * binaries.
+   */
+  readonly importScale?: number | undefined;
   readonly nowIso: string;
 }
 
@@ -62,7 +73,8 @@ function ensureDir(dir: string): void {
  * consumed the only copy of something that was paid for.
  */
 export function exportJob(request: ExportRequest): ExportResult {
-  const { job, unitsDir, skeletonRef, skeletonDoc, clipLibId, clips, stateMachine, maxTimeScale, nowIso } = request;
+  const { job, unitsDir, skeletonRef, skeletonDoc, clipLibId, clips, stateMachine, maxTimeScale, importScale, nowIso } =
+    request;
 
   const unitDir = join(unitsDir, job.unitId);
   ensureDir(unitDir);
@@ -161,11 +173,11 @@ export function exportJob(request: ExportRequest): ExportResult {
       import: {
         normals: 'flat',
         targetTris: job.params.faceLimit,
-        // 1 until the mesh has actually been measured against the skeleton's
-        // canonical height. Recorded honestly rather than guessed: the real
-        // factor is around thirty and inventing it here would put a unit in the
-        // world at the wrong size with a number that looks deliberate.
-        scale: 1,
+        // Measured off the rigged .glb by the caller, never guessed. It falls
+        // back to 1 when nothing measured it, which is honest and useless -- the
+        // real factor is around thirty, and a unit exported at 1 is a body the
+        // size of a coin. Spec 115 is what made the measurement possible.
+        scale: importScale ?? 1,
         upAxis: '+Y',
       },
       maxTimeScale,

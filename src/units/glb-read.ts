@@ -408,6 +408,30 @@ export function readSkinnedMesh(glb: GlbBinary): SkinnedMeshData | null {
   return null;
 }
 
+/**
+ * The mesh's own height, which is what the import scale is measured against.
+ *
+ * The *mesh*, deliberately, not the topmost joint: a rig's head bone sits inside
+ * the skull, so scaling by the skeleton's extent leaves every unit a few percent
+ * short. This is the same quantity `UnitRig.fitToHeight` gets from a `Box3` in
+ * the browser, which is what makes the number the export writes agree with the
+ * one the preview shows.
+ *
+ * Zero when there is no mesh, so a caller can tell "flat" from "unknown".
+ */
+export function meshHeight(glb: GlbBinary): number {
+  const mesh = readSkinnedMesh(glb);
+  if (mesh === null) return 0;
+  let low = Number.POSITIVE_INFINITY;
+  let high = Number.NEGATIVE_INFINITY;
+  for (let vertex = 0; vertex < mesh.vertexCount; vertex += 1) {
+    const y = mesh.positions[vertex * 3 + 1] ?? 0;
+    low = Math.min(low, y);
+    high = Math.max(high, y);
+  }
+  return Number.isFinite(low) && Number.isFinite(high) ? high - low : 0;
+}
+
 /** How many skinned primitives the file has, so a caller can refuse the plural. */
 export function skinnedPrimitiveCount(glb: GlbBinary): number {
   let found = 0;

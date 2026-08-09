@@ -134,37 +134,32 @@ function addLimb(
 ): void {
   const base = out.positions.length / 3;
   /**
-   * Axis-aligned, inflated on the two axes that are **not** the limb's length.
+   * Axis-aligned, inflated on X and Z, and on Y **only when the limb is flat in
+   * it**.
    *
-   * Which axis that is has to be derived, not assumed. This inflated X and Z and
-   * left Y alone, which is right for a leg and wrong for an arm: the arms run
-   * along Z at a constant height, so the box came out with zero Y extent -- a
-   * flat card whose four side faces were degenerate triangles. That is 32 of the
-   * mannequin's 156 triangles drawing nothing, and arms that vanish edge-on. It
-   * was invisible until spec 115 gave something the ability to read a vertex.
+   * Y was never inflated at all, which is right for a leg -- it has 0.42 of its
+   * own -- and wrong for an arm: the arms run along Z at a constant height, so
+   * the box came out with zero Y extent. A flat card, whose four side faces were
+   * degenerate triangles. 32 of the mannequin's 156 triangles drew nothing and
+   * the arms vanished edge-on, and nothing could see it until spec 115 gave
+   * something the ability to read a vertex.
+   *
+   * Narrow on purpose: inflating whichever axes are not the limb's *longest*
+   * also thickens the feet, which pushes the toes below y=0 and puts every unit
+   * of the family slightly into the ground. Only an axis with no extent at all
+   * needs any.
    */
-  const span: [number, number, number] = [
-    Math.abs(to[0] - from[0]),
-    Math.abs(to[1] - from[1]),
-    Math.abs(to[2] - from[2]),
-  ];
-  const along = span.indexOf(Math.max(...span));
-  // First cross axis takes the depth, second takes the width -- which for a
-  // vertical limb is X and Z, exactly what this did before.
-  const cross = [0, 1, 2].filter((axis) => axis !== along);
-  const inflate: [number, number, number] = [0, 0, 0];
-  inflate[cross[0] ?? 0] = halfDepth;
-  inflate[cross[1] ?? 2] = halfWidth;
+  const halfHeight = Math.abs(to[1] - from[1]) < 1e-9 ? halfWidth : 0;
 
   const lo: [number, number, number] = [
-    Math.min(from[0], to[0]) - inflate[0],
-    Math.min(from[1], to[1]) - inflate[1],
-    Math.min(from[2], to[2]) - inflate[2],
+    Math.min(from[0], to[0]) - halfDepth,
+    Math.min(from[1], to[1]) - halfHeight,
+    Math.min(from[2], to[2]) - halfWidth,
   ];
   const hi: [number, number, number] = [
-    Math.max(from[0], to[0]) + inflate[0],
-    Math.max(from[1], to[1]) + inflate[1],
-    Math.max(from[2], to[2]) + inflate[2],
+    Math.max(from[0], to[0]) + halfDepth,
+    Math.max(from[1], to[1]) + halfHeight,
+    Math.max(from[2], to[2]) + halfWidth,
   ];
 
   const corners: [number, number, number][] = [

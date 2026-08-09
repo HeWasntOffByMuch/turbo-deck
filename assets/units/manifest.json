@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "hash": "7c1b78a8e68fdd47bf1f1b8b1d63be0a1dcb871ecf927a80736b3dcd182625a1",
+  "hash": "932d9dddde0a94c6bea0d0cabcac6aa5bb038d12e7db38497a4dfd2cb49b7ffe",
   "builtStages": [],
   "units": [
     {
@@ -14,7 +14,7 @@
         },
         {
           "path": "dev/mannequin.glb",
-          "sha256": "503eae2ba7f092fb8d33aa3cb99dfd8d32834b0af7702b78a6ea12122f8d8541",
+          "sha256": "1604138eb177a7be4da6d0ebc0bd8577d9e14184db0d3e3a1f6088966c987d38",
           "bytes": 20784
         },
         {
