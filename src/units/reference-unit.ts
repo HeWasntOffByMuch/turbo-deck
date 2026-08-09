@@ -309,7 +309,11 @@ const CLIP_SPECS: readonly ClipSpec[] = [
     },
   },
   {
-    id: 'attack',
+    // `slash`, not `attack`: clip ids are the API's own preset vocabulary, so a
+    // generated unit's swing arrives called `slash` and `scaffold.ts` looks for
+    // that name. A reference unit whose swing was called something else was a
+    // worked example of the one thing nothing else does.
+    id: 'slash',
     durationMs: 900,
     loop: false,
     // The two markers the action timing maps: the frame it commits, and the

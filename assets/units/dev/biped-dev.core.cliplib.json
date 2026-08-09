@@ -44,8 +44,8 @@
       ]
     },
     {
-      "id": "attack",
-      "source": "clips/attack.glb",
+      "id": "slash",
+      "source": "clips/slash.glb",
       "durationMs": 900,
       "loop": false,
       "events": [

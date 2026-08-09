@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "hash": "b0ebf735fd765a4d5dcb9f6415a744630554626536c3e34ecbe0c2cd7c2c4c0e",
+  "hash": "a5b4d3fb07ffe6977d1c8ea167e65054ee61b710328721fa5d37fe861fa6ef39",
   "builtStages": [],
   "units": [
     {
@@ -9,8 +9,8 @@
       "entries": [
         {
           "path": "dev/mannequin.unitdef.json",
-          "sha256": "6fa499ab21dbb82934f3d988f0d9613ee36925130abc4c55416a351ac1949c33",
-          "bytes": 3334
+          "sha256": "dd74e637cd59cccb0da520b59ec53fd80fcb082c02656250f89ed1c5799e2b3f",
+          "bytes": 3331
         },
         {
           "path": "dev/mannequin.glb",
@@ -19,8 +19,8 @@
         },
         {
           "path": "dev/biped-dev.core.cliplib.json",
-          "sha256": "49d0cbf7e2dde4f1e2727f04d844f35b5d3fa105181e122b6adc86ce2131a019",
-          "bytes": 1295
+          "sha256": "15301f536f3b55c9a639d257d799871df08445408ef7b1ab08161f3bf95eb744",
+          "bytes": 1293
         },
         {
           "path": "dev/clips/idle.glb",
@@ -38,8 +38,8 @@
           "bytes": 6776
         },
         {
-          "path": "dev/clips/attack.glb",
-          "sha256": "8486212ae8435117f3e423ea6631a201a47bbafa846d1999e318e2d2f0ba27e2",
+          "path": "dev/clips/slash.glb",
+          "sha256": "7363a604ae3bd21adde6bf7f8a54e0926cbb507460f05f73d09cf600629fe885",
           "bytes": 5288
         }
       ]

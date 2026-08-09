@@ -59,7 +59,7 @@
       },
       {
         "id": "swing",
-        "clipRef": "attack",
+        "clipRef": "slash",
         "loop": false,
         "timeScale": 1,
         "blendInMs": 60,
@@ -67,7 +67,7 @@
       },
       {
         "id": "down",
-        "clipRef": "attack",
+        "clipRef": "slash",
         "loop": false,
         "timeScale": 0.6,
         "blendInMs": 200,
@@ -137,7 +137,7 @@
         "windupMs": 380,
         "activeMs": 120,
         "recoveryMs": 280,
-        "clipRef": "attack",
+        "clipRef": "slash",
         "eventMap": {
           "windup": "swing.start",
           "active": "swing.impact"

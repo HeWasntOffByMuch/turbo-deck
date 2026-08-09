@@ -110,8 +110,8 @@ function main(): void {
         { id: 'locomotion', clipRef: 'move', loop: true, timeScale: 1, blendInMs: 150, category: 'loop' },
         // Locking: committing to a blow means being committed to it, which is
         // the decision this whole game is built on.
-        { id: 'swing', clipRef: 'attack', loop: false, timeScale: 1, blendInMs: 60, category: 'locking' },
-        { id: 'down', clipRef: 'attack', loop: false, timeScale: 0.6, blendInMs: 200, category: 'terminal' },
+        { id: 'swing', clipRef: 'slash', loop: false, timeScale: 1, blendInMs: 60, category: 'locking' },
+        { id: 'down', clipRef: 'slash', loop: false, timeScale: 0.6, blendInMs: 200, category: 'terminal' },
       ],
       blendTrees: [
         {
@@ -142,7 +142,11 @@ function main(): void {
           windupMs: 380,
           activeMs: 120,
           recoveryMs: 280,
-          clipRef: 'attack',
+          // `slash` the clip, driven by the `attack` trigger above. The two names
+          // are different on purpose: the trigger is what the game asks for, the
+          // clip is what the API retargeted, and conflating them is how a unit
+          // ends up needing a clip nobody can order.
+          clipRef: 'slash',
           eventMap: { windup: 'swing.start', active: 'swing.impact' },
         },
       ],

@@ -26,7 +26,7 @@ import mannequinUrl from '../../../../assets/units/dev/mannequin.glb?url';
 import idleUrl from '../../../../assets/units/dev/clips/idle.glb?url';
 import walkUrl from '../../../../assets/units/dev/clips/walk.glb?url';
 import runUrl from '../../../../assets/units/dev/clips/run.glb?url';
-import attackUrl from '../../../../assets/units/dev/clips/attack.glb?url';
+import slashUrl from '../../../../assets/units/dev/clips/slash.glb?url';
 import devUnitDef from '../../../../assets/units/dev/mannequin.unitdef.json' with { type: 'json' };
 import devClipLib from '../../../../assets/units/dev/biped-dev.core.cliplib.json' with { type: 'json' };
 import devSkeleton from '../../../../assets/units/dev/biped-dev.skeleton.json' with { type: 'json' };
@@ -306,7 +306,7 @@ export function mountStudio(container: HTMLElement): ViewHandle {
         clipLib: bundle.value.clipLib,
         assets: {
           meshUrl: mannequinUrl,
-          clipUrls: { idle: idleUrl, walk: walkUrl, run: runUrl, attack: attackUrl },
+          clipUrls: { idle: idleUrl, walk: walkUrl, run: runUrl, slash: slashUrl },
           importScale: bundle.value.unit.import.scale,
           // Spread rather than assigned: absent means "do not check", and under
           // `exactOptionalPropertyTypes` a present `undefined` is another thing.
