@@ -41,6 +41,7 @@ import devSkeleton from '../../../../assets/units/dev/biped-dev.skeleton.json' w
 import { bundleErrorText, loadUnitBundle } from '../../../units/bundle.js';
 import { scaffoldClipLib, scaffoldStateMachine, type MeasuredClip } from '../../../units/scaffold.js';
 import { validateSkeleton } from '../../../units/validate.js';
+import { facingIsClean, nearestAxis, type FacingReport } from '../../../units/facing.js';
 import type { UnitDef } from '../../../units/types.js';
 
 /** How often the queue is re-read while the tab is open. */
@@ -860,11 +861,69 @@ export function mountStudio(container: HTMLElement): ViewHandle {
     // The previewed job is part of what these cards draw -- one of them says
     // "Previewing" and its button is disabled -- so it belongs in the signature.
     // Without it the button would only catch up when something else about a job
-    // changed, which for a finished job is never.
-    repaint(libraryList, `${previewedJobId ?? ''}|${done.map(jobKey).join('|')}`, () => {
+    // changed, which for a finished job is never. `facingRuns` is in it for the
+    // same reason and one more: re-checking the same job produces the same key
+    // by every other measure, so without a counter the second press of Check
+    // facing would repaint nothing at all.
+    repaint(libraryList, `${previewedJobId ?? ''}|${facingRuns}|${done.map(jobKey).join('|')}`, () => {
       if (done.length === 0) return [el('p', MUTED, 'Nothing generated yet.')];
       return done.map(libraryCard);
     });
+  }
+
+  /**
+   * What the last facing check said about each job (spec 116).
+   *
+   * Kept per job rather than for one at a time, because the question these
+   * answer is comparative: a roster where every unit is 180° around is a
+   * generator setting, and one where a single unit is, is that unit.
+   */
+  const facingReports = new Map<string, FacingReport>();
+  let facingRuns = 0;
+
+  /** The facing report as rows, or nothing when the job has not been checked. */
+  function facingRows(job: JobView): readonly Node[] {
+    const report = facingReports.get(job.id);
+    if (report === undefined) return [];
+    const box = el('div', 'margin-top:8px;border-top:1px solid #2f2f40;padding-top:8px;');
+    if (report.error !== null) {
+      box.appendChild(el('div', `${MUTED}color:#e06c75;`, report.error));
+      return [box];
+    }
+
+    const axis = (v: readonly [number, number, number] | null): string =>
+      v === null ? 'not measurable' : (nearestAxis(v) ?? `(${v[0].toFixed(2)}, ${v[1].toFixed(2)}, ${v[2].toFixed(2)})`);
+    box.appendChild(
+      el(
+        'div',
+        MUTED,
+        `mesh ${axis(report.mesh.fromFeet)} (feet) · ${axis(report.mesh.fromHead)} (head) · ` +
+          `rig ${axis(report.rig.forward)} (toes) · the scene draws +X`,
+      ),
+    );
+    for (const clip of report.clips) {
+      const said =
+        clip.error !== null
+          ? clip.error
+          : clip.moving
+            ? `strides ${axis(clip.strideForward)}`
+            : 'no foot travel, so it is not asked which way it goes';
+      box.appendChild(el('div', MUTED, `  ${clip.source}: ${said}`));
+    }
+    for (const finding of report.findings) {
+      const colour = finding.severity === 'ok' ? '#7bc47f' : finding.severity === 'warning' ? '#e5c07b' : '#e06c75';
+      const mark = finding.severity === 'ok' ? '✓' : '✗';
+      const angle = finding.degrees === null ? '' : ` (${Math.round(finding.degrees)}°)`;
+      box.appendChild(
+        el('div', `${MUTED}color:${colour};margin-top:4px;`, `${mark} ${finding.title}${angle}: ${finding.message}`),
+      );
+    }
+    if (facingIsClean(report)) {
+      box.appendChild(
+        el('div', `${MUTED}color:#7bc47f;margin-top:4px;`, 'Nothing disagrees: the mesh, the rig and every clip point the same way.'),
+      );
+    }
+    return [box];
   }
 
   function libraryCard(job: JobView): HTMLElement {
@@ -896,8 +955,25 @@ export function mountStudio(container: HTMLElement): ViewHandle {
       look.addEventListener('click', () => void run(async () => {
         await previewJob(job);
       }));
+      // Free, offline, and the answer to the one question a preview cannot
+      // settle by eye: a unit that faces the camera and walks backwards looks
+      // identical whether the mesh, the rig or the clip is the thing that is
+      // turned around, and the three have three different fixes (spec 116).
+      const facing = button(facingReports.has(job.id) ? 'Check facing again' : 'Check facing');
+      facing.disabled = job.artifacts.riggedGlb === null;
+      facing.style.opacity = facing.disabled ? '0.5' : '1';
+      facing.title =
+        job.artifacts.riggedGlb === null
+          ? 'this job has no rigged model, so there is no rig to measure'
+          : 'measures the mesh, the rig and every clip off the .glb bytes. Free.';
+      facing.addEventListener('click', () => void run(async () => {
+        facingReports.set(job.id, await api.facing(job.id));
+        facingRuns += 1;
+      }));
+
       row.append(
         look,
+        facing,
         el(
           'span',
           MUTED,
@@ -907,6 +983,7 @@ export function mountStudio(container: HTMLElement): ViewHandle {
         ),
       );
       card.appendChild(row);
+      for (const node of facingRows(job)) card.appendChild(node);
       return card;
     }
   }

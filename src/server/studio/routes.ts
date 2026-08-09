@@ -367,6 +367,84 @@ export function studioRoutes(deps: RouteDeps): readonly Route[] {
     },
 
     /**
+     * Which way this unit faces, and which way its clips go (spec 116).
+     *
+     * Free, offline and read-only: it opens files that are already on disk and
+     * measures them. It is here rather than only in `scripts/probe-facing.ts`
+     * because the moment somebody notices a unit walking backwards they are
+     * looking at the library card, not at a terminal -- and the answer decides
+     * whether the fix is a regeneration, a retarget, or something in our own
+     * import. That is a decision worth not guessing at.
+     *
+     * The rigged model, never the raw generation: the unrigged mesh has no
+     * skeleton, so there would be nothing to compare the clips against.
+     */
+    {
+      method: 'GET',
+      pattern: '/api/studio/jobs/:id/facing',
+      handler: async ({ response, params }) => {
+        const job = store.getJob(params['id'] ?? '');
+        if (!job) return sendJson(response, 404, { error: 'no such job' });
+        const meshPath = job.artifacts.riggedGlb;
+        if (meshPath === null) {
+          return sendJson(response, 409, { error: 'this job has no rigged model, so there is no rig to measure' });
+        }
+
+        const { existsSync, readFileSync } = await import('node:fs');
+        const { basename } = await import('node:path');
+        const read = (path: string): { name: string; bytes: Uint8Array } | null =>
+          existsSync(path) ? { name: basename(path), bytes: new Uint8Array(readFileSync(path)) } : null;
+
+        const mesh = read(meshPath);
+        if (mesh === null) {
+          return sendJson(response, 404, { error: 'the record names a rigged model that is not on disk' });
+        }
+        // A clip the record names but the disk does not have is a *missing*
+        // clip, not an absent one: reported as a row that says so rather than
+        // dropped from the list. Dropping it is how a stale path hides -- the
+        // report then looks complete and is quietly about one clip fewer, which
+        // is exactly what happened the first time this ran.
+        const clips: { name: string; bytes: Uint8Array }[] = [];
+        const missing: string[] = [];
+        for (const path of Object.values(job.artifacts.clipGlbs)) {
+          const clip = read(path);
+          if (clip === null) missing.push(path);
+          else clips.push(clip);
+        }
+
+        const { facingReport } = await import('../../units/facing.js');
+        try {
+          const report = facingReport(mesh, clips);
+          return sendJson(response, 200, {
+            jobId: job.id,
+            report: {
+              ...report,
+              clips: [
+                ...report.clips,
+                ...missing.map((path) => ({
+                  source: basename(path),
+                  animation: '',
+                  strideForward: null,
+                  rootTravel: null,
+                  strideLength: 0,
+                  moving: false,
+                  degreesFromRig: null,
+                  restDrift: [],
+                  error: `the job record names ${path}, which is not on disk`,
+                })),
+              ],
+            },
+          });
+        } catch (cause) {
+          // A `.glb` this cannot read is a finding, not a crash -- and naming it
+          // is the whole point, since "Draco-compressed" and "backwards" need
+          // very different next moves.
+          return sendJson(response, 422, { error: cause instanceof Error ? cause.message : String(cause) });
+        }
+      },
+    },
+
+    /**
      * Stages a finished job into `assets/units/` and validates what it wrote.
      *
      * Deliberately refuses anything that has not succeeded: half a job's files

@@ -23,7 +23,7 @@
 import type { CostProjection } from '../../../server/studio/pricing.js';
 import type { Ceilings, CreditSummary } from '../../../server/studio/ledger.js';
 import type { JobArtifacts, JobStatus, Stage, StepRecord } from '../../../server/studio/types.js';
-import type { Clip, Issue, StateMachine } from '../../../units/index.js';
+import type { Clip, FacingReport, Issue, StateMachine } from '../../../units/index.js';
 
 const TOKEN_KEY = 'turbo-deck.studio.token';
 
@@ -281,6 +281,19 @@ export class StudioApi {
 
   cancel(jobId: string): Promise<JobView> {
     return this.call(`/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }) as Promise<JobView>;
+  }
+
+  /**
+   * What the unit's own bytes say about which way it faces (spec 116).
+   *
+   * Free and read-only: the server opens files it already has. Measured there
+   * rather than here even though `facing.ts` is pure and would run in the tab,
+   * because the artifacts are on the server's disk and pulling four `.glb`s
+   * across to answer a yes/no question is a lot of megabytes for a sentence.
+   */
+  async facing(jobId: string): Promise<FacingReport> {
+    const body = (await this.call(`/jobs/${encodeURIComponent(jobId)}/facing`)) as { report: FacingReport };
+    return body.report;
   }
 
   /**
