@@ -173,6 +173,21 @@ src/render/critters/ playable animal characters as pure data (spec 055): one
                  `src/render/iso3d/critter.ts` already knows how to build it.
                  `npx tsx scripts/preview-critters.ts` renders the real rig to
                  .claude/screenshots/critters.png to check it reads at 64px.
+src/render/iso3d/studio/  the Studio tab (spec 109), the fifth entry in the tab
+                 shell: ingest, generate, library, preview and export over the
+                 spec 108 service. image-check.ts and plan.ts are pure and
+                 tested headlessly -- the first measures what pixels can
+                 actually answer about a reference image and leaves the rest as
+                 a checklist, because a green tick that means nothing is how a
+                 bad reference gets generated twice; the second derives whether
+                 a generation establishes a rig family from the library rather
+                 than from a checkbox, since that decision is money. api.ts
+                 tells "no server", "no token" and "wrong token" apart, because
+                 they have three different fixes. view.ts renders the projected
+                 cost before the button that spends it exists.
+                 `npx tsx scripts/preview-studio.ts` clicks all five tabs in a
+                 real browser, since a fifth array entry cannot fail a typecheck
+                 and cannot fail a headless test.
 src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  from a loaded map document, never from the world generator.
                  camera.ts, brush.ts, scatter.ts, markers.ts, parts.ts and

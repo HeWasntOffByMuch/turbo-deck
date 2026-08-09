@@ -151,6 +151,14 @@ const PURE_RENDER = [
   'src/render/iso3d/world/hud-layout.ts',
   'src/render/iso3d/world/icons.ts',
   'src/render/iso3d/world/*.test.ts',
+  // The Studio tab's decision-making half (spec 109). image-check.ts measures a
+  // reference image and plan.ts derives whether a generation establishes a rig
+  // family -- the shared-skeleton rule, which is money, and so is a function of
+  // the library rather than a checkbox somebody has to remember to tick.
+  'src/render/iso3d/studio/image-check.ts',
+  'src/render/iso3d/studio/image-check.test.ts',
+  'src/render/iso3d/studio/plan.ts',
+  'src/render/iso3d/studio/plan.test.ts',
   'src/render/iso3d/editor/brush.ts',
   'src/render/iso3d/editor/camera.ts',
   'src/render/iso3d/editor/history.ts',

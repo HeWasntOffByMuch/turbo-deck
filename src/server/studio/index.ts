@@ -12,6 +12,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { join } from 'node:path';
 import { verifyAdminToken } from '../admin/auth.js';
 import { ConfirmationStore } from './confirm.js';
 import { describeConfig, loadStudioConfig, type StudioConfig } from './config.js';
@@ -93,7 +94,16 @@ export function createStudio(options: StudioOptions): Studio {
   };
 
   const router = new Router(authorize);
-  for (const route of studioRoutes({ config, store, pipeline, confirmations: new ConfirmationStore(), now, log })) {
+  const unitsDir = join(options.repoRoot, 'assets', 'units');
+  for (const route of studioRoutes({
+    config,
+    unitsDir,
+    store,
+    pipeline,
+    confirmations: new ConfirmationStore(),
+    now,
+    log,
+  })) {
     router.add(route);
   }
 

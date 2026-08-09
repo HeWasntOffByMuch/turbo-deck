@@ -35,6 +35,8 @@ const MAX_JSON_BYTES = 256 * 1024;
 
 export interface RouteDeps {
   readonly config: StudioConfig;
+  /** Where `assets/units/` lives, so Export knows what "the repo" means. */
+  readonly unitsDir: string;
   readonly store: StudioStore;
   readonly pipeline: StudioPipeline;
   readonly confirmations: ConfirmationStore;
@@ -277,6 +279,84 @@ export function studioRoutes(deps: RouteDeps): readonly Route[] {
 
         void pipeline.run(jobId);
         return sendJson(response, 202, { cached: false, job: jobView(job) });
+      },
+    },
+
+    /**
+     * Serves one of a job's downloaded files.
+     *
+     * The name is matched against the job's own recorded artifacts rather than
+     * joined onto a directory, so there is no path to traverse out of: a name
+     * that is not in the record does not resolve, whatever it contains.
+     */
+    {
+      method: 'GET',
+      pattern: '/api/studio/jobs/:id/artifacts/:name',
+      handler: async ({ response, params }) => {
+        const job = store.getJob(params['id'] ?? '');
+        if (!job) return sendJson(response, 404, { error: 'no such job' });
+
+        const known = [job.artifacts.meshGlb, job.artifacts.riggedGlb, ...Object.values(job.artifacts.clipGlbs)];
+        const wanted = params['name'] ?? '';
+        const { basename } = await import('node:path');
+        const path = known.find((candidate) => candidate !== null && basename(candidate) === wanted);
+        if (path === undefined || path === null) {
+          return sendJson(response, 404, { error: 'no such artifact on this job' });
+        }
+
+        const { existsSync, readFileSync } = await import('node:fs');
+        if (!existsSync(path)) return sendJson(response, 404, { error: 'the record names a file that is not there' });
+        const bytes = readFileSync(path);
+        response.writeHead(200, {
+          'content-type': 'model/gltf-binary',
+          'content-length': bytes.length,
+          'cache-control': 'no-store',
+        });
+        return response.end(bytes);
+      },
+    },
+
+    /**
+     * Stages a finished job into `assets/units/` and validates what it wrote.
+     *
+     * Deliberately refuses anything that has not succeeded: half a job's files
+     * are on disk after a failure, and staging those into the repo would put a
+     * broken unit in a directory CI validates.
+     */
+    {
+      method: 'POST',
+      pattern: '/api/studio/export',
+      handler: async ({ request, response }) => {
+        const body = asRecord(await readJsonBody(request, MAX_JSON_BYTES));
+        const job = store.getJob(asStringField(body, 'jobId') ?? '');
+        if (!job) return sendJson(response, 404, { error: 'no such job' });
+        if (job.status !== 'succeeded') {
+          return sendJson(response, 409, {
+            error: `job is ${job.status}; only a succeeded job can be exported`,
+          });
+        }
+
+        const { readFileSync, existsSync } = await import('node:fs');
+        const { join } = await import('node:path');
+        const skeletonRef = asStringField(body, 'skeletonRef') ?? `${job.skeletonId}.skeleton.json`;
+        const skeletonPath = join(deps.unitsDir, skeletonRef);
+        if (!existsSync(skeletonPath)) {
+          return sendJson(response, 400, { error: `no skeleton at assets/units/${skeletonRef}` });
+        }
+
+        const { exportJob } = await import('./export.js');
+        const result = exportJob({
+          job,
+          unitsDir: deps.unitsDir,
+          skeletonRef,
+          skeletonDoc: JSON.parse(readFileSync(skeletonPath, 'utf8')) as unknown,
+          clipLibId: asStringField(body, 'clipLibId') ?? `${job.skeletonId}.core`,
+          clips: Array.isArray(body['clips']) ? (body['clips'] as never) : undefined,
+          stateMachine: body['stateMachine'] === undefined ? undefined : (body['stateMachine'] as never),
+          maxTimeScale: config.maxTimeScale,
+          nowIso: new Date(now()).toISOString(),
+        });
+        return sendJson(response, result.ok ? 200 : 422, result);
       },
     },
 
