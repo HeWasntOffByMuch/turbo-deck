@@ -18,9 +18,9 @@
  */
 
 import type { Appearance } from './appearance.js';
+import { authoredUnitAssets, authoredUnitIds, type AuthoredUnitId } from './unit-assets.js';
 
-/** Authored units this build knows about. */
-export type AuthoredUnitId = 'mannequin';
+export type { AuthoredUnitId };
 
 /**
  * The monster type ids drawn from an authored unit.
@@ -70,7 +70,16 @@ export function unitsFromQuery(search: string = globalThis.location?.search ?? '
   const entries: Record<string, AuthoredUnitId> = {};
   for (const pair of raw.split(',')) {
     const [typeId, unitId] = pair.split(':');
-    if (!typeId || unitId !== 'mannequin') continue;
+    // Checked against what this build actually has rather than against a union
+    // type: the roster is the contents of `assets/units/` now, so the set is
+    // not knowable at compile time. A name nothing was exported under is
+    // skipped and said out loud -- it is almost always a typo, and silently
+    // drawing the old rig is how a typo survives.
+    if (!typeId || !unitId) continue;
+    if (authoredUnitAssets(unitId) === null) {
+      console.error(`[units] no authored unit called "${unitId}". This build has: ${authoredUnitIds().join(', ') || '(none)'}`);
+      continue;
+    }
     entries[typeId.trim()] = unitId;
   }
   return entries;

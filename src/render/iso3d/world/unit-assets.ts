@@ -1,36 +1,40 @@
 /**
- * Where an authored unit's bytes and documents actually come from (spec 111).
+ * Every authored unit in the repo, discovered rather than listed (spec 113).
  *
  * The impure edge of the unit system, and the only file in it that knows a unit
  * is made of files. Everything else -- the catalogue, the driver, the LOD, the
  * machine -- takes documents and numbers.
  *
- * Bundled at build time through Vite's `?url` and JSON imports rather than
- * fetched from the authoring server, for the same reason the Studio preview
- * does it: the game has to work from a fresh clone with nothing generated and no
- * `npm run server` running. `?url` and not an inline import, so a skinned mesh
- * is a request made by the sessions that need it rather than weight in the main
- * bundle paid for by every session that does not.
+ * ## Why this is a glob and not a list
  *
- * **Validated, not cast.** The documents go through `loadUnitBundle` -- the same
- * call the Studio tab makes -- so a unitdef that is broken is refused here with
- * the reasons, and the body falls back to the rig it would have had. A cast
- * would type-check, run, and make the game the one caller that never finds out.
+ * It used to be five hardcoded `?url` imports naming the dev mannequin, which
+ * meant the answer to "I exported a unit, now what" was "nothing, the game has
+ * no way to name it". Adding a unit meant editing a union type, adding five
+ * imports and a `register` call -- for an asset the Studio tab had just written
+ * to disk. Export produced files nothing could load.
+ *
+ * So the roster is the *contents of `assets/units/`*, resolved by
+ * `import.meta.glob` at build time and indexed by the manifest the bake writes.
+ * Exporting a unit and re-baking is the whole of adding one; no code changes.
+ *
+ * Build time, not runtime: `import.meta.glob` is statically analysed, so the
+ * bundler emits exactly the assets that exist and a mesh is still a request made
+ * only by the sessions that need one, rather than weight in the main bundle.
+ *
+ * **Validated, not cast.** Every document goes through `loadUnitBundle` -- the
+ * same call the Studio tab makes -- so a broken unit is refused here with the
+ * reasons rather than drawn wrong.
  */
 
-import meshUrl from '../../../../assets/units/dev/mannequin.glb?url';
-import idleUrl from '../../../../assets/units/dev/clips/idle.glb?url';
-import walkUrl from '../../../../assets/units/dev/clips/walk.glb?url';
-import runUrl from '../../../../assets/units/dev/clips/run.glb?url';
-import attackUrl from '../../../../assets/units/dev/clips/attack.glb?url';
-import unitDoc from '../../../../assets/units/dev/mannequin.unitdef.json' with { type: 'json' };
-import clipLibDoc from '../../../../assets/units/dev/biped-dev.core.cliplib.json' with { type: 'json' };
-import skeletonDoc from '../../../../assets/units/dev/biped-dev.skeleton.json' with { type: 'json' };
+import manifestDoc from '../../../../assets/units/manifest.json' with { type: 'json' };
 import { bundleErrorText, loadUnitBundle } from '../../../units/bundle.js';
 import { validateSkeleton } from '../../../units/validate.js';
+import type { UnitManifest } from '../../../units/manifest.js';
 import type { ClipLib, UnitDef } from '../../../units/types.js';
 import type { UnitAssets } from '../unit-rig.js';
-import type { AuthoredUnitId } from './unit-catalog.js';
+
+/** Any unit id the manifest carries. Checked against the registry, not the type. */
+export type AuthoredUnitId = string;
 
 export interface AuthoredUnit {
   readonly unit: UnitDef;
@@ -39,45 +43,113 @@ export interface AuthoredUnit {
 }
 
 /**
- * The rig's root bone, read off the skeleton document.
+ * Every asset under `assets/units/`, keyed by the path Vite resolved it from.
  *
- * Read rather than assumed. `mixamorig:Hips` is right for every rig this repo
- * has and would be wrong the first time it is not -- and a wrong root means the
- * root-motion check either misses translation that is there or strips a track
- * the rig needed. Null when the document does not validate, which turns the
- * check off rather than pointing it at a guess.
+ * Eager, because the alternative is a promise per file and a loader that cannot
+ * answer "does this unit exist" without awaiting. What is eager is the *URL*,
+ * not the bytes -- a `?url` import is a string, and the mesh is fetched when
+ * something asks for it.
  */
-function rootBoneOf(doc: unknown): string | undefined {
-  const skeleton = validateSkeleton(doc).value;
-  return skeleton?.bones.find((bone) => bone.parent === null)?.name;
+const glbUrls = import.meta.glob('../../../../assets/units/**/*.glb', {
+  query: '?url',
+  import: 'default',
+  eager: true,
+}) as Record<string, string>;
+
+const jsonDocs = import.meta.glob('../../../../assets/units/**/*.json', { eager: true }) as Record<
+  string,
+  { default: unknown }
+>;
+
+const MANIFEST = manifestDoc as unknown as UnitManifest;
+
+/** The manifest hash this build was made against, for the connect-time check. */
+export const ASSET_MANIFEST_HASH: string = MANIFEST.hash;
+
+/**
+ * Resolves a manifest path -- relative to `assets/units/` -- to a glob key.
+ *
+ * The two disagree about prefix and nothing else: the manifest says
+ * `dev/mannequin.glb` because that is what it is relative to, and the glob keys
+ * are relative to this file. Matched on the suffix rather than reconstructed, so
+ * a change to either side's base cannot silently resolve to nothing.
+ */
+function lookup<T>(table: Record<string, T>, path: string): T | undefined {
+  const suffix = `/assets/units/${path}`;
+  for (const [key, value] of Object.entries(table)) {
+    if (key.endsWith(suffix)) return value;
+  }
+  return undefined;
 }
 
 const registry = new Map<AuthoredUnitId, AuthoredUnit>();
 /** Why a unit is not in the registry, so a caller can say more than "missing". */
 const refusals = new Map<AuthoredUnitId, string>();
 
-function register(id: AuthoredUnitId, unitDocument: unknown, clipLibDocument: unknown, assets: UnitAssets): void {
-  const bundle = loadUnitBundle(unitDocument, clipLibDocument);
-  if (!bundle.value) {
-    const why = bundleErrorText(bundle);
-    refusals.set(id, why);
-    console.error(`[units] "${id}" did not validate and will not be drawn: ${why}`);
-    return;
-  }
-  registry.set(id, { unit: bundle.value.unit, clipLib: bundle.value.clipLib, assets });
+/**
+ * The rig's root bone, read off the skeleton document rather than assumed.
+ *
+ * Undefined turns the root-motion check off instead of pointing it at a guess.
+ * A wrong root either misses translation that is there or condemns a track the
+ * rig needed -- and three sanitises `:` out of bone names, so a name from a
+ * document has to be checked against the loaded rig anyway.
+ */
+function rootBoneOf(doc: unknown): string | undefined {
+  return validateSkeleton(doc).value?.bones.find((bone) => bone.parent === null)?.name;
 }
 
-const devRootBone = rootBoneOf(skeletonDoc);
-register('mannequin', unitDoc, clipLibDoc, {
-  meshUrl,
-  clipUrls: { idle: idleUrl, walk: walkUrl, run: runUrl, attack: attackUrl },
-  // The measured import scale off the authored rig's own height, not a number
-  // somebody picked -- see `reference-unit.ts`.
-  importScale: (unitDoc as { import: { scale: number } }).import.scale,
-  // Spread rather than assigned: absent means "do not check", and under
-  // `exactOptionalPropertyTypes` a present `undefined` is a different thing.
-  ...(devRootBone === undefined ? {} : { rootBone: devRootBone }),
-});
+for (const entry of MANIFEST.units) {
+  const unitDocPath = entry.entries.find((file) => file.path.endsWith('.unitdef.json'))?.path;
+  if (unitDocPath === undefined) {
+    refusals.set(entry.id, 'the manifest lists no unitdef for it');
+    continue;
+  }
+
+  const dir = unitDocPath.slice(0, unitDocPath.lastIndexOf('/') + 1);
+  const unitDoc = lookup(jsonDocs, unitDocPath)?.default;
+  const clipLibPath = entry.entries.find((file) => file.path.endsWith('.cliplib.json'))?.path;
+  const clipLibDoc = clipLibPath === undefined ? undefined : lookup(jsonDocs, clipLibPath)?.default;
+
+  const bundle = loadUnitBundle(unitDoc, clipLibDoc);
+  if (!bundle.value) {
+    const why = bundleErrorText(bundle) || 'its documents are not in the bundle';
+    refusals.set(entry.id, why);
+    console.error(`[units] "${entry.id}" did not validate and will not be drawn: ${why}`);
+    continue;
+  }
+  const { unit, clipLib } = bundle.value;
+
+  const meshUrl = lookup(glbUrls, `${dir}${unit.meshRef}`);
+  if (meshUrl === undefined) {
+    refusals.set(entry.id, `its mesh ${unit.meshRef} is not in the bundle`);
+    continue;
+  }
+
+  // Clip ids are the keys the machine names; the paths come from the library.
+  const clipUrls: Record<string, string> = {};
+  for (const clip of clipLib.clips) {
+    const url = lookup(glbUrls, `${dir}${clip.source}`);
+    if (url !== undefined) clipUrls[clip.id] = url;
+  }
+
+  const skeletonDoc = lookup(jsonDocs, `${dir}${unit.skeletonRef}`)?.default;
+  const rootBone = skeletonDoc === undefined ? undefined : rootBoneOf(skeletonDoc);
+
+  registry.set(unit.id, {
+    unit,
+    clipLib,
+    assets: {
+      meshUrl,
+      clipUrls,
+      // The measured import scale off the rig itself, never a number somebody
+      // picked -- see `UnitRig.fitToHeight` and `reference-unit.ts`.
+      importScale: unit.import.scale,
+      // Spread rather than assigned: absent means "do not check", and under
+      // `exactOptionalPropertyTypes` a present `undefined` is a different thing.
+      ...(rootBone === undefined ? {} : { rootBone }),
+    },
+  });
+}
 
 /** The unit, or null when it is not there or did not validate. */
 export function authoredUnitAssets(id: AuthoredUnitId): AuthoredUnit | null {
@@ -87,4 +159,9 @@ export function authoredUnitAssets(id: AuthoredUnitId): AuthoredUnit | null {
 /** Why a unit was refused, or null. */
 export function authoredUnitRefusal(id: AuthoredUnitId): string | null {
   return refusals.get(id) ?? null;
+}
+
+/** Every unit this build can draw, for a panel or a `?units=` typo. */
+export function authoredUnitIds(): readonly AuthoredUnitId[] {
+  return [...registry.keys()].sort();
 }

@@ -37,6 +37,7 @@ import { abilityById, BASIC_ATTACK_ID } from '../../../server/data/abilities.js'
 import { EntityKind } from '../../../server/net/protocol.js';
 import { viewSeed } from '../seed.js';
 import { setAuthoredUnits, unitsFromQuery } from './unit-catalog.js';
+import { ASSET_MANIFEST_HASH } from './unit-assets.js';
 import mapText from '../../../../maps/arena.json?raw';
 import { parseMap } from '../../../terrain/map.js';
 import { StreamedMap } from '../../../server/client/streamed-map.js';
@@ -98,6 +99,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   const client = new GameClient(transport.connect(), {
     playerId: 'you',
     displayName: 'You',
+    // What this build's assets hash to (spec 113). The in-tab server has no
+    // manifest of its own, so today this always passes -- it is sent anyway
+    // because this is the one client construction site, and a real socket is a
+    // transport swap away.
+    assetManifest: ASSET_MANIFEST_HASH,
     // Predict against the world the server is colliding against (spec 063), so
     // a tree stops the local guess where it stops the authoritative one.
     predictor: (stats, tickRate) =>

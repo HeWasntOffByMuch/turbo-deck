@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { EntityKind } from '../../../server/net/protocol.js';
 import { appearanceOf } from './appearance.js';
-import { authoredUnitFor, authoredUnits, setAuthoredUnits } from './unit-catalog.js';
+import { authoredUnitIds } from './unit-assets.js';
+import { authoredUnitFor, authoredUnits, setAuthoredUnits, unitsFromQuery } from './unit-catalog.js';
 
 afterEach(() => {
   setAuthoredUnits({});
@@ -41,5 +42,32 @@ describe('authoredUnitFor', () => {
     setAuthoredUnits({ grazer: 'mannequin' });
     setAuthoredUnits({ ravager: 'mannequin' });
     expect(authoredUnits()).toEqual({ ravager: 'mannequin' });
+  });
+});
+
+describe('the roster is discovered, not listed (spec 113)', () => {
+  it('finds every unit the manifest carries', () => {
+    // The registry used to be five hardcoded imports naming one unit, which
+    // meant the answer to "I exported a unit, now what" was "nothing". Adding
+    // one is exporting it and re-baking; no code changes.
+    expect(authoredUnitIds()).toContain('mannequin');
+  });
+
+  it('accepts a `?units=` naming a unit this build actually has', () => {
+    expect(unitsFromQuery('?units=grazer:mannequin')).toEqual({ grazer: 'mannequin' });
+  });
+
+  it('refuses one that was never exported, rather than drawing the old rig', () => {
+    // Almost always a typo, and silently falling back is how a typo survives.
+    expect(unitsFromQuery('?units=grazer:no-such-unit')).toEqual({});
+  });
+
+  it('keeps the pairs it can resolve and drops the ones it cannot', () => {
+    expect(unitsFromQuery('?units=grazer:mannequin,ravager:ghost')).toEqual({ grazer: 'mannequin' });
+  });
+
+  it('is empty without the switch, so the arena is unchanged', () => {
+    expect(unitsFromQuery('')).toEqual({});
+    expect(unitsFromQuery('?seed=7')).toEqual({});
   });
 });

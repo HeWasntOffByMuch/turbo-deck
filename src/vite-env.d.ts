@@ -22,6 +22,18 @@ declare module '*?raw' {
  */
 interface ImportMeta {
   glob(pattern: string, options: { eager: true }): Record<string, unknown>;
+  /**
+   * The `?url` form, for discovering assets rather than naming them (spec 113).
+   *
+   * The game's unit roster is the contents of `assets/units/`, not a list in a
+   * source file -- so the `.glb` paths cannot be written as imports. This gives
+   * the bundler a static pattern it can still analyse, and hands back the emitted
+   * URL per file. Eager, and cheap: what is eager is the string, not the bytes.
+   */
+  glob(
+    pattern: string,
+    options: { query: '?url'; import: 'default'; eager: true },
+  ): Record<string, string>;
 }
 
 /**
