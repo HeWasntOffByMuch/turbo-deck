@@ -28,6 +28,13 @@ const DETERMINISTIC_CORE = [
   'src/server/world/**/*.ts',
   'src/server/player/**/*.ts',
   'src/server/data/**/*.ts',
+  // The unit authoring format and its validator (spec 107). Not a simulation,
+  // but held to the same bar for the same reason the server's data tables are:
+  // the Studio tab, the export path, the CI runner and the game's runtime all
+  // read these documents through this one parser, and a parser that behaved
+  // differently in a browser than in Node would make "the tool and the game read
+  // the same files" false in exactly the way nobody would think to check.
+  'src/units/**/*.ts',
 ];
 
 /**

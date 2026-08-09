@@ -58,6 +58,7 @@ change a game outcome.
 | `npm run test:watch` | Vitest in watch mode |
 | `npm run typecheck` | `tsc --noEmit` against the strict tsconfig |
 | `npm run lint` | ESLint over the whole repo |
+| `npm run validate:units` | Validate every authored unit document in `assets/units/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
 | `npm run server` | The authoritative server, plus the admin console |
@@ -104,6 +105,10 @@ merge time.
 
 ```
 specs/           spec markdown, one file per system, written before its code
+schemas/         JSON Schema (draft-07) for the three unit documents, committed
+                 and validated against in CI. additionalProperties is false
+                 throughout, so a typo'd key in a hand-edited file is an error with
+                 a pointer at it rather than a field that silently does nothing.
 maps/            the world, as a map document (spec 072). arena.json is what the
                  server loads at boot and streams to clients; regenerate it with
                  `npx tsx scripts/bake-map.ts`, or edit it in the Map editor tab
@@ -125,6 +130,19 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  the recipe's field in over a short skirt.
 src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
                  collision and pathfinding helpers the server collides against
+src/units/       the unit authoring format and its validator (spec 107): the three
+                 JSON documents a unit is made of -- skeleton.json (one rig family,
+                 mixamo bone contract, canonical height), cliplib.json (clips for a
+                 skeleton, events in normalized time) and <unit>.unitdef.json (mesh,
+                 provenance, import overrides and the state machine). Structure is
+                 checked against the committed schemas in schemas/ with ajv; what a
+                 JSON Schema cannot say -- reference resolution, bone ordering, the
+                 time-scale bound -- is hand written beside it in validate.ts. Pure
+                 and part of the deterministic core, because the Studio tab, the
+                 export path, CI and the game's runtime all read these documents
+                 through this one parser. The rule the format exists to enforce is
+                 that gameplay timing is authoritative and the clip is rescaled to
+                 fit, bounded in both directions. `npm run validate:units`.
 src/render/      the client: a tab shell over the play view, the two tuning
                  sandboxes and the map editor
 src/render/cloth/ pure cloth simulation for the robed character (spec 046) --

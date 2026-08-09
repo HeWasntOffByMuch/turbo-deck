@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://turbo-deck.local/schemas/cliplib.schema.json",
+  "title": "cliplib.json",
+  "description": "The clips available for one skeleton (spec 107). Retargeted onto the rig family once and shared by every unit in it -- retargeting the same clip per unit is a bug, not a variation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["formatVersion", "id", "skeletonRef", "clips"],
+  "properties": {
+    "$comment": {
+      "description": "A note for whoever opens the file next. JSON has no comments and additionalProperties is false.",
+      "type": "string"
+    },
+    "formatVersion": { "type": "integer", "const": 1 },
+    "id": { "$ref": "#/definitions/identifier" },
+    "skeletonRef": {
+      "description": "Path to the skeleton.json these clips are bound to by bone name.",
+      "type": "string",
+      "minLength": 1
+    },
+    "clips": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "source", "durationMs", "loop", "events"],
+        "properties": {
+          "id": { "$ref": "#/definitions/identifier" },
+          "source": {
+            "description": "The animation-only .glb -- mesh data is stripped at bake time, so one clip set serves N units.",
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\.glb$"
+          },
+          "durationMs": {
+            "description": "Authored length in milliseconds. Milliseconds rather than glTF's seconds so no reader has to remember which unit a time field is in. NOT authoritative over gameplay: an actionTiming rescales this.",
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "loop": { "type": "boolean" },
+          "events": {
+            "description": "Markers in NORMALIZED time, ascending. Normalized is the whole point: time-scaling a clip to fit a wind-up must not move where the hit lands.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "normalizedTime"],
+              "properties": {
+                "name": { "$ref": "#/definitions/identifier" },
+                "normalizedTime": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-zA-Z][a-zA-Z0-9_.-]*$"
+    }
+  }
+}
