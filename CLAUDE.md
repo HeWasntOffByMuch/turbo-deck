@@ -144,6 +144,11 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  through this one parser. The rule the format exists to enforce is
                  that gameplay timing is authoritative and the clip is rescaled to
                  fit, bounded in both directions. `npm run validate:units`.
+                 scaffold.ts derives a first unitdef for a unit that has just
+                 been generated (spec 112) -- a clip library over what was
+                 actually retargeted, and a machine reaching only the states the
+                 runtime can drive, with the action split out of the clip's own
+                 length so the rate is 1.0 before anybody tunes it.
                  bundle.ts is the one way a unit is read (spec 111): the Studio
                  tab and the game both call loadUnitBundle rather than casting
                  their imports, so a broken document is refused at both ends
@@ -224,6 +229,12 @@ src/render/iso3d/studio/  the Studio tab (spec 109), the fifth entry in the tab
                  timeline.ts, timing-bar.ts and graph-layout.ts are the panels'
                  arithmetic, pure and tested; preview-panel.ts is the DOM over
                  them and writes every edit back through the server.
+                 `npx tsx scripts/preview-library.ts` stands up a real
+                 authoring server over a seeded job and clicks Preview on the
+                 library card (spec 112) -- the clip lengths and the import scale
+                 only exist once three has decoded a .glb, so the flow cannot be
+                 checked anywhere else. It caught the object URLs being revoked a
+                 moment before the loader asked for them.
                  `npx tsx scripts/preview-studio.ts` clicks all five tabs in a
                  real browser, since a fifth array entry cannot fail a typecheck
                  and cannot fail a headless test -- and it is the only thing that

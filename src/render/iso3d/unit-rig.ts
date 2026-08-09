@@ -192,6 +192,45 @@ export class UnitRig {
     this.mixer.update(0);
   }
 
+  /**
+   * Scales the model so it stands exactly `targetHeight` tall, and says what
+   * scale that took.
+   *
+   * A generated rig arrives at whatever size its generator felt like, and the
+   * import scale in a unitdef is supposed to be a *measured* number rather than
+   * one somebody typed -- the reference unit's 32.35 was measured, and reusing
+   * it for a different rig would draw every generated unit at a size that is
+   * simply wrong. With the player silhouette standing beside it in the preview,
+   * wrong by 40% is obvious and wrong by 5% is not, which is the case this
+   * exists for.
+   *
+   * Returns the absolute scale, so it can be written into the document as the
+   * import override rather than recomputed by whatever loads it next.
+   */
+  fitToHeight(targetHeight: number): number {
+    if (!this.model || !(targetHeight > 0)) return 1;
+    const box = new THREE.Box3().setFromObject(this.model);
+    const height = box.max.y - box.min.y;
+    if (!(height > 0)) return this.model.scale.y;
+    const factor = targetHeight / height;
+    this.model.scale.multiplyScalar(factor);
+    return this.model.scale.y;
+  }
+
+  /**
+   * Each loaded clip's real length in milliseconds.
+   *
+   * The number Export refuses to invent, and the reason it refuses: a made-up
+   * duration validates and then silently rescales every action timing built on
+   * it. This is where the real one comes from -- read off the file three just
+   * decoded, not off a document that claims it.
+   */
+  durationsMs(): Readonly<Record<string, number>> {
+    const found: Record<string, number> = {};
+    for (const [id, seconds] of this.clipDurations) found[id] = seconds * 1000;
+    return found;
+  }
+
   /** How many triangles and bones the loaded model actually has. */
   stats(): UnitStats {
     let triangles = 0;

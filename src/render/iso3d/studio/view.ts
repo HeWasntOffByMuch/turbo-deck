@@ -20,7 +20,8 @@ import { StudioApi, StudioApiError, type EstimateResult, type JobView, type Stud
 import { formatBytes, formatCredits, formatDuration, formatTimestamp, STAGE_LABELS, STATUS_COLORS, STATUS_LABELS } from './format.js';
 import { checkImage, MANUAL_CHECKS, measureImage, worstSeverity, type ImageFinding } from './image-check.js';
 import { CLIP_INTENTS, defaultClipIntents, establishesRigFamily, unitIdProblem } from './plan.js';
-import { mountPreview, type PreviewHandle } from './preview-panel.js';
+import { mountPreview, type PreviewHandle, type PreviewSource, type SaveDocument } from './preview-panel.js';
+import { PLAYER_REFERENCE_HEIGHT } from './preview.js';
 import mannequinUrl from '../../../../assets/units/dev/mannequin.glb?url';
 import idleUrl from '../../../../assets/units/dev/clips/idle.glb?url';
 import walkUrl from '../../../../assets/units/dev/clips/walk.glb?url';
@@ -30,7 +31,9 @@ import devUnitDef from '../../../../assets/units/dev/mannequin.unitdef.json' wit
 import devClipLib from '../../../../assets/units/dev/biped-dev.core.cliplib.json' with { type: 'json' };
 import devSkeleton from '../../../../assets/units/dev/biped-dev.skeleton.json' with { type: 'json' };
 import { bundleErrorText, loadUnitBundle } from '../../../units/bundle.js';
+import { scaffoldClipLib, scaffoldStateMachine, type MeasuredClip } from '../../../units/scaffold.js';
 import { validateSkeleton } from '../../../units/validate.js';
+import type { UnitDef } from '../../../units/types.js';
 
 /** How often the queue is re-read while the tab is open. */
 const POLL_MS = 2000;
@@ -214,16 +217,69 @@ export function mountStudio(container: HTMLElement): ViewHandle {
    */
   const devRootBone = validateSkeleton(devSkeleton).value?.bones.find((bone) => bone.parent === null)?.name;
 
+  /** The canonical height a rig of this family stands at, for fitting a new one. */
+  const devCanonicalHeight = validateSkeleton(devSkeleton).value?.canonicalHeight ?? PLAYER_REFERENCE_HEIGHT;
+
   let previewHandle: PreviewHandle | null = null;
+  /**
+   * The generated job on screen, or null for the reference unit.
+   *
+   * Export reads it: a job being previewed exports the documents that were
+   * tuned on screen. Without the link the two were unconnected halves, and you
+   * could retune a wind-up all afternoon and export the scaffold it started
+   * from.
+   */
+  let previewedJobId: string | null = null;
+  /** Object URLs the preview is holding, revoked when it is replaced. */
+  let previewUrls: string[] = [];
   const previewMount = el('div');
-  preview.body.append(
-    el(
-      'p',
-      MUTED,
-      'The reference unit (assets/units/dev/) -- a real skinned biped on the mixamo contract, so this screen works before anything has been generated. Rendered through the game\'s own retro pass and its cog; edits write back to the JSON on disk.',
-    ),
-    previewMount,
-  );
+  const previewLabel = el('p', MUTED);
+  preview.body.append(previewLabel, previewMount);
+
+  /**
+   * Writes an edited document back through the server.
+   *
+   * Shared by every source the preview can be pointed at, so an edit to the
+   * reference unit and an edit to a generated one take the same path: validated
+   * server-side, written atomically, and said plainly when there is no server
+   * to write to -- an edit that silently lived in the tab would be the hidden
+   * state this whole road exists to avoid.
+   */
+  const saveDocument: SaveDocument = async (path, doc) => {
+    try {
+      const result = await api.saveDocument(path, doc);
+      return result.ok
+        ? `saved assets/units/${result.path}`
+        : `refused: ${result.issues.map((issue) => `${issue.path} ${issue.message}`).join('; ')}`;
+    } catch (cause) {
+      return cause instanceof StudioApiError ? `not saved -- ${cause.remedy}` : `not saved -- ${String(cause)}`;
+    }
+  };
+
+  /** Tears down whatever the preview is showing and releases its blobs. */
+  function clearPreview(): void {
+    previewHandle?.dispose();
+    previewHandle = null;
+    previewedJobId = null;
+    // An object URL lives as long as the document unless it is revoked, so a
+    // session that browsed the library all afternoon would hold every mesh it
+    // had ever looked at.
+    for (const url of previewUrls) URL.revokeObjectURL(url);
+    previewUrls = [];
+    previewMount.replaceChildren();
+  }
+
+  function mountSource(source: PreviewSource, jobId: string | null, caption: string): void {
+    clearPreview();
+    previewedJobId = jobId;
+    previewLabel.textContent = caption;
+    previewHandle = mountPreview(source, saveDocument);
+    previewMount.appendChild(previewHandle.element);
+    previewHandle.start();
+  }
+
+  const REFERENCE_CAPTION =
+    'The reference unit (assets/units/dev/) -- a real skinned biped on the mixamo contract, so this screen works before anything has been generated. Rendered through the game\'s own retro pass and its cog; edits write back to the JSON on disk.';
 
   function startPreview(): void {
     if (previewHandle) return;
@@ -235,13 +291,14 @@ export function mountStudio(container: HTMLElement): ViewHandle {
     // game calls the same function on the same files.
     const bundle = loadUnitBundle(devUnitDef, devClipLib);
     if (!bundle.value) {
+      previewLabel.textContent = '';
       previewMount.appendChild(
         el('p', `${BODY}color:#e06c75;`, `The reference unit does not validate: ${bundleErrorText(bundle)}`),
       );
       return;
     }
 
-    previewHandle = mountPreview(
+    mountSource(
       {
         unitPath: 'dev/mannequin.unitdef.json',
         clipLibPath: 'dev/biped-dev.core.cliplib.json',
@@ -256,22 +313,105 @@ export function mountStudio(container: HTMLElement): ViewHandle {
           ...(devRootBone === undefined ? {} : { rootBone: devRootBone }),
         },
       },
-      // Writes go through the server when one is reachable, and say so plainly
-      // when it is not -- an edit that silently lived in the tab would be the
-      // hidden state this whole road exists to avoid.
-      async (path, doc) => {
-        try {
-          const result = await api.saveDocument(path, doc);
-          return result.ok
-            ? `saved assets/units/${result.path}`
-            : `refused: ${result.issues.map((issue) => `${issue.path} ${issue.message}`).join('; ')}`;
-        } catch (cause) {
-          return cause instanceof StudioApiError ? `not saved -- ${cause.remedy}` : `not saved -- ${String(cause)}`;
-        }
-      },
+      null,
+      REFERENCE_CAPTION,
     );
-    previewMount.appendChild(previewHandle.element);
-    previewHandle.start();
+  }
+
+  /** The file name a recorded artifact path ends in, for the artifact route. */
+  function fileName(path: string): string {
+    return path.split(/[\\/]/).pop() ?? path;
+  }
+
+  /**
+   * Shows a generated unit, built from its own files.
+   *
+   * The documents handed over at mount time are a placeholder for the moment
+   * between mounting and loading. `deriveOnLoad` replaces them with a scaffold
+   * built on the clip lengths three actually measured and the scale the rig
+   * actually needed -- both numbers Export refuses to invent, and rightly so.
+   */
+  async function previewJob(job: JobView): Promise<void> {
+    const model = job.artifacts.riggedGlb ?? job.artifacts.meshGlb;
+    if (model === null) throw new Error('this job has no model on disk to preview');
+
+    // Fetched through the authenticated client and handed over as blobs:
+    // three's loader issues a plain request with no headers, and the artifact
+    // route is behind the admin token like everything else that reads a paid
+    // job's files.
+    const urls: string[] = [];
+    const meshUrl = await api.artifactUrl(job.id, fileName(model));
+    urls.push(meshUrl);
+
+    const clipUrls: Record<string, string> = {};
+    const intents: string[] = [];
+    for (const [intent, path] of Object.entries(job.artifacts.clipGlbs)) {
+      const url = await api.artifactUrl(job.id, fileName(path));
+      urls.push(url);
+      clipUrls[intent] = url;
+      intents.push(intent);
+    }
+
+    const clipLibId = `${job.skeletonId}.core`;
+    const skeletonRef = `${job.skeletonId}.skeleton.json`;
+    const maxTimeScale = config?.maxTimeScale ?? 2;
+
+    const derive = (durationsMs: Readonly<Record<string, number>>, importScale: number) => {
+      const clips: MeasuredClip[] = intents.map((id) => ({
+        id,
+        source: `clips/${id}.glb`,
+        // A placeholder only until the file has been decoded; the scaffold's
+        // whole point is that the shipped number is the measured one.
+        durationMs: durationsMs[id] ?? 1000,
+      }));
+      const input = { clipLibId, skeletonRef, clips };
+      return {
+        unit: {
+          ...(devUnitDef as unknown as UnitDef),
+          id: job.unitId,
+          meshRef: fileName(model),
+          skeletonRef,
+          clipLibRef: `${clipLibId}.cliplib.json`,
+          import: { ...(devUnitDef as unknown as UnitDef).import, scale: importScale },
+          maxTimeScale,
+          stateMachine: scaffoldStateMachine(input, maxTimeScale),
+        },
+        clipLib: scaffoldClipLib(input),
+      };
+    };
+
+    const provisional = derive({}, 1);
+    // Handed over *after* the mount, never before: `mountSource` tears down what
+    // was showing, and tearing down revokes the URLs it was holding. Assigning
+    // first meant revoking the blobs a moment before the loader asked for them,
+    // which surfaced as "could not load the model: Failed to fetch" -- a message
+    // that points at the network and not at the line above it.
+    const adopt = (): void => {
+      previewUrls = urls;
+    };
+    mountSource(
+      {
+        // No documents on disk yet: this unit is a job's files and nothing
+        // else, so an edit has nowhere to be saved until it is exported.
+        unitPath: null,
+        clipLibPath: null,
+        unit: provisional.unit,
+        clipLib: provisional.clipLib,
+        assets: {
+          meshUrl,
+          clipUrls,
+          // Unscaled on the way in; `fitToHeight` measures and corrects, and the
+          // scale it settles on is what goes into the document.
+          importScale: 1,
+          ...(devRootBone === undefined ? {} : { rootBone: devRootBone }),
+        },
+        fitToHeight: devCanonicalHeight,
+        deriveOnLoad: derive,
+      },
+      job.id,
+      `${job.unitId} (job ${job.id.slice(0, 8)}) -- scaffolded from its clips. Tune it here, then Export to write assets/units/${job.unitId}/.`,
+    );
+    adopt();
   }
 
   // --- ingest ---------------------------------------------------------------
@@ -694,7 +834,11 @@ export function mountStudio(container: HTMLElement): ViewHandle {
 
   function renderLibrary(): void {
     const done = jobs.filter((job) => job.status === 'succeeded');
-    repaint(libraryList, done.map(jobKey).join('|'), () => {
+    // The previewed job is part of what these cards draw -- one of them says
+    // "Previewing" and its button is disabled -- so it belongs in the signature.
+    // Without it the button would only catch up when something else about a job
+    // changed, which for a finished job is never.
+    repaint(libraryList, `${previewedJobId ?? ''}|${done.map(jobKey).join('|')}`, () => {
       if (done.length === 0) return [el('p', MUTED, 'Nothing generated yet.')];
       return done.map(libraryCard);
     });
@@ -719,9 +863,27 @@ export function mountStudio(container: HTMLElement): ViewHandle {
       ] as const) {
         if (path) card.appendChild(el('div', MUTED, `${label}: ${path}`));
       }
-      // Tri and bone counts need a parsed .glb, which is the preview's job. Said
-      // plainly rather than shown as a blank column that looks like zero.
-      card.appendChild(el('div', `${MUTED}color:#6a6a80;`, 'tri and bone counts are read off the .glb — spec 110'));
+
+      // The button this section was missing (spec 112). Everything up to here
+      // was a receipt for something you could not look at.
+      const row = el('div', 'display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;');
+      const look = button(previewedJobId === job.id ? 'Previewing' : 'Preview', 'primary');
+      look.disabled = previewedJobId === job.id;
+      look.style.opacity = look.disabled ? '0.5' : '1';
+      look.addEventListener('click', () => void run(async () => {
+        await previewJob(job);
+      }));
+      row.append(
+        look,
+        el(
+          'span',
+          MUTED,
+          // Said plainly, because a blank tri count reads as zero and because
+          // measuring is exactly what the preview is for.
+          'tri and bone counts, and the real clip lengths, are read off the .glb by the preview',
+        ),
+      );
+      card.appendChild(row);
       return card;
     }
   }
@@ -730,7 +892,7 @@ export function mountStudio(container: HTMLElement): ViewHandle {
     const done = jobs.filter((job) => job.status === 'succeeded');
     // Keyed on the units alone, not on their step detail: an export result is
     // written into a row by hand and a repaint would throw it away.
-    repaint(exportList, done.map((job) => `${job.id}:${job.unitId}`).join('|'), () => {
+    repaint(exportList, `${previewedJobId ?? ''}|${done.map((job) => `${job.id}:${job.unitId}`).join('|')}`, () => {
       if (done.length === 0) return [el('p', MUTED, 'Nothing to export yet.')];
       return done.map(exportRow);
     });
@@ -739,10 +901,32 @@ export function mountStudio(container: HTMLElement): ViewHandle {
   function exportRow(job: JobView): HTMLElement {
     {
       const row = el('div', 'display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap;');
-      const go = button(`Export ${job.unitId}`);
+      const tuned = previewedJobId === job.id;
+      const go = button(tuned ? `Export ${job.unitId} (as tuned)` : `Export ${job.unitId}`, tuned ? 'primary' : 'plain');
       const result = el('div', `${MUTED}width:100%;`);
+      if (!tuned) {
+        // Without documents, Export copies the .glbs and writes no unitdef --
+        // correct, and previously the only thing it could ever do. Saying so
+        // here is the difference between "it half worked" and "press Preview".
+        row.appendChild(
+          el('span', `${MUTED}color:#e5c07b;`, 'preview it first to write a unitdef; on its own this copies the .glb files only'),
+        );
+      }
       go.addEventListener('click', () => void run(async () => {
-        const exported = await api.exportJob(job.id, { skeletonRef: `${job.skeletonId}.skeleton.json` });
+        // The documents that were tuned on screen, when this is the job on
+        // screen. Clip durations in them are measured off the loaded .glb,
+        // which is exactly the number Export refuses to invent.
+        const documents = tuned ? previewHandle?.documents() : undefined;
+        const exported = await api.exportJob(job.id, {
+          skeletonRef: `${job.skeletonId}.skeleton.json`,
+          ...(documents
+            ? {
+                clipLibId: documents.clipLib.id,
+                clips: documents.clipLib.clips,
+                stateMachine: documents.unit.stateMachine,
+              }
+            : {}),
+        });
         result.replaceChildren();
         result.appendChild(el('div', `${BODY}color:${exported.ok ? '#7bc47f' : '#e5c07b'};`, `assets/units/${job.unitId}/`));
         for (const file of exported.written) result.appendChild(el('div', `${MUTED}color:#7bc47f;`, `  wrote ${file}`));

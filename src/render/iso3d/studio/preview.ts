@@ -234,6 +234,16 @@ export class UnitPreview {
     this.rig.applyPoses(poses);
   }
 
+  /** Stands the model at a canonical height and reports the scale it took. */
+  fitToHeight(targetHeight: number): number {
+    return this.rig.fitToHeight(targetHeight);
+  }
+
+  /** Each loaded clip's measured length, for a document that must not guess. */
+  durationsMs(): Readonly<Record<string, number>> {
+    return this.rig.durationsMs();
+  }
+
   /** How many triangles and bones the loaded model actually has. */
   stats(): UnitStats {
     const stats = this.rig.stats();

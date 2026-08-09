@@ -23,7 +23,7 @@
 import type { CostProjection } from '../../../server/studio/pricing.js';
 import type { Ceilings, CreditSummary } from '../../../server/studio/ledger.js';
 import type { JobArtifacts, JobStatus, Stage, StepRecord } from '../../../server/studio/types.js';
-import type { Issue } from '../../../units/index.js';
+import type { Clip, Issue, StateMachine } from '../../../units/index.js';
 
 const TOKEN_KEY = 'turbo-deck.studio.token';
 
@@ -267,6 +267,34 @@ export class StudioApi {
     return this.call(`/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }) as Promise<JobView>;
   }
 
+  /**
+   * A job's `.glb`, as an object URL the loader can be handed.
+   *
+   * Fetched here rather than pointed at, because three's `GLTFLoader` issues a
+   * plain request with no headers of its own -- and the artifact route is behind
+   * the admin token like everything else that reads from a paid job. So the
+   * bytes come through the authenticated client and become a blob the loader can
+   * treat as an ordinary URL.
+   *
+   * The caller owns the URL and must revoke it. An object URL lives as long as
+   * the document unless somebody says otherwise, so a preview panel that swapped
+   * units all afternoon would hold every mesh it had ever shown.
+   */
+  async artifactUrl(jobId: string, filename: string): Promise<string> {
+    if (!this.hasToken) throw new StudioApiError('no admin token', 'unauthorized');
+    const path = `/jobs/${encodeURIComponent(jobId)}/artifacts/${encodeURIComponent(filename)}`;
+    let response: Response;
+    try {
+      response = await fetch(`${this.base}${path}`, { headers: { Authorization: `Bearer ${this.token}` } });
+    } catch {
+      throw new StudioApiError('the authoring server did not answer', 'offline');
+    }
+    if (!response.ok) {
+      throw new StudioApiError(`could not read ${filename} (HTTP ${response.status})`, 'refused', response.status);
+    }
+    return URL.createObjectURL(await response.blob());
+  }
+
   /** Writes an authored document back to disk, validated server-side first. */
   async saveDocument(path: string, doc: unknown): Promise<ExportResultView & { path: string }> {
     const body = (await this.call(`/documents?path=${encodeURIComponent(path)}`, {
@@ -277,7 +305,23 @@ export class StudioApi {
     return { ...body, written: [], pending: [], unitDir: '' };
   }
 
-  exportJob(jobId: string, options: { skeletonRef?: string; clipLibId?: string } = {}): Promise<ExportResultView> {
+  /**
+   * Stages a job into `assets/units/`.
+   *
+   * `clips` and `stateMachine` come from the preview panel when the job is the
+   * one on screen. Without them the server writes the `.glb` files and no
+   * unitdef -- deliberately, since it will not invent a clip duration or a state
+   * machine, and a document built on either would validate and then be wrong.
+   */
+  exportJob(
+    jobId: string,
+    options: {
+      skeletonRef?: string;
+      clipLibId?: string;
+      clips?: readonly Clip[];
+      stateMachine?: StateMachine;
+    } = {},
+  ): Promise<ExportResultView> {
     return this.json('/export', { jobId, ...options }) as Promise<ExportResultView>;
   }
 }

@@ -58,12 +58,42 @@ function button(label: string, width = 0): HTMLButtonElement {
 }
 
 export interface PreviewSource {
-  /** Repo-relative under `assets/units/`, for writing back. */
-  readonly unitPath: string;
-  readonly clipLibPath: string;
+  /**
+   * Repo-relative under `assets/units/`, for writing back. Null for a unit that
+   * has not been exported yet: it exists as a job's files and nothing else, so
+   * there is no document on disk for an edit to be saved into.
+   */
+  readonly unitPath: string | null;
+  readonly clipLibPath: string | null;
   readonly unit: UnitDef;
   readonly clipLib: ClipLib;
   readonly assets: PreviewAssets;
+  /**
+   * Rebuilds the documents once the clips have been loaded and measured.
+   *
+   * For a freshly generated unit, whose real clip lengths are not known until
+   * three has decoded the files. The provisional `unit`/`clipLib` above are what
+   * is shown for the moment between mounting and loading; this replaces them
+   * with documents built on measured durations.
+   *
+   * Here rather than inside the panel because deriving a unitdef is not the
+   * panel's job -- `units/scaffold.ts` does that and is tested in Node. The
+   * panel only knows when the numbers became available.
+   */
+  readonly deriveOnLoad?: (
+    durationsMs: Readonly<Record<string, number>>,
+    importScale: number,
+  ) => {
+    readonly unit: UnitDef;
+    readonly clipLib: ClipLib;
+  };
+  /**
+   * Stand the loaded model at this height and record the scale it took.
+   *
+   * Set for a generated unit, whose rig arrives at whatever size its generator
+   * chose. Absent for one whose `import.scale` was already measured.
+   */
+  readonly fitToHeight?: number;
 }
 
 export interface PreviewHandle {
@@ -71,6 +101,14 @@ export interface PreviewHandle {
   start(): void;
   stop(): void;
   dispose(): void;
+  /**
+   * The documents as they stand, including every edit made on screen.
+   *
+   * What Export writes for a unit that has no files on disk yet. Without this
+   * the tuning and the export were two unconnected halves: you could retune a
+   * wind-up all afternoon and then export the scaffold it started from.
+   */
+  documents(): { readonly unit: UnitDef; readonly clipLib: ClipLib };
 }
 
 /** Writes a document back through the server; resolves to a message for the UI. */
@@ -175,7 +213,14 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
     if (secondary) secondary.machine = new UnitMachine({ unit, clipLib, tickMs: TICK_MS });
   }
 
-  async function persist(path: string, doc: unknown, what: string): Promise<void> {
+  async function persist(path: string | null, doc: unknown, what: string): Promise<void> {
+    if (path === null) {
+      // A generated unit that has not been exported has no document on disk for
+      // an edit to land in. Saying so beats a write that silently goes nowhere.
+      status = `${what} changed here only -- this unit has no files in assets/units/ yet. Export it first, and edits will save.`;
+      renderStatus();
+      return;
+    }
     if (!save) {
       status = `${what} changed in this session only -- connect to the authoring server to write it to disk.`;
       renderStatus();
@@ -736,6 +781,35 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
     element: root,
     start(): void {
       void primary.preview.load(source.assets, source.unit.id).then(() => {
+        // Measured, then derived. For a freshly generated unit the documents
+        // shown until this moment were a placeholder: the clip lengths were not
+        // knowable until three had decoded the files, and Export will not accept
+        // a guessed one.
+        const fitted = source.fitToHeight === undefined ? source.assets.importScale : primary.preview.fitToHeight(source.fitToHeight);
+        if (source.deriveOnLoad) {
+          // Guarded, because a throw in here used to leave the panel half
+          // rebuilt and silent: the clip list had been refreshed and nothing
+          // after it had, which looks like a preview that simply stopped. A
+          // derivation that fails should say so where the failures go.
+          try {
+            const derived = source.deriveOnLoad(primary.preview.durationsMs(), fitted);
+            unit = structuredClone(derived.unit) as UnitDef;
+            clipLib = structuredClone(derived.clipLib) as ClipLib;
+            selectedClipId = clipLib.clips[0]?.id ?? '';
+            selectedTransition = null;
+            rebuildMachines();
+            refreshClipList();
+            renderParameters();
+            renderGraph();
+            renderTransitionEditor();
+            renderTimings();
+            renderTimeline();
+          } catch (cause) {
+            status = `could not build a unit from these clips: ${cause instanceof Error ? cause.message : String(cause)}`;
+            renderStatus();
+            return;
+          }
+        }
         const stats = primary.preview.stats();
         // Root motion is reported here as well as in the console and in CI
         // (spec 111). Stripping it is right; stripping it *quietly* is how a
@@ -743,9 +817,13 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
         // and nobody finds out until they watch it. This is the screen the
         // person who could fix that is actually looking at.
         const stripped = primary.preview.rootMotion;
+        // The import scale is in the line because it is a *measured* number for
+        // a generated unit, and a unit that is subtly the wrong size looks fine
+        // alone and wrong beside the silhouette -- which is what the silhouette
+        // is for, and what this number makes checkable rather than eyeballed.
         status = primary.preview.error
           ? `could not load the model: ${primary.preview.error}`
-          : `${stats.triangles} triangles, ${stats.bones} bones, ${stats.vertices} vertices · reference silhouette is ${PLAYER_REFERENCE_HEIGHT} world units`;
+          : `${stats.triangles} triangles, ${stats.bones} bones, ${stats.vertices} vertices · import scale ${fitted.toFixed(2)} · reference silhouette is ${PLAYER_REFERENCE_HEIGHT} world units`;
         if (stripped.length > 0) status = `${status} · ROOT MOTION STRIPPED — ${stripped.join(' ')}`;
         renderStatus();
       });
@@ -760,6 +838,12 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
       cancelAnimationFrame(raf);
       primary.preview.dispose();
       secondary?.preview.dispose();
+    },
+    documents(): { unit: UnitDef; clipLib: ClipLib } {
+      // Cloned on the way out for the same reason the working copies were cloned
+      // on the way in: a caller holding a live reference into this panel would
+      // see it change under them mid-export.
+      return { unit: structuredClone(unit) as UnitDef, clipLib: structuredClone(clipLib) as ClipLib };
     },
   };
 }
