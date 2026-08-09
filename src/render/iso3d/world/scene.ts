@@ -33,7 +33,11 @@ import { castsShadows, makeMoveMarker, makeUnwalkableField, makeWall } from '../
 import { ARENA_OBSTACLES } from '../../../sim/constants.js';
 import { vegetationColliders } from '../../../terrain/vegetation.js';
 import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-mesh.js';
-import { buildPropField, type PropFieldHandle } from '../props.js';
+import { buildPropField, FLAT_SHADING, type PropFieldHandle, type PropShading } from '../props.js';
+import { type HikeSettings } from '../hike.js';
+import { CURVATURE_UNIFORMS } from '../terrain-curvature.js';
+import { installPoissonShadows, shadowRadiusFor } from '../shadow-pcf.js';
+import { DETAIL_UNIFORMS, buildDetailTexture } from '../terrain-detail.js';
 import { MechRig, Poofs } from '../rigs.js';
 import { CritterRig, defaultCritterTuning } from '../critter.js';
 import { CRITTERS } from '../../critters/index.js';
@@ -49,7 +53,15 @@ import {
   offsetToOrbit,
   orbitToOffset,
 } from '../view-settings.js';
-import { cameraFrustum, cursorToNdc, internalRenderSize } from '../view-frame.js';
+import {
+  cameraFrustum,
+  cursorToNdc,
+  internalRenderSize,
+  pixelFrame,
+  snapToPixelGrid,
+  worldPerPixel,
+  type PixelFrame,
+} from '../view-frame.js';
 import {
   horizonShadow,
   shadowFillBoost,
@@ -59,6 +71,8 @@ import {
   type HorizonShadow,
 } from '../shadow.js';
 import { RetroPass } from '../retro-pass.js';
+import { HikeBuffers } from '../hike-buffers.js';
+import { HikeEdges } from '../hike-edges.js';
 import { advanceWind } from '../wind-uniforms.js';
 import { FIXED_DAYLIGHT } from '../daynight.js';
 import {
@@ -193,6 +207,13 @@ export class WorldScene {
 
   private readonly renderer: THREE.WebGLRenderer;
   private readonly retro = new RetroPass(1, 1);
+  /**
+   * Depth and view-space normals at the virtual resolution (spec 100). Built lazily,
+   * because until the switch is thrown it would be a render target nothing reads.
+   */
+  private buffers: HikeBuffers | null = null;
+  /** The outline pass (spec 101). Built with the buffers it reads. */
+  private edges: HikeEdges | null = null;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
   private readonly sun = new THREE.DirectionalLight(
@@ -267,6 +288,16 @@ export class WorldScene {
   private renderH = 0;
   private aspect = 1;
   private elapsed = 0;
+  /**
+   * How the fixed virtual buffer is being shown, or null while the view is drawn
+   * the pre-spec-099 way (spec 099).
+   */
+  private frame: PixelFrame | null = null;
+  /** Scratch for the pixel snap, so a per-frame snap allocates nothing. */
+  private readonly snapRight = new THREE.Vector3();
+  private readonly snapUp = new THREE.Vector3();
+  private readonly snapForward = new THREE.Vector3();
+  private readonly snapBefore = new THREE.Vector3();
 
   private readonly raycaster = new THREE.Raycaster();
   private readonly ndc = new THREE.Vector2();
@@ -299,10 +330,27 @@ export class WorldScene {
       CAMERA_NEAR,
       CAMERA_FAR,
     );
+
+    // Before the first resize, and it has to stay there: since spec 099 `resize`
+    // asks the panel whether the frame is drawn at a fixed virtual resolution, so
+    // a panel built afterwards is a panel that does not exist the first time it
+    // is read. Nothing here depends on the scene, so this is only an ordering
+    // requirement, not a design one -- but it is a real one, and it took a
+    // browser to notice: no unit test constructs a WorldScene, because it needs
+    // a canvas.
+    this.controls = createViewControls();
+    this.controls.attachWheelZoom(canvas);
+    canvas.addEventListener('webglcontextlost', this.onContextLost);
+    canvas.addEventListener('webglcontextrestored', this.onContextRestored);
+
     this.resize();
 
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+    // Before any material compiles: the filter lives in three's own shadow chunk,
+    // and a chunk edited after a program is built does not reach that program.
+    installPoissonShadows();
+    this.sun.shadow.radius = 0;
     this.scene.add(this.sun, this.sun.target, this.ambient);
 
     // No terrain yet. The ground and the trees are the ones the server *sent*
@@ -374,9 +422,6 @@ export class WorldScene {
     this.aimUnitRing.rotation.x = -Math.PI / 2;
     this.aimUnitRing.visible = false;
     this.scene.add(this.aimUnitRing);
-
-    this.controls = createViewControls();
-    this.controls.attachWheelZoom(canvas);
   }
 
   /**
@@ -390,8 +435,86 @@ export class WorldScene {
     this.map = map;
     this.terrainMesh = buildTerrainMeshFromChunks(map.meshLayers, []);
     this.scene.add(this.terrainMesh.group);
-    this.propField = buildPropField([], (x, z) => this.ground(x, z));
+    this.propField = buildPropField([], (x, z) => this.ground(x, z), undefined, this.propShading);
     this.scene.add(this.propField.group);
+  }
+
+  /**
+   * How the prop field is shaded (spec 097, step 2), as the panel last asked
+   * for it.
+   *
+   * Held rather than read at build time because it is baked into the geometry's
+   * normals and into each batch's material: changing it means rebuilding the
+   * field, so the frame has to notice the change rather than pick it up on the
+   * next rebuild that happens for some other reason.
+   */
+  private propShading: PropShading = FLAT_SHADING;
+
+  /**
+   * Adopt the panel's shading settings, rebuilding the prop field if they moved
+   * (spec 097, step 2).
+   *
+   * Compared rather than applied every frame, because applying means rebuilding
+   * every batch in the world -- a few hundred milliseconds. So this costs three
+   * comparisons per frame and does the work only on the frame a switch is
+   * actually thrown.
+   */
+  private applyPropShading(hike: HikeSettings): void {
+    const wanted: PropShading = {
+      smooth: hike.smoothNormals,
+      creaseAngle: hike.creaseAngle,
+      swayNormals: hike.swayNormals,
+    };
+    const current = this.propShading;
+    if (
+      wanted.smooth === current.smooth &&
+      wanted.creaseAngle === current.creaseAngle &&
+      wanted.swayNormals === current.swayNormals
+    ) {
+      return;
+    }
+    this.propShading = wanted;
+    this.refreshProps();
+  }
+
+  /**
+   * Hand the ground materials the crease settings (spec 104).
+   *
+   * A uniform write, every frame, costing nothing: the measure itself was baked
+   * into a vertex attribute when the chunk was meshed. That is the whole reason
+   * it is carried in its own channel rather than folded into the vertex colours
+   * -- toggling it would otherwise mean re-meshing every chunk in the world.
+   */
+  private applyCurvature(hike: HikeSettings): void {
+    CURVATURE_UNIFORMS.uCavityStrength.value = hike.curvature ? hike.curvatureStrength : 0;
+    // The debug view draws what was baked at full scale, which is a different
+    // question from what is currently applied -- and it stands on its own rather
+    // than needing the feature switched on to be looked at.
+    CURVATURE_UNIFORMS.uCavityOnly.value = hike.debug === 'curvature' ? 1 : 0;
+  }
+
+  /**
+   * Hand the ground materials the surface-detail settings (spec 106).
+   *
+   * Uniform writes, like the creases: the tile is generated once at startup and
+   * nothing here rebuilds geometry or recompiles a shader. The texture is built
+   * lazily, so a session that never throws the switch never spends the 64KB or
+   * the mipmap chain on it.
+   */
+  private applyDetail(hike: HikeSettings): void {
+    const wanted = hike.triplanar || hike.materialBlend;
+    if (wanted && !DETAIL_UNIFORMS.uDetailMap.value) {
+      // The driver's maximum, which is what makes the ground readable at the
+      // 27-degree grazing angle this camera looks along.
+      DETAIL_UNIFORMS.uDetailMap.value = buildDetailTexture(
+        this.renderer.capabilities.getMaxAnisotropy(),
+      );
+    }
+    DETAIL_UNIFORMS.uDetailStrength.value = hike.triplanar ? hike.detailStrength : 0;
+    DETAIL_UNIFORMS.uDetailScale.value = 1 / Math.max(1, hike.detailScale);
+    DETAIL_UNIFORMS.uDetailSharpness.value = Math.max(1, hike.detailSharpness);
+    DETAIL_UNIFORMS.uBlendStrength.value = hike.materialBlend ? hike.blendStrength : 0;
+    DETAIL_UNIFORMS.uBlendNoise.value = hike.blendNoise;
   }
 
   /** Ground height, or 0 before there is any ground to ask about. */
@@ -427,7 +550,7 @@ export class WorldScene {
 
     this.scene.remove(this.propField.group);
     this.propField.dispose();
-    this.propField = buildPropField(props, heightAt);
+    this.propField = buildPropField(props, heightAt, undefined, this.propShading);
     this.scene.add(this.propField.group);
 
     this.unwalkable.clear();
@@ -571,14 +694,75 @@ export class WorldScene {
 
     this.camera.updateMatrixWorld();
     this.scene.updateMatrixWorld();
-    this.collectAnchors();
-    // After the matrices are fresh: a pick made against last frame's camera
+    // Before the snap, because this is a pick: which body is under the cursor is
+    // answered against the same unsnapped camera every other pick uses. After
+    // the matrices are fresh, though -- a pick made against last frame's camera
     // lags the highlight behind a moving view by a frame.
+    //
+    // `collectAnchors` used to sit here beside it and has moved below the snap:
+    // an anchor has to agree with the *drawn* image, and a pick must not (spec
+    // 095). They want opposite cameras, so they no longer travel together.
     this.syncHover(frame);
 
-    this.retro.set(this.controls.retro());
-    this.retro.setGrade(this.controls.grade());
-    this.retro.render(this.renderer, this.scene, this.camera);
+    const hike = this.controls.hike();
+    this.applyPropShading(hike);
+    this.applyCurvature(hike);
+    // Written every frame, and written even when the feature is off: three's own
+    // default for `radius` is 1, so leaving it alone would soften every shadow in
+    // the world without anything having been switched on (spec 105).
+    this.sun.shadow.radius = shadowRadiusFor(hike.softShadows, hike.shadowPcfRadius);
+    this.applyDetail(hike);
+
+    // Snapped for everything that has to agree with the drawn image: the frame
+    // itself, and the screen anchors the DOM overlay hangs bars from. An anchor
+    // computed off the unsnapped camera would jitter against the body it labels
+    // by up to half a virtual pixel -- which at a 4x upscale is two CSS pixels
+    // of health bar wobble, exactly the shimmer the snap exists to remove.
+    const unsnap = this.applyPixelSnap(hike);
+    this.collectAnchors();
+
+    // Captured with the snapped camera, so the buffers line up with the frame
+    // they will be composited over rather than being half a pixel out from it.
+    const debugging = hike.debug === 'depth' || hike.debug === 'normals';
+    // Outlines need the buffers they are found in, so asking for outlines asks
+    // for the buffers. Two switches where one implies the other is a switch that
+    // silently does nothing, which is worse than no switch at all.
+    const wantsBuffers = hike.buffers || hike.edges || hike.ink;
+    if (wantsBuffers) {
+      const buffers = this.ensureBuffers();
+      buffers.capture(this.renderer, this.scene, this.camera);
+    }
+
+    if (wantsBuffers && debugging) {
+      // One buffer on its own, instead of the frame. The only way to look at a
+      // depth texture at all: a depth attachment cannot be read back, so it has
+      // to be sampled in a shader and written somewhere visible.
+      this.ensureBuffers().blit(this.renderer, hike.debug === 'depth' ? 'depth' : 'normals');
+    } else if (hike.edges && hike.debug === 'edges') {
+      this.drawEdges(hike, true);
+    } else {
+      this.retro.set(this.controls.retro());
+      this.retro.setGrade(this.controls.grade());
+      this.retro.setPalette(hike.palette);
+      // The distance treatment reads the same depth buffer the outlines do, so
+      // it needs the buffers whether or not the outlines are on (spec 103). The
+      // fog colour is the live sky rather than a setting: the day/night cycle
+      // moves it, and a fixed haze under a sunset is a grey band on the horizon.
+      this.retro.setInk(
+        hike.ink ? this.ensureBuffers().depthTexture : null,
+        this.camera.near,
+        this.camera.far,
+        this.inkOrigin(),
+        this.background,
+        hike.ink ? hike : null,
+      );
+      this.retro.render(this.renderer, this.scene, this.camera);
+      // Over the finished frame, which is where a line belongs: the fills are
+      // settled, so the outline is a constant dark value rather than something
+      // the quantizer gets to round.
+      if (hike.edges) this.drawEdges(hike, false);
+    }
+    unsnap?.();
   }
 
   dispose(): void {
@@ -594,8 +778,37 @@ export class WorldScene {
     this.telegraphs.clear();
     this.terrainMesh?.dispose();
     this.propField?.dispose();
+    this.buffers?.dispose();
+    this.edges?.dispose();
+    this.canvas.removeEventListener('webglcontextlost', this.onContextLost);
+    this.canvas.removeEventListener('webglcontextrestored', this.onContextRestored);
     this.renderer.dispose();
   }
+
+  /**
+   * A lost context takes every GPU-side object with it, including the render
+   * targets and the depth texture, and leaves three.js holding handles to things
+   * that no longer exist (spec 100).
+   *
+   * Unhandled since spec 038 put the first render target on screen, and survivable
+   * until now only because nothing read one back. Preventing the default is what
+   * makes `webglcontextrestored` fire at all -- without it the browser never
+   * offers a new context and the canvas stays blank for good.
+   */
+  private readonly onContextLost = (event: Event): void => {
+    event.preventDefault();
+  };
+
+  private readonly onContextRestored = (): void => {
+    this.buffers?.recreate();
+    // Re-measured from scratch: the swap chain is new, so the sizes three.js
+    // thinks it set are not the sizes it has.
+    this.renderW = 0;
+    this.renderH = 0;
+    this.frame = null;
+    this.lastHalfWidth = -1;
+    this.resize();
+  };
 
   // --- world ------------------------------------------------------------
 
@@ -992,6 +1205,13 @@ export class WorldScene {
   // --- camera, sun and lights -------------------------------------------
 
   private resize(): void {
+    const hike = this.controls.hike();
+    if (hike.lowRes) {
+      this.resizeToVirtual(hike);
+      return;
+    }
+    if (this.frame) this.releaseVirtual();
+
     const cssWidth = this.canvas.clientWidth || this.canvas.width || 1;
     const cssHeight = this.canvas.clientHeight || this.canvas.height || 1;
     const size = internalRenderSize(cssWidth, cssHeight);
@@ -1002,6 +1222,175 @@ export class WorldScene {
     this.renderer.setSize(size.width, size.height, false);
     this.retro.setSize(size.width, size.height);
     this.lastHalfWidth = -1;
+  }
+
+  /**
+   * Draw at a fixed virtual resolution and let CSS blow it up by a whole number
+   * of device pixels, letterboxing what is left over (spec 099).
+   *
+   * There is no blit shader here on purpose. Sizing the canvas's backing store to
+   * exactly the virtual buffer and giving it a CSS size of `scale` device pixels
+   * per virtual pixel makes the browser's own upscale the integer one --
+   * `image-rendering: pixelated` is defined as nearest-neighbour, and there is
+   * nothing a quad of our own would do differently.
+   *
+   * It also buys the thing that would otherwise be the risky part of this change:
+   * because the letterbox is the *canvas element's own box* rather than an inset
+   * inside a full-bleed canvas, every cursor-to-world conversion in the renderer
+   * keeps working untouched. They all derive NDC from `canvas.getBoundingClientRect()`,
+   * which is now the letterboxed rect, so the offsets cancel without anybody
+   * having to know they exist.
+   *
+   * The available box has to come from the *parent*, since the canvas is about to
+   * stop filling it -- measuring the canvas would feed its own new size back in
+   * and ratchet the scale down a step per frame.
+   */
+  private resizeToVirtual(hike: HikeSettings): void {
+    const host = this.canvas.parentElement;
+    const availWidth = (host?.clientWidth ?? this.canvas.clientWidth) || 1;
+    const availHeight = (host?.clientHeight ?? this.canvas.clientHeight) || 1;
+    const dpr = globalThis.devicePixelRatio || 1;
+    const next = pixelFrame(availWidth, availHeight, dpr, hike.virtualWidth, hike.virtualHeight);
+    const width = Math.max(1, Math.round(hike.virtualWidth));
+    const height = Math.max(1, Math.round(hike.virtualHeight));
+
+    const unchanged =
+      this.frame !== null &&
+      this.frame.scale === next.scale &&
+      this.frame.cssWidth === next.cssWidth &&
+      this.frame.cssHeight === next.cssHeight &&
+      this.frame.offsetX === next.offsetX &&
+      this.frame.offsetY === next.offsetY &&
+      this.renderW === width &&
+      this.renderH === height;
+    if (unchanged) return;
+
+    this.frame = next;
+    this.renderW = width;
+    this.renderH = height;
+    // Fixed, and deliberately not the window's: a virtual resolution that took
+    // the window's aspect would not be a fixed virtual resolution.
+    this.aspect = width / height;
+    this.renderer.setSize(width, height, false);
+    this.retro.setSize(width, height);
+    this.lastHalfWidth = -1;
+
+    const style = this.canvas.style;
+    style.inset = '';
+    style.left = `${next.offsetX}px`;
+    style.top = `${next.offsetY}px`;
+    style.width = `${next.cssWidth}px`;
+    style.height = `${next.cssHeight}px`;
+  }
+
+  /** Draw the outlines over the frame, or the edge mask on its own. */
+  private drawEdges(hike: HikeSettings, maskOnly: boolean): void {
+    const buffers = this.ensureBuffers();
+    this.edges ??= new HikeEdges();
+    this.edges.render(
+      this.renderer,
+      buffers.normalTexture,
+      buffers.depthTexture,
+      this.camera,
+      this.renderW,
+      this.renderH,
+      hike,
+      maskOnly,
+      this.inkOrigin(),
+    );
+  }
+
+  /**
+   * The depth the distance treatment counts from: the camera's own distance to
+   * what it is looking at.
+   *
+   * An orthographic camera parked 6,000 units back makes every pixel in the frame
+   * about 6,000 units away, so a ramp measured from the camera is a ramp measured
+   * from a constant. Measured from the focus, 0 is the ground under the player and
+   * the settings are distances into the scene -- which is what they are named for,
+   * and what survives the Distance slider moving the camera without moving the
+   * world.
+   */
+  private inkOrigin(): number {
+    return this.camOffsetCurrent.length();
+  }
+
+  /**
+   * The depth/normal buffers, built on first use and kept at the render size.
+   *
+   * Lazily, so a session that never throws the switch never allocates a render
+   * target and a depth texture it will not read.
+   */
+  private ensureBuffers(): HikeBuffers {
+    const width = Math.max(1, this.renderW);
+    const height = Math.max(1, this.renderH);
+    if (!this.buffers) {
+      this.buffers = new HikeBuffers(width, height);
+    } else {
+      this.buffers.setSize(width, height);
+    }
+    return this.buffers;
+  }
+
+  /** Give the canvas the whole box back, for a frame drawn the old way. */
+  private releaseVirtual(): void {
+    this.frame = null;
+    const style = this.canvas.style;
+    style.left = '';
+    style.top = '';
+    style.inset = '0';
+    style.width = '100%';
+    style.height = '100%';
+    this.renderW = 0;
+    this.renderH = 0;
+  }
+
+  /**
+   * Where the drawn image sits inside the view, in CSS pixels.
+   *
+   * The DOM overlay has to be laid over *this* and not over the whole view, or
+   * every health bar is displaced by the letterbox -- the anchors it positions
+   * from are in canvas space.
+   */
+  viewport(): { x: number; y: number; width: number; height: number } {
+    if (!this.frame) {
+      return { x: 0, y: 0, width: this.canvas.clientWidth, height: this.canvas.clientHeight };
+    }
+    return {
+      x: this.frame.offsetX,
+      y: this.frame.offsetY,
+      width: this.frame.cssWidth,
+      height: this.frame.cssHeight,
+    };
+  }
+
+  /**
+   * Put the camera on the virtual pixel lattice for the draw, and hand back the
+   * undo.
+   *
+   * Restored immediately afterwards because picking must not see it: a snapped
+   * matrix answers "which cell is under the cursor" with up to a pixel of error,
+   * and flips that error from one side to the other as the camera crosses a snap
+   * boundary -- so a cell under a stationary cursor would change identity while
+   * the player walks past. Everything the sim is told comes through those
+   * conversions, which makes this the one place in the renderer where a rounding
+   * choice could change an outcome.
+   */
+  private applyPixelSnap(hike: HikeSettings): (() => void) | null {
+    if (!hike.snapCamera || this.renderW <= 0) return null;
+
+    const step = worldPerPixel(this.camera.right - this.camera.left, this.renderW);
+    this.camera.matrixWorld.extractBasis(this.snapRight, this.snapUp, this.snapForward);
+    const snapped = snapToPixelGrid(this.camera.position, this.snapRight, this.snapUp, step);
+    const before = this.snapBefore.copy(this.camera.position);
+    if (snapped === this.camera.position) return null;
+
+    this.camera.position.set(snapped.x, snapped.y, snapped.z);
+    this.camera.updateMatrixWorld(true);
+    return () => {
+      this.camera.position.copy(before);
+      this.camera.updateMatrixWorld(true);
+    };
   }
 
   /**

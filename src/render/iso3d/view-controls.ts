@@ -1,5 +1,17 @@
 import { RETRO_DEFAULTS, type BayerSize, type RetroSettings } from './retro.js';
 import {
+  DEFAULT_PALETTE_ID,
+  DEFAULT_VIRTUAL_SIZE,
+  HIKE_DEBUG_VIEWS,
+  HIKE_OFF,
+  HIKE_PALETTES,
+  paletteById,
+  VIRTUAL_SIZES,
+  virtualSizeById,
+  type HikeDebugView,
+  type HikeSettings,
+} from './hike.js';
+import {
   DEFAULT_DAY_LENGTH_MINUTES,
   DEFAULT_TIME_OF_DAY,
   MAX_DAY_LENGTH_MINUTES,
@@ -79,6 +91,14 @@ export interface ViewControls {
   showSpawners(): boolean;
   /** The retro dither/quantization filter's current settings (spec 038). */
   retro(): RetroSettings;
+  /**
+   * The hike look's settings (spec 097). Every switch off by default, so the
+   * frame is the one that shipped before the arc started until one is thrown.
+   *
+   * Fields belonging to steps that have not landed sit at their `HIKE_OFF`
+   * values; the panel only carries widgets for the ones that are wired.
+   */
+  hike(): HikeSettings;
   /**
    * Whether the day/night cycle owns the sun (spec 047). When false the
    * `Direction`/`Elevation` sliders above drive it, exactly as in spec 033.
@@ -421,6 +441,130 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   const gradeStrength = makeSlider('Filter strength', 0, 100, 5, DEFAULT_GRADE_STRENGTH * 100, '%',
     'How strongly the colour filter is applied. 0 is off whichever preset is chosen.');
 
+  // The hike look (spec 097). One switch per step, all off, so each can be
+  // turned on alone -- these two are step 2's.
+  const smoothNormals = makeCheckbox('Smooth normals', HIKE_OFF.smoothNormals,
+    'Average vertex normals across surfaces gentler than the crease angle instead of shading every ' +
+    'face flat. Reaches almost nothing on this geometry: only the canopy slabs are modelled finer ' +
+    'than the crease, so trunks, cones and stones keep their facets.');
+  const creaseAngle = makeSlider('Crease angle', 5, 80, 5, Math.round((HIKE_OFF.creaseAngle * 180) / Math.PI), '°',
+    'Faces meeting sharper than this stay split. Above ~52° a 7-sided trunk welds its whole tip into ' +
+    'one normal and the taper reads as a melted dome.');
+  // Step 3: the fixed virtual buffer, upscaled by whole device pixels.
+  const lowRes = makeCheckbox('Low-res buffer', HIKE_OFF.lowRes,
+    'Draw at a fixed virtual resolution and blow it up by a whole number of device pixels, ' +
+    'letterboxing the remainder. Off, the buffer is a fixed 300px tall at the window aspect and ' +
+    'CSS stretches it by whatever fraction happens to fit.');
+  const virtualSize = makeTextChoice('Virtual size',
+    VIRTUAL_SIZES.map((v) => [v.id, v.id] as const), DEFAULT_VIRTUAL_SIZE,
+    'The buffer the world is drawn into. Fixed: it never changes with the window, which is what ' +
+    'letterboxing is for.');
+  const snapCamera = makeCheckbox('Snap camera to pixels', HIKE_OFF.snapCamera,
+    'Move the camera onto whole virtual pixels each frame, so edges stop shimmering between two ' +
+    'rows as the view follows. Applied only to the drawn frame -- clicks are still resolved against ' +
+    'the unsnapped camera, so a cell under a stationary cursor cannot change identity as you walk.');
+
+  // Step 4: the depth and normal buffers, and the only way to look at them.
+  const buffers = makeCheckbox('Depth + normal buffers', HIKE_OFF.buffers,
+    'Render depth and view-space normals at the virtual resolution, for the outline pass to read. ' +
+    'Costs a second geometry pass; draws nothing on its own.');
+  const debugView = makeTextChoice('Debug view',
+    HIKE_DEBUG_VIEWS.map((v) => [v, v] as const), HIKE_OFF.debug,
+    'Draw one intermediate buffer on its own instead of the finished frame. Needs the buffers above.');
+
+  // Step 7: what distance does to a fill. The outlines are deliberately not part
+  // of it -- they stay at a constant dark value, which is the whole effect.
+  const ink = makeCheckbox('Distance ink', HIKE_OFF.ink,
+    'Flatten, drain and fog the fills as they recede, while the outlines over them stay exactly as ' +
+    'dark. Distant geometry loses its gradient and becomes flat shapes bounded by line.');
+  const inkStart = makeSlider('Ink start', 0, 800, 20, HIKE_OFF.inkStart, 'u',
+    'How far past the player the treatment begins, in world units. Measured from what the camera ' +
+    'is looking at, not from the camera -- an orthographic camera sits a fixed distance back, so ' +
+    'depth from it is mostly that constant.');
+  const inkEnd = makeSlider('Ink full', 40, 2000, 20, HIKE_OFF.inkEnd, 'u',
+    'How far past the player it reaches full strength. The view reaches about 350u past the ' +
+    'player at the default zoom.');
+  const inkFlatten = makeSlider('Flatten', 0, 100, 5, Math.round(HIKE_OFF.inkFlatten * 100), '%',
+    'How far the shading gradient is removed at full strength. 100% gives a surface one tone.');
+  const inkDesat = makeSlider('Drain', 0, 100, 5, Math.round(HIKE_OFF.inkDesaturate * 100), '%',
+    'How far the colour drains toward grey at full strength.');
+  const inkFog = makeSlider('Haze', 0, 100, 5, Math.round(HIKE_OFF.inkFog * 100), '%',
+    'How far the fill drifts toward the sky at full strength. The sky colour is the live one.');
+  const inkEdgeGain = makeSlider('Far line gain', 100, 400, 10, Math.round(HIKE_OFF.inkEdgeGain * 100), '%',
+    'How much more sensitive the normal edge gets at full distance. A far shape has lost its ' +
+    'shading, so its line is the only thing left describing it.');
+  const minNeighbours = makeSlider('Line coherence', 0, 6, 1, HIKE_OFF.outlineMinNeighbours, '',
+    'Edge neighbours a pixel needs before its line draws at full strength. Fades the one- and ' +
+    'two-pixel specks that blink as geometry crosses a sample boundary. 0 disables it.');
+
+  // Step 10: the renderer's first texture, generated rather than fetched
+  // (spec 106), and the boundary the ground's materials meet along.
+  const triplanar = makeCheckbox('Surface detail', HIKE_OFF.triplanar,
+    'Modulate the ground and cliff colours with a generated noise tile, projected on all three ' +
+    'world axes so a vertical face is not smeared. Off by default: it is the only step here that ' +
+    'changes what a surface is made of rather than how it is lit.');
+  const detailStrength = makeSlider('Detail', 0, 60, 2, Math.round(HIKE_OFF.detailStrength * 100), '%',
+    'How far the tile darkens and lightens the colour underneath it.');
+  const detailScale = makeSlider('Detail size', 20, 300, 10, HIKE_OFF.detailScale, 'u',
+    'World units per repeat of the tile.');
+  const detailSharpness = makeSlider('Projection blend', 1, 12, 1, HIKE_OFF.detailSharpness, '',
+    'How hard a surface commits to one projection axis. Low is a soft blend that loses contrast ' +
+    'where two projections average each other out; high is a narrow seam.');
+
+  const materialBlend = makeCheckbox('Rock by slope', HIKE_OFF.materialBlend,
+    'Blend the ground toward bare rock where it is steep or high, with the boundary displaced by ' +
+    'noise. Colour only -- the cell still knows what it is made of.');
+  const blendStrength = makeSlider('Rock amount', 0, 100, 5, Math.round(HIKE_OFF.blendStrength * 100), '%',
+    'How far the colour moves toward stone where the blend is full.');
+  // Stops at 40%, which is not a round number but the point past which the
+  // displacement reaches ground with no slope at all -- see maxNoiseForFlatGround.
+  const blendNoise = makeSlider('Ragged edge', 0, 40, 5, Math.round(HIKE_OFF.blendNoise * 100), '%',
+    'How far the noise displaces the boundary. At zero it is a contour line, which is as regular ' +
+    'as the lattice underneath it.');
+
+  // Step 9: a softer shadow edge, which the look deliberately does not want
+  // (spec 105) -- the switch exists so the choice can be seen.
+  const softShadows = makeCheckbox('Soft shadows', HIKE_OFF.softShadows,
+    'Filter the shadow map with a Poisson disc instead of taking one unfiltered comparison. Off by ' +
+    'choice rather than by caution: hard shadow edges land on texel boundaries and match a ' +
+    'posterized frame, and a penumbra is the one smooth gradient in the picture.');
+  const shadowRadius = makeSlider('Penumbra', 0.5, 6, 0.5, HIKE_OFF.shadowPcfRadius, ' texels',
+    'How wide the filter reaches, in shadow-map texels.');
+
+  // Step 8: the fold that is already in the data (spec 104).
+  const curvature = makeCheckbox('Creases', HIKE_OFF.curvature,
+    'Darken the ground where it folds. Measured once at mesh time from the corner normals each ' +
+    'chunk already carries, so it costs a uniform to switch and nothing per frame.');
+  const curvatureStrength = makeSlider('Crease depth', 0, 100, 5, Math.round(HIKE_OFF.curvatureStrength * 100), '%',
+    'How dark the deepest fold goes. Full strength is a cell that turns through about 20 degrees ' +
+    'across its own width; open ground is nowhere near that and stays put.');
+
+  // Step 6: quantize onto a named palette instead of onto even steps. The steps,
+  // the dither and its strength are the retro filter's own sliders above -- this
+  // is only the choice between the two.
+  const paletteChoice = makeTextChoice('Palette',
+    HIKE_PALETTES.map((p) => [p.id, p.id] as const), DEFAULT_PALETTE_ID,
+    'Snap every pixel to the nearest colour of a fixed set, instead of to the nearest even step ' +
+    'per channel. The dither above still applies, measured in palette spacing rather than in bands.');
+
+  // Step 5: the outlines the buffers exist for.
+  const edges = makeCheckbox('Outlines', HIKE_OFF.edges,
+    'Find edges in the depth and normal buffers and draw them over the frame. Needs the buffers above.');
+  const depthThreshold = makeSlider('Depth edge', 1, 60, 1, HIKE_OFF.depthEdgeThreshold, 'u',
+    'How far a pixel must sit off its neighbour\'s surface to count as an edge, in world units. ' +
+    'Measured against the plane the neighbour lies in, so a hillside at a glancing angle reads as ' +
+    'flat -- and the camera being orthographic is what lets one number serve the whole frame.');
+  const normalThreshold = makeSlider('Normal edge', 5, 100, 5, Math.round(HIKE_OFF.normalEdgeThreshold * 100), '%',
+    'How far two neighbouring normals must diverge to count as an edge. 200% is a full reversal.');
+  const skyOutline = makeCheckbox('Outline against sky', HIKE_OFF.outlineAgainstSky,
+    'Let the far plane take part. Off, nothing is traced against the background -- on, every ' +
+    'silhouette against the sky gets a line, at full strength, because the far plane is thousands ' +
+    'of units from anything.');
+
+  const swayNormals = makeCheckbox('Sway rotates normals', HIKE_OFF.swayNormals,
+    'Turn the vertex normal with the wind bend. Does nothing while normals are flat-shaded; with ' +
+    'smooth normals on, leaving it off is what makes a leaning canopy light as though it were upright.');
+
   const reset = document.createElement('button');
   reset.textContent = 'Reset';
   reset.title = 'Restore the camera, light, and terrain overlay to their defaults.';
@@ -432,7 +576,11 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
       dayNight, timeOfDay, clockRunning, dayLength,
       torchOn, torchRange, torchBright, torchFlickerDepth, torchShadows,
       magicOn, magicRange, magicBright, spawners,
-      retroOn, levels, dither, weave, weaveScale, pixelSize, gradeChoice, gradeStrength];
+      retroOn, levels, dither, weave, weaveScale, pixelSize, gradeChoice, gradeStrength,
+      smoothNormals, creaseAngle, swayNormals, lowRes, virtualSize, snapCamera, buffers, edges, depthThreshold, normalThreshold, skyOutline, paletteChoice, ink, inkStart, inkEnd, inkFlatten, inkDesat, inkFog, inkEdgeGain,
+      minNeighbours, curvature, curvatureStrength, softShadows, shadowRadius,
+      triplanar, detailStrength, detailScale, detailSharpness, materialBlend, blendStrength, blendNoise,
+      debugView];
     for (const w of widgets) w.reset();
   });
 
@@ -467,6 +615,41 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     pixelSize.row,
   );
   if (lighting) panel.append(gradeChoice.row, gradeStrength.row);
+  panel.append(
+    section('Hike'),
+    lowRes.row,
+    virtualSize.row,
+    snapCamera.row,
+    smoothNormals.row,
+    creaseAngle.row,
+    swayNormals.row,
+    buffers.row,
+    edges.row,
+    depthThreshold.row,
+    normalThreshold.row,
+    skyOutline.row,
+    paletteChoice.row,
+    ink.row,
+    inkStart.row,
+    inkEnd.row,
+    inkFlatten.row,
+    inkDesat.row,
+    inkFog.row,
+    inkEdgeGain.row,
+    minNeighbours.row,
+    curvature.row,
+    curvatureStrength.row,
+    softShadows.row,
+    shadowRadius.row,
+    triplanar.row,
+    detailStrength.row,
+    detailScale.row,
+    detailSharpness.row,
+    materialBlend.row,
+    blendStrength.row,
+    blendNoise.row,
+    debugView.row,
+  );
   panel.append(reset);
 
   // The cog button toggles the popover; a highlighted state marks it open.
@@ -522,6 +705,45 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
       ditherScale: weaveScale.value(),
       pixelSize: pixelSize.value(),
     }),
+    hike: () => {
+      const size = virtualSizeById(virtualSize.value());
+      return {
+        ...HIKE_OFF,
+        lowRes: lowRes.checked(),
+        virtualWidth: size.width,
+        virtualHeight: size.height,
+        snapCamera: snapCamera.checked(),
+        smoothNormals: smoothNormals.checked(),
+        creaseAngle: (creaseAngle.value() * Math.PI) / 180,
+        swayNormals: swayNormals.checked(),
+        buffers: buffers.checked(),
+        edges: edges.checked(),
+        depthEdgeThreshold: depthThreshold.value(),
+        normalEdgeThreshold: normalThreshold.value() / 100,
+        outlineAgainstSky: skyOutline.checked(),
+        palette: paletteById(paletteChoice.value()),
+        ink: ink.checked(),
+        inkStart: inkStart.value(),
+        inkEnd: inkEnd.value(),
+        inkFlatten: inkFlatten.value() / 100,
+        inkDesaturate: inkDesat.value() / 100,
+        inkFog: inkFog.value() / 100,
+        inkEdgeGain: inkEdgeGain.value() / 100,
+        outlineMinNeighbours: minNeighbours.value(),
+        curvature: curvature.checked(),
+        curvatureStrength: curvatureStrength.value() / 100,
+        softShadows: softShadows.checked(),
+        shadowPcfRadius: shadowRadius.value(),
+        triplanar: triplanar.checked(),
+        detailStrength: detailStrength.value() / 100,
+        detailScale: detailScale.value(),
+        detailSharpness: detailSharpness.value(),
+        materialBlend: materialBlend.checked(),
+        blendStrength: blendStrength.value() / 100,
+        blendNoise: blendNoise.value() / 100,
+        debug: debugView.value() as HikeDebugView,
+      };
+    },
     dayNightEnabled: () => dayNight.checked(),
     sky: () => (dayNight.checked() ? skyAt(timeOfDay.value()) : null),
     // The slider *is* the clock: writing the advanced hour back to it keeps one

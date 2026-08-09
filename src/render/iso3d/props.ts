@@ -3,6 +3,7 @@ import { PALETTE } from './palette.js';
 import { hashUnit2 } from '../../shared/hash.js';
 import { FENCE_KINDS, FENCE_TILE_LENGTH, type FenceKind, type Prop } from '../../terrain/vegetation.js';
 import { applySway, bakeBend, disposeSway, tiltReach, type SwayInstance } from './sway.js';
+import { DEFAULT_CREASE_ANGLE, weldedNormals } from './shading.js';
 import { stiffness } from './wind.js';
 import {
   LOBED,
@@ -1293,6 +1294,76 @@ const DRAWN_KINDS: ReadonlySet<string> = new Set<string>(['tree', 'bush', ...FEN
 export type NormalAt = (x: number, z: number) => readonly [number, number, number];
 
 /**
+ * How the prop field shades itself (spec 097, step 2).
+ *
+ * Props are where this question has an answer worth asking: they are the only
+ * curved surfaces in the world that are not the terrain. The terrain's surface is
+ * already smooth from its own corner normals and its cliffs are flat by
+ * construction, and rigs and critters are boxes, on which averaging a normal
+ * means nothing.
+ */
+export interface PropShading {
+  /**
+   * Weld and average normals across the crease angle instead of flat-shading
+   * every face.
+   *
+   * On this geometry that reaches almost nothing: only the canopy slabs are
+   * tessellated finer than the crease, so trunks, cones and stones keep their
+   * facets. See the table in `shading.ts` -- the coarseness is the style, and
+   * this switch is here to make that visible rather than to change it.
+   */
+  readonly smooth: boolean;
+  /** Faces meeting at a sharper angle than this stay split. In radians. */
+  readonly creaseAngle: number;
+  /** Rotate vertex normals with the wind's bend. Inert while `smooth` is false. */
+  readonly swayNormals: boolean;
+}
+
+/**
+ * What the field has always done, and still does unless told otherwise: every
+ * face flat, nothing welded.
+ */
+export const FLAT_SHADING: PropShading = {
+  smooth: false,
+  creaseAngle: DEFAULT_CREASE_ANGLE,
+  swayNormals: false,
+};
+
+/**
+ * The geometry to draw a part with under smooth shading: the same one with
+ * welded, crease-split normals.
+ *
+ * **Indexed geometry is expanded first.** `weldedNormals` needs one vertex slot
+ * per triangle corner, because a crease is expressed by two slots at one
+ * position disagreeing -- an indexed mesh has a single slot there and physically
+ * cannot record the split. three.js's `ConeGeometry` is indexed, so without this
+ * the conifers came out smooth around their circumference under a crease angle
+ * that says they should stay faceted. `toNonIndexed` carries every attribute
+ * across, including the `aBend` the wind sway needs.
+ *
+ * Returns the geometry to use, which may be a new object; the caller owns it and
+ * disposes it with the batch. Marked as done so a geometry handed out twice is
+ * welded once.
+ */
+function smoothGeometry(geometry: THREE.BufferGeometry, creaseCos: number): THREE.BufferGeometry {
+  if (geometry.userData['weldedNormals'] === creaseCos) return geometry;
+  if (!geometry.getAttribute('position')) return geometry;
+
+  let target = geometry;
+  if (geometry.getIndex()) {
+    target = geometry.toNonIndexed();
+    // Never uploaded, so this frees bookkeeping rather than GPU memory -- but a
+    // geometry nothing will ever draw should not be left in the batch's list.
+    geometry.dispose();
+  }
+  const position = target.getAttribute('position');
+  const normals = weldedNormals(position.array as ArrayLike<number>, creaseCos);
+  target.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  target.userData['weldedNormals'] = creaseCos;
+  return target;
+}
+
+/**
  * Build the instanced meshes for a list of scattered props, standing each one on
  * the terrain via `heightAt`. Static: instance matrices are written once, since
  * scenery never moves.
@@ -1306,8 +1377,11 @@ export function buildPropField(
   props: readonly Prop[],
   heightAt: (x: number, z: number) => number,
   normalAt?: NormalAt,
+  shading?: PropShading,
 ): PropFieldHandle {
   const group = new THREE.Group();
+  const shade = shading ?? FLAT_SHADING;
+  const creaseCos = Math.cos(shade.creaseAngle);
 
   /**
    * One batching region's meshes and the resources only it owns.
@@ -1364,8 +1438,9 @@ export function buildPropField(
       const jitterSize =
         part.jitterScaleX !== undefined || part.jitterScaleY !== undefined || part.jitterTint !== undefined;
 
-      const material = new THREE.MeshLambertMaterial({ flatShading: true });
-      const mesh = new THREE.InstancedMesh(part.geometry, material, grown.length);
+      const geometry = shade.smooth ? smoothGeometry(part.geometry, creaseCos) : part.geometry;
+      const material = new THREE.MeshLambertMaterial({ flatShading: !shade.smooth });
+      const mesh = new THREE.InstancedMesh(geometry, material, grown.length);
       mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
       // Scenery is the bulk of the shadow pass (spec 045): a canopy that throws
       // dappled shade onto the ground is what stops props reading as decals.
@@ -1482,14 +1557,20 @@ export function buildPropField(
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       if (swaying.length === grown.length && swaying.length > 0) {
-        applySway(mesh, swaying, swayHeight, {
-          lag: part.swayLag ?? 0,
-          tilt: part.swayTilt ?? 0,
-          reach: swayReach,
-        });
+        applySway(
+          mesh,
+          swaying,
+          swayHeight,
+          {
+            lag: part.swayLag ?? 0,
+            tilt: part.swayTilt ?? 0,
+            reach: swayReach,
+          },
+          shade.swayNormals,
+        );
       }
       current.group.add(mesh);
-      current.geometries.push(part.geometry);
+      current.geometries.push(geometry);
       current.materials.push(material);
     });
   };

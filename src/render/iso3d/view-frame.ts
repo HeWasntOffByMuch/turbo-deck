@@ -55,3 +55,136 @@ export function cursorToNdc(cssX: number, cssY: number, cssWidth: number, cssHei
   const height = cssHeight > 0 ? cssHeight : 1;
   return { x: (cssX / width) * 2 - 1, y: -((cssY / height) * 2 - 1) };
 }
+
+// --- the fixed virtual resolution (spec 099) ---------------------------------
+
+/**
+ * Where the canvas sits, and how big, to show a fixed virtual buffer upscaled by
+ * a whole number of **device** pixels with the remainder as letterbox.
+ *
+ * Everything is CSS pixels except `scale`, which counts device pixels per virtual
+ * pixel.
+ */
+export interface PixelFrame {
+  /** Device pixels per virtual pixel. A whole number, never below 1. */
+  readonly scale: number;
+  /** The canvas's CSS size -- `scale` device pixels per virtual pixel, exactly. */
+  readonly cssWidth: number;
+  readonly cssHeight: number;
+  /** Where to put it inside the available box, to centre it. */
+  readonly offsetX: number;
+  readonly offsetY: number;
+}
+
+/**
+ * Fit `virtualWidth` x `virtualHeight` into a CSS box at a given device pixel
+ * ratio, upscaled by the largest whole factor that fits.
+ *
+ * ## Why the factor is computed in device pixels
+ *
+ * Because that is where the pixels are. A 960x540 CSS box on a retina screen is
+ * 1920x1080 real pixels, so it can show a 480x270 buffer at exactly 4x -- and
+ * choosing the factor from the CSS box would say 2x, throw away half the display
+ * and *still* resample, since the browser then maps each of those 2x blocks onto
+ * 2x2 device pixels. Getting this backwards is not subtly wrong; it is the
+ * difference between pixel art and a blurry approximation of it.
+ *
+ * ## Why the offsets are snapped too
+ *
+ * The canvas has to *start* on a whole device pixel as well as be sized in whole
+ * device pixels. Centring leaves a remainder, and half of an odd remainder is
+ * half a device pixel -- enough for the browser to resample the whole image while
+ * every size involved is still perfectly integral. So each offset is floored to
+ * the device grid, which puts any odd pixel on the right and bottom.
+ *
+ * The virtual resolution is an input and never an output: a window this cannot
+ * fit gets scale 1 and clips, rather than a buffer that quietly changes size.
+ */
+export function pixelFrame(
+  cssWidth: number,
+  cssHeight: number,
+  devicePixelRatio: number,
+  virtualWidth: number,
+  virtualHeight: number,
+): PixelFrame {
+  const dpr = devicePixelRatio > 0 ? devicePixelRatio : 1;
+  const vw = Math.max(1, Math.round(virtualWidth));
+  const vh = Math.max(1, Math.round(virtualHeight));
+  const deviceWidth = Math.max(1, cssWidth) * dpr;
+  const deviceHeight = Math.max(1, cssHeight) * dpr;
+
+  const scale = Math.max(1, Math.floor(Math.min(deviceWidth / vw, deviceHeight / vh)));
+  const shownWidth = (vw * scale) / dpr;
+  const shownHeight = (vh * scale) / dpr;
+  // Floored onto the device grid, not merely halved -- see above.
+  const snap = (gap: number): number => Math.max(0, Math.floor((gap / 2) * dpr) / dpr);
+
+  return {
+    scale,
+    cssWidth: shownWidth,
+    cssHeight: shownHeight,
+    offsetX: snap(cssWidth - shownWidth),
+    offsetY: snap(cssHeight - shownHeight),
+  };
+}
+
+/** A world-space point or direction. Structural, so three.js's vectors fit it. */
+export interface Vec3Like {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
+/**
+ * The camera position moved to the nearest whole virtual pixel, along the two
+ * axes that move the image.
+ *
+ * Without this the world slides continuously behind a pixel grid that does not,
+ * so every edge in the frame shimmers between two rows as the camera follows the
+ * player -- the single most obvious tell that a low-resolution image is being
+ * faked rather than rendered.
+ *
+ * `right` and `up` are the camera's own world axes and must be orthonormal, which
+ * for a camera they are; only the components along them are touched, so the
+ * distance along the view direction -- and therefore every clip plane -- is left
+ * exactly as it was.
+ *
+ * The result is what the scene is *drawn* with and deliberately not what picking
+ * uses: a snapped matrix answers "which cell is under the cursor" with an error
+ * of up to a pixel, and jumps that error from one side to the other as the camera
+ * crosses a snap boundary. See `scene.ts`, which restores the unsnapped position
+ * after drawing for exactly that reason.
+ */
+export function snapToPixelGrid(
+  position: Vec3Like,
+  right: Vec3Like,
+  up: Vec3Like,
+  worldPerPixel: number,
+): Vec3Like {
+  if (!(worldPerPixel > 0) || !Number.isFinite(worldPerPixel)) return position;
+
+  const alongRight = position.x * right.x + position.y * right.y + position.z * right.z;
+  const alongUp = position.x * up.x + position.y * up.y + position.z * up.z;
+  const dRight = Math.round(alongRight / worldPerPixel) * worldPerPixel - alongRight;
+  const dUp = Math.round(alongUp / worldPerPixel) * worldPerPixel - alongUp;
+
+  return {
+    x: position.x + right.x * dRight + up.x * dUp,
+    y: position.y + right.y * dRight + up.y * dUp,
+    z: position.z + right.z * dRight + up.z * dUp,
+  };
+}
+
+/**
+ * World units per virtual pixel, for an orthographic camera showing `spanWidth`
+ * world units across `virtualWidth` pixels.
+ *
+ * One number rather than two because the virtual buffer's aspect is fixed and the
+ * frustum is derived from it, so the pixels are square by construction -- and if
+ * that ever stops being true, a single snap step is the wrong shape and this is
+ * where it should be noticed.
+ */
+export function worldPerPixel(spanWidth: number, virtualWidth: number): number {
+  const pixels = Math.max(1, virtualWidth);
+  return Math.abs(spanWidth) / pixels;
+}

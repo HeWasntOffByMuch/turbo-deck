@@ -174,6 +174,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   }
 
   const hud = createHud((x, y, lift) => scene.projectPoint(x, y, lift));
+  /** The overlay's current box, so it is only rewritten when the letterbox moves. */
+  let hudBox = { x: -1, y: -1, width: -1, height: -1 };
   hud.onUse((abilityId) => pressAbility(abilityId));
   // Picking a weapon is an ordinary equip (spec 079): the server puts it in the
   // hand, recomputes the stat block, and the new `basicAttackId` comes back on
@@ -852,6 +854,23 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       targetEntityId: targetId,
       aim: aimIndicator(view, view.self ?? { x: 0, y: 0 }),
     });
+    // The overlay is laid over the *drawn image*, not over the window (spec 099).
+    // Every anchor it positions from is in canvas space, so under a letterbox an
+    // overlay spanning the whole view would sit the health bars off their bodies
+    // by the size of the bars -- and the hotbar would hang in the letterbox
+    // rather than over the picture. Written only when it moves; a per-frame style
+    // write is a per-frame layout.
+    const box = scene.viewport();
+    if (box.x !== hudBox.x || box.y !== hudBox.y || box.width !== hudBox.width || box.height !== hudBox.height) {
+      hudBox = box;
+      const style = hud.element.style;
+      style.inset = '';
+      style.left = `${box.x}px`;
+      style.top = `${box.y}px`;
+      style.width = `${box.width}px`;
+      style.height = `${box.height}px`;
+    }
+
     hud.update(view, scene.screenAnchors(), drawnTick, client.correctionCount, targetId, {
       abilityId: pendingAim?.abilityId ?? order?.abilityId ?? null,
       pending: pendingAim !== null,

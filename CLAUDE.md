@@ -216,6 +216,33 @@ src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
                  `src/render/wind-probe.html` are a dev-server-only measuring rig
                  (never in a build) driven by `npx tsx scripts/preview-wind.ts`,
                  which photographs the frame and reports the acceptance numbers.
+src/render/iso3d/hike.ts, shading.ts, hike-buffers.ts  the stylized look (specs
+                 097-106): hike.ts is the one settings object every step of the arc
+                 is switched from (all off by default) plus the sRGB transfer the
+                 passes mirror; shading.ts welds vertex normals across a crease
+                 angle, rotates one to follow the wind's bend, and packs one
+                 octahedrally into two bytes. Both pure and tested headlessly.
+                 edges.ts finds outlines in those buffers: the depth term measures
+                 deviation from the plane each neighbour lies in rather than a raw
+                 difference, because a hillside at a glancing angle changes depth
+                 fast with no edge present, and no single threshold survives that.
+                 hike-buffers.ts and hike-edges.ts are the three.js halves: a second
+                 geometry pass writing depth and view-space normals at the virtual
+                 resolution, the blit that draws one of them on its own -- the only
+                 way to see a depth texture at all, since a depth attachment cannot
+                 be read back -- and the Roberts cross over both.
+                 `npx tsx scripts/probe-shading.ts` checks all of it offscreen;
+                 `npx tsx scripts/preview-outlines.ts` throws the switch in the
+                 real page, because the outline pass once shipped with a correct
+                 mask and a pass that cleared the canvas before blending it, and
+                 every offscreen measurement was right while the screen was black.
+                 `shading-probe.ts` plus `src/render/shading-probe.html` are a
+                 dev-server-only rig (never in a build) driven by `npx tsx
+                 scripts/probe-shading.ts`, which is the only thing here that can
+                 tell whether a shader actually compiled -- it asserts on pixels
+                 read out of the drawing buffer, because three.js logs a failed
+                 compile and carries on, and because preview-trees.ts rasterises
+                 in software and never makes a GL context at all.
 src/render/iso3d/lobe.ts  the lobed canopy tree's shape (spec 077): the union of
                  circles a canopy slab's outline is, where the slabs sit, and the
                  trunk's taper to a single vertex. Pure and tested headlessly --
