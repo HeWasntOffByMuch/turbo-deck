@@ -35,6 +35,8 @@ import {
   MIN_LIGHT_RANGE,
   TORCH_DEFAULTS,
 } from './player-lights.js';
+import { createMenuGroup, type MenuGroup } from './menu-group.js';
+import { createSettingsMenu, resetButton, section, type Resettable } from './settings-menu.js';
 import {
   CAMERA_ELEVATION_MAX_DEG,
   CAMERA_ELEVATION_MIN_DEG,
@@ -54,18 +56,29 @@ import {
 /**
  * The camera/light control panel (spec 033/034): the viewer orbits the follow
  * camera, zooms, swings the sun, toggles the unwalkable-terrain overlay, and
- * dials in the retro post filter (spec 038). The sliders live in a popover
- * tucked behind a cog button (spec 034) so they stay out of the way until
- * opened. It owns only the mutable widget state and derives the values the scene
- * asks for each frame; it holds no three.js and decides no game rules -- the
- * scene reads these and moves its camera/light to match.
+ * dials in the retro post filter (spec 038). The sliders live in popovers
+ * tucked behind buttons (spec 034) so they stay out of the way until opened. It
+ * owns only the mutable widget state and derives the values the scene asks for
+ * each frame; it holds no three.js and decides no game rules -- the scene reads
+ * these and moves its camera/light to match.
+ *
+ * Since spec 107 that is five buttons rather than one: the view, the day/night
+ * clock, the player's lights, the retro filter and the hike look each have a
+ * popover of their own, and a shared `MenuGroup` keeps at most one open --
+ * including the weather panel next door, which joins the same group.
  */
 
 const DEG = Math.PI / 180;
 
 export interface ViewControls {
-  /** The cog button + its collapsible settings popover, to mount beside the canvas. */
+  /** The row of settings buttons and their popovers, to mount beside the canvas. */
   readonly element: HTMLElement;
+  /**
+   * The group holding these buttons to one open popover at a time (spec 107).
+   * Exposed so a panel built elsewhere -- the weather's, next door -- can join
+   * it rather than have one handed down through the scene.
+   */
+  readonly menus: MenuGroup;
   /** Camera offset from the followed target, world units. */
   cameraOffset(): Vec3;
   /** Orthographic half-width (zoom); smaller frames a tighter region. */
@@ -310,12 +323,11 @@ function makeTextChoice(
   };
 }
 
-function section(text: string): HTMLElement {
-  const el = document.createElement('div');
-  el.textContent = text;
-  el.style.cssText = 'font-weight:600;color:#e8e8f2;letter-spacing:.04em;text-transform:uppercase;font-size:11px;';
-  return el;
-}
+/**
+ * What a popover is built from: a section heading, or a widget -- whose row is
+ * appended and whose `reset` that popover's Reset button drives (spec 107).
+ */
+type PanelRow = HTMLElement | ({ readonly row: HTMLElement } & Resettable);
 
 /** Bring an angle in radians into whole degrees within [0, 360). */
 function wrapDeg(radians: number): number {
@@ -332,6 +344,12 @@ export interface ViewControlOptions {
    * post pass, so those rows would be controls that visibly do nothing.
    */
   readonly lighting?: boolean;
+  /**
+   * The group these buttons belong to (spec 107). Defaults to one of their own,
+   * which is what the sandboxes want -- there is no other popover in the corner
+   * for them to be exclusive with.
+   */
+  readonly group?: MenuGroup;
 }
 
 /** Build the slider panel; the returned getters reflect the live slider state. */
@@ -339,17 +357,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   const camOrbit = offsetToOrbit(DEFAULT_CAMERA_OFFSET);
   const lightOrbit = offsetToOrbit(DEFAULT_LIGHT_OFFSET);
   const lighting = opts.lighting ?? true;
-
-  const panel = document.createElement('div');
-  panel.style.cssText =
-    "font-family:'Segoe UI',system-ui,sans-serif;color:#c9c9d8;font-size:12px;" +
-    'display:none;flex-direction:column;gap:10px;width:210px;padding:14px;box-sizing:border-box;' +
-    // Anchored to the cog's right edge so it opens *inward*: the cog sits in the
-    // game window's top-right corner, and a left-anchored panel would open off
-    // the viewport. Capped in height (and scrollable) so a short window can't
-    // push its lower sliders off the bottom either.
-    'position:absolute;top:38px;right:0;z-index:10;max-height:calc(100vh - 90px);overflow-y:auto;' +
-    'background:#1c1c26;border:1px solid #2a2a3a;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.45);';
+  const menus = opts.group ?? createMenuGroup();
 
   const camAz = makeSlider('Orbit', 0, 360, 1, wrapDeg(camOrbit.azimuth), '°',
     'Rotate the follow camera around the unit (compass azimuth, in degrees).');
@@ -565,118 +573,89 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     'Turn the vertex normal with the wind bend. Does nothing while normals are flat-shaded; with ' +
     'smooth normals on, leaving it off is what makes a leaning canopy light as though it were upright.');
 
-  const reset = document.createElement('button');
-  reset.textContent = 'Reset';
-  reset.title = 'Restore the camera, light, and terrain overlay to their defaults.';
-  reset.style.cssText =
-    "font-family:inherit;font-size:12px;margin-top:2px;padding:6px 10px;border-radius:6px;cursor:pointer;" +
-    'border:1px solid #2a2a3a;background:#252533;color:#e8e8f2;';
-  reset.addEventListener('click', () => {
-    const widgets = [camAz, camEl, zoom, followLag, lightAz, lightEl, unwalkable,
-      dayNight, timeOfDay, clockRunning, dayLength,
-      torchOn, torchRange, torchBright, torchFlickerDepth, torchShadows,
-      magicOn, magicRange, magicBright, spawners,
-      retroOn, levels, dither, weave, weaveScale, pixelSize, gradeChoice, gradeStrength,
-      smoothNormals, creaseAngle, swayNormals, lowRes, virtualSize, snapCamera, buffers, edges, depthThreshold, normalThreshold, skyOutline, paletteChoice, ink, inkStart, inkEnd, inkFlatten, inkDesat, inkFog, inkEdgeGain,
-      minNeighbours, curvature, curvatureStrength, softShadows, shadowRadius,
-      triplanar, detailStrength, detailScale, detailSharpness, materialBlend, blendStrength, blendNoise,
-      debugView];
-    for (const w of widgets) w.reset();
-  });
-
-  panel.append(section('Camera'), camAz.row, camEl.row, zoom.row, followLag.row);
-  if (lighting) {
-    panel.append(section('Sky'), dayNight.row, timeOfDay.row, clockRunning.row, dayLength.row);
-  }
-  panel.append(section('Light'), lightAz.row, lightEl.row);
-  if (lighting) {
-    panel.append(
-      section('Player light'),
-      torchOn.row,
-      torchRange.row,
-      torchBright.row,
-      torchFlickerDepth.row,
-      torchShadows.row,
-      magicOn.row,
-      magicRange.row,
-      magicBright.row,
-    );
-  }
-  panel.append(
-    section('Terrain'),
-    unwalkable.row,
-    spawners.row,
-    section('Retro'),
-    retroOn.row,
-    levels.row,
-    dither.row,
-    weave.row,
-    weaveScale.row,
-    pixelSize.row,
-  );
-  if (lighting) panel.append(gradeChoice.row, gradeStrength.row);
-  panel.append(
-    section('Hike'),
-    lowRes.row,
-    virtualSize.row,
-    snapCamera.row,
-    smoothNormals.row,
-    creaseAngle.row,
-    swayNormals.row,
-    buffers.row,
-    edges.row,
-    depthThreshold.row,
-    normalThreshold.row,
-    skyOutline.row,
-    paletteChoice.row,
-    ink.row,
-    inkStart.row,
-    inkEnd.row,
-    inkFlatten.row,
-    inkDesat.row,
-    inkFog.row,
-    inkEdgeGain.row,
-    minNeighbours.row,
-    curvature.row,
-    curvatureStrength.row,
-    softShadows.row,
-    shadowRadius.row,
-    triplanar.row,
-    detailStrength.row,
-    detailScale.row,
-    detailSharpness.row,
-    materialBlend.row,
-    blendStrength.row,
-    blendNoise.row,
-    debugView.row,
-  );
-  panel.append(reset);
-
-  // The cog button toggles the popover; a highlighted state marks it open.
-  const cog = document.createElement('button');
-  cog.type = 'button';
-  cog.textContent = '⚙';
-  cog.title = 'View settings';
-  cog.setAttribute('aria-label', 'View settings');
-  const styleCog = (open: boolean): void => {
-    cog.style.cssText =
-      'font-size:18px;line-height:1;width:32px;height:32px;border-radius:8px;cursor:pointer;' +
-      `border:1px solid #2a2a3a;color:#e8e8f2;` +
-      (open ? 'background:#2a2a3a;' : 'background:#1c1c26;');
+  // One popover per subject (spec 107). `fill` takes headings and widgets in the
+  // order they should read and wires the panel's own Reset from the widgets it
+  // was given, so what a menu holds and what its Reset restores cannot drift
+  // apart -- which is exactly what the one flat list at the bottom of this file
+  // used to invite.
+  const fill = (panel: HTMLElement, tip: string, rows: readonly PanelRow[]): void => {
+    const widgets: Resettable[] = [];
+    for (const row of rows) {
+      if ('row' in row) {
+        panel.append(row.row);
+        widgets.push(row);
+      } else {
+        panel.append(row);
+      }
+    }
+    panel.append(resetButton(tip, widgets));
   };
-  styleCog(false);
-  cog.addEventListener('click', () => {
-    const open = panel.style.display === 'none';
-    panel.style.display = open ? 'flex' : 'none';
-    styleCog(open);
-  });
 
+  const view = createSettingsMenu({ glyph: '⚙', label: 'View settings', group: menus });
+  fill(view.panel, 'Restore the camera and the terrain overlays to their defaults.', [
+    section('Camera'), camAz, camEl, zoom, followLag,
+    section('Terrain'), unwalkable, spawners,
+  ]);
+
+  // The sun. The manual sliders live with the cycle rather than with the camera
+  // because they *are* the sun -- they drive it whenever the cycle is off, which
+  // in the sandboxes is always, and this menu is then only those two rows.
+  const sun = createSettingsMenu({
+    glyph: '☀',
+    label: lighting ? 'Day and night' : 'Light',
+    group: menus,
+    fontSize: 17,
+  });
+  fill(sun.panel, 'Restore the clock and the sun to their defaults.', [
+    ...(lighting ? [section('Sky'), dayNight, timeOfDay, clockRunning, dayLength] : []),
+    section('Sun'), lightAz, lightEl,
+  ]);
+
+  // The player's own two lights, and only where they exist.
+  const lights = lighting
+    ? createSettingsMenu({ glyph: '✦', label: 'Player lights', group: menus, fontSize: 16 })
+    : null;
+  if (lights) {
+    fill(lights.panel, 'Restore the torch and the magic light to their defaults.', [
+      section('Torch'), torchOn, torchRange, torchBright, torchFlickerDepth, torchShadows,
+      section('Magic light'), magicOn, magicRange, magicBright,
+    ]);
+  }
+
+  // The two post passes, together: the grade applies whether or not the image is
+  // dithered, but both are things done to the finished frame rather than to the
+  // world. The grade is a lighting row and the retro filter is not, which is why
+  // only one of them is conditional.
+  const filter = createSettingsMenu({ glyph: '▦', label: 'Retro filter', group: menus, fontSize: 16 });
+  fill(filter.panel, 'Restore the retro filter and the colour grade to their defaults.', [
+    section('Retro'), retroOn, levels, dither, weave, weaveScale, pixelSize,
+    ...(lighting ? [section('Colour'), gradeChoice, gradeStrength] : []),
+  ]);
+
+  const hikeMenu = createSettingsMenu({ glyph: '❖', label: 'Hike look', group: menus, fontSize: 16 });
+  fill(hikeMenu.panel, 'Switch every step of the hike look back off (spec 097).', [
+    section('Buffer'), lowRes, virtualSize, snapCamera,
+    section('Normals'), smoothNormals, creaseAngle, swayNormals,
+    section('Outlines'), buffers, edges, depthThreshold, normalThreshold, skyOutline, minNeighbours,
+    section('Palette'), paletteChoice,
+    section('Distance'), ink, inkStart, inkEnd, inkFlatten, inkDesat, inkFog, inkEdgeGain,
+    section('Surfaces'), curvature, curvatureStrength, softShadows, shadowRadius,
+    triplanar, detailStrength, detailScale, detailSharpness,
+    materialBlend, blendStrength, blendNoise,
+    section('Debug'), debugView,
+  ]);
+
+  // One row of buttons; every popover hangs off its own, anchored to that
+  // button's right edge, so the set grows leftwards from the corner.
   const element = document.createElement('div');
-  element.style.cssText = 'position:relative;';
-  element.append(cog, panel);
+  element.style.cssText = 'display:flex;gap:6px;';
+  element.append(view.element, sun.element);
+  if (lights) element.append(lights.element);
+  element.append(filter.element, hikeMenu.element);
 
   return {
     element,
+    menus,
     // Non-passive: the wheel is the zoom here, so it must not also scroll the page.
     attachWheelZoom: (target: HTMLElement) => {
       target.addEventListener(

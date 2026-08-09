@@ -1,15 +1,19 @@
 import { screenVisibility, WIND_BEARING_DEG, WIND_LIMITS } from './wind.js';
 import { setWindBearing, setWindSpeed, setWindStrength } from './wind-uniforms.js';
+import { createMenuGroup, type MenuGroup } from './menu-group.js';
+import { createSettingsMenu, resetButton, section } from './settings-menu.js';
 
 /**
- * The weather panel (spec 075): a second popover beside the view cog, holding
- * the three knobs on the wind.
+ * The weather panel (spec 075): a popover of its own beside the view settings,
+ * holding the three knobs on the wind.
  *
  * A panel of its own rather than another section inside the view settings, for
  * the same reason spec 034 put the camera behind a cog in the first place: that
  * one is already twenty-odd rows deep and scrolls on a short window. Weather is
  * also a different *kind* of thing -- the view settings describe how the world
- * is looked at, and these describe what the world is doing.
+ * is looked at, and these describe what the world is doing. Spec 107 took the
+ * argument the rest of the way and split that panel into five; this one joins
+ * their group, so opening it closes whichever of them was open.
  *
  * ## Why this one writes instead of being polled
  *
@@ -57,9 +61,10 @@ interface Knob {
  *
  * Deliberately a local copy of the shape `view-controls.ts` uses rather than a
  * shared widget module: that one's sliders are read by a polling caller and have
- * no change callback, and threading one through it would touch twenty-odd rows
- * to serve three. If a third panel wants sliders, that is the moment to lift
- * these out -- not before.
+ * no change callback, and threading one through it would touch sixty-odd rows to
+ * serve three. Spec 107 lifted out what the two panels genuinely share -- the
+ * button, the popover, the heading and the Reset, all in `settings-menu.ts` --
+ * and left the sliders alone, because that difference is real.
  */
 function makeSlider(
   label: string,
@@ -110,13 +115,6 @@ function makeSlider(
   };
 }
 
-function section(text: string): HTMLElement {
-  const el = document.createElement('div');
-  el.textContent = text;
-  el.style.cssText = 'font-weight:600;color:#e8e8f2;letter-spacing:.04em;text-transform:uppercase;font-size:11px;';
-  return el;
-}
-
 /**
  * How a bearing reads in words. A compass point is what someone picturing wind
  * actually has in their head; the degrees are there for repeatability.
@@ -132,17 +130,18 @@ export function compassPoint(bearingDeg: number): string {
   return POINTS[Math.round(wrapped / 45) % 8] ?? 'E';
 }
 
-/** Build the weather panel. Its sliders drive the shared wind uniforms directly. */
-export function createWeatherControls(): WeatherControls {
-  const panel = document.createElement('div');
-  panel.style.cssText =
-    "font-family:'Segoe UI',system-ui,sans-serif;color:#c9c9d8;font-size:12px;" +
-    'display:none;flex-direction:column;gap:10px;width:210px;padding:14px;box-sizing:border-box;' +
-    // Anchored to its button's right edge, like the view cog's, so it opens
-    // inward from the top-right corner rather than off the viewport.
-    'position:absolute;top:38px;right:0;z-index:10;max-height:calc(100vh - 90px);overflow-y:auto;' +
-    'background:#1c1c26;border:1px solid #2a2a3a;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.45);';
+export interface WeatherControlOptions {
+  /**
+   * The group that keeps one settings popover open at a time (spec 107). The
+   * Play tab passes the view settings' own group so the six buttons in that
+   * corner are exclusive; a caller that mounts this panel alone can leave it
+   * out and get a group to itself.
+   */
+  readonly group?: MenuGroup;
+}
 
+/** Build the weather panel. Its sliders drive the shared wind uniforms directly. */
+export function createWeatherControls(opts: WeatherControlOptions = {}): WeatherControls {
   const strength = makeSlider(
     'Wind strength',
     WIND_LIMITS.minStrength * 100,
@@ -187,46 +186,26 @@ export function createWeatherControls(): WeatherControls {
 
   const knobs = [strength, bearing, speed];
 
-  const reset = document.createElement('button');
-  reset.textContent = 'Reset';
-  reset.title = 'Restore the wind to the weather the world was art-directed for.';
-  reset.style.cssText =
-    "font-family:inherit;font-size:12px;margin-top:2px;padding:6px 10px;border-radius:6px;cursor:pointer;" +
-    'border:1px solid #2a2a3a;background:#252533;color:#e8e8f2;';
-  reset.addEventListener('click', () => {
-    for (const knob of knobs) knob.reset();
-  });
-
-  panel.append(section('Wind'), strength.row, bearing.row, speed.row, reset);
-
-  const button = document.createElement('button');
-  button.type = 'button';
   // A plain wave glyph rather than an emoji. The cog beside it is U+2699, which
   // every UI font carries; a weather emoji is not, and a headless Chromium
   // renders it as a tofu box -- which is what the settings button would look
   // like to anyone whose system font stack is equally sparse.
-  button.textContent = '≋';
-  button.title = 'Weather';
-  button.setAttribute('aria-label', 'Weather');
-  const style = (open: boolean): void => {
-    button.style.cssText =
-      'font-size:19px;line-height:1;width:32px;height:32px;border-radius:8px;cursor:pointer;' +
-      'border:1px solid #2a2a3a;color:#e8e8f2;' +
-      (open ? 'background:#2a2a3a;' : 'background:#1c1c26;');
-  };
-  style(false);
-  button.addEventListener('click', () => {
-    const open = panel.style.display === 'none';
-    panel.style.display = open ? 'flex' : 'none';
-    style(open);
+  const menu = createSettingsMenu({
+    glyph: '≋',
+    label: 'Weather',
+    group: opts.group ?? createMenuGroup(),
+    fontSize: 19,
   });
-
-  const element = document.createElement('div');
-  element.style.cssText = 'position:relative;';
-  element.append(button, panel);
+  menu.panel.append(
+    section('Wind'),
+    strength.row,
+    bearing.row,
+    speed.row,
+    resetButton('Restore the wind to the weather the world was art-directed for.', knobs),
+  );
 
   return {
-    element,
+    element: menu.element,
     settings: () => ({
       strength: strength.value() / 100,
       bearingDeg: bearing.value(),
