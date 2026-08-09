@@ -320,7 +320,13 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
 src/render/iso3d/unit-rig.ts  a loaded authored unit, posed by a machine (spec
                  111). The three.js half of "the tool and the game read the same
                  files": load the .glb, strip root motion and say so, write a
-                 pose. `mixer.update(0)` always -- every action's time comes from
+                 pose. The root bone is found in the *loaded rig*, never taken
+                 from a document -- three sanitises `mixamorig:Hips` to
+                 `mixamorigHips` in its track names, so a name read from the
+                 skeleton JSON matches nothing, strips nothing, and looks exactly
+                 like a clean import. The reference unit could never catch that:
+                 glb.ts writes rotation channels only, so its clips have no
+                 translation to strip. `mixer.update(0)` always -- every action's time comes from
                  an integer tick, so the pose is a pure function of a tick count
                  and an event lands on the same frame at 30fps as at 144.
 src/render/iso3d/view-controls.ts, menu-group.ts, settings-menu.ts  the Play

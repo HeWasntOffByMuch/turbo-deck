@@ -70,6 +70,26 @@ function retexture(mesh: THREE.Mesh): void {
   });
 }
 
+/**
+ * The skeleton's root bone in a loaded model.
+ *
+ * Read off the rig rather than taken from a document, because the two can
+ * disagree and only one of them is what the clips will actually animate. The
+ * root is the bone with no parent inside the skeleton -- everything above it is
+ * the armature or the scene.
+ */
+function findRootBone(model: THREE.Object3D): string | null {
+  let found: string | null = null;
+  model.traverse((object) => {
+    if (found !== null || !(object instanceof THREE.SkinnedMesh)) return;
+    const bones = object.skeleton.bones;
+    const names = new Set(bones.map((bone) => bone.name));
+    const root = bones.find((bone) => bone.parent === null || !names.has(bone.parent.name));
+    found = root?.name ?? null;
+  });
+  return found;
+}
+
 export class UnitRig {
   /** The thing to add to a scene. Always present, empty until `load` resolves. */
   readonly object = new THREE.Group();
@@ -80,6 +100,8 @@ export class UnitRig {
   private model: THREE.Object3D | null = null;
   private failure: string | null = null;
   private readonly stripped: string[] = [];
+  /** The skeleton's own root bone, found in the loaded rig. */
+  private rootBone: string | null = null;
 
   /** Why the load failed, or null. */
   get error(): string | null {
@@ -89,6 +111,16 @@ export class UnitRig {
   /** Root translation channels found and removed, one message each. */
   get rootMotion(): readonly string[] {
     return this.stripped;
+  }
+
+  /**
+   * The bone the root-motion check ran against, or null when there is no rig.
+   *
+   * Worth being able to read. A check that silently ran against a bone this
+   * model does not have finds nothing and looks exactly like a clean import.
+   */
+  get rootBoneName(): string | null {
+    return this.rootBone;
   }
 
   get loaded(): boolean {
@@ -122,6 +154,7 @@ export class UnitRig {
       this.object.clear();
       this.object.add(model);
       this.model = model;
+      this.rootBone = findRootBone(model);
       this.mixer = new THREE.AnimationMixer(model);
       this.actions.clear();
       this.clipDurations.clear();
@@ -131,7 +164,12 @@ export class UnitRig {
         const clipGltf = await loader.loadAsync(url);
         const clip = clipGltf.animations[0];
         if (!clip) continue;
-        this.stripRootMotion(clip, unitId, id, assets.rootBone);
+        // The rig's own root, not a name from a document. The document might
+        // describe a different rig entirely -- which is exactly what happened:
+        // a generated unit was checked against the reference skeleton's
+        // `mixamorig:Hips`, matched nothing, stripped nothing, and walked away
+        // from where the server had put it.
+        this.stripRootMotion(clip, unitId, id, this.rootBone ?? assets.rootBone);
 
         const action = this.mixer.clipAction(clip);
         action.play();
@@ -159,8 +197,8 @@ export class UnitRig {
    * and the console says so, `npm run validate:units` fails on the same
    * condition, and the Studio panel shows it.
    */
-  private stripRootMotion(clip: THREE.AnimationClip, unitId: string, clipId: string, rootBone?: string): void {
-    if (rootBone === undefined) return;
+  private stripRootMotion(clip: THREE.AnimationClip, unitId: string, clipId: string, rootBone?: string | null): void {
+    if (rootBone === undefined || rootBone === null) return;
     const names = clip.tracks.map((track) => track.name);
     const offending = rootMotionTrackNames(names, rootBone);
     if (offending.length === 0) return;

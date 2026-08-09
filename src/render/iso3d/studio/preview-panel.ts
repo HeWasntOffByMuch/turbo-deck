@@ -132,6 +132,26 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
   let playing = true;
   let speed = 1;
   let loopClip = true;
+  /**
+   * What the viewport is showing: the selected clip, or the machine.
+   *
+   * There used to be no such choice, and that was the defect. The dropdown, the
+   * Play button, the frame steppers, the Loop toggle and the timeline all look
+   * like a clip player, and none of them played a clip -- the viewport showed
+   * whatever state the machine happened to be in, which for a unit sitting at
+   * speed zero is the idle, forever. Selecting `walk` moved the ruler and
+   * nothing else, `Loop` was read by nothing at all, and the only way to see a
+   * clip that was not currently playing was to drag the scrubber across it by
+   * hand. "The play button doesn't work most of the time" is an accurate
+   * description of that.
+   *
+   * Clip is the default because these controls are a clip player. The machine
+   * is one button away, and the graph and the parameters keep driving it either
+   * way.
+   */
+  let showing: 'clip' | 'machine' = 'clip';
+  /** Integer playhead within the selected clip, in ticks. Clip mode only. */
+  let clipFrame = 0;
   let selectedClipId = clipLib.clips[0]?.id ?? '';
   let selectedTransition: number | null = null;
   let scrub: number | null = null;
@@ -174,6 +194,7 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
   const turntableBtn = button('Turntable', 84);
   const resetCam = button('Iso preset');
   const abBtn = button('A/B: off', 74);
+  const sourceBtn = button('Showing: clip', 116);
   const frameLabel = el('span', MUTED);
   playerRow.append(
     clipSelect,
@@ -182,6 +203,7 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
     stepFwd,
     loopBtn,
     speedSelect,
+    sourceBtn,
     turntableBtn,
     resetCam,
     abBtn,
@@ -301,11 +323,17 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
     const width = timelineBox.clientWidth || 600;
     const frames = frameCount(clip.durationMs);
     const snapshot = primary.machine.snapshot();
-    const showing = scrub ?? (isClipShowing(snapshot, clip.id) ? snapshot.normalizedTime : 0);
-    const x = timeToX(showing, width);
+    const at =
+      scrub ??
+      (showing === 'clip'
+        ? clipNormalized()
+        : isClipShowing(snapshot, clip.id)
+          ? snapshot.normalizedTime
+          : 0);
+    const x = timeToX(at, width);
     playhead.setAttribute('x1', String(x));
     playhead.setAttribute('x2', String(x));
-    const label = `frame ${timeToFrame(showing, frames)} / ${frames - 1} · ${clip.durationMs}ms · ${frames} ticks`;
+    const label = `frame ${timeToFrame(at, frames)} / ${frames - 1} · ${clip.durationMs}ms · ${frames} ticks`;
     if (frameLabel.textContent !== label) frameLabel.textContent = label;
   }
 
@@ -674,10 +702,28 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
 
   clipSelect.addEventListener('change', () => {
     selectedClipId = clipSelect.value;
+    // Back to the start of the newly chosen clip, and out of any scrub: picking
+    // a clip is asking to watch it, not to land partway through it at whatever
+    // frame the last one happened to be on.
+    clipFrame = 0;
+    scrub = null;
     renderTimeline();
+  });
+
+  sourceBtn.addEventListener('click', () => {
+    showing = showing === 'clip' ? 'machine' : 'clip';
+    sourceBtn.textContent = `Showing: ${showing}`;
+    scrub = null;
+    if (showing === 'clip') clipFrame = 0;
   });
   playBtn.addEventListener('click', () => {
     playing = !playing;
+    if (playing && scrub !== null && showing === 'clip') {
+      // Carry the scrubbed position into the playhead rather than throwing it
+      // away: pressing play after dragging to an interesting frame should
+      // continue from there, not jump back to wherever the clip was.
+      clipFrame = timeToFrame(scrub, selectedFrames());
+    }
     if (playing) scrub = null;
     playBtn.textContent = playing ? 'Pause' : 'Play';
   });
@@ -687,7 +733,11 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
     playing = false;
     playBtn.textContent = 'Play';
     const frames = frameCount(clip.durationMs);
-    scrub = stepFrame(scrub ?? primary.machine.snapshot().normalizedTime, delta, frames);
+    // Stepped from where the playhead actually is. Reading the machine's
+    // normalized time while showing a clip meant a frame step jumped to
+    // wherever the machine happened to be in a different clip entirely.
+    const from = scrub ?? (showing === 'clip' ? clipNormalized() : primary.machine.snapshot().normalizedTime);
+    scrub = stepFrame(from, delta, frames);
     renderTimeline();
   };
   stepBack.addEventListener('click', () => stepBy(-1));
@@ -695,6 +745,10 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
   loopBtn.addEventListener('click', () => {
     loopClip = !loopClip;
     loopBtn.textContent = `Loop: ${loopClip ? 'on' : 'off'}`;
+    // Turning looping back on from a clip that had run to its end restarts it,
+    // rather than leaving the playhead pinned on the last frame with the button
+    // saying it is looping.
+    if (loopClip && clipFrame >= selectedFrames() - 1) clipFrame = 0;
   });
   speedSelect.addEventListener('change', () => {
     speed = Number(speedSelect.value) || 1;
@@ -722,9 +776,62 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
     }
   });
 
+  /** Frames in the selected clip, or 1 when there is no clip to count. */
+  function selectedFrames(): number {
+    const clip = clipById(selectedClipId);
+    return clip ? Math.max(1, frameCount(clip.durationMs)) : 1;
+  }
+
+  /**
+   * Where the clip playhead is, 0..1.
+   *
+   * Divided the way the machine divides it, so the timeline reads the same in
+   * both modes: a looping clip's last frame sits just short of 1 and wraps to a
+   * new frame, and a one-shot genuinely reaches 1 rather than stopping a frame
+   * early on a pose nobody authored.
+   */
+  function clipNormalized(): number {
+    const frames = selectedFrames();
+    const clip = clipById(selectedClipId);
+    if (clip?.loop === true) return Math.min(1, clipFrame / frames);
+    return frames <= 1 ? 1 : Math.min(1, clipFrame / (frames - 1));
+  }
+
+  /** Advances the clip playhead one tick, wrapping or holding at the end. */
+  function advanceClip(): void {
+    const frames = selectedFrames();
+    const clip = clipById(selectedClipId);
+    const looping = loopClip && clip?.loop !== false;
+    clipFrame += 1;
+    if (clipFrame <= frames - 1) return;
+    // `loopClip` off holds the last frame rather than snapping to the first,
+    // which is what makes stepping to the end of a one-shot and looking at it
+    // possible at all.
+    clipFrame = looping ? 0 : frames - 1;
+  }
+
   // --- the frame ------------------------------------------------------------
 
   function frame(now: number): void {
+    // The loop keeps going even if a frame throws. It used to not: one
+    // exception anywhere in here and the last line -- the request for the next
+    // frame -- never ran, so the panel froze mid-pose with every control still
+    // responding. "The play button doesn't work" is what that looks like from
+    // the outside, and nothing said otherwise.
+    try {
+      drawFrame(now);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      if (status !== `preview frame failed: ${message}`) {
+        status = `preview frame failed: ${message}`;
+        renderStatus();
+        console.error('[studio] preview frame failed', cause);
+      }
+    }
+    raf = requestAnimationFrame(frame);
+  }
+
+  function drawFrame(now: number): void {
     const elapsed = last === 0 ? TICK_MS : Math.min(200, now - last);
     last = now;
 
@@ -738,6 +845,7 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
         stepped += 1;
         primary.machine.step(1);
         secondary?.machine.step(1);
+        if (showing === 'clip') advanceClip();
       }
     }
 
@@ -750,6 +858,13 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
         primary.preview.applyPoses([{ clipId: clip.id, normalizedTime: scrub, weight: 1 }]);
         secondary?.preview.applyPoses([{ clipId: clip.id, normalizedTime: scrub, weight: 1 }]);
       }
+    } else if (showing === 'clip') {
+      const clip = clipById(selectedClipId);
+      if (clip) {
+        const poses = [{ clipId: clip.id, normalizedTime: clipNormalized(), weight: 1 }];
+        primary.preview.applyPoses(poses);
+        secondary?.preview.applyPoses(poses);
+      }
     } else {
       primary.preview.applyPoses(primary.machine.poses());
       if (secondary) secondary.preview.applyPoses(secondary.machine.poses());
@@ -759,15 +874,19 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
     secondary?.preview.render(elapsed / 1000);
 
     const snapshot = primary.machine.snapshot();
+    // Names what is on screen, not just what the machine is doing: in clip mode
+    // those are different things, and a label that only ever said the machine's
+    // state was part of why the viewport seemed not to respond.
     const label =
-      `A — ${snapshot.stateId}${snapshot.previousStateId ? ` ← ${snapshot.previousStateId} (${Math.round(snapshot.blend * 100)}%)` : ''}` +
-      `${snapshot.actionPhase ? ` · ${snapshot.actionPhase}` : ''}`;
+      showing === 'clip'
+        ? `A — clip ${selectedClipId}${playing ? '' : ' (paused)'} · machine in ${snapshot.stateId}`
+        : `A — ${snapshot.stateId}${snapshot.previousStateId ? ` ← ${snapshot.previousStateId} (${Math.round(snapshot.blend * 100)}%)` : ''}` +
+          `${snapshot.actionPhase ? ` · ${snapshot.actionPhase}` : ''}`;
     if (primary.label.textContent !== label) primary.label.textContent = label;
     // Both of these are guarded: they move a playhead and a highlight, and only
     // rebuild when the clip or the machine's shape has actually changed.
     renderTimeline();
     renderGraph();
-    raf = requestAnimationFrame(frame);
   }
 
   refreshClipList();
@@ -824,6 +943,12 @@ export function mountPreview(source: PreviewSource, save: SaveDocument | null): 
         status = primary.preview.error
           ? `could not load the model: ${primary.preview.error}`
           : `${stats.triangles} triangles, ${stats.bones} bones, ${stats.vertices} vertices · import scale ${fitted.toFixed(2)} · reference silhouette is ${PLAYER_REFERENCE_HEIGHT} world units`;
+        // The root is named either way. A check that found nothing looks
+        // identical to a check that ran against a bone the rig does not have,
+        // and the second one ships a unit that walks away from where the server
+        // put it -- so the bone it ran against is on screen rather than implied.
+        const bone = primary.preview.rootBoneName;
+        status = `${status} · root ${bone ?? 'not found'}`;
         if (stripped.length > 0) status = `${status} · ROOT MOTION STRIPPED — ${stripped.join(' ')}`;
         renderStatus();
       });

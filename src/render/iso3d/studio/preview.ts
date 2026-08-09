@@ -208,6 +208,11 @@ export class UnitPreview {
     return this.rig.rootMotion;
   }
 
+  /** The bone the root-motion check ran against, found in the loaded rig. */
+  get rootBoneName(): string | null {
+    return this.rig.rootBoneName;
+  }
+
   /**
    * Loads the mesh and every clip, through the game's own loader.
    *

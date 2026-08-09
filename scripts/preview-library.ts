@@ -217,17 +217,88 @@ async function main(): Promise<void> {
       if (/mannequin/.test(after) && !after.includes(UNIT_ID)) {
         failures.push('the panel is still showing the reference unit');
       }
+
+      // Scrolled into view before anything is clicked. The tab shell scrolls
+      // inside a fixed-height container, so the player's controls start below
+      // the fold -- and a `fullPage` screenshot of this flow would otherwise
+      // stop above the thing it is a screenshot of.
+      await page.evaluate(() => {
+        const headings = Array.from(document.querySelectorAll('h2'));
+        headings.find((node) => /preview/i.test(node.textContent ?? ''))?.scrollIntoView();
+      });
+      await page.waitForTimeout(600);
+
+      // --- the root-motion check ran against a bone this rig actually has ---
+      //
+      // It used to run against a name taken from the reference skeleton's
+      // document, which for a generated unit is a different rig: it matched
+      // nothing, stripped nothing, and the body walked away from where the
+      // server had put it. A check that found nothing and a check that ran
+      // against the wrong bone look identical, so the bone is reported.
+      const rootLine = /root (\S+)/.exec(after);
+      if (!rootLine) {
+        failures.push('the panel does not say which bone the root-motion check ran against');
+      } else if (rootLine[1] === 'not') {
+        failures.push('no root bone was found in the loaded rig, so root motion cannot be stripped');
+      } else {
+        console.log(`  root-motion check ran against ${rootLine[1]}`);
+      }
+
+      // --- the clip player actually plays the selected clip ------------------
+      //
+      // The reported symptom: "the play button doesn't work most of the time".
+      // It didn't -- the dropdown moved the ruler, `Loop` was read by nothing at
+      // all, and the viewport showed whatever state the machine was in, which
+      // for a unit standing at speed zero is the idle forever.
+      const frameLabel = async (): Promise<string> => {
+        const panel = await page.locator('#app').innerText();
+        return /frame \d+ \/ \d+/.exec(panel)?.[0] ?? '';
+      };
+      /** Waits for the playhead to move, rather than sampling on a fixed delay. */
+      const advancedFrom = async (was: string, withinMs: number): Promise<boolean> => {
+        const deadline = Date.now() + withinMs;
+        while (Date.now() < deadline) {
+          if ((await frameLabel()) !== was) return true;
+          await page.waitForTimeout(120);
+        }
+        return false;
+      };
+
+      // `walk` rather than the swing: a one-shot clamps on its last frame, so
+      // two samples either side of its end are equal and a naive check calls a
+      // working player broken.
+      const clipSelect = page.locator('#app select:visible').first();
+      await clipSelect.selectOption('walk');
+      await page.waitForTimeout(300);
+      // Waited for, not sampled. The label is written by the render loop, and
+      // under software GL in a container that loop runs at a handful of frames
+      // a second -- a single read 300ms after the click is reading the frame
+      // before the click as often as not.
+      const showsWalk = await page
+        .locator('#app')
+        .filter({ hasText: 'clip walk' })
+        .first()
+        .waitFor({ timeout: 5000 })
+        .then(() => true)
+        .catch(() => false);
+      if (!showsWalk) failures.push('selecting a clip did not change what the viewport is showing');
+
+      const started = await frameLabel();
+      if (started === '') {
+        failures.push('the player shows no frame counter at all');
+      } else if (!(await advancedFrom(started, 3000))) {
+        failures.push(`the selected clip is not playing: frame label stuck at "${started}"`);
+      } else {
+        console.log(`  clip player advanced from ${started}`);
+      }
+
+      // And Pause actually stops it.
+      await page.getByRole('button', { name: 'Pause', exact: true }).click();
+      await page.waitForTimeout(200);
+      const paused = await frameLabel();
+      if (await advancedFrom(paused, 1000)) failures.push('Pause did not stop the clip player');
     }
 
-    // Scrolled into view first. The tab shell scrolls inside a fixed-height
-    // container, so `fullPage` captures the viewport and nothing below it -- a
-    // screenshot of this flow that stops above the preview is a screenshot of
-    // the wrong thing.
-    await page.evaluate(() => {
-      const headings = Array.from(document.querySelectorAll('h2'));
-      headings.find((node) => /preview/i.test(node.textContent ?? ''))?.scrollIntoView();
-    });
-    await page.waitForTimeout(600);
     await page.screenshot({ path: join(outDir, 'studio-library.png') });
     console.log(`  wrote ${join('.claude', 'screenshots', 'studio-library.png')}`);
 
