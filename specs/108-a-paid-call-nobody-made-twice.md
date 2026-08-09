@@ -39,7 +39,25 @@ changes the output. An identical request returns the existing job's artifacts
 and spends nothing.
 
 **Never auto-retry.** A failed paid call moves the job to `failed` and stops.
-Re-running is a new job, deliberately created, priced and confirmed again.
+Nothing on a timer, no boot-time sweep and no loop anywhere picks it back up.
+
+**But a person may say carry on.** The first draft of this rule said re-running
+was a *new job*, and that turned out to be the more expensive answer: a retarget
+that fails on its third clip strands a mesh and a rig that were paid for and are
+sitting on disk, and a new job buys both again — 75 credits to recover from a 25
+credit call going wrong. So a failed job has a `retry` that resumes at the stage
+that failed, priced by `projectRemaining` (what is already `done` costs nothing,
+and a clip already downloaded is not bought twice) and redeemed with the same
+one-shot confirmation token a fresh generation needs. The machine still never
+decides to spend again; the operator can, having been shown the number.
+
+Two things make that safe rather than a retry loop with extra steps. Only the
+failed stage is rewound — `creditsConsumed` stays on every step, so failing
+repeatedly cannot walk past a ceiling. And a task the API itself reported
+`failed` is dropped from `inFlight` while one we merely *timed out on* is kept:
+the first is a corpse and re-polling it would make the retry unable to move, the
+second may still be running and billing, so re-polling it is free where
+re-submitting would not be.
 
 **Persist before submit.** The job record is written to disk *before* the
 request goes out, never after, so a process that dies mid-call still knows a
@@ -120,7 +138,16 @@ Money:
 - A projection that fits alone but pushes the day over the per-day ceiling
   blocks before any request is sent.
 - The day total counts entries by UTC day and ignores other days.
-- A failed step never schedules another attempt.
+- A failed step never schedules another attempt: no timer, no loop, and a
+  restart's resume sweep leaves it alone.
+- A retry resumes at the failed stage and re-buys nothing that is already
+  `done` — a failed retarget does not pay for the mesh or the rig again.
+- A retry is quoted at the remaining cost, not the job's, and clips already on
+  disk are not in the quote.
+- A task the API called failed is dropped from `inFlight`; a task we timed out
+  on is kept, so a retry re-polls it rather than paying for another.
+- `retry` refuses anything that is not `failed`, and `resume` refuses anything
+  that is not `blocked`.
 - An identical request after a success is a cache hit: no request is sent and
   the existing artifacts come back.
 - A cache key changes when any parameter that changes the output changes, and

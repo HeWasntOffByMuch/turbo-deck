@@ -173,7 +173,12 @@ src/server/studio/  the unit authoring service (spec 108). Node-only, wired in f
                  before anything is sent, the job record is written BEFORE the
                  submit, a model URL is downloaded in the same handler that saw
                  it succeed (they expire in ~5 minutes) and never stored, and a
-                 failed paid call is never retried. jobs.json is rewritten
+                 failed paid call is never retried *by the machine* -- nothing on
+                 a timer picks one back up, but a person can retry it from the
+                 stage that failed, priced at what is left rather than at the
+                 job's original cost, because a retarget that dies on its third
+                 clip must not cost a fresh mesh and rig to recover from.
+                 jobs.json is rewritten
                  atomically; ledger.jsonl is append-only. State lives in
                  .studio/ and is gitignored.
 src/render/      the client: a tab shell over the play view, the two tuning
