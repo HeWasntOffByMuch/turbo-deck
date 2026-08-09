@@ -1,0 +1,142 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://turbo-deck.local/schemas/skeleton.schema.json",
+  "title": "skeleton.json",
+  "description": "One rig family (spec 107). The bone contract every unit in the family is verified against, and the canonical height every mesh is normalized to.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "formatVersion",
+    "id",
+    "naming",
+    "upAxis",
+    "forwardAxis",
+    "canonicalHeight",
+    "boneBudget",
+    "bones",
+    "sockets",
+    "bindPose"
+  ],
+  "properties": {
+    "$comment": {
+      "description": "A note for whoever opens the file next. JSON has no comments and additionalProperties is false, so without this there is nowhere to write down why a number is the number it is.",
+      "type": "string"
+    },
+    "formatVersion": {
+      "description": "Bumped on any incompatible change. Readers reject a version they do not know rather than guessing.",
+      "type": "integer",
+      "const": 1
+    },
+    "id": { "$ref": "#/definitions/identifier" },
+    "naming": {
+      "description": "The bone naming spec this family follows. A field rather than an assumption, so a non-biped family is a new file and not a new format.",
+      "type": "string",
+      "enum": ["mixamo"]
+    },
+    "upAxis": { "$ref": "#/definitions/axis" },
+    "forwardAxis": { "$ref": "#/definitions/axis" },
+    "canonicalHeight": {
+      "description": "Floor to crown, in WORLD units -- this project's world is not metric. Every mesh in the family is scaled so its standing height matches.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "boneBudget": {
+      "description": "Inclusive bone-count bounds. Outside them is an error: too few cannot deform, too many is paying for finger joints nobody sees at this camera.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max"],
+      "properties": {
+        "min": { "type": "integer", "minimum": 1 },
+        "max": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "bones": {
+      "description": "Ordered. Array order IS the canonical bone order, and a parent must appear before its children.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "parent"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "parent": {
+            "description": "The parent bone's name, or null for the single root.",
+            "type": ["string", "null"],
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "sockets": {
+      "description": "Named attachment points -- a weapon hand, an effect origin -- so content refers to 'weapon.main' rather than to a bone name.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "bone"],
+        "properties": {
+          "id": { "$ref": "#/definitions/identifier" },
+          "bone": { "type": "string", "minLength": 1 },
+          "offset": { "$ref": "#/definitions/vec3" }
+        }
+      }
+    },
+    "bindPose": {
+      "description": "The measured rest pose, or null while the skeleton is PROVISIONAL -- the bone contract written down before any rig has been measured against it. Provisional warns on its own and blocks any unitdef that references it.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "bones"],
+          "properties": {
+            "source": {
+              "description": "The .glb the bind pose was read out of.",
+              "type": "string",
+              "minLength": 1
+            },
+            "bones": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "translation", "rotation", "scale"],
+                "properties": {
+                  "name": { "type": "string", "minLength": 1 },
+                  "translation": { "$ref": "#/definitions/vec3" },
+                  "rotation": {
+                    "description": "Quaternion, xyzw, matching glTF's own ordering.",
+                    "type": "array",
+                    "minItems": 4,
+                    "maxItems": 4,
+                    "items": { "type": "number" }
+                  },
+                  "scale": { "$ref": "#/definitions/vec3" }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "definitions": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-zA-Z][a-zA-Z0-9_.-]*$"
+    },
+    "axis": {
+      "type": "string",
+      "enum": ["+X", "-X", "+Y", "-Y", "+Z", "-Z"]
+    },
+    "vec3": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": { "type": "number" }
+    }
+  }
+}

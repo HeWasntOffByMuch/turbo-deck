@@ -58,6 +58,9 @@ change a game outcome.
 | `npm run test:watch` | Vitest in watch mode |
 | `npm run typecheck` | `tsc --noEmit` against the strict tsconfig |
 | `npm run lint` | ESLint over the whole repo |
+| `npm run validate:units` | Validate every authored unit document in `assets/units/` |
+| `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
+| `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
 | `npm run server` | The authoritative server, plus the admin console |
@@ -104,6 +107,10 @@ merge time.
 
 ```
 specs/           spec markdown, one file per system, written before its code
+schemas/         JSON Schema (draft-07) for the three unit documents, committed
+                 and validated against in CI. additionalProperties is false
+                 throughout, so a typo'd key in a hand-edited file is an error with
+                 a pointer at it rather than a field that silently does nothing.
 maps/            the world, as a map document (spec 072). arena.json is what the
                  server loads at boot and streams to clients; regenerate it with
                  `npx tsx scripts/bake-map.ts`, or edit it in the Map editor tab
@@ -125,6 +132,116 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  the recipe's field in over a short skirt.
 src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
                  collision and pathfinding helpers the server collides against
+src/units/       the unit authoring format and its validator (spec 107): the three
+                 JSON documents a unit is made of -- skeleton.json (one rig family,
+                 mixamo bone contract, canonical height), cliplib.json (clips for a
+                 skeleton, events in normalized time) and <unit>.unitdef.json (mesh,
+                 provenance, import overrides and the state machine). Structure is
+                 checked against the committed schemas in schemas/ with ajv; what a
+                 JSON Schema cannot say -- reference resolution, bone ordering, the
+                 time-scale bound -- is hand written beside it in validate.ts. Pure
+                 and part of the deterministic core, because the Studio tab, the
+                 export path, CI and the game's runtime all read these documents
+                 through this one parser. The rule the format exists to enforce is
+                 that gameplay timing is authoritative and the clip is rescaled to
+                 fit, bounded in both directions. `npm run validate:units`.
+                 manifest.ts is what both ends agree on (spec 113): a sha256
+                 over every asset, exchanged at connect, and a mismatch is a
+                 refused connection -- a client on stale assets draws a fight
+                 that is not the one being played and nothing looks wrong until
+                 somebody notices. An *absent* client hash is allowed, because
+                 the in-tab server and the bot harness share a process with what
+                 they connect to. `npm run bake:units` writes it; decimation,
+                 meshopt and KTX2 are deferred rather than faked, and
+                 `builtStages` records what actually ran.
+                 glb-read.ts, skin.ts and mesh-check.ts are the half that reads
+                 the *vertices* (spec 115), because every other check here reads
+                 a document and none of the ways a generated rig actually fails
+                 are in a schema. The reader takes the binary chunk and refuses
+                 what it cannot honestly decode; skin.ts is linear blend skinning
+                 on the CPU and deliberately does not renormalize weights, since
+                 a mesh that shrinks as it poses is the thing being looked for;
+                 mesh-check.ts is weight sums, a second influence set the runtime
+                 silently drops, joint indices, vertices bound to nothing or drawn
+                 by nothing, degenerate triangles, whether the bind pose is a T/A
+                 or somebody's idle, and what four extreme poses do to the body.
+                 Two rules learned the hard way: pose axes are the *body's*,
+                 measured off the hips, because "rotate the shoulder about Z"
+                 assumes the mixamo arm axis and on a rig whose arms run along Z
+                 it rolls each arm about its own length and scores a flawless zero
+                 on a pose it never applied; and deformation is measured by area,
+                 never by normal direction, because a triangle carried rigidly by
+                 a bone that turns 100 degrees has a normal that turned 100
+                 degrees and nothing about it inverted. Errors fail
+                 `npm run bake:units`, deformation findings warn, and
+                 `npx tsx scripts/preview-deform.ts` is the picture a person
+                 decides from. skeleton-from-rig.ts turns a rigged .glb into a
+                 family's skeleton document, which is what lets a new rig family
+                 be exported at all and what finally fills in a provisional one;
+                 compareToFamily is the shared-skeleton rule as a check, since the
+                 family's one clip library animates every unit in it.
+                 canonical-height.ts is the height a body is drawn at, in one
+                 place rather than inside one hand-written asset.
+                 scaffold.ts derives a first unitdef for a unit that has just
+                 been generated (spec 112) -- a clip library over what was
+                 actually retargeted, and a machine reaching only the states the
+                 runtime can drive, with the action split out of the clip's own
+                 length so the rate is 1.0 before anybody tunes it.
+                 bundle.ts is the one way a unit is read (spec 111): the Studio
+                 tab and the game both call loadUnitBundle rather than casting
+                 their imports, so a broken document is refused at both ends
+                 instead of at neither. root-motion.ts names translation on the
+                 root bone, in a clip's glTF JSON for CI and in three.js track
+                 names for the importer -- one rule, so the gate and the loader
+                 cannot disagree about what counts.
+                 machine.ts is the state machine BOTH the Studio tab and the game
+                 drive (specs 110-111) -- one machine, two callers, which is what
+                 makes "the tool and the game read the same files" a fact about
+                 the module graph rather than a promise. It advances in whole
+                 60Hz ticks and fires events on integer frame crossing, walking
+                 one tick at a time, so an overshooting step cannot skip an event
+                 or fire one twice. glb.ts writes a .glb (glTF is JSON plus a
+                 binary chunk; a writer for the subset we emit is smaller than
+                 the argument for a dependency) and reference-unit.ts is the
+                 mannequin it writes: a real skinned biped on the mixamo
+                 contract, authored at ~1.7 units like a real rig so the ~32x
+                 import scale is measured rather than invented. It exists so the
+                 preview, the deformation checks and the screenshot baselines
+                 have a subject before a credit is spent.
+src/server/studio/  the unit authoring service (spec 108). Node-only, wired in from
+                 src/server/index.ts and imported by nothing in the server's
+                 portable half, because this is where the Tripo API key lives.
+                 tripo.ts is the ONLY file that knows the API's paths and field
+                 names, so the first real call corrects one file; everything
+                 above it speaks TaskHandle/TaskResult. The half that decides
+                 whether to spend -- cache.ts, confirm.ts, jobs.ts, ledger.ts,
+                 pacing.ts, pricing.ts -- is pure, clock-injected and linted as
+                 part of the deterministic core, and is driven end to end in
+                 tests through a fake fetch. The interlocks: confirmation is a
+                 server-issued one-shot token rather than a browser boolean,
+                 ceilings are checked against spend-so-far plus the projection
+                 before anything is sent, the job record is written BEFORE the
+                 submit, a model URL is downloaded in the same handler that saw
+                 it succeed (they expire in ~5 minutes) and never stored, and a
+                 failed paid call is never retried *by the machine* -- nothing on
+                 a timer picks one back up, but a person can retry it from the
+                 stage that failed, priced at what is left rather than at the
+                 job's original cost, because a retarget that dies on its third
+                 clip must not cost a fresh mesh and rig to recover from.
+                 A family's clip library can be handed back (spec 114): the first
+                 job to succeed owned it forever, including when its clips were
+                 the ones you would not ship, and the only escape was inventing a
+                 second family name. Releasing is free and never touches what was
+                 paid for; it changes the price of the *next* generation, which is
+                 what the button says rather than saying "this is free".
+                 family.ts is where a skeleton document comes from at export time
+                 (spec 115) -- measured off the rig when there is none, filled in
+                 when the one there is provisional, and never overwritten once it
+                 has a bind pose, because from then on it is the contract the next
+                 rig of the family is checked against.
+                 jobs.json is rewritten
+                 atomically; ledger.jsonl is append-only. State lives in
+                 .studio/ and is gitignored.
 src/render/      the client: a tab shell over the play view, the two tuning
                  sandboxes and the map editor
 src/render/cloth/ pure cloth simulation for the robed character (spec 046) --
@@ -137,6 +254,40 @@ src/render/critters/ playable animal characters as pure data (spec 055): one
                  `src/render/iso3d/critter.ts` already knows how to build it.
                  `npx tsx scripts/preview-critters.ts` renders the real rig to
                  .claude/screenshots/critters.png to check it reads at 64px.
+src/render/iso3d/studio/  the Studio tab (spec 109), the fifth entry in the tab
+                 shell: ingest, generate, library, preview and export over the
+                 spec 108 service. image-check.ts and plan.ts are pure and
+                 tested headlessly -- the first measures what pixels can
+                 actually answer about a reference image and leaves the rest as
+                 a checklist, because a green tick that means nothing is how a
+                 bad reference gets generated twice; the second derives whether
+                 a generation establishes a rig family from the library rather
+                 than from a checkbox, since that decision is money. api.ts
+                 tells "no server", "no token" and "wrong token" apart, because
+                 they have three different fixes. view.ts renders the projected
+                 cost before the button that spends it exists.
+                 preview.ts is the viewport (spec 110): the game's own RetroPass
+                 and its cog, an isometric preset, a turntable and free orbit, and
+                 a ground plane with a silhouette at the height a player is really
+                 drawn -- a unit that is subtly the wrong size looks fine alone and
+                 wrong beside something. The mixer is driven with update(0) after
+                 each action's time is written from the machine's integer tick, so
+                 the pose is a pure function of a tick count. Caveat worth knowing:
+                 this is the same control-panel TYPE as Play's, not a shared
+                 instance, so a switch has to be thrown in both places.
+                 timeline.ts, timing-bar.ts and graph-layout.ts are the panels'
+                 arithmetic, pure and tested; preview-panel.ts is the DOM over
+                 them and writes every edit back through the server.
+                 `npx tsx scripts/preview-library.ts` stands up a real
+                 authoring server over a seeded job and clicks Preview on the
+                 library card (spec 112) -- the clip lengths and the import scale
+                 only exist once three has decoded a .glb, so the flow cannot be
+                 checked anywhere else. It caught the object URLs being revoked a
+                 moment before the loader asked for them.
+                 `npx tsx scripts/preview-studio.ts` clicks all five tabs in a
+                 real browser, since a fifth array entry cannot fail a typecheck
+                 and cannot fail a headless test -- and it is the only thing that
+                 can tell whether three's GLTFLoader accepts the .glb we write.
 src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  from a loaded map document, never from the world generator.
                  camera.ts, brush.ts, scatter.ts, markers.ts, parts.ts and
@@ -178,6 +329,12 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  right-click attack order, spec 072), cast.ts, appearance.ts,
                  projectile-shape.ts and trail.ts (an arrow's and a shuriken's
                  silhouettes, and the streak a thrown star leaves, spec 087)
+                 unit-catalog.ts, unit-driver.ts and unit-lod.ts (spec 111: which
+                 monsters are drawn from an authored unit, the pure function from
+                 replicated facts to machine commands -- handed a snapshot and not
+                 the GameClient, so animation has nothing it *could* call -- and
+                 how often a distant body's pose is applied; the machine itself is
+                 never throttled, because its events are authored on frame indices)
                  pixel-font.ts (a 5x7 glyph table, since nothing may be fetched)
                  and touch.ts (taps and pinches, spec 093 -- bounded by distance
                  and never by time, because an event's stamp measures the
@@ -191,6 +348,14 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  photographs the real page into .claude/screenshots/world-*.png,
                  and `npx tsx scripts/preview-shots.ts` flies the real ShotRig
                  through a real arc into .claude/screenshots/shots.png.
+                 `npx tsx scripts/preview-units.ts` puts authored units in the
+                 real arena (`?units=grazer:mannequin`) and asserts a skinned
+                 body with 25 bones is being posed -- the half of spec 111 that
+                 only exists once a browser has fetched a .glb and skinned it.
+                 `presentation-only.test.ts` beside them is the brief's
+                 assertion: the same seed and inputs twice, once with the
+                 animation layer driven and once without, and the authoritative
+                 state must be identical.
                  `npx tsx scripts/preview-arcs.ts` plots what a shot's path
                  actually is, flown through the real step: one weapon at a
                  spread of distances, and the same shot over flat and broken
@@ -201,6 +366,18 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  browser is delivering pointer events. `fullscreen.ts` beside it
                  is the tab bar's fullscreen button -- DOM only, and absent on
                  anything that cannot go fullscreen or is not a coarse pointer.
+src/render/iso3d/unit-rig.ts  a loaded authored unit, posed by a machine (spec
+                 111). The three.js half of "the tool and the game read the same
+                 files": load the .glb, strip root motion and say so, write a
+                 pose. The root bone is found in the *loaded rig*, never taken
+                 from a document -- three sanitises `mixamorig:Hips` to
+                 `mixamorigHips` in its track names, so a name read from the
+                 skeleton JSON matches nothing, strips nothing, and looks exactly
+                 like a clean import. The reference unit could never catch that:
+                 glb.ts writes rotation channels only, so its clips have no
+                 translation to strip. `mixer.update(0)` always -- every action's time comes from
+                 an integer tick, so the pose is a pure function of a tick count
+                 and an event lands on the same frame at 30fps as at 144.
 src/render/iso3d/view-controls.ts, menu-group.ts, settings-menu.ts  the Play
                  tab's settings (specs 033/034/107): six buttons in the top-right
                  corner -- view, day and night, player lights, retro filter, hike

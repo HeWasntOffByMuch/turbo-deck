@@ -105,6 +105,7 @@ describe('game message round-trip', () => {
       playerId: 'alice',
       displayName: 'Alice',
       token: '',
+      assetManifest: '',
     },
     {
       type: ClientMessageType.Input,

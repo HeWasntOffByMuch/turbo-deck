@@ -38,7 +38,7 @@ class Client {
     });
   }
 
-  async hello(playerId: string): Promise<void> {
+  async hello(playerId: string, assetManifest = ''): Promise<void> {
     await this.server.receive(
       this.connection,
       encodeClientMessage({
@@ -47,6 +47,7 @@ class Client {
         playerId,
         displayName: playerId,
         token: '',
+        assetManifest,
       }),
     );
   }
@@ -130,6 +131,7 @@ describe('login', () => {
         playerId: 'alice',
         displayName: 'Alice',
         token: '',
+        assetManifest: '',
       }),
     );
     expect(client.of(ServerMessageType.Error)[0]?.code).toBe(ErrorCode.BadProtocolVersion);
@@ -669,5 +671,52 @@ describe('the admin namespace on the same connection', () => {
     if (reply?.type !== AdminReplyType.Audit) throw new Error('expected an audit reply');
     expect(reply.entries.map((entry) => entry.action)).toContain('admin:broadcast');
     for (const entry of reply.entries) expect(entry.actor).toBe('root');
+  });
+});
+
+describe('the asset manifest gate (spec 113)', () => {
+  /** A server that is serving a known set of assets. */
+  const serving = (hash: string): GameServer =>
+    new GameServer({ seed: 5, adminVerifier: createHmacAdminVerifier(SECRET), assetManifestHash: hash });
+
+  it('refuses a client built against different assets', async () => {
+    // The failure this exists for is silent: a client on stale assets draws a
+    // fight that is not the one being played -- different clip lengths,
+    // different action timings, a hit landing on a frame the server never used
+    // -- and nothing looks wrong until somebody notices.
+    const client = new Client(serving('server-hash'));
+    await client.hello('you', 'client-hash');
+
+    const error = client.received.find((message) => message.type === ServerMessageType.Error);
+    expect(error).toBeDefined();
+    if (error?.type !== ServerMessageType.Error) throw new Error('expected an error');
+    expect(error.code).toBe(ErrorCode.BadProtocolVersion);
+    // Both hashes, because which side moved decides the remedy.
+    expect(error.message).toContain('server-hash'.slice(0, 12));
+    expect(error.message).toContain('client-hash'.slice(0, 12));
+    expect(client.received.some((message) => message.type === ServerMessageType.Welcome)).toBe(false);
+  });
+
+  it('welcomes a client built against the same assets', async () => {
+    const client = new Client(serving('same-hash'));
+    await client.hello('you', 'same-hash');
+    expect(client.received.some((message) => message.type === ServerMessageType.Welcome)).toBe(true);
+  });
+
+  it('welcomes a client that has no manifest at all', async () => {
+    // The in-tab server and the bot harness share a process with the thing they
+    // connect to and cannot be stale with respect to it. A gate that failed
+    // closed on absence could never have been introduced in the first place.
+    const client = new Client(serving('server-hash'));
+    await client.hello('you', '');
+    expect(client.received.some((message) => message.type === ServerMessageType.Welcome)).toBe(true);
+  });
+
+  it('welcomes everybody when the server itself has no manifest', async () => {
+    // A checkout where `npm run bake:units` has never run is still one somebody
+    // can play.
+    const client = new Client(server());
+    await client.hello('you', 'whatever-the-client-thinks');
+    expect(client.received.some((message) => message.type === ServerMessageType.Welcome)).toBe(true);
   });
 });

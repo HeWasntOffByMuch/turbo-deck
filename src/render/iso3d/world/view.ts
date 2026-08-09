@@ -36,6 +36,8 @@ import {
 import { abilityById, BASIC_ATTACK_ID } from '../../../server/data/abilities.js';
 import { EntityKind } from '../../../server/net/protocol.js';
 import { viewSeed } from '../seed.js';
+import { setAuthoredUnits, unitsFromQuery } from './unit-catalog.js';
+import { ASSET_MANIFEST_HASH } from './unit-assets.js';
 import mapText from '../../../../maps/arena.json?raw';
 import { parseMap } from '../../../terrain/map.js';
 import { StreamedMap } from '../../../server/client/streamed-map.js';
@@ -83,6 +85,9 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // The seed still picks the fight's randomness; it stopped describing the
   // ground the moment the ground became a file somebody could edit by hand.
   const seed = viewSeed();
+  // Which monsters are drawn from an authored unit (spec 111). Empty unless
+  // `?units=` says otherwise, so the arena looks exactly as it did.
+  setAuthoredUnits(unitsFromQuery());
   const world = buildWorldFromMap(parseMap(mapText), mapText);
 
   const transport = new LoopbackTransport();
@@ -94,6 +99,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   const client = new GameClient(transport.connect(), {
     playerId: 'you',
     displayName: 'You',
+    // What this build's assets hash to (spec 113). The in-tab server has no
+    // manifest of its own, so today this always passes -- it is sent anyway
+    // because this is the one client construction site, and a real socket is a
+    // transport swap away.
+    assetManifest: ASSET_MANIFEST_HASH,
     // Predict against the world the server is colliding against (spec 063), so
     // a tree stops the local guess where it stops the authoritative one.
     predictor: (stats, tickRate) =>
@@ -171,6 +181,24 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // clicked at tick 150 was clicking into a half-drawn field.
       root.dataset['worldReady'] = 'true';
     }
+  }
+
+  /**
+   * Mirrors the authored units' state onto the root element (spec 111).
+   *
+   * Written only when it changes, because a per-frame attribute write is a
+   * per-frame style invalidation. Read by `preview-units.ts` and by nothing in
+   * the game -- this is a window into the renderer, not an input to it.
+   */
+  let lastUnitReadout = '';
+  function publishUnitReadout(): void {
+    const readout = scene.authoredUnitReadout();
+    const text = `${readout.loaded}:${readout.bones}:${readout.states}`;
+    if (text === lastUnitReadout) return;
+    lastUnitReadout = text;
+    root.dataset['authoredUnits'] = String(readout.loaded);
+    root.dataset['authoredBones'] = String(readout.bones);
+    root.dataset['authoredStates'] = readout.states;
   }
 
   const hud = createHud((x, y, lift) => scene.projectPoint(x, y, lift));
@@ -807,8 +835,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     accumulator = Math.min(accumulator + elapsed, TICK_MS * MAX_CATCH_UP_TICKS);
     sinceDelta += elapsed;
 
+    let ticks = 0;
     while (accumulator >= TICK_MS) {
       accumulator -= TICK_MS;
+      ticks += 1;
       // The in-tab server advances on the same fixed step it would over a wire;
       // this view just happens to be the thing driving its clock.
       server.tick();
@@ -843,6 +873,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
     scene.render(view, {
       dt: elapsed / 1000,
+      // What an authored unit's state machine advances by (spec 111). The whole
+      // steps this frame actually drained, so an event lands on the same machine
+      // tick whether the browser painted at 30fps or at 144 -- `dt` above cannot
+      // say that and never could.
+      ticks,
       alpha,
       tick: drawnTick,
       selfFacing: facing,
@@ -893,6 +928,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
           }))
         : [],
     );
+
+    publishUnitReadout();
 
     raf = requestAnimationFrame(frame);
   }

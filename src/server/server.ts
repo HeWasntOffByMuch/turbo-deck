@@ -48,6 +48,7 @@ import {
 import { TickLoop } from './loop.js';
 import { regenerated } from './sim/resource.js';
 import { monsterById } from './data/monsters.js';
+import { compareManifest, mismatchMessage, refusesConnection } from '../units/manifest.js';
 import { decodeAdminRequest, encodeAdminReply, type AdminPlayerRow } from './net/admin-messages.js';
 import { CodecError } from './net/codec.js';
 import { DeltaTracker } from './net/delta.js';
@@ -112,6 +113,14 @@ export interface GameServerOptions {
    */
   readonly adminVerifier?: AdminTokenVerifier;
   readonly store?: DataStore;
+  /**
+   * The asset manifest hash this server serves (spec 113).
+   *
+   * Omit and every client is let through, whatever it claims -- which is right
+   * for a server inside a player's own tab, for the bot harness, and for every
+   * test here. `src/server/index.ts` reads the real one off disk.
+   */
+  readonly assetManifestHash?: string;
   readonly zones?: ZoneManager;
   readonly terrain?: TerrainSampler;
   readonly world?: WorldColliders;
@@ -217,6 +226,15 @@ export class GameServer implements AdminHost {
   /** Announced in the welcome so a client can build the same ground (spec 063). */
   private readonly worldSeed: number;
   private readonly store: DataStore;
+  /**
+   * The asset manifest hash this server is serving, or '' when it has none.
+   *
+   * Injected rather than read from disk here, because `server.ts` is the
+   * portable half and reading `assets/units/manifest.json` is a Node concern.
+   * An empty hash lets every client through, which is what keeps a repo with no
+   * manifest yet -- and every test in this suite -- runnable.
+   */
+  private readonly assetManifestHash: string;
   private readonly config = new LiveConfigStore();
   private readonly chunks: ChunkManager;
   private readonly players: PlayerManager;
@@ -248,6 +266,7 @@ export class GameServer implements AdminHost {
     this.mapIndex = built && 'index' in built ? (built as BuiltMapWorld).index : null;
     this.spawnPoints = built && 'spawnPoints' in built ? (built as BuiltMapWorld).spawnPoints : [];
     this.store = options.store ?? new MemoryDataStore();
+    this.assetManifestHash = options.assetManifestHash ?? '';
     this.chunks = new ChunkManager(CHUNK_SIZE, INTEREST_CHUNK_RADIUS);
     this.players = new PlayerManager(this.store, this.zones);
     this.audit = new AuditLog(this.store);
@@ -363,7 +382,13 @@ export class GameServer implements AdminHost {
 
     switch (message.type) {
       case ClientMessageType.Hello:
-        await this.hello(connection, message.protocolVersion, message.playerId, message.displayName);
+        await this.hello(
+          connection,
+          message.protocolVersion,
+          message.playerId,
+          message.displayName,
+          message.assetManifest,
+        );
         break;
 
       case ClientMessageType.Input: {
@@ -481,6 +506,7 @@ export class GameServer implements AdminHost {
     protocolVersion: number,
     playerId: string,
     displayName: string,
+    assetManifest = '',
   ): Promise<void> {
     if (protocolVersion !== PROTOCOL_VERSION) {
       this.send(connection, {
@@ -489,6 +515,20 @@ export class GameServer implements AdminHost {
         message: `server speaks protocol ${PROTOCOL_VERSION}`,
       });
       this.drop(connection, 'protocol mismatch');
+      return;
+    }
+
+    // Checked after the version and before anything else (spec 113). A client
+    // built against different assets is drawing a fight that is not the one
+    // being played -- different clip lengths, different action timings, a hit
+    // landing on a frame that is not the frame the server used. Nothing about
+    // that is visible until somebody notices, which is why it is a refused
+    // connection rather than a warning.
+    const verdict = compareManifest(assetManifest, this.assetManifestHash);
+    if (refusesConnection(verdict)) {
+      const message = mismatchMessage(assetManifest, this.assetManifestHash);
+      this.send(connection, { type: ServerMessageType.Error, code: ErrorCode.BadProtocolVersion, message });
+      this.drop(connection, 'asset manifest mismatch');
       return;
     }
     if (playerId.length === 0 || playerId.length > 64) {

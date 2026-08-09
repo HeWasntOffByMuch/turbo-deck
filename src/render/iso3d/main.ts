@@ -1,7 +1,7 @@
 /**
  * Entry point and tab shell (specs 031, 062, 063, 066).
  *
- * Four tabs, and only the first of them is the game: since spec 063 it is the
+ * Five tabs, and only the first of them is the game: since spec 063 it is the
  * isometric world -- terrain, props, rigs and shadows -- reading a replicated
  * server view rather than simulating anything itself.
  *
@@ -18,6 +18,7 @@
  */
 
 import { mountEditor } from './editor/view.js';
+import { mountStudio } from './studio/view.js';
 import { mountWorld } from './world/view.js';
 import { mountMovement } from './movement.js';
 import { mountDebug } from './debug-view.js';
@@ -45,6 +46,9 @@ function main(): void {
     { label: 'Movement sandbox', mount: mountMovement },
     { label: 'Rig debug', mount: mountDebug },
     { label: 'Map editor', mount: mountEditor, fullscreen: true },
+    // Spec 109. Not fullscreen: Play and the editor own the window because they
+    // are a window onto the world, and this is a form.
+    { label: 'Studio', mount: mountStudio },
   ];
 
   // The bar floats over the game window rather than pushing it down (spec 041);

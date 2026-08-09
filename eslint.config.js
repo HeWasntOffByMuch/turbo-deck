@@ -28,6 +28,28 @@ const DETERMINISTIC_CORE = [
   'src/server/world/**/*.ts',
   'src/server/player/**/*.ts',
   'src/server/data/**/*.ts',
+  // The unit authoring format and its validator (spec 107). Not a simulation,
+  // but held to the same bar for the same reason the server's data tables are:
+  // the Studio tab, the export path, the CI runner and the game's runtime all
+  // read these documents through this one parser, and a parser that behaved
+  // differently in a browser than in Node would make "the tool and the game read
+  // the same files" false in exactly the way nobody would think to check.
+  'src/units/**/*.ts',
+  // The studio's decision-making half (spec 108). Named file by file rather
+  // than by directory because the rest of `src/server/studio/` is the opposite
+  // of pure -- it is fetch, fs, timers and an API key.
+  //
+  // These are the modules that decide whether to spend money, and holding them
+  // to the core's rules is what makes that decision testable: no clock of their
+  // own, no ambient randomness, every timestamp an argument. `ledger.ts` even
+  // computes its UTC day boundary by hand rather than reach for `Date`.
+  'src/server/studio/cache.ts',
+  'src/server/studio/confirm.ts',
+  'src/server/studio/jobs.ts',
+  'src/server/studio/ledger.ts',
+  'src/server/studio/pacing.ts',
+  'src/server/studio/pricing.ts',
+  'src/server/studio/types.ts',
 ];
 
 /**
@@ -129,6 +151,32 @@ const PURE_RENDER = [
   'src/render/iso3d/world/hud-layout.ts',
   'src/render/iso3d/world/icons.ts',
   'src/render/iso3d/world/*.test.ts',
+  // The Studio tab's decision-making half (spec 109). image-check.ts measures a
+  // reference image and plan.ts derives whether a generation establishes a rig
+  // family -- the shared-skeleton rule, which is money, and so is a function of
+  // the library rather than a checkbox somebody has to remember to tick.
+  // The game's unit runtime (spec 111): the catalogue, the driver that turns
+  // replicated facts into machine commands, and the distance LOD. Pure by
+  // construction and linted as such -- the driver in particular is where the
+  // "animation is presentation only" rule lives, and a `Date` or a
+  // `Math.random` in it would be exactly the kind of hidden input that makes
+  // two clients disagree about what they are watching.
+  'src/render/iso3d/world/unit-catalog.ts',
+  'src/render/iso3d/world/unit-driver.ts',
+  'src/render/iso3d/world/unit-lod.ts',
+  'src/render/iso3d/studio/image-check.ts',
+  'src/render/iso3d/studio/image-check.test.ts',
+  'src/render/iso3d/studio/plan.ts',
+  'src/render/iso3d/studio/plan.test.ts',
+  // The tuning panels' arithmetic (spec 110). The scrubber, the stacked timing
+  // bar and the state graph's layout are all answerable in Node, and all three
+  // are the sort of code that looks obviously right and is off by one -- a
+  // marker that drifts a frame per drag, a bar with a gap in it, a graph that
+  // draws four arrows where the author wrote one.
+  'src/render/iso3d/studio/timeline.ts',
+  'src/render/iso3d/studio/timing-bar.ts',
+  'src/render/iso3d/studio/graph-layout.ts',
+  'src/render/iso3d/studio/panels.test.ts',
   'src/render/iso3d/editor/brush.ts',
   'src/render/iso3d/editor/camera.ts',
   'src/render/iso3d/editor/history.ts',
