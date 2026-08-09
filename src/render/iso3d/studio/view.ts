@@ -163,6 +163,15 @@ export function mountStudio(container: HTMLElement): ViewHandle {
   let config: StudioConfigView | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
   let banner: { text: string; remedy: string } | null = null;
+  /**
+   * Retry quotes, by job id: the price of finishing a failed job, once asked
+   * for.
+   *
+   * Held rather than fetched on render, because asking is a deliberate act and
+   * the answer carries a one-shot token. A poll that re-quoted every failed job
+   * on screen would mint tokens nobody asked for.
+   */
+  const retryQuotes = new Map<string, EstimateResult>();
 
   // --- header ---------------------------------------------------------------
   const header = el('div', CARD);
@@ -512,7 +521,11 @@ export function mountStudio(container: HTMLElement): ViewHandle {
     const steps = job.steps
       .map((step) => `${step.stage}:${step.status}:${step.creditsConsumed}:${step.error ?? ''}`)
       .join(',');
-    return `${job.id}:${job.status}:${job.stage ?? ''}:${job.creditsSpent}:${job.message ?? ''}:${steps}`;
+    // The retry quote is part of what is drawn, so it belongs in the signature:
+    // without it the box would appear only when something else about the job
+    // happened to change, which for a failed job is never.
+    const quote = retryQuotes.get(job.id);
+    return `${job.id}:${job.status}:${job.stage ?? ''}:${job.creditsSpent}:${job.message ?? ''}:${steps}:${quote?.confirmationToken ?? ''}`;
   }
 
   function renderJobs(): void {
@@ -540,8 +553,8 @@ export function mountStudio(container: HTMLElement): ViewHandle {
       }));
       head.appendChild(cancel);
     }
-    // Only a blocked job. A failed one has no button, because a paid call that
-    // failed for an unknown reason must not be repeatable by pressing one.
+    // A block cost nothing, so carrying on needs no fresh price: it is the rest
+    // of a job somebody already approved.
     if (job.status === 'blocked') {
       const resume = button('Resume', 'primary');
       resume.addEventListener('click', () => void run(async () => {
@@ -549,6 +562,16 @@ export function mountStudio(container: HTMLElement): ViewHandle {
         await refresh();
       }));
       head.appendChild(resume);
+    }
+    // A failure is a different question, and it is asked in two steps -- price
+    // first, then the button that spends it. Never automatic, and never quoted
+    // at the job's original cost: what is on disk is not for sale twice.
+    if (job.status === 'failed' && !retryQuotes.has(job.id)) {
+      const price = button('Price a retry', 'primary');
+      price.addEventListener('click', () => void run(async () => {
+        retryQuotes.set(job.id, await api.retryEstimate(job.id));
+      }));
+      head.appendChild(price);
     }
     card.appendChild(head);
 
@@ -584,7 +607,60 @@ export function mountStudio(container: HTMLElement): ViewHandle {
       const color = job.status === 'failed' ? '#e06c75' : '#e5c07b';
       card.appendChild(el('div', `${BODY}color:${color};margin-top:6px;`, job.message));
     }
+
+    const quote = retryQuotes.get(job.id);
+    if (quote && job.status === 'failed') card.appendChild(renderRetryQuote(job, quote));
     return card;
+  }
+
+  /**
+   * The price of finishing a failed job, and only then the button that pays it.
+   *
+   * Same shape and same order as the generation quote above, for the same
+   * reason: the total is in the DOM before the control that acts on it, so
+   * there is no arrangement of this panel in which a spend is confirmed by
+   * somebody who was not shown a number. The stages already paid for are listed
+   * at zero rather than omitted, because "the rig costs nothing this time" is
+   * the fact that makes the smaller total believable.
+   */
+  function renderRetryQuote(job: JobView, quote: EstimateResult): HTMLElement {
+    const box = el('div', `${BODY}margin-top:8px;border-left:3px solid #8a6f3a;padding:8px 10px;background:rgba(48,38,18,.35);`);
+    box.appendChild(
+      el('div', `${BODY}color:#f0dcb0;`, `Finishing this job costs ${formatCredits(quote.projection.totalCredits)} credits`),
+    );
+    for (const step of quote.projection.steps) {
+      const already = step.credits === 0 && step.calls === 0;
+      box.appendChild(
+        el(
+          'div',
+          `${MUTED}${already ? 'color:#7bc47f;' : ''}`,
+          already
+            ? `  ${STAGE_LABELS[step.stage]} · already paid for`
+            : `  ${STAGE_LABELS[step.stage]} · ${step.calls} call(s) · ${formatCredits(step.credits)}`,
+        ),
+      );
+    }
+
+    const confirm = button(`Retry for ${formatCredits(quote.projection.totalCredits)} credits`, 'primary');
+    confirm.disabled = config?.keyConfigured !== true;
+    confirm.style.opacity = confirm.disabled ? '0.5' : '1';
+    confirm.addEventListener('click', () => void run(async () => {
+      // Cleared first: the token is one-shot, so leaving the box on screen after
+      // it has been redeemed would offer a button that can only 409.
+      retryQuotes.delete(job.id);
+      await api.retry(job.id, quote.confirmationToken ?? '');
+      await refresh();
+    }));
+
+    const cancel = button('Not now');
+    cancel.addEventListener('click', () => void run(async () => {
+      retryQuotes.delete(job.id);
+    }));
+
+    const row = el('div', 'margin-top:8px;display:flex;gap:8px;');
+    row.append(confirm, cancel);
+    box.appendChild(row);
+    return box;
   }
 
   function renderLibrary(): void {

@@ -270,6 +270,49 @@ export function resumeBlocked(job: Job, nowMs: number): Job | null {
   return { ...job, status: 'queued', stage: null, message: null, updatedAtMs: nowMs };
 }
 
+/**
+ * Picks a failed job back up at the stage that failed.
+ *
+ * The rule this lives under is "never auto-retry a failed paid call", and it
+ * does not break it: nothing here is on a timer and nothing calls this except a
+ * person pressing a button, having been shown what the rest of the job will
+ * cost. What the rule forbids is a machine deciding to spend again. It does not
+ * forbid the operator deciding to, and a pipeline that cannot be told to carry
+ * on has a worse failure mode than the one it was avoiding -- a retarget that
+ * failed on its third clip strands a mesh and a rig that were paid for and are
+ * sitting on disk, and the only way forward is a new job that buys both again.
+ *
+ * Only the failed stage is rewound. Stages already `done` stay done, the
+ * artifacts stay, and `creditsConsumed` stays on every step including the failed
+ * one -- that money was spent whatever happened next, and a total that forgets it
+ * is a ceiling that can be walked past by failing repeatedly.
+ *
+ * `taskId` on the failed step *is* cleared, because it names a task that
+ * produced nothing and anything downstream reading it as a source would be
+ * building on a corpse. Entries in `inFlight` are deliberately left alone: those
+ * are calls whose outcome is still unknown, and re-polling one is free where
+ * re-submitting it is not.
+ */
+export function retryFailed(job: Job, nowMs: number): Job | null {
+  if (job.status !== 'failed') return null;
+  const stage = job.stage;
+  return {
+    ...job,
+    status: 'queued',
+    stage: null,
+    message: null,
+    steps:
+      stage === null
+        ? job.steps
+        : job.steps.map((step) =>
+            step.stage === stage
+              ? { ...step, status: 'pending' as const, taskId: null, error: null, startedAtMs: null, finishedAtMs: null }
+              : step,
+          ),
+    updatedAtMs: nowMs,
+  };
+}
+
 export function cancelJob(job: Job, nowMs: number): Job {
   if (isTerminal(job)) return job;
   return { ...job, status: 'cancelled', message: 'cancelled', updatedAtMs: nowMs };

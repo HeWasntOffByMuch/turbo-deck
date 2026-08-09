@@ -25,7 +25,7 @@ import { readBody, readJsonBody, sendJson, type RequestContext, type Route } fro
 import { cacheHit, createJob } from './jobs.js';
 import { summarize } from './ledger.js';
 import type { StudioPipeline } from './pipeline.js';
-import { projectCost } from './pricing.js';
+import { projectCost, projectRemaining } from './pricing.js';
 import type { StudioStore } from './store.js';
 import { knownPresetsFor, unknownPresets } from './tripo.js';
 import type { GenerationParams, Job } from './types.js';
@@ -70,6 +70,18 @@ function paramsFrom(body: Record<string, unknown>, config: StudioConfig): Genera
     clipIntents,
     outFormat: 'glb',
   };
+}
+
+/**
+ * What a retry's confirmation token is bound to.
+ *
+ * Deliberately not the job's cache key, which is what a fresh generation's token
+ * is bound to. Sharing one would let a token issued for "generate this image"
+ * be redeemed as "retry that job" and the other way round -- two different
+ * prices, one of them quoted for the other's work.
+ */
+function retryKey(jobId: string): string {
+  return `retry:${jobId}`;
 }
 
 /**
@@ -430,9 +442,9 @@ export function studioRoutes(deps: RouteDeps): readonly Route[] {
     /**
      * Carries a blocked job on from where the ceiling stopped it.
      *
-     * Only ever a blocked job. A failed one stays failed: `resumeBlocked`
-     * returns null for it and this answers 409, because a paid call that failed
-     * for an unknown reason must not be repeatable by pressing a button.
+     * Only ever a blocked job. A failed one has its own route below, because it
+     * is a different decision: nothing was charged for a block, so carrying on
+     * needs no fresh confirmation, and a retry does.
      */
     {
       method: 'POST',
@@ -446,9 +458,79 @@ export function studioRoutes(deps: RouteDeps): readonly Route[] {
         return sendJson(response, 409, {
           error:
             existing.status === 'failed'
-              ? 'this job failed rather than being blocked, and a failed paid call is never repeated. Start a new job.'
+              ? 'this job failed rather than being blocked; price the rest of it with POST /api/studio/jobs/:id/retry/estimate and retry that.'
               : `this job is ${existing.status}; only a blocked job can be resumed`,
         });
+      },
+    },
+
+    /**
+     * Prices what is left of a failed job, and issues the token to buy it.
+     *
+     * Deliberately the same two-call shape as a fresh generation: a projection
+     * and a one-shot token, then a second call that redeems it. A retry spends
+     * money, so it goes through the same door money always goes through, and the
+     * number shown is {@link projectRemaining} rather than the job's original
+     * price -- what is already on disk is not for sale twice.
+     */
+    {
+      method: 'POST',
+      pattern: '/api/studio/jobs/:id/retry/estimate',
+      handler: ({ response, params }) => {
+        const id = params['id'] ?? '';
+        const job = store.getJob(id);
+        if (!job) return sendJson(response, 404, { error: 'no such job' });
+        if (job.status !== 'failed') {
+          return sendJson(response, 409, { error: `this job is ${job.status}; only a failed job is retried` });
+        }
+
+        const projection = projectRemaining(job, config.prices);
+        const confirmation = confirmations.issue(randomUUID(), projection, retryKey(id), now());
+        confirmations.sweep(now());
+        return sendJson(response, 200, {
+          projection,
+          confirmationToken: confirmation.token,
+          expiresAtMs: confirmation.expiresAtMs,
+          credits: summarize(store.listLedger(), now(), config.ceilings),
+        });
+      },
+    },
+
+    /**
+     * Picks a failed job back up at the stage that failed.
+     *
+     * This is the operator deciding, not the machine: the token proves a price
+     * was quoted and somebody looked at it, and nothing anywhere calls this on a
+     * timer. The rule the brief sets is that a failed paid call is never retried
+     * *automatically*, and a pipeline with no manual way forward is worse than
+     * the thing that rule protects against -- a retarget that died on its third
+     * clip would otherwise strand a paid mesh and a paid rig, and the only route
+     * onward would be a new job that buys both again.
+     */
+    {
+      method: 'POST',
+      pattern: '/api/studio/jobs/:id/retry',
+      handler: async (context) => {
+        const { request, response, params } = context;
+        if (!requireKey(context)) return;
+
+        const id = params['id'] ?? '';
+        const existing = store.getJob(id);
+        if (!existing) return sendJson(response, 404, { error: 'no such job' });
+
+        const body = asRecord(await readJsonBody(request, MAX_JSON_BYTES));
+        const token = asStringField(body, 'confirmationToken');
+        if (token === null) {
+          return sendJson(response, 400, {
+            error: 'no confirmation token; price the retry with POST /api/studio/jobs/:id/retry/estimate first',
+          });
+        }
+        const redeemed = confirmations.redeem(token, retryKey(id), now());
+        if (!redeemed.ok) return sendJson(response, 409, { error: redeemed.reason });
+
+        const job = pipeline.retry(id);
+        if (!job) return sendJson(response, 409, { error: `this job is ${existing.status}; only a failed job is retried` });
+        return sendJson(response, 202, jobView(job));
       },
     },
 

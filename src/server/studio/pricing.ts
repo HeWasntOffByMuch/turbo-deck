@@ -13,7 +13,7 @@
  * record of what was billed.
  */
 
-import type { GenerationParams, Stage } from './types.js';
+import type { GenerationParams, Job, Stage } from './types.js';
 
 /** Credits per call, by stage. rig-check is free and is priced as such. */
 export interface PriceList {
@@ -100,6 +100,45 @@ export function projectCost(input: PlanInput): CostProjection {
     { stage: 'retarget', calls, credits: calls * prices.retargetPerCall },
     { stage: 'download', calls: 0, credits: 0 },
   ];
+
+  return { steps, totalCredits: steps.reduce((sum, step) => sum + step.credits, 0) };
+}
+
+/**
+ * What is left to buy on a job that has already spent something.
+ *
+ * The price a retry is confirmed against, and it is not the price of the job.
+ * A retarget that failed on its third of five clips has a mesh and a rig on
+ * disk and two clips downloaded: quoting the full 175 would be asking somebody
+ * to approve a charge four times what carrying on actually costs, and a
+ * confirmation dialog that overstates gets dismissed unread just as fast as one
+ * that understates.
+ *
+ * A stage that is `done` or `skipped` costs nothing. Everything else is priced
+ * in full -- including the stage that failed, because it will be attempted
+ * again. The retarget is priced per clip *not already on disk*, which is the
+ * same arithmetic `runRetarget` does when it decides what to skip, so the quote
+ * and the spend cannot disagree.
+ */
+export function projectRemaining(job: Job, prices: PriceList): CostProjection {
+  const full = projectCost({
+    params: job.params,
+    establishesRigFamily: job.establishesRigFamily,
+    prices,
+  });
+  const clipsLeft = job.establishesRigFamily
+    ? [...new Set(job.params.clipIntents)].filter((intent) => job.artifacts.clipGlbs[intent] === undefined).length
+    : 0;
+
+  const steps = full.steps.map((step): PlannedStep => {
+    const record = job.steps.find((entry) => entry.stage === step.stage);
+    if (record?.status === 'done' || record?.status === 'skipped') return { ...step, calls: 0, credits: 0 };
+    if (step.stage === 'retarget') {
+      const calls = retargetCalls(clipsLeft);
+      return { stage: 'retarget', calls, credits: calls * prices.retargetPerCall };
+    }
+    return step;
+  });
 
   return { steps, totalCredits: steps.reduce((sum, step) => sum + step.credits, 0) };
 }

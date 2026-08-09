@@ -38,6 +38,7 @@ import {
   recordTaskId,
   resumable,
   resumeBlocked,
+  retryFailed,
   stepOf,
 } from './jobs.js';
 import { Pacer } from './pacing.js';
@@ -167,8 +168,20 @@ export class StudioPipeline {
       this.say(`${job.id}/${key}: task ${taskId} was already submitted; polling it rather than paying again`);
     }
 
-    const result = await this.awaitTask(taskId, deadline);
+    const { result, resolved } = await this.awaitTask(taskId, deadline);
     current = this.record(current, stage, taskId, result);
+
+    // A task the API itself called failed is finished, so stop remembering it.
+    // Otherwise a retry would resume it, poll a corpse, and fail again forever
+    // -- the job would have a button that cannot possibly work.
+    //
+    // Only when the API said so. Our own timeout and our own shutdown also
+    // arrive here as `failed`, and in both of those the task may well still be
+    // running: forgetting one of those would turn a re-poll, which is free, into
+    // a re-submit, which is not.
+    if (result.state === 'failed' && resolved) {
+      current = this.save(clearInFlight(current, key, this.deps.now()));
+    }
     return { job: current, taskId, result };
   }
 
@@ -214,16 +227,30 @@ export class StudioPipeline {
    * Times out rather than polling forever: a task stuck in `running` for twenty
    * minutes is not going to finish, and a poll loop with no end is a slow leak
    * of both requests and rate-limit budget.
+   *
+   * `resolved` says which kind of answer this is: true when the API reported a
+   * terminal state, false when we gave up on a task that was still going. Both
+   * come back as a failure to the caller, and they are worlds apart in what may
+   * be done next -- one names a dead task, the other names a task that is very
+   * possibly still being billed for.
    */
-  private async awaitTask(taskId: string, deadlineMs: number): Promise<TaskResult> {
+  private async awaitTask(
+    taskId: string,
+    deadlineMs: number,
+  ): Promise<{ readonly result: TaskResult; readonly resolved: boolean }> {
     for (;;) {
       await this.gate();
       const result = await this.deps.client.task(taskId);
-      if (result.state === 'succeeded' || result.state === 'failed') return result;
+      if (result.state === 'succeeded' || result.state === 'failed') return { result, resolved: true };
       if (this.deps.now() >= deadlineMs) {
-        return { ...result, state: 'failed', error: 'timed out waiting for the task to finish' };
+        return {
+          result: { ...result, state: 'failed', error: 'timed out waiting for the task to finish' },
+          resolved: false,
+        };
       }
-      if (this.stopped) return { ...result, state: 'failed', error: 'server shutting down' };
+      if (this.stopped) {
+        return { result: { ...result, state: 'failed', error: 'server shutting down' }, resolved: false };
+      }
       await this.deps.sleep(this.deps.config.pollIntervalMs);
     }
   }
@@ -563,6 +590,27 @@ export class StudioPipeline {
     this.save(resumed);
     void this.run(jobId);
     return resumed;
+  }
+
+  /**
+   * Picks a failed job back up at the stage that failed. Null when it is not
+   * failed.
+   *
+   * Never called by anything on a timer -- the route behind it wants a one-shot
+   * confirmation token issued against {@link projectRemaining}, so the button
+   * that reaches here has already shown somebody what carrying on costs. That is
+   * the whole difference between this and the auto-retry the brief rules out:
+   * the machine still never decides to spend twice, and now the operator can.
+   */
+  retry(jobId: string): Job | null {
+    const job = this.deps.store.getJob(jobId);
+    if (!job) return null;
+    const retried = retryFailed(job, this.deps.now());
+    if (retried === null) return null;
+    this.say(`${jobId}: retrying from ${job.stage ?? 'the start'}`);
+    this.save(retried);
+    void this.run(jobId);
+    return retried;
   }
 
   cancel(jobId: string): Job | null {

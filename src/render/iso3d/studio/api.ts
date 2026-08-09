@@ -248,6 +248,21 @@ export class StudioApi {
     return this.call(`/jobs/${encodeURIComponent(jobId)}/resume`, { method: 'POST' }) as Promise<JobView>;
   }
 
+  /**
+   * Prices what is left of a failed job. Refused for anything not failed.
+   *
+   * The projection is of the *remainder*, not of the job: a retarget that died
+   * on its third clip is not going to re-buy the mesh and the rig.
+   */
+  retryEstimate(jobId: string): Promise<EstimateResult> {
+    return this.call(`/jobs/${encodeURIComponent(jobId)}/retry/estimate`, { method: 'POST' }) as Promise<EstimateResult>;
+  }
+
+  /** The second half of the retry path; the token comes from `retryEstimate`. */
+  retry(jobId: string, confirmationToken: string): Promise<JobView> {
+    return this.json(`/jobs/${encodeURIComponent(jobId)}/retry`, { confirmationToken }) as Promise<JobView>;
+  }
+
   cancel(jobId: string): Promise<JobView> {
     return this.call(`/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }) as Promise<JobView>;
   }

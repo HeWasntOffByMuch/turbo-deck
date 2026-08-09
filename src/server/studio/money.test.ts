@@ -11,7 +11,8 @@ import { cacheKey, canonicalClipIntents } from './cache.js';
 import { ConfirmationStore, DEFAULT_CONFIRMATION_TTL_MS } from './confirm.js';
 import { checkCeilings, dayKeyOf, dayTotal, runTotal, summarize, type Ceilings, type LedgerEntry } from './ledger.js';
 import { DEFAULT_MIN_INTERVAL_MS, Pacer } from './pacing.js';
-import { DEFAULT_PRICES, projectCost, retargetCalls, RETARGET_BATCH_SIZE } from './pricing.js';
+import { createJob, beginStep, completeStep, failJob, recordArtifacts } from './jobs.js';
+import { DEFAULT_PRICES, projectCost, projectRemaining, retargetCalls, RETARGET_BATCH_SIZE } from './pricing.js';
 import { BIPED_ANIMATION_PRESETS, knownPresetsFor, presetFor, unknownPresets } from './tripo.js';
 import type { GenerationParams } from './types.js';
 
@@ -132,6 +133,78 @@ describe('projectCost', () => {
     // a paid thing costs nothing -- the one wrong answer this must not give.
     const projection = projectCost({ params: params(), establishesRigFamily: true, prices: DEFAULT_PRICES });
     expect(projection.totalCredits).toBeGreaterThan(0);
+  });
+});
+
+describe('projectRemaining', () => {
+  /** A job with `done` stages up to and including `through`; null for a fresh one. */
+  function partway(
+    through: 'imageToModel' | 'rigCheck' | 'rig' | null,
+    clips: readonly string[] = ['idle', 'run', 'swing'],
+  ) {
+    const stages = ['imageToModel', 'rigCheck', 'rig'] as const;
+    let current = createJob(
+      {
+        id: 'job-1',
+        unitId: 'grunt',
+        skeletonId: 'biped',
+        establishesRigFamily: true,
+        referenceImageSha256: HASH,
+        params: params({ clipIntents: clips }),
+      },
+      0,
+    );
+    if (through === null) return current;
+    for (const stage of stages) {
+      current = completeStep(beginStep(current, stage, 0), stage, {}, 0);
+      if (stage === through) break;
+    }
+    return current;
+  }
+
+  it('prices only what is left, not the whole job', () => {
+    // The failure this exists for: a retarget that died after the rig. Quoting
+    // the full price would ask somebody to approve three times what carrying on
+    // costs, and an overstated dialog gets dismissed unread just as fast as an
+    // understated one.
+    const job = failJob(partway('rig'), 'retarget', 'preset unavailable', 0);
+    expect(projectRemaining(job, DEFAULT_PRICES).totalCredits).toBe(3 * DEFAULT_PRICES.retargetPerCall);
+  });
+
+  it('charges nothing for a stage already done', () => {
+    const steps = projectRemaining(failJob(partway('rig'), 'retarget', 'boom', 0), DEFAULT_PRICES).steps;
+    for (const stage of ['imageToModel', 'rigCheck', 'rig'] as const) {
+      expect(steps.find((step) => step.stage === stage)?.credits, stage).toBe(0);
+    }
+  });
+
+  it('lists the paid-for stages rather than dropping them', () => {
+    // "The rig costs nothing this time" is the fact that makes the smaller total
+    // believable; a quote that simply omits it looks like a different job.
+    const steps = projectRemaining(failJob(partway('rig'), 'retarget', 'boom', 0), DEFAULT_PRICES).steps;
+    expect(steps.map((step) => step.stage)).toEqual(projectCost({ params: params(), establishesRigFamily: true, prices: DEFAULT_PRICES }).steps.map((step) => step.stage));
+  });
+
+  it('does not re-buy a clip that is already on disk', () => {
+    // The same arithmetic `runRetarget` does when it decides what to skip, so
+    // the quote and the spend cannot disagree.
+    const withClips = recordArtifacts(partway('rig'), { clipGlbs: { idle: '/i.glb', run: '/r.glb' } }, 0);
+    const job = failJob(withClips, 'retarget', 'boom', 0);
+    expect(projectRemaining(job, DEFAULT_PRICES).totalCredits).toBe(DEFAULT_PRICES.retargetPerCall);
+  });
+
+  it('prices a stage that failed in full, because it will be attempted again', () => {
+    const job = failJob(partway('rigCheck'), 'rig', 'internal error', 0);
+    const remaining = projectRemaining(job, DEFAULT_PRICES);
+    expect(remaining.steps.find((step) => step.stage === 'rig')?.credits).toBe(DEFAULT_PRICES.rig);
+    expect(remaining.totalCredits).toBe(DEFAULT_PRICES.rig + 3 * DEFAULT_PRICES.retargetPerCall);
+  });
+
+  it('is the whole price for a job that failed on its first call', () => {
+    const job = failJob(beginStep(partway(null), 'imageToModel', 0), 'imageToModel', 'boom', 0);
+    const fresh = projectCost({ params: params(), establishesRigFamily: true, prices: DEFAULT_PRICES });
+    // Nothing reached `done`, so nothing is free -- a retry here costs the lot.
+    expect(projectRemaining(job, DEFAULT_PRICES).totalCredits).toBe(fresh.totalCredits);
   });
 });
 

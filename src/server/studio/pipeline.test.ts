@@ -132,6 +132,22 @@ function scriptSuccess(fake: FakeTripo): void {
     .script('/animations/retarget', { creditsConsumed: 25, modelUrl: CLIP_URL });
 }
 
+/** Builds a second pipeline over the same store: a restart, from a job's view. */
+function restart(h: Harness): StudioPipeline {
+  return new StudioPipeline({
+    client: new TripoClient({
+      apiKey: 'tsk_secret',
+      baseUrl: 'https://openapi.example/v3',
+      fetch: h.fake.fetch,
+    }),
+    store: h.store,
+    config: h.config,
+    now: () => 0,
+    sleep: () => Promise.resolve(),
+    writeArtifact: (jobId, filename, bytes) => h.store.writeArtifact(jobId, filename, bytes),
+  });
+}
+
 beforeEach(() => {
   harness = build();
 });
@@ -558,10 +574,10 @@ describe('the interlocks', () => {
     rmSync(tight.dir, { recursive: true, force: true });
   });
 
-  it('never resumes a failed job', async () => {
-    // The whole reason blocked and failed are different states. A paid call that
-    // failed for a reason nobody understands must not be repeatable by pressing
-    // a button.
+  it('never resumes a failed job through the blocked path', async () => {
+    // The whole reason blocked and failed are different states. `resume` is for a
+    // job that was stopped before spending; a failure goes through `retry`, which
+    // is priced and confirmed separately.
     harness.fake
       .script('/generation/image-to-model', { creditsConsumed: 20, modelUrl: MESH_URL })
       .script('/animations/rig-check', { creditsConsumed: 0, riggable: true, rigType: 'biped' })
@@ -575,12 +591,94 @@ describe('the interlocks', () => {
     expect(harness.fake.callsTo('/animations/rig')).toHaveLength(1);
   });
 
+  it('nothing puts a failed job back on its own', async () => {
+    // The rule that matters: no timer, no loop, no boot-time sweep picks a
+    // failure back up. `retry` exists, and only a person reaches it.
+    harness.fake
+      .script('/generation/image-to-model', { creditsConsumed: 50, modelUrl: MESH_URL })
+      .script('/animations/rig-check', { creditsConsumed: 0, riggable: true, rigType: 'biped' })
+      .script('/animations/rig', { status: 'failed', message: 'internal error' });
+    seedJob(harness);
+    await harness.pipeline.run('job-1');
+
+    const before = harness.fake.calls.length;
+    // A restart is the loop most likely to get this wrong: it sweeps everything
+    // that was mid-flight, and a failed job must not be in that set.
+    restart(harness).resume();
+    await harness.pipeline.run('job-1');
+    expect(harness.fake.calls.length).toBe(before);
+    expect(harness.store.getJob('job-1')?.status).toBe('failed');
+  });
+
   it('will not resume a job that is merely running or already done', async () => {
     scriptSuccess(harness.fake);
     seedJob(harness);
     await harness.pipeline.run('job-1');
     expect(harness.pipeline.unblock('job-1')).toBeNull();
     expect(harness.pipeline.unblock('no-such-job')).toBeNull();
+  });
+
+  it('carries on from a failed retarget without re-buying the mesh or the rig', async () => {
+    // The reported bug. A retarget that fails leaves a mesh and a rig that were
+    // paid for and are on disk, and before this the only way forward was a new
+    // job that bought both again -- 75 credits to recover from a 25 credit call
+    // going wrong.
+    scriptSuccess(harness.fake);
+    harness.fake.script('/animations/retarget', { status: 'failed', message: 'preset unavailable' });
+    seedJob(harness);
+    await harness.pipeline.run('job-1');
+
+    const failed = harness.store.getJob('job-1') as Job;
+    expect(failed.status).toBe('failed');
+    expect(failed.artifacts.meshGlb).toContain('mesh.glb');
+    expect(failed.artifacts.riggedGlb).toContain('rigged.glb');
+
+    harness.fake.script('/animations/retarget', { creditsConsumed: 25, modelUrl: CLIP_URL });
+    expect(harness.pipeline.retry('job-1')).not.toBeNull();
+    const finished = await harness.pipeline.run('job-1');
+
+    expect(finished?.status).toBe('succeeded');
+    // The two calls that matter: neither was made a second time.
+    expect(harness.fake.callsTo('/generation/image-to-model')).toHaveLength(1);
+    expect(harness.fake.callsTo('/animations/rig')).toHaveLength(1);
+    expect(Object.keys(finished?.artifacts.clipGlbs ?? {})).toEqual(['idle', 'run']);
+  });
+
+  it('forgets a task the API called failed, so a retry submits instead of re-polling', async () => {
+    // Without this the retry has a button that cannot work: `paidCall` would
+    // resume the dead task id, poll it, get the same failure, and fail again --
+    // forever, and free, which is its own kind of maddening.
+    scriptSuccess(harness.fake);
+    harness.fake.script('/animations/rig', { status: 'failed', message: 'internal error' });
+    seedJob(harness);
+    await harness.pipeline.run('job-1');
+    expect((harness.store.getJob('job-1') as Job).inFlight['rig']).toBeUndefined();
+  });
+
+  it('keeps a task we merely gave up on, because it may still be running', async () => {
+    // The other half of the same rule, and the expensive half. A timeout is our
+    // impatience, not the API's verdict: the task may yet succeed and will be
+    // billed either way, so its id is worth keeping and re-polling.
+    const slow = build();
+    scriptSuccess(slow.fake);
+    slow.fake.script('/animations/rig', { pollsBeforeDone: 10_000 });
+    seedJob(slow);
+    await slow.pipeline.run('job-1');
+
+    const job = slow.store.getJob('job-1') as Job;
+    expect(job.status).toBe('failed');
+    expect(job.message).toContain('timed out');
+    expect(job.inFlight['rig']).toBeDefined();
+    rmSync(slow.dir, { recursive: true, force: true });
+  });
+
+  it('retries only a failed job, and only when told to', async () => {
+    scriptSuccess(harness.fake);
+    seedJob(harness);
+    expect(harness.pipeline.retry('no-such-job')).toBeNull();
+    await harness.pipeline.run('job-1');
+    expect(harness.pipeline.retry('job-1')).toBeNull();
+    expect(harness.store.getJob('job-1')?.status).toBe('succeeded');
   });
 
   it('cancels a job that is mid-flight', async () => {
@@ -594,22 +692,6 @@ describe('the interlocks', () => {
 });
 
 describe('resuming without paying twice', () => {
-  /** Builds a second pipeline over the same store: a restart, from a job's view. */
-  function restart(h: Harness): StudioPipeline {
-    return new StudioPipeline({
-      client: new TripoClient({
-        apiKey: 'tsk_secret',
-        baseUrl: 'https://openapi.example/v3',
-        fetch: h.fake.fetch,
-      }),
-      store: h.store,
-      config: h.config,
-      now: () => 0,
-      sleep: () => Promise.resolve(),
-      writeArtifact: (jobId, filename, bytes) => h.store.writeArtifact(jobId, filename, bytes),
-    });
-  }
-
   it('polls a task that was already submitted instead of buying another', async () => {
     // The window that used to cost money: the submit returned, the id was on
     // disk, and the process died during the poll. A restart re-submitted.

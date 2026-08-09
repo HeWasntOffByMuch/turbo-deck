@@ -16,6 +16,7 @@ import {
   recordCredits,
   recordTaskId,
   resumable,
+  retryFailed,
   skipStep,
   stepOf,
 } from './jobs.js';
@@ -216,6 +217,51 @@ describe('terminal states', () => {
   it('will not cancel a job that has already finished', () => {
     const succeeded = runThrough(job()).job;
     expect(cancelJob(succeeded, 99).status).toBe('succeeded');
+  });
+});
+
+describe('retryFailed', () => {
+  it('rewinds only the stage that failed', () => {
+    let current = completeStep(beginStep(job(), 'imageToModel', 0), 'imageToModel', {}, 0);
+    current = recordCredits(beginStep(current, 'rig', 0), 'rig', 25, 0);
+    const failed = failJob(current, 'rig', 'internal error', 0);
+
+    const retried = retryFailed(failed, 5) as Job;
+    expect(retried.status).toBe('queued');
+    expect(nextStage(retried)).toBe('rigCheck');
+    expect(stepOf(retried, 'imageToModel')?.status).toBe('done');
+    expect(stepOf(retried, 'rig')?.status).toBe('pending');
+    expect(stepOf(retried, 'rig')?.error).toBeNull();
+  });
+
+  it('keeps the credits the failed stage already cost', () => {
+    // That money was spent whatever happened next. A total that forgets it is a
+    // ceiling that can be walked past by failing over and over.
+    const failed = failJob(recordCredits(beginStep(job(), 'rig', 0), 'rig', 25, 0), 'rig', 'boom', 0);
+    const retried = retryFailed(failed, 5) as Job;
+    expect(retried.creditsSpent).toBe(25);
+    expect(stepOf(retried, 'rig')?.creditsConsumed).toBe(25);
+  });
+
+  it('drops the failed task id, since it names a task that produced nothing', () => {
+    const started = recordTaskId(beginStep(job(), 'rig', 0), 'rig', 'task-9', 0);
+    const retried = retryFailed(failJob(started, 'rig', 'boom', 0), 5) as Job;
+    expect(stepOf(retried, 'rig')?.taskId).toBeNull();
+  });
+
+  it('leaves in-flight calls alone, because re-polling is free and re-buying is not', () => {
+    const started = markInFlight(beginStep(job(), 'rig', 0), 'rig', 'task-9', 0);
+    const retried = retryFailed(failJob(started, 'rig', 'boom', 0), 5) as Job;
+    expect(inFlightTask(retried, 'rig')).toBe('task-9');
+  });
+
+  it('is only ever a failed job', () => {
+    // Blocked has its own path, and the two mean different things: nothing was
+    // charged for a block, so carrying on needs no new confirmation.
+    expect(retryFailed(job(), 0)).toBeNull();
+    expect(retryFailed(blockJob(job(), 'rigCheck', 'not riggable', 0), 0)).toBeNull();
+    expect(retryFailed(runThrough(job()).job, 0)).toBeNull();
+    expect(retryFailed(cancelJob(job(), 0), 0)).toBeNull();
   });
 });
 
