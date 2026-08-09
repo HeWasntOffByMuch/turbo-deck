@@ -184,6 +184,20 @@ function probe(meshPath: string, clipPaths: readonly string[]): boolean {
   return lines.some((line) => line.startsWith('  ✗'));
 }
 
+/**
+ * An artifact path as recorded, or the same file where the store would put it.
+ *
+ * The job record holds whatever path the process that downloaded it wrote,
+ * which is absolute when `STUDIO_DATA_DIR` was. A clone with the assets copied
+ * in, or a data dir that moved, would otherwise fail on a path that is right
+ * about the file and wrong about the machine.
+ */
+function locate(jobId: string, recorded: string): string {
+  if (existsSync(recorded)) return recorded;
+  const beside = join(repoRoot, '.studio', 'assets', jobId, recorded.split(/[\\/]/).pop() ?? '');
+  return existsSync(beside) ? beside : recorded;
+}
+
 /** The artifacts of a job on disk, so a real generation can be probed as-is. */
 function jobArtifacts(jobId: string): { readonly mesh: string; readonly clips: string[] } | null {
   const path = join(repoRoot, '.studio', 'jobs.json');
@@ -195,7 +209,13 @@ function jobArtifacts(jobId: string): { readonly mesh: string; readonly clips: s
   const list = Array.isArray(jobs) ? jobs : (jobs.jobs ?? []);
   const job = list.find((entry) => entry.id === jobId);
   if (!job) {
-    console.error(`no job ${jobId} in ${path}. Jobs on disk: ${list.map((entry) => entry.id).join(', ')}`);
+    // The listing rather than "no such job": the ids are uuids, and the reason
+    // to be here at all is usually not knowing which one to look at.
+    console.error(`no job "${jobId}" in ${path}. Jobs on disk:`);
+    for (const entry of list) {
+      const clips = Object.keys(entry.artifacts.clipGlbs).join(', ') || 'no clips';
+      console.error(`  ${entry.id}  ${entry.unitId} · ${entry.status} · ${clips}`);
+    }
     return null;
   }
   // The rigged model, never the raw generation: the unrigged mesh has no
@@ -205,7 +225,10 @@ function jobArtifacts(jobId: string): { readonly mesh: string; readonly clips: s
     console.error(`job ${jobId} has no rigged model on disk yet.`);
     return null;
   }
-  return { mesh, clips: Object.values(job.artifacts.clipGlbs) };
+  return {
+    mesh: locate(job.id, mesh),
+    clips: Object.values(job.artifacts.clipGlbs).map((clip) => locate(job.id, clip)),
+  };
 }
 
 function main(): void {
