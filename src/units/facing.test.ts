@@ -185,3 +185,64 @@ describe('a fault introduced on purpose', () => {
     expect(facingIsClean(report)).toBe(false);
   });
 });
+
+/**
+ * The failure the first real generated unit produced, which was the probe's and
+ * not the unit's.
+ *
+ * Its rig answered none of the mixamo bone names, so every estimator that reads
+ * a skeleton went quiet, the one that reads geometry agreed with itself, and
+ * the report ended "Nothing disagrees" -- a green tick for a question nobody
+ * answered. An estimator that cannot run has to say so, and a report containing
+ * one is not an all-clear.
+ */
+describe('a rig off the naming contract', () => {
+  /** Every bone renamed to a vocabulary this project does not know. */
+  const renamed: GlbDocument = {
+    ...unit.meshGlb,
+    nodes: unit.meshGlb.nodes.map((node) => ({
+      ...node,
+      name: node.name.replace('mixamorig:', 'joint_').replace('Left', 'L_').replace('Right', 'R_'),
+    })),
+  };
+
+  it('is not reported as clean, however well its geometry reads', () => {
+    const report = facingReport({ name: 'mesh.glb', bytes: bytes(renamed) }, [
+      { name: 'walk.glb', bytes: bytes(clipDocument('walk')) },
+    ]);
+    // The geometry estimate still works -- it never looks at a bone -- which is
+    // exactly what made the old all-clear so convincing.
+    expect(report.mesh.fromFeet).not.toBeNull();
+    expect(report.rig.forward).toBeNull();
+    expect(facingIsClean(report)).toBe(false);
+  });
+
+  it('names the bones that are missing and the ones there are', () => {
+    const report = facingReport({ name: 'mesh.glb', bytes: bytes(renamed) }, []);
+    const finding = report.findings.find((entry) => entry.title === 'rig forward');
+    expect(finding?.severity).toBe('warning');
+    expect(finding?.message).toContain('leftfoot');
+    // The vocabulary it does have, because that is what somebody compares
+    // against the contract to work out what happened.
+    expect(finding?.message).toContain('joint_L_Foot');
+  });
+
+  it('tells a clip with no feet to watch from an idle', () => {
+    const report = facingReport({ name: 'mesh.glb', bytes: bytes(renamed) }, [
+      { name: 'walk.glb', bytes: bytes({ ...clipDocument('walk'), nodes: renamed.nodes }) },
+    ]);
+    const clip = report.clips[0];
+    expect(clip?.measurable).toBe(false);
+    expect(clip?.moving).toBe(false);
+    expect(report.findings.some((entry) => entry.title === 'walk.glb: stride')).toBe(true);
+  });
+
+  it('shouts when a clip shares no bone names with the mesh at all', () => {
+    // The quietest catastrophe: three binds by name, so this animates nothing.
+    const report = facingReport({ name: 'mesh.glb', bytes: bytes(unit.meshGlb) }, [
+      { name: 'walk.glb', bytes: bytes({ ...clipDocument('walk'), nodes: renamed.nodes }) },
+    ]);
+    expect(report.clips[0]?.matchedBones).toBe(0);
+    expect(report.findings.some((entry) => entry.title === 'walk.glb: binds to nothing')).toBe(true);
+  });
+});

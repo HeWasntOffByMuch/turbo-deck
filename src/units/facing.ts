@@ -171,6 +171,25 @@ export function boneMap(nodes: readonly GlbReadNode[]): ReadonlyMap<string, GlbR
 
 // --- what the rig thinks -----------------------------------------------------
 
+/**
+ * The bones every estimator here needs, under {@link boneKey}.
+ *
+ * Named as a list because "could not measure" has to be able to say *what was
+ * missing*. A rig whose bones are called something else is not an unreadable
+ * file -- it is a rig off the contract this whole format is built on, and that
+ * is a finding rather than a shrug.
+ */
+export const REQUIRED_BONES: readonly string[] = [
+  'hips',
+  'leftfoot',
+  'rightfoot',
+  'leftupleg',
+  'rightupleg',
+];
+
+/** A toe on either side. Absent on a rig that stops at the ankle. */
+const TOE_BONES: readonly string[] = ['lefttoeend', 'lefttoebase', 'righttoeend', 'righttoebase'];
+
 export interface RigFacing {
   /** Ankle to toe, averaged over both feet. Null when the rig has no toes. */
   readonly forward: Vec3 | null;
@@ -185,6 +204,12 @@ export interface RigFacing {
    * is why this is reported next to the other measurements and not on its own.
    */
   readonly handednessOk: boolean | null;
+  /** Which of {@link REQUIRED_BONES} this rig does not have. */
+  readonly missingBones: readonly string[];
+  /** True when the rig has no toe bone on either side. */
+  readonly missingToes: boolean;
+  /** Every bone in the file, so an unrecognised vocabulary can be read off. */
+  readonly boneNames: readonly string[];
 }
 
 /** Which way the skeleton points, from the bones themselves. */
@@ -212,7 +237,14 @@ export function rigFacing(nodes: readonly GlbReadNode[]): RigFacing {
   const rightHip = at('rightupleg');
   const left = leftHip === null || rightHip === null ? null : normalize(horizontal(subtract(leftHip, rightHip)));
   const handednessOk = forward === null || left === null ? null : dot(cross(UP, forward), left) > 0;
-  return { forward, left, handednessOk };
+  return {
+    forward,
+    left,
+    handednessOk,
+    missingBones: REQUIRED_BONES.filter((key) => !bones.has(key)),
+    missingToes: !TOE_BONES.some((key) => bones.has(key)),
+    boneNames: nodes.filter((node) => node.name !== '').map((node) => node.name),
+  };
 }
 
 // --- what the mesh thinks ----------------------------------------------------
@@ -331,6 +363,16 @@ export interface ClipFacing {
   readonly strideForward: Vec3 | null;
   /** How far the feet actually travel, in model units. A still clip says ~0. */
   readonly strideLength: number;
+  /**
+   * How many foot bones the estimator actually found, of the two it wants.
+   *
+   * The difference between "this clip does not move its feet" and "this file
+   * has no bones called feet", which the stride alone cannot tell apart: both
+   * come out as zero travel. One is an idle. The other is a rig off the naming
+   * contract, and reporting it as an idle is a false all-clear.
+   */
+  readonly footBonesFound: number;
+  readonly hipsFound: boolean;
   readonly frames: number;
 }
 
@@ -539,6 +581,8 @@ export function clipFacing(glb: GlbBinary, animationIndex = 0, frames = 48): Cli
     rootTravel,
     strideForward: normalize(travel),
     strideLength,
+    footBonesFound: footKeys.filter((key) => bones.has(key)).length,
+    hipsFound: bones.has('hips'),
     frames,
   };
 }
@@ -605,6 +649,10 @@ export interface ClipReport {
   readonly strideLength: number;
   /** False for an idle or a pose, which is not asked which way it goes. */
   readonly moving: boolean;
+  /** False when there were no foot bones to watch, which is not the same thing. */
+  readonly measurable: boolean;
+  /** Bones this clip and the mesh have in common. Zero animates nothing. */
+  readonly matchedBones: number;
   readonly degreesFromRig: number | null;
   /** Bones whose rest pose differs from the mesh's by more than a few degrees. */
   readonly restDrift: readonly RestDelta[];
@@ -657,7 +705,7 @@ export function facingReport(mesh: FacingSource, clips: readonly FacingSource[])
     const message = cause instanceof Error ? cause.message : String(cause);
     return {
       mesh: { fromFeet: null, fromHead: null, lean: { feet: 0, head: 0 }, vertexCount: 0 },
-      rig: { forward: null, left: null, handednessOk: null },
+      rig: { forward: null, left: null, handednessOk: null, missingBones: [], missingToes: true, boneNames: [] },
       clips: [],
       findings: [],
       error: `${mesh.name}: ${message}`,
@@ -708,6 +756,39 @@ export function facingReport(mesh: FacingSource, clips: readonly FacingSource[])
     });
   }
 
+  // The rig could not be measured at all. This has to be loud, and it has to
+  // name the bones: every estimator that reads the skeleton looks its bones up
+  // by the mixamo contract, so all of them going quiet at once is one fact, not
+  // five, and the fact is that this rig is not on the contract. Reported as a
+  // finding rather than left as a row of "not measurable" -- a report whose
+  // only measurable estimator agreed with itself used to end with "nothing
+  // disagrees", which is a green tick for a question nobody answered.
+  if (rig.forward === null) {
+    const sample = rig.boneNames.slice(0, 40).join(', ');
+    const why =
+      rig.missingBones.length > 0
+        ? `it has no ${rig.missingBones.join(', ')}`
+        : 'it has feet and hips but no toe bone on either side, so there is no ankle-to-toe vector to measure';
+    findings.push({
+      severity: 'warning',
+      title: 'rig forward',
+      degrees: null,
+      message:
+        `could not be measured: ${why}. Every skeleton estimate here looks bones up by the mixamo names ` +
+        `this project's whole unit format is built on, so a rig that answers none of them is a rig off that ` +
+        `contract -- which is worth knowing on its own, since the sockets, the root-motion strip and the ` +
+        `export all assume it too. The ${rig.boneNames.length} bones this file actually has: ${sample}` +
+        `${rig.boneNames.length > 40 ? ' …' : ''}`,
+    });
+  } else if (rig.missingBones.length > 0) {
+    findings.push({
+      severity: 'warning',
+      title: 'rig bones',
+      degrees: null,
+      message: `measured, but this rig has no ${rig.missingBones.join(', ')}, which the unit format expects.`,
+    });
+  }
+
   const clipReports: ClipReport[] = [];
   for (const clip of clips) {
     clipReports.push(readClip(clip, meshNodes, rig, findings));
@@ -729,6 +810,8 @@ function readClip(
     rootTravel: null,
     strideLength: 0,
     moving: false,
+    measurable: false,
+    matchedBones: 0,
     degreesFromRig: null,
     restDrift: [],
   };
@@ -742,7 +825,25 @@ function readClip(
   const facing = clipFacing(glb);
   if (facing === null) return { ...empty, error: 'no animation in this file' };
 
-  const drift = restPoseDeltas(meshNodes, readNodeTree(glb)).filter((delta) => delta.degrees > REST_DRIFT_DEGREES);
+  const clipNodes = readNodeTree(glb);
+  const shared = restPoseDeltas(meshNodes, clipNodes);
+  // Zero shared bones is the quietest catastrophe in the set: three's mixer
+  // binds a clip's tracks onto the mesh's skeleton *by name*, so a clip with no
+  // name in common animates nothing at all -- and the old report said nothing,
+  // because a comparison with no bones to compare produces no deltas and
+  // therefore no findings.
+  if (shared.length === 0) {
+    findings.push({
+      severity: 'error',
+      title: `${clip.name}: binds to nothing`,
+      degrees: null,
+      message:
+        'this clip and the mesh share no bone names, so the mixer will bind none of its tracks and the ' +
+        'body will not move at all. Check that the clip came from the rig this mesh was exported from.',
+    });
+  }
+
+  const drift = shared.filter((delta) => delta.degrees > REST_DRIFT_DEGREES);
   if (drift.length > 0) {
     const worst = drift.slice(0, 4).map((delta) => `${delta.bone} ${Math.round(delta.degrees)}°`).join(', ');
     findings.push({
@@ -758,8 +859,22 @@ function readClip(
   // A clip with no travel is an idle, and an idle has no opinion about forward.
   // Reporting one would be noise at best and a wrong diagnosis at worst: the
   // estimator fits a slope through a foot that never moves.
-  const moving = facing.strideLength >= STILL_STRIDE;
-  if (moving) {
+  //
+  // But only when there were feet to watch. Without them the travel is zero for
+  // a completely different reason, and calling that an idle is how a walk that
+  // could not be measured gets filed as a walk that is fine.
+  const measurable = facing.footBonesFound > 0 && facing.hipsFound;
+  const moving = measurable && facing.strideLength >= STILL_STRIDE;
+  if (!measurable) {
+    findings.push({
+      severity: 'warning',
+      title: `${clip.name}: stride`,
+      degrees: null,
+      message:
+        `could not be measured: this file has ${facing.footBonesFound} of the 2 foot bones` +
+        `${facing.hipsFound ? '' : ' and no hips'}. Nothing is claimed about which way it goes.`,
+    });
+  } else if (moving) {
     const finding = compare(
       `${clip.name}: stride vs rig`,
       facing.strideForward,
@@ -777,13 +892,27 @@ function readClip(
     rootTravel: facing.rootTravel,
     strideLength: facing.strideLength,
     moving,
+    measurable,
+    matchedBones: shared.length,
     degreesFromRig: moving ? angleBetween(facing.strideForward, rig.forward) : null,
     restDrift: drift,
     error: null,
   };
 }
 
-/** Whether anything in a report is actually wrong. */
+/**
+ * Whether the report is an all-clear.
+ *
+ * Requires that the rig was actually measured, not merely that nothing
+ * contradicted itself. The first real generated unit put through this had an
+ * unreadable rig and one working estimator, and the answer came back "nothing
+ * disagrees" -- which is true, and is a green tick for a question that was
+ * never answered. An unmeasurable estimator files a warning now, so this is
+ * false whenever something could not be checked as well as whenever something
+ * is wrong.
+ */
 export function facingIsClean(report: FacingReport): boolean {
-  return report.error === null && report.findings.every((finding) => finding.severity === 'ok');
+  if (report.error !== null || report.rig.forward === null) return false;
+  if (!report.findings.every((finding) => finding.severity === 'ok')) return false;
+  return report.clips.every((clip) => clip.error === null);
 }

@@ -905,10 +905,25 @@ export function mountStudio(container: HTMLElement): ViewHandle {
       const said =
         clip.error !== null
           ? clip.error
-          : clip.moving
-            ? `strides ${axis(clip.strideForward)}`
-            : 'no foot travel, so it is not asked which way it goes';
+          : !clip.measurable
+            ? 'no foot bones to watch, so nothing is claimed about which way it goes'
+            : clip.moving
+              ? `strides ${axis(clip.strideForward)}`
+              : 'no foot travel, so it is not asked which way it goes';
       box.appendChild(el('div', MUTED, `  ${clip.source}: ${said}`));
+    }
+    // The bone names, when they are the finding: every skeleton estimate looks
+    // its bones up by name, so a rig that answers none of them is answered with
+    // the vocabulary it does have. Wrapped rather than truncated -- this is the
+    // list somebody is about to compare against the mixamo contract.
+    if (report.rig.forward === null && report.rig.boneNames.length > 0) {
+      box.appendChild(
+        el(
+          'div',
+          `${MUTED}margin-top:4px;word-break:break-word;`,
+          `the ${report.rig.boneNames.length} bones this rig has: ${report.rig.boneNames.join(', ')}`,
+        ),
+      );
     }
     for (const finding of report.findings) {
       const colour = finding.severity === 'ok' ? '#7bc47f' : finding.severity === 'warning' ? '#e5c07b' : '#e06c75';

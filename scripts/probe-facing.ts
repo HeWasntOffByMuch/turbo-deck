@@ -47,9 +47,13 @@ function printClip(clip: ClipReport): void {
     console.log(`    ${clip.error}`);
     return;
   }
-  console.log(`    animation "${clip.animation}", stride ${clip.strideLength.toFixed(3)}`);
+  console.log(`    animation "${clip.animation}", stride ${clip.strideLength.toFixed(3)}, ${clip.matchedBones} bones shared with the mesh`);
   console.log(`    root travel          ${show(clip.rootTravel)}`);
   console.log(`    stride forward       ${show(clip.strideForward)}`);
+  if (!clip.measurable) {
+    console.log('    (no foot bones to watch -- nothing is claimed about which way this goes)');
+    return;
+  }
   if (!clip.moving) {
     console.log('    (no meaningful foot travel -- an idle or a pose, so it is not asked which way it goes)');
     return;
@@ -66,7 +70,12 @@ function printReport(report: FacingReport): void {
   console.log(`  mesh forward (head)  ${show(report.mesh.fromHead)}  lean ${(report.mesh.lean.head * 100).toFixed(1)}%`);
   console.log(`  rig forward (toes)   ${show(report.rig.forward)}`);
   console.log(`  rig left (hips)      ${show(report.rig.left)}`);
-  console.log(`  vertices ${report.mesh.vertexCount}`);
+  console.log(`  vertices ${report.mesh.vertexCount}, bones ${report.rig.boneNames.length}`);
+  // Printed in full when the rig could not be read, because then the bone names
+  // *are* the finding and a truncated list is a second round trip.
+  if (report.rig.forward === null) {
+    console.log(`  bones: ${report.rig.boneNames.join(', ')}`);
+  }
 
   for (const clip of report.clips) printClip(clip);
 
