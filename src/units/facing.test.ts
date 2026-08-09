@@ -206,20 +206,22 @@ describe('a rig off the naming contract', () => {
     })),
   };
 
-  it('is not reported as clean, however well its geometry reads', () => {
+  it('is measured anyway, and is still not reported as clean', () => {
     const report = facingReport({ name: 'mesh.glb', bytes: bytes(renamed) }, [
       { name: 'walk.glb', bytes: bytes(clipDocument('walk')) },
     ]);
-    // The geometry estimate still works -- it never looks at a bone -- which is
-    // exactly what made the old all-clear so convincing.
     expect(report.mesh.fromFeet).not.toBeNull();
-    expect(report.rig.forward).toBeNull();
+    // Measured off the shape, since the names answer nothing.
+    expect(report.rig.method).toBe('structure');
+    expect(angleBetween(report.rig.forward, FORWARD)).toBeLessThan(5);
+    // Two separate facts: the facing is sound, and the unit cannot load into a
+    // format built on the names it does not have.
     expect(facingIsClean(report)).toBe(false);
   });
 
   it('names the bones that are missing and the ones there are', () => {
     const report = facingReport({ name: 'mesh.glb', bytes: bytes(renamed) }, []);
-    const finding = report.findings.find((entry) => entry.title === 'rig forward');
+    const finding = report.findings.find((entry) => entry.title === 'rig naming');
     expect(finding?.severity).toBe('warning');
     expect(finding?.message).toContain('leftfoot');
     // The vocabulary it does have, because that is what somebody compares
@@ -227,14 +229,76 @@ describe('a rig off the naming contract', () => {
     expect(finding?.message).toContain('joint_L_Foot');
   });
 
-  it('tells a clip with no feet to watch from an idle', () => {
+  it('says nothing about a clip whose file has no legs to find', () => {
+    // Two bones in a line: no second leaf, so there is no pair of lowest tips
+    // to call feet and nothing to measure. The honest answer is silence with a
+    // reason, which is the one thing the old code would not do.
+    const stick: GlbDocument = {
+      nodes: [
+        { name: 'a', parent: null, translation: [0, 0, 0] },
+        { name: 'b', parent: 0, translation: [0, 1, 0] },
+      ],
+      joints: [0, 1],
+      mesh: null,
+      animations: [
+        {
+          name: 'wobble',
+          channels: [
+            {
+              node: 1,
+              times: new Float32Array([0, 0.5, 1]),
+              rotations: new Float32Array([0, 0, 0, 1, 0, 0.1, 0, 0.995, 0, 0, 0, 1]),
+            },
+          ],
+        },
+      ],
+      generator: 'facing.test',
+    };
     const report = facingReport({ name: 'mesh.glb', bytes: bytes(renamed) }, [
-      { name: 'walk.glb', bytes: bytes({ ...clipDocument('walk'), nodes: renamed.nodes }) },
+      { name: 'stick.glb', bytes: bytes(stick) },
     ]);
     const clip = report.clips[0];
     expect(clip?.measurable).toBe(false);
     expect(clip?.moving).toBe(false);
-    expect(report.findings.some((entry) => entry.title === 'walk.glb: stride')).toBe(true);
+    expect(report.findings.some((entry) => entry.title === 'stick.glb: stride')).toBe(true);
+  });
+
+  /**
+   * The real one, named the way Tripo actually names a rig.
+   *
+   * `spec: mixamo` is what the rig call asks for and this is what came back:
+   * `tripo::Root`, `tripo::Spine_0`, and four limb chains numbered rather than
+   * named, with nothing in the vocabulary saying which pair is legs. The bones
+   * are renamed here and nothing else is touched, so the right answer is known
+   * -- it is the same +X mannequin -- and the only question is whether the
+   * shape alone gets there.
+   */
+  const tripoNamed: GlbDocument = {
+    ...unit.meshGlb,
+    nodes: unit.meshGlb.nodes.map((node, index) => ({ ...node, name: `tripo::J_${index}` })),
+  };
+
+  it('measures a rig off the contract from the skeleton\'s shape', () => {
+    const report = facingReport({ name: 'mesh.glb', bytes: bytes(tripoNamed) }, []);
+    expect(report.rig.method).toBe('structure');
+    // The whole point: a real direction, off a rig whose names mean nothing.
+    expect(angleBetween(report.rig.forward, FORWARD)).toBeLessThan(5);
+    // And still not clean, because the unit cannot load into this format.
+    expect(facingIsClean(report)).toBe(false);
+    expect(report.findings.find((entry) => entry.title === 'rig naming')?.severity).toBe('warning');
+  });
+
+  it('measures the stride of a walk on that rig too', () => {
+    const walk = clipDocument('walk');
+    const report = facingReport({ name: 'mesh.glb', bytes: bytes(tripoNamed) }, [
+      { name: 'walk.glb', bytes: bytes({ ...walk, nodes: tripoNamed.nodes }) },
+    ]);
+    const clip = report.clips[0];
+    expect(clip?.measurable).toBe(true);
+    expect(clip?.moving).toBe(true);
+    // Which is the question the whole probe exists to answer, now answerable on
+    // the rigs this project actually gets back.
+    expect(clip?.degreesFromRig ?? 180).toBeLessThan(10);
   });
 
   it('shouts when a clip shares no bone names with the mesh at all', () => {

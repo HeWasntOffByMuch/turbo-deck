@@ -68,12 +68,13 @@ function printReport(report: FacingReport): void {
   }
   console.log(`  mesh forward (feet)  ${show(report.mesh.fromFeet)}  lean ${(report.mesh.lean.feet * 100).toFixed(1)}%`);
   console.log(`  mesh forward (head)  ${show(report.mesh.fromHead)}  lean ${(report.mesh.lean.head * 100).toFixed(1)}%`);
-  console.log(`  rig forward (toes)   ${show(report.rig.forward)}`);
+  const how = report.rig.method === 'structure' ? ' [from the skeleton\'s shape, not its names]' : '';
+  console.log(`  rig forward (toes)   ${show(report.rig.forward)}${how}`);
   console.log(`  rig left (hips)      ${show(report.rig.left)}`);
   console.log(`  vertices ${report.mesh.vertexCount}, bones ${report.rig.boneNames.length}`);
-  // Printed in full when the rig could not be read, because then the bone names
-  // *are* the finding and a truncated list is a second round trip.
-  if (report.rig.forward === null) {
+  // Printed in full whenever the names did not answer, because then the bone
+  // list *is* the finding and a truncated one is a second round trip.
+  if (report.rig.method !== 'names') {
     console.log(`  bones: ${report.rig.boneNames.join(', ')}`);
   }
 

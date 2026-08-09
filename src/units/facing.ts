@@ -210,33 +210,178 @@ export interface RigFacing {
   readonly missingToes: boolean;
   /** Every bone in the file, so an unrecognised vocabulary can be read off. */
   readonly boneNames: readonly string[];
+  /**
+   * How the bones were found: by the mixamo names, or by the skeleton's shape.
+   *
+   * Reported because it changes what the answer is worth. `names` is the
+   * contract being kept. `structure` is a measurement of a rig that is off the
+   * contract -- the facing is still real, and the unit still will not load into
+   * a format built on those names.
+   */
+  readonly method: 'names' | 'structure' | 'none';
 }
 
-/** Which way the skeleton points, from the bones themselves. */
-export function rigFacing(nodes: readonly GlbReadNode[]): RigFacing {
+/**
+ * The bones the estimators need, found without being told their names.
+ *
+ * The reason this exists: `spec: mixamo` is what the rig call asks for, and
+ * what came back on the first real unit was Tripo's own vocabulary --
+ * `tripo::Root`, `tripo::Spine_0`, `tripo::1_Left_Limb_2`. Four limb chains
+ * numbered rather than named, with nothing saying which pair is legs. Every
+ * name-based estimate went quiet at once, and the unit could not be measured at
+ * all.
+ *
+ * A skeleton is still a shape, though, and the facts these estimators need are
+ * structural rather than lexical:
+ *
+ *  - **the legs** are the two chains whose tips are lowest -- feet reach the
+ *    ground and hands do not, in every bind pose that is a T or an A;
+ *  - **the ankle** is the joint before the tip, so tip-minus-ankle is the foot,
+ *    whatever the two are called;
+ *  - **the hips** are where the two leg chains meet, which is the pelvis by
+ *    construction rather than by naming.
+ *
+ * Left and right are deliberately *not* resolved here. Without names there is
+ * nothing to be wrong about -- a handedness check needs a bone claiming to be
+ * left before it can catch one that is not.
+ */
+export interface StructuralBones {
+  readonly hips: GlbReadNode | null;
+  /** The joint before each foot's tip. One entry per leg found. */
+  readonly ankles: readonly GlbReadNode[];
+  /** Each leg's tip, aligned with {@link ankles}. Equal to the ankle if the leg has no toe. */
+  readonly toes: readonly GlbReadNode[];
+}
+
+/** Bone indices to walk, from the skin when there is one and every node when not. */
+function jointSet(nodes: readonly GlbReadNode[], joints: readonly number[] | null): ReadonlySet<number> {
+  // The skin's joint list is the honest answer to "what is a bone". Without it
+  // -- an animation-only file -- every node is a candidate, which costs nothing
+  // here: a scene node with no children is not a leaf anybody's foot is on.
+  if (joints !== null && joints.length > 0) return new Set(joints);
+  return new Set(nodes.map((node) => node.index));
+}
+
+export function structuralBones(
+  nodes: readonly GlbReadNode[],
+  joints: readonly number[] | null = null,
+): StructuralBones {
+  const bones = jointSet(nodes, joints);
+  const byIndex = new Map(nodes.map((node) => [node.index, node]));
+  const parentOf = (node: GlbReadNode): GlbReadNode | null => {
+    const parent = node.parent === null ? undefined : byIndex.get(node.parent);
+    return parent !== undefined && bones.has(parent.index) ? parent : null;
+  };
+
+  const hasChild = new Set<number>();
+  for (const index of bones) {
+    const parent = parentOf(byIndex.get(index) ?? ({} as GlbReadNode));
+    if (parent !== null) hasChild.add(parent.index);
+  }
+  const leaves = [...bones]
+    .map((index) => byIndex.get(index))
+    .filter((node): node is GlbReadNode => node !== undefined && !hasChild.has(node.index));
+  if (leaves.length < 2) return { hips: null, ankles: [], toes: [] };
+
+  // The two lowest tips. Sorted by world height, which is the one thing a bind
+  // pose guarantees about feet: a T-pose puts the hands at hip height and an
+  // A-pose lower still, but neither puts them under the ankles.
+  const byHeight = [...leaves].sort((a, b) => nodePosition(a)[1] - nodePosition(b)[1]);
+  const legTips = byHeight.slice(0, 2);
+
+  const chainOf = (leaf: GlbReadNode): GlbReadNode[] => {
+    const chain: GlbReadNode[] = [];
+    let at: GlbReadNode | null = leaf;
+    // Bounded by the bone count: a malformed file is what this reads, and a
+    // cycle here would hang rather than report anything.
+    for (let guard = bones.size + 1; at !== null && guard > 0; guard -= 1) {
+      chain.push(at);
+      at = parentOf(at);
+    }
+    return chain.reverse();
+  };
+
+  const chains = legTips.map(chainOf);
+  const ankles: GlbReadNode[] = [];
+  const toes: GlbReadNode[] = [];
+  for (const chain of chains) {
+    const tip = chain[chain.length - 1];
+    if (tip === undefined) continue;
+    // A leg of hip/knee/ankle/toe gives an ankle one up from the tip. A leg
+    // that stops at the ankle has no foot vector, and says so by reporting the
+    // same joint twice rather than by inventing one.
+    const ankle = chain.length >= 4 ? (chain[chain.length - 2] ?? tip) : tip;
+    ankles.push(ankle);
+    toes.push(tip);
+  }
+
+  // Where the two legs meet: the deepest joint both chains pass through.
+  let hips: GlbReadNode | null = null;
+  const [first, second] = chains;
+  if (first && second) {
+    const secondIds = new Set(second.map((node) => node.index));
+    for (const node of first) {
+      if (secondIds.has(node.index)) hips = node;
+      else break;
+    }
+  }
+  return { hips, ankles, toes };
+}
+
+/** The mean ankle-to-toe direction of a set of legs, flattened to the ground. */
+function toeForward(pairs: readonly (readonly [Vec3, Vec3])[]): Vec3 | null {
+  const vectors: Vec3[] = [];
+  for (const [ankle, toe] of pairs) {
+    const v = normalize(horizontal(subtract(toe, ankle)));
+    if (v !== null) vectors.push(v);
+  }
+  return vectors.length === 0 ? null : normalize(vectors.reduce((acc, v) => add(acc, v), [0, 0, 0] as Vec3));
+}
+
+/**
+ * Which way the skeleton points, from the bones themselves.
+ *
+ * The names first, because a rig that keeps the contract should be measured
+ * against it -- and the shape second, so a rig that does not is still measured
+ * rather than shrugged at.
+ */
+export function rigFacing(nodes: readonly GlbReadNode[], joints: readonly number[] | null = null): RigFacing {
   const bones = boneMap(nodes);
   const at = (key: string): Vec3 | null => {
     const node = bones.get(key);
     return node === undefined ? null : nodePosition(node);
   };
 
-  const toeVectors: Vec3[] = [];
+  const named: (readonly [Vec3, Vec3])[] = [];
   for (const side of ['left', 'right']) {
     const ankle = at(`${side}foot`);
     // `Toe_End` is the tip and the better lever arm; `ToeBase` is the fallback
     // for a rig that stops at the ball of the foot.
     const toe = at(`${side}toeend`) ?? at(`${side}toebase`);
     if (ankle === null || toe === null) continue;
-    const v = normalize(horizontal(subtract(toe, ankle)));
-    if (v !== null) toeVectors.push(v);
+    named.push([ankle, toe]);
   }
-  const forward =
-    toeVectors.length === 0 ? null : normalize(toeVectors.reduce((acc, v) => add(acc, v), [0, 0, 0] as Vec3));
+
+  let forward = toeForward(named);
+  let method: RigFacing['method'] = forward === null ? 'none' : 'names';
+
+  if (forward === null) {
+    const found = structuralBones(nodes, joints);
+    const pairs = found.ankles
+      .map((ankle, index) => [ankle, found.toes[index]] as const)
+      .filter((pair): pair is readonly [GlbReadNode, GlbReadNode] => pair[1] !== undefined)
+      .filter(([ankle, toe]) => ankle.index !== toe.index)
+      .map(([ankle, toe]) => [nodePosition(ankle), nodePosition(toe)] as const);
+    forward = toeForward(pairs);
+    if (forward !== null) method = 'structure';
+  }
 
   const leftHip = at('leftupleg');
   const rightHip = at('rightupleg');
   const left = leftHip === null || rightHip === null ? null : normalize(horizontal(subtract(leftHip, rightHip)));
-  const handednessOk = forward === null || left === null ? null : dot(cross(UP, forward), left) > 0;
+  // Only meaningful in the name path: handedness is a claim a bone makes about
+  // itself, and a numbered limb makes none.
+  const handednessOk = method !== 'names' || forward === null || left === null ? null : dot(cross(UP, forward), left) > 0;
   return {
     forward,
     left,
@@ -244,6 +389,7 @@ export function rigFacing(nodes: readonly GlbReadNode[]): RigFacing {
     missingBones: REQUIRED_BONES.filter((key) => !bones.has(key)),
     missingToes: !TOE_BONES.some((key) => bones.has(key)),
     boneNames: nodes.filter((node) => node.name !== '').map((node) => node.name),
+    method,
   };
 }
 
@@ -499,12 +645,18 @@ export function clipFacing(glb: GlbBinary, animationIndex = 0, frames = 48): Cli
   if (!(end > start)) return null;
 
   const bones = boneMap(nodes);
-  const rootNode = bones.get('hips')?.index ?? 0;
-  const footKeys = ['leftfoot', 'rightfoot'] as const;
+  // Names first, shape second -- the same order and for the same reason as
+  // `rigFacing`. On a rig off the contract this is the difference between
+  // measuring the walk and filing it as an idle.
+  const named = (['leftfoot', 'rightfoot'] as const).map((key) => bones.get(key)).filter((node) => node !== undefined);
+  const structural = named.length > 0 ? null : structuralBones(nodes, readSkinJoints(glb));
+  const footNodes = named.length > 0 ? named : (structural?.ankles ?? []);
+  const hipsNode = bones.get('hips') ?? structural?.hips ?? null;
+  const rootNode = hipsNode?.index ?? 0;
 
   const times: number[] = [];
   const hipsPath: Vec3[] = [];
-  const feetPaths = new Map<string, Vec3[]>(footKeys.map((key) => [key, []]));
+  const feetPaths = new Map<number, Vec3[]>(footNodes.map((node) => [node.index, []]));
 
   for (let frame = 0; frame < frames; frame += 1) {
     const t = start + ((end - start) * frame) / (frames - 1);
@@ -529,11 +681,7 @@ export function clipFacing(glb: GlbBinary, animationIndex = 0, frames = 48): Cli
     };
     times.push(t);
     hipsPath.push(originOf(rootNode));
-    for (const key of footKeys) {
-      const node = bones.get(key);
-      if (node === undefined) continue;
-      feetPaths.get(key)?.push(originOf(node.index));
-    }
+    for (const node of footNodes) feetPaths.get(node.index)?.push(originOf(node.index));
   }
 
   const rootTravel =
@@ -546,8 +694,8 @@ export function clipFacing(glb: GlbBinary, animationIndex = 0, frames = 48): Cli
   // relative to the hips over those frames is the body's motion, reversed.
   let travel: Vec3 = [0, 0, 0];
   let strideLength = 0;
-  for (const key of footKeys) {
-    const path = feetPaths.get(key) ?? [];
+  for (const node of footNodes) {
+    const path = feetPaths.get(node.index) ?? [];
     if (path.length < 4) continue;
     const ys = path.map((p) => p[1]);
     const low = Math.min(...ys);
@@ -581,10 +729,15 @@ export function clipFacing(glb: GlbBinary, animationIndex = 0, frames = 48): Cli
     rootTravel,
     strideForward: normalize(travel),
     strideLength,
-    footBonesFound: footKeys.filter((key) => bones.has(key)).length,
-    hipsFound: bones.has('hips'),
+    footBonesFound: footNodes.length,
+    hipsFound: hipsNode !== null,
     frames,
   };
+}
+
+/** The skin's joint list, or null when the file has no skinned mesh. */
+function readSkinJoints(glb: GlbBinary): readonly number[] | null {
+  return readSkinnedMesh(glb)?.jointNodes ?? null;
 }
 
 // --- two files that have to agree --------------------------------------------
@@ -705,15 +858,24 @@ export function facingReport(mesh: FacingSource, clips: readonly FacingSource[])
     const message = cause instanceof Error ? cause.message : String(cause);
     return {
       mesh: { fromFeet: null, fromHead: null, lean: { feet: 0, head: 0 }, vertexCount: 0 },
-      rig: { forward: null, left: null, handednessOk: null, missingBones: [], missingToes: true, boneNames: [] },
+      rig: {
+        forward: null,
+        left: null,
+        handednessOk: null,
+        missingBones: [],
+        missingToes: true,
+        boneNames: [],
+        method: 'none',
+      },
       clips: [],
       findings: [],
       error: `${mesh.name}: ${message}`,
     };
   }
 
-  const geometry = meshFacing(readSkinnedMesh(meshGlb));
-  const rig = rigFacing(meshNodes);
+  const skinned = readSkinnedMesh(meshGlb);
+  const geometry = meshFacing(skinned);
+  const rig = rigFacing(meshNodes, skinned?.jointNodes ?? null);
   const findings: FacingFinding[] = [];
   const push = (finding: FacingFinding | null): void => {
     if (finding !== null) findings.push(finding);
@@ -778,6 +940,23 @@ export function facingReport(mesh: FacingSource, clips: readonly FacingSource[])
         `this project's whole unit format is built on, so a rig that answers none of them is a rig off that ` +
         `contract -- which is worth knowing on its own, since the sockets, the root-motion strip and the ` +
         `export all assume it too. The ${rig.boneNames.length} bones this file actually has: ${sample}` +
+        `${rig.boneNames.length > 40 ? ' …' : ''}`,
+    });
+  } else if (rig.method === 'structure') {
+    // Measured, and still a problem -- two separate facts that have to be said
+    // separately, because the facing here is trustworthy and the unit is not
+    // loadable. The rig call asks for `spec: mixamo`; a rig that answers to
+    // none of those names did not come back on that contract, and the sockets,
+    // the root-motion strip, the skeleton document and the export all read it.
+    findings.push({
+      severity: 'warning',
+      title: 'rig naming',
+      degrees: null,
+      message:
+        `this rig answers to none of the mixamo names (no ${rig.missingBones.join(', ')}), so its facing was ` +
+        `measured from the skeleton's shape instead: the two lowest limb tips are the feet, and the joint above ` +
+        `each tip is the ankle. The measurement is sound; the unit still will not load into a format built on ` +
+        `those names. Its ${rig.boneNames.length} bones: ${rig.boneNames.slice(0, 40).join(', ')}` +
         `${rig.boneNames.length > 40 ? ' …' : ''}`,
     });
   } else if (rig.missingBones.length > 0) {

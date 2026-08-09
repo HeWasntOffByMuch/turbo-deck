@@ -898,7 +898,8 @@ export function mountStudio(container: HTMLElement): ViewHandle {
         'div',
         MUTED,
         `mesh ${axis(report.mesh.fromFeet)} (feet) · ${axis(report.mesh.fromHead)} (head) · ` +
-          `rig ${axis(report.rig.forward)} (toes) · the scene draws +X`,
+          `rig ${axis(report.rig.forward)} (toes` +
+          `${report.rig.method === 'structure' ? ', found by shape' : ''}) · the scene draws +X`,
       ),
     );
     for (const clip of report.clips) {
@@ -916,7 +917,7 @@ export function mountStudio(container: HTMLElement): ViewHandle {
     // its bones up by name, so a rig that answers none of them is answered with
     // the vocabulary it does have. Wrapped rather than truncated -- this is the
     // list somebody is about to compare against the mixamo contract.
-    if (report.rig.forward === null && report.rig.boneNames.length > 0) {
+    if (report.rig.method !== 'names' && report.rig.boneNames.length > 0) {
       box.appendChild(
         el(
           'div',
