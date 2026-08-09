@@ -389,6 +389,39 @@ export function writeGlb(document: GlbDocument): Uint8Array {
   return out;
 }
 
+/** Both chunks of a `.glb`: the document, and the buffer its accessors index. */
+export interface GlbChunks {
+  readonly json: Record<string, unknown>;
+  /** Empty when the file carries no binary chunk. */
+  readonly bin: Uint8Array;
+}
+
+/**
+ * Splits a `.glb` into its two chunks.
+ *
+ * Still not a loader: it hands back the document and the bytes, and decoding an
+ * accessor out of them is somebody else's problem -- see `facing.ts`, which
+ * needs the numbers to measure which way a rig points. three's `GLTFLoader` is
+ * what actually loads a model for drawing.
+ */
+export function readGlbChunks(bytes: Uint8Array): GlbChunks {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(0, true) !== MAGIC) throw new Error('not a glb');
+  const jsonLength = view.getUint32(12, true);
+  if (view.getUint32(16, true) !== JSON_CHUNK) throw new Error('first chunk is not JSON');
+  const text = new TextDecoder().decode(bytes.subarray(20, 20 + jsonLength));
+  const json = JSON.parse(text) as Record<string, unknown>;
+
+  const binHeader = 20 + jsonLength;
+  // A `.glb` may legitimately be JSON only -- a clip whose buffers are external.
+  // Nothing here refuses that; the accessor read is what will fail, and it can
+  // say which accessor.
+  if (binHeader + 8 > bytes.byteLength) return { json, bin: new Uint8Array(0) };
+  const binLength = view.getUint32(binHeader, true);
+  if (view.getUint32(binHeader + 4, true) !== BIN_CHUNK) return { json, bin: new Uint8Array(0) };
+  return { json, bin: bytes.subarray(binHeader + 8, binHeader + 8 + binLength) };
+}
+
 /**
  * Reads a `.glb`'s JSON chunk back.
  *
@@ -397,12 +430,7 @@ export function writeGlb(document: GlbDocument): Uint8Array {
  * three's `GLTFLoader` is what actually loads a model.
  */
 export function readGlbJson(bytes: Uint8Array): Record<string, unknown> {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (view.getUint32(0, true) !== MAGIC) throw new Error('not a glb');
-  const jsonLength = view.getUint32(12, true);
-  if (view.getUint32(16, true) !== JSON_CHUNK) throw new Error('first chunk is not JSON');
-  const text = new TextDecoder().decode(bytes.subarray(20, 20 + jsonLength));
-  return JSON.parse(text) as Record<string, unknown>;
+  return readGlbChunks(bytes).json;
 }
 
 export { UNSIGNED_BYTE };

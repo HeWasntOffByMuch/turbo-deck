@@ -194,6 +194,17 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  root bone, in a clip's glTF JSON for CI and in three.js track
                  names for the importer -- one rule, so the gate and the loader
                  cannot disagree about what counts.
+                 facing.ts measures which way a unit actually points, off the
+                 `.glb` bytes and with no GL context: the mesh's front (from
+                 geometry alone), the rig's (ankle to toe), and the clip's (the
+                 stance foot slides backwards under a body going forwards). It
+                 exists because `forwardAxis` in a skeleton document is an
+                 assertion and nothing measured it, so "faces the camera, walks
+                 backwards" had four possible causes with four different fixes
+                 and no way to tell them apart short of generating another unit.
+                 `npx tsx scripts/probe-facing.ts --job <id>` runs it over a real
+                 generation; the reference unit is the control, and the test
+                 beside it introduces each of the four faults on purpose.
                  machine.ts is the state machine BOTH the Studio tab and the game
                  drive (specs 110-111) -- one machine, two callers, which is what
                  makes "the tool and the game read the same files" a fact about
