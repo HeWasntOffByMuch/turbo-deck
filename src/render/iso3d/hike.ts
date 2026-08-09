@@ -28,8 +28,6 @@
  * from a rebuild.
  */
 
-import { DEFAULT_CREASE_ANGLE } from './shading.js';
-
 /**
  * A single buffer the debug view may draw on its own, instead of the finished
  * frame (spec 097). Wired by step 4 onward, as each buffer starts to exist.
@@ -141,12 +139,12 @@ export interface HikeSettings {
    * Share and average normals across curved surfaces, splitting them only at
    * hard creases, cap rims and seams.
    *
-   * Off by default and likely to stay that way: everything but the terrain
-   * surface is flat-shaded deliberately (spec 031, and spec 077 rebuilt the
-   * lobed tree non-indexed precisely to keep its facets). The look being
-   * imitated is flat-shaded too -- it gets its shape from facets and outlines,
-   * not from smooth gradients. This exists so the choice can be seen rather
-   * than assumed.
+   * On in `HIKE_DEFAULTS`, which was not the original expectation: everything
+   * but the terrain surface is flat-shaded deliberately (spec 031, and spec 077
+   * rebuilt the lobed tree non-indexed precisely to keep its facets), and the
+   * look being imitated gets its shape from facets and outlines rather than from
+   * smooth gradients. What settled it was looking at both, which is what the
+   * switch is for.
    */
   readonly smoothNormals: boolean;
   /**
@@ -155,7 +153,8 @@ export interface HikeSettings {
    *
    * The tessellation, not this number, is what decides whether smoothing reaches
    * anything -- `shading.ts` carries the table of what meets at what angle, and
-   * why going much above the default turns a tapered trunk into a dome.
+   * why going much above `DEFAULT_CREASE_ANGLE` turns a tapered trunk into a
+   * dome. `HIKE_OFF` opens well above it on purpose; see the note there.
    */
   readonly creaseAngle: number;
   /**
@@ -404,7 +403,14 @@ export interface HikeSettings {
  */
 export const HIKE_OFF: HikeSettings = {
   smoothNormals: false,
-  creaseAngle: DEFAULT_CREASE_ANGLE,
+  // 80 degrees, not `shading.ts`'s 30. That default is the welding angle for a
+  // prop built to keep its facets, and at 30 the smoothing reaches almost
+  // nothing here -- only the canopy slabs are modelled finer than that, so the
+  // switch above looked like it did nothing at all. At 80 the trunks, cones and
+  // stones round off too, which is the version worth having a switch for. The
+  // melted-dome warning in `shading.ts` is real and this is past it; it is a
+  // deliberate trade of a crisp taper for a surface that carries a gradient.
+  creaseAngle: (80 * Math.PI) / 180,
   swayNormals: false,
 
   lowRes: false,
@@ -429,15 +435,21 @@ export const HIKE_OFF: HikeSettings = {
   palette: null,
 
   ink: false,
-  // Relative to the focus, and sized to the frame: at the default zoom the view
-  // reaches about 350 units past the player before the top edge, so the ramp
-  // starts just beyond them and is nearly complete at the horizon. Zooming out
-  // widens the frame without moving these, which is right -- a wider view should
-  // show more of the far treatment, not rescale it.
-  inkStart: 80,
-  inkEnd: 380,
-  inkDesaturate: 0.55,
-  inkFlatten: 0.8,
+  // Relative to the focus, and deliberately reaching well past the frame: at the
+  // default zoom the view ends about 350 units past the player, so the ramp only
+  // begins near the top edge and never comes close to full strength on screen.
+  // That is the point. Sized to the frame -- the 80/380 these opened at -- the
+  // treatment lands on everything at once and reads as a filter over the picture
+  // rather than as distance; starting past the edge means it arrives as the
+  // player walks toward something, and zooming out reveals more of the ramp
+  // instead of rescaling it.
+  inkStart: 460,
+  inkEnd: 1360,
+  inkDesaturate: 0.5,
+  // Light, for the same reason the ramp is long: at 0.8 a surface that has only
+  // partly entered the ramp has already lost most of its gradient, so the hills
+  // behind the player flatten before anything else says they are far away.
+  inkFlatten: 0.3,
   inkFog: 0.45,
   inkEdgeGain: 2.2,
   outlineMinNeighbours: 2,
@@ -460,6 +472,28 @@ export const HIKE_OFF: HikeSettings = {
   blendNoise: 0.25,
 
   debug: 'off',
+};
+
+/**
+ * What the Play tab actually opens at, and what the hike menu's Reset restores.
+ *
+ * Separate from `HIKE_OFF` rather than replacing it, because the two answer
+ * different questions and both are worth being able to ask. `HIKE_OFF` is the
+ * frame before spec 097 existed -- the thing every step of the arc is judged
+ * against, and the state a probe or a bisect wants to start from. This is the
+ * verdict: of the ten switches, the two that earned their place by default.
+ *
+ * Written as a diff so it reads as one, and so the thresholds cannot drift apart
+ * from the values `HIKE_OFF` documents. The switches left off are as much of the
+ * answer as the ones turned on -- `curvature` and `softShadows` in particular
+ * are off *by choice* (spec 104's fold darkening doubles what the outlines
+ * already say; spec 105's penumbra is the one smooth gradient in a posterized
+ * frame), not because nobody got to them.
+ */
+export const HIKE_DEFAULTS: HikeSettings = {
+  ...HIKE_OFF,
+  smoothNormals: true,
+  ink: true,
 };
 
 // --- the colour transfer ----------------------------------------------------

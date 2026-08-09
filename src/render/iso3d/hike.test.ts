@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_VIRTUAL_SIZE,
   HIKE_DEBUG_VIEWS,
+  HIKE_DEFAULTS,
   HIKE_OFF,
   paletteById,
   DEFAULT_PALETTE_ID,
@@ -66,12 +67,52 @@ describe('the hike settings', () => {
     expect(HIKE_OFF.inkEnd).toBeGreaterThan(HIKE_OFF.inkStart);
   });
 
+  it('keeps the ink ramp reaching past the frame, not sized to it', () => {
+    // The view ends about 350u past the player at the default zoom. A ramp that
+    // completes inside that lands on every pixel at once and reads as a filter
+    // over the picture rather than as distance -- which is what these opened at
+    // and what moving them was for. Stated as the property rather than as the
+    // two numbers, so retuning them cannot quietly undo it.
+    expect(HIKE_OFF.inkStart).toBeGreaterThan(350);
+  });
+
   it('opens at the size the panel calls the default', () => {
     // Two places name it; this is what stops them drifting apart, which would
     // show up as the panel silently resizing the buffer on first read.
     const size = virtualSizeById(DEFAULT_VIRTUAL_SIZE);
     expect(size.width).toBe(HIKE_OFF.virtualWidth);
     expect(size.height).toBe(HIKE_OFF.virtualHeight);
+  });
+});
+
+describe('the hike defaults', () => {
+  it('turns on smooth normals and the distance treatment, and nothing else', () => {
+    // Walked rather than listed, the same way `HIKE_OFF`'s own test is: a switch
+    // that starts defaulting on has to be a decision made here, not something
+    // that arrives with an unrelated commit.
+    const on = Object.entries(HIKE_DEFAULTS)
+      .filter(([, value]) => value === true)
+      .map(([name]) => name);
+    expect(on.sort()).toEqual(['ink', 'smoothNormals']);
+  });
+
+  it('leaves the two steps that were declined off', () => {
+    // Off by choice rather than by omission -- spec 104's fold darkening repeats
+    // what the outlines already say, and spec 105's penumbra is the one smooth
+    // gradient in a posterized frame. Pinned so "everything else is off" cannot
+    // be read as "nobody got to these".
+    expect(HIKE_DEFAULTS.curvature).toBe(false);
+    expect(HIKE_DEFAULTS.softShadows).toBe(false);
+  });
+
+  it('changes only which switches are thrown, never a threshold', () => {
+    // The thresholds live in one place. This is what stops the defaults becoming
+    // a second set of tuned numbers that drifts from the one `HIKE_OFF`
+    // documents.
+    for (const [name, value] of Object.entries(HIKE_DEFAULTS)) {
+      if (typeof value === 'boolean') continue;
+      expect([name, value]).toEqual([name, HIKE_OFF[name as keyof HikeSettings]]);
+    }
   });
 });
 
