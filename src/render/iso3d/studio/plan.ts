@@ -89,6 +89,52 @@ export function establishedFamilies(jobs: readonly JobSummary[]): readonly strin
 }
 
 /**
+ * Enough of a job to say what releasing its family would cost next time.
+ *
+ * Structurally satisfied by `JobView`, so the caller passes its jobs straight
+ * in. Kept separate from {@link JobSummary} because only this decision needs the
+ * clip list, and widening the summary would make every caller carry it.
+ */
+export interface FamilyJob extends JobSummary {
+  readonly unitId: string;
+  readonly params: { readonly clipIntents: readonly string[] };
+}
+
+/**
+ * The jobs whose success is why a family is closed (spec 114).
+ *
+ * Normally one. More than one is possible and is not an error: two generations
+ * of a brand-new family can be confirmed before either finishes, and both will
+ * have been priced with a retarget. Releasing has to clear all of them or the
+ * family stays closed by the one that was missed.
+ */
+export function familyOwners(jobs: readonly FamilyJob[], skeletonId: string): readonly FamilyJob[] {
+  return jobs.filter(
+    (job) => job.skeletonId === skeletonId && job.status === 'succeeded' && job.establishesRigFamily,
+  );
+}
+
+/**
+ * What a release will actually do, in the words the button needs.
+ *
+ * The number that matters is the retarget count, because that is the bill: the
+ * next unit of this family stops reusing clips and buys one call per intent.
+ * Saying "this is free" and stopping there would be true and useless -- the cost
+ * is real, it is just deferred by one action, and a warning that hides that is
+ * how somebody releases a family to try one thing and pays for eleven clips.
+ */
+export function releaseWarning(owners: readonly FamilyJob[]): string | null {
+  if (owners.length === 0) return null;
+  const clips = Math.max(...owners.map((job) => job.params.clipIntents.length));
+  const who = owners.map((job) => `"${job.unitId}"`).join(', ');
+  return (
+    `Releasing costs nothing now. It un-owns the clip library from ${who}, and the next unit of ` +
+    `this family will retarget again -- ${clips} paid call${clips === 1 ? '' : 's'} at the price ` +
+    `the estimate quotes. Units already exported keep the clips they were exported with.`
+  );
+}
+
+/**
  * A unit id that can be a file name and an identifier.
  *
  * Matched to the `identifier` pattern the spec 107 schemas use, so an id that

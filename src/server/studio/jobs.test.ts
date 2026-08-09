@@ -15,6 +15,7 @@ import {
   recordArtifacts,
   recordCredits,
   recordTaskId,
+  releaseFamily,
   resumable,
   retryFailed,
   skipStep,
@@ -273,6 +274,51 @@ describe('resumable', () => {
     const failed = failJob(job(), 'rig', 'boom', 0);
     const queued = job();
     expect(resumable([running, done, failed, queued]).map((entry) => entry.status)).toEqual(['running', 'queued']);
+  });
+});
+
+describe('releaseFamily (spec 114)', () => {
+  /** A succeeded job that owns its family, which is the only kind release acts on. */
+  function owner(id: string, patch: Partial<Job> = {}): Job {
+    return { ...runThrough(job()).job, id, status: 'succeeded' as const, ...patch };
+  }
+
+  it('un-owns every succeeded job of the family and returns only those', () => {
+    const jobs = [owner('a'), owner('b', { skeletonId: 'avian' })];
+    const released = releaseFamily(jobs, 'biped', 9000);
+    expect(released.map((entry) => entry.id)).toEqual(['a']);
+    expect(released[0]?.establishesRigFamily).toBe(false);
+    expect(released[0]?.updatedAtMs).toBe(9000);
+  });
+
+  it('leaves a failed job alone, so a retry is not silently repriced', () => {
+    // `projectRemaining` prices a failed job's unrun retargets as its own to
+    // buy. Clearing the flag here would make those stop being its work and quote
+    // the retry short -- a release must never change what a *retry* costs.
+    const failed = failJob(job(), 'retarget', 'boom', 0);
+    expect(releaseFamily([failed], 'biped', 1)).toEqual([]);
+  });
+
+  it('keeps what was paid and every task id', () => {
+    const spent = recordCredits(owner('a'), 'rig', 25, 0);
+    const [released] = releaseFamily([spent], 'biped', 1);
+    expect(released?.creditsSpent).toBe(spent.creditsSpent);
+    expect(released?.steps.map((step) => step.taskId)).toEqual(spent.steps.map((step) => step.taskId));
+  });
+
+  it('releases nothing the second time', () => {
+    const [once] = releaseFamily([owner('a')], 'biped', 1);
+    expect(once).toBeDefined();
+    expect(releaseFamily([once as Job], 'biped', 2)).toEqual([]);
+  });
+
+  it('makes the next job of the family run the retarget stage again', () => {
+    // The whole point: ownership is derived, so clearing it has to actually
+    // reopen the stage that costs money rather than only change a label.
+    const [released] = releaseFamily([owner('a')], 'biped', 1);
+    expect(nextStage(job({ establishesRigFamily: false }))).not.toBe('retarget');
+    expect(released?.establishesRigFamily).toBe(false);
+    expect(runThrough(job({ establishesRigFamily: true })).visited).toContain('retarget');
   });
 });
 

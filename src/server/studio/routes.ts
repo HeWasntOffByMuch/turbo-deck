@@ -22,7 +22,7 @@ import { canonicalClipIntents, cacheKey } from './cache.js';
 import { ConfirmationStore } from './confirm.js';
 import type { StudioConfig } from './config.js';
 import { readBody, readJsonBody, sendJson, type RequestContext, type Route } from './http.js';
-import { cacheHit, createJob } from './jobs.js';
+import { cacheHit, createJob, releaseFamily } from './jobs.js';
 import { summarize } from './ledger.js';
 import type { StudioPipeline } from './pipeline.js';
 import { projectCost, projectRemaining } from './pricing.js';
@@ -559,6 +559,37 @@ export function studioRoutes(deps: RouteDeps): readonly Route[] {
         } catch (cause) {
           return sendJson(response, 502, { error: cause instanceof Error ? cause.message : String(cause) });
         }
+      },
+    },
+
+    /**
+     * Hands a rig family's clip library back (spec 114).
+     *
+     * Free, and behind the admin gate anyway -- not because it spends, but
+     * because it changes what the *next* generation spends. There is no
+     * confirmation token for the same reason: a token binds a quoted price to a
+     * spend, and the price this changes is quoted by the next `/estimate`, which
+     * is where the user will see it.
+     *
+     * 404 when nothing owned the family, rather than 200 with an empty list. A
+     * release that released nothing is almost always a family name typed wrong,
+     * and answering "done" to that is how the next generation surprises somebody
+     * with a retarget bill.
+     */
+    {
+      method: 'POST',
+      pattern: '/api/studio/families/:skeletonId/release',
+      handler: ({ response, params }) => {
+        const skeletonId = params['skeletonId'] ?? '';
+        const released = releaseFamily(store.listJobs(), skeletonId, now());
+        if (released.length === 0) {
+          return sendJson(response, 404, {
+            error: `no succeeded job owns the "${skeletonId}" rig family, so there is nothing to release`,
+          });
+        }
+        for (const job of released) store.saveJob(job);
+        deps.log?.(`[studio] released rig family ${skeletonId} from ${released.length} job(s)`);
+        return sendJson(response, 200, { skeletonId, released: released.map(jobView) });
       },
     },
 

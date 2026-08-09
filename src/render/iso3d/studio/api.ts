@@ -265,6 +265,20 @@ export class StudioApi {
     return this.json(`/jobs/${encodeURIComponent(jobId)}/retry`, { confirmationToken }) as Promise<JobView>;
   }
 
+  /**
+   * Hands a rig family's clip library back, so the next unit re-establishes it
+   * (spec 114).
+   *
+   * Free — and therefore no confirmation token. What it changes is the price of
+   * the *next* generation, which `estimate` quotes when it is asked.
+   */
+  async releaseFamily(skeletonId: string): Promise<readonly JobView[]> {
+    const body = (await this.call(`/families/${encodeURIComponent(skeletonId)}/release`, {
+      method: 'POST',
+    })) as { released?: JobView[] };
+    return body.released ?? [];
+  }
+
   cancel(jobId: string): Promise<JobView> {
     return this.call(`/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }) as Promise<JobView>;
   }

@@ -19,7 +19,15 @@ import type { ViewHandle } from '../view-handle.js';
 import { StudioApi, StudioApiError, type EstimateResult, type JobView, type StudioConfigView } from './api.js';
 import { formatBytes, formatCredits, formatDuration, formatTimestamp, STAGE_LABELS, STATUS_COLORS, STATUS_LABELS } from './format.js';
 import { checkImage, MANUAL_CHECKS, measureImage, worstSeverity, type ImageFinding } from './image-check.js';
-import { CLIP_INTENTS, defaultClipIntents, establishesRigFamily, unitIdProblem } from './plan.js';
+import {
+  CLIP_INTENTS,
+  defaultClipIntents,
+  establishesRigFamily,
+  familyOwners,
+  releaseWarning,
+  unitIdProblem,
+  type FamilyJob,
+} from './plan.js';
 import { mountPreview, type PreviewHandle, type PreviewSource, type SaveDocument } from './preview-panel.js';
 import { PLAYER_REFERENCE_HEIGHT } from './preview.js';
 import mannequinUrl from '../../../../assets/units/dev/mannequin.glb?url';
@@ -561,16 +569,26 @@ export function mountStudio(container: HTMLElement): ViewHandle {
       setText(hashLine, image.sha256 === null ? (image.uploadError ?? 'hashing…') : `sha256 ${image.sha256}`);
 
       const establishes = establishesRigFamily(jobs, image.skeletonId);
-      repaint(clips, `${establishes}:${image.clipIntents.join(',')}:${image.skeletonId}`, () => {
+      repaint(clips, `${establishes}:${image.clipIntents.join(',')}:${image.skeletonId}:${image.busy}`, () => {
         if (!establishes) {
-          // The shared-skeleton rule, made visible rather than merely enforced.
-          return [
+          // The shared-skeleton rule, made visible rather than merely enforced
+          // -- and, since spec 114, revocable rather than merely visible.
+          const owners = familyOwners(jobs, image.skeletonId);
+          const row = el('div', 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;');
+          row.appendChild(
             el(
-              'div',
+              'span',
               `${MUTED}color:#7bc47f;`,
               `"${image.skeletonId}" already has a clip library. This unit reuses it -- no retarget, and nothing to choose.`,
             ),
-          ];
+          );
+          if (owners.length > 0) {
+            const release = button('Release the family…', 'danger');
+            release.disabled = image.busy;
+            release.addEventListener('click', () => void releaseTheFamily(image.skeletonId, owners));
+            row.appendChild(release);
+          }
+          return [row];
         }
         return CLIP_INTENTS.map((intent) => {
           const label = el('label', `${MUTED}display:flex;gap:4px;align-items:center;cursor:pointer;`);
@@ -1008,6 +1026,29 @@ export function mountStudio(container: HTMLElement): ViewHandle {
     });
     image.busy = false;
     renderAll(lastCredits);
+  }
+
+  /**
+   * Un-owns a rig family, after saying what that will cost next time.
+   *
+   * Confirmed with the browser's own dialog rather than an inline two-step,
+   * because this is the one control in the ingest form that changes the price of
+   * a future action while itself being free -- the shape everything else here
+   * uses (a projection, then a button that redeems a token for it) would be a
+   * lie about what is happening.
+   */
+  async function releaseTheFamily(skeletonId: string, owners: readonly FamilyJob[]): Promise<void> {
+    const warning = releaseWarning(owners);
+    if (warning === null) return;
+    if (!globalThis.confirm(`Release the "${skeletonId}" rig family?\n\n${warning}`)) return;
+    await run(async () => {
+      await api.releaseFamily(skeletonId);
+      // Reloaded rather than patched locally: `establishesRigFamily` is derived
+      // from the job list, and a stale list would keep every price wrong.
+      await refresh();
+      // Every quote on screen was priced against the old ownership.
+      for (const image of pending) image.estimate = null;
+    });
   }
 
   async function confirmImage(image: PendingImage): Promise<void> {

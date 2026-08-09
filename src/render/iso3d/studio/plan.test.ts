@@ -4,8 +4,11 @@ import {
   defaultClipIntents,
   establishedFamilies,
   establishesRigFamily,
+  familyOwners,
   isValidUnitId,
+  releaseWarning,
   unitIdProblem,
+  type FamilyJob,
   type JobSummary,
 } from './plan.js';
 import { RETARGET_BATCH_SIZE } from '../../../server/studio/pricing.js';
@@ -52,6 +55,47 @@ describe('establishedFamilies', () => {
       job({ skeletonId: 'quadruped', status: 'failed' }),
     ];
     expect(establishedFamilies(jobs)).toEqual(['avian', 'biped']);
+  });
+});
+
+describe('releasing a rig family (spec 114)', () => {
+  function owner(patch: Partial<FamilyJob> = {}): FamilyJob {
+    return { ...job(), unitId: 'pig', params: { clipIntents: ['idle', 'walk', 'slash'] }, ...patch };
+  }
+
+  it('names the succeeded jobs that hold the family closed', () => {
+    const jobs = [owner({ id: 'a' }), owner({ id: 'b', skeletonId: 'avian' })];
+    expect(familyOwners(jobs, 'biped').map((entry) => entry.id)).toEqual(['a']);
+  });
+
+  it('names every owner when two were confirmed before either finished', () => {
+    // Both were priced with a retarget, so both hold the family. Releasing one
+    // and not the other would leave the family closed by the one that was
+    // missed, which reads as the release having silently failed.
+    const jobs = [owner({ id: 'a' }), owner({ id: 'b' })];
+    expect(familyOwners(jobs, 'biped').map((entry) => entry.id)).toEqual(['a', 'b']);
+  });
+
+  it('does not count a job that failed or that reused the family', () => {
+    const jobs = [owner({ id: 'a', status: 'failed' }), owner({ id: 'b', establishesRigFamily: false })];
+    expect(familyOwners(jobs, 'biped')).toEqual([]);
+  });
+
+  it('warns about the retargets the NEXT generation buys, not about being free', () => {
+    // "This is free" is true and useless. The cost is real and deferred by one
+    // action, and a warning that omits it is how somebody releases a family to
+    // try one thing and pays for a clip set.
+    const warning = releaseWarning([owner()]);
+    expect(warning).toContain('3 paid calls');
+    expect(warning).toContain('"pig"');
+  });
+
+  it('says "call" rather than "calls" for a single clip', () => {
+    expect(releaseWarning([owner({ params: { clipIntents: ['idle'] } })])).toContain('1 paid call ');
+  });
+
+  it('has nothing to warn about when nothing owns the family', () => {
+    expect(releaseWarning([])).toBeNull();
   });
 });
 

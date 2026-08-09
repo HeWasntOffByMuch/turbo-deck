@@ -313,6 +313,44 @@ export function retryFailed(job: Job, nowMs: number): Job | null {
   };
 }
 
+/**
+ * Takes a rig family's clip library away from whoever owns it (spec 114).
+ *
+ * Ownership is derived, not stored as a flag on the family: `establishesRigFamily`
+ * on the *client* is "no succeeded job of this family claims it". So releasing a
+ * family is clearing that claim on the jobs that hold it, and the next estimate
+ * then quotes a retarget again because the same derivation now says yes.
+ *
+ * Returns only the jobs that changed, so a caller can say what it did and a
+ * second release can 404 rather than reporting a release that released nothing.
+ *
+ * Three things are deliberately *not* touched:
+ *
+ *  - **Anything that is not `succeeded`.** A failed job never owned the family,
+ *    and clearing the flag on one would change what `projectRemaining` prices:
+ *    its unrun retarget steps would stop being its to buy. Releasing must not
+ *    quietly reprice a retry.
+ *  - **`creditsSpent` and every `taskId`.** What was paid for was paid for.
+ *    Release is a statement about the next generation, not a refund, and a
+ *    ledger that forgets a charge is a ceiling that can be walked past.
+ *  - **The clip `.glb` files.** They stay on disk under the job and under
+ *    `assets/units/`; deleting from a git working tree is the author's call.
+ */
+export function releaseFamily(jobs: readonly Job[], skeletonId: string, nowMs: number): readonly Job[] {
+  return jobs
+    .filter((job) => job.skeletonId === skeletonId && job.status === 'succeeded' && job.establishesRigFamily)
+    .map((job) => ({
+      ...job,
+      establishesRigFamily: false,
+      // Said in the record rather than only in a log, because a unit exported
+      // from this job later still names its real retarget task ids in
+      // provenance, and the two together are the whole story: these clips were
+      // bought here, and they are no longer what the family reuses.
+      message: 'released: this job no longer owns the rig family’s clip library',
+      updatedAtMs: nowMs,
+    }));
+}
+
 export function cancelJob(job: Job, nowMs: number): Job {
   if (isTerminal(job)) return job;
   return { ...job, status: 'cancelled', message: 'cancelled', updatedAtMs: nowMs };
