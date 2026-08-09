@@ -13,16 +13,24 @@ built, and the numbers are below so that decision can be argued with.
 
 ## The tension worth naming first
 
-Spec 018 opens with "flat blocks of these colours only — no gradients, no
-textures." That is not an oversight this step corrects; it is the look. Every
-surface in this world is one colour per cell or per facet, and the shape comes
-from silhouette and facet rather than from surface detail.
+This step adds the **first texture in the renderer**, and it is off by default.
 
-So this step adds the *first texture in the renderer*, and it is off by default
-and likely to stay that way. It exists because the brief asked for it and because
-a cliff face is the one place the flat-colour rule visibly runs out: a
-forty-unit-tall stone wall in a single tone is the largest untextured area in the
-frame, and it reads as a cut-out rather than as rock.
+Spec 031 asks for a look that is "flat-colour blocked, pixelated, a limited
+palette, a single light source, and no smooth shading", and spec 043 lists "no
+textures, normal maps, or shaders beyond flat-shaded vertex colours" among the
+things it does not do. The second of those is a scoping note about that spec's
+own deliverable rather than a standing prohibition, and the first is about
+*shading* -- which this does not touch. There is no normal map here, no smooth
+normal, and the facets and silhouettes are exactly as they were; the detail is a
+multiplicative modulation of a flat vertex colour.
+
+What it does soften is the *uniformity of a block*, and that is the real
+question. It is a look call rather than a rule violation, which is why it gets a
+switch and a default rather than an argument.
+
+The reason to want it at all is the cliff. A forty-unit-tall stone wall in a
+single tone is the largest untextured area in the frame, and it reads as a
+cut-out rather than as rock.
 
 ## Nothing is fetched
 

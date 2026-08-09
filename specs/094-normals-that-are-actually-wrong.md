@@ -21,7 +21,7 @@ and does not even write `vNormal`. So the lighting already follows the bend, by
 accident. The omission only bites the moment normals are interpolated.
 
 **Smooth normals are asked for, and this geometry has almost nothing to smooth.**
-Everything but the terrain surface is flat-shaded deliberately (spec 018; spec 077
+Everything but the terrain surface is flat-shaded deliberately (spec 031; spec 077
 rebuilt the lobed tree non-indexed specifically to keep its facets), and the look
 being imitated is flat-shaded too — it gets its shape from facets and outlines.
 More concretely, averaging normals across a shared position only changes anything

@@ -491,8 +491,8 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   // (spec 102), and the boundary the ground's materials meet along.
   const triplanar = makeCheckbox('Surface detail', HIKE_OFF.triplanar,
     'Modulate the ground and cliff colours with a generated noise tile, projected on all three ' +
-    'world axes so a vertical face is not smeared. Off by default: spec 018 says flat blocks of ' +
-    'colour and no textures, and this is the one place that rule runs out.');
+    'world axes so a vertical face is not smeared. Off by default: it is the only step here that ' +
+    'changes what a surface is made of rather than how it is lit.');
   const detailStrength = makeSlider('Detail', 0, 60, 2, Math.round(HIKE_OFF.detailStrength * 100), '%',
     'How far the tile darkens and lightens the colour underneath it.');
   const detailScale = makeSlider('Detail size', 20, 300, 10, HIKE_OFF.detailScale, 'u',

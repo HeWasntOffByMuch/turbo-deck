@@ -22,7 +22,7 @@ import { glslOctahedralChunk } from './shading.js';
  *
  * ## Why the normals come from derivatives
  *
- * Almost everything in this world is `flatShading` (spec 018), which means the
+ * Almost everything in this world is `flatShading` (spec 031), which means the
  * *drawn* normal is not the interpolated vertex normal at all -- three.js derives
  * it per fragment from the derivatives of the view position. A normal buffer
  * built from `vNormal` would therefore disagree with the shading and, worse,

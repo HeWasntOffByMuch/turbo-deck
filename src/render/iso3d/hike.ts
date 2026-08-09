@@ -142,7 +142,7 @@ export interface HikeSettings {
    * hard creases, cap rims and seams.
    *
    * Off by default and likely to stay that way: everything but the terrain
-   * surface is flat-shaded deliberately (spec 018, and spec 077 rebuilt the
+   * surface is flat-shaded deliberately (spec 031, and spec 077 rebuilt the
    * lobed tree non-indexed precisely to keep its facets). The look being
    * imitated is flat-shaded too -- it gets its shape from facets and outlines,
    * not from smooth gradients. This exists so the choice can be seen rather
@@ -349,10 +349,16 @@ export interface HikeSettings {
    * Sample a generated noise tile by triplanar projection and modulate the
    * ground and cliff colours with it.
    *
-   * The renderer's first texture, and a deliberate exception to spec 018's
-   * "flat blocks of colour, no textures" -- which is why it is off by default. A
-   * cliff face is the one place that rule visibly runs out: a tall stone wall in
-   * a single tone reads as a cut-out.
+   * The renderer's first texture, and the one step of this arc that changes what
+   * a surface is *made of* rather than how it is lit or filtered -- which is why
+   * it is off by default. A cliff face is where the flat-colour look runs out: a
+   * tall stone wall in a single tone reads as a cut-out.
+   *
+   * Spec 031 asks for "flat-colour blocked ... and no smooth shading", and this
+   * keeps both: it is a multiplicative modulation of a flat vertex colour, with
+   * no normal map and no smooth normals, so the facets and silhouettes are
+   * untouched. What it softens is the *uniformity* of a block, which is a real
+   * look question and the reason for the switch.
    *
    * Triplanar rather than a UV mapping because a cliff is vertical, and any
    * mapping taken from the ground plane smears one row of texels down its whole
