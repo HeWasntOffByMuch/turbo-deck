@@ -1,9 +1,9 @@
 # 00 — GUI framework architecture
 
-**Status: proposal. No framework code exists yet.** This is the Phase 0 deliverable.
-It raises eight collisions between the brief and the code that is already here (§2).
-Seven are now settled and eight decisions remain open (§12). Phase 1 should not start
-until those are settled.
+**Status: accepted. No framework code exists yet.** This is the Phase 0 deliverable.
+It raised eight collisions between the brief and the code that is already here (§2);
+**all fifteen decisions in §12 are now settled and Phase 1 is unblocked.** §14 has the
+work order.
 
 Read `CLAUDE.md` first if you have not. Everything below is written to fit the rules
 already in force there, and where it cannot, it says so instead of quietly bending
@@ -40,8 +40,9 @@ it.
 
 ## 2. Collisions with what is already here
 
-These are the reason this document exists. Six of the seven are answerable; the
-seventh (§2.7) is scope the brief does not appear to have priced in.
+These are the reason this document exists. Seven of the eight had an answer inside the
+framework; the eighth (§2.7) is scope the brief did not price in, and it moved the
+phase order rather than the design. All are resolved — §12 is the record.
 
 ### 2.1 "Bitmap fonts only, from an atlas" vs. *nothing may be fetched*
 
@@ -57,7 +58,7 @@ procedurally (`detail-texture.ts`, `surface-detail.ts`) specifically so nothing 
 to be fetched. A hand-painted `ui-atlas.png` would be the first, and it would review
 as a binary blob.
 
-**Proposal: keep the atlas, change where it comes from.** The atlas is *baked at boot
+**Settled — keep the atlas, change where it comes from.** The atlas is *baked at boot
 from committed text data*, not authored as a PNG:
 
 - Glyphs stay as they already are — rows of `#` and `.` strings, one array per
@@ -293,9 +294,7 @@ fails rather than a hotbar quietly sliding off a device nobody in the room is ho
 it is left over. The brief bans general-purpose UI libraries, and adopting Pixi now
 would mean a second renderer beside three.js.
 
-**Proposal: remove it** (separate commit, not part of Phase 1) and note it in
-`TODO.md`. Flagging rather than doing, per the brief's "do not refactor outside the
-phase's scope".
+**Settled — remove it**, in its own commit and not as part of Phase 1's diff.
 
 ### 2.7 Phases 4 and 6 are about half server work, and the brief does not say so
 
@@ -331,7 +330,7 @@ What *does* already exist, and maps cleanly onto the brief's intent model:
 `GameClient.view()` is already the read model the HUD draws from, and
 `client/prediction.ts` already does optimistic-prediction-and-reconcile for movement.
 
-**Proposal:** Phase 4 and Phase 6 each split in two — a `specs/` entry for the server
+**Settled.** Phase 4 and Phase 6 each split in two — a `specs/` entry for the server
 side (item instances + container + protocol; then vendor/trade/currency) written and
 landed first, and the UI phase after it. Phase 5's stat page either drops the stat
 half or waits on a stat-respec spec; the skill half can proceed now. This is a
@@ -354,7 +353,7 @@ file that also owns the aim/commit flow, which is the most delicate code in the 
 (specs 080, 090, 092). The editor and the sandboxes are dev surfaces and should be left
 alone, consistent with §11.
 
-**Proposal:** Phase 3's scope is the Play tab only, and "nothing reads a raw key" means
+**Settled.** Phase 3's scope is the Play tab only, and "nothing reads a raw key" means
 *nothing in gameplay* reads a raw key. Confirm, or Phase 3 quietly grows two more
 migrations.
 
@@ -603,8 +602,8 @@ credible.
    one texture, drawn after `RetroPass` with `autoClear = false`. Built **only if
    `canvas2d` misses the 1.5 ms budget.**
 
-This is a deliberate deviation from the brief's "one draw call per z-layer", and it
-needs sign-off (§12). The reasoning: that constraint's purpose is the frame budget,
+This is a deliberate deviation from the brief's "one draw call per z-layer",
+**accepted**. The reasoning: that constraint's purpose is the frame budget,
 and at the viewport sizes §2.5 lands on — a few hundred by a few hundred UI pixels,
 with a few hundred sprites — a `drawImage` loop is very likely under it.
 `canvas2d` has no shader to fail, no GL state entangled with the retro pass, and gives
@@ -711,71 +710,54 @@ before then.
 
 ## 12. Decisions
 
-### Settled
+All settled. Nothing below is open; a change to any of them is a new decision, not a
+clarification of an old one.
 
-- **§2.2 — fonts.** Two faces, one glyph format: the existing 5×7 for numerals, a new
-  6×10 for body text. ✅
-- **§2.7 — no multi-cell items.** The grid is uniform cells; packing, rotation and
-  per-item sizes are future work. ✅
-- **§2.3 — the UI has an integer *scale*, not a fixed virtual canvas**, and therefore
-  never reads the world's resolution. Correct whether or not the low-res buffer is
-  deprecated, which is why it was settled without waiting on that. ✅
-- **§2.4 — snapping.** Panels and windows snap to the UI grid; world-anchored overlays
-  snap to the *device* grid, so their art stays uniform while their motion stays
-  smooth. ✅
-- **§10 — the theme owns its own ≤16 colours** rather than resolving them against the
-  live `HIKE_PALETTES` entry. Same reasoning as §2.3: do not couple the UI to a setting
-  that may not survive. ✅
-- **The low-res buffer is not this subsystem's business.** Nothing here reads `lowRes`,
-  `VIRTUAL_SIZES` or `snapCamera`, and no phase proposes changing them. That decision
-  stays open on its own timeline without blocking anything below. ✅
+### Rendering and structure
 
-### Open — these four block Phase 1
+1. **The atlas is baked at boot from committed text data**, not a PNG (§2.1). Keeps the
+   client's "nothing is fetched" property and the whole UI appearance reviewable as a
+   diff.
+2. **Two font faces, one glyph format** (§2.2): the existing 5×7 for numerals, a new
+   6×10 for body text.
+3. **The UI has an integer *scale*, not a fixed virtual canvas** (§2.3), and therefore
+   never reads the world's resolution.
+4. **Panels and windows snap to the UI grid; world-anchored overlays snap to the
+   *device* grid** (§2.4) — uniform art, smooth motion.
+5. **Phase 1 ships on `canvas2d`** (§8), with the WebGL backend built only if the
+   measured budget demands it. An accepted deviation from "one draw call per z-layer".
+6. **The theme owns its own ≤16 colours** (§10) rather than tracking the live
+   `HIKE_PALETTES` entry.
+7. **`src/ui/` is a top-level peer**, not `src/render/ui/` (§4).
+8. **`pixi.js` is removed** (§2.6), in its own commit and not inside Phase 1's diff.
 
-1. **Where does the atlas come from?** (§2.1)
-   Baked at boot from committed `#`/`.` text, or a hand-painted PNG loaded at runtime?
-   *Recommend: baked from text.* A PNG would be the client's first fetched binary and
-   would review as an opaque blob; baking costs ~2 ms once and keeps the whole UI
-   appearance legible in a diff.
+### Scope
 
-2. **Which render backend ships first?** (§8)
-   `canvas2d` now with WebGL only if the measured budget demands it, or WebGL from the
-   start? *Recommend: `canvas2d` first.* It deviates from the brief's "one draw call per
-   z-layer", so it needs an explicit yes. It has no shader to fail, no GL state shared
-   with the post-processing chain, and free nearest-neighbour blitting; the six-method
-   interface makes the upgrade a swap. **The one I would most like a second opinion on.**
+9. **No multi-cell items** (§2.7). The grid is uniform cells; packing, rotation and
+   per-item sizes are future work.
+10. **Phases 4 and 6 wait on server specs** (§2.7) — a container of `{ defId, count }`
+    plus a capacity, then currency/vendor/trade.
+11. **Phase 5's stat page is dropped for now** (§2.7). Base stats are set at character
+    creation and never recomputed, so there is nothing to allocate; the skill half
+    proceeds unaffected.
+12. **Phase 3 covers the Play tab only** (§2.8). The editor and sandbox input systems
+    are dev surfaces and stay as they are.
+13. **The settings and editor panels stay on the DOM** (§11), as deliberate duplication
+    of Slider/Checkbox/Button. Worth one correction to the reasoning: the *editor* panel
+    is the repo's only `lil-gui` import, but the Play tab's settings cog
+    (`view-controls.ts`) is hand-rolled DOM and **is** player-facing. It still stays —
+    native range inputs and keyboard accessibility come free from the DOM and would cost
+    real work to reproduce — but the reason is "it wants native inputs", not "no player
+    sees it". If the cog should eventually match the game's chrome, that is its own
+    phase, not a Phase 1 obligation.
 
-3. **Where does the code live?** (§4)
-   `src/ui/` as a top-level peer beside `src/sim/` and `src/units/`, or `src/render/ui/`?
-   *Recommend: `src/ui/`.* Putting it under `src/render/` implies it belongs to three.js,
-   and layer 1 not belonging to any engine is the whole point.
+### Process
 
-4. **Does each phase get a `specs/` entry?** (§12)
-   `CLAUDE.md` requires a spec committed before its implementation. Is this document the
-   architecture with `specs/119-*.md` opening Phase 1 and one per phase after, or is
-   `docs/ui/` the spec home for this subsystem? *Recommend: a spec per phase*, matching
-   the repo.
-
-### Open — these block later phases, cheap to answer now
-
-5. **Do Phases 4 and 6 wait on server specs?** (§2.7, blocks Phase 4)
-   A container of `{ defId, count }` plus a capacity, then currency/vendor/trade — or
-   build the UI against a mock view-model and wire it later? *Recommend: server spec
-   first.* Smaller than it was now that multi-cell is out, but the intents have to exist
-   before a widget can emit one.
-
-6. **What happens to Phase 5's stat allocation?** (§2.7, blocks Phase 5)
-   Base stats are set at character creation and never recomputed, so there is nothing to
-   allocate. Drop the stats page, or wait on a respec spec? The *skill* half needs
-   neither and can proceed regardless. *Recommend: drop it for now.*
-
-7. **How far does Phase 3 reach?** (§2.8, blocks Phase 3)
-   The Play tab only, or also the editor and sandbox input systems? *Recommend: Play tab
-   only.* The other two are dev surfaces; "nothing reads a raw key" should mean nothing
-   in gameplay does.
-
-8. **Does the unused `pixi.js` dependency go?** (§2.6, blocks nothing)
-   Nothing imports it. *Recommend: remove it in its own commit.*
+14. **A `specs/` entry per phase**, committed before its implementation, per `CLAUDE.md`
+    (§12). This document is the architecture and does not replace them; Phase 1 opens
+    with `specs/121-*.md`.
+15. **The low-res buffer is not this subsystem's business.** Nothing here reads
+    `lowRes`, `VIRTUAL_SIZES` or `snapCamera`, and no phase proposes changing them.
 
 ---
 
@@ -823,28 +805,44 @@ keyboard accessibility; rebuilding them here would cost real work to make them w
 
 ---
 
-## 14. Changelog
+## 14. Changelog and the Phase 1 work order
 
-**Usable now:** nothing. This is a proposal.
+**Usable now:** nothing. Phase 0 produced this document and no code.
 
-**What Phase 1 would deliver:** the virtual surface (reusing `pixelFrame`), the atlas
-bake, both fonts, the `raster` and `canvas2d` backends, the widget base with dirty
-flags, all six containers, hit-testing and focus, the nine Phase-1 widgets, the
-`/dev/ui-gallery` scene, layout tests, replay tests, goldens in CI, and a measured
-frame-budget number.
+**Phase 1, in the order it should be built.** Each step is checkable before the next
+one starts, and the first four are what make everything after them testable.
 
-**Still missing / what I would change:** seven of §12's items are settled and eight are
-open. §2.3 has already been revised once — the first draft asked you to choose between
-locking the UI to 480×270 and letting it ride the world's setting, which was a false
-choice built on the assumption that the world's resolution was locked. It is not;
-`lowRes` is off by default. A UI with an integer scale and a variable viewport needs no
-answer to that question at all, which is the version now in §2.3.
+1. `specs/121-*.md` — the spec, committed before any of the code below, per §12.14.
+2. `ui/theme/` — `theme.json`, `schemas/ui-theme.schema.json`, the token types, and the
+   ajv validation test. Everything downstream reads tokens, so this is first.
+3. `ui/text/` — the 5×7 numeral face re-exported from `pixel-font.ts`, the new 6×10 body
+   face, and text measurement/wrapping. Pure, tested in Node.
+4. `ui/render/atlas.ts` + `ui/render/raster.ts` — the atlas bake and the software
+   backend. **The goldens exist from here on**, which is what makes every later step
+   verifiable rather than eyeballed.
+5. `ui/core/` — `uiFrame`, `autoUiScale`, the `Widget` base with dirty flags,
+   measure/arrange, the six containers, hit-testing, focus, the context stack and event
+   routing. The largest step; layout and replay tests land with it.
+6. `ui/widgets/` — Panel, Label, Button, Icon, Checkbox, Slider, TextField, ScrollView,
+   Separator.
+7. `ui/render/canvas2d.ts` — the browser backend, plus the cross-backend assertion that
+   its output matches `raster` byte-for-byte.
+8. The `/dev/ui-gallery` scene as a sixth tab, `scripts/preview-ui-gallery.ts`, and the
+   measured frame-budget number.
+9. The lint boundaries from §4: the `UI_PURE` glob list, the colour-literal ban, the
+   `fillText`/`measureText` ban, and the no-sim-imports rule.
+10. `pixi.js` removed, in its own commit (§12.8).
 
-The item I would most like a second opinion on is §8 — shipping Phase 1 on `canvas2d`
-rather than WebGL trades a stated constraint for a much shorter path to something on
-screen, and the frame-budget measurement that would justify it does not exist yet.
+**What Phase 1 will not deliver:** any change to the Play tab. The DOM HUD, the settings
+cog and the world's rendering path are untouched until Phase 5, and the low-res buffer
+is never this subsystem's business (§12.15).
 
-The thing most likely to be underestimated is §2.4(c): replacing the DOM HUD makes its
-text about two and a half times taller, so the status line, name plates and chat get
-redesigned rather than ported. That is a Phase 5 design job hiding inside what reads
-like a migration.
+**The thing most likely to be underestimated later** is §2.4(c): replacing the DOM HUD
+makes its text about two and a half times taller, so the status line, name plates and
+chat get redesigned rather than ported. That is a Phase 5 design job hiding inside what
+reads like a migration. Worth remembering when Phase 5 is scoped.
+
+**One judgement I would revisit on evidence:** §8's `canvas2d`-first call rests on a
+frame-budget estimate, not a measurement. Step 8 above produces the real number. If it
+comes in over 1.5 ms with six windows open, the WebGL backend is the answer and the
+six-method interface is what makes that a swap rather than a rewrite.
