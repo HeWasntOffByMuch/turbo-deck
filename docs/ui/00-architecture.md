@@ -17,17 +17,23 @@ The brief shipped with placeholders. Two of them the repo answers on its own:
 | Placeholder | Value | Where it comes from |
 |---|---|---|
 | Target stack | TypeScript (ES2022, `strict` + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`), three.js over WebGL2, Vite, authoritative Node server over a binary WebSocket protocol | `package.json`, `tsconfig.json`, `src/server/net/PROTOCOL.md` |
-| UI virtual resolution | **480×270**, integer-scaled with letterboxing | `HIKE_DEFAULTS` in `src/render/iso3d/hike.ts:417`; `pixelFrame()` in `src/render/iso3d/view-frame.ts:103` |
+| UI resolution | **An integer scale, not a fixed canvas** — see §2.3. The world's 480×270 buffer turned out to be an opt-in setting that is off by default, so the UI must not ride on it. | `hike.ts:416`, `view-frame.ts:13-34`, `scene.ts:1430-1448` |
 
 The brief says three placeholders; I can only find two. If there was a third —
 most likely the art/theme reference or the target device matrix — it did not make
 it into the text I received.
 
-The virtual-resolution one is not a guess. Spec 099 already built exactly the
-surface Phase 1 asks for, including the part that is easy to get wrong: the scale
-factor is computed in **device** pixels, not CSS pixels, and the centring offsets
-are floored onto the device grid. `view-frame.ts:83-101` explains why at length.
-**Phase 1 must reuse `pixelFrame()`, not reimplement it.**
+The resolution answer moved once already. The brief's `480x270` guess matches a real
+constant in the repo, but that constant belongs to a low-res buffer that is **off by
+default** and may be deprecated outright — so building the UI on it would have been
+building on sand. §2.3 has the full trace and the model that replaces it.
+
+What does carry over is the one piece of arithmetic that is easy to get wrong and is
+already solved: the scale factor must be computed in **device** pixels, not CSS pixels
+(`view-frame.ts:83-101` explains why at length — getting it backwards "is not subtly
+wrong; it is the difference between pixel art and a blurry approximation of it").
+`uiFrame()` in §2.3 inherits that rule from `pixelFrame()` rather than rediscovering
+it.
 
 ---
 
@@ -86,36 +92,89 @@ everything else. `ui/text/` owns both; `pixel-font.ts` becomes a re-export of th
 5×7 table so there is one source of truth and the existing HUD keeps working
 untouched. "Bitmap fonts only" is plural; this is inside it.
 
-### 2.3 The world's virtual resolution is a **user setting**, and the UI would ride on it
+### 2.3 The world's resolution is not locked — and the UI should not care
 
-This is the sharpest collision and the brief could not have known about it.
-`VIRTUAL_SIZES` (`hike.ts:59`) offers four buffers — 320×180, 384×216, 480×270,
-640×360 — selectable in the Play tab's settings cog. The brief assumes one fixed
-virtual resolution.
+**The answer is: no, it is not locked, and there are two different kinds of unlocked.**
 
-You cannot simply give the UI its own fixed 480×270 and overlay it. Both surfaces
-integer-scale into the same available box, and their scale factors round differently:
-a 1700×950 device box gives the 480×270 buffer scale 3 (a 1440×810 image) and the
-320×180 buffer scale 5 (a 1600×900 image). Two different letterboxes, two different
-screen edges, a visible mismatched border. Upscaling one to meet the other
-reintroduces exactly the resampling `view-frame.ts:83-101` exists to prevent.
+`lowRes` defaults to **`false`** (`hike.ts:416`). The fixed-virtual-resolution,
+integer-scaled, letterboxed path that spec 099 built is an *opt-in checkbox in the
+settings cog*, off unless a player turns it on. So there are two live paths:
 
-Two honest options:
+- **Default (`lowRes: false`)** — `scene.ts:1438-1447` calls `internalRenderSize()`,
+  which gives a buffer of fixed **height 300**, width `300 × window aspect`, capped at
+  760 wide (`view-frame.ts:13-34`). The canvas is then `width: 100%` with
+  `image-rendering: pixelated`. On a 1920×1080 window that is a 533×300 buffer
+  stretched by **3.6×** — so some pixels come out three device pixels wide and some
+  four, and the buffer's *size changes with the window's aspect*.
+- **Opt-in (`lowRes: true`)** — one of four 16:9 sizes from `VIRTUAL_SIZES`
+  (`hike.ts:59`), integer-scaled, letterboxed. Locked and even.
 
-- **(A) Lock the UI to 480×270 and prune `VIRTUAL_SIZES`** to sizes that share a
-  frame with it. Only 240×135 and 480×270 qualify; 320×180, 384×216 and 640×360 are
-  removed. Clean, but it deletes a shipped feature to serve the UI.
-- **(B) One virtual resolution for the whole frame.** The UI reads the same setting
-  the world does. The UI's *pixel count* is constant; those pixels get chunkier at
-  320×180 and finer at 640×360, which is how resolution scale behaves in any game
-  that offers it. The cost is a real constraint on design: **every window must fit
-  inside 320×180**, and layout tests assert that at all four sizes.
+`hike.ts:411-417` says the quiet part out loud about the default path:
 
-**Recommendation: (B).** The virtual-size picker is existing, shipped, and load-bearing
-for the art direction; taking choices away from it so the inventory can be roomier is
-the tail wagging the dog. And "every window fits the smallest supported frame" is a
-discipline worth having anyway — it is the thing that stops a character sheet growing
-until it needs its own scrollbar.
+> The play view already renders small and lets CSS stretch the canvas, but at a
+> *fractional* factor and at a resolution that changes with the window's aspect — so
+> pixels come out unevenly doubled, which is most of why the current frame does not
+> read as pixel art.
+
+**A trap worth naming before you touch it.** "Deprecate the low-res buffer" has two
+readings, and the literal one is the wrong one. Deleting the `lowRes` branch removes
+the *good* path and leaves the 300-tall fractionally-stretched one — still low-res,
+just badly. If the intent is a genuinely full-resolution world, `RENDER_H = 300` and
+`MAX_RENDER_W = 760` have to go too, and with them `snapCamera`, `worldPerPixel` and
+`snapToPixelGrid` become dead, and `RetroPass`'s screen-space Bayer dither turns into
+invisible per-pixel noise at native density. That is your call and outside this
+document, but it is a bigger demolition than one checkbox.
+
+#### What the UI should do: stop having a resolution
+
+The earlier version of this section asked you to choose between locking the UI to
+480×270 and letting it ride the world's setting. **Both were wrong, and the question
+dissolves.** A fixed virtual *canvas* is something a 3D camera needs — it has to frame
+consistently, so its aspect must be constant. A UI needs no such thing. What the UI
+actually needs is that **one UI pixel is always a whole number of device pixels**.
+
+So the model is a fixed integer **scale**, not a fixed **canvas**:
+
+```ts
+// ui/core/frame.ts — pure, sits beside pixelFrame() and is tested the same way.
+export interface UiFrame {
+  /** Device pixels per UI pixel. A whole number, never below 1. */
+  readonly scale: number;
+  /** The viewport in UI pixels. Varies with the window; always integral. */
+  readonly width: number;
+  readonly height: number;
+}
+
+export function uiFrame(cssW: number, cssH: number, dpr: number, scale: number): UiFrame;
+```
+
+`width = floor(cssW × dpr / scale)`, `height` likewise. The UI fills the window; there
+is **no letterbox for the UI**, because it has no aspect to preserve. Every widget
+still lands on whole UI pixels, every sprite still blits at exactly `scale`×
+nearest-neighbour, and every crispness guarantee in the brief survives intact.
+
+This is the "UI Scale: 1× / 2× / 3× / 4× / Auto" control players already expect, and
+it is how every pixel-art interface over a non-pixel-art world works.
+
+The payoff is that **it is correct in all three futures** — low-res stays, low-res
+goes, or low-res becomes per-user — because the UI no longer reads the world's
+resolution at all. If the world *is* letterboxed, it sits letterboxed inside a UI that
+covers the whole window, which is strictly better than today and needs no coordination.
+
+What it costs: a window can no longer assume a canvas size. Windows anchor and clamp to
+a viewport that varies — which is what the brief's `Anchor` container and
+"clamp-to-viewport" already imply — and layout tests run over a **matrix of viewport
+sizes** rather than one. The "must fit 320×180" invariant is replaced by a *minimum
+supported viewport*, derived in §2.5 rather than picked.
+
+#### Two knock-ons to note
+
+The `raster` backend and the goldens are unaffected: goldens are rendered at scale 1
+into a fixed test viewport, which is a property of the test, not of the runtime.
+
+`view-frame.ts`'s `pixelFrame()` stays exactly as it is — it is the *world's* framing
+and remains correct for whatever the world ends up doing. `uiFrame()` is a sibling, not
+a replacement.
 
 ### 2.4 The HUD is DOM, on purpose, and Phase 5 replaces it
 
@@ -143,23 +202,44 @@ SVG path strings stroked with `currentColor`, which is a fourth way of drawing a
 on screen. Phase 1's `Icon` widget replaces it with atlas sprites, and the paths become
 source data for the atlas bake rather than runtime markup.
 
-### 2.5 A finger-sized tap target is a large fraction of a 480×270 screen
+### 2.5 Tap targets: the UI scale is what solves this, and the scale is a formula
 
 Spec 094 fixed `MIN_TAP_PX = 44` CSS px (`world/hud-layout.ts:24`) and derived the
-compact HUD from it. In virtual pixels that number is not constant: on the phone
-frame the preview script drives (844×390 CSS, dpr 3 → `pixelFrame` scale 4), one
-virtual pixel is 1.33 CSS px, so 44 CSS px is **33 virtual px** — about a fourteenth
-of the screen's width per button.
+compact HUD from it. That number is not constant in UI pixels — it depends on the
+scale — and this is the concrete reason §2.3's variable viewport is an improvement
+rather than a complication. **Raising the scale makes a tap target cheaper in UI
+pixels.** Worked on the phone frame the preview script drives, 844×390 CSS at dpr 3
+(2532×1170 device):
 
-Eight hotbar slots at 33px plus gaps is roughly 300 of 480 virtual px. It fits, but
-there is no slack, and at 320×180 it does not fit at all.
+| scale | viewport (UI px) | 44 CSS px costs | 8 hotbar slots + 4px gaps |
+|---|---|---|---|
+| 4 | 633×292 | 33 UI px | 292 of 633 |
+| 6 | 422×195 | 22 UI px | 204 of 422 |
+| **8** | **316×146** | **17 UI px** | **164 of 316** |
 
-**Proposal:** a pure `ui/core/tap.ts` in the same register as `hud-layout.ts` —
-given a `PixelFrame` and `MIN_TAP_PX`, return the minimum virtual size a touch
-target may have. Theme tokens carry a `compact` variant chosen from it. The point of
-putting the arithmetic in a pure module is that "a ninth ability no longer fits on a
-phone" fails in Node, which is exactly the argument `hud-layout.ts:5-8` makes for
-itself.
+At scale 8 a legal tap target costs 17 UI pixels and the hotbar uses half the width
+with room to spare. Under the old fixed-480×270 model the same button cost 33 of 480
+and there was no slack at all. The constraint stops being a squeeze and becomes an
+equation:
+
+```ts
+// ui/core/scale.ts — pure, in the same register as hud-layout.ts.
+export function autoUiScale(
+  deviceW: number, deviceH: number, dpr: number,
+  coarsePointer: boolean,
+  minViewport: Size,          // the smallest viewport the screens are designed for
+): number;
+```
+
+Pick the largest scale whose resulting viewport still contains `minViewport`; on a
+coarse pointer, additionally require that `MIN_TAP_PX` converts to no more than the
+theme's tap token. A player override (1×–4×, or Auto) sits on top.
+
+`minViewport` is now the single number that decides whether the character sheet fits
+on a phone, and it is *derived from the screens* rather than picked — a screen that
+outgrows it fails a layout test in Node. That is exactly the argument
+`hud-layout.ts:5-8` makes for itself: the day somebody adds a ninth ability, a sum
+fails rather than a hotbar quietly sliding off a device nobody in the room is holding.
 
 ### 2.6 `pixi.js` is a dependency that nothing imports
 
@@ -471,7 +551,8 @@ credible.
 
 This is a deliberate deviation from the brief's "one draw call per z-layer", and it
 needs sign-off (§12). The reasoning: that constraint's purpose is the frame budget,
-and at 480×270 with a few hundred sprites a `drawImage` loop is very likely under it.
+and at the viewport sizes §2.5 lands on — a few hundred by a few hundred UI pixels,
+with a few hundred sprites — a `drawImage` loop is very likely under it.
 `canvas2d` has no shader to fail, no GL state entangled with the retro pass, and gives
 nearest-neighbour blitting for free. Shipping on it is the boring, explicit choice the
 brief asks for, and the interface makes upgrading a swap rather than a rewrite. The
@@ -492,7 +573,8 @@ Four layers, three of which run in `npm test` and therefore gate CI.
 
 **9.1 Layout tests** — colocated `*.test.ts`, vitest, node env. Build a tree, measure,
 arrange, assert exact `Rect`s. Including the boring ones: integer distribution sums to
-the parent, the remainder lands left-to-right, nothing overflows at 320×180.
+the parent, the remainder lands left-to-right, and no screen overflows `minViewport`
+(§2.5) — the last of those run over a matrix of viewport sizes rather than one.
 
 **9.2 Input-replay tests** — a script of `[timestampMs, UiEvent]` pairs driven through
 `root.update()`, asserting the resulting state. These are exact rather than flaky
@@ -544,6 +626,13 @@ recolours with the world, which is probably what you want — or it pins one pal
 looks foreign under the others. Worth deciding in Phase 1 rather than discovering at
 Phase 7.
 
+And it may not survive at all: if the low-res buffer goes (§2.3), the dither and
+quantize pass it feeds is a candidate to go with it, and `HIKE_PALETTES` would stop
+describing what is on screen. If that happens the UI theme owns its own ≤16 outright
+and picks them to sit against the world rather than being taken from it — a smaller
+change than it sounds, since it only moves where the numbers come from, not how the
+theme is shaped.
+
 Per the brief's visual direction, the boldness is spent in exactly one place — window
 title bars and the active-tab treatment — and every other widget state is a value
 change within the same quiet range.
@@ -570,9 +659,10 @@ before then.
 
 ## 12. Decisions needed before Phase 1
 
-1. **§2.3 — virtual resolution.** Option (B), one shared virtual resolution with a
-   "must fit 320×180" invariant? Or (A), lock the UI to 480×270 and prune
-   `VIRTUAL_SIZES`? *Recommend (B).*
+1. **§2.3 — the UI has an integer *scale*, not a fixed virtual canvas**, and therefore
+   never reads the world's resolution. This is correct whether or not the low-res
+   buffer is deprecated, so it needs confirming but does not block on that decision.
+   Confirm.
 2. **§2.1 — the atlas is baked at boot from committed text data**, not a PNG. Confirm.
 3. **§8 — ship Phase 1 on `canvas2d`**, with the WebGL backend built only if the budget
    is missed. This deviates from "one draw call per z-layer". Confirm, or require WebGL
@@ -625,6 +715,14 @@ view-model to widget, evaluated once per frame. Costs ceremony per field. Buys t
 guarantee that a widget cannot reach game state — enforced by lint — and makes retained
 mode's stale-label failure a missing line rather than a mystery.
 
+**ADR-007 — The UI has a scale, not a resolution.** One UI pixel is a whole number of
+device pixels; the viewport is whatever that leaves. Costs the assumption that a window
+knows how much room it has, so screens must anchor and clamp and layout tests run over
+a matrix of sizes. Buys total independence from what the world renders at — which
+matters because the world's resolution turned out to be an off-by-default setting that
+may be deprecated. A UI needs pixels that land on the grid; only a camera needs a fixed
+aspect.
+
 **ADR-006 — The settings and editor panels stay on the DOM.** Deliberate duplication of
 Slider/Checkbox/Button. Those surfaces are dev tooling and want native inputs and
 keyboard accessibility; rebuilding them here would cost real work to make them worse.
@@ -641,7 +739,13 @@ flags, all six containers, hit-testing and focus, the nine Phase-1 widgets, the
 `/dev/ui-gallery` scene, layout tests, replay tests, goldens in CI, and a measured
 frame-budget number.
 
-**Still missing / what I would change:** the ten items in §12 are open. The one I am
-least comfortable with is §2.3 — it is the only place where serving the brief means
-either taking a feature away from the Play tab or accepting a real constraint on how
-big a window may be, and I would rather you pick than have me pick quietly.
+**Still missing / what I would change:** the ten items in §12 are open, and §2.3 has
+already been revised once — the first draft asked you to choose between locking the UI
+to 480×270 and letting it ride the world's setting, which was a false choice built on
+the assumption that the world's resolution was locked. It is not; `lowRes` is off by
+default. A UI with an integer scale and a variable viewport needs no answer to that
+question at all, which is the version now in §2.3.
+
+The item I would most like a second opinion on is §8 — shipping Phase 1 on `canvas2d`
+rather than WebGL trades a stated constraint for a much shorter path to something on
+screen, and the frame-budget measurement that would justify it does not exist yet.
