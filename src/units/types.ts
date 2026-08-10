@@ -14,6 +14,10 @@
  * construction rather than by discipline.
  */
 
+import type { NamingSpec } from './naming.js';
+
+export type { NamingSpec };
+
 /** An axis in the project's convention: up is +Y, forward is +X. */
 export type Axis = '+X' | '-X' | '+Y' | '-Y' | '+Z' | '-Z';
 
@@ -58,7 +62,13 @@ export interface Skeleton {
   readonly $comment?: string;
   readonly formatVersion: 1;
   readonly id: string;
-  readonly naming: 'mixamo';
+  /**
+   * The bone vocabulary this family's rigs are named in (spec 120). Detected
+   * from the bones rather than assumed: generated rigs come back on the `tripo`
+   * spec, the reference mannequin is mixamo-named, and both live in the tree at
+   * once. See `naming.ts` for what each contract calls each bone.
+   */
+  readonly naming: NamingSpec;
   readonly upAxis: Axis;
   readonly forwardAxis: Axis;
   /** Floor to crown in **world** units. This project's world is not metric. */
