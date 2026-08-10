@@ -134,7 +134,7 @@ src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
                  collision and pathfinding helpers the server collides against
 src/units/       the unit authoring format and its validator (spec 107): the three
                  JSON documents a unit is made of -- skeleton.json (one rig family,
-                 mixamo bone contract, canonical height), cliplib.json (clips for a
+                 its bone vocabulary, canonical height), cliplib.json (clips for a
                  skeleton, events in normalized time) and <unit>.unitdef.json (mesh,
                  provenance, import overrides and the state machine). Structure is
                  checked against the committed schemas in schemas/ with ajv; what a
@@ -145,6 +145,25 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  through this one parser. The rule the format exists to enforce is
                  that gameplay timing is authoritative and the clip is rescaled to
                  fit, bounded in both directions. `npm run validate:units`.
+                 naming.ts is the two bone vocabularies and the one way to look a
+                 bone up across them (spec 120). There are two in the tree
+                 permanently: the reference mannequin is authored and
+                 mixamo-named, and every *generated* rig is on the `tripo` spec,
+                 because a rig built to the mixamo naming spec is refused by the
+                 retarget -- the two specs are a choice between Tripo's animation
+                 library and Mixamo's, and a game needs the clips. So `naming` is
+                 a field that is detected off the bones and checked against them
+                 by the validator, never assumed. The rule that makes it a table
+                 rather than a heuristic: every consumer wants a bone's *role* --
+                 the right hand, the left hip, the arm chain -- and none of them
+                 want a string, so roles are named once and each vocabulary says
+                 what it calls them. This existed as an assumption for a long
+                 time and cost three silent failures on every unit we ship: the
+                 pig derived no weapon sockets at all, its facing fell back to
+                 the shape search with handedness unverifiable, and its bind pose
+                 came back `unmeasured`. Each had been noticed separately and
+                 written down as a shrug in a comment beside the code that gave
+                 up. Adding a third vocabulary is a column in this file.
                  manifest.ts is what both ends agree on (spec 113): a sha256
                  over every asset, exchanged at connect, and a mismatch is a
                  refused connection -- a client on stale assets draws a fight
