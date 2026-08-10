@@ -42,7 +42,11 @@ export const PLAYER_TYPE_ID = 'player';
  * property this seam exists to keep -- adding a unit is adding a row, and a
  * missing row changes nothing.
  */
-const authored = new Map<string, AuthoredUnitId>([[PLAYER_TYPE_ID, 'pig_a_pose_full']]);
+export const DEFAULT_AUTHORED_UNITS: Readonly<Record<string, AuthoredUnitId>> = {
+  [PLAYER_TYPE_ID]: 'pig_a_pose_full',
+};
+
+const authored = new Map<string, AuthoredUnitId>(Object.entries(DEFAULT_AUTHORED_UNITS));
 
 /**
  * Points a set of type ids at authored units.
@@ -51,6 +55,12 @@ const authored = new Map<string, AuthoredUnitId>([[PLAYER_TYPE_ID, 'pig_a_pose_f
  * table without this module having to know which of them did it. Replaces
  * rather than merges: a caller setting the table is describing the whole roster,
  * and a merge would make "remove a unit" impossible to express.
+ *
+ * Which is why {@link DEFAULT_AUTHORED_UNITS} has to be spread in by the caller
+ * that wants it. The Play tab calls this on mount with whatever `?units=` says,
+ * and an empty query is still a whole roster -- so a default living only in this
+ * module's initial map was wiped before the first frame, and the player kept
+ * drawing as the critter rig with nothing anywhere reporting a problem.
  */
 export function setAuthoredUnits(entries: Readonly<Record<string, AuthoredUnitId>>): void {
   authored.clear();

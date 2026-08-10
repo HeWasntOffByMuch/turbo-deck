@@ -2,7 +2,14 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { EntityKind } from '../../../server/net/protocol.js';
 import { appearanceOf } from './appearance.js';
 import { authoredUnitIds } from './unit-assets.js';
-import { authoredUnitFor, authoredUnits, setAuthoredUnits, unitsFromQuery } from './unit-catalog.js';
+import {
+  authoredUnitFor,
+  authoredUnits,
+  DEFAULT_AUTHORED_UNITS,
+  PLAYER_TYPE_ID,
+  setAuthoredUnits,
+  unitsFromQuery,
+} from './unit-catalog.js';
 
 afterEach(() => {
   setAuthoredUnits({});
@@ -80,5 +87,28 @@ describe('the roster is discovered, not listed (spec 113)', () => {
   it('is empty without the switch, so the arena is unchanged', () => {
     expect(unitsFromQuery('')).toEqual({});
     expect(unitsFromQuery('?seed=7')).toEqual({});
+  });
+});
+
+describe('the default roster surviving a caller', () => {
+  it('is a value a caller can spread, not just the map this module starts with', () => {
+    // The bug this exists to stop coming back. The Play tab calls
+    // `setAuthoredUnits(unitsFromQuery())` on mount, and that replaces the whole
+    // table by design -- so an empty query wiped the default before the first
+    // frame and the player went on being drawn by the critter rig, with nothing
+    // anywhere reporting a problem. A default only the module knows about is a
+    // default one caller can silently delete.
+    expect(DEFAULT_AUTHORED_UNITS[PLAYER_TYPE_ID]).toBe('pig_a_pose_full');
+
+    setAuthoredUnits(unitsFromQuery('?seed=1'));
+    expect(authoredUnitFor(appearanceOf({ kind: EntityKind.Player, typeId: 'player' }))).toBeNull();
+
+    setAuthoredUnits({ ...DEFAULT_AUTHORED_UNITS, ...unitsFromQuery('?seed=1') });
+    expect(authoredUnitFor(appearanceOf({ kind: EntityKind.Player, typeId: 'player' }))).toBe('pig_a_pose_full');
+  });
+
+  it('lets the query override the default rather than only adding to it', () => {
+    setAuthoredUnits({ ...DEFAULT_AUTHORED_UNITS, ...unitsFromQuery('?units=player:mannequin') });
+    expect(authoredUnitFor(appearanceOf({ kind: EntityKind.Player, typeId: 'player' }))).toBe('mannequin');
   });
 });

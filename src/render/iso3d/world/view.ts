@@ -36,7 +36,7 @@ import {
 import { abilityById, BASIC_ATTACK_ID } from '../../../server/data/abilities.js';
 import { EntityKind } from '../../../server/net/protocol.js';
 import { viewSeed } from '../seed.js';
-import { setAuthoredUnits, unitsFromQuery } from './unit-catalog.js';
+import { DEFAULT_AUTHORED_UNITS, setAuthoredUnits, unitsFromQuery } from './unit-catalog.js';
 import { ASSET_MANIFEST_HASH } from './unit-assets.js';
 import mapText from '../../../../maps/arena.json?raw';
 import { parseMap } from '../../../terrain/map.js';
@@ -87,7 +87,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   const seed = viewSeed();
   // Which monsters are drawn from an authored unit (spec 111). Empty unless
   // `?units=` says otherwise, so the arena looks exactly as it did.
-  setAuthoredUnits(unitsFromQuery());
+  // The defaults first, then whatever `?units=` overrides. `setAuthoredUnits`
+  // replaces the whole table by design, so passing the query alone wiped the
+  // default roster on every mount -- which is exactly how the player went on
+  // being drawn by the critter rig after being pointed at an authored unit.
+  setAuthoredUnits({ ...DEFAULT_AUTHORED_UNITS, ...unitsFromQuery() });
   const world = buildWorldFromMap(parseMap(mapText), mapText);
 
   const transport = new LoopbackTransport();
