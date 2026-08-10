@@ -61,14 +61,34 @@ export interface CombatFacts {
   readonly bleeds: boolean;
 }
 
-/** The impact effect for each damage type. Absent entries fall back to physical. */
+/**
+ * The impact effect for each damage type (spec 121).
+ *
+ * The table is the seam the whole arc is built around: a new damage type is a
+ * row here and an entry in the library, and nothing at any call site changes.
+ * Every id is asserted to exist in the registry, because a stub table is exactly
+ * where a typo survives -- it looks filled in and silently plays nothing.
+ */
 export const DAMAGE_EFFECTS: Record<DamageType, string> = {
-  physical: 'hit_metal_spark',
-  fire: 'hit_metal_spark',
-  poison: 'hit_metal_spark',
-  ice: 'hit_metal_spark',
-  lightning: 'hit_metal_spark',
-  arcane: 'hit_metal_spark',
+  physical: 'hit_physical',
+  fire: 'hit_fire',
+  poison: 'hit_poison',
+  ice: 'hit_ice',
+  lightning: 'hit_lightning',
+  arcane: 'hit_arcane',
+};
+
+/** The secondary an impact plays alongside its flash, or null. */
+export const DAMAGE_DEBRIS: Record<DamageType, string | null> = {
+  // Only a physical blow throws chips and dust. Fire and arcane leave nothing
+  // solid behind, and giving them debris is what makes every damage type read
+  // the same.
+  physical: 'impact_physical',
+  fire: null,
+  poison: null,
+  ice: 'impact_physical',
+  lightning: null,
+  arcane: null,
 };
 
 /**
@@ -85,11 +105,11 @@ export function blowSeed(facts: CombatFacts, tick: number): number {
 }
 
 /**
- * What to play for one blow. Zero, one or two requests.
+ * What to play for one blow. Between zero and three requests.
  *
- * Never more than two: an impact and, on a killing blow, the death. A blow that
- * spawned a handful of effects would be a blow that costs a handful of the
- * budget, and the budget is spent per-blow by the people fighting.
+ * Capped at three deliberately. The budget is spent per-blow by the people
+ * fighting, and an impact that fans out into six effects is one that starves the
+ * next five impacts -- which is worse than any of the six looked good.
  */
 export function effectsForBlow(facts: CombatFacts, tick: number): readonly PlayRequest[] {
   const out: PlayRequest[] = [];
@@ -102,33 +122,37 @@ export function effectsForBlow(facts: CombatFacts, tick: number): readonly PlayR
   const rotation = dx * dx + dz * dz > 1e-3 ? Math.atan2(dz, dx) : 0;
 
   // A crit is the same language, louder -- never a different one.
-  const scale = (facts.critical ? 1.45 : 1) * (facts.blocked ? 0.7 : 1);
+  const scale = facts.critical ? 1.45 : 1;
 
-  if (facts.bleeds && !facts.blocked) {
-    out.push({
-      id: facts.killed ? 'death_blood' : 'hit_blood',
-      x: facts.x,
-      y: facts.y,
-      z: facts.z,
-      rotation,
-      scale,
-      seed,
-    });
+  // Every request of one blow gets its own seed, or the flash and the spray draw
+  // the same numbers and land in the same pattern -- which reads as one effect
+  // drawn twice rather than as two things happening.
+  const at = (id: string, salt: number, sizeScale = 1): PlayRequest => ({
+    id,
+    x: facts.x,
+    y: facts.y,
+    z: facts.z,
+    rotation,
+    scale: scale * sizeScale,
+    seed: (seed ^ Math.imul(salt, 0x9e3779b1)) | 0,
+  });
+
+  if (facts.blocked) {
+    // A blow that was stopped opened nothing, so there is no blood and no
+    // debris -- just the guard taking it.
+    out.push(at('hit_block', 1, 0.85));
+    return out;
   }
 
-  // The impact itself: sparks on a block or on something that does not bleed.
-  if (facts.blocked || !facts.bleeds) {
-    out.push({
-      id: DAMAGE_EFFECTS[facts.damageType] ?? DAMAGE_EFFECTS.physical,
-      x: facts.x,
-      y: facts.y,
-      z: facts.z,
-      rotation,
-      scale,
-      // Offset so the two effects of one blow do not draw the same numbers.
-      seed: (seed ^ 0x5bd1e995) | 0,
-    });
-  }
+  out.push(facts.bleeds ? at(facts.killed ? 'death_blood' : 'hit_blood', 2) : at(DAMAGE_EFFECTS[facts.damageType], 3));
+
+  if (facts.critical) out.push(at('hit_critical', 4));
+
+  // Chips and dust, for the damage types that break something rather than burn
+  // it -- and only off a body that is not already throwing blood, so a blow
+  // never draws two kinds of debris at once.
+  const debris = DAMAGE_DEBRIS[facts.damageType];
+  if (debris && !facts.bleeds) out.push(at(debris, 5));
 
   return out;
 }

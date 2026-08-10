@@ -8,8 +8,9 @@ Status: **Phase 1 landed; Phase 2a (sparks) at its review gate.**
 | 1 — core system (spec 118) | done, 71 tests, lint and typecheck green |
 | 2a — sparks + verification + glow comparison | done |
 | 2b — blood splat generator (spec 119) | done |
-| 2c — decals: ground, props, gore setting, combat wiring (spec 120) | **at the review gate** |
-| 2d onward — fire, smoke, auras, remaining hit effects | not started |
+| 2c — decals: ground, props, gore setting, combat wiring (spec 120) | done |
+| 2d — the effect library: fire, smoke, auras, hit vocabulary (spec 121) | **at the review gate** |
+| 3 — Studio VFX tab | not started |
 | 3 — Studio VFX tab | not started |
 
 This is the living document for the VFX arc. It is updated as decisions land, and
@@ -763,6 +764,116 @@ first inherits that rule.
   still never evicts a chunk. That is the honest state, not an oversight.
 - Damage types all currently map to `hit_metal_spark` in `DAMAGE_EFFECTS`. The
   table is the seam; filling it in is the fire/ice/lightning work.
+
+---
+
+## 5e. The library, and the one thing the brief asked for that cannot be built
+
+Spec 121: forty-odd authored effects, the damage-type tables filled in, and the
+Play tab's seventh corner button.
+
+### Statuses are not replicated, and auras were meant to hang off them
+
+The brief asks that auras "hook to the existing debuff/status tracking so
+applying a status shows its aura automatically." **There is no such tracking on
+the client.** `ReplicatedEntity` carries id, kind, typeId, position, facing,
+health, maxHealth, activity, activityUntilTick and level. `StatModifier` exists
+server-side and never reaches a client; there is no buff or debuff list on the
+wire at all.
+
+Putting one there is a protocol change, which this arc rules out as a non-goal.
+So the whole aura path is built and tested against a pure `aurasFor(facts)` and
+driven by what the client *does* know — a channel in progress, the selected
+target, a telegraph. Every status aura is authored and reachable, and
+`AuraFacts` already carries a `statuses` field that is empty today. When a status
+list is replicated, `aurasFor` gains a branch and nothing else in the renderer
+changes.
+
+This is flagged rather than worked around because the alternative — inferring
+statuses from health deltas, or having the client keep its own guess — would be
+a renderer with an opinion about game state, which is the one thing the whole
+split exists to prevent.
+
+### Three builders, forty effects
+
+`fire`, `puff` and `aura` are parameterized because each brief says so. They
+return plain config; nothing in them is behaviour.
+
+- **Fire is five layers**, and that is what makes it read as burning rather than
+  as a decal of a fire: a flipbook core, embers that leave and keep rising, a
+  shimmer, a smoke column that starts *above* the flame, and a ground glow. Tint
+  carries down through sub-effects, so blue fire is a parameter and not a second
+  definition — asserted by a test that blue and normal fire have identical
+  luminance ramps.
+- **One puff drives nine effects**, and it works because at this resolution the
+  only things separating dust from poison gas are colour, size, rise speed and
+  lifetime. There is no detail left to differ in.
+- **Auras are ground rings**, which is the whole reason two can be on at once:
+  concentric rings read as two things where two body glows read as one muddy
+  colour. `auras.test.ts` reads the authored radii out of the library and asserts
+  every neighbouring pair is at least two virtual pixels apart at gameplay zoom,
+  and that the whole stack fits inside the frame.
+
+### The heat shimmer, and why it is not refraction
+
+A refraction pass samples the frame with an offset. At 300 pixels tall that moves
+*whole pixels* around and reads as tearing, not as heat. The stand-in is a few
+large, faint, fast-rising dither-cutout quads: they punch a shifting stipple
+through what is behind them, which is the impression of disturbed air for the
+cost of one more batch of quads.
+
+### One test over the whole table
+
+`library.test.ts` asserts across every effect at once — compiles, emits, positive
+lifetimes, a size and alpha that are ever non-zero, sprite sheets that exist with
+the right frame counts, information at priority 3, no dangling sub-effects, and
+the whole library playable for a hundred ticks without throwing. A new effect
+next month gets all of it for free, which is the only way a library this size
+stays honest: nobody writes six tests per effect.
+
+It found one thing immediately -- `death_blood/pool` is fully transparent. That
+turned out to be deliberate (an invisible carrier that exists to fall and place
+the pool decal), so the rule became "visible **or** places a decal", which still
+fails an emitter that went transparent by accident.
+
+### The sheet caught the damage-type language failing
+
+The first render of the library sheet showed all seven damage-type flashes as the
+same desaturated grey-brown smudge. Each was a single dithered halo running
+hot-to-cool over its life, and at that size the dithered falloff is most of the
+disc -- so most of what reached the screen was the *faint* outer stipple and the
+hue never got a chance to say anything.
+
+That is the whole damage-type language failing quietly: every test passed, and
+six of the seven types were indistinguishable in play. A flash is two emitters
+now, a small hard-edged core at full alpha in the type's hot colour plus the
+dithered halo in its cool one, and the seven read apart at a glance.
+
+### Two mistakes worth recording
+
+**I overwrote `scripts/preview-library.ts`**, which has belonged to spec 112's
+Studio unit library since it landed. Caught by reading `CLAUDE.md`'s directory
+map, restored from git with nothing lost, and mine is `preview-vfx-library.ts`.
+
+**The library sheet photographed eleven effects after they had finished.** The
+first version picked a tick from an id prefix; every flash in the library lives
+three or four ticks and was being caught at eight, producing eleven empty tiles
+and eleven confident bug reports about effects that were working perfectly. It
+now derives candidate ticks from the emitters and *measures* which one holds the
+most particles — counting is cheap, only the screenshot is slow.
+
+### Still open
+
+- The gore and intensity settings have their button now. `DecalField.dropChunk`
+  is still called by nothing, for the same reason as before.
+- Damage types are wired for *impacts*. Nothing yet decides that a given ability
+  is fire rather than physical — `CombatFacts.damageType` is supplied as
+  `physical` by the Play tab. Deriving it from the ability table is a one-line
+  lookup and belongs with whichever spec gives abilities a damage type.
+- `puff_footstep` and its terrain-tinted siblings exist and nothing plays them:
+  there is no footfall event in the Play tab since `Poofs` was removed. Wiring it
+  needs the rig to report a footfall, which the authored-unit machine can do and
+  the mech rigs cannot.
 
 ---
 

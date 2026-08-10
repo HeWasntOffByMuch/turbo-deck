@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { blowSeed, effectsForBlow, type CombatFacts } from './vfx-wire.js';
+import { blowSeed, DAMAGE_EFFECTS, effectsForBlow, type CombatFacts } from './vfx-wire.js';
 
 function facts(overrides: Partial<CombatFacts> = {}): CombatFacts {
   return {
@@ -30,22 +30,54 @@ describe('effectsForBlow', () => {
     expect(effectsForBlow(facts({ killed: true }), 500)[0]?.id).toBe('death_blood');
   });
 
-  it('draws sparks off something that does not bleed', () => {
+  it('draws the damage type off something that does not bleed', () => {
     const played = effectsForBlow(facts({ bleeds: false }), 500);
-    expect(played.map((request) => request.id)).toEqual(['hit_metal_spark']);
+    expect(played.map((request) => request.id)).toEqual(['hit_physical', 'impact_physical']);
   });
 
-  it('draws sparks and no blood off a block', () => {
-    // A blow that was stopped did not open anything.
+  it('gives each damage type its own flash', () => {
+    for (const damageType of ['physical', 'fire', 'poison', 'ice', 'lightning', 'arcane'] as const) {
+      const played = effectsForBlow(facts({ bleeds: false, damageType }), 1);
+      expect(played[0]?.id).toBe(DAMAGE_EFFECTS[damageType]);
+    }
+    // ...and they are all different, which a copy-paste table would fail.
+    expect(new Set(Object.values(DAMAGE_EFFECTS)).size).toBe(6);
+  });
+
+  it('throws debris only for the types that break something', () => {
+    const withDebris = (damageType: CombatFacts['damageType']): string[] =>
+      effectsForBlow(facts({ bleeds: false, damageType }), 1).map((request) => request.id);
+    expect(withDebris('physical')).toContain('impact_physical');
+    expect(withDebris('ice')).toContain('impact_physical');
+    expect(withDebris('fire')).not.toContain('impact_physical');
+    expect(withDebris('arcane')).not.toContain('impact_physical');
+  });
+
+  it('draws no debris off a body that is already throwing blood', () => {
+    // Otherwise one blow draws two kinds of debris at once.
+    const played = effectsForBlow(facts({ bleeds: true, damageType: 'physical' }), 1);
+    expect(played.map((request) => request.id)).not.toContain('impact_physical');
+  });
+
+  it('draws the guard and nothing else off a block', () => {
+    // A blow that was stopped opened nothing: no blood and no debris.
     const played = effectsForBlow(facts({ blocked: true }), 500);
-    expect(played.map((request) => request.id)).toEqual(['hit_metal_spark']);
+    expect(played.map((request) => request.id)).toEqual(['hit_block']);
   });
 
-  it('never plays more than two effects for one blow', () => {
+  it('adds the critical on top rather than replacing what happened', () => {
+    const played = effectsForBlow(facts({ critical: true }), 1).map((request) => request.id);
+    expect(played).toContain('hit_blood');
+    expect(played).toContain('hit_critical');
+  });
+
+  it('never plays more than three effects for one blow', () => {
     for (const blocked of [false, true]) {
       for (const bleeds of [false, true]) {
         for (const killed of [false, true]) {
-          expect(effectsForBlow(facts({ blocked, bleeds, killed }), 1).length).toBeLessThanOrEqual(2);
+          for (const critical of [false, true]) {
+            expect(effectsForBlow(facts({ blocked, bleeds, killed, critical }), 1).length).toBeLessThanOrEqual(3);
+          }
         }
       }
     }
@@ -75,16 +107,16 @@ describe('effectsForBlow', () => {
     expect(critical?.scale ?? 0).toBeGreaterThan(plain?.scale ?? 0);
   });
 
-  it('makes a block smaller', () => {
+  it('makes a block smaller than an open blow', () => {
     const blocked = effectsForBlow(facts({ blocked: true }), 1)[0];
     const open = effectsForBlow(facts({ bleeds: false }), 1)[0];
     expect(blocked?.scale ?? 0).toBeLessThan(open?.scale ?? 0);
   });
 
-  it('gives the two effects of one blow different seeds', () => {
-    // Otherwise the spark and the blood draw the same numbers and land in
+  it('gives every effect of one blow a different seed', () => {
+    // Otherwise the flash and the spray draw the same numbers and land in
     // exactly the same pattern, which reads as one effect drawn twice.
-    const played = effectsForBlow(facts({ blocked: true, bleeds: true }), 1);
+    const played = effectsForBlow(facts({ bleeds: false, critical: true, damageType: 'physical' }), 1);
     const seeds = new Set(played.map((request) => request.seed));
     expect(seeds.size).toBe(played.length);
   });

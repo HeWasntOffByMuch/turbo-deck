@@ -125,6 +125,96 @@ function puffSheet(size: number, frames: number): { pixels: Uint8Array<ArrayBuff
 }
 
 /**
+ * An annulus with dithered edges: the aura ring (spec 121).
+ *
+ * `thickness` is the band as a fraction of the radius. Both edges are dithered
+ * rather than one, so a ring reads as a band of stipple at any size instead of
+ * as a hard donut that the quantizer then hardens further.
+ */
+function ringSprite(size: number, thickness: number): Uint8Array<ArrayBuffer> {
+  const pixels = new Uint8Array(size * size * 4);
+  const centre = (size - 1) / 2;
+  const radius = size / 2;
+  const inner = 1 - thickness;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = (x - centre) / radius;
+      const dy = (y - centre) / radius;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      // Peak in the middle of the band, falling to nothing at both edges.
+      const t = (distance - inner) / Math.max(1e-3, thickness);
+      const coverage = t < 0 || t > 1 ? 0 : Math.sin(t * Math.PI);
+      const alpha = coverage > 0 && coverage < 1 ? (coverage > ditherThreshold(x, y) ? 1 : 0) : coverage;
+      const at = (y * size + x) * 4;
+      pixels[at] = 255;
+      pixels[at + 1] = 255;
+      pixels[at + 2] = 255;
+      pixels[at + 3] = Math.round(Math.max(0, Math.min(1, alpha)) * 255);
+    }
+  }
+  return pixels;
+}
+
+/**
+ * A flame flipbook: a tongue that rises, narrows and breaks up (spec 121).
+ *
+ * Built from a width profile rather than from noise. A flame's silhouette is the
+ * whole read at this resolution -- wide and round at the base, pinched at the
+ * waist, tapering to a tip that wanders -- and noise gives none of that.
+ */
+function flameSheet(size: number, frames: number): { pixels: Uint8Array<ArrayBuffer>; width: number } {
+  const width = size * frames;
+  const pixels = new Uint8Array(width * size * 4);
+  for (let f = 0; f < frames; f++) {
+    const phase = (f / frames) * Math.PI * 2;
+    for (let y = 0; y < size; y++) {
+      // 0 at the base, 1 at the tip.
+      const up = 1 - y / (size - 1);
+      // Round at the base, pinched a third of the way up, tapering after.
+      const body = Math.sin(Math.min(1, up * 1.15) * Math.PI * 0.92);
+      const pinch = 1 - 0.28 * Math.exp(-((up - 0.36) ** 2) / 0.012);
+      // The tip leans, and the lean travels up the flame over the loop.
+      const lean = Math.sin(phase + up * 3.1) * up * up * 0.22;
+      const halfWidth = body * pinch * 0.46 * size;
+      const axis = (size - 1) / 2 + lean * size;
+      for (let x = 0; x < size; x++) {
+        const distance = Math.abs(x - axis);
+        let coverage = halfWidth <= 0 ? 0 : 1 - distance / halfWidth;
+        // Break the tip up so it does not read as a solid leaf.
+        if (up > 0.7) coverage -= (up - 0.7) * 1.6 * (0.5 + 0.5 * Math.sin(phase * 2 + x));
+        const alpha = coverage <= 0 ? 0 : coverage >= 1 ? 1 : coverage > ditherThreshold(x, y + f) ? 1 : 0;
+        const at = (y * width + f * size + x) * 4;
+        pixels[at] = 255;
+        pixels[at + 1] = 255;
+        pixels[at + 2] = 255;
+        pixels[at + 3] = alpha > 0 ? 255 : 0;
+      }
+    }
+  }
+  return { pixels, width };
+}
+
+/** An angular chip: debris, ice shards, anything that broke rather than burned. */
+function chipSprite(size: number): Uint8Array<ArrayBuffer> {
+  const pixels = new Uint8Array(size * size * 4);
+  const centre = (size - 1) / 2;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = (x - centre) / (size / 2);
+      const dy = (y - centre) / (size / 2);
+      // A diamond rather than a disc: straight edges are what say "broken".
+      const inside = Math.abs(dx) + Math.abs(dy) <= 1;
+      const at = (y * size + x) * 4;
+      pixels[at] = 255;
+      pixels[at + 1] = 255;
+      pixels[at + 2] = 255;
+      pixels[at + 3] = inside ? 255 : 0;
+    }
+  }
+  return pixels;
+}
+
+/**
  * A named sheet.
  *
  * The empty name is the solid square, which is what an emitter with no `sprite`
@@ -149,6 +239,20 @@ export function spriteSheet(name: string): THREE.DataTexture {
     case 'disc':
       texture = makeTexture(radialSprite(8, 0.55, true), 8, 8);
       break;
+    case 'ring':
+      texture = makeTexture(ringSprite(32, 0.32), 32, 32);
+      break;
+    case 'ring_thin':
+      texture = makeTexture(ringSprite(32, 0.16), 32, 32);
+      break;
+    case 'chip':
+      texture = makeTexture(chipSprite(4), 4, 4);
+      break;
+    case 'flame': {
+      const { pixels, width } = flameSheet(16, 8);
+      texture = makeTexture(pixels, width, 16);
+      break;
+    }
     case 'puff': {
       const { pixels, width } = puffSheet(12, 8);
       texture = makeTexture(pixels, width, 12);
@@ -165,7 +269,8 @@ export function spriteSheet(name: string): THREE.DataTexture {
 
 /** How many frames wide a named sheet is. Must agree with `spriteSheet`. */
 export function sheetFrames(name: string): number {
-  return name === 'puff' ? 8 : 1;
+  if (name === 'puff' || name === 'flame') return 8;
+  return 1;
 }
 
 /** Drop every generated sheet. Only a context loss needs this. */

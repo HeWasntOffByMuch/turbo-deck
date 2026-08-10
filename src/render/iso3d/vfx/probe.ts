@@ -47,6 +47,18 @@ import {
 export type GlowMode = 'dither' | 'smooth' | 'layered';
 
 /**
+ * Play any effect in the shipped registry and hold it for a fixed tick count.
+ *
+ * The contact sheet for the library (spec 121). Same rig as the glow comparison,
+ * so what it photographs is the game's own pass at the game's own resolution --
+ * and the only way to see what forty authored effects actually look like without
+ * fighting one of each.
+ */
+export function runLibraryShot(probe: { shot: (id: string, ticks: number) => ProbeReport }, id: string, ticks: number): ProbeReport {
+  return probe.shot(id, ticks);
+}
+
+/**
  * The spark, with its flash rebuilt three ways.
  *
  * Same particle counts, same lifetimes, same ramp -- the *only* difference is
@@ -90,6 +102,7 @@ declare global {
   interface Window {
     vfxProbe?: {
       run: (mode: GlowMode) => ProbeReport;
+      shot: (id: string, ticks: number) => ProbeReport;
       readonly reports: ProbeReport[];
     };
   }
@@ -124,7 +137,50 @@ class Probe {
     this.camera.lookAt(0, 30, 0);
   }
 
+  /**
+   * Play one shipped effect and photograph it after `ticks`.
+   *
+   * The registry rather than a rebuilt one: the point is to see what the game
+   * will actually draw, so a doctored copy would be worth nothing.
+   */
+  shot(id: string, ticks: number): ProbeReport {
+    // The game's own quantization, not the probe's six-colour palette.
+    //
+    // That palette exists so "is this pixel on the palette" is a sharp question
+    // for the low-resolution verification. Photographing the *library* through it
+    // is actively misleading: it snapped all seven damage-type flashes -- white,
+    // orange, green, cyan, yellow, violet -- onto the same handful of colours, so
+    // a sheet meant to show that each damage type reads differently showed seven
+    // identical green dots.
+    this.retro.setPalette(null);
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(PROBE_BACKGROUND);
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(1600, 1600), new THREE.MeshBasicMaterial({ color: PROBE_GROUND }));
+    ground.rotation.x = -Math.PI / 2;
+    scene.add(ground);
+
+    const layer = new VfxLayer({
+      hooks: { ground: () => 0, attach: (_e, _s, out, at) => { out[at] = 0; out[at + 1] = 20; out[at + 2] = 0; return true; } },
+      limits: { maxParticles: 2500, maxInstances: 32, pressureFloor: 0.25 },
+      lights: false,
+    });
+    scene.add(layer.root);
+    layer.play(id, { x: 0, y: 24, z: 0, seed: 20260810, attach: { kind: 'entity', entityId: 1 } });
+    layer.update(ticks);
+
+    this.retro.render(this.renderer, scene, this.camera);
+    const report: ProbeReport = { mode: 'dither', particles: layer.readout().particles, drawCalls: layer.readout().drawCalls };
+
+    scene.remove(layer.root);
+    layer.dispose();
+    ground.geometry.dispose();
+    (ground.material as THREE.Material).dispose();
+    return report;
+  }
+
   run(mode: GlowMode): ProbeReport {
+    // Back to the tiny palette: this is the verification, and it needs it.
+    this.retro.setPalette(PROBE_PALETTE);
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(PROBE_BACKGROUND);
 
@@ -184,6 +240,11 @@ function main(): void {
   window.vfxProbe = {
     run: (mode: GlowMode) => {
       const report = probe.run(mode);
+      reports.push(report);
+      return report;
+    },
+    shot: (id: string, ticks: number) => {
+      const report = probe.shot(id, ticks);
       reports.push(report);
       return report;
     },

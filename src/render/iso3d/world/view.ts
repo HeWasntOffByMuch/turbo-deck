@@ -43,6 +43,7 @@ import { parseMap } from '../../../terrain/map.js';
 import { StreamedMap } from '../../../server/client/streamed-map.js';
 import type { ViewHandle } from '../view-handle.js';
 import { createWeatherControls } from '../weather-controls.js';
+import { createVfxControls } from '../vfx-controls.js';
 import { turnToward } from '../../../server/sim/movement.js';
 import { facesAim } from '../../../server/sim/abilities.js';
 import { createHud, HOTBAR } from './hud.js';
@@ -222,13 +223,23 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // each rather than one drawer for all of them -- and one group, so opening any
   // of them closes the rest instead of stacking six panels into one corner.
   const weather = createWeatherControls({ group: scene.controls.menus });
+  // The seventh button (spec 121). Both settings are pushed straight into the
+  // layer rather than polled: the intensity is a budget the sim reads, and gore
+  // is a switch the decal field acts on rather than a flag anything draws past.
+  const vfxControls = createVfxControls({
+    group: scene.controls.menus,
+    onChange: (settings) => {
+      scene.setVfxIntensity(settings.intensity);
+      scene.setGore(settings.gore);
+    },
+  });
   const buttons = document.createElement('div');
   // Inset against the notch and the home indicator (spec 093): in landscape the
   // cutout is on a side edge, which is exactly where these sit.
   buttons.style.cssText =
     'position:absolute;top:calc(8px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));' +
     'z-index:30;display:flex;gap:6px;';
-  buttons.append(scene.controls.element, weather.element);
+  buttons.append(scene.controls.element, weather.element, vfxControls.element);
   root.append(hud.element, buttons);
 
   /** Where a blow lands on a body, in world units above its feet. */

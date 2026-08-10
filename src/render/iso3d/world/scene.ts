@@ -777,6 +777,11 @@ export class WorldScene {
     this.vfx.setGore(level);
   }
 
+  /** 0 off, 1 low, 2 medium, 3 full. Off skips the simulation rather than hiding it. */
+  setVfxIntensity(intensity: number): void {
+    this.vfx.setIntensity(intensity);
+  }
+
   /** What the VFX debug readout shows. */
   vfxReadout(): ReturnType<VfxLayer['readout']> {
     return this.vfx.readout();

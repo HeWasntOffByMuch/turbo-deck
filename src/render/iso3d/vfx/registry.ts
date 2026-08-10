@@ -16,6 +16,7 @@
  */
 
 import { compileRegistry, type CompiledRegistry } from './compile.js';
+import { LIBRARY } from './library.js';
 import type { EffectDefinition } from './types.js';
 
 /**
@@ -232,8 +233,21 @@ const DEATH_BLOOD: EffectDefinition = {
   ],
 };
 
-/** Every authored effect, in one array. */
-export const EFFECTS: readonly EffectDefinition[] = [SPARK_BOUNCE, HIT_METAL_SPARK, HIT_BLOOD, DEATH_BLOOD];
+/**
+ * Every authored effect, in one array.
+ *
+ * The impacts and the blood are written out here because they were the effects
+ * the machinery was proved against; everything else is `library.ts`, where fire,
+ * smoke, auras and the rest of the hit vocabulary are built from three
+ * parameterized families (spec 121).
+ */
+export const EFFECTS: readonly EffectDefinition[] = [
+  SPARK_BOUNCE,
+  HIT_METAL_SPARK,
+  HIT_BLOOD,
+  DEATH_BLOOD,
+  ...LIBRARY,
+];
 
 /**
  * The compiled table, built once at module load.
