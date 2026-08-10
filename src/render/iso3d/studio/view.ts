@@ -64,6 +64,16 @@ interface PendingImage {
   skeletonId: string;
   faceLimit: number;
   clipIntents: string[];
+  /**
+   * The preset filter and whether the long list is open.
+   *
+   * Held per card because ticking a preset repaints the picker, and a repaint
+   * replaces its children: without this, filtering to "hit" and ticking one
+   * result collapses the list and clears the box, so choosing three related
+   * clips means typing the same filter three times.
+   */
+  clipFilter: string;
+  clipsOpen: boolean;
   estimate: EstimateResult | null;
   busy: boolean;
 }
@@ -591,21 +601,71 @@ export function mountStudio(container: HTMLElement): ViewHandle {
           }
           return [row];
         }
-        return CLIP_INTENTS.map((intent) => {
+        const toggle = (id: string, on: boolean): void => {
+          image.clipIntents = on
+            ? [...new Set([...image.clipIntents, id])]
+            : image.clipIntents.filter((existing) => existing !== id);
+          image.estimate = null;
+          refresh();
+        };
+
+        const tick = (id: string, text: string): HTMLElement => {
           const label = el('label', `${MUTED}display:flex;gap:4px;align-items:center;cursor:pointer;`);
           const box = el('input') as HTMLInputElement;
           box.type = 'checkbox';
-          box.checked = image.clipIntents.includes(intent.id);
-          box.addEventListener('change', () => {
-            image.clipIntents = box.checked
-              ? [...image.clipIntents, intent.id]
-              : image.clipIntents.filter((id) => id !== intent.id);
-            image.estimate = null;
-            refresh();
-          });
-          label.append(box, document.createTextNode(intent.label));
+          box.checked = image.clipIntents.includes(id);
+          box.addEventListener('change', () => toggle(id, box.checked));
+          label.append(box, document.createTextNode(text));
           return label;
-        });
+        };
+
+        const nodes: Node[] = CLIP_INTENTS.map((intent) => tick(intent.id, intent.label));
+
+        // Everything else the configured rig model can animate. The shortlist
+        // above is what a unit needs to stand, move and fight; this is the
+        // other ninety, and it is a search rather than a wall of tick boxes.
+        const shortlisted = new Set(CLIP_INTENTS.map((intent) => intent.id));
+        const rest = (config?.clipPresets ?? []).filter((preset) => !shortlisted.has(preset));
+        if (rest.length > 0) {
+          const more = el('details', 'width:100%;margin-top:6px;');
+          const summary = el('summary', `${MUTED}cursor:pointer;`);
+          setText(summary, `${rest.length} more presets on ${config?.rigModelVersion ?? 'this rig model'}`);
+          more.appendChild(summary);
+
+          more.open = image.clipsOpen;
+          more.addEventListener('toggle', () => {
+            image.clipsOpen = more.open;
+          });
+
+          const filter = el('input', `${INPUT}width:100%;margin:6px 0;`) as HTMLInputElement;
+          filter.placeholder = 'filter — try "hit", "defeat", "cast"';
+          filter.value = image.clipFilter;
+          const list = el(
+            'div',
+            'display:flex;flex-wrap:wrap;gap:4px 14px;max-height:190px;overflow:auto;padding:2px 0;',
+          );
+          const draw = (): void => {
+            image.clipFilter = filter.value;
+            const needle = filter.value.trim().toLowerCase();
+            list.replaceChildren(
+              ...rest.filter((preset) => preset.includes(needle)).map((preset) => tick(preset, preset)),
+            );
+          };
+          filter.addEventListener('input', draw);
+          draw();
+          more.append(filter, list);
+          nodes.push(more);
+        } else if (config !== null) {
+          nodes.push(
+            el(
+              'div',
+              `${MUTED}width:100%;color:#e5c07b;`,
+              `The server has not enumerated ${config.rigModelVersion}'s presets, so this is a shortlist rather ` +
+                'than the whole vocabulary. Anything sent that this model does not have is a paid call that buys nothing.',
+            ),
+          );
+        }
+        return nodes;
       });
 
       const problem = unitIdProblem(image.unitId, jobs.map((job) => job.unitId));
@@ -1199,6 +1259,8 @@ export function mountStudio(container: HTMLElement): ViewHandle {
         skeletonId: 'biped',
         faceLimit: config?.defaultFaceLimit ?? 8000,
         clipIntents: [...defaultClipIntents()],
+        clipFilter: '',
+        clipsOpen: false,
         estimate: null,
         busy: false,
       };

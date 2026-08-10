@@ -255,6 +255,53 @@ export const BIPED_ANIMATION_PRESETS: readonly string[] = [
 ];
 
 /**
+ * What {@link HUMANOID_RIG_MODEL} can animate: 101 presets, transcribed from
+ * the reference page's expanded list.
+ *
+ * The eleven the creature model has are all in here, which is what makes the
+ * two lists comparable at all -- everything else is new. The game-relevant
+ * additions are worth naming, because they are the reason this list is worth
+ * having: `defeat_02`/`defeat_03` for a death, five `hit_to_*` reactions,
+ * `cast_a_spell`, `chop`, `fire`, `front_kick_01`/`_02`, `box_01..03` and
+ * `flee_01`/`_02`.
+ *
+ * **There is still no `death`.** Nor a `defeat_01`, which reads like a gap in
+ * their library rather than in this transcription -- it is absent from the
+ * published list and is not invented here.
+ *
+ * ## The spelling, which is not what the docs say
+ *
+ * The reference page writes these as `preset:biped:idle`, namespaced, while the
+ * creature model's biped presets are bare. This pipeline sends the **bare**
+ * form and a real generation on this model retargeted `idle`, `walk` and `run`
+ * with it. So the API accepts bare here whatever the page shows, and changing a
+ * proven call on the strength of a document that has already been wrong twice
+ * -- the missing `rig_type`, the mixamo retarget refusal -- would be trading a
+ * working request for a paid failure.
+ *
+ * The names are therefore stored bare, as intents. If a preset outside those
+ * three ever comes back refused, the namespaced form is the first thing to try
+ * and it is a one-line change in {@link presetFor}.
+ */
+export const HUMANOID_BIPED_PRESETS: readonly string[] = [
+  'afraid', 'agree', 'angry_01', 'angry_02', 'angry_03', 'basketball_shot', 'bow', 'box_01',
+  'box_02', 'box_03', 'cast_a_spell', 'cheer', 'chop', 'clap', 'climb', 'complain_01',
+  'complain_02', 'cross_body_crunch', 'crossover_dribble', 'cry', 'dance_01', 'dance_02',
+  'dance_03', 'dance_04', 'dance_05', 'dance_06', 'defeat_02', 'defeat_03', 'depressed', 'dig',
+  'dive', 'dribble', 'fall', 'fire', 'flee_01', 'flee_02', 'flip', 'fold_arms', 'football_catch',
+  'football_pass', 'football_save', 'freaky', 'frightened', 'front_kick_01', 'front_kick_02',
+  'frustrated_01', 'frustrated_02', 'golf', 'greet_01', 'greet_02', 'greet_03', 'greet_04',
+  'heart_pose', 'hit_to_body_01', 'hit_to_body_02', 'hit_to_head', 'hit_to_side',
+  'hit_to_stomach', 'hug', 'hurt', 'idle', 'jump', 'jump_down', 'jump_rope_01', 'jump_rope_02',
+  'laugh_01', 'laugh_02', 'lift_heavy', 'look_around', 'make_a_call_01', 'make_a_call_02',
+  'pitch_baseball', 'play_mobile_game', 'play_video_game', 'press-up', 'run', 'run_upstairs',
+  'scared_01', 'scared_02', 'scratch', 'shoot', 'shovel', 'sing_01', 'sing_02', 'sing_03',
+  'sing_04', 'sit', 'slash', 'sob', 'standing_relax', 'surf', 'swagger', 'swim', 'turn',
+  'victory_celebration', 'volleyball', 'wait', 'walk', 'warm_up', 'wave_goodbye_01',
+  'wave_goodbye_02',
+];
+
+/**
  * A clip intent turned into the preset name the API wants.
  *
  * A biped's presets are bare -- `preset:walk` -- and every other creature's are
@@ -291,8 +338,14 @@ export function presetFor(intent: string, rigType: string | null = null): string
  * rig models".
  */
 export function knownPresetsFor(rigType: string | null, rigModelVersion: string): readonly string[] | null {
-  if (rigModelVersion !== CREATURE_RIG_MODEL) return null;
-  return rigType === null || rigType === 'biped' ? BIPED_ANIMATION_PRESETS : null;
+  const biped = rigType === null || rigType === 'biped';
+  // The humanoid model is biped-only, so a rig type it does not recognise is
+  // not something it can animate either way.
+  if (rigModelVersion === HUMANOID_RIG_MODEL) return biped ? HUMANOID_BIPED_PRESETS : null;
+  if (rigModelVersion === CREATURE_RIG_MODEL) return biped ? BIPED_ANIMATION_PRESETS : null;
+  // A model nobody has enumerated. Refusing against another one's vocabulary
+  // would block work that would have succeeded.
+  return null;
 }
 
 /** Intents this rig has no preset for. Empty when the vocabulary is unknown. */

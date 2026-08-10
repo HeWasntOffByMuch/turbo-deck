@@ -164,6 +164,14 @@ export function studioRoutes(deps: RouteDeps): readonly Route[] {
           modelVersion: config.modelVersion,
           defaultFaceLimit: config.defaultFaceLimit,
           orientation: config.orientation,
+          rigModelVersion: config.rigModelVersion,
+          rigSpec: config.rigSpec,
+          // What this rig model can actually animate, so the picker offers the
+          // vocabulary the server will really send rather than a list compiled
+          // against whichever model was configured when the UI was written.
+          // Empty means "not enumerated here", and the picker says so instead
+          // of pretending the roster is eleven clips long.
+          clipPresets: knownPresetsFor('biped', config.rigModelVersion) ?? [],
           ceilings: config.ceilings,
           prices: config.prices,
           maxTimeScale: config.maxTimeScale,

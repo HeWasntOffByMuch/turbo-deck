@@ -82,6 +82,20 @@ export interface StudioConfigView {
   readonly defaultFaceLimit: number;
   /** How generated meshes are oriented; see the server's `GenerationParams`. */
   readonly orientation: 'default' | 'align_image';
+  /** Which auto-rig model, which decides both the skeleton and the clip list. */
+  readonly rigModelVersion: string;
+  readonly rigSpec: string;
+  /**
+   * Every animation preset the configured rig model can retarget.
+   *
+   * Asked for rather than compiled in. The two rig models have different
+   * libraries -- eleven presets against a hundred and one -- so a list baked
+   * into this tab is a list that silently describes whichever model was
+   * configured on the day it was written. Empty means the server has not
+   * enumerated this model, and the picker has to say so rather than imply the
+   * roster is short.
+   */
+  readonly clipPresets: readonly string[];
   readonly ceilings: Ceilings;
   readonly prices: Record<string, number>;
   readonly maxTimeScale: number;

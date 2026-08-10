@@ -12,7 +12,7 @@ import {
   type JobSummary,
 } from './plan.js';
 import { RETARGET_BATCH_SIZE } from '../../../server/studio/pricing.js';
-import { BIPED_ANIMATION_PRESETS } from '../../../server/studio/tripo.js';
+import { BIPED_ANIMATION_PRESETS, HUMANOID_BIPED_PRESETS } from '../../../server/studio/tripo.js';
 
 function job(patch: Partial<JobSummary> = {}): JobSummary {
   return { id: 'j', skeletonId: 'biped', status: 'succeeded', establishesRigFamily: true, ...patch };
@@ -114,13 +114,23 @@ describe('clip intents', () => {
     expect(defaultClipIntents()).toEqual(['idle', 'walk', 'slash']);
   });
 
-  it('offers exactly the presets a biped has, and no invented ones', () => {
-    // The list is duplicated rather than imported, because this file is bundled
-    // into the browser and the server's copy sits next to the API key's client.
-    // This is what stops the copy drifting: a preset added on the server that
-    // never reaches the tick boxes cannot be asked for, and a tick box with no
-    // preset behind it is a paid call that buys nothing.
-    expect(CLIP_INTENTS.map((intent) => intent.id)).toEqual([...BIPED_ANIMATION_PRESETS]);
+  it('shortlists only presets that exist on both rig models', () => {
+    // The shortlist is not the vocabulary any more -- the humanoid model has a
+    // hundred and one presets and the picker asks the server for them. What
+    // this still has to hold is that every *labelled* tick box is real on
+    // whichever model is configured, because a tick box with no preset behind
+    // it is a paid call that buys nothing.
+    for (const intent of CLIP_INTENTS) {
+      expect(BIPED_ANIMATION_PRESETS).toContain(intent.id);
+      expect(HUMANOID_BIPED_PRESETS).toContain(intent.id);
+    }
+  });
+
+  it('is a shortlist, not a claim about how many presets there are', () => {
+    // The humanoid model's library is an order of magnitude bigger, and the
+    // regression this guards against is somebody "restoring" the old
+    // equivalence between the tick boxes and one model's list.
+    expect(HUMANOID_BIPED_PRESETS.length).toBeGreaterThan(CLIP_INTENTS.length * 5);
   });
 
   it('has no attack and no death, whatever a game programmer would reach for', () => {

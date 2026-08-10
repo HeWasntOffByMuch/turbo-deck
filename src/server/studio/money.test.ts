@@ -458,13 +458,35 @@ describe('the animation vocabulary', () => {
     expect(knownPresetsFor('quadruped', CREATURE_RIG_MODEL)).toBeNull();
   });
 
-  it('claims to know nothing about the humanoid model, which has ninety-odd presets', () => {
+  it('knows the humanoid model\'s far longer list too', () => {
     // The eleven names are one rig model's biped vocabulary, not "the presets a
-    // biped has". Checking an intent against the wrong version's list is the
-    // same failure as checking it against a guessed one, and it refuses work
-    // that would have succeeded.
-    expect(knownPresetsFor('biped', HUMANOID_RIG_MODEL)).toBeNull();
-    expect(unknownPresets('biped', HUMANOID_RIG_MODEL, ['cartwheel', 'salute'])).toEqual([]);
+    // biped has". The humanoid model has a hundred and one, transcribed from the
+    // reference page, and every one of the eleven is among them -- which is what
+    // lets a shortlist span both models.
+    const humanoid = knownPresetsFor('biped', HUMANOID_RIG_MODEL) ?? [];
+    expect(humanoid.length).toBe(101);
+    for (const preset of BIPED_ANIMATION_PRESETS) expect(humanoid).toContain(preset);
+    // The additions that make it worth having: a death, hit reactions, a cast.
+    for (const preset of ['defeat_02', 'hit_to_head', 'cast_a_spell', 'chop']) {
+      expect(humanoid).toContain(preset);
+    }
+    // And still no `death`, whatever a game programmer reaches for first.
+    expect(humanoid).not.toContain('death');
+  });
+
+  it('refuses an invented name on the humanoid model now that its list is known', () => {
+    // The check this restores: a retarget is a paid call per clip, so a name the
+    // model does not have is not a validation error, it is a charge for nothing.
+    expect(unknownPresets('biped', HUMANOID_RIG_MODEL, ['idle', 'death', 'cartwheel'])).toEqual([
+      'death',
+      'cartwheel',
+    ]);
+    expect(unknownPresets('biped', HUMANOID_RIG_MODEL, ['defeat_02', 'hit_to_head'])).toEqual([]);
+  });
+
+  it('refuses nothing on a rig model nobody has enumerated', () => {
+    expect(knownPresetsFor('biped', 'v9.9-unreleased')).toBeNull();
+    expect(unknownPresets('biped', 'v9.9-unreleased', ['whatever'])).toEqual([]);
   });
 
   it('names the intents a biped has no preset for', () => {
