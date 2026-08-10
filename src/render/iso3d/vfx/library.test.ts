@@ -91,9 +91,11 @@ describe('the registry as a whole', () => {
   });
 
   it('compiles into few enough draw calls to be worth batching', () => {
-    // The whole library, batched by blend mode and sheet. If this grows without
-    // bound the batching has stopped meaning anything.
-    expect(REGISTRY.batches.length).toBeLessThanOrEqual(12);
+    // The whole library, batched by blend mode, sheet and solid shape. If this
+    // grows without bound the batching has stopped meaning anything. It is a
+    // ceiling on what *could* be drawn: only a batch with something in it costs
+    // a call, so a frame with one aura up draws three.
+    expect(REGISTRY.batches.length).toBeLessThanOrEqual(16);
   });
 });
 
@@ -287,7 +289,18 @@ describe('the aura family', () => {
     for (const effect of LIBRARY) {
       if (!effect.id.startsWith('aura_')) continue;
       const ring = effect.emitters.find((emitter) => emitter.id === 'ring');
-      expect(ring?.render, effect.id).toBe('ground-quad');
+      expect(ring?.render, effect.id).toBe('mesh');
+      expect(ring?.mesh?.shape, effect.id).toMatch(/^rune-ring/);
+      // Not dithered. This is the one drawn line in the library, and a stipple
+      // has no edge -- which is the whole of why the first version was rejected.
+      expect(ring?.blend, effect.id).toBe('alpha');
+    }
+  });
+
+  it('stops hard, because a held sigil would otherwise outlive its status', () => {
+    for (const effect of LIBRARY) {
+      if (!effect.id.startsWith('aura_')) continue;
+      expect(effect.hardStop, effect.id).toBe(true);
     }
   });
 
@@ -300,19 +313,69 @@ describe('the aura family', () => {
     }
   });
 
-  it('pulses, which needs the ring re-stamped rather than held', () => {
-    // A single long-lived quad cannot pulse: size is a curve over a particle's
-    // own life, so a ring that lived forever would sit at its last keyframe.
-    const built = aura({ id: 'aura_test', color: 'auraBuff', radius: 40 });
-    const ring = built.emitters[0];
-    expect(ring?.emission.kind).toBe('rate');
-    const flat = compileCurve(ring?.size ?? { keys: [] });
-    expect(sampleCurve(flat, 0.5)).toBeGreaterThan(sampleCurve(flat, 0));
+  it('holds the sigil rather than stamping it', () => {
+    // Two crisp rings alive at once at slightly different angles are a doubled
+    // line, so there is only ever one and it is spun rather than re-emitted.
+    const ring = aura({ id: 'aura_test', color: 'auraBuff', radius: 40 }).emitters[0];
+    expect(ring?.emission).toEqual({ kind: 'burst', count: 1 });
+    expect(ring?.lifetimeTicks[0]).toBeGreaterThan(30 * 60);
+    expect(ring?.lifetimeTicks[0]).toBe(ring?.lifetimeTicks[1]);
   });
 
-  it('adds motes only where they were asked for', () => {
+  it('spins from angular velocity, never from a rotation curve', () => {
+    // A rotation curve is sampled from life fraction every tick and would
+    // overwrite the spin, so a held sigil driven by one would sit still.
+    for (const effect of LIBRARY) {
+      if (!effect.id.startsWith('aura_')) continue;
+      const ring = effect.emitters.find((emitter) => emitter.id === 'ring');
+      expect(ring?.rotation, effect.id).toBeUndefined();
+    }
+    const spun = aura({ id: 'a', color: 'auraBuff', radius: 40, spin: 0.5 }).emitters[0];
+    expect(spun?.angularVelocity?.[0]).toBeCloseTo(Math.PI, 5);
+    expect(spun?.angularVelocity?.[0]).toBe(spun?.angularVelocity?.[1]);
+  });
+
+  it('holds its size and alpha flat, since every frame but the angle is the same', () => {
+    const ring = aura({ id: 'a', color: 'auraBuff', radius: 40 }).emitters[0];
+    const size = compileCurve(ring?.size ?? { keys: [] });
+    const alpha = compileCurve(ring?.alpha ?? { keys: [] });
+    for (const t of [0, 0.25, 0.5, 0.75, 1]) {
+      expect(sampleCurve(size, t)).toBeCloseTo(40, 5);
+      expect(sampleCurve(alpha, t)).toBeCloseTo(0.9, 5);
+    }
+  });
+
+  it('adds shafts and diamonds only where they were asked for', () => {
     expect(aura({ id: 'a', color: 'auraBuff', radius: 40 }).emitters).toHaveLength(1);
-    expect(aura({ id: 'b', color: 'auraBuff', radius: 40, motes: 6 }).emitters).toHaveLength(2);
+    expect(aura({ id: 'b', color: 'auraBuff', radius: 40, shafts: 4 }).emitters).toHaveLength(2);
+    expect(aura({ id: 'c', color: 'auraBuff', radius: 40, diamonds: 4 }).emitters).toHaveLength(2);
+    expect(aura({ id: 'd', color: 'auraBuff', radius: 40, shafts: 4, diamonds: 4 }).emitters).toHaveLength(3);
+  });
+
+  it('leaves nothing behind when a soft stop ends it', () => {
+    // The hazard `hardStop` exists for. A held sigil is given ten minutes of
+    // life, so a soft stop -- the default, and the right default for a fire
+    // trail -- would leave it lying on the ground long after the status ended.
+    const system = new VfxSystem({
+      registry: REGISTRY,
+      hooks: { ground: () => 0 },
+      limits: { maxParticles: 400, maxInstances: 8, pressureFloor: 0.25 },
+    });
+    const handle = system.play('aura_buff', { x: 0, y: 0, z: 0, seed: 11 });
+    system.update(30);
+    expect(system.pool.count).toBeGreaterThan(0);
+    system.stop(handle);
+    expect(system.pool.count).toBe(0);
+  });
+
+  it('stands its shafts on the ring rather than inside it', () => {
+    // Two effects rather than one, otherwise: light coming out of the middle of
+    // a circle is not light coming out of the circle.
+    const built = aura({ id: 'a', color: 'auraBuff', radius: 40, shafts: 4 });
+    const shafts = built.emitters.find((emitter) => emitter.id === 'shafts');
+    expect(shafts?.shape).toEqual({ kind: 'circle', radius: 40 * 0.86, shell: true });
+    expect(shafts?.mesh?.shape).toBe('shaft');
+    expect(shafts?.blend).toBe('additive');
   });
 });
 

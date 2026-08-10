@@ -207,6 +207,16 @@ export interface EffectDefinition {
   readonly cullDistance?: number;
   /** Ticks after which a continuous effect stops itself. 0 means until stopped. */
   readonly durationTicks?: number;
+  /**
+   * Kill this effect's particles the moment it is stopped, rather than letting
+   * them live out their lives (spec 124).
+   *
+   * The default is right for a thing that was *thrown* -- a fire trail should
+   * finish burning after the caster stops running. It is wrong for a thing that
+   * is *shown*: an aura holds one particle for ten minutes, and a soft stop
+   * would leave the sigil on the ground long after the status ended.
+   */
+  readonly hardStop?: boolean;
 }
 
 // --- the play call -----------------------------------------------------------

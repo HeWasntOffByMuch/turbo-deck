@@ -308,17 +308,29 @@ export interface AuraParams {
   /** World units. Stacked auras must differ by enough to read apart. */
   readonly radius: number;
   readonly priority?: Priority;
-  /** Turns per second. 0 is a still ring. */
+  /** Turns per second. 0 is a still sigil. */
   readonly spin?: number;
-  /** How much the radius breathes, as a fraction. */
-  readonly pulse?: number;
+  /** A lighter sigil: narrower bands and fewer marks. */
   readonly thin?: boolean;
-  /** Motes orbiting the ring. Poison and arcane want them; a shield does not. */
-  readonly motes?: number;
+  /** Shafts of light standing on the ring, per second. 0 is a bare sigil. */
+  readonly shafts?: number;
+  /** Diamonds floating above it, per second. */
+  readonly diamonds?: number;
 }
 
 /**
- * A status, drawn as a ring on the ground (spec 121).
+ * Ticks a held particle lives for.
+ *
+ * Long enough that no fight outlasts it, short enough that a leak is bounded.
+ * This is the sigil's whole lifetime: it is stamped once and then spun, rather
+ * than re-emitted, because two crisp rings alive at once at slightly different
+ * angles read as a doubled line. `hardStop` is what makes this safe -- see the
+ * note on {@link aura}.
+ */
+const HELD = 36_000;
+
+/**
+ * A status, drawn as a sigil on the ground (specs 121, 124).
  *
  * Ground-projected rather than a shell around the body, and that is the whole
  * reason two statuses can be on at once: rings at different radii stack
@@ -326,54 +338,93 @@ export interface AuraParams {
  * as one muddy colour. `auras.test.ts` asserts the radii are far enough apart to
  * survive the virtual resolution.
  *
- * The ring never expires on its own -- an aura is state, and it is stopped when
- * the state ends. `durationTicks` is deliberately absent.
+ * ## Drawn, not emitted
+ *
+ * The sigil is one solid, stamped once and spun -- not a stream. The previous
+ * version re-stamped a dithered quad twelve times a second so that a size curve
+ * could make it breathe, and both halves of that were wrong: a stipple has no
+ * edge to read, and two crisp rings alive at once at slightly different angles
+ * are a doubled line. Spin comes from `angularVelocity` rather than from a
+ * rotation curve, because a rotation curve is sampled from life fraction and
+ * would overwrite the spin every tick.
+ *
+ * The pulse went with the stamping. What the two auras that used it actually
+ * needed -- *do not miss this* -- is said here with more shafts and a brighter
+ * ring, which is louder in the same language rather than a second one.
+ *
+ * ## It never expires, so it must be stopped hard
+ *
+ * An aura is state: it ends when the state ends, and `durationTicks` is
+ * deliberately absent. A held particle whose effect is stopped *softly* would
+ * then hang around for the ten minutes it was given, so every aura sets
+ * `hardStop` and the system kills its particles the moment it is stopped.
  */
 export function aura(params: AuraParams): EffectDefinition {
   const spin = params.spin ?? 0.25;
-  const pulse = params.pulse ?? 0.06;
   const emitters: Emitter[] = [
     {
       id: 'ring',
       shape: { kind: 'point' },
-      // Re-stamped rather than held: a single long-lived quad cannot pulse,
-      // because size is a curve over a particle's own life.
-      emission: { kind: 'rate', perSecond: 12 },
-      lifetimeTicks: [12, 12],
+      emission: { kind: 'burst', count: 1 },
+      lifetimeTicks: [HELD, HELD],
       speed: [0, 0],
-      size: {
-        keys: [
-          [0, params.radius * (1 - pulse)],
-          [0.5, params.radius * (1 + pulse)],
-          [1, params.radius * (1 - pulse)],
-        ],
-      },
-      alpha: { keys: [[0, 0], [0.25, 0.75], [0.75, 0.75], [1, 0]] },
+      // Constant, both of them. Every frame of this particle's life looks the
+      // same except for its angle, which is the point of holding it.
+      size: { keys: [[0, params.radius]] },
+      alpha: { keys: [[0, 0.9]] },
       color: { stops: [[0, params.color]] },
-      rotation: { keys: [[0, 0], [1, spin * Math.PI * 2]] },
-      render: 'ground-quad',
-      blend: 'dither-cutout',
-      sprite: { sheet: params.thin ? 'ring_thin' : 'ring', frames: 1, fps: 0 },
+      angularVelocity: [spin * Math.PI * 2, spin * Math.PI * 2],
+      render: 'mesh',
+      mesh: { shape: params.thin ? 'rune-ring-thin' : 'rune-ring' },
+      // Alpha, not dither-cutout: this is the one thing in the whole library
+      // that is a drawn line, and a drawn line wants an edge.
+      blend: 'alpha',
       offset: { x: 0, y: 2, z: 0 },
       worldSpace: false,
     },
   ];
 
-  if (params.motes && params.motes > 0) {
+  if (params.shafts && params.shafts > 0) {
+    // Standing on the ring itself, not inside it -- the sigil is what they come
+    // out of, so their feet have to be on it or the effect is two effects.
     emitters.push({
-      id: 'motes',
-      shape: { kind: 'circle', radius: params.radius * 0.42, shell: true },
-      emission: { kind: 'rate', perSecond: params.motes },
-      lifetimeTicks: [45, 75],
-      speed: [4, 10],
-      spreadRadians: 0.4,
-      acceleration: { x: 0, y: 14, z: 0 },
-      drag: 1.1,
-      size: { keys: [[0, 2.4], [1, 1.2]] },
-      alpha: { keys: [[0, 0], [0.2, 1], [0.8, 1], [1, 0]] },
+      id: 'shafts',
+      shape: { kind: 'circle', radius: params.radius * 0.86, shell: true },
+      emission: { kind: 'rate', perSecond: params.shafts },
+      lifetimeTicks: [26, 44],
+      speed: [0, 0],
+      size: { keys: [[0, params.radius * 0.35], [0.35, params.radius * 0.85], [1, params.radius * 0.5]] },
+      alpha: { keys: [[0, 0], [0.3, 0.5], [0.6, 0.4], [1, 0]] },
       color: { stops: [[0, params.color]] },
-      render: 'billboard',
+      render: 'mesh',
+      mesh: { shape: 'shaft' },
       blend: 'additive',
+      offset: { x: 0, y: 2, z: 0 },
+      worldSpace: false,
+    });
+  }
+
+  if (params.diamonds && params.diamonds > 0) {
+    emitters.push({
+      id: 'diamonds',
+      shape: { kind: 'circle', radius: params.radius * 0.6, shell: true },
+      emission: { kind: 'rate', perSecond: params.diamonds },
+      lifetimeTicks: [60, 100],
+      speed: [3, 7],
+      spreadRadians: 0.5,
+      acceleration: { x: 0, y: 10, z: 0 },
+      drag: 1.3,
+      angularVelocity: [-1.6, 1.6],
+      // Big enough to be a shape. The first cut was three units across, which at
+      // 480x270 is two pixels -- a speck, and specks are what this whole
+      // direction is a move away from.
+      size: { keys: [[0, 3], [0.3, 7], [1, 3]] },
+      alpha: { keys: [[0, 0], [0.2, 1], [0.75, 1], [1, 0]] },
+      color: { stops: [[0, params.color]] },
+      render: 'mesh',
+      mesh: { shape: 'diamond' },
+      blend: 'alpha',
+      offset: { x: 0, y: 14, z: 0 },
       worldSpace: false,
     });
   }
@@ -382,6 +433,7 @@ export function aura(params: AuraParams): EffectDefinition {
     id: params.id,
     priority: params.priority ?? 2,
     cullDistance: 2000,
+    hardStop: true,
     emitters,
   };
 }
@@ -556,15 +608,18 @@ export const LIBRARY: readonly EffectDefinition[] = [
   // --- auras -----------------------------------------------------------------
   // Radii are separated on purpose so two at once are concentric rings rather
   // than one smear. `auras.test.ts` holds the separation to account.
+  // Selection is the quietest of these: a thin sigil turning slowly, and nothing
+  // standing on it. It is on whenever a unit is clicked, so it must not shout.
   aura({ id: 'aura_selected', color: 'auraSelected', radius: 34, spin: 0.15, thin: true, priority: 3 }),
-  aura({ id: 'aura_buff', color: 'auraBuff', radius: 44, spin: 0.2, motes: 6 }),
-  aura({ id: 'aura_debuff', color: 'auraDebuff', radius: 54, spin: -0.2 }),
-  aura({ id: 'aura_poison', color: 'poisonDeep', radius: 64, spin: 0.1, motes: 8 }),
-  aura({ id: 'aura_shield', color: 'auraShield', radius: 74, spin: 0.35, thin: true }),
-  aura({ id: 'aura_heal', color: 'auraHeal', radius: 84, spin: 0.3, motes: 10 }),
-  aura({ id: 'aura_channel', color: 'auraChannel', radius: 94, spin: 0.5, pulse: 0.1, priority: 3 }),
-  // The one a player must never miss, so it is priority 3 and it pulses hard.
-  aura({ id: 'aura_telegraph', color: 'auraTelegraph', radius: 110, spin: 0, pulse: 0.16, priority: 3 }),
+  aura({ id: 'aura_buff', color: 'auraBuff', radius: 44, spin: 0.2, shafts: 3, diamonds: 4 }),
+  aura({ id: 'aura_debuff', color: 'auraDebuff', radius: 54, spin: -0.2, shafts: 2 }),
+  aura({ id: 'aura_poison', color: 'poisonDeep', radius: 64, spin: 0.1, diamonds: 5 }),
+  aura({ id: 'aura_shield', color: 'auraShield', radius: 74, spin: 0.35, thin: true, shafts: 5 }),
+  aura({ id: 'aura_heal', color: 'auraHeal', radius: 84, spin: 0.3, shafts: 4, diamonds: 6 }),
+  aura({ id: 'aura_channel', color: 'auraChannel', radius: 94, spin: 0.5, shafts: 7, diamonds: 4, priority: 3 }),
+  // The one a player must never miss. Louder in the same language: a still sigil
+  // ringed with shafts, never a different vocabulary.
+  aura({ id: 'aura_telegraph', color: 'auraTelegraph', radius: 110, spin: 0, shafts: 10, priority: 3 }),
 
   // --- hit effects, one flash per damage type --------------------------------
   flash('impact_flash', 'physicalBone', 'physicalGrey', 15),

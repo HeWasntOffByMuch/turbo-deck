@@ -35,7 +35,7 @@ export const RENDER_MODES = ['billboard', 'stretched', 'axis-billboard', 'ground
 export const BLEND_MODES = ['alpha', 'additive', 'dither-cutout'] as const;
 export const SHAPE_KINDS = ['point', 'sphere', 'hemisphere', 'cone', 'box', 'circle', 'mesh', 'arc'] as const;
 /** The solids a `mesh` particle can be (spec 123). */
-export const MESH_SHAPES = ['blob', 'tongue'] as const;
+export const MESH_SHAPES = ['blob', 'tongue', 'rune-ring', 'rune-ring-thin', 'diamond', 'shaft'] as const;
 
 /**
  * Every tunable field on an emitter, in the order the panel shows them.

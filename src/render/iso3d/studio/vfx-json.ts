@@ -265,6 +265,13 @@ export function effectFromJson(text: string): ParseResult {
   if (cull !== undefined) out['cullDistance'] = cull;
   const duration = asNumber(raw['durationTicks'], 'durationTicks', errors);
   if (duration !== undefined) out['durationTicks'] = duration;
+  if (raw['hardStop'] !== undefined) {
+    if (typeof raw['hardStop'] !== 'boolean') {
+      errors.push('hardStop must be true or false');
+    } else {
+      out['hardStop'] = raw['hardStop'];
+    }
+  }
   if (errors.length > 0) return { error: errors.join('; ') };
 
   return { effect: out as unknown as EffectDefinition };

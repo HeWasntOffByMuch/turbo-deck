@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { blobMesh, tongueMesh, particleMesh, type MeshData } from './meshes.js';
+import {
+  blobMesh,
+  diamondMesh,
+  ORIENT,
+  orientOf,
+  particleMesh,
+  runeRingMesh,
+  shadedShape,
+  shaftMesh,
+  tongueMesh,
+  type MeshData,
+} from './meshes.js';
 import { depthOrder } from './depth-sort.js';
 import { REGISTRY } from './registry.js';
 import { FAMILY, familyOf, RENDER } from './compile.js';
@@ -37,6 +48,9 @@ function area(t: number[]): number {
 const SHAPES: [string, () => MeshData][] = [
   ['blob', () => blobMesh()],
   ['tongue', () => tongueMesh()],
+  ['rune-ring', () => runeRingMesh()],
+  ['diamond', () => diamondMesh()],
+  ['shaft', () => shaftMesh()],
 ];
 
 describe('the geometry is closed and sane', () => {
@@ -207,6 +221,146 @@ describe('the tongue points up', () => {
   });
 });
 
+describe('the sigil', () => {
+  const mesh = runeRingMesh(12, false);
+
+  it('is flat on the ground, and its normals all point up', () => {
+    // Ink on the ground, not an object lying on it. A vertex off the plane
+    // catches the key light from the side and the whole thing stops reading as
+    // a drawn symbol.
+    for (let i = 1; i < mesh.positions.length; i += 3) {
+      expect(mesh.positions[i] ?? 1).toBe(0);
+    }
+    for (let i = 0; i < mesh.normals.length; i += 3) {
+      expect(Math.abs(mesh.normals[i + 1] ?? 0)).toBeCloseTo(1, 5);
+      expect(mesh.normals[i] ?? 1).toBeCloseTo(0, 5);
+      expect(mesh.normals[i + 2] ?? 1).toBeCloseTo(0, 5);
+    }
+  });
+
+  it('reaches unit radius and no further, so size means diameter', () => {
+    let max = 0;
+    for (let i = 0; i < mesh.positions.length; i += 3) {
+      const x = mesh.positions[i] ?? 0;
+      const z = mesh.positions[i + 2] ?? 0;
+      max = Math.max(max, Math.sqrt(x * x + z * z));
+    }
+    expect(max).toBeCloseTo(1, 5);
+  });
+
+  it('has an outer band, an inner band, and marks in the gap', () => {
+    // The three things that make it a sigil rather than a hoop. Measured as
+    // "some geometry lives at this radius", which is what the eye reads.
+    const at = (radius: number): boolean => {
+      for (let i = 0; i < mesh.positions.length; i += 3) {
+        const x = mesh.positions[i] ?? 0;
+        const z = mesh.positions[i + 2] ?? 0;
+        if (Math.abs(Math.sqrt(x * x + z * z) - radius) < 0.02) return true;
+      }
+      return false;
+    };
+    // Vertex radii, not covered radii -- a quad band has no vertices in its own
+    // middle, so these are its two edges.
+    expect(at(1)).toBe(true);
+    expect(at(0.92)).toBe(true);
+    expect(at(0.75)).toBe(true);
+    expect(at(0.665)).toBe(true);
+    expect(at(0.77)).toBe(true);
+    expect(at(0.9)).toBe(true);
+    // And nothing in the middle: a filled disc would be a puddle, not a sigil.
+    expect(at(0.4)).toBe(false);
+    expect(at(0.05)).toBe(false);
+  });
+
+  it('spaces its marks evenly around the circle', () => {
+    const runes = 9;
+    const marked = runeRingMesh(runes, false);
+    // Angles of everything in the gap between the bands, rounded to a degree.
+    const angles = new Set<number>();
+    for (let i = 0; i < marked.positions.length; i += 3) {
+      const x = marked.positions[i] ?? 0;
+      const z = marked.positions[i + 2] ?? 0;
+      const radius = Math.sqrt(x * x + z * z);
+      // Strictly between the bands, so only the marks are counted.
+      if (radius < 0.76 || radius > 0.915) continue;
+      angles.add(Math.round((Math.atan2(z, x) * 180) / Math.PI));
+    }
+    // Cluster into groups separated by more than the widest mark.
+    const sorted = [...angles].sort((a, b) => a - b);
+    let clusters = 0;
+    let previous = -Infinity;
+    for (const angle of sorted) {
+      if (angle - previous > 12) clusters += 1;
+      previous = angle;
+    }
+    expect(clusters).toBe(runes);
+  });
+
+  it('gets thinner bands and fewer marks when asked', () => {
+    const thin = runeRingMesh(8, true);
+    expect(thin.indices.length).toBeLessThan(mesh.indices.length);
+  });
+});
+
+describe('the diamond and the shaft', () => {
+  it('the diamond is a closed octahedron, taller than it is wide', () => {
+    const mesh = diamondMesh();
+    expect(mesh.indices.length / 3).toBe(8);
+    let maxY = 0;
+    let maxX = 0;
+    for (let i = 0; i < mesh.positions.length; i += 3) {
+      maxX = Math.max(maxX, Math.abs(mesh.positions[i] ?? 0));
+      maxY = Math.max(maxY, Math.abs(mesh.positions[i + 1] ?? 0));
+    }
+    expect(maxY).toBeGreaterThan(maxX);
+  });
+
+  it('the shaft stands on the origin and tapers to a point', () => {
+    const mesh = shaftMesh();
+    let top = -Infinity;
+    let topR = Infinity;
+    let base = Infinity;
+    for (let i = 0; i < mesh.positions.length; i += 3) {
+      const x = mesh.positions[i] ?? 0;
+      const y = mesh.positions[i + 1] ?? 0;
+      const z = mesh.positions[i + 2] ?? 0;
+      base = Math.min(base, y);
+      if (y > top) {
+        top = y;
+        topR = Math.sqrt(x * x + z * z);
+      }
+    }
+    expect(base).toBe(0);
+    expect(top).toBe(1);
+    // A flat top would read as a post rather than as light: per-instance alpha
+    // is one number for the whole solid, so the silhouette is the only fade.
+    expect(topR).toBeCloseTo(0, 6);
+  });
+});
+
+describe('orientation is a property of the shape', () => {
+  it('a sigil takes exactly the angle it was given', () => {
+    // A per-seed jitter would put the runes somewhere different every stamp.
+    expect(orientOf('rune-ring')).toBe(ORIENT.exact);
+    expect(orientOf('rune-ring-thin')).toBe(ORIENT.exact);
+  });
+
+  it('flames and shafts stand up; blobs and diamonds tumble', () => {
+    expect(orientOf('tongue')).toBe(ORIENT.uprightJittered);
+    expect(orientOf('shaft')).toBe(ORIENT.uprightJittered);
+    expect(orientOf('blob')).toBe(ORIENT.tumble);
+    expect(orientOf('diamond')).toBe(ORIENT.tumble);
+  });
+
+  it('light is not lit', () => {
+    expect(shadedShape('tongue')).toBe(false);
+    expect(shadedShape('shaft')).toBe(false);
+    expect(shadedShape('rune-ring')).toBe(false);
+    expect(shadedShape('blob')).toBe(true);
+    expect(shadedShape('diamond')).toBe(true);
+  });
+});
+
 describe('mesh is no longer a stub', () => {
   it('a mesh emitter is its own family, not a quad', () => {
     expect(familyOf(RENDER.mesh)).toBe(FAMILY.mesh);
@@ -225,6 +379,10 @@ describe('mesh is no longer a stub', () => {
     expect(particleMesh('blob')).toBe(particleMesh('blob'));
     expect(particleMesh('tongue')).toBe(particleMesh('tongue'));
     expect(particleMesh('blob')).not.toBe(particleMesh('tongue'));
+    // The thin sigil is its own shape rather than a parameter, because the cache
+    // and the batch key are both the shape: sharing 'rune-ring' would give both
+    // auras whichever of the two happened to be built first.
+    expect(particleMesh('rune-ring-thin')).not.toBe(particleMesh('rune-ring'));
   });
 });
 
@@ -257,7 +415,11 @@ describe('the compiled registry', () => {
   });
 
   it('still compiles to a handful of draw calls', () => {
-    expect(compiled.batches.length).toBeLessThanOrEqual(12);
+    // A ceiling on the *possible* calls; the layer only issues one per batch
+    // that has anything in it, and a frame with one aura up draws three.
+    // Every solid shape costs a batch per blend it is used with, so this moves
+    // when a shape is added and must be moved deliberately.
+    expect(compiled.batches.length).toBeLessThanOrEqual(16);
   });
 });
 

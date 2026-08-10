@@ -39,7 +39,7 @@ import * as THREE from 'three';
 import { BLEND, RENDER } from './compile.js';
 import type { ParticlePool } from './pool.js';
 import { sheetFrames, spriteSheet } from './textures.js';
-import { particleMesh, type MeshShape } from './meshes.js';
+import { orientOf, particleMesh, shadedShape, type MeshShape } from './meshes.js';
 
 /** Instances one batch is built to hold. Grown by rebuilding, never per frame. */
 const INITIAL_CAPACITY = 256;
@@ -377,12 +377,16 @@ mat3 rotation(vec3 angles) {
 }
 
 void main() {
-  // A tongue must stay upright, so it turns about Y only; a blob tumbles freely.
-  // uUpright picks which, per batch. (No backticks in here -- this is a template
+  // Three answers, picked per batch by uOrient (spec 124). A blob tumbles
+  // freely; a flame or a shaft of light stands up and takes a per-seed yaw so
+  // two side by side are not one extrusion; a sigil takes the rotation it was
+  // given and nothing else, because a jitter would put its runes at a different
+  // angle every time one is stamped. (No backticks in here -- this is a template
   // literal and one closes it, which is a parse error a long way from the cause.)
-  mat3 basis = uUpright > 0.5
-    ? rotation(vec3(0.0, iRotation + tumble(iSeed).y, 0.0))
-    : rotation(tumble(iSeed) + vec3(0.0, iRotation, 0.0));
+  mat3 basis =
+    uOrient < 0.5 ? rotation(tumble(iSeed) + vec3(0.0, iRotation, 0.0)) :
+    uOrient < 1.5 ? rotation(vec3(0.0, iRotation + tumble(iSeed).y, 0.0)) :
+                    rotation(vec3(0.0, iRotation, 0.0));
 
   vec3 local = basis * (position * iSize);
   vNormal = normalize(basis * normal);
@@ -432,14 +436,15 @@ export class MeshParticleBatch {
     readonly shape: MeshShape,
   ) {
     this.material = new THREE.ShaderMaterial({
-      vertexShader: `uniform float uUpright;\n${MESH_VERTEX_SHADER}`,
+      vertexShader: `uniform float uOrient;\n${MESH_VERTEX_SHADER}`,
       fragmentShader: MESH_FRAGMENT_SHADER,
       uniforms: {
         // Roughly the scene's own key light, so a blob is lit like the ground.
         uLightDirection: { value: new THREE.Vector3(0.45, 1, 0.35).normalize() },
-        uShading: { value: shape === 'tongue' ? 0 : 1 },
-        // A flame stands up; smoke may lie however it likes.
-        uUpright: { value: shape === 'tongue' ? 1 : 0 },
+        // Light is not lit. A flame, a shaft and a sigil are all their own
+        // colour; a blob and a diamond are objects and catch the key.
+        uShading: { value: shadedShape(shape) ? 1 : 0 },
+        uOrient: { value: orientOf(shape) },
       },
       transparent: true,
       // Same pair as the quad batches, and the same two jobs: the right blend

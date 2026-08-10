@@ -27,7 +27,7 @@ export interface MeshData {
   readonly indices: Uint16Array;
 }
 
-export type MeshShape = 'blob' | 'tongue';
+export type MeshShape = 'blob' | 'tongue' | 'rune-ring' | 'rune-ring-thin' | 'diamond' | 'shaft';
 
 /** A tiny deterministic hash, so a shape is a pure function of its seed. */
 function hash(index: number, seed: number): number {
@@ -195,6 +195,144 @@ export function tongueMesh(radialSegments = 7, rings = 6, seed = 991): MeshData 
 }
 
 /**
+ * The sigil an aura is drawn as (spec 124): a flat ring in the XZ plane, at unit
+ * outer radius, with an outer band, an inner band, and rune marks between them.
+ *
+ * Flat and unshaded on purpose. This is ink on the ground, not an object lying on
+ * it: the moment it catches light from the side it stops reading as a drawn
+ * symbol and starts reading as a hoop somebody dropped.
+ *
+ * The runes are blocks rather than glyphs, and that is a resolution decision
+ * rather than a shortcut. A forty-unit ring is about forty pixels across at
+ * 480x270, which leaves two or three pixels per mark -- a letterform is mush at
+ * that size and a bar with a gap beside it is legible. `pixel-font.ts` reached
+ * the same conclusion for text and settled on 5x7.
+ */
+export function runeRingMesh(runes = 12, thin = false, seed = 7717): MeshData {
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const segments = 40;
+
+  /** One flat quad, wound so its normal is +Y. */
+  const quad = (
+    ax: number, az: number, bx: number, bz: number,
+    cx: number, cz: number, dx: number, dz: number,
+  ): void => {
+    const at = positions.length / 3;
+    positions.push(ax, 0, az, bx, 0, bz, cx, 0, cz, dx, 0, dz);
+    indices.push(at, at + 2, at + 1, at, at + 3, at + 2);
+  };
+
+  /** An annulus, as `segments` quads. */
+  const band = (inner: number, outer: number): void => {
+    for (let i = 0; i < segments; i++) {
+      const a = (i / segments) * Math.PI * 2;
+      const b = ((i + 1) / segments) * Math.PI * 2;
+      quad(
+        Math.cos(a) * inner, Math.sin(a) * inner,
+        Math.cos(b) * inner, Math.sin(b) * inner,
+        Math.cos(b) * outer, Math.sin(b) * outer,
+        Math.cos(a) * outer, Math.sin(a) * outer,
+      );
+    }
+  };
+
+  /** A block spanning `[inner, outer]` radially and `span` radians across. */
+  const mark = (angle: number, inner: number, outer: number, span: number): void => {
+    const a = angle - span / 2;
+    const b = angle + span / 2;
+    quad(
+      Math.cos(a) * inner, Math.sin(a) * inner,
+      Math.cos(b) * inner, Math.sin(b) * inner,
+      Math.cos(b) * outer, Math.sin(b) * outer,
+      Math.cos(a) * outer, Math.sin(a) * outer,
+    );
+  };
+
+  // `thin` means *fewer marks and a lighter ring*, not a thinner line. The first
+  // cut made the bands half as wide and the smallest aura came out as a dashed
+  // ellipse: at radius 34 that band is a world unit and a bit, and the
+  // foreshortened near and far edges of the ellipse fall under one pixel.
+  band(thin ? 0.945 : 0.92, 1);
+  band(thin ? 0.7 : 0.665, 0.75);
+
+  // The marks, deterministic in the seed but not identical to each other -- a
+  // ring of twelve identical ticks is a clock face.
+  const count = Math.max(1, Math.round(runes));
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2;
+    const roll = hash(i, seed);
+    if (roll < 0.34) {
+      // A long bar across the whole gap.
+      mark(angle, 0.77, 0.9, 0.055);
+    } else if (roll < 0.67) {
+      // Two short bars, one against each band.
+      mark(angle, 0.77, 0.82, 0.075);
+      mark(angle, 0.85, 0.9, 0.075);
+    } else {
+      // A bar with a pip outside it.
+      mark(angle, 0.77, 0.86, 0.05);
+      mark(angle + 0.055, 0.875, 0.9, 0.03);
+    }
+  }
+
+  return unshare(positions, indices);
+}
+
+/**
+ * The diamonds that float above a sigil: an octahedron, taller than it is wide.
+ *
+ * Eight triangles, which at this size is as much shape as survives the
+ * quantizer, and the four facets a lit octahedron shows are what make it read as
+ * a solid turning rather than as a lozenge sliding about.
+ */
+export function diamondMesh(height = 1.35): MeshData {
+  const positions = [
+    0, height, 0,
+    0, -height, 0,
+    1, 0, 0,
+    0, 0, 1,
+    -1, 0, 0,
+    0, 0, -1,
+  ];
+  const indices: number[] = [];
+  for (let i = 0; i < 4; i++) {
+    const a = 2 + i;
+    const b = 2 + ((i + 1) % 4);
+    indices.push(0, a, b, 1, b, a);
+  }
+  return unshare(positions, indices);
+}
+
+/**
+ * A shaft of light: a spike standing on the origin, one unit tall, tapering to a
+ * point.
+ *
+ * Not a beam with a flat top. A shaft that ends abruptly reads as a post, and
+ * per-instance alpha is one number for the whole solid, so the *only* place the
+ * fade at the top can come from is the silhouette narrowing.
+ */
+export function shaftMesh(sides = 5, baseRadius = 0.045): MeshData {
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const count = Math.max(3, sides);
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2;
+    positions.push(Math.cos(angle) * baseRadius, 0, Math.sin(angle) * baseRadius);
+  }
+  const apex = count;
+  positions.push(0, 1, 0);
+  const centre = count + 1;
+  positions.push(0, 0, 0);
+  for (let i = 0; i < count; i++) {
+    const next = (i + 1) % count;
+    indices.push(i, apex, next);
+    indices.push(centre, next, i);
+  }
+  return unshare(positions, indices);
+}
+
+/**
  * Split shared vertices so every triangle has its own, and give each its face
  * normal.
  *
@@ -258,7 +396,55 @@ const CACHE = new Map<MeshShape, MeshData>();
 export function particleMesh(shape: MeshShape): MeshData {
   const cached = CACHE.get(shape);
   if (cached) return cached;
-  const made = shape === 'tongue' ? tongueMesh() : blobMesh();
+  const made = build(shape);
   CACHE.set(shape, made);
   return made;
+}
+
+function build(shape: MeshShape): MeshData {
+  switch (shape) {
+    case 'tongue':
+      return tongueMesh();
+    case 'rune-ring':
+      return runeRingMesh(12, false);
+    // A separate shape rather than a parameter, because the cache is keyed by
+    // shape and the batch key is the shape: a thin ring that shared 'rune-ring'
+    // would silently be whichever of the two was built first.
+    case 'rune-ring-thin':
+      return runeRingMesh(8, true);
+    case 'diamond':
+      return diamondMesh();
+    case 'shaft':
+      return shaftMesh();
+    default:
+      return blobMesh();
+  }
+}
+
+/**
+ * How an instance of a shape is turned (spec 124).
+ *
+ * A property of the *shape*, because it follows from what the shape is: smoke
+ * may lie however it likes, a flame stands up, and a sigil must sit at exactly
+ * the angle it was given -- a per-seed jitter on a ring puts its runes somewhere
+ * different every time one is stamped.
+ */
+export const ORIENT = { tumble: 0, uprightJittered: 1, exact: 2 } as const;
+
+export function orientOf(shape: MeshShape): number {
+  switch (shape) {
+    case 'tongue':
+    case 'shaft':
+      return ORIENT.uprightJittered;
+    case 'rune-ring':
+    case 'rune-ring-thin':
+      return ORIENT.exact;
+    default:
+      return ORIENT.tumble;
+  }
+}
+
+/** Whether a shape is lit, or drawn as its own flat colour. Light is not shaded. */
+export function shadedShape(shape: MeshShape): boolean {
+  return shape === 'blob' || shape === 'diamond';
 }

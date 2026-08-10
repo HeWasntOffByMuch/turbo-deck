@@ -1,7 +1,7 @@
 # VFX and particles — plan
 
-Status: **Phases 0–3 landed. Fire and smoke re-authored as solids (spec 123),
-at its review gate.**
+Status: **Phases 0–3 landed. Fire and smoke re-authored as solids (spec 123);
+auras re-authored as drawn sigils (spec 124), at its review gate.**
 
 | Phase | State |
 |---|---|
@@ -12,7 +12,8 @@ at its review gate.**
 | 2c — decals: ground, props, gore setting, combat wiring (spec 120) | done |
 | 2d — the effect library: fire, smoke, auras, hit vocabulary (spec 121) | done |
 | 3 — the VFX tab and the stress numbers (spec 122) | done |
-| art direction: fire and smoke as solids (spec 123) | **at the review gate** |
+| art direction: fire and smoke as solids (spec 123) | done |
+| art direction: auras as drawn sigils (spec 124) | **at the review gate** |
 
 This is the living document for the VFX arc. It is updated as decisions land, and
 it is where the damage-type colour/shape language is written down so future
@@ -1034,6 +1035,81 @@ alpha instead of 0.42. The flame is the brightest thing in its own effect again.
   gameplay scale and unreadable at sheet scale — the sheet frames every effect
   identically on purpose.
 - Sparks, blood, decals and the hit vocabulary are untouched.
+
+---
+
+## 5h. An aura is a sigil (spec 124)
+
+Same review, next verdict: the status auras were a dithered ring stamped twelve
+times a second with motes orbiting it, and the particle look was rejected
+outright. The reference is a **runed magic circle** — outer band, inner band,
+rune marks between them, shafts of light standing on the ring, diamonds floating
+above it.
+
+### Three faults, and only one of them was the look
+
+- **A stipple is not a line.** `dither-cutout` on a ground quad dissolves the
+  ring's edge into the frame's weave. Correct for a smoke halo; wrong for a drawn
+  symbol, which wants the ink definition the rest of the art direction asks for.
+- **The ring was a stream.** Re-stamped on a `rate` emitter because size is a
+  curve over a particle's own life and that was the only way to make it pulse.
+  Two stamps alive at once at slightly different radii is survivable for a
+  stipple and reads as a doubled line for a solid.
+- **There was no sigil.** A featureless annulus has nothing in it to read.
+
+### What was built
+
+`runeRingMesh` (flat, in the XZ plane: two bands and a ring of marks),
+`diamondMesh` (an octahedron, taller than wide) and `shaftMesh` (a spike that
+tapers to a point). The sigil is one held particle — burst of one, ten minutes of
+life, constant size and alpha, spun by `angularVelocity` — and the shafts and
+diamonds are ordinary stamped emitters over it.
+
+**The runes are blocks, not glyphs.** A forty-unit ring is about forty pixels
+across at 480×270, which leaves two or three pixels per mark: a letterform is
+mush at that size and a bar with a gap beside it is legible. `pixel-font.ts`
+reached the same conclusion for text and settled on 5×7.
+
+### Two things this needed from the layer below
+
+- **Orientation became a property of the shape.** The mesh batch had a boolean —
+  tumble or yaw-only — and yaw-only adds a per-seed jitter so two flames are not
+  one extrusion. A sigil needs a third answer: exactly the angle it was given,
+  because a jitter puts the runes somewhere different every stamp. `uOrient` now
+  has three values and `meshes.ts` answers for each shape.
+- **`EffectDefinition.hardStop`.** `stop(handle)` lets particles finish, which is
+  right for a fire trail and catastrophic for a held sigil: a soft stop would
+  leave it on the ground for the ten minutes it was given. An effect can now
+  insist, and every aura does. There is a test that stops one softly and asserts
+  the pool is empty.
+
+### What the sheet changed
+
+`scripts/preview-auras.ts` is new, and it exists because the library sheet frames
+every effect identically — right for comparing forty, useless here, since an aura
+is a hundred-odd units across where a hit flash is fifteen, so the big ones were
+photographed from inside themselves. Two moments each: the sigil nearly alone,
+and the steady state.
+
+Three things it caught:
+
+- **Shafts read as traffic cones** at a base radius of 0.09. Halved, and the
+  height brought down from 1.15× the radius to 0.85×.
+- **Diamonds were specks.** Three world units is two pixels at 480×270 — exactly
+  the thing this direction is a move away from. Now 3→7 units, and lifted from
+  8 units above the ground to 14 so they float rather than sit in the ring.
+- **The thin sigil came out as a dashed ellipse.** `thin` had been implemented as
+  half-width bands, and at radius 34 that band is a world unit: the foreshortened
+  near and far edges of the ellipse fell under one pixel. `thin` now means fewer
+  marks and a lighter ring, not a thinner line.
+
+### Still open
+
+- Nothing drives auras. Statuses are still not replicated (§5e), so this is
+  reachable from the Studio tab and from `AuraTracker` and nowhere else.
+- The reference also shows a soft glow pooled inside the circle. Left out: at
+  this resolution a low-alpha disc under a crisp sigil is mud, and the sigil is
+  the thing being read.
 
 ---
 

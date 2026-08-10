@@ -348,12 +348,18 @@ export class VfxSystem {
    * Soft by default: emitters switch off and the particles already in the air
    * finish their lives, which is what "put the torch out" means. `hard` kills
    * them where they stand, which is what an entity despawning means.
+   *
+   * An effect may insist on hard (spec 124). A thing that was *thrown* should
+   * finish falling; a thing that is *shown* ends when the state it shows ends,
+   * and an aura holds one particle for ten minutes, so a soft stop would leave
+   * its sigil on the ground long after the status was gone.
    */
   stop(handle: number, hard = false): void {
     const slot = this.slotFor(handle);
     if (slot < 0) return;
     this.instStopping[slot] = 1;
-    if (!hard) return;
+    const effect = this.registry.effects[this.instEffect[slot] ?? -1];
+    if (!hard && !effect?.hardStop) return;
     for (let i = this.pool.count - 1; i >= 0; i--) {
       if ((this.pool.instance[i] ?? -1) === slot) this.pool.kill(i);
     }

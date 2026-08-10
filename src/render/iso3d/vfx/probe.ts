@@ -102,7 +102,7 @@ declare global {
   interface Window {
     vfxProbe?: {
       run: (mode: GlowMode) => ProbeReport;
-      shot: (id: string, ticks: number) => ProbeReport;
+      shot: (id: string, ticks: number, halfHeight?: number) => ProbeReport;
       readonly reports: ProbeReport[];
     };
   }
@@ -143,7 +143,7 @@ class Probe {
    * The registry rather than a rebuilt one: the point is to see what the game
    * will actually draw, so a doctored copy would be worth nothing.
    */
-  shot(id: string, ticks: number): ProbeReport {
+  shot(id: string, ticks: number, halfHeight?: number): ProbeReport {
     // The game's own quantization, not the probe's six-colour palette.
     //
     // That palette exists so "is this pixel on the palette" is a sharp question
@@ -153,6 +153,10 @@ class Probe {
     // a sheet meant to show that each damage type reads differently showed seven
     // identical green dots.
     this.retro.setPalette(null);
+    // Framed to the effect when asked. The default box fits a hit or a puff; an
+    // aura is a hundred-odd units across and would be photographed from inside
+    // itself. (`frame` restores the box afterwards, so shots stay comparable.)
+    const restore = halfHeight === undefined ? undefined : this.frame(halfHeight);
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(PROBE_BACKGROUND);
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(1600, 1600), new THREE.MeshBasicMaterial({ color: PROBE_GROUND }));
@@ -165,6 +169,9 @@ class Probe {
       lights: false,
     });
     scene.add(layer.root);
+    // The camera's own forward axis, so the transparency sort (spec 123) orders
+    // solids for *this* view rather than for the game's isometric one.
+    layer.setViewDirection(-this.camera.position.x, 30 - this.camera.position.y, -this.camera.position.z);
     layer.play(id, { x: 0, y: 24, z: 0, seed: 20260810, attach: { kind: 'entity', entityId: 1 } });
     layer.update(ticks);
 
@@ -175,7 +182,23 @@ class Probe {
     layer.dispose();
     ground.geometry.dispose();
     (ground.material as THREE.Material).dispose();
+    restore?.();
     return report;
+  }
+
+  /** Re-frame the orthographic box, and hand back the undo. */
+  private frame(halfHeight: number): () => void {
+    const previous = { top: this.camera.top, bottom: this.camera.bottom, left: this.camera.left, right: this.camera.right };
+    const aspect = VIRTUAL_W / VIRTUAL_H;
+    this.camera.top = halfHeight;
+    this.camera.bottom = -halfHeight;
+    this.camera.left = -halfHeight * aspect;
+    this.camera.right = halfHeight * aspect;
+    this.camera.updateProjectionMatrix();
+    return () => {
+      Object.assign(this.camera, previous);
+      this.camera.updateProjectionMatrix();
+    };
   }
 
   run(mode: GlowMode): ProbeReport {

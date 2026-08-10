@@ -126,6 +126,8 @@ export interface CompiledEffect {
   readonly priority: number;
   readonly cullDistance: number;
   readonly durationTicks: number;
+  /** Stopping this effect kills its particles at once (spec 124). */
+  readonly hardStop: boolean;
   readonly emitters: readonly CompiledEmitter[];
   /** True when any emitter emits forever -- what makes an effect need stopping. */
   readonly continuous: boolean;
@@ -307,6 +309,7 @@ export function compileRegistry(definitions: readonly EffectDefinition[]): Compi
       priority: definition.priority,
       cullDistance: definition.cullDistance ?? Number.POSITIVE_INFINITY,
       durationTicks: definition.durationTicks ?? 0,
+      hardStop: definition.hardStop ?? false,
       emitters,
       continuous: emitters.some((emitter) => emitter.emissionKind === EMISSION.rate),
     };
