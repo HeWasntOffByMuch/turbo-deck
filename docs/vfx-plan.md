@@ -9,8 +9,8 @@ Status: **Phase 1 landed; Phase 2a (sparks) at its review gate.**
 | 2a — sparks + verification + glow comparison | done |
 | 2b — blood splat generator (spec 119) | done |
 | 2c — decals: ground, props, gore setting, combat wiring (spec 120) | done |
-| 2d — the effect library: fire, smoke, auras, hit vocabulary (spec 121) | **at the review gate** |
-| 3 — Studio VFX tab | not started |
+| 2d — the effect library: fire, smoke, auras, hit vocabulary (spec 121) | done |
+| 3 — the VFX tab and the stress numbers (spec 122) | **at the review gate** |
 | 3 — Studio VFX tab | not started |
 
 This is the living document for the VFX arc. It is updated as decisions land, and
@@ -874,6 +874,91 @@ most particles — counting is cheap, only the screenshot is slow.
   there is no footfall event in the Play tab since `Poofs` was removed. Wiring it
   needs the rig to report a footfall, which the authored-unit machine can do and
   the mech rigs cannot.
+
+---
+
+## 5f. The tab, and the acceptance numbers
+
+Spec 122: a sixth tab — effect browser, live parameter panel generated from a
+field table, curve and gradient editors, a preview on the game's own path, the
+debug readout, and a JSON round trip that makes tuning the authoring.
+
+### The acceptance criteria, answered
+
+| Criterion | Where it stands |
+|---|---|
+| Adding an effect is config only, no call-site change | Yes. `library.ts` builders return plain config; `vfx-wire.ts` maps events to ids by table. |
+| The VFX pass renders inside the low-res buffer | **Measured**: 36,000/36,000 pixels on the palette, 0/36,000 device-pixel blocks non-flat (§5b). |
+| 50 combat effects + 200 decals holds framerate | **Measured**: see below. |
+| No per-frame allocation in the update loop | **Measured**: ~0.4 bytes per particle per tick against ≥32 for one object each (§5a). |
+| Same seed reproduces the same effect | Asserted field-by-field across the whole registry. |
+| Disabling VFX leaves gameplay working | Intensity 0 skips the update; gore 0 refuses every decal. |
+| Every effect visible in the tab | Yes — the browser lists the registry. |
+
+### The stress number
+
+`node --expose-gc --import tsx scripts/stress-vfx.ts`, CPU simulation only
+(particle tick plus decal ageing), sustained by re-playing every 20 ticks:
+
+| Run | particles (mean / peak) | decals held | µs/tick | worst tick | of a 60fps frame |
+|---|---|---|---|---|---|
+| **50 effects, 200 decals** | **385 / 669** | **382** | **113** | 2,906 | **0.7%** |
+| 10 effects, 50 decals | 93 / 159 | 176 | 37 | 1,468 | 0.2% |
+| 50 effects, 512 decals | 385 / 669 | 382 | 101 | 1,513 | 0.6% |
+| 100 effects, 512 decals | 629 / 1,105 | 419 | 194 | 2,159 | 1.2% |
+| 50 effects, 200 decals, intensity 1 | 134 / 252 | 303 | 46 | 1,282 | 0.3% |
+
+Read it with §5a beside it, because the honest caveat is that **fifty combat
+effects is not the hard case**. Combat bursts are short-lived by design, so fifty
+of them sustain a few hundred live particles; a saturated field of 2,000
+continuous particles measured 697 µs/tick (4.2% of a frame) and is the real
+ceiling. The stress test passes comfortably and says why rather than claiming the
+easy case as the hard one.
+
+Two things the harness got wrong first and now reports honestly: it labelled a
+run "200 decals" while holding 382 (the blood those effects throw adds to the
+pre-load), and it reported only the final particle count, which understated a
+sustained test by four times. The worst-tick column is the re-play spike, not the
+steady state.
+
+### The panel is generated, not written
+
+`EMITTER_FIELDS` is a table and the panel is built from it. Forty hand-written
+rows is forty chances to forget one, and the failure is silent — a field with no
+row is simply not tunable and nobody notices until they go looking. A test
+asserts the table covers every key any shipped emitter uses, or that the key is
+named in `UNEDITED_KEYS` with a reason, so adding a field to the format fails a
+test rather than quietly going missing.
+
+### Curve editing is almost entirely edge cases
+
+Which is why it is a file with tests rather than fifty lines in a mousemove: a
+key dragged past its neighbour (re-sort, or `sampleCurve` reads garbage), a key
+dragged outside the box, the last key deleted (an empty curve is not
+representable — `compileCurve` substitutes a fallback, so the delete would
+silently reset the field), and a click near two keys at once (nearest, not first,
+or one of them is undraggable and the other moves when you grab either).
+
+### An edit rebuilds the layer, once per frame
+
+A compiled emitter is frozen and the system holds its table by reference, so an
+edit cannot be poked into a running system — and should not be, since particles
+already in the air read their emitter every tick and would change mid-flight. The
+layer is rebuilt outright, deferred to the next frame because a slider fires on
+every pixel of a drag.
+
+### Still open
+
+- Nothing decides that an ability *is* fire: `CombatFacts.damageType` is supplied
+  as `physical` by the Play tab.
+- `puff_footstep` and its terrain-tinted siblings are authored and unplayed —
+  there is no footfall event since `Poofs` was removed.
+- `DecalField.dropChunk` is still called by nothing.
+- Statuses are still not replicated (§5e), so the status auras are reachable and
+  undriven.
+- Export writes JSON to the clipboard and the textarea. Turning that into a
+  committed `library.ts` is a person's decision and a git diff, which is the rule
+  the map editor already follows.
 
 ---
 

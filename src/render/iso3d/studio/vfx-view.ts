@@ -1,0 +1,662 @@
+/**
+ * The VFX tab (spec 122).
+ *
+ * A browser down the left, the preview in the middle, the parameters on the
+ * right, and a readout over the viewport. The DOM half only: every decision
+ * about what a field *is*, what a drag *means* and what the JSON *says* lives in
+ * `vfx-fields.ts`, `curve-edit.ts` and `vfx-json.ts`, where a test can reach it.
+ *
+ * ## The preview is the game's own path
+ *
+ * The same `RetroPass`, the same `createViewControls` cog, the same virtual
+ * resolution and the same `VfxLayer` the Play tab builds. `preview.ts` set that
+ * bar for units and states the reason: a preview that flatters moves numbers in
+ * the wrong direction and does it convincingly. The caveat it records applies
+ * here too -- this is the same control-panel *type* as Play's, not a shared
+ * instance, so a switch has to be thrown in both places.
+ *
+ * ## Edits rebuild the registry
+ *
+ * Changing a field recompiles a one-effect registry and replays it. That sounds
+ * heavy and is not: compiling one definition is a handful of typed arrays, and
+ * the alternative -- mutating a compiled emitter in place -- would change what
+ * particles already in the air are doing, since they read their emitter every
+ * tick. Replay-on-edit is also what makes the feedback honest: what you see is
+ * a fresh play of exactly the definition the Export button will hand you.
+ */
+
+import * as THREE from 'three';
+import { RetroPass } from '../retro-pass.js';
+import { createViewControls, type ViewControls } from '../view-controls.js';
+import { internalRenderSize } from '../view-frame.js';
+import { VfxLayer } from '../vfx/layer.js';
+import { compileRegistry } from '../vfx/compile.js';
+import { EFFECTS } from '../vfx/registry.js';
+import { VFX_PALETTE, type PaletteKey } from '../vfx/palette.js';
+import type { EffectDefinition, Emitter } from '../vfx/types.js';
+import type { Curve, Gradient } from '../vfx/curve.js';
+import type { ViewHandle } from '../view-handle.js';
+import {
+  clampToSpec,
+  fieldGroups,
+  readField,
+  writeField,
+  type FieldSpec,
+} from './vfx-fields.js';
+import {
+  addKey,
+  addStop,
+  autoRange,
+  curveToPixels,
+  moveKey,
+  moveStop,
+  pickKey,
+  pickStop,
+  pixelToCurve,
+  removeKey,
+  removeStop,
+  setStopColor,
+  type Box,
+} from './curve-edit.js';
+import { effectFromJson, effectToJson } from './vfx-json.js';
+
+const MONO = "'Courier New',ui-monospace,monospace";
+const PANEL = 'background:#16161e;border:1px solid #2a2a3a;padding:10px;box-sizing:border-box;';
+
+/** Ground materials the preview can stand an effect on. */
+const GROUNDS: readonly { readonly name: string; readonly color: number }[] = [
+  { name: 'Grass', color: 0x86a740 },
+  { name: 'Dirt', color: 0xb37034 },
+  { name: 'Stone', color: 0xafa693 },
+  { name: 'Snow', color: 0xe3e9e5 },
+  { name: 'Night', color: 0x1a1a24 },
+];
+
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, css: string, text = ''): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag);
+  node.style.cssText = css;
+  if (text) node.textContent = text;
+  return node;
+}
+
+/** Deep-ish clone of a definition, so edits never touch the shipped table. */
+function cloneEffect(effect: EffectDefinition): EffectDefinition {
+  return JSON.parse(JSON.stringify(effect)) as EffectDefinition;
+}
+
+export function mountVfxStudio(container: HTMLElement): ViewHandle {
+  const root = el('div', `font-family:${MONO};color:#c8c8d8;font-size:12px;display:flex;gap:10px;height:calc(100vh - 60px);`);
+
+  // --- state ---------------------------------------------------------------
+  let edited: EffectDefinition = cloneEffect(EFFECTS[0] as EffectDefinition);
+  let emitterIndex = 0;
+  let attachToSocket = false;
+  let groundIndex = 1;
+  let handle = 0;
+  let looping = true;
+
+  // --- the viewport --------------------------------------------------------
+  const canvas = el('canvas', 'display:block;width:100%;image-rendering:pixelated;background:#101018;');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
+  renderer.setPixelRatio(1);
+  const retro = new RetroPass(1, 1);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x8fd6c8);
+
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(3000, 3000),
+    new THREE.MeshLambertMaterial({ color: GROUNDS[groundIndex]?.color ?? 0xb37034, flatShading: true }),
+  );
+  ground.rotation.x = -Math.PI / 2;
+  scene.add(ground);
+  scene.add(new THREE.AmbientLight(0xffffff, 1.1));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+  sun.position.set(120, 260, 160);
+  scene.add(sun);
+
+  /**
+   * The dummy: a body at the player's real drawn height, so an attached effect
+   * is judged against something the right size. A unit that is subtly the wrong
+   * scale looks fine alone and wrong beside anything.
+   */
+  const dummy = new THREE.Group();
+  const dummyBody = new THREE.Mesh(
+    new THREE.CapsuleGeometry(10, 34, 4, 8),
+    new THREE.MeshLambertMaterial({ color: 0x615a8c, flatShading: true }),
+  );
+  dummyBody.position.y = 28;
+  dummy.add(dummyBody);
+  scene.add(dummy);
+
+  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 6000);
+  let cameraSpan = 220;
+
+  const HOOKS = {
+    ground: () => 0,
+    attach: (_entity: number, _socket: string, out: Float32Array, at: number): boolean => {
+      // The socket preview: a point that moves, because an attached effect judged
+      // against a stationary body is judged against the easy case.
+      out[at] = dummy.position.x;
+      out[at + 1] = 34;
+      out[at + 2] = dummy.position.z;
+      return true;
+    },
+  };
+
+  function makeLayer(): VfxLayer {
+    return new VfxLayer({
+      registry: compileRegistry([edited]),
+      hooks: HOOKS,
+      limits: { maxParticles: 3000, maxInstances: 64, pressureFloor: 0.25 },
+    });
+  }
+
+  let layer = makeLayer();
+  scene.add(layer.root);
+
+  const controls: ViewControls = createViewControls();
+
+  // --- rebuild -------------------------------------------------------------
+
+  /**
+   * Ask for a fresh layer on the next frame.
+   *
+   * A compiled emitter is frozen and the system holds its table by reference, so
+   * an edit cannot be poked into a running system -- and it should not be, since
+   * particles already in the air read their emitter every tick and would change
+   * mid-flight. So the layer is rebuilt outright.
+   *
+   * Deferred to the next frame because a slider fires `input` on every pixel of
+   * a drag, and rebuilding a layer per pixel would tear down and re-make GPU
+   * buffers dozens of times a second. Once per frame is imperceptible and is
+   * what "immediate visual feedback" actually needs.
+   */
+  let dirty = true;
+  function replay(): void {
+    dirty = true;
+  }
+
+  function rebuildNow(): void {
+    dirty = false;
+    scene.remove(layer.root);
+    layer.dispose();
+    layer = makeLayer();
+    scene.add(layer.root);
+    handle = layer.play(edited.id, {
+      x: 0,
+      y: attachToSocket ? 0 : 30,
+      z: 0,
+      seed: 20260810,
+      ...(attachToSocket ? { attach: { kind: 'entity' as const, entityId: 1 } } : {}),
+    });
+  }
+
+  // --- the browser ---------------------------------------------------------
+  const browser = el('div', `${PANEL}width:210px;overflow:auto;flex:none;`);
+  browser.append(el('div', 'letter-spacing:.08em;color:#f0f0f8;margin-bottom:8px;', 'EFFECTS'));
+  const rows = new Map<string, HTMLButtonElement>();
+  for (const effect of EFFECTS) {
+    const button = el('button', '');
+    button.type = 'button';
+    button.textContent = effect.id;
+    button.style.cssText =
+      `display:block;width:100%;text-align:left;font:inherit;font-size:11px;padding:3px 6px;margin-bottom:2px;` +
+      'cursor:pointer;border:1px solid transparent;background:transparent;color:#9a9ab0;';
+    button.addEventListener('click', () => {
+      edited = cloneEffect(effect);
+      emitterIndex = 0;
+      select();
+      buildPanel();
+      replay();
+    });
+    rows.set(effect.id, button);
+    browser.append(button);
+  }
+  function select(): void {
+    for (const [id, button] of rows) {
+      const on = id === edited.id;
+      button.style.background = on ? '#3a3a4e' : 'transparent';
+      button.style.color = on ? '#f0f0f8' : '#9a9ab0';
+    }
+  }
+
+  // --- the middle ----------------------------------------------------------
+  const middle = el('div', 'flex:1;display:flex;flex-direction:column;gap:8px;min-width:0;');
+  const stage = el('div', 'position:relative;flex:1;min-height:0;');
+  stage.append(canvas);
+  const readout = el(
+    'div',
+    'position:absolute;left:8px;top:8px;background:rgba(12,12,18,.78);border:1px solid #2a2a3a;' +
+      'padding:6px 8px;font-size:11px;line-height:1.5;color:#c8c8d8;white-space:pre;pointer-events:none;',
+  );
+  stage.append(readout);
+  const cog = el('div', 'position:absolute;right:8px;top:8px;');
+  cog.append(controls.element);
+  stage.append(cog);
+  middle.append(stage);
+
+  const bar = el('div', `${PANEL}display:flex;gap:6px;align-items:center;flex-wrap:wrap;flex:none;`);
+  const button = (label: string, onClick: () => void): HTMLButtonElement => {
+    const node = el('button', '');
+    node.type = 'button';
+    node.textContent = label;
+    node.style.cssText =
+      'font:inherit;font-size:11px;padding:4px 10px;cursor:pointer;border:1px solid #4a4a5e;background:#252533;color:#e8e8f2;';
+    node.addEventListener('click', onClick);
+    return node;
+  };
+  bar.append(button('Replay', () => replay()));
+  const loopButton = button('Loop: on', () => {
+    looping = !looping;
+    loopButton.textContent = `Loop: ${looping ? 'on' : 'off'}`;
+  });
+  bar.append(loopButton);
+  const attachButton = button('Attach: world', () => {
+    attachToSocket = !attachToSocket;
+    attachButton.textContent = `Attach: ${attachToSocket ? 'socket' : 'world'}`;
+    replay();
+  });
+  bar.append(attachButton);
+  const groundButton = button(`Ground: ${GROUNDS[groundIndex]?.name ?? ''}`, () => {
+    groundIndex = (groundIndex + 1) % GROUNDS.length;
+    const chosen = GROUNDS[groundIndex];
+    if (chosen) {
+      (ground.material as THREE.MeshLambertMaterial).color.setHex(chosen.color);
+      groundButton.textContent = `Ground: ${chosen.name}`;
+    }
+  });
+  bar.append(groundButton);
+  bar.append(
+    button('Export JSON', () => {
+      const text = effectToJson(edited);
+      void navigator.clipboard?.writeText(text).catch(() => undefined);
+      jsonArea.value = text;
+      status.textContent = 'copied to the clipboard, and shown below';
+    }),
+  );
+  bar.append(
+    button('Import JSON', () => {
+      const parsed = effectFromJson(jsonArea.value);
+      if ('error' in parsed) {
+        status.textContent = parsed.error;
+        status.style.color = '#e06c75';
+        return;
+      }
+      edited = parsed.effect;
+      emitterIndex = 0;
+      status.textContent = 'loaded';
+      status.style.color = '#8a8aa0';
+      buildPanel();
+      replay();
+    }),
+  );
+  const status = el('div', 'color:#8a8aa0;font-size:11px;flex:1;');
+  bar.append(status);
+  middle.append(bar);
+
+  const jsonArea = el('textarea', `${PANEL}height:120px;font-family:${MONO};font-size:11px;color:#c8c8d8;resize:vertical;flex:none;`) as HTMLTextAreaElement;
+  jsonArea.spellcheck = false;
+  middle.append(jsonArea);
+
+  // --- the parameter panel -------------------------------------------------
+  const params = el('div', `${PANEL}width:300px;overflow:auto;flex:none;`);
+
+  function currentEmitter(): Emitter | undefined {
+    return edited.emitters[emitterIndex];
+  }
+
+  function setEmitter(next: Emitter): void {
+    const emitters = edited.emitters.map((emitter, index) => (index === emitterIndex ? next : emitter));
+    edited = { ...edited, emitters };
+    replay();
+  }
+
+  function numberRow(spec: FieldSpec, value: number, onChange: (next: number) => void): HTMLElement {
+    const row = el('label', 'display:flex;flex-direction:column;gap:2px;margin-bottom:6px;cursor:pointer;');
+    if (spec.tip) row.title = spec.tip;
+    const head = el('div', 'display:flex;justify-content:space-between;color:#9a9ab0;font-size:11px;');
+    head.append(el('span', '', spec.label));
+    const shown = el('span', 'color:#e8e8f2;', String(Math.round(value * 1000) / 1000));
+    head.append(shown);
+    const slider = el('input', 'width:100%;') as HTMLInputElement;
+    slider.type = 'range';
+    slider.min = String(spec.min ?? 0);
+    slider.max = String(spec.max ?? 1);
+    slider.step = String(spec.step ?? 0.01);
+    slider.value = String(value);
+    slider.addEventListener('input', () => {
+      const next = clampToSpec(spec, Number(slider.value));
+      shown.textContent = String(Math.round(next * 1000) / 1000);
+      onChange(next);
+    });
+    row.append(head, slider);
+    return row;
+  }
+
+  /** A curve editor: a box you drag keys around in. */
+  function curveRow(spec: FieldSpec, curve: Curve, onChange: (next: Curve) => void): HTMLElement {
+    const row = el('div', 'margin-bottom:8px;');
+    row.append(el('div', 'color:#9a9ab0;font-size:11px;margin-bottom:2px;', `${spec.label} (drag; double-click adds, right-click removes)`));
+    const view = el('canvas', 'display:block;width:100%;height:70px;background:#101018;border:1px solid #2a2a3a;cursor:crosshair;') as HTMLCanvasElement;
+    view.width = 276;
+    view.height = 70;
+    row.append(view);
+
+    let live = curve;
+    const range = spec.min !== undefined && spec.max !== undefined ? { min: spec.min, max: spec.max } : autoRange(curve);
+    const box: Box = { x: 4, y: 4, width: view.width - 8, height: view.height - 8 };
+    let dragging = -1;
+
+    const paint = (): void => {
+      const ctx = view.getContext('2d');
+      if (!ctx) return;
+      ctx.clearRect(0, 0, view.width, view.height);
+      ctx.fillStyle = '#101018';
+      ctx.fillRect(0, 0, view.width, view.height);
+      const points = curveToPixels(live, box, range);
+      ctx.strokeStyle = '#6fae4a';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      points.forEach((point, index) => (index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y)));
+      ctx.stroke();
+      ctx.fillStyle = '#ffe08a';
+      for (const point of points) ctx.fillRect(point.x - 2, point.y - 2, 5, 5);
+    };
+
+    const at = (event: MouseEvent): { px: number; py: number } => {
+      const rect = view.getBoundingClientRect();
+      return {
+        px: ((event.clientX - rect.left) / rect.width) * view.width,
+        py: ((event.clientY - rect.top) / rect.height) * view.height,
+      };
+    };
+
+    view.addEventListener('mousedown', (event) => {
+      const { px, py } = at(event);
+      dragging = pickKey(live, box, range, px, py, 8);
+    });
+    view.addEventListener('mousemove', (event) => {
+      if (dragging < 0) return;
+      const { px, py } = at(event);
+      const { t, value } = pixelToCurve(box, range, px, py);
+      live = moveKey(live, dragging, t, value, range);
+      // The dragged key may have re-sorted past a neighbour, so follow it.
+      dragging = pickKey(live, box, range, px, py, 12);
+      paint();
+      onChange(live);
+    });
+    const stop = (): void => {
+      dragging = -1;
+    };
+    view.addEventListener('mouseup', stop);
+    view.addEventListener('mouseleave', stop);
+    view.addEventListener('dblclick', (event) => {
+      const { px, py } = at(event);
+      const { t, value } = pixelToCurve(box, range, px, py);
+      live = addKey(live, t, value).curve;
+      paint();
+      onChange(live);
+    });
+    view.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      const { px, py } = at(event);
+      const index = pickKey(live, box, range, px, py, 8);
+      if (index < 0) return;
+      live = removeKey(live, index);
+      paint();
+      onChange(live);
+    });
+
+    paint();
+    return row;
+  }
+
+  /** A gradient editor: stops on a strip, each with a palette dropdown. */
+  function gradientRow(spec: FieldSpec, gradient: Gradient, onChange: (next: Gradient) => void): HTMLElement {
+    const row = el('div', 'margin-bottom:8px;');
+    row.append(el('div', 'color:#9a9ab0;font-size:11px;margin-bottom:2px;', `${spec.label} (drag; double-click adds)`));
+    const strip = el('canvas', 'display:block;width:100%;height:26px;border:1px solid #2a2a3a;cursor:crosshair;') as HTMLCanvasElement;
+    strip.width = 276;
+    strip.height = 26;
+    row.append(strip);
+    const list = el('div', 'display:flex;flex-direction:column;gap:2px;margin-top:3px;');
+    row.append(list);
+
+    let live = gradient;
+    const box: Box = { x: 0, y: 0, width: strip.width, height: strip.height };
+    let dragging = -1;
+
+    const paint = (): void => {
+      const ctx = strip.getContext('2d');
+      if (!ctx) return;
+      const fill = ctx.createLinearGradient(0, 0, strip.width, 0);
+      for (const [t, key] of live.stops) {
+        fill.addColorStop(Math.min(1, Math.max(0, t)), `#${VFX_PALETTE[key].toString(16).padStart(6, '0')}`);
+      }
+      ctx.fillStyle = fill;
+      ctx.fillRect(0, 0, strip.width, strip.height);
+      ctx.fillStyle = '#101018';
+      for (const [t] of live.stops) ctx.fillRect(t * strip.width - 1, 0, 3, strip.height);
+
+      list.replaceChildren();
+      live.stops.forEach(([t, key], index) => {
+        const entry = el('div', 'display:flex;gap:4px;align-items:center;font-size:11px;');
+        entry.append(el('span', 'color:#8a8aa0;width:34px;', t.toFixed(2)));
+        const pick = el('select', 'flex:1;font:inherit;font-size:11px;background:#252533;color:#e8e8f2;border:1px solid #4a4a5e;') as HTMLSelectElement;
+        for (const name of Object.keys(VFX_PALETTE)) {
+          const option = document.createElement('option');
+          option.value = name;
+          option.textContent = name;
+          if (name === key) option.selected = true;
+          pick.append(option);
+        }
+        pick.addEventListener('change', () => {
+          live = setStopColor(live, index, pick.value as PaletteKey);
+          paint();
+          onChange(live);
+        });
+        entry.append(pick);
+        const drop = el('button', 'font:inherit;font-size:11px;padding:0 6px;cursor:pointer;border:1px solid #4a4a5e;background:#252533;color:#e8e8f2;', '×');
+        (drop as HTMLButtonElement).type = 'button';
+        drop.addEventListener('click', () => {
+          live = removeStop(live, index);
+          paint();
+          onChange(live);
+        });
+        entry.append(drop);
+        list.append(entry);
+      });
+    };
+
+    const px = (event: MouseEvent): number => {
+      const rect = strip.getBoundingClientRect();
+      return ((event.clientX - rect.left) / rect.width) * strip.width;
+    };
+    strip.addEventListener('mousedown', (event) => {
+      dragging = pickStop(live, box, px(event), 8);
+    });
+    strip.addEventListener('mousemove', (event) => {
+      if (dragging < 0) return;
+      live = moveStop(live, dragging, px(event) / strip.width);
+      dragging = pickStop(live, box, px(event), 12);
+      paint();
+      onChange(live);
+    });
+    strip.addEventListener('mouseup', () => (dragging = -1));
+    strip.addEventListener('mouseleave', () => (dragging = -1));
+    strip.addEventListener('dblclick', (event) => {
+      const first = live.stops[0];
+      live = addStop(live, px(event) / strip.width, first ? first[1] : 'sparkHot');
+      paint();
+      onChange(live);
+    });
+
+    paint();
+    return row;
+  }
+
+  function buildPanel(): void {
+    params.replaceChildren();
+    params.append(el('div', 'letter-spacing:.08em;color:#f0f0f8;margin-bottom:8px;', edited.id.toUpperCase()));
+
+    const tabs = el('div', 'display:flex;gap:3px;flex-wrap:wrap;margin-bottom:8px;');
+    edited.emitters.forEach((emitter, index) => {
+      const node = el('button', '');
+      (node as HTMLButtonElement).type = 'button';
+      node.textContent = emitter.id;
+      node.style.cssText =
+        'font:inherit;font-size:10px;padding:2px 6px;cursor:pointer;border:1px solid #4a4a5e;' +
+        (index === emitterIndex ? 'background:#4a4a68;color:#f0f0f8;' : 'background:transparent;color:#9a9ab0;');
+      node.addEventListener('click', () => {
+        emitterIndex = index;
+        buildPanel();
+      });
+      tabs.append(node);
+    });
+    params.append(tabs);
+
+    const emitter = currentEmitter();
+    if (!emitter) return;
+
+    for (const group of fieldGroups()) {
+      const rowsForGroup: HTMLElement[] = [];
+      for (const spec of group.fields) {
+        const value = readField(emitter, spec.path);
+        if (spec.kind === 'curve') {
+          if (!value) continue;
+          rowsForGroup.push(
+            curveRow(spec, value as Curve, (next) => setEmitter(writeField(currentEmitter() ?? emitter, spec.path, next))),
+          );
+        } else if (spec.kind === 'gradient') {
+          if (!value) continue;
+          rowsForGroup.push(
+            gradientRow(spec, value as Gradient, (next) => setEmitter(writeField(currentEmitter() ?? emitter, spec.path, next))),
+          );
+        } else if (spec.kind === 'range') {
+          const pair = (value as [number, number] | undefined) ?? [0, 0];
+          rowsForGroup.push(
+            numberRow({ ...spec, label: `${spec.label} min` }, pair[0], (next) =>
+              setEmitter(writeField(currentEmitter() ?? emitter, spec.path, [next, pair[1]])),
+            ),
+            numberRow({ ...spec, label: `${spec.label} max` }, pair[1], (next) =>
+              setEmitter(writeField(currentEmitter() ?? emitter, spec.path, [pair[0], next])),
+            ),
+          );
+        } else if (spec.kind === 'enum') {
+          const pick = el('select', 'width:100%;font:inherit;font-size:11px;background:#252533;color:#e8e8f2;border:1px solid #4a4a5e;margin-bottom:6px;') as HTMLSelectElement;
+          for (const option of spec.options ?? []) {
+            const node = document.createElement('option');
+            node.value = option;
+            node.textContent = option;
+            if (option === value) node.selected = true;
+            pick.append(node);
+          }
+          pick.addEventListener('change', () => setEmitter(writeField(currentEmitter() ?? emitter, spec.path, pick.value)));
+          const wrap = el('label', 'display:flex;flex-direction:column;gap:2px;');
+          wrap.append(el('div', 'color:#9a9ab0;font-size:11px;', spec.label), pick);
+          rowsForGroup.push(wrap);
+        } else if (spec.kind === 'boolean') {
+          const wrap = el('label', 'display:flex;gap:6px;align-items:center;margin-bottom:6px;cursor:pointer;');
+          const check = el('input', '') as HTMLInputElement;
+          check.type = 'checkbox';
+          check.checked = value !== false;
+          check.addEventListener('change', () => setEmitter(writeField(currentEmitter() ?? emitter, spec.path, check.checked)));
+          wrap.append(check, el('span', 'color:#9a9ab0;font-size:11px;', spec.label));
+          rowsForGroup.push(wrap);
+        } else if (typeof value === 'number') {
+          rowsForGroup.push(numberRow(spec, value, (next) => setEmitter(writeField(currentEmitter() ?? emitter, spec.path, next))));
+        }
+      }
+      if (rowsForGroup.length === 0) continue;
+      params.append(el('div', 'color:#f0f0f8;font-size:11px;letter-spacing:.06em;margin:10px 0 4px;', group.title.toUpperCase()));
+      for (const node of rowsForGroup) params.append(node);
+    }
+  }
+
+  root.append(browser, middle, params);
+  container.append(root);
+
+  // --- the loop ------------------------------------------------------------
+  let raf = 0;
+  let last = 0;
+  let accumulator = 0;
+  let vfxCost = 0;
+
+  function resize(): void {
+    const width = stage.clientWidth || 640;
+    const height = stage.clientHeight || 400;
+    const size = internalRenderSize(width, height);
+    renderer.setSize(size.width, size.height, false);
+    retro.setSize(size.width, size.height);
+    canvas.style.height = `${height}px`;
+    const aspect = size.width / size.height;
+    camera.left = -cameraSpan * aspect * 0.5;
+    camera.right = cameraSpan * aspect * 0.5;
+    camera.top = cameraSpan * 0.5;
+    camera.bottom = -cameraSpan * 0.5;
+    camera.updateProjectionMatrix();
+  }
+
+  function frame(now: number): void {
+    const elapsed = last === 0 ? 16.7 : now - last;
+    last = now;
+    accumulator = Math.min(accumulator + elapsed, 200);
+    let ticks = 0;
+    while (accumulator >= 1000 / 60) {
+      accumulator -= 1000 / 60;
+      ticks += 1;
+    }
+
+    if (dirty) rebuildNow();
+
+    // The game's own zoom slider, so the preview frames a unit the way Play does.
+    cameraSpan = Math.max(40, controls.viewHalfWidth() * 2);
+    resize();
+    const offset = controls.cameraOffset();
+    camera.position.set(offset.x, offset.y, offset.z);
+    camera.lookAt(0, 26, 0);
+
+    // Measured around the VFX work only, which is the number the readout claims.
+    const started = performance.now();
+    layer.setViewpoint(0, 26, 0);
+    layer.update(ticks);
+    vfxCost = vfxCost * 0.9 + (performance.now() - started) * 0.1;
+
+    if (looping && handle !== 0 && !layer.system.isLive(handle)) replay();
+
+    retro.set(controls.retro());
+    retro.setGrade(controls.grade());
+    retro.setPalette(controls.hike().palette);
+    retro.render(renderer, scene, camera);
+
+    const stats = layer.readout();
+    readout.textContent =
+      `particles   ${stats.particles}\n` +
+      `effects     ${stats.effects}\n` +
+      `draw calls  ${stats.drawCalls}\n` +
+      `decals      ${stats.decals} in ${stats.decalBuckets} chunk(s)\n` +
+      `lights      ${stats.lights}\n` +
+      `culled      ${stats.refusedDistance} distance, ${stats.refusedBudget} budget\n` +
+      `throttled   ${stats.throttled}\n` +
+      `vfx cost    ${vfxCost.toFixed(2)} ms/frame`;
+
+    raf = requestAnimationFrame(frame);
+  }
+
+  select();
+  buildPanel();
+  replay();
+  jsonArea.value = effectToJson(edited);
+
+  return {
+    element: root,
+    start(): void {
+      last = 0;
+      raf = requestAnimationFrame(frame);
+    },
+    stop(): void {
+      cancelAnimationFrame(raf);
+      raf = 0;
+    },
+  };
+}

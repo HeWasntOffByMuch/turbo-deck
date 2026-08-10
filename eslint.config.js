@@ -178,6 +178,16 @@ const PURE_RENDER = [
   'src/render/iso3d/studio/timeline.ts',
   'src/render/iso3d/studio/timing-bar.ts',
   'src/render/iso3d/studio/graph-layout.ts',
+  // The VFX tab's arithmetic (spec 122): the field table the parameter panel is
+  // generated from, the keyframe editing, and the JSON round trip that makes
+  // tuning into authoring. All three are answerable in Node, and all three are
+  // the sort of code that looks obviously right and is off by one -- a key that
+  // drags past its neighbour and corrupts the order, an export that is quietly
+  // lossy, a field nobody can edit because its row was never generated.
+  'src/render/iso3d/studio/vfx-fields.ts',
+  'src/render/iso3d/studio/curve-edit.ts',
+  'src/render/iso3d/studio/vfx-json.ts',
+  'src/render/iso3d/studio/vfx-panels.test.ts',
   'src/render/iso3d/studio/panels.test.ts',
   // The VFX core (spec 118). Every decision an effect makes is arithmetic --
   // emission, integration, collision, curves, the budget -- and the promise the
