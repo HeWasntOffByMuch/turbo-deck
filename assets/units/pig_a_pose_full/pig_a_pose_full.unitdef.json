@@ -3,8 +3,8 @@
   "formatVersion": 1,
   "id": "pig_a_pose_full",
   "meshRef": "pig_a_pose_full.glb",
-  "skeletonRef": "../biped.skeleton.json",
-  "clipLibRef": "biped.core.cliplib.json",
+  "skeletonRef": "../pig.skeleton.json",
+  "clipLibRef": "pig.core.cliplib.json",
   "provenance": {
     "tripoTaskIds": {
       "imageToModel": "bebdb9ca-976d-45b2-97e3-469e21fc9fe4",

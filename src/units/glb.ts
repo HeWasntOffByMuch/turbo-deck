@@ -390,6 +390,44 @@ export function writeGlb(document: GlbDocument): Uint8Array {
 }
 
 /**
+ * Re-packs a document and a binary chunk into a `.glb`.
+ *
+ * The other half of `glb-read.ts`'s `splitGlb`, and deliberately nothing more:
+ * it does not touch accessors, so the buffer handed in must still be the one the
+ * document describes. That makes it exactly right for an edit to the *document*
+ * -- dropping an animation channel, renaming a node -- and useless for anything
+ * that changes the geometry, which is the honest boundary.
+ */
+export function writeGlbContainer(json: Record<string, unknown>, bin: Uint8Array): Uint8Array {
+  const jsonBytes = new TextEncoder().encode(JSON.stringify(json));
+  const jsonPadding = (4 - (jsonBytes.byteLength % 4)) % 4;
+  const jsonChunk = new Uint8Array(jsonBytes.byteLength + jsonPadding);
+  jsonChunk.set(jsonBytes);
+  // Spaces, so the chunk still parses as JSON; zeroes for the binary one.
+  jsonChunk.fill(0x20, jsonBytes.byteLength);
+
+  const binPadding = (4 - (bin.byteLength % 4)) % 4;
+  const binLength = bin.byteLength + binPadding;
+  const total = 12 + 8 + jsonChunk.byteLength + (bin.byteLength > 0 ? 8 + binLength : 0);
+
+  const out = new Uint8Array(total);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, MAGIC, true);
+  view.setUint32(4, 2, true);
+  view.setUint32(8, total, true);
+  view.setUint32(12, jsonChunk.byteLength, true);
+  view.setUint32(16, JSON_CHUNK, true);
+  out.set(jsonChunk, 20);
+  if (bin.byteLength > 0) {
+    const at = 20 + jsonChunk.byteLength;
+    view.setUint32(at, binLength, true);
+    view.setUint32(at + 4, BIN_CHUNK, true);
+    out.set(bin, at + 8);
+  }
+  return out;
+}
+
+/**
  * Reads a `.glb`'s JSON chunk back.
  *
  * Only the JSON: enough for a test to assert about nodes, skins and animation

@@ -128,3 +128,45 @@ export function rootMotionMessage(unitId: string, clipId: string, bones: readonl
     `the clip will play in place. Re-export it with the root locked if that is not what you meant.`
   );
 }
+
+/**
+ * The same document with its root translation channels taken out.
+ *
+ * Stripping at import was always the plan and is not enough on its own: the
+ * *committed* clip still carries the travel, so `npm run validate:units` fails
+ * on every generated clip, and the asset in the repository is not the thing the
+ * game plays. Both are fixed by baking it out once, at export, where the file is
+ * written anyway.
+ *
+ * Channels only. The sampler and its accessor are left where they are, orphaned
+ * but valid -- pruning them means rebuilding the buffer, and a rewrite that
+ * touches the binary chunk is a much larger promise than this needs to make.
+ * The bytes cost nothing at runtime; three loads the channels, not the file.
+ */
+export function withoutRootMotion(
+  gltf: Record<string, unknown>,
+  roots: string | readonly string[],
+): { readonly json: Record<string, unknown>; readonly removed: readonly RootMotionChannel[] } {
+  const removed = rootMotionChannels(gltf, roots);
+  if (removed.length === 0) return { json: gltf, removed };
+
+  const wanted = new Set(typeof roots === 'string' ? [roots] : roots);
+  const nodes = Array.isArray(gltf['nodes']) ? (gltf['nodes'] as { name?: unknown }[]) : [];
+  const animations = Array.isArray(gltf['animations']) ? (gltf['animations'] as Record<string, unknown>[]) : [];
+
+  const stripped = animations.map((animation) => {
+    const channels = Array.isArray(animation['channels'])
+      ? (animation['channels'] as { target?: { node?: unknown; path?: unknown } }[])
+      : [];
+    return {
+      ...animation,
+      channels: channels.filter((channel) => {
+        const index = channel.target?.node;
+        if (typeof index !== 'number' || channel.target?.path !== 'translation') return true;
+        const name = nodes[index]?.name;
+        return !wanted.has(typeof name === 'string' ? name : '');
+      }),
+    };
+  });
+  return { json: { ...gltf, animations: stripped }, removed };
+}

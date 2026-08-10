@@ -22,21 +22,27 @@ import { authoredUnitAssets, authoredUnitIds, type AuthoredUnitId } from './unit
 
 export type { AuthoredUnitId };
 
+/** The id the player entity is drawn under; see `appearanceOf`. */
+export const PLAYER_TYPE_ID = 'player';
+
 /**
- * The monster type ids drawn from an authored unit.
+ * The type ids drawn from an authored unit.
  *
- * A monster rather than the player, on purpose. The player's rig carries the
- * cloth solve, the coat palette and the critter tuning the whole Play tab was
- * built around, and replacing it would be the largest visible change in the
- * game to demonstrate a loader. A monster is where a new unit belongs anyway:
- * it is the thing the Studio tab exists to make more of.
+ * Monsters **and** the player. It was monsters only, on the grounds that the
+ * player's rig carries the cloth solve, the coat palette and the critter tuning
+ * the whole Play tab was built around, and that swapping it out to demonstrate a
+ * loader would trade a world that renders for a claim about architecture. That
+ * was the right call while the only authored unit was a grey untextured
+ * mannequin; it stops being right the moment a real generated character exists,
+ * because the player is the body somebody looks at for hours and it is the one
+ * that has to prove the format.
  *
- * Empty by default. The dev mannequin is opt-in through {@link setAuthoredUnits}
- * rather than wired to a real monster id, because it is a grey untextured
- * mannequin and shipping it into the arena as a live enemy would be a worse
- * default than the rig that is there.
+ * So the default table now has a row: the player is the generated unit. Every
+ * other entity still falls through to exactly what it drew before, which is the
+ * property this seam exists to keep -- adding a unit is adding a row, and a
+ * missing row changes nothing.
  */
-const authored = new Map<string, AuthoredUnitId>();
+const authored = new Map<string, AuthoredUnitId>([[PLAYER_TYPE_ID, 'pig_a_pose_full']]);
 
 /**
  * Points a set of type ids at authored units.
@@ -100,6 +106,12 @@ export function authoredUnits(): Readonly<Record<string, AuthoredUnitId>> {
  * should be.
  */
 export function authoredUnitFor(look: Appearance): AuthoredUnitId | null {
-  if (look.rig !== 'monster') return null;
-  return authored.get(look.typeId) ?? null;
+  // A projectile is a few pixels of geometry with no skeleton and a prop does
+  // not move, so neither can be an authored unit however the table is filled in.
+  if (look.rig !== 'monster' && look.rig !== 'player') return null;
+  const id = authored.get(look.typeId) ?? null;
+  // A row naming a unit this build does not have draws the old rig rather than
+  // nothing: the default table ships pointing at a generated unit, and a
+  // checkout where that unit has not been baked should still render a game.
+  return id !== null && authoredUnitAssets(id) !== null ? id : null;
 }
