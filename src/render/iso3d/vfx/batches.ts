@@ -39,6 +39,7 @@ import * as THREE from 'three';
 import { BLEND, RENDER } from './compile.js';
 import type { ParticlePool } from './pool.js';
 import { sheetFrames, spriteSheet } from './textures.js';
+import { particleMesh, type MeshShape } from './meshes.js';
 
 /** Instances one batch is built to hold. Grown by rebuilding, never per frame. */
 const INITIAL_CAPACITY = 256;
@@ -334,11 +335,205 @@ export function modeCode(render: number): number {
       return 2;
     case RENDER['ground-quad']:
       return 3;
-    // A ribbon is drawn as a chain of stretched quads by the layer, and a mesh
-    // particle is a billboard until an effect actually needs instanced geometry
-    // (debris chips, in the physical-impact work).
+    // A ribbon is drawn as a chain of stretched quads by the layer. `mesh` never
+    // reaches here -- it has its own batch (spec 123), and it used to fold into
+    // this default and silently come out as a billboard, which is why fire and
+    // smoke read as flat sprites no matter how they were authored.
     default:
       return 0;
+  }
+}
+
+// --- solid particles (spec 123) ----------------------------------------------
+
+const MESH_VERTEX_SHADER = /* glsl */ `
+attribute vec3 iOffset;
+attribute float iSize;
+attribute float iRotation;
+attribute vec3 iColor;
+attribute float iAlpha;
+attribute float iSeed;
+
+varying vec3 vColor;
+varying float vAlpha;
+varying vec3 vNormal;
+
+/** Three angles hashed out of the seed: a fixed tumble, so blobs differ. */
+vec3 tumble(float seed) {
+  float a = fract(sin(seed * 12.9898) * 43758.5453);
+  float b = fract(sin(seed * 78.2330) * 24634.6345);
+  float c = fract(sin(seed * 39.4256) * 15731.7431);
+  return vec3(a, b, c) * 6.2831853;
+}
+
+mat3 rotation(vec3 angles) {
+  float sx = sin(angles.x), cx = cos(angles.x);
+  float sy = sin(angles.y), cy = cos(angles.y);
+  float sz = sin(angles.z), cz = cos(angles.z);
+  mat3 rx = mat3(1.0, 0.0, 0.0, 0.0, cx, -sx, 0.0, sx, cx);
+  mat3 ry = mat3(cy, 0.0, sy, 0.0, 1.0, 0.0, -sy, 0.0, cy);
+  mat3 rz = mat3(cz, -sz, 0.0, sz, cz, 0.0, 0.0, 0.0, 1.0);
+  return rz * ry * rx;
+}
+
+void main() {
+  // A tongue must stay upright, so it turns about Y only; a blob tumbles freely.
+  // uUpright picks which, per batch. (No backticks in here -- this is a template
+  // literal and one closes it, which is a parse error a long way from the cause.)
+  mat3 basis = uUpright > 0.5
+    ? rotation(vec3(0.0, iRotation + tumble(iSeed).y, 0.0))
+    : rotation(tumble(iSeed) + vec3(0.0, iRotation, 0.0));
+
+  vec3 local = basis * (position * iSize);
+  vNormal = normalize(basis * normal);
+  vColor = iColor;
+  vAlpha = iAlpha;
+  gl_Position = projectionMatrix * viewMatrix * vec4(iOffset + local, 1.0);
+}
+`;
+
+const MESH_FRAGMENT_SHADER = /* glsl */ `
+precision mediump float;
+
+uniform vec3 uLightDirection;
+uniform float uShading;
+
+varying vec3 vColor;
+varying float vAlpha;
+varying vec3 vNormal;
+
+void main() {
+  // A cheap wrapped lambert. Without it a semi-transparent blob is a flat
+  // silhouette and a cluster of them is a smear; with it each one catches light
+  // in planes and the cluster reads as a body with a top and an underside --
+  // which is the entire difference between "smoke" and "grey shapes".
+  float lambert = dot(normalize(vNormal), normalize(uLightDirection)) * 0.5 + 0.5;
+  float shade = mix(1.0, 0.45 + 0.75 * lambert, uShading);
+  gl_FragColor = vec4(vColor * shade, vAlpha);
+}
+`;
+
+/** One draw call: every live solid particle sharing a shape and a blend mode. */
+export class MeshParticleBatch {
+  readonly mesh: THREE.Mesh;
+  private geometry: THREE.InstancedBufferGeometry;
+  private readonly material: THREE.ShaderMaterial;
+  private capacity = INITIAL_CAPACITY;
+
+  private offset!: THREE.InstancedBufferAttribute;
+  private size!: THREE.InstancedBufferAttribute;
+  private rotation!: THREE.InstancedBufferAttribute;
+  private color!: THREE.InstancedBufferAttribute;
+  private alpha!: THREE.InstancedBufferAttribute;
+  private seed!: THREE.InstancedBufferAttribute;
+
+  constructor(
+    readonly blend: number,
+    readonly shape: MeshShape,
+  ) {
+    this.material = new THREE.ShaderMaterial({
+      vertexShader: `uniform float uUpright;\n${MESH_VERTEX_SHADER}`,
+      fragmentShader: MESH_FRAGMENT_SHADER,
+      uniforms: {
+        // Roughly the scene's own key light, so a blob is lit like the ground.
+        uLightDirection: { value: new THREE.Vector3(0.45, 1, 0.35).normalize() },
+        uShading: { value: shape === 'tongue' ? 0 : 1 },
+        // A flame stands up; smoke may lie however it likes.
+        uUpright: { value: shape === 'tongue' ? 1 : 0 },
+      },
+      transparent: true,
+      // Same pair as the quad batches, and the same two jobs: the right blend
+      // state, and the condition `HikeBuffers.capture` skips on so a puff of
+      // smoke is never given an ink outline.
+      depthWrite: false,
+      depthTest: true,
+      blending: blendingFor(blend),
+      side: THREE.DoubleSide,
+    });
+
+    this.geometry = this.buildGeometry(this.capacity);
+    this.mesh = new THREE.Mesh(this.geometry, this.material);
+    this.mesh.frustumCulled = false;
+    // Behind the additive quads: sparks and flashes read over smoke, not under.
+    this.mesh.renderOrder = 8;
+    this.mesh.visible = false;
+  }
+
+  private buildGeometry(capacity: number): THREE.InstancedBufferGeometry {
+    const source = particleMesh(this.shape);
+    const geometry = new THREE.InstancedBufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(source.positions, 3));
+    geometry.setAttribute('normal', new THREE.BufferAttribute(source.normals, 3));
+    geometry.setIndex(new THREE.BufferAttribute(source.indices, 1));
+
+    const instanced = (items: number): THREE.InstancedBufferAttribute => {
+      const attribute = new THREE.InstancedBufferAttribute(new Float32Array(capacity * items), items);
+      attribute.setUsage(THREE.DynamicDrawUsage);
+      return attribute;
+    };
+    this.offset = instanced(3);
+    this.size = instanced(1);
+    this.rotation = instanced(1);
+    this.color = instanced(3);
+    this.alpha = instanced(1);
+    this.seed = instanced(1);
+
+    geometry.setAttribute('iOffset', this.offset);
+    geometry.setAttribute('iSize', this.size);
+    geometry.setAttribute('iRotation', this.rotation);
+    geometry.setAttribute('iColor', this.color);
+    geometry.setAttribute('iAlpha', this.alpha);
+    geometry.setAttribute('iSeed', this.seed);
+    geometry.instanceCount = 0;
+    return geometry;
+  }
+
+  private ensureCapacity(needed: number): void {
+    if (needed <= this.capacity) return;
+    let capacity = this.capacity;
+    while (capacity < needed) capacity *= 2;
+    this.capacity = capacity;
+    const old = this.geometry;
+    this.geometry = this.buildGeometry(capacity);
+    this.mesh.geometry = this.geometry;
+    old.dispose();
+  }
+
+  begin(count: number): void {
+    this.ensureCapacity(count);
+  }
+
+  write(at: number, pool: ParticlePool, i: number): void {
+    const o = at * 3;
+    this.offset.array[o] = pool.x[i] ?? 0;
+    this.offset.array[o + 1] = pool.y[i] ?? 0;
+    this.offset.array[o + 2] = pool.z[i] ?? 0;
+    this.color.array[o] = pool.r[i] ?? 0;
+    this.color.array[o + 1] = pool.g[i] ?? 0;
+    this.color.array[o + 2] = pool.b[i] ?? 0;
+    this.size.array[at] = pool.size[i] ?? 0;
+    this.rotation.array[at] = pool.rot[i] ?? 0;
+    this.alpha.array[at] = pool.a[i] ?? 0;
+    this.seed.array[at] = ((pool.seed[i] ?? 0) & 0xffff) / 0xffff;
+  }
+
+  end(count: number): void {
+    this.geometry.instanceCount = count;
+    this.mesh.visible = count > 0;
+    if (count === 0) return;
+    for (const attribute of [this.offset, this.color]) {
+      attribute.addUpdateRange(0, count * 3);
+      attribute.needsUpdate = true;
+    }
+    for (const attribute of [this.size, this.rotation, this.alpha, this.seed]) {
+      attribute.addUpdateRange(0, count);
+      attribute.needsUpdate = true;
+    }
+  }
+
+  dispose(): void {
+    this.geometry.dispose();
+    this.material.dispose();
   }
 }
 

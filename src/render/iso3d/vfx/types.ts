@@ -18,6 +18,7 @@
 import type { Curve, Gradient } from './curve.js';
 import type { PaletteKey } from './palette.js';
 import type { FluidKind } from './splat.js';
+import type { MeshShape } from './meshes.js';
 
 /** Where in the emitter's local frame a particle is born, and which way it goes. */
 export type EmitterShape =
@@ -173,6 +174,12 @@ export interface Emitter {
   readonly render: RenderMode;
   readonly blend: Blend;
   readonly sprite?: SpriteSpec;
+  /**
+   * Which solid a `mesh` particle is (spec 123). Required when `render` is
+   * `mesh` -- an emitter that asks for a mesh and names no shape is how this
+   * silently fell back to a billboard for a whole spec.
+   */
+  readonly mesh?: { readonly shape: MeshShape };
   readonly collision?: CollisionSpec;
   readonly subEmitters?: SubEmitterSpec;
   readonly light?: LightSpec;

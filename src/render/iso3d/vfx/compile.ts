@@ -18,6 +18,7 @@ import { SHAPE, type CompiledShape, type ShapeKind } from './shapes.js';
 import { VFX_PALETTE } from './palette.js';
 import type { Blend, EffectDefinition, Emitter, EmitterShape, RenderMode } from './types.js';
 import type { FluidKind } from './splat.js';
+import type { MeshShape } from './meshes.js';
 
 export const EMISSION = { burst: 0, rate: 1, ramp: 2 } as const;
 export const RENDER = {
@@ -80,6 +81,8 @@ export interface CompiledEmitter {
   readonly batch: number;
 
   readonly sheet: string;
+  /** The solid a mesh particle draws as, or '' for the quad families. */
+  readonly meshShape: MeshShape | '';
   readonly frames: number;
   readonly spriteFps: number;
   readonly randomStartFrame: boolean;
@@ -132,7 +135,12 @@ export interface CompiledRegistry {
   readonly effects: readonly CompiledEffect[];
   readonly byId: ReadonlyMap<string, number>;
   /** One entry per distinct draw call: `family`, `blend`, `sheet`. */
-  readonly batches: readonly { readonly family: number; readonly blend: number; readonly sheet: string }[];
+  readonly batches: readonly {
+    readonly family: number;
+    readonly blend: number;
+    readonly sheet: string;
+    readonly meshShape: MeshShape | '';
+  }[];
   /** Ids named as sub-effects that no definition provides. */
   readonly danglingSubEffects: readonly string[];
 }
@@ -176,7 +184,10 @@ function soundCode(on: 'start' | 'burst' | 'collide' | undefined): number {
 
 const NO_RAMP: Curve = { keys: [[0, 0]] };
 
-function compileEmitter(emitter: Emitter, batchOf: (family: number, blend: number, sheet: string) => number): CompiledEmitter {
+function compileEmitter(
+  emitter: Emitter,
+  batchOf: (family: number, blend: number, sheet: string, meshShape: MeshShape | '') => number,
+): CompiledEmitter {
   const render = renderCode(emitter.render);
   const blend = blendCode(emitter.blend);
   const family = familyOf(render);
@@ -223,9 +234,10 @@ function compileEmitter(emitter: Emitter, batchOf: (family: number, blend: numbe
     render,
     blend,
     family,
-    batch: batchOf(family, blend, sheet),
+    batch: batchOf(family, blend, sheet, emitter.mesh?.shape ?? ''),
 
     sheet,
+    meshShape: emitter.mesh?.shape ?? '',
     frames: Math.max(1, emitter.sprite?.frames ?? 1),
     spriteFps: emitter.sprite?.fps ?? 0,
     randomStartFrame: emitter.sprite?.randomStart ?? false,
@@ -273,13 +285,15 @@ function compileEmitter(emitter: Emitter, batchOf: (family: number, blend: numbe
  */
 export function compileRegistry(definitions: readonly EffectDefinition[]): CompiledRegistry {
   const batchKeys: string[] = [];
-  const batches: { family: number; blend: number; sheet: string }[] = [];
-  const batchOf = (family: number, blend: number, sheet: string): number => {
-    const key = `${family}:${blend}:${sheet}`;
+  const batches: { family: number; blend: number; sheet: string; meshShape: MeshShape | '' }[] = [];
+  // The shape is part of the key: two solids cannot share a draw call, because a
+  // draw call is one geometry.
+  const batchOf = (family: number, blend: number, sheet: string, meshShape: MeshShape | ''): number => {
+    const key = `${family}:${blend}:${sheet}:${meshShape}`;
     const existing = batchKeys.indexOf(key);
     if (existing >= 0) return existing;
     batchKeys.push(key);
-    batches.push({ family, blend, sheet });
+    batches.push({ family, blend, sheet, meshShape });
     return batchKeys.length - 1;
   };
 

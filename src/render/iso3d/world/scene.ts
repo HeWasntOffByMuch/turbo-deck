@@ -853,6 +853,16 @@ export class WorldScene {
     // the same thing" stops being assertable. Same reason the unit machines take
     // `frame.ticks`.
     this.vfx.setViewpoint(this.target.x, this.target.y, this.target.z);
+    // The direction the camera looks along, for the transparency sort (spec
+    // 123). Taken from *last* frame's camera, since this one is not aimed until
+    // `lookAt` below -- which costs nothing, because the only thing that turns
+    // this camera is a view control, and a sort order one frame stale is not a
+    // sort order anybody can see.
+    this.vfx.setViewDirection(
+      this.target.x - this.camera.position.x,
+      this.target.y - this.camera.position.y,
+      this.target.z - this.camera.position.z,
+    );
     this.vfx.update(frame.ticks);
 
     // The camera follows the *predicted* self, not an interpolated replica: the

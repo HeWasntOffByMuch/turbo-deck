@@ -1,6 +1,7 @@
 # VFX and particles — plan
 
-Status: **Phase 1 landed; Phase 2a (sparks) at its review gate.**
+Status: **Phases 0–3 landed. Fire and smoke re-authored as solids (spec 123),
+at its review gate.**
 
 | Phase | State |
 |---|---|
@@ -10,8 +11,8 @@ Status: **Phase 1 landed; Phase 2a (sparks) at its review gate.**
 | 2b — blood splat generator (spec 119) | done |
 | 2c — decals: ground, props, gore setting, combat wiring (spec 120) | done |
 | 2d — the effect library: fire, smoke, auras, hit vocabulary (spec 121) | done |
-| 3 — the VFX tab and the stress numbers (spec 122) | **at the review gate** |
-| 3 — Studio VFX tab | not started |
+| 3 — the VFX tab and the stress numbers (spec 122) | done |
+| art direction: fire and smoke as solids (spec 123) | **at the review gate** |
 
 This is the living document for the VFX arc. It is updated as decisions land, and
 it is where the damage-type colour/shape language is written down so future
@@ -959,6 +960,80 @@ every pixel of a drag.
 - Export writes JSON to the clipboard and the textarea. Turning that into a
   committed `library.ts` is a person's decision and a git diff, which is the rule
   the map editor already follows.
+
+---
+
+## 5g. Smoke is a solid (spec 123)
+
+The art direction changed after the library was reviewed: sparks were right, and
+fire, smoke and the poison cloud were not. The note asked for smoke that behaves
+like smoke rather than like particles, poison clouds that are semi-transparent 3D
+masses changing shape, and a different direction for fire — with references
+showing chunky solid flame tongues, square embers, a dark smoke column and a warm
+ground pool.
+
+### All three complaints had one cause
+
+`RenderMode.mesh` was in the format and was a **stub**. `modeCode` mapped it to
+`0`, the billboard, and the default branch swallowed it silently. Every emitter
+that asked for a solid got a flat camera-facing quad, and no test could see it,
+because the whole format round-tripped correctly — the value was accepted, stored,
+compiled and then quietly ignored one layer further down.
+
+That is what makes "particles" the word for the result. **A billboard cannot
+intersect anything.** Two of them at the same place are two decals stacked up; the
+mass a smoke plume reads as comes entirely from solids interpenetrating each
+other. No amount of tuning alpha, size or count gets there from quads.
+
+### What was built
+
+- `vfx/meshes.ts`, pure and tested in Node: `blobMesh` (an icosahedron subdivided
+  once, then pushed in and out per vertex — 80 faces) and `tongueMesh` (a lathe:
+  shoulders low, a pinched waist, a twist and a lean, closing to a single apex).
+  Both flat-shaded by splitting vertices per face, which is the house style —
+  `flatShading` is on every material in this scene.
+- `MeshParticleBatch` in `batches.ts`: one `InstancedBufferGeometry` per (shape,
+  blend), per-instance offset, size, rotation, colour, alpha and seed. The vertex
+  shader builds a fixed tumble hashed out of the seed, so a hundred blobs are a
+  hundred *orientations* of one geometry rather than a hundred draw calls; the
+  fragment shader is a wrapped lambert against a fixed light, which is what makes
+  a blob read as round instead of as a silhouette.
+- `vfx/depth-sort.ts`: alpha-blended solids are drawn back-to-front. Insertion
+  sort over preallocated arrays — nearly-sorted frame to frame, so about O(n),
+  and it allocates nothing. `WorldScene` and the VFX tab both feed it their real
+  camera direction.
+- `Emitter.mesh: { shape }` is part of the batch key, editable in the tab, and
+  validated on the way in from JSON rather than passed through: an unknown shape
+  is the stub failure wearing a different hat.
+
+### One geometry, many orientations
+
+Deliberate, and worth writing down because the alternative looks tempting. A mesh
+per particle would be a draw call per particle. At 480×270 a lumpy sphere is
+perhaps twenty pixels across, and nobody can tell one sphere seen from a hundred
+angles from a hundred different spheres. The variety budget goes on orientation,
+which is free.
+
+### What the first sheet showed, and the fix
+
+The solids worked immediately — smoke and dust read as overlapping volumes with
+edges. Fire did not: the smoke column swallowed the flame. Thirty-unit blobs, at
+a rise of `h * 0.3` and living up to 170 ticks, piled into one grey mass sitting
+on top of a twenty-six-unit fire. A column that does not *travel* is not a column.
+
+Smoke now rises at `h * 0.5–0.9` with `h * 0.7` of upward acceleration, lives
+70–130 ticks, tops out at `h * 0.78` rather than `h * 1.15`, and peaks at 0.34
+alpha instead of 0.42. The flame is the brightest thing in its own effect again.
+
+### Still open
+
+- The aura reference (a runed circle with light shafts and floating diamonds) is
+  a different piece of work. Nobody asked for it; it is not built.
+- `cloud_poison` is a 140-unit zone made of 39-unit blobs, so on the contact
+  sheet the camera is inside it and the tile is a green wall. It is correct at
+  gameplay scale and unreadable at sheet scale — the sheet frames every effect
+  identically on purpose.
+- Sparks, blood, decals and the hit vocabulary are untouched.
 
 ---
 

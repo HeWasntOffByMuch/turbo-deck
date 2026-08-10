@@ -647,6 +647,9 @@ export function mountVfxStudio(container: HTMLElement): ViewHandle {
     // Measured around the VFX work only, which is the number the readout claims.
     const started = performance.now();
     layer.setViewpoint(0, 26, 0);
+    // Whichever way the turntable has left the camera pointing, so the solids
+    // sort correctly from every angle rather than only the isometric one.
+    layer.setViewDirection(-offset.x, 26 - offset.y, -offset.z);
     layer.update(ticks);
     vfxCost = vfxCost * 0.9 + (performance.now() - started) * 0.1;
 

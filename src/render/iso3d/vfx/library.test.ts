@@ -119,7 +119,33 @@ describe('the fire family', () => {
   it('is layered rather than one emitter', () => {
     // The thing that reads as burning is the relationship between the layers.
     const campfire = byId.get('campfire');
-    expect(campfire?.emitters.map((emitter) => emitter.id)).toEqual(['flame', 'embers', 'shimmer', 'smoke', 'glow']);
+    expect(campfire?.emitters.map((emitter) => emitter.id)).toEqual([
+      'tongues',
+      'core',
+      'embers',
+      'shimmer',
+      'smoke',
+      'glow',
+    ]);
+  });
+
+  it('builds its flame out of solids rather than camera-facing cards', () => {
+    // The direction of spec 123, as an assertion. A flipbook on a quad has no
+    // silhouette to read, and the silhouette is the whole thing at this size.
+    const campfire = byId.get('campfire');
+    for (const id of ['tongues', 'core']) {
+      const emitter = campfire?.emitters.find((candidate) => candidate.id === id);
+      expect(emitter?.render, id).toBe('mesh');
+      expect(emitter?.mesh?.shape, id).toBe('tongue');
+      // Alpha rather than additive: additive is a glow, and a glow has no edge.
+      expect(emitter?.blend, id).toBe('alpha');
+    }
+  });
+
+  it('keeps the embers as quads, because an ember is a spark', () => {
+    const embers = byId.get('campfire')?.emitters.find((emitter) => emitter.id === 'embers');
+    expect(embers?.render).toBe('billboard');
+    expect(embers?.blend).toBe('additive');
   });
 
   it('drops the layers a variant does not want', () => {
@@ -146,7 +172,7 @@ describe('the fire family', () => {
       const emitter = effect.emitters.find((candidate) => candidate.id === id);
       return Math.max(...(emitter?.size.keys.map(([, value]) => value) ?? [0]));
     };
-    expect(peak(large, 'flame') / peak(small, 'flame')).toBeCloseTo(4, 5);
+    expect(peak(large, 'tongues') / peak(small, 'tongues')).toBeCloseTo(4, 5);
     expect(peak(large, 'smoke') / peak(small, 'smoke')).toBeCloseTo(4, 5);
   });
 
@@ -223,11 +249,24 @@ describe('the puff family', () => {
     expect(tones.size).toBe(4);
   });
 
+  it('is made of solids, so overlapping puffs build a mass', () => {
+    // The direction of spec 123. A billboard cannot intersect anything, so two
+    // of them are two decals stacked up rather than one churning body.
+    for (const effect of LIBRARY) {
+      if (!effect.id.startsWith('puff_') && !effect.id.startsWith('cloud_') && !effect.id.startsWith('smoke_')) continue;
+      const emitter = effect.emitters[0];
+      expect(emitter?.render, effect.id).toBe('mesh');
+      expect(emitter?.mesh?.shape, effect.id).toBe('blob');
+      expect(emitter?.blend, effect.id).toBe('alpha');
+    }
+  });
+
   it('rises unless it was told to hug the ground', () => {
     const groundHugging = LIBRARY.find((effect) => effect.id === 'cloud_poison')?.emitters[0];
     const rising = LIBRARY.find((effect) => effect.id === 'puff_teleport')?.emitters[0];
-    expect(groundHugging?.render).toBe('ground-quad');
-    expect(rising?.render).toBe('axis-billboard');
+    // Both are solids now; what separates them is where they go, not how they
+    // are drawn -- a cloud that sinks and one that climbs.
+    expect(groundHugging?.gravity ?? 0).toBeLessThan(0);
     expect(rising?.acceleration?.y ?? 0).toBeGreaterThan(0);
   });
 });

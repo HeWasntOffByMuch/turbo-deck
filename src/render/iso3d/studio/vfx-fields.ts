@@ -34,6 +34,8 @@ export interface FieldSpec {
 export const RENDER_MODES = ['billboard', 'stretched', 'axis-billboard', 'ground-quad', 'ribbon', 'mesh'] as const;
 export const BLEND_MODES = ['alpha', 'additive', 'dither-cutout'] as const;
 export const SHAPE_KINDS = ['point', 'sphere', 'hemisphere', 'cone', 'box', 'circle', 'mesh', 'arc'] as const;
+/** The solids a `mesh` particle can be (spec 123). */
+export const MESH_SHAPES = ['blob', 'tongue'] as const;
 
 /**
  * Every tunable field on an emitter, in the order the panel shows them.
@@ -67,6 +69,7 @@ export const EMITTER_FIELDS: readonly FieldSpec[] = [
   { path: 'velocityScale', label: 'Velocity scale', kind: 'curve', min: 0, max: 2 },
   { path: 'render', label: 'Render as', kind: 'enum', options: RENDER_MODES },
   { path: 'blend', label: 'Blend', kind: 'enum', options: BLEND_MODES },
+  { path: 'mesh.shape', label: 'Solid', kind: 'enum', options: MESH_SHAPES, tip: 'Which solid, when rendering as a mesh. Ignored otherwise.' },
   { path: 'stretch', label: 'Stretch', kind: 'number', min: 0, max: 0.4, step: 0.005, tip: 'Length per unit of screen speed, for stretched billboards.' },
   { path: 'ribbonSpacing', label: 'Ribbon spacing', kind: 'number', min: 0.5, max: 60, step: 0.5 },
 

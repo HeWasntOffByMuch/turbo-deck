@@ -204,6 +204,10 @@ const PURE_RENDER = [
   'src/render/iso3d/vfx/curve.ts',
   'src/render/iso3d/vfx/palette.ts',
   'src/render/iso3d/vfx/shapes.ts',
+  // The solids particles are made of (spec 123). Geometry as arrays, generated
+  // rather than fetched -- so the silhouette a flame is read by is a thing a
+  // test in Node can hold to account.
+  'src/render/iso3d/vfx/meshes.ts',
   'src/render/iso3d/vfx/types.ts',
   'src/render/iso3d/vfx/compile.ts',
   'src/render/iso3d/vfx/pool.ts',

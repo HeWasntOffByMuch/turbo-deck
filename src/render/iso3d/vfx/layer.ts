@@ -26,7 +26,9 @@
  */
 
 import * as THREE from 'three';
-import { ParticleBatch, modeCode } from './batches.js';
+import { ParticleBatch, MeshParticleBatch, modeCode } from './batches.js';
+import { FAMILY } from './compile.js';
+import { depthOrder } from './depth-sort.js';
 import { VfxSystem, type VfxHooks, type VfxSystemOptions } from './system.js';
 import { REGISTRY } from './registry.js';
 import { DecalField, type GoreLevel } from './decals.js';
@@ -49,11 +51,25 @@ export class VfxLayer {
   readonly decals: DecalField;
   private readonly decalView: DecalView;
 
-  private readonly batches: ParticleBatch[] = [];
+  private readonly batches: (ParticleBatch | MeshParticleBatch)[] = [];
+  /**
+   * Draw order for the solid batches, back to front (spec 123).
+   *
+   * Semi-transparent solids that intersect each other have to be drawn far-first
+   * or the near ones punch holes in the far ones. Insertion sort over a
+   * preallocated array: the order barely changes between frames, so it runs at
+   * about O(n) and allocates nothing.
+   */
+  private readonly order: Int32Array;
+  private readonly depth: Float32Array;
   /** Write cursor per batch, reset every sync. Preallocated. */
   private readonly cursors: Int32Array;
   private readonly pointLights: THREE.PointLight[] = [];
   private drawCalls = 0;
+  // The isometric default, so the sort is right before anybody sets one.
+  private viewX = -0.577;
+  private viewY = -0.577;
+  private viewZ = -0.577;
 
   constructor(options: VfxLayerOptions) {
     const registry = options.registry ?? REGISTRY;
@@ -93,11 +109,16 @@ export class VfxLayer {
     this.root.frustumCulled = false;
 
     for (const batch of registry.batches) {
-      const made = new ParticleBatch(batch.blend, batch.sheet);
+      const made =
+        batch.family === FAMILY.mesh && batch.meshShape !== ''
+          ? new MeshParticleBatch(batch.blend, batch.meshShape)
+          : new ParticleBatch(batch.blend, batch.sheet);
       this.batches.push(made);
       this.root.add(made.mesh);
     }
     this.cursors = new Int32Array(this.batches.length);
+    this.order = new Int32Array(this.system.pool.capacity);
+    this.depth = new Float32Array(this.system.pool.capacity);
 
     if (options.lights !== false) {
       for (let i = 0; i < LIGHT_POOL; i++) {
@@ -147,14 +168,17 @@ export class VfxLayer {
 
     for (const batch of this.batches) batch.begin(pool.count);
 
-    for (let i = 0; i < pool.count; i++) {
+    const walk = this.sortForDepth(pool.count);
+    for (let n = 0; n < pool.count; n++) {
+      const i = walk[n] ?? 0;
       const batchIndex = pool.batch[i] ?? 0;
       const batch = this.batches[batchIndex];
       if (!batch) continue;
       const emitter = this.system.emitterAt(i);
       if (!emitter) continue;
       const at = this.cursors[batchIndex] ?? 0;
-      batch.write(at, pool, i, modeCode(emitter.render), emitter.stretch);
+      if (batch instanceof MeshParticleBatch) batch.write(at, pool, i);
+      else batch.write(at, pool, i, modeCode(emitter.render), emitter.stretch);
       this.cursors[batchIndex] = at + 1;
     }
 
@@ -166,6 +190,17 @@ export class VfxLayer {
     }
 
     this.syncLights();
+  }
+
+  /**
+   * Particle indices ordered furthest-first along the view direction.
+   *
+   * The ordering itself is arithmetic and lives in `depth-sort.ts` where it can
+   * be replayed in Node; this only supplies the pool and the scratch arrays.
+   */
+  private sortForDepth(count: number): Int32Array {
+    const pool = this.system.pool;
+    return depthOrder(count, pool.x, pool.y, pool.z, this.viewX, this.viewY, this.viewZ, this.order, this.depth);
   }
 
   private syncLights(): void {
@@ -196,6 +231,20 @@ export class VfxLayer {
   setViewpoint(x: number, y: number, z: number): void {
     this.system.setViewpoint(x, y, z);
     this.decals.setViewpoint(x, z);
+  }
+
+  /**
+   * Which way the camera looks, for the transparency sort.
+   *
+   * A direction rather than a position: the camera is orthographic, so what
+   * decides which of two blobs is in front is the projection onto its forward
+   * axis and not the distance to its eye.
+   */
+  setViewDirection(x: number, y: number, z: number): void {
+    const length = Math.sqrt(x * x + y * y + z * z) || 1;
+    this.viewX = x / length;
+    this.viewY = y / length;
+    this.viewZ = z / length;
   }
 
   setIntensity(intensity: number): void {

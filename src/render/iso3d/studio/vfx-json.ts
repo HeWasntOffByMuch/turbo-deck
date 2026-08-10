@@ -18,7 +18,7 @@
 import type { Curve, Gradient } from '../vfx/curve.js';
 import { isPaletteKey, type PaletteKey } from '../vfx/palette.js';
 import type { EffectDefinition, Emitter } from '../vfx/types.js';
-import { BLEND_MODES, RENDER_MODES, SHAPE_KINDS } from './vfx-fields.js';
+import { BLEND_MODES, MESH_SHAPES, RENDER_MODES, SHAPE_KINDS } from './vfx-fields.js';
 
 /**
  * Serialize an effect.
@@ -201,6 +201,19 @@ function readEmitter(raw: unknown, index: number, errors: string[]): Emitter | u
       }
       out[key] = { ...value };
     }
+  }
+  // The mesh shape is checked rather than passed through, because an unknown
+  // one is the spec-123 stub failure wearing a different hat: the batch is
+  // built, nothing throws, and the effect comes out as flat quads.
+  if (raw['mesh'] !== undefined) {
+    const mesh = raw['mesh'];
+    if (!isObject(mesh)) {
+      errors.push(`${where}.mesh must be an object`);
+      return undefined;
+    }
+    const shapeName = asEnum(mesh['shape'], MESH_SHAPES, `${where}.mesh.shape`, errors);
+    if (!shapeName) return undefined;
+    out['mesh'] = { shape: shapeName };
   }
   if (raw['worldSpace'] !== undefined) {
     if (typeof raw['worldSpace'] !== 'boolean') {

@@ -70,29 +70,59 @@ export function fire(params: FireParams): EffectDefinition {
   const world = !params.attached;
 
   const emitters: Emitter[] = [
-    // (a) The flame itself: a flipbook, axis-locked so it stands up rather than
-    // leaning with the camera, with upward drag and a little turbulence.
+    // (a) The tongues: solid, stacked, upright.
+    //
+    // The whole direction of this family. A flipbook on a camera-facing quad has
+    // no silhouette -- it is a picture of a flame rather than a flame -- and at
+    // this resolution the silhouette is the entire read. These are real tapered
+    // solids that rise, shrink and are replaced, so the outline is always several
+    // overlapping tongues rather than one card.
     {
-      id: 'flame',
-      shape: { kind: 'circle', radius: h * 0.16 },
-      emission: { kind: 'rate', perSecond: 22 * vigour },
-      lifetimeTicks: [16, 26],
-      speed: [h * 0.35, h * 0.8],
-      spreadRadians: 0.22,
-      gravity: 0,
-      drag: 1.5,
-      acceleration: { x: 0, y: h * 1.1, z: 0 },
-      turbulence: { amplitude: h * 0.9, frequency: 0.05 },
-      size: { keys: [[0, h * 0.42], [0.35, h * 0.5], [1, h * 0.16]] },
-      alpha: { keys: [[0, 1], [0.7, 1], [1, 0]] },
-      color: { stops: [[0, core], [0.4, body], [1, deep]] },
-      render: 'axis-billboard',
-      blend: 'additive',
-      sprite: { sheet: 'flame', frames: 8, fps: 18, randomStart: true },
+      id: 'tongues',
+      shape: { kind: 'circle', radius: h * 0.17 },
+      emission: { kind: 'rate', perSecond: 16 * vigour },
+      lifetimeTicks: [14, 24],
+      speed: [h * 0.25, h * 0.55],
+      spreadRadians: 0.3,
+      drag: 1.8,
+      acceleration: { x: 0, y: h * 0.9, z: 0 },
+      turbulence: { amplitude: h * 0.5, frequency: 0.06 },
+      angularVelocity: [-1.4, 1.4],
+      size: { keys: [[0, h * 0.5], [0.3, h * 0.62], [1, h * 0.12]] },
+      alpha: { keys: [[0, 1], [0.75, 1], [1, 0]] },
+      color: { stops: [[0, core], [0.45, body], [1, deep]] },
+      render: 'mesh',
+      mesh: { shape: 'tongue' },
+      // Alpha, not additive: a tongue is a shape with an edge, and additive
+      // blending is what turned the last version into a glow with no outline.
+      blend: 'alpha',
       worldSpace: world,
       light: { color: body, intensity: { keys: [[0, 0.9], [1, 0.4]] }, radius: h * 4 },
     },
-    // (b) Embers: points that leave the flame and keep going, flickering.
+    // (b) The core: a short, fat, near-white tongue low in the fire, so the
+    // middle is hot and the edges are not. The references all have this and it is
+    // what stops a flame reading as flat orange.
+    {
+      id: 'core',
+      shape: { kind: 'circle', radius: h * 0.08 },
+      emission: { kind: 'rate', perSecond: 12 * vigour },
+      lifetimeTicks: [8, 14],
+      speed: [h * 0.2, h * 0.4],
+      spreadRadians: 0.15,
+      drag: 2.2,
+      acceleration: { x: 0, y: h * 0.5, z: 0 },
+      angularVelocity: [-2, 2],
+      size: { keys: [[0, h * 0.34], [0.4, h * 0.4], [1, h * 0.1]] },
+      alpha: { keys: [[0, 1], [0.7, 1], [1, 0]] },
+      color: { stops: [[0, core], [1, body]] },
+      render: 'mesh',
+      mesh: { shape: 'tongue' },
+      blend: 'alpha',
+      offset: { x: 0, y: h * 0.06, z: 0 },
+      worldSpace: world,
+    },
+    // (c) Embers: square chips of light that leave the fire and keep going. The
+    // one part of this family a quad is right for -- an ember is a spark.
     {
       id: 'embers',
       shape: { kind: 'circle', radius: h * 0.2 },
@@ -111,28 +141,29 @@ export function fire(params: FireParams): EffectDefinition {
       blend: 'additive',
       worldSpace: world,
     },
-    // (c) The heat shimmer, as something that survives pixelation.
+    // (d) The shimmer above the fire: barely-there solids rising fast.
     //
-    // Not a refraction pass. At 300 pixels tall, sampling the frame with an
-    // offset moves whole pixels around and reads as tearing, not as heat. This
-    // is a few big, faint, fast-rising dither-cutout quads: what they actually
-    // do is punch a shifting stipple through whatever is behind them, which is
-    // the *impression* of disturbed air and costs one more batch of quads.
+    // Not refraction. Sampling the frame with an offset moves whole pixels at
+    // 300 tall and reads as tearing. Faint blobs drifting up through what is
+    // behind them give the *impression* of disturbed air, and now that they are
+    // solids they occlude each other slightly as they tumble, which sells it
+    // better than the flat version did.
     {
       id: 'shimmer',
       shape: { kind: 'circle', radius: h * 0.22 },
-      emission: { kind: 'rate', perSecond: 9 * vigour },
+      emission: { kind: 'rate', perSecond: 7 * vigour },
       lifetimeTicks: [18, 30],
       speed: [h * 0.5, h * 0.9],
       spreadRadians: 0.3,
       acceleration: { x: 0, y: h * 0.6, z: 0 },
       turbulence: { amplitude: h * 0.7, frequency: 0.06 },
-      size: { keys: [[0, h * 0.3], [1, h * 0.62]] },
-      alpha: { keys: [[0, 0.22], [0.5, 0.16], [1, 0]] },
+      angularVelocity: [-1, 1],
+      size: { keys: [[0, h * 0.28], [1, h * 0.6]] },
+      alpha: { keys: [[0, 0.14], [0.5, 0.1], [1, 0]] },
       color: { stops: [[0, core], [1, body]] },
-      render: 'axis-billboard',
-      blend: 'dither-cutout',
-      sprite: { sheet: 'glow', frames: 1, fps: 0 },
+      render: 'mesh',
+      mesh: { shape: 'blob' },
+      blend: 'alpha',
       offset: { x: 0, y: h * 0.55, z: 0 },
       worldSpace: world,
     },
@@ -144,19 +175,23 @@ export function fire(params: FireParams): EffectDefinition {
     emitters.push({
       id: 'smoke',
       shape: { kind: 'circle', radius: h * 0.2 },
-      emission: { kind: 'rate', perSecond: 5 * vigour },
-      lifetimeTicks: [90, 170],
-      speed: [h * 0.3, h * 0.6],
-      spreadRadians: 0.35,
+      emission: { kind: 'rate', perSecond: 4.5 * vigour },
+      lifetimeTicks: [70, 130],
+      // Fast enough that the column *travels*. The first cut rose at a third of
+      // this and lived twice as long, and the result was not a column at all --
+      // a dozen thirty-unit blobs hanging in the same place above the fire,
+      // which at this resolution is one grey mass with the flame lost inside it.
+      speed: [h * 0.5, h * 0.9],
+      spreadRadians: 0.3,
       drag: 0.5,
-      acceleration: { x: 0, y: h * 0.35, z: 0 },
+      acceleration: { x: 0, y: h * 0.7, z: 0 },
       turbulence: { amplitude: h * 0.8, frequency: 0.02 },
-      size: { keys: [[0, h * 0.3], [1, h * 1.1]] },
-      alpha: { keys: [[0, 0], [0.2, 0.5], [0.7, 0.35], [1, 0]] },
+      size: { keys: [[0, h * 0.3], [1, h * 0.78]] },
+      alpha: { keys: [[0, 0], [0.2, 0.34], [0.7, 0.24], [1, 0]] },
       color: { stops: [[0, 'smokeLight'], [1, 'smokeDark']] },
-      render: 'axis-billboard',
-      blend: 'dither-cutout',
-      sprite: { sheet: 'puff', frames: 8, fps: 6, randomStart: true },
+      render: 'mesh',
+      mesh: { shape: 'blob' },
+      blend: 'alpha',
       offset: { x: 0, y: h * 0.9, z: 0 },
       angularVelocity: [-0.5, 0.5],
       worldSpace: world,
@@ -248,12 +283,17 @@ export function puff(params: PuffParams): EffectDefinition {
         drag: 1.6,
         acceleration: { x: 0, y: params.groundHugging ? 0 : params.rise * 0.5, z: 0 },
         turbulence: { amplitude: params.rise * 1.2 * churn, frequency: 0.03 },
-        size: { keys: [[0, params.size * 0.6], [0.4, params.size], [1, params.size * 1.4]] },
-        alpha: { keys: [[0, 0], [0.15, 0.7], [0.65, 0.5], [1, 0]] },
+        size: { keys: [[0, params.size * 0.55], [0.4, params.size], [1, params.size * 1.5]] },
+        // Semi-transparent, so overlapping blobs build a mass with depth in it
+        // rather than a stack of equally-opaque cards.
+        alpha: { keys: [[0, 0], [0.15, 0.55], [0.65, 0.42], [1, 0]] },
         color: params.color,
-        render: params.groundHugging ? 'ground-quad' : 'axis-billboard',
-        blend: 'dither-cutout',
-        sprite: { sheet: 'puff', frames: 8, fps: 8, randomStart: true },
+        // A solid, always -- including the ground-hugging clouds. A poison cloud
+        // is a *volume* an ability owns, and a flat quad on the floor is a decal
+        // of one.
+        render: 'mesh',
+        mesh: { shape: 'blob' },
+        blend: 'alpha',
         angularVelocity: [-0.8 * churn, 0.8 * churn],
       },
     ],
@@ -572,9 +612,9 @@ export const LIBRARY: readonly EffectDefinition[] = [
         size: { keys: [[0, 6], [1, 13]] },
         alpha: { keys: [[0, 0.6], [1, 0]] },
         color: { stops: [[0, 'dustPale'], [1, 'dustStone']] },
-        render: 'axis-billboard',
-        blend: 'dither-cutout',
-        sprite: { sheet: 'puff', frames: 8, fps: 10, randomStart: true },
+        render: 'mesh',
+        mesh: { shape: 'blob' },
+        blend: 'alpha',
       },
     ],
   },
@@ -702,11 +742,11 @@ export const LIBRARY: readonly EffectDefinition[] = [
         spreadRadians: 1.4,
         drag: 2.2,
         size: { keys: [[0, 9], [1, 22]] },
-        alpha: { keys: [[0, 0], [0.15, 0.65], [1, 0]] },
+        alpha: { keys: [[0, 0], [0.15, 0.6], [1, 0]] },
         color: { stops: [[0, 'dustPale'], [1, 'dustStone']] },
-        render: 'axis-billboard',
-        blend: 'dither-cutout',
-        sprite: { sheet: 'puff', frames: 8, fps: 9, randomStart: true },
+        render: 'mesh',
+        mesh: { shape: 'blob' },
+        blend: 'alpha',
       },
     ],
   },
