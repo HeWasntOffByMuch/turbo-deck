@@ -129,6 +129,28 @@ meets the bone.
 - Presentation-only: the same seed and inputs with weapons drawn and with them
   suppressed produce identical authoritative state.
 
+## What building it turned up
+
+Three things only the probes could have found, each recorded here because each
+was invisible from every other angle:
+
+- **A unit's skeleton document was never resolving.** `unit-assets.ts` matched
+  the reference path literally, so the pig's `../pig.skeleton.json` was compared
+  against a bundler key that has no `..` in it and found nothing. Silent by
+  construction — an absent document only means "skip the checks that needed
+  it" — and it had already cost the pig its root bone. It would have cost it
+  every socket too.
+- **`drawnHeight()` was measuring a transform glTF says to ignore.** A skinned
+  mesh's vertices live in skeleton space and its node matrix is not applied;
+  `Box3.setFromObject` applies it anyway. On the pig the two disagree by 3×
+  (17.9 against a real 55.65), and that number was already hanging the health
+  bar — which is why the bar sat across the pig's back rather than over its
+  head. Fixed by measuring a skinned body through its skeleton.
+- **Honest thicknesses are invisible.** Built at real proportions the weapons
+  were present, correctly placed and correctly sized, and about one pixel wide
+  — the one outcome indistinguishable from never having built them. Flattened
+  to roughly the 10:1 shaft `projectile-shape.ts` already settled on for arrows.
+
 ## Out of scope
 
 - **Off-hand, armour, trinkets.** One slot, one bit. The other slots replicate
@@ -142,3 +164,6 @@ meets the bone.
   leaves behind, and a melee equivalent is its own decision.
 - **The 5° bind-pose asymmetry** spec 120 surfaced. A weapon hangs off one hand
   and does not care that the other one sits slightly differently.
+- **Where a weapon points.** It hangs off the hand at the bone's own
+  orientation, which is what the socket means. A per-weapon grip rotation is a
+  tuning question, and one worth having a second unit before answering.

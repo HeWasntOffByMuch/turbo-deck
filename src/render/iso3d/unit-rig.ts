@@ -23,6 +23,7 @@
  */
 
 import * as THREE from 'three';
+import { boneKey } from '../../units/naming.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import {
   rootMotionMessage,
@@ -49,6 +50,13 @@ export interface UnitAssets {
    * wrong root means either a silent miss or a stripped track the rig needed.
    */
   readonly rootBone?: string;
+  /**
+   * Socket id -> the bone name the skeleton document gives it (spec 121).
+   *
+   * As the document spells it. Resolving it against what three actually built
+   * is `attach`'s job, because this is the half that knows.
+   */
+  readonly sockets?: Readonly<Record<string, string>>;
 }
 
 /** What a body looks like once it is standing there. */
@@ -174,6 +182,39 @@ function reachOf(rest: ReadonlyMap<string, readonly [number, number, number]>): 
   return reach;
 }
 
+/**
+ * Matches each socket's document bone name to a node three actually built.
+ *
+ * Through `boneKey` (spec 120), because `mixamorig:RightHand` in a file is
+ * `mixamorigRightHand` in the scene. Matching raw strings finds nothing,
+ * attaches nothing, and reports a perfectly clean "this rig has no sockets" --
+ * the precise failure this codebase has already shipped twice, once for the
+ * root bone and once for the whole naming table.
+ *
+ * A socket naming a bone the rig does not have is left out rather than faked,
+ * so `attachable` answers where something can actually be hung.
+ */
+export function resolveSocketNodes(
+  model: THREE.Object3D,
+  socketBones: Readonly<Record<string, string>>,
+): Map<string, THREE.Object3D> {
+  const byKey = new Map<string, THREE.Object3D>();
+  model.traverse((node) => {
+    if (node.name === '') return;
+    const key = boneKey(node.name);
+    // First wins: a rig that carries two nodes normalising to one name is
+    // giving the same answer twice, and the earlier is the one nearer the root.
+    if (!byKey.has(key)) byKey.set(key, node);
+  });
+
+  const resolved = new Map<string, THREE.Object3D>();
+  for (const [id, bone] of Object.entries(socketBones)) {
+    const node = byKey.get(boneKey(bone));
+    if (node !== undefined) resolved.set(id, node);
+  }
+  return resolved;
+}
+
 export class UnitRig {
   /** The thing to add to a scene. Always present, empty until `load` resolves. */
   readonly object = new THREE.Group();
@@ -192,6 +233,12 @@ export class UnitRig {
   private restPose = new Map<string, readonly [number, number, number]>();
   /** How far the rig reaches in its own units, which sets what counts as travel. */
   private reach = 0;
+  /** Socket id -> the bone name as the *document* spells it. */
+  private socketBones: Readonly<Record<string, string>> = {};
+  /** Socket id -> the node in the loaded rig, resolved once per load. */
+  private readonly socketNodes = new Map<string, THREE.Object3D>();
+  /** What is currently hanging off each socket, so it can be taken back off. */
+  private readonly attached = new Map<string, THREE.Object3D>();
 
   /** Why the load failed, or null. */
   get error(): string | null {
@@ -215,6 +262,71 @@ export class UnitRig {
 
   get loaded(): boolean {
     return this.model !== null;
+  }
+
+  /**
+   * Socket ids this rig can actually attach to.
+   *
+   * Resolved against the loaded bones rather than listed off the document, so
+   * this answers "where can something be hung" and not "what did somebody
+   * write down". A socket naming a bone the rig does not have is absent here.
+   */
+  get attachable(): readonly string[] {
+    return [...this.socketNodes.keys()];
+  }
+
+  /**
+   * What is currently hanging off `socketId`, or null.
+   *
+   * So a caller can free what it built: `attach` takes the previous occupant
+   * out of the scene graph and deliberately does not dispose it, because a rig
+   * has no business deciding whether something it was handed is still wanted.
+   */
+  attachedTo(socketId: string): THREE.Object3D | null {
+    return this.attached.get(socketId) ?? null;
+  }
+
+  /**
+   * Hangs `object` off `socketId`, replacing whatever was there. Null empties it.
+   *
+   * False means nothing happened: no such socket, or the rig has not loaded.
+   *
+   * The object is authored in **world units**, like a prop or a projectile, and
+   * counter-scaled here. A rig imported at ~32x scales its whole bone chain, so
+   * a sword parented raw comes out thirty-two times too long -- and it is the
+   * rig that knows its own import scale, not the thing being attached.
+   */
+  attach(socketId: string, object: THREE.Object3D | null): boolean {
+    const node = this.socketNodes.get(socketId);
+    if (node === undefined) return false;
+
+    const previous = this.attached.get(socketId);
+    if (previous) {
+      node.remove(previous);
+      this.attached.delete(socketId);
+    }
+    if (object === null) return true;
+
+    // The bone's own world scale, which is the import scale and whatever else
+    // the chain applies. Measured rather than assumed: `fitToHeight` can have
+    // multiplied it since load, and a rig with a scaled bone is a rig somebody
+    // will build one day.
+    const scale = new THREE.Vector3();
+    node.getWorldScale(scale);
+    const inverse = (axis: number): number => (axis > 1e-6 ? 1 / axis : 1);
+    object.scale.set(inverse(scale.x), inverse(scale.y), inverse(scale.z));
+
+    node.add(object);
+    this.attached.set(socketId, object);
+    return true;
+  }
+
+  private resolveSockets(model: THREE.Object3D): void {
+    this.socketNodes.clear();
+    this.attached.clear();
+    for (const [id, node] of resolveSocketNodes(model, this.socketBones)) {
+      this.socketNodes.set(id, node);
+    }
   }
 
   /**
@@ -251,6 +363,8 @@ export class UnitRig {
       // the rest pose is no longer readable off the rig at all.
       this.restPose = readRestPose(model);
       this.reach = reachOf(this.restPose);
+      this.socketBones = assets.sockets ?? {};
+      this.resolveSockets(model);
       this.mixer = new THREE.AnimationMixer(model);
       this.actions.clear();
       this.clipDurations.clear();
@@ -417,11 +531,47 @@ export class UnitRig {
    * Measured off the model as drawn -- import scale already applied -- because
    * that is the number anything hung above its head needs. Zero when nothing
    * has loaded, so a caller can tell "not yet" from "flat".
+   *
+   * A skinned body is measured through its **skeleton**, not through the mesh
+   * node's own matrix. glTF says a skinned mesh's node transform is ignored
+   * when skinning -- the vertices live in skeleton space -- and three obeys
+   * that when it draws, while `Box3.setFromObject` applies the matrix anyway.
+   * On a rig that carries one, those two disagree: the pig's box says 17.9
+   * units against a body really drawn at its canonical 55.65, a third of its
+   * true size. That number was already being used to hang the health bar, which
+   * is why the bar sat across the pig's back instead of over its head, and it
+   * would have sized every held weapon to a third as well.
    */
   drawnHeight(): number {
     if (!this.model) return 0;
+    const skinned = this.skinnedHeight();
+    if (skinned > 0) return skinned;
     const box = new THREE.Box3().setFromObject(this.model);
     const height = box.max.y - box.min.y;
+    return Number.isFinite(height) && height > 0 ? height : 0;
+  }
+
+  /**
+   * The height of a skinned body, in the space it is actually drawn in.
+   *
+   * The geometry's own bounds carry the mesh's true proportions; the scale that
+   * reaches the screen is the skeleton's, since that is what the vertices are
+   * transformed by. Zero when there is no skinned mesh, so `drawnHeight` can
+   * fall back to the plain box for a prop.
+   */
+  private skinnedHeight(): number {
+    let height = 0;
+    this.model?.traverse((object) => {
+      if (!(object instanceof THREE.SkinnedMesh)) return;
+      const geometry = object.geometry;
+      if (!geometry.boundingBox) geometry.computeBoundingBox();
+      const box = geometry.boundingBox;
+      const root = object.skeleton.bones[0];
+      if (!box || !root) return;
+      const scale = new THREE.Vector3();
+      root.getWorldScale(scale);
+      height = Math.max(height, (box.max.y - box.min.y) * Math.abs(scale.y));
+    });
     return Number.isFinite(height) && height > 0 ? height : 0;
   }
 

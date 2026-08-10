@@ -70,6 +70,8 @@ import {
   SHADOW_MAP_SIZE,
   type HorizonShadow,
 } from '../shadow.js';
+import { buildWeapon, disposeWeapon } from './weapon-mesh.js';
+import { weaponKindFor } from './weapon-shape.js';
 import { RetroPass } from '../retro-pass.js';
 import { HikeBuffers } from '../hike-buffers.js';
 import { HikeEdges } from '../hike-edges.js';
@@ -212,6 +214,14 @@ interface DrivenUnit {
   readonly machine: UnitMachine;
   /** The document behind the machine, for questions about what it authored. */
   readonly def: UnitDef;
+  /**
+   * The item id currently hanging off `weapon.main`, so the mesh is rebuilt on
+   * a change and not on a frame (spec 121).
+   *
+   * `null` means "not yet looked at", which is distinct from `''` -- the latter
+   * is a body that really is empty-handed and has been dealt with.
+   */
+  heldItemId: string | null;
   /** Last tick's facts, so a cast's first tick can be told from its fifth. */
   previous: UnitFacts | null;
   /** Last drawn position, for the speed the blend tree reads. */
@@ -1139,6 +1149,50 @@ export class WorldScene {
       this.inFrustum(unit.rig.object),
     );
     if (shouldApply(cadence, unit.machine.tick, entity.id)) unit.rig.applyPoses(unit.machine.poses());
+
+    this.syncWeapon(unit, entity.mainHandId);
+  }
+
+  /**
+   * Puts the right weapon in the hand, and only when it changed (spec 121).
+   *
+   * Presentation start to finish: the item id is authoritative and arrives on
+   * the delta, and nothing decided here is sent anywhere or read by the sim.
+   *
+   * Deferred rather than skipped while the mesh is still loading -- the rig has
+   * no bones until the `.glb` lands, so `attach` would refuse and the body would
+   * stay empty-handed for the rest of its life. Leaving `heldItemId` as null
+   * means the next frame tries again.
+   */
+  private syncWeapon(unit: DrivenUnit, itemId: string): void {
+    if (unit.heldItemId === itemId) return;
+    if (!unit.rig.loaded) return;
+
+    const previous = unit.rig.attachedTo('weapon.main');
+    const kind = itemId === '' ? null : weaponKindFor(itemId);
+    if (kind === null) {
+      if (unit.rig.attach('weapon.main', null) && previous) disposeWeapon(previous);
+      unit.heldItemId = itemId;
+      return;
+    }
+
+    // Sized against the body it hangs on, measured (spec 121). The canonical
+    // height in the document is not what a unit is drawn at -- the pig is
+    // authored at 55.65 and drawn under 18 -- so a weapon built against the
+    // constant is longer than the animal carrying it.
+    const height = unit.rig.drawnHeight();
+    if (!(height > 0)) return;
+
+    const weapon = buildWeapon(kind, height);
+    if (!unit.rig.attach('weapon.main', weapon)) {
+      // No such socket on this rig: a unit with no hand cannot hold anything,
+      // which is a fact about the rig rather than an error.
+      disposeWeapon(weapon);
+      unit.heldItemId = itemId;
+      return;
+    }
+    if (previous) disposeWeapon(previous);
+    unit.heldItemId = itemId;
   }
 
   /**
@@ -1151,17 +1205,38 @@ export class WorldScene {
    * distinguishes "loaded", "has the right skeleton" and "is being driven";
    * `view.ts` puts it on a data attribute and nothing in the game reads it.
    */
-  authoredUnitReadout(): { readonly loaded: number; readonly bones: number; readonly states: string } {
+  authoredUnitReadout(): {
+    readonly loaded: number;
+    readonly bones: number;
+    readonly states: string;
+    readonly weapons: string;
+  } {
     let loaded = 0;
     let bones = 0;
     const states: string[] = [];
+    // What is actually parented into a hand, read off the scene graph rather
+    // than off the item id that asked for it (spec 121) -- the id surviving the
+    // wire and the mesh reaching the bone are two different claims, and this
+    // readout exists to tell them apart.
+    const weapons: string[] = [];
     for (const body of this.bodies.values()) {
       if (!body.unit?.rig.loaded) continue;
       loaded += 1;
       bones = Math.max(bones, body.unit.bones);
       states.push(`${body.unit.machine.stateId}@${body.unit.machine.tick}`);
+      const held = body.unit.rig.attachedTo('weapon.main');
+      if (held) {
+        // With the size it is actually drawn at, in world units. "Attached" and
+        // "visible" are different claims: a weapon parented to the right bone
+        // and scaled to nothing is attached, and looks from every readout like
+        // a success.
+        held.updateMatrixWorld(true);
+        const box = new THREE.Box3().setFromObject(held);
+        const size = box.getSize(new THREE.Vector3());
+        weapons.push(`${held.name}@${Math.max(size.x, size.y, size.z).toFixed(1)}`);
+      }
     }
-    return { loaded, bones, states: states.sort().join(',') };
+    return { loaded, bones, states: states.sort().join(','), weapons: weapons.sort().join(',') };
   }
 
   /** Whether a body is anywhere the camera can see, for the skinning skip. */
@@ -1330,6 +1405,7 @@ export class WorldScene {
         def: authoredUnit.unit,
         previous: null,
         previousPosition: null,
+        heldItemId: null,
         speed: STOPPED,
         blendSpeed: 0,
         bones: 0,

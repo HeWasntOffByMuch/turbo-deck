@@ -75,11 +75,33 @@ export const ASSET_MANIFEST_HASH: string = MANIFEST.hash;
  * a change to either side's base cannot silently resolve to nothing.
  */
 function lookup<T>(table: Record<string, T>, path: string): T | undefined {
-  const suffix = `/assets/units/${path}`;
+  const suffix = normalizeRefPath(`/assets/units/${path}`);
   for (const [key, value] of Object.entries(table)) {
     if (key.endsWith(suffix)) return value;
   }
   return undefined;
+}
+
+/**
+ * Collapses `a/../b` in a reference, because the bundler's keys have none.
+ *
+ * A unit in its own directory refers to its family's skeleton as
+ * `../pig.skeleton.json`, which is correct and is what the validator resolves.
+ * The glob's keys are already-normalised absolute paths, so matching the raw
+ * string against them compares `.../pig_a_pose_full/../pig.skeleton.json` to
+ * `.../pig.skeleton.json` and finds nothing -- and finding nothing here is
+ * silent, because an absent skeleton document only means "skip the checks that
+ * needed it". It cost the pig its root bone and, once there were any, its
+ * sockets: a body that cannot resolve its own skeleton cannot hold anything.
+ */
+function normalizeRefPath(path: string): string {
+  const parts: string[] = [];
+  for (const segment of path.split('/')) {
+    if (segment === '.' || segment === '') continue;
+    if (segment === '..') parts.pop();
+    else parts.push(segment);
+  }
+  return `/${parts.join('/')}`;
 }
 
 const registry = new Map<AuthoredUnitId, AuthoredUnit>();
@@ -96,6 +118,21 @@ const refusals = new Map<AuthoredUnitId, string>();
  */
 function rootBoneOf(doc: unknown): string | undefined {
   return validateSkeleton(doc).value?.bones.find((bone) => bone.parent === null)?.name;
+}
+
+/**
+ * The rig's sockets, as the skeleton document spells their bones (spec 121).
+ *
+ * Handed on as written and resolved against the loaded rig by `UnitRig`, for
+ * the same reason the root bone is: three sanitises `mixamorig:RightHand` to
+ * `mixamorigRightHand` when it builds the scene, so a document name matches no
+ * node. Normalising here instead would put the rule in the wrong place -- the
+ * only thing that knows what three actually built is the thing holding it.
+ */
+function socketsOf(doc: unknown): Readonly<Record<string, string>> | undefined {
+  const skeleton = validateSkeleton(doc).value;
+  if (!skeleton || skeleton.sockets.length === 0) return undefined;
+  return Object.fromEntries(skeleton.sockets.map((socket) => [socket.id, socket.bone]));
 }
 
 for (const entry of MANIFEST.units) {
@@ -134,6 +171,7 @@ for (const entry of MANIFEST.units) {
 
   const skeletonDoc = lookup(jsonDocs, `${dir}${unit.skeletonRef}`)?.default;
   const rootBone = skeletonDoc === undefined ? undefined : rootBoneOf(skeletonDoc);
+  const sockets = skeletonDoc === undefined ? undefined : socketsOf(skeletonDoc);
 
   registry.set(unit.id, {
     unit,
@@ -147,6 +185,7 @@ for (const entry of MANIFEST.units) {
       // Spread rather than assigned: absent means "do not check", and under
       // `exactOptionalPropertyTypes` a present `undefined` is a different thing.
       ...(rootBone === undefined ? {} : { rootBone }),
+      ...(sockets === undefined ? {} : { sockets }),
     },
   });
 }

@@ -197,12 +197,13 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   let lastUnitReadout = '';
   function publishUnitReadout(): void {
     const readout = scene.authoredUnitReadout();
-    const text = `${readout.loaded}:${readout.bones}:${readout.states}`;
+    const text = `${readout.loaded}:${readout.bones}:${readout.states}:${readout.weapons}`;
     if (text === lastUnitReadout) return;
     lastUnitReadout = text;
     root.dataset['authoredUnits'] = String(readout.loaded);
     root.dataset['authoredBones'] = String(readout.bones);
     root.dataset['authoredStates'] = readout.states;
+    root.dataset['authoredWeapons'] = readout.weapons;
   }
 
   const hud = createHud((x, y, lift) => scene.projectPoint(x, y, lift));
