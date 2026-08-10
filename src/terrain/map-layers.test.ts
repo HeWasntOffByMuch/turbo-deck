@@ -36,7 +36,7 @@ function chunkAt(cx: number, cz: number, height: number): MapChunk {
   };
 }
 
-function layer(id: string, height: number, baseY: number, chunks: readonly MapChunk[]): MapLayer {
+function layer(id: string, baseY: number, chunks: readonly MapChunk[]): MapLayer {
   return {
     id,
     seed: 1,
@@ -54,21 +54,21 @@ function doc(): MapDocument {
     seed: 1,
     grid: { cellSize: CELL, chunkCells: CHUNK_CELLS },
     arena: { minX: 0, minZ: 0, maxX: SPAN, maxZ: SPAN },
-    layers: [layer(GROUND, 0, -10, [chunkAt(0, 0, 0)])],
+    layers: [layer(GROUND, -10, [chunkAt(0, 0, 0)])],
   };
 }
 
 describe('adding a layer', () => {
   it('takes one that was not in the document', () => {
     const store = new MapChunkStore(doc());
-    expect(store.addLayer(layer('rock-1', 50, -5, [chunkAt(0, 0, 50)]))).toBe(true);
+    expect(store.addLayer(layer('rock-1', -5, [chunkAt(0, 0, 50)]))).toBe(true);
     expect(store.layerIds).toEqual([GROUND, 'rock-1']);
     expect(store.chunkCount('rock-1')).toBe(1);
   });
 
   it('refuses an id that is taken, rather than dropping the chunks behind it', () => {
     const store = new MapChunkStore(doc());
-    expect(store.addLayer(layer(GROUND, 99, -5, []))).toBe(false);
+    expect(store.addLayer(layer(GROUND, -5, []))).toBe(false);
     // The ground's own chunk is still there, which is the point of refusing.
     expect(store.chunkCount(GROUND)).toBe(1);
     expect(store.cornerHeight(GROUND, 0, 0)).toBe(0);
@@ -76,7 +76,7 @@ describe('adding a layer', () => {
 
   it('survives the save path, which is where it used to be dropped', () => {
     const store = new MapChunkStore(doc());
-    store.addLayer(layer('rock-1', 50, -5, [chunkAt(0, 0, 50)]));
+    store.addLayer(layer('rock-1', -5, [chunkAt(0, 0, 50)]));
 
     const saved = parseMap(serializeMap(store.toDocument()));
     expect(saved.layers.map((l) => l.id)).toEqual([GROUND, 'rock-1']);
@@ -87,7 +87,7 @@ describe('adding a layer', () => {
 
   it('is sampled by the world it was added to, taking the higher ground', () => {
     const store = new MapChunkStore(doc());
-    store.addLayer(layer('rock-1', 50, -5, [chunkAt(0, 0, 50)]));
+    store.addLayer(layer('rock-1', -5, [chunkAt(0, 0, 50)]));
     // Reloaded rather than read off the store handed out earlier: the save path
     // is what the server and every client actually see.
     expect(loadMap(store.toDocument()).world.heightAt(SPAN / 2, SPAN / 2)).toBe(50);
@@ -95,7 +95,7 @@ describe('adding a layer', () => {
 
   it('does not disturb a layer added after it when chunks arrive', () => {
     const store = new MapChunkStore(doc());
-    store.addLayer(layer('rock-1', 50, -5, []));
+    store.addLayer(layer('rock-1', -5, []));
     expect(store.insertChunk('rock-1', chunkAt(1, 0, 50))).toBe(true);
     expect(store.chunkCount('rock-1')).toBe(1);
     expect(store.chunkCount(GROUND)).toBe(1);
@@ -105,7 +105,7 @@ describe('adding a layer', () => {
 describe('removing a layer', () => {
   it('drops it and everything it held', () => {
     const store = new MapChunkStore(doc());
-    store.addLayer(layer('rock-1', 50, -5, [chunkAt(0, 0, 50)]));
+    store.addLayer(layer('rock-1', -5, [chunkAt(0, 0, 50)]));
     expect(store.removeLayer('rock-1')).toBe(true);
     expect(store.layerIds).toEqual([GROUND]);
     expect(store.chunkCount('rock-1')).toBe(0);
@@ -114,7 +114,7 @@ describe('removing a layer', () => {
   it('stays removed through a save, rather than coming back off the document', () => {
     const start: MapDocument = {
       ...doc(),
-      layers: [layer(GROUND, 0, -10, [chunkAt(0, 0, 0)]), layer('rock-1', 50, -5, [chunkAt(0, 0, 50)])],
+      layers: [layer(GROUND, -10, [chunkAt(0, 0, 0)]), layer('rock-1', -5, [chunkAt(0, 0, 50)])],
     };
     const store = new MapChunkStore(start);
     expect(store.removeLayer('rock-1')).toBe(true);
@@ -132,9 +132,9 @@ describe('removing a layer', () => {
     const start: MapDocument = {
       ...doc(),
       layers: [
-        layer(GROUND, 0, -10, [chunkAt(0, 0, 0)]),
-        layer('rock-1', 50, -5, [chunkAt(0, 0, 50)]),
-        layer('rock-2', 90, 45, [chunkAt(0, 0, 90)]),
+        layer(GROUND, -10, [chunkAt(0, 0, 0)]),
+        layer('rock-1', -5, [chunkAt(0, 0, 50)]),
+        layer('rock-2', 45, [chunkAt(0, 0, 90)]),
       ],
     };
     const store = new MapChunkStore(start);
