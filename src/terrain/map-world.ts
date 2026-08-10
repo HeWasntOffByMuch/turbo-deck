@@ -6,6 +6,7 @@ import {
   quantize,
   type MapChunk,
   type MapDocument,
+  type MapLayer,
   type MapMarker,
   type MapPart,
   type MapPoint,
@@ -280,6 +281,46 @@ export class MapChunkStore {
       markers: chunk.markers.map((m) => ({ ...m, x: originX + m.x, z: originZ + m.z })),
       nav: chunk.nav === null ? null : Uint8Array.from(chunk.nav),
     };
+  }
+
+  /**
+   * Add a layer after construction (spec 121).
+   *
+   * A formation is a layer, and the editor makes one every time somebody draws
+   * a tier -- so a store has to be able to gain one the same way it gains a
+   * chunk. The new layer goes on the end, which is where `toDocument` will emit
+   * it; layer order carries no meaning to `heightAt`, which takes a maximum
+   * over all of them.
+   *
+   * Returns false if the id is taken, rather than replacing: overwriting a
+   * layer would drop every chunk it held, and no caller wants that by accident.
+   */
+  addLayer(layer: MapLayer): boolean {
+    if (this.layers.has(layer.id)) return false;
+    const chunks = new Map<string, StoredChunk>();
+    for (const chunk of layer.chunks) chunks.set(key(chunk.cx, chunk.cz), this.storeChunk(chunk, layer.origin));
+    this.layers.set(layer.id, {
+      id: layer.id,
+      seed: layer.seed,
+      origin: layer.origin,
+      bounds: layer.bounds,
+      baseY: layer.baseY,
+      waterLevel: layer.waterLevel,
+      grid: grid(chunks.values(), layer.origin, layer.bounds, this.cellSize),
+      chunks,
+    });
+    return true;
+  }
+
+  /**
+   * Drop a layer and everything it held (spec 121).
+   *
+   * The inverse of `addLayer`, and what undoing a formation is: carving its
+   * cells away empties its chunks, and an empty layer is one nobody wants left
+   * in the file. Returns false if there was no such layer.
+   */
+  removeLayer(layerId: string): boolean {
+    return this.layers.delete(layerId);
   }
 
   /**
@@ -970,9 +1011,13 @@ export class MapChunkStore {
       // Held here rather than read off `this.doc`, so a part added since
       // construction survives a save (spec 084).
       ...(this.partList.length === 0 ? {} : { parts: this.partList }),
-      layers: this.doc.layers.map((docLayer) => {
-        const layer = this.layers.get(docLayer.id);
-        if (!layer) return docLayer;
+      // The layers *held*, not the ones the document arrived with. A store can
+      // gain a layer after construction (spec 121's formations) and lose one,
+      // and mapping over the constructor's list would drop the first silently
+      // and resurrect the second -- the same failure the chunk list and the
+      // parts list each already had. Insertion order is document order, and
+      // `addLayer` appends.
+      layers: [...this.layers.values()].map((layer) => {
         return {
           id: layer.id,
           seed: layer.seed,
