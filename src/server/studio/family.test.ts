@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import provisional from '../../../assets/units/biped.skeleton.json' with { type: 'json' };
+import type { Skeleton as SkeletonDoc } from '../../units/types.js';
 import { DEFAULT_CANONICAL_HEIGHT } from '../../units/canonical-height.js';
 import { writeGlb } from '../../units/glb.js';
 import { buildReferenceUnit } from '../../units/reference-unit.js';
@@ -23,6 +23,30 @@ import type { Job } from './types.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const MANNEQUIN = join(repoRoot, 'assets', 'units', 'dev', 'mannequin.glb');
+
+/**
+ * A provisional family document, owned by this file.
+ *
+ * It used to import `assets/units/biped.skeleton.json`, which was provisional
+ * at the time -- and whose entire purpose is to *stop* being provisional the
+ * first time a real rig is measured into it. The day that happened these tests
+ * started exercising a filled-in document while still calling it provisional,
+ * and failed for a reason that had nothing to do with the code under test.
+ *
+ * A fixture that changes when the thing it describes succeeds is not a fixture.
+ * Built from the reference unit instead: mixamo bones, no bind pose.
+ */
+const provisional: SkeletonDoc = {
+  ...buildReferenceUnit(DEFAULT_CANONICAL_HEIGHT).skeleton,
+  id: 'biped',
+  boneBudget: { min: 15, max: 30 },
+  sockets: [
+    { id: 'weapon.main', bone: 'mixamorig:RightHand' },
+    { id: 'weapon.off', bone: 'mixamorig:LeftHand' },
+    { id: 'fx.body', bone: 'mixamorig:Spine2' },
+  ],
+  bindPose: null,
+};
 
 let dir: string;
 

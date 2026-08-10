@@ -3,7 +3,7 @@
   "formatVersion": 1,
   "id": "pig_a_pose_full",
   "meshRef": "pig_a_pose_full.glb",
-  "skeletonRef": "biped.skeleton.json",
+  "skeletonRef": "../biped.skeleton.json",
   "clipLibRef": "biped.core.cliplib.json",
   "provenance": {
     "tripoTaskIds": {

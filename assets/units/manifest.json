@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "hash": "932d9dddde0a94c6bea0d0cabcac6aa5bb038d12e7db38497a4dfd2cb49b7ffe",
+  "hash": "1da01af3bcccdca6e340df2d954b3618a6b009098283707c9c3abac3b15ef184",
   "builtStages": [],
   "units": [
     {
@@ -19,8 +19,8 @@
         },
         {
           "path": "dev/biped-dev.core.cliplib.json",
-          "sha256": "15301f536f3b55c9a639d257d799871df08445408ef7b1ab08161f3bf95eb744",
-          "bytes": 1293
+          "sha256": "cce76f3de68ac8ac8b9848097b363418588cedad12376cac9e50443ad78305f5",
+          "bytes": 1312
         },
         {
           "path": "dev/clips/idle.glb",
@@ -41,6 +41,52 @@
           "path": "dev/clips/slash.glb",
           "sha256": "7363a604ae3bd21adde6bf7f8a54e0926cbb507460f05f73d09cf600629fe885",
           "bytes": 5288
+        }
+      ]
+    },
+    {
+      "id": "pig_a_pose_full",
+      "family": "../biped",
+      "entries": [
+        {
+          "path": "pig_a_pose_full/pig_a_pose_full.unitdef.json",
+          "sha256": "1447e7fb75994fce5d98234e04e77ed3d85d1daf11c0c20b501aa2619e1ebc97",
+          "bytes": 2637
+        },
+        {
+          "path": "pig_a_pose_full/pig_a_pose_full.glb",
+          "sha256": "e057529ccbe46f28428bd5301198486d44798a5dd34511e44afe926198ab3140",
+          "bytes": 286792
+        },
+        {
+          "path": "pig_a_pose_full/biped.core.cliplib.json",
+          "sha256": "82dc86ffdf5d05115f84431fb60f6fd17354d831d2c7a39c406003b9cc3ed0c4",
+          "bytes": 870
+        },
+        {
+          "path": "pig_a_pose_full/clips/defeat_02.glb",
+          "sha256": "025c52b9d8eae5f49acb4aa48405f18ada9b6bbb63cd2ed3a786dddf563f69cd",
+          "bytes": 655520
+        },
+        {
+          "path": "pig_a_pose_full/clips/hurt.glb",
+          "sha256": "eb742b797a37fdd9cf2344d848f9afd92b5eabaaecbc3ebb7f6da1603e1883be",
+          "bytes": 871208
+        },
+        {
+          "path": "pig_a_pose_full/clips/idle.glb",
+          "sha256": "ccb1b5b56b96ada31dfd2ab8d28343ffc2e72c0aefccfa38b8f79c849a73bd27",
+          "bytes": 931400
+        },
+        {
+          "path": "pig_a_pose_full/clips/run.glb",
+          "sha256": "b5d408fcd5d03d1e88fa5eb5637196cf00995de070b0f202eb51f2f9e8184a9d",
+          "bytes": 366024
+        },
+        {
+          "path": "pig_a_pose_full/clips/walk.glb",
+          "sha256": "b07714c53c8bac566feb7714983838636962987ff71a360f4a2d68b071e8ca67",
+          "bytes": 409484
         }
       ]
     }
