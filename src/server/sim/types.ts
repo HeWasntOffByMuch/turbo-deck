@@ -155,6 +155,21 @@ export interface ServerEntity {
   readonly activityUntilTick: number;
   /** Earliest tick this entity may attack again. */
   readonly attackReadyTick: number;
+  /**
+   * What this body is holding in its main hand, or `''` for empty-handed
+   * (spec 121).
+   *
+   * The id and nothing else, like every other piece of content on an entity:
+   * what a `sword.keen` weighs and reaches is the item table's business, and
+   * what it looks like is the renderer's. Carried on the entity rather than
+   * looked up from the player session at send time, because the delta builder
+   * is handed entities and reaching past them into session state is how the
+   * pure half of the server stops being pure.
+   *
+   * Monsters hold `''` today. Nothing stops one holding a sword the moment a
+   * monster row says so.
+   */
+  readonly mainHandId: string;
   /** Body radius for collision. */
   readonly radius: number;
   /** Homing target for a monster; null when idle or player-controlled. */

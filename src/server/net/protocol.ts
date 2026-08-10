@@ -180,6 +180,8 @@ export const EntityField = {
   Health: 1 << 3,
   Activity: 1 << 4,
   Level: 1 << 5,
+  /** What the body is holding in its main hand (spec 121). */
+  MainHand: 1 << 6,
 } as const;
 
 export const EntityKind = {

@@ -161,6 +161,7 @@ as `MapInfo` and `MapChunk`.
 | `0x08` | Health | `f32 health` · `f32 maxHealth` |
 | `0x10` | Activity | `u8 activity` · `u32 activityUntilTick` |
 | `0x20` | Level | `varuint level` |
+| `0x40` | MainHand | `str itemId` |
 
 The bitmask *is* the delta: an entity that did not move contributes no position
 bytes, and an entity that did not change at all is not in the frame. A frame
@@ -168,6 +169,14 @@ with no upserts and no removals is not sent.
 
 `Spawn` is set the first time an entity enters this client's interest set, and
 carries identity so a client never has to infer a field it was not told.
+
+`MainHand` is what the body is holding (spec 121), as an item id and nothing
+else -- what it weighs is the item table's business and what it looks like is
+the renderer's. `''` means empty-handed, which is a value rather than a gap: a
+reader that treated it as "no news" would leave the last sword in the hand of
+somebody who just put it away. Every client that can see a body is told, not
+just its owner; `Stats` carries the owner's derived `basicAttackId` and has
+never said anything about anyone else.
 
 `kind`: `0` player, `1` monster, `2` prop, `3` projectile.
 `activity`: `0` idle, `1` moving, `2` casting, `3` stunned, `4` dead, `5` recovering.

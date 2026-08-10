@@ -317,6 +317,8 @@ export interface EntityDelta {
   readonly activity?: number;
   readonly activityUntilTick?: number;
   readonly level?: number;
+  /** Main-hand item id; `''` is empty-handed, which is a value and not a gap. */
+  readonly mainHandId?: string;
 }
 
 export interface DeltaMessage {
@@ -523,6 +525,7 @@ const FIELD_FACING = 1 << 2;
 const FIELD_HEALTH = 1 << 3;
 const FIELD_ACTIVITY = 1 << 4;
 const FIELD_LEVEL = 1 << 5;
+const FIELD_MAIN_HAND = 1 << 6;
 
 function writeEntityDelta(writer: BufferWriter, entity: EntityDelta): void {
   writer.varuint(entity.id).u8(entity.fields);
@@ -539,6 +542,9 @@ function writeEntityDelta(writer: BufferWriter, entity: EntityDelta): void {
     writer.u8(entity.activity ?? 0).u32(entity.activityUntilTick ?? 0);
   }
   if (entity.fields & FIELD_LEVEL) writer.varuint(entity.level ?? 1);
+  // `''` is a value here, not a gap: it is how a body says it is empty-handed,
+  // and a reader that treated it as absent would leave the last sword in place.
+  if (entity.fields & FIELD_MAIN_HAND) writer.str(entity.mainHandId ?? '');
 }
 
 function readEntityDelta(reader: BufferReader): EntityDelta {
@@ -553,6 +559,7 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
   let activity: number | undefined;
   let activityUntilTick: number | undefined;
   let level: number | undefined;
+  let mainHandId: string | undefined;
   if (fields & FIELD_SPAWN) {
     kind = reader.u8();
     typeId = reader.str();
@@ -570,6 +577,7 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
     activityUntilTick = reader.u32();
   }
   if (fields & FIELD_LEVEL) level = reader.varuint();
+  if (fields & FIELD_MAIN_HAND) mainHandId = reader.str();
   return {
     id,
     fields,
@@ -582,6 +590,7 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
     ...(activity === undefined ? {} : { activity }),
     ...(activityUntilTick === undefined ? {} : { activityUntilTick }),
     ...(level === undefined ? {} : { level }),
+    ...(mainHandId === undefined ? {} : { mainHandId }),
   };
 }
 

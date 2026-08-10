@@ -87,6 +87,7 @@ function blankEntity(id: number): ServerEntity {
     health: 1,
     level: 1,
     zoneId: 'wilds',
+    mainHandId: '',
     stats: {
       maxHealth: 1,
       moveSpeed: 0,
@@ -162,6 +163,8 @@ export interface SpawnSpec {
   readonly level?: number;
   readonly zoneId: string;
   readonly health?: number;
+  /** Main-hand item id, or absent for empty-handed (spec 121). */
+  readonly mainHandId?: string;
   /**
    * Who this body starts out fighting, if anyone (spec 076).
    *
@@ -189,6 +192,7 @@ export function spawnEntity(
     level: spec.level ?? 1,
     zoneId: spec.zoneId,
     stats: spec.stats,
+    mainHandId: spec.mainHandId ?? '',
     activity: ActivityValue.Idle,
     activityUntilTick: 0,
     attackReadyTick: 0,

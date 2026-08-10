@@ -76,6 +76,9 @@ export function asEntity(mirror: Mirror): ServerEntity {
     health: mirror.health,
     level: 1,
     zoneId: '',
+    // The client's mirror of itself is for the prediction rules, which do not
+    // consult what is in the hand; the real value rides the delta (spec 121).
+    mainHandId: '',
     stats: mirror.stats,
     activity: 0,
     activityUntilTick: 0,

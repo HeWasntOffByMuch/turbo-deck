@@ -559,6 +559,7 @@ export class GameServer implements AdminHost {
       position: session.record.position,
       facing: session.record.facing,
       stats: session.stats,
+      mainHandId: session.record.equipment.mainHand ?? '',
       radius: PLAYER_BODY_RADIUS,
       level: session.record.level,
       zoneId: session.record.currentZone,
@@ -720,6 +721,10 @@ export class GameServer implements AdminHost {
         this.state = replaceEntity(this.state, {
           ...entity,
           stats: session.stats,
+          // The same recalculation that re-derives the stats re-reads the hand:
+          // an equip is exactly when both change, and a body whose damage went
+          // up while its hands stayed empty is the bug this spec exists to end.
+          mainHandId: session.record.equipment.mainHand ?? '',
           health: Math.min(entity.health, session.stats.maxHealth),
           level: session.record.level,
         });

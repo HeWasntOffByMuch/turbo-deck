@@ -320,6 +320,39 @@ describe('inventory and skills are server-side only', () => {
     expect(after).toBeGreaterThan(before);
   });
 
+  it('tells everyone who can see you what you are holding, not just you (spec 121)', async () => {
+    // The half that `Stats` has never covered: it carries the owner's derived
+    // basicAttackId to the owner alone, so before this every other player was
+    // drawn empty-handed no matter what they had equipped.
+    const game = server();
+    const alice = new Client(game);
+    const bob = new Client(game);
+    await alice.hello('alice');
+    await bob.hello('bob');
+    const bobEntity = bob.of(ServerMessageType.Welcome)[0]?.entityId ?? -1;
+
+    broadcast(game);
+    // The starter sword, seen by somebody else, on first sight.
+    const held = (client: Client, id: number): string | undefined => {
+      let seen: string | undefined;
+      for (const delta of client.of(ServerMessageType.Delta)) {
+        for (const record of delta.upserts) {
+          if (record.id === id && record.mainHandId !== undefined) seen = record.mainHandId;
+        }
+      }
+      return seen;
+    };
+    expect(held(alice, bobEntity)).toBe('sword.worn');
+
+    alice.clear();
+    await game.receive(
+      bob.connection,
+      encodeClientMessage({ type: ClientMessageType.Equip, slot: 'mainHand', itemId: 'bow.hunting' }),
+    );
+    broadcast(game);
+    expect(held(alice, bobEntity)).toBe('bow.hunting');
+  });
+
   it('refuses an illegal skill allocation and changes nothing', async () => {
     const game = server();
     const client = new Client(game);

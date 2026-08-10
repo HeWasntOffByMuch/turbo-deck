@@ -238,7 +238,8 @@ describe('game message round-trip', () => {
             EntityField.Facing |
             EntityField.Health |
             EntityField.Activity |
-            EntityField.Level,
+            EntityField.Level |
+            EntityField.MainHand,
           kind: 0,
           typeId: 'player',
           position: { x: 1.5, y: -2.5, z: 0 },
@@ -248,9 +249,13 @@ describe('game message round-trip', () => {
           activity: 1,
           activityUntilTick: 30,
           level: 4,
+          mainHandId: 'sword.keen',
         },
         { id: 2, fields: EntityField.Position, position: { x: 10, y: 20, z: -1.5 } },
         { id: 3, fields: EntityField.Health, health: 5, maxHealth: 40 },
+        // Empty-handed on the wire: `''` has to survive as itself, since it is
+        // how putting a weapon away is said (spec 121).
+        { id: 5, fields: EntityField.MainHand, mainHandId: '' },
       ],
     };
     expect(decodeServerMessage(encodeServerMessage(message))).toEqual(message);

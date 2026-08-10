@@ -26,6 +26,7 @@ function entity(id: number, overrides: Partial<ServerEntity> = {}): ServerEntity
     kind: EntityKindValue.Monster,
     typeId: 'grazer',
     ownerPlayerId: null,
+    mainHandId: '',
     position: { x: 100, y: 200, z: 0 },
     facing: 0,
     health: 100,
@@ -71,7 +72,8 @@ describe('delta tracking', () => {
         EntityField.Facing |
         EntityField.Health |
         EntityField.Activity |
-        EntityField.Level,
+        EntityField.Level |
+        EntityField.MainHand,
     );
     expect(record?.typeId).toBe('grazer');
     expect(record?.kind).toBe(EntityKindValue.Monster);
@@ -127,6 +129,28 @@ describe('delta tracking', () => {
     expect(DeltaTracker.isEmpty(third)).toBe(true);
   });
 
+  it('sends a weapon change, and nothing when the weapon is unchanged (spec 121)', () => {
+    const tracker = new DeltaTracker();
+    tracker.build(1, 0, [entity(7, { mainHandId: 'sword.worn' })]);
+
+    // Standing still with the same sword is not news.
+    expect(tracker.build(2, 0, [entity(7, { mainHandId: 'sword.worn' })]).upserts).toHaveLength(0);
+
+    const switched = tracker.build(3, 0, [entity(7, { mainHandId: 'bow.hunting' })]);
+    expect(switched.upserts[0]?.fields).toBe(EntityField.MainHand);
+    expect(switched.upserts[0]?.mainHandId).toBe('bow.hunting');
+  });
+
+  it('sends putting a weapon away, rather than treating empty as no news', () => {
+    // The failure this guards: `''` read as "absent" leaves the last sword in
+    // the hand of somebody who just unequipped it.
+    const tracker = new DeltaTracker();
+    tracker.build(1, 0, [entity(7, { mainHandId: 'sword.worn' })]);
+    const emptied = tracker.build(2, 0, [entity(7, { mainHandId: '' })]);
+    expect(emptied.upserts[0]?.fields).toBe(EntityField.MainHand);
+    expect(emptied.upserts[0]?.mainHandId).toBe('');
+  });
+
   it('re-sends an entity in full when it comes back into view', () => {
     const tracker = new DeltaTracker();
     tracker.build(1, 0, [entity(7)]);
@@ -138,7 +162,8 @@ describe('delta tracking', () => {
         EntityField.Facing |
         EntityField.Health |
         EntityField.Activity |
-        EntityField.Level,
+        EntityField.Level |
+        EntityField.MainHand,
     );
   });
 

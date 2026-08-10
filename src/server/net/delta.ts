@@ -40,6 +40,7 @@ interface KnownEntity {
   activity: number;
   activityUntilTick: number;
   level: number;
+  mainHandId: string;
 }
 
 function snapshotOf(entity: ServerEntity): KnownEntity {
@@ -53,6 +54,7 @@ function snapshotOf(entity: ServerEntity): KnownEntity {
     activity: entity.activity,
     activityUntilTick: entity.activityUntilTick,
     level: entity.level,
+    mainHandId: entity.mainHandId,
   };
 }
 
@@ -83,7 +85,8 @@ export class DeltaTracker {
             EntityField.Facing |
             EntityField.Health |
             EntityField.Activity |
-            EntityField.Level,
+            EntityField.Level |
+            EntityField.MainHand,
           kind: entity.kind,
           typeId: entity.typeId,
           position: entity.position,
@@ -93,6 +96,7 @@ export class DeltaTracker {
           activity: entity.activity,
           activityUntilTick: entity.activityUntilTick,
           level: entity.level,
+          mainHandId: entity.mainHandId,
         });
         this.known.set(entity.id, next);
         continue;
@@ -120,6 +124,9 @@ export class DeltaTracker {
         fields |= EntityField.Activity;
       }
       if (next.level !== previous.level) fields |= EntityField.Level;
+      // A string compare, and it costs nothing: switching weapons is a keypress
+      // a person makes, not something that happens every tick.
+      if (next.mainHandId !== previous.mainHandId) fields |= EntityField.MainHand;
 
       if (fields === 0) continue;
 
@@ -135,6 +142,7 @@ export class DeltaTracker {
           ? { activity: entity.activity, activityUntilTick: entity.activityUntilTick }
           : {}),
         ...(fields & EntityField.Level ? { level: entity.level } : {}),
+        ...(fields & EntityField.MainHand ? { mainHandId: entity.mainHandId } : {}),
       });
       this.known.set(entity.id, next);
     }

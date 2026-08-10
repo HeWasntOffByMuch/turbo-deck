@@ -29,6 +29,8 @@ export interface ReplicatedEntity {
   readonly activity: number;
   readonly activityUntilTick: number;
   readonly level: number;
+  /** Main-hand item id, `''` when empty-handed (spec 121). */
+  readonly mainHandId: string;
 }
 
 export class ReplicatedWorld {
@@ -79,6 +81,7 @@ export class ReplicatedWorld {
           activity: record.activity ?? 0,
           activityUntilTick: record.activityUntilTick ?? 0,
           level: record.level ?? 1,
+          mainHandId: record.mainHandId ?? '',
         });
         continue;
       }
@@ -102,6 +105,9 @@ export class ReplicatedWorld {
           : {}),
         ...(record.fields & EntityField.Level && record.level !== undefined
           ? { level: record.level }
+          : {}),
+        ...(record.fields & EntityField.MainHand && record.mainHandId !== undefined
+          ? { mainHandId: record.mainHandId }
           : {}),
       });
     }
