@@ -526,7 +526,11 @@ export class StudioPipeline {
         () =>
           this.deps.client.retarget({
             sourceTaskId: source,
-            animations: [presetFor(intent)],
+            // Namespaced by creature for anything that is not a biped: a
+            // quadruped's walk is `preset:quadruped:walk`, and asking it for a
+            // bare `preset:walk` is asking a four-legged rig for a two-legged
+            // animation -- a paid call for the wrong clip at best.
+            animations: [presetFor(intent, job.rigType)],
             outFormat: job.params.outFormat,
           }),
         deadline,

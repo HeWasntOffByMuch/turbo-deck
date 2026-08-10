@@ -257,12 +257,22 @@ export const BIPED_ANIMATION_PRESETS: readonly string[] = [
 /**
  * A clip intent turned into the preset name the API wants.
  *
- * Just `preset:<name>` -- **not** namespaced by rig type. An earlier draft sent
- * `preset:biped:walk` on the strength of a third-party integration note; the
- * real API takes the bare form.
+ * A biped's presets are bare -- `preset:walk` -- and every other creature's are
+ * namespaced by its rig type: `preset:quadruped:walk`, `preset:hexapod:walk`,
+ * `preset:serpentine:march`. Both halves of that were learned the hard way and
+ * in opposite directions. An early draft namespaced *everything* on the
+ * strength of a third-party note and the biped calls were refused; this then
+ * sent everything bare, which is right for the only rig type anyone had
+ * generated and silently wrong for the first quadruped, where `preset:walk`
+ * asks a four-legged rig for a two-legged animation.
+ *
+ * Null is treated as a biped, matching {@link knownPresetsFor}: it is what the
+ * rig check falls back to when it names nothing, and it is the only rig type
+ * this project has a unit format for.
  */
-export function presetFor(intent: string): string {
-  return `preset:${intent}`;
+export function presetFor(intent: string, rigType: string | null = null): string {
+  if (rigType === null || rigType === 'biped') return `preset:${intent}`;
+  return `preset:${rigType}:${intent}`;
 }
 
 /**

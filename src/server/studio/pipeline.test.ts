@@ -248,11 +248,24 @@ describe('the happy path', () => {
     expect(harness.fake.callsTo('/animations/retarget')).toHaveLength(7);
   });
 
-  it('sends a bare preset name, not one namespaced by rig type', () => {
-    // An earlier draft sent `preset:biped:walk` on the strength of a third-party
-    // integration note. The real API takes `preset:walk`, and the rig type is
-    // read for a different purpose entirely: choosing which vocabulary the names
-    // are checked against.
+  it('sends a biped\'s presets bare', () => {
+    // An earlier draft namespaced everything -- `preset:biped:walk` -- on the
+    // strength of a third-party integration note, and the real API refused it.
+    scriptSuccess(harness.fake);
+    seedJob(harness);
+    return harness.pipeline.run('job-1').then(() => {
+      const sent = harness.fake
+        .callsTo('/animations/retarget')
+        .map((call) => (call.body as { animations: string[] }).animations);
+      expect(sent).toEqual([['preset:idle'], ['preset:run']]);
+    });
+  });
+
+  it('namespaces every other creature\'s', () => {
+    // And then this file over-corrected: bare for *everything*, which is right
+    // for the only rig type anyone had generated and silently wrong for the
+    // first quadruped, where `preset:walk` asks a four-legged rig for a
+    // two-legged animation. The documented form is `preset:quadruped:walk`.
     scriptSuccess(harness.fake);
     harness.fake.script('/animations/rig-check', { creditsConsumed: 0, riggable: true, rigType: 'quadruped' });
     seedJob(harness);
@@ -260,7 +273,7 @@ describe('the happy path', () => {
       const sent = harness.fake
         .callsTo('/animations/retarget')
         .map((call) => (call.body as { animations: string[] }).animations);
-      expect(sent).toEqual([['preset:idle'], ['preset:run']]);
+      expect(sent).toEqual([['preset:quadruped:idle'], ['preset:quadruped:run']]);
     });
   });
 

@@ -443,6 +443,11 @@ describe('the animation vocabulary', () => {
   // clip, so a name the API does not know is charged for and returns nothing.
   it('sends a bare preset name', () => {
     expect(presetFor('walk')).toBe('preset:walk');
+    expect(presetFor('walk', 'biped')).toBe('preset:walk');
+    // Every other creature namespaces its own: a bare `preset:walk` sent to a
+    // quadruped asks a four-legged rig for a two-legged animation.
+    expect(presetFor('walk', 'quadruped')).toBe('preset:quadruped:walk');
+    expect(presetFor('march', 'serpentine')).toBe('preset:serpentine:march');
   });
 
   it('knows what a biped has on the creature model, and admits when it does not know', () => {
