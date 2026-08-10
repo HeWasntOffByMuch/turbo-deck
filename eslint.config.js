@@ -198,6 +198,8 @@ const PURE_RENDER = [
   'src/render/iso3d/vfx/system.ts',
   'src/render/iso3d/vfx/registry.ts',
   'src/render/iso3d/vfx/stress.ts',
+  'src/render/iso3d/vfx/splat.ts',
+  'src/render/iso3d/vfx/probe-config.ts',
   'src/render/iso3d/vfx/*.test.ts',
   'src/render/iso3d/editor/brush.ts',
   'src/render/iso3d/editor/camera.ts',

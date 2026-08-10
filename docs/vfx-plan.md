@@ -6,8 +6,9 @@ Status: **Phase 1 landed; Phase 2a (sparks) at its review gate.**
 |---|---|
 | 0 — plan | done |
 | 1 — core system (spec 118) | done, 71 tests, lint and typecheck green |
-| 2a — sparks + verification + glow comparison | **at the review gate** |
-| 2b onward — blood, fire, smoke, auras, remaining hit effects | not started |
+| 2a — sparks + verification + glow comparison | done |
+| 2b — blood splat generator (spec 119) | **at the review gate: contact sheet below** |
+| 2c onward — decals, fire, smoke, auras, remaining hit effects | not started |
 | 3 — Studio VFX tab | not started |
 
 This is the living document for the VFX arc. It is updated as decisions land, and
@@ -619,6 +620,70 @@ One honest caveat on the comparison: `dither` and `smooth` are like-for-like, bu
 `layered` adds an emitter, which shifts every later emitter's index and therefore
 its RNG stream — so its *sparks* differ, not just its halo. The halo is still the
 thing being compared, but the burst underneath is not the same burst.
+
+---
+
+## 5c. Blood: the generator, and what the contact sheet changed
+
+`npx tsx scripts/preview-splats.ts` → `.claude/screenshots/splats.png`. Fifty
+tiles: thirty blood splats over three rows, then one seed thrown eight ways, then
+all five fluids from the same generator.
+
+**The approach is the hybrid, as planned.** Five hand-authored blot profiles
+supply the shape language; the seed supplies which blot, how big, how turned,
+mirrored or not, where the droplets land, how far the drips run, and how far the
+whole thing is drawn out along the blow. Nothing is fetched and nothing is fBm.
+
+### The first sheet was wrong, and that is what it was for
+
+The first render produced thirty rounded masses with a couple of specks beside
+them — jellybeans, not spatter. Every test passed. Three things were wrong, and
+none of them is visible from the code:
+
+1. **The outlines were circles.** Sixteen smoothly interpolated profile samples
+   at a six-pixel radius is a slightly squashed circle. Fixed with a per-stamp
+   ragged edge — three harmonics with random amplitude and phase — which puts
+   irregularity back at the scale the pixels can hold while staying continuous,
+   so the edge is torn rather than fizzy.
+2. **The droplets were invisible.** Sized at a tenth of the core, which on a
+   32-pixel tile is one or two pixels: present in the mask, absent on screen.
+   They are now a third to two thirds of the core, stretched harder than the
+   core is, so an airborne drop lands as a dash rather than a dot — and the
+   dashes are most of what says "thrown".
+3. **The mass was one blob.** Now three or four overlapping blots, so the
+   silhouette is a union of ragged outlines rather than one rim.
+
+A fourth thing was wrong before the sheet was even rendered, and the *tests*
+caught that one: the throw stretch was symmetric, which elongates a splat equally
+both ways and leaves its centre of mass exactly where it started. A splat "thrown
+right" was measurably identical to one thrown left. Real spatter is a comet, so
+the stretch is forward-only now.
+
+| Measure | First pass | Now |
+|---|---|---|
+| Centre of mass displaced along the throw | −4.60 px (**backwards**) | **+3.89 px** |
+| Shape dissimilarity, closest pair of 30 | 0.11 | **0.24** |
+| Shape dissimilarity, median pair | 0.34 | **0.40** |
+| Splats clipped by the tile border | 0 / 30 | 0 / 30 |
+
+Dissimilarity is symmetric-difference-over-union, not raw pixel difference. These
+masks fill about 11% of their tile, so two entirely unrelated splats differ on
+only ~6% of its pixels — asserting on that number makes a healthy generator look
+broken and pushes the threshold the wrong way.
+
+### Standing judgement to make at this gate
+
+The droplets now often merge into the main mass rather than staying separate.
+That reads as one torn shape, which is right for a heavy hit and arguably wrong
+for a light one — the fix, if wanted, is to push the near-in droplets further out
+at low `mass`. Worth deciding with the sheet in hand rather than by argument.
+
+### Still to come, in the decal spec
+
+The generator emits coverage and nothing else — no colour, no placement, no
+lifetime. Ground decals per chunk, the box projector for props, the unit-staining
+recommendation (mask texture vs bone-parented quads vs hybrid), the gore setting
+and its off switch, and wiring any of it to a hit all belong to the next spec.
 
 ---
 

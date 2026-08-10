@@ -335,7 +335,8 @@ export function modeCode(render: number): number {
     case RENDER['ground-quad']:
       return 3;
     // A ribbon is drawn as a chain of stretched quads by the layer, and a mesh
-    // particle is a billboard until spec 119 gives it real geometry to instance.
+    // particle is a billboard until an effect actually needs instanced geometry
+    // (debris chips, in the physical-impact work).
     default:
       return 0;
   }

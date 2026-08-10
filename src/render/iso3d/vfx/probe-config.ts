@@ -1,5 +1,5 @@
 /**
- * The numbers the VFX probe's two halves have to agree on (spec 119).
+ * The numbers the VFX probe's two halves have to agree on (spec 118).
  *
  * A file of its own because the page (`probe.ts`) mounts itself on import -- it
  * is an entry point, and touching `document` at module scope is the point of it

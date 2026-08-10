@@ -1,5 +1,5 @@
 // Dev-only: verify the particles are inside the low-resolution buffer, and
-// photograph the glow approaches so a person can decide between them (spec 119).
+// photograph the glow approaches so a person can decide between them (spec 118).
 // Not part of the app. `npx tsx scripts/probe-vfx.ts`
 //
 // Drives `src/render/vfx-probe.html`, which renders a spark burst through the

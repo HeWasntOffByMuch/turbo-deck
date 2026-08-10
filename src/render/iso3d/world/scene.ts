@@ -462,7 +462,8 @@ export class WorldScene {
           // *loaded rig* rather than by a name out of a skeleton document --
           // three sanitises `mixamorig:Hips` to `mixamorigHips`, so a documented
           // name matches nothing and looks exactly like a clean import
-          // (`unit-rig.ts`). The effects that need a socket arrive with spec 119.
+          // (`unit-rig.ts`). The effects that need a socket -- a burning unit, a
+          // weapon trail -- arrive with the fire and slash work.
           out[at] = body.group.position.x;
           out[at + 1] = body.group.position.y;
           out[at + 2] = body.group.position.z;
@@ -757,8 +758,8 @@ export class WorldScene {
    * carried `${ability.id}.impact` since spec 062 and this renderer threw it away
    * and drew one hardcoded ring for every ability in the game. When the registry
    * knows the id it plays the authored effect; when it does not, the ring is
-   * still what happens, so abilities keep their cue until spec 119 onward gives
-   * each of them a real one.
+   * still what happens, so abilities keep their cue until the effect library
+   * gives each of them a real one.
    */
   addEffect(effectId: string, x: number, y: number, radius: number, durationTicks: number): void {
     if (this.vfx.system.has(effectId)) {

@@ -142,8 +142,8 @@ export function spriteSheet(name: string): THREE.DataTexture {
       texture = makeTexture(radialSprite(16, 0.15, true), 16, 16);
       break;
     case 'glow_smooth':
-      // The comparison subject in spec 119, kept so the two can be shown side by
-      // side rather than argued about.
+      // The comparison subject, kept so the two can be shown side by side rather
+      // than argued about. `scripts/probe-vfx.ts` photographs both.
       texture = makeTexture(radialSprite(16, 0.15, false), 16, 16);
       break;
     case 'disc':

@@ -6,9 +6,11 @@
  * effect is adding an entry here, and retuning one is editing numbers here (or
  * in the Studio tab, which writes back to this shape as JSON).
  *
- * Sparks are the first entry and land with spec 119, which is also where the
- * low-resolution verification and the glow comparison are. The rest of the
- * library -- fire, blood, auras, smoke, the remaining hit effects -- follows it.
+ * Sparks are the first entry, and they landed with the core because the core
+ * needed something real to be proved against -- the low-resolution verification
+ * and the glow comparison in `scripts/probe-vfx.ts` are both driven by this
+ * definition. Blood is spec 119; fire, auras, smoke and the remaining hit
+ * effects follow it.
  * `spark_bounce` is here because a spark's ricochet is a sub-effect and a
  * sub-effect has to be an entry like any other.
  */
@@ -47,7 +49,8 @@ const SPARK_BOUNCE: EffectDefinition = {
 };
 
 /**
- * A blow landing on metal (spec 119's subject).
+ * A blow landing on metal: the first authored effect, and the subject the
+ * low-resolution verification and the glow comparison are both measured on.
  *
  * Three emitters, because the thing being drawn is three things: the flash at
  * the contact point that says *when*, the shower that says *where from*, and a

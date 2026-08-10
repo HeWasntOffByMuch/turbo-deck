@@ -1,6 +1,6 @@
 /**
  * Dev-only: prove the particles are actually inside the low-resolution buffer,
- * and show what the two glow approaches look like once quantized (spec 119).
+ * and show what the glow approaches look like once quantized (spec 118).
  *
  * Not part of the app. Driven by `npx tsx scripts/probe-vfx.ts`, which serves
  * `src/render/vfx-probe.html` -- dev-server only, since `vite build` bundles
