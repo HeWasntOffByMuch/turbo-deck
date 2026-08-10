@@ -425,6 +425,11 @@ export class StudioPipeline {
           // of what a unit was rigged with is the first thing anybody wants
           // when its bones turn out to be named something unexpected.
           modelVersion: job.params.rigModelVersion,
+          // What the free rig-check already told us this creature is. It was
+          // read, stored and used only to vet preset names, while the call that
+          // actually builds the skeleton was never told -- so every rig came
+          // back generic, and `spec: mixamo` had no named biped to name.
+          rigType: job.rigType,
           spec: job.params.rigSpec,
           outFormat: job.params.outFormat,
         }),

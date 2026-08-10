@@ -28,7 +28,7 @@
  * | upload (free) | `POST /files`, multipart field `file` -> `data.file_token` |
  * | image to model | `POST /generation/image-to-model` `{input, model, face_limit, texture, pbr}` |
  * | rig check (free) | `POST /animations/rig-check` `{input}` -> `output.{riggable, rig_type}` |
- * | rig | `POST /animations/rig` `{input, model, spec, out_format}` |
+ * | rig | `POST /animations/rig` `{input, model, rig_type, spec, out_format}` |
  * | retarget | `POST /animations/retarget` `{input, animations, out_format}` |
  * | poll | `GET /tasks/{task_id}`, plural, no faster than ~3s |
  * | envelope | `{ code, data }`, `code === 0` on success |
@@ -48,6 +48,14 @@
  *    is what keeps the projection and the ceilings honest about it. The preset
  *    is a bare `preset:walk` -- see {@link BIPED_ANIMATION_PRESETS} for the
  *    names a biped actually has.
+ *  - **The rig takes a `rig_type`, and omitting it is not neutral.** The fifth
+ *    correction, and the most expensive one to have found by inspection rather
+ *    than from the docs: every unit generated without it came back on a generic
+ *    numbered-limb skeleton that `spec: mixamo` could not name, could not carry
+ *    a socket, and could not be checked against a rig family. The presets are
+ *    documented per creature -- {@link BIPED_ANIMATION_PRESETS} is the *biped*
+ *    list -- so asking for `preset:walk` on a rig that was never declared a
+ *    biped is asking a question the vocabulary does not fit.
  *
  * ## The key
  *
@@ -136,6 +144,23 @@ export interface ImageToModelRequest {
 export interface RigRequest {
   /** The task whose model output is being rigged. */
   readonly sourceTaskId: string;
+  /**
+   * What kind of creature this is: `biped`, `quadruped`, `avian` and so on.
+   *
+   * Optional to the API and, it turns out, decisive. Left out, the auto-rig
+   * builds a *generic* skeleton -- `tripo::Root`, `tripo::Spine_0`, and four
+   * limb chains numbered rather than named, with nothing saying which pair is
+   * legs -- and {@link RigRequest.spec} then has nothing to name in the mixamo
+   * way, because there is no named biped to name. Every unit generated before
+   * this field was sent came back like that.
+   *
+   * The value is the one {@link TaskResult.rigType} reported, echoed back
+   * unchanged rather than mapped: it is the API's own vocabulary and a mapping
+   * would be one more place to disagree with it. Null when the check named
+   * nothing, and then the field is *omitted* rather than guessed at -- a wrong
+   * creature is a worse rig than an unspecified one.
+   */
+  readonly rigType: string | null;
   /**
    * The **rig** model version, which is not the generation model version.
    *
@@ -469,8 +494,13 @@ export class TripoClient {
     return this.submit('/animations/rig', {
       input: request.sourceTaskId,
       model: request.modelVersion,
+      // Omitted rather than sent as null when the check named no creature: the
+      // field is optional and an absent one is the API's own default, where a
+      // null would be a value it has to have an opinion about.
+      ...(request.rigType === null ? {} : { rig_type: request.rigType }),
       // The shared-skeleton constraint starts here: one naming spec for the
-      // whole roster, so clips bind by bone name across every unit.
+      // whole roster, so clips bind by bone name across every unit. Only
+      // meaningful alongside `rig_type` -- see {@link RigRequest.rigType}.
       spec: request.spec,
       out_format: request.outFormat,
     });

@@ -390,6 +390,52 @@ describe('the happy path', () => {
     });
   });
 
+  it('tells the rig what creature the free check said it was', async () => {
+    // The bug this exists to stop coming back. `rig_type` is optional, and
+    // leaving it out is not neutral: the auto-rig builds a generic
+    // numbered-limb skeleton, `spec: mixamo` has no named biped to name, and
+    // the unit that comes back answers to none of the bone names the sockets,
+    // the skeleton document, the family check and the export all use. The
+    // check is free, always runs, and already knew the answer.
+    scriptSuccess(harness.fake);
+    seedJob(harness);
+    await harness.pipeline.run('job-1');
+    const body = harness.fake.callsTo('/animations/rig')[0]?.body as Record<string, unknown>;
+    expect(body['rig_type']).toBe('biped');
+    expect(body['spec']).toBe('mixamo');
+  });
+
+  it('passes the check\'s own word through, whatever creature it names', async () => {
+    // Not mapped, not validated against a list of ours: it is the API's
+    // vocabulary going back to the API. A quadruped that we rewrote to `biped`
+    // because our preset table only knows bipeds would be rigged as the wrong
+    // animal entirely.
+    harness.fake
+      .script('/generation/image-to-model', { creditsConsumed: 20, modelUrl: MESH_URL })
+      .script('/animations/rig-check', { creditsConsumed: 0, riggable: true, rigType: 'quadruped' })
+      .script('/animations/rig', { creditsConsumed: 10, modelUrl: RIG_URL })
+      .script('/animations/retarget', { creditsConsumed: 10, modelUrl: CLIP_URL });
+    seedJob(harness, { establishesRigFamily: false });
+    await harness.pipeline.run('job-1');
+    const body = harness.fake.callsTo('/animations/rig')[0]?.body as Record<string, unknown>;
+    expect(body['rig_type']).toBe('quadruped');
+  });
+
+  it('omits the creature entirely when the check named none', async () => {
+    // Absent is the API's own default. A guess would be a rig built for an
+    // animal this model may not be, which is worse than an unspecified one --
+    // and worse than it sounds, because it is paid for either way.
+    harness.fake
+      .script('/generation/image-to-model', { creditsConsumed: 20, modelUrl: MESH_URL })
+      .script('/animations/rig-check', { creditsConsumed: 0, riggable: true })
+      .script('/animations/rig', { creditsConsumed: 10, modelUrl: RIG_URL })
+      .script('/animations/retarget', { creditsConsumed: 10, modelUrl: CLIP_URL });
+    seedJob(harness, { establishesRigFamily: false });
+    await harness.pipeline.run('job-1');
+    const body = harness.fake.callsTo('/animations/rig')[0]?.body as Record<string, unknown>;
+    expect('rig_type' in body).toBe(false);
+  });
+
   it('rigs with the spec the job was created with, not the one the server has now', async () => {
     // The reason this matters: `spec` decides what the skeleton is called, and
     // a rig that comes back in a generator's own vocabulary answers to none of

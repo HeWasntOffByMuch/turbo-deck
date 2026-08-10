@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { cacheKey, canonicalClipIntents } from './cache.js';
+import { cacheKey, canonicalClipIntents, PIPELINE_REVISION } from './cache.js';
 import { ConfirmationStore, DEFAULT_CONFIRMATION_TTL_MS } from './confirm.js';
 import { checkCeilings, dayKeyOf, dayTotal, runTotal, summarize, type Ceilings, type LedgerEntry } from './ledger.js';
 import { DEFAULT_MIN_INTERVAL_MS, Pacer } from './pacing.js';
@@ -72,6 +72,15 @@ describe('cacheKey', () => {
     // artifacts it was meant to replace.
     expect(cacheKey(HASH, params({ rigSpec: 'tripo' }))).not.toBe(base);
     expect(cacheKey(HASH, params({ rigModelVersion: 'rig-v-other' }))).not.toBe(base);
+  });
+
+  it('carries the pipeline revision, so a fix on our side is not answered from the cache', () => {
+    // The one thing the parameters cannot describe: a change to what the client
+    // sends. Adding `rig_type` changed every rig that comes back without
+    // changing any request a caller makes, so the key has to move too or the
+    // first regeneration after the fix is served the artifacts it was meant to
+    // replace -- free, and looking exactly like the fix not working.
+    expect(cacheKey(HASH, params())).toContain(`pipeline=${PIPELINE_REVISION}`);
   });
 
   it('is readable, so a cache miss can be diagnosed by eye', () => {

@@ -26,6 +26,27 @@ export function canonicalClipIntents(intents: readonly string[]): readonly strin
   return [...new Set(intents)].sort();
 }
 
+/**
+ * Bumped when a change on *our* side changes what the API sends back.
+ *
+ * The cache key covers everything about the request a caller chooses. It cannot
+ * cover what the client itself sends, and that turns out to matter: adding
+ * `rig_type` to the rig call changed every rig from a generic numbered-limb
+ * skeleton to a named biped, with the same image, the same parameters and
+ * therefore the same key. Without this, the first regeneration after that fix
+ * would have been answered from the cache with the artifacts it was meant to
+ * replace -- and reported as free, which is how somebody concludes the fix did
+ * not work.
+ *
+ * Bump it only for a change that alters the *output*, never for a refactor.
+ * Every bump makes the whole library miss and costs real credits, so it is a
+ * deliberate act with a line in the history saying why.
+ *
+ * 2 -- `rig_type` is sent (spec 116's investigation); rigs before it are
+ *      generic skeletons that no unit document can address.
+ */
+export const PIPELINE_REVISION = 2;
+
 export function cacheKey(referenceImageSha256: string, params: GenerationParams): string {
   const clips = canonicalClipIntents(params.clipIntents).join(',');
   // Ordered fields with explicit names, so a new parameter added to
@@ -44,6 +65,7 @@ export function cacheKey(referenceImageSha256: string, params: GenerationParams)
     // returns the job made with the old one and reports it as free.
     `rig=${params.rigModelVersion}/${params.rigSpec}`,
     `format=${params.outFormat}`,
+    `pipeline=${PIPELINE_REVISION}`,
     `clips=${clips}`,
   ].join('|');
 }
