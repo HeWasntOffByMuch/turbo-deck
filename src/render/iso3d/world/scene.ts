@@ -93,7 +93,8 @@ import { authoredUnitFor } from './unit-catalog.js';
 import { authoredUnitAssets } from './unit-assets.js';
 import { advanceSpeed, driveUnit, STOPPED, type SpeedClock, type UnitFacts } from './unit-driver.js';
 import { SERVER_TICK_RATE } from '../../../server/config.js';
-import { mixerCadence, shouldApply } from './unit-lod.js';
+import { drawnPixels, mixerCadence, shouldApply } from './unit-lod.js';
+import { DEFAULT_CANONICAL_HEIGHT } from '../../../units/canonical-height.js';
 import { ShotRig } from './shot.js';
 import type { AimShape } from './aim.js';
 import { castBar } from './cast.js';
@@ -1099,7 +1100,14 @@ export class WorldScene {
     unit.previous = facts;
     unit.previousPosition = { x: at.x, y: at.y };
 
-    const cadence = mixerCadence(this.camera.position.distanceTo(unit.rig.object.getWorldPosition(SCRATCH_WORLD)), this.inFrustum(unit.rig.object));
+    // How big the body is *drawn*, never how far the camera is from it (spec
+    // 118). This camera is orthographic and parks 6000 units back for near/far
+    // clearance, so every unit in the game read as maximally distant and posed
+    // at 15Hz -- the player in the centre of the screen included.
+    const cadence = mixerCadence(
+      drawnPixels(DEFAULT_CANONICAL_HEIGHT, this.camera.right - this.camera.left, this.renderW),
+      this.inFrustum(unit.rig.object),
+    );
     if (shouldApply(cadence, unit.machine.tick, entity.id)) unit.rig.applyPoses(unit.machine.poses());
   }
 

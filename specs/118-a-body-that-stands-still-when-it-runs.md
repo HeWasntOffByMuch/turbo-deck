@@ -96,6 +96,47 @@ It reports through the same channel the strip already reports through.
 the same fraction, because a gate and an importer that disagree about what
 counts is the failure this module is arranged to prevent.
 
+**The LOD measures a distance that cannot mean what it is being asked to
+mean.** `mixerCadence` takes `camera.position.distanceTo(body)` against
+thresholds of 600 and 1400 world units, which is the right shape for a
+perspective camera and is meaningless for this one. The Play camera is
+orthographic, and `DEFAULT_CAMERA_ORBIT.distance` is a fixed **6000** — set,
+as `view-settings.ts` says outright, "for clearance, not look", because under
+an orthographic projection the standoff cannot affect framing. It is not a
+slider, so no setting brings it down.
+
+So every authored unit in the game has always been more than four times past
+the far threshold, including the player standing in the centre of the screen:
+
+| | value |
+|---|---|
+| camera standoff, every unit, always | ~6000 |
+| `DEFAULT_LOD.far` | 1400 |
+| resulting cadence | `LOD_CADENCE.far` = 4 |
+| poses written per second | **15** |
+
+Fifteen poses a second under a body whose *position* is interpolated every
+frame — which is exactly "the animation plays every third or fourth frame",
+and exactly why the Studio preview is smooth: `preview-panel.ts` calls
+`applyPoses` unconditionally and never consults the LOD at all.
+
+Under an orthographic projection every on-screen body is drawn at the same
+scale no matter where it stands, so eye distance is not a weak signal here,
+it is not a signal at all. What decides apparent size is the zoom. The cadence
+is therefore chosen from the body's **drawn height in raster pixels** —
+`canonical height / worldPerPixel(view span, virtual width)`, the same
+`worldPerPixel` the pixel-snap already uses — and the frustum test stays
+per-unit, because whether a body is on screen is still its own business.
+
+Thresholds come from the configurations that exist rather than from round
+numbers. The retro filter's virtual sizes are 320/384/480/640 wide and the zoom
+spans 400–2800 world units, so a 55.65-unit body runs from ~6px (smallest
+raster, fully zoomed out) to 111px (retro off on a 1280px canvas). At the
+default zoom it is 28px on the smallest raster and 42px on the default one —
+both the character somebody is playing — so `full` is 24 and both animate every
+tick. `reduced` is 10, which only the fully-zoomed-out end reaches, and that is
+the case the LOD was built for.
+
 ## Invariants tested
 
 - `advanceSpeed` reports the same speed at 30, 60, 75, 120 and 144fps for a
@@ -114,6 +155,12 @@ counts is the failure this module is arranged to prevent.
   time.
 - Measured against the committed pig clips: `run` and `walk` are corrected,
   `idle` and `hurt` are left alone.
+- A body at the *real* camera standoff and the *real* default zoom animates
+  every tick — asserted against the shipped constants rather than against
+  numbers the test picked, since the whole fault was a threshold that no real
+  configuration could ever satisfy.
+- Cadence falls to every second and every fourth tick as the zoom widens, and
+  is zero outside the frustum at every zoom.
 
 Everything above is checked in Node against clip *documents*, and all of it can
 be green while the game still slides — the half left over is three's
