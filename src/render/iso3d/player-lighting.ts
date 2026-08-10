@@ -1,34 +1,44 @@
 import * as THREE from 'three';
-import { NO_TINT, type LightTint } from './player-lights.js';
+import { APPARENT_LIGHT_FRACTION } from './player-lights.js';
 
 /**
- * The local player, taken out of the lights they are carrying (spec 118).
+ * The local player, lit by the lights they carry as though those lights were
+ * farther away than they are (spec 118).
  *
  * The three.js half of `player-lights.ts`, and the only place in the renderer
- * that edits a shader string. It does three things to whichever rig is the
- * local player:
+ * that edits a shader string. It attaches to whichever rig is the local player
+ * and does two things:
  *
- * - **Kills the point-light term** in every lit material under it, so the torch
- *   and the orb light the world and not the body holding them.
- * - **Lifts the finished shading** by a tint uniform every one of those
- *   materials shares, which is the flat brightening filter the body gets
- *   instead. See {@link patchFragment} for why it is added rather than
- *   multiplied.
+ * - **Re-sites the point lights**, for that rig's materials only. Each one is
+ *   pushed out along the true direction from the body to it, to
+ *   `apparentLightDistance` of its own range. Colour, decay, the range window,
+ *   the flicker and the shadow lookup all run unmodified against the result.
  * - **Keeps the body out of point-light shadow maps**, optionally, so the
  *   player's own silhouette does not swing across their feet as the flame
  *   gutters.
  *
- * ## Why a shader patch and not layers
+ * ## Why the light is moved rather than dimmed
  *
- * `Object3D.layers` looks like the answer and is not. three 0.160 tests a
+ * A torch 26 units from a 46-unit body is wrong in two ways at once, and only
+ * one of them is brightness. `1/d²` puts several times more light on the chest
+ * than on the far hip, *and* the vector to the flame points sharply up at the
+ * feet and sharply down at the head. Turning it down fixes neither: the hot spot
+ * and the fan are both functions of how much of the distance the body spans.
+ * Moving where it is measured from fixes both, and costs the figure nothing --
+ * it still has a lit side, a shaded side, and both still turn as the player does.
+ *
+ * ## Why a shader patch
+ *
+ * `Object3D.layers` looks like the answer and is not: three 0.160 tests a
  * light's layers against the **camera** (`WebGLRenderer.projectObject`), never
- * against the object being lit, so a light is either in the frame or out of it
- * and there is no per-object exclusion to reach for. What is left is rendering
- * the scene twice with different camera layers -- which runs the shadow pass
- * twice for the sake of one rig -- or rewriting the one chunk that reads the
- * point lights. This is the second. The two markers it replaces are asserted by
- * a test, so a three.js upgrade that renames them fails in Node rather than
- * quietly shipping a player lit by their own torch again.
+ * against the object being lit, so there is no per-object light state to reach
+ * for -- and a second, dimmer light for the player alone would land on
+ * everything else for the same reason. What is left is rewriting the loop that
+ * reads the point lights. `pointLight` is a local copy in that loop, so moving
+ * its `position` before `getPointLightInfo` reads it is the whole change. The
+ * marker being replaced is asserted by a test, so a three.js upgrade that
+ * renames it fails in Node rather than quietly shipping a player lit from point
+ * blank again.
  *
  * ## Why the materials are patched in place
  *
@@ -42,18 +52,14 @@ import { NO_TINT, type LightTint } from './player-lights.js';
  * changes a game outcome and the sim is never told any of it.
  */
 
-/** The uniform name the patched materials share. Prefixed so nothing collides. */
-const TINT_UNIFORM = 'turboPlayerTint';
+/** The uniform naming the body's middle, in view space. Prefixed so nothing collides. */
+const ANCHOR_UNIFORM = 'turboBodyAnchor';
 
 /**
- * The line in `lights_fragment_begin` that fetches one point light's
- * contribution. Zeroing the colour immediately after it is the whole exclusion:
- * `RE_Direct` still runs, and adds nothing.
+ * The line in `lights_fragment_begin` that reads one point light. Everything
+ * this module does happens in the statement before it.
  */
 const POINT_LIGHT_CALL = 'getPointLightInfo( pointLight, geometryPosition, directLight );';
-
-/** Where the shading becomes a pixel, and so where the filter is applied. */
-const OUTPUT_INCLUDE = '#include <opaque_fragment>';
 
 /** The include the point-light loop arrives in. */
 const LIGHTS_INCLUDE = '#include <lights_fragment_begin>';
@@ -70,44 +76,41 @@ export function shaderMarkersPresent(): boolean {
 }
 
 /**
- * `lights_fragment_begin` with the point-light term zeroed.
+ * `lights_fragment_begin`, with the light held at arm's length before it is read.
  *
- * Built from the chunk rather than from a copy of it, so everything else the
- * chunk does -- the directional lights, the hemisphere fill, the shadow terms --
+ * Built from three's own chunk rather than from a copy of it, so everything else
+ * it does -- the directional lights, the hemisphere fill, the shadow terms --
  * stays whatever the installed three.js says it is.
+ *
+ * Three details worth keeping straight:
+ *
+ * - Everything here is **view space**, which is where `pointLight.position` and
+ *   `geometryPosition` already live, so the anchor is handed in that way too.
+ * - The distance is measured from the one anchor rather than per fragment. Per
+ *   fragment would put the apparent light somewhere slightly different for every
+ *   pixel, which is the fan being removed.
+ * - `max` against the true distance, so a light that is already further off than
+ *   this is left exactly where it is rather than dragged in.
  */
-function unlitByPointLights(): string {
-  return THREE.ShaderChunk.lights_fragment_begin.replace(
-    POINT_LIGHT_CALL,
-    `${POINT_LIGHT_CALL}\n\t\tdirectLight.color = vec3( 0.0 );`,
-  );
+function heldAtArmsLength(): string {
+  // Term for term `carriedLightDistance` composed with `apparentLightDistance`:
+  //   max( trueDistance, max( 1, range * APPARENT_LIGHT_FRACTION ) )
+  // The TypeScript is the version a test can execute; this is the transcription.
+  const injection = [
+    `\t\tvec3 turboToLight = pointLight.position - ${ANCHOR_UNIFORM};`,
+    '\t\tfloat turboTrue = length( turboToLight );',
+    '\t\tif ( turboTrue > 0.0001 ) {',
+    `\t\t\tfloat turboApparent = max( 1.0, pointLight.distance * ${APPARENT_LIGHT_FRACTION.toFixed(4)} );`,
+    '\t\t\tfloat turboHeld = max( turboTrue, turboApparent );',
+    `\t\t\tpointLight.position = ${ANCHOR_UNIFORM} + ( turboToLight / turboTrue ) * turboHeld;`,
+    '\t\t}',
+    `\t\t${POINT_LIGHT_CALL}`,
+  ].join('\n');
+  return THREE.ShaderChunk.lights_fragment_begin.replace(POINT_LIGHT_CALL, injection);
 }
 
-/**
- * The filter, as one line after `opaque_fragment`.
- *
- * **Added, not multiplied,** which is the whole difference between this working
- * and this being invisible. The tint is a multiplier -- what the body would be
- * scaled by if it were already lit -- but the frames a carried light exists for
- * are the ones where the body is not: at midnight the moon leaves it a few
- * hundredths above black, and 1.6 times almost nothing is almost nothing. The
- * first build of this drew the player as a black cutout standing in a pool of
- * fire, which is the artifact the spec set out to remove, in a new shape.
- *
- * So the lift is spent as `albedo * (tint - 1)`: the light is *added* to the
- * body, and weighted by the body's own colour so a coat keeps its hue instead of
- * washing to the flame's. The same trick `highlight.ts` uses to brighten a
- * hovered unit without turning a tan cow pink.
- *
- * It goes in before tonemapping and the sRGB encode, so it is linear light being
- * added to linear light rather than a number added to a display value.
- */
 function patchFragment(source: string): string {
-  const lift =
-    `\tgl_FragColor.rgb += diffuseColor.rgb * max( vec3( 0.0 ), ${TINT_UNIFORM} - vec3( 1.0 ) );`;
-  return `uniform vec3 ${TINT_UNIFORM};\n${source}`
-    .replace(LIGHTS_INCLUDE, unlitByPointLights())
-    .replace(OUTPUT_INCLUDE, `${OUTPUT_INCLUDE}\n${lift}`);
+  return `uniform vec3 ${ANCHOR_UNIFORM};\n${source}`.replace(LIGHTS_INCLUDE, heldAtArmsLength());
 }
 
 /**
@@ -133,26 +136,26 @@ function isLit(material: THREE.Material): material is THREE.MeshLambertMaterial 
   return material instanceof THREE.MeshLambertMaterial;
 }
 
-export class PlayerLightMask {
+export class PlayerLighting {
   /**
-   * Shared by every patched material by reference, so a frame's tint is one
+   * Shared by every patched material by reference, so a frame's anchor is one
    * write rather than one per material. `onBeforeCompile` hands this same object
    * to each program, which is what makes that true across recompiles too.
    */
-  private readonly tint = { value: new THREE.Color(NO_TINT.r, NO_TINT.g, NO_TINT.b) };
+  private readonly anchor = { value: new THREE.Vector3() };
   private readonly noPointShadow = makeNoPointShadow();
 
   private root: THREE.Object3D | null = null;
-  /** The materials this mask has patched under the current root. */
+  /** The materials this has patched under the current root. */
   private patched = new Set<THREE.MeshLambertMaterial>();
   /** The meshes it has taken out of the point-light shadow pass. */
   private masked = new Set<THREE.Mesh>();
   private castsPointShadow = false;
 
   /**
-   * Point the mask at the rig that is the local player now, restoring the one it
-   * was on. A repeat call with the same root is the common case and does nothing
-   * but the rescan below.
+   * Point at the rig that is the local player now, restoring the one it was on.
+   * A repeat call with the same root is the common case and does nothing but the
+   * rescan below.
    */
   attach(root: THREE.Object3D | null): void {
     if (root === this.root) {
@@ -164,9 +167,13 @@ export class PlayerLightMask {
     this.scan();
   }
 
-  /** Write the frame's brightening filter. One write, however many materials. */
-  setTint(tint: LightTint): void {
-    this.tint.value.setRGB(tint.r, tint.g, tint.b, THREE.LinearSRGBColorSpace);
+  /**
+   * Where the lights are measured from: the middle of the body, in **view
+   * space** -- the space `pointLight.position` is already in by the time a
+   * fragment shader sees it. One write, however many materials.
+   */
+  setAnchor(x: number, y: number, z: number): void {
+    this.anchor.value.set(x, y, z);
   }
 
   /**
@@ -200,7 +207,7 @@ export class PlayerLightMask {
    *
    * Called every frame rather than once at attach time, because an authored
    * unit's mesh arrives from a `.glb` some frames after its body exists (spec
-   * 111) -- a single scan would mask a group that is still empty. Sets are
+   * 111) -- a single scan would patch a group that is still empty. Sets are
    * checked before anything is written, so a settled rig costs one traverse.
    */
   private scan(): void {
@@ -229,7 +236,7 @@ export class PlayerLightMask {
     if (!isLit(material) || this.patched.has(material)) return;
     this.patched.add(material);
     material.onBeforeCompile = (shader) => {
-      shader.uniforms[TINT_UNIFORM] = this.tint;
+      shader.uniforms[ANCHOR_UNIFORM] = this.anchor;
       shader.fragmentShader = patchFragment(shader.fragmentShader);
     };
     material.needsUpdate = true;

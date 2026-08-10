@@ -77,19 +77,15 @@ import { advanceWind } from '../wind-uniforms.js';
 import { FIXED_DAYLIGHT } from '../daynight.js';
 import {
   MAGIC_COLOR,
-  MAGIC_DEFAULTS,
   MAX_LIGHT_RANGE,
-  NO_TINT,
   TORCH_ANCHOR,
   TORCH_COLOR,
   TORCH_DEFAULTS,
   orbState,
-  playerLightTint,
   pointIntensity,
   torchFlicker,
-  type TintSource,
 } from '../player-lights.js';
-import { PlayerLightMask } from '../player-light-mask.js';
+import { PlayerLighting } from '../player-lighting.js';
 import { appearanceOf, PLAYER_CRITTER, PLAYER_FIGURE, type Appearance } from './appearance.js';
 import { UnitRig } from '../unit-rig.js';
 import { UnitMachine } from '../../../units/machine.js';
@@ -118,6 +114,12 @@ const TARGET_RING_COLOR = 0xff6a5a;
  * click *would* do and what is already being hit must never be the same mark.
  */
 const AIM_COLOR = 0x7fd4ff;
+
+/**
+ * Where the middle of a body is, as a fraction of the height its health bar
+ * hangs at (spec 118). A little under half, because the bar clears the head.
+ */
+const BODY_MIDDLE = 0.45;
 
 const FLAME_RADIUS = 5;
 const ORB_RADIUS = 7;
@@ -305,15 +307,16 @@ export class WorldScene {
   /** The rig currently carrying the torch, so re-parenting happens once. */
   private torchHost: THREE.Object3D | null = null;
   /**
-   * The local player, taken out of the lights they are carrying (spec 118).
+   * The local player, lit by the lights they carry from farther off than they
+   * really are (spec 118).
    *
    * Attached to the same rig the torch is hung off, and for the same reason it
    * is re-checked every frame: a respawn is a new entity and therefore a new
    * body.
    */
-  private readonly lightMask = new PlayerLightMask();
-  /** Scratch for the two tint sources, so a frame of lit walking allocates nothing. */
-  private readonly tintSources: TintSource[] = [];
+  private readonly playerLighting = new PlayerLighting();
+  /** Scratch for the body anchor, so a frame of lit walking allocates nothing. */
+  private readonly lightAnchor = new THREE.Vector3();
   private readonly unwalkable = new THREE.Group();
 
   /**
@@ -786,6 +789,9 @@ export class WorldScene {
 
     this.camera.updateMatrixWorld();
     this.scene.updateMatrixWorld();
+    // Needs both of the above: it reads the rig's world position and pushes it
+    // through the camera's inverse (spec 118).
+    this.anchorPlayerLighting(view.selfEntityId);
     // Before the snap, because this is a pick: which body is under the cursor is
     // answered against the same unsnapped camera every other pick uses. After
     // the matrices are fresh, though -- a pick made against last frame's camera
@@ -1235,10 +1241,10 @@ export class WorldScene {
   /** Hang the torch off the local player's rig; see {@link applyPlayerLights}. */
   private carryTorch(selfEntityId: number): void {
     const host = this.bodies.get(selfEntityId)?.group ?? null;
-    // Every frame, not only on a change: the mask has to find meshes that were
+    // Every frame, not only on a change: the patch has to find meshes that were
     // not there when the body was made, since an authored unit's `.glb` lands
     // some frames after the group it goes in (spec 118).
-    this.lightMask.attach(host);
+    this.playerLighting.attach(host);
     if (host === this.torchHost) return;
     this.torchHost = host;
     // Before the first delta places us there is no rig to carry it; parking the
@@ -1717,9 +1723,6 @@ export class WorldScene {
    */
   private applyPlayerLights(position: Vec2, groundY: number): void {
     const settings = this.controls.playerLights();
-    // Rebuilt rather than accumulated: a light switched off this frame must
-    // leave nothing behind for the tint to keep reading (spec 118).
-    this.tintSources.length = 0;
 
     this.torch.visible = settings.torchOn;
     this.torchFlame.visible = settings.torchOn;
@@ -1735,15 +1738,6 @@ export class WorldScene {
         TORCH_ANCHOR.z + flame.sway.z,
       );
       this.torchFlame.position.copy(this.torch.position);
-      // The flicker goes into the filter as well as into the light, so the body
-      // breathes with the flame rather than sitting at a fixed offset beside a
-      // light that does not.
-      this.tintSources.push({
-        color: TORCH_COLOR,
-        brightness: settings.torchBrightness,
-        reference: TORCH_DEFAULTS.brightness,
-        intensity: flame.intensity,
-      });
     }
 
     this.orb.visible = settings.magicOn;
@@ -1760,21 +1754,38 @@ export class WorldScene {
         position.y + state.offset.z,
       );
       this.orbMesh.position.copy(this.orb.position);
-      this.tintSources.push({
-        color: MAGIC_COLOR,
-        brightness: settings.magicBrightness,
-        reference: MAGIC_DEFAULTS.brightness,
-        intensity: state.intensity,
-      });
     }
 
-    // What the player gets *instead* of being lit by either of them: a flat
-    // brightening filter in the colour of whatever is burning, and no cube-map
-    // silhouette of themselves across their own feet unless asked for.
-    this.lightMask.setTint(
-      this.tintSources.length === 0 ? NO_TINT : playerLightTint(this.tintSources),
-    );
-    this.lightMask.setCastsPointShadow(settings.torchPlayerShadow);
+    // No cube-map silhouette of the player across their own feet unless asked
+    // for (spec 118). The anchor the lights are measured from is written after
+    // the matrices are fresh, in `anchorPlayerLighting`.
+    this.playerLighting.setCastsPointShadow(settings.torchPlayerShadow);
+  }
+
+  /**
+   * Hand the player's own materials the point they measure the carried lights
+   * from: the middle of the body, in view space (spec 118).
+   *
+   * View space because that is where `pointLight.position` already is by the
+   * time a fragment shader sees it -- three transforms every light through the
+   * view matrix in `WebGLLights`, so an anchor in world units would put the
+   * apparent light somewhere behind the camera.
+   *
+   * Called after the camera and the scene have had their matrices updated, and
+   * before the pixel snap: the snap moves the camera by a fraction of a virtual
+   * pixel, which is nothing next to the tens of units this is measuring.
+   */
+  private anchorPlayerLighting(selfEntityId: number): void {
+    const host = this.bodies.get(selfEntityId);
+    if (!host) return;
+    host.group.getWorldPosition(this.lightAnchor);
+    // The rig's origin is at its feet, and lighting a standing figure from its
+    // feet points every ray straight up. Half the height the health bar hangs at
+    // is the middle of the body for a mech, a critter and an authored unit
+    // alike, since that is the one measurement all three publish.
+    this.lightAnchor.y += host.headroom * BODY_MIDDLE;
+    this.lightAnchor.applyMatrix4(this.camera.matrixWorldInverse);
+    this.playerLighting.setAnchor(this.lightAnchor.x, this.lightAnchor.y, this.lightAnchor.z);
   }
 
   /**

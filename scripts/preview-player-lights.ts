@@ -4,22 +4,24 @@
  *   npm run build && npx tsx scripts/preview-player-lights.ts
  *
  * The half of this change that no headless test can reach. `player-lights.ts`
- * pins the tint's arithmetic in Node and `player-lights.test.ts` pins the string
- * the mask rewrites, but neither can answer the only question that matters once
- * a shader has been edited: **did it compile, and is the player still there.**
- * three.js logs a failed compile and carries on drawing, so a broken patch is a
- * console line and a body that renders untouched -- which looks exactly like a
- * patch that worked, if all you have is a screenshot.
+ * pins the distance arithmetic in Node and `player-lights.test.ts` pins the
+ * string the patch rewrites, but neither can answer the only question that
+ * matters once a shader has been edited: **did it compile, and is the player
+ * still there.** three.js logs a failed compile and carries on drawing, so a
+ * broken patch is a console line and a body lit the old way -- which looks
+ * exactly like a patch that worked, if all you have is a screenshot.
  *
  * So this drives the real page at midnight and measures the pixels the player is
- * made of, with each light on and off:
+ * actually made of:
  *
- *  - the body brightens when a light is switched on, and leans toward that
- *    light's own hue -- warm for the torch, cool for the orb;
- *  - the ground beside the body brightens too, which is what says the light is
- *    still lighting the *world* rather than having been switched off entirely;
- *  - toggling `Player casts torch shadow` changes the ground under the player
- *    and nothing about the body.
+ *  - the body is lit when a light is switched on, leans toward that light's own
+ *    hue -- warm for the torch, cool for the orb -- and is not blown out;
+ *  - top and bottom of the body land within a narrow ratio of each other, which
+ *    is the uniformity a flame at head height cannot give;
+ *  - across the reach slider the ground climbs and the body does not, which is
+ *    what says the body is lit from the apparent distance and not the real one;
+ *  - `Player casts torch shadow` darkens both the ground around the player and
+ *    the player, which is the whole of why it is off by default.
  *
  * Serves `dist/` rather than the dev server, so what is measured is what ships.
  */
@@ -47,21 +49,40 @@ const CHROMIUM_ARGS = [
 ];
 
 /**
- * How far below the health bar the body's own pixels start, and how big a patch
- * of them to average, in CSS pixels.
- *
- * The bar hangs at the top of the head, so dropping this far lands in the torso.
- * The patch is deliberately narrow: a wide one would take in the ground either
- * side of the figure, and the ground is lit by the torch -- which would report a
- * brightening body when the mask had done nothing at all.
+ * The box around the health bar the body is looked for in, in CSS pixels: from
+ * a little over the head down past the feet, and the figure's width either side.
  */
-const BODY_DROP = 40;
-const BODY_PATCH = 12;
+const BODY_SEARCH = { left: -45, top: -10, width: 90, height: 130 };
 
 /**
- * Where the "is the world still lit" patch is taken, relative to the same bar.
- * Far enough out to be past the figure, near enough to be inside the torch's
- * reach.
+ * How far below the bar to aim the cursor to hover the body, in CSS pixels.
+ *
+ * Several, tried in turn until one produces a figure-sized mask. The bar hangs
+ * over the head and the pick is the body's own geometry since spec 095, so how
+ * far down the column is solid depends on which way the figure is facing and
+ * what it is doing with its arms -- one fixed drop came back empty on about
+ * half the readings.
+ */
+const BODY_DROPS = [42, 30, 55, 68, 20];
+
+/**
+ * How much brighter a pixel must go when the cursor lands on the body to count
+ * as one of the body's own.
+ *
+ * The hover highlight is an emissive term worth 35% of each material's colour
+ * (`highlight.ts`), so a real body pixel moves by tens of levels while the
+ * ground beside it does not move at all. Comfortably above two frames' own
+ * churn and comfortably below what the highlight actually does.
+ */
+const HOVER_LIFT = 10;
+
+/** A mask smaller or larger than this is not a figure, and is not measured. */
+const MASK_MIN = 300;
+const MASK_MAX = 8000;
+
+/**
+ * Where the "is the world still lit" patch is taken, relative to the same bar:
+ * past the figure, and inside the torch's default reach.
  */
 const GROUND_DROP = 96;
 const GROUND_ACROSS = 62;
@@ -89,6 +110,68 @@ function warmth(patch: Patch): number {
   return patch.r - patch.b;
 }
 
+interface Box {
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * The pixels the player's own body is drawn on, found rather than guessed.
+ *
+ * Offsets from the health bar were the first attempt and were wrong twice over:
+ * a patch below the bar landed in the pool of torchlight the figure stands in,
+ * and one a little lower landed on the unlit flame mesh, which is the brightest
+ * thing in frame. Both reported a gloriously lit body while measuring no part
+ * of one.
+ *
+ * So the body says where it is. Hovering a unit brightens its rig and nothing
+ * else in the scene (spec 095), so the pixels that move when the cursor lands on
+ * it *are* the rig -- ground, flame, orb and every other body excluded by
+ * construction.
+ */
+interface BodyMask {
+  /** Indices into a frame's `data`, one per body pixel, already times four. */
+  readonly pixels: readonly number[];
+  /** The same, split at the body's middle, for the top-to-bottom check. */
+  readonly upper: readonly number[];
+  readonly lower: readonly number[];
+}
+
+function maskFrom(cold: PNG, warm: PNG, box: Box): BodyMask {
+  const pixels: number[] = [];
+  const rows: number[] = [];
+  for (let y = Math.max(0, box.top); y < Math.min(cold.height, box.top + box.height); y++) {
+    for (let x = Math.max(0, box.left); x < Math.min(cold.width, box.left + box.width); x++) {
+      const i = (y * cold.width + x) * 4;
+      const before = ((cold.data[i] ?? 0) + (cold.data[i + 1] ?? 0) + (cold.data[i + 2] ?? 0)) / 3;
+      const after = ((warm.data[i] ?? 0) + (warm.data[i + 1] ?? 0) + (warm.data[i + 2] ?? 0)) / 3;
+      if (after - before < HOVER_LIFT) continue;
+      pixels.push(i);
+      rows.push(y);
+    }
+  }
+  const middle = rows.length > 0 ? (Math.min(...rows) + Math.max(...rows)) / 2 : 0;
+  const upper: number[] = [];
+  const lower: number[] = [];
+  pixels.forEach((i, n) => ((rows[n] ?? 0) < middle ? upper : lower).push(i));
+  return { pixels, upper, lower };
+}
+
+function sampleMask(png: PNG, pixels: readonly number[]): Patch {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  for (const i of pixels) {
+    r += png.data[i] ?? 0;
+    g += png.data[i + 1] ?? 0;
+    b += png.data[i + 2] ?? 0;
+  }
+  const n = Math.max(1, pixels.length);
+  return { mean: (r + g + b) / (3 * n), r: r / n, g: g / n, b: b / n };
+}
+
 function samplePatch(png: PNG, left: number, top: number, size: number): Patch {
   let r = 0;
   let g = 0;
@@ -108,18 +191,12 @@ function samplePatch(png: PNG, left: number, top: number, size: number): Patch {
 }
 
 /** How many pixels of a box differ between two frames, and by how much on average. */
-function boxDelta(
-  a: PNG,
-  b: PNG,
-  left: number,
-  top: number,
-  size: number,
-): { changed: number; meanShift: number } {
+function boxDelta(a: PNG, b: PNG, box: Box): { changed: number; meanShift: number } {
   let changed = 0;
   let shift = 0;
   let n = 0;
-  for (let y = Math.max(0, Math.round(top)); y < Math.min(a.height, b.height, top + size); y++) {
-    for (let x = Math.max(0, Math.round(left)); x < Math.min(a.width, b.width, left + size); x++) {
+  for (let y = Math.max(0, box.top); y < Math.min(a.height, b.height, box.top + box.height); y++) {
+    for (let x = Math.max(0, box.left); x < Math.min(a.width, b.width, box.left + box.width); x++) {
       const i = (y * a.width + x) * 4;
       const before = ((a.data[i] ?? 0) + (a.data[i + 1] ?? 0) + (a.data[i + 2] ?? 0)) / 3;
       const after = ((b.data[i] ?? 0) + (b.data[i + 1] ?? 0) + (b.data[i + 2] ?? 0)) / 3;
@@ -129,14 +206,6 @@ function boxDelta(
     }
   }
   return { changed, meanShift: n > 0 ? shift / n : 0 };
-}
-
-function report(name: string, patch: Patch): void {
-  console.log(
-    `    ${name.padEnd(22)} mean ${patch.mean.toFixed(1).padStart(6)}  ` +
-      `rgb ${patch.r.toFixed(1)}/${patch.g.toFixed(1)}/${patch.b.toFixed(1)}  ` +
-      `warmth ${warmth(patch).toFixed(1)}`,
-  );
 }
 
 async function waitForServer(url: string, timeoutMs = 30_000): Promise<void> {
@@ -165,13 +234,20 @@ async function waitForTick(page: Page, ticks: number, timeoutMs = 90_000): Promi
   throw new Error(`sim never reached tick ${ticks} (last seen: ${last})`);
 }
 
-/** Where the local player's own health bar is, which is where the body is. */
+/**
+ * Where the local player's own health bar is, which is where the body is.
+ *
+ * `x` is the bar's **centre**, not its left edge. That distinction cost a run:
+ * hovering at `offsetLeft` aims some twenty-five pixels to the left of the
+ * figure, which lands on the body about half the time and on the grass the
+ * other half -- and a hover that misses returns an empty mask, not a wrong one.
+ */
 async function selfBar(page: Page): Promise<{ x: number; y: number }> {
   const found = await page.$$eval('[data-entity]', (nodes) =>
     nodes
       .map((node) => node as HTMLElement)
       .filter((element) => element.dataset['self'] !== undefined)
-      .map((element) => ({ x: element.offsetLeft, y: element.offsetTop })),
+      .map((element) => ({ x: element.offsetLeft + element.offsetWidth / 2, y: element.offsetTop })),
   );
   const bar = found[0];
   if (!bar) throw new Error('the local player has no bar on screen');
@@ -214,14 +290,112 @@ async function holdAtMidnight(page: Page): Promise<void> {
   });
 }
 
+/**
+ * Switch the retro filter off for the duration.
+ *
+ * Not housekeeping: it quantizes each channel to twelve steps, which is a step
+ * of twenty-one levels. Anything smaller reaches a screenshot as dither noise or
+ * as nothing, and the hover lift the body mask is found by sits right on that
+ * boundary -- with the filter on the mask came back as 166 scattered pixels of a
+ * figure a hundred tall.
+ */
+async function dropTheFilter(page: Page): Promise<void> {
+  await withMenu(page, 'Retro filter', async () => {
+    await setCheckbox(page, 'Retro filter', false);
+  });
+}
+
+/** Still the flame, and open at a known reach. */
+async function settleTheTorch(page: Page): Promise<void> {
+  await withMenu(page, 'Player lights', async () => {
+    // The flicker runs from 0.55 to 1.35, so two frames a second apart differ by
+    // more than anything this script toggles -- the first run of it read a 38%
+    // brighter body off nothing but the flame.
+    await setSlider(page, 'Flicker', 0);
+    await setSlider(page, 'Torch range', 300);
+  });
+}
+
 async function frame(page: Page): Promise<PNG> {
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(400);
   return PNG.sync.read(await page.screenshot());
 }
 
 async function shoot(page: Page, name: string): Promise<void> {
   await page.screenshot({ path: join(outDir, `${name}.png`) });
   console.log(`  wrote ${name}.png`);
+}
+
+/** Everything one lighting condition has to say, measured off its own frames. */
+interface Reading {
+  readonly body: Patch;
+  readonly top: Patch;
+  readonly bottom: Patch;
+  readonly ground: Patch;
+  readonly found: number;
+  readonly frame: PNG;
+  readonly around: Box;
+}
+
+/**
+ * Photograph the current condition and measure the body in it.
+ *
+ * The mask is re-derived here rather than taken once at the start, and that is
+ * not caution: the first version captured it once and every later reading
+ * disagreed with itself, because the world does not hold still for a screenshot
+ * harness. A body a monster has nudged three pixels is a mask over the ground
+ * beside it, and the ground is lit ten times harder than the body -- so a stale
+ * mask does not merely add noise, it reports the ground's own behaviour under
+ * the body's name. Each reading now takes its own pair of frames a moment apart
+ * and finds the figure where it is *now*.
+ */
+async function read(page: Page): Promise<Reading> {
+  const bar = await selfBar(page);
+  const parked = { x: Math.max(20, bar.x - 320), y: bar.y + 220 };
+  const box = {
+    left: bar.x + BODY_SEARCH.left,
+    top: bar.y + BODY_SEARCH.top,
+    width: BODY_SEARCH.width,
+    height: BODY_SEARCH.height,
+  };
+
+  await page.mouse.move(parked.x, parked.y);
+  const cold = await frame(page);
+
+  let mask = maskFrom(cold, cold, box);
+  for (const drop of BODY_DROPS) {
+    await page.mouse.move(bar.x, bar.y + drop);
+    const warm = await frame(page);
+    const found = maskFrom(cold, warm, box);
+    if (found.pixels.length > mask.pixels.length) mask = found;
+    if (mask.pixels.length > MASK_MIN) break;
+  }
+  await page.mouse.move(parked.x, parked.y);
+
+  return {
+    body: sampleMask(cold, mask.pixels),
+    top: sampleMask(cold, mask.upper),
+    bottom: sampleMask(cold, mask.lower),
+    ground: samplePatch(
+      cold,
+      bar.x + GROUND_ACROSS - GROUND_PATCH / 2,
+      bar.y + GROUND_DROP,
+      GROUND_PATCH,
+    ),
+    found: mask.pixels.length,
+    frame: cold,
+    around: { left: bar.x - AROUND / 2, top: bar.y - AROUND / 4, width: AROUND, height: AROUND },
+  };
+}
+
+function report(name: string, reading: Reading): void {
+  const line = (what: string, patch: Patch): string =>
+    `${what} ${patch.mean.toFixed(1).padStart(6)} (${patch.r.toFixed(0)}/${patch.g.toFixed(0)}/${patch.b.toFixed(0)})`;
+  console.log(
+    `    ${name.padEnd(20)} ${line('body', reading.body)}  ` +
+      `${line('top', reading.top)}  ${line('bottom', reading.bottom)}  ` +
+      `${line('ground', reading.ground)}  [${reading.found}px]`,
+  );
 }
 
 async function main(): Promise<void> {
@@ -261,114 +435,122 @@ async function main(): Promise<void> {
     await waitForTick(page, 150);
 
     await holdAtMidnight(page);
+    await dropTheFilter(page);
+    await settleTheTorch(page);
 
-    const bar = await selfBar(page);
-    const bodyBox = { left: bar.x - BODY_PATCH / 2, top: bar.y + BODY_DROP };
-    const groundBox = { left: bar.x + GROUND_ACROSS, top: bar.y + GROUND_DROP };
-    const body = (png: PNG): Patch => samplePatch(png, bodyBox.left, bodyBox.top, BODY_PATCH);
-    const ground = (png: PNG): Patch => samplePatch(png, groundBox.left, groundBox.top, GROUND_PATCH);
-
-    console.log('\nmidnight, no light carried');
+    console.log('\nmidnight');
     await withMenu(page, 'Player lights', async () => {
       await setCheckbox(page, 'Torch', false);
       await setCheckbox(page, 'Magic light', false);
-      // The flame is stilled for every measurement below. The flicker runs from
-      // 0.55 to 1.35 and the filter carries it on purpose, so two frames taken a
-      // second apart differ by more than anything this script is toggling --
-      // the first run of it read a 38% brighter body off nothing but the flame.
-      await setSlider(page, 'Flicker', 0);
     });
-    const dark = await frame(page);
+    const dark = await read(page);
     await shoot(page, 'player-lights-none');
-    report('body', body(dark));
-    report('ground beside', ground(dark));
+    report('no light carried', dark);
 
-    console.log('\ntorch on');
     await withMenu(page, 'Player lights', async () => {
       await setCheckbox(page, 'Torch', true);
     });
-    const torch = await frame(page);
+    const torch = await read(page);
     await shoot(page, 'player-lights-torch');
-    report('body', body(torch));
-    report('ground beside', ground(torch));
+    report('torch', torch);
 
-    check(body(torch).mean > body(dark).mean, 'the torch brightens the body it is carried by');
+    const located = (reading: Reading): boolean =>
+      reading.found > MASK_MIN && reading.found < MASK_MAX;
+    check(located(dark) && located(torch), 'the hover highlight located the player’s own pixels');
+    check(torch.body.mean > dark.body.mean, 'the torch lights the body carrying it');
+    check(warmth(torch.body) > warmth(dark.body), 'and it is the flame’s own colour landing on it');
+    check(torch.ground.mean > dark.ground.mean, 'the torch still lights the ground beside it');
+    // Lit, not held against: a body a torch is pressed to clips on the near side.
     check(
-      warmth(body(torch)) > warmth(body(dark)),
-      'and warms it -- the filter is in the flame’s own colour',
+      Math.max(torch.body.r, torch.body.g, torch.body.b) < 250,
+      'and the body is lit rather than blown out',
     );
-    check(ground(torch).mean > ground(dark).mean, 'the torch still lights the ground beside it');
 
-    // The headline, and the one measurement that can tell the mask working from
-    // the mask silently not applying: pull the torch's *reach* in. A point light
-    // still landing on the body would drag it with the ground, because reach and
-    // candela are the same number squared (`pointIntensity`). The filter is a
-    // function of brightness alone, so a body under it does not move at all.
-    console.log('\ntorch reach pulled right in');
-    await withMenu(page, 'Player lights', async () => {
-      await setSlider(page, 'Torch range', 80);
-    });
-    const near = await frame(page);
-    report('body', body(near));
-    report('ground beside', ground(near));
-    check(
-      ground(near).mean < ground(torch).mean - 20,
-      'the ground beside the player falls out of the light',
-    );
-    check(
-      Math.abs(body(near).mean - body(torch).mean) < 6,
-      'and the body does not follow it -- the point light is off the body',
-    );
-    await withMenu(page, 'Player lights', async () => {
-      await setSlider(page, 'Torch range', 300);
-    });
+    // The uniformity the spec is named for, and the check that can tell the
+    // patch working from the patch silently not applying. The flame hangs at head
+    // height 44 units off: lit from *there*, the shoulders sit at a fraction of
+    // that distance and the shins at several times it, and 1/d² turns that into a
+    // near/far ratio around ten. From half the torch's range both are within a
+    // fraction of a stop, and what is left between them is the moon's own shading.
+    const spread = torch.top.mean / Math.max(1, torch.bottom.mean);
+    console.log(`    top/bottom brightness ratio: ${spread.toFixed(2)}`);
+    check(spread > 1 / 1.8 && spread < 1.8, 'and lit evenly top to bottom');
+
+    // Reach and candela are the same number squared (`pointIntensity`), so how
+    // lit the body is would follow this slider anywhere if the body were lit
+    // from where the flame actually is. Measured from half the range it holds
+    // still, because half the range is the distance `brightness` is defined at.
+    //
+    // The short end is in the table and out of the assertion on purpose: at a
+    // range of 80 the half-range is 40 units and the flame's own anchor is 44,
+    // so `carriedLightDistance` leaves the light exactly where it is. A lamp
+    // with an 80-unit reach is meant to be an intimate light.
+    console.log('\nacross the reach slider');
+    const sweep: { range: number; reading: Reading }[] = [];
+    for (const range of [80, 150, 300, 600, 900]) {
+      await withMenu(page, 'Player lights', async () => {
+        await setSlider(page, 'Torch range', range);
+      });
+      const reading = await read(page);
+      report(`range ${range}`, reading);
+      sweep.push({ range, reading });
+    }
+    const wide = sweep.filter((entry) => entry.range >= 300).map((entry) => entry.reading);
+    const bodies = wide.map((reading) => reading.body.mean);
+    const grounds = wide.map((reading) => reading.ground.mean);
+    const span = (xs: number[]): number => Math.max(...xs) / Math.max(1, Math.min(...xs));
+    console.log(`    over 300..900 -- body spans ${span(bodies).toFixed(2)}x, ground ${span(grounds).toFixed(2)}x`);
+    check(span(bodies) < 1.25, 'tripling the reach barely moves how lit the body is');
+    check(span(grounds) > 1.25, 'while it plainly moves how far the light throws');
 
     console.log('\nmagic orb on, torch off');
     await withMenu(page, 'Player lights', async () => {
+      await setSlider(page, 'Torch range', 300);
       await setCheckbox(page, 'Torch', false);
       await setCheckbox(page, 'Magic light', true);
     });
-    const orb = await frame(page);
+    const orb = await read(page);
     await shoot(page, 'player-lights-orb');
-    report('body', body(orb));
-    report('ground beside', ground(orb));
-
-    check(body(orb).mean > body(dark).mean, 'the orb brightens the body it floats over');
-    check(
-      warmth(body(orb)) < warmth(body(torch)),
-      'and cools it -- the two lights do not tint the same way',
-    );
+    report('orb', orb);
+    check(orb.body.mean > dark.body.mean, 'the orb lights the body it floats over');
+    check(warmth(orb.body) < warmth(torch.body), 'and cools it -- the two do not land the same way');
 
     console.log('\nplayer casting into the torch’s shadow map');
     await withMenu(page, 'Player lights', async () => {
       await setCheckbox(page, 'Magic light', false);
       await setCheckbox(page, 'Torch', true);
+    });
+    const before = await read(page);
+    await withMenu(page, 'Player lights', async () => {
       await setCheckbox(page, 'Player casts torch shadow', true);
     });
-    const casting = await frame(page);
+    const casting = await read(page);
     await shoot(page, 'player-lights-self-shadow');
-    report('body', body(casting));
-    report('ground beside', ground(casting));
+    report('not casting', before);
+    report('casting', casting);
 
-    // Measured over a window rather than one patch: which way the silhouette
-    // falls depends on which way the player is facing, so a fixed patch is a
-    // coin toss. What is not a coin toss is that a shadow appearing takes light
-    // *away* from the ground around the caster.
-    const shadowed = boxDelta(torch, casting, bar.x - AROUND / 2, bar.y - AROUND / 4, AROUND);
+    // Measured over a window rather than a patch: which way the silhouette falls
+    // depends on which way the player happens to be facing, so a fixed patch is
+    // a coin toss. What is not a coin toss is that a shadow appearing takes
+    // light away from the ground around the caster.
+    const shadowed = boxDelta(before.frame, casting.frame, before.around);
     console.log(
       `    pixels changed around the player: ${shadowed.changed}, ` +
         `mean shift ${shadowed.meanShift.toFixed(2)}`,
     );
     check(shadowed.changed > 200, 'the checkbox visibly changes the ground around the player');
-    check(shadowed.meanShift < 0, 'and it changes it by taking light away, which is what a shadow is');
+    check(shadowed.meanShift < 0, 'and it changes it by taking light away, which is a shadow');
+    // The other half of why it is off by default, and the half that only exists
+    // because the player is lit by the torch again: a body drawn into the cube
+    // map occludes the flame from its own far side, so it shadows itself.
     check(
-      Math.abs(body(casting).mean - body(torch).mean) < 6,
-      'while leaving the body’s own shading alone',
+      casting.body.mean < before.body.mean,
+      'and the body shadows itself once it is drawn into the cube map',
     );
 
-    // A blank frame passes every brightness comparison above by accident, so
-    // say out loud that there is a picture here at all.
-    check(body(torch).mean > 4, 'the body is drawn at all -- this is not a black frame');
+    // A blank frame passes every brightness comparison above by accident, so say
+    // out loud that there is a picture here at all.
+    check(torch.body.mean > 4, 'the body is drawn at all -- this is not a black frame');
 
     const shaderErrors = problems.filter((line) => /shader|glsl|program|compile/i.test(line));
     check(shaderErrors.length === 0, 'no shader failed to compile');

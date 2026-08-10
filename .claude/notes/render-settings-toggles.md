@@ -71,9 +71,10 @@ conflate them:
 Other toggles follow the identical pattern: `torchOn`/`torchShadows`/`magicOn`
 (read in `scene.ts` ~900-925 to drive `this.torch`/`this.orb` three.js lights),
 `torchPlayerShadow` (spec 118, default **off** — the one toggle here that does
-not reach a light or a mesh but `PlayerLightMask`, which owns whether the local
-player is drawn into point-light shadow maps and carries the brightening filter
-the body gets in place of being lit by the lights it holds),
+not reach a light or a mesh but `PlayerLighting`, which owns whether the local
+player is drawn into point-light shadow maps, and which also rewrites the
+point-light loop in the player's own materials so the carried lights are
+measured from half their range rather than from the flame's own anchor),
 `dayNightEnabled()`/`sky()` (drives `applyCycleSun()` vs `applyManualSun()`,
 `scene.ts:835`), `retro()` (feeds a post-process pass, `scene.ts:444-445`).
 
