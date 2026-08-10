@@ -177,6 +177,28 @@ const PURE_RENDER = [
   'src/render/iso3d/studio/timing-bar.ts',
   'src/render/iso3d/studio/graph-layout.ts',
   'src/render/iso3d/studio/panels.test.ts',
+  // The VFX core (spec 118). Every decision an effect makes is arithmetic --
+  // emission, integration, collision, curves, the budget -- and the promise the
+  // whole system rests on is that the same seed draws the same thing, which is
+  // only assertable where it can be replayed. The three.js half is the batches
+  // and the layer, and neither of those decides anything.
+  //
+  // `rng.ts` is the pointed one. It is a *mutable* generator, which the sim's own
+  // PRNG deliberately is not, because a particle loop cannot allocate per draw.
+  // It is linted as pure so that nothing else about it drifts, and it must never
+  // be imported by anything the deterministic core can reach.
+  'src/render/iso3d/vfx/rng.ts',
+  'src/render/iso3d/vfx/noise.ts',
+  'src/render/iso3d/vfx/curve.ts',
+  'src/render/iso3d/vfx/palette.ts',
+  'src/render/iso3d/vfx/shapes.ts',
+  'src/render/iso3d/vfx/types.ts',
+  'src/render/iso3d/vfx/compile.ts',
+  'src/render/iso3d/vfx/pool.ts',
+  'src/render/iso3d/vfx/system.ts',
+  'src/render/iso3d/vfx/registry.ts',
+  'src/render/iso3d/vfx/stress.ts',
+  'src/render/iso3d/vfx/*.test.ts',
   'src/render/iso3d/editor/brush.ts',
   'src/render/iso3d/editor/camera.ts',
   'src/render/iso3d/editor/history.ts',
