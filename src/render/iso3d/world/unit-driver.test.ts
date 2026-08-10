@@ -9,6 +9,7 @@ import {
   advanceSpeed,
   BLEND_SLEW_PER_SECOND,
   driveUnit,
+  hasDeathAnimation,
   slewSpeed,
   speedBetween,
   startedCasting,
@@ -458,5 +459,53 @@ describe('the pig, driven to a stop through its own machine', () => {
       // A tick that drew nothing would be a body that blinked.
       expect(frame.run + frame.walk + frame.idle).toBeGreaterThan(0.5);
     }
+  });
+});
+
+
+describe('hasDeathAnimation', () => {
+  /**
+   * The scene squashes a corpse to 0.6 so a kill reads. That is right for the
+   * procedural rigs, which have no death clip, and wrong for a body that falls
+   * over by itself -- which drew the pig at half size for the whole of its
+   * collapse and snapped it back to full size on respawn.
+   */
+  const DIR = 'assets/units/pig_a_pose_full';
+  const read = (name: string): unknown =>
+    JSON.parse(readFileSync(join(process.cwd(), DIR, name), 'utf8'));
+  const bundle = loadUnitBundle(read('pig_a_pose_full.unitdef.json'), read('pig.core.cliplib.json'));
+
+  it('is true for the pig, which has a terminal state to fall into', () => {
+    const unit = bundle.value?.unit;
+    if (!unit) throw new Error(bundleErrorText(bundle));
+    expect(hasDeathAnimation(unit)).toBe(true);
+  });
+
+  it('is the same answer before the machine has caught up', () => {
+    // The reason this asks the document and not the current state: a corpse the
+    // client joined to find already on the ground spends its first frame in the
+    // entry state, and a per-frame answer would pop it from squashed to full.
+    const loaded = bundle.value;
+    if (!loaded) throw new Error(bundleErrorText(bundle));
+    const driven = new UnitMachine({ unit: loaded.unit, clipLib: loaded.clipLib });
+    expect(driven.stateId).toBe('idle');
+    expect(hasDeathAnimation(loaded.unit)).toBe(true);
+    driveUnit(driven, facts({ dead: true }), facts(), 1);
+    expect(driven.stateId).toBe('down');
+    expect(hasDeathAnimation(loaded.unit)).toBe(true);
+  });
+
+  it('is false for a unit whose author wired no death state', () => {
+    // That body still needs the squash, and gets it without anyone having to
+    // remember the rule.
+    const bare = unitDefFixture();
+    const noDeath = {
+      ...bare,
+      stateMachine: {
+        ...bare.stateMachine,
+        states: bare.stateMachine.states.map((state) => ({ ...state, category: 'loop' as const })),
+      },
+    };
+    expect(hasDeathAnimation(noDeath)).toBe(false);
   });
 });

@@ -89,9 +89,18 @@ import { PlayerLighting } from '../player-lighting.js';
 import { appearanceOf, PLAYER_CRITTER, PLAYER_FIGURE, type Appearance } from './appearance.js';
 import { UnitRig } from '../unit-rig.js';
 import { UnitMachine } from '../../../units/machine.js';
+import type { UnitDef } from '../../../units/types.js';
 import { authoredUnitFor } from './unit-catalog.js';
 import { authoredUnitAssets } from './unit-assets.js';
-import { advanceSpeed, driveUnit, slewSpeed, STOPPED, type SpeedClock, type UnitFacts } from './unit-driver.js';
+import {
+  advanceSpeed,
+  driveUnit,
+  hasDeathAnimation,
+  slewSpeed,
+  STOPPED,
+  type SpeedClock,
+  type UnitFacts,
+} from './unit-driver.js';
 import { SERVER_TICK_RATE } from '../../../server/config.js';
 import { drawnPixels, mixerCadence, shouldApply } from './unit-lod.js';
 import { DEFAULT_CANONICAL_HEIGHT } from '../../../units/canonical-height.js';
@@ -201,6 +210,8 @@ export interface AimIndicator {
 interface DrivenUnit {
   readonly rig: UnitRig;
   readonly machine: UnitMachine;
+  /** The document behind the machine, for questions about what it authored. */
+  readonly def: UnitDef;
   /** Last tick's facts, so a cast's first tick can be told from its fifth. */
   previous: UnitFacts | null;
   /** Last drawn position, for the speed the blend tree reads. */
@@ -1031,9 +1042,14 @@ export class WorldScene {
       // following rather than the one the deltas describe (spec 087).
       body.shot?.update(dt, x, y, ground);
 
-      // A corpse lies where it fell and stops animating, so a kill reads.
+      // A corpse lies where it fell and stops animating, so a kill reads. The
+      // squash is how that reads for the procedural rigs, which have no death
+      // clip -- a body with an authored `terminal` state is already lying down
+      // by its own animation, and squashing that as well drew the pig at half
+      // size for the whole of its collapse.
       const dead = entity.maxHealth > 0 && entity.health <= 0;
-      body.group.scale.setScalar(dead ? 0.6 : 1);
+      const fallen = body.unit !== undefined && hasDeathAnimation(body.unit.def);
+      body.group.scale.setScalar(dead && !fallen ? 0.6 : 1);
       // Cleared here and turned back on by `syncHover`, so exactly one body is
       // ever lit however many frames ago the cursor last moved.
       body.highlight?.setHighlighted(false);
@@ -1311,6 +1327,7 @@ export class WorldScene {
       const driven: DrivenUnit = {
         rig: unitRig,
         machine: new UnitMachine({ unit: authoredUnit.unit, clipLib: authoredUnit.clipLib }),
+        def: authoredUnit.unit,
         previous: null,
         previousPosition: null,
         speed: STOPPED,

@@ -20,6 +20,7 @@
  * Pure, so a whole fight's worth of animation decisions can be replayed in Node.
  */
 
+import type { UnitDef } from '../../../units/types.js';
 import { EntityActivity, CastPhaseValue } from '../../../server/net/protocol.js';
 import type { FiredEvent, UnitMachine } from '../../../units/machine.js';
 
@@ -231,4 +232,28 @@ export function slewSpeed(
   const delta = to - from;
   if (Math.abs(delta) <= step) return to;
   return from + Math.sign(delta) * step;
+}
+
+/**
+ * Whether a unit shows its own death, so the scene must not show it as well.
+ *
+ * The scene squashes a corpse to 0.6 so a kill reads. That is the right answer
+ * for the procedural rigs, which have no death clip: a body that stopped where
+ * it stood is otherwise indistinguishable from one standing still. An authored
+ * unit with a `terminal` state falls over by itself, and squashing it too drew
+ * the pig at half size for the whole of its collapse, then snapped it back to
+ * full size the moment it was alive again.
+ *
+ * Asked of the *document* rather than of the state the machine is in this
+ * frame. Both answer the question for a body that died while being watched;
+ * only this one answers it for a corpse that was already on the ground when the
+ * client joined, whose machine spends its first frame in the entry state and
+ * would pop from squashed to full size as it caught up.
+ *
+ * `terminal` is the category for a state that is never left, which for a living
+ * body is not a thing to be in -- so a unit that declares one is a unit that
+ * has somewhere to fall.
+ */
+export function hasDeathAnimation(unit: UnitDef): boolean {
+  return unit.stateMachine.states.some((state) => state.category === 'terminal');
 }
