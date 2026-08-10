@@ -77,14 +77,19 @@ import { advanceWind } from '../wind-uniforms.js';
 import { FIXED_DAYLIGHT } from '../daynight.js';
 import {
   MAGIC_COLOR,
+  MAGIC_DEFAULTS,
   MAX_LIGHT_RANGE,
+  NO_TINT,
   TORCH_ANCHOR,
   TORCH_COLOR,
   TORCH_DEFAULTS,
   orbState,
+  playerLightTint,
   pointIntensity,
   torchFlicker,
+  type TintSource,
 } from '../player-lights.js';
+import { PlayerLightMask } from '../player-light-mask.js';
 import { appearanceOf, PLAYER_CRITTER, PLAYER_FIGURE, type Appearance } from './appearance.js';
 import { UnitRig } from '../unit-rig.js';
 import { UnitMachine } from '../../../units/machine.js';
@@ -299,6 +304,16 @@ export class WorldScene {
   private readonly orbMesh: THREE.Mesh;
   /** The rig currently carrying the torch, so re-parenting happens once. */
   private torchHost: THREE.Object3D | null = null;
+  /**
+   * The local player, taken out of the lights they are carrying (spec 118).
+   *
+   * Attached to the same rig the torch is hung off, and for the same reason it
+   * is re-checked every frame: a respawn is a new entity and therefore a new
+   * body.
+   */
+  private readonly lightMask = new PlayerLightMask();
+  /** Scratch for the two tint sources, so a frame of lit walking allocates nothing. */
+  private readonly tintSources: TintSource[] = [];
   private readonly unwalkable = new THREE.Group();
 
   /**
@@ -1220,6 +1235,10 @@ export class WorldScene {
   /** Hang the torch off the local player's rig; see {@link applyPlayerLights}. */
   private carryTorch(selfEntityId: number): void {
     const host = this.bodies.get(selfEntityId)?.group ?? null;
+    // Every frame, not only on a change: the mask has to find meshes that were
+    // not there when the body was made, since an authored unit's `.glb` lands
+    // some frames after the group it goes in (spec 118).
+    this.lightMask.attach(host);
     if (host === this.torchHost) return;
     this.torchHost = host;
     // Before the first delta places us there is no rig to carry it; parking the
@@ -1698,6 +1717,9 @@ export class WorldScene {
    */
   private applyPlayerLights(position: Vec2, groundY: number): void {
     const settings = this.controls.playerLights();
+    // Rebuilt rather than accumulated: a light switched off this frame must
+    // leave nothing behind for the tint to keep reading (spec 118).
+    this.tintSources.length = 0;
 
     this.torch.visible = settings.torchOn;
     this.torchFlame.visible = settings.torchOn;
@@ -1713,6 +1735,15 @@ export class WorldScene {
         TORCH_ANCHOR.z + flame.sway.z,
       );
       this.torchFlame.position.copy(this.torch.position);
+      // The flicker goes into the filter as well as into the light, so the body
+      // breathes with the flame rather than sitting at a fixed offset beside a
+      // light that does not.
+      this.tintSources.push({
+        color: TORCH_COLOR,
+        brightness: settings.torchBrightness,
+        reference: TORCH_DEFAULTS.brightness,
+        intensity: flame.intensity,
+      });
     }
 
     this.orb.visible = settings.magicOn;
@@ -1729,7 +1760,21 @@ export class WorldScene {
         position.y + state.offset.z,
       );
       this.orbMesh.position.copy(this.orb.position);
+      this.tintSources.push({
+        color: MAGIC_COLOR,
+        brightness: settings.magicBrightness,
+        reference: MAGIC_DEFAULTS.brightness,
+        intensity: state.intensity,
+      });
     }
+
+    // What the player gets *instead* of being lit by either of them: a flat
+    // brightening filter in the colour of whatever is burning, and no cube-map
+    // silhouette of themselves across their own feet unless asked for.
+    this.lightMask.setTint(
+      this.tintSources.length === 0 ? NO_TINT : playerLightTint(this.tintSources),
+    );
+    this.lightMask.setCastsPointShadow(settings.torchPlayerShadow);
   }
 
   /**

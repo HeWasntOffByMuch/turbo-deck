@@ -1,11 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
+  MAGIC_COLOR,
   MAGIC_DEFAULTS,
+  MAX_PLAYER_TINT,
+  PLAYER_TINT_GAIN,
+  TORCH_COLOR,
   TORCH_DEFAULTS,
   orbState,
+  playerLightTint,
   pointIntensity,
   torchFlicker,
+  type LightTint,
+  type TintSource,
 } from './player-lights.js';
+import { shaderMarkersPresent } from './player-light-mask.js';
 
 /** A long even sweep of the flame, for statistics rather than spot checks. */
 function flickerSamples(seed: number, count = 4000, step = 1 / 60): number[] {
@@ -161,5 +169,114 @@ describe('pointIntensity (spec 047)', () => {
   it('never returns a negative or non-finite intensity', () => {
     expect(pointIntensity(-5, 300)).toBe(0);
     expect(Number.isFinite(pointIntensity(1, 0))).toBe(true);
+  });
+});
+
+describe('playerLightTint (spec 118)', () => {
+  /** A source at its own default brightness and a steady flame. */
+  function full(color: number, reference: number, intensity = 1): TintSource {
+    return { color, brightness: reference, reference, intensity };
+  }
+
+  const torch = full(TORCH_COLOR, TORCH_DEFAULTS.brightness);
+  const orb = full(MAGIC_COLOR, MAGIC_DEFAULTS.brightness);
+  const channels = (tint: LightTint): number[] => [tint.r, tint.g, tint.b];
+
+  it('is exactly the identity with no light on', () => {
+    expect(playerLightTint([])).toEqual({ r: 1, g: 1, b: 1 });
+  });
+
+  it('only ever brightens -- this is a filter, not a grade', () => {
+    // The headline assertion. Blending the body toward a normalised colour
+    // would take a third off red for the blue orb, so switching a light *on*
+    // would darken the player on two channels out of three.
+    for (const sources of [[torch], [orb], [torch, orb]]) {
+      for (const channel of channels(playerLightTint(sources))) {
+        expect(channel).toBeGreaterThanOrEqual(1);
+      }
+    }
+  });
+
+  it('leans toward the hue of whatever is burning', () => {
+    const flame = playerLightTint([torch]);
+    expect(flame.r).toBeGreaterThan(flame.b);
+    const magic = playerLightTint([orb]);
+    expect(magic.b).toBeGreaterThan(magic.r);
+  });
+
+  it('lands between the two when both are on', () => {
+    const both = playerLightTint([torch, orb]);
+    const flame = playerLightTint([torch]);
+    const magic = playerLightTint([orb]);
+    // Warmer than the orb alone and cooler than the flame alone, measured as
+    // the red the tint has over its blue.
+    const warmth = (tint: LightTint): number => tint.r - tint.b;
+    expect(warmth(both)).toBeLessThan(warmth(flame));
+    expect(warmth(both)).toBeGreaterThan(warmth(magic));
+  });
+
+  it('lifts more with two lights than with one', () => {
+    const sum = (tint: LightTint): number => tint.r + tint.g + tint.b;
+    expect(sum(playerLightTint([torch, orb]))).toBeGreaterThan(sum(playerLightTint([torch])));
+  });
+
+  it('is the identity at zero brightness', () => {
+    expect(playerLightTint([{ ...torch, brightness: 0 }])).toEqual({ r: 1, g: 1, b: 1 });
+  });
+
+  it('stops lifting past the light’s own default brightness', () => {
+    // Past the default the slider goes on lighting the *world*, which is what
+    // it is for. The player has no falloff to absorb more and would just clip.
+    const cranked = playerLightTint([{ ...torch, brightness: TORCH_DEFAULTS.brightness * 4 }]);
+    expect(cranked).toEqual(playerLightTint([torch]));
+    // And below it, it is still a dial.
+    const half = playerLightTint([{ ...torch, brightness: TORCH_DEFAULTS.brightness / 2 }]);
+    expect(half.r - 1).toBeCloseTo((cranked.r - 1) / 2, 9);
+  });
+
+  it('reaches its full gain on the light’s brightest channel', () => {
+    // The hue is normalised, so the peak channel of a source at full brightness
+    // lifts by exactly the gain -- the tuning knob means what it says.
+    expect(playerLightTint([torch]).r).toBeCloseTo(1 + PLAYER_TINT_GAIN, 9);
+  });
+
+  it('scales linearly with the flicker, so the body breathes with the flame', () => {
+    const dim = playerLightTint([{ ...torch, intensity: 0.5 }]);
+    const bright = playerLightTint([torch]);
+    expect(dim.r - 1).toBeCloseTo((bright.r - 1) / 2, 9);
+  });
+
+  it('caps every channel however many lights are on', () => {
+    const many = Array.from({ length: 12 }, () => torch);
+    for (const channel of channels(playerLightTint(many))) {
+      expect(channel).toBeLessThanOrEqual(MAX_PLAYER_TINT);
+    }
+  });
+
+  it('treats nonsense as no light rather than painting the player NaN', () => {
+    // This ends up in a material uniform, where a NaN does not throw -- it
+    // renders the body black.
+    const rubbish: TintSource[] = [
+      { ...torch, intensity: Number.NaN },
+      { ...torch, intensity: -3 },
+      { ...torch, brightness: Number.NaN },
+      { ...torch, reference: 0 },
+      { ...torch, color: Number.NaN },
+    ];
+    for (const source of rubbish) {
+      for (const channel of channels(playerLightTint([source]))) {
+        expect(Number.isFinite(channel)).toBe(true);
+        expect(channel).toBeGreaterThanOrEqual(1);
+      }
+    }
+  });
+});
+
+describe('the mask’s shader patch (spec 118)', () => {
+  it('still finds the line it rewrites in three’s own chunk', () => {
+    // The one thing that cannot be seen from a browser: a replace that stops
+    // matching is a silent no-op there, and a player lit by their own torch
+    // again. A three.js upgrade that renames this fails here instead.
+    expect(shaderMarkersPresent()).toBe(true);
   });
 });

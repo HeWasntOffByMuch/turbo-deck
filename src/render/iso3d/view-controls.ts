@@ -141,6 +141,16 @@ export interface PlayerLightSettings {
   readonly torchFlicker: number;
   /** Whether the torch casts shadows. Off is much cheaper -- it is a cube map. */
   readonly torchShadows: boolean;
+  /**
+   * Whether the player is drawn into the torch's shadow map (spec 118).
+   *
+   * Off by default. The player is the nearest thing to a flame they are
+   * carrying, so with this on the cube map is mostly their own silhouette
+   * thrown across the ground they are standing on, swinging as the flame
+   * gutters. Everything *else* still casts either way -- this is about the one
+   * caster the light is attached to.
+   */
+  readonly torchPlayerShadow: boolean;
   readonly magicOn: boolean;
   readonly magicRange: number;
   readonly magicBrightness: number;
@@ -411,6 +421,12 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   const torchShadows = makeCheckbox('Torch shadows', true,
     'Let the torch cast shadows. This is a cube shadow map — six extra passes a ' +
     'frame — so it is the first thing to switch off if the view stutters.');
+  // Off by default (spec 118): the player is the closest thing to their own
+  // flame, so what this adds is mostly their silhouette across their own feet.
+  const torchPlayerShadow = makeCheckbox('Player casts torch shadow', false,
+    'Let the player themself be drawn into the torch’s shadow map. Everything else ' +
+    'casts either way; this is the one caster the flame is attached to, and it throws ' +
+    'a silhouette across the ground under your own feet that swings as the flame gutters.');
 
   const magicOn = makeCheckbox('Magic light', false,
     'A conjured orb floating over the player that brightens everything within range ' +
@@ -621,6 +637,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   if (lights) {
     fill(lights.panel, 'Restore the torch and the magic light to their defaults.', [
       section('Torch'), torchOn, torchRange, torchBright, torchFlickerDepth, torchShadows,
+      torchPlayerShadow,
       section('Magic light'), magicOn, magicRange, magicBright,
     ]);
   }
@@ -742,6 +759,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
       torchBrightness: torchBright.value() / 100,
       torchFlicker: torchFlickerDepth.value() / 100,
       torchShadows: torchShadows.checked(),
+      torchPlayerShadow: torchPlayerShadow.checked(),
       magicOn: magicOn.checked(),
       magicRange: magicRange.value(),
       magicBrightness: magicBright.value() / 100,

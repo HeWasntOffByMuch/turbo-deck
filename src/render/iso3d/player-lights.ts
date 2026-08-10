@@ -16,6 +16,13 @@ import type { Vec3 } from './view-settings.js';
  *   it lights gains a shadow, which is what makes it read as magical rather
  *   than as a second lantern.
  *
+ * Neither of them lights the *player* (spec 118). A point light at head height
+ * beside a body, tuned to still read on the ground a hundred units away, does
+ * not shade that body -- it washes the near flank out and leaves the far one
+ * black. The player instead gets {@link playerLightTint}: a flat brightening
+ * filter in the colour of whatever is lit, which is the fact of carrying a
+ * light without the falloff.
+ *
  * Both use real time rather than sim ticks: they are cosmetic, they run at
  * frame rate, and nothing here feeds back into the sim.
  */
@@ -192,4 +199,106 @@ export function orbState(seconds: number, phase = 0): OrbState {
 export function pointIntensity(brightness: number, range: number): number {
   const half = Math.max(1, range) / 2;
   return Math.max(0, brightness) * half * half;
+}
+
+// --- the filter the player gets instead of being lit (spec 118) -------------
+
+/**
+ * How much one light at its default brightness lifts the player's own body.
+ *
+ * Tuned against the thing it replaces: enough that walking out of a lit camp
+ * into the dark with the torch on still shows the figure, and far short of the
+ * blown-out near flank a point light at 13 units was producing.
+ */
+export const PLAYER_TINT_GAIN = 0.6;
+
+/**
+ * The per-channel ceiling, so both lights on at once cannot clip the body to
+ * white. Two full-strength sources reach 2.2 before this bites, which is why it
+ * is above `1 + 2 * PLAYER_TINT_GAIN` rather than at it -- the cap is there for
+ * a third light nobody has added yet, not to quietly retune the second.
+ */
+export const MAX_PLAYER_TINT = 2.4;
+
+/** One light asking for its share of the player's brightening filter. */
+export interface TintSource {
+  /** The light's own colour, `0xrrggbb`. */
+  readonly color: number;
+  /** What the panel's brightness slider currently says. */
+  readonly brightness: number;
+  /** The brightness that counts as "full" for this light -- its default. */
+  readonly reference: number;
+  /** The live multiplier: the flame's flicker, or the orb's pulse. */
+  readonly intensity: number;
+}
+
+/** A per-channel multiplier on the player's own shading. `1,1,1` is untouched. */
+export interface LightTint {
+  readonly r: number;
+  readonly g: number;
+  readonly b: number;
+}
+
+/** The filter that changes nothing, for a player carrying no light at all. */
+export const NO_TINT: LightTint = { r: 1, g: 1, b: 1 };
+
+function clamp01(x: number): number {
+  return Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : 0;
+}
+
+/**
+ * A `0xrrggbb` colour scaled so its largest channel is 1.
+ *
+ * The normalisation is what makes this a *hue* rather than a colour: the torch's
+ * flame and a dimmer flame of the same hue must lift the body by the same
+ * proportions, with how much of it there is coming from `brightness` alone.
+ */
+function hueOf(color: number): LightTint {
+  const packed = Number.isFinite(color) ? Math.max(0, Math.floor(color)) : 0;
+  const r = ((packed >> 16) & 0xff) / 255;
+  const g = ((packed >> 8) & 0xff) / 255;
+  const b = (packed & 0xff) / 255;
+  const peak = Math.max(r, g, b);
+  if (peak <= 0) return { r: 0, g: 0, b: 0 };
+  return { r: r / peak, g: g / peak, b: b / peak };
+}
+
+/**
+ * The brightening filter the player's own body gets in place of being lit by
+ * the lights it carries (spec 118).
+ *
+ * **It only ever brightens.** Each source's hue is *added to* 1 rather than
+ * blended toward, so no channel can end below where it started. That is the
+ * difference between a light and a grade, and it is not a detail: blending the
+ * body toward the magic orb's normalised blue would take 38% off red and 15%
+ * off green, so switching a light *on* would make the player darker on two
+ * channels out of three.
+ *
+ * Each source is capped at its own `reference` brightness. Past that the slider
+ * goes on lighting the world -- which is what it is for -- without going on
+ * lifting a body that has no falloff to absorb it and would simply clip.
+ *
+ * Total in every input, because this ends up in a material's uniform: a `NaN`
+ * that reaches a colour there does not throw, it paints the player black.
+ */
+export function playerLightTint(sources: readonly TintSource[]): LightTint {
+  let r = 1;
+  let g = 1;
+  let b = 1;
+  for (const source of sources) {
+    const reference = Number.isFinite(source.reference) ? Math.max(0, source.reference) : 0;
+    const share = reference > 0 ? clamp01(source.brightness / reference) : 0;
+    const live = Number.isFinite(source.intensity) ? Math.max(0, source.intensity) : 0;
+    const weight = PLAYER_TINT_GAIN * share * live;
+    if (weight <= 0) continue;
+    const hue = hueOf(source.color);
+    r += weight * hue.r;
+    g += weight * hue.g;
+    b += weight * hue.b;
+  }
+  return {
+    r: Math.min(MAX_PLAYER_TINT, r),
+    g: Math.min(MAX_PLAYER_TINT, g),
+    b: Math.min(MAX_PLAYER_TINT, b),
+  };
 }

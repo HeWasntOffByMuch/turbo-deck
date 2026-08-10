@@ -48,6 +48,7 @@ export const MAX_PLAYER_TINT: number;    // per-channel ceiling
 ```
 
 A **brightening filter, never a dimmer.** Each source's colour is normalised so
+
 its largest channel is 1 before it is weighed in, and the weights are *added to*
 1 rather than blended toward the colour. So no channel ever ends below 1: a deep
 blue orb tints the body blue by lifting red and green less than blue, not by
@@ -62,6 +63,16 @@ the player has no falloff to absorb it and would simply clip to white.
 
 `intensity` carries the flicker, so the body breathes with the flame instead of
 sitting at a fixed offset next to a light that does not.
+
+**Spent as a lift, not as a multiply.** The tint is a multiplier by
+construction, and the shader applies it as `albedo * (tint - 1)` *added* to the
+shading rather than as `shading * tint`. The reason is the whole case the
+feature exists for: at midnight the moon leaves the body a few hundredths above
+black, and 1.6 times almost nothing is almost nothing. Multiplying drew the
+player as a black cutout standing in a pool of fire — the same artifact this
+spec set out to remove, in a new shape. Weighting the addition by the body's own
+colour is what keeps a coat's hue instead of washing everything to the flame's,
+and is the trick `highlight.ts` already uses to brighten a hovered unit.
 
 ### The mask (`player-light-mask.ts`, new)
 
@@ -138,6 +149,24 @@ exists to remove; on for anyone who wants it back.
 - The chunk the mask rewrites still contains the two markers it replaces, so a
   three.js upgrade that renames them fails a test rather than silently shipping
   a player lit by their own torch again.
+
+The rest is only true once a browser has compiled the patched shader, so
+`npx tsx scripts/preview-player-lights.ts` drives the built page at midnight and
+asserts on its pixels — three.js logs a failed compile and carries on drawing,
+which looks exactly like a patch that worked:
+
+- Switching a light on brightens the body and leans it toward that light's hue:
+  warm for the torch, cool for the orb.
+- The ground beside the player still brightens, so the light is lighting the
+  *world* rather than having been quietly switched off.
+- **Pulling the torch's reach in drops the ground and leaves the body where it
+  was.** This is the assertion that tells the mask working from the mask not
+  applying: reach and candela are the same number squared, so a point light
+  still landing on the body would drag it down with the ground, and a filter
+  that is a function of brightness alone cannot.
+- Ticking `Player casts torch shadow` visibly changes the ground around the
+  player, and changes it by *taking light away*, while leaving the body's own
+  shading alone.
 
 ## Out of scope
 
