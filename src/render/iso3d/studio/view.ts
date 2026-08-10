@@ -912,6 +912,14 @@ export function mountStudio(container: HTMLElement): ViewHandle {
               ? `strides ${axis(clip.strideForward)}`
               : 'no foot travel, so it is not asked which way it goes';
       box.appendChild(el('div', MUTED, `  ${clip.source}: ${said}`));
+      // What the clip moves, by node name. A body that still slides in the
+      // preview means the importer's strip did not match one of these, and
+      // guessing which is what cost a round trip last time.
+      if (clip.translatedNodes.length > 0) {
+        box.appendChild(
+          el('div', `${MUTED}padding-left:12px;`, `translates: ${clip.translatedNodes.join(', ')}`),
+        );
+      }
     }
     // The bone names, when they are the finding: every skeleton estimate looks
     // its bones up by name, so a rig that answers none of them is answered with

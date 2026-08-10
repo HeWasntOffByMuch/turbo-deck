@@ -557,6 +557,18 @@ export interface ClipFacing {
   /** How far the feet actually travel, in model units. A still clip says ~0. */
   readonly strideLength: number;
   /**
+   * Every node this clip translates, by name.
+   *
+   * The list the importer needs and could not get. Root motion is stripped by
+   * matching track names against the rig's root chain, and when that match
+   * misses, nothing is removed and the import reports itself clean -- so "the
+   * body still slides" and "the strip is working" look identical from the
+   * outside. Naming the nodes turns the next occurrence from a guess into a
+   * comparison: if the node that moves is not in the chain the loader strips,
+   * that is the bug, and its name is right here.
+   */
+  readonly translatedNodes: readonly string[];
+  /**
    * The skeleton's height, which is what {@link strideLength} is judged against.
    *
    * Carried rather than kept private because a stride is only meaningful beside
@@ -791,12 +803,19 @@ export function clipFacing(glb: GlbBinary, animationIndex = 0, frames = 48): Cli
   }
   const scale = high > low ? high - low : 0;
 
+  // Named rather than counted: the whole point is to be able to compare this
+  // against the chain the loader strips.
+  const translatedNodes = [...translations.keys()]
+    .map((index) => nodes[index]?.name ?? `node ${index}`)
+    .filter((name) => name !== '');
+
   return {
     animation: typeof animation.name === 'string' ? animation.name : '',
     rootTravel,
     strideForward: normalize(travel),
     strideLength,
     scale,
+    translatedNodes,
     footBonesFound: footNodes.length,
     hipsFound: hipsNode !== null,
     frames,
@@ -874,6 +893,8 @@ export interface ClipReport {
   readonly measurable: boolean;
   /** Bones this clip and the mesh have in common. Zero animates nothing. */
   readonly matchedBones: number;
+  /** Nodes this clip translates, which is what the importer has to strip. */
+  readonly translatedNodes: readonly string[];
   readonly degreesFromRig: number | null;
   /** Bones whose rest pose differs from the mesh's by more than a few degrees. */
   readonly restDrift: readonly RestDelta[];
@@ -1093,6 +1114,7 @@ function readClip(
     moving: false,
     measurable: false,
     matchedBones: 0,
+    translatedNodes: [],
     degreesFromRig: null,
     restDrift: [],
   };
@@ -1209,6 +1231,7 @@ function readClip(
     moving,
     measurable,
     matchedBones: shared.length,
+    translatedNodes: facing.translatedNodes,
     degreesFromRig: moving ? angleBetween(facing.strideForward, rig.forward) : null,
     restDrift: drift,
     error: null,

@@ -49,6 +49,11 @@ function printClip(clip: ClipReport): void {
   }
   console.log(`    animation "${clip.animation}", stride ${clip.strideLength.toFixed(3)}, ${clip.matchedBones} bones shared with the mesh`);
   console.log(`    root travel          ${show(clip.rootTravel)}`);
+  if (clip.translatedNodes.length > 0) {
+    // The names the importer's strip has to match. When a body still slides,
+    // this is the list to check the rig's root chain against.
+    console.log(`    translates           ${clip.translatedNodes.join(', ')}`);
+  }
   console.log(`    stride forward       ${show(clip.strideForward)}`);
   if (!clip.measurable) {
     console.log('    (no foot bones to watch -- nothing is claimed about which way this goes)');
