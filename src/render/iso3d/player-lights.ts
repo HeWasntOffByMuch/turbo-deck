@@ -16,6 +16,13 @@ import type { Vec3 } from './view-settings.js';
  *   it lights gains a shadow, which is what makes it read as magical rather
  *   than as a second lantern.
  *
+ * Both light the *player* too, but from farther off than they really are (spec
+ * 118). A flame 26 units from a 46-unit body is not lighting a figure so much as
+ * being held against one: `1/d²` puts several times more on the chest than on
+ * the far hip, and the direction to it fans a hundred degrees head to foot. So
+ * the player's own materials measure them from {@link apparentLightDistance}
+ * instead -- same colour, same direction, same flicker, held at arm's length.
+ *
  * Both use real time rather than sim ticks: they are cosmetic, they run at
  * frame rate, and nothing here feeds back into the sim.
  */
@@ -193,3 +200,62 @@ export function pointIntensity(brightness: number, range: number): number {
   const half = Math.max(1, range) / 2;
   return Math.max(0, brightness) * half * half;
 }
+
+// --- how far off a carried light is measured from (spec 118) ----------------
+
+/**
+ * How far along its own range a carried light is held, as far as the player's
+ * own body is concerned.
+ *
+ * A half, and that is not a number picked by eye: it is the one distance this
+ * panel already defines everything in terms of. `pointIntensity` above exists
+ * because the brightness slider means *"roughly this much illuminance at half
+ * range"*, so measuring the body from there hands it exactly the level the
+ * slider names -- at every range, which is the whole point.
+ */
+export const APPARENT_LIGHT_FRACTION = 0.5;
+
+/**
+ * Where a carried light is measured from, for the player carrying it.
+ *
+ * The light is not moved: it stays where the flame is, throws the same shadows
+ * and lights the world from the same place. This is only how far away the
+ * player's own materials pretend it is, and it buys two things that a light
+ * pressed against the ribs cannot give:
+ *
+ * - **Level.** At half range the body receives `brightness`, by the definition
+ *   of `pointIntensity` -- so the reach slider stops secretly being a second
+ *   brightness slider aimed at the figure, exactly the coupling `pointIntensity`
+ *   was written to remove everywhere else.
+ * - **Uniformity.** Falloff and direction both vary across a body in proportion
+ *   to how much of the distance the body spans. At 26 units a 46-unit figure
+ *   spans nearly twice it; at 150 it spans a third, and the near and far sides
+ *   land within a fraction of a stop of each other.
+ *
+ * Total, and never zero: this reaches a shader, where a `NaN` distance does not
+ * throw -- it paints the body black.
+ */
+export function apparentLightDistance(range: number): number {
+  const clean = Number.isFinite(range) ? Math.max(0, range) : 0;
+  return Math.max(1, clean * APPARENT_LIGHT_FRACTION);
+}
+
+/**
+ * How far off a light really `trueDistance` away is measured from, for the
+ * player carrying it.
+ *
+ * The `max` is the whole of the second half of the rule, and it earns its place
+ * at the shortest reach the panel allows: a torch set to a range of 80 has its
+ * half-range at 40, which is *nearer* than the flame's own 44-unit anchor. A
+ * light is only ever held further out, never pulled in — a lamp with an 80-unit
+ * reach is meant to be an intimate light, and dragging it closer to make it
+ * "uniform" would be inventing a look nobody asked for.
+ *
+ * `player-lighting.ts` transcribes this into GLSL. It is here, in TypeScript,
+ * because a shader expression nobody can execute is where a typo lives forever.
+ */
+export function carriedLightDistance(trueDistance: number, range: number): number {
+  const clean = Number.isFinite(trueDistance) ? Math.max(0, trueDistance) : 0;
+  return Math.max(clean, apparentLightDistance(range));
+}
+
