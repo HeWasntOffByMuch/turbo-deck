@@ -82,3 +82,40 @@ describe('rootMotionMessage', () => {
     expect(message).toContain('root locked');
   });
 });
+
+/**
+ * The rig that got past this check, and what it cost.
+ *
+ * A real generated rig carries its travel on a node the skin does not deform:
+ * `Root` sits above `Hip`, moves the character across the floor, and is not one
+ * of the skin's joints. The importer asked three for the topmost *joint*, got
+ * `Hip`, matched nothing, stripped nothing, and reported a clean import -- while
+ * the preview showed the body sliding out of the scene.
+ */
+describe('a rig whose travel is above the skin', () => {
+  const named = (names: readonly string[]): unknown => ({
+    nodes: names.map((name) => ({ name })),
+    animations: [{ name: 'walk', channels: [{ target: { node: 0, path: 'translation' } }] }],
+  });
+
+  it('misses the travel when only the topmost joint is checked', () => {
+    // The bug, pinned so the fix cannot quietly regress to it.
+    expect(rootMotionChannels(named(['Root', 'Hip', 'Spine01']), 'Hip')).toEqual([]);
+    expect(rootMotionTrackNames(['Root.position', 'Hip.quaternion'], 'Hip')).toEqual([]);
+  });
+
+  it('finds it when the whole chain above the root is checked', () => {
+    const found = rootMotionChannels(named(['Root', 'Hip', 'Spine01']), ['Hip', 'Root', 'Armature']);
+    expect(found.map((channel) => channel.bone)).toEqual(['Root']);
+    expect(rootMotionTrackNames(['Root.position', 'Hip.quaternion'], ['Hip', 'Root'])).toEqual(['Root.position']);
+  });
+
+  it('still ignores translation on a bone that merely poses the body', () => {
+    // The chain is the root and its ancestors, never a shoulder that slides.
+    expect(rootMotionTrackNames(['Spine01.position'], ['Hip', 'Root', 'Armature'])).toEqual([]);
+  });
+
+  it('takes a single name too, so every existing caller still reads', () => {
+    expect(rootMotionTrackNames(['Hips.position'], 'Hips')).toEqual(['Hips.position']);
+  });
+});

@@ -62,7 +62,12 @@ function nameOf(value: unknown): string {
  * cannot read is a problem for the validator that *parsed* it, and a checker
  * that throws would replace that file's real error with this one's.
  */
-export function rootMotionChannels(gltf: unknown, rootBone: string): readonly RootMotionChannel[] {
+export function rootMotionChannels(
+  gltf: unknown,
+  /** The root and everything above it -- see {@link rootMotionTrackNames}. */
+  roots: string | readonly string[],
+): readonly RootMotionChannel[] {
+  const wanted = new Set(typeof roots === 'string' ? [roots] : roots);
   if (typeof gltf !== 'object' || gltf === null) return [];
   const doc = gltf as GltfIsh;
   const nodes = Array.isArray(doc.nodes) ? doc.nodes : [];
@@ -75,7 +80,7 @@ export function rootMotionChannels(gltf: unknown, rootBone: string): readonly Ro
       const path = nameOf(channel.target?.path);
       if (typeof index !== 'number' || path !== 'translation') continue;
       const bone = nameOf(nodes[index]?.name);
-      if (bone !== rootBone) continue;
+      if (!wanted.has(bone)) continue;
       found.push({ animation: nameOf(animation.name), bone, path });
     }
   }
@@ -90,13 +95,28 @@ export function rootMotionChannels(gltf: unknown, rootBone: string): readonly Ro
  * exported, so both are matched. The property is compared exactly: `.position`
  * is root motion and `.positionSomething` is a track this has no opinion about.
  */
-export function rootMotionTrackNames(trackNames: readonly string[], rootBone: string): readonly string[] {
+export function rootMotionTrackNames(
+  trackNames: readonly string[],
+  /**
+   * The skeleton's root **and every node above it**.
+   *
+   * A list rather than one name, because a real rig puts the travel on a node
+   * the skin does not deform: `Root` sits above `Hip`, carries the character
+   * across the floor, and is not one of the skin's joints. Checking only the
+   * topmost *joint* then finds nothing, strips nothing, and reports a clean
+   * import while the body slides away from where the server put it -- which is
+   * exactly what shipped. Everything at or above the root positions the body;
+   * nothing at or above it poses the body.
+   */
+  roots: string | readonly string[],
+): readonly string[] {
+  const wanted = new Set(typeof roots === 'string' ? [roots] : roots);
   return trackNames.filter((name) => {
     if (!name.endsWith('.position')) return false;
     const target = name.slice(0, -'.position'.length);
     // `.bones[Hips]` and `Hips` are the same bone said two ways.
     const scoped = /\[([^\]]+)\]$/.exec(target);
-    return (scoped?.[1] ?? target) === rootBone;
+    return wanted.has(scoped?.[1] ?? target);
   });
 }
 

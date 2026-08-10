@@ -946,6 +946,26 @@ export function facingReport(mesh: FacingSource, clips: readonly FacingSource[])
   const skinned = readSkinnedMesh(meshGlb);
   const geometry = meshFacing(skinned);
   const rig = rigFacing(meshNodes, skinned?.jointNodes ?? null);
+
+  /**
+   * The body's front, or null when the geometry cannot agree with itself.
+   *
+   * Both slices or neither. On a subject the estimators suit -- a biped, stood
+   * square -- the feet and the head point the same way and either will do. On a
+   * pig in an A-pose they came back 127° apart, and the report went on to
+   * announce, from the feet alone, that the skeleton was fitted in backwards and
+   * the generation should be redone. That is the most expensive wrong answer
+   * this can give: it spends money to fix a unit that was fine, and it had
+   * already printed the evidence against itself one line above.
+   *
+   * So a disagreement here is an absence of a measurement, not a choice between
+   * two. Everything downstream that would have leaned on it stays quiet.
+   */
+  const meshDisagreement = angleBetween(geometry.fromFeet, geometry.fromHead);
+  const meshForward =
+    meshDisagreement !== null && meshDisagreement > SIDEWAYS_DEGREES
+      ? null
+      : (geometry.fromFeet ?? geometry.fromHead);
   const findings: FacingFinding[] = [];
   const push = (finding: FacingFinding | null): void => {
     if (finding !== null) findings.push(finding);
@@ -954,7 +974,7 @@ export function facingReport(mesh: FacingSource, clips: readonly FacingSource[])
   push(
     compare(
       'mesh vs rig',
-      geometry.fromFeet,
+      meshForward,
       rig.forward,
       'the skeleton was fitted into the mesh BACKWARDS. Every clip will play backwards and no clip is at fault: this is the generation to redo, with the other orientation.',
       'the skeleton is yawed inside the mesh, so the body will walk across its own facing.',
@@ -1050,7 +1070,7 @@ export function facingReport(mesh: FacingSource, clips: readonly FacingSource[])
 
   const clipReports: ClipReport[] = [];
   for (const clip of clips) {
-    clipReports.push(readClip(clip, meshNodes, rig, geometry.fromFeet ?? geometry.fromHead, findings));
+    clipReports.push(readClip(clip, meshNodes, rig, meshForward, findings));
   }
 
   return { mesh: geometry, rig, clips: clipReports, findings, error: null };

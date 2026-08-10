@@ -410,6 +410,35 @@ describe('a rig off the naming contract', () => {
     expect(report.clips[0]?.moving).toBe(false);
   });
 
+  it('refuses to judge the rig when the geometry cannot agree with itself', () => {
+    // A pig in an A-pose: the feet slice and the head slice came back 127°
+    // apart, and the report went on to announce -- from the feet alone -- that
+    // the skeleton was fitted in backwards and the generation should be redone.
+    // The most expensive wrong answer available, with the evidence against it
+    // printed one line above.
+    //
+    // Built by moving the head slice's mass to one side, which is what a snout
+    // does, while the feet stay put.
+    const mesh = unit.meshGlb.mesh ?? ({} as GlbMesh);
+    const positions = Float32Array.from(mesh.positions);
+    let maxY = -Infinity;
+    let minY = Infinity;
+    for (let i = 1; i < positions.length; i += 3) {
+      maxY = Math.max(maxY, positions[i] ?? 0);
+      minY = Math.min(minY, positions[i] ?? 0);
+    }
+    const headFloor = minY + (maxY - minY) * 0.88;
+    for (let i = 0; i + 2 < positions.length; i += 3) {
+      if ((positions[i + 1] ?? 0) >= headFloor) positions[i] = (positions[i] ?? 0) - 0.6;
+    }
+
+    const report = facingReport({ name: 'mesh.glb', bytes: bytes({ ...unit.meshGlb, mesh: { ...mesh, positions } }) }, []);
+    const disagreement = report.findings.find((entry) => entry.title === 'mesh feet vs mesh head');
+    expect(disagreement?.severity).toBe('error');
+    // And having said the geometry is unreliable, it says nothing built on it.
+    expect(report.findings.some((entry) => entry.title === 'mesh vs rig')).toBe(false);
+  });
+
   it('shouts when a clip shares no bone names with the mesh at all', () => {
     // The quietest catastrophe: three binds by name, so this animates nothing.
     const report = facingReport({ name: 'mesh.glb', bytes: bytes(unit.meshGlb) }, [
