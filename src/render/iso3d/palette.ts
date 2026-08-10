@@ -120,8 +120,33 @@ export const TERRAIN_COLORS: Record<TerrainMaterial, readonly [number, number]> 
  * The stratified stone of a terrain edge: the wall dropped wherever solid ground
  * meets open air, so a coastline or a floating island reads as a solid mass and
  * not a paper cut-out.
+ *
+ * Keyed on the material of the ground *above* the wall (spec 121), because one
+ * pair cannot serve both jobs a skirt now does. The single warm pair this used
+ * to be was authored for a coastline, where the ground above is sand and the
+ * cut below it should read as the same beach in shadow. A rock formation's tier
+ * is the same geometry doing something else entirely: a slab of stone standing
+ * out of a meadow, which wants cool grey and not weathered limestone.
+ *
+ * Doing it by material rather than by a field on the layer is what keeps the
+ * document out of it -- no `MAP_VERSION` bump, no migration, no protocol
+ * change -- and it is the more honest answer anyway. What a cut edge looks like
+ * is a fact about what the ground is made of.
  */
-export const TERRAIN_CLIFF_COLORS: readonly [number, number] = [0xa89a84, 0x8f8371];
+export const TERRAIN_CLIFF_COLORS: Record<TerrainMaterial, readonly [number, number]> = {
+  // A cut through water is the lake bed, not the water.
+  water: [0x6f6a5a, 0x5d594c],
+  sand: [0xa89a84, 0x8f8371],
+  // Earth under turf: the dark of a cut bank, with the meadow's warmth in it.
+  grass: [0x7a6a4e, 0x685a43],
+  dirt: [0x8a6338, 0x76542f],
+  // Cool grey slate. The `rock` surface above it is deliberately warm pale
+  // stone; a tier's face is the freshly broken side of the same mass and reads
+  // colder, which is most of what makes a formation look like rock and not
+  // like a plateau of sand.
+  rock: [0x8d949c, 0x767d86],
+  snow: [0xbcc2c8, 0xa6adb5],
+};
 
 /** Enemy body colour by sim type key, falling back to a neutral tone. */
 export function enemyColor(type: string): number {

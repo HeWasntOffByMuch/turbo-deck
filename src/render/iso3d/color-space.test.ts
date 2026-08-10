@@ -29,7 +29,7 @@ import { PALETTE, TERRAIN_CLIFF_COLORS, TERRAIN_COLORS } from './palette.js';
 const ALL_HEXES: readonly number[] = [
   ...Object.values(PALETTE),
   ...Object.values(TERRAIN_COLORS).flat(),
-  ...TERRAIN_CLIFF_COLORS,
+  ...Object.values(TERRAIN_CLIFF_COLORS).flat(),
 ];
 
 describe('three colour management', () => {

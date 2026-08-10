@@ -243,7 +243,10 @@ function buildChunk(
       surface.quad(c00, c01, c11, c10, color, cavity);
 
       // Skirt every edge that faces open air, dropped to the layer's underside.
-      const cliff = linearColor(TERRAIN_CLIFF_COLORS[tone] ?? TERRAIN_CLIFF_COLORS[0]);
+      // The wall takes the material of the ground it hangs from (spec 121), so
+      // a coastline cuts as sand and a rock tier cuts as grey slate.
+      const cliffPair = TERRAIN_CLIFF_COLORS[material];
+      const cliff = linearColor(cliffPair[tone] ?? cliffPair[0]);
       const wall = (a: Corner, b: Corner): void => {
         walls.quad(a, b, [b[0], baseY, b[2]], [a[0], baseY, a[2]], cliff);
       };
