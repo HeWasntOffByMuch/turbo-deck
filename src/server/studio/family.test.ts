@@ -14,6 +14,8 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import provisional from '../../../assets/units/biped.skeleton.json' with { type: 'json' };
 import { DEFAULT_CANONICAL_HEIGHT } from '../../units/canonical-height.js';
+import { writeGlb } from '../../units/glb.js';
+import { buildReferenceUnit } from '../../units/reference-unit.js';
 import type { Skeleton } from '../../units/types.js';
 import { resolveFamilySkeleton } from './family.js';
 import { createJob } from './jobs.js';
@@ -143,6 +145,39 @@ describe('a provisional document (spec 115)', () => {
     expect(filled.boneBudget).toEqual(provisional.boneBudget);
     expect(filled.canonicalHeight).toBe(provisional.canonicalHeight);
     expect(filled.$comment).toBe(provisional.$comment);
+  });
+
+  it('drops the sockets a rig on another naming contract cannot satisfy', () => {
+    // The state the pipeline is actually in. `spec: tripo` is what the retarget
+    // requires, so every rig now comes back named `tripo::*` -- and the sockets
+    // this provisional document inherited name `mixamorig:` bones that are not
+    // in the measured list. Carried through, the document failed its own
+    // validator and export refused with five socket errors and no way forward.
+    const tripoRig = join(dir, 'tripo-rigged.glb');
+    const built = buildReferenceUnit(DEFAULT_CANONICAL_HEIGHT);
+    writeFileSync(
+      tripoRig,
+      writeGlb({
+        ...built.meshGlb,
+        nodes: built.meshGlb.nodes.map((node, index) => ({ ...node, name: `tripo::J_${index}` })),
+      }),
+    );
+
+    const result = resolveFamilySkeleton({
+      job: job({ skeletonId: 'biped', artifacts: { meshGlb: null, riggedGlb: tripoRig, clipGlbs: {} } }),
+      unitsDir: dir,
+      skeletonRef: 'biped.skeleton.json',
+      canonicalHeight: DEFAULT_CANONICAL_HEIGHT,
+    });
+
+    // Exported, not refused.
+    expect(result.problem).toBeNull();
+    expect(result.wrote).toBe('biped.skeleton.json');
+    expect(read('biped.skeleton.json').sockets).toEqual([]);
+    // And named, because a unit that cannot hold a weapon is a real loss.
+    expect(result.droppedSockets).toHaveLength(provisional.sockets.length);
+    expect(result.droppedSockets.join(' ')).toContain('weapon.main');
+    expect(result.droppedSockets.join(' ')).toContain('mixamorig:RightHand');
   });
 });
 

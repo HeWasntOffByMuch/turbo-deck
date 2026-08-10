@@ -498,7 +498,19 @@ export function studioRoutes(deps: RouteDeps): readonly Route[] {
           importScale: family.importScale,
           nowIso: new Date(now()).toISOString(),
         });
-        return sendJson(response, result.ok ? 200 : 422, result);
+        // A dropped socket is not an export failure and must not be silent
+        // either: the unit is written, and it cannot hold a weapon. `pending` is
+        // exactly the list for "what could not be written yet, and why".
+        const pending =
+          family.droppedSockets.length === 0
+            ? result.pending
+            : [
+                ...result.pending,
+                `the ${job.skeletonId} rig does not have the bones these sockets name, so they were left out of ` +
+                  `the family document: ${family.droppedSockets.join(', ')}. Nothing can be attached to this unit ` +
+                  `until they are re-pointed at bones it does have.`,
+              ];
+        return sendJson(response, result.ok ? 200 : 422, { ...result, pending });
       },
     },
 
