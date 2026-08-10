@@ -359,6 +359,21 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  right-click attack order, spec 072), cast.ts, appearance.ts,
                  projectile-shape.ts and trail.ts (an arrow's and a shuriken's
                  silhouettes, and the streak a thrown star leaves, spec 087)
+                 weapon-shape.ts and weapon-mesh.ts (spec 121: what each weapon
+                 is shaped like, and the three.js half that builds it -- the
+                 same pure/rendered split as projectile-shape.ts and shot.ts,
+                 and for the same reason, since a silhouette a few pixels wide
+                 is the whole difference between "that one has a bow" and "that
+                 one has something". Lengths are honest fractions of the body
+                 holding them, measured off the rig and never off a constant;
+                 thicknesses are deliberately not honest, because at real
+                 proportions every weapon came out about a pixel wide -- present,
+                 correctly placed, correctly sized and invisible, which is the
+                 one outcome indistinguishable from never having built them.
+                 Which item draws as what is a table with a row per id, not a
+                 rule that reads the prefix, and a test drives it off the
+                 server's own ITEMS so a weapon added there fails here rather
+                 than silently drawing nothing)
                  unit-catalog.ts, unit-driver.ts and unit-lod.ts (spec 111: which
                  monsters are drawn from an authored unit, the pure function from
                  replicated facts to machine commands -- handed a snapshot and not
@@ -390,6 +405,20 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  photographs the real page into .claude/screenshots/world-*.png,
                  and `npx tsx scripts/preview-shots.ts` flies the real ShotRig
                  through a real arc into .claude/screenshots/shots.png.
+                 `npx tsx scripts/probe-attach.ts` is the offscreen half of
+                 spec 121 -- the real unit through the real loader, asking
+                 whether `weapon.main` resolves against what three actually built
+                 and whether what hangs off it comes out the size it was
+                 authored. `npx tsx scripts/preview-weapon.ts` is the other half,
+                 in a browser: it clicks the real HUD switch and reads back what
+                 is parented into the hand, because the id surviving the wire and
+                 the mesh reaching the bone are two different claims. Between
+                 them they found that a unit's skeleton document had never
+                 resolved (the `../` in its reference matched no bundler key, so
+                 the pig had no root bone either) and that `drawnHeight` measured
+                 a transform glTF says to ignore for a skinned mesh, reporting
+                 the pig at a third of its real size -- which is where the health
+                 bar had been getting its height.
                  `npx tsx scripts/preview-units.ts` puts authored units in the
                  real arena (`?units=grazer:mannequin`) and asserts a skinned
                  body with 25 bones is being posed -- the half of spec 111 that
