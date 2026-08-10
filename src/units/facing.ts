@@ -79,8 +79,16 @@ const SIDEWAYS_DEGREES = 45;
 /** A rest-pose difference worth reporting, in degrees. */
 const REST_DRIFT_DEGREES = 5;
 
-/** Below this much foot travel, a clip is a pose and has no direction. */
-const STILL_STRIDE = 0.02;
+/**
+ * Below this much foot travel, a clip is a pose and has no direction.
+ *
+ * A fraction of the skeleton's own height, not an absolute distance. An
+ * absolute one is a threshold in whatever units the generator happened to
+ * export at, and the first generated unit to reach it reported an *idle* as
+ * striding diagonally -- a shuffling foot cleared a fixed 0.02 and became a
+ * confident direction. Two percent of a body is a real step at any scale.
+ */
+const STILL_STRIDE_FRACTION = 0.02;
 
 // --- vectors -----------------------------------------------------------------
 
@@ -219,6 +227,18 @@ export interface RigFacing {
    * a format built on those names.
    */
   readonly method: 'names' | 'structure' | 'none';
+  /** Leg chains the shape search found: 0, 1 or 2. */
+  readonly legTipsFound: number;
+  /**
+   * How many of those legs ended in a segment flat enough to be a foot.
+   *
+   * Zero with two legs found is a specific and common shape: a rig that stops
+   * at the ankle. The names answered nothing *and* there is no ankle-to-toe
+   * vector, which are two different reasons for the same silence and want two
+   * different sentences -- the second one being that the gait is still
+   * perfectly measurable from the clips.
+   */
+  readonly usableFootSegments: number;
 }
 
 /**
@@ -380,13 +400,23 @@ export function rigFacing(nodes: readonly GlbReadNode[], joints: readonly number
   let forward = toeForward(named);
   let method: RigFacing['method'] = forward === null ? 'none' : 'names';
 
+  let legTipsFound = 0;
+  let usableFootSegments = 0;
   if (forward === null) {
     const found = structuralBones(nodes, joints);
+    legTipsFound = found.toes.length;
     const pairs = found.ankles
       .map((ankle, index) => [ankle, found.toes[index]] as const)
       .filter((pair): pair is readonly [GlbReadNode, GlbReadNode] => pair[1] !== undefined)
       .filter(([ankle, toe]) => ankle.index !== toe.index)
       .map(([ankle, toe]) => [nodePosition(ankle), nodePosition(toe)] as const);
+    // Counted the same way `toeForward` filters, so the report can say "both
+    // legs were found and neither ends in a foot" rather than implying the
+    // shape search never ran.
+    usableFootSegments = pairs.filter(
+      ([ankle, toe]) =>
+        length(horizontal(subtract(toe, ankle))) >= FOOT_HORIZONTAL_FLOOR * length(subtract(toe, ankle)),
+    ).length;
     forward = toeForward(pairs);
     if (forward !== null) method = 'structure';
   }
@@ -405,6 +435,8 @@ export function rigFacing(nodes: readonly GlbReadNode[], joints: readonly number
     missingToes: !TOE_BONES.some((key) => bones.has(key)),
     boneNames: nodes.filter((node) => node.name !== '').map((node) => node.name),
     method,
+    legTipsFound,
+    usableFootSegments,
   };
 }
 
@@ -524,6 +556,14 @@ export interface ClipFacing {
   readonly strideForward: Vec3 | null;
   /** How far the feet actually travel, in model units. A still clip says ~0. */
   readonly strideLength: number;
+  /**
+   * The skeleton's height, which is what {@link strideLength} is judged against.
+   *
+   * Carried rather than kept private because a stride is only meaningful beside
+   * it: `0.4` is a stride on a body 1.7 tall and a tremor on one 40 tall, and
+   * the two arrive here from generators with no agreement about units.
+   */
+  readonly scale: number;
   /**
    * How many foot bones the estimator actually found, of the two it wants.
    *
@@ -739,11 +779,24 @@ export function clipFacing(glb: GlbBinary, animationIndex = 0, frames = 48): Cli
     );
   }
 
+  // The skeleton's own vertical extent, in whatever units this file was
+  // exported at. Measured off the bones rather than the mesh because a clip
+  // file may carry no mesh at all.
+  let low = Infinity;
+  let high = -Infinity;
+  for (const node of nodes) {
+    const y = nodePosition(node)[1];
+    low = Math.min(low, y);
+    high = Math.max(high, y);
+  }
+  const scale = high > low ? high - low : 0;
+
   return {
     animation: typeof animation.name === 'string' ? animation.name : '',
     rootTravel,
     strideForward: normalize(travel),
     strideLength,
+    scale,
     footBonesFound: footNodes.length,
     hipsFound: hipsNode !== null,
     frames,
@@ -881,6 +934,8 @@ export function facingReport(mesh: FacingSource, clips: readonly FacingSource[])
         missingToes: true,
         boneNames: [],
         method: 'none',
+        legTipsFound: 0,
+        usableFootSegments: 0,
       },
       clips: [],
       findings: [],
@@ -942,8 +997,18 @@ export function facingReport(mesh: FacingSource, clips: readonly FacingSource[])
   // disagrees", which is a green tick for a question nobody answered.
   if (rig.forward === null) {
     const sample = rig.boneNames.slice(0, 40).join(', ');
-    const why =
-      rig.missingBones.length > 0
+    // Two failures, said apart. The names not answering is one fact; the shape
+    // search having found both legs and neither ending in a foot is a second,
+    // and it has a different consequence -- the gait is still measurable, so
+    // the clip rows below are the answer rather than more silence. Reporting
+    // only the first sends somebody looking for a naming bug when what they
+    // have is a rig with no toes.
+    const noToes = rig.legTipsFound >= 2 && rig.usableFootSegments === 0;
+    const why = noToes
+      ? `its bones answer to none of the mixamo names, and the shape search found both legs but neither ends ` +
+        `in a foot -- the last segment of each points almost straight down, so there is no ankle-to-toe ` +
+        `vector to read. The gait is still measurable: see what each clip strides towards, below`
+      : rig.missingBones.length > 0
         ? `it has no ${rig.missingBones.join(', ')}`
         : 'it has feet and hips but no toe bone on either side, so there is no ankle-to-toe vector to measure';
     findings.push({
@@ -985,7 +1050,7 @@ export function facingReport(mesh: FacingSource, clips: readonly FacingSource[])
 
   const clipReports: ClipReport[] = [];
   for (const clip of clips) {
-    clipReports.push(readClip(clip, meshNodes, rig, findings));
+    clipReports.push(readClip(clip, meshNodes, rig, geometry.fromFeet ?? geometry.fromHead, findings));
   }
 
   return { mesh: geometry, rig, clips: clipReports, findings, error: null };
@@ -995,6 +1060,8 @@ function readClip(
   clip: FacingSource,
   meshNodes: readonly GlbReadNode[],
   rig: RigFacing,
+  /** The body's own front, for when the rig's cannot be read. */
+  meshForward: Vec3 | null,
   findings: FacingFinding[],
 ): ClipReport {
   const empty = {
@@ -1080,7 +1147,8 @@ function readClip(
   // a completely different reason, and calling that an idle is how a walk that
   // could not be measured gets filed as a walk that is fine.
   const measurable = facing.footBonesFound > 0 && facing.hipsFound;
-  const moving = measurable && facing.strideLength >= STILL_STRIDE;
+  const moving =
+    measurable && facing.scale > 0 && facing.strideLength >= STILL_STRIDE_FRACTION * facing.scale;
   if (!measurable) {
     findings.push({
       severity: 'warning',
@@ -1091,12 +1159,23 @@ function readClip(
         `${facing.hipsFound ? '' : ' and no hips'}. Nothing is claimed about which way it goes.`,
     });
   } else if (moving) {
+    // Against the rig's forward when there is one, and against the *mesh's*
+    // when there is not. The fallback is the whole point on a rig whose bones
+    // cannot be read: the geometry still knows which way the body faces, the
+    // gait is measured, and a walk that goes the other way is the finding
+    // whether or not a skeleton could confirm it. Without this the report
+    // printed "strides -X" beside "mesh +X" and left the subtraction to the
+    // reader -- which is not a report, it is a puzzle.
+    const against = rig.forward ?? meshForward;
+    const what = rig.forward !== null ? 'rig' : 'the mesh\'s front';
     const finding = compare(
-      `${clip.name}: stride vs rig`,
+      `${clip.name}: stride vs ${what}`,
       facing.strideForward,
-      rig.forward,
-      'the clip strides towards the rig\'s BACK. This is the walk-backwards symptom in the clip rather than in the rig.',
-      'the clip strides across the rig rather than along it.',
+      against,
+      `the clip strides towards the ${rig.forward !== null ? 'rig' : 'body'}'s BACK. This is the walk-backwards ` +
+        'symptom, measured on the gait itself rather than on root motion -- so stripping root translation does ' +
+        'not fix it, and neither does yawing the unit, which turns the clip and the body together.',
+      'the clip strides across the body rather than along it.',
     );
     if (finding !== null) findings.push(finding);
   }

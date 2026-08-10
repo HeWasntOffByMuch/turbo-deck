@@ -335,6 +335,81 @@ describe('a rig off the naming contract', () => {
     expect(rig.method).toBe('none');
   });
 
+  /**
+   * The shape the second real generation came back as, exactly.
+   *
+   * Names that answer nothing *and* legs that end at the ankle, so both the
+   * name path and the shape path go quiet -- and the gait is still perfectly
+   * measurable. The first version of this report printed "strides -X" beside
+   * "mesh +X" and emitted no finding at all, leaving the subtraction to the
+   * reader. That is not a report, it is a puzzle.
+   */
+  const noToes: GlbDocument = (() => {
+    const dropped = new Set([
+      'mixamorig:LeftToe_End',
+      'mixamorig:RightToe_End',
+      'mixamorig:LeftToeBase',
+      'mixamorig:RightToeBase',
+    ]);
+    const oldToNew = new Map<number, number>();
+    unit.meshGlb.nodes.forEach((node, index) => {
+      if (!dropped.has(node.name)) oldToNew.set(index, oldToNew.size);
+    });
+    const kept = unit.meshGlb.nodes
+      .map((node, index) => ({ node, index }))
+      .filter(({ node }) => !dropped.has(node.name));
+    return {
+      ...unit.meshGlb,
+      nodes: kept.map(({ node, index }) => ({
+        ...node,
+        name: `tripo::J_${index}`,
+        parent: node.parent === null ? null : (oldToNew.get(node.parent) ?? null),
+      })),
+      joints: kept.map((_, index) => index),
+      mesh: null,
+    };
+  })();
+
+  it('measures the gait against the mesh when the rig cannot be read at all', () => {
+    // The mesh has to come from a file that still has geometry, so the body's
+    // own front is measurable; the clip is the one carrying the unreadable rig.
+    const walk = clipDocument('walk');
+    const report = facingReport({ name: 'mesh.glb', bytes: bytes(unit.meshGlb) }, [
+      { name: 'walk.glb', bytes: bytes({ ...walk, nodes: noToes.nodes, joints: noToes.joints }) },
+    ]);
+    const clip = report.clips[0];
+    expect(clip?.measurable).toBe(true);
+    expect(clip?.moving).toBe(true);
+    // Named after what it was actually compared against, so nobody reads it as
+    // a claim about a rig that was never measured.
+    expect(report.findings.some((entry) => entry.title.includes('stride vs'))).toBe(true);
+  });
+
+  it('says the legs end at the ankle rather than blaming the names alone', () => {
+    const report = facingReport({ name: 'mesh.glb', bytes: bytes(noToes) }, []);
+    const finding = report.findings.find((entry) => entry.title === 'rig forward');
+    expect(finding?.message).toContain('neither ends in a foot');
+    // And points at the thing that *is* measurable, rather than stopping.
+    expect(finding?.message).toContain('gait is still measurable');
+  });
+
+  it('does not call an idle a stride, whatever units the model is in', () => {
+    // The same idle, exported at forty times the size. An absolute threshold
+    // passes it and reports a direction; a threshold that is a fraction of the
+    // body does not.
+    const big = (document: GlbDocument): GlbDocument => ({
+      ...document,
+      nodes: document.nodes.map((node) => ({
+        ...node,
+        translation: [node.translation[0] * 40, node.translation[1] * 40, node.translation[2] * 40] as const,
+      })),
+    });
+    const report = facingReport({ name: 'mesh.glb', bytes: bytes(big(unit.meshGlb)) }, [
+      { name: 'idle.glb', bytes: bytes(big(clipDocument('idle'))) },
+    ]);
+    expect(report.clips[0]?.moving).toBe(false);
+  });
+
   it('shouts when a clip shares no bone names with the mesh at all', () => {
     // The quietest catastrophe: three binds by name, so this animates nothing.
     const report = facingReport({ name: 'mesh.glb', bytes: bytes(unit.meshGlb) }, [
