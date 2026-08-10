@@ -212,8 +212,14 @@ interface Body {
   readonly unit?: DrivenUnit;
   readonly shot?: ShotRig;
   readonly highlight?: HighlightHandle;
-  /** World units above the feet to hang the health bar; see {@link Body.headroom}. */
-  readonly headroom: number;
+  /**
+   * World units above the feet to hang the health bar.
+   *
+   * Not readonly, because an authored unit's height is not known until its mesh
+   * has been fetched and skinned -- and until it is measured the bar hangs at a
+   * shared default that cut straight through the pig's head.
+   */
+  headroom: number;
 }
 
 /**
@@ -1253,6 +1259,12 @@ export class WorldScene {
       void unitRig.load(authoredUnit.assets, authoredUnit.unit.id).then(() => {
         castsShadows(group);
         driven.bones = unitRig.stats().bones;
+        // Measured off the body that actually loaded rather than left at the
+        // shared default. A generated unit stands at whatever its import scale
+        // brings it to, and the default is a number picked for the procedural
+        // mech rig -- on a taller body the health bar hangs inside the head.
+        const height = unitRig.drawnHeight();
+        if (height > 0) authoredBody.headroom = height + HEADROOM_GAP;
       });
       const authoredBody: Body = {
         group,

@@ -63,9 +63,18 @@ const DEFAULT_COLOR = 0xc9b79a;
  * the one thing the generator got right.
  */
 function retexture(mesh: THREE.Mesh): void {
-  const source = mesh.material as THREE.Material & { color?: THREE.Color };
+  const source = mesh.material as THREE.Material & {
+    color?: THREE.Color;
+    map?: THREE.Texture | null;
+  };
   mesh.material = new THREE.MeshLambertMaterial({
     color: source.color?.clone() ?? new THREE.Color(DEFAULT_COLOR),
+    // The texture comes with it. Dropping the map was fine for as long as the
+    // only authored unit was the reference mannequin, which has none -- and it
+    // rendered every *generated* unit as a flat-shaded lump of its own base
+    // colour, which is what a texture the generator was paid to produce looks
+    // like when the loader throws it away.
+    ...(source.map ? { map: source.map } : {}),
     flatShading: true,
   });
 }
@@ -307,6 +316,20 @@ export class UnitRig {
     const found: Record<string, number> = {};
     for (const [id, seconds] of this.clipDurations) found[id] = seconds * 1000;
     return found;
+  }
+
+  /**
+   * How tall the loaded body stands, in world units.
+   *
+   * Measured off the model as drawn -- import scale already applied -- because
+   * that is the number anything hung above its head needs. Zero when nothing
+   * has loaded, so a caller can tell "not yet" from "flat".
+   */
+  drawnHeight(): number {
+    if (!this.model) return 0;
+    const box = new THREE.Box3().setFromObject(this.model);
+    const height = box.max.y - box.min.y;
+    return Number.isFinite(height) && height > 0 ? height : 0;
   }
 
   /** How many triangles and bones the loaded model actually has. */
