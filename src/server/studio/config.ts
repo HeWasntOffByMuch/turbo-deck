@@ -16,7 +16,7 @@ import { DEFAULT_CANONICAL_HEIGHT } from '../../units/canonical-height.js';
 import type { Ceilings } from './ledger.js';
 import { DEFAULT_MIN_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS } from './pacing.js';
 import { DEFAULT_PRICES, type PriceList } from './pricing.js';
-import { DEFAULT_BASE_URL } from './tripo.js';
+import { DEFAULT_BASE_URL, HUMANOID_RIG_MODEL } from './tripo.js';
 
 export interface StudioConfig {
   /** Null when no key is configured: the routes mount and refuse to spend. */
@@ -94,7 +94,14 @@ export function loadStudioConfig(env: NodeJS.ProcessEnv, repoRoot: string): Stud
     apiKey: key === undefined || key === '' ? null : key,
     baseUrl: env['TRIPO_BASE_URL']?.trim() || DEFAULT_BASE_URL,
     modelVersion: env['TRIPO_MODEL_VERSION']?.trim() || 'P1-20260311',
-    rigModelVersion: env['TRIPO_RIG_MODEL_VERSION']?.trim() || 'v2.5-20260210',
+    // The humanoid rig model, because this project's contract is a biped: one
+    // mixamo skeleton, sockets addressed by bone name, one clip library for the
+    // family. The creature model was the default until a human generated on it
+    // came back as `tripo::0_Left_Limb_3` -- a generic skeleton no unit document
+    // here can address, with `spec: mixamo` sent and ignored. A quadruped has to
+    // set `TRIPO_RIG_MODEL_VERSION=v2.5-20260210`, which is the model that has
+    // one; see `CREATURE_RIG_MODEL`.
+    rigModelVersion: env['TRIPO_RIG_MODEL_VERSION']?.trim() || HUMANOID_RIG_MODEL,
     rigSpec: env['TRIPO_RIG_SPEC']?.trim() || 'mixamo',
     // `default` preserves what this pipeline got implicitly before the field was
     // sent at all, so turning it on changes nothing until somebody decides it

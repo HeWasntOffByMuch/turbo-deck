@@ -108,9 +108,9 @@ function retryKey(jobId: string): string {
  * than refused against a list nobody has verified.
  */
 function clipVocabularyProblem(skeletonId: string, params: GenerationParams): string | null {
-  const unknown = unknownPresets(skeletonId, params.clipIntents);
+  const unknown = unknownPresets(skeletonId, params.rigModelVersion, params.clipIntents);
   if (unknown.length === 0) return null;
-  const known = knownPresetsFor(skeletonId) ?? [];
+  const known = knownPresetsFor(skeletonId, params.rigModelVersion) ?? [];
   return `no ${skeletonId} animation preset is called ${unknown.map((name) => `"${name}"`).join(', ')}. The ones there are: ${known.join(', ')}.`;
 }
 

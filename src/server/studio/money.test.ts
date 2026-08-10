@@ -13,7 +13,14 @@ import { checkCeilings, dayKeyOf, dayTotal, runTotal, summarize, type Ceilings, 
 import { DEFAULT_MIN_INTERVAL_MS, Pacer } from './pacing.js';
 import { createJob, beginStep, completeStep, failJob, recordArtifacts } from './jobs.js';
 import { DEFAULT_PRICES, projectCost, projectRemaining, retargetCalls, RETARGET_BATCH_SIZE } from './pricing.js';
-import { BIPED_ANIMATION_PRESETS, knownPresetsFor, presetFor, unknownPresets } from './tripo.js';
+import {
+  BIPED_ANIMATION_PRESETS,
+  CREATURE_RIG_MODEL,
+  HUMANOID_RIG_MODEL,
+  knownPresetsFor,
+  presetFor,
+  unknownPresets,
+} from './tripo.js';
 import type { GenerationParams } from './types.js';
 
 function params(patch: Partial<GenerationParams> = {}): GenerationParams {
@@ -438,28 +445,37 @@ describe('the animation vocabulary', () => {
     expect(presetFor('walk')).toBe('preset:walk');
   });
 
-  it('knows what a biped has, and admits when it does not know', () => {
-    expect(knownPresetsFor('biped')).toEqual(BIPED_ANIMATION_PRESETS);
+  it('knows what a biped has on the creature model, and admits when it does not know', () => {
+    expect(knownPresetsFor('biped', CREATURE_RIG_MODEL)).toEqual(BIPED_ANIMATION_PRESETS);
     // Null when the rig check has not run yet: the biped list is the one that
-    // has been confirmed, and it is the only rig this repo authors today.
-    expect(knownPresetsFor(null)).toEqual(BIPED_ANIMATION_PRESETS);
-    expect(knownPresetsFor('quadruped')).toBeNull();
+    // has been confirmed for this model.
+    expect(knownPresetsFor(null, CREATURE_RIG_MODEL)).toEqual(BIPED_ANIMATION_PRESETS);
+    expect(knownPresetsFor('quadruped', CREATURE_RIG_MODEL)).toBeNull();
+  });
+
+  it('claims to know nothing about the humanoid model, which has ninety-odd presets', () => {
+    // The eleven names are one rig model's biped vocabulary, not "the presets a
+    // biped has". Checking an intent against the wrong version's list is the
+    // same failure as checking it against a guessed one, and it refuses work
+    // that would have succeeded.
+    expect(knownPresetsFor('biped', HUMANOID_RIG_MODEL)).toBeNull();
+    expect(unknownPresets('biped', HUMANOID_RIG_MODEL, ['cartwheel', 'salute'])).toEqual([]);
   });
 
   it('names the intents a biped has no preset for', () => {
     // The four a game programmer reaches for first, and none of them exist.
-    expect(unknownPresets('biped', ['idle', 'attack', 'death', 'cast', 'hit'])).toEqual([
+    expect(unknownPresets('biped', CREATURE_RIG_MODEL, ['idle', 'attack', 'death', 'cast', 'hit'])).toEqual([
       'attack',
       'death',
       'cast',
       'hit',
     ]);
-    expect(unknownPresets('biped', ['idle', 'walk', 'slash', 'fall', 'hurt'])).toEqual([]);
+    expect(unknownPresets('biped', CREATURE_RIG_MODEL, ['idle', 'walk', 'slash', 'fall', 'hurt'])).toEqual([]);
   });
 
   it('refuses nothing when the vocabulary is unknown', () => {
     // Refusing against a guessed list would block work that would have
     // succeeded -- the opposite failure, but still a failure.
-    expect(unknownPresets('quadruped', ['pounce', 'nonsense'])).toEqual([]);
+    expect(unknownPresets('quadruped', CREATURE_RIG_MODEL, ['pounce', 'nonsense'])).toEqual([]);
   });
 });

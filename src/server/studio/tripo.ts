@@ -187,12 +187,43 @@ export interface RetargetRequest {
 }
 
 /**
- * The animations a biped rig can actually be given.
+ * The two rig models, which are two different skeletons and two different
+ * animation libraries wearing one field name.
+ *
+ * This distinction cost a roster of unusable units to find. `model` on the rig
+ * call is not a version of one thing:
+ *
+ *  - **{@link HUMANOID_RIG_MODEL}** is biped only, is what the docs recommend
+ *    for humanoid characters, and carries 90+ presets.
+ *  - **{@link CREATURE_RIG_MODEL}** is the newer one that covers quadrupeds,
+ *    hexapods, avians and the rest. Its biped support exists, but what it
+ *    actually produced for a human was a *generic* skeleton -- `tripo::Root`,
+ *    `tripo::Spine_0`, four numbered limb chains -- with `spec: mixamo` sent
+ *    and no mixamo name anywhere in the result. Its preset library is the
+ *    eleven names below rather than ninety.
+ *
+ * So a humanoid asked for on the creature model gets a creature's skeleton,
+ * which no unit document in this project can address and which the biped
+ * presets appear to have been retargeted onto sideways. Bipeds belong on the
+ * humanoid model; anything with more than two legs has no choice.
+ */
+export const HUMANOID_RIG_MODEL = 'v1.0-20240301';
+export const CREATURE_RIG_MODEL = 'v2.5-20260210';
+
+/**
+ * The animations a biped rig can actually be given **on the creature model**.
  *
  * The real vocabulary, and the reason it is written down rather than left to
  * whatever somebody types: retarget is a paid call per clip, so a name the API
  * does not know is not a validation error, it is a charge for nothing. Holding
  * the list here lets an unknown intent be refused *before* anything is sent.
+ *
+ * Version-specific, which the first draft of this file did not say and should
+ * have. These eleven are {@link CREATURE_RIG_MODEL}'s biped presets;
+ * {@link HUMANOID_RIG_MODEL} has 90+ and this list is not a subset anybody has
+ * checked. Refusing an intent against the wrong version's vocabulary is the
+ * same failure as refusing against a guessed one -- see {@link knownPresetsFor},
+ * which answers null rather than pretending.
  *
  * Note what is not in it. There is no `attack` and no `death` -- the nearest are
  * `slash` and `fall`, and those are the names to use rather than a mapping
@@ -225,21 +256,32 @@ export function presetFor(intent: string): string {
 }
 
 /**
- * The presets a rig type is known to have, or null when we do not know.
+ * The presets a rig is known to have, or null when we do not know.
  *
- * Null is a real answer and is treated as one: only the biped list has been
- * confirmed, so a quadruped's intents are passed through unchecked rather than
- * refused against a list that was guessed. Refusing on an invented list would
- * block work that would have succeeded, which is the opposite failure but still
- * a failure.
+ * Null is a real answer and is treated as one: only the creature model's biped
+ * list has been confirmed, so a quadruped's intents -- or *any* intent on the
+ * humanoid model, whose ninety-odd presets nobody here has enumerated -- are
+ * passed through unchecked rather than refused against a list that does not
+ * apply. Refusing on the wrong version's vocabulary would block work that would
+ * have succeeded, which is the opposite failure but still a failure.
+ *
+ * The version argument is not optional-with-a-default on purpose. It was the
+ * absence of exactly this parameter that let an eleven-name list read as "the
+ * presets a biped has" rather than "the presets a biped has on one of the two
+ * rig models".
  */
-export function knownPresetsFor(rigType: string | null): readonly string[] | null {
+export function knownPresetsFor(rigType: string | null, rigModelVersion: string): readonly string[] | null {
+  if (rigModelVersion !== CREATURE_RIG_MODEL) return null;
   return rigType === null || rigType === 'biped' ? BIPED_ANIMATION_PRESETS : null;
 }
 
 /** Intents this rig has no preset for. Empty when the vocabulary is unknown. */
-export function unknownPresets(rigType: string | null, intents: readonly string[]): readonly string[] {
-  const known = knownPresetsFor(rigType);
+export function unknownPresets(
+  rigType: string | null,
+  rigModelVersion: string,
+  intents: readonly string[],
+): readonly string[] {
+  const known = knownPresetsFor(rigType, rigModelVersion);
   if (known === null) return [];
   return intents.filter((intent) => !known.includes(intent));
 }

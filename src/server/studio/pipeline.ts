@@ -471,9 +471,9 @@ export class StudioPipeline {
     // of it is sent. Blocked rather than failed, because nothing was attempted;
     // and the fix is a new job with real names rather than a resume, which is
     // what the message has to say.
-    const unknown = unknownPresets(job.rigType, job.params.clipIntents);
+    const unknown = unknownPresets(job.rigType, job.params.rigModelVersion, job.params.clipIntents);
     if (unknown.length > 0) {
-      const known = knownPresetsFor(job.rigType) ?? [];
+      const known = knownPresetsFor(job.rigType, job.params.rigModelVersion) ?? [];
       return this.save(
         blockJob(
           job,

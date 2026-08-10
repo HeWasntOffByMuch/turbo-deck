@@ -22,7 +22,7 @@ import { FakeTripo } from './fake-tripo.js';
 import { createJob } from './jobs.js';
 import { StudioPipeline } from './pipeline.js';
 import { studioPaths, StudioStore } from './store.js';
-import { TripoClient } from './tripo.js';
+import { CREATURE_RIG_MODEL, HUMANOID_RIG_MODEL, TripoClient } from './tripo.js';
 import type { GenerationParams, Job } from './types.js';
 
 const HASH = 'a'.repeat(64);
@@ -388,6 +388,22 @@ describe('the happy path', () => {
       expect(body['spec']).toBe('mixamo');
       expect(body['input']).toBe('task-1');
     });
+  });
+
+  it('defaults to the humanoid rig model, because the roster is bipeds', async () => {
+    // Not a preference: the creature model returned a *generic* skeleton for a
+    // human -- numbered limb chains, no mixamo name anywhere, `spec: mixamo`
+    // sent and ignored -- and no unit document in this project can address one.
+    // A quadruped has to opt into the creature model, which is the one that has
+    // a quadruped rig at all.
+    const config = loadStudioConfig({ TRIPO_API_KEY: 'k' }, '/tmp/studio-default');
+    expect(config.rigModelVersion).toBe(HUMANOID_RIG_MODEL);
+    expect(config.rigModelVersion).not.toBe(CREATURE_RIG_MODEL);
+    // And it stays overridable, since that is how the creature model is reached.
+    expect(
+      loadStudioConfig({ TRIPO_API_KEY: 'k', TRIPO_RIG_MODEL_VERSION: CREATURE_RIG_MODEL }, '/tmp/studio-default')
+        .rigModelVersion,
+    ).toBe(CREATURE_RIG_MODEL);
   });
 
   it('tells the rig what creature the free check said it was', async () => {
