@@ -230,6 +230,59 @@ const PURE_RENDER = [
   'src/render/iso3d/editor/*.test.ts',
 ];
 
+/**
+ * The GUI framework (spec 121). Everything under src/ui/ except the backends.
+ *
+ * Stated as "all of it, minus one directory" rather than as an allowlist of
+ * files, deliberately: PURE_RENDER above is an explicit list, which means a new
+ * pure file nobody remembers to add gets no rules at all. Here a new file is
+ * covered the moment it exists, and the only way to opt out is to put it in
+ * src/ui/render/, which is a visible decision rather than an omission.
+ */
+const UI_PURE = ['src/ui/**/*.ts'];
+const UI_IMPURE = ['src/ui/render/canvas2d.ts'];
+/** The one bridge to the game's renderer: the 5x7 glyph table. See below. */
+const UI_FONT_BRIDGE = ['src/ui/text/font.ts', 'src/ui/text/font.test.ts'];
+
+/** Widgets and screens: no colour may be spelled out, only named. */
+const UI_STYLED = ['src/ui/widgets/**/*.ts', 'src/ui/screens/**/*.ts', 'src/ui/gallery/**/*.ts'];
+
+/** Bitmap fonts only: nothing under src/ui/ asks the platform to draw or measure text. */
+const NO_PLATFORM_TEXT = [
+  /** @type {const} */ ({ object: 'ctx', property: 'fillText', message: 'Bitmap fonts only. Text is drawn from the atlas (src/ui/core/paint.ts).' }),
+  /** @type {const} */ ({ object: 'context', property: 'fillText', message: 'Bitmap fonts only. Text is drawn from the atlas (src/ui/core/paint.ts).' }),
+  /** @type {const} */ ({ object: 'ctx', property: 'measureText', message: 'Text is measured from the glyph table (src/ui/text/font.ts), never by the platform.' }),
+  /** @type {const} */ ({ object: 'context', property: 'measureText', message: 'Text is measured from the glyph table (src/ui/text/font.ts), never by the platform.' }),
+];
+
+/**
+ * A widget may read the content tables -- the HUD already does -- but nothing
+ * under src/ui/ may reach the simulation. A widget that cannot reach the sim
+ * cannot change an outcome, which is the CLAUDE.md rule a linter could not see
+ * until this directory existed.
+ */
+const NO_SIM = {
+  group: ['**/server/sim/**', '**/server/world/**', '**/server/player/**', '**/server/state/**'],
+  message:
+    'A widget reads a view-model and emits an intent. It never touches the sim: that is what keeps the UI unable to change an outcome.',
+};
+
+/**
+ * The game's renderer, by its subtrees -- deliberately not `**\/render/**`,
+ * which would also match src/ui/render/, this framework's own backends.
+ */
+const NO_GAME_RENDERER = {
+  group: ['**/render/iso3d/**', '**/render/cloth/**', '**/render/critters/**'],
+  message:
+    "src/ui/ is engine-independent. Only src/ui/text/font.ts may read the game's renderer, and only for the 5x7 glyph table.",
+};
+
+/** The import rule for a src/ui/ block, stated in full so nothing is lost. */
+const uiImports = (/** @type {object[]} */ extraPatterns) => ({
+  ...NO_RENDERING_LIBRARIES,
+  patterns: [...NO_RENDERING_LIBRARIES.patterns, NO_SIM, ...extraPatterns],
+});
+
 const NO_AMBIENT_RANDOMNESS = [
   /** @type {const} */ ({
     object: 'Math',
@@ -338,6 +391,66 @@ export default tseslint.config(
       'no-restricted-properties': ['error', ...NO_AMBIENT_RANDOMNESS],
       'no-restricted-globals': ['error', ...NO_WALL_CLOCK_OR_DOM],
       'no-restricted-imports': ['error', NO_RENDERING_LIBRARIES],
+    },
+  },
+  {
+    // --- the GUI framework (spec 121) ---------------------------------------
+    //
+    // Its pure half: layout, hit-testing, focus, event routing, the widget tree,
+    // the theme and both fonts. It must run headlessly, and -- the rule the whole
+    // test strategy rests on -- it must never read a clock. Time arrives as an
+    // argument to UiRoot.update.
+    //
+    // Each block below restates its rules IN FULL rather than adding to an
+    // earlier one. Flat config merges by last-wins per rule name, so a later
+    // block that sets `no-restricted-properties` for one thing silently drops
+    // every other restriction on that rule -- which is how Math.random and a
+    // three.js import went unchecked here for an afternoon.
+    files: UI_PURE,
+    ignores: [...UI_IMPURE, ...UI_FONT_BRIDGE],
+    rules: {
+      'no-restricted-properties': ['error', ...NO_AMBIENT_RANDOMNESS, ...NO_PLATFORM_TEXT],
+      'no-restricted-globals': ['error', ...NO_WALL_CLOCK_OR_DOM],
+      'no-restricted-imports': ['error', uiImports([NO_GAME_RENDERER])],
+    },
+  },
+  {
+    // src/ui/text/font.ts and its test: the one place allowed to read the game's
+    // renderer, and for exactly one thing -- the 5x7 glyph table, so that face
+    // has a single source of truth and the Play tab is not touched. The file it
+    // imports is pure and has no three.js in it.
+    files: UI_FONT_BRIDGE,
+    rules: {
+      'no-restricted-properties': ['error', ...NO_AMBIENT_RANDOMNESS, ...NO_PLATFORM_TEXT],
+      'no-restricted-globals': ['error', ...NO_WALL_CLOCK_OR_DOM],
+      'no-restricted-imports': ['error', uiImports([])],
+    },
+  },
+  {
+    // The browser backend. It is allowed the DOM -- that is its whole job -- but
+    // not the platform's text rasteriser: bitmap fonts only, drawn from the atlas.
+    files: UI_IMPURE,
+    rules: {
+      'no-restricted-properties': ['error', ...NO_AMBIENT_RANDOMNESS, ...NO_PLATFORM_TEXT],
+    },
+  },
+  {
+    // "A code review that finds #4a3b2c in a widget fails." Made mechanical,
+    // because this repo's whole disposition is that a rule a linter can check is
+    // a rule that stays true.
+    files: UI_STYLED,
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "Literal[value=/^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/]",
+          message: 'No colour literals in a widget. Name a token in src/ui/theme/theme.json and read it from the theme.',
+        },
+        {
+          selector: 'Literal[raw=/^0x[0-9a-fA-F]{6}$/]',
+          message: 'No colour literals in a widget. Name a token in src/ui/theme/theme.json and read it from the theme.',
+        },
+      ],
     },
   },
 );
