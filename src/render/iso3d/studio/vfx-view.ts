@@ -85,7 +85,34 @@ function cloneEffect(effect: EffectDefinition): EffectDefinition {
 }
 
 export function mountVfxStudio(container: HTMLElement): ViewHandle {
-  const root = el('div', `font-family:${MONO};color:#c8c8d8;font-size:12px;display:flex;gap:10px;height:calc(100vh - 60px);`);
+  /**
+   * The root, and an inner element that does the actual layout.
+   *
+   * The split is not decoration. `main.ts` writes `element.style.display =
+   * 'block'` on a tab's root every time that tab is activated -- that is how the
+   * shell shows and hides them -- so a root that lays itself out with
+   * `display:flex` has its flex clobbered on the first click. The three columns
+   * become block-level, stack vertically, and the preview lands below the fold
+   * behind a full-width list of effect names.
+   *
+   * So the root owns only the box (height, padding from the shell, no scroll)
+   * and `layout` owns the columns, where nothing outside this file writes to it.
+   * `box-sizing:border-box` because the shell adds 44px of top padding to clear
+   * the floating tab bar and 16px at the bottom, and those have to come out of
+   * the height rather than be added to it.
+   */
+  const root = el(
+    'div',
+    `font-family:${MONO};color:#c8c8d8;font-size:12px;box-sizing:border-box;height:100vh;overflow:hidden;`,
+  );
+  // Named so a probe can find *this* tab's elements. Every tab that has been
+  // opened stays in the DOM behind `display:none`, so a bare
+  // `document.querySelector('canvas')` finds the Play tab's hidden one and
+  // measures a zero-sized rectangle -- which is exactly what the first version of
+  // the layout check did, and it reported a failure that was entirely its own.
+  root.id = 'vfx-studio';
+  const layout = el('div', 'display:flex;gap:10px;height:100%;min-height:0;');
+  layout.dataset['vfxLayout'] = 'true';
 
   // --- state ---------------------------------------------------------------
   let edited: EffectDefinition = cloneEffect(EFFECTS[0] as EffectDefinition);
@@ -573,7 +600,8 @@ export function mountVfxStudio(container: HTMLElement): ViewHandle {
     }
   }
 
-  root.append(browser, middle, params);
+  layout.append(browser, middle, params);
+  root.append(layout);
   container.append(root);
 
   // --- the loop ------------------------------------------------------------
