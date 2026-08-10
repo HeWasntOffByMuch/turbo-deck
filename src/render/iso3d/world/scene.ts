@@ -91,7 +91,7 @@ import { UnitRig } from '../unit-rig.js';
 import { UnitMachine } from '../../../units/machine.js';
 import { authoredUnitFor } from './unit-catalog.js';
 import { authoredUnitAssets } from './unit-assets.js';
-import { advanceSpeed, driveUnit, STOPPED, type SpeedClock, type UnitFacts } from './unit-driver.js';
+import { advanceSpeed, driveUnit, slewSpeed, STOPPED, type SpeedClock, type UnitFacts } from './unit-driver.js';
 import { SERVER_TICK_RATE } from '../../../server/config.js';
 import { drawnPixels, mixerCadence, shouldApply } from './unit-lod.js';
 import { DEFAULT_CANONICAL_HEIGHT } from '../../../units/canonical-height.js';
@@ -207,6 +207,15 @@ interface DrivenUnit {
   previousPosition: { x: number; y: number } | null;
   /** That speed, kept on the sim's clock rather than the browser's (spec 118). */
   speed: SpeedClock;
+  /**
+   * The same speed, slewed, which is what the blend tree is actually handed
+   * (spec 119).
+   *
+   * The measured one steps -- the sim has no acceleration -- and a blend tree
+   * is a pure function of its parameter, so a step in it is a cut no transition
+   * duration can soften.
+   */
+  blendSpeed: number;
   /**
    * Bone count, read once when the mesh lands.
    *
@@ -1090,8 +1099,13 @@ export class WorldScene {
       frame.ticks,
       TICK_SECONDS,
     );
+    // Slewed, not assigned: a blend tree reads its parameter live, so a step in
+    // it swaps the pose in one tick under a cross-fade that never sees it (spec
+    // 119). This is the only input to the machine allowed to jump, so it is the
+    // one that is bounded.
+    unit.blendSpeed = slewSpeed(unit.blendSpeed, unit.speed.speed, frame.ticks, TICK_SECONDS);
     const facts: UnitFacts = {
-      speed: unit.speed.speed,
+      speed: unit.blendSpeed,
       activity: entity.activity,
       castPhase: this.castPhases.get(entity.id) ?? null,
       dead,
@@ -1300,6 +1314,7 @@ export class WorldScene {
         previous: null,
         previousPosition: null,
         speed: STOPPED,
+        blendSpeed: 0,
         bones: 0,
       };
       // Fire and forget: the group is in the scene from this frame and the mesh

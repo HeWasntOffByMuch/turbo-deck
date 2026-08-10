@@ -344,8 +344,20 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  monsters are drawn from an authored unit, the pure function from
                  replicated facts to machine commands -- handed a snapshot and not
                  the GameClient, so animation has nothing it *could* call -- and
-                 how often a distant body's pose is applied; the machine itself is
-                 never throttled, because its events are authored on frame indices)
+                 how often a body's pose is applied; the machine itself is
+                 never throttled, because its events are authored on frame indices.
+                 The LOD measures how big a body is *drawn*, in pixels of the
+                 virtual raster, and never how far the camera is from it (spec
+                 118): this camera is orthographic and parks 6000 units back for
+                 near/far clearance, so a distance threshold put every unit in
+                 the game -- the player included -- on a quarter-rate pose, and
+                 the Studio preview looked perfect throughout because it never
+                 consults the LOD at all. The driver also slews the blend
+                 parameter rather than assigning it (spec 119), because a blend
+                 tree is a pure function of its parameter and the sim has no
+                 acceleration: a step from run to nothing swapped the pose in one
+                 tick under a cross-fade that never saw it, which is why setting
+                 off blended and stopping cut)
                  pixel-font.ts (a 5x7 glyph table, since nothing may be fetched)
                  and touch.ts (taps and pinches, spec 093 -- bounded by distance
                  and never by time, because an event's stamp measures the

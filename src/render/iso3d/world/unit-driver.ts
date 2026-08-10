@@ -175,3 +175,60 @@ export function advanceSpeed(
   if (whole === 0 || !(tickSeconds > 0)) return { pending, speed: clock.speed };
   return { pending: 0, speed: pending / (whole * tickSeconds) };
 }
+
+/**
+ * How fast the blend parameter is allowed to move, in speed units per second.
+ *
+ * 1000, so the run threshold of 150 is reached from a standstill -- or given up
+ * -- in 150ms, which is the duration the unitdefs author their locomotion
+ * transitions at. Tying the two together is the point: the parameter and the
+ * cross-fade it feeds should take the same time, or one of them is visible on
+ * its own and reads as a cut.
+ */
+export const BLEND_SLEW_PER_SECOND = 1000;
+
+/**
+ * Moves the blend parameter toward the measured speed at a bounded rate (spec 119).
+ *
+ * The machine has two kinds of blend and only one is time-based. A state
+ * transition fades over ticks; a blend tree is a pure function of its
+ * parameter, evaluated live -- for the *outgoing* layer of a transition as much
+ * as the incoming one. The sim has no acceleration, so speed steps between 0
+ * and full in a single tick, and those two facts do not compose:
+ *
+ * Setting off, the step lands on exactly the value the cross-fade is heading
+ * to, so the fade does the work and the step is invisible. Stopping, the
+ * outgoing layer stops being a run before the transition it is the outgoing
+ * half of has done anything -- the tree reads zero and emits the idle clip, so
+ * the run pose is not faded out, it is simply not there. The cross-fade then
+ * blends idle into idle for 150ms and looks like a cut.
+ *
+ * A rate limit rather than an exponential decay, so the settle time is a number
+ * somebody chose rather than one that emerges from a half-life -- and so it can
+ * be the *same* number as the transition's. Advanced on `ticks` rather than on
+ * the frame delta for the reason spec 118 exists: a frame that drained no tick
+ * must not advance a signal the sim clock owns.
+ *
+ * Both directions, not only the fall. Damping one way would fix the symptom and
+ * leave the two paths different in kind, which is what made this hard to see.
+ * Rising it cannot be seen anyway: `speed > 5` is crossed inside the first
+ * tick, and the tree then walks up through the walk band under a cross-fade
+ * that is already running.
+ */
+export function slewSpeed(
+  current: number,
+  target: number,
+  ticks: number,
+  tickSeconds: number,
+  rate: number = BLEND_SLEW_PER_SECOND,
+): number {
+  const from = Number.isFinite(current) ? current : 0;
+  const to = Number.isFinite(target) ? target : 0;
+  const whole = Math.max(0, Math.floor(ticks));
+  if (whole === 0 || !(tickSeconds > 0) || !(rate > 0)) return from;
+
+  const step = rate * whole * tickSeconds;
+  const delta = to - from;
+  if (Math.abs(delta) <= step) return to;
+  return from + Math.sign(delta) * step;
+}

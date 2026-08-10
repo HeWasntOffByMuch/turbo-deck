@@ -1,10 +1,15 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { EntityActivity, CastPhaseValue } from '../../../server/net/protocol.js';
 import { clipLibFixture, unitDefFixture } from '../../../units/fixtures.js';
+import { bundleErrorText, loadUnitBundle } from '../../../units/bundle.js';
 import { UnitMachine } from '../../../units/machine.js';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   advanceSpeed,
+  BLEND_SLEW_PER_SECOND,
   driveUnit,
+  slewSpeed,
   speedBetween,
   startedCasting,
   STOPPED,
@@ -259,5 +264,199 @@ describe('the blend tree over a real frame loop (spec 118)', () => {
       previous = current;
     }
     expect(unit.stateId).toBe('idle');
+  });
+});
+
+
+describe('slewSpeed', () => {
+  const slew = (from: number, to: number, ticks = 1): number => slewSpeed(from, to, ticks, TICK_SECONDS);
+
+  it('holds still on a frame that drained no tick', () => {
+    // Same clock rule as `advanceSpeed`: a signal the sim owns does not advance
+    // because the browser drew a frame.
+    expect(slewSpeed(100, 0, 0, TICK_SECONDS)).toBe(100);
+  });
+
+  it('reaches the target and stays there', () => {
+    let value = MOVE_SPEED;
+    for (let tick = 0; tick < 60; tick += 1) value = slew(value, 0);
+    expect(value).toBe(0);
+    expect(slew(value, 0)).toBe(0);
+  });
+
+  it('never overshoots from either side', () => {
+    expect(slew(0, 3)).toBe(3);
+    expect(slew(3, 0)).toBe(0);
+  });
+
+  it('is monotone toward the target', () => {
+    let value = MOVE_SPEED;
+    for (let tick = 0; tick < 20; tick += 1) {
+      const next = slew(value, 0);
+      expect(next).toBeLessThanOrEqual(value);
+      value = next;
+    }
+  });
+
+  it('is framerate independent on the sim clock', () => {
+    let stepped = MOVE_SPEED;
+    for (let tick = 0; tick < 6; tick += 1) stepped = slew(stepped, 0);
+    expect(slew(MOVE_SPEED, 0, 6)).toBeCloseTo(stepped, 10);
+  });
+
+  it('gives up full speed in about the 150ms the transitions are authored at', () => {
+    const ticks = Math.ceil(MOVE_SPEED / (BLEND_SLEW_PER_SECOND * TICK_SECONDS));
+    // The ramp itself, plus at most the one tick rounding up to a whole one
+    // costs. Both halves named rather than a single magic bound, because the
+    // point of the number is that it matches the authored transition.
+    const ramp = (MOVE_SPEED / BLEND_SLEW_PER_SECOND) * 1000;
+    expect(ramp).toBeLessThanOrEqual(160);
+    expect(ticks * TICK_MS).toBeLessThanOrEqual(ramp + TICK_MS);
+    expect(slew(MOVE_SPEED, 0, ticks)).toBe(0);
+  });
+
+  it('crosses the transition threshold within one tick when setting off', () => {
+    // Rising, the slew must not delay `speed > 5` or the state change would lag
+    // the input by a visible amount.
+    expect(slew(0, MOVE_SPEED)).toBeGreaterThan(5);
+  });
+});
+
+describe('stopping, through the pig\'s real thresholds', () => {
+  /**
+   * The regression this exists for (spec 119).
+   *
+   * Read off the committed unitdef rather than restated here: the fault was a
+   * parameter stepping straight over the walk band, and a test that invented
+   * its own thresholds could not have noticed.
+   */
+  const machineDoc = JSON.parse(
+    readFileSync(
+      join(process.cwd(), 'assets/units/pig_a_pose_full/pig_a_pose_full.unitdef.json'),
+      'utf8',
+    ),
+  ) as { stateMachine: { blendTrees: { id: string; thresholds: { value: number; clipRef: string }[] }[] } };
+  const move = machineDoc.stateMachine.blendTrees.find((tree) => tree.id === 'move');
+  const walk = move?.thresholds.find((threshold) => threshold.clipRef === 'walk')?.value ?? 0;
+  const run = move?.thresholds.find((threshold) => threshold.clipRef === 'run')?.value ?? 0;
+
+  it('has the thresholds this test is about', () => {
+    expect(walk).toBeGreaterThan(0);
+    expect(run).toBeGreaterThan(walk);
+  });
+
+  it('visits the walk band on the way down instead of stepping over it', () => {
+    let value = MOVE_SPEED;
+    let inWalkBand = 0;
+    for (let tick = 0; tick < 60 && value > 0; tick += 1) {
+      value = slewSpeed(value, 0, 1, TICK_SECONDS);
+      if (value >= walk && value < run) inWalkBand += 1;
+    }
+    // Several ticks of actual walk, not a single frame clipping through it.
+    expect(inWalkBand).toBeGreaterThanOrEqual(4);
+  });
+
+  it('spends the whole descent somewhere the tree can blend', () => {
+    let value = MOVE_SPEED;
+    const seen: number[] = [];
+    while (value > 0) {
+      value = slewSpeed(value, 0, 1, TICK_SECONDS);
+      seen.push(value);
+    }
+    expect(seen.length).toBeGreaterThanOrEqual(8);
+    expect(seen[seen.length - 1]).toBe(0);
+  });
+
+  it('is what the old assignment was not', () => {
+    // The behaviour being replaced, stated so the diff has a control: assigning
+    // the measured speed put the tree on the idle clip in one tick, which is
+    // the cut that was reported.
+    const assigned = 0;
+    expect(assigned < walk).toBe(true);
+    expect(slewSpeed(MOVE_SPEED, 0, 1, TICK_SECONDS)).toBeGreaterThan(walk);
+  });
+});
+
+
+describe('the pig, driven to a stop through its own machine', () => {
+  /**
+   * The whole fix, end to end (spec 119): the real unitdef, the real machine,
+   * a real stop, and the question the report was about -- does the run pose
+   * fade, or is it simply gone.
+   */
+  const DIR = 'assets/units/pig_a_pose_full';
+  const read = (name: string): unknown =>
+    JSON.parse(readFileSync(join(process.cwd(), DIR, name), 'utf8'));
+  const bundle = loadUnitBundle(read('pig_a_pose_full.unitdef.json'), read('pig.core.cliplib.json'));
+
+  /** Weight of one clip in a tick's poses, summed over both blending layers. */
+  const weightOf = (poses: readonly { clipId: string; weight: number }[], clipId: string): number =>
+    poses.filter((pose) => pose.clipId === clipId).reduce((total, pose) => total + pose.weight, 0);
+
+  /** Run for `ticks`, holding `speed`, and report what each tick drew. */
+  function drive(
+    machine: UnitMachine,
+    blend: number,
+    target: number,
+    ticks: number,
+  ): { blend: number; frames: { run: number; walk: number; idle: number }[] } {
+    const frames: { run: number; walk: number; idle: number }[] = [];
+    let value = blend;
+    for (let tick = 0; tick < ticks; tick += 1) {
+      value = slewSpeed(value, target, 1, TICK_SECONDS);
+      machine.setParameter('speed', value);
+      machine.step(1);
+      const poses = machine.poses();
+      frames.push({
+        run: weightOf(poses, 'run'),
+        walk: weightOf(poses, 'walk'),
+        idle: weightOf(poses, 'idle'),
+      });
+    }
+    return { blend: value, frames };
+  }
+
+  it('loads', () => {
+    expect(bundle.value, bundleErrorText(bundle)).not.toBeNull();
+  });
+
+  it('fades the run out over several ticks instead of dropping it in one', () => {
+    const loaded = bundle.value;
+    if (!loaded) throw new Error(bundleErrorText(bundle));
+    const machine = new UnitMachine({ unit: loaded.unit, clipLib: loaded.clipLib });
+
+    // Up to speed first, and settled there.
+    const running = drive(machine, 0, MOVE_SPEED, 60);
+    expect(running.frames[running.frames.length - 1]?.run).toBeGreaterThan(0.9);
+
+    // Then the move order ends: the measured speed steps to zero in one tick.
+    const stopping = drive(machine, running.blend, 0, 60);
+
+    // The run must not vanish in a single tick, which is what was reported.
+    const runWeights = stopping.frames.map((frame) => frame.run);
+    const ticksWithRun = runWeights.filter((weight) => weight > 0.01).length;
+    expect(ticksWithRun).toBeGreaterThanOrEqual(5);
+
+    // It must come down rather than hold and cut.
+    expect(runWeights[0] ?? 0).toBeGreaterThan(0.5);
+    expect(runWeights[runWeights.length - 1] ?? 1).toBeLessThan(0.01);
+
+    // The walk is genuinely visited on the way down -- the band the old step
+    // jumped clean over.
+    expect(stopping.frames.some((frame) => frame.walk > 0.3)).toBe(true);
+
+    // And it ends standing.
+    expect(stopping.frames[stopping.frames.length - 1]?.idle).toBeGreaterThan(0.9);
+  });
+
+  it('never drops every clip at once while stopping', () => {
+    const loaded = bundle.value;
+    if (!loaded) throw new Error(bundleErrorText(bundle));
+    const machine = new UnitMachine({ unit: loaded.unit, clipLib: loaded.clipLib });
+    const running = drive(machine, 0, MOVE_SPEED, 60);
+    for (const frame of drive(machine, running.blend, 0, 60).frames) {
+      // A tick that drew nothing would be a body that blinked.
+      expect(frame.run + frame.walk + frame.idle).toBeGreaterThan(0.5);
+    }
   });
 });
