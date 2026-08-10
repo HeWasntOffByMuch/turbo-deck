@@ -147,6 +147,37 @@ describe('a provisional document (spec 115)', () => {
     expect(filled.$comment).toBe(provisional.$comment);
   });
 
+  it('widens a provisional bone budget to the rig it measured', () => {
+    // The real shape: a generated humanoid rig carries twist bones and arrives
+    // with 43, against a provisional budget of 15..30 written around the
+    // 25-bone mixamo contract. Keeping the guess made the filled-in document
+    // fail its own validator, and export refused the unit for being the shape
+    // it actually is -- which reads as "export does nothing".
+    const built = buildReferenceUnit(DEFAULT_CANONICAL_HEIGHT);
+    const extra = Array.from({ length: 18 }, (_, index) => ({
+      name: `L_Twist${index}`,
+      parent: 0,
+      translation: [0, 0.01 * index, 0] as const,
+    }));
+    const nodes = [...built.meshGlb.nodes, ...extra];
+    const twisty = join(dir, 'twisty.glb');
+    writeFileSync(twisty, writeGlb({ ...built.meshGlb, nodes, joints: nodes.map((_, index) => index) }));
+
+    const result = resolveFamilySkeleton({
+      job: job({ skeletonId: 'biped', artifacts: { meshGlb: null, riggedGlb: twisty, clipGlbs: {} } }),
+      unitsDir: dir,
+      skeletonRef: 'biped.skeleton.json',
+      canonicalHeight: DEFAULT_CANONICAL_HEIGHT,
+    });
+
+    expect(result.problem).toBeNull();
+    const written = read('biped.skeleton.json');
+    expect(written.bones.length).toBe(nodes.length);
+    // Widened to what is there, rather than the guess it contradicts.
+    expect(written.boneBudget.max).toBeGreaterThanOrEqual(nodes.length);
+    expect(written.boneBudget.min).toBeLessThanOrEqual(nodes.length);
+  });
+
   it('drops the sockets a rig on another naming contract cannot satisfy', () => {
     // The state the pipeline is actually in. `spec: tripo` is what the retarget
     // requires, so every rig now comes back named `tripo::*` -- and the sockets

@@ -168,7 +168,20 @@ export function resolveFamilySkeleton(request: FamilyRequest): FamilyResult {
   const droppedSockets = declared
     .filter((socket) => !boneNames.has(socket.bone))
     .map((socket) => `${socket.id} (wanted "${socket.bone}")`);
-  const skeleton = { ...derived.skeleton, sockets: kept };
+
+  // The inherited bone budget gets the same treatment, and for the same reason.
+  // A provisional document's budget is a guess about a rig nobody had measured
+  // -- 15..30, written around the 25-bone mixamo contract -- and a real rig
+  // arrives with twist bones and 43. Keeping the guess makes the filled-in
+  // document contradict its own bind pose and fail validation, which reads as
+  // "export is broken" rather than as "that number was always provisional".
+  // The bind pose is the measurement; the budget is a description of it.
+  const boneCount = derived.skeleton.bones.length;
+  const inherited = derived.skeleton.boneBudget;
+  const budgetFits = boneCount >= inherited.min && boneCount <= inherited.max;
+  const boneBudget = budgetFits ? inherited : { min: boneCount, max: boneCount };
+
+  const skeleton = { ...derived.skeleton, sockets: kept, boneBudget };
 
   const validated = validateSkeleton(skeleton);
   if (validated.value === null) {

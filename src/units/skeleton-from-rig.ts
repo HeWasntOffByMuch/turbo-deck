@@ -155,7 +155,14 @@ export function skeletonFromRig(glb: GlbBinary, options: DeriveOptions): Derived
     upAxis: '+Y',
     forwardAxis: '+X',
     canonicalHeight: options.canonicalHeight,
-    boneBudget: options.boneBudget ?? { min: 15, max: 30 },
+    // The measured count when nobody supplied one, rather than the hand-authored
+    // 15..30 the mixamo contract was written around. A real generated rig has
+    // twist bones -- 43 on the first one through here -- so that default made a
+    // derived document fail its own validator the moment it was written, and
+    // export refused a unit for being the shape it actually is. A family's bone
+    // count is a measurement like its bind pose; `compareToFamily` is what holds
+    // the next rig to it.
+    boneBudget: options.boneBudget ?? { min: bones.length, max: bones.length },
     bones,
     sockets,
     bindPose: { source: options.source, bones: bindBones },
