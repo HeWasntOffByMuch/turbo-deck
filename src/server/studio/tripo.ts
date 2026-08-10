@@ -48,6 +48,16 @@
  *    is what keeps the projection and the ceilings honest about it. The preset
  *    is a bare `preset:walk` -- see {@link BIPED_ANIMATION_PRESETS} for the
  *    names a biped actually has.
+ *  - **`spec: mixamo` and Tripo's animations are mutually exclusive.** The
+ *    sixth correction and the one that cost the most to learn, because nothing
+ *    refuses it until the *retarget*: a mixamo-spec rig is built and paid for,
+ *    and then every clip call comes back "retargeting of Mixamo skeletons is not
+ *    supported". The two specs are not two spellings of one skeleton. They are a
+ *    choice between their animation library and Mixamo's, made at the rig call,
+ *    and a game that wants the presets has to take the `tripo` names with them.
+ *    Worth knowing about that message: it arrived localized -- in Polish, to a
+ *    Polish account -- so nothing here may ever branch on the text of an API
+ *    error. Only on `code`.
  *  - **The rig takes a `rig_type`, and omitting it is not neutral.** The fifth
  *    correction, and the most expensive one to have found by inspection rather
  *    than from the docs: every unit generated without it came back on a generic
