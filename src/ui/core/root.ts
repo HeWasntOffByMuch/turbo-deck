@@ -79,7 +79,7 @@ export class UiRoot {
   update(nowMs: number): void {
     this.now = nowMs;
     this.focus.revalidate(this.content);
-    if (!this.content.needsMeasure && !this.content.needsArrange) return;
+    if (!this.content.needsMeasure && !this.content.needsArrange && !this.content.needsArrangeInSubtree) return;
     this.layoutCount++;
     const context = this.layoutContext();
     this.content.measure(looseConstraint(this.viewportSize), context);

@@ -5,7 +5,10 @@ import { renderGallery } from './render.js';
 import { buildGallery } from './gallery.js';
 import { bakeAtlas } from '../render/atlas.js';
 import { THEME } from '../theme/theme.js';
-import { UNBOUNDED } from '../core/geom.js';
+import { UNBOUNDED, type Size } from '../core/geom.js';
+import { UiRoot } from '../core/root.js';
+import type { Widget } from '../core/widget.js';
+import { ScrollView } from '../widgets/scroll-view.js';
 
 const directory = new URL('./goldens/', import.meta.url);
 
@@ -41,6 +44,53 @@ describe('golden images', () => {
       { width: second.surface.width, height: second.surface.height, pixels: second.surface.pixels },
     )).toBe(null);
   });
+});
+
+/**
+ * Nothing may be laid out beyond the box it was given.
+ *
+ * A scroll view's content is the one legitimate exception -- extending past its
+ * viewport is the whole point of it -- so it is skipped by name. Everything else
+ * overflowing is a layout bug, and this is the check that makes it fail in Node
+ * instead of showing up as two widgets drawn on top of each other in a
+ * screenshot somebody happens to look at.
+ */
+function overflowsIn(viewport: Size): readonly string[] {
+  const atlas = bakeAtlas(THEME);
+  const gallery = buildGallery(THEME);
+  const root = new UiRoot(gallery.root, { theme: THEME, atlas, viewport });
+  root.update(0);
+
+  const found: string[] = [];
+  const walk = (widget: Widget, parent: Widget | null): void => {
+    if (parent && widget.visible && parent.visible && !(parent instanceof ScrollView)) {
+      const child = widget.rect;
+      const box = parent.rect;
+      const right = child.x + child.width - (box.x + box.width);
+      const bottom = child.y + child.height - (box.y + box.height);
+      const left = box.x - child.x;
+      const top = box.y - child.y;
+      const worst = Math.max(right, bottom, left, top);
+      if (worst > 0) found.push(`${widget.name} escapes ${parent.name} by ${worst}px`);
+    }
+    for (const child of widget.children) walk(child, widget);
+  };
+  walk(gallery.root, null);
+  return found;
+}
+
+describe('nothing escapes its box', () => {
+  for (const viewport of [
+    { width: 300, height: 140 },
+    { width: 320, height: 200 },
+    { width: 400, height: 300 },
+    { width: 640, height: 360 },
+    { width: 480, height: 800 },
+  ]) {
+    it(`at ${viewport.width}x${viewport.height}`, () => {
+      expect(overflowsIn(viewport)).toEqual([]);
+    });
+  }
 });
 
 describe('the gallery fits the smallest supported viewport', () => {

@@ -31,6 +31,11 @@ export class Button extends StyledWidget {
   constructor(private labelText = '', name = 'button') {
     super('button', name);
     this.focusable = true;
+    // A button has an intrinsic size, so it sits at that size on the cross axis
+    // rather than filling it. Stretching is the container default and it is right
+    // for a panel or a slider; a button stretched to the width of a column reads
+    // as a mistake, which is what the gallery showed the first time it rendered.
+    this.layoutAlign = 'start';
   }
 
   get label(): string {
@@ -125,6 +130,7 @@ export class Icon extends StyledWidget {
   constructor(public iconName: string, name = 'icon') {
     super('icon', name);
     this.pointerTransparent = true;
+    this.layoutAlign = 'start';
   }
 
   setIcon(value: string): void {

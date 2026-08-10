@@ -99,6 +99,17 @@ export abstract class Widget {
   private readonly childList: Widget[] = [];
   private measureDirty = true;
   private arrangeDirty = true;
+  /**
+   * Something below this node needs arranging, even though this node's own rect
+   * has not changed.
+   *
+   * Without this, `arrange` early-returns on an unchanged rect and never reaches
+   * the descendant that asked to move -- which is exactly what a scroll view
+   * does: its own rect is identical frame to frame and only its content slides.
+   * The symptom is a scroll offset that updates, a scrollbar thumb that moves,
+   * and content that never budges.
+   */
+  private subtreeArrangeDirty = false;
   private lastConstraint: Constraint | null = null;
   private desired: Size = ZERO_SIZE;
 
@@ -151,11 +162,26 @@ export abstract class Widget {
     }
   }
 
-  /** Marks this node and every descendant: a moved parent moves its children. */
+  /**
+   * Marks this node and every descendant: a moved parent moves its children.
+   *
+   * Ancestors are *not* marked dirty -- their own rects are still correct -- but
+   * they are told that something below them is not, so the top-down walk knows to
+   * keep descending rather than stopping at the first node whose rect is unchanged.
+   */
   invalidateArrange(): void {
+    this.markSubtreeArrange();
+    let node = this.parent;
+    while (node && !node.subtreeArrangeDirty) {
+      node.subtreeArrangeDirty = true;
+      node = node.parent;
+    }
+  }
+
+  private markSubtreeArrange(): void {
     if (this.arrangeDirty) return;
     this.arrangeDirty = true;
-    for (const child of this.childList) child.invalidateArrange();
+    for (const child of this.childList) child.markSubtreeArrange();
   }
 
   get needsMeasure(): boolean {
@@ -164,6 +190,11 @@ export abstract class Widget {
 
   get needsArrange(): boolean {
     return this.arrangeDirty;
+  }
+
+  /** Whether a descendant needs arranging while this node's own rect is fine. */
+  get needsArrangeInSubtree(): boolean {
+    return this.subtreeArrangeDirty;
   }
 
   /**
@@ -204,9 +235,10 @@ export abstract class Widget {
       width: Math.max(0, Math.round(target.width)),
       height: Math.max(0, Math.round(target.height)),
     };
-    if (!this.arrangeDirty && rectsEqual(this.rect, snapped)) return;
+    if (!this.arrangeDirty && !this.subtreeArrangeDirty && rectsEqual(this.rect, snapped)) return;
     this.rect = snapped;
     this.arrangeDirty = false;
+    this.subtreeArrangeDirty = false;
     this.arrangeSelf(snapped, context);
   }
 

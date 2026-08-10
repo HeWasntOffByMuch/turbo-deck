@@ -26,6 +26,17 @@ import { StyledWidget } from './base.js';
 const WHEEL_STEP = 12;
 
 export class ScrollView extends StyledWidget {
+  /**
+   * A ceiling on the viewport's height, or null to take whatever is offered.
+   *
+   * Without one, a scroll view handed a generous constraint measures to its
+   * content's full height and there is nothing left to scroll -- which is a
+   * perfectly reasonable thing for it to do and a useless thing for a list that
+   * is meant to be a list. Set it when the box should be shorter than what is in
+   * it; leave it null when a parent is going to constrain the height anyway.
+   */
+  maxHeight: number | null = null;
+
   /** How far down the content is scrolled, in UI pixels. Never negative. */
   private offset = 0;
   private contentHeight = 0;
@@ -88,27 +99,44 @@ export class ScrollView extends StyledWidget {
     this.scrollBy(-gesture.delta.y);
   }
 
+  /**
+   * The room the bar takes, always -- whether or not there is anything to scroll.
+   *
+   * Reserving it conditionally is the obvious thing and it is worse in two ways.
+   * Measure would have to know whether the content overflows, which is what it is
+   * being run to find out; and a list that grows past its box would reflow every
+   * widget in it sideways at the moment the bar appears. A stable six pixels
+   * costs nothing and never moves.
+   */
+  private barRoom(context: LayoutContext): number {
+    return context.theme.widget(this.styleKey).metric('barThickness', 6);
+  }
+
   protected override measureSelf(constraint: Constraint, context: LayoutContext): Size {
     // Unbounded height: the point is to find out how tall the content wants to be.
-    const size = this.content.measure({ maxWidth: constraint.maxWidth, maxHeight: UNBOUNDED }, context);
+    // The width is the one the content will actually be *arranged* at, bar room
+    // already taken out -- measuring it wider is how a wrapped label ends up
+    // breaking its lines for a box it never gets.
+    const inner = Math.max(0, constraint.maxWidth - this.barRoom(context));
+    const size = this.content.measure({ maxWidth: inner, maxHeight: UNBOUNDED }, context);
     this.contentHeight = size.height;
     // Never taller than the content and never taller than the offer. Returning
     // the raw constraint would make a scroll view inside an unbounded measure
     // claim an unbounded height, and every ancestor would inherit it.
-    return { width: size.width, height: Math.min(boundedOr(constraint.maxHeight, size.height), size.height) };
+    const offered = boundedOr(constraint.maxHeight, size.height);
+    const ceiling = this.maxHeight === null ? offered : Math.min(offered, this.maxHeight);
+    return { width: size.width + this.barRoom(context), height: Math.min(ceiling, size.height) };
   }
 
   protected override arrangeSelf(rect: Rect, context: LayoutContext): void {
     // Clamp after a resize: shrinking the viewport can leave the offset past the
     // end, which would show blank space below the content.
     this.offset = Math.max(0, Math.min(this.maxScroll, this.offset));
-    const style = context.theme.widget(this.styleKey);
-    const barRoom = this.scrollable ? style.metric('barThickness', 6) : 0;
     this.content.arrange(
       {
         x: rect.x,
         y: rect.y - this.offset,
-        width: Math.max(0, rect.width - barRoom),
+        width: Math.max(0, rect.width - this.barRoom(context)),
         height: this.contentHeight,
       },
       context,

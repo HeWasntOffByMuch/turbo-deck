@@ -122,7 +122,9 @@ export function buildGallery(theme: Theme): Gallery {
     listContent.add(new Label(`Item ${i}`, 'body'));
   }
   const scroll = new ScrollView(listContent, 'scroll');
-  scroll.layoutGrow = 1;
+  // Deliberately shorter than its twelve rows: a scroll view that fits its own
+  // content is not demonstrating anything, and this is the QA surface.
+  scroll.maxHeight = 64;
   parts['scroll'] = scroll;
 
   // --- a uniform grid, which is what an inventory will be ------------------
@@ -168,7 +170,6 @@ export function buildGallery(theme: Theme): Gallery {
   columns.addAll([left, right]);
 
   const scrollGroup = group(theme, 'Scroll', [scroll]);
-  scrollGroup.layoutGrow = 1;
 
   const content = new Column('galleryContent');
   content.padding = uniformInsets(theme.spacing.sm);
