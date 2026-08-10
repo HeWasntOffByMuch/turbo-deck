@@ -91,13 +91,17 @@ import { UnitRig } from '../unit-rig.js';
 import { UnitMachine } from '../../../units/machine.js';
 import { authoredUnitFor } from './unit-catalog.js';
 import { authoredUnitAssets } from './unit-assets.js';
-import { driveUnit, speedBetween, type UnitFacts } from './unit-driver.js';
+import { advanceSpeed, driveUnit, STOPPED, type SpeedClock, type UnitFacts } from './unit-driver.js';
+import { SERVER_TICK_RATE } from '../../../server/config.js';
 import { mixerCadence, shouldApply } from './unit-lod.js';
 import { ShotRig } from './shot.js';
 import type { AimShape } from './aim.js';
 import { castBar } from './cast.js';
 import { EntityMotion } from './interpolate.js';
 import type { WorldAnchor } from './damage-popup.js';
+
+/** One sim tick, in seconds -- the clock an authored unit's speed is on. */
+const TICK_SECONDS = 1 / SERVER_TICK_RATE;
 
 /** Fraction of the gap to the target framing closed each frame (spec 034). */
 const CAMERA_SMOOTH = 0.15;
@@ -200,6 +204,8 @@ interface DrivenUnit {
   previous: UnitFacts | null;
   /** Last drawn position, for the speed the blend tree reads. */
   previousPosition: { x: number; y: number } | null;
+  /** That speed, kept on the sim's clock rather than the browser's (spec 118). */
+  speed: SpeedClock;
   /**
    * Bone count, read once when the mesh lands.
    *
@@ -1010,7 +1016,7 @@ export class WorldScene {
       // neither needs the scene to remember where it drew them last frame.
       body.player?.update(dt, { x, y }, -facing);
       body.mech?.update(dt, { x, y }, -facing);
-      if (body.unit) this.driveAuthoredUnit(body.unit, entity, { x, y }, frame, dt);
+      if (body.unit) this.driveAuthoredUnit(body.unit, entity, { x, y }, frame);
       // Fed the *drawn* pose, so an arrow's nose follows the curve the eye is
       // following rather than the one the deltas describe (spec 087).
       body.shot?.update(dt, x, y, ground);
@@ -1071,11 +1077,20 @@ export class WorldScene {
     entity: ClientView['entities'][number],
     at: { readonly x: number; readonly y: number },
     frame: FrameInfo,
-    dt: number,
   ): void {
     const dead = entity.maxHealth > 0 && entity.health <= 0;
+    // Distance on the frame clock, the quotient on the tick clock (spec 118).
+    // A drawn position only moves when a tick drained, so dividing by the frame
+    // delta reported a standing body on every frame that drained none -- which
+    // above 60fps is most of them, and which the blend tree reads on all of them.
+    unit.speed = advanceSpeed(
+      unit.speed,
+      unit.previousPosition === null ? 0 : Math.hypot(at.x - unit.previousPosition.x, at.y - unit.previousPosition.y),
+      frame.ticks,
+      TICK_SECONDS,
+    );
     const facts: UnitFacts = {
-      speed: unit.previousPosition === null ? 0 : speedBetween(unit.previousPosition, at, dt),
+      speed: unit.speed.speed,
       activity: entity.activity,
       castPhase: this.castPhases.get(entity.id) ?? null,
       dead,
@@ -1276,6 +1291,7 @@ export class WorldScene {
         machine: new UnitMachine({ unit: authoredUnit.unit, clipLib: authoredUnit.clipLib }),
         previous: null,
         previousPosition: null,
+        speed: STOPPED,
         bones: 0,
       };
       // Fire and forget: the group is in the scene from this frame and the mesh

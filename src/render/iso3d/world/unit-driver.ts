@@ -123,3 +123,55 @@ export function speedBetween(
   if (!(seconds > 0)) return 0;
   return Math.hypot(to.x - from.x, to.y - from.y) / seconds;
 }
+
+/**
+ * What a body's speed is, kept on the sim's clock (spec 118).
+ *
+ * The drawn distance divided by the frame delta is the obvious way to measure
+ * this and it is wrong, because the two are on different clocks. A body's drawn
+ * position only moves on a frame that drained a 60Hz tick -- the local player's
+ * because prediction advances a tick at a time, a remote one's because the
+ * interpolator has no new sample to walk toward. Above 60fps most frames drain
+ * no tick at all, so most frames measured a real distance of zero over a real
+ * delta and reported a standing body.
+ *
+ * That was invisible in the state machine, which only evaluates transitions on
+ * a tick and so never saw the zero. It was extremely visible in the blend tree,
+ * which is read on *every* frame: at 120Hz the pig alternated between its run
+ * pose and frame 0.02 of a fifteen-second idle, every other frame.
+ *
+ * So distance accumulates on the frame clock and the division happens on the
+ * tick clock, and a frame that drained nothing holds the last answer rather
+ * than inventing a stop.
+ */
+export interface SpeedClock {
+  /** Drawn distance since the last tick-bearing frame. */
+  readonly pending: number;
+  /** World units per second, measured over whole ticks. */
+  readonly speed: number;
+}
+
+/** A body that has not moved yet. */
+export const STOPPED: SpeedClock = { pending: 0, speed: 0 };
+
+/**
+ * Folds one frame's drawn travel in, and takes the quotient when a tick landed.
+ *
+ * `ticks` is what the frame's accumulator actually drained, the same number the
+ * machine steps by. Dividing by `ticks * tickSeconds` rather than by the frame
+ * delta is the whole point: the numerator is however many ticks' worth of
+ * travel the drawn position picked up, so the denominator has to be those same
+ * ticks and not the wall-clock time it took to notice them.
+ */
+export function advanceSpeed(
+  clock: SpeedClock,
+  travelled: number,
+  ticks: number,
+  tickSeconds: number,
+): SpeedClock {
+  const moved = Number.isFinite(travelled) && travelled > 0 ? travelled : 0;
+  const pending = clock.pending + moved;
+  const whole = Math.max(0, Math.floor(ticks));
+  if (whole === 0 || !(tickSeconds > 0)) return { pending, speed: clock.speed };
+  return { pending: 0, speed: pending / (whole * tickSeconds) };
+}

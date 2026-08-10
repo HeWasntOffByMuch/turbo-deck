@@ -29,7 +29,22 @@
  * a rig doing something unusual (a squash, a shoulder that slides) and refusing
  * it would be this module inventing a rule nobody asked for. Only the root, and
  * only position.
+ *
+ * ## What counts, measured (spec 118)
+ *
+ * That rule asks which *bone* a track is on, and a generated rig has no reason
+ * to obey it: the pig's auto-rig baked the whole stride onto `Hip`, one node
+ * below the root, and the clip validated clean while the body slid. So there is
+ * a second rule below, asked of the values instead of the name —
+ * {@link trackTravel} and {@link withoutTravel}. A cycle ends where it began, so
+ * a translation track whose last key is not its first is carrying travel
+ * wherever it sits, and only the component *along* that displacement is the
+ * fault. The two rules do not compete: the first deletes tracks on nodes that
+ * exist to position the body, the second corrects the one component of a
+ * posing bone that is positioning it by accident.
  */
+
+import { readAccessor, splitGlb } from './glb-read.js';
 
 /** One offending channel, named well enough to fix. */
 export interface RootMotionChannel {
@@ -53,6 +68,15 @@ interface GltfIsh {
 
 function nameOf(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+/** The loose shapes {@link travelChannels} reads out of a file it did not write. */
+function list(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
 }
 
 /**
@@ -118,6 +142,171 @@ export function rootMotionTrackNames(
     const scoped = /\[([^\]]+)\]$/.exec(target);
     return wanted.has(scoped?.[1] ?? target);
   });
+}
+
+/**
+ * The net displacement a translation track ends on (spec 118).
+ *
+ * The rule above asks *which bone* a track is on and refuses to look anywhere
+ * else. That was enough while every rig here carried its travel on the root,
+ * and it is not a rule a generated rig has any reason to obey: the pig's
+ * auto-rig leaves `Root` animated in rotation only and bakes the whole stride
+ * onto `Hip`, one node *below* the root, where nothing was looking. The clip
+ * validated clean and the body slid 160 world units forward per cycle.
+ *
+ * So this is the same rule asked of the *values* rather than of the name. A
+ * cycle ends where it began; a translation track whose last key is not its first
+ * went somewhere and did not come back, and that is travel wherever in the rig
+ * it sits. It is a measurement, so it cannot be fooled by a rig that names its
+ * bones differently, and it does not have to be told which convention produced
+ * the file.
+ *
+ * The axis comes back with the distance because the correction needs it: what
+ * runs along the travel is the travel, and what is perpendicular to it is the
+ * bob, the sway and the crouch that the run is made of.
+ */
+export interface Travel {
+  readonly distance: number;
+  /** Unit vector along the net displacement, or zero when there is none. */
+  readonly axis: readonly [number, number, number];
+}
+
+const NO_TRAVEL: Travel = { distance: 0, axis: [0, 0, 0] };
+
+/** First-to-last displacement of a flat `[x,y,z, x,y,z, ...]` track. */
+export function trackTravel(values: ArrayLike<number>): Travel {
+  const keys = Math.floor(values.length / 3);
+  if (keys < 2) return NO_TRAVEL;
+  const last = (keys - 1) * 3;
+  const d: [number, number, number] = [
+    (values[last + 0] ?? 0) - (values[0] ?? 0),
+    (values[last + 1] ?? 0) - (values[1] ?? 0),
+    (values[last + 2] ?? 0) - (values[2] ?? 0),
+  ];
+  const distance = Math.hypot(d[0], d[1], d[2]);
+  if (distance === 0) return NO_TRAVEL;
+  return { distance, axis: [d[0] / distance, d[1] / distance, d[2] / distance] };
+}
+
+/**
+ * The same keys with the travel taken out, and nothing else touched.
+ *
+ * Two steps, and the second is the one that is easy to leave out.
+ *
+ *  1. **Remove the ramp.** Subtract the net displacement, spread across the
+ *     clip, so the last key lands back on the first and the loop closes.
+ *  2. **Re-centre along the travel axis.** After step 1 the run's hips sit half
+ *     a metre of rig space ahead of the idle's, because the retarget's ramp
+ *     started from wherever the stride happened to begin. Left there, the body
+ *     jumps ~29 world units the moment the blend crosses between them. So the
+ *     along-axis component is slid until its mean is the bone's *rest* value,
+ *     which is the one thing every clip of a rig agrees about.
+ *
+ * Only the along-axis component is touched. The perpendicular components come
+ * through key for key, which is what keeps the vertical bob of a walk, the side
+ * sway of an idle and the crouch a run holds its hips in -- all of which a
+ * plain "delete the translation track" throws away along with the fault.
+ *
+ * `times` is used to spread the ramp when the keys are not evenly spaced. It is
+ * optional because the loop closes either way; without it the ramp is spread by
+ * key index, which is exact for the uniformly-baked output every retarget
+ * produces.
+ */
+export function withoutTravel(
+  values: ArrayLike<number>,
+  rest: readonly [number, number, number],
+  times?: ArrayLike<number>,
+): number[] {
+  const out = Array.from(values, Number);
+  const travel = trackTravel(values);
+  if (travel.distance === 0) return out;
+
+  const keys = Math.floor(out.length / 3);
+  const [ax, ay, az] = travel.axis;
+  const span = times === undefined ? 0 : (times[keys - 1] ?? 0) - (times[0] ?? 0);
+
+  let alongTotal = 0;
+  for (let key = 0; key < keys; key += 1) {
+    const at = key * 3;
+    const u =
+      times !== undefined && span > 0
+        ? ((times[key] ?? 0) - (times[0] ?? 0)) / span
+        : keys > 1
+          ? key / (keys - 1)
+          : 0;
+    out[at + 0] = (out[at + 0] ?? 0) - ax * travel.distance * u;
+    out[at + 1] = (out[at + 1] ?? 0) - ay * travel.distance * u;
+    out[at + 2] = (out[at + 2] ?? 0) - az * travel.distance * u;
+    alongTotal += (out[at + 0] ?? 0) * ax + (out[at + 1] ?? 0) * ay + (out[at + 2] ?? 0) * az;
+  }
+
+  const shift = (rest[0] * ax + rest[1] * ay + rest[2] * az) - alongTotal / keys;
+  for (let key = 0; key < keys; key += 1) {
+    const at = key * 3;
+    out[at + 0] = (out[at + 0] ?? 0) + ax * shift;
+    out[at + 1] = (out[at + 1] ?? 0) + ay * shift;
+    out[at + 2] = (out[at + 2] ?? 0) + az * shift;
+  }
+  return out;
+}
+
+/** One node that goes somewhere over a clip and does not come back. */
+export interface TravelChannel {
+  readonly animation: string;
+  readonly node: string;
+  readonly distance: number;
+}
+
+/**
+ * Every travelling translation channel in a clip's `.glb`, measured.
+ *
+ * The offline half of the rule, in the same file as the runtime half for the
+ * same reason {@link rootMotionChannels} is: the gate and the importer must not
+ * be able to disagree about what counts. This one has to read the *binary*
+ * chunk, because a channel's displacement is in its accessor rather than in the
+ * JSON -- which is precisely why nothing measured it until now.
+ *
+ * `minimum` is the caller's, because how far is far depends on what the rig was
+ * exported at. Below it a channel is the noise a retarget leaves behind rather
+ * than a stride.
+ */
+export function travelChannels(bytes: Uint8Array, minimum: number): readonly TravelChannel[] {
+  const glb = splitGlb(bytes);
+  const nodes = list(glb.json['nodes']).map(record);
+  const animations = list(glb.json['animations']).map(record);
+
+  const found: TravelChannel[] = [];
+  for (const animation of animations) {
+    const samplers = list(animation['samplers']).map(record);
+    for (const channel of list(animation['channels']).map(record)) {
+      const target = record(channel['target']);
+      if (target['path'] !== 'translation') continue;
+      const nodeIndex = target['node'];
+      const sampler = samplers[Number(channel['sampler'])];
+      if (typeof nodeIndex !== 'number' || sampler === undefined) continue;
+      const output = sampler['output'];
+      if (typeof output !== 'number') continue;
+
+      const travel = trackTravel(readAccessor(glb, output));
+      if (travel.distance < minimum) continue;
+      found.push({
+        animation: nameOf(animation['name']),
+        node: nameOf(nodes[nodeIndex]?.['name']),
+        distance: travel.distance,
+      });
+    }
+  }
+  return found;
+}
+
+/** One line a person can act on: which clip, which bone, and how far it went. */
+export function travelMessage(unitId: string, clipId: string, node: string, distance: number): string {
+  return (
+    `${unitId}/${clipId}: "${node}" travels ${distance.toFixed(3)} over the clip and does not come back. ` +
+    `The server owns where a body is, so the travel is taken out at import and the rest of the bone's ` +
+    `motion is kept -- the clip will play in place. Re-export it with the travel locked if that is not ` +
+    `what you meant.`
+  );
 }
 
 /** One line a person can act on: which clip, which bone, and what to do. */

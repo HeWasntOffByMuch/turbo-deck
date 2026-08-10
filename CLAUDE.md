@@ -389,6 +389,21 @@ src/render/iso3d/unit-rig.ts  a loaded authored unit, posed by a machine (spec
                  translation to strip. `mixer.update(0)` always -- every action's time comes from
                  an integer tick, so the pose is a pure function of a tick count
                  and an event lands on the same frame at 30fps as at 144.
+                 Since spec 118 there is a second rule beside the first: the
+                 strip asks which *node* a track sits on, and a generated rig
+                 has no reason to obey that convention -- the pig's auto-rig
+                 baked the whole stride onto `Hip`, one node below the root,
+                 where nothing was looking. So travel is also *measured*, on any
+                 bone, and only the component along it is taken out; the bob and
+                 the crouch are perpendicular to it and survive. The threshold is
+                 a tenth of the rig's reach, the same rule
+                 `npm run validate:units` applies offline to the same files.
+                 `npx tsx scripts/probe-travel.ts` is the check that matters --
+                 the real unit through the real loader, asking where the hips go
+                 in world units. It fails a looping clip that ends somewhere else
+                 AND one whose hips never move, since a correction that ate the
+                 pose scores a perfect zero on the first test alone. No GL
+                 context: nothing in it rasterises.
 src/render/iso3d/view-controls.ts, menu-group.ts, settings-menu.ts  the Play
                  tab's settings (specs 033/034/107): six buttons in the top-right
                  corner -- view, day and night, player lights, retro filter, hike

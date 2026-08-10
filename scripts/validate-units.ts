@@ -21,13 +21,17 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { errorsOf, formatIssue, warningsOf, type Issue } from '../src/units/issues.js';
 import { readGlbJson } from '../src/units/glb.js';
-import { rootMotionChannels, rootMotionMessage } from '../src/units/root-motion.js';
+import { nodePosition, readNodeTree, splitGlb } from '../src/units/glb-read.js';
+import { rootMotionChannels, rootMotionMessage, travelChannels, travelMessage } from '../src/units/root-motion.js';
 import { validateClipLib, validateSkeleton, validateUnitBundle, validateUnitDef } from '../src/units/validate.js';
 import type { ClipLib, Skeleton } from '../src/units/types.js';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 /** Where authored units live. A directory rather than a manifest, so adding a unit is adding a file. */
 const UNITS_DIR = join(repoRoot, 'assets', 'units');
+
+/** How far a bone must go before it is travelling. Matches `unit-rig.ts`. */
+const TRAVEL_FRACTION_OF_REACH = 0.1;
 
 interface FileReport {
   readonly path: string;
@@ -98,9 +102,11 @@ function checkClipBinaries(clipLibPath: string, clipLib: ClipLib, rootBone: stri
 
   for (const [index, clip] of clipLib.clips.entries()) {
     const path = resolve(base, clip.source);
+    let bytes: Uint8Array;
     let gltf: unknown;
     try {
-      gltf = readGlbJson(new Uint8Array(readFileSync(path)));
+      bytes = new Uint8Array(readFileSync(path));
+      gltf = readGlbJson(bytes);
     } catch (cause) {
       issues.push({
         severity: 'warning',
@@ -112,15 +118,76 @@ function checkClipBinaries(clipLibPath: string, clipLib: ClipLib, rootBone: stri
     }
 
     const offending = rootMotionChannels(gltf, rootBone);
-    if (offending.length === 0) continue;
-    issues.push({
-      severity: 'error',
-      code: 'runner.clip.rootMotion',
-      path: `/clips/${index}/source`,
-      message: rootMotionMessage(clipLib.id, clip.id, [...new Set(offending.map((channel) => channel.bone))]),
-    });
+    if (offending.length > 0) {
+      issues.push({
+        severity: 'error',
+        code: 'runner.clip.rootMotion',
+        path: `/clips/${index}/source`,
+        message: rootMotionMessage(clipLib.id, clip.id, [...new Set(offending.map((channel) => channel.bone))]),
+      });
+    }
+    issues.push(...checkTravel(bytes, clipLib, clip.id, index, path));
   }
   return issues;
+}
+
+/**
+ * Travel on any bone at all, measured rather than assumed (spec 118).
+ *
+ * The check above asks whether the *root* carries translation, which is the
+ * convention this repo's own rigs follow and not one a generated rig has any
+ * reason to. The pig's auto-rig left `Root` still and baked the stride onto
+ * `Hip`, so the check above passed on every clip while the body slid 160 world
+ * units forward and snapped back once a cycle.
+ *
+ * A **warning**, not an error, and the distinction is load-bearing: the
+ * importer corrects this, so a library that trips it draws correctly today. It
+ * goes red the day the export path bakes the travel out instead, at which point
+ * a clip that still travels is a clip that skipped the bake.
+ */
+function checkTravel(
+  bytes: Uint8Array,
+  clipLib: ClipLib,
+  clipId: string,
+  index: number,
+  path: string,
+): readonly Issue[] {
+  let travelling: readonly { readonly node: string; readonly distance: number }[];
+  try {
+    // A tenth of the rig's own reach, which is how the importer scales it too:
+    // far enough under a stride and far enough over the millimetre of drift a
+    // retarget leaves on a reaction that neither is a close call.
+    travelling = travelChannels(bytes, rigReach(bytes) * TRAVEL_FRACTION_OF_REACH);
+  } catch (cause) {
+    return [
+      {
+        severity: 'warning',
+        code: 'runner.clip.unreadable',
+        path: `/clips/${index}/source`,
+        message: `could not measure travel in ${relative(repoRoot, path)} (${cause instanceof Error ? cause.message : String(cause)})`,
+      },
+    ];
+  }
+
+  const worst = new Map<string, number>();
+  for (const channel of travelling) worst.set(channel.node, Math.max(worst.get(channel.node) ?? 0, channel.distance));
+  return [...worst].map(([node, distance]) => ({
+    severity: 'warning' as const,
+    code: 'runner.clip.travel',
+    path: `/clips/${index}/source`,
+    message: travelMessage(clipLib.id, clipId, node, distance),
+  }));
+}
+
+/** How far the rig reaches from its own origin, in its own units. */
+function rigReach(bytes: Uint8Array): number {
+  const glb = splitGlb(bytes);
+  let reach = 0;
+  for (const node of readNodeTree(glb)) {
+    const [x, y, z] = nodePosition(node);
+    reach = Math.max(reach, Math.hypot(x, y, z));
+  }
+  return reach;
 }
 
 function main(): void {

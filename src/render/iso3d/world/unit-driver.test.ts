@@ -2,7 +2,15 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { EntityActivity, CastPhaseValue } from '../../../server/net/protocol.js';
 import { clipLibFixture, unitDefFixture } from '../../../units/fixtures.js';
 import { UnitMachine } from '../../../units/machine.js';
-import { driveUnit, speedBetween, startedCasting, type UnitFacts } from './unit-driver.js';
+import {
+  advanceSpeed,
+  driveUnit,
+  speedBetween,
+  startedCasting,
+  STOPPED,
+  type SpeedClock,
+  type UnitFacts,
+} from './unit-driver.js';
 
 function facts(patch: Partial<UnitFacts> = {}): UnitFacts {
   return { speed: 0, activity: EntityActivity.Idle, castPhase: null, dead: false, ...patch };
@@ -122,5 +130,134 @@ describe('speedBetween', () => {
     expect(speedBetween({ x: 0, y: 0 }, { x: 5, y: 0 }, 0)).toBe(0);
     expect(speedBetween({ x: 0, y: 0 }, { x: 5, y: 0 }, -1)).toBe(0);
     expect(speedBetween({ x: 0, y: 0 }, { x: 5, y: 0 }, Number.NaN)).toBe(0);
+  });
+});
+
+const TICK_SECONDS = 1 / 60;
+const TICK_MS = 1000 / 60;
+/** What the player moves at, from `player/stats.ts`. */
+const MOVE_SPEED = 155;
+
+describe('advanceSpeed', () => {
+  it('holds the last answer on a frame that drained no tick', () => {
+    // The bug this exists for. A drawn position only moves when a tick drained,
+    // so a frame that drained none has measured nothing -- and reporting that
+    // as a stop is what put the pig's blend tree on the idle clip for most of
+    // every second above 60fps.
+    const running = advanceSpeed(STOPPED, MOVE_SPEED * TICK_SECONDS, 1, TICK_SECONDS);
+    expect(running.speed).toBeCloseTo(MOVE_SPEED, 6);
+    expect(advanceSpeed(running, 0, 0, TICK_SECONDS).speed).toBeCloseTo(MOVE_SPEED, 6);
+  });
+
+  it('carries the travel of a zero-tick frame into the next measurement', () => {
+    // Nothing is lost, only deferred: a remote body does move between ticks,
+    // and dropping that distance would read as a body slower than it is.
+    let clock: SpeedClock = STOPPED;
+    for (let i = 0; i < 3; i += 1) clock = advanceSpeed(clock, 1, 0, TICK_SECONDS);
+    expect(clock.pending).toBe(3);
+    expect(advanceSpeed(clock, 0, 1, TICK_SECONDS).speed).toBeCloseTo(3 * 60, 6);
+  });
+
+  it('reports the same speed at every refresh rate', () => {
+    // A body moving a fixed distance per tick is moving at one speed, and how
+    // often the browser painted is not part of it.
+    for (const refreshHz of [30, 60, 75, 120, 144, 165]) {
+      const seen = drive(refreshHz, 240).speeds.slice(60);
+      for (const speed of seen) expect(speed, `${refreshHz}Hz`).toBeCloseTo(MOVE_SPEED, 6);
+    }
+  });
+
+  it('reads a stop within a tick of it happening', () => {
+    const running = advanceSpeed(STOPPED, MOVE_SPEED * TICK_SECONDS, 1, TICK_SECONDS);
+    expect(advanceSpeed(running, 0, 1, TICK_SECONDS).speed).toBe(0);
+  });
+
+  it('ignores travel that is not a number', () => {
+    expect(advanceSpeed(STOPPED, Number.NaN, 1, TICK_SECONDS).speed).toBe(0);
+    expect(advanceSpeed(STOPPED, -5, 1, TICK_SECONDS).speed).toBe(0);
+    expect(advanceSpeed(STOPPED, 1, 1, 0).speed).toBe(0);
+  });
+});
+
+/**
+ * A body moving at a fixed rate per tick, drawn at `refreshHz` (spec 118).
+ *
+ * Mirrors the accumulator in `view.ts`: real time in, whole 60Hz steps out, and
+ * a drawn position that only moves on the steps -- which is true of the local
+ * player because prediction advances a tick at a time, and true of a remote one
+ * because the interpolator has no newer sample to walk toward.
+ */
+function drive(refreshHz: number, frames: number) {
+  const unit = machine();
+  // The fixture's death transition reads `!grounded`, which nothing on the wire
+  // drives. Standing up first keeps this about locomotion.
+  unit.setParameter('grounded', true);
+  const frameMs = 1000 / refreshHz;
+  let accumulator = 0;
+  let x = 0;
+  let drawn = 0;
+  let clock: SpeedClock = STOPPED;
+  let previous: UnitFacts | null = null;
+  const speeds: number[] = [];
+  const clips: string[] = [];
+
+  for (let frame = 0; frame < frames; frame += 1) {
+    accumulator += frameMs;
+    let ticks = 0;
+    while (accumulator >= TICK_MS) {
+      accumulator -= TICK_MS;
+      ticks += 1;
+      x += MOVE_SPEED * TICK_SECONDS;
+    }
+    clock = advanceSpeed(clock, x - drawn, ticks, TICK_SECONDS);
+    drawn = x;
+    const current = facts({ speed: clock.speed, activity: EntityActivity.Moving });
+    driveUnit(unit, current, previous, ticks);
+    previous = current;
+    speeds.push(clock.speed);
+    // What the renderer samples, which it does on every frame and not only on
+    // the ones that stepped the machine.
+    const poses = [...unit.poses()].sort((a, b) => b.weight - a.weight);
+    clips.push(poses[0]?.clipId ?? 'none');
+  }
+  return { speeds, clips, stateId: unit.stateId };
+}
+
+describe('the blend tree over a real frame loop (spec 118)', () => {
+  it('holds one gait for the whole run, at every refresh rate', () => {
+    // The regression. Measured on the frame clock this alternated between the
+    // run clip and frame 0.02 of a fifteen-second idle -- every other frame at
+    // 120Hz, and 118 frames in 300 at 75Hz.
+    for (const refreshHz of [30, 60, 75, 120, 144, 165]) {
+      const { clips, stateId } = drive(refreshHz, 300);
+      const settled = clips.slice(60);
+      expect(new Set(settled), `${refreshHz}Hz`).toEqual(new Set(['run']));
+      expect(stateId, `${refreshHz}Hz`).toBe('locomotion');
+    }
+  });
+
+  it('still comes to rest when the body does', () => {
+    // The other half: a clock that held its last answer forever would be a pig
+    // that runs on the spot after it stops.
+    const unit = machine();
+    unit.setParameter('grounded', true);
+    let clock: SpeedClock = STOPPED;
+    let previous: UnitFacts | null = null;
+    const moving = () => {
+      clock = advanceSpeed(clock, MOVE_SPEED * TICK_SECONDS, 1, TICK_SECONDS);
+      const current = facts({ speed: clock.speed, activity: EntityActivity.Moving });
+      driveUnit(unit, current, previous, 1);
+      previous = current;
+    };
+    for (let i = 0; i < 60; i += 1) moving();
+    expect(unit.stateId).toBe('locomotion');
+
+    for (let i = 0; i < 60; i += 1) {
+      clock = advanceSpeed(clock, 0, 1, TICK_SECONDS);
+      const current = facts({ speed: clock.speed });
+      driveUnit(unit, current, previous, 1);
+      previous = current;
+    }
+    expect(unit.stateId).toBe('idle');
   });
 });

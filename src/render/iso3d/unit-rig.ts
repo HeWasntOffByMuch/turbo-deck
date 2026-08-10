@@ -24,7 +24,13 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { rootMotionMessage, rootMotionTrackNames } from '../../units/root-motion.js';
+import {
+  rootMotionMessage,
+  rootMotionTrackNames,
+  trackTravel,
+  travelMessage,
+  withoutTravel,
+} from '../../units/root-motion.js';
 import type { PoseSample } from '../../units/machine.js';
 
 /** Where a unit's bytes are. Ids match the clip library's, not the file names. */
@@ -130,6 +136,44 @@ function findRootChain(model: THREE.Object3D): readonly string[] {
   return chain;
 }
 
+/** The suffix three gives a translation track, and the rest value of a bone with none. */
+const POSITION = '.position';
+const ZERO: readonly [number, number, number] = [0, 0, 0];
+
+/** How far a bone must go, as a fraction of reach, before it is travelling. */
+const TRAVEL_FRACTION_OF_REACH = 0.1;
+
+/**
+ * Every bone's bind-pose local translation, keyed the way its tracks are.
+ *
+ * By `object.name` rather than by anything from a document, because that is
+ * what three matched the track against -- the same reason the root bone is
+ * found in the loaded rig. `mixorig:Hips` in a file is `mixamorigHips` here.
+ */
+function readRestPose(model: THREE.Object3D): Map<string, readonly [number, number, number]> {
+  const rest = new Map<string, readonly [number, number, number]>();
+  model.traverse((node) => {
+    if (node instanceof THREE.Bone && node.name !== '') {
+      rest.set(node.name, [node.position.x, node.position.y, node.position.z]);
+    }
+  });
+  return rest;
+}
+
+/**
+ * How far the rig reaches in its own units: the longest bone offset in it.
+ *
+ * A scale-free stand-in for "how big is this thing", so the travel threshold
+ * means the same on a rig exported at 1.7 units and one exported at 55. Mirrors
+ * `rigReach` in `scripts/validate-units.ts`, which measures the same quantity
+ * off the same numbers in the file.
+ */
+function reachOf(rest: ReadonlyMap<string, readonly [number, number, number]>): number {
+  let reach = 0;
+  for (const [x, y, z] of rest.values()) reach = Math.max(reach, Math.hypot(x, y, z));
+  return reach;
+}
+
 export class UnitRig {
   /** The thing to add to a scene. Always present, empty until `load` resolves. */
   readonly object = new THREE.Group();
@@ -144,6 +188,10 @@ export class UnitRig {
   private rootBone: string | null = null;
   /** The root and every node above it, which is where travel actually lives. */
   private rootChain: readonly string[] = [];
+  /** Each bone's bind-pose local translation, by the name its tracks use. */
+  private restPose = new Map<string, readonly [number, number, number]>();
+  /** How far the rig reaches in its own units, which sets what counts as travel. */
+  private reach = 0;
 
   /** Why the load failed, or null. */
   get error(): string | null {
@@ -198,6 +246,11 @@ export class UnitRig {
       this.model = model;
       this.rootBone = findRootBone(model);
       this.rootChain = findRootChain(model);
+      // Snapshotted here, before a single clip has been handed to the mixer:
+      // once one has, a bone's `position` is whatever the last pose wrote and
+      // the rest pose is no longer readable off the rig at all.
+      this.restPose = readRestPose(model);
+      this.reach = reachOf(this.restPose);
       this.mixer = new THREE.AnimationMixer(model);
       this.actions.clear();
       this.clipDurations.clear();
@@ -216,6 +269,7 @@ export class UnitRig {
         // carries the travel is usually not a joint at all.
         const roots = this.rootChain.length > 0 ? this.rootChain : [assets.rootBone ?? ''].filter(Boolean);
         this.stripRootMotion(clip, unitId, id, roots);
+        this.correctTravel(clip, unitId, id);
 
         const action = this.mixer.clipAction(clip);
         action.play();
@@ -256,6 +310,45 @@ export class UnitRig {
     const message = rootMotionMessage(unitId, clipId, stripped);
     this.stripped.push(message);
     console.error(`[units] ${message}`);
+  }
+
+  /**
+   * Takes the travel out of any bone that is carrying it (spec 118).
+   *
+   * The strip above asks *which node* a track sits on and deletes it whole.
+   * That is right for a node that exists to position the body and wrong for
+   * everything else, which is why it is aimed so narrowly -- and why it found
+   * nothing on the pig, whose auto-rig left `Root` rotating in place and baked
+   * the entire stride onto `Hip`, a bone whose translation the walk is also
+   * made of. Deleting that track would have taken the gait with the fault.
+   *
+   * So this one asks the values instead: a cycle ends where it began, so a
+   * translation track whose last key is not its first is travelling wherever it
+   * sits. Only the component along that displacement comes out; the bob, the
+   * sway and the crouch are perpendicular to it and survive key for key.
+   *
+   * The threshold is a tenth of the rig's own reach, the same rule
+   * `npm run validate:units` applies to the same files -- the gate and the
+   * importer disagreeing about what counts is the failure mode this whole
+   * module is arranged to prevent.
+   */
+  private correctTravel(clip: THREE.AnimationClip, unitId: string, clipId: string): void {
+    const minimum = this.reach * TRAVEL_FRACTION_OF_REACH;
+    if (!(minimum > 0)) return;
+
+    for (const track of clip.tracks) {
+      if (!track.name.endsWith(POSITION)) continue;
+      const travel = trackTravel(track.values);
+      if (travel.distance < minimum) continue;
+
+      const bone = track.name.slice(0, -POSITION.length);
+      const rest = this.restPose.get(bone) ?? ZERO;
+      track.values = new Float32Array(withoutTravel(track.values, rest, track.times));
+
+      const message = travelMessage(unitId, clipId, bone, travel.distance);
+      this.stripped.push(message);
+      console.error(`[units] ${message}`);
+    }
   }
 
   /**
