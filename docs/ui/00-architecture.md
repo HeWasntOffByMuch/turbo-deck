@@ -1,8 +1,9 @@
 # 00 — GUI framework architecture
 
 **Status: proposal. No framework code exists yet.** This is the Phase 0 deliverable.
-It asks for ten decisions (§12) and raises eight collisions between the brief and
-the code that is already here (§2). Phase 1 should not start until those are settled.
+It raises eight collisions between the brief and the code that is already here (§2).
+Four are now settled and eight decisions remain open (§12). Phase 1 should not start
+until those are settled.
 
 Read `CLAUDE.md` first if you have not. Everything below is written to fit the rules
 already in force there, and where it cannot, it says so instead of quietly bending
@@ -86,7 +87,7 @@ damage numbers, which is all it was ever for. Phase 1 needs printable ASCII.
 Also: 5×7 is a *numerals* face. The brief says the character sheet and inventory
 "get read for hours". 5×7 has no descenders and no room for a comfortable lowercase.
 
-**Proposal: two faces, one glyph format.** Keep 5×7 as `numeric` for HUD numbers
+**Settled — two faces, one glyph format.** Keep 5×7 as `numeric` for HUD numbers
 (it is already tuned and already shipping), and add a 6×10 `body` face for
 everything else. `ui/text/` owns both; `pixel-font.ts` becomes a re-export of the
 5×7 table so there is one source of truth and the existing HUD keeps working
@@ -193,14 +194,59 @@ not. It uses the browser's `ui-monospace` at 12px and about thirty hardcoded hex
 literals, and it has `border-radius` on it. None of that is in the art direction.
 
 So the constraint the framework must honour is precise: **the UI layer never goes
-through `RetroPass`; it composites after it.** With that, moving the HUD onto the
-framework in Phase 5 is an improvement rather than a regression. But it is a rewrite
-of 669 lines plus the phone HUD work from specs 093/094 — see §2.7.
+through `RetroPass`; it composites after it.** Four things follow, and the last is the
+one nobody has priced.
 
-The same applies to `world/icons.ts`: the weapon-switch and ability icons are inline
-SVG path strings stroked with `currentColor`, which is a fourth way of drawing a thing
-on screen. Phase 1's `Icon` widget replaces it with atlas sprites, and the paths become
-source data for the atlas bake rather than runtime markup.
+**(a) The rule is free on `canvas2d`, and a thing to remember on WebGL.** A separate
+`<canvas>` stacked over the world canvas is after the post-processing chain *by
+construction* — there is no ordering to get wrong. A WebGL backend sharing the
+framebuffer has to be drawn after `RetroPass` with `autoClear = false`, and getting
+that wrong is precisely the failure spec 101 already shipped once: a correct mask, and
+a pass that cleared the canvas before blending it, with every offscreen measurement
+reading right while the screen was black. This is a second, independent argument for
+§8's ordering.
+
+**(b) The original reason is expiring anyway.** If the low-res buffer goes (§2.3), the
+dither pass it feeds is a candidate to go with it — and then "text through that filter
+comes out as chewed pixels" describes a filter that no longer exists. Phase 5 stops
+being a rewrite that overrides a considered decision and becomes one that clears out a
+justification which expired. That materially lowers its risk.
+
+**(c) The HUD's text gets bigger and chunkier, and some of it needs redesigning rather
+than porting.** Today's status line, name plates and chat are 12px system monospace at
+native device resolution. A 6×10 body glyph at UI scale 4 is 24×40 device pixels — call
+it two and a half times the height. The damage numbers are already the 5×7 pixel font
+(specs 065/096) and port straight across, but anything that is currently a sentence
+will hold roughly a third as many characters in the same space. That is a design job in
+Phase 5, not a mechanical one, and it is the part of the phase most likely to be
+underestimated.
+
+**(d) World-anchored elements need a different snapping rule from windows.** Health
+bars, cast bars, name plates and damage numbers are positioned by projecting a world
+point — `ScreenAnchor` is documented as "CSS pixels within the canvas box"
+(`scene.ts:298-302`). In the framework that projection lands in UI pixels instead, and
+*how* it is rounded matters:
+
+- Round to whole **UI** pixels and a health bar over a smoothly-moving unit steps in
+  jumps of `scale` device pixels while the body underneath it glides. At scale 4 over a
+  full-resolution world that is visible judder.
+- Do not round at all and the sprite blits to a fractional destination, so its own
+  pixels come out unevenly sized — the exact fault `view-frame.ts:83-101` exists to
+  prevent.
+- **Round to whole *device* pixels.** Every pixel of the sprite is then exactly `scale`
+  device pixels wide, uniform, while the position quantum is one device pixel rather
+  than `scale` of them. Chunky art, smooth motion.
+
+So: **panels and windows snap to the UI grid; world-anchored overlays snap to the
+device grid.** Two rules, because they are two jobs — a window is furniture and wants
+to sit on the grid, an overlay is pinned to something moving and wants to track it.
+Worth writing down now because it is invisible until it is wrong, and then it is
+"why does the health bar stutter".
+
+The same expiry applies to `world/icons.ts`: the weapon-switch and ability icons are
+inline SVG path strings stroked with `currentColor`, which is a fourth way of drawing a
+thing on screen. Phase 1's `Icon` widget replaces it with atlas sprites, and the paths
+become source data for the atlas bake rather than runtime markup.
 
 ### 2.5 Tap targets: the UI scale is what solves this, and the scale is a formula
 
@@ -260,9 +306,17 @@ The framework can be built for them. The *game state they display does not exist
   slots, each holding an item **id**. There is no bag, no container, no list.
 - **There are no item instances.** An item *is* its id — `data/items.ts:1-6` is
   explicit that a save holds `{ slot: itemId }` so that buffing a sword buffs every
-  sword in the world. Stack counts, stack splitting and multi-cell items all require
-  an instance concept (`{ defId, count, instanceId }`) that would change the store
-  shape, the protocol and the sim's validation.
+  sword in the world. Stack counts still need an instance concept
+  (`{ defId, count }`), which changes the store shape, the protocol and the sim's
+  validation.
+
+  **Multi-cell items are out of scope** — settled, and it takes real weight with it.
+  The grid becomes a flat array of uniform cells, so there is no placement or packing
+  algorithm, no rotation, no "does this shape fit here" test, and an item instance
+  needs no width or height. `ItemGrid` drops to roughly the simplest thing that could
+  work, and the server change shrinks to a list of `{ defId, count }` plus a capacity.
+  Should multi-cell ever arrive, it lands as a size on the definition and a packing
+  function beside the grid; nothing designed here forecloses it.
 - **There is no currency, no vendor, no trade, no buyback.** The client→server
   message set is `Hello, Input, Ping, Equip, Unequip, SpendSkillPoint, Chat,
   UseAbility, CancelCast, RequestChunk, WatchSpawners` (`net/messages.ts:149`).
@@ -657,28 +711,40 @@ before then.
 
 ---
 
-## 12. Decisions needed before Phase 1
+## 12. Decisions
 
-1. **§2.3 — the UI has an integer *scale*, not a fixed virtual canvas**, and therefore
-   never reads the world's resolution. This is correct whether or not the low-res
-   buffer is deprecated, so it needs confirming but does not block on that decision.
-   Confirm.
-2. **§2.1 — the atlas is baked at boot from committed text data**, not a PNG. Confirm.
-3. **§8 — ship Phase 1 on `canvas2d`**, with the WebGL backend built only if the budget
+### Settled
+
+- **§2.2 — fonts.** Two faces, one glyph format: the existing 5×7 for numerals, a new
+  6×10 for body text. ✅
+- **§2.7 — no multi-cell items.** The grid is uniform cells; packing, rotation and
+  per-item sizes are future work. ✅
+- **§2.3 — the UI has an integer *scale*, not a fixed virtual canvas**, and therefore
+  never reads the world's resolution. Correct whether or not the low-res buffer is
+  deprecated, which is why it was settled without waiting on that. ✅
+- **§2.4 — snapping.** Panels and windows snap to the UI grid; world-anchored overlays
+  snap to the *device* grid, so their art stays uniform while their motion stays
+  smooth. ✅
+
+### Still open
+
+1. **§2.1 — the atlas is baked at boot from committed text data**, not a PNG. Confirm.
+2. **§8 — ship Phase 1 on `canvas2d`**, with the WebGL backend built only if the budget
    is missed. This deviates from "one draw call per z-layer". Confirm, or require WebGL
-   from the start.
-4. **§2.7 — Phases 4 and 6 need server specs first** (item instances + container, then
-   currency/vendor/trade). Confirm the split, and confirm whether Phase 5's *stat*
-   allocation is dropped or waits on a respec spec.
-5. **§2.2 — a second 6×10 body face** alongside the existing 5×7 numerals. Confirm.
-6. **§4 — `src/ui/` as a top-level peer**, not `src/render/ui/`. Confirm.
-7. **§2.6 — remove the unused `pixi.js` dependency** in its own commit. Confirm.
-8. **§2.8 — Phase 3's scope is the Play tab**, leaving the editor and sandbox input
+   from the start. *The one I would most like a second opinion on.*
+3. **§2.7 — Phases 4 and 6 still need server specs first** — a container of
+   `{ defId, count }` plus a capacity, then currency/vendor/trade. Smaller than it was
+   now that multi-cell is out, but not nothing. Confirm the split, and confirm whether
+   Phase 5's *stat* allocation is dropped or waits on a respec spec.
+4. **§4 — `src/ui/` as a top-level peer**, not `src/render/ui/`. Confirm.
+5. **§2.6 — remove the unused `pixi.js` dependency** in its own commit. Confirm.
+6. **§2.8 — Phase 3's scope is the Play tab**, leaving the editor and sandbox input
    systems alone. Confirm.
-9. **§10 — the UI theme resolves its colours against the live `HIKE_PALETTES` entry**,
-   so the chrome recolours with the world when the palette setting changes. Confirm, or
-   pin one palette.
-10. **Spec convention.** `CLAUDE.md` requires a `specs/` entry committed *before* its
+7. **§10 — the UI theme resolves its colours against the live `HIKE_PALETTES` entry**,
+   so the chrome recolours with the world when the palette setting changes — unless the
+   dither pass goes with the low-res buffer, in which case the theme owns its own ≤16.
+   Confirm.
+8. **Spec convention.** `CLAUDE.md` requires a `specs/` entry committed *before* its
    implementation. This document is the architecture; it does not replace that. Phase 1
    should open with `specs/119-*.md` and each later phase with its own. Confirm that is
    what you want rather than treating `docs/ui/` as the spec home.
@@ -739,13 +805,18 @@ flags, all six containers, hit-testing and focus, the nine Phase-1 widgets, the
 `/dev/ui-gallery` scene, layout tests, replay tests, goldens in CI, and a measured
 frame-budget number.
 
-**Still missing / what I would change:** the ten items in §12 are open, and §2.3 has
-already been revised once — the first draft asked you to choose between locking the UI
-to 480×270 and letting it ride the world's setting, which was a false choice built on
-the assumption that the world's resolution was locked. It is not; `lowRes` is off by
-default. A UI with an integer scale and a variable viewport needs no answer to that
-question at all, which is the version now in §2.3.
+**Still missing / what I would change:** four of §12's items are settled and eight are
+open. §2.3 has already been revised once — the first draft asked you to choose between
+locking the UI to 480×270 and letting it ride the world's setting, which was a false
+choice built on the assumption that the world's resolution was locked. It is not;
+`lowRes` is off by default. A UI with an integer scale and a variable viewport needs no
+answer to that question at all, which is the version now in §2.3.
 
 The item I would most like a second opinion on is §8 — shipping Phase 1 on `canvas2d`
 rather than WebGL trades a stated constraint for a much shorter path to something on
 screen, and the frame-budget measurement that would justify it does not exist yet.
+
+The thing most likely to be underestimated is §2.4(c): replacing the DOM HUD makes its
+text about two and a half times taller, so the status line, name plates and chat get
+redesigned rather than ported. That is a Phase 5 design job hiding inside what reads
+like a migration.
