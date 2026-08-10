@@ -1,0 +1,537 @@
+# VFX and particles — plan
+
+Status: **Phase 0, awaiting review.** No engine code written yet.
+
+This is the living document for the VFX arc. It is updated as decisions land, and
+it is where the damage-type colour/shape language is written down so future
+effects stay coherent.
+
+A note on where this lives. `CLAUDE.md` requires a numbered `specs/` entry
+committed *before* its implementation. This file is the plan and the running
+record the brief asked for; the per-phase specs (`specs/118-…` onward) are the
+short, testable contracts that go in before each phase's code. They are not
+duplicates: this argues, those assert.
+
+---
+
+## 0. What the read turned up
+
+Findings that actually changed the design, with the file that says so.
+
+**The whole frame is already low-resolution, before any pass runs.**
+`WorldScene.resize` (`src/render/iso3d/world/scene.ts:1405`) sets the
+*renderer's backing store* to `internalRenderSize(...)` — height fixed at
+`RENDER_H = 300`, width capped at `MAX_RENDER_W = 760`
+(`src/render/iso3d/view-frame.ts:13`). With the `lowRes` switch on it is a fixed
+480×270 instead (`hike.ts:416`), and CSS blows the canvas up by a whole number of
+device pixels with `image-rendering: pixelated`. So the upscale is the *browser's*
+nearest-neighbour, not a blit shader we could accidentally bypass.
+
+**There is exactly one path from the scene graph to the screen.**
+`WorldScene.render` ends in `this.retro.render(this.renderer, this.scene, this.camera)`
+(`scene.ts:836`), and `RetroPass.render` draws `scene` into its own target then
+paints that target through the quantize/dither quad (`retro-pass.ts:423-426`).
+The only other thing that touches the default framebuffer is the outline pass
+(`drawEdges`, `scene.ts:840`), which draws no scene geometry at all.
+
+The consequence is the single most important fact in this plan: **a
+`THREE.Object3D` added to `WorldScene.scene` is in the low-res buffer by
+construction.** There is no compositing step to get wrong, and no VFX render pass
+to insert. The art-direction constraint is satisfied by *not building a separate
+pass*, which is the opposite of the usual answer.
+
+**Transparent geometry is already excluded from the outline buffers.**
+`HikeBuffers.capture` skips any material with `transparent === true` or
+`depthWrite === false` (`hike-buffers.ts:358`), which is documented as the rule
+that keeps ground decals from being outlined like surfaces. Particles and decals
+inherit that exclusion for free, and correctly: a spark is not a form that should
+be inked.
+
+**A VFX id channel already exists on the wire.** `EffectMessage` carries
+`effectId: string` (`src/server/net/messages.ts:425`), and the sim already emits
+`` `${ability.id}.impact` `` and `` `${ability.id}.self` ``
+(`src/server/sim/abilities.ts:697,724`, `sim/world.ts:608,632`). The renderer
+currently throws the id away and draws one hardcoded circle
+(`scene.addEffect`, `scene.ts:722`). Wiring the registry to that id needs no
+protocol change.
+
+**There is precedent for presentation-only data on a shared table.**
+`ProjectileLook` on `AbilityDefinition` (`src/server/data/abilities.ts:41`) is
+explicitly documented as a look that nothing under `src/server/sim/` reads and
+that rides no wire. Damage type and per-ability VFX ids follow that pattern
+exactly, so no new mechanism is needed.
+
+**Two existing effects are ad-hoc and should be absorbed.** `Poofs`
+(`rigs.ts:1608`) allocates a `Group` and three materials per footfall and disposes
+them on death; `scene.addEffect` allocates a `CircleGeometry` and a material per
+blast. Both are per-spawn garbage in a hot path. They become registry entries
+(`footstep_dust`, `blast_ring`) and the classes go away.
+
+### Friction to flag rather than work around
+
+1. **`Rng` cannot be used in the update loop.** `src/shared/prng.ts` is
+   deliberately immutable — every draw returns a *new* `Rng`
+   (`prng.ts:16-19`) — which is exactly right for the sim and fatal for a
+   zero-allocation particle loop. VFX needs a mutable, non-allocating generator.
+   Since VFX is presentation-only and lives outside the deterministic core, the
+   plan is a small mutable xorshift in `src/render/iso3d/vfx/rng.ts`, with a test
+   asserting seed-reproducibility. It is **not** a second sim PRNG and must never
+   be imported by anything the linter guards. Alternative considered and rejected:
+   pre-drawing a block of numbers from `Rng` at spawn time — it bounds the draws
+   per effect instance, which sub-emitters break.
+2. **`CombatResultMessage` has no damage type.** Fields are attacker, target,
+   damage, targetHealth, flags (killed/critical/blocked). Damage type is derived
+   client-side from the ability/item tables, the `ProjectileLook` way. This is
+   fine, and it is worth stating because "tint the impact by damage type" reads
+   like a protocol change and is not one.
+3. **The client never evicts map chunks.** `StreamedMap.add` inserts and nothing
+   removes (`src/server/client/streamed-map.ts`); there is no drop path in
+   `map-cache.ts` either. So "decals stream out with the chunk" has no eviction
+   event to hang off *today*. See decision (c).
+4. **No audio system is wired up.** `src/render/music.ts` is pure note data with
+   no player attached to the Play tab. The sound hook is a typed no-op sink, with
+   the interface written now so wiring one later is a single implementation.
+5. **The Studio preview shares a control-panel *type* with Play, not an
+   instance** — an existing, documented caveat (`studio/preview.ts` header). The
+   VFX tab inherits it: switches have to be thrown in both places.
+
+---
+
+## 1. Where VFX hooks into the pipeline
+
+### Render pass order (existing, with VFX marked)
+
+```
+WorldScene.render(view, frame)
+  1  resize()                       -> backing store = virtual res (<=760x300, or 480x270)
+  2  advanceWind(dt); observe(); syncBodies(); carryTorch()
+  3  syncTelegraphs(); ageEffects(); poofs.update(dt)
+ 3b  >>> vfx.update(frame.ticks)    <<< NEW - whole 60Hz steps, not dt
+ 3c  >>> vfx.sync(camera)           <<< NEW - billboard/sort/upload, once per frame
+  4  followSelf(); applyControls(); applyPlayerLights(); camera.lookAt()
+  5  syncHover()                    (unsnapped camera: a pick, not a picture)
+  6  applyPixelSnap(); collectAnchors()
+  7  HikeBuffers.capture()          VFX excluded automatically (transparent/no depthWrite)
+  8  RetroPass.render(scene, cam)   >>> VFX rendered HERE, inside the low-res target <<<
+  9  drawEdges()                    over the finished frame; draws no scene geometry
+ 10  unsnap()
+--- outside the scene ---
+ 11  DOM HUD overlay, positioned to the letterboxed canvas box
+```
+
+VFX enters at 3b/3c (update) and is *drawn* at 8 by virtue of being in the scene
+graph. Nothing is added to the pass chain.
+
+Two ordering details that matter:
+
+- **`vfx.sync` runs before the pixel snap (6), not after.** The snap nudges the
+  camera by up to half a virtual pixel and is undone at 10. Billboard basis
+  vectors want the unsnapped camera for the same reason `syncHover` does — a
+  basis derived from the snapped camera would wobble by the snap amount each
+  frame, which is the shimmer the snap exists to remove. Particle *positions* are
+  world-space and unaffected either way.
+- **Ground decals must not write depth**, both to avoid z-fighting with terrain
+  and to keep the `HikeBuffers` exclusion at `hike-buffers.ts:358` applying to
+  them. Depth offset comes from `polygonOffset` plus a small lift along the
+  terrain normal, the way the existing ground rings already sit.
+
+### Update tick
+
+`FrameInfo` already carries both `dt` (seconds, clamped to 0.05) and `ticks` (the
+whole 60Hz steps this frame drained) — `view.ts:878-885`. VFX advances on
+**`ticks`**, for the same reason `UnitMachine` does: an effect stepped by wall
+time is a different effect at 30fps and at 144fps, and "same seed reproduces the
+same effect exactly" stops being a statement anyone can test. A frame that drains
+zero ticks redraws the previous state.
+
+Cost: at 60Hz a particle's per-tick motion is at most a fraction of a virtual
+pixel at gameplay zoom, so there is no visible stepping to buy back with
+interpolation. If one ever shows on a very fast spark, the fix is a render-time
+position extrapolation in `sync`, which does not touch the simulated state.
+
+### Event sources
+
+| Source | Signal | Effects it drives |
+|---|---|---|
+| `client.onEffect` (`game-client.ts:788`) | `effectId`, x/y/z, radius, durationTicks | Ability impacts and self-casts. `effectId` **is** the registry key. |
+| `client.onCombatResult` (`view.ts:233`) | attacker, target, damage, flags | Impact flash, sparks, blood, crit, block. Damage type looked up from the ability table. |
+| `client.onCastStarted` / `onCastEnded` | entity, abilityId, phase, ticks | Channel auras, cast flashes, boss telegraphs. |
+| Replica diff (`replica.ts`) | health drop, entity removed, `activity` | Death effects, status auras, burning-unit attachment. |
+| Renderer-local | footfalls (`rigs.ts`), projectile spawn/despawn (`scene.syncBodies`), terrain material under a foot | Footstep dust, trails, muzzle flashes. No server event exists for these. |
+
+All server-fed translation lives in **one** pure module,
+`src/render/iso3d/world/vfx-wire.ts`: `(event, snapshot) -> PlayRequest[]`. It is
+handed plain data, never the `GameClient` — the same discipline `unit-driver.ts`
+already follows so that animation has nothing it *could* call. It is unit-tested
+in Node, and `presentation-only.test.ts` gets a sibling asserting that the same
+seed and inputs produce identical authoritative state with VFX driven and with
+VFX absent.
+
+---
+
+## 2. Data model
+
+An effect is data. Call sites only ever say:
+
+```ts
+vfx.play('hit_metal_spark', { position, rotation, attachTo, tint, scale, seed });
+```
+
+### Types
+
+```ts
+/** Piecewise-linear over normalized life. Sampled, never allocated. */
+export interface Curve {
+  readonly keys: readonly (readonly [t: number, value: number])[];
+}
+
+/**
+ * Colour over life. Stops name PALETTE entries rather than free hex, so an
+ * effect cannot introduce a colour the look does not have (see section 6).
+ */
+export interface Gradient {
+  readonly stops: readonly (readonly [t: number, color: PaletteKey])[];
+}
+
+export type EmitterShape =
+  | { readonly kind: 'point' }
+  | { readonly kind: 'sphere' | 'hemisphere'; readonly radius: number; readonly shell?: boolean }
+  | { readonly kind: 'cone'; readonly angle: number; readonly radius: number }
+  | { readonly kind: 'box'; readonly half: Vec3 }
+  | { readonly kind: 'circle'; readonly radius: number; readonly shell?: boolean }
+  | { readonly kind: 'mesh'; readonly source: 'attached' }        // surface of the attached unit
+  | { readonly kind: 'arc'; readonly radius: number; readonly sweep: number };  // slashes
+
+export type Emission =
+  | { readonly kind: 'burst'; readonly count: number; readonly delayTicks?: number }
+  | { readonly kind: 'rate'; readonly perSecond: number }
+  | { readonly kind: 'ramp'; readonly perSecond: Curve; readonly overTicks: number };
+
+export type RenderMode =
+  | 'billboard'            // camera-facing quad
+  | 'stretched'            // velocity-aligned, length scales with speed
+  | 'axis-billboard'       // Y-locked; the isometric default for uprights
+  | 'ground-quad'          // flat on the terrain, follows its normal
+  | 'ribbon'               // trail through recent positions
+  | 'mesh';                // instanced solid (debris chips)
+
+export type Blend = 'alpha' | 'additive' | 'dither-cutout';
+
+export interface Emitter {
+  readonly id: string;
+  readonly shape: EmitterShape;
+  readonly emission: Emission;
+  readonly lifetimeTicks: readonly [min: number, max: number];
+  readonly speed: readonly [min: number, max: number];
+  readonly spreadRadians: number;
+  readonly gravity: number;            // world units / s^2, negative is down
+  readonly drag: number;               // per second
+  readonly angularVelocity: readonly [min: number, max: number];
+  readonly turbulence?: { readonly amplitude: number; readonly frequency: number };
+  readonly size: Curve;
+  readonly alpha: Curve;
+  readonly color: Gradient;
+  readonly rotation?: Curve;
+  readonly velocityScale?: Curve;
+  readonly render: RenderMode;
+  readonly blend: Blend;
+  readonly sprite?: { readonly sheet: string; readonly frames: number; readonly fps: number; readonly randomStart: boolean };
+  readonly collision?: {
+    readonly restitution: number;
+    readonly friction: number;
+    readonly maxBounces: number;
+    readonly onCollide?: string;       // sub-effect id
+  };
+  readonly subEmitters?: {
+    readonly onSpawn?: string;
+    readonly onDeath?: string;
+  };
+  readonly light?: { readonly color: PaletteKey; readonly intensity: Curve; readonly radius: number };
+  readonly sound?: { readonly cue: string; readonly on: 'start' | 'burst' | 'collide' };
+}
+
+export interface EffectDefinition {
+  readonly id: string;
+  /** Dropped first when over budget. 0 = ambient, 3 = must never be culled. */
+  readonly priority: 0 | 1 | 2 | 3;
+  readonly emitters: readonly Emitter[];
+  /** Beyond this many world units from the camera the effect is not spawned. */
+  readonly cullDistance?: number;
+}
+```
+
+### Concrete example
+
+```ts
+export const HIT_METAL_SPARK: EffectDefinition = {
+  id: 'hit_metal_spark',
+  priority: 2,
+  cullDistance: 1400,
+  emitters: [
+    {
+      id: 'shower',
+      shape: { kind: 'cone', angle: 1.05, radius: 2 },
+      emission: { kind: 'burst', count: 14 },
+      lifetimeTicks: [8, 20],
+      speed: [220, 460],
+      spreadRadians: 1.05,
+      gravity: -900,
+      drag: 1.6,
+      angularVelocity: [0, 0],
+      size: { keys: [[0, 3.2], [0.25, 2.4], [1, 0.9]] },
+      alpha: { keys: [[0, 1], [0.7, 1], [1, 0]] },
+      // hot white -> orange -> ember, all palette entries (section 6)
+      color: { stops: [[0, 'sparkHot'], [0.35, 'sparkWarm'], [1, 'sparkEmber']] },
+      velocityScale: { keys: [[0, 1], [1, 0.55]] },
+      render: 'stretched',
+      blend: 'additive',
+      collision: { restitution: 0.35, friction: 0.4, maxBounces: 2 },
+      light: { color: 'sparkWarm', intensity: { keys: [[0, 1], [1, 0]] }, radius: 90 },
+      sound: { cue: 'impact_metal', on: 'burst' },
+    },
+    {
+      id: 'stragglers',
+      shape: { kind: 'cone', angle: 0.5, radius: 1 },
+      emission: { kind: 'burst', count: 3 },
+      lifetimeTicks: [34, 52],           // the few that outlive the shower
+      speed: [140, 260],
+      spreadRadians: 0.5,
+      gravity: -900,
+      drag: 1.1,
+      angularVelocity: [0, 0],
+      size: { keys: [[0, 2.4], [1, 0.8]] },
+      alpha: { keys: [[0, 1], [0.85, 0.9], [1, 0]] },
+      color: { stops: [[0, 'sparkWarm'], [1, 'sparkEmber']] },
+      render: 'stretched',
+      blend: 'additive',
+      collision: { restitution: 0.45, friction: 0.35, maxBounces: 2 },
+    },
+    {
+      id: 'flash',
+      shape: { kind: 'point' },
+      emission: { kind: 'burst', count: 1 },
+      lifetimeTicks: [3, 4],             // brief, oversized, reads at 300px tall
+      speed: [0, 0],
+      spreadRadians: 0,
+      gravity: 0,
+      drag: 0,
+      angularVelocity: [0, 0],
+      size: { keys: [[0, 16], [1, 22]] },
+      alpha: { keys: [[0, 0.95], [1, 0]] },
+      color: { stops: [[0, 'sparkHot'], [1, 'sparkWarm']] },
+      render: 'billboard',
+      blend: 'additive',
+    },
+  ],
+};
+```
+
+Runtime overrides (`tint`, `scale`, `seed`, `attachTo`) multiply into the
+definition; they never mutate it. The registry is frozen at module load.
+
+### Attachment
+
+`AttachSpec` is one of: `world` (default), `{ entityId }`, `{ entityId, socket }`
+(a bone name on a loaded `UnitRig`), or `{ entityId, socket, detach: 'onSpawn' }`
+— the sparks-fly-off-a-moving-unit case. Socket lookup goes through
+`UnitRig`, **not** through a name read out of a skeleton document: three.js
+sanitises `mixamorig:Hips` to `mixamorigHips`, a trap `unit-rig.ts` already
+documents and already solved with `findRootBone`. The VFX socket resolver reuses
+that same "find it in the loaded rig" rule.
+
+---
+
+## 3. The three open decisions
+
+### (a) CPU-simulated with instanced rendering — **recommended**
+
+| | CPU sim + instanced draw | GPU/shader sim |
+|---|---|---|
+| Particle ceiling | ~3k comfortably; ~10k before JS is the cost | 100k+ |
+| Cost at *our* counts | ~2k particles × ~40 flops × 60Hz ≈ 0.2–0.4 ms/frame | Similar, plus 2 FBO ping-pongs and state textures |
+| Headless testability | Full. Runs in Node, in vitest, with no GL. | None. Cannot assert a seeded result without a GL context. |
+| Collision, sub-emitters, decal spawn-on-impact | Straightforward — read terrain height, push an event | Needs readback or a parallel CPU shadow; spawn-on-collide is genuinely painful |
+| Fits the repo | Matches `lobe.ts`, `edges.ts`, `shading.ts`: the arithmetic is pure and tested in Node, three.js is the thin half | Fights it |
+
+The deciding number is the resolution. The buffer is at most 760×300 = 228,000
+pixels. A particle that is *readable* under nearest-neighbour quantization is
+roughly 3–12 virtual pixels across, so 2,000 live particles already covers a
+meaningful fraction of the screen and the look wants far fewer, larger, crisper
+ones than that. GPU simulation buys headroom above a ceiling we cannot approach
+without the screen turning to soup — and it costs the one property this repo is
+built around, which is that the interesting half runs and is asserted in Node.
+
+**Recommendation: CPU simulation over flat typed arrays (SoA), instanced
+rendering, batched by material + blend.** Revisit only if a real effect wants
+>5k particles, which none in the Phase 2 list does.
+
+Layout: one `Float32Array` per field (`x,y,z,vx,vy,vz,age,life,seed,size,rot,…`),
+a free-list of indices, and a swap-with-last removal. No per-particle objects
+exist at all, so there is nothing to allocate.
+
+### (b) Both, with one rule — **recommended**
+
+Explicit `vfx.play()` is the only API. The event bus is an *adapter on top of it*,
+not a second path.
+
+- Server events → `vfx-wire.ts` (pure, tested) → `vfx.play(...)`.
+- Renderer-local cues with no server event (footfalls, projectile trails, terrain
+  material under a foot) → `vfx.play(...)` directly from the scene.
+
+Why not bus-only: footsteps, trails and material-tinted dust have no server
+message and inventing one would put presentation on the wire, which spec 065 went
+out of its way to remove (`messages.ts:344` records exactly that removal).
+
+Why not calls-only: `effectId` already exists on `EffectMessage`, and the whole
+point of a registry is that a designer adds `frostbolt.impact` to the table and it
+plays with no renderer change. Throwing that away would mean editing a call site
+per ability.
+
+The rule that keeps it honest: **`vfx-wire.ts` may read game state and may not
+change it.** No `if` in it affects a game outcome — the standing rule for
+`src/render/`, and here it is the entire contract.
+
+### (c) Blood decals across chunk streaming — **own the lifetime, hook the eviction that does not exist yet**
+
+The honest finding first: **the client never drops a chunk.** `StreamedMap` only
+inserts. So a design that relies on "the decal dies when its chunk streams out"
+would be relying on an event that is never fired, and would look correct in
+review and leak forever in play.
+
+Recommended:
+
+1. **Key decals by chunk coordinate** (`cx,cz` from the impact point), stored in a
+   `Map<chunkKey, DecalBucket>`. A chunk is 28 cells × 22 units = **616 world
+   units** square; the player is ~56 units tall, so a chunk is roughly eleven
+   player-heights across.
+2. **Cap per bucket at 64, oldest fades first** — a ring buffer, so a fight in one
+   spot bounds its own cost and the eviction is a fade rather than a pop.
+3. **Cap globally at 512** across all buckets, evicting whole buckets by distance
+   from the camera when over.
+4. **Expose `vfx.dropChunk(cx, cz)`** and call it from wherever chunk eviction
+   eventually lands. Today nothing calls it; that is written down here rather than
+   left as a surprise.
+5. **One merged geometry per bucket**, rebuilt only when that bucket changes —
+   the same region-invalidation pattern `props.ts` uses for the prop field
+   (spec 086). A decal is a handful of triangles; rebuilding one 616-unit bucket
+   is cheap and a global rebuild is not.
+
+Terrain-fitted rather than projected: the terrain height sampler is already on
+hand (`WorldScene.ground(x, y)`), so a ground decal is a small grid of quads
+sampling the heightfield with a lift along the normal, `depthWrite: false`,
+`polygonOffset` on. That handles hills without a projector pass, and keeps decals
+inside the `hike-buffers.ts:358` exclusion.
+
+Static props (Phase 2 item 2) use a real box projector with normal-angle
+rejection; units (item 3) get their own recommendation, deferred to the Phase 2
+review gate where the contact sheet is due — the current lean is the **hybrid**
+(UV-space mask texture for persistent staining, bone-parented quads for the
+moment-of-impact splat), but that is a call to make with pictures in hand, not
+here.
+
+---
+
+## 4. Budget
+
+Measured against the default path: virtual buffer ≤ 760×300, orthographic
+isometric camera, 60Hz sim tick.
+
+| Resource | Soft cap | Hard cap | What happens at the cap |
+|---|---|---|---|
+| Live particles | 2,000 | 3,000 | New spawns refused for priority 0, then 1 |
+| Live decals | 512 total, 64/chunk | 640 | Oldest in bucket fades early; whole far buckets evicted |
+| Concurrent effect instances | 96 | 128 | Lowest priority, then furthest, stopped (emitters off, live particles finish) |
+| Draw calls for the whole VFX pass | 6 | 10 | One per (material, blend) batch; over this is a bug, not a budget |
+| Sub-emitter depth | 2 | 2 | Third-level spawns are dropped silently |
+| Per-frame allocations in update | 0 | 0 | Asserted by test, not by hope |
+
+**Degradation order under pressure** — first to go, last to go:
+
+1. Ambient/looping priority 0 (torch flicker, vents, distant fire embers)
+2. Priority 1 cosmetics (footstep dust, minor debris)
+3. Distance: any effect beyond its `cullDistance`, furthest first
+4. Emission rate scaling on priority 2 (continuous emitters throttle before they stop)
+5. Priority 2 one-shots (impacts, sparks) — *never* dropped for the local player's
+   own blows while any budget remains
+6. Priority 3 never drops (boss telegraphs, channel auras — these are readable
+   information, not decoration)
+
+The global **VFX intensity** setting (0 / low / medium / full) scales the soft
+caps and emission counts, and `0` skips the update and sync entirely rather than
+simulating into a void. **Gore intensity** is separate and its off switch skips
+the blood decal work altogether, as required.
+
+---
+
+## 5. Build order
+
+Each phase lands its `specs/` entry first, then its implementation, in separate
+commits, per `CLAUDE.md`.
+
+| # | Phase | Gate |
+|---|---|---|
+| 0 | This document | **Review — stop here** |
+| 1a | `specs/118`: core system contract | — |
+| 1b | RNG, curves, gradients, palette helper — all pure, tested in Node | `npm test` |
+| 1c | Particle pool (SoA), emitters, shapes, over-life curves, collision, sub-emitters — pure | `npm test` + zero-alloc test |
+| 1d | three.js half: instanced batches, blend modes, billboard bases, attachment | typecheck/lint |
+| 1e | `vfx-wire.ts` + registry, replacing `Poofs` and `scene.addEffect` | `presentation-only.test.ts` sibling |
+| 2a | **Sparks**, plus the low-res-buffer verification probe and the **glow approach comparison** | **Review — stop here** |
+| 2b | Blood: procedural splat generator + **~30-splat contact sheet** | **Review** (contact sheet before wiring) |
+| 2c | Ground decals, then prop decals, then the unit-staining recommendation | Review of (3)(a) vs (b) vs hybrid |
+| 2d | Fire, smoke/clouds, auras, remaining hit effects | — |
+| 3 | Studio VFX tab: browser, live editing, curve/gradient editors, preview scene, JSON export, debug HUD | Stress test numbers reported |
+
+**Deliverables owed at the Phase 2a gate**, per the brief:
+
+- How the low-res-buffer claim was *verified*, not asserted. Plan:
+  `scripts/probe-vfx.ts`, modelled on `scripts/probe-shading.ts`, reads pixels out
+  of the drawing buffer and asserts (i) every VFX colour present in the frame is a
+  member of the active palette, and (ii) colour runs along a scanline through a
+  particle are exact multiples of the upscale factor — i.e. the particle's edge
+  lands on a virtual-pixel boundary. A natively-rendered sprite fails both.
+- Two glow approaches rendered side by side: **additive sprite halo with an
+  ordered-dither radial falloff** (reusing the Bayer matrix from `retro.ts` so the
+  weave matches the frame's) versus **a low-res bloom applied inside the pixel
+  buffer** (threshold + small blur at virtual resolution, before the quantize).
+  Pictures, then a decision. No full-resolution bloom is on the table.
+
+---
+
+## 6. Damage-type colour and shape language
+
+Written here so future effects stay coherent. Colours become named `PALETTE`
+entries in a shared `vfx/palette.ts`; nothing in an effect definition names a raw
+hex.
+
+| Type | Colour ramp | Shape language | Motion |
+|---|---|---|---|
+| Physical | bone white → warm grey → dust | Chips, wedges, a short directional shockwave ring | Fast out, gravity-bound, settles |
+| Fire | hot white → orange → ember red → dark smoke | Round lobed puffs, upward tongues | Rises, turbulent, drags upward |
+| Poison | pale sickly green → deep green → murky | Low flat blobs, ground-hugging area | Slow churn, sinks and spreads |
+| Ice | near-white → pale cyan → deep blue | Hard-edged shards, straight lines, radial cracks | Sharp burst then near-freeze |
+| Lightning | white → pale yellow → violet | Thin jagged polylines, tight bright core | Instant, no gravity, flickers |
+| Arcane | pale lilac → magenta → deep violet | Rings, orbiting motes, geometric arcs | Orbital, floats, resists gravity |
+
+Cross-cutting rules:
+
+- **Hot core, cool edge.** Every burst has a near-white centre for one to three
+  ticks. At 300 pixels tall that flash is what reads, not the colour ramp behind it.
+- **Silhouette over detail.** Few large crisp particles. A particle below ~2
+  virtual pixels is invisible after quantization and is pure cost.
+- **Direction is information.** Spatter, sparks and shockwaves follow the hit
+  vector. A blow from the left throws to the right, always.
+- **Critical is louder in the same language**, never a new one: same ramp, larger
+  flash, more stragglers, one extra ring. A player should read "that was big"
+  without reading a number.
+- **Status auras are ground-projected rings**, so two statuses stack as
+  concentric rings rather than as overlapping soup. Colour comes from this table.
+
+---
+
+## 7. Non-goals, restated
+
+No changes to gameplay simulation, networking, or combat resolution. No
+third-party particle library (none is proposed; if one becomes worth it, it comes
+back here with a size and integration cost, and waits). No full-resolution
+post-processing stack.
