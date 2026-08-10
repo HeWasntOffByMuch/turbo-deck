@@ -89,15 +89,29 @@ import { PlayerLighting } from '../player-lighting.js';
 import { appearanceOf, PLAYER_CRITTER, PLAYER_FIGURE, type Appearance } from './appearance.js';
 import { UnitRig } from '../unit-rig.js';
 import { UnitMachine } from '../../../units/machine.js';
+import type { UnitDef } from '../../../units/types.js';
 import { authoredUnitFor } from './unit-catalog.js';
 import { authoredUnitAssets } from './unit-assets.js';
-import { driveUnit, speedBetween, type UnitFacts } from './unit-driver.js';
-import { mixerCadence, shouldApply } from './unit-lod.js';
+import {
+  advanceSpeed,
+  driveUnit,
+  hasDeathAnimation,
+  slewSpeed,
+  STOPPED,
+  type SpeedClock,
+  type UnitFacts,
+} from './unit-driver.js';
+import { SERVER_TICK_RATE } from '../../../server/config.js';
+import { drawnPixels, mixerCadence, shouldApply } from './unit-lod.js';
+import { DEFAULT_CANONICAL_HEIGHT } from '../../../units/canonical-height.js';
 import { ShotRig } from './shot.js';
 import type { AimShape } from './aim.js';
 import { castBar } from './cast.js';
 import { EntityMotion } from './interpolate.js';
 import type { WorldAnchor } from './damage-popup.js';
+
+/** One sim tick, in seconds -- the clock an authored unit's speed is on. */
+const TICK_SECONDS = 1 / SERVER_TICK_RATE;
 
 /** Fraction of the gap to the target framing closed each frame (spec 034). */
 const CAMERA_SMOOTH = 0.15;
@@ -196,10 +210,23 @@ export interface AimIndicator {
 interface DrivenUnit {
   readonly rig: UnitRig;
   readonly machine: UnitMachine;
+  /** The document behind the machine, for questions about what it authored. */
+  readonly def: UnitDef;
   /** Last tick's facts, so a cast's first tick can be told from its fifth. */
   previous: UnitFacts | null;
   /** Last drawn position, for the speed the blend tree reads. */
   previousPosition: { x: number; y: number } | null;
+  /** That speed, kept on the sim's clock rather than the browser's (spec 118). */
+  speed: SpeedClock;
+  /**
+   * The same speed, slewed, which is what the blend tree is actually handed
+   * (spec 119).
+   *
+   * The measured one steps -- the sim has no acceleration -- and a blend tree
+   * is a pure function of its parameter, so a step in it is a cut no transition
+   * duration can soften.
+   */
+  blendSpeed: number;
   /**
    * Bone count, read once when the mesh lands.
    *
@@ -1010,14 +1037,19 @@ export class WorldScene {
       // neither needs the scene to remember where it drew them last frame.
       body.player?.update(dt, { x, y }, -facing);
       body.mech?.update(dt, { x, y }, -facing);
-      if (body.unit) this.driveAuthoredUnit(body.unit, entity, { x, y }, frame, dt);
+      if (body.unit) this.driveAuthoredUnit(body.unit, entity, { x, y }, frame);
       // Fed the *drawn* pose, so an arrow's nose follows the curve the eye is
       // following rather than the one the deltas describe (spec 087).
       body.shot?.update(dt, x, y, ground);
 
-      // A corpse lies where it fell and stops animating, so a kill reads.
+      // A corpse lies where it fell and stops animating, so a kill reads. The
+      // squash is how that reads for the procedural rigs, which have no death
+      // clip -- a body with an authored `terminal` state is already lying down
+      // by its own animation, and squashing that as well drew the pig at half
+      // size for the whole of its collapse.
       const dead = entity.maxHealth > 0 && entity.health <= 0;
-      body.group.scale.setScalar(dead ? 0.6 : 1);
+      const fallen = body.unit !== undefined && hasDeathAnimation(body.unit.def);
+      body.group.scale.setScalar(dead && !fallen ? 0.6 : 1);
       // Cleared here and turned back on by `syncHover`, so exactly one body is
       // ever lit however many frames ago the cursor last moved.
       body.highlight?.setHighlighted(false);
@@ -1071,11 +1103,25 @@ export class WorldScene {
     entity: ClientView['entities'][number],
     at: { readonly x: number; readonly y: number },
     frame: FrameInfo,
-    dt: number,
   ): void {
     const dead = entity.maxHealth > 0 && entity.health <= 0;
+    // Distance on the frame clock, the quotient on the tick clock (spec 118).
+    // A drawn position only moves when a tick drained, so dividing by the frame
+    // delta reported a standing body on every frame that drained none -- which
+    // above 60fps is most of them, and which the blend tree reads on all of them.
+    unit.speed = advanceSpeed(
+      unit.speed,
+      unit.previousPosition === null ? 0 : Math.hypot(at.x - unit.previousPosition.x, at.y - unit.previousPosition.y),
+      frame.ticks,
+      TICK_SECONDS,
+    );
+    // Slewed, not assigned: a blend tree reads its parameter live, so a step in
+    // it swaps the pose in one tick under a cross-fade that never sees it (spec
+    // 119). This is the only input to the machine allowed to jump, so it is the
+    // one that is bounded.
+    unit.blendSpeed = slewSpeed(unit.blendSpeed, unit.speed.speed, frame.ticks, TICK_SECONDS);
     const facts: UnitFacts = {
-      speed: unit.previousPosition === null ? 0 : speedBetween(unit.previousPosition, at, dt),
+      speed: unit.blendSpeed,
       activity: entity.activity,
       castPhase: this.castPhases.get(entity.id) ?? null,
       dead,
@@ -1084,7 +1130,14 @@ export class WorldScene {
     unit.previous = facts;
     unit.previousPosition = { x: at.x, y: at.y };
 
-    const cadence = mixerCadence(this.camera.position.distanceTo(unit.rig.object.getWorldPosition(SCRATCH_WORLD)), this.inFrustum(unit.rig.object));
+    // How big the body is *drawn*, never how far the camera is from it (spec
+    // 118). This camera is orthographic and parks 6000 units back for near/far
+    // clearance, so every unit in the game read as maximally distant and posed
+    // at 15Hz -- the player in the centre of the screen included.
+    const cadence = mixerCadence(
+      drawnPixels(DEFAULT_CANONICAL_HEIGHT, this.camera.right - this.camera.left, this.renderW),
+      this.inFrustum(unit.rig.object),
+    );
     if (shouldApply(cadence, unit.machine.tick, entity.id)) unit.rig.applyPoses(unit.machine.poses());
   }
 
@@ -1274,8 +1327,11 @@ export class WorldScene {
       const driven: DrivenUnit = {
         rig: unitRig,
         machine: new UnitMachine({ unit: authoredUnit.unit, clipLib: authoredUnit.clipLib }),
+        def: authoredUnit.unit,
         previous: null,
         previousPosition: null,
+        speed: STOPPED,
+        blendSpeed: 0,
         bones: 0,
       };
       // Fire and forget: the group is in the scene from this frame and the mesh

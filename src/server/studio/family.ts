@@ -58,15 +58,16 @@ export interface FamilyResult {
    * A provisional family keeps everything already decided -- including sockets,
    * which is right when the measured rig speaks the same bone vocabulary the
    * sockets were written in. It stopped being right the moment the rigs came
-   * back on Tripo's own naming: the derived bone list is `tripo::*` and every
-   * inherited socket hangs off a `mixamorig:` bone that is not in it, so the
-   * document fails its own validator and the export refuses with five errors
-   * nobody can act on.
+   * back on Tripo's naming: every inherited socket hung off a `mixamorig:` bone
+   * that is not in the derived list, so the document failed its own validator
+   * and the export refused with five errors nobody could act on.
    *
-   * Dropped rather than fatal, and *named* rather than dropped quietly. A unit
-   * with no weapon socket is a unit that cannot hold a weapon, which is a real
-   * loss and has to be visible -- see `specs/117`, which is where sockets stop
-   * being bone names and become roles resolved against the rig.
+   * Since spec 120 sockets are derived by *role*, so a fresh family on either
+   * vocabulary gets its own spelling and nothing is dropped. This stays for the
+   * case that remains: a family established under one contract whose next rig
+   * comes back on another. Dropped rather than fatal, and *named* rather than
+   * dropped quietly -- a unit with no weapon socket is a unit that cannot hold a
+   * weapon, which is a real loss and has to be visible.
    */
   readonly droppedSockets: readonly string[];
   /**
@@ -137,6 +138,11 @@ export function resolveFamilySkeleton(request: FamilyRequest): FamilyResult {
     canonicalHeight: established?.canonicalHeight ?? canonicalHeight,
     ...(established?.boneBudget === undefined ? {} : { boneBudget: established.boneBudget }),
     ...(established?.sockets === undefined ? {} : { sockets: established.sockets }),
+    // Only consulted when the rig answers to neither vocabulary; the bones win
+    // whenever they say anything (spec 120). An established family's own record
+    // is what a fill-in should keep, and the deriver's own default -- the spec
+    // every rig is asked for -- covers a family being established here.
+    ...(established?.naming === undefined ? {} : { naming: established.naming }),
     comment:
       established?.$comment ??
       `The ${job.skeletonId} rig family, measured from job ${job.id}'s rig. Written by the Studio export ` +
@@ -153,15 +159,16 @@ export function resolveFamilySkeleton(request: FamilyRequest): FamilyResult {
   }
 
   // An inherited socket names a bone in the vocabulary it was *written* in, and
-  // a measured rig may not speak it -- which is not hypothetical any more, it is
-  // every rig the pipeline now produces. Carried through unchecked, the document
+  // a measured rig may not speak it. Carried through unchecked, the document
   // fails its own validator and export refuses with a list of socket errors and
   // no way forward, since the only fix would be hand-editing the family file.
   //
-  // So the ones this rig cannot satisfy come out, and are named. Deliberately
-  // not remapped: guessing which numbered limb is the right hand is the job
-  // `specs/117` exists to do properly, and a socket silently pointing at the
-  // wrong bone is worse than one that is absent.
+  // Since spec 120 a socket derived *fresh* is resolved by role, so a rig on
+  // either vocabulary gets its own spelling and this drops nothing. What still
+  // reaches here is an inherited set: a family established under one contract
+  // whose next rig came back on another. Those are deliberately not remapped --
+  // a family whose rigs changed vocabulary is a fact somebody should see, and a
+  // socket silently pointing at the wrong bone is worse than one that is absent.
   const boneNames = new Set(derived.skeleton.bones.map((bone) => bone.name));
   const declared = derived.skeleton.sockets ?? [];
   const kept = declared.filter((socket) => boneNames.has(socket.bone));

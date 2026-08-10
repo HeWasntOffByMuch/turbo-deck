@@ -45,6 +45,67 @@ describe('validateSkeleton', () => {
     expect(result.value).not.toBeNull();
   });
 
+  describe('the naming field against the bones (spec 120)', () => {
+    /** A tripo-named biped: `Hip` not `Hips`, `L_Hand` not `LeftHand`. */
+    const tripoBones = [
+      { name: 'Root', parent: null },
+      { name: 'Hip', parent: 'Root' },
+      { name: 'Spine01', parent: 'Hip' },
+      { name: 'Spine02', parent: 'Spine01' },
+      { name: 'Neck', parent: 'Spine02' },
+      { name: 'Head', parent: 'Neck' },
+      { name: 'L_Upperarm', parent: 'Spine02' },
+      { name: 'L_Forearm', parent: 'L_Upperarm' },
+      { name: 'L_Hand', parent: 'L_Forearm' },
+      { name: 'R_Upperarm', parent: 'Spine02' },
+      { name: 'R_Forearm', parent: 'R_Upperarm' },
+      { name: 'R_Hand', parent: 'R_Forearm' },
+      { name: 'L_Thigh', parent: 'Hip' },
+      { name: 'L_Calf', parent: 'L_Thigh' },
+      { name: 'L_Foot', parent: 'L_Calf' },
+      { name: 'R_Thigh', parent: 'Hip' },
+      { name: 'R_Calf', parent: 'R_Thigh' },
+      { name: 'R_Foot', parent: 'R_Calf' },
+    ];
+
+    it('refuses a document that claims a contract its bones do not follow', () => {
+      // The exact shape `pig.skeleton.json` shipped in: tripo bones under a
+      // mixamo claim. It validated clean, and every lookup that trusted the
+      // field then found nothing -- sockets, facing, bind pose -- each failing
+      // silently and separately.
+      const result = validateSkeleton(skeletonFixture({ naming: 'mixamo', bones: tripoBones, bindPose: null }));
+      expect(codes(result.issues)).toContain('skeleton.naming.mismatch');
+      expect(result.value).toBeNull();
+    });
+
+    it('accepts the same bones once the document says what they are', () => {
+      const result = validateSkeleton(skeletonFixture({ naming: 'tripo', bones: tripoBones, bindPose: null }));
+      expect(codes(result.issues)).not.toContain('skeleton.naming.mismatch');
+    });
+
+    it('leaves a rig on neither contract alone, whichever it claims', () => {
+      // Undetectable is not a disagreement. A rig off both vocabularies still
+      // has to record the spec it was built for, and the warning for that is
+      // raised where the document is written, not here.
+      const odd = [
+        { name: 'joint0', parent: null },
+        { name: 'joint1', parent: 'joint0' },
+        ...Array.from({ length: 14 }, (_, i) => ({ name: `joint${i + 2}`, parent: 'joint1' })),
+      ];
+      const result = validateSkeleton(skeletonFixture({ naming: 'mixamo', bones: odd, bindPose: null }));
+      expect(codes(result.issues)).not.toContain('skeleton.naming.mismatch');
+    });
+
+    it('reads L_/R_ as a sided pair, so symmetry is checked on a tripo rig too', () => {
+      // The same class of silence: `mirrorName` only knew Left/Right, so on a
+      // generated rig it returned null for every bone and the symmetry rule
+      // passed by never running.
+      const lopsided = tripoBones.filter((bone) => bone.name !== 'R_Hand');
+      const result = validateSkeleton(skeletonFixture({ naming: 'tripo', bones: lopsided, bindPose: null }));
+      expect(codes(result.issues)).toContain('skeleton.symmetry');
+    });
+  });
+
   it('requires exactly one root', () => {
     const none = skeletonFixture({
       bones: skeletonFixture().bones.map((bone, i) => (i === 0 ? { ...bone, parent: 'mixamorig:Head' } : bone)),

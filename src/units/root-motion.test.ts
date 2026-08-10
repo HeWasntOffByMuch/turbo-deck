@@ -1,9 +1,15 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   rootMotionChannels,
   rootMotionMessage,
   rootMotionTrackNames,
+  trackTravel,
+  travelChannels,
+  travelMessage,
   withoutRootMotion,
+  withoutTravel,
 } from './root-motion.js';
 
 function gltf(channels: readonly { node: number; path: string }[], animationName = 'walk'): unknown {
@@ -168,5 +174,124 @@ describe('withoutRootMotion', () => {
     const { json, removed } = withoutRootMotion(original, ['NoSuchBone']);
     expect(removed).toEqual([]);
     expect(json).toBe(original);
+  });
+});
+
+describe('trackTravel', () => {
+  it('is zero for a track that returns to its first key', () => {
+    // A cycle ends where it began, whatever it does in between. This is the
+    // idle: 0.163 of sway and not one unit of travel.
+    const bob = [0, 1, 0, 0, 1.2, 0, 0, 0.8, 0, 0, 1, 0];
+    expect(trackTravel(bob).distance).toBe(0);
+    expect(trackTravel(bob).axis).toEqual([0, 0, 0]);
+  });
+
+  it('is the first-to-last distance when it does not', () => {
+    const stride = [0, 0, 0, 1, 0, 0, 2, 0, 0, 3, 0, 0];
+    expect(trackTravel(stride)).toEqual({ distance: 3, axis: [1, 0, 0] });
+  });
+
+  it('is zero for a track with nothing to compare', () => {
+    expect(trackTravel([]).distance).toBe(0);
+    expect(trackTravel([1, 2, 3]).distance).toBe(0);
+  });
+});
+
+describe('withoutTravel', () => {
+  /** A stride along -y with a bob on z and a constant offset on x. */
+  function walking(keys: number): number[] {
+    const values: number[] = [];
+    for (let key = 0; key < keys; key += 1) {
+      const u = key / (keys - 1);
+      values.push(0.5, -2 * u, 1 + 0.1 * Math.sin(u * Math.PI * 2));
+    }
+    return values;
+  }
+
+  it('leaves a track with no travel byte for byte alone', () => {
+    const bob = [0, 1, 0, 0, 1.2, 0, 0, 0.8, 0, 0, 1, 0];
+    expect(withoutTravel(bob, [0, 0, 0])).toEqual(bob);
+  });
+
+  it('closes the loop: the last key lands back on the first', () => {
+    const corrected = withoutTravel(walking(9), [0, 0, 0]);
+    const last = corrected.length - 3;
+    for (let axis = 0; axis < 3; axis += 1) {
+      expect(corrected[last + axis]).toBeCloseTo(corrected[axis] ?? 0, 10);
+    }
+  });
+
+  it('keeps what is perpendicular to the travel, key for key', () => {
+    // The whole reason this is not a `delete the track`. What runs across the
+    // stride is the bob, the sway and the crouch a run holds its hips in.
+    const before = walking(9);
+    const after = withoutTravel(before, [0, 0, 0]);
+    for (let key = 0; key * 3 < before.length; key += 1) {
+      expect(after[key * 3 + 0]).toBeCloseTo(before[key * 3 + 0] ?? 0, 10);
+      expect(after[key * 3 + 2]).toBeCloseTo(before[key * 3 + 2] ?? 0, 10);
+    }
+  });
+
+  it('puts the along-axis mean at the bone rest value', () => {
+    // Without this the run's hips sit half a stride ahead of the idle's, and
+    // the body jumps the moment a blend crosses between them.
+    const corrected = withoutTravel(walking(9), [0, -0.25, 0]);
+    let total = 0;
+    for (let key = 0; key * 3 < corrected.length; key += 1) total += corrected[key * 3 + 1] ?? 0;
+    expect(total / (corrected.length / 3)).toBeCloseTo(-0.25, 10);
+  });
+
+  it('spreads the ramp by time when the keys are not evenly spaced', () => {
+    const values = [0, 0, 0, 0, 1, 0, 0, 4, 0];
+    const times = [0, 0.25, 1];
+    const corrected = withoutTravel(values, [0, 0, 0], times);
+    // Each key loses its own share: 0, a quarter of 4, and all of it.
+    expect(corrected[1]).toBeCloseTo(corrected[7] ?? 0, 10);
+    expect((corrected[4] ?? 0) - (corrected[1] ?? 0)).toBeCloseTo(0, 10);
+  });
+
+  it('is idempotent', () => {
+    // A clip that has already been corrected has no travel left to find, so a
+    // second pass must be a no-op rather than another shift.
+    const once = withoutTravel(walking(9), [0, 0, 0]);
+    expect(withoutTravel(once, [0, 0, 0])).toEqual(once);
+  });
+});
+
+describe('travelMessage', () => {
+  it('names the clip, the bone and how far it went', () => {
+    const message = travelMessage('pig.core', 'run', 'Hip', 2.86018);
+    expect(message).toContain('pig.core/run');
+    expect(message).toContain('"Hip"');
+    expect(message).toContain('2.860');
+  });
+});
+
+describe('travelChannels, over the committed pig clips (spec 118)', () => {
+  const clips = join('assets', 'units', 'pig_a_pose_full', 'clips');
+  /** A tenth of the rig's reach. The pig's skeleton spans about one unit. */
+  const MINIMUM = 0.1;
+
+  function travelling(clip: string): readonly { node: string; distance: number }[] {
+    const found = travelChannels(new Uint8Array(readFileSync(join(clips, `${clip}.glb`))), MINIMUM);
+    return found.map((channel) => ({ node: channel.node, distance: channel.distance }));
+  }
+
+  it('finds the stride the root-bone rule cannot see', () => {
+    // The bug, as data. `Root` carries no translation channel at all, so the
+    // rule that looks at the root passed every one of these clips while the
+    // body slid 160 world units forward per cycle.
+    expect(travelling('run')).toHaveLength(1);
+    expect(travelling('run')[0]?.node).toBe('Hip');
+    expect(travelling('run')[0]?.distance).toBeCloseTo(2.86, 2);
+    expect(travelling('walk')[0]).toMatchObject({ node: 'Hip' });
+  });
+
+  it('leaves the clips that stay put alone', () => {
+    // Both have translation on the same bone. The idle sways 0.163 and comes
+    // back; the hurt drifts 0.017, which is what a retarget leaves behind.
+    expect(travelling('idle')).toEqual([]);
+    expect(travelling('hurt')).toEqual([]);
+    expect(travelling('defeat_02')).toEqual([]);
   });
 });

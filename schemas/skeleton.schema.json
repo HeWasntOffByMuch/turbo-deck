@@ -29,9 +29,9 @@
     },
     "id": { "$ref": "#/definitions/identifier" },
     "naming": {
-      "description": "The bone naming spec this family follows. A field rather than an assumption, so a non-biped family is a new file and not a new format.",
+      "description": "The bone vocabulary this family's rigs are named in. A field rather than an assumption, so a non-biped family is a new file and not a new format. 'tripo' is what the auto-rig returns and what every generated unit is on; 'mixamo' is the authored reference mannequin. The two are mutually exclusive at the rig call, because a mixamo-spec rig is refused by the retarget. Validated against the family's own bones, so a document cannot claim one and carry the other.",
       "type": "string",
-      "enum": ["mixamo"]
+      "enum": ["mixamo", "tripo"]
     },
     "upAxis": { "$ref": "#/definitions/axis" },
     "forwardAxis": { "$ref": "#/definitions/axis" },

@@ -22,22 +22,57 @@
  * question with a right answer and no need of a GPU to ask it.
  */
 
-/** Distances in world units. A player is ~16 units across, so these are bodies. */
+/**
+ * How big a body is *drawn*, in raster pixels, not how far away it is.
+ *
+ * This started out as a distance in world units and could not work (spec 118).
+ * The Play camera is orthographic and sits at a fixed 6000-unit standoff --
+ * set for near/far-plane clearance, which is all a standoff can be set for
+ * under a projection where it cannot affect framing. Every unit in the game was
+ * therefore more than four times past a 1400-unit "far" threshold, the player
+ * in the middle of the screen included, and every one of them animated at 15Hz
+ * under a body whose position was interpolated every frame.
+ *
+ * Under an orthographic projection every on-screen body is drawn at the same
+ * scale wherever it stands, so eye distance is not a weak signal here -- it is
+ * not a signal. Apparent size is decided by the zoom, so that is what is
+ * measured, and it is measured in the unit the saving is actually about: how
+ * many pixels of screen this body is worth.
+ */
 export interface LodThresholds {
-  /** Under this, every tick. */
-  readonly near: number;
-  /** Under this, every second tick. Beyond, every fourth. */
-  readonly far: number;
+  /** At or above this drawn height in pixels, every tick. */
+  readonly full: number;
+  /** At or above this, every second tick. Below it, every fourth. */
+  readonly reduced: number;
 }
 
 /**
- * Defaults, in the same world units the arena is measured in.
+ * Defaults, in pixels of the virtual raster the game actually draws into.
  *
- * `near` is roughly the width of what the isometric camera has in frame at the
- * default zoom, so anything a player is actually looking at animates at full
- * rate. `far` is past where a body is a handful of pixels.
+ * Set from the configurations that exist rather than from round numbers. The
+ * retro filter's smallest virtual size is 320x180 and the widest zoom is a
+ * 2800-unit span, so a 55.65-unit body runs from about 6px (smallest raster,
+ * fully zoomed out) to 111px (retro off on a 1280px canvas, default zoom). At
+ * the default zoom it is 28px on the smallest raster and 42px on the default
+ * one -- both of which are the character somebody is playing, so `full` sits
+ * below them. `reduced` sits above the fully-zoomed-out end, which is the case
+ * the LOD was built for and the only one where a quarter-rate pose is honestly
+ * invisible.
  */
-export const DEFAULT_LOD: LodThresholds = { near: 600, far: 1400 };
+export const DEFAULT_LOD: LodThresholds = { full: 24, reduced: 10 };
+
+/**
+ * A body's drawn height in pixels, from the view span and the raster width.
+ *
+ * The same quantity `worldPerPixel` gives the pixel-snap, asked the other way
+ * round. Inlined rather than imported so this module stays free of anything
+ * that might one day reach for a canvas: it is one division, and the test
+ * beside it pins it to the same numbers.
+ */
+export function drawnPixels(worldHeight: number, spanWidth: number, virtualWidth: number): number {
+  const worldPerPixel = Math.abs(spanWidth) / Math.max(1, virtualWidth);
+  return worldPerPixel > 0 ? Math.abs(worldHeight) / worldPerPixel : 0;
+}
 
 /** Applications are skipped between these, so 4 means one tick in four. */
 export const LOD_CADENCE = { near: 1, mid: 2, far: 4 } as const;
@@ -51,10 +86,10 @@ export const LOD_CADENCE = { near: 1, mid: 2, far: 4 } as const;
  * it is applied on, from a machine that has been stepping the whole time, so it
  * reappears mid-stride rather than snapping from where it left.
  */
-export function mixerCadence(distance: number, inFrustum: boolean, thresholds: LodThresholds = DEFAULT_LOD): number {
+export function mixerCadence(pixels: number, inFrustum: boolean, thresholds: LodThresholds = DEFAULT_LOD): number {
   if (!inFrustum) return 0;
-  if (!(distance > thresholds.near)) return LOD_CADENCE.near;
-  if (!(distance > thresholds.far)) return LOD_CADENCE.mid;
+  if (pixels >= thresholds.full) return LOD_CADENCE.near;
+  if (pixels >= thresholds.reduced) return LOD_CADENCE.mid;
   return LOD_CADENCE.far;
 }
 
