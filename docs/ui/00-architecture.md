@@ -2,7 +2,7 @@
 
 **Status: proposal. No framework code exists yet.** This is the Phase 0 deliverable.
 It raises eight collisions between the brief and the code that is already here (§2).
-Four are now settled and eight decisions remain open (§12). Phase 1 should not start
+Seven are now settled and eight decisions remain open (§12). Phase 1 should not start
 until those are settled.
 
 Read `CLAUDE.md` first if you have not. Everything below is written to fit the rules
@@ -672,20 +672,18 @@ frame is quantized onto (spec 102), flat `0xRRGGBB` arrays capped at sixteen ent
 (`MAX_PALETTE = 16`, `retro-pass.ts:40`), chosen in the same settings popover as the
 virtual size.
 
-The UI's ≤16 should be **drawn from the palette the world is posterized onto**, so UI
-and world are literally the same colours rather than merely similar ones. Note the
-consequence, since §2.3 has the same shape: the active palette is a *setting*, so
-either the UI theme resolves its tokens against whichever palette is live — the chrome
-recolours with the world, which is probably what you want — or it pins one palette and
-looks foreign under the others. Worth deciding in Phase 1 rather than discovering at
-Phase 7.
+There is an obvious move here and I think it is the wrong one. Resolving the theme's
+tokens against whichever `HIKE_PALETTES` entry is live would make the chrome recolour
+with the world — appealing, and exactly the coupling §2.3 just finished removing. The
+active palette is a *setting*, and the pass that consumes it is a candidate to be
+deprecated along with the low-res buffer; a theme wired to it would stop describing
+what is on screen the day that happens.
 
-And it may not survive at all: if the low-res buffer goes (§2.3), the dither and
-quantize pass it feeds is a candidate to go with it, and `HIKE_PALETTES` would stop
-describing what is on screen. If that happens the UI theme owns its own ≤16 outright
-and picks them to sit against the world rather than being taken from it — a smaller
-change than it sounds, since it only moves where the numbers come from, not how the
-theme is shaped.
+**So the theme owns its own ≤16**, chosen to sit against the world palette rather than
+taken from it. Same principle as §2.3: do not couple the UI to a setting that may not
+survive. The cost is that a player switching world palettes gets chrome that no longer
+matches exactly — which is a smaller problem than chrome that breaks, and it can be
+revisited once the post-processing chain has stopped moving.
 
 Per the brief's visual direction, the boldness is spent in exactly one place — window
 title bars and the active-tab treatment — and every other widget state is a value
@@ -725,29 +723,59 @@ before then.
 - **§2.4 — snapping.** Panels and windows snap to the UI grid; world-anchored overlays
   snap to the *device* grid, so their art stays uniform while their motion stays
   smooth. ✅
+- **§10 — the theme owns its own ≤16 colours** rather than resolving them against the
+  live `HIKE_PALETTES` entry. Same reasoning as §2.3: do not couple the UI to a setting
+  that may not survive. ✅
+- **The low-res buffer is not this subsystem's business.** Nothing here reads `lowRes`,
+  `VIRTUAL_SIZES` or `snapCamera`, and no phase proposes changing them. That decision
+  stays open on its own timeline without blocking anything below. ✅
 
-### Still open
+### Open — these four block Phase 1
 
-1. **§2.1 — the atlas is baked at boot from committed text data**, not a PNG. Confirm.
-2. **§8 — ship Phase 1 on `canvas2d`**, with the WebGL backend built only if the budget
-   is missed. This deviates from "one draw call per z-layer". Confirm, or require WebGL
-   from the start. *The one I would most like a second opinion on.*
-3. **§2.7 — Phases 4 and 6 still need server specs first** — a container of
-   `{ defId, count }` plus a capacity, then currency/vendor/trade. Smaller than it was
-   now that multi-cell is out, but not nothing. Confirm the split, and confirm whether
-   Phase 5's *stat* allocation is dropped or waits on a respec spec.
-4. **§4 — `src/ui/` as a top-level peer**, not `src/render/ui/`. Confirm.
-5. **§2.6 — remove the unused `pixi.js` dependency** in its own commit. Confirm.
-6. **§2.8 — Phase 3's scope is the Play tab**, leaving the editor and sandbox input
-   systems alone. Confirm.
-7. **§10 — the UI theme resolves its colours against the live `HIKE_PALETTES` entry**,
-   so the chrome recolours with the world when the palette setting changes — unless the
-   dither pass goes with the low-res buffer, in which case the theme owns its own ≤16.
-   Confirm.
-8. **Spec convention.** `CLAUDE.md` requires a `specs/` entry committed *before* its
-   implementation. This document is the architecture; it does not replace that. Phase 1
-   should open with `specs/119-*.md` and each later phase with its own. Confirm that is
-   what you want rather than treating `docs/ui/` as the spec home.
+1. **Where does the atlas come from?** (§2.1)
+   Baked at boot from committed `#`/`.` text, or a hand-painted PNG loaded at runtime?
+   *Recommend: baked from text.* A PNG would be the client's first fetched binary and
+   would review as an opaque blob; baking costs ~2 ms once and keeps the whole UI
+   appearance legible in a diff.
+
+2. **Which render backend ships first?** (§8)
+   `canvas2d` now with WebGL only if the measured budget demands it, or WebGL from the
+   start? *Recommend: `canvas2d` first.* It deviates from the brief's "one draw call per
+   z-layer", so it needs an explicit yes. It has no shader to fail, no GL state shared
+   with the post-processing chain, and free nearest-neighbour blitting; the six-method
+   interface makes the upgrade a swap. **The one I would most like a second opinion on.**
+
+3. **Where does the code live?** (§4)
+   `src/ui/` as a top-level peer beside `src/sim/` and `src/units/`, or `src/render/ui/`?
+   *Recommend: `src/ui/`.* Putting it under `src/render/` implies it belongs to three.js,
+   and layer 1 not belonging to any engine is the whole point.
+
+4. **Does each phase get a `specs/` entry?** (§12)
+   `CLAUDE.md` requires a spec committed before its implementation. Is this document the
+   architecture with `specs/119-*.md` opening Phase 1 and one per phase after, or is
+   `docs/ui/` the spec home for this subsystem? *Recommend: a spec per phase*, matching
+   the repo.
+
+### Open — these block later phases, cheap to answer now
+
+5. **Do Phases 4 and 6 wait on server specs?** (§2.7, blocks Phase 4)
+   A container of `{ defId, count }` plus a capacity, then currency/vendor/trade — or
+   build the UI against a mock view-model and wire it later? *Recommend: server spec
+   first.* Smaller than it was now that multi-cell is out, but the intents have to exist
+   before a widget can emit one.
+
+6. **What happens to Phase 5's stat allocation?** (§2.7, blocks Phase 5)
+   Base stats are set at character creation and never recomputed, so there is nothing to
+   allocate. Drop the stats page, or wait on a respec spec? The *skill* half needs
+   neither and can proceed regardless. *Recommend: drop it for now.*
+
+7. **How far does Phase 3 reach?** (§2.8, blocks Phase 3)
+   The Play tab only, or also the editor and sandbox input systems? *Recommend: Play tab
+   only.* The other two are dev surfaces; "nothing reads a raw key" should mean nothing
+   in gameplay does.
+
+8. **Does the unused `pixi.js` dependency go?** (§2.6, blocks nothing)
+   Nothing imports it. *Recommend: remove it in its own commit.*
 
 ---
 
@@ -805,7 +833,7 @@ flags, all six containers, hit-testing and focus, the nine Phase-1 widgets, the
 `/dev/ui-gallery` scene, layout tests, replay tests, goldens in CI, and a measured
 frame-budget number.
 
-**Still missing / what I would change:** four of §12's items are settled and eight are
+**Still missing / what I would change:** seven of §12's items are settled and eight are
 open. §2.3 has already been revised once — the first draft asked you to choose between
 locking the UI to 480×270 and letting it ride the world's setting, which was a false
 choice built on the assumption that the world's resolution was locked. It is not;
