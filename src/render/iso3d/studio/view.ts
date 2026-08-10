@@ -41,6 +41,7 @@ import devSkeleton from '../../../../assets/units/dev/biped-dev.skeleton.json' w
 import { bundleErrorText, loadUnitBundle } from '../../../units/bundle.js';
 import { scaffoldClipLib, scaffoldStateMachine, type MeasuredClip } from '../../../units/scaffold.js';
 import { validateSkeleton } from '../../../units/validate.js';
+import { facingIsClean, nearestAxis, type FacingReport } from '../../../units/facing.js';
 import type { UnitDef } from '../../../units/types.js';
 
 /** How often the queue is re-read while the tab is open. */
@@ -63,6 +64,16 @@ interface PendingImage {
   skeletonId: string;
   faceLimit: number;
   clipIntents: string[];
+  /**
+   * The preset filter and whether the long list is open.
+   *
+   * Held per card because ticking a preset repaints the picker, and a repaint
+   * replaces its children: without this, filtering to "hit" and ticking one
+   * result collapses the list and clears the box, so choosing three related
+   * clips means typing the same filter three times.
+   */
+  clipFilter: string;
+  clipsOpen: boolean;
   estimate: EstimateResult | null;
   busy: boolean;
 }
@@ -590,21 +601,71 @@ export function mountStudio(container: HTMLElement): ViewHandle {
           }
           return [row];
         }
-        return CLIP_INTENTS.map((intent) => {
+        const toggle = (id: string, on: boolean): void => {
+          image.clipIntents = on
+            ? [...new Set([...image.clipIntents, id])]
+            : image.clipIntents.filter((existing) => existing !== id);
+          image.estimate = null;
+          refresh();
+        };
+
+        const tick = (id: string, text: string): HTMLElement => {
           const label = el('label', `${MUTED}display:flex;gap:4px;align-items:center;cursor:pointer;`);
           const box = el('input') as HTMLInputElement;
           box.type = 'checkbox';
-          box.checked = image.clipIntents.includes(intent.id);
-          box.addEventListener('change', () => {
-            image.clipIntents = box.checked
-              ? [...image.clipIntents, intent.id]
-              : image.clipIntents.filter((id) => id !== intent.id);
-            image.estimate = null;
-            refresh();
-          });
-          label.append(box, document.createTextNode(intent.label));
+          box.checked = image.clipIntents.includes(id);
+          box.addEventListener('change', () => toggle(id, box.checked));
+          label.append(box, document.createTextNode(text));
           return label;
-        });
+        };
+
+        const nodes: Node[] = CLIP_INTENTS.map((intent) => tick(intent.id, intent.label));
+
+        // Everything else the configured rig model can animate. The shortlist
+        // above is what a unit needs to stand, move and fight; this is the
+        // other ninety, and it is a search rather than a wall of tick boxes.
+        const shortlisted = new Set(CLIP_INTENTS.map((intent) => intent.id));
+        const rest = (config?.clipPresets ?? []).filter((preset) => !shortlisted.has(preset));
+        if (rest.length > 0) {
+          const more = el('details', 'width:100%;margin-top:6px;');
+          const summary = el('summary', `${MUTED}cursor:pointer;`);
+          setText(summary, `${rest.length} more presets on ${config?.rigModelVersion ?? 'this rig model'}`);
+          more.appendChild(summary);
+
+          more.open = image.clipsOpen;
+          more.addEventListener('toggle', () => {
+            image.clipsOpen = more.open;
+          });
+
+          const filter = el('input', `${INPUT}width:100%;margin:6px 0;`) as HTMLInputElement;
+          filter.placeholder = 'filter — try "hit", "defeat", "cast"';
+          filter.value = image.clipFilter;
+          const list = el(
+            'div',
+            'display:flex;flex-wrap:wrap;gap:4px 14px;max-height:190px;overflow:auto;padding:2px 0;',
+          );
+          const draw = (): void => {
+            image.clipFilter = filter.value;
+            const needle = filter.value.trim().toLowerCase();
+            list.replaceChildren(
+              ...rest.filter((preset) => preset.includes(needle)).map((preset) => tick(preset, preset)),
+            );
+          };
+          filter.addEventListener('input', draw);
+          draw();
+          more.append(filter, list);
+          nodes.push(more);
+        } else if (config !== null) {
+          nodes.push(
+            el(
+              'div',
+              `${MUTED}width:100%;color:#e5c07b;`,
+              `The server has not enumerated ${config.rigModelVersion}'s presets, so this is a shortlist rather ` +
+                'than the whole vocabulary. Anything sent that this model does not have is a paid call that buys nothing.',
+            ),
+          );
+        }
+        return nodes;
       });
 
       const problem = unitIdProblem(image.unitId, jobs.map((job) => job.unitId));
@@ -860,11 +921,93 @@ export function mountStudio(container: HTMLElement): ViewHandle {
     // The previewed job is part of what these cards draw -- one of them says
     // "Previewing" and its button is disabled -- so it belongs in the signature.
     // Without it the button would only catch up when something else about a job
-    // changed, which for a finished job is never.
-    repaint(libraryList, `${previewedJobId ?? ''}|${done.map(jobKey).join('|')}`, () => {
+    // changed, which for a finished job is never. `facingRuns` is in it for the
+    // same reason and one more: re-checking the same job produces the same key
+    // by every other measure, so without a counter the second press of Check
+    // facing would repaint nothing at all.
+    repaint(libraryList, `${previewedJobId ?? ''}|${facingRuns}|${done.map(jobKey).join('|')}`, () => {
       if (done.length === 0) return [el('p', MUTED, 'Nothing generated yet.')];
       return done.map(libraryCard);
     });
+  }
+
+  /**
+   * What the last facing check said about each job (spec 116).
+   *
+   * Kept per job rather than for one at a time, because the question these
+   * answer is comparative: a roster where every unit is 180° around is a
+   * generator setting, and one where a single unit is, is that unit.
+   */
+  const facingReports = new Map<string, FacingReport>();
+  let facingRuns = 0;
+
+  /** The facing report as rows, or nothing when the job has not been checked. */
+  function facingRows(job: JobView): readonly Node[] {
+    const report = facingReports.get(job.id);
+    if (report === undefined) return [];
+    const box = el('div', 'margin-top:8px;border-top:1px solid #2f2f40;padding-top:8px;');
+    if (report.error !== null) {
+      box.appendChild(el('div', `${MUTED}color:#e06c75;`, report.error));
+      return [box];
+    }
+
+    const axis = (v: readonly [number, number, number] | null): string =>
+      v === null ? 'not measurable' : (nearestAxis(v) ?? `(${v[0].toFixed(2)}, ${v[1].toFixed(2)}, ${v[2].toFixed(2)})`);
+    box.appendChild(
+      el(
+        'div',
+        MUTED,
+        `mesh ${axis(report.mesh.fromFeet)} (feet) · ${axis(report.mesh.fromHead)} (head) · ` +
+          `rig ${axis(report.rig.forward)} (toes` +
+          `${report.rig.method === 'structure' ? ', found by shape' : ''}) · the scene draws +X`,
+      ),
+    );
+    for (const clip of report.clips) {
+      const said =
+        clip.error !== null
+          ? clip.error
+          : !clip.measurable
+            ? 'no foot bones to watch, so nothing is claimed about which way it goes'
+            : clip.moving
+              ? `strides ${axis(clip.strideForward)}`
+              : 'no foot travel, so it is not asked which way it goes';
+      box.appendChild(el('div', MUTED, `  ${clip.source}: ${said}`));
+      // What the clip moves, by node name. A body that still slides in the
+      // preview means the importer's strip did not match one of these, and
+      // guessing which is what cost a round trip last time.
+      if (clip.translatedNodes.length > 0) {
+        box.appendChild(
+          el('div', `${MUTED}padding-left:12px;`, `translates: ${clip.translatedNodes.join(', ')}`),
+        );
+      }
+    }
+    // The bone names, when they are the finding: every skeleton estimate looks
+    // its bones up by name, so a rig that answers none of them is answered with
+    // the vocabulary it does have. Wrapped rather than truncated -- this is the
+    // list somebody is about to compare against the mixamo contract.
+    if (report.rig.method !== 'names' && report.rig.boneNames.length > 0) {
+      box.appendChild(
+        el(
+          'div',
+          `${MUTED}margin-top:4px;word-break:break-word;`,
+          `the ${report.rig.boneNames.length} bones this rig has: ${report.rig.boneNames.join(', ')}`,
+        ),
+      );
+    }
+    for (const finding of report.findings) {
+      const colour = finding.severity === 'ok' ? '#7bc47f' : finding.severity === 'warning' ? '#e5c07b' : '#e06c75';
+      const mark = finding.severity === 'ok' ? '✓' : '✗';
+      const angle = finding.degrees === null ? '' : ` (${Math.round(finding.degrees)}°)`;
+      box.appendChild(
+        el('div', `${MUTED}color:${colour};margin-top:4px;`, `${mark} ${finding.title}${angle}: ${finding.message}`),
+      );
+    }
+    if (facingIsClean(report)) {
+      box.appendChild(
+        el('div', `${MUTED}color:#7bc47f;margin-top:4px;`, 'Nothing disagrees: the mesh, the rig and every clip point the same way.'),
+      );
+    }
+    return [box];
   }
 
   function libraryCard(job: JobView): HTMLElement {
@@ -896,8 +1039,25 @@ export function mountStudio(container: HTMLElement): ViewHandle {
       look.addEventListener('click', () => void run(async () => {
         await previewJob(job);
       }));
+      // Free, offline, and the answer to the one question a preview cannot
+      // settle by eye: a unit that faces the camera and walks backwards looks
+      // identical whether the mesh, the rig or the clip is the thing that is
+      // turned around, and the three have three different fixes (spec 116).
+      const facing = button(facingReports.has(job.id) ? 'Check facing again' : 'Check facing');
+      facing.disabled = job.artifacts.riggedGlb === null;
+      facing.style.opacity = facing.disabled ? '0.5' : '1';
+      facing.title =
+        job.artifacts.riggedGlb === null
+          ? 'this job has no rigged model, so there is no rig to measure'
+          : 'measures the mesh, the rig and every clip off the .glb bytes. Free.';
+      facing.addEventListener('click', () => void run(async () => {
+        facingReports.set(job.id, await api.facing(job.id));
+        facingRuns += 1;
+      }));
+
       row.append(
         look,
+        facing,
         el(
           'span',
           MUTED,
@@ -907,6 +1067,7 @@ export function mountStudio(container: HTMLElement): ViewHandle {
         ),
       );
       card.appendChild(row);
+      for (const node of facingRows(job)) card.appendChild(node);
       return card;
     }
   }
@@ -1098,6 +1259,8 @@ export function mountStudio(container: HTMLElement): ViewHandle {
         skeletonId: 'biped',
         faceLimit: config?.defaultFaceLimit ?? 8000,
         clipIntents: [...defaultClipIntents()],
+        clipFilter: '',
+        clipsOpen: false,
         estimate: null,
         busy: false,
       };

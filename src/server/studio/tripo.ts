@@ -28,7 +28,7 @@
  * | upload (free) | `POST /files`, multipart field `file` -> `data.file_token` |
  * | image to model | `POST /generation/image-to-model` `{input, model, face_limit, texture, pbr}` |
  * | rig check (free) | `POST /animations/rig-check` `{input}` -> `output.{riggable, rig_type}` |
- * | rig | `POST /animations/rig` `{input, model, spec, out_format}` |
+ * | rig | `POST /animations/rig` `{input, model, rig_type, spec, out_format}` |
  * | retarget | `POST /animations/retarget` `{input, animations, out_format}` |
  * | poll | `GET /tasks/{task_id}`, plural, no faster than ~3s |
  * | envelope | `{ code, data }`, `code === 0` on success |
@@ -48,6 +48,24 @@
  *    is what keeps the projection and the ceilings honest about it. The preset
  *    is a bare `preset:walk` -- see {@link BIPED_ANIMATION_PRESETS} for the
  *    names a biped actually has.
+ *  - **`spec: mixamo` and Tripo's animations are mutually exclusive.** The
+ *    sixth correction and the one that cost the most to learn, because nothing
+ *    refuses it until the *retarget*: a mixamo-spec rig is built and paid for,
+ *    and then every clip call comes back "retargeting of Mixamo skeletons is not
+ *    supported". The two specs are not two spellings of one skeleton. They are a
+ *    choice between their animation library and Mixamo's, made at the rig call,
+ *    and a game that wants the presets has to take the `tripo` names with them.
+ *    Worth knowing about that message: it arrived localized -- in Polish, to a
+ *    Polish account -- so nothing here may ever branch on the text of an API
+ *    error. Only on `code`.
+ *  - **The rig takes a `rig_type`, and omitting it is not neutral.** The fifth
+ *    correction, and the most expensive one to have found by inspection rather
+ *    than from the docs: every unit generated without it came back on a generic
+ *    numbered-limb skeleton that `spec: mixamo` could not name, could not carry
+ *    a socket, and could not be checked against a rig family. The presets are
+ *    documented per creature -- {@link BIPED_ANIMATION_PRESETS} is the *biped*
+ *    list -- so asking for `preset:walk` on a rig that was never declared a
+ *    biped is asking a question the vocabulary does not fit.
  *
  * ## The key
  *
@@ -137,6 +155,23 @@ export interface RigRequest {
   /** The task whose model output is being rigged. */
   readonly sourceTaskId: string;
   /**
+   * What kind of creature this is: `biped`, `quadruped`, `avian` and so on.
+   *
+   * Optional to the API and, it turns out, decisive. Left out, the auto-rig
+   * builds a *generic* skeleton -- `tripo::Root`, `tripo::Spine_0`, and four
+   * limb chains numbered rather than named, with nothing saying which pair is
+   * legs -- and {@link RigRequest.spec} then has nothing to name in the mixamo
+   * way, because there is no named biped to name. Every unit generated before
+   * this field was sent came back like that.
+   *
+   * The value is the one {@link TaskResult.rigType} reported, echoed back
+   * unchanged rather than mapped: it is the API's own vocabulary and a mapping
+   * would be one more place to disagree with it. Null when the check named
+   * nothing, and then the field is *omitted* rather than guessed at -- a wrong
+   * creature is a worse rig than an unspecified one.
+   */
+  readonly rigType: string | null;
+  /**
    * The **rig** model version, which is not the generation model version.
    *
    * Two different date-stamped ids in one pipeline, and passing the generation
@@ -162,12 +197,43 @@ export interface RetargetRequest {
 }
 
 /**
- * The animations a biped rig can actually be given.
+ * The two rig models, which are two different skeletons and two different
+ * animation libraries wearing one field name.
+ *
+ * This distinction cost a roster of unusable units to find. `model` on the rig
+ * call is not a version of one thing:
+ *
+ *  - **{@link HUMANOID_RIG_MODEL}** is biped only, is what the docs recommend
+ *    for humanoid characters, and carries 90+ presets.
+ *  - **{@link CREATURE_RIG_MODEL}** is the newer one that covers quadrupeds,
+ *    hexapods, avians and the rest. Its biped support exists, but what it
+ *    actually produced for a human was a *generic* skeleton -- `tripo::Root`,
+ *    `tripo::Spine_0`, four numbered limb chains -- with `spec: mixamo` sent
+ *    and no mixamo name anywhere in the result. Its preset library is the
+ *    eleven names below rather than ninety.
+ *
+ * So a humanoid asked for on the creature model gets a creature's skeleton,
+ * which no unit document in this project can address and which the biped
+ * presets appear to have been retargeted onto sideways. Bipeds belong on the
+ * humanoid model; anything with more than two legs has no choice.
+ */
+export const HUMANOID_RIG_MODEL = 'v1.0-20240301';
+export const CREATURE_RIG_MODEL = 'v2.5-20260210';
+
+/**
+ * The animations a biped rig can actually be given **on the creature model**.
  *
  * The real vocabulary, and the reason it is written down rather than left to
  * whatever somebody types: retarget is a paid call per clip, so a name the API
  * does not know is not a validation error, it is a charge for nothing. Holding
  * the list here lets an unknown intent be refused *before* anything is sent.
+ *
+ * Version-specific, which the first draft of this file did not say and should
+ * have. These eleven are {@link CREATURE_RIG_MODEL}'s biped presets;
+ * {@link HUMANOID_RIG_MODEL} has 90+ and this list is not a subset anybody has
+ * checked. Refusing an intent against the wrong version's vocabulary is the
+ * same failure as refusing against a guessed one -- see {@link knownPresetsFor},
+ * which answers null rather than pretending.
  *
  * Note what is not in it. There is no `attack` and no `death` -- the nearest are
  * `slash` and `fall`, and those are the names to use rather than a mapping
@@ -189,32 +255,106 @@ export const BIPED_ANIMATION_PRESETS: readonly string[] = [
 ];
 
 /**
+ * What {@link HUMANOID_RIG_MODEL} can animate: 101 presets, transcribed from
+ * the reference page's expanded list.
+ *
+ * The eleven the creature model has are all in here, which is what makes the
+ * two lists comparable at all -- everything else is new. The game-relevant
+ * additions are worth naming, because they are the reason this list is worth
+ * having: `defeat_02`/`defeat_03` for a death, five `hit_to_*` reactions,
+ * `cast_a_spell`, `chop`, `fire`, `front_kick_01`/`_02`, `box_01..03` and
+ * `flee_01`/`_02`.
+ *
+ * **There is still no `death`.** Nor a `defeat_01`, which reads like a gap in
+ * their library rather than in this transcription -- it is absent from the
+ * published list and is not invented here.
+ *
+ * ## The spelling, which is not what the docs say
+ *
+ * The reference page writes these as `preset:biped:idle`, namespaced, while the
+ * creature model's biped presets are bare. This pipeline sends the **bare**
+ * form and a real generation on this model retargeted `idle`, `walk` and `run`
+ * with it. So the API accepts bare here whatever the page shows, and changing a
+ * proven call on the strength of a document that has already been wrong twice
+ * -- the missing `rig_type`, the mixamo retarget refusal -- would be trading a
+ * working request for a paid failure.
+ *
+ * The names are therefore stored bare, as intents. If a preset outside those
+ * three ever comes back refused, the namespaced form is the first thing to try
+ * and it is a one-line change in {@link presetFor}.
+ */
+export const HUMANOID_BIPED_PRESETS: readonly string[] = [
+  'afraid', 'agree', 'angry_01', 'angry_02', 'angry_03', 'basketball_shot', 'bow', 'box_01',
+  'box_02', 'box_03', 'cast_a_spell', 'cheer', 'chop', 'clap', 'climb', 'complain_01',
+  'complain_02', 'cross_body_crunch', 'crossover_dribble', 'cry', 'dance_01', 'dance_02',
+  'dance_03', 'dance_04', 'dance_05', 'dance_06', 'defeat_02', 'defeat_03', 'depressed', 'dig',
+  'dive', 'dribble', 'fall', 'fire', 'flee_01', 'flee_02', 'flip', 'fold_arms', 'football_catch',
+  'football_pass', 'football_save', 'freaky', 'frightened', 'front_kick_01', 'front_kick_02',
+  'frustrated_01', 'frustrated_02', 'golf', 'greet_01', 'greet_02', 'greet_03', 'greet_04',
+  'heart_pose', 'hit_to_body_01', 'hit_to_body_02', 'hit_to_head', 'hit_to_side',
+  'hit_to_stomach', 'hug', 'hurt', 'idle', 'jump', 'jump_down', 'jump_rope_01', 'jump_rope_02',
+  'laugh_01', 'laugh_02', 'lift_heavy', 'look_around', 'make_a_call_01', 'make_a_call_02',
+  'pitch_baseball', 'play_mobile_game', 'play_video_game', 'press-up', 'run', 'run_upstairs',
+  'scared_01', 'scared_02', 'scratch', 'shoot', 'shovel', 'sing_01', 'sing_02', 'sing_03',
+  'sing_04', 'sit', 'slash', 'sob', 'standing_relax', 'surf', 'swagger', 'swim', 'turn',
+  'victory_celebration', 'volleyball', 'wait', 'walk', 'warm_up', 'wave_goodbye_01',
+  'wave_goodbye_02',
+];
+
+/**
  * A clip intent turned into the preset name the API wants.
  *
- * Just `preset:<name>` -- **not** namespaced by rig type. An earlier draft sent
- * `preset:biped:walk` on the strength of a third-party integration note; the
- * real API takes the bare form.
+ * A biped's presets are bare -- `preset:walk` -- and every other creature's are
+ * namespaced by its rig type: `preset:quadruped:walk`, `preset:hexapod:walk`,
+ * `preset:serpentine:march`. Both halves of that were learned the hard way and
+ * in opposite directions. An early draft namespaced *everything* on the
+ * strength of a third-party note and the biped calls were refused; this then
+ * sent everything bare, which is right for the only rig type anyone had
+ * generated and silently wrong for the first quadruped, where `preset:walk`
+ * asks a four-legged rig for a two-legged animation.
+ *
+ * Null is treated as a biped, matching {@link knownPresetsFor}: it is what the
+ * rig check falls back to when it names nothing, and it is the only rig type
+ * this project has a unit format for.
  */
-export function presetFor(intent: string): string {
-  return `preset:${intent}`;
+export function presetFor(intent: string, rigType: string | null = null): string {
+  if (rigType === null || rigType === 'biped') return `preset:${intent}`;
+  return `preset:${rigType}:${intent}`;
 }
 
 /**
- * The presets a rig type is known to have, or null when we do not know.
+ * The presets a rig is known to have, or null when we do not know.
  *
- * Null is a real answer and is treated as one: only the biped list has been
- * confirmed, so a quadruped's intents are passed through unchecked rather than
- * refused against a list that was guessed. Refusing on an invented list would
- * block work that would have succeeded, which is the opposite failure but still
- * a failure.
+ * Null is a real answer and is treated as one: only the creature model's biped
+ * list has been confirmed, so a quadruped's intents -- or *any* intent on the
+ * humanoid model, whose ninety-odd presets nobody here has enumerated -- are
+ * passed through unchecked rather than refused against a list that does not
+ * apply. Refusing on the wrong version's vocabulary would block work that would
+ * have succeeded, which is the opposite failure but still a failure.
+ *
+ * The version argument is not optional-with-a-default on purpose. It was the
+ * absence of exactly this parameter that let an eleven-name list read as "the
+ * presets a biped has" rather than "the presets a biped has on one of the two
+ * rig models".
  */
-export function knownPresetsFor(rigType: string | null): readonly string[] | null {
-  return rigType === null || rigType === 'biped' ? BIPED_ANIMATION_PRESETS : null;
+export function knownPresetsFor(rigType: string | null, rigModelVersion: string): readonly string[] | null {
+  const biped = rigType === null || rigType === 'biped';
+  // The humanoid model is biped-only, so a rig type it does not recognise is
+  // not something it can animate either way.
+  if (rigModelVersion === HUMANOID_RIG_MODEL) return biped ? HUMANOID_BIPED_PRESETS : null;
+  if (rigModelVersion === CREATURE_RIG_MODEL) return biped ? BIPED_ANIMATION_PRESETS : null;
+  // A model nobody has enumerated. Refusing against another one's vocabulary
+  // would block work that would have succeeded.
+  return null;
 }
 
 /** Intents this rig has no preset for. Empty when the vocabulary is unknown. */
-export function unknownPresets(rigType: string | null, intents: readonly string[]): readonly string[] {
-  const known = knownPresetsFor(rigType);
+export function unknownPresets(
+  rigType: string | null,
+  rigModelVersion: string,
+  intents: readonly string[],
+): readonly string[] {
+  const known = knownPresetsFor(rigType, rigModelVersion);
   if (known === null) return [];
   return intents.filter((intent) => !known.includes(intent));
 }
@@ -469,8 +609,13 @@ export class TripoClient {
     return this.submit('/animations/rig', {
       input: request.sourceTaskId,
       model: request.modelVersion,
+      // Omitted rather than sent as null when the check named no creature: the
+      // field is optional and an absent one is the API's own default, where a
+      // null would be a value it has to have an opinion about.
+      ...(request.rigType === null ? {} : { rig_type: request.rigType }),
       // The shared-skeleton constraint starts here: one naming spec for the
-      // whole roster, so clips bind by bone name across every unit.
+      // whole roster, so clips bind by bone name across every unit. Only
+      // meaningful alongside `rig_type` -- see {@link RigRequest.rigType}.
       spec: request.spec,
       out_format: request.outFormat,
     });

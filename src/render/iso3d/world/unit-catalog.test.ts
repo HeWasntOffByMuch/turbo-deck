@@ -2,19 +2,36 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { EntityKind } from '../../../server/net/protocol.js';
 import { appearanceOf } from './appearance.js';
 import { authoredUnitIds } from './unit-assets.js';
-import { authoredUnitFor, authoredUnits, setAuthoredUnits, unitsFromQuery } from './unit-catalog.js';
+import {
+  authoredUnitFor,
+  authoredUnits,
+  DEFAULT_AUTHORED_UNITS,
+  PLAYER_TYPE_ID,
+  setAuthoredUnits,
+  unitsFromQuery,
+} from './unit-catalog.js';
 
 afterEach(() => {
   setAuthoredUnits({});
 });
 
 describe('authoredUnitFor', () => {
-  it('is null for everything by default', () => {
-    // The dev mannequin is a grey untextured figure. Shipping it into the arena
-    // as a live enemy would be a worse default than the rig that is there.
-    for (const kind of [EntityKind.Player, EntityKind.Monster, EntityKind.Prop, EntityKind.Projectile]) {
+  it('draws the player from the generated unit by default, and nothing else', () => {
+    // The default table has exactly one row. The player is the body somebody
+    // looks at for hours, so it is the one that has to prove the format; every
+    // other entity still falls through to the rig it always drew, which is the
+    // property this seam exists to keep.
+    expect(authoredUnitFor(appearanceOf({ kind: EntityKind.Player, typeId: 'player' }))).toBe('pig_a_pose_full');
+    for (const kind of [EntityKind.Monster, EntityKind.Prop, EntityKind.Projectile]) {
       expect(authoredUnitFor(appearanceOf({ kind, typeId: 'grazer' })), String(kind)).toBeNull();
     }
+  });
+
+  it('falls back to the old rig when the named unit is not in this build', () => {
+    // The default ships pointing at a generated unit. A checkout where that unit
+    // has not been baked must still render a game rather than a hole.
+    setAuthoredUnits({ player: 'no-such-unit' });
+    expect(authoredUnitFor(appearanceOf({ kind: EntityKind.Player, typeId: 'player' }))).toBeNull();
   });
 
   it('draws a monster from its authored unit once one is named', () => {
@@ -27,11 +44,12 @@ describe('authoredUnitFor', () => {
     expect(authoredUnitFor(appearanceOf({ kind: EntityKind.Monster, typeId: 'ravager' }))).toBeNull();
   });
 
-  it('ignores an entry naming a player, a prop or a projectile', () => {
+  it('honours a player entry, and still ignores a prop or a projectile', () => {
     // A typo in a roster file must not put a mannequin where the arrow should
-    // be: a projectile has no skeleton and a prop does not move.
+    // be: a projectile has no skeleton and a prop does not move. The player is
+    // no longer in that company -- it has a skeleton and it moves.
     setAuthoredUnits({ player: 'mannequin', arrow: 'mannequin', rock: 'mannequin' });
-    expect(authoredUnitFor(appearanceOf({ kind: EntityKind.Player, typeId: 'player' }))).toBeNull();
+    expect(authoredUnitFor(appearanceOf({ kind: EntityKind.Player, typeId: 'player' }))).toBe('mannequin');
     expect(authoredUnitFor(appearanceOf({ kind: EntityKind.Projectile, typeId: 'arrow' }))).toBeNull();
     expect(authoredUnitFor(appearanceOf({ kind: EntityKind.Prop, typeId: 'rock' }))).toBeNull();
   });
@@ -69,5 +87,28 @@ describe('the roster is discovered, not listed (spec 113)', () => {
   it('is empty without the switch, so the arena is unchanged', () => {
     expect(unitsFromQuery('')).toEqual({});
     expect(unitsFromQuery('?seed=7')).toEqual({});
+  });
+});
+
+describe('the default roster surviving a caller', () => {
+  it('is a value a caller can spread, not just the map this module starts with', () => {
+    // The bug this exists to stop coming back. The Play tab calls
+    // `setAuthoredUnits(unitsFromQuery())` on mount, and that replaces the whole
+    // table by design -- so an empty query wiped the default before the first
+    // frame and the player went on being drawn by the critter rig, with nothing
+    // anywhere reporting a problem. A default only the module knows about is a
+    // default one caller can silently delete.
+    expect(DEFAULT_AUTHORED_UNITS[PLAYER_TYPE_ID]).toBe('pig_a_pose_full');
+
+    setAuthoredUnits(unitsFromQuery('?seed=1'));
+    expect(authoredUnitFor(appearanceOf({ kind: EntityKind.Player, typeId: 'player' }))).toBeNull();
+
+    setAuthoredUnits({ ...DEFAULT_AUTHORED_UNITS, ...unitsFromQuery('?seed=1') });
+    expect(authoredUnitFor(appearanceOf({ kind: EntityKind.Player, typeId: 'player' }))).toBe('pig_a_pose_full');
+  });
+
+  it('lets the query override the default rather than only adding to it', () => {
+    setAuthoredUnits({ ...DEFAULT_AUTHORED_UNITS, ...unitsFromQuery('?units=player:mannequin') });
+    expect(authoredUnitFor(appearanceOf({ kind: EntityKind.Player, typeId: 'player' }))).toBe('mannequin');
   });
 });

@@ -237,7 +237,7 @@ function checkOrphanVertices(
 // the bind pose
 // ---------------------------------------------------------------------------
 
-export type BindPoseShape = 'T' | 'A' | 'posed';
+export type BindPoseShape = 'T' | 'A' | 'posed' | 'unmeasured';
 
 export interface BindPoseVerdict {
   readonly shape: BindPoseShape;
@@ -285,8 +285,13 @@ export function classifyBindPose(nodes: readonly GlbReadNode[]): BindPoseVerdict
   const rightKnee = measureChain(nodes, 'RightUpLeg', 'RightLeg', 'RightFoot');
 
   if (!left || !right) {
+    // *Unmeasured*, not posed. These two are wildly different findings and the
+    // second one ends with "regenerate" -- so reporting a rig this cannot read
+    // as a bad bind pose spends money to fix a model that may be perfect. The
+    // arm chain is looked up by mixamo name and the generated rigs are not on
+    // that contract: `L_Upperarm`, `L_Forearm`, `L_Hand` answer none of it.
     return {
-      shape: 'posed',
+      shape: 'unmeasured',
       armDropDegrees: Number.NaN,
       elbowDegrees: Number.NaN,
       kneeDegrees: Number.NaN,
@@ -341,6 +346,18 @@ function reasonFor(shape: BindPoseShape, armDrop: number, elbow: number, knee: n
  */
 export function checkBindPose(verdict: BindPoseVerdict, meshRef = 'the mesh'): readonly Issue[] {
   const issues: Issue[] = [];
+  if (verdict.shape === 'unmeasured') {
+    // A warning, and it names what is missing rather than what is wrong. The
+    // bind pose may well be a perfect T; nothing here can see it.
+    issues.push(
+      warning(
+        'mesh.bindpose.unmeasured',
+        pointer(meshRef, 'bindPose'),
+        `the bind pose could not be classified: ${verdict.reason}. Nothing is claimed about it -- this is the ` +
+          'check being unable to read the rig, not a finding about the rig.',
+      ),
+    );
+  }
   if (verdict.shape === 'posed') {
     issues.push(
       error(

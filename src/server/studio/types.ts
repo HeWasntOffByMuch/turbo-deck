@@ -63,6 +63,24 @@ export interface GenerationParams {
    */
   readonly orientation: 'default' | 'align_image';
   /**
+   * The skeleton the auto-rig is asked for -- `mixamo` for this project's roster.
+   *
+   * Server-side configuration like {@link orientation}, and recorded here for
+   * the same reason: it changes the bytes that come back, so it belongs in the
+   * cache key. Leaving it out meant that changing `TRIPO_RIG_SPEC` and
+   * regenerating served the *old* job straight back as a cache hit -- the one
+   * experiment the setting exists for, silently answered with the artifacts it
+   * was meant to replace.
+   *
+   * It is also the field that decides whether a unit can exist at all. The
+   * sockets, the skeleton document, the family check and the export all address
+   * bones by mixamo name, and a rig that comes back in a generator's own
+   * vocabulary answers to none of them.
+   */
+  readonly rigSpec: string;
+  /** The auto-rig's model version, which is not the generation one. */
+  readonly rigModelVersion: string;
+  /**
    * Which clips to retarget, by intent name. Ordered on write so the cache key
    * of the same set requested in a different order is the same key.
    */

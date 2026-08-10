@@ -63,3 +63,6 @@ export { bundleErrorText, loadUnitBundle } from './bundle.js';
 
 export type { RootMotionChannel } from './root-motion.js';
 export { rootMotionChannels, rootMotionMessage, rootMotionTrackNames } from './root-motion.js';
+
+export type { ClipReport, FacingFinding, FacingReport, FacingSeverity, FacingSource } from './facing.js';
+export { facingIsClean, facingReport, nearestAxis } from './facing.js';

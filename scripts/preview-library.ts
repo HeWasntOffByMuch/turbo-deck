@@ -60,6 +60,8 @@ function seededJob(): Job {
     texture: true,
     pbr: false,
     orientation: 'default',
+    rigSpec: 'mixamo',
+    rigModelVersion: 'rig-v-test',
     clipIntents: ['idle', 'walk', 'run', 'slash'],
     outFormat: 'glb',
   };
@@ -99,7 +101,7 @@ function seededJob(): Job {
         idle: devGlb(join('clips', 'idle.glb')),
         walk: devGlb(join('clips', 'walk.glb')),
         run: devGlb(join('clips', 'run.glb')),
-        slash: devGlb(join('clips', 'attack.glb')),
+        slash: devGlb(join('clips', 'slash.glb')),
       },
     },
   };
@@ -129,14 +131,24 @@ async function main(): Promise<void> {
 
   try {
     processes.push(
+      // `detached`, so each child leads its own process group and {@link stop}
+      // can take the whole group down. Killing the `npx` alone leaves the `tsx`
+      // it spawned running and listening -- and then the *next* run's
+      // `waitForServer` is answered by the previous run's server, holding the
+      // previous run's data directory. That reads as a code failure with a
+      // completely invented cause: this script spent a debugging session on a
+      // report that was three clips long because a server from ten minutes
+      // earlier was still answering.
       spawn('npx', ['tsx', 'src/server/index.ts'], {
         cwd: root,
         stdio: 'ignore',
+        detached: true,
         env: { ...process.env, PORT: String(API_PORT), ADMIN_SECRET: SECRET, STUDIO_DATA_DIR: dataDir },
       }),
       spawn('npx', ['vite', '--port', String(WEB_PORT), '--strictPort'], {
         cwd: root,
         stdio: 'ignore',
+        detached: true,
         env: { ...process.env, STUDIO_SERVER: `http://localhost:${API_PORT}` },
       }),
     );
@@ -165,7 +177,56 @@ async function main(): Promise<void> {
       failures.push(`the seeded job is not in the library. Panel said: ${text.slice(0, 400)}`);
     }
 
-    // --- the button this whole spec is about --------------------------------
+    // --- the facing check, end to end (spec 116) ----------------------------
+    //
+    // Clicked here rather than covered in Node because the measuring is only
+    // half of it: the route has to find the artifacts, the client has to carry
+    // the admin token, and the card has to repaint. The seeded job *is* the
+    // reference mannequin, which faces +X on purpose, so this has a known right
+    // answer -- and a probe that cannot clear a unit that is fine is worth less
+    // than no probe, because it would send somebody off to regenerate one.
+    const facingButton = page.getByRole('button', { name: 'Check facing', exact: true });
+    if ((await facingButton.count()) === 0) {
+      failures.push('no Check facing button on the library card');
+    } else {
+      await facingButton.first().click();
+      await page
+        .locator('#app')
+        .filter({ hasText: /mesh .* \(feet\)/ })
+        .first()
+        .waitFor({ timeout: 20_000 })
+        .catch(() => undefined);
+
+      const checked = await page.locator('#app').innerText();
+      if (!/Nothing disagrees/.test(checked)) {
+        const said = /mesh .*\n?.*/.exec(checked)?.[0] ?? checked.slice(-600);
+        failures.push(`the facing check did not clear the reference unit. It said: ${said}`);
+      } else {
+        console.log('  facing: mesh, rig and clips all agree on +X');
+      }
+
+      // Every clip the job names has to appear, including the ones with nothing
+      // to say. A report that quietly covers three of four clips looks complete
+      // and is not -- which is exactly what a stale path in this file did the
+      // first time it ran.
+      for (const intent of ['idle', 'walk', 'run', 'slash']) {
+        if (!checked.includes(`${intent}.glb:`)) {
+          failures.push(`the facing report does not mention ${intent}.glb, so it covered fewer clips than the job has`);
+        }
+      }
+
+      // Photographed on its own, because the report is several lines of small
+      // text on a card and "it rendered" is not the same claim as "it reads".
+      await page.evaluate(() => {
+        const headings = Array.from(document.querySelectorAll('h2'));
+        headings.find((node) => /library/i.test(node.textContent ?? ''))?.scrollIntoView();
+      });
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: join(outDir, 'studio-facing.png') });
+      console.log(`  wrote ${join('.claude', 'screenshots', 'studio-facing.png')}`);
+    }
+
+    // --- the button spec 112 was about --------------------------------------
     const previewButton = page.getByRole('button', { name: 'Preview', exact: true });
     if ((await previewButton.count()) === 0) {
       failures.push('no Preview button on the library card');
@@ -175,6 +236,20 @@ async function main(): Promise<void> {
       // measuring and rebuilding the panels takes as long as the machine takes,
       // and under software GL on a loaded box that is well past any fixed number
       // worth writing down.
+      //
+      // Waited for by the *job's* caption, not by the model stats. The reference
+      // unit this tab opens on is the same mannequin the seeded job points at,
+      // so "156 triangles, 25 bones" is already on screen before the button is
+      // pressed: a wait on that resolves against the panel that is about to be
+      // torn down, and everything after it drives a dead one. That is not
+      // hypothetical -- every assertion below was passing against the reference
+      // panel while the job's preview quietly failed to mount at all.
+      await page
+        .locator('#app')
+        .filter({ hasText: /\(job seeded-j/ })
+        .first()
+        .waitFor({ timeout: 40_000 })
+        .catch(() => undefined);
       await page
         .locator('#app')
         .filter({ hasText: /triangles, \d+ bones/ })
@@ -315,7 +390,17 @@ async function main(): Promise<void> {
 
     await browser.close();
   } finally {
-    for (const child of processes) child.kill();
+    for (const child of processes) {
+      // The group, not the process: `npx` is a shell wrapper around the thing
+      // that actually holds the port. A negative pid is the group, and the
+      // fallback is there because a child that already exited has no group left
+      // to signal and throws rather than reporting it.
+      try {
+        if (child.pid !== undefined) process.kill(-child.pid, 'SIGTERM');
+      } catch {
+        child.kill();
+      }
+    }
     rmSync(dataDir, { recursive: true, force: true });
   }
 

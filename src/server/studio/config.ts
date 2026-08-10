@@ -16,7 +16,7 @@ import { DEFAULT_CANONICAL_HEIGHT } from '../../units/canonical-height.js';
 import type { Ceilings } from './ledger.js';
 import { DEFAULT_MIN_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS } from './pacing.js';
 import { DEFAULT_PRICES, type PriceList } from './pricing.js';
-import { DEFAULT_BASE_URL } from './tripo.js';
+import { DEFAULT_BASE_URL, HUMANOID_RIG_MODEL } from './tripo.js';
 
 export interface StudioConfig {
   /** Null when no key is configured: the routes mount and refuse to spend. */
@@ -28,7 +28,21 @@ export interface StudioConfig {
    * generation one. The server's own default is rejected, so it has to be sent.
    */
   readonly rigModelVersion: string;
-  /** The bone naming contract the rig is asked for. `mixamo` for a biped. */
+  /**
+   * The bone naming contract the rig is asked for: `tripo` or `mixamo`.
+   *
+   * **`mixamo` and Tripo's own animations are mutually exclusive.** A rig built
+   * to the mixamo naming spec is refused by the retarget -- "retargeting of
+   * Mixamo skeletons is not supported" -- so asking for mixamo names buys a rig
+   * that can never be given a clip by the service that made it. The two specs
+   * are not two spellings of one skeleton; they are a choice between *their
+   * animation library* and *Mixamo's*.
+   *
+   * A game needs the clips, so this is `tripo`. What it costs is the assumption
+   * spec 107 was built on -- that every unit shares the mixamo bone contract --
+   * and that assumption has to be replaced rather than patched around. See
+   * `specs/117`.
+   */
   readonly rigSpec: string;
   /** How a generated mesh is oriented. See `GenerationParams.orientation`. */
   readonly orientation: 'default' | 'align_image';
@@ -94,8 +108,18 @@ export function loadStudioConfig(env: NodeJS.ProcessEnv, repoRoot: string): Stud
     apiKey: key === undefined || key === '' ? null : key,
     baseUrl: env['TRIPO_BASE_URL']?.trim() || DEFAULT_BASE_URL,
     modelVersion: env['TRIPO_MODEL_VERSION']?.trim() || 'P1-20260311',
-    rigModelVersion: env['TRIPO_RIG_MODEL_VERSION']?.trim() || 'v2.5-20260210',
-    rigSpec: env['TRIPO_RIG_SPEC']?.trim() || 'mixamo',
+    // The humanoid rig model, because this project's contract is a biped: one
+    // mixamo skeleton, sockets addressed by bone name, one clip library for the
+    // family. The creature model was the default until a human generated on it
+    // came back as `tripo::0_Left_Limb_3` -- a generic skeleton no unit document
+    // here can address, with `spec: mixamo` sent and ignored. A quadruped has to
+    // set `TRIPO_RIG_MODEL_VERSION=v2.5-20260210`, which is the model that has
+    // one; see `CREATURE_RIG_MODEL`.
+    rigModelVersion: env['TRIPO_RIG_MODEL_VERSION']?.trim() || HUMANOID_RIG_MODEL,
+    // `tripo`, because the retarget refuses a mixamo-spec rig outright. Asking
+    // for mixamo names buys a skeleton no Tripo clip can ever be bound to,
+    // which is a rig nobody can use in a game. See `StudioConfig.rigSpec`.
+    rigSpec: env['TRIPO_RIG_SPEC']?.trim() || 'tripo',
     // `default` preserves what this pipeline got implicitly before the field was
     // sent at all, so turning it on changes nothing until somebody decides it
     // should. See `GenerationParams.orientation` for which way each one fails.

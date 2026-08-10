@@ -12,8 +12,10 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import provisional from '../../../assets/units/biped.skeleton.json' with { type: 'json' };
+import type { Skeleton as SkeletonDoc } from '../../units/types.js';
 import { DEFAULT_CANONICAL_HEIGHT } from '../../units/canonical-height.js';
+import { writeGlb } from '../../units/glb.js';
+import { buildReferenceUnit } from '../../units/reference-unit.js';
 import type { Skeleton } from '../../units/types.js';
 import { resolveFamilySkeleton } from './family.js';
 import { createJob } from './jobs.js';
@@ -21,6 +23,30 @@ import type { Job } from './types.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const MANNEQUIN = join(repoRoot, 'assets', 'units', 'dev', 'mannequin.glb');
+
+/**
+ * A provisional family document, owned by this file.
+ *
+ * It used to import `assets/units/biped.skeleton.json`, which was provisional
+ * at the time -- and whose entire purpose is to *stop* being provisional the
+ * first time a real rig is measured into it. The day that happened these tests
+ * started exercising a filled-in document while still calling it provisional,
+ * and failed for a reason that had nothing to do with the code under test.
+ *
+ * A fixture that changes when the thing it describes succeeds is not a fixture.
+ * Built from the reference unit instead: mixamo bones, no bind pose.
+ */
+const provisional: SkeletonDoc = {
+  ...buildReferenceUnit(DEFAULT_CANONICAL_HEIGHT).skeleton,
+  id: 'biped',
+  boneBudget: { min: 15, max: 30 },
+  sockets: [
+    { id: 'weapon.main', bone: 'mixamorig:RightHand' },
+    { id: 'weapon.off', bone: 'mixamorig:LeftHand' },
+    { id: 'fx.body', bone: 'mixamorig:Spine2' },
+  ],
+  bindPose: null,
+};
 
 let dir: string;
 
@@ -45,6 +71,8 @@ function job(patch: Partial<Job> = {}): Job {
         texture: true,
         pbr: false,
         orientation: 'default',
+        rigSpec: 'mixamo',
+        rigModelVersion: 'rig-v-test',
         clipIntents: ['idle'],
         outFormat: 'glb',
       },
@@ -141,6 +169,70 @@ describe('a provisional document (spec 115)', () => {
     expect(filled.boneBudget).toEqual(provisional.boneBudget);
     expect(filled.canonicalHeight).toBe(provisional.canonicalHeight);
     expect(filled.$comment).toBe(provisional.$comment);
+  });
+
+  it('widens a provisional bone budget to the rig it measured', () => {
+    // The real shape: a generated humanoid rig carries twist bones and arrives
+    // with 43, against a provisional budget of 15..30 written around the
+    // 25-bone mixamo contract. Keeping the guess made the filled-in document
+    // fail its own validator, and export refused the unit for being the shape
+    // it actually is -- which reads as "export does nothing".
+    const built = buildReferenceUnit(DEFAULT_CANONICAL_HEIGHT);
+    const extra = Array.from({ length: 18 }, (_, index) => ({
+      name: `L_Twist${index}`,
+      parent: 0,
+      translation: [0, 0.01 * index, 0] as const,
+    }));
+    const nodes = [...built.meshGlb.nodes, ...extra];
+    const twisty = join(dir, 'twisty.glb');
+    writeFileSync(twisty, writeGlb({ ...built.meshGlb, nodes, joints: nodes.map((_, index) => index) }));
+
+    const result = resolveFamilySkeleton({
+      job: job({ skeletonId: 'biped', artifacts: { meshGlb: null, riggedGlb: twisty, clipGlbs: {} } }),
+      unitsDir: dir,
+      skeletonRef: 'biped.skeleton.json',
+      canonicalHeight: DEFAULT_CANONICAL_HEIGHT,
+    });
+
+    expect(result.problem).toBeNull();
+    const written = read('biped.skeleton.json');
+    expect(written.bones.length).toBe(nodes.length);
+    // Widened to what is there, rather than the guess it contradicts.
+    expect(written.boneBudget.max).toBeGreaterThanOrEqual(nodes.length);
+    expect(written.boneBudget.min).toBeLessThanOrEqual(nodes.length);
+  });
+
+  it('drops the sockets a rig on another naming contract cannot satisfy', () => {
+    // The state the pipeline is actually in. `spec: tripo` is what the retarget
+    // requires, so every rig now comes back named `tripo::*` -- and the sockets
+    // this provisional document inherited name `mixamorig:` bones that are not
+    // in the measured list. Carried through, the document failed its own
+    // validator and export refused with five socket errors and no way forward.
+    const tripoRig = join(dir, 'tripo-rigged.glb');
+    const built = buildReferenceUnit(DEFAULT_CANONICAL_HEIGHT);
+    writeFileSync(
+      tripoRig,
+      writeGlb({
+        ...built.meshGlb,
+        nodes: built.meshGlb.nodes.map((node, index) => ({ ...node, name: `tripo::J_${index}` })),
+      }),
+    );
+
+    const result = resolveFamilySkeleton({
+      job: job({ skeletonId: 'biped', artifacts: { meshGlb: null, riggedGlb: tripoRig, clipGlbs: {} } }),
+      unitsDir: dir,
+      skeletonRef: 'biped.skeleton.json',
+      canonicalHeight: DEFAULT_CANONICAL_HEIGHT,
+    });
+
+    // Exported, not refused.
+    expect(result.problem).toBeNull();
+    expect(result.wrote).toBe('biped.skeleton.json');
+    expect(read('biped.skeleton.json').sockets).toEqual([]);
+    // And named, because a unit that cannot hold a weapon is a real loss.
+    expect(result.droppedSockets).toHaveLength(provisional.sockets.length);
+    expect(result.droppedSockets.join(' ')).toContain('weapon.main');
+    expect(result.droppedSockets.join(' ')).toContain('mixamorig:RightHand');
   });
 });
 

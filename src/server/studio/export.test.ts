@@ -35,6 +35,8 @@ function finishedJob(patch: Partial<Job> = {}): Job {
         texture: true,
         pbr: false,
     orientation: 'default',
+    rigSpec: 'mixamo',
+    rigModelVersion: 'rig-v-test',
         clipIntents: ['idle', 'run'],
         outFormat: 'glb',
       },

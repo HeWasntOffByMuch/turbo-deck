@@ -7,13 +7,20 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { cacheKey, canonicalClipIntents } from './cache.js';
+import { cacheKey, canonicalClipIntents, PIPELINE_REVISION } from './cache.js';
 import { ConfirmationStore, DEFAULT_CONFIRMATION_TTL_MS } from './confirm.js';
 import { checkCeilings, dayKeyOf, dayTotal, runTotal, summarize, type Ceilings, type LedgerEntry } from './ledger.js';
 import { DEFAULT_MIN_INTERVAL_MS, Pacer } from './pacing.js';
 import { createJob, beginStep, completeStep, failJob, recordArtifacts } from './jobs.js';
 import { DEFAULT_PRICES, projectCost, projectRemaining, retargetCalls, RETARGET_BATCH_SIZE } from './pricing.js';
-import { BIPED_ANIMATION_PRESETS, knownPresetsFor, presetFor, unknownPresets } from './tripo.js';
+import {
+  BIPED_ANIMATION_PRESETS,
+  CREATURE_RIG_MODEL,
+  HUMANOID_RIG_MODEL,
+  knownPresetsFor,
+  presetFor,
+  unknownPresets,
+} from './tripo.js';
 import type { GenerationParams } from './types.js';
 
 function params(patch: Partial<GenerationParams> = {}): GenerationParams {
@@ -23,6 +30,8 @@ function params(patch: Partial<GenerationParams> = {}): GenerationParams {
     texture: true,
     pbr: false,
     orientation: 'default',
+    rigSpec: 'mixamo',
+    rigModelVersion: 'rig-v-test',
     clipIntents: ['idle', 'run', 'swing'],
     outFormat: 'glb',
     ...patch,
@@ -63,6 +72,22 @@ describe('cacheKey', () => {
     // Orientation changes which way the mesh faces, so it changes the bytes --
     // and a cache that ignored it would hand back a model made the other way.
     expect(cacheKey(HASH, params({ orientation: 'align_image' }))).not.toBe(base);
+    // The rig spec decides what the skeleton is *called* and how many bones it
+    // has, so it changes every artifact after the mesh. Left out, changing
+    // `TRIPO_RIG_SPEC` and regenerating served the old job back as a free cache
+    // hit -- answering the one experiment the setting exists for with the
+    // artifacts it was meant to replace.
+    expect(cacheKey(HASH, params({ rigSpec: 'tripo' }))).not.toBe(base);
+    expect(cacheKey(HASH, params({ rigModelVersion: 'rig-v-other' }))).not.toBe(base);
+  });
+
+  it('carries the pipeline revision, so a fix on our side is not answered from the cache', () => {
+    // The one thing the parameters cannot describe: a change to what the client
+    // sends. Adding `rig_type` changed every rig that comes back without
+    // changing any request a caller makes, so the key has to move too or the
+    // first regeneration after the fix is served the artifacts it was meant to
+    // replace -- free, and looking exactly like the fix not working.
+    expect(cacheKey(HASH, params())).toContain(`pipeline=${PIPELINE_REVISION}`);
   });
 
   it('is readable, so a cache miss can be diagnosed by eye', () => {
@@ -418,30 +443,66 @@ describe('the animation vocabulary', () => {
   // clip, so a name the API does not know is charged for and returns nothing.
   it('sends a bare preset name', () => {
     expect(presetFor('walk')).toBe('preset:walk');
+    expect(presetFor('walk', 'biped')).toBe('preset:walk');
+    // Every other creature namespaces its own: a bare `preset:walk` sent to a
+    // quadruped asks a four-legged rig for a two-legged animation.
+    expect(presetFor('walk', 'quadruped')).toBe('preset:quadruped:walk');
+    expect(presetFor('march', 'serpentine')).toBe('preset:serpentine:march');
   });
 
-  it('knows what a biped has, and admits when it does not know', () => {
-    expect(knownPresetsFor('biped')).toEqual(BIPED_ANIMATION_PRESETS);
+  it('knows what a biped has on the creature model, and admits when it does not know', () => {
+    expect(knownPresetsFor('biped', CREATURE_RIG_MODEL)).toEqual(BIPED_ANIMATION_PRESETS);
     // Null when the rig check has not run yet: the biped list is the one that
-    // has been confirmed, and it is the only rig this repo authors today.
-    expect(knownPresetsFor(null)).toEqual(BIPED_ANIMATION_PRESETS);
-    expect(knownPresetsFor('quadruped')).toBeNull();
+    // has been confirmed for this model.
+    expect(knownPresetsFor(null, CREATURE_RIG_MODEL)).toEqual(BIPED_ANIMATION_PRESETS);
+    expect(knownPresetsFor('quadruped', CREATURE_RIG_MODEL)).toBeNull();
+  });
+
+  it('knows the humanoid model\'s far longer list too', () => {
+    // The eleven names are one rig model's biped vocabulary, not "the presets a
+    // biped has". The humanoid model has a hundred and one, transcribed from the
+    // reference page, and every one of the eleven is among them -- which is what
+    // lets a shortlist span both models.
+    const humanoid = knownPresetsFor('biped', HUMANOID_RIG_MODEL) ?? [];
+    expect(humanoid.length).toBe(101);
+    for (const preset of BIPED_ANIMATION_PRESETS) expect(humanoid).toContain(preset);
+    // The additions that make it worth having: a death, hit reactions, a cast.
+    for (const preset of ['defeat_02', 'hit_to_head', 'cast_a_spell', 'chop']) {
+      expect(humanoid).toContain(preset);
+    }
+    // And still no `death`, whatever a game programmer reaches for first.
+    expect(humanoid).not.toContain('death');
+  });
+
+  it('refuses an invented name on the humanoid model now that its list is known', () => {
+    // The check this restores: a retarget is a paid call per clip, so a name the
+    // model does not have is not a validation error, it is a charge for nothing.
+    expect(unknownPresets('biped', HUMANOID_RIG_MODEL, ['idle', 'death', 'cartwheel'])).toEqual([
+      'death',
+      'cartwheel',
+    ]);
+    expect(unknownPresets('biped', HUMANOID_RIG_MODEL, ['defeat_02', 'hit_to_head'])).toEqual([]);
+  });
+
+  it('refuses nothing on a rig model nobody has enumerated', () => {
+    expect(knownPresetsFor('biped', 'v9.9-unreleased')).toBeNull();
+    expect(unknownPresets('biped', 'v9.9-unreleased', ['whatever'])).toEqual([]);
   });
 
   it('names the intents a biped has no preset for', () => {
     // The four a game programmer reaches for first, and none of them exist.
-    expect(unknownPresets('biped', ['idle', 'attack', 'death', 'cast', 'hit'])).toEqual([
+    expect(unknownPresets('biped', CREATURE_RIG_MODEL, ['idle', 'attack', 'death', 'cast', 'hit'])).toEqual([
       'attack',
       'death',
       'cast',
       'hit',
     ]);
-    expect(unknownPresets('biped', ['idle', 'walk', 'slash', 'fall', 'hurt'])).toEqual([]);
+    expect(unknownPresets('biped', CREATURE_RIG_MODEL, ['idle', 'walk', 'slash', 'fall', 'hurt'])).toEqual([]);
   });
 
   it('refuses nothing when the vocabulary is unknown', () => {
     // Refusing against a guessed list would block work that would have
     // succeeded -- the opposite failure, but still a failure.
-    expect(unknownPresets('quadruped', ['pounce', 'nonsense'])).toEqual([]);
+    expect(unknownPresets('quadruped', CREATURE_RIG_MODEL, ['pounce', 'nonsense'])).toEqual([]);
   });
 });

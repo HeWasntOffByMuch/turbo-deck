@@ -212,8 +212,14 @@ interface Body {
   readonly unit?: DrivenUnit;
   readonly shot?: ShotRig;
   readonly highlight?: HighlightHandle;
-  /** World units above the feet to hang the health bar; see {@link Body.headroom}. */
-  readonly headroom: number;
+  /**
+   * World units above the feet to hang the health bar.
+   *
+   * Not readonly, because an authored unit's height is not known until its mesh
+   * has been fetched and skinned -- and until it is measured the bar hangs at a
+   * shared default that cut straight through the pig's head.
+   */
+  headroom: number;
 }
 
 /**
@@ -1229,6 +1235,51 @@ export class WorldScene {
 
     const { rig, typeId, radius, look } = appearance;
     let body: Body;
+
+    // Tried before anything else, and for the player as well as a monster
+    // (spec 111). The player is the body somebody looks at for hours, so it is
+    // the one that has to prove the format -- and an entity with no row in the
+    // table still falls through to exactly the rig it drew before.
+    const authoredId = authoredUnitFor(appearance);
+    const authoredUnit = authoredId === null ? null : authoredUnitAssets(authoredId);
+    if (authoredUnit) {
+      const group = new THREE.Group();
+      const unitRig = new UnitRig();
+      group.add(unitRig.object);
+      const driven: DrivenUnit = {
+        rig: unitRig,
+        machine: new UnitMachine({ unit: authoredUnit.unit, clipLib: authoredUnit.clipLib }),
+        previous: null,
+        previousPosition: null,
+        bones: 0,
+      };
+      // Fire and forget: the group is in the scene from this frame and the mesh
+      // appears in it whenever the fetch lands. Awaiting here would mean
+      // `bodyFor` could not answer a frame that is already drawing.
+      void unitRig.load(authoredUnit.assets, authoredUnit.unit.id).then(() => {
+        castsShadows(group);
+        driven.bones = unitRig.stats().bones;
+        // Measured off the body that actually loaded rather than left at the
+        // shared default. A generated unit stands at whatever its import scale
+        // brings it to, and the default is a number picked for the procedural
+        // mech rig -- on a taller body the health bar hangs inside the head.
+        const height = unitRig.drawnHeight();
+        if (height > 0) authoredBody.headroom = height + HEADROOM_GAP;
+      });
+      const authoredBody: Body = {
+        group,
+        kind: rig === 'player' ? 'player' : 'monster',
+        unit: driven,
+        highlight: attachHighlight(group),
+        headroom: DEFAULT_HEADROOM,
+      };
+      this.scene.add(authoredBody.group);
+      // `castsShadows` runs again once the mesh has actually loaded, above --
+      // the group is empty at this point and there is nothing yet to cast one.
+      this.bodies.set(id, authoredBody);
+      return authoredBody;
+    }
+
     if (rig === 'player') {
       // Every player gets its own tuning object rather than sharing one: the
       // panel that edits a figure lives in the sandbox, and a shared record here
@@ -1256,46 +1307,16 @@ export class WorldScene {
       // than anything measured off the mesh.
       body = { group: shot.group, kind: 'projectile', shot, headroom: DEFAULT_HEADROOM };
     } else {
-      // An authored unit if one has been made for this type, and the procedural
-      // rig otherwise (spec 111). Additive on purpose: the roster moves over
-      // when there is a roster, and until then nothing that draws today stops.
-      const authored = authoredUnitFor(appearance);
-      const built = authored === null ? null : authoredUnitAssets(authored);
-      if (built) {
-        const group = new THREE.Group();
-        const rig = new UnitRig();
-        group.add(rig.object);
-        // Fire and forget: the group is in the scene from this frame and the
-        // mesh appears in it whenever the fetch lands. Awaiting here would mean
-        // `bodyFor` could not answer a frame that is already drawing.
-        const driven: DrivenUnit = {
-          rig,
-          machine: new UnitMachine({ unit: built.unit, clipLib: built.clipLib }),
-          previous: null,
-          previousPosition: null,
-          bones: 0,
-        };
-        void rig.load(built.assets, built.unit.id).then(() => {
-          castsShadows(group);
-          driven.bones = rig.stats().bones;
-        });
-        body = {
-          group,
-          kind: 'monster',
-          unit: driven,
-          highlight: attachHighlight(group),
-          headroom: DEFAULT_HEADROOM,
-        };
-      } else {
-        const mech = new MechRig(typeId);
-        body = {
-          group: mech.group,
-          kind: 'monster',
-          mech,
-          highlight: attachHighlight(mech.group),
-          headroom: DEFAULT_HEADROOM,
-        };
-      }
+      // No authored unit for this type, so the procedural rig it has always
+      // had. Additive on purpose: the roster moves over when there is a roster.
+      const mech = new MechRig(typeId);
+      body = {
+        group: mech.group,
+        kind: 'monster',
+        mech,
+        highlight: attachHighlight(mech.group),
+        headroom: DEFAULT_HEADROOM,
+      };
     }
 
     this.scene.add(body.group);

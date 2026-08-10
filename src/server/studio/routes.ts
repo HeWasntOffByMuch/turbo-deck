@@ -71,6 +71,12 @@ function paramsFrom(body: Record<string, unknown>, config: StudioConfig): Genera
     // comes back, so it is a property of the roster rather than a per-request
     // whim. `TRIPO_ORIENTATION` moves it.
     orientation: config.orientation,
+    // Copied off the config for the same reason `orientation` is: it changes
+    // what comes back, so it has to reach the cache key, and a job has to
+    // record what it was actually rigged with rather than what the server
+    // happens to be set to when somebody reads the record later.
+    rigSpec: config.rigSpec,
+    rigModelVersion: config.rigModelVersion,
     clipIntents,
     outFormat: 'glb',
   };
@@ -102,9 +108,9 @@ function retryKey(jobId: string): string {
  * than refused against a list nobody has verified.
  */
 function clipVocabularyProblem(skeletonId: string, params: GenerationParams): string | null {
-  const unknown = unknownPresets(skeletonId, params.clipIntents);
+  const unknown = unknownPresets(skeletonId, params.rigModelVersion, params.clipIntents);
   if (unknown.length === 0) return null;
-  const known = knownPresetsFor(skeletonId) ?? [];
+  const known = knownPresetsFor(skeletonId, params.rigModelVersion) ?? [];
   return `no ${skeletonId} animation preset is called ${unknown.map((name) => `"${name}"`).join(', ')}. The ones there are: ${known.join(', ')}.`;
 }
 
@@ -158,6 +164,14 @@ export function studioRoutes(deps: RouteDeps): readonly Route[] {
           modelVersion: config.modelVersion,
           defaultFaceLimit: config.defaultFaceLimit,
           orientation: config.orientation,
+          rigModelVersion: config.rigModelVersion,
+          rigSpec: config.rigSpec,
+          // What this rig model can actually animate, so the picker offers the
+          // vocabulary the server will really send rather than a list compiled
+          // against whichever model was configured when the UI was written.
+          // Empty means "not enumerated here", and the picker says so instead
+          // of pretending the roster is eleven clips long.
+          clipPresets: knownPresetsFor('biped', config.rigModelVersion) ?? [],
           ceilings: config.ceilings,
           prices: config.prices,
           maxTimeScale: config.maxTimeScale,
@@ -367,6 +381,84 @@ export function studioRoutes(deps: RouteDeps): readonly Route[] {
     },
 
     /**
+     * Which way this unit faces, and which way its clips go (spec 116).
+     *
+     * Free, offline and read-only: it opens files that are already on disk and
+     * measures them. It is here rather than only in `scripts/probe-facing.ts`
+     * because the moment somebody notices a unit walking backwards they are
+     * looking at the library card, not at a terminal -- and the answer decides
+     * whether the fix is a regeneration, a retarget, or something in our own
+     * import. That is a decision worth not guessing at.
+     *
+     * The rigged model, never the raw generation: the unrigged mesh has no
+     * skeleton, so there would be nothing to compare the clips against.
+     */
+    {
+      method: 'GET',
+      pattern: '/api/studio/jobs/:id/facing',
+      handler: async ({ response, params }) => {
+        const job = store.getJob(params['id'] ?? '');
+        if (!job) return sendJson(response, 404, { error: 'no such job' });
+        const meshPath = job.artifacts.riggedGlb;
+        if (meshPath === null) {
+          return sendJson(response, 409, { error: 'this job has no rigged model, so there is no rig to measure' });
+        }
+
+        const { existsSync, readFileSync } = await import('node:fs');
+        const { basename } = await import('node:path');
+        const read = (path: string): { name: string; bytes: Uint8Array } | null =>
+          existsSync(path) ? { name: basename(path), bytes: new Uint8Array(readFileSync(path)) } : null;
+
+        const mesh = read(meshPath);
+        if (mesh === null) {
+          return sendJson(response, 404, { error: 'the record names a rigged model that is not on disk' });
+        }
+        // A clip the record names but the disk does not have is a *missing*
+        // clip, not an absent one: reported as a row that says so rather than
+        // dropped from the list. Dropping it is how a stale path hides -- the
+        // report then looks complete and is quietly about one clip fewer, which
+        // is exactly what happened the first time this ran.
+        const clips: { name: string; bytes: Uint8Array }[] = [];
+        const missing: string[] = [];
+        for (const path of Object.values(job.artifacts.clipGlbs)) {
+          const clip = read(path);
+          if (clip === null) missing.push(path);
+          else clips.push(clip);
+        }
+
+        const { facingReport } = await import('../../units/facing.js');
+        try {
+          const report = facingReport(mesh, clips);
+          return sendJson(response, 200, {
+            jobId: job.id,
+            report: {
+              ...report,
+              clips: [
+                ...report.clips,
+                ...missing.map((path) => ({
+                  source: basename(path),
+                  animation: '',
+                  strideForward: null,
+                  rootTravel: null,
+                  strideLength: 0,
+                  moving: false,
+                  degreesFromRig: null,
+                  restDrift: [],
+                  error: `the job record names ${path}, which is not on disk`,
+                })),
+              ],
+            },
+          });
+        } catch (cause) {
+          // A `.glb` this cannot read is a finding, not a crash -- and naming it
+          // is the whole point, since "Draco-compressed" and "backwards" need
+          // very different next moves.
+          return sendJson(response, 422, { error: cause instanceof Error ? cause.message : String(cause) });
+        }
+      },
+    },
+
+    /**
      * Stages a finished job into `assets/units/` and validates what it wrote.
      *
      * Deliberately refuses anything that has not succeeded: half a job's files
@@ -414,7 +506,19 @@ export function studioRoutes(deps: RouteDeps): readonly Route[] {
           importScale: family.importScale,
           nowIso: new Date(now()).toISOString(),
         });
-        return sendJson(response, result.ok ? 200 : 422, result);
+        // A dropped socket is not an export failure and must not be silent
+        // either: the unit is written, and it cannot hold a weapon. `pending` is
+        // exactly the list for "what could not be written yet, and why".
+        const pending =
+          family.droppedSockets.length === 0
+            ? result.pending
+            : [
+                ...result.pending,
+                `the ${job.skeletonId} rig does not have the bones these sockets name, so they were left out of ` +
+                  `the family document: ${family.droppedSockets.join(', ')}. Nothing can be attached to this unit ` +
+                  `until they are re-pointed at bones it does have.`,
+              ];
+        return sendJson(response, result.ok ? 200 : 422, { ...result, pending });
       },
     },
 

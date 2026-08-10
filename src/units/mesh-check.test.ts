@@ -256,8 +256,20 @@ describe('classifyBindPose (spec 115)', () => {
   });
 
   it('says what it could not measure rather than guessing', () => {
-    expect(classifyBindPose([]).shape).toBe('posed');
+    // `unmeasured`, not `posed`. The two findings read the same to a machine
+    // and could not be further apart to a person: one of them ends by telling
+    // somebody to regenerate the model, and a rig this cannot read may have a
+    // perfect bind pose. Generated rigs are not on the mixamo contract --
+    // `L_Upperarm`, `L_Forearm`, `L_Hand` -- so this is the common case, not
+    // the exotic one.
+    expect(classifyBindPose([]).shape).toBe('unmeasured');
     expect(classifyBindPose([]).reason).toContain('no arm chain');
+  });
+
+  it('warns rather than failing the build when it cannot read the rig', () => {
+    const issues = checkBindPose(classifyBindPose([]));
+    expect(issues.map((issue) => issue.severity)).toEqual(['warning']);
+    expect(issues[0]?.code).toBe('mesh.bindpose.unmeasured');
   });
 });
 

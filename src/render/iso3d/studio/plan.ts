@@ -38,10 +38,19 @@ export interface JobSummary {
  * which is *near* a death without being one, so nothing here quietly aliases the
  * two.
  *
- * Duplicated from `BIPED_ANIMATION_PRESETS` on the server rather than imported,
- * because this file is bundled into the browser and that one is the module that
- * holds the API key's client. `plan.test.ts` asserts the two agree, so the copy
- * cannot drift in silence.
+ * The **recommended** set, not the available one. The rig model decides what is
+ * available -- the creature model has eleven presets and the humanoid model has
+ * a hundred and one -- so the full vocabulary is asked for at runtime and comes
+ * back on `/config`. Baking it in here would mean this tab quietly describes
+ * whichever model was configured on the day it was written, which is what
+ * happened: the tick boxes went on offering eleven clips for weeks after the
+ * pipeline moved to a model with a hundred.
+ *
+ * What stays here is the shortlist worth a label and a default, because a
+ * hundred and one tick boxes is not a choice, it is a search problem. Every id
+ * below exists in both models' vocabularies, which is what `plan.test.ts`
+ * checks -- a tick box with no preset behind it is a paid call that buys
+ * nothing.
  *
  * The defaults are the smallest set a unit needs to stand, move and fight.
  */

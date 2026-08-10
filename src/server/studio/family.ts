@@ -53,6 +53,23 @@ export interface FamilyResult {
   /** Why there is no document, in words a person can act on. */
   readonly problem: string | null;
   /**
+   * Sockets the provisional document declared that this rig cannot satisfy.
+   *
+   * A provisional family keeps everything already decided -- including sockets,
+   * which is right when the measured rig speaks the same bone vocabulary the
+   * sockets were written in. It stopped being right the moment the rigs came
+   * back on Tripo's own naming: the derived bone list is `tripo::*` and every
+   * inherited socket hangs off a `mixamorig:` bone that is not in it, so the
+   * document fails its own validator and the export refuses with five errors
+   * nobody can act on.
+   *
+   * Dropped rather than fatal, and *named* rather than dropped quietly. A unit
+   * with no weapon socket is a unit that cannot hold a weapon, which is a real
+   * loss and has to be visible -- see `specs/117`, which is where sockets stop
+   * being bone names and become roles resolved against the rig.
+   */
+  readonly droppedSockets: readonly string[];
+  /**
    * What brings this mesh to the family's canonical height, or undefined when
    * there was no rig to measure.
    *
@@ -78,6 +95,7 @@ export function resolveFamilySkeleton(request: FamilyRequest): FamilyResult {
     return {
       doc: null,
       wrote: null,
+      droppedSockets: [],
       problem:
         `assets/units/${skeletonRef} does not validate, so nothing can be exported against it: ` +
         existing.issues.map(formatIssue).join('; '),
@@ -94,6 +112,7 @@ export function resolveFamilySkeleton(request: FamilyRequest): FamilyResult {
     return {
       doc: established,
       wrote: null,
+      droppedSockets: [],
       problem: null,
       importScale: scaleFor(rigPath, established.canonicalHeight),
     };
@@ -103,6 +122,7 @@ export function resolveFamilySkeleton(request: FamilyRequest): FamilyResult {
     return {
       doc: null,
       wrote: null,
+      droppedSockets: [],
       problem:
         `there is no measured skeleton at assets/units/${skeletonRef} and this job has no rigged .glb to measure ` +
         'one from. Export a job that completed the rig stage, or write the document by hand.',
@@ -127,25 +147,59 @@ export function resolveFamilySkeleton(request: FamilyRequest): FamilyResult {
     return {
       doc: null,
       wrote: null,
+      droppedSockets: [],
       problem: `could not measure a skeleton off this job's rig: ${derived.issues.map(formatIssue).join('; ')}`,
     };
   }
 
-  const validated = validateSkeleton(derived.skeleton);
+  // An inherited socket names a bone in the vocabulary it was *written* in, and
+  // a measured rig may not speak it -- which is not hypothetical any more, it is
+  // every rig the pipeline now produces. Carried through unchecked, the document
+  // fails its own validator and export refuses with a list of socket errors and
+  // no way forward, since the only fix would be hand-editing the family file.
+  //
+  // So the ones this rig cannot satisfy come out, and are named. Deliberately
+  // not remapped: guessing which numbered limb is the right hand is the job
+  // `specs/117` exists to do properly, and a socket silently pointing at the
+  // wrong bone is worse than one that is absent.
+  const boneNames = new Set(derived.skeleton.bones.map((bone) => bone.name));
+  const declared = derived.skeleton.sockets ?? [];
+  const kept = declared.filter((socket) => boneNames.has(socket.bone));
+  const droppedSockets = declared
+    .filter((socket) => !boneNames.has(socket.bone))
+    .map((socket) => `${socket.id} (wanted "${socket.bone}")`);
+
+  // The inherited bone budget gets the same treatment, and for the same reason.
+  // A provisional document's budget is a guess about a rig nobody had measured
+  // -- 15..30, written around the 25-bone mixamo contract -- and a real rig
+  // arrives with twist bones and 43. Keeping the guess makes the filled-in
+  // document contradict its own bind pose and fail validation, which reads as
+  // "export is broken" rather than as "that number was always provisional".
+  // The bind pose is the measurement; the budget is a description of it.
+  const boneCount = derived.skeleton.bones.length;
+  const inherited = derived.skeleton.boneBudget;
+  const budgetFits = boneCount >= inherited.min && boneCount <= inherited.max;
+  const boneBudget = budgetFits ? inherited : { min: boneCount, max: boneCount };
+
+  const skeleton = { ...derived.skeleton, sockets: kept, boneBudget };
+
+  const validated = validateSkeleton(skeleton);
   if (validated.value === null) {
     return {
       doc: null,
       wrote: null,
+      droppedSockets,
       problem:
         `the skeleton measured off this rig does not validate, so it is not written: ` +
         validated.issues.map(formatIssue).join('; '),
     };
   }
 
-  writeFileSync(path, `${JSON.stringify(derived.skeleton, null, 2)}\n`, 'utf8');
+  writeFileSync(path, `${JSON.stringify(skeleton, null, 2)}\n`, 'utf8');
   return {
     doc: validated.value,
     wrote: skeletonRef,
+    droppedSockets,
     problem: null,
     importScale: derived.measuredHeight > 0 ? scaleFor(rigPath, validated.value.canonicalHeight) : undefined,
   };
@@ -171,6 +225,7 @@ function compare(
   return {
     doc: null,
     wrote: null,
+    droppedSockets: [],
     problem:
       `this rig does not match the "${established.id}" family recorded in assets/units/${skeletonRef}, and the ` +
       `family's clips are what this unit would be animated with: ${issues.map(formatIssue).join('; ')}`,

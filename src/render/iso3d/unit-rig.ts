@@ -63,9 +63,18 @@ const DEFAULT_COLOR = 0xc9b79a;
  * the one thing the generator got right.
  */
 function retexture(mesh: THREE.Mesh): void {
-  const source = mesh.material as THREE.Material & { color?: THREE.Color };
+  const source = mesh.material as THREE.Material & {
+    color?: THREE.Color;
+    map?: THREE.Texture | null;
+  };
   mesh.material = new THREE.MeshLambertMaterial({
     color: source.color?.clone() ?? new THREE.Color(DEFAULT_COLOR),
+    // The texture comes with it. Dropping the map was fine for as long as the
+    // only authored unit was the reference mannequin, which has none -- and it
+    // rendered every *generated* unit as a flat-shaded lump of its own base
+    // colour, which is what a texture the generator was paid to produce looks
+    // like when the loader throws it away.
+    ...(source.map ? { map: source.map } : {}),
     flatShading: true,
   });
 }
@@ -90,6 +99,37 @@ function findRootBone(model: THREE.Object3D): string | null {
   return found;
 }
 
+/**
+ * The root bone and every named node above it, up to the model.
+ *
+ * The skin's joints are the bones that *deform* the mesh, and a real rig moves
+ * the body with a node that does not: this project's generated rigs carry the
+ * travel on `Root`, which sits above `Hip` and is not skinned. So the topmost
+ * joint is `Hip`, the strip ran against `Hip`, `Root.position` was never
+ * matched, and the import reported itself clean while the body walked out of
+ * the scene -- with a preview that showed it doing so.
+ *
+ * Everything at or above the root positions the body; nothing at or above it
+ * poses the body. So all of them are fair game, and taking the chain rather
+ * than one name is what makes this robust to a rig with two such nodes, which
+ * is common enough (`Armature` over `Root` over `Hip`).
+ */
+function findRootChain(model: THREE.Object3D): readonly string[] {
+  const rootBone = findRootBone(model);
+  if (rootBone === null) return [];
+
+  const chain: string[] = [];
+  let node: THREE.Object3D | null = model.getObjectByName(rootBone) ?? null;
+  while (node !== null && node !== model) {
+    if (node.name !== '') chain.push(node.name);
+    node = node.parent;
+  }
+  // The model's own node too: a scene root carrying the travel is still travel,
+  // and a track bound to it moves the same body the same way.
+  if (model.name !== '') chain.push(model.name);
+  return chain;
+}
+
 export class UnitRig {
   /** The thing to add to a scene. Always present, empty until `load` resolves. */
   readonly object = new THREE.Group();
@@ -102,6 +142,8 @@ export class UnitRig {
   private readonly stripped: string[] = [];
   /** The skeleton's own root bone, found in the loaded rig. */
   private rootBone: string | null = null;
+  /** The root and every node above it, which is where travel actually lives. */
+  private rootChain: readonly string[] = [];
 
   /** Why the load failed, or null. */
   get error(): string | null {
@@ -155,6 +197,7 @@ export class UnitRig {
       this.object.add(model);
       this.model = model;
       this.rootBone = findRootBone(model);
+      this.rootChain = findRootChain(model);
       this.mixer = new THREE.AnimationMixer(model);
       this.actions.clear();
       this.clipDurations.clear();
@@ -164,12 +207,15 @@ export class UnitRig {
         const clipGltf = await loader.loadAsync(url);
         const clip = clipGltf.animations[0];
         if (!clip) continue;
-        // The rig's own root, not a name from a document. The document might
-        // describe a different rig entirely -- which is exactly what happened:
-        // a generated unit was checked against the reference skeleton's
-        // `mixamorig:Hips`, matched nothing, stripped nothing, and walked away
-        // from where the server had put it.
-        this.stripRootMotion(clip, unitId, id, this.rootBone ?? assets.rootBone);
+        // The rig's own root *and everything above it*, not a name from a
+        // document. The document might describe a different rig entirely --
+        // which is exactly what happened: a generated unit was checked against
+        // the reference skeleton's `mixamorig:Hips`, matched nothing, stripped
+        // nothing, and walked away from where the server had put it. And the
+        // chain rather than the single topmost joint, because the node that
+        // carries the travel is usually not a joint at all.
+        const roots = this.rootChain.length > 0 ? this.rootChain : [assets.rootBone ?? ''].filter(Boolean);
+        this.stripRootMotion(clip, unitId, id, roots);
 
         const action = this.mixer.clipAction(clip);
         action.play();
@@ -197,14 +243,17 @@ export class UnitRig {
    * and the console says so, `npm run validate:units` fails on the same
    * condition, and the Studio panel shows it.
    */
-  private stripRootMotion(clip: THREE.AnimationClip, unitId: string, clipId: string, rootBone?: string | null): void {
-    if (rootBone === undefined || rootBone === null) return;
+  private stripRootMotion(clip: THREE.AnimationClip, unitId: string, clipId: string, roots: readonly string[]): void {
+    if (roots.length === 0) return;
     const names = clip.tracks.map((track) => track.name);
-    const offending = rootMotionTrackNames(names, rootBone);
+    const offending = rootMotionTrackNames(names, roots);
     if (offending.length === 0) return;
 
     clip.tracks = clip.tracks.filter((track) => !offending.includes(track.name));
-    const message = rootMotionMessage(unitId, clipId, [rootBone]);
+    // Named by what was actually stripped rather than by everything checked:
+    // the chain is several nodes and usually only one of them was moving.
+    const stripped = offending.map((name) => name.slice(0, -'.position'.length));
+    const message = rootMotionMessage(unitId, clipId, stripped);
     this.stripped.push(message);
     console.error(`[units] ${message}`);
   }
@@ -267,6 +316,20 @@ export class UnitRig {
     const found: Record<string, number> = {};
     for (const [id, seconds] of this.clipDurations) found[id] = seconds * 1000;
     return found;
+  }
+
+  /**
+   * How tall the loaded body stands, in world units.
+   *
+   * Measured off the model as drawn -- import scale already applied -- because
+   * that is the number anything hung above its head needs. Zero when nothing
+   * has loaded, so a caller can tell "not yet" from "flat".
+   */
+  drawnHeight(): number {
+    if (!this.model) return 0;
+    const box = new THREE.Box3().setFromObject(this.model);
+    const height = box.max.y - box.min.y;
+    return Number.isFinite(height) && height > 0 ? height : 0;
   }
 
   /** How many triangles and bones the loaded model actually has. */

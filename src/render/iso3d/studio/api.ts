@@ -23,7 +23,7 @@
 import type { CostProjection } from '../../../server/studio/pricing.js';
 import type { Ceilings, CreditSummary } from '../../../server/studio/ledger.js';
 import type { JobArtifacts, JobStatus, Stage, StepRecord } from '../../../server/studio/types.js';
-import type { Clip, Issue, StateMachine } from '../../../units/index.js';
+import type { Clip, FacingReport, Issue, StateMachine } from '../../../units/index.js';
 
 const TOKEN_KEY = 'turbo-deck.studio.token';
 
@@ -82,6 +82,20 @@ export interface StudioConfigView {
   readonly defaultFaceLimit: number;
   /** How generated meshes are oriented; see the server's `GenerationParams`. */
   readonly orientation: 'default' | 'align_image';
+  /** Which auto-rig model, which decides both the skeleton and the clip list. */
+  readonly rigModelVersion: string;
+  readonly rigSpec: string;
+  /**
+   * Every animation preset the configured rig model can retarget.
+   *
+   * Asked for rather than compiled in. The two rig models have different
+   * libraries -- eleven presets against a hundred and one -- so a list baked
+   * into this tab is a list that silently describes whichever model was
+   * configured on the day it was written. Empty means the server has not
+   * enumerated this model, and the picker has to say so rather than imply the
+   * roster is short.
+   */
+  readonly clipPresets: readonly string[];
   readonly ceilings: Ceilings;
   readonly prices: Record<string, number>;
   readonly maxTimeScale: number;
@@ -281,6 +295,19 @@ export class StudioApi {
 
   cancel(jobId: string): Promise<JobView> {
     return this.call(`/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }) as Promise<JobView>;
+  }
+
+  /**
+   * What the unit's own bytes say about which way it faces (spec 116).
+   *
+   * Free and read-only: the server opens files it already has. Measured there
+   * rather than here even though `facing.ts` is pure and would run in the tab,
+   * because the artifacts are on the server's disk and pulling four `.glb`s
+   * across to answer a yes/no question is a lot of megabytes for a sentence.
+   */
+  async facing(jobId: string): Promise<FacingReport> {
+    const body = (await this.call(`/jobs/${encodeURIComponent(jobId)}/facing`)) as { report: FacingReport };
+    return body.report;
   }
 
   /**

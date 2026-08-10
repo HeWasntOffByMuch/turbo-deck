@@ -62,7 +62,12 @@ function nameOf(value: unknown): string {
  * cannot read is a problem for the validator that *parsed* it, and a checker
  * that throws would replace that file's real error with this one's.
  */
-export function rootMotionChannels(gltf: unknown, rootBone: string): readonly RootMotionChannel[] {
+export function rootMotionChannels(
+  gltf: unknown,
+  /** The root and everything above it -- see {@link rootMotionTrackNames}. */
+  roots: string | readonly string[],
+): readonly RootMotionChannel[] {
+  const wanted = new Set(typeof roots === 'string' ? [roots] : roots);
   if (typeof gltf !== 'object' || gltf === null) return [];
   const doc = gltf as GltfIsh;
   const nodes = Array.isArray(doc.nodes) ? doc.nodes : [];
@@ -75,7 +80,7 @@ export function rootMotionChannels(gltf: unknown, rootBone: string): readonly Ro
       const path = nameOf(channel.target?.path);
       if (typeof index !== 'number' || path !== 'translation') continue;
       const bone = nameOf(nodes[index]?.name);
-      if (bone !== rootBone) continue;
+      if (!wanted.has(bone)) continue;
       found.push({ animation: nameOf(animation.name), bone, path });
     }
   }
@@ -90,13 +95,28 @@ export function rootMotionChannels(gltf: unknown, rootBone: string): readonly Ro
  * exported, so both are matched. The property is compared exactly: `.position`
  * is root motion and `.positionSomething` is a track this has no opinion about.
  */
-export function rootMotionTrackNames(trackNames: readonly string[], rootBone: string): readonly string[] {
+export function rootMotionTrackNames(
+  trackNames: readonly string[],
+  /**
+   * The skeleton's root **and every node above it**.
+   *
+   * A list rather than one name, because a real rig puts the travel on a node
+   * the skin does not deform: `Root` sits above `Hip`, carries the character
+   * across the floor, and is not one of the skin's joints. Checking only the
+   * topmost *joint* then finds nothing, strips nothing, and reports a clean
+   * import while the body slides away from where the server put it -- which is
+   * exactly what shipped. Everything at or above the root positions the body;
+   * nothing at or above it poses the body.
+   */
+  roots: string | readonly string[],
+): readonly string[] {
+  const wanted = new Set(typeof roots === 'string' ? [roots] : roots);
   return trackNames.filter((name) => {
     if (!name.endsWith('.position')) return false;
     const target = name.slice(0, -'.position'.length);
     // `.bones[Hips]` and `Hips` are the same bone said two ways.
     const scoped = /\[([^\]]+)\]$/.exec(target);
-    return (scoped?.[1] ?? target) === rootBone;
+    return wanted.has(scoped?.[1] ?? target);
   });
 }
 
@@ -107,4 +127,46 @@ export function rootMotionMessage(unitId: string, clipId: string, bones: readonl
     `The server owns where a body is, so root motion is stripped at import -- ` +
     `the clip will play in place. Re-export it with the root locked if that is not what you meant.`
   );
+}
+
+/**
+ * The same document with its root translation channels taken out.
+ *
+ * Stripping at import was always the plan and is not enough on its own: the
+ * *committed* clip still carries the travel, so `npm run validate:units` fails
+ * on every generated clip, and the asset in the repository is not the thing the
+ * game plays. Both are fixed by baking it out once, at export, where the file is
+ * written anyway.
+ *
+ * Channels only. The sampler and its accessor are left where they are, orphaned
+ * but valid -- pruning them means rebuilding the buffer, and a rewrite that
+ * touches the binary chunk is a much larger promise than this needs to make.
+ * The bytes cost nothing at runtime; three loads the channels, not the file.
+ */
+export function withoutRootMotion(
+  gltf: Record<string, unknown>,
+  roots: string | readonly string[],
+): { readonly json: Record<string, unknown>; readonly removed: readonly RootMotionChannel[] } {
+  const removed = rootMotionChannels(gltf, roots);
+  if (removed.length === 0) return { json: gltf, removed };
+
+  const wanted = new Set(typeof roots === 'string' ? [roots] : roots);
+  const nodes = Array.isArray(gltf['nodes']) ? (gltf['nodes'] as { name?: unknown }[]) : [];
+  const animations = Array.isArray(gltf['animations']) ? (gltf['animations'] as Record<string, unknown>[]) : [];
+
+  const stripped = animations.map((animation) => {
+    const channels = Array.isArray(animation['channels'])
+      ? (animation['channels'] as { target?: { node?: unknown; path?: unknown } }[])
+      : [];
+    return {
+      ...animation,
+      channels: channels.filter((channel) => {
+        const index = channel.target?.node;
+        if (typeof index !== 'number' || channel.target?.path !== 'translation') return true;
+        const name = nodes[index]?.name;
+        return !wanted.has(typeof name === 'string' ? name : '');
+      }),
+    };
+  });
+  return { json: { ...gltf, animations: stripped }, removed };
 }

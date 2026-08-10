@@ -17,8 +17,11 @@
  * build would reject.
  */
 
-import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
+import { readNodeTree, splitGlb } from '../../units/glb-read.js';
+import { writeGlbContainer } from '../../units/glb.js';
+import { withoutRootMotion } from '../../units/root-motion.js';
 import { validateClipLib, validateSkeleton, validateUnitBundle, validateUnitDef } from '../../units/validate.js';
 import type { Clip, ClipLib, Issue, StateMachine, UnitDef } from '../../units/index.js';
 import type { Job } from './types.js';
@@ -64,6 +67,49 @@ function ensureDir(dir: string): void {
   mkdirSync(dir, { recursive: true });
 }
 
+/** The family's root bone, from the document that describes the family. */
+function rootChainOf(skeletonDoc: unknown): string | null {
+  const parsed = validateSkeleton(skeletonDoc).value;
+  return parsed?.bones.find((bone) => bone.parent === null)?.name ?? null;
+}
+
+/**
+ * A clip with its root translation removed, and the names of what went.
+ *
+ * The chain is resolved against the *clip's own* node tree rather than the
+ * skeleton document, because the node carrying the travel is usually not a bone
+ * at all -- `Root` under an `Armature`, neither of them skinned.
+ */
+function bakeClip(source: string, rootBone: string | null): { bytes: Uint8Array; removed: readonly string[] } {
+  const bytes = new Uint8Array(readFileSync(source));
+  if (rootBone === null) return { bytes, removed: [] };
+
+  // A file this cannot read is copied through untouched. Refusing here would
+  // turn "we could not parse one clip" into "the export produced nothing",
+  // which is the wrong trade: the bake and the validator read these files too
+  // and both say far more about *why* than this could.
+  let glb;
+  let nodes;
+  try {
+    glb = splitGlb(bytes);
+    nodes = readNodeTree(glb);
+  } catch {
+    return { bytes, removed: [] };
+  }
+
+  const chain: string[] = [];
+  let at = nodes.find((node) => node.name === rootBone) ?? null;
+  for (let guard = nodes.length + 1; at !== null && guard > 0; guard -= 1) {
+    if (at.name !== '') chain.push(at.name);
+    at = at.parent === null ? null : (nodes[at.parent] ?? null);
+  }
+  if (chain.length === 0) return { bytes, removed: [] };
+
+  const { json, removed } = withoutRootMotion(glb.json, chain);
+  if (removed.length === 0) return { bytes, removed: [] };
+  return { bytes: writeGlbContainer(json, glb.bin), removed: [...new Set(removed.map((c) => c.bone))] };
+}
+
 /**
  * Copies the job's binaries in and writes whatever documents it has the facts
  * for.
@@ -78,6 +124,23 @@ export function exportJob(request: ExportRequest): ExportResult {
 
   const unitDir = join(unitsDir, job.unitId);
   ensureDir(unitDir);
+
+  /**
+   * The skeleton reference as written *inside* the documents.
+   *
+   * Every ref in this format resolves against the directory of the document
+   * holding it, which is right and is what makes a unit directory portable. But
+   * the family's skeleton is shared by every unit of the family, so it lives at
+   * the units root rather than inside any one of them -- and a bare
+   * `biped.skeleton.json` written into `assets/units/pig/` therefore resolves to
+   * `assets/units/pig/biped.skeleton.json`, which is nowhere.
+   *
+   * The caller's `skeletonRef` is relative to the units root, so from a unit's
+   * own directory it is exactly one level up. Written that way rather than
+   * copying the family document into each unit, which would give a shared
+   * contract N divergent copies.
+   */
+  const skeletonRefFromUnit = skeletonRef.includes('/') ? skeletonRef : `../${skeletonRef}`;
   const written: string[] = [];
   const pending: string[] = [];
   const issues: Issue[] = [];
@@ -107,15 +170,34 @@ export function exportJob(request: ExportRequest): ExportResult {
     copyIn(job.artifacts.meshGlb, `${job.unitId}.unrigged.glb`);
   }
 
+  // The root bone and everything above it: those position the body, and their
+  // translation is baked out below. Everything under the root -- the pelvis
+  // included -- poses the body, and a pelvis that bobs and shifts weight is the
+  // animation doing its job, so it stays.
+  const rootChain = rootChainOf(skeletonDoc);
+
   const clipDir = join(unitDir, 'clips');
   const clipSources = new Map<string, string>();
+  const strippedClips: string[] = [];
   for (const [intent, source] of Object.entries(job.artifacts.clipGlbs)) {
     if (!existsSync(source)) continue;
     ensureDir(clipDir);
     const target = join(clipDir, basename(source));
-    copyFileSync(source, target);
+    // Baked rather than copied. Stripping at import was always the plan and is
+    // not enough on its own: the committed clip still carries the travel, so
+    // `validate:units` fails on every generated clip and the asset in the
+    // repository is not the thing the game plays.
+    const baked = bakeClip(source, rootChain);
+    writeFileSync(target, baked.bytes);
+    if (baked.removed.length > 0) strippedClips.push(`${intent} (${baked.removed.join(', ')})`);
     clipSources.set(intent, `clips/${basename(source)}`);
     if (!written.includes(rel(target))) written.push(rel(target));
+  }
+  if (strippedClips.length > 0) {
+    pending.push(
+      `root motion was baked out of ${strippedClips.length} clip(s) -- ${strippedClips.join('; ')}. ` +
+        'The server owns where a body is, so these play in place; the originals in .studio/ are untouched.',
+    );
   }
 
   // --- the clip library -----------------------------------------------------
@@ -129,7 +211,7 @@ export function exportJob(request: ExportRequest): ExportResult {
       $comment: `Generated by Studio export from job ${job.id}.`,
       formatVersion: 1,
       id: clipLibId,
-      skeletonRef,
+      skeletonRef: skeletonRefFromUnit,
       clips,
     };
     const result = validateClipLib(doc);
@@ -151,7 +233,7 @@ export function exportJob(request: ExportRequest): ExportResult {
       formatVersion: 1,
       id: job.unitId,
       meshRef: `${job.unitId}.glb`,
-      skeletonRef,
+      skeletonRef: skeletonRefFromUnit,
       clipLibRef: `${clipLibId}.cliplib.json`,
       provenance: {
         tripoTaskIds: {

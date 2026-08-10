@@ -22,7 +22,7 @@ import { FakeTripo } from './fake-tripo.js';
 import { createJob } from './jobs.js';
 import { StudioPipeline } from './pipeline.js';
 import { studioPaths, StudioStore } from './store.js';
-import { TripoClient } from './tripo.js';
+import { CREATURE_RIG_MODEL, HUMANOID_RIG_MODEL, TripoClient } from './tripo.js';
 import type { GenerationParams, Job } from './types.js';
 
 const HASH = 'a'.repeat(64);
@@ -37,6 +37,11 @@ function params(patch: Partial<GenerationParams> = {}): GenerationParams {
     texture: true,
     pbr: false,
     orientation: 'default',
+    rigSpec: 'mixamo',
+    // The config default, so the assertion that the rig gets its *own* version
+    // rather than the generation one still means what it meant when the value
+    // came off the config instead of off the job.
+    rigModelVersion: 'v2.5-20260210',
     clipIntents: ['idle', 'run'],
     outFormat: 'glb',
     ...patch,
@@ -243,11 +248,24 @@ describe('the happy path', () => {
     expect(harness.fake.callsTo('/animations/retarget')).toHaveLength(7);
   });
 
-  it('sends a bare preset name, not one namespaced by rig type', () => {
-    // An earlier draft sent `preset:biped:walk` on the strength of a third-party
-    // integration note. The real API takes `preset:walk`, and the rig type is
-    // read for a different purpose entirely: choosing which vocabulary the names
-    // are checked against.
+  it('sends a biped\'s presets bare', () => {
+    // An earlier draft namespaced everything -- `preset:biped:walk` -- on the
+    // strength of a third-party integration note, and the real API refused it.
+    scriptSuccess(harness.fake);
+    seedJob(harness);
+    return harness.pipeline.run('job-1').then(() => {
+      const sent = harness.fake
+        .callsTo('/animations/retarget')
+        .map((call) => (call.body as { animations: string[] }).animations);
+      expect(sent).toEqual([['preset:idle'], ['preset:run']]);
+    });
+  });
+
+  it('namespaces every other creature\'s', () => {
+    // And then this file over-corrected: bare for *everything*, which is right
+    // for the only rig type anyone had generated and silently wrong for the
+    // first quadruped, where `preset:walk` asks a four-legged rig for a
+    // two-legged animation. The documented form is `preset:quadruped:walk`.
     scriptSuccess(harness.fake);
     harness.fake.script('/animations/rig-check', { creditsConsumed: 0, riggable: true, rigType: 'quadruped' });
     seedJob(harness);
@@ -255,7 +273,7 @@ describe('the happy path', () => {
       const sent = harness.fake
         .callsTo('/animations/retarget')
         .map((call) => (call.body as { animations: string[] }).animations);
-      expect(sent).toEqual([['preset:idle'], ['preset:run']]);
+      expect(sent).toEqual([['preset:quadruped:idle'], ['preset:quadruped:run']]);
     });
   });
 
@@ -383,6 +401,92 @@ describe('the happy path', () => {
       expect(body['spec']).toBe('mixamo');
       expect(body['input']).toBe('task-1');
     });
+  });
+
+  it('defaults to the humanoid rig model, because the roster is bipeds', async () => {
+    // Not a preference: the creature model returned a *generic* skeleton for a
+    // human -- numbered limb chains, no mixamo name anywhere, `spec: mixamo`
+    // sent and ignored -- and no unit document in this project can address one.
+    // A quadruped has to opt into the creature model, which is the one that has
+    // a quadruped rig at all.
+    const config = loadStudioConfig({ TRIPO_API_KEY: 'k' }, '/tmp/studio-default');
+    expect(config.rigModelVersion).toBe(HUMANOID_RIG_MODEL);
+    expect(config.rigModelVersion).not.toBe(CREATURE_RIG_MODEL);
+    // And it stays overridable, since that is how the creature model is reached.
+    expect(
+      loadStudioConfig({ TRIPO_API_KEY: 'k', TRIPO_RIG_MODEL_VERSION: CREATURE_RIG_MODEL }, '/tmp/studio-default')
+        .rigModelVersion,
+    ).toBe(CREATURE_RIG_MODEL);
+  });
+
+  it('tells the rig what creature the free check said it was', async () => {
+    // The bug this exists to stop coming back. `rig_type` is optional, and
+    // leaving it out is not neutral: the auto-rig builds a generic
+    // numbered-limb skeleton, `spec: mixamo` has no named biped to name, and
+    // the unit that comes back answers to none of the bone names the sockets,
+    // the skeleton document, the family check and the export all use. The
+    // check is free, always runs, and already knew the answer.
+    scriptSuccess(harness.fake);
+    seedJob(harness);
+    await harness.pipeline.run('job-1');
+    const body = harness.fake.callsTo('/animations/rig')[0]?.body as Record<string, unknown>;
+    expect(body['rig_type']).toBe('biped');
+    expect(body['spec']).toBe('mixamo');
+  });
+
+  it('passes the check\'s own word through, whatever creature it names', async () => {
+    // Not mapped, not validated against a list of ours: it is the API's
+    // vocabulary going back to the API. A quadruped that we rewrote to `biped`
+    // because our preset table only knows bipeds would be rigged as the wrong
+    // animal entirely.
+    harness.fake
+      .script('/generation/image-to-model', { creditsConsumed: 20, modelUrl: MESH_URL })
+      .script('/animations/rig-check', { creditsConsumed: 0, riggable: true, rigType: 'quadruped' })
+      .script('/animations/rig', { creditsConsumed: 10, modelUrl: RIG_URL })
+      .script('/animations/retarget', { creditsConsumed: 10, modelUrl: CLIP_URL });
+    seedJob(harness, { establishesRigFamily: false });
+    await harness.pipeline.run('job-1');
+    const body = harness.fake.callsTo('/animations/rig')[0]?.body as Record<string, unknown>;
+    expect(body['rig_type']).toBe('quadruped');
+  });
+
+  it('omits the creature entirely when the check named none', async () => {
+    // Absent is the API's own default. A guess would be a rig built for an
+    // animal this model may not be, which is worse than an unspecified one --
+    // and worse than it sounds, because it is paid for either way.
+    harness.fake
+      .script('/generation/image-to-model', { creditsConsumed: 20, modelUrl: MESH_URL })
+      .script('/animations/rig-check', { creditsConsumed: 0, riggable: true })
+      .script('/animations/rig', { creditsConsumed: 10, modelUrl: RIG_URL })
+      .script('/animations/retarget', { creditsConsumed: 10, modelUrl: CLIP_URL });
+    seedJob(harness, { establishesRigFamily: false });
+    await harness.pipeline.run('job-1');
+    const body = harness.fake.callsTo('/animations/rig')[0]?.body as Record<string, unknown>;
+    expect('rig_type' in body).toBe(false);
+  });
+
+  it('rigs with the spec the job was created with, not the one the server has now', async () => {
+    // The reason this matters: `spec` decides what the skeleton is called, and
+    // a rig that comes back in a generator's own vocabulary answers to none of
+    // the names the unit format addresses bones by. A config edit between
+    // submitting a job and resuming it must not rig half a roster each way.
+    scriptSuccess(harness.fake);
+    const job = createJob(
+      {
+        id: 'job-1',
+        unitId: 'grunt',
+        skeletonId: 'biped',
+        establishesRigFamily: true,
+        referenceImageSha256: HASH,
+        params: params({ rigSpec: 'tripo' }),
+      },
+      0,
+    );
+    harness.store.saveReferenceImage('job-1', 'ref.png', 'image/png', new Uint8Array([1]));
+    harness.store.saveJob(job);
+    await harness.pipeline.run('job-1');
+    const body = harness.fake.callsTo('/animations/rig')[0]?.body as Record<string, unknown>;
+    expect(body['spec']).toBe('tripo');
   });
 
   it('polls until a task finishes', async () => {

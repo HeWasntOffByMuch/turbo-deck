@@ -419,8 +419,18 @@ export class StudioPipeline {
       () =>
         this.deps.client.rig({
           sourceTaskId: source,
-          modelVersion: this.deps.config.rigModelVersion,
-          spec: this.deps.config.rigSpec,
+          // The job's, not the server's. A job carries what it was priced and
+          // cached under, so a config change between submitting and resuming
+          // cannot rig half a roster one way and half the other -- and a record
+          // of what a unit was rigged with is the first thing anybody wants
+          // when its bones turn out to be named something unexpected.
+          modelVersion: job.params.rigModelVersion,
+          // What the free rig-check already told us this creature is. It was
+          // read, stored and used only to vet preset names, while the call that
+          // actually builds the skeleton was never told -- so every rig came
+          // back generic, and `spec: mixamo` had no named biped to name.
+          rigType: job.rigType,
+          spec: job.params.rigSpec,
           outFormat: job.params.outFormat,
         }),
       deadline,
@@ -461,9 +471,9 @@ export class StudioPipeline {
     // of it is sent. Blocked rather than failed, because nothing was attempted;
     // and the fix is a new job with real names rather than a resume, which is
     // what the message has to say.
-    const unknown = unknownPresets(job.rigType, job.params.clipIntents);
+    const unknown = unknownPresets(job.rigType, job.params.rigModelVersion, job.params.clipIntents);
     if (unknown.length > 0) {
-      const known = knownPresetsFor(job.rigType) ?? [];
+      const known = knownPresetsFor(job.rigType, job.params.rigModelVersion) ?? [];
       return this.save(
         blockJob(
           job,
@@ -516,7 +526,11 @@ export class StudioPipeline {
         () =>
           this.deps.client.retarget({
             sourceTaskId: source,
-            animations: [presetFor(intent)],
+            // Namespaced by creature for anything that is not a biped: a
+            // quadruped's walk is `preset:quadruped:walk`, and asking it for a
+            // bare `preset:walk` is asking a four-legged rig for a two-legged
+            // animation -- a paid call for the wrong clip at best.
+            animations: [presetFor(intent, job.rigType)],
             outFormat: job.params.outFormat,
           }),
         deadline,

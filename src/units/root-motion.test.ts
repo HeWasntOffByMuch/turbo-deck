@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { rootMotionChannels, rootMotionMessage, rootMotionTrackNames } from './root-motion.js';
+import {
+  rootMotionChannels,
+  rootMotionMessage,
+  rootMotionTrackNames,
+  withoutRootMotion,
+} from './root-motion.js';
 
 function gltf(channels: readonly { node: number; path: string }[], animationName = 'walk'): unknown {
   return {
@@ -80,5 +85,88 @@ describe('rootMotionMessage', () => {
     expect(message).toContain('"Hips"');
     expect(message).toContain('stripped at import');
     expect(message).toContain('root locked');
+  });
+});
+
+/**
+ * The rig that got past this check, and what it cost.
+ *
+ * A real generated rig carries its travel on a node the skin does not deform:
+ * `Root` sits above `Hip`, moves the character across the floor, and is not one
+ * of the skin's joints. The importer asked three for the topmost *joint*, got
+ * `Hip`, matched nothing, stripped nothing, and reported a clean import -- while
+ * the preview showed the body sliding out of the scene.
+ */
+describe('a rig whose travel is above the skin', () => {
+  const named = (names: readonly string[]): unknown => ({
+    nodes: names.map((name) => ({ name })),
+    animations: [{ name: 'walk', channels: [{ target: { node: 0, path: 'translation' } }] }],
+  });
+
+  it('misses the travel when only the topmost joint is checked', () => {
+    // The bug, pinned so the fix cannot quietly regress to it.
+    expect(rootMotionChannels(named(['Root', 'Hip', 'Spine01']), 'Hip')).toEqual([]);
+    expect(rootMotionTrackNames(['Root.position', 'Hip.quaternion'], 'Hip')).toEqual([]);
+  });
+
+  it('finds it when the whole chain above the root is checked', () => {
+    const found = rootMotionChannels(named(['Root', 'Hip', 'Spine01']), ['Hip', 'Root', 'Armature']);
+    expect(found.map((channel) => channel.bone)).toEqual(['Root']);
+    expect(rootMotionTrackNames(['Root.position', 'Hip.quaternion'], ['Hip', 'Root'])).toEqual(['Root.position']);
+  });
+
+  it('still ignores translation on a bone that merely poses the body', () => {
+    // The chain is the root and its ancestors, never a shoulder that slides.
+    expect(rootMotionTrackNames(['Spine01.position'], ['Hip', 'Root', 'Armature'])).toEqual([]);
+  });
+
+  it('takes a single name too, so every existing caller still reads', () => {
+    expect(rootMotionTrackNames(['Hips.position'], 'Hips')).toEqual(['Hips.position']);
+  });
+});
+
+describe('withoutRootMotion', () => {
+  const doc = (): Record<string, unknown> => ({
+    nodes: [{ name: 'Armature' }, { name: 'Root' }, { name: 'Hip' }, { name: 'L_Calf' }],
+    animations: [
+      {
+        name: 'walk',
+        channels: [
+          { target: { node: 1, path: 'translation' } },
+          { target: { node: 0, path: 'translation' } },
+          { target: { node: 1, path: 'rotation' } },
+          { target: { node: 2, path: 'translation' } },
+          { target: { node: 3, path: 'rotation' } },
+        ],
+      },
+    ],
+  });
+
+  it('removes translation on the root chain and nothing else', () => {
+    const { json, removed } = withoutRootMotion(doc(), ['Root', 'Armature']);
+    expect(removed.map((channel) => channel.bone).sort()).toEqual(['Armature', 'Root']);
+    const channels = (json['animations'] as { channels: { target: { node: number; path: string } }[] }[])[0]
+      ?.channels;
+    // The root's *rotation* survives: a clip that turns the body is doing its
+    // job, and only the travel is the server's business.
+    expect(channels).toEqual([
+      { target: { node: 1, path: 'rotation' } },
+      { target: { node: 2, path: 'translation' } },
+      { target: { node: 3, path: 'rotation' } },
+    ]);
+  });
+
+  it('keeps the pelvis, which bobs and shifts weight on purpose', () => {
+    // The mistake this pins: `Hip` is the root bone's *child*, not the root.
+    // Stripping it takes the weight shift out of every walk in the library.
+    const { removed } = withoutRootMotion(doc(), ['Root', 'Armature']);
+    expect(removed.map((channel) => channel.bone)).not.toContain('Hip');
+  });
+
+  it('hands back the same document when there is nothing to remove', () => {
+    const original = doc();
+    const { json, removed } = withoutRootMotion(original, ['NoSuchBone']);
+    expect(removed).toEqual([]);
+    expect(json).toBe(original);
   });
 });
