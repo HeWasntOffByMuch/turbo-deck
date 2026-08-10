@@ -32,6 +32,8 @@ function params(patch: Partial<GenerationParams> = {}): GenerationParams {
     texture: true,
     pbr: false,
     orientation: 'default',
+    rigSpec: 'mixamo',
+    rigModelVersion: 'rig-v-test',
     clipIntents: ['idle', 'run'],
     outFormat: 'glb',
     ...patch,

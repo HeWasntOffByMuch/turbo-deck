@@ -419,8 +419,13 @@ export class StudioPipeline {
       () =>
         this.deps.client.rig({
           sourceTaskId: source,
-          modelVersion: this.deps.config.rigModelVersion,
-          spec: this.deps.config.rigSpec,
+          // The job's, not the server's. A job carries what it was priced and
+          // cached under, so a config change between submitting and resuming
+          // cannot rig half a roster one way and half the other -- and a record
+          // of what a unit was rigged with is the first thing anybody wants
+          // when its bones turn out to be named something unexpected.
+          modelVersion: job.params.rigModelVersion,
+          spec: job.params.rigSpec,
           outFormat: job.params.outFormat,
         }),
       deadline,

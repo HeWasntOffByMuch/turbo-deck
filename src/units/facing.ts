@@ -1050,6 +1050,28 @@ function readClip(
     });
   }
 
+  // Root translation, which is a second and independent witness to the clip's
+  // intended direction -- and one that has to be reported carefully, because it
+  // is *not* what anybody is looking at. The importer strips root translation
+  // (spec 111), so by the time a body is drawn this motion is gone and the
+  // sliding it would have caused never happens. What it establishes is which
+  // way the clip was authored to travel, which is exactly the question when the
+  // gait and the geometry disagree.
+  const rootAngle = angleBetween(facing.rootTravel, rig.forward);
+  if (rootAngle !== null && rootAngle > BACKWARDS_DEGREES) {
+    findings.push({
+      severity: 'error',
+      title: `${clip.name}: root motion`,
+      degrees: rootAngle,
+      message:
+        'the clip translates its root towards the rig\'s BACK, so it was retargeted in a frame turned around ' +
+        'from this rig. Note that this translation is stripped at import and never reaches the screen -- ' +
+        'stripping it stops the sliding and does not fix the gait, which is measured separately below. ' +
+        'Rotating the unit does not fix it either: the mismatch is between the clip and the skeleton inside ' +
+        'one file, and a yaw turns both together.',
+    });
+  }
+
   // A clip with no travel is an idle, and an idle has no opinion about forward.
   // Reporting one would be noise at best and a wrong diagnosis at worst: the
   // estimator fits a slope through a foot that never moves.

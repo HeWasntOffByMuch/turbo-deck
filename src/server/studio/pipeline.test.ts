@@ -37,6 +37,11 @@ function params(patch: Partial<GenerationParams> = {}): GenerationParams {
     texture: true,
     pbr: false,
     orientation: 'default',
+    rigSpec: 'mixamo',
+    // The config default, so the assertion that the rig gets its *own* version
+    // rather than the generation one still means what it meant when the value
+    // came off the config instead of off the job.
+    rigModelVersion: 'v2.5-20260210',
     clipIntents: ['idle', 'run'],
     outFormat: 'glb',
     ...patch,
@@ -383,6 +388,30 @@ describe('the happy path', () => {
       expect(body['spec']).toBe('mixamo');
       expect(body['input']).toBe('task-1');
     });
+  });
+
+  it('rigs with the spec the job was created with, not the one the server has now', async () => {
+    // The reason this matters: `spec` decides what the skeleton is called, and
+    // a rig that comes back in a generator's own vocabulary answers to none of
+    // the names the unit format addresses bones by. A config edit between
+    // submitting a job and resuming it must not rig half a roster each way.
+    scriptSuccess(harness.fake);
+    const job = createJob(
+      {
+        id: 'job-1',
+        unitId: 'grunt',
+        skeletonId: 'biped',
+        establishesRigFamily: true,
+        referenceImageSha256: HASH,
+        params: params({ rigSpec: 'tripo' }),
+      },
+      0,
+    );
+    harness.store.saveReferenceImage('job-1', 'ref.png', 'image/png', new Uint8Array([1]));
+    harness.store.saveJob(job);
+    await harness.pipeline.run('job-1');
+    const body = harness.fake.callsTo('/animations/rig')[0]?.body as Record<string, unknown>;
+    expect(body['spec']).toBe('tripo');
   });
 
   it('polls until a task finishes', async () => {

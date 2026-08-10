@@ -38,6 +38,11 @@ export function cacheKey(referenceImageSha256: string, params: GenerationParams)
     `texture=${params.texture ? 1 : 0}`,
     `pbr=${params.pbr ? 1 : 0}`,
     `orient=${params.orientation}`,
+    // The rig identity, because a different skeleton spec is a different set of
+    // artifacts start to finish -- different bone names, so different clips
+    // bound to them. Without it, flipping `TRIPO_RIG_SPEC` and regenerating
+    // returns the job made with the old one and reports it as free.
+    `rig=${params.rigModelVersion}/${params.rigSpec}`,
     `format=${params.outFormat}`,
     `clips=${clips}`,
   ].join('|');

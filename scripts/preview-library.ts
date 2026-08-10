@@ -60,6 +60,8 @@ function seededJob(): Job {
     texture: true,
     pbr: false,
     orientation: 'default',
+    rigSpec: 'mixamo',
+    rigModelVersion: 'rig-v-test',
     clipIntents: ['idle', 'walk', 'run', 'slash'],
     outFormat: 'glb',
   };

@@ -71,6 +71,12 @@ function paramsFrom(body: Record<string, unknown>, config: StudioConfig): Genera
     // comes back, so it is a property of the roster rather than a per-request
     // whim. `TRIPO_ORIENTATION` moves it.
     orientation: config.orientation,
+    // Copied off the config for the same reason `orientation` is: it changes
+    // what comes back, so it has to reach the cache key, and a job has to
+    // record what it was actually rigged with rather than what the server
+    // happens to be set to when somebody reads the record later.
+    rigSpec: config.rigSpec,
+    rigModelVersion: config.rigModelVersion,
     clipIntents,
     outFormat: 'glb',
   };

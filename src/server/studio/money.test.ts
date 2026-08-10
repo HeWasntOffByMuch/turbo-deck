@@ -23,6 +23,8 @@ function params(patch: Partial<GenerationParams> = {}): GenerationParams {
     texture: true,
     pbr: false,
     orientation: 'default',
+    rigSpec: 'mixamo',
+    rigModelVersion: 'rig-v-test',
     clipIntents: ['idle', 'run', 'swing'],
     outFormat: 'glb',
     ...patch,
@@ -63,6 +65,13 @@ describe('cacheKey', () => {
     // Orientation changes which way the mesh faces, so it changes the bytes --
     // and a cache that ignored it would hand back a model made the other way.
     expect(cacheKey(HASH, params({ orientation: 'align_image' }))).not.toBe(base);
+    // The rig spec decides what the skeleton is *called* and how many bones it
+    // has, so it changes every artifact after the mesh. Left out, changing
+    // `TRIPO_RIG_SPEC` and regenerating served the old job back as a free cache
+    // hit -- answering the one experiment the setting exists for with the
+    // artifacts it was meant to replace.
+    expect(cacheKey(HASH, params({ rigSpec: 'tripo' }))).not.toBe(base);
+    expect(cacheKey(HASH, params({ rigModelVersion: 'rig-v-other' }))).not.toBe(base);
   });
 
   it('is readable, so a cache miss can be diagnosed by eye', () => {
