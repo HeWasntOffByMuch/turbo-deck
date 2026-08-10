@@ -69,9 +69,11 @@ is solved from that clearance across every tier count the species grows, against
 the *species'* longest trunk, so every variant is a slice of one profile and two
 neighbours of different sizes are the same thickness at the same height. Clamped
 into a band: below it there would be no visible taper at all, above it a spike.
-Where the trunk is actually *looked* at — the bare length under the lowest frond
-— that works out at a few percent, which is the "slightly" this is after; the
-thin end is the buried one.
+
+It solves to 0.53 for the fir and 0.83 for the pine, whose topmost frond drifts
+furthest off the axis and so leaves the least room. Read where the trunk is
+actually *looked* at, that is a base of 6 narrowing to 4.4 by the fir's lowest
+frond and to 3.8 by the pine's; the thin end — 2.8 and 1.1 — is the buried one.
 
 `tierCover` accordingly subtracts the trunk's **radius at that height** rather
 than a box's half-diagonal, which is the other half of where the room comes

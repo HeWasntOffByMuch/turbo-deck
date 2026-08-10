@@ -32,7 +32,9 @@ import { hashUnit2 } from '../../shared/hash.js';
  *   polygon at the full cone radius on the rim's own bearings, and its inradius
  *   is `R (1-u) cos(halfGap)`. Hold every gap to the tip step or under
  *   ({@link frondGap}, asserted in the tests) and that is the cone's own
- *   `CONE_COVER`, unchanged. `trunkHeight` does not move for a cutout.
+ *   `CONE_COVER`, unchanged: a cutout costs the trunk none of the cover it is
+ *   hidden by. Since spec 122 the hem is also *where the trunk ends* -- the
+ *   first height at which the frond above it has closed all the way round.
  * - **A crown still reaches its species' width.** One tip is always at zero
  *   lift, because the lifts are normalized to their own minimum.
  *

@@ -122,6 +122,13 @@ interface PropPart {
    */
   readonly grownAt?: number;
   /**
+   * The highest tier count this part is drawn for, `grownAt` being the floor
+   * (spec 122). Set with it to pick out *exactly* one count: the conifer trunks
+   * are one geometry per count, and a tree draws the one that ends in the frond
+   * it grew.
+   */
+  readonly grownUpTo?: number;
+  /**
    * Which entry of the autumn ramp this part takes, defaulting to `tier`. The
    * conifers want the ramp to climb with the tier, dark base to bright crown;
    * the lobed tree wants two tones alternating and nothing else.
@@ -235,11 +242,15 @@ const PINE_TIERS: readonly (readonly [radius: number, height: number, baseY: num
 /** Tier ramp, dark at the base to bright at the crown, however many tiers there are. */
 const TIER_COLORS = [PALETTE.leafDeep, PALETTE.leafMid, PALETTE.leafBright, PALETTE.leafBright] as const;
 
-/** A stack of cones on a square column: the fir and the pine. */
+/** A stack of fronds on a round tapered column: the fir and the pine. */
 interface ConiferShape {
   readonly kind: 'conifer';
-  /** Trunk box: a square column this wide. Its height is derived, below. */
-  readonly trunkWidth: number;
+  /** Trunk radius at the ground. Its height and its taper are derived, below. */
+  readonly trunkRadius: number;
+  /** Sides of the trunk's cross-section. */
+  readonly trunkSegments: number;
+  /** Rings up the trunk. What lets the wind *curve* it rather than tip it. */
+  readonly trunkRings: number;
   readonly tiers: readonly (readonly [radius: number, height: number, baseY: number])[];
   /** The tier counts an instance may take; the hash picks one, so repeats weight it. */
   readonly tierCounts: readonly number[];
@@ -262,7 +273,12 @@ type SpeciesShape = ConiferShape | LobedShape;
 
 const FIR: ConiferShape = {
   kind: 'conifer',
-  trunkWidth: 12,
+  trunkRadius: 6,
+  trunkSegments: 7,
+  // Enough rings that the wind's quadratic bend draws a curve up the trunk
+  // rather than tipping a straight stick, and no more: a conifer's trunk is
+  // drawn a thousand times over and most of its length is behind foliage.
+  trunkRings: 4,
   tiers: FIR_TIERS,
   tierCounts: [2, 3, 3, 4],
   driftMax: 5,
@@ -276,7 +292,9 @@ const FIR: ConiferShape = {
  */
 const PINE: ConiferShape = {
   kind: 'conifer',
-  trunkWidth: 12,
+  trunkRadius: 6,
+  trunkSegments: 7,
+  trunkRings: 4,
   tiers: PINE_TIERS,
   tierCounts: [2, 2, 3],
   driftMax: 9,
@@ -361,7 +379,7 @@ function tierSway(shape: ConiferShape, tier: number): { drift: number; lean: num
  * cap there at any depth. Saying so is what keeps the trunk's height derived
  * rather than derived-from-a-solid-that-is-no-longer-solid.
  */
-function tierCover(shape: ConiferShape, tier: number, y: number, asymmetry: number): number {
+function tierReach(shape: ConiferShape, tier: number, y: number, asymmetry: number): number {
   const tierSpec = shape.tiers[tier];
   if (!tierSpec) return -Infinity;
   const [radius, height, baseY] = tierSpec;
@@ -374,67 +392,113 @@ function tierCover(shape: ConiferShape, tier: number, y: number, asymmetry: numb
   if (along > height + EPSILON) return -Infinity;
   const reach = radius * (1 - Math.min(Math.max(along, 0), height) / height) * CONE_COVER;
   const offAxis = Math.abs(sway.drift * asymmetry) + Math.abs(dy * Math.tan(lean));
-  return reach - offAxis - (shape.trunkWidth / 2) * Math.SQRT2;
+  return reach - offAxis;
+}
+
+/**
+ * How much foliage there is to spare around a trunk that ends at `y`.
+ *
+ * The frond's reach less the trunk's own -- a *radius* since spec 122 and not a
+ * box's half-diagonal, which is half of where the room at the top of a tall
+ * trunk comes from: a round column has no corner that has to clear as well.
+ */
+function tierCover(shape: ConiferShape, tier: number, y: number, asymmetry: number): number {
+  return tierReach(shape, tier, y, asymmetry) - coniferTrunkRadius(shape, y);
 }
 
 /** Foliage left to spare around the trunk's buried top, in prop-local units. */
 const TRUNK_BURIAL = 2;
 
 /**
- * How tall the trunk stands -- derived, not authored, because where it *ends*
- * is not a free choice. A trunk is a solid column that stops in mid-air, so
- * unless its top is buried inside a frond the cap and its corners hang out
- * through the cone's sloped side: the bug this replaces stood the fir's trunk
- * up to 86, where the frond around it has narrowed to a 3-unit radius, and the
- * top 5 units of column stuck out into open air on every fir in the world.
+ * How tall a conifer's trunk stands -- derived per *tree*, not per species
+ * (spec 122), because where it ends is not a free choice and the answer is
+ * different for a sapling and for a full-grown spire.
  *
- * So the trunk grows to the highest point its own species still covers: the
- * last height where a tier's cone clears the trunk's corner with room to spare,
- * at the worst lean and drift an instance can take (|asymmetry| = 1, which is
- * the worst case -- both terms only grow with it). Only the tiers *every*
- * instance grows count, since a two-tier sapling has no crown to hide in.
+ * It ends at the **hem of the topmost frond this tree grew**: the height at
+ * which that frond has closed all the way round (spec 121), and so the first
+ * height at which it hides what is inside it. Lower and the cap shows through a
+ * cutout; higher and the trunk is climbing through a crown it has already
+ * reached. What it replaces was one number per species -- the highest point the
+ * tiers *every* instance grows still covered -- which stopped a four-tier fir's
+ * trunk inside its second frond with two more hanging above it off nothing.
  */
-function buriedTrunkHeight(shape: ConiferShape): number {
-  const guaranteed = Math.min(...shape.tierCounts);
-  let best = 0;
-  for (let tier = 0; tier < guaranteed; tier++) {
-    const [, height, baseY] = shape.tiers[tier] ?? [0, 0, 0];
-    // The tier leans about its own centre, so its base sits here rather than at
-    // `baseY`. A cone narrows with height far faster than leaning slides it
-    // sideways, so cover falls off monotonically from that base to the tip: a
-    // tier covers the trunk at all only if it covers it down there, and one
-    // bisection then finds the height where it stops.
-    //
-    // "Down there" is the frond's **hem**, not the tier's base plane (spec 121):
-    // below the hem the cutouts leave gaps, so that is the lowest height the
-    // question can be asked at, and starting any lower would ask it where the
-    // answer is `-Infinity` and drop the tier on the spot.
-    const centre = baseY + height / 2;
-    const hem = frondHem(tierRim(shape, tier)) * height;
-    let lo = centre + (hem - height / 2) * Math.cos(tierSway(shape, tier).lean);
-    let hi = baseY + height;
-    if (tierCover(shape, tier, lo, 1) < TRUNK_BURIAL) continue;
-    for (let i = 0; i < 48; i++) {
-      const mid = (lo + hi) / 2;
-      if (tierCover(shape, tier, mid, 1) >= TRUNK_BURIAL) lo = mid;
-      else hi = mid;
-    }
-    best = Math.max(best, lo);
-  }
-  return best;
+function coniferTrunkHeight(shape: ConiferShape, tierCount: number): number {
+  const tier = Math.max(0, Math.min(tierCount, shape.tiers.length) - 1);
+  const [, height, baseY] = shape.tiers[tier] ?? [0, 0, 0];
+  const hem = frondHem(tierRim(shape, tier)) * height;
+  // Measured on the *leaned* frond, at the worst lean an instance can take: the
+  // tier tips about its own centre, so a fixed world height sits further down
+  // the cone the harder it leans, and a trunk that ended at the upright hem
+  // would stand a hair proud of the hem on the trees that lean furthest.
+  const centre = baseY + height / 2;
+  return centre + (hem - height / 2) * Math.cos(tierSway(shape, tier).lean);
 }
 
-const TRUNK_HEIGHT: Record<TreeSpecies, number> = {
-  fir: buriedTrunkHeight(FIR),
-  pine: buriedTrunkHeight(PINE),
+/** The longest trunk a species grows: the profile every shorter one is a slice of. */
+function coniferTrunkSpan(shape: ConiferShape): number {
+  return Math.max(...shape.tierCounts.map((count) => coniferTrunkHeight(shape, count)));
+}
+
+/**
+ * How much of its base radius a trunk loses over its species' longest trunk --
+ * derived from the burial, for the same reason the height is (spec 122).
+ *
+ * The cap has to sit inside the frond above it by {@link TRUNK_BURIAL}, and at
+ * that frond's hem the room is whatever the tier table and the drift leave: the
+ * pine's topmost frond reaches 13.2 from the axis there and may slide 9 of that
+ * off the trunk's own axis, which leaves about a unit of trunk. So the taper is
+ * solved from the tightest variant the species grows, against the *species'*
+ * longest trunk rather than each variant's own -- one profile, sliced at
+ * different heights, so two neighbours of different sizes are the same
+ * thickness at the same height.
+ *
+ * Clamped into a band at both ends: under {@link TAPER_MIN} there is no visible
+ * taper at all, over {@link TAPER_MAX} the trunk is a spike, and a tier table
+ * that asked for more than that is asking for a frond that cannot hide a trunk
+ * -- which `trunkTopCover` is what says so, rather than this quietly obliging.
+ */
+const TAPER_MIN = 0.35;
+const TAPER_MAX = 0.85;
+
+function coniferTrunkTaper(shape: ConiferShape): number {
+  const span = coniferTrunkSpan(shape);
+  let taper = TAPER_MIN;
+  for (const count of new Set(shape.tierCounts)) {
+    const y = coniferTrunkHeight(shape, count);
+    if (y <= EPSILON) continue;
+    const tier = Math.min(count, shape.tiers.length) - 1;
+    // At the worst lean and drift an instance can take: both terms only grow
+    // with |asymmetry|, so 1 is the case to survive.
+    const room = tierReach(shape, tier, y, 1) - TRUNK_BURIAL;
+    const allowed = Math.max(0, room);
+    taper = Math.max(taper, (1 - allowed / shape.trunkRadius) * (span / y));
+  }
+  return Math.min(TAPER_MAX, taper);
+}
+
+/** Solved once per species, on first use -- adding a third conifer cannot forget it. */
+const TRUNK_TAPERS = new Map<ConiferShape, number>();
+
+function trunkTaper(shape: ConiferShape): number {
+  const known = TRUNK_TAPERS.get(shape);
+  if (known !== undefined) return known;
+  const taper = coniferTrunkTaper(shape);
+  TRUNK_TAPERS.set(shape, taper);
+  return taper;
+}
+
+/** The trunk's radius at height `y`, on the one profile the species' variants share. */
+function coniferTrunkRadius(shape: ConiferShape, y: number): number {
+  const u = Math.min(1, Math.max(0, y / coniferTrunkSpan(shape)));
+  return shape.trunkRadius * (1 - trunkTaper(shape) * u);
+}
+
+/** How tall this tree's trunk stands, in prop-local units (before scale). */
+export function trunkHeight(variant: TreeVariant): number {
+  const shape = SPECIES[variant.species];
   // Nothing to bury: the lobed trunk narrows to a single vertex, so it runs the
   // whole height of the tree and its "top" is a point in open air by design.
-  lobed: LOBED.height,
-};
-
-/** How tall a species' trunk stands, in prop-local units (before scale). */
-export function trunkHeight(species: TreeSpecies): number {
-  return TRUNK_HEIGHT[species];
+  return shape.kind === 'lobed' ? shape.height : coniferTrunkHeight(shape, variant.tierCount);
 }
 
 /**
@@ -444,14 +508,14 @@ export function trunkHeight(species: TreeSpecies): number {
  * with the prop together, so one number answers for every size it can grow to.
  *
  * `Infinity` for the lobed tree (spec 077), and that is the honest answer rather
- * than a dodge: the question is about a solid column's flat cap and its corners
- * hanging out through a sloped cone, and a trunk that tapers to a single vertex
- * has neither. The invariant is vacuous there, not satisfied by luck.
+ * than a dodge: the question is about a solid column's flat cap hanging out
+ * through a sloped cone, and a trunk that tapers to a single vertex has none.
+ * The invariant is vacuous there, not satisfied by luck.
  */
 export function trunkTopCover(variant: TreeVariant): number {
   const shape = SPECIES[variant.species];
   if (shape.kind === 'lobed') return Infinity;
-  const y = TRUNK_HEIGHT[variant.species];
+  const y = coniferTrunkHeight(shape, variant.tierCount);
   let best = -Infinity;
   const grown = Math.min(variant.tierCount, shape.tiers.length);
   for (let tier = 0; tier < grown; tier++) {
@@ -595,6 +659,48 @@ function lobedSlabGeometry(slab: SlabSpec, shape: LobedShape): THREE.BufferGeome
 }
 
 /**
+ * A conifer's trunk (spec 122): a round column that thins as it climbs, up to
+ * the frond it ends inside.
+ *
+ * Standing on its own origin like the lobed trunk, so `offsetY` is zero and the
+ * baked bend weight is the local height over the species height -- which is what
+ * puts the trunk and the crown above it on one continuous curve rather than each
+ * running 0..1 within itself.
+ *
+ * The rings up its length are the difference between the wind *bending* it and
+ * the wind *tipping* it: the bend is quadratic in height, so with only a foot
+ * and a cap there is nothing in between to lag. The foot is capped for the
+ * reason the lobed trunk's is -- a tree stands on ground sampled at one point,
+ * so on a slope its foot is partly in the air and an open bottom shows daylight
+ * straight up the inside of it. The top is capped because that cap is the whole
+ * subject of {@link trunkTopCover}: it is buried in a frond, and it is a
+ * *surface* being buried rather than an absence.
+ */
+function coniferTrunkGeometry(shape: ConiferShape, height: number): THREE.BufferGeometry {
+  const sides = shape.trunkSegments;
+  const { tri, quad, build } = meshBuilder();
+  const ringY = (ring: number): number => (height * ring) / shape.trunkRings;
+  const at = (ring: number, side: number): Vec3 => {
+    const y = ringY(ring);
+    const radius = coniferTrunkRadius(shape, y);
+    const angle = (side / sides) * Math.PI * 2;
+    return [Math.cos(angle) * radius, y, Math.sin(angle) * radius];
+  };
+
+  const foot: Vec3 = [0, 0, 0];
+  const cap: Vec3 = [0, height, 0];
+  for (let side = 0; side < sides; side++) {
+    const next = (side + 1) % sides;
+    tri(foot, at(0, side), at(0, next));
+    for (let ring = 0; ring < shape.trunkRings; ring++) {
+      quad(at(ring, side), at(ring + 1, side), at(ring + 1, next), at(ring, next));
+    }
+    tri(cap, at(shape.trunkRings, next), at(shape.trunkRings, side));
+  }
+  return build();
+}
+
+/**
  * One tier's frond: the cone it has always been, with its hem cut away
  * (spec 121).
  *
@@ -708,21 +814,25 @@ function lobedParts(shape: LobedShape): PropPart[] {
 function treeParts(species: TreeSpecies): PropPart[] {
   const shape = SPECIES[species];
   if (shape.kind === 'lobed') return lobedParts(shape);
-  const trunkWidth = shape.trunkWidth;
-  const height = trunkHeight(species);
   // The bend weight is measured against the tallest the species reaches, not
   // against the part, so the trunk and the crown above it lie on one continuous
   // curve rather than each running 0..1 within itself.
   const full = speciesHeight(species);
-  const parts: PropPart[] = [
-    {
-      geometry: new THREE.BoxGeometry(trunkWidth, height, trunkWidth),
-      offsetY: height / 2,
-      color: PALETTE.trunk,
-      foliage: false,
-      sway: true,
-    },
-  ];
+  // One trunk per tier count rather than one per species (spec 122): a tree ends
+  // its trunk in the frond it actually grew, and a sapling's is not a tall
+  // tree's cut short -- it is the same profile, stopped lower. The counts
+  // partition the trees between these batches, so a tree still draws exactly
+  // one and the world draws no more trunks than it did.
+  const parts: PropPart[] = [...new Set(shape.tierCounts)].map((count) => ({
+    geometry: coniferTrunkGeometry(shape, coniferTrunkHeight(shape, count)),
+    // Built standing on its own origin, so nothing to offset.
+    offsetY: 0,
+    color: PALETTE.trunk,
+    foliage: false,
+    sway: true,
+    grownAt: count,
+    grownUpTo: count,
+  }));
   shape.tiers.forEach(([radius, tierHeight, baseY], tier) => {
     const sway = tierSway(shape, tier);
     parts.push({
@@ -745,8 +855,7 @@ function treeParts(species: TreeSpecies): PropPart[] {
 
 /** A species' trunk radius at the ground, whichever construction it is. */
 function speciesTrunkRadius(species: TreeSpecies): number {
-  const shape = SPECIES[species];
-  return shape.kind === 'lobed' ? shape.trunkRadius : shape.trunkWidth / 2;
+  return SPECIES[species].trunkRadius;
 }
 
 /**
@@ -1346,8 +1455,11 @@ export function speciesHeight(species: TreeSpecies): number {
     const crown = slabLayout(shape).reduce((high, slab) => Math.max(high, slab.y + slabRise(slab)), 0);
     return Math.max(crown, shape.height);
   }
-  const crown = shape.tiers.reduce((high, [, height, baseY]) => Math.max(high, baseY + height), 0);
-  return Math.max(crown, trunkHeight(species));
+  // The crown alone, since spec 122: the trunk ends inside the topmost frond a
+  // tree grew, so it can no longer be the tallest thing on the tree. Asked as a
+  // maximum anyway rather than as the last tier's top, because which tier is
+  // tallest is the tier table's business.
+  return shape.tiers.reduce((high, [, height, baseY]) => Math.max(high, baseY + height), 0);
 }
 
 /**
@@ -1540,10 +1652,19 @@ export function buildPropField(
     parts.forEach((part, partIndex) => {
       const tier = part.tier;
       // `tier + 1` is the rule the conifers have always used; `grownAt` is what
-      // lets the lobed canopy keep its topmost slab at every count (spec 077).
+      // lets the lobed canopy keep its topmost slab at every count (spec 077),
+      // and `grownUpTo` is the ceiling that picks out one count exactly, which
+      // is how a trunk knows which frond it is ending in (spec 122).
       const needs = part.grownAt ?? (tier === undefined ? 0 : tier + 1);
+      const upTo = part.grownUpTo ?? Infinity;
+      const bounded = needs > 0 || upTo < Infinity;
       const grown =
-        tier === undefined || !variants ? of : of.filter((prop) => (variants.get(prop)?.tierCount ?? 0) >= needs);
+        !bounded || !variants
+          ? of
+          : of.filter((prop) => {
+              const count = variants.get(prop)?.tierCount ?? 0;
+              return count >= needs && count <= upTo;
+            });
       if (grown.length === 0) return;
       const jitterPos = part.jitterX !== undefined || part.jitterZ !== undefined;
       const jitterRot = part.jitterYaw !== undefined || part.jitterRoll !== undefined;
