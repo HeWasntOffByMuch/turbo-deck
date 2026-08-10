@@ -272,6 +272,43 @@ src/server/studio/  the unit authoring service (spec 108). Node-only, wired in f
                  jobs.json is rewritten
                  atomically; ledger.jsonl is append-only. State lives in
                  .studio/ and is gitignored.
+src/ui/          the GUI framework (spec 121), and a top-level peer rather than a
+                 subdirectory of src/render/ because layer 1 belongs to no engine.
+                 core/ is layout, hit-testing, focus, event routing and the widget
+                 tree; text/ is the two bitmap faces; theme/ is theme.json plus the
+                 atlas authored as text; widgets/ is the nine; render/ is the only
+                 impure part. Everything else runs in Node.
+                 Three rules the code rests on, all of them enforced rather than
+                 honoured. **Time is an argument** -- `UiRoot.update(nowMs)`, and
+                 nothing under src/ui/ may read `Date` or `performance`, which is
+                 what makes an input-replay test exact rather than approximately
+                 reproducible. **A widget cannot reach the sim** -- it may read the
+                 content tables, as the HUD already does, but lint refuses it
+                 `server/sim`, `world`, `player` and `state`, so the CLAUDE.md rule
+                 that no `if` in the renderer changes an outcome is finally a fact
+                 about the module graph. **No colour is spelled out** in a widget;
+                 a hex literal there fails the build.
+                 The UI has a *scale*, not a resolution: one UI pixel is always a
+                 whole number of device pixels and the viewport is whatever the
+                 window leaves, so it never reads the world's `lowRes` setting --
+                 which is off by default and may go. A camera needs a fixed aspect
+                 because it has to frame consistently; an interface does not.
+                 render/ has three backends behind six methods. raster.ts is pure
+                 software and is the golden-image oracle, which is what lets a
+                 screen be compared byte for byte inside `npm test` with no GPU and
+                 no browser -- every other visual check in this repo photographs a
+                 browser and none of them run in CI. canvas2d.ts is what ships. A
+                 WebGL one is deferred until the frame budget asks for it; the
+                 measurement so far is 0.9ms against a 1.5ms budget.
+                 Having two unrelated backends is not redundancy, it is the check:
+                 `npx tsx scripts/preview-ui-gallery.ts` renders the same tree
+                 through both and compares them pixel for pixel. It immediately
+                 caught the thing offscreen testing never could -- a 2D canvas clip
+                 only ever narrows, so recomputing the clip after each pop (which is
+                 what raster.ts correctly does) left everything after the first
+                 `popClip` quietly cropped in the browser and perfect in Node.
+                 `npm run bake:ui-goldens` accepts a visual change; CI re-bakes and
+                 requires no diff, like the unit manifest.
 src/render/      the client: a tab shell over the play view, the two tuning
                  sandboxes and the map editor
 src/render/cloth/ pure cloth simulation for the robed character (spec 046) --
