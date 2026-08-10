@@ -56,6 +56,10 @@ describe('skeletonFromRig (spec 115)', () => {
     expect(derive().sockets).toEqual(authored.sockets);
   });
 
+  it('records the vocabulary the rig is actually named in', () => {
+    expect(derive().naming).toBe('mixamo');
+  });
+
   it('produces a document the validator accepts, with no provisional warning', () => {
     const result = validateSkeleton(derive());
     expect(result.value).not.toBeNull();
@@ -91,6 +95,37 @@ describe('skeletonFromRig (spec 115)', () => {
     });
     expect(result.skeleton?.sockets).toEqual(sockets);
     expect(result.skeleton?.boneBudget).toEqual({ min: 1, max: 99 });
+  });
+});
+
+describe('a rig on the tripo vocabulary (spec 120)', () => {
+  // The real generated rig, because the whole point is that this vocabulary is
+  // what the auto-rig returns and not something a fixture can assert into being.
+  const pig = splitGlb(
+    new Uint8Array(readFileSync(join(repoRoot, 'assets', 'units', 'pig_a_pose_full', 'pig_a_pose_full.glb'))),
+  );
+  const derived = skeletonFromRig(pig, { id: 'pig', source: 'pig.glb', canonicalHeight: 55.65 }).skeleton;
+
+  it('records tripo rather than the spec that was hoped for', () => {
+    expect(derived?.naming).toBe('tripo');
+  });
+
+  it('derives the same socket roles the mixamo rig gets, on this rig\'s own bones', () => {
+    // The agreement that makes a role-based table a replacement rather than a
+    // second code path: same five ids, spelled the way this rig spells them.
+    expect(derived?.sockets).toEqual([
+      { id: 'weapon.main', bone: 'R_Hand' },
+      { id: 'weapon.off', bone: 'L_Hand' },
+      { id: 'fx.cast', bone: 'R_Hand' },
+      { id: 'fx.body', bone: 'Spine02' },
+      { id: 'anchor.head', bone: 'Head' },
+    ]);
+    expect(derived?.sockets.map((socket) => socket.id)).toEqual(authored.sockets.map((socket) => socket.id));
+  });
+
+  it('warns about nothing, where it used to warn that the names were wrong', () => {
+    const result = skeletonFromRig(pig, { id: 'pig', source: 'pig.glb', canonicalHeight: 55.65 });
+    expect(result.issues.map((issue) => issue.code)).not.toContain('skeleton.rig.naming');
   });
 });
 
