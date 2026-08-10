@@ -71,6 +71,10 @@ export interface InputTokens {
   readonly maxTapUiPx: number;
   /** The smallest viewport every screen is designed to fit inside. */
   readonly minViewport: Size;
+  /** How long the pointer must rest before a tooltip appears. */
+  readonly tooltipDelayMs: number;
+  /** How much of a window's title bar must stay on screen. */
+  readonly minVisible: number;
 }
 
 export interface Theme {
@@ -106,12 +110,7 @@ interface RawTheme {
   readonly palette: Readonly<Record<string, string>>;
   readonly spacing: Spacing;
   readonly fonts: { readonly body: FontId; readonly numeric: FontId };
-  readonly input: {
-    readonly dragThreshold: number;
-    readonly doubleClickMs: number;
-    readonly maxTapUiPx: number;
-    readonly minViewport: Size;
-  };
+  readonly input: InputTokens;
   readonly widgets: Readonly<Record<string, RawWidgetStyle>>;
 }
 

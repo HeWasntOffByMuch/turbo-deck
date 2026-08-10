@@ -15,6 +15,8 @@
  */
 
 import { ContextStack, type InputContextId, type UiEvent } from './events.js';
+import type { LayerStack } from './layers.js';
+import type { WindowManager } from './window-manager.js';
 import { DrawList } from './draw-list.js';
 import { FocusManager } from './focus.js';
 import { looseConstraint, type Size } from './geom.js';
@@ -27,6 +29,14 @@ export interface UiRootOptions {
   readonly theme: Theme;
   readonly atlas: Atlas;
   readonly viewport: Size;
+  /**
+   * The window manager, when this screen has windows.
+   *
+   * Optional: the gallery and every test that only needs a widget tree get to
+   * skip it, and the root stays usable for a HUD that has no windows at all.
+   */
+  readonly windows?: WindowManager;
+  readonly layers?: LayerStack;
 }
 
 export class UiRoot {
@@ -69,15 +79,28 @@ export class UiRoot {
     return this.layoutCount;
   }
 
+  get windows(): WindowManager | null {
+    return this.options.windows ?? null;
+  }
+
+  get layers(): LayerStack | null {
+    return this.options.layers ?? null;
+  }
+
   resize(viewport: Size): void {
     if (viewport.width === this.viewportSize.width && viewport.height === this.viewportSize.height) return;
     this.viewportSize = viewport;
+    // Windows are placed absolutely, so a smaller viewport has to pull them back
+    // on screen -- and since the UI has a scale rather than a resolution, the
+    // viewport changes whenever the player resizes the window or the scale.
+    this.options.windows?.setViewport(viewport);
     this.content.invalidateMeasure();
   }
 
   /** Advance to `nowMs` and lay out anything dirty. */
   update(nowMs: number): void {
     this.now = nowMs;
+    this.options.windows?.setViewport(this.viewportSize);
     this.focus.revalidate(this.content);
     if (!this.content.needsMeasure && !this.content.needsArrange && !this.content.needsArrangeInSubtree) return;
     this.layoutCount++;
@@ -99,6 +122,22 @@ export class UiRoot {
    */
   handle(event: UiEvent): boolean {
     this.now = event.time;
+
+    // Click-to-focus, before routing: whatever was pressed comes forward, so the
+    // window that handles the press is the one that is now on top.
+    if (event.kind === 'pointer' && event.phase === 'down') {
+      const manager = this.options.windows;
+      const hit = manager?.windowAt(event.pos);
+      if (manager && hit) manager.focus(hit.id);
+    }
+
+    if (event.kind === 'key' && event.phase === 'down' && event.code === 'Escape') {
+      // Escape closes the topmost closable, unpinned window. When there is none
+      // it is deliberately NOT consumed, so gameplay still sees it and can
+      // cancel a cast.
+      if (this.options.windows?.closeTopmost() === true) return true;
+    }
+
     return this.router.route(this.content, event, this.focus.focused);
   }
 

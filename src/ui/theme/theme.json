@@ -34,18 +34,43 @@
     "dragThreshold": 3,
     "doubleClickMs": 350,
     "maxTapUiPx": 20,
-    "minViewport": { "width": 300, "height": 140 }
+    "minViewport": {
+      "width": 300,
+      "height": 140
+    },
+    "tooltipDelayMs": 400,
+    "minVisible": 24
   },
   "widgets": {
     "panel": {
       "frame": "frame",
       "padding": 8,
       "states": {
-        "normal": { "fill": "panel", "frameTint": "edgeLight", "text": "text" },
-        "hover": { "fill": "panel", "frameTint": "edgeLight", "text": "text" },
-        "pressed": { "fill": "panel", "frameTint": "edgeLight", "text": "text" },
-        "disabled": { "fill": "panel", "frameTint": "edgeDark", "text": "textDim" },
-        "focused": { "fill": "panel", "frameTint": "focus", "text": "text" }
+        "normal": {
+          "fill": "panel",
+          "frameTint": "edgeLight",
+          "text": "text"
+        },
+        "hover": {
+          "fill": "panel",
+          "frameTint": "edgeLight",
+          "text": "text"
+        },
+        "pressed": {
+          "fill": "panel",
+          "frameTint": "edgeLight",
+          "text": "text"
+        },
+        "disabled": {
+          "fill": "panel",
+          "frameTint": "edgeDark",
+          "text": "textDim"
+        },
+        "focused": {
+          "fill": "panel",
+          "frameTint": "focus",
+          "text": "text"
+        }
       }
     },
     "button": {
@@ -54,11 +79,31 @@
       "minWidth": 32,
       "minHeight": 16,
       "states": {
-        "normal": { "fill": "panelRaised", "frameTint": "edgeLight", "text": "text" },
-        "hover": { "fill": "edgeLight", "frameTint": "edgeLight", "text": "text" },
-        "pressed": { "fill": "panelSunken", "frameTint": "edgeDark", "text": "accent" },
-        "disabled": { "fill": "panel", "frameTint": "edgeDark", "text": "textDim" },
-        "focused": { "fill": "panelRaised", "frameTint": "focus", "text": "text" }
+        "normal": {
+          "fill": "panelRaised",
+          "frameTint": "edgeLight",
+          "text": "text"
+        },
+        "hover": {
+          "fill": "edgeLight",
+          "frameTint": "edgeLight",
+          "text": "text"
+        },
+        "pressed": {
+          "fill": "panelSunken",
+          "frameTint": "edgeDark",
+          "text": "accent"
+        },
+        "disabled": {
+          "fill": "panel",
+          "frameTint": "edgeDark",
+          "text": "textDim"
+        },
+        "focused": {
+          "fill": "panelRaised",
+          "frameTint": "focus",
+          "text": "text"
+        }
       }
     },
     "checkbox": {
@@ -66,11 +111,36 @@
       "padding": 4,
       "boxSize": 10,
       "states": {
-        "normal": { "fill": "panelSunken", "frameTint": "edgeLight", "text": "text", "mark": "accent" },
-        "hover": { "fill": "panelSunken", "frameTint": "edgeLight", "text": "text", "mark": "accent" },
-        "pressed": { "fill": "ink", "frameTint": "edgeDark", "text": "text", "mark": "accent" },
-        "disabled": { "fill": "panel", "frameTint": "edgeDark", "text": "textDim", "mark": "textDim" },
-        "focused": { "fill": "panelSunken", "frameTint": "focus", "text": "text", "mark": "accent" }
+        "normal": {
+          "fill": "panelSunken",
+          "frameTint": "edgeLight",
+          "text": "text",
+          "mark": "accent"
+        },
+        "hover": {
+          "fill": "panelSunken",
+          "frameTint": "edgeLight",
+          "text": "text",
+          "mark": "accent"
+        },
+        "pressed": {
+          "fill": "ink",
+          "frameTint": "edgeDark",
+          "text": "text",
+          "mark": "accent"
+        },
+        "disabled": {
+          "fill": "panel",
+          "frameTint": "edgeDark",
+          "text": "textDim",
+          "mark": "textDim"
+        },
+        "focused": {
+          "fill": "panelSunken",
+          "frameTint": "focus",
+          "text": "text",
+          "mark": "accent"
+        }
       }
     },
     "slider": {
@@ -80,11 +150,36 @@
       "knobWidth": 6,
       "knobHeight": 14,
       "states": {
-        "normal": { "fill": "panelSunken", "frameTint": "edgeLight", "text": "text", "mark": "accent" },
-        "hover": { "fill": "panelSunken", "frameTint": "edgeLight", "text": "text", "mark": "accent" },
-        "pressed": { "fill": "panelSunken", "frameTint": "accent", "text": "text", "mark": "accent" },
-        "disabled": { "fill": "panel", "frameTint": "edgeDark", "text": "textDim", "mark": "textDim" },
-        "focused": { "fill": "panelSunken", "frameTint": "focus", "text": "text", "mark": "accent" }
+        "normal": {
+          "fill": "panelSunken",
+          "frameTint": "edgeLight",
+          "text": "text",
+          "mark": "accent"
+        },
+        "hover": {
+          "fill": "panelSunken",
+          "frameTint": "edgeLight",
+          "text": "text",
+          "mark": "accent"
+        },
+        "pressed": {
+          "fill": "panelSunken",
+          "frameTint": "accent",
+          "text": "text",
+          "mark": "accent"
+        },
+        "disabled": {
+          "fill": "panel",
+          "frameTint": "edgeDark",
+          "text": "textDim",
+          "mark": "textDim"
+        },
+        "focused": {
+          "fill": "panelSunken",
+          "frameTint": "focus",
+          "text": "text",
+          "mark": "accent"
+        }
       }
     },
     "textField": {
@@ -94,11 +189,36 @@
       "minHeight": 16,
       "caretWidth": 1,
       "states": {
-        "normal": { "fill": "panelSunken", "frameTint": "edgeDark", "text": "text", "mark": "accent" },
-        "hover": { "fill": "panelSunken", "frameTint": "edgeLight", "text": "text", "mark": "accent" },
-        "pressed": { "fill": "panelSunken", "frameTint": "edgeLight", "text": "text", "mark": "accent" },
-        "disabled": { "fill": "panel", "frameTint": "edgeDark", "text": "textDim", "mark": "textDim" },
-        "focused": { "fill": "ink", "frameTint": "focus", "text": "text", "mark": "accent" }
+        "normal": {
+          "fill": "panelSunken",
+          "frameTint": "edgeDark",
+          "text": "text",
+          "mark": "accent"
+        },
+        "hover": {
+          "fill": "panelSunken",
+          "frameTint": "edgeLight",
+          "text": "text",
+          "mark": "accent"
+        },
+        "pressed": {
+          "fill": "panelSunken",
+          "frameTint": "edgeLight",
+          "text": "text",
+          "mark": "accent"
+        },
+        "disabled": {
+          "fill": "panel",
+          "frameTint": "edgeDark",
+          "text": "textDim",
+          "mark": "textDim"
+        },
+        "focused": {
+          "fill": "ink",
+          "frameTint": "focus",
+          "text": "text",
+          "mark": "accent"
+        }
       }
     },
     "scrollView": {
@@ -106,11 +226,36 @@
       "padding": 0,
       "barThickness": 6,
       "states": {
-        "normal": { "fill": "panelSunken", "frameTint": "edgeDark", "text": "text", "mark": "edgeLight" },
-        "hover": { "fill": "panelSunken", "frameTint": "edgeDark", "text": "text", "mark": "textDim" },
-        "pressed": { "fill": "panelSunken", "frameTint": "edgeDark", "text": "text", "mark": "accent" },
-        "disabled": { "fill": "panel", "frameTint": "edgeDark", "text": "textDim", "mark": "edgeDark" },
-        "focused": { "fill": "panelSunken", "frameTint": "focus", "text": "text", "mark": "textDim" }
+        "normal": {
+          "fill": "panelSunken",
+          "frameTint": "edgeDark",
+          "text": "text",
+          "mark": "edgeLight"
+        },
+        "hover": {
+          "fill": "panelSunken",
+          "frameTint": "edgeDark",
+          "text": "text",
+          "mark": "textDim"
+        },
+        "pressed": {
+          "fill": "panelSunken",
+          "frameTint": "edgeDark",
+          "text": "text",
+          "mark": "accent"
+        },
+        "disabled": {
+          "fill": "panel",
+          "frameTint": "edgeDark",
+          "text": "textDim",
+          "mark": "edgeDark"
+        },
+        "focused": {
+          "fill": "panelSunken",
+          "frameTint": "focus",
+          "text": "text",
+          "mark": "textDim"
+        }
       }
     },
     "separator": {
@@ -118,33 +263,195 @@
       "padding": 0,
       "thickness": 1,
       "states": {
-        "normal": { "fill": "edgeLight", "frameTint": "edgeLight", "text": "textDim" },
-        "hover": { "fill": "edgeLight", "frameTint": "edgeLight", "text": "textDim" },
-        "pressed": { "fill": "edgeLight", "frameTint": "edgeLight", "text": "textDim" },
-        "disabled": { "fill": "edgeDark", "frameTint": "edgeDark", "text": "textDim" },
-        "focused": { "fill": "edgeLight", "frameTint": "focus", "text": "textDim" }
+        "normal": {
+          "fill": "edgeLight",
+          "frameTint": "edgeLight",
+          "text": "textDim"
+        },
+        "hover": {
+          "fill": "edgeLight",
+          "frameTint": "edgeLight",
+          "text": "textDim"
+        },
+        "pressed": {
+          "fill": "edgeLight",
+          "frameTint": "edgeLight",
+          "text": "textDim"
+        },
+        "disabled": {
+          "fill": "edgeDark",
+          "frameTint": "edgeDark",
+          "text": "textDim"
+        },
+        "focused": {
+          "fill": "edgeLight",
+          "frameTint": "focus",
+          "text": "textDim"
+        }
       }
     },
     "label": {
       "frame": "frame",
       "padding": 0,
       "states": {
-        "normal": { "fill": "overlay", "frameTint": "edgeLight", "text": "text" },
-        "hover": { "fill": "overlay", "frameTint": "edgeLight", "text": "text" },
-        "pressed": { "fill": "overlay", "frameTint": "edgeLight", "text": "text" },
-        "disabled": { "fill": "overlay", "frameTint": "edgeDark", "text": "textDim" },
-        "focused": { "fill": "overlay", "frameTint": "focus", "text": "text" }
+        "normal": {
+          "fill": "overlay",
+          "frameTint": "edgeLight",
+          "text": "text"
+        },
+        "hover": {
+          "fill": "overlay",
+          "frameTint": "edgeLight",
+          "text": "text"
+        },
+        "pressed": {
+          "fill": "overlay",
+          "frameTint": "edgeLight",
+          "text": "text"
+        },
+        "disabled": {
+          "fill": "overlay",
+          "frameTint": "edgeDark",
+          "text": "textDim"
+        },
+        "focused": {
+          "fill": "overlay",
+          "frameTint": "focus",
+          "text": "text"
+        }
       }
     },
     "icon": {
       "frame": "frame",
       "padding": 0,
       "states": {
-        "normal": { "fill": "overlay", "frameTint": "edgeLight", "text": "text" },
-        "hover": { "fill": "overlay", "frameTint": "edgeLight", "text": "accent" },
-        "pressed": { "fill": "overlay", "frameTint": "edgeDark", "text": "accent" },
-        "disabled": { "fill": "overlay", "frameTint": "edgeDark", "text": "textDim" },
-        "focused": { "fill": "overlay", "frameTint": "focus", "text": "text" }
+        "normal": {
+          "fill": "overlay",
+          "frameTint": "edgeLight",
+          "text": "text"
+        },
+        "hover": {
+          "fill": "overlay",
+          "frameTint": "edgeLight",
+          "text": "accent"
+        },
+        "pressed": {
+          "fill": "overlay",
+          "frameTint": "edgeDark",
+          "text": "accent"
+        },
+        "disabled": {
+          "fill": "overlay",
+          "frameTint": "edgeDark",
+          "text": "textDim"
+        },
+        "focused": {
+          "fill": "overlay",
+          "frameTint": "focus",
+          "text": "text"
+        }
+      }
+    },
+    "window": {
+      "frame": "frame",
+      "padding": 4,
+      "minWidth": 64,
+      "minHeight": 40,
+      "gripSize": 7,
+      "states": {
+        "normal": {
+          "fill": "panel",
+          "frameTint": "edgeLight",
+          "text": "textDim",
+          "mark": "accent"
+        },
+        "hover": {
+          "fill": "panel",
+          "frameTint": "edgeLight",
+          "text": "text",
+          "mark": "accent"
+        },
+        "pressed": {
+          "fill": "panel",
+          "frameTint": "edgeLight",
+          "text": "text",
+          "mark": "accent"
+        },
+        "disabled": {
+          "fill": "panel",
+          "frameTint": "edgeDark",
+          "text": "textDim",
+          "mark": "textDim"
+        },
+        "focused": {
+          "fill": "panel",
+          "frameTint": "accent",
+          "text": "text",
+          "mark": "accent"
+        }
+      }
+    },
+    "tab": {
+      "frame": "raised",
+      "padding": 4,
+      "minHeight": 14,
+      "states": {
+        "normal": {
+          "fill": "panel",
+          "frameTint": "edgeDark",
+          "text": "textDim"
+        },
+        "hover": {
+          "fill": "panelRaised",
+          "frameTint": "edgeLight",
+          "text": "text"
+        },
+        "pressed": {
+          "fill": "panelSunken",
+          "frameTint": "edgeDark",
+          "text": "accent"
+        },
+        "disabled": {
+          "fill": "panel",
+          "frameTint": "edgeDark",
+          "text": "textDim"
+        },
+        "focused": {
+          "fill": "panelRaised",
+          "frameTint": "focus",
+          "text": "text"
+        }
+      }
+    },
+    "tooltip": {
+      "frame": "frame",
+      "padding": 4,
+      "states": {
+        "normal": {
+          "fill": "shadow",
+          "frameTint": "edgeLight",
+          "text": "text"
+        },
+        "hover": {
+          "fill": "shadow",
+          "frameTint": "edgeLight",
+          "text": "text"
+        },
+        "pressed": {
+          "fill": "shadow",
+          "frameTint": "edgeLight",
+          "text": "text"
+        },
+        "disabled": {
+          "fill": "shadow",
+          "frameTint": "edgeDark",
+          "text": "textDim"
+        },
+        "focused": {
+          "fill": "shadow",
+          "frameTint": "focus",
+          "text": "text"
+        }
       }
     }
   }

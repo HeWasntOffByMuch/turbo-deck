@@ -12,7 +12,7 @@
  */
 
 import { PNG } from 'pngjs';
-import type { RenderOptions } from './render.js';
+import type { RenderOptions, WindowsRenderOptions } from './render.js';
 
 export interface GoldenCase {
   readonly name: string;
@@ -54,6 +54,42 @@ export const GOLDEN_CASES: readonly GoldenCase[] = [
     name: 'small',
     options: { viewport: { width: 300, height: 140 } },
     covers: "the theme's minViewport, where the gallery has to scroll rather than squash",
+  },
+];
+
+export interface WindowsGoldenCase {
+  readonly name: string;
+  readonly options: WindowsRenderOptions;
+  readonly covers: string;
+}
+
+/**
+ * The six-window scene (spec 122).
+ *
+ * Separate from the widget cases because it is a different question: those check
+ * that a widget draws, these check that windows stack, tabs switch and a tooltip
+ * gets out of its own way.
+ */
+export const WINDOW_GOLDEN_CASES: readonly WindowsGoldenCase[] = [
+  {
+    name: 'windows',
+    options: { focusWindow: 'character' },
+    covers: 'six windows, z-order, the focused title bar and the active tab',
+  },
+  {
+    name: 'windows-tab',
+    options: { focusWindow: 'character', tab: 'skills' },
+    covers: 'a different tab selected, and the bold treatment moving with it',
+  },
+  {
+    name: 'windows-tooltip',
+    options: { focusWindow: 'log', tooltipAt: { x: 300, y: 240 } },
+    covers: 'a tooltip flipping away from the bottom-right corner rather than overflowing',
+  },
+  {
+    name: 'windows-small',
+    options: { viewport: { width: 300, height: 140 } },
+    covers: 'every window pulled back on screen at the smallest supported viewport',
   },
 ];
 

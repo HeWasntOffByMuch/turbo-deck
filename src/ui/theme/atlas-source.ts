@@ -157,6 +157,16 @@ export const ICONS: Readonly<Record<string, readonly string[]>> = {
     '.......',
     '.......',
   ],
+  /** The resize corner. Three steps, reading as a diagonal without a diagonal. */
+  grip: [
+    '.......',
+    '......T',
+    '.....T.',
+    '....T.T',
+    '...T.T.',
+    '..T.T.T',
+    '.......',
+  ],
   dot: [
     '.......',
     '.......',

@@ -40,9 +40,11 @@
     "input": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["dragThreshold", "doubleClickMs", "maxTapUiPx", "minViewport"],
+      "required": ["dragThreshold", "doubleClickMs", "maxTapUiPx", "minViewport", "tooltipDelayMs", "minVisible"],
       "properties": {
         "dragThreshold": { "type": "integer", "minimum": 1 },
+        "tooltipDelayMs": { "type": "integer", "minimum": 0 },
+        "minVisible": { "type": "integer", "minimum": 1 },
         "doubleClickMs": { "type": "integer", "minimum": 1 },
         "maxTapUiPx": { "type": "integer", "minimum": 1 },
         "minViewport": {
@@ -111,6 +113,7 @@
         "barThickness": { "type": "integer", "minimum": 1 },
         "thickness": { "type": "integer", "minimum": 1 },
         "caretWidth": { "type": "integer", "minimum": 1 },
+        "gripSize": { "type": "integer", "minimum": 1 },
         "states": {
           "type": "object",
           "additionalProperties": false,

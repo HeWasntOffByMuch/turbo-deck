@@ -16,6 +16,7 @@ import { autoUiScale, uiFrame } from '../ui/core/frame.js';
 import { UiRoot } from '../ui/core/root.js';
 import { NO_MODIFIERS, type Modifiers, type UiEvent } from '../ui/core/events.js';
 import { buildGallery } from '../ui/gallery/gallery.js';
+import { buildWindowsScene } from '../ui/gallery/windows-scene.js';
 import { bakeAtlas } from '../ui/render/atlas.js';
 import { Canvas2dSurface } from '../ui/render/canvas2d.js';
 import { RasterSurface } from '../ui/render/raster.js';
@@ -45,8 +46,6 @@ function main(): void {
   app.appendChild(canvas);
 
   const atlas = bakeAtlas(THEME);
-  const gallery = buildGallery(THEME);
-
   const dpr = globalThis.devicePixelRatio || 1;
   const scale = autoUiScale(app.clientWidth, app.clientHeight, dpr, {
     minViewport: THEME.input.minViewport,
@@ -54,11 +53,22 @@ function main(): void {
     maxTapUiPx: THEME.input.maxTapUiPx,
   });
   const frame = uiFrame(app.clientWidth, app.clientHeight, dpr, scale);
+  const viewport = { width: frame.width, height: frame.height };
 
-  const root = new UiRoot(gallery.root, {
+  // `?scene=windows` draws spec 122's six-window scene instead of the widget
+  // gallery, so the cross-backend comparison covers both. Two pages would be two
+  // copies of the glue below.
+  const wantsWindows = new URLSearchParams(globalThis.location.search).get('scene') === 'windows';
+  const scene = wantsWindows ? buildWindowsScene(THEME, viewport) : null;
+  const gallery = scene ? null : buildGallery(THEME);
+  const content = scene ? scene.root : gallery?.root;
+  if (!content) throw new Error('no scene');
+
+  const root = new UiRoot(content, {
     theme: THEME,
     atlas,
-    viewport: { width: frame.width, height: frame.height },
+    viewport,
+    ...(scene ? { windows: scene.manager, layers: scene.root } : {}),
   });
   const surface = new Canvas2dSurface(canvas, atlas, frame.width, frame.height, { scale: frame.scale });
 
@@ -78,7 +88,12 @@ function main(): void {
   };
 
   canvas.addEventListener('mousemove', (event) => {
-    send({ kind: 'pointer', phase: 'move', pos: toUi(event.clientX, event.clientY), button: -1, mods: modifiersOf(event), time: now });
+    const pos = toUi(event.clientX, event.clientY);
+    send({ kind: 'pointer', phase: 'move', pos, button: -1, mods: modifiersOf(event), time: now });
+    if (scene) {
+      const under = root.content.hitTest(pos);
+      scene.tooltip.point(under ? under.name : null, pos, now);
+    }
   });
   canvas.addEventListener('mousedown', (event) => {
     const pos = toUi(event.clientX, event.clientY);
@@ -110,6 +125,7 @@ function main(): void {
     now = timestamp;
     const started = performance.now();
     root.update(timestamp);
+    scene?.tooltip.update(timestamp, THEME.input.tooltipDelayMs);
     const list = root.paint();
     const commands = list.finish();
     drawCalls = commands.length;
@@ -129,8 +145,15 @@ function main(): void {
    * offscreen measurements were all correct while the screen was black.
    */
   globalThis.setTimeout(() => {
+    // Cleared to *transparent*, not to the page's background colour. The
+    // question this asks is "did canvas2d draw the same commands as raster", and
+    // a canvas is transparent where nothing was drawn -- so clearing the
+    // reference to ink would compare backgrounds instead, and fail on the first
+    // empty pixel of any scene that does not cover the whole viewport. The
+    // golden PNGs still bake on ink, because there the background is part of the
+    // picture.
     const reference = new RasterSurface(atlas, frame.width, frame.height);
-    reference.clear(THEME.color('ink'));
+    reference.clear();
     replay(reference, root.paint().finish());
 
     const actual = canvas.getContext('2d')?.getImageData(0, 0, canvas.width, canvas.height);

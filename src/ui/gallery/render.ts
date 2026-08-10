@@ -16,6 +16,7 @@ import { THEME, type Theme } from '../theme/theme.js';
 import type { Widget } from '../core/widget.js';
 import { ScrollView } from '../widgets/scroll-view.js';
 import { buildGallery } from './gallery.js';
+import { buildWindowsScene } from './windows-scene.js';
 
 export interface GalleryFrame {
   readonly surface: RasterSurface;
@@ -88,4 +89,59 @@ export function renderGallery(options: RenderOptions = {}): GalleryFrame {
   replay(surface, list.finish());
 
   return { surface, root, atlas, parts: gallery.parts };
+}
+
+export interface WindowsFrame {
+  readonly surface: RasterSurface;
+  readonly root: UiRoot;
+  readonly atlas: Atlas;
+  readonly scene: ReturnType<typeof buildWindowsScene>;
+}
+
+export interface WindowsRenderOptions {
+  readonly viewport?: Size;
+  readonly now?: number;
+  /** Bring this window to the front before painting. */
+  readonly focusWindow?: string;
+  /** Select this tab in the character window. */
+  readonly tab?: string;
+  /** Show a tooltip anchored here, with the delay already elapsed. */
+  readonly tooltipAt?: { x: number; y: number };
+  readonly tooltipText?: string;
+}
+
+/**
+ * The six-window scene, rasterised.
+ *
+ * Shares nothing with `renderGallery` except the backend, deliberately: the two
+ * scenes answer different questions and a helper that did both would be a helper
+ * with a mode flag.
+ */
+export function renderWindows(options: WindowsRenderOptions = {}): WindowsFrame {
+  const theme = THEME;
+  const viewport = options.viewport ?? GOLDEN_VIEWPORT;
+  const atlas = bakeAtlas(theme);
+  const scene = buildWindowsScene(theme, viewport);
+  const root = new UiRoot(scene.root, {
+    theme,
+    atlas,
+    viewport,
+    windows: scene.manager,
+    layers: scene.root,
+  });
+
+  const now = options.now ?? 0;
+  if (options.tab !== undefined) scene.tabs.select(options.tab);
+  if (options.focusWindow !== undefined) scene.manager.focus(options.focusWindow);
+  if (options.tooltipAt !== undefined) {
+    scene.tooltip.point(options.tooltipText ?? 'A tooltip that flips at the edges', options.tooltipAt, 0);
+    scene.tooltip.update(theme.input.tooltipDelayMs + 1, theme.input.tooltipDelayMs);
+  }
+  root.update(now);
+
+  const surface = new RasterSurface(atlas, viewport.width, viewport.height);
+  surface.clear(theme.color('ink'));
+  replay(surface, root.paint().finish());
+
+  return { surface, root, atlas, scene };
 }

@@ -12,8 +12,8 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { encodePng, GOLDEN_CASES } from '../src/ui/gallery/goldens.js';
-import { renderGallery } from '../src/ui/gallery/render.js';
+import { encodePng, GOLDEN_CASES, WINDOW_GOLDEN_CASES } from '../src/ui/gallery/goldens.js';
+import { renderGallery, renderWindows } from '../src/ui/gallery/render.js';
 
 const directory = fileURLToPath(new URL('../src/ui/gallery/goldens/', import.meta.url));
 mkdirSync(directory, { recursive: true });
@@ -25,4 +25,13 @@ for (const item of GOLDEN_CASES) {
   console.log(`${item.name}.png  ${frame.surface.width}x${frame.surface.height}  ${item.covers}`);
 }
 
-console.log(`\n${GOLDEN_CASES.length} golden(s) written to src/ui/gallery/goldens/`);
+for (const item of WINDOW_GOLDEN_CASES) {
+  const frame = renderWindows(item.options);
+  const png = encodePng(frame.surface.width, frame.surface.height, frame.surface.pixels);
+  writeFileSync(`${directory}${item.name}.png`, png);
+  console.log(`${item.name}.png  ${frame.surface.width}x${frame.surface.height}  ${item.covers}`);
+}
+
+console.log(
+  `\n${GOLDEN_CASES.length + WINDOW_GOLDEN_CASES.length} golden(s) written to src/ui/gallery/goldens/`,
+);

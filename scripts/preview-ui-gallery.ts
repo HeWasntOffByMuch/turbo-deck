@@ -70,31 +70,32 @@ try {
     if (message.type() === 'error' && !message.text().includes('favicon')) errors.push(message.text());
   });
 
-  await page.goto(`http://localhost:${PORT}/ui-gallery.html`, { waitUntil: 'load' });
-  await page.waitForSelector('canvas');
-  await page.waitForTimeout(2200);
-
   const outDir = join(root, '.claude', 'screenshots');
   mkdirSync(outDir, { recursive: true });
-  await page.screenshot({ path: join(outDir, 'ui-gallery.png') });
 
-  // Hover a button and focus a field, so the states are in the photograph too.
-  await page.mouse.move(120, 120);
-  await page.waitForTimeout(200);
-  await page.screenshot({ path: join(outDir, 'ui-gallery-hover.png') });
+  // Both scenes: the widget gallery (spec 121) and the six-window one (spec 122).
+  // The budget the brief states is "six windows open", so the second is the one
+  // the number actually belongs to.
+  for (const scene of ['widgets', 'windows'] as const) {
+    const query = scene === 'windows' ? '?scene=windows' : '';
+    await page.goto(`http://localhost:${PORT}/ui-gallery.html${query}`, { waitUntil: 'load' });
+    await page.waitForSelector('canvas');
+    await page.waitForTimeout(2200);
+    await page.screenshot({ path: join(outDir, `ui-${scene}.png`) });
 
-  const probe = (await page.evaluate(() => (globalThis as { __uiProbe?: Probe }).__uiProbe ?? null)) as Probe | null;
+    // Hover something, so a hovered state is in the photograph too.
+    await page.mouse.move(200, 120);
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: join(outDir, `ui-${scene}-hover.png`) });
 
-  if (errors.length > 0) {
-    console.log('page errors:');
-    for (const error of errors.slice(0, 5)) console.log(`  ${error}`);
-    failed = true;
-  }
+    const probe = (await page.evaluate(() => (globalThis as { __uiProbe?: Probe }).__uiProbe ?? null)) as Probe | null;
 
-  if (!probe) {
-    console.log('FAIL  the page never published a probe -- it probably threw before its first frame');
-    failed = true;
-  } else {
+    console.log(`--- ${scene} ---`);
+    if (!probe) {
+      console.log('FAIL  the page never published a probe -- it probably threw before its first frame');
+      failed = true;
+      continue;
+    }
     console.log(`viewport    ${probe.viewport.width}x${probe.viewport.height} UI px at scale ${probe.scale}`);
     console.log(`draw calls  ${probe.drawCalls}`);
     console.log(`frame       ${probe.frameMs.toFixed(3)} ms (median of 120), budget ${BUDGET_MS} ms`);
@@ -111,7 +112,13 @@ try {
     }
   }
 
-  console.log(`\nwrote .claude/screenshots/ui-gallery.png`);
+  if (errors.length > 0) {
+    console.log('\npage errors:');
+    for (const error of errors.slice(0, 5)) console.log(`  ${error}`);
+    failed = true;
+  }
+
+  console.log(`\nwrote .claude/screenshots/ui-widgets.png and ui-windows.png`);
   await browser.close();
 } finally {
   server.kill();

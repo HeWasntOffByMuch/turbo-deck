@@ -1,10 +1,13 @@
 # 01 — building a screen with what exists now
 
-Phase 1 shipped the framework and nine widgets. This is how to use them today,
-and what is deliberately not here yet.
+Phase 1 shipped the framework and nine widgets; phase 2 added windows, tabs,
+layers, tooltips and a saved layout. This is how to use them today, and what is
+deliberately not here yet.
 
-`docs/ui/00-architecture.md` is the design and the decisions; `specs/121-a-gui-the-tests-can-see.md`
-is what was built. This file is the walkthrough.
+`docs/ui/00-architecture.md` is the design and the decisions;
+`specs/121-a-gui-the-tests-can-see.md` and
+`specs/122-windows-that-remember-where-they-were.md` are what was built. This file
+is the walkthrough.
 
 ---
 
@@ -12,12 +15,13 @@ is what was built. This file is the walkthrough.
 
 ```
 src/ui/
-  core/      layout, hit-testing, focus, event routing, the widget tree     pure
+  core/      layout, hit-testing, focus, event routing, the widget tree,
+             the layer stack, the window manager, the layout store          pure
   text/      the two glyph tables, measurement and wrapping                 pure
   theme/     theme.json, its schema, the atlas source                       pure
   widgets/   Panel, Label, Button, Icon, Checkbox, Slider, TextField,
-             ScrollView, Separator                                          pure
-  gallery/   the QA surface and its goldens                                 pure
+             ScrollView, Separator, Window, Tabs, Tooltip                   pure
+  gallery/   the two QA scenes and their goldens                            pure
   render/    atlas.ts, raster.ts (software), canvas2d.ts (browser)          only canvas2d is impure
 ```
 
@@ -173,11 +177,52 @@ catch a backend that draws something the goldens do not describe.
 
 ---
 
+## Windows, tabs and tooltips (phase 2)
+
+```ts
+const manager = new WindowManager();
+const layers = new LayerStack();
+layers.place('windows', manager);
+
+const window = new UiWindow(buildCharacterPanel(send), {
+  title: 'Character',
+  at: { x: 8, y: 8 },
+  size: { width: 140, height: 96 },
+  resizable: true,
+});
+manager.register(window, 'character');
+
+const root = new UiRoot(layers, { theme: THEME, atlas, viewport, windows: manager, layers });
+```
+
+- **Layers** are a fixed enum: `hud → windows → dragGhost → modal → tooltip →
+  notification`. Nothing assigns a z-index. A layer is pointer-transparent
+  *always* — it is an ordering, not a surface.
+- **Z-order within `windows`** is a list the manager owns. `focus(id)` moves an
+  entry to the end; clicking a window does it for you.
+- **Escape** closes the topmost closable, unpinned window and consumes the key.
+  With nothing to close it is deliberately *not* consumed, so gameplay still sees
+  it and can cancel a cast.
+- **Tabs** build content lazily and then keep it. `panel.isBuilt(id)` says whether
+  a tab has ever been opened; a value typed into one survives leaving and coming
+  back.
+- **The layout** is a versioned document. `captureLayout` / `applyLayout` round
+  trip position, size, open state, pinned state and z-order; `migrateLayout`
+  returns **null** rather than throwing for anything unreadable. Persistence takes
+  a `StorageLike`, injected at the DOM edge.
+- **Tooltips** wait `theme.input.tooltipDelayMs` — measured from the timestamps
+  you pass to `update`, so they replay — and flip at the viewport edges.
+
+One rule worth knowing before you draw an icon: **a sprite's destination must be
+an integer multiple of its source size.** `raster.ts` does nearest-neighbour with
+an explicit formula and a browser does it with `drawImage`; the two agree exactly
+at whole-number scales and are free to disagree otherwise. A test asserts it over
+both scenes.
+
 ## What is not here yet
 
 | Want | Phase | Note |
 |---|---|---|
-| Windows, tabs, modals, tooltips | 2 | `Anchor` and the layer enum are here to build on |
 | Rebindable actions, `InputMap` | 3 | widgets take key events directly for now |
 | Drag and drop, item grids, equipment | 4 | also needs a server-side container that does not exist |
 | Skillbar, HUD, character sheet | 5 | replacing the DOM HUD is a redesign, not a port |
@@ -223,6 +268,26 @@ Everything after the first `popClip` was quietly cropped. Nothing in `npm test`
 could see it; the cross-backend comparison found it as one pixel of the wrong
 colour in a scrollbar. That is the clearest argument for the two-backend design
 there is going to be.
+
+**ADR-106 — A layer is never a hit target, only its contents are.**
+Making non-interactive layers pointer-transparent and interactive ones opaque
+looks right and means an *empty modal layer*, whose rect covers the viewport,
+silently swallows every click in the game. `interactive` decides whether a layer
+is consulted; it never makes the layer itself a target. Cost half an hour and one
+baffling "nothing is clickable".
+
+**ADR-107 — Sprites blit at whole-number scale only.**
+Nothing specifies which source pixel a *minifying* nearest-neighbour sample lands
+on, so a 7×7 icon drawn into a 6×6 box resolved differently in Node and in
+Chrome. The rule is free to keep and the alternative is a class of mismatch that
+only ever appears in a browser.
+
+**ADR-108 — `invalidateArrange` tells ancestors that a descendant moved.**
+`arrange` early-returns on an unchanged rect, and a scroll view's own rect never
+changes — only its content slides. Without a subtree flag the walk stopped one
+node above the thing that had asked to move, so `scrollTo` updated the offset and
+the scrollbar thumb while the content stayed put. The goldens agreed with the bug,
+because the thumb *had* moved.
 
 **ADR-105 — Each lint block states its rules in full.**
 Flat config merges last-wins *per rule name*, so a later block setting
