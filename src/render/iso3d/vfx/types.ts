@@ -17,6 +17,7 @@
 
 import type { Curve, Gradient } from './curve.js';
 import type { PaletteKey } from './palette.js';
+import type { FluidKind } from './splat.js';
 
 /** Where in the emitter's local frame a particle is born, and which way it goes. */
 export type EmitterShape =
@@ -80,6 +81,21 @@ export interface SpriteSpec {
   readonly once?: boolean;
 }
 
+/**
+ * A stain left where a particle lands.
+ *
+ * Separate from `onCollide`, which plays another *effect*. A decal is not an
+ * effect -- it outlives every particle in the system, it is owned by a map chunk
+ * rather than by an emitter, and it is what the gore setting switches off.
+ */
+export interface DecalSpec {
+  readonly fluid: FluidKind;
+  /** World units across, before the effect's own scale. */
+  readonly size: readonly [min: number, max: number];
+  /** 0..1. Not every drop that lands leaves a mark. */
+  readonly chance: number;
+}
+
 export interface CollisionSpec {
   /** Fraction of speed kept on bounce. 0 comes to rest on the ground. */
   readonly restitution: number;
@@ -90,6 +106,8 @@ export interface CollisionSpec {
   readonly onCollide?: string;
   /** Kill the particle on first contact instead of bouncing. */
   readonly dieOnCollide?: boolean;
+  /** Leave a stain at the contact point. */
+  readonly decal?: DecalSpec;
 }
 
 export interface SubEmitterSpec {

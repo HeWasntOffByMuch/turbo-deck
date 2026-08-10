@@ -7,8 +7,9 @@ Status: **Phase 1 landed; Phase 2a (sparks) at its review gate.**
 | 0 — plan | done |
 | 1 — core system (spec 118) | done, 71 tests, lint and typecheck green |
 | 2a — sparks + verification + glow comparison | done |
-| 2b — blood splat generator (spec 119) | **at the review gate: contact sheet below** |
-| 2c onward — decals, fire, smoke, auras, remaining hit effects | not started |
+| 2b — blood splat generator (spec 119) | done |
+| 2c — decals: ground, props, gore setting, combat wiring (spec 120) | **at the review gate** |
+| 2d onward — fire, smoke, auras, remaining hit effects | not started |
 | 3 — Studio VFX tab | not started |
 
 This is the living document for the VFX arc. It is updated as decisions land, and
@@ -684,6 +685,84 @@ The generator emits coverage and nothing else — no colour, no placement, no
 lifetime. Ground decals per chunk, the box projector for props, the unit-staining
 recommendation (mask texture vs bone-parented quads vs hybrid), the gore setting
 and its off switch, and wiring any of it to a hit all belong to the next spec.
+
+---
+
+## 5d. Decals, and the unit-staining decision
+
+Landed with spec 120: a per-chunk decal field, terrain-fitted ground decals, the
+projection rule for props, the gore setting, and blood wired to combat results
+through one pure module.
+
+### What the preview caught that the tests did not
+
+`npx tsx scripts/preview-decals.ts` reports the field's own arithmetic, and the
+first run said **chunk 0,0: 77 decals, 77 fading out**. The per-chunk cap counted
+decals that were *already fading* toward its limit, so under sustained fire every
+add marked another survivor and within a few seconds the entire bucket was on its
+way out — the ground going clean in the middle of the fight staining it. The cap
+now counts only the solid ones; the same spot reports 64 solid and 16 fading.
+
+The test that should have caught it existed and was too weak: it used a four-tick
+fade, which is fast enough that the dying decals leave before they can distort
+the count. It now uses a sixty-tick fade and asserts the solid count exactly.
+
+### Ground and props
+
+Ground decals are **fitted, not projected**: each is a 4×4 grid whose vertices
+sample the real terrain height. That is a few dozen vertices instead of a
+projection pass, it needs no depth buffer, and it cannot z-fight — there is no
+coplanar surface to fight with, because the decal *is* the surface, lifted along
+its normal. A flat quad on this heightfield floats at one end of a slope and is
+buried at the other, and on a ridge does both at once.
+
+Props use a box projector with `acceptsProjection`, which rejects faces turned
+more than a limit from the spray. Without it a projector paints every face it
+passes through, including the ones facing away, and blood appears on the
+underside of a rock as though applied from below.
+
+Neither writes depth, which is also what keeps them out of `HikeBuffers` and
+therefore un-inked. A bloodstain is a mark on a surface, not a form.
+
+### Units: recommendation
+
+Both approaches were evaluated; **neither is implemented**, because either one
+needs a change to the unit shader and, for (a), a render target per stained unit
+— a bigger surface than the ground and the props together, and its own spec.
+
+| | (a) UV-space mask texture | (b) Bone-parented quads |
+|---|---|---|
+| Persistence | Real. Stays through every animation. | Real, but attached to one bone. |
+| Deformation | Follows the skin exactly — it *is* the skin's texture. | Slides visibly. A quad on the chest bone stays rigid while the chest bends. |
+| Cost | One R8 target per stained unit (64×64 ≈ 4 KB), plus a brush-splat draw per hit. | Nothing but a few quads. |
+| Shader change | The unit material samples a second texture and tints. | None. |
+| Failure mode at this resolution | The mask is 64×64 over a whole body, so a stain is a handful of texels — coarse, but coarse is the house style. | The slide. It reads as a decal sitting *near* a unit rather than on it. |
+| Cleanup | Target returns to a pool on despawn. | Dies with the unit. |
+
+**Recommended: the hybrid, weighted toward (a).** A bone-parented quad at the
+moment of impact — one or two ticks, where nothing has time to slide — and a
+brush splat painted into the unit's mask texture for the staining that persists.
+That gets the impact's punch from the cheap mechanism and the persistence from
+the correct one, and neither is asked to do the job it is bad at.
+
+The reason not to take (b) alone, despite it being nearly free: this game's
+bodies are animated constantly and the camera is close enough at gameplay zoom to
+read the slide. The reason not to take (a) alone is that a mask painted the
+instant a blow lands has no *impact* to it — it appears rather than arriving.
+
+Worth knowing before it is scheduled: `unit-rig.ts` finds bones in the **loaded
+rig**, never by a name from a skeleton document, because three sanitises
+`mixamorig:Hips` to `mixamorigHips`. Whichever half of the hybrid gets built
+first inherits that rule.
+
+### Still open
+
+- The gore setting has no UI yet. `WorldScene.setGore` exists and is wired to the
+  field; the seventh button in the Play tab's corner is with the other panels.
+- `DecalField.dropChunk` is tested and **nothing calls it**, because the client
+  still never evicts a chunk. That is the honest state, not an oversight.
+- Damage types all currently map to `hit_metal_spark` in `DAMAGE_EFFECTS`. The
+  table is the seam; filling it in is the fire/ice/lightning work.
 
 ---
 

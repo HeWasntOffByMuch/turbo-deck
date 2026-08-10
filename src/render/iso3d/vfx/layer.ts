@@ -29,6 +29,8 @@ import * as THREE from 'three';
 import { ParticleBatch, modeCode } from './batches.js';
 import { VfxSystem, type VfxHooks, type VfxSystemOptions } from './system.js';
 import { REGISTRY } from './registry.js';
+import { DecalField, type GoreLevel } from './decals.js';
+import { DecalView } from './decal-view.js';
 import type { PlayOptions } from './types.js';
 
 /** How many of the sim's lights are actually given a `PointLight`. */
@@ -43,6 +45,9 @@ export interface VfxLayerOptions extends Omit<VfxSystemOptions, 'registry'> {
 export class VfxLayer {
   readonly root = new THREE.Object3D();
   readonly system: VfxSystem;
+  /** The stains (spec 120). Outlives every particle, owned by map chunks. */
+  readonly decals: DecalField;
+  private readonly decalView: DecalView;
 
   private readonly batches: ParticleBatch[] = [];
   /** Write cursor per batch, reset every sync. Preallocated. */
@@ -52,7 +57,34 @@ export class VfxLayer {
 
   constructor(options: VfxLayerOptions) {
     const registry = options.registry ?? REGISTRY;
-    this.system = new VfxSystem({ ...options, registry });
+    this.decals = new DecalField();
+    // The sim reports a contact; the field decides whether to keep it. Wiring
+    // them here rather than inside the sim is what keeps the sim free of chunk
+    // bookkeeping and the field free of particles.
+    this.system = new VfxSystem({
+      ...options,
+      registry,
+      hooks: {
+        ...options.hooks,
+        decal: (x, y, z, seed, fluid, size, dirX, dirZ) => {
+          this.decals.add({
+            x,
+            y,
+            z,
+            size,
+            // The stain lies the way the drop was travelling.
+            rotation: Math.atan2(dirZ, dirX),
+            nx: 0,
+            ny: 1,
+            nz: 0,
+            seed,
+            fluid,
+          });
+        },
+      },
+    });
+    this.decalView = new DecalView(this.decals, options.hooks.ground);
+    this.root.add(this.decalView.root);
 
     this.root.name = 'vfx';
     // Never culled as a whole: its children hold world-space particles and the
@@ -97,7 +129,15 @@ export class VfxLayer {
    */
   update(ticks: number): void {
     this.system.update(ticks);
+    this.decals.update(ticks);
     this.sync();
+    this.decalView.sync();
+  }
+
+  /** 0 off, 1 reduced, 2 full. Off removes the work, not just the pixels. */
+  setGore(level: GoreLevel): void {
+    this.decals.setGore(level);
+    this.decalView.sync();
   }
 
   /** Copy the particle field into the instanced attributes. */
@@ -155,6 +195,7 @@ export class VfxLayer {
   /** Where the camera is, for distance culling. */
   setViewpoint(x: number, y: number, z: number): void {
     this.system.setViewpoint(x, y, z);
+    this.decals.setViewpoint(x, z);
   }
 
   setIntensity(intensity: number): void {
@@ -179,6 +220,8 @@ export class VfxLayer {
     readonly refusedBudget: number;
     readonly refusedDistance: number;
     readonly throttled: number;
+    readonly decals: number;
+    readonly decalBuckets: number;
   } {
     const stats = this.system.stats;
     return {
@@ -189,10 +232,14 @@ export class VfxLayer {
       refusedBudget: stats.refusedBudget,
       refusedDistance: stats.refusedDistance,
       throttled: stats.throttled,
+      decals: this.decals.count,
+      decalBuckets: this.decalView.bucketCount,
     };
   }
 
   dispose(): void {
+    this.decalView.dispose();
+    this.root.remove(this.decalView.root);
     for (const batch of this.batches) {
       this.root.remove(batch.mesh);
       batch.dispose();

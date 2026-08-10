@@ -48,6 +48,7 @@ import { VfxRng } from './rng.js';
 import { turbulence3 } from './noise.js';
 import { EMISSION, RENDER, type CompiledEmitter, type CompiledRegistry } from './compile.js';
 import type { PlayOptions, VfxLimits, VfxStats } from './types.js';
+import type { FluidKind } from './splat.js';
 
 /** The fixed timestep. The sim's rate, because an effect times a blow. */
 export const VFX_TICK_SECONDS = 1 / 60;
@@ -99,6 +100,24 @@ export interface VfxHooks {
   readonly surface?: (entityId: number, rng: VfxRng, out: Float32Array, at: number) => boolean;
   /** Fired for `SoundSpec`. A sink today; there is no audio system to wire it to. */
   readonly sound?: (cue: string, x: number, y: number, z: number) => void;
+  /**
+   * A particle landed and left a stain (spec 120).
+   *
+   * Injected rather than owned, for the usual reason and one more: a decal
+   * outlives every particle in this system and is owned by a map chunk, so the
+   * particle sim has no business holding one. It reports the contact and the
+   * direction of travel and forgets about it.
+   */
+  readonly decal?: (
+    x: number,
+    y: number,
+    z: number,
+    seed: number,
+    fluid: FluidKind,
+    size: number,
+    dirX: number,
+    dirZ: number,
+  ) => void;
 }
 
 export interface VfxSystemOptions {
@@ -651,6 +670,21 @@ export class VfxSystem {
             }
             if (emitter.soundOn === 3) this.hooks.sound?.(emitter.soundCue, px, py, pz);
             pool.bounces[i] = (pool.bounces[i] ?? 0) + 1;
+
+            // The stain, at the moment of contact and only on the first one: a
+            // drop that bounces twice has not bled twice.
+            if (emitter.decalFluid !== null && this.hooks.decal && (pool.bounces[i] ?? 0) === 1) {
+              const seed = pool.seed[i] ?? 0;
+              // Drawn from the particle's own seed rather than the shared
+              // generator, so a decal is a function of the particle that made it
+              // and replaying the effect lays the same stains down.
+              this.rng.restore(seed | 0);
+              if (this.rng.float() < emitter.decalChance) {
+                const size = this.rng.range(emitter.decalMin, emitter.decalMax);
+                // Direction of travel across the ground: which way it was thrown.
+                this.hooks.decal(px, py, pz, seed, emitter.decalFluid, size, vx, vz);
+              }
+            }
           }
 
           const spent = emitter.dieOnCollide || (pool.bounces[i] ?? 0) > emitter.maxBounces;

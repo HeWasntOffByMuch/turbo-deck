@@ -116,8 +116,124 @@ const HIT_METAL_SPARK: EffectDefinition = {
   ],
 };
 
+/**
+ * A blow that draws blood (spec 120).
+ *
+ * The droplets are the whole effect: they fly, they fall, and the ones that
+ * reach the ground leave a stain that outlives them. There is no separate
+ * "spawn a decal" step -- the collision does it, which is what keeps a spatter's
+ * marks where its drops actually landed rather than in a ring around the victim.
+ *
+ * `chance` below 1 on purpose. Every drop leaving a mark fills a chunk's budget
+ * in one fight and reads as a stencil rather than as a spatter.
+ */
+const HIT_BLOOD: EffectDefinition = {
+  id: 'hit_blood',
+  priority: 2,
+  cullDistance: 1500,
+  emitters: [
+    {
+      id: 'spray',
+      shape: { kind: 'cone', angle: 0.85, radius: 3 },
+      emission: { kind: 'burst', count: 12 },
+      lifetimeTicks: [14, 34],
+      speed: [90, 260],
+      spreadRadians: 0.7,
+      gravity: -1100,
+      drag: 0.8,
+      size: { keys: [[0, 3.4], [1, 2.2]] },
+      alpha: { keys: [[0, 1], [1, 1]] },
+      color: { stops: [[0, 'bloodFresh'], [1, 'bloodDeep']] },
+      render: 'stretched',
+      // Alpha rather than additive: blood is a fluid and does not glow.
+      blend: 'alpha',
+      stretch: 0.05,
+      collision: {
+        restitution: 0,
+        friction: 0.8,
+        maxBounces: 0,
+        dieOnCollide: true,
+        decal: { fluid: 'blood', size: [18, 42], chance: 0.55 },
+      },
+    },
+    {
+      id: 'mist',
+      shape: { kind: 'cone', angle: 1.2, radius: 2 },
+      emission: { kind: 'burst', count: 8 },
+      lifetimeTicks: [6, 14],
+      speed: [40, 130],
+      spreadRadians: 1.1,
+      gravity: -300,
+      drag: 3.2,
+      size: { keys: [[0, 2.6], [1, 0.8]] },
+      alpha: { keys: [[0, 0.85], [1, 0]] },
+      color: { stops: [[0, 'bloodFresh'], [1, 'bloodDeep']] },
+      render: 'billboard',
+      blend: 'dither-cutout',
+    },
+  ],
+};
+
+/**
+ * The killing blow: the same language, louder, and it pools.
+ *
+ * Not a new shape vocabulary -- more drops, thrown further, and a much larger
+ * stain at the impact point itself, which is what "pooling" is at this
+ * resolution.
+ */
+const DEATH_BLOOD: EffectDefinition = {
+  id: 'death_blood',
+  priority: 2,
+  cullDistance: 1600,
+  emitters: [
+    {
+      id: 'spray',
+      shape: { kind: 'cone', angle: 1, radius: 4 },
+      emission: { kind: 'burst', count: 24 },
+      lifetimeTicks: [16, 46],
+      speed: [110, 340],
+      spreadRadians: 0.9,
+      gravity: -1100,
+      drag: 0.7,
+      size: { keys: [[0, 4], [1, 2.4]] },
+      alpha: { keys: [[0, 1], [1, 1]] },
+      color: { stops: [[0, 'bloodFresh'], [1, 'bloodDeep']] },
+      render: 'stretched',
+      blend: 'alpha',
+      stretch: 0.05,
+      collision: {
+        restitution: 0,
+        friction: 0.8,
+        maxBounces: 0,
+        dieOnCollide: true,
+        decal: { fluid: 'blood', size: [22, 56], chance: 0.7 },
+      },
+    },
+    {
+      id: 'pool',
+      shape: { kind: 'point' },
+      emission: { kind: 'burst', count: 1 },
+      lifetimeTicks: [2, 2],
+      speed: [0, 0],
+      gravity: -600,
+      size: { keys: [[0, 2]] },
+      alpha: { keys: [[0, 0]] },
+      color: { stops: [[0, 'bloodDeep']] },
+      render: 'billboard',
+      blend: 'alpha',
+      collision: {
+        restitution: 0,
+        friction: 1,
+        maxBounces: 0,
+        dieOnCollide: true,
+        decal: { fluid: 'blood', size: [70, 96], chance: 1 },
+      },
+    },
+  ],
+};
+
 /** Every authored effect, in one array. */
-export const EFFECTS: readonly EffectDefinition[] = [SPARK_BOUNCE, HIT_METAL_SPARK];
+export const EFFECTS: readonly EffectDefinition[] = [SPARK_BOUNCE, HIT_METAL_SPARK, HIT_BLOOD, DEATH_BLOOD];
 
 /**
  * The compiled table, built once at module load.

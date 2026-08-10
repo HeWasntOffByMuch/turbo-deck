@@ -47,6 +47,7 @@ import { turnToward } from '../../../server/sim/movement.js';
 import { facesAim } from '../../../server/sim/abilities.js';
 import { createHud, HOTBAR } from './hud.js';
 import { appearanceOf } from './appearance.js';
+import { effectsForBlow } from './vfx-wire.js';
 import { moveIntent, MOVE_KEYS, RoutePlanner } from './intent.js';
 import { autoAttack } from './target.js';
 import { aimShape, castOrder, startAim, type AimGesture, type AimOrder } from './aim.js';
@@ -230,7 +231,37 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   buttons.append(scene.controls.element, weather.element);
   root.append(hud.element, buttons);
 
+  /** Where a blow lands on a body, in world units above its feet. */
+  const BLOOD_HEIGHT = 26;
+
   client.onCombatResult((result) => {
+    // What a blow looks like, decided in one pure place (spec 120). Nothing
+    // about this changes a game outcome -- the server already resolved the blow
+    // and this is reading the answer.
+    const target = client.view().entities.find((entity) => entity.id === result.targetId);
+    const attacker = client.view().entities.find((entity) => entity.id === result.attackerId);
+    if (target) {
+      for (const request of effectsForBlow(
+        {
+          attackerId: result.attackerId,
+          targetId: result.targetId,
+          damage: result.damage,
+          killed: (result.flags & 1) !== 0,
+          critical: (result.flags & 2) !== 0,
+          blocked: (result.flags & 4) !== 0,
+          damageType: 'physical',
+          x: target.x,
+          y: BLOOD_HEIGHT,
+          z: target.y,
+          fromX: attacker?.x ?? target.x,
+          fromZ: attacker?.y ?? target.y,
+          bleeds: true,
+        },
+        client.view().estimatedTick,
+      )) {
+        scene.playEffect(request);
+      }
+    }
     // Where it landed, asked for now and never again (spec 096). The scene is
     // the better answer -- it knows the pose actually on screen, and it still
     // holds the body of something this very blow killed -- and the replica is

@@ -73,6 +73,8 @@ import {
 import { RetroPass } from '../retro-pass.js';
 import { HikeBuffers } from '../hike-buffers.js';
 import { VfxLayer } from '../vfx/layer.js';
+import type { GoreLevel } from '../vfx/decals.js';
+import type { PlayRequest } from './vfx-wire.js';
 import { HikeEdges } from '../hike-edges.js';
 import { advanceWind } from '../wind-uniforms.js';
 import { FIXED_DAYLIGHT } from '../daynight.js';
@@ -749,6 +751,35 @@ export class WorldScene {
       y: py,
       onScreen: this.projected.z < 1 && px >= -80 && px <= width + 80 && py >= -80 && py <= height + 80,
     };
+  }
+
+  /**
+   * Play what a blow asked for (spec 120).
+   *
+   * Handed a request `vfx-wire.ts` already decided on, so this end makes no
+   * judgement at all -- it turns a ground position into a world one and plays the
+   * id it was given. Every `if` about what a blow looks like lives in that pure
+   * module, where a test can reach it.
+   */
+  playEffect(request: PlayRequest): void {
+    this.vfx.play(request.id, {
+      x: request.x,
+      y: this.ground(request.x, request.z) + request.y,
+      z: request.z,
+      rotation: request.rotation,
+      scale: request.scale,
+      seed: request.seed,
+    });
+  }
+
+  /** 0 off, 1 reduced, 2 full. Off removes the decal work, not just the pixels. */
+  setGore(level: GoreLevel): void {
+    this.vfx.setGore(level);
+  }
+
+  /** What the VFX debug readout shows. */
+  vfxReadout(): ReturnType<VfxLayer['readout']> {
+    return this.vfx.readout();
   }
 
   /**

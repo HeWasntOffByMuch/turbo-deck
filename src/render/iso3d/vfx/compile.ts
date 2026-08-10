@@ -17,6 +17,7 @@ import { compileCurve, compileGradient, constant, type Curve } from './curve.js'
 import { SHAPE, type CompiledShape, type ShapeKind } from './shapes.js';
 import { VFX_PALETTE } from './palette.js';
 import type { Blend, EffectDefinition, Emitter, EmitterShape, RenderMode } from './types.js';
+import type { FluidKind } from './splat.js';
 
 export const EMISSION = { burst: 0, rate: 1, ramp: 2 } as const;
 export const RENDER = {
@@ -89,6 +90,10 @@ export interface CompiledEmitter {
   readonly friction: number;
   readonly maxBounces: number;
   readonly dieOnCollide: boolean;
+  readonly decalFluid: FluidKind | null;
+  readonly decalMin: number;
+  readonly decalMax: number;
+  readonly decalChance: number;
   /** Resolved in the second pass. -1 is "nothing". */
   onCollideEffect: number;
   onSpawnEffect: number;
@@ -231,6 +236,10 @@ function compileEmitter(emitter: Emitter, batchOf: (family: number, blend: numbe
     friction: emitter.collision?.friction ?? 0,
     maxBounces: emitter.collision?.maxBounces ?? 0,
     dieOnCollide: emitter.collision?.dieOnCollide ?? false,
+    decalFluid: emitter.collision?.decal?.fluid ?? null,
+    decalMin: emitter.collision?.decal?.size[0] ?? 0,
+    decalMax: emitter.collision?.decal?.size[1] ?? 0,
+    decalChance: emitter.collision?.decal?.chance ?? 0,
     onCollideEffect: -1,
     onSpawnEffect: -1,
     onDeathEffect: -1,
