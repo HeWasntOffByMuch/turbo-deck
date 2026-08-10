@@ -161,6 +161,212 @@ describe('the trunk ends inside the canopy, not through it', () => {
 });
 
 /**
+ * The conifer's frond, as `buildPropField` actually builds it (spec 121).
+ *
+ * `frond.test.ts` covers the hem's arithmetic -- where the tips and the clefts
+ * sit. What is left is everything between that and a frame, and it is all one
+ * claim: the bite is cut out of the cone the fir and the pine have always been,
+ * and costs nothing that was not already being paid. Every vertex on that cone's
+ * surface is what makes the trunk's derived height survive a cutout; the
+ * triangle budget and the batch count are what make "no burden on performance"
+ * a thing a test can fail rather than a sentence in a commit message.
+ */
+describe('the conifer frond, as built', () => {
+  /** A conifer of a given species and tier count, found by walking the position hash. */
+  function coniferProp(species: TreeSpecies, tierCount: number): Prop {
+    for (let i = 0; i < 40000; i++) {
+      const prop: Prop = { kind: 'tree', x: i * 37, y: i * 53, scale: 1, rotation: 0, tint: 0 };
+      const variant = treeVariant(prop);
+      if (variant.species === species && variant.tierCount === tierCount) return prop;
+    }
+    throw new Error(`no ${species} with ${tierCount} tiers in the hash`);
+  }
+
+  const batchesOf = (props: readonly Prop[]): THREE.InstancedMesh[] => {
+    const out: THREE.InstancedMesh[] = [];
+    buildPropField(props, () => 0).group.traverse((object) => {
+      if (object instanceof THREE.InstancedMesh) out.push(object);
+    });
+    return out;
+  };
+
+  /** The trunk is the one part drawn in bark rather than in leaf. */
+  const isFoliage = (mesh: THREE.InstancedMesh): boolean => {
+    const color = new THREE.Color();
+    mesh.getColorAt(0, color);
+    return color.getHex() !== new THREE.Color(PALETTE.trunk).getHex();
+  };
+
+  /** Every vertex of a geometry as (radius from the axis, height). */
+  const vertices = (mesh: THREE.InstancedMesh): { r: number; y: number }[] => {
+    const position = mesh.geometry.getAttribute('position');
+    const out: { r: number; y: number }[] = [];
+    for (let i = 0; i < position.count; i++) {
+      out.push({ r: Math.hypot(position.getX(i), position.getZ(i)), y: position.getY(i) });
+    }
+    return out;
+  };
+
+  const conifers = ['fir', 'pine'] as const satisfies readonly TreeSpecies[];
+  const fronds = (species: TreeSpecies, tierCount: number): THREE.InstancedMesh[] =>
+    batchesOf([coniferProp(species, tierCount)]).filter(isFoliage);
+
+  it('puts every vertex of a frond on the cone it is cut from', () => {
+    // The property the whole thing rests on. A vertex *off* that surface --
+    // pulled in at its own height rather than lifted up the slope -- would take
+    // cover the trunk's derived height is counting on, and nothing in the frame
+    // would say so.
+    for (const species of conifers) {
+      for (const tierCount of new Set(speciesTierCounts(species))) {
+        for (const frond of fronds(species, tierCount)) {
+          const points = vertices(frond);
+          const apex = Math.max(...points.map((p) => p.y));
+          const foot = Math.min(...points.map((p) => p.y));
+          const height = apex - foot;
+          const radius = Math.max(...points.map((p) => p.r));
+          for (const { r, y } of points) {
+            // The axis carries the apex and the underside's centre; every other
+            // vertex is on the slope, exactly.
+            if (r < 1e-9) continue;
+            // Loosely, because the buffer is float32 and a 44-unit radius has
+            // about six digits in it -- the claim is "on the surface", not "to
+            // the last bit of a float".
+            expect(r).toBeCloseTo((radius * (apex - y)) / height, 4);
+          }
+        }
+      }
+    }
+  });
+
+  it('keeps a crown as wide as its species table says, and its base plane where it was', () => {
+    for (const species of conifers) {
+      const widest = Math.max(
+        ...fronds(species, Math.max(...speciesTierCounts(species))).flatMap((frond) =>
+          vertices(frond).map((p) => p.r),
+        ),
+      );
+      expect(widest).toBeCloseTo(crownRadius(species), 6);
+    }
+    // ...and the lowest foliage still hangs exactly where `bareTrunkHeight`
+    // promises, since the hem is cut *upward* out of the cone and never below it.
+    for (const species of conifers) {
+      const field = batchesOf([coniferProp(species, 2)]).filter(isFoliage);
+      const lowest = Math.min(
+        ...field.flatMap((frond) => {
+          const matrix = new THREE.Matrix4();
+          frond.getMatrixAt(0, matrix);
+          const at = new THREE.Vector3().setFromMatrixPosition(matrix).y;
+          return vertices(frond).map((p) => at + p.y);
+        }),
+      );
+      expect(lowest).toBeCloseTo(bareTrunkHeight(species), 6);
+    }
+  });
+
+  it('actually bites: a hem that is not the cone\'s own flat rim', () => {
+    for (const species of conifers) {
+      for (const frond of fronds(species, Math.max(...speciesTierCounts(species)))) {
+        const points = vertices(frond);
+        const foot = Math.min(...points.map((p) => p.y));
+        const height = Math.max(...points.map((p) => p.y)) - foot;
+        const rim = points.filter((p) => p.r > 1e-9);
+        // One tip left at full reach, and a cut well up into the frond.
+        expect(Math.min(...rim.map((p) => p.y - foot))).toBeCloseTo(0, 6);
+        expect(Math.max(...rim.map((p) => p.y - foot))).toBeGreaterThan(0.15 * height);
+      }
+    }
+  });
+
+  it('costs a handful of triangles and not one extra batch', () => {
+    for (const species of conifers) {
+      for (const tierCount of new Set(speciesTierCounts(species))) {
+        const batches = batchesOf([coniferProp(species, tierCount)]);
+        // One trunk, one frond per tier it grew. The variety between two trees
+        // is the instance matrix, so a bitten frond adds no draw call.
+        expect(batches).toHaveLength(1 + tierCount);
+        for (const frond of batches.filter(isFoliage)) {
+          const triangles = frond.geometry.getAttribute('position').count / 3;
+          // The cone was 7 sides and a cap; the clefts add at most three tips'
+          // worth on top of that. A budget rather than an exact count, because
+          // how many bites a frond takes is hashed.
+          expect(triangles).toBeGreaterThanOrEqual(14);
+          expect(triangles).toBeLessThanOrEqual(24);
+        }
+      }
+    }
+  });
+
+  it('turns every frond differently while leaving the trunks alone', () => {
+    // The variety is in the instance matrix, which is why one shared geometry
+    // does not read as one shape stamped across a forest. A stand of firs that
+    // all stand *unturned* -- one region, one batch, `rotation: 0` on every one
+    // of them -- so the only thing that can separate their fronds is the spin.
+    const stand: Prop[] = [];
+    for (let i = 0; stand.length < 16 && i < 400; i++) {
+      const prop = tree(40 + (i % 20) * 52, 40 + Math.floor(i / 20) * 52);
+      const variant = treeVariant(prop);
+      if (variant.species === 'fir' && variant.tierCount === 4) stand.push(prop);
+    }
+    expect(stand).toHaveLength(16);
+    const yaws = (mesh: THREE.InstancedMesh): number[] => {
+      const matrix = new THREE.Matrix4();
+      const quaternion = new THREE.Quaternion();
+      return Array.from({ length: mesh.count }, (_, i) => {
+        mesh.getMatrixAt(i, matrix);
+        quaternion.setFromRotationMatrix(matrix);
+        const axis = new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion);
+        return Math.atan2(axis.z, axis.x);
+      });
+    };
+    const batches = batchesOf(stand);
+    const foliage = batches.filter(isFoliage);
+    expect(foliage).toHaveLength(4);
+    for (const frond of foliage) {
+      const spread = yaws(frond);
+      expect(spread).toHaveLength(stand.length);
+      // Turned across the whole compass rather than nudged: two neighbours
+      // share a frond and must not share its bearing.
+      expect(new Set(spread.map((y) => y.toFixed(3))).size).toBe(spread.length);
+      expect(Math.max(...spread) - Math.min(...spread)).toBeGreaterThan(Math.PI);
+    }
+    // ...and no two tiers of one tree line up either, or a bite would run
+    // straight down the side of the tree.
+    const first = foliage.map((frond) => yaws(frond)[0] as number);
+    for (let i = 1; i < first.length; i++) {
+      expect(Math.abs((first[i] as number) - (first[0] as number))).toBeGreaterThan(0.05);
+    }
+    // The trunk is a square column and gets none of this: whatever the world
+    // turned the tree by is what it is drawn at.
+    for (const trunk of batches.filter((mesh) => !isFoliage(mesh))) {
+      for (const yaw of yaws(trunk)) expect(yaw).toBeCloseTo(0, 9);
+    }
+  });
+
+  it('spins a frond under the lean rather than turning the lean with it', () => {
+    // The order that matters. Folded into the base yaw instead, the spin would
+    // carry the lean's axis round with it, and one tree's tiers would tip in
+    // four different compass directions while all drifting the same way -- the
+    // canopy coming off the trunk, which is what the lean and the drift are
+    // shaped to avoid.
+    for (const species of conifers) {
+      const prop = coniferProp(species, Math.max(...speciesTierCounts(species)));
+      const variant = treeVariant(prop);
+      expect(Math.abs(variant.asymmetry)).toBeGreaterThan(0.05);
+      const matrix = new THREE.Matrix4();
+      const quaternion = new THREE.Quaternion();
+      const bearings = fronds(species, variant.tierCount).map((frond) => {
+        frond.getMatrixAt(0, matrix);
+        quaternion.setFromRotationMatrix(matrix);
+        const tipped = new THREE.Vector3(0, 1, 0).applyQuaternion(quaternion);
+        return { bearing: Math.atan2(tipped.z, tipped.x), tilt: Math.hypot(tipped.x, tipped.z) };
+      });
+      for (const { tilt } of bearings) expect(tilt).toBeGreaterThan(1e-3);
+      for (const { bearing } of bearings) expect(bearing).toBeCloseTo(bearings[0]?.bearing as number, 6);
+    }
+  });
+});
+
+/**
  * Spec 058. A fence tile is the first prop whose *parts* have to line up with
  * the world -- a tree can be turned any way at all and nobody can tell, but a
  * tile's uprights sit along its own local +X and have to come out along the run.

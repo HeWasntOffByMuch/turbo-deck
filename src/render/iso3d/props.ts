@@ -5,6 +5,7 @@ import { FENCE_KINDS, FENCE_TILE_LENGTH, type FenceKind, type Prop } from '../..
 import { applySway, bakeBend, disposeSway, tiltReach, type SwayInstance } from './sway.js';
 import { DEFAULT_CREASE_ANGLE, weldedNormals } from './shading.js';
 import { stiffness } from './wind.js';
+import { frondGap, frondHem, frondRim, type FrondPoint } from './frond.js';
 import {
   LOBED,
   lobedCrownRadius,
@@ -75,6 +76,8 @@ const HASH_JITTER_ROT = 0x5eed06;
 const HASH_JITTER_SIZE = 0x5eed07;
 /** A tree's own offset into the wind's clock (spec 074). */
 const HASH_WIND_PHASE = 0x5eed08;
+/** Which way a frond is turned on this tree (spec 121) -- its own channel, as above. */
+const HASH_SPIN = 0x5eed09;
 
 /**
  * How the three species divide the forest, as cumulative shares of the position
@@ -183,6 +186,20 @@ interface PropPart {
   readonly swayTilt?: number;
   /** How far this part's geometry reaches from its own origin, for those bounds. */
   readonly swayReach?: number;
+  /**
+   * A full-turn spin about this part's *own* axis, radians, hashed per instance
+   * (spec 121).
+   *
+   * What makes one shared frond look like a forest of them: the geometry is the
+   * same buffer on every tree in the world and only the instance matrix differs,
+   * so the variety costs nothing to draw and nothing to store.
+   *
+   * Applied last in the quaternion chain and so *first* in the part's own frame,
+   * which is the whole difference between this and {@link jitterYaw}: the frond
+   * turns under the lean rather than turning the lean with it, so a tree's tiers
+   * still drift and lean as one thing while none of them line up.
+   */
+  readonly spinYaw?: number;
 }
 
 /**
@@ -228,6 +245,8 @@ interface ConiferShape {
   readonly tierCounts: readonly number[];
   readonly driftMax: number;
   readonly leanMax: number;
+  /** Drives the hem each tier is cut with (spec 121); the tier index is mixed in. */
+  readonly seed: number;
 }
 
 /**
@@ -248,6 +267,7 @@ const FIR: ConiferShape = {
   tierCounts: [2, 3, 3, 4],
   driftMax: 5,
   leanMax: 0.1,
+  seed: 0xf12,
 };
 
 /**
@@ -261,21 +281,57 @@ const PINE: ConiferShape = {
   tierCounts: [2, 2, 3],
   driftMax: 9,
   leanMax: 0.19,
+  seed: 0x9143,
 };
 
 const SPECIES: Record<TreeSpecies, SpeciesShape> = { fir: FIR, pine: PINE, lobed: LOBED };
 
-/** Sides on a tier's cone. */
+/** Tips on a tier's frond, and so sides on the cone it is cut from. */
 const CONE_SEGMENTS = 7;
 /**
  * A cone's `radius` is the circumradius of that heptagon, so over a flat face
  * the foliage only reaches this fraction of it from the axis -- and a flat face
  * is what the trunk has to hide behind.
+ *
+ * Still exactly this once the hem is cut (spec 121), because a frond's vertices
+ * all sit *on* that cone: a horizontal slice above the hem crosses every edge
+ * from the apex to a rim vertex, an apex-to-surface edge lies on the cone, and
+ * so the slice is a polygon at the full cone radius on the rim's own bearings.
+ * A cleft only ever adds a bearing *within* a sector, so the widest gap is the
+ * heptagon's own step and this is its half-angle. {@link frondGap} is what holds
+ * that true, and `frond.test.ts` asserts it.
  */
 const CONE_COVER = Math.cos(Math.PI / CONE_SEGMENTS);
 
 /** Slack on the band edges, so a cone's own base does not round its way out of it. */
 const EPSILON = 1e-6;
+
+/**
+ * The hem each tier of each conifer is cut with (spec 121), built once.
+ *
+ * One frond per (species, tier), shared by every tree in the world: the variety
+ * between two of them is the per-instance spin, not a second buffer. Keyed by
+ * the species' own seed with the tier mixed in, so a tree's fronds differ from
+ * each other as well as from the cone they came from.
+ */
+const FROND_RIMS = new Map<string, readonly FrondPoint[]>();
+
+function tierRim(shape: ConiferShape, tier: number): readonly FrondPoint[] {
+  const key = `${shape.seed},${tier}`;
+  const known = FROND_RIMS.get(key);
+  if (known) return known;
+  const rim = frondRim(shape.seed + tier * 0x1f1f, CONE_SEGMENTS);
+  // Checked here rather than trusted, for the reason `sway.ts` checks its
+  // splices at module load: {@link CONE_COVER} is the half-angle of the widest
+  // gap in this rim, and a rim that opened one past the heptagon's step would
+  // cover the trunk *less* than the cone did while every number downstream went
+  // on saying it covered exactly as much.
+  if (frondGap(rim) > (2 * Math.PI) / CONE_SEGMENTS + EPSILON) {
+    throw new Error(`frond rim ${key} leaves a gap wider than the tip step`);
+  }
+  FROND_RIMS.set(key, rim);
+  return rim;
+}
 
 /** How far a tier may swing off the trunk's axis at full asymmetry. */
 function tierSway(shape: ConiferShape, tier: number): { drift: number; lean: number } {
@@ -298,6 +354,12 @@ function tierSway(shape: ConiferShape, tier: number): { drift: number; lean: num
  * face* that has to clear. The tier's own drift and lean count against it: the
  * cone leans about its own centre, which both slides the axis sideways by
  * `dy * tan(lean)` and tips the slice being cut at `y` further up the cone.
+ *
+ * Below the frond's hem (spec 121) the answer is `-Infinity` rather than a
+ * smaller number: down there the cutouts leave *nothing at all* at some
+ * bearings, and the prop is spun arbitrarily, so a tier does not hide a trunk's
+ * cap there at any depth. Saying so is what keeps the trunk's height derived
+ * rather than derived-from-a-solid-that-is-no-longer-solid.
  */
 function tierCover(shape: ConiferShape, tier: number, y: number, asymmetry: number): number {
   const tierSpec = shape.tiers[tier];
@@ -308,7 +370,8 @@ function tierCover(shape: ConiferShape, tier: number, y: number, asymmetry: numb
   const lean = sway.lean * asymmetry;
   const dy = y - centre;
   const along = height / 2 + dy / Math.cos(lean);
-  if (along < -EPSILON || along > height + EPSILON) return -Infinity;
+  if (along < frondHem(tierRim(shape, tier)) * height - EPSILON) return -Infinity;
+  if (along > height + EPSILON) return -Infinity;
   const reach = radius * (1 - Math.min(Math.max(along, 0), height) / height) * CONE_COVER;
   const offAxis = Math.abs(sway.drift * asymmetry) + Math.abs(dy * Math.tan(lean));
   return reach - offAxis - (shape.trunkWidth / 2) * Math.SQRT2;
@@ -341,8 +404,14 @@ function buriedTrunkHeight(shape: ConiferShape): number {
     // sideways, so cover falls off monotonically from that base to the tip: a
     // tier covers the trunk at all only if it covers it down there, and one
     // bisection then finds the height where it stops.
+    //
+    // "Down there" is the frond's **hem**, not the tier's base plane (spec 121):
+    // below the hem the cutouts leave gaps, so that is the lowest height the
+    // question can be asked at, and starting any lower would ask it where the
+    // answer is `-Infinity` and drop the tier on the spot.
     const centre = baseY + height / 2;
-    let lo = centre - (height / 2) * Math.cos(tierSway(shape, tier).lean);
+    const hem = frondHem(tierRim(shape, tier)) * height;
+    let lo = centre + (hem - height / 2) * Math.cos(tierSway(shape, tier).lean);
     let hi = baseY + height;
     if (tierCover(shape, tier, lo, 1) < TRUNK_BURIAL) continue;
     for (let i = 0; i < 48; i++) {
@@ -525,6 +594,46 @@ function lobedSlabGeometry(slab: SlabSpec, shape: LobedShape): THREE.BufferGeome
   return build();
 }
 
+/**
+ * One tier's frond: the cone it has always been, with its hem cut away
+ * (spec 121).
+ *
+ * Built about the same origin `THREE.ConeGeometry` used -- apex at `+height/2`,
+ * base plane at `-height/2` -- so every `offsetY`, every bend weight and every
+ * bounding sphere in the file goes on meaning what it meant.
+ *
+ * Each rim vertex sits on the cone's own surface at its own height, so its
+ * radius is `radius * (1 - lift)` and nothing here can put a vertex outside the
+ * silhouette it replaces. The triangles are chords of that cone, which is also
+ * what makes the faces between a low tip and a high cleft slant: a frond takes
+ * light unevenly for the same reason it reads as bitten.
+ *
+ * The underside is a fan from the base plane's centre out to the same rim. It is
+ * never seen from this camera -- it faces down -- but it is what the shadow pass
+ * casts from and what stops the frond being a shell you can see up the inside of
+ * from a hillside below.
+ */
+function frondGeometry(radius: number, height: number, rim: readonly FrondPoint[]): THREE.BufferGeometry {
+  const { tri, build } = meshBuilder();
+  const apex: Vec3 = [0, height / 2, 0];
+  const foot: Vec3 = [0, -height / 2, 0];
+  const at = (point: FrondPoint): Vec3 => {
+    const reach = radius * (1 - point.lift);
+    return [Math.cos(point.angle) * reach, -height / 2 + point.lift * height, Math.sin(point.angle) * reach];
+  };
+
+  for (let i = 0; i < rim.length; i++) {
+    const here = at(rim[i] as FrondPoint);
+    const next = at(rim[(i + 1) % rim.length] as FrondPoint);
+    // Wound the way `lobedSlabGeometry` winds its two faces: inner vertex first,
+    // then round the rim the one way for a surface facing up and out, the other
+    // for one facing down.
+    tri(apex, next, here);
+    tri(foot, here, next);
+  }
+  return build();
+}
+
 /** Two tones and no more, alternating up the cluster: the brief's flat palette. */
 const LOBED_TONES = [PALETTE.leafMid, PALETTE.leafBright] as const;
 
@@ -617,7 +726,7 @@ function treeParts(species: TreeSpecies): PropPart[] {
   shape.tiers.forEach(([radius, tierHeight, baseY], tier) => {
     const sway = tierSway(shape, tier);
     parts.push({
-      geometry: new THREE.ConeGeometry(radius, tierHeight, CONE_SEGMENTS),
+      geometry: frondGeometry(radius, tierHeight, tierRim(shape, tier)),
       offsetY: baseY + tierHeight / 2,
       color: TIER_COLORS[Math.min(tier, TIER_COLORS.length - 1)] ?? PALETTE.leafMid,
       foliage: true,
@@ -625,6 +734,9 @@ function treeParts(species: TreeSpecies): PropPart[] {
       driftMax: sway.drift,
       leanMax: sway.lean,
       sway: true,
+      // One frond per tier, turned differently on every tree it is drawn on
+      // (spec 121). A cone had nothing to turn.
+      spinYaw: Math.PI,
     });
   });
   for (const part of parts) bakeBend(part.geometry, part.offsetY, full);
@@ -1471,6 +1583,7 @@ export function buildPropField(
         const wobblePos = jitterPos ? wobble(HASH_JITTER_POS) : 0;
         const wobbleRot = jitterRot ? wobble(HASH_JITTER_ROT) : 0;
         const wobbleSize = jitterSize ? wobble(HASH_JITTER_SIZE) : 0;
+        const wobbleSpin = part.spinYaw === undefined ? 0 : wobble(HASH_SPIN);
 
         // Local offset, scaled with the prop and spun by its rotation. The
         // per-instance drift rides in that same local frame, so a leaning tree
@@ -1505,6 +1618,12 @@ export function buildPropField(
           leanAxis.set(Math.cos(variant.leanAngle), 0, Math.sin(variant.leanAngle));
           quaternion.multiply(tilt.setFromAxisAngle(leanAxis, lean));
         }
+        // Last in the chain and so first in the part's own frame (spec 121): the
+        // frond turns *under* the lean. Multiplied the other way round it would
+        // carry the lean's axis with it, and a tree's tiers would each drift one
+        // way while leaning another -- the frond tearing off the trunk it hangs
+        // on, which is the one thing the drift and the lean exist to avoid.
+        if (part.spinYaw) quaternion.multiply(tilt.setFromAxisAngle(up, part.spinYaw * wobbleSpin));
         if (prop.alignToNormal && normalAt) {
           const [nx, ny, nz] = normalAt(prop.x, prop.y);
           groundUp.set(nx, ny, nz);
