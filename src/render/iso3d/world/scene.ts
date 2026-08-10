@@ -38,7 +38,7 @@ import { type HikeSettings } from '../hike.js';
 import { CURVATURE_UNIFORMS } from '../terrain-curvature.js';
 import { installPoissonShadows, shadowRadiusFor } from '../shadow-pcf.js';
 import { DETAIL_UNIFORMS, buildDetailTexture } from '../terrain-detail.js';
-import { MechRig, Poofs } from '../rigs.js';
+import { MechRig } from '../rigs.js';
 import { CritterRig, defaultCritterTuning } from '../critter.js';
 import { CRITTERS } from '../../critters/index.js';
 import { attachHighlight, type HighlightHandle } from '../highlight.js';
@@ -72,6 +72,7 @@ import {
 } from '../shadow.js';
 import { RetroPass } from '../retro-pass.js';
 import { HikeBuffers } from '../hike-buffers.js';
+import { VfxLayer } from '../vfx/layer.js';
 import { HikeEdges } from '../hike-edges.js';
 import { advanceWind } from '../wind-uniforms.js';
 import { FIXED_DAYLIGHT } from '../daynight.js';
@@ -310,7 +311,19 @@ export class WorldScene {
   private map: StreamedMap | null = null;
   private terrainMesh: TerrainMeshHandle | null = null;
   private propField: PropFieldHandle | null = null;
-  private readonly poofs: Poofs;
+  /**
+   * The particle field (spec 118).
+   *
+   * A plain `Object3D` in this scene, which is the whole integration: `RetroPass`
+   * draws `this.scene` into the low-resolution target, so every particle is
+   * inside the pixel buffer by construction rather than by a pass anyone had to
+   * remember to order correctly.
+   *
+   * It replaced `Poofs`, which this scene built and ticked every frame and never
+   * once called `spawn` on -- dead in the Play tab and unreferenced everywhere
+   * else in the repo.
+   */
+  private readonly vfx: VfxLayer;
   /** Marks the standing move order on the ground (spec 064). */
   private readonly moveMarker = makeMoveMarker();
 
@@ -438,7 +451,26 @@ export class WorldScene {
 
     this.torchFlame = this.buildTorch();
     this.orbMesh = this.buildOrb();
-    this.poofs = new Poofs(this.scene);
+    this.vfx = new VfxLayer({
+      hooks: {
+        // Injected rather than imported, so the sim stays free of terrain.
+        ground: (x, z) => this.ground(x, z),
+        attach: (entityId, _socket, out, at) => {
+          const body = this.bodies.get(entityId);
+          if (!body) return false;
+          // Entity-level for now. Socket resolution has to find the bone in the
+          // *loaded rig* rather than by a name out of a skeleton document --
+          // three sanitises `mixamorig:Hips` to `mixamorigHips`, so a documented
+          // name matches nothing and looks exactly like a clean import
+          // (`unit-rig.ts`). The effects that need a socket arrive with spec 119.
+          out[at] = body.group.position.x;
+          out[at + 1] = body.group.position.y;
+          out[at + 2] = body.group.position.z;
+          return true;
+        },
+      },
+    });
+    this.scene.add(this.vfx.root);
     this.moveMarker.visible = false;
     this.scene.add(this.moveMarker);
 
@@ -718,8 +750,29 @@ export class WorldScene {
     };
   }
 
-  /** A blast landed. Purely something to look at; the damage already happened. */
-  addEffect(x: number, y: number, radius: number, durationTicks: number): void {
+  /**
+   * A blast landed. Purely something to look at; the damage already happened.
+   *
+   * `effectId` is the one the server already sends on `EffectMessage` -- it has
+   * carried `${ability.id}.impact` since spec 062 and this renderer threw it away
+   * and drew one hardcoded ring for every ability in the game. When the registry
+   * knows the id it plays the authored effect; when it does not, the ring is
+   * still what happens, so abilities keep their cue until spec 119 onward gives
+   * each of them a real one.
+   */
+  addEffect(effectId: string, x: number, y: number, radius: number, durationTicks: number): void {
+    if (this.vfx.system.has(effectId)) {
+      this.vfx.play(effectId, {
+        x,
+        y: this.ground(x, y) + 2,
+        z: y,
+        scale: Math.max(0.25, radius / 40),
+        // Derived from where it landed, so the same blast in the same place looks
+        // the same on every client watching it.
+        seed: (Math.round(x) * 73856093) ^ (Math.round(y) * 19349663),
+      });
+      return;
+    }
     const mesh = new THREE.Mesh(
       new THREE.CircleGeometry(Math.max(4, radius), 24),
       new THREE.MeshBasicMaterial({
@@ -758,7 +811,12 @@ export class WorldScene {
     }
     this.syncTelegraphs(view, frame);
     this.ageEffects();
-    this.poofs.update(dt);
+    // Advanced on whole 60Hz steps, never on `dt`: an effect stepped by elapsed
+    // time is a different effect at 30fps and at 144, and "the same seed draws
+    // the same thing" stops being assertable. Same reason the unit machines take
+    // `frame.ticks`.
+    this.vfx.setViewpoint(this.target.x, this.target.y, this.target.z);
+    this.vfx.update(frame.ticks);
 
     // The camera follows the *predicted* self, not an interpolated replica: the
     // one body that must never lag its own input is this one.
@@ -843,6 +901,7 @@ export class WorldScene {
   }
 
   dispose(): void {
+    this.vfx.dispose();
     for (const body of this.bodies.values()) {
       this.scene.remove(body.group);
       if (body.shot?.trace) this.scene.remove(body.shot.trace);

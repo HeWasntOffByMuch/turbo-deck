@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { compileCurve, compileGradient, sampleCurve, sampleGradient } from './curve.js';
 import { VFX_PALETTE } from './palette.js';
+import { unpackLinear } from '../hike.js';
 
 describe('compileCurve', () => {
   it('sorts keys authored out of order', () => {
@@ -57,17 +58,32 @@ describe('gradients', () => {
   it('reads a palette entry exactly at a stop', () => {
     const flat = compileGradient({ stops: [[0, 'sparkHot'], [1, 'sparkEmber']] });
     sampleGradient(flat, 0, out, 0);
-    const hot = VFX_PALETTE.sparkHot;
-    expect(out[0]).toBeCloseTo(((hot >> 16) & 0xff) / 255, 5);
-    expect(out[1]).toBeCloseTo(((hot >> 8) & 0xff) / 255, 5);
-    expect(out[2]).toBeCloseTo((hot & 0xff) / 255, 5);
+    const [r, g, b] = unpackLinear(VFX_PALETTE.sparkHot);
+    expect(out[0]).toBeCloseTo(r, 5);
+    expect(out[1]).toBeCloseTo(g, 5);
+    expect(out[2]).toBeCloseTo(b, 5);
+  });
+
+  it('delivers linear channels, not the authored sRGB bytes', () => {
+    // The scene is lit and composited in linear working space and RetroPass does
+    // the encode at the end, so a gradient that handed over raw sRGB would make
+    // every particle too bright in the mid-tones -- which reads as alpha curves
+    // needing a tune rather than as a colour-space bug.
+    const flat = compileGradient({ stops: [[0, 'fireBody']] });
+    sampleGradient(flat, 0, out, 0);
+    // Checked on the green channel, which is a mid-tone. The transfer barely
+    // moves a near-white channel, so asserting on fireBody's red would pass
+    // whether or not the decode happened.
+    const raw = ((VFX_PALETTE.fireBody >> 8) & 0xff) / 255;
+    expect(out[1]).toBeCloseTo(unpackLinear(VFX_PALETTE.fireBody)[1], 5);
+    expect(out[1]).toBeLessThan(raw - 0.2);
   });
 
   it('interpolates between stops and clamps outside them', () => {
     const flat = compileGradient({ stops: [[0, 'oilBlack'], [1, 'dustSnow']] });
     sampleGradient(flat, 0.5, out, 0);
-    const lowR = ((VFX_PALETTE.oilBlack >> 16) & 0xff) / 255;
-    const highR = ((VFX_PALETTE.dustSnow >> 16) & 0xff) / 255;
+    const lowR = unpackLinear(VFX_PALETTE.oilBlack)[0];
+    const highR = unpackLinear(VFX_PALETTE.dustSnow)[0];
     expect(out[0]).toBeCloseTo((lowR + highR) / 2, 5);
 
     sampleGradient(flat, 4, out, 0);

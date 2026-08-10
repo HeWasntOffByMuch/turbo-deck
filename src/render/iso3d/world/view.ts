@@ -240,7 +240,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     hud.addDamage(result.targetId, at, result.damage, (result.flags & 2) !== 0);
   });
   client.onEffect((effect) => {
-    scene.addEffect(effect.x, effect.y, effect.radius, effect.durationTicks);
+    // The id the server has always sent and this view has always dropped.
+    scene.addEffect(effect.effectId, effect.x, effect.y, effect.radius, effect.durationTicks);
   });
   client.onCastRejected((abilityId, reason) => {
     hud.notice(`${abilityById(abilityId)?.name ?? abilityId}: ${reason}`);

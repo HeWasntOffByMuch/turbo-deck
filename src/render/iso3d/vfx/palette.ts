@@ -16,7 +16,23 @@
  * is exactly where it should happen -- a particle pre-snapped to the display
  * palette and then snapped again by the pass would band twice. What this table
  * is for is stopping thirty effects each inventing their own orange.
+ *
+ * ## Authored as sRGB, used as linear
+ *
+ * Every entry below is an sRGB hex, the way every other colour constant in this
+ * renderer is authored (`iso3d/palette.ts`, and `color-space.test.ts` beside it).
+ * The scene is lit and composited in linear working space and the sRGB encode
+ * happens once, in `RetroPass`, over the finished frame -- so these have to
+ * arrive at the shader as *linear*, exactly as `new THREE.Color(hex)` would
+ * deliver them.
+ *
+ * {@link paletteInto} therefore decodes, through the same `unpackLinear` the
+ * rest of the renderer is held to. Skipping it does not look like a bug: the
+ * particles simply come out too bright in the mid-tones, in a way that reads as
+ * the alpha curves needing tuning.
  */
+
+import { unpackLinear } from '../hike.js';
 
 export const VFX_PALETTE = {
   // --- sparks and metal ---
@@ -87,14 +103,21 @@ export function isPaletteKey(key: string): key is PaletteKey {
   return Object.prototype.hasOwnProperty.call(VFX_PALETTE, key);
 }
 
-/** Unpack a packed 0xRRGGBB into three floats in [0, 1], written at `at`. */
+/**
+ * Unpack a packed sRGB `0xRRGGBB` into three **linear** floats, written at `at`.
+ *
+ * Through the renderer's own `unpackLinear`, so a VFX colour takes exactly the
+ * journey every other palette constant here takes and a three.js upgrade that
+ * moved one would move both.
+ */
 export function unpackInto(packed: number, out: Float32Array, at: number): void {
-  out[at] = ((packed >> 16) & 0xff) / 255;
-  out[at + 1] = ((packed >> 8) & 0xff) / 255;
-  out[at + 2] = (packed & 0xff) / 255;
+  const [r, g, b] = unpackLinear(packed);
+  out[at] = r;
+  out[at + 1] = g;
+  out[at + 2] = b;
 }
 
-/** A palette entry as three floats in [0, 1], written at `at`. */
+/** A palette entry as three linear floats, written at `at`. */
 export function paletteInto(key: PaletteKey, out: Float32Array, at: number): void {
   unpackInto(VFX_PALETTE[key], out, at);
 }

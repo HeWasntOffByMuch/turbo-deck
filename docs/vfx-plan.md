@@ -1,6 +1,14 @@
 # VFX and particles — plan
 
-Status: **Phase 0, awaiting review.** No engine code written yet.
+Status: **Phase 1 landed; Phase 2a (sparks) at its review gate.**
+
+| Phase | State |
+|---|---|
+| 0 — plan | done |
+| 1 — core system (spec 118) | done, 71 tests, lint and typecheck green |
+| 2a — sparks + verification + glow comparison | **at the review gate** |
+| 2b onward — blood, fire, smoke, auras, remaining hit effects | not started |
+| 3 — Studio VFX tab | not started |
 
 This is the living document for the VFX arc. It is updated as decisions land, and
 it is where the damage-type colour/shape language is written down so future
@@ -495,6 +503,122 @@ commits, per `CLAUDE.md`.
   weave matches the frame's) versus **a low-res bloom applied inside the pixel
   buffer** (threshold + small blur at virtual resolution, before the quantize).
   Pictures, then a decision. No full-resolution bloom is on the table.
+
+---
+
+## 5a. What Phase 1 actually cost, measured
+
+`node --expose-gc --import tsx scripts/profile-vfx.ts`, on the container this was
+built in (software rendering, no GPU — the simulation figures are CPU only and
+are what matter here). One tick is one 60Hz step, so µs/tick is the per-frame
+cost at 60fps.
+
+| Configuration | live | µs/tick | ns/particle | B/particle/tick |
+|---|---|---|---|---|
+| every feature at once, cap 1000 | 980 | 341 | 348 | 0.58 |
+| every feature at once, cap 2000 | 1957 | 697 | 356 | 0.50 |
+| every feature at once, cap 3000 | 2936 | 1045 | 356 | 0.32 |
+| plain (curves, gradient, gravity, drag) | 1961 | 232 | 118 | 0.20 |
+| + turbulence | 1961 | 509 | 259 | 0.50 |
+| + ground collision | 1950 | 326 | 167 | 0.20 |
+| + collision with a sub-effect | 1961 | 313 | 160 | 0.57 |
+| + ribbon | 1961 | 248 | 126 | 0.24 |
+| + sprite flipbook | 1958 | 238 | 122 | 0.20 |
+
+Reading it:
+
+- **The budget holds with room to spare.** 2,000 particles of ordinary work is
+  0.23 ms a frame; 2,000 particles doing *everything at once* is 0.70 ms. Against
+  a 16.6 ms frame that is 1.4% and 4.2%.
+- **Turbulence is the one expensive feature** — it more than doubles the
+  per-particle cost on its own. Fire and smoke both want it, so it is worth
+  spending deliberately rather than sprinkling. It got 2.1× cheaper during this
+  phase and is still the ceiling.
+- **Allocation is not per particle.** 0.2–0.6 bytes per particle per tick, where
+  a single small object each would be 32 or more. `alloc.test.ts` asserts the
+  per-particle figure stays under 8.
+
+Two performance findings worth keeping, because both cost real time to find and
+neither is guessable from reading the code:
+
+1. **V8 will not inline an eleven-argument helper.** `noise.ts` was factored into
+   `field()` and a `blend()` taking eight corners and three weights, which is how
+   anyone would write it. Flattening the identical arithmetic into one function
+   took it from **325 ns to 112 ns a call** — 2.9×. The file is written flat now
+   and says why at the top, because it reads worse and the next person to tidy it
+   would undo the measurement.
+2. **`>>> 0` leaves V8's small-integer range.** An unsigned 32-bit hash exceeds
+   2³¹, which cannot be a Smi, so it boxes. The extraction `(h >> s) & 0x3ff`
+   reads exactly the same bits with every intermediate staying small. (This one
+   turned out *not* to be the bottleneck when measured in isolation — the
+   inlining was — but it is still the right way to write it, and the ratio test
+   in `alloc.test.ts` is what keeps either from regressing.)
+
+The honest caveat on all of it: this is CPU simulation cost, measured under
+software rendering. What the *draw* costs on a real GPU is a separate number, and
+the stress test in the acceptance criteria (50 effects + 200 decals) needs decals
+to exist first — it lands with Phase 2c.
+
+---
+
+## 5b. The two gate deliverables
+
+### How "inside the low-resolution buffer" was verified
+
+Not asserted — measured, on the composited page, by `npx tsx scripts/probe-vfx.ts`.
+It renders a spark burst through the real `RetroPass` at a real virtual
+resolution (240×150, upscaled ×4 by CSS) with a deliberately tiny six-colour
+palette, screenshots the canvas, and checks two independent things in Node. A
+particle drawn at native resolution and composited on top fails both:
+
+| Check | What it would catch | Result |
+|---|---|---|
+| Every pixel is a palette entry | The pass snaps the whole image to the palette; anything drawn *after* it keeps its own colour | **36,000 of 36,000 on palette, 0 off** |
+| Every 4×4 device-pixel block is one flat colour | The backing store is the virtual buffer and CSS upscales by a whole number, so a natively-drawn edge lands inside a block | **0 of 36,000 blocks non-flat** |
+| Draw calls for the whole effect | Batching by (blend, sheet) working at all | **2** |
+
+Two things went wrong on the way to that number, and both are worth recording
+because both produced *believable* wrong answers:
+
+- The first version called `readRenderTargetPixels(null, …)` to read the default
+  framebuffer. three refuses that — it wants a real render target — so every
+  measurement came back zero and the probe reported "nothing is on the palette",
+  which is exactly what a genuinely broken pipeline reports. The pixels now come
+  from the screenshot, which is the better subject anyway: it is what a player
+  sees, and it is the only place the CSS upscale exists at all.
+- The script imported the palette from the page module, which mounts itself on
+  import, so running it in Node crashed on `document`. The shared numbers moved
+  to `probe-config.ts`. Copying the palette into the script instead is the
+  version where the two drift and the check keeps passing against a list nothing
+  uses.
+
+### Glow: three approaches, rendered
+
+`.claude/screenshots/vfx-glow-{dither,smooth,layered}.png`. Same seed, same tick,
+same ramp — only the halo's falloff differs.
+
+| | What it is | How it reads at 240×150 |
+|---|---|---|
+| **dither** | Additive halo, radial falloff resolved against the same 4×4 Bayer matrix `retro.ts` dithers the frame with | Hot white core, halo dissolves into a stipple that belongs to the frame's own weave. 3 luminance levels over 415 px. |
+| **smooth** | Additive halo, plain radial ramp | The ramp does not survive the quantizer. It collapses into a **hard-edged brown blob** with a visible contour — a shape, not a glow. |
+| **layered** | Dithered halo plus a second wider, dimmer one | A much broader stipple field, 642 px. Reads big; also reads busy. |
+
+**Recommendation: `dither` as the default, `layered` reserved for effects that
+are meant to be large** (explosions, boss telegraphs, a fireball's ignition).
+
+**And no bloom pass.** The `smooth` image is the argument, and it is a fair proxy:
+a low-res bloom applied inside the pixel buffer produces exactly the smooth ramp
+that `smooth` produces — it just generates it from the framebuffer instead of
+from a sprite — and the quantizer does the same thing to it either way. Spending
+a threshold pass, a blur pass and a second render target to arrive at the picture
+on the right is not a trade worth making. If a future effect genuinely needs
+light to bleed onto neighbouring geometry, the cheap light hook already in the
+system (`LightSpec`) tints real geometry without touching the frame.
+
+One honest caveat on the comparison: `dither` and `smooth` are like-for-like, but
+`layered` adds an emitter, which shifts every later emitter's index and therefore
+its RNG stream — so its *sparks* differ, not just its halo. The halo is still the
+thing being compared, but the burst underneath is not the same burst.
 
 ---
 
