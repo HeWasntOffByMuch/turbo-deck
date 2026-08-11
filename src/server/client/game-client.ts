@@ -67,7 +67,14 @@ const CHUNK_REQUEST_INTERVAL_TICKS = 3;
  */
 const CHUNK_THROTTLE_BACKOFF_TICKS = 15;
 import { abilityById } from '../data/abilities.js';
-import type { EffectiveStats } from '../state/types.js';
+import {
+  EMPTY_EQUIPMENT,
+  type EffectiveStats,
+  type Equipment,
+  type Inventory,
+  type SlotAddress,
+} from '../state/types.js';
+import { applyMove, type MoveRequest } from '../player/inventory.js';
 import { createFlatPredictor, PredictionBuffer, type PredictedInput, type PredictStep } from './prediction.js';
 import { ReplicatedWorld } from './replica.js';
 import {
@@ -186,6 +193,17 @@ export interface ClientView {
    */
   readonly spawners: readonly SpawnerStatus[];
   readonly stats: EffectiveStats | null;
+  /**
+   * What the player is carrying and wearing (spec 126), with any move still in
+   * flight already drawn in. Empty until the first `Inventory` message lands.
+   *
+   * This is where a paperdoll comes from. It is *not* derivable from
+   * {@link stats}: two swords with the same numbers are the same stat block and
+   * different pictures, which is why the HUD's weapon switch used to click
+   * "Hunting Bow" and light "Worn Sword".
+   */
+  readonly inventory: Inventory;
+  readonly equipment: Equipment;
   readonly level: number;
   readonly experience: number;
   readonly unspentSkillPoints: number;
@@ -334,6 +352,21 @@ export class GameClient {
   /** The spawner readout, when it has been asked for (spec 076). */
   private spawners: readonly SpawnerStatus[] = [];
   private stats: EffectiveStats | null = null;
+  /**
+   * The containers as the server last described them, and the guess drawn on top
+   * (spec 126).
+   *
+   * Two copies on purpose, and the same shape prediction has for movement: the
+   * server's word is what a replay starts from, and the predicted pair is what a
+   * view reads. Keeping only the guess would leave nothing to roll back *to*.
+   */
+  private serverInventory: Inventory = [];
+  private serverEquipment: Equipment = EMPTY_EQUIPMENT;
+  private inventory: Inventory = [];
+  private equipment: Equipment = EMPTY_EQUIPMENT;
+  /** Moves sent and not yet answered, oldest first. */
+  private readonly pendingMoves: { readonly requestId: number; readonly request: MoveRequest }[] = [];
+  private moveRequests = 0;
   private level = 1;
   private experience = 0;
   private unspentSkillPoints = 0;
@@ -511,6 +544,53 @@ export class GameClient {
 
   unequip(slot: string): void {
     this.channel.send(encodeClientMessage({ type: ClientMessageType.Unequip, slot }));
+  }
+
+  /**
+   * Ask to move an item, and draw the result immediately (spec 126).
+   *
+   * Predicted, unlike a cast: the rules are pure and this client has the same
+   * copy of them the server runs, so guessing costs nothing when it is right and
+   * is undone by the answer when it is wrong. `count` of 0 means the whole stack.
+   *
+   * Returns the request id, so a caller can tell its own move from a resend.
+   */
+  moveItem(from: SlotAddress, to: SlotAddress, count = 0): number {
+    if (!this.connected) return 0;
+    this.moveRequests += 1;
+    const requestId = this.moveRequests;
+    const request: MoveRequest = { from, to, ...(count === 0 ? {} : { count }) };
+    this.pendingMoves.push({ requestId, request });
+    this.replayMoves();
+    this.channel.send(
+      encodeClientMessage({ type: ClientMessageType.MoveItem, requestId, from, to, count }),
+    );
+    return requestId;
+  }
+
+  /**
+   * Rebuild the predicted containers from the server's last word plus every
+   * move still in flight.
+   *
+   * The same shape as movement reconciliation, and for the same reason: with two
+   * drags in flight, the answer to the first one describes a world where the
+   * second has not happened, and adopting it wholesale would make the second
+   * drag flicker back for a round trip. A refused move simply is not in this
+   * list any more, so the rollback is this function finding one fewer.
+   */
+  private replayMoves(): void {
+    let bag = this.serverInventory;
+    let worn = this.serverEquipment;
+    for (const pending of this.pendingMoves) {
+      const outcome = applyMove(bag, worn, pending.request, this.level);
+      // A guess the local rules refuse is simply not drawn. The server is about
+      // to refuse it too, and predicting an illegal move is worse than lagging.
+      if (!outcome.ok) continue;
+      bag = outcome.inventory;
+      worn = outcome.equipment;
+    }
+    this.inventory = bag;
+    this.equipment = worn;
   }
 
   spendSkillPoint(skillId: string): void {
@@ -963,6 +1043,8 @@ export class GameClient {
       map: this.mapView(),
       spawners: this.spawners,
       stats: this.stats,
+      inventory: this.inventory,
+      equipment: this.equipment,
       level: this.level,
       experience: this.experience,
       unspentSkillPoints: this.unspentSkillPoints,
@@ -1138,6 +1220,18 @@ export class GameClient {
         if (message.reason === ChunkDeniedReason.Throttled) {
           this.chunkBackoffTicks = CHUNK_THROTTLE_BACKOFF_TICKS;
         }
+        break;
+
+      case ServerMessageType.Inventory:
+        this.serverInventory = message.inventory;
+        this.serverEquipment = message.equipment;
+        // Everything up to and including the answered request has been settled,
+        // whether it was taken or refused -- the containers that arrived are the
+        // truth about both. What is left is what is still in flight.
+        while ((this.pendingMoves[0]?.requestId ?? Infinity) <= message.requestId) {
+          this.pendingMoves.shift();
+        }
+        this.replayMoves();
         break;
 
       case ServerMessageType.Stats:

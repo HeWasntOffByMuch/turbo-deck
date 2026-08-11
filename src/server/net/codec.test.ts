@@ -24,7 +24,8 @@ import {
   isAdminRequest,
   ServerMessageType,
 } from './protocol.js';
-import type { EffectiveStats } from '../state/types.js';
+import { EMPTY_EQUIPMENT, emptyInventory, type EffectiveStats } from '../state/types.js';
+import { maxStackOf } from '../data/items.js';
 
 const STATS: EffectiveStats = {
   maxHealth: 137.5,
@@ -134,6 +135,22 @@ describe('game message round-trip', () => {
       afterInputSeq: 9001,
     },
     { type: ClientMessageType.CancelCast, afterInputSeq: 9002 },
+    {
+      type: ClientMessageType.MoveItem,
+      requestId: 7,
+      from: { container: 'inventory', index: 3 },
+      to: { container: 'equipment', index: 0 },
+      count: 0,
+    },
+    {
+      // An out-of-range index is a *rule* refusal, so it has to survive the
+      // wire to be refused with a reason -- a signed index, not a length.
+      type: ClientMessageType.MoveItem,
+      requestId: 8,
+      from: { container: 'inventory', index: -1 },
+      to: { container: 'inventory', index: 5 },
+      count: 4,
+    },
   ];
 
   it.each(clientMessages.map((m) => [m.type, m] as const))(
@@ -211,6 +228,28 @@ describe('game message round-trip', () => {
       atTick: 1750,
     },
     { type: ServerMessageType.Cooldowns, entries: [], resource: 0, atTick: 0 },
+    // An empty bag, a full one, and a stack at its ceiling (spec 126) -- the
+    // three shapes a container has, and the codec has to carry all of them.
+    {
+      type: ServerMessageType.Inventory,
+      requestId: 0,
+      inventory: emptyInventory(),
+      equipment: EMPTY_EQUIPMENT,
+    },
+    {
+      type: ServerMessageType.Inventory,
+      requestId: 12,
+      inventory: [...emptyInventory()].map(() => ({ defId: 'sword.worn', count: 1 })),
+      equipment: { ...EMPTY_EQUIPMENT, mainHand: 'bow.hunting', chest: 'chest.leather' },
+    },
+    {
+      type: ServerMessageType.Inventory,
+      requestId: 3,
+      inventory: [...emptyInventory()].map((_, i) =>
+        i === 2 ? { defId: 'potion.minor', count: maxStackOf('potion.minor') } : null,
+      ),
+      equipment: EMPTY_EQUIPMENT,
+    },
     { type: ServerMessageType.Pong, nonce: 88, serverTick: 1000 },
     { type: ServerMessageType.Error, code: 7, message: 'rejected' },
     { type: ServerMessageType.Disconnect, reason: 'kicked' },

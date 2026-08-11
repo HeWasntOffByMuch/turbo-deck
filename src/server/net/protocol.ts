@@ -36,6 +36,14 @@ export const ClientMessageType = {
    * nothing when it is off.
    */
   WatchSpawners: 0x0b,
+  /**
+   * Move one item from one slot to another (spec 126).
+   *
+   * The only container write there is: equip, unequip, swap, merge and split are
+   * all this message with different addresses, which is why there is one
+   * handler to keep honest rather than six.
+   */
+  MoveItem: 0x0c,
 } as const;
 
 export const ServerMessageType = {
@@ -78,6 +86,17 @@ export const ServerMessageType = {
    * `WatchSpawners`.
    */
   SpawnerStates: 0x51,
+  /**
+   * What the player is carrying and wearing, whole (spec 126).
+   *
+   * Whole rather than as a delta, and deliberately: twenty-four slots of an id
+   * and a count is a few hundred bytes, where a delta would be a second
+   * description of the same state that can drift from it. The client's
+   * optimistic guess is *replaced* by what arrives, so rollback is not a code
+   * path -- it is what happens when the resend disagrees, and it therefore
+   * cannot rot from disuse.
+   */
+  Inventory: 0x52,
 } as const;
 
 /** What a spawner is doing, as a byte (spec 076). */

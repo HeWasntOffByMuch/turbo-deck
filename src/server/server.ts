@@ -430,6 +430,7 @@ export class GameServer implements AdminHost {
         if (connection.playerId === null) return;
         const result = await this.players.equip(connection.playerId, message.slot, message.itemId);
         this.reportAction(connection, result.ok ? null : result.reason);
+        this.sendInventory(connection, 0);
         break;
       }
 
@@ -437,6 +438,24 @@ export class GameServer implements AdminHost {
         if (connection.playerId === null) return;
         const result = await this.players.unequip(connection.playerId, message.slot);
         this.reportAction(connection, result.ok ? null : result.reason);
+        this.sendInventory(connection, 0);
+        break;
+      }
+
+      case ClientMessageType.MoveItem: {
+        if (connection.playerId === null) return;
+        const result = await this.players.moveItem(connection.playerId, {
+          from: message.from,
+          to: message.to,
+          // 0 on the wire means "the whole stack", which is `undefined` to the
+          // rules -- the wire has no way to say "absent" and the rules have no
+          // use for a zero.
+          ...(message.count === 0 ? {} : { count: message.count }),
+        });
+        this.reportAction(connection, result.ok ? null : result.reason);
+        // Answered either way, at the id that was asked. A refusal that said
+        // nothing but "no" would leave the client's guess standing.
+        this.sendInventory(connection, message.requestId);
         break;
       }
 
@@ -585,6 +604,9 @@ export class GameServer implements AdminHost {
     });
     this.sendMapInfo(connection);
     this.sendStats(connection);
+    // Unprompted, because nothing asked: a client cannot draw a bag it was
+    // never told about, and login is the one moment it has no guess to settle.
+    this.sendInventory(connection, 0);
   }
 
   /**
@@ -783,6 +805,26 @@ export class GameServer implements AdminHost {
       experience: session.record.experience,
       unspentSkillPoints: session.record.unspentSkillPoints,
       stats: session.stats,
+    });
+  }
+
+  /**
+   * The player's containers, whole (spec 126).
+   *
+   * `requestId` is the move this answers, or 0 for an unprompted resend. Sent
+   * after a refusal as well as after an acceptance, which is the whole rollback
+   * mechanism: the client replaces its guess with this, so a refused move undoes
+   * itself through the same code path an accepted one confirms itself through.
+   */
+  private sendInventory(connection: Connection, requestId: number): void {
+    if (connection.playerId === null) return;
+    const session = this.players.get(connection.playerId);
+    if (!session) return;
+    this.send(connection, {
+      type: ServerMessageType.Inventory,
+      requestId,
+      inventory: session.record.inventory,
+      equipment: session.record.equipment,
     });
   }
 

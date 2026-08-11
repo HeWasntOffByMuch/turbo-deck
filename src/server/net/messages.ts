@@ -8,7 +8,16 @@
  * frame rather than a crash.
  */
 
-import type { EffectiveStats, Vec3 } from '../state/types.js';
+import {
+  EQUIP_SLOTS,
+  type EffectiveStats,
+  type Equipment,
+  type EquipSlot,
+  type Inventory,
+  type ItemStack,
+  type SlotAddress,
+  type Vec3,
+} from '../state/types.js';
 import { BufferReader, BufferWriter, CodecError } from './codec.js';
 import { ClientMessageType, ServerMessageType } from './protocol.js';
 import {
@@ -85,6 +94,23 @@ export interface UnequipMessage {
   readonly slot: string;
 }
 
+/**
+ * Move one item between two slots (spec 126).
+ *
+ * A request like every other: the server decides. The client is expected to
+ * guess the outcome and draw it, which is what `requestId` is for -- the answer
+ * names the guess it settles, so a client can tell "my move went through" from
+ * "an unrelated resend arrived".
+ */
+export interface MoveItemMessage {
+  readonly type: typeof ClientMessageType.MoveItem;
+  readonly requestId: number;
+  readonly from: SlotAddress;
+  readonly to: SlotAddress;
+  /** How many to take, or 0 for the whole stack. */
+  readonly count: number;
+}
+
 export interface SpendSkillPointMessage {
   readonly type: typeof ClientMessageType.SpendSkillPoint;
   readonly skillId: string;
@@ -152,12 +178,78 @@ export type ClientMessage =
   | PingMessage
   | EquipMessage
   | UnequipMessage
+  | MoveItemMessage
   | SpendSkillPointMessage
   | ChatMessage
   | UseAbilityMessage
   | CancelCastMessage
   | RequestChunkMessage
   | WatchSpawnersMessage;
+
+/**
+ * A slot address, as a container byte and a signed index (spec 126).
+ *
+ * Signed on purpose: an out-of-range index is a *rule* refusal, answered with a
+ * reason, and encoding it as a varuint would turn a client's -1 into a corrupt
+ * frame and a dropped connection instead.
+ */
+const CONTAINER_BYTE = { inventory: 0, equipment: 1 } as const;
+
+function writeAddress(writer: BufferWriter, at: SlotAddress): void {
+  writer.u8(CONTAINER_BYTE[at.container]).varint(at.index);
+}
+
+function readAddress(reader: BufferReader): SlotAddress {
+  const container = reader.u8();
+  if (container !== CONTAINER_BYTE.inventory && container !== CONTAINER_BYTE.equipment) {
+    throw new CodecError(`unknown container ${container}`);
+  }
+  return {
+    container: container === CONTAINER_BYTE.inventory ? 'inventory' : 'equipment',
+    index: reader.varint(),
+  };
+}
+
+/**
+ * A whole container. An empty slot is an empty id, which costs one byte -- and
+ * keeps the count of slots on the wire equal to the count the server has, so a
+ * client never has to guess how long its own bag is.
+ */
+function writeInventory(writer: BufferWriter, inventory: Inventory): void {
+  writer.varuint(inventory.length);
+  for (const stack of inventory) {
+    if (!stack) {
+      writer.str('');
+      continue;
+    }
+    writer.str(stack.defId).varuint(stack.count);
+  }
+}
+
+function readInventory(reader: BufferReader): Inventory {
+  const count = reader.varuint();
+  const bag: (ItemStack | null)[] = new Array<ItemStack | null>(count).fill(null);
+  for (let i = 0; i < count; i++) {
+    const defId = reader.str();
+    bag[i] = defId === '' ? null : { defId, count: reader.varuint() };
+  }
+  return bag;
+}
+
+function writeEquipment(writer: BufferWriter, equipment: Equipment): void {
+  // Slot order is `EQUIP_SLOTS`, so a new slot is appended there and nowhere
+  // else -- the wire has no names on it and cannot survive a reorder.
+  for (const slot of EQUIP_SLOTS) writer.str(equipment[slot] ?? '');
+}
+
+function readEquipment(reader: BufferReader): Equipment {
+  const worn: Partial<Record<EquipSlot, string | null>> = {};
+  for (const slot of EQUIP_SLOTS) {
+    const id = reader.str();
+    worn[slot] = id === '' ? null : id;
+  }
+  return worn as Equipment;
+}
 
 export function encodeClientMessage(message: ClientMessage): Uint8Array {
   const writer = new BufferWriter(64);
@@ -189,6 +281,12 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
       break;
     case ClientMessageType.Unequip:
       writer.str(message.slot);
+      break;
+    case ClientMessageType.MoveItem:
+      writer.varuint(message.requestId);
+      writeAddress(writer, message.from);
+      writeAddress(writer, message.to);
+      writer.varuint(message.count);
       break;
     case ClientMessageType.SpendSkillPoint:
       writer.str(message.skillId);
@@ -247,6 +345,14 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
       return { type: ClientMessageType.Equip, slot: reader.str(), itemId: reader.str() };
     case ClientMessageType.Unequip:
       return { type: ClientMessageType.Unequip, slot: reader.str() };
+    case ClientMessageType.MoveItem:
+      return {
+        type: ClientMessageType.MoveItem,
+        requestId: reader.varuint(),
+        from: readAddress(reader),
+        to: readAddress(reader),
+        count: reader.varuint(),
+      };
     case ClientMessageType.SpendSkillPoint:
       return { type: ClientMessageType.SpendSkillPoint, skillId: reader.str() };
     case ClientMessageType.Chat:
@@ -368,6 +474,22 @@ export interface StatsMessage {
   readonly experience: number;
   readonly unspentSkillPoints: number;
   readonly stats: EffectiveStats;
+}
+
+/**
+ * What the player is carrying and wearing (spec 126). The whole thing, always.
+ *
+ * Sent on login, after every accepted move, and after every *refused* one --
+ * the refusal is the case that matters, because it is what a client's optimistic
+ * guess is rolled back against, and a rollback that only runs on rare failures
+ * is a rollback that has stopped working by the time it is needed.
+ */
+export interface InventoryMessage {
+  readonly type: typeof ServerMessageType.Inventory;
+  /** The request this answers, or 0 for an unprompted resend. */
+  readonly requestId: number;
+  readonly inventory: Inventory;
+  readonly equipment: Equipment;
 }
 
 export interface ServerChatMessage {
@@ -501,6 +623,7 @@ export type ServerMessage =
   | CorrectionMessage
   | CombatResultMessage
   | StatsMessage
+  | InventoryMessage
   | ServerChatMessage
   | PongMessage
   | ErrorMessage
@@ -696,6 +819,11 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
         .varuint(message.unspentSkillPoints);
       writeStats(writer, message.stats);
       break;
+    case ServerMessageType.Inventory:
+      writer.varuint(message.requestId);
+      writeInventory(writer, message.inventory);
+      writeEquipment(writer, message.equipment);
+      break;
     case ServerMessageType.Chat:
       writer.u8(message.channel).str(message.from).str(message.text);
       break;
@@ -823,6 +951,13 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         experience: reader.varuint(),
         unspentSkillPoints: reader.varuint(),
         stats: readStats(reader),
+      };
+    case ServerMessageType.Inventory:
+      return {
+        type: ServerMessageType.Inventory,
+        requestId: reader.varuint(),
+        inventory: readInventory(reader),
+        equipment: readEquipment(reader),
       };
     case ServerMessageType.Chat:
       return {

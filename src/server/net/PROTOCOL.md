@@ -117,7 +117,25 @@ the time it lands (spec 067).
 
 Equip, unequip and skill spends each trigger a full server-side stat
 recalculation and are answered with a fresh `Stats` message, or with `Error`
-(`RejectedAction`) and no state change.
+(`RejectedAction`) and no state change. Since spec 126 equip and unequip are
+`MoveItem` underneath -- they name an item id rather than a slot index, and they
+are refused unless the player is carrying the item. Both also answer with an
+unprompted `Inventory`, and both should go away once nothing sends them.
+
+### `0x0c MoveItem`
+`varuint requestId` · `u8 fromContainer` · `varint fromIndex` ·
+`u8 toContainer` · `varint toIndex` · `varuint count`
+
+Move one item from one slot to another (spec 126). `container` is `0` inventory
+and `1` equipment; `index` is a bag slot or the ordinal of an `EquipSlot`, and it
+is **signed** because an out-of-range index is a rule refusal with a reason
+attached, not a malformed frame. `count` of `0` means the whole stack; any other
+value splits.
+
+The only container write there is: equip, unequip, swap, merge and split are all
+this message with different addresses, which is what keeps the conservation rule
+in one place. Answered with an `Inventory` at the same `requestId` whether it was
+taken or refused, plus an `Error(RejectedAction)` when it was refused.
 
 ### `0x0b WatchSpawners`
 `bool on`
@@ -369,6 +387,26 @@ Sent on the broadcast cadence, and **only to a connection that sent
 interest set: these are markers a level designer placed, so there are tens of
 them, and an overlay that faded out at the interest radius would be worst at
 exactly the question it exists to answer.
+
+### `0x52 Inventory`
+`varuint requestId` · `varuint slots` · per slot: `str defId` (empty = the slot
+is empty) · `varuint count` (absent for an empty slot) · then one `str` per
+`EquipSlot`, in `EQUIP_SLOTS` order (empty = nothing worn)
+
+What the player is carrying and wearing (spec 126). `requestId` is the `MoveItem`
+this answers, or `0` for an unprompted resend — login, and the equip/unequip
+messages that predate this one.
+
+**The whole container, never a delta.** Twenty-four slots of an id and a count is
+a few hundred bytes, where a delta would be a second description of the same
+state that can drift from it. The client's optimistic guess is *replaced* by what
+arrives, so rollback is not a code path — it is what happens when the resend
+disagrees, and it therefore cannot rot from disuse. That is also why a **refused**
+move is answered with this message too: the refusal is exactly when the client's
+guess needs taking away.
+
+Equipment slot order is the wire contract: a new slot is appended to
+`EQUIP_SLOTS` and never reordered, because there are no names on the wire.
 
 ## `admin:*` — client → server
 
