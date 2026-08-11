@@ -1,5 +1,5 @@
 /**
- * A viewport over something taller than itself (spec 121).
+ * A viewport over something taller than itself (spec 123).
  *
  * The content is measured against an *unbounded* height and then arranged
  * offset upwards, which is what makes it a scroll view rather than a squashed

@@ -1,5 +1,5 @@
 /**
- * The screen that edits the map (spec 123).
+ * The screen that edits the map (spec 125).
  *
  * A row per action: its name, its two chords as buttons, and a reset. Clicking a
  * chord button enters *capture* -- the row swallows the next key and binds it.
@@ -8,7 +8,7 @@
  *
  * **Capture pushes `textEntry`.** For the same reason a focused text field does:
  * while capturing, `Digit1` must bind and not also cast. That is the whole reason
- * spec 121 made contexts a stack rather than a flag.
+ * spec 123 made contexts a stack rather than a flag.
  *
  * **A conflict is offered, not enforced.** Binding a chord somebody else has
  * leaves both in place and shows what it clashes with. The player can then decide
@@ -165,7 +165,7 @@ export class KeybindingsScreen extends Column {
       this.rows.push(row);
       column.add(row);
     }
-    // A tab's content is built on first selection (spec 122), so the rows that
+    // A tab's content is built on first selection (spec 124), so the rows that
     // appear here have never been refreshed. Do it now rather than waiting for
     // the next binding change, or a freshly-opened tab shows empty buttons.
     this.refresh();

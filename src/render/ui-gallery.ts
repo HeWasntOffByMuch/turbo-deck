@@ -1,5 +1,5 @@
 /**
- * The gallery, in a real browser (spec 121).
+ * The gallery, in a real browser (spec 123).
  *
  * A dev-server page rather than a tab in the game's shell, for the same reason
  * `wind-probe.html` and `shading-probe.html` are: it is a measuring rig, and the
@@ -61,7 +61,7 @@ function main(): void {
   const frame = uiFrame(app.clientWidth, app.clientHeight, dpr, scale);
   const viewport = { width: frame.width, height: frame.height };
 
-  // `?scene=windows` draws spec 122's six-window scene instead of the widget
+  // `?scene=windows` draws spec 124's six-window scene instead of the widget
   // gallery, so the cross-backend comparison covers both. Two pages would be two
   // copies of the glue below.
   const wanted = new URLSearchParams(globalThis.location.search).get('scene');
@@ -203,7 +203,7 @@ function main(): void {
 }
 
 /**
- * The keybinding window in a window (spec 123).
+ * The keybinding window in a window (spec 125).
  *
  * A third scene rather than a seventh window in the six-window one, so the frame
  * budget that scene measures keeps meaning what it says.

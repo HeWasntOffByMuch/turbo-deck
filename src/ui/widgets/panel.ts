@@ -1,5 +1,5 @@
 /**
- * A box with a frame and children inside it (spec 121).
+ * A box with a frame and children inside it (spec 123).
  *
  * A `Column` that happens to draw. Kept as its own class rather than a flag on
  * the container because "does this thing have a background" is the question a

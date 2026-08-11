@@ -1,5 +1,5 @@
 /**
- * Six windows, tabs and a tooltip, on one screen (spec 122).
+ * Six windows, tabs and a tooltip, on one screen (spec 124).
  *
  * The phase-2 half of the QA surface, and the subject of its own goldens. Six
  * because that is the number the brief's frame budget is stated against -- if it

@@ -232,7 +232,7 @@ const PURE_RENDER = [
 ];
 
 /**
- * The GUI framework (spec 121). Everything under src/ui/ except the backends.
+ * The GUI framework (spec 123). Everything under src/ui/ except the backends.
  *
  * Stated as "all of it, minus one directory" rather than as an allowlist of
  * files, deliberately: PURE_RENDER above is an explicit list, which means a new
@@ -395,7 +395,7 @@ export default tseslint.config(
     },
   },
   {
-    // Nothing in the Play tab branches on a raw key (spec 123).
+    // Nothing in the Play tab branches on a raw key (spec 125).
     //
     // `world/view.ts` is the one adapter: it asks the InputMap what actions a
     // KeyboardEvent fires and acts on those, so every key there is rebindable.
@@ -419,7 +419,7 @@ export default tseslint.config(
     },
   },
   {
-    // --- the GUI framework (spec 121) ---------------------------------------
+    // --- the GUI framework (spec 123) ---------------------------------------
     //
     // Its pure half: layout, hit-testing, focus, event routing, the widget tree,
     // the theme and both fonts. It must run headlessly, and -- the rule the whole

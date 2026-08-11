@@ -1,5 +1,5 @@
 /**
- * The chrome, as text (spec 121).
+ * The chrome, as text (spec 123).
  *
  * There is no `ui-atlas.png` and there is not going to be one. Nothing in this
  * client is fetched, and a painted texture is a binary blob that reviews as

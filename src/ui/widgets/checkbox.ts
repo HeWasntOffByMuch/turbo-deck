@@ -1,5 +1,5 @@
 /**
- * A box, a tick and a label (spec 121).
+ * A box, a tick and a label (spec 123).
  *
  * The whole widget is a click target, label included -- a 10-pixel box is a
  * miserable thing to hit with a finger, and spec 094 already established that a

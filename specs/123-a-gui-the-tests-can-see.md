@@ -167,9 +167,9 @@ tables are allowed; `sim/`, `world/` and `player/` are not).
 
 ## Out of scope
 
-- **Windows, tabs, modals and tooltips** — spec 122. `Anchor` and the layer enum are
+- **Windows, tabs, modals and tooltips** — spec 124. `Anchor` and the layer enum are
   here so that phase has somewhere to stand, but there is no window manager yet.
-- **The action/keybinding layer** — spec 123. Widgets take key events directly for now.
+- **The action/keybinding layer** — spec 125. Widgets take key events directly for now.
 - **Drag and drop, item grids, equipment** — spec 124, and it waits on a server-side
   container that does not exist.
 - **The Play tab.** The DOM HUD, the settings cog and the world's render path are

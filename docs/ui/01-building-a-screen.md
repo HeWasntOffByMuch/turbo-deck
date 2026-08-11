@@ -6,9 +6,9 @@ the window that edits them. This is how to use them today, and what is
 deliberately not here yet.
 
 `docs/ui/00-architecture.md` is the design and the decisions;
-`specs/121-a-gui-the-tests-can-see.md` and
-`specs/122-windows-that-remember-where-they-were.md` and
-`specs/123-a-key-is-a-binding-not-a-branch.md` are what was built. This file
+`specs/123-a-gui-the-tests-can-see.md` and
+`specs/124-windows-that-remember-where-they-were.md` and
+`specs/125-a-key-is-a-binding-not-a-branch.md` are what was built. This file
 is the walkthrough.
 
 ---

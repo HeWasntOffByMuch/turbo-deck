@@ -1,5 +1,5 @@
 /**
- * One texture, baked from committed text (spec 121).
+ * One texture, baked from committed text (spec 123).
  *
  * Every glyph of both faces, every 9-slice frame and every icon are packed into
  * a single RGBA buffer at startup. Nothing is fetched and no PNG exists: the

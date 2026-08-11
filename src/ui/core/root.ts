@@ -1,5 +1,5 @@
 /**
- * The one object a caller holds (spec 121).
+ * The one object a caller holds (spec 123).
  *
  * Owns the tree, the router, the focus manager and the context stack, and
  * exposes exactly three verbs: feed it an event, tell it what time it is, and

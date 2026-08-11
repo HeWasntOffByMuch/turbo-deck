@@ -9,7 +9,7 @@ find them tomorrow where they left them today.
 
 The parts that look easy and are not: z-order that survives clicking, a drag that
 lands on the grid rather than wherever the cursor happened to be, a window clamped
-to a viewport that now varies (spec 121 made the UI a scale rather than a fixed
+to a viewport that now varies (spec 123 made the UI a scale rather than a fixed
 canvas, so the viewport changes when the window does), and a saved layout that
 still loads after the schema changes.
 
@@ -59,7 +59,7 @@ two windows could hold the same depth with nothing to say which won.
 
 ### Layers, so a tooltip is never under a window
 
-The fixed enum from spec 121's design, made real:
+The fixed enum from spec 123's design, made real:
 
 ```
 Hud 10 -> Windows 20 -> DragGhost 30 -> Modal 40 -> Tooltip 50 -> Notification 60
@@ -111,7 +111,7 @@ Persistence goes through a `StorageLike` injected at the DOM edge, exactly as
 `editor/persistence.ts` already does it — the module stays pure and testable.
 
 Restoring **re-clamps to the current viewport**. A layout saved on a wide monitor
-must not put a window off the edge of a phone, and since spec 121 the viewport is
+must not put a window off the edge of a phone, and since spec 123 the viewport is
 a function of the window size and the UI scale, so this is the common case rather
 than the exotic one.
 
@@ -157,7 +157,7 @@ behaviour is replayable.
 - **Any game screen.** This spec builds the furniture; the inventory and the
   character sheet are phases 4 and 5, and they wait on server work that does not
   exist (see `docs/ui/00-architecture.md` §2.7).
-- **Rebindable actions.** Escape and Tab are wired directly here; spec 123 gives
+- **Rebindable actions.** Escape and Tab are wired directly here; spec 125 gives
   them an `InputMap`.
 - **Docking, snapping windows to each other, or maximise.** A window goes where it
   is put.

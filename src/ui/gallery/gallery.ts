@@ -1,5 +1,5 @@
 /**
- * Every widget, in every state, on one screen (spec 121).
+ * Every widget, in every state, on one screen (spec 123).
  *
  * The primary manual QA surface, and the subject of the golden images. Built as
  * a pure function of a theme and an atlas so the exact same tree is what the

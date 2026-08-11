@@ -1,5 +1,5 @@
 /**
- * A track, a knob and a value (spec 121).
+ * A track, a knob and a value (spec 123).
  *
  * Two details that are the difference between a slider and a frustrating slider.
  *

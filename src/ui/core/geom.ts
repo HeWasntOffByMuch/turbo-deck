@@ -1,5 +1,5 @@
 /**
- * The shapes everything else is expressed in (spec 121).
+ * The shapes everything else is expressed in (spec 123).
  *
  * Every rectangle in this framework is in **whole UI pixels**. Not "usually
  * whole" -- the type does not say so, but every function here that produces one

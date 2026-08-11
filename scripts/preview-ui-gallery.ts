@@ -1,4 +1,4 @@
-// Dev-only: drive the widget gallery in a real browser (spec 121).
+// Dev-only: drive the widget gallery in a real browser (spec 123).
 // `npx tsx scripts/preview-ui-gallery.ts`
 //
 // Two things only a browser can answer, and both of them matter.
@@ -73,7 +73,7 @@ try {
   const outDir = join(root, '.claude', 'screenshots');
   mkdirSync(outDir, { recursive: true });
 
-  // Both scenes: the widget gallery (spec 121) and the six-window one (spec 122).
+  // Both scenes: the widget gallery (spec 123) and the six-window one (spec 124).
   // The budget the brief states is "six windows open", so the second is the one
   // the number actually belongs to.
   for (const scene of ['widgets', 'windows', 'keys'] as const) {

@@ -1,5 +1,5 @@
 /**
- * A button, an icon, and a separator (spec 121).
+ * A button, an icon, and a separator (spec 123).
  *
  * The button is the widget the whole framework is checked against, because it is
  * the one that exercises every part: five theme states, a gesture that can be

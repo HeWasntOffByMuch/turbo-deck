@@ -1,5 +1,5 @@
 /**
- * The browser backend (spec 121).
+ * The browser backend (spec 123).
  *
  * The **only** file under `src/ui/` that touches the DOM, which is the whole
  * point of the layer split -- and it is a hundred lines, which is what makes the

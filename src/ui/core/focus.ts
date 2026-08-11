@@ -1,5 +1,5 @@
 /**
- * Who has the keyboard (spec 121).
+ * Who has the keyboard (spec 123).
  *
  * Focus traversal is a depth-first walk of the tree in paint order, filtered to
  * what can actually take it. The filter is the whole of the logic and it is

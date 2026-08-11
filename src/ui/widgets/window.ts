@@ -1,5 +1,5 @@
 /**
- * A panel with a title bar and a place to be (spec 122).
+ * A panel with a title bar and a place to be (spec 124).
  *
  * This is where the visual direction spends its one allowance of boldness: the
  * title bar is the `heavy` frame in the accent, and everything else in the

@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://turbo-deck/schemas/ui-theme.schema.json",
   "title": "UI theme",
-  "description": "The one document every widget's colours, spacing and per-state styling come from (spec 121). additionalProperties is false throughout, so a typo'd key is an error with a pointer at it rather than a token that silently does nothing.",
+  "description": "The one document every widget's colours, spacing and per-state styling come from (spec 123). additionalProperties is false throughout, so a typo'd key is an error with a pointer at it rather than a token that silently does nothing.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "palette", "spacing", "fonts", "input", "widgets"],

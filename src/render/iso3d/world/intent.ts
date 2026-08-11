@@ -51,7 +51,7 @@ export interface MoveIntent {
  * Which *actions* drive which way, in the sim's axes: +y is "down the screen"
  * (south), matching the terrain module's `z`.
  *
- * Four entries, not eight (spec 123). This used to be keyed by `KeyboardEvent.code`
+ * Four entries, not eight (spec 125). This used to be keyed by `KeyboardEvent.code`
  * and list WASD and the arrows separately -- which is two bindings of one action
  * spelled as two actions, and put "the arrows walk too" in a table no player
  * could reach. The arrows are now the secondary binding of these four, in

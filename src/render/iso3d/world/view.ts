@@ -300,7 +300,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
   // --- input -------------------------------------------------------------
   /**
-   * Held *actions*, not key codes (spec 123).
+   * Held *actions*, not key codes (spec 125).
    *
    * The map is per-view and loaded from the player's profile at mount; the
    * storage is reached for here, at the DOM edge, exactly as the editor's
@@ -457,7 +457,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
   /**
    * The only place in the game that turns a `KeyboardEvent` into a decision
-   * (spec 123).
+   * (spec 125).
    *
    * It asks the map what actions the key fires and acts on those; it never
    * branches on a code or a letter. That is what makes every key here

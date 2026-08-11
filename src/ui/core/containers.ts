@@ -1,5 +1,5 @@
 /**
- * The six containers (spec 121).
+ * The six containers (spec 123).
  *
  * `Row` and `Column` are one implementation parameterised by axis, because a
  * column is a row with the words swapped and two copies of this arithmetic would

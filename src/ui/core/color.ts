@@ -1,5 +1,5 @@
 /**
- * Colour, as four bytes (spec 121).
+ * Colour, as four bytes (spec 123).
  *
  * Bytes rather than a packed integer because JavaScript's bitwise operators are
  * 32-bit *signed*: `0xff0000ff | 0` is negative, and every read of a packed

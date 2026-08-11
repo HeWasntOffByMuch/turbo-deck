@@ -1,5 +1,5 @@
 /**
- * Who is in front (spec 122).
+ * Who is in front (spec 124).
  *
  * Z-order is a **list the manager owns**, not a number each window carries. A
  * window holding its own depth needs every other window rewritten whenever one

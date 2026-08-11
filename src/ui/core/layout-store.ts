@@ -1,5 +1,5 @@
 /**
- * Where the windows were, across a reload (spec 122).
+ * Where the windows were, across a reload (spec 124).
  *
  * A versioned document, and three rules that come from it being a *preference*
  * rather than a save file.
@@ -11,7 +11,7 @@
  * throw is a black screen.
  *
  * **It re-clamps on apply.** A layout saved on a wide monitor must not put a
- * window off the edge of a phone. Since spec 121 the viewport is a function of
+ * window off the edge of a phone. Since spec 123 the viewport is a function of
  * the window size *and* the UI scale, so restoring at a different size is the
  * common case rather than the exotic one.
  *

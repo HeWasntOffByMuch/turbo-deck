@@ -1,5 +1,5 @@
 /**
- * The software backend, and the reason the goldens are exact (spec 121).
+ * The software backend, and the reason the goldens are exact (spec 123).
  *
  * Writes RGBA bytes into a `Uint8Array` with no GPU, no canvas and no browser,
  * which makes it the one backend a vitest run can drive. Every golden image in

@@ -1,5 +1,5 @@
 /**
- * Bindings across a reload (spec 123).
+ * Bindings across a reload (spec 125).
  *
  * Beside `core/layout-store.ts` and under the same three rules: never throws,
  * takes a `StorageLike` rather than reaching for one, and stores a document with

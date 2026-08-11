@@ -1,5 +1,5 @@
 /**
- * 9-slice frames and text runs, as `drawSprite` calls (spec 121).
+ * 9-slice frames and text runs, as `drawSprite` calls (spec 123).
  *
  * These are the functions that keep the backend interface at six methods. A
  * frame is nine quads and a string is one quad per glyph, and both decompose

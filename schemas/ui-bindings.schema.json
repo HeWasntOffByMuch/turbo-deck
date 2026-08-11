@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://turbo-deck/schemas/ui-bindings.schema.json",
   "title": "UI action bindings",
-  "description": "Every action the game can be asked to do, and the keys it ships bound to (spec 123). Defaults are data rather than code, which is what lets the keybinding window offer reset without a build step. additionalProperties is false throughout.",
+  "description": "Every action the game can be asked to do, and the keys it ships bound to (spec 125). Defaults are data rather than code, which is what lets the keybinding window offer reset without a build step. additionalProperties is false throughout.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "actions"],

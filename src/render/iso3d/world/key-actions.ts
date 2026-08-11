@@ -1,8 +1,8 @@
 /**
- * What a key press means to the Play tab (spec 123).
+ * What a key press means to the Play tab (spec 125).
  *
  * Pure, and split out of `view.ts` for one reason: the decision "this key walks
- * north / casts slot 3 / cancels" is the whole of what spec 123 changed, and
+ * north / casts slot 3 / cancels" is the whole of what spec 125 changed, and
  * leaving it inline in a DOM handler makes it the one part of the change nothing
  * can assert. A browser can tell you the page did not throw; it cannot tell you
  * that a rebound key reaches the right ability.

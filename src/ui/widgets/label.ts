@@ -1,5 +1,5 @@
 /**
- * Text, wrapped or not (spec 121).
+ * Text, wrapped or not (spec 123).
  *
  * The one widget with no chrome at all: a label draws glyphs and nothing else,
  * so a heading inside a panel does not paint a second background over the panel's.

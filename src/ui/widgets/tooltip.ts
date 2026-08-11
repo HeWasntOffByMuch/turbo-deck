@@ -1,5 +1,5 @@
 /**
- * A label that follows the cursor and gets out of its own way (spec 122).
+ * A label that follows the cursor and gets out of its own way (spec 124).
  *
  * Two behaviours, both of which are the difference between a tooltip and an
  * annoyance.
@@ -11,7 +11,7 @@
  *
  * **It flips rather than overflows.** Near the right edge it opens to the left;
  * near the bottom it opens above. A tooltip clipped by the screen edge is a
- * tooltip you cannot read, and the viewport is small and variable since spec 121.
+ * tooltip you cannot read, and the viewport is small and variable since spec 123.
  */
 
 import type { DrawList } from '../core/draw-list.js';

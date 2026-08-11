@@ -1,5 +1,5 @@
 /**
- * The fixed stacking order (spec 122).
+ * The fixed stacking order (spec 124).
  *
  * An enum, not a number anybody assigns. Every UI framework that lets a widget
  * pick its own z-index ends up with a file of magic numbers nobody dares change

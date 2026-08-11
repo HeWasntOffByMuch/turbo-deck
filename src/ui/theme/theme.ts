@@ -1,5 +1,5 @@
 /**
- * The theme, resolved once so that no widget ever sees a string (spec 121).
+ * The theme, resolved once so that no widget ever sees a string (spec 123).
  *
  * `theme.json` is authored with palette *names* -- `"fill": "panelRaised"` --
  * because a document full of hex is a document nobody can retune. Everything

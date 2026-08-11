@@ -1,5 +1,5 @@
 /**
- * Tabs that keep what you left in them (spec 122).
+ * Tabs that keep what you left in them (spec 124).
  *
  * The rule that matters: content is built lazily on first selection and then
  * **kept**. Switching away hides a widget; it does not destroy one. Rebuilding on

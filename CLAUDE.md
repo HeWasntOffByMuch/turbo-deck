@@ -272,7 +272,7 @@ src/server/studio/  the unit authoring service (spec 108). Node-only, wired in f
                  jobs.json is rewritten
                  atomically; ledger.jsonl is append-only. State lives in
                  .studio/ and is gitignored.
-src/ui/          the GUI framework (spec 121), and a top-level peer rather than a
+src/ui/          the GUI framework (spec 123), and a top-level peer rather than a
                  subdirectory of src/render/ because layer 1 belongs to no engine.
                  core/ is layout, hit-testing, focus, event routing and the widget
                  tree; text/ is the two bitmap faces; theme/ is theme.json plus the

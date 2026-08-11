@@ -1,5 +1,5 @@
 /**
- * How big a UI pixel is, and how many of them fit (spec 121).
+ * How big a UI pixel is, and how many of them fit (spec 123).
  *
  * The world's virtual buffer is a *setting* -- four sizes in `hike.ts`, off by
  * default -- so a UI built on it would be built on sand. What the UI needs is

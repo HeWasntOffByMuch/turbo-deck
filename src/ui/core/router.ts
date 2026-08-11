@@ -1,5 +1,5 @@
 /**
- * Where an event goes, and what a press turns into (spec 121).
+ * Where an event goes, and what a press turns into (spec 123).
  *
  * Routing is capture then bubble, which is worth the machinery for one reason:
  * a scroll view needs to know a drag started inside it *before* the button

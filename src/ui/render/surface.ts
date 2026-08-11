@@ -1,5 +1,5 @@
 /**
- * The entire graphics API surface, in six methods (spec 121).
+ * The entire graphics API surface, in six methods (spec 123).
  *
  * This is the whole of what a backend has to implement. 9-slice frames, text
  * runs, borders, focus rings and the drag ghost are all *core* functions that

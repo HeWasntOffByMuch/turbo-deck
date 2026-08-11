@@ -1,5 +1,5 @@
 /**
- * Render the gallery to pixels, in Node (spec 121).
+ * Render the gallery to pixels, in Node (spec 123).
  *
  * One function, shared by the golden-image test, the PNG writer and the browser
  * preview, so that all three are looking at the same frame. If the goldens and
@@ -174,7 +174,7 @@ export interface KeybindingsRenderOptions {
 }
 
 /**
- * The keybinding window, rasterised (spec 123).
+ * The keybinding window, rasterised (spec 125).
  *
  * Its own scene rather than a seventh window in the six-window one, so the frame
  * budget that scene exists to measure keeps meaning what it says.

@@ -1,5 +1,5 @@
 /**
- * The frames the goldens cover, and how a buffer becomes a PNG (spec 121).
+ * The frames the goldens cover, and how a buffer becomes a PNG (spec 123).
  *
  * Shared by the test that asserts them and the script that regenerates them, so
  * the two cannot disagree about what is being compared -- the failure mode where
@@ -64,7 +64,7 @@ export interface WindowsGoldenCase {
 }
 
 /**
- * The six-window scene (spec 122).
+ * The six-window scene (spec 124).
  *
  * Separate from the widget cases because it is a different question: those check
  * that a widget draws, these check that windows stack, tabs switch and a tooltip
@@ -99,7 +99,7 @@ export interface KeybindingsGoldenCase {
   readonly covers: string;
 }
 
-/** The keybinding window (spec 123), in the states worth a picture. */
+/** The keybinding window (spec 125), in the states worth a picture. */
 export const KEYBINDING_GOLDEN_CASES: readonly KeybindingsGoldenCase[] = [
   {
     name: 'keys',

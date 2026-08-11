@@ -1,5 +1,5 @@
 /**
- * A field you type into, and the context it pushes (spec 121).
+ * A field you type into, and the context it pushes (spec 123).
  *
  * This is the widget that justifies the context stack. A focused text field must
  * swallow `1` so it types a one instead of casting the first hotbar ability, and

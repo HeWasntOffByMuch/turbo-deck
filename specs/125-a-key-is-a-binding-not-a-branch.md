@@ -82,7 +82,7 @@ where a player can change it.
 
 ### The window
 
-`src/ui/screens/keybindings.ts`, built on spec 122's `TabPanel` -- one tab per
+`src/ui/screens/keybindings.ts`, built on spec 124's `TabPanel` -- one tab per
 category, and a `TextField` that filters rows by label. Each row is the action's
 name, its two chords as buttons, and a reset. Clicking a chord button enters
 *capture*: the row swallows the next key event and binds it. An unbound action is

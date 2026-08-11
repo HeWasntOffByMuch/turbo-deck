@@ -1,5 +1,5 @@
 /**
- * Physical keys in, action ids out (spec 123).
+ * Physical keys in, action ids out (spec 125).
  *
  * The one place in the game allowed to think about a key. Everything downstream
  * asks "did `combat.cancel` fire", which is a question a player can rebind the

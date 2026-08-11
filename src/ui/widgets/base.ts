@@ -1,5 +1,5 @@
 /**
- * What every widget shares: a theme style, and which state it is in (spec 121).
+ * What every widget shares: a theme style, and which state it is in (spec 123).
  *
  * The state rule is here rather than in nine copies because it is a priority
  * order and priority orders drift. Disabled beats everything -- a disabled

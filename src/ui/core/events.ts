@@ -1,5 +1,5 @@
 /**
- * What reaches a widget, and the stack that decides whether it does (spec 121).
+ * What reaches a widget, and the stack that decides whether it does (spec 123).
  *
  * Two things here are deliberate and easy to get wrong later.
  *

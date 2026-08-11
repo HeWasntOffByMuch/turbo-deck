@@ -1,5 +1,5 @@
 /**
- * The retained tree, and its dirty flags (spec 121).
+ * The retained tree, and its dirty flags (spec 123).
  *
  * Retained rather than immediate, and the decisive reason is the frame budget
  * rather than drag state: an immediate-mode UI re-lays-out its whole tree every

@@ -1,5 +1,5 @@
 /**
- * Sharing leftover pixels out, deterministically (spec 121).
+ * Sharing leftover pixels out, deterministically (spec 123).
  *
  * A row of three children growing into 100 pixels cannot each get 33.333. Some
  * child has to get the extra pixel, and *which* one has to be decided the same

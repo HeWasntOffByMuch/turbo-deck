@@ -1,5 +1,5 @@
 /**
- * The body face: 6x10, printable ASCII (spec 121).
+ * The body face: 6x10, printable ASCII (spec 123).
  *
  * The repo's existing font is 5x7 and has sixteen glyphs, because it was built
  * for damage numbers and a damage number is digits and a bang (spec 065). A

@@ -1,5 +1,5 @@
 /**
- * What a widget paints into, instead of painting (spec 121).
+ * What a widget paints into, instead of painting (spec 123).
  *
  * `Widget.paint()` appends commands here; a {@link UiSurface} replays them
  * afterwards. The indirection buys two things that would otherwise both need a

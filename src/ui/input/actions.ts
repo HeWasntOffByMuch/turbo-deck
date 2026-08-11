@@ -1,5 +1,5 @@
 /**
- * What the game can be asked to do, and what it ships bound to (spec 123).
+ * What the game can be asked to do, and what it ships bound to (spec 125).
  *
  * The registry is a committed JSON document rather than a table in code, for the
  * reason the brief gives and one it does not. Defaults as data means the

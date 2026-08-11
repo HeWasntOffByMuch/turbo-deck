@@ -1,5 +1,5 @@
 /**
- * Regenerate the gallery's golden images (spec 121).
+ * Regenerate the gallery's golden images (spec 123).
  *
  * `npm run bake:ui-goldens`. The PNGs are committed, and CI re-bakes and
  * requires no diff -- the same arrangement `assets/units/manifest.json` uses,
