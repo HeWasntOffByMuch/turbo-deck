@@ -12,7 +12,12 @@
  */
 
 import { PNG } from 'pngjs';
-import type { KeybindingsRenderOptions, RenderOptions, WindowsRenderOptions } from './render.js';
+import type {
+  InventoryRenderOptions,
+  KeybindingsRenderOptions,
+  RenderOptions,
+  WindowsRenderOptions,
+} from './render.js';
 
 export interface GoldenCase {
   readonly name: string;
@@ -125,6 +130,53 @@ export const KEYBINDING_GOLDEN_CASES: readonly KeybindingsGoldenCase[] = [
     name: 'keys-unbound',
     options: { tab: 'combat', unbind: 'combat.stop' },
     covers: 'an unbound action flagged in words rather than left blank',
+  },
+];
+
+export interface InventoryGoldenCase {
+  readonly name: string;
+  readonly options: InventoryRenderOptions;
+  readonly covers: string;
+}
+
+/**
+ * The inventory window (spec 127), in the states worth a picture.
+ *
+ * The drag cases are the ones that could not be checked any other way: whether
+ * the ghost is drawn where the cursor is, and whether the cell under it lights
+ * up, are facts about pixels.
+ */
+export const INVENTORY_GOLDEN_CASES: readonly InventoryGoldenCase[] = [
+  {
+    name: 'bag',
+    options: {},
+    covers: 'a paperdoll and a 24-cell bag, with a stack, a gap and an unknown item',
+  },
+  {
+    name: 'bag-dragging',
+    options: {
+      pickUp: { container: 'inventory', index: 0 },
+      carryToCell: { container: 'inventory', index: 20 },
+    },
+    covers: 'the ghost under the cursor and the cell it would land on, lit',
+  },
+  {
+    name: 'bag-refused',
+    options: {
+      pickUp: { container: 'inventory', index: 0 },
+      carryToCell: { container: 'equipment', index: 2 },
+    },
+    covers: 'an equipment slot that will not take it -- nothing lights, which is the refusal',
+  },
+  {
+    name: 'bag-tooltip',
+    options: { tooltipOver: { container: 'inventory', index: 8 }, focus: { container: 'inventory', index: 8 } },
+    covers: 'a stack named and counted, and a focused cell',
+  },
+  {
+    name: 'bag-small',
+    options: { viewport: { width: 300, height: 140 } },
+    covers: 'the smallest supported viewport, where the window scrolls rather than the cells squashing',
   },
 ];
 

@@ -22,6 +22,11 @@ import { LayerStack } from '../ui/core/layers.js';
 import { WindowManager } from '../ui/core/window-manager.js';
 import { InputMap } from '../ui/input/input-map.js';
 import { KeybindingsScreen } from '../ui/screens/keybindings.js';
+import { InventoryScreen } from '../ui/screens/inventory.js';
+import { ItemSlot } from '../ui/widgets/item-slot.js';
+import { demoContainers } from '../ui/gallery/render.js';
+import { ScrollView } from '../ui/widgets/scroll-view.js';
+import { Tooltip } from '../ui/widgets/tooltip.js';
 import { UiWindow } from '../ui/widgets/window.js';
 import { bakeAtlas } from '../ui/render/atlas.js';
 import { Canvas2dSurface } from '../ui/render/canvas2d.js';
@@ -67,11 +72,12 @@ function main(): void {
   const wanted = new URLSearchParams(globalThis.location.search).get('scene');
   const scene = wanted === 'windows' ? buildWindowsScene(THEME, viewport) : null;
   const keys = wanted === 'keys' ? buildKeysScene(viewport) : null;
-  const gallery = scene ?? keys ? null : buildGallery(THEME);
-  const content = scene?.root ?? keys?.root ?? gallery?.root;
+  const bag = wanted === 'bag' ? buildBagScene(viewport) : null;
+  const gallery = scene ?? keys ?? bag ? null : buildGallery(THEME);
+  const content = scene?.root ?? keys?.root ?? bag?.root ?? gallery?.root;
   if (!content) throw new Error('no scene');
-  const manager = scene?.manager ?? keys?.manager;
-  const layerStack = scene?.root ?? keys?.root;
+  const manager = scene?.manager ?? keys?.manager ?? bag?.manager;
+  const layerStack = scene?.root ?? keys?.root ?? bag?.root;
 
   const root = new UiRoot(content, {
     theme: THEME,
@@ -103,6 +109,7 @@ function main(): void {
       const under = root.content.hitTest(pos);
       scene.tooltip.point(under ? under.name : null, pos, now);
     }
+    if (bag) bag.hover(pos, now);
   });
   canvas.addEventListener('mousedown', (event) => {
     const pos = toUi(event.clientX, event.clientY);
@@ -135,6 +142,7 @@ function main(): void {
     const started = performance.now();
     root.update(timestamp);
     scene?.tooltip.update(timestamp, THEME.input.tooltipDelayMs);
+    bag?.tooltip.update(timestamp, THEME.input.tooltipDelayMs);
     const list = root.paint();
     const commands = list.finish();
     drawCalls = commands.length;
@@ -226,6 +234,46 @@ function buildKeysScene(viewport: { width: number; height: number }): {
   manager.register(window, 'keybindings');
   manager.setViewport(viewport);
   return { root: layers, manager };
+}
+
+/**
+ * The inventory (spec 127), which is the one scene where the browser is checking
+ * something the goldens cannot: a real drag, driven by a real pointer, through
+ * the router rather than by calling the controller.
+ */
+function buildBagScene(viewport: { width: number; height: number }): {
+  root: LayerStack;
+  manager: WindowManager;
+  tooltip: Tooltip;
+  hover: (at: { x: number; y: number }, now: number) => void;
+} {
+  const layers = new LayerStack();
+  const manager = new WindowManager();
+  layers.place('windows', manager);
+
+  const screen = new InventoryScreen({ theme: THEME, hitTest: (at) => layers.hitTest(at) });
+  screen.setContainers(demoContainers());
+  layers.place('dragGhost', screen.ghost);
+
+  const tooltip = new Tooltip();
+  tooltip.viewport = viewport;
+  layers.place('tooltip', tooltip);
+
+  const window = new UiWindow(new ScrollView(screen, 'inventoryScroll'), {
+    title: 'Inventory',
+    at: { x: 8, y: 8 },
+    size: { width: Math.min(viewport.width - 16, 260), height: Math.min(viewport.height - 16, 220) },
+    resizable: true,
+  });
+  manager.register(window, 'inventory');
+  manager.setViewport(viewport);
+
+  const hover = (at: { x: number; y: number }, now: number): void => {
+    const under = layers.hitTest(at);
+    const cell = under instanceof ItemSlot ? under : null;
+    tooltip.point(cell ? screen.tooltipFor(cell) : null, at, now);
+  };
+  return { root: layers, manager, tooltip, hover };
 }
 
 main();
