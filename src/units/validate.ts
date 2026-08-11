@@ -19,15 +19,17 @@ import { parseCondition, conditionParameter } from './condition.js';
 import { error, hasErrors, pointer, warning, type Issue, type Result } from './issues.js';
 import { validateAgainstSchema } from './schema.js';
 import { actionTotalMs, inWindow, phaseWindows, stretchRatio, timeScaleFor } from './timing.js';
+import { detectNaming } from './naming.js';
 import type { Clip, ClipLib, Skeleton, UnitBundle, UnitDef } from './types.js';
 
 /**
  * Bone names that mean somebody paid for finger joints.
  *
  * A warning, never an error: a rig that has them still works, it is just wasting
- * bones on articulation that is a fraction of a pixel at this camera. Matched on
- * the mixamo names, which is why `naming` is a field on the skeleton -- a
- * different naming spec would want a different list, not a different severity.
+ * bones on articulation that is a fraction of a pixel at this camera. Both
+ * vocabularies spell the digits the same way (`LeftHandIndex1`, `L_Index1`), so
+ * one pattern covers them; a naming spec that did not would want its own list
+ * here rather than a different severity.
  */
 const FINGER_BONES = /(Thumb|Index|Middle|Ring|Pinky)\d/i;
 
@@ -71,6 +73,29 @@ export function validateSkeleton(doc: unknown): Result<Skeleton> {
         'skeleton.boneBudget.inverted',
         pointer('boneBudget'),
         `min ${skeleton.boneBudget.min} is above max ${skeleton.boneBudget.max}`,
+      ),
+    );
+  }
+
+  // The `naming` field against the bones it describes (spec 120). Without this
+  // the field is an assertion nobody checks, which is exactly what it was: the
+  // pig's document claimed the mixamo contract while carrying `L_Hand`, `Hip`
+  // and `Spine02`, validated clean, and left the socket derivation, the facing
+  // probe and the bind-pose check each silently finding nothing.
+  //
+  // Only a *confident* disagreement is an error. A rig on neither vocabulary
+  // still has to be able to say which one it was built for, so an undetectable
+  // skeleton keeps whatever it declares -- that case is a warning where the
+  // document is written, not here where it is read.
+  const detected = detectNaming(skeleton.bones.map((bone) => bone.name));
+  if (detected !== 'unknown' && detected !== skeleton.naming) {
+    issues.push(
+      error(
+        'skeleton.naming.mismatch',
+        pointer('naming'),
+        `this document says "${skeleton.naming}" but its bones are ${detected} names. Every lookup in the ` +
+          `format goes through that field -- sockets, the facing probe, the bind-pose check -- so the ones it ` +
+          `points at do not exist and each of them fails silently. Record what the rig is.`,
       ),
     );
   }
@@ -211,12 +236,21 @@ export function validateSkeleton(doc: unknown): Result<Skeleton> {
 /**
  * The counterpart name for a sided bone, or null for one that is not sided.
  *
- * Matched on a word boundary so `LeftUpLeg` mirrors and a hypothetical bone with
- * "left" buried inside a longer word does not.
+ * Both vocabularies, because a rule that only knows one of them is a rule that
+ * silently stops running (spec 120). `Left`/`Right` is how mixamo says it;
+ * `L_`/`R_` is how the auto-rig does, and against those names this returned null
+ * for every bone on the rig -- so a generated skeleton passed the symmetry check
+ * by never being subject to it.
+ *
+ * The side marker is matched where each vocabulary puts it: mixamo spells it
+ * inside the name, tripo prefixes it. Anchoring the prefix is what keeps a bone
+ * that merely starts with `L` from being read as a left one.
  */
 function mirrorName(name: string): string | null {
   if (/Left/.test(name)) return name.replace(/Left/g, 'Right');
   if (/Right/.test(name)) return name.replace(/Right/g, 'Left');
+  if (/^L_/.test(name)) return name.replace(/^L_/, 'R_');
+  if (/^R_/.test(name)) return name.replace(/^R_/, 'L_');
   return null;
 }
 

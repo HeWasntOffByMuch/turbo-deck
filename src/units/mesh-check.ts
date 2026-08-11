@@ -25,6 +25,7 @@
 
 import { error, pointer, warning, type Issue } from './issues.js';
 import { nodePosition, type GlbReadNode, type SkinnedMeshData } from './glb-read.js';
+import { detectNaming, findRole, type BoneRole, type NamingSpec } from './naming.js';
 import {
   axisQuat,
   meshVolume,
@@ -279,24 +280,32 @@ interface ArmMeasure {
  * measures the same as a conventional one. Nothing here reads a bone's rotation.
  */
 export function classifyBindPose(nodes: readonly GlbReadNode[]): BindPoseVerdict {
-  const left = measureArm(nodes, 'Left');
-  const right = measureArm(nodes, 'Right');
-  const leftKnee = measureChain(nodes, 'LeftUpLeg', 'LeftLeg', 'LeftFoot');
-  const rightKnee = measureChain(nodes, 'RightUpLeg', 'RightLeg', 'RightFoot');
+  const naming = detectNaming(nodes.map((node) => node.name));
+  const left = naming === 'unknown' ? null : measureArm(nodes, naming, 'left');
+  const right = naming === 'unknown' ? null : measureArm(nodes, naming, 'right');
+  const leftKnee = naming === 'unknown' ? null : measureChain(nodes, naming, 'leftUpLeg', 'leftLeg', 'leftFoot');
+  const rightKnee = naming === 'unknown' ? null : measureChain(nodes, naming, 'rightUpLeg', 'rightLeg', 'rightFoot');
 
   if (!left || !right) {
     // *Unmeasured*, not posed. These two are wildly different findings and the
     // second one ends with "regenerate" -- so reporting a rig this cannot read
-    // as a bad bind pose spends money to fix a model that may be perfect. The
-    // arm chain is looked up by mixamo name and the generated rigs are not on
-    // that contract: `L_Upperarm`, `L_Forearm`, `L_Hand` answer none of it.
+    // as a bad bind pose spends money to fix a model that may be perfect.
+    //
+    // This used to fire on every generated unit: the arm chain was looked up by
+    // mixamo name and the rigs are on the tripo vocabulary, where the same three
+    // bones are `L_Upperarm`, `L_Forearm`, `L_Hand`. Since spec 120 the lookup
+    // goes through the naming table, so reaching here means a rig on neither
+    // contract -- which is a real finding rather than a spelling difference.
     return {
       shape: 'unmeasured',
       armDropDegrees: Number.NaN,
       elbowDegrees: Number.NaN,
       kneeDegrees: Number.NaN,
       asymmetryDegrees: Number.NaN,
-      reason: 'the rig has no arm chain this could measure (looked for mixamo Arm/ForeArm/Hand names)',
+      reason:
+        naming === 'unknown'
+          ? 'the rig answers to neither naming contract, so no arm chain could be found to measure'
+          : `the rig has no arm chain this could measure (looked for the ${naming} upper-arm, forearm and hand)`,
     };
   }
 
@@ -383,15 +392,16 @@ export function checkBindPose(verdict: BindPoseVerdict, meshRef = 'the mesh'): r
 }
 
 /** World position of the first bone whose name ends in `suffix`, or null. */
-function boneAt(nodes: readonly GlbReadNode[], suffix: string): [number, number, number] | null {
-  const found = nodes.find((node) => node.name.endsWith(suffix));
+function boneAt(nodes: readonly GlbReadNode[], naming: NamingSpec, role: BoneRole): [number, number, number] | null {
+  const name = findRole(nodes.map((node) => node.name), naming, role);
+  const found = name === null ? undefined : nodes.find((node) => node.name === name);
   return found ? nodePosition(found) : null;
 }
 
-function measureArm(nodes: readonly GlbReadNode[], side: 'Left' | 'Right'): ArmMeasure | null {
-  const shoulder = boneAt(nodes, `${side}Arm`);
-  const hand = boneAt(nodes, `${side}Hand`);
-  const elbow = measureChain(nodes, `${side}Arm`, `${side}ForeArm`, `${side}Hand`);
+function measureArm(nodes: readonly GlbReadNode[], naming: NamingSpec, side: 'left' | 'right'): ArmMeasure | null {
+  const shoulder = boneAt(nodes, naming, `${side}Arm`);
+  const hand = boneAt(nodes, naming, `${side}Hand`);
+  const elbow = measureChain(nodes, naming, `${side}Arm`, `${side}ForeArm`, `${side}Hand`);
   if (!shoulder || !hand || elbow === null) return null;
 
   // Drop is measured against the horizontal *plane*, not against a chosen axis:
@@ -405,13 +415,14 @@ function measureArm(nodes: readonly GlbReadNode[], side: 'Left' | 'Right'): ArmM
 /** The interior angle at `middle`, in degrees. 180 is a straight limb. */
 function measureChain(
   nodes: readonly GlbReadNode[],
-  root: string,
-  middle: string,
-  tip: string,
+  naming: NamingSpec,
+  root: BoneRole,
+  middle: BoneRole,
+  tip: BoneRole,
 ): number | null {
-  const a = boneAt(nodes, root);
-  const b = boneAt(nodes, middle);
-  const c = boneAt(nodes, tip);
+  const a = boneAt(nodes, naming, root);
+  const b = boneAt(nodes, naming, middle);
+  const c = boneAt(nodes, naming, tip);
   if (!a || !b || !c) return null;
   const u = [a[0] - b[0], a[1] - b[1], a[2] - b[2]] as const;
   const v = [c[0] - b[0], c[1] - b[1], c[2] - b[2]] as const;
@@ -445,8 +456,8 @@ export interface ExtremePose {
 type PoseAxis = 'lateral' | 'forward' | 'up';
 
 interface PoseTurn {
-  /** Bone name suffix, e.g. `RightArm`. Matched against whatever the rig calls it. */
-  readonly bone: string;
+  /** The bone by role, resolved through the rig's own vocabulary (spec 120). */
+  readonly bone: BoneRole;
   readonly axis: PoseAxis;
   readonly degrees: number;
 }
@@ -468,15 +479,15 @@ interface BodyFrame {
   readonly up: readonly [number, number, number];
 }
 
-function bodyFrame(nodes: readonly GlbReadNode[]): BodyFrame | null {
-  const across = (left: string, right: string): [number, number, number] | null => {
-    const a = boneAt(nodes, left);
-    const b = boneAt(nodes, right);
+function bodyFrame(nodes: readonly GlbReadNode[], naming: NamingSpec): BodyFrame | null {
+  const across = (left: BoneRole, right: BoneRole): [number, number, number] | null => {
+    const a = boneAt(nodes, naming, left);
+    const b = boneAt(nodes, naming, right);
     if (!a || !b) return null;
     const out: [number, number, number] = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
     return magnitude(out) < 1e-9 ? null : out;
   };
-  const lateral = across('LeftUpLeg', 'RightUpLeg') ?? across('LeftArm', 'RightArm');
+  const lateral = across('leftUpLeg', 'rightUpLeg') ?? across('leftArm', 'rightArm');
   if (!lateral) return null;
   const forward = cross(lateral, UP);
   if (magnitude(forward) < 1e-9) return null;
@@ -501,7 +512,9 @@ function bodyFrame(nodes: readonly GlbReadNode[]): BodyFrame | null {
  * applied, which is the worst thing a check can do.
  */
 export function extremePoses(nodes: readonly GlbReadNode[]): readonly ExtremePose[] {
-  const frame = bodyFrame(nodes);
+  const naming = detectNaming(nodes.map((node) => node.name));
+  if (naming === 'unknown') return [];
+  const frame = bodyFrame(nodes, naming);
   if (!frame) return [];
 
   const poses: readonly { id: string; why: string; turns: readonly PoseTurn[] }[] = [
@@ -509,36 +522,36 @@ export function extremePoses(nodes: readonly GlbReadNode[]): readonly ExtremePos
       id: 'slash.windup',
       why: 'the shoulder at the back of a slash, past vertical',
       turns: [
-        { bone: 'RightArm', axis: 'forward', degrees: 150 },
-        { bone: 'RightForeArm', axis: 'up', degrees: -90 },
-        { bone: 'Spine1', axis: 'up', degrees: -35 },
+        { bone: 'rightArm', axis: 'forward', degrees: 150 },
+        { bone: 'rightForeArm', axis: 'up', degrees: -90 },
+        { bone: 'chest', axis: 'up', degrees: -35 },
       ],
     },
     {
       id: 'slash.follow-through',
       why: 'the same shoulder at the end of the swing, across the chest',
       turns: [
-        { bone: 'RightArm', axis: 'up', degrees: 110 },
-        { bone: 'RightForeArm', axis: 'forward', degrees: 60 },
-        { bone: 'Spine1', axis: 'up', degrees: 40 },
+        { bone: 'rightArm', axis: 'up', degrees: 110 },
+        { bone: 'rightForeArm', axis: 'forward', degrees: 60 },
+        { bone: 'chest', axis: 'up', degrees: 40 },
       ],
     },
     {
       id: 'run.knee',
       why: 'the knee at the top of a run cycle, folded to a right angle',
       turns: [
-        { bone: 'LeftUpLeg', axis: 'lateral', degrees: 70 },
-        { bone: 'LeftLeg', axis: 'lateral', degrees: -120 },
-        { bone: 'RightUpLeg', axis: 'lateral', degrees: -45 },
+        { bone: 'leftUpLeg', axis: 'lateral', degrees: 70 },
+        { bone: 'leftLeg', axis: 'lateral', degrees: -120 },
+        { bone: 'rightUpLeg', axis: 'lateral', degrees: -45 },
       ],
     },
     {
       id: 'turn.spine',
       why: 'the spine at the end of a turn',
       turns: [
-        { bone: 'Spine', axis: 'up', degrees: 35 },
-        { bone: 'Spine1', axis: 'up', degrees: 35 },
-        { bone: 'Neck', axis: 'up', degrees: 30 },
+        { bone: 'spine', axis: 'up', degrees: 35 },
+        { bone: 'chest', axis: 'up', degrees: 35 },
+        { bone: 'neck', axis: 'up', degrees: 30 },
       ],
     },
   ];
@@ -547,7 +560,7 @@ export function extremePoses(nodes: readonly GlbReadNode[]): readonly ExtremePos
   for (const pose of poses) {
     const rotations = new Map<string, readonly [number, number, number, number]>();
     for (const turn of pose.turns) {
-      const resolved = resolveTurn(turn, frame, nodes);
+      const resolved = resolveTurn(turn, frame, nodes, naming);
       if (resolved) rotations.set(resolved.bone, resolved.rotation);
     }
     if (rotations.size > 0) built.push({ id: pose.id, why: pose.why, rotations });
@@ -569,8 +582,10 @@ function resolveTurn(
   turn: PoseTurn,
   frame: BodyFrame,
   nodes: readonly GlbReadNode[],
+  naming: NamingSpec,
 ): { bone: string; rotation: [number, number, number, number] } | null {
-  const node = nodes.find((entry) => entry.name === turn.bone || entry.name.endsWith(turn.bone));
+  const name = findRole(nodes.map((entry) => entry.name), naming, turn.bone);
+  const node = name === null ? undefined : nodes.find((entry) => entry.name === name);
   if (!node) return null;
   const local = intoLocalFrame(frame[turn.axis], node.world);
   if (magnitude(local) < 1e-6) return null;

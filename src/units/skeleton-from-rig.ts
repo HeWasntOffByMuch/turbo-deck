@@ -27,23 +27,28 @@
 import { error, pointer, warning, type Issue } from './issues.js';
 import { nodePosition, type GlbBinary, type GlbReadNode } from './glb-read.js';
 import { readNodeTree, readSkinnedMesh } from './glb-read.js';
+import { detectNaming, findRole, type BoneRole, type NamingSpec } from './naming.js';
 import type { BindBone, Skeleton, SkeletonBone, SkeletonSocket } from './types.js';
 
 /**
- * The sockets a biped gets, by the bone each hangs off.
+ * The sockets a biped gets, by the **role** each hangs off (spec 120).
  *
- * Matched on a name suffix so a rig that drops the `mixamorig:` prefix still
- * gets them. A socket whose bone is absent is left out rather than pointed at
- * something else -- the validator would refuse a socket naming a bone that does
- * not exist, and quietly re-homing `weapon.main` onto whatever is nearby would
- * put a sword through somebody's elbow.
+ * A role rather than a bone name, because there are two vocabularies in the tree
+ * and this list has to work in both: `weapon.main` is the right hand whether the
+ * rig calls it `mixamorig:RightHand` or `R_Hand`. Naming the bones directly is
+ * what shipped a pig with no weapon socket at all.
+ *
+ * A socket whose bone is absent is left out rather than pointed at something
+ * else -- the validator would refuse a socket naming a bone that does not exist,
+ * and quietly re-homing `weapon.main` onto whatever is nearby would put a sword
+ * through somebody's elbow.
  */
-const STANDARD_SOCKETS: readonly { readonly id: string; readonly bone: string }[] = [
-  { id: 'weapon.main', bone: 'RightHand' },
-  { id: 'weapon.off', bone: 'LeftHand' },
-  { id: 'fx.cast', bone: 'RightHand' },
-  { id: 'fx.body', bone: 'Spine2' },
-  { id: 'anchor.head', bone: 'Head' },
+const STANDARD_SOCKETS: readonly { readonly id: string; readonly role: BoneRole }[] = [
+  { id: 'weapon.main', role: 'rightHand' },
+  { id: 'weapon.off', role: 'leftHand' },
+  { id: 'fx.cast', role: 'rightHand' },
+  { id: 'fx.body', role: 'chest' },
+  { id: 'anchor.head', role: 'head' },
 ];
 
 export interface DeriveOptions {
@@ -56,6 +61,12 @@ export interface DeriveOptions {
   readonly boneBudget?: { readonly min: number; readonly max: number };
   /** Carried through when filling in an existing provisional document. */
   readonly sockets?: readonly SkeletonSocket[];
+  /**
+   * The naming spec the rig was *asked for*, used only when the bones answer to
+   * no vocabulary at all. Detection off the rig wins whenever it is certain, so
+   * this is a fallback for the document's own record and never an override.
+   */
+  readonly naming?: NamingSpec;
   readonly comment?: string;
 }
 
@@ -128,14 +139,21 @@ export function skeletonFromRig(glb: GlbBinary, options: DeriveOptions): Derived
     );
   }
 
-  const naming = namingOf(bones);
-  if (naming === 'unknown') {
+  // What the rig *is*, not what was hoped for (spec 120). Recording a guess is
+  // how `pig.skeleton.json` came to claim the mixamo contract while carrying
+  // `L_Hand`, `Spine02` and `Hip` -- a document that validated, and three
+  // separate consumers that silently found nothing in it.
+  const boneNames = bones.map((bone) => bone.name);
+  const detected = detectNaming(boneNames);
+  const naming: NamingSpec = detected === 'unknown' ? (options.naming ?? 'tripo') : detected;
+  if (detected === 'unknown') {
     issues.push(
       warning(
         'skeleton.rig.naming',
         pointer('naming'),
-        'the bone names do not look like the mixamo contract, so this is recorded as mixamo anyway and every ' +
-          'retarget preset will be matching names that may not be there. Check the rig before spending on clips.',
+        `the bone names match neither vocabulary this project reads, so this is recorded as "${naming}" -- the ` +
+          'spec the rig was asked for. Sockets, the facing probe and the bind-pose check all look bones up by ' +
+          'name and will find nothing on it. Check the rig before spending on clips.',
       ),
     );
   }
@@ -143,15 +161,15 @@ export function skeletonFromRig(glb: GlbBinary, options: DeriveOptions): Derived
   const sockets =
     options.sockets ??
     STANDARD_SOCKETS.flatMap((socket): SkeletonSocket[] => {
-      const bone = bones.find((entry) => entry.name === socket.bone || entry.name.endsWith(socket.bone));
-      return bone ? [{ id: socket.id, bone: bone.name }] : [];
+      const bone = findRole(boneNames, naming, socket.role);
+      return bone === null ? [] : [{ id: socket.id, bone }];
     });
 
   const skeleton: Skeleton = {
     ...(options.comment === undefined ? {} : { $comment: options.comment }),
     formatVersion: 1,
     id: options.id,
-    naming: 'mixamo',
+    naming,
     upAxis: '+Y',
     forwardAxis: '+X',
     canonicalHeight: options.canonicalHeight,
@@ -259,13 +277,6 @@ function orderParentsFirst(jointNodes: readonly number[], nodes: readonly GlbRea
   });
   if (alreadyFine) return ordered;
   return ordered.sort((a, b) => (depth.get(a) ?? 0) - (depth.get(b) ?? 0));
-}
-
-/** Whether the names look like the contract every retarget preset assumes. */
-function namingOf(bones: readonly SkeletonBone[]): 'mixamo' | 'unknown' {
-  const wanted = ['Hips', 'Spine', 'Head', 'LeftHand', 'RightHand', 'LeftFoot', 'RightFoot'];
-  const names = bones.map((bone) => bone.name);
-  return wanted.every((want) => names.some((name) => name === want || name.endsWith(want))) ? 'mixamo' : 'unknown';
 }
 
 /** The rig's own height, bottom joint to top joint. */

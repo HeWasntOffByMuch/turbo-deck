@@ -134,7 +134,7 @@ src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
                  collision and pathfinding helpers the server collides against
 src/units/       the unit authoring format and its validator (spec 107): the three
                  JSON documents a unit is made of -- skeleton.json (one rig family,
-                 mixamo bone contract, canonical height), cliplib.json (clips for a
+                 its bone vocabulary, canonical height), cliplib.json (clips for a
                  skeleton, events in normalized time) and <unit>.unitdef.json (mesh,
                  provenance, import overrides and the state machine). Structure is
                  checked against the committed schemas in schemas/ with ajv; what a
@@ -145,6 +145,25 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  through this one parser. The rule the format exists to enforce is
                  that gameplay timing is authoritative and the clip is rescaled to
                  fit, bounded in both directions. `npm run validate:units`.
+                 naming.ts is the two bone vocabularies and the one way to look a
+                 bone up across them (spec 120). There are two in the tree
+                 permanently: the reference mannequin is authored and
+                 mixamo-named, and every *generated* rig is on the `tripo` spec,
+                 because a rig built to the mixamo naming spec is refused by the
+                 retarget -- the two specs are a choice between Tripo's animation
+                 library and Mixamo's, and a game needs the clips. So `naming` is
+                 a field that is detected off the bones and checked against them
+                 by the validator, never assumed. The rule that makes it a table
+                 rather than a heuristic: every consumer wants a bone's *role* --
+                 the right hand, the left hip, the arm chain -- and none of them
+                 want a string, so roles are named once and each vocabulary says
+                 what it calls them. This existed as an assumption for a long
+                 time and cost three silent failures on every unit we ship: the
+                 pig derived no weapon sockets at all, its facing fell back to
+                 the shape search with handedness unverifiable, and its bind pose
+                 came back `unmeasured`. Each had been noticed separately and
+                 written down as a shrug in a comment beside the code that gave
+                 up. Adding a third vocabulary is a column in this file.
                  manifest.ts is what both ends agree on (spec 113): a sha256
                  over every asset, exchanged at connect, and a mismatch is a
                  refused connection -- a client on stale assets draws a fight
@@ -344,8 +363,20 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  monsters are drawn from an authored unit, the pure function from
                  replicated facts to machine commands -- handed a snapshot and not
                  the GameClient, so animation has nothing it *could* call -- and
-                 how often a distant body's pose is applied; the machine itself is
-                 never throttled, because its events are authored on frame indices)
+                 how often a body's pose is applied; the machine itself is
+                 never throttled, because its events are authored on frame indices.
+                 The LOD measures how big a body is *drawn*, in pixels of the
+                 virtual raster, and never how far the camera is from it (spec
+                 118): this camera is orthographic and parks 6000 units back for
+                 near/far clearance, so a distance threshold put every unit in
+                 the game -- the player included -- on a quarter-rate pose, and
+                 the Studio preview looked perfect throughout because it never
+                 consults the LOD at all. The driver also slews the blend
+                 parameter rather than assigning it (spec 119), because a blend
+                 tree is a pure function of its parameter and the sim has no
+                 acceleration: a step from run to nothing swapped the pose in one
+                 tick under a cross-fade that never saw it, which is why setting
+                 off blended and stopping cut)
                  pixel-font.ts (a 5x7 glyph table, since nothing may be fetched)
                  and touch.ts (taps and pinches, spec 093 -- bounded by distance
                  and never by time, because an event's stamp measures the
@@ -389,6 +420,21 @@ src/render/iso3d/unit-rig.ts  a loaded authored unit, posed by a machine (spec
                  translation to strip. `mixer.update(0)` always -- every action's time comes from
                  an integer tick, so the pose is a pure function of a tick count
                  and an event lands on the same frame at 30fps as at 144.
+                 Since spec 118 there is a second rule beside the first: the
+                 strip asks which *node* a track sits on, and a generated rig
+                 has no reason to obey that convention -- the pig's auto-rig
+                 baked the whole stride onto `Hip`, one node below the root,
+                 where nothing was looking. So travel is also *measured*, on any
+                 bone, and only the component along it is taken out; the bob and
+                 the crouch are perpendicular to it and survive. The threshold is
+                 a tenth of the rig's reach, the same rule
+                 `npm run validate:units` applies offline to the same files.
+                 `npx tsx scripts/probe-travel.ts` is the check that matters --
+                 the real unit through the real loader, asking where the hips go
+                 in world units. It fails a looping clip that ends somewhere else
+                 AND one whose hips never move, since a correction that ate the
+                 pose scores a perfect zero on the first test alone. No GL
+                 context: nothing in it rasterises.
 src/render/iso3d/view-controls.ts, menu-group.ts, settings-menu.ts  the Play
                  tab's settings (specs 033/034/107): six buttons in the top-right
                  corner -- view, day and night, player lights, retro filter, hike

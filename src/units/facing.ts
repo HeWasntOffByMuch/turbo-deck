@@ -61,6 +61,7 @@ import {
   type GlbReadNode,
   type SkinnedMeshData,
 } from './glb-read.js';
+import { boneKey as keyOf, detectNaming, findRole, roleName, type BoneRole, type NamingSpec } from './naming.js';
 
 export type Vec3 = readonly [number, number, number];
 
@@ -153,25 +154,17 @@ export function nearestAxis(v: Vec3 | null): string | null {
 
 // --- the skeleton ------------------------------------------------------------
 
-/**
- * A bone name reduced to what two files can be expected to agree on.
- *
- * `mixamorig:LeftFoot`, `mixamorigLeftFoot` and `mixamorig1:LeftFoot` are the
- * same bone said three ways -- three.js sanitises the colon out of its track
- * names, and exporters number the prefix when a scene has carried two rigs.
- * Comparing raw names across two files is how a check silently matches nothing
- * and reports a clean result, which has already happened once in this codebase.
- */
-export function boneKey(name: string): string {
-  return name.replace(/^mixamorig\d*[:_]?/i, '').replace(/[^a-z0-9]/gi, '').toLowerCase();
-}
+// The normalization and the two vocabularies live in `naming.ts` (spec 120), so
+// this file and the socket derivation cannot drift apart about what a bone is
+// called. Re-exported because it was this module's export first.
+export { boneKey } from './naming.js';
 
 /** Bones by {@link boneKey}. First wins, so a duplicated rig cannot shadow one. */
 export function boneMap(nodes: readonly GlbReadNode[]): ReadonlyMap<string, GlbReadNode> {
   const found = new Map<string, GlbReadNode>();
   for (const node of nodes) {
     if (node.name === '') continue;
-    const key = boneKey(node.name);
+    const key = keyOf(node.name);
     if (!found.has(key)) found.set(key, node);
   }
   return found;
@@ -180,23 +173,24 @@ export function boneMap(nodes: readonly GlbReadNode[]): ReadonlyMap<string, GlbR
 // --- what the rig thinks -----------------------------------------------------
 
 /**
- * The bones every estimator here needs, under {@link boneKey}.
+ * The bones every estimator here needs, as roles rather than names (spec 120).
  *
- * Named as a list because "could not measure" has to be able to say *what was
- * missing*. A rig whose bones are called something else is not an unreadable
- * file -- it is a rig off the contract this whole format is built on, and that
- * is a finding rather than a shrug.
+ * Roles because there are two vocabularies and both are current: the mannequin
+ * is mixamo-named and every generated rig is on the tripo spec. Named as a list
+ * because "could not measure" has to be able to say *what was missing*. A rig
+ * whose bones answer to neither contract is not an unreadable file -- it is a
+ * rig this format cannot address, and that is a finding rather than a shrug.
  */
-export const REQUIRED_BONES: readonly string[] = [
+export const REQUIRED_ROLES: readonly BoneRole[] = [
   'hips',
-  'leftfoot',
-  'rightfoot',
-  'leftupleg',
-  'rightupleg',
+  'leftFoot',
+  'rightFoot',
+  'leftUpLeg',
+  'rightUpLeg',
 ];
 
 /** A toe on either side. Absent on a rig that stops at the ankle. */
-const TOE_BONES: readonly string[] = ['lefttoeend', 'lefttoebase', 'righttoeend', 'righttoebase'];
+const TOE_ROLES: readonly BoneRole[] = ['leftToe', 'rightToe'];
 
 export interface RigFacing {
   /** Ankle to toe, averaged over both feet. Null when the rig has no toes. */
@@ -212,19 +206,28 @@ export interface RigFacing {
    * is why this is reported next to the other measurements and not on its own.
    */
   readonly handednessOk: boolean | null;
-  /** Which of {@link REQUIRED_BONES} this rig does not have. */
+  /**
+   * Which of {@link REQUIRED_ROLES} this rig does not have, spelled in the
+   * vocabulary that answered it (spec 120).
+   */
   readonly missingBones: readonly string[];
+  /**
+   * The bone vocabulary the rig's names are in, or `unknown` for a rig on
+   * neither contract. `unknown` is why {@link method} is `structure`: names are
+   * not consulted at all when there is no vocabulary to consult them in.
+   */
+  readonly naming: NamingSpec | 'unknown';
   /** True when the rig has no toe bone on either side. */
   readonly missingToes: boolean;
   /** Every bone in the file, so an unrecognised vocabulary can be read off. */
   readonly boneNames: readonly string[];
   /**
-   * How the bones were found: by the mixamo names, or by the skeleton's shape.
+   * How the bones were found: by name, or by the skeleton's shape.
    *
-   * Reported because it changes what the answer is worth. `names` is the
-   * contract being kept. `structure` is a measurement of a rig that is off the
-   * contract -- the facing is still real, and the unit still will not load into
-   * a format built on those names.
+   * Reported because it changes what the answer is worth. `names` is a
+   * vocabulary being kept -- either of them. `structure` is a measurement of a
+   * rig that is on neither, and the facing is still real while the unit is
+   * still not addressable by any of the lookups this format is built on.
    */
   readonly method: 'names' | 'structure' | 'none';
   /** Leg chains the shape search found: 0, 1 or 2. */
@@ -382,17 +385,26 @@ function toeForward(pairs: readonly (readonly [Vec3, Vec3])[]): Vec3 | null {
  */
 export function rigFacing(nodes: readonly GlbReadNode[], joints: readonly number[] | null = null): RigFacing {
   const bones = boneMap(nodes);
-  const at = (key: string): Vec3 | null => {
-    const node = bones.get(key);
+  const names = nodes.filter((node) => node.name !== '').map((node) => node.name);
+  // Which vocabulary this rig is in, decided once (spec 120). `unknown` means
+  // the names are looked up in *neither*: a rig that half-answers two contracts
+  // is exactly where a partial match puts the wrong bone in the right slot, and
+  // the shape search below is the honest answer for it.
+  const detected = detectNaming(names);
+  const naming: NamingSpec | null = detected === 'unknown' ? null : detected;
+  const at = (role: BoneRole): Vec3 | null => {
+    if (naming === null) return null;
+    const found = findRole(names, naming, role);
+    const node = found === null ? undefined : bones.get(keyOf(found));
     return node === undefined ? null : nodePosition(node);
   };
 
   const named: (readonly [Vec3, Vec3])[] = [];
-  for (const side of ['left', 'right']) {
-    const ankle = at(`${side}foot`);
-    // `Toe_End` is the tip and the better lever arm; `ToeBase` is the fallback
-    // for a rig that stops at the ball of the foot.
-    const toe = at(`${side}toeend`) ?? at(`${side}toebase`);
+  for (const side of ['left', 'right'] as const) {
+    const ankle = at(`${side}Foot` as BoneRole);
+    // The toe *tip* is the better lever arm and the vocabulary table prefers it,
+    // falling back to the ball for a rig that stops there.
+    const toe = at(`${side}Toe` as BoneRole);
     if (ankle === null || toe === null) continue;
     named.push([ankle, toe]);
   }
@@ -421,8 +433,8 @@ export function rigFacing(nodes: readonly GlbReadNode[], joints: readonly number
     if (forward !== null) method = 'structure';
   }
 
-  const leftHip = at('leftupleg');
-  const rightHip = at('rightupleg');
+  const leftHip = at('leftUpLeg');
+  const rightHip = at('rightUpLeg');
   const left = leftHip === null || rightHip === null ? null : normalize(horizontal(subtract(leftHip, rightHip)));
   // Only meaningful in the name path: handedness is a claim a bone makes about
   // itself, and a numbered limb makes none.
@@ -431,9 +443,16 @@ export function rigFacing(nodes: readonly GlbReadNode[], joints: readonly number
     forward,
     left,
     handednessOk,
-    missingBones: REQUIRED_BONES.filter((key) => !bones.has(key)),
-    missingToes: !TOE_BONES.some((key) => bones.has(key)),
-    boneNames: nodes.filter((node) => node.name !== '').map((node) => node.name),
+    // Spelled in the vocabulary that answered, so "it has no lfoot" points at
+    // the bone somebody should go looking for. A rig on neither contract is
+    // reported in mixamo's spelling: it is the format's reference vocabulary and
+    // the one the reader is most likely to be holding a document in.
+    naming: detected,
+    missingBones: REQUIRED_ROLES.filter((role) => at(role) === null).map((role) =>
+      roleName(naming ?? 'mixamo', role),
+    ),
+    missingToes: !TOE_ROLES.some((role) => at(role) !== null),
+    boneNames: names,
     method,
     legTipsFound,
     usableFootSegments,
@@ -952,6 +971,7 @@ export function facingReport(mesh: FacingSource, clips: readonly FacingSource[])
         left: null,
         handednessOk: null,
         missingBones: [],
+        naming: 'unknown',
         missingToes: true,
         boneNames: [],
         method: 'none',
@@ -1031,8 +1051,8 @@ export function facingReport(mesh: FacingSource, clips: readonly FacingSource[])
 
   // The rig could not be measured at all. This has to be loud, and it has to
   // name the bones: every estimator that reads the skeleton looks its bones up
-  // by the mixamo contract, so all of them going quiet at once is one fact, not
-  // five, and the fact is that this rig is not on the contract. Reported as a
+  // by one of the two vocabularies, so all of them going quiet at once is one
+  // fact, not five, and the fact is that this rig is on neither. Reported as a
   // finding rather than left as a row of "not measurable" -- a report whose
   // only measurable estimator agreed with itself used to end with "nothing
   // disagrees", which is a green tick for a question nobody answered.
@@ -1046,7 +1066,7 @@ export function facingReport(mesh: FacingSource, clips: readonly FacingSource[])
     // have is a rig with no toes.
     const noToes = rig.legTipsFound >= 2 && rig.usableFootSegments === 0;
     const why = noToes
-      ? `its bones answer to none of the mixamo names, and the shape search found both legs but neither ends ` +
+      ? `its bones answer to neither naming contract, and the shape search found both legs but neither ends ` +
         `in a foot -- the last segment of each points almost straight down, so there is no ankle-to-toe ` +
         `vector to read. The gait is still measurable: see what each clip strides towards, below`
       : rig.missingBones.length > 0
@@ -1057,27 +1077,27 @@ export function facingReport(mesh: FacingSource, clips: readonly FacingSource[])
       title: 'rig forward',
       degrees: null,
       message:
-        `could not be measured: ${why}. Every skeleton estimate here looks bones up by the mixamo names ` +
-        `this project's whole unit format is built on, so a rig that answers none of them is a rig off that ` +
-        `contract -- which is worth knowing on its own, since the sockets, the root-motion strip and the ` +
-        `export all assume it too. The ${rig.boneNames.length} bones this file actually has: ${sample}` +
+        `could not be measured: ${why}. Every skeleton estimate here looks bones up by one of the two ` +
+        `vocabularies this format reads -- mixamo for the authored mannequin, tripo for everything the ` +
+        `auto-rig returns -- so a rig that answers neither is worth knowing about on its own, since the ` +
+        `sockets and the export read the same names. The ${rig.boneNames.length} bones it has: ${sample}` +
         `${rig.boneNames.length > 40 ? ' …' : ''}`,
     });
   } else if (rig.method === 'structure') {
     // Measured, and still a problem -- two separate facts that have to be said
     // separately, because the facing here is trustworthy and the unit is not
-    // loadable. The rig call asks for `spec: mixamo`; a rig that answers to
-    // none of those names did not come back on that contract, and the sockets,
-    // the root-motion strip, the skeleton document and the export all read it.
+    // addressable. A rig that answers neither vocabulary came back on a third
+    // one, and the sockets, the skeleton document and the export all read a
+    // name to find a bone.
     findings.push({
       severity: 'warning',
       title: 'rig naming',
       degrees: null,
       message:
-        `this rig answers to none of the mixamo names (no ${rig.missingBones.join(', ')}), so its facing was ` +
-        `measured from the skeleton's shape instead: the two lowest limb tips are the feet, and the joint above ` +
-        `each tip is the ankle. The measurement is sound; the unit still will not load into a format built on ` +
-        `those names. Its ${rig.boneNames.length} bones: ${rig.boneNames.slice(0, 40).join(', ')}` +
+        `this rig answers to neither naming contract (no ${rig.missingBones.join(', ')} under mixamo or ` +
+        `tripo), so its facing was measured from the skeleton's shape instead: the two lowest limb tips are ` +
+        `the feet, and the joint above each tip is the ankle. The measurement is sound; the unit is still not ` +
+        `addressable by name. Its ${rig.boneNames.length} bones: ${rig.boneNames.slice(0, 40).join(', ')}` +
         `${rig.boneNames.length > 40 ? ' …' : ''}`,
     });
   } else if (rig.missingBones.length > 0) {

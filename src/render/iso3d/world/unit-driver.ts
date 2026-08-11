@@ -20,6 +20,7 @@
  * Pure, so a whole fight's worth of animation decisions can be replayed in Node.
  */
 
+import type { UnitDef } from '../../../units/types.js';
 import { EntityActivity, CastPhaseValue } from '../../../server/net/protocol.js';
 import type { FiredEvent, UnitMachine } from '../../../units/machine.js';
 
@@ -122,4 +123,137 @@ export function speedBetween(
 ): number {
   if (!(seconds > 0)) return 0;
   return Math.hypot(to.x - from.x, to.y - from.y) / seconds;
+}
+
+/**
+ * What a body's speed is, kept on the sim's clock (spec 118).
+ *
+ * The drawn distance divided by the frame delta is the obvious way to measure
+ * this and it is wrong, because the two are on different clocks. A body's drawn
+ * position only moves on a frame that drained a 60Hz tick -- the local player's
+ * because prediction advances a tick at a time, a remote one's because the
+ * interpolator has no new sample to walk toward. Above 60fps most frames drain
+ * no tick at all, so most frames measured a real distance of zero over a real
+ * delta and reported a standing body.
+ *
+ * That was invisible in the state machine, which only evaluates transitions on
+ * a tick and so never saw the zero. It was extremely visible in the blend tree,
+ * which is read on *every* frame: at 120Hz the pig alternated between its run
+ * pose and frame 0.02 of a fifteen-second idle, every other frame.
+ *
+ * So distance accumulates on the frame clock and the division happens on the
+ * tick clock, and a frame that drained nothing holds the last answer rather
+ * than inventing a stop.
+ */
+export interface SpeedClock {
+  /** Drawn distance since the last tick-bearing frame. */
+  readonly pending: number;
+  /** World units per second, measured over whole ticks. */
+  readonly speed: number;
+}
+
+/** A body that has not moved yet. */
+export const STOPPED: SpeedClock = { pending: 0, speed: 0 };
+
+/**
+ * Folds one frame's drawn travel in, and takes the quotient when a tick landed.
+ *
+ * `ticks` is what the frame's accumulator actually drained, the same number the
+ * machine steps by. Dividing by `ticks * tickSeconds` rather than by the frame
+ * delta is the whole point: the numerator is however many ticks' worth of
+ * travel the drawn position picked up, so the denominator has to be those same
+ * ticks and not the wall-clock time it took to notice them.
+ */
+export function advanceSpeed(
+  clock: SpeedClock,
+  travelled: number,
+  ticks: number,
+  tickSeconds: number,
+): SpeedClock {
+  const moved = Number.isFinite(travelled) && travelled > 0 ? travelled : 0;
+  const pending = clock.pending + moved;
+  const whole = Math.max(0, Math.floor(ticks));
+  if (whole === 0 || !(tickSeconds > 0)) return { pending, speed: clock.speed };
+  return { pending: 0, speed: pending / (whole * tickSeconds) };
+}
+
+/**
+ * How fast the blend parameter is allowed to move, in speed units per second.
+ *
+ * 1000, so the run threshold of 150 is reached from a standstill -- or given up
+ * -- in 150ms, which is the duration the unitdefs author their locomotion
+ * transitions at. Tying the two together is the point: the parameter and the
+ * cross-fade it feeds should take the same time, or one of them is visible on
+ * its own and reads as a cut.
+ */
+export const BLEND_SLEW_PER_SECOND = 1000;
+
+/**
+ * Moves the blend parameter toward the measured speed at a bounded rate (spec 119).
+ *
+ * The machine has two kinds of blend and only one is time-based. A state
+ * transition fades over ticks; a blend tree is a pure function of its
+ * parameter, evaluated live -- for the *outgoing* layer of a transition as much
+ * as the incoming one. The sim has no acceleration, so speed steps between 0
+ * and full in a single tick, and those two facts do not compose:
+ *
+ * Setting off, the step lands on exactly the value the cross-fade is heading
+ * to, so the fade does the work and the step is invisible. Stopping, the
+ * outgoing layer stops being a run before the transition it is the outgoing
+ * half of has done anything -- the tree reads zero and emits the idle clip, so
+ * the run pose is not faded out, it is simply not there. The cross-fade then
+ * blends idle into idle for 150ms and looks like a cut.
+ *
+ * A rate limit rather than an exponential decay, so the settle time is a number
+ * somebody chose rather than one that emerges from a half-life -- and so it can
+ * be the *same* number as the transition's. Advanced on `ticks` rather than on
+ * the frame delta for the reason spec 118 exists: a frame that drained no tick
+ * must not advance a signal the sim clock owns.
+ *
+ * Both directions, not only the fall. Damping one way would fix the symptom and
+ * leave the two paths different in kind, which is what made this hard to see.
+ * Rising it cannot be seen anyway: `speed > 5` is crossed inside the first
+ * tick, and the tree then walks up through the walk band under a cross-fade
+ * that is already running.
+ */
+export function slewSpeed(
+  current: number,
+  target: number,
+  ticks: number,
+  tickSeconds: number,
+  rate: number = BLEND_SLEW_PER_SECOND,
+): number {
+  const from = Number.isFinite(current) ? current : 0;
+  const to = Number.isFinite(target) ? target : 0;
+  const whole = Math.max(0, Math.floor(ticks));
+  if (whole === 0 || !(tickSeconds > 0) || !(rate > 0)) return from;
+
+  const step = rate * whole * tickSeconds;
+  const delta = to - from;
+  if (Math.abs(delta) <= step) return to;
+  return from + Math.sign(delta) * step;
+}
+
+/**
+ * Whether a unit shows its own death, so the scene must not show it as well.
+ *
+ * The scene squashes a corpse to 0.6 so a kill reads. That is the right answer
+ * for the procedural rigs, which have no death clip: a body that stopped where
+ * it stood is otherwise indistinguishable from one standing still. An authored
+ * unit with a `terminal` state falls over by itself, and squashing it too drew
+ * the pig at half size for the whole of its collapse, then snapped it back to
+ * full size the moment it was alive again.
+ *
+ * Asked of the *document* rather than of the state the machine is in this
+ * frame. Both answer the question for a body that died while being watched;
+ * only this one answers it for a corpse that was already on the ground when the
+ * client joined, whose machine spends its first frame in the entry state and
+ * would pop from squashed to full size as it caught up.
+ *
+ * `terminal` is the category for a state that is never left, which for a living
+ * body is not a thing to be in -- so a unit that declares one is a unit that
+ * has somewhere to fall.
+ */
+export function hasDeathAnimation(unit: UnitDef): boolean {
+  return unit.stateMachine.states.some((state) => state.category === 'terminal');
 }

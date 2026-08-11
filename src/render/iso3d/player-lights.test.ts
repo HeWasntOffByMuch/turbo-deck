@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
+  APPARENT_LIGHT_FRACTION,
   MAGIC_DEFAULTS,
+  MAX_LIGHT_RANGE,
+  MIN_LIGHT_RANGE,
+  TORCH_ANCHOR,
   TORCH_DEFAULTS,
+  apparentLightDistance,
+  carriedLightDistance,
   orbState,
   pointIntensity,
   torchFlicker,
 } from './player-lights.js';
+import { shaderMarkersPresent } from './player-lighting.js';
 
 /** A long even sweep of the flame, for statistics rather than spot checks. */
 function flickerSamples(seed: number, count = 4000, step = 1 / 60): number[] {
@@ -161,5 +168,83 @@ describe('pointIntensity (spec 047)', () => {
   it('never returns a negative or non-finite intensity', () => {
     expect(pointIntensity(-5, 300)).toBe(0);
     expect(Number.isFinite(pointIntensity(1, 0))).toBe(true);
+  });
+});
+
+
+describe('apparentLightDistance (spec 118)', () => {
+  it('is a fixed fraction of the light’s own range', () => {
+    expect(apparentLightDistance(300)).toBeCloseTo(300 * APPARENT_LIGHT_FRACTION, 9);
+    expect(apparentLightDistance(900)).toBeCloseTo(900 * APPARENT_LIGHT_FRACTION, 9);
+  });
+
+  it('is linear in the range', () => {
+    expect(apparentLightDistance(600)).toBeCloseTo(2 * apparentLightDistance(300), 9);
+  });
+
+  it('lights the body at exactly the brightness the slider names, at every range', () => {
+    // The headline, and the reason the fraction is a half. `pointIntensity`
+    // exists because the brightness slider means "this much illuminance at half
+    // range"; measuring the body from there is that sentence, applied to the
+    // body. A range slider that changed how lit the player looks would be the
+    // same coupling `pointIntensity` was written to remove everywhere else.
+    for (const range of [MIN_LIGHT_RANGE, 120, 300, 500, MAX_LIGHT_RANGE]) {
+      for (const brightness of [0.4, 1.6, 3.2]) {
+        const d = apparentLightDistance(range);
+        expect(pointIntensity(brightness, range) / (d * d)).toBeCloseTo(brightness, 6);
+      }
+    }
+  });
+
+  it('holds the torch further out than it really is, at the default reach', () => {
+    const carried = Math.hypot(TORCH_ANCHOR.x, TORCH_ANCHOR.y, TORCH_ANCHOR.z);
+    expect(carriedLightDistance(carried, TORCH_DEFAULTS.range)).toBeGreaterThan(carried * 3);
+    expect(carriedLightDistance(carried, MAX_LIGHT_RANGE)).toBeGreaterThan(carried * 3);
+  });
+
+  it('never pulls a light *closer* than it really is', () => {
+    // Which is not hypothetical: at the shortest reach the panel allows, half
+    // range is 40 units and the flame's own anchor is 44. A lamp with an
+    // 80-unit reach is meant to be an intimate light, and dragging it inward to
+    // make it uniform would be inventing a look nobody asked for.
+    const carried = Math.hypot(TORCH_ANCHOR.x, TORCH_ANCHOR.y, TORCH_ANCHOR.z);
+    expect(apparentLightDistance(MIN_LIGHT_RANGE)).toBeLessThan(carried);
+    expect(carriedLightDistance(carried, MIN_LIGHT_RANGE)).toBe(carried);
+    for (const range of [MIN_LIGHT_RANGE, 120, 300, MAX_LIGHT_RANGE]) {
+      for (const distance of [0, 5, carried, 400, 5000]) {
+        expect(carriedLightDistance(distance, range)).toBeGreaterThanOrEqual(distance);
+      }
+    }
+  });
+
+  it('flattens the falloff across a body from severe to under a stop', () => {
+    // The uniformity, stated as the thing the eye actually sees: how much more
+    // light the near side of a figure gets than the far side, under 1/d².
+    const halfBody = 46 / 2;
+    const spread = (distance: number): number =>
+      ((distance + halfBody) / (distance - halfBody)) ** 2;
+
+    const carried = Math.hypot(TORCH_ANCHOR.x, TORCH_ANCHOR.y, TORCH_ANCHOR.z);
+    expect(spread(carried)).toBeGreaterThan(8);
+    expect(spread(apparentLightDistance(TORCH_DEFAULTS.range))).toBeLessThan(2);
+  });
+
+  it('never returns zero or a non-finite distance', () => {
+    // This reaches a shader, where a NaN does not throw -- it paints the body
+    // black -- and a zero divides by itself.
+    for (const range of [0, -50, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const d = apparentLightDistance(range);
+      expect(Number.isFinite(d) || range === Number.POSITIVE_INFINITY).toBe(true);
+      expect(d).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('the shader patch behind it (spec 118)', () => {
+  it('still finds the line it rewrites in three’s own chunk', () => {
+    // The one thing that cannot be seen from a browser: a replace that stops
+    // matching is a silent no-op there, and a player lit from point blank
+    // again. A three.js upgrade that renames this fails here instead.
+    expect(shaderMarkersPresent()).toBe(true);
   });
 });

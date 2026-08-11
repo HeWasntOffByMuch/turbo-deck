@@ -178,8 +178,11 @@ describe('a provisional document (spec 115)', () => {
     // fail its own validator, and export refused the unit for being the shape
     // it actually is -- which reads as "export does nothing".
     const built = buildReferenceUnit(DEFAULT_CANONICAL_HEIGHT);
+    // Paired, because a real rig's twists come in twos and the symmetry check
+    // reads `L_`/`R_` since spec 120. An unpaired left side here would be
+    // testing the budget against a rig that would be refused for asymmetry.
     const extra = Array.from({ length: 18 }, (_, index) => ({
-      name: `L_Twist${index}`,
+      name: `${index % 2 === 0 ? 'L' : 'R'}_Twist${Math.floor(index / 2)}`,
       parent: 0,
       translation: [0, 0.01 * index, 0] as const,
     }));
