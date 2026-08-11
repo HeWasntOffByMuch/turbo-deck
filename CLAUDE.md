@@ -285,8 +285,13 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  a property over the whole easing table instead of a claim each
                  widget has to remember. text/ is the two bitmap faces; theme/ is theme.json plus the
                  atlas authored as text; widgets/ is the nine; screens/ is the
-                 seven (the HUD, the bag, the sheet, the shop, the keybindings,
-                 the trade table and the options window);
+                 eight (the HUD, the bag, the sheet, the shop, the keybindings,
+                 the trade table, the options window and its display page);
+                 input/ is the actions, the key map and the two preferences that
+                 outlive a session -- the bindings and the interface scale, each
+                 a versioned document over an injected `StorageLike` that never
+                 throws, because a corrupt preference must cost defaults rather
+                 than a black screen;
                  render/ is the only impure part. Everything else runs in Node.
                  Since spec 131 all but the HUD are in the Play tab, over
                  the world -- mounted by src/render/iso3d/world/ui-screens.ts,
@@ -308,6 +313,13 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  window leaves, so it never reads the world's `lowRes` setting --
                  which is off by default and may go. A camera needs a fixed aspect
                  because it has to frame consistently; an interface does not.
+                 Since spec 136 that scale is a *setting* on the options window's
+                 Display tab, and `auto` -- the default -- is `autoUiScale`
+                 unchanged. A chosen number is honoured outright rather than
+                 clamped back against the auto rules: those exist to choose for
+                 somebody who has not, and a preference that silently became a
+                 different number would fail on exactly the screens somebody
+                 would want to change it on.
                  render/ has three backends behind six methods. raster.ts is pure
                  software and is the golden-image oracle, which is what lets a
                  screen be compared byte for byte inside `npm test` with no GPU and

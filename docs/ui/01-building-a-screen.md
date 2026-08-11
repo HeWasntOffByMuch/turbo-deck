@@ -353,6 +353,42 @@ shop.onSell = (index) => client.sellItem(vendorId, index);
   you chose; a sale is undone by a six-entry buyback list a seventh sale pushes
   off the end. The asymmetry is why the dialog sits on exactly one button.
 
+## Picking things up (spec 136)
+
+Six complaints about the bag, and one answer: touching an item should be easier
+than it was. Nothing here is new machinery — it is the phase-4 drag, reached a
+second way.
+
+```ts
+cell.onClick = (slot, gesture) => screen.clickCell(slot, gesture);
+screen.pointerMoved(at, nowMs);            // hover -> tooltip, and the carry follows
+layers.place('tooltip', screen.tooltip);
+```
+
+- **A click picks up and a click puts down.** `DragController` already models
+  "something is in hand, and here is where the cursor is", which is exactly what
+  carrying is; what changed is what starts and ends it. Press-drag-release still
+  works, because a drag that began is a carry that began — the two gestures are
+  one state machine reached two ways.
+- **A cell's hit rect is bigger than its paint rect.** `SLOT_CATCH` is exactly
+  half the gutter, so the expanded rects *tile*: every point in the grid belongs
+  to one cell and none belongs to two. Overlap would be worse than the gap,
+  because which cell won would depend on child order. This is the only place in
+  the framework where the two rects differ, and `containsForHitTest` is the only
+  hook that makes it possible.
+- **Right-click equips, and the screen still decides nothing.** It reads
+  `item.slot` off the view-model and emits the same `MoveIntent` a drag would;
+  `applyMove` on the server does the swap it has done since spec 126.
+- **The tooltip is fed by the hover the router already tracks.** The delay is
+  `theme.input.tooltipDelayMs` and the clock is the `nowMs` the mount hands in,
+  like everything else here.
+
+The interface's scale became a setting on the same spec: `src/ui/input/
+display-store.ts` beside the bindings store, a `DisplayScreen` in the options
+window's second tab, and `resolveUiScale` in `core/frame.ts` — `'auto'` is
+`autoUiScale` unchanged, and a number is honoured outright rather than clamped
+back into the rules that exist for people who have not chosen.
+
 ## What is not here yet
 
 | Want | Phase | Note |
