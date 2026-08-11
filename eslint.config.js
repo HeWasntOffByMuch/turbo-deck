@@ -155,6 +155,10 @@ const PURE_RENDER = [
   // replicated containers and the item table, out to the plain rows `src/ui/`
   // is allowed to hold -- a mapping, and so checked in Node.
   'src/render/iso3d/world/inventory-model.ts',
+  // The HUD's and the character sheet's view-models (spec 128). Same job, and
+  // the place `validateSkillSpend` is asked so a greyed-out button and a
+  // refused request cannot disagree.
+  'src/render/iso3d/world/character-model.ts',
   'src/render/iso3d/world/*.test.ts',
   // The Studio tab's decision-making half (spec 109). image-check.ts measures a
   // reference image and plan.ts derives whether a generation establishes a rig
