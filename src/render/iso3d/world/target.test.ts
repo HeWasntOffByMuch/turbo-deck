@@ -18,7 +18,7 @@ import { ALL_ABILITIES } from '../../../server/data/abilities.js';
 import { ALL_MONSTERS } from '../../../server/data/monsters.js';
 import { mayCast, type CastDecision } from '../../../server/client/combat.js';
 import { computeEffectiveStats } from '../../../server/player/stats.js';
-import { EMPTY_EQUIPMENT } from '../../../server/state/types.js';
+import { EMPTY_EQUIPMENT, emptyInventory } from '../../../server/state/types.js';
 
 const TARGET: TargetSnapshot = { id: 7, x: 400, y: 0, radius: 20, health: 40 };
 /** The basic attack's reach, before the target's body is added to it. */
@@ -53,6 +53,7 @@ function gate(abilityId: string, from: Point, targetRadius: number): CastDecisio
     baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
     skills: [],
     equipment: EMPTY_EQUIPMENT,
+    inventory: emptyInventory(),
     position: { x: 0, y: 0, z: 0 },
     facing: 0,
     currentZone: 'greenmarch',

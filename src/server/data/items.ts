@@ -12,7 +12,12 @@ import type { StatModifier } from './modifiers.js';
 export interface ItemDefinition {
   readonly id: string;
   readonly name: string;
-  readonly slot: EquipSlot;
+  /**
+   * Where it goes when worn, or `null` for something that is only ever carried
+   * (spec 126). A null slot is what makes "this cannot be equipped" a fact about
+   * the row rather than a list of exceptions somewhere else.
+   */
+  readonly slot: EquipSlot | null;
   /** Character level required to equip; below it the equip is rejected. */
   readonly levelRequirement: number;
   readonly modifiers: StatModifier;
@@ -25,6 +30,14 @@ export interface ItemDefinition {
    * every bow at a different shot is one edit in `data/abilities.ts`.
    */
   readonly basicAttackId?: string;
+  /**
+   * How many of this fit in one inventory slot (spec 126). Absent means 1.
+   *
+   * A weapon does not stack and a potion does, and that is the whole of it --
+   * `maxStackOf` below is the only thing that reads it, so "absent means one"
+   * is stated once rather than at every call site.
+   */
+  readonly maxStack?: number;
 }
 
 const DEFINITIONS: readonly ItemDefinition[] = [
@@ -145,6 +158,18 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     levelRequirement: 8,
     modifiers: { maxHealthPct: 0.12, attackDamagePct: 0.05 },
   },
+  // --- carried ---
+  // Nothing drinks this yet: consuming an item is its own spec, and it is here
+  // because stacking has to be a rule about real rows to be worth testing. A
+  // table with no stackable item in it makes `maxStack` a hypothesis.
+  {
+    id: 'potion.minor',
+    name: 'Minor Salve',
+    slot: null,
+    levelRequirement: 1,
+    modifiers: {},
+    maxStack: 10,
+  },
 ];
 
 export const ITEMS: ReadonlyMap<string, ItemDefinition> = new Map(
@@ -156,3 +181,30 @@ export const ALL_ITEMS: readonly ItemDefinition[] = DEFINITIONS;
 export function itemById(id: string): ItemDefinition | null {
   return ITEMS.get(id) ?? null;
 }
+
+/** How many of `id` fit in one slot. Unknown ids answer 1, never 0 (spec 126). */
+export function maxStackOf(id: string): number {
+  return Math.max(1, Math.floor(ITEMS.get(id)?.maxStack ?? 1));
+}
+
+/**
+ * What a brand new character is given (spec 126).
+ *
+ * Once ownership is enforced, a new character with an empty bag can equip
+ * nothing at all -- so this table is not a nicety, it is the thing that keeps
+ * the change from being a regression for everyone who has not looted anything.
+ *
+ * Every main hand the HUD's weapon switch offers is in here, because the switch
+ * equips by id and a button the server refuses is a button that does nothing.
+ * `weapon-switch.test.ts` asserts exactly that, so adding a fourth weapon to the
+ * switch fails the suite rather than failing quietly in a player's hands.
+ */
+export const STARTING_KIT: readonly { readonly defId: string; readonly count: number }[] = [
+  { defId: 'sword.worn', count: 1 },
+  { defId: 'bow.hunting', count: 1 },
+  { defId: 'stars.weighted', count: 1 },
+  { defId: 'chest.leather', count: 1 },
+  { defId: 'helm.leather', count: 1 },
+  { defId: 'legs.traveller', count: 1 },
+  { defId: 'potion.minor', count: 3 },
+];

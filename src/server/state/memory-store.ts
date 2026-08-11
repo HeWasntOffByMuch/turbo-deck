@@ -20,6 +20,14 @@ function clonePlayer(player: PersistedPlayer): PersistedPlayer {
     baseStats: { ...player.baseStats },
     skills: player.skills.map((allocation) => ({ ...allocation })),
     equipment: { ...player.equipment },
+    // Each stack copied too: a bag is an array of objects, and a shallow copy of
+    // the array would still hand back the very stacks the caller is holding.
+    //
+    // The `??` is not dead code: a row written before spec 126 has no bag at
+    // all, and a store is where that shows up first. It hands the record back as
+    // it found it and `sanitizeInventory` decides what an absent bag means --
+    // which is the same thing a Postgres store reading a NULL column would do.
+    inventory: (player.inventory ?? []).map((stack) => (stack ? { ...stack } : null)),
     position: { ...player.position },
   };
 }

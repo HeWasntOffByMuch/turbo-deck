@@ -9,17 +9,27 @@
  */
 
 import type { ZoneManager } from '../world/zone-manager.js';
-import { itemById } from '../data/items.js';
+import { STARTING_KIT } from '../data/items.js';
 import type { DataStore } from '../state/store.js';
 import {
   EMPTY_EQUIPMENT,
+  EQUIP_SLOTS,
+  emptyInventory,
   isEquipSlot,
   type BaseStats,
   type EffectiveStats,
-  type EquipSlot,
+  type Equipment,
+  type Inventory,
   type PersistedPlayer,
   type Vec3,
 } from '../state/types.js';
+import {
+  addToInventory,
+  applyMove,
+  equipmentAddress,
+  sanitizeInventory,
+  type MoveRequest,
+} from './inventory.js';
 import { spendSkillPoint, sanitizeSkills } from './skills.js';
 import { clampHealthToStats, clampResourceToStats, computeEffectiveStats } from './stats.js';
 
@@ -34,11 +44,29 @@ export const DEFAULT_BASE_STATS: BaseStats = {
 /** Where a character with no saved position wakes up: the safe hub. */
 export const DEFAULT_SPAWN: Vec3 = { x: 600, y: 450, z: 0 };
 
-export const STARTER_EQUIPMENT: Readonly<Record<EquipSlot, string | null>> = {
+export const STARTER_EQUIPMENT: Equipment = {
   ...EMPTY_EQUIPMENT,
   mainHand: 'sword.worn',
   chest: 'chest.leather',
 };
+
+/**
+ * The starting kit, minus what the character is already wearing (spec 126).
+ *
+ * Subtracted rather than granted twice: `STARTER_EQUIPMENT` puts a worn sword
+ * and a jerkin on, and handing a second copy of each into the bag would be the
+ * first duplication bug in a system whose whole point is that nothing is
+ * duplicated.
+ */
+export function starterInventory(): Inventory {
+  const worn = new Set(EQUIP_SLOTS.map((slot) => STARTER_EQUIPMENT[slot]).filter((id) => id !== null));
+  let bag = emptyInventory();
+  for (const entry of STARTING_KIT) {
+    if (worn.delete(entry.defId) && entry.count === 1) continue;
+    bag = addToInventory(bag, entry) ?? bag;
+  }
+  return bag;
+}
 
 /** Skill points granted per level gained. */
 export const SKILL_POINTS_PER_LEVEL = 1;
@@ -82,7 +110,10 @@ export class PlayerManager {
   async login(playerId: string, displayName: string): Promise<PlayerSession> {
     const loaded = await this.store.loadPlayer(playerId);
     const record: PersistedPlayer = loaded
-      ? { ...loaded, skills: sanitizeSkills(loaded.skills) }
+      ? // A save from before spec 126 has no `inventory` at all; it loads as an
+        // empty bag and keeps whatever it was wearing. Nobody is stripped by an
+        // upgrade, and nobody is handed a second starting kit for logging in.
+        { ...loaded, skills: sanitizeSkills(loaded.skills), inventory: sanitizeInventory(loaded.inventory) }
       : this.createCharacter(playerId, displayName);
 
     const stats = computeEffectiveStats(record);
@@ -114,6 +145,7 @@ export class PlayerManager {
       baseStats: DEFAULT_BASE_STATS,
       skills: [],
       equipment: STARTER_EQUIPMENT,
+      inventory: starterInventory(),
       position: DEFAULT_SPAWN,
       facing: 0,
       currentZone: this.zones.zoneIdAt(DEFAULT_SPAWN.x, DEFAULT_SPAWN.y),
@@ -183,38 +215,70 @@ export class PlayerManager {
     return next;
   }
 
-  async equip(playerId: string, slot: string, itemId: string): Promise<PlayerActionResult> {
+  /**
+   * The one write into either container (spec 126).
+   *
+   * Everything below goes through here, and here goes through `applyMove` --
+   * which is pure, so the rules that decide whether a move is legal are testable
+   * without a session, a store or a clock.
+   */
+  async moveItem(playerId: string, request: MoveRequest): Promise<PlayerActionResult> {
     const session = this.sessions.get(playerId);
     if (!session) return { ok: false, reason: 'not logged in' };
-    if (!isEquipSlot(slot)) return { ok: false, reason: `no such slot: ${slot}` };
 
-    const item = itemById(itemId);
-    if (!item) return { ok: false, reason: `no such item: ${itemId}` };
-    if (item.slot !== slot) return { ok: false, reason: `${item.name} does not go in ${slot}` };
-    if (session.record.level < item.levelRequirement) {
-      return { ok: false, reason: `${item.name} requires level ${item.levelRequirement}` };
-    }
+    const outcome = applyMove(
+      session.record.inventory,
+      session.record.equipment,
+      request,
+      session.record.level,
+    );
+    if (!outcome.ok) return { ok: false, reason: outcome.reason };
 
     this.commit({
       ...session,
-      record: { ...session.record, equipment: { ...session.record.equipment, [slot]: itemId } },
+      record: { ...session.record, inventory: outcome.inventory, equipment: outcome.equipment },
     });
     const updated = await this.recalculate(playerId);
     return updated ? { ok: true, session: updated } : { ok: false, reason: 'not logged in' };
   }
 
+  /**
+   * Wear the first one of `itemId` in the bag.
+   *
+   * Kept for the HUD's weapon switch, which knows an item id and not a slot
+   * index, and reimplemented over `moveItem` rather than beside it -- so it
+   * obeys ownership for free instead of having its own copy of the rules to
+   * forget one of. Strictly redundant with `MoveItem` once nothing sends it.
+   */
+  async equip(playerId: string, slot: string, itemId: string): Promise<PlayerActionResult> {
+    const session = this.sessions.get(playerId);
+    if (!session) return { ok: false, reason: 'not logged in' };
+    if (!isEquipSlot(slot)) return { ok: false, reason: `no such slot: ${slot}` };
+
+    const index = session.record.inventory.findIndex((stack) => stack?.defId === itemId);
+    if (index < 0) return { ok: false, reason: `you are not carrying ${itemId}` };
+
+    return this.moveItem(playerId, {
+      from: { container: 'inventory', index },
+      to: equipmentAddress(slot),
+      count: 1,
+    });
+  }
+
+  /** Take off what is in `slot` and put it in the first free bag slot. */
   async unequip(playerId: string, slot: string): Promise<PlayerActionResult> {
     const session = this.sessions.get(playerId);
     if (!session) return { ok: false, reason: 'not logged in' };
     if (!isEquipSlot(slot)) return { ok: false, reason: `no such slot: ${slot}` };
     if (session.record.equipment[slot] === null) return { ok: false, reason: `${slot} is empty` };
 
-    this.commit({
-      ...session,
-      record: { ...session.record, equipment: { ...session.record.equipment, [slot]: null } },
+    const free = session.record.inventory.findIndex((stack) => stack === null);
+    if (free < 0) return { ok: false, reason: 'your bag is full' };
+
+    return this.moveItem(playerId, {
+      from: equipmentAddress(slot),
+      to: { container: 'inventory', index: free },
     });
-    const updated = await this.recalculate(playerId);
-    return updated ? { ok: true, session: updated } : { ok: false, reason: 'not logged in' };
   }
 
   /** Validated in `skills.ts`; a rejection leaves the record untouched. */

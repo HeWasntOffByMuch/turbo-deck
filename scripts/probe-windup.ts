@@ -34,7 +34,7 @@ import { FLAT_TERRAIN } from '../src/server/world/terrain.js';
 import { MemoryDataStore } from '../src/server/state/memory-store.js';
 import { DEFAULT_SPAWN } from '../src/server/player/player-manager.js';
 import { computeEffectiveStats } from '../src/server/player/stats.js';
-import { EMPTY_EQUIPMENT } from '../src/server/state/types.js';
+import { EMPTY_EQUIPMENT, emptyInventory } from '../src/server/state/types.js';
 import type { PersistedPlayer } from '../src/server/state/types.js';
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -119,6 +119,7 @@ function fastCharacter(dexterity: number, skilled: boolean): PersistedPlayer {
         ]
       : [],
     equipment: { ...EMPTY_EQUIPMENT, mainHand: 'stars.weighted' },
+    inventory: emptyInventory(),
     position: { ...DEFAULT_SPAWN },
     facing: 0,
     currentZone: 'hub',

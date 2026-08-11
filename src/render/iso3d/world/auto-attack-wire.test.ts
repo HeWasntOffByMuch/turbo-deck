@@ -33,7 +33,7 @@ import { CastEndReason, type ServerEntity } from '../../../server/sim/types.js';
 import { FLAT_TERRAIN } from '../../../server/world/terrain.js';
 import { GameClient } from '../../../server/client/game-client.js';
 import { computeEffectiveStats } from '../../../server/player/stats.js';
-import { EMPTY_EQUIPMENT } from '../../../server/state/types.js';
+import { EMPTY_EQUIPMENT, emptyInventory } from '../../../server/state/types.js';
 import { createWorldPredictor } from '../../../server/client/prediction.js';
 import { moveIntent } from './intent.js';
 import { autoAttack } from './target.js';
@@ -241,6 +241,7 @@ function ticksFor(weapon: string | null): number {
     baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
     skills: [],
     equipment: { ...EMPTY_EQUIPMENT, ...(weapon ? { mainHand: weapon } : {}) },
+    inventory: emptyInventory(),
     position: { x: 0, y: 0, z: 0 },
     facing: 0,
     currentZone: 'greenmarch',
