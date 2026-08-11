@@ -43,10 +43,12 @@ import { parseMap } from '../../../terrain/map.js';
 import { StreamedMap } from '../../../server/client/streamed-map.js';
 import type { ViewHandle } from '../view-handle.js';
 import { createWeatherControls } from '../weather-controls.js';
+import { createVfxControls } from '../vfx-controls.js';
 import { turnToward } from '../../../server/sim/movement.js';
 import { facesAim } from '../../../server/sim/abilities.js';
 import { createHud, HOTBAR } from './hud.js';
 import { appearanceOf } from './appearance.js';
+import { effectsForBlow } from './vfx-wire.js';
 import { moveIntent, MOVE_KEYS, RoutePlanner } from './intent.js';
 import { autoAttack } from './target.js';
 import { aimShape, castOrder, startAim, type AimGesture, type AimOrder } from './aim.js';
@@ -221,16 +223,56 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // each rather than one drawer for all of them -- and one group, so opening any
   // of them closes the rest instead of stacking six panels into one corner.
   const weather = createWeatherControls({ group: scene.controls.menus });
+  // The seventh button (spec 121). Both settings are pushed straight into the
+  // layer rather than polled: the intensity is a budget the sim reads, and gore
+  // is a switch the decal field acts on rather than a flag anything draws past.
+  const vfxControls = createVfxControls({
+    group: scene.controls.menus,
+    onChange: (settings) => {
+      scene.setVfxIntensity(settings.intensity);
+      scene.setGore(settings.gore);
+    },
+  });
   const buttons = document.createElement('div');
   // Inset against the notch and the home indicator (spec 093): in landscape the
   // cutout is on a side edge, which is exactly where these sit.
   buttons.style.cssText =
     'position:absolute;top:calc(8px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));' +
     'z-index:30;display:flex;gap:6px;';
-  buttons.append(scene.controls.element, weather.element);
+  buttons.append(scene.controls.element, weather.element, vfxControls.element);
   root.append(hud.element, buttons);
 
+  /** Where a blow lands on a body, in world units above its feet. */
+  const BLOOD_HEIGHT = 26;
+
   client.onCombatResult((result) => {
+    // What a blow looks like, decided in one pure place (spec 120). Nothing
+    // about this changes a game outcome -- the server already resolved the blow
+    // and this is reading the answer.
+    const target = client.view().entities.find((entity) => entity.id === result.targetId);
+    const attacker = client.view().entities.find((entity) => entity.id === result.attackerId);
+    if (target) {
+      for (const request of effectsForBlow(
+        {
+          attackerId: result.attackerId,
+          targetId: result.targetId,
+          damage: result.damage,
+          killed: (result.flags & 1) !== 0,
+          critical: (result.flags & 2) !== 0,
+          blocked: (result.flags & 4) !== 0,
+          damageType: 'physical',
+          x: target.x,
+          y: BLOOD_HEIGHT,
+          z: target.y,
+          fromX: attacker?.x ?? target.x,
+          fromZ: attacker?.y ?? target.y,
+          bleeds: true,
+        },
+        client.view().estimatedTick,
+      )) {
+        scene.playEffect(request);
+      }
+    }
     // Where it landed, asked for now and never again (spec 096). The scene is
     // the better answer -- it knows the pose actually on screen, and it still
     // holds the body of something this very blow killed -- and the replica is
@@ -240,7 +282,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     hud.addDamage(result.targetId, at, result.damage, (result.flags & 2) !== 0);
   });
   client.onEffect((effect) => {
-    scene.addEffect(effect.x, effect.y, effect.radius, effect.durationTicks);
+    // The id the server has always sent and this view has always dropped.
+    scene.addEffect(effect.effectId, effect.x, effect.y, effect.radius, effect.durationTicks);
   });
   client.onCastRejected((abilityId, reason) => {
     hud.notice(`${abilityById(abilityId)?.name ?? abilityId}: ${reason}`);

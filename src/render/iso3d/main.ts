@@ -1,11 +1,11 @@
 /**
  * Entry point and tab shell (specs 031, 062, 063, 066).
  *
- * Five tabs, and only the first of them is the game: since spec 063 it is the
+ * Six tabs, and only the first of them is the game: since spec 063 it is the
  * isometric world -- terrain, props, rigs and shadows -- reading a replicated
  * server view rather than simulating anything itself.
  *
- * The other three are workshops. The movement sandbox and the rig debugger
+ * The others are workshops. The movement sandbox and the rig debugger
  * (specs 032/035, back since 066) drive one unit over the sandbox mover so a
  * gait, a cloth solve or a turn rate can be watched and tuned with no game in
  * the way; the map editor authors the world document. The flat debug canvas 062
@@ -19,6 +19,7 @@
 
 import { mountEditor } from './editor/view.js';
 import { mountStudio } from './studio/view.js';
+import { mountVfxStudio } from './studio/vfx-view.js';
 import { mountWorld } from './world/view.js';
 import { mountMovement } from './movement.js';
 import { mountDebug } from './debug-view.js';
@@ -49,6 +50,10 @@ function main(): void {
     // Spec 109. Not fullscreen: Play and the editor own the window because they
     // are a window onto the world, and this is a form.
     { label: 'Studio', mount: mountStudio },
+    // Spec 122. Also a workshop rather than a window onto the world: a browser, a
+    // preview and a wall of parameters, so it lays out under the bar like the
+    // other benches rather than owning the screen.
+    { label: 'VFX', mount: mountVfxStudio },
   ];
 
   // The bar floats over the game window rather than pushing it down (spec 041);
