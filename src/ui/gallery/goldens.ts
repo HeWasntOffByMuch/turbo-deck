@@ -12,7 +12,7 @@
  */
 
 import { PNG } from 'pngjs';
-import type { RenderOptions, WindowsRenderOptions } from './render.js';
+import type { KeybindingsRenderOptions, RenderOptions, WindowsRenderOptions } from './render.js';
 
 export interface GoldenCase {
   readonly name: string;
@@ -90,6 +90,41 @@ export const WINDOW_GOLDEN_CASES: readonly WindowsGoldenCase[] = [
     name: 'windows-small',
     options: { viewport: { width: 300, height: 140 } },
     covers: 'every window pulled back on screen at the smallest supported viewport',
+  },
+];
+
+export interface KeybindingsGoldenCase {
+  readonly name: string;
+  readonly options: KeybindingsRenderOptions;
+  readonly covers: string;
+}
+
+/** The keybinding window (spec 123), in the states worth a picture. */
+export const KEYBINDING_GOLDEN_CASES: readonly KeybindingsGoldenCase[] = [
+  {
+    name: 'keys',
+    options: {},
+    covers: 'a tab per category, a row per action, both chords as a player reads them',
+  },
+  {
+    name: 'keys-capture',
+    options: { capture: { actionId: 'move.south', slot: 'primary' } },
+    covers: 'a row waiting for a key, and the text-entry context it pushed',
+  },
+  {
+    name: 'keys-conflict',
+    options: { rebind: { actionId: 'move.south', code: 'KeyW' } },
+    covers: 'a conflict reported rather than refused -- both bindings stay live',
+  },
+  {
+    name: 'keys-filter',
+    options: { tab: 'skillbar', filter: 'skillbar 1' },
+    covers: 'the filter hiding every row that does not match',
+  },
+  {
+    name: 'keys-unbound',
+    options: { tab: 'combat', unbind: 'combat.stop' },
+    covers: 'an unbound action flagged in words rather than left blank',
   },
 ];
 

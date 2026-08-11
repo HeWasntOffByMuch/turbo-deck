@@ -17,6 +17,12 @@ import type { Widget } from '../core/widget.js';
 import { ScrollView } from '../widgets/scroll-view.js';
 import { buildGallery } from './gallery.js';
 import { buildWindowsScene } from './windows-scene.js';
+import { ContextStack } from '../core/events.js';
+import { LayerStack } from '../core/layers.js';
+import { WindowManager } from '../core/window-manager.js';
+import { InputMap } from '../input/input-map.js';
+import { KeybindingsScreen } from '../screens/keybindings.js';
+import { UiWindow } from '../widgets/window.js';
 
 export interface GalleryFrame {
   readonly surface: RasterSurface;
@@ -144,4 +150,74 @@ export function renderWindows(options: WindowsRenderOptions = {}): WindowsFrame 
   replay(surface, root.paint().finish());
 
   return { surface, root, atlas, scene };
+}
+
+export interface KeybindingsFrame {
+  readonly surface: RasterSurface;
+  readonly root: UiRoot;
+  readonly screen: KeybindingsScreen;
+  readonly map: InputMap;
+}
+
+export interface KeybindingsRenderOptions {
+  readonly viewport?: Size;
+  /** Which category tab to show. */
+  readonly tab?: string;
+  /** Type into the filter field. */
+  readonly filter?: string;
+  /** Show the row waiting for a key. */
+  readonly capture?: { readonly actionId: string; readonly slot: 'primary' | 'secondary' };
+  /** Rebind this action to this chord first, so a conflict notice is in the frame. */
+  readonly rebind?: { readonly actionId: string; readonly code: string };
+  /** Unbind this action, so the flagged state is in the frame. */
+  readonly unbind?: string;
+}
+
+/**
+ * The keybinding window, rasterised (spec 123).
+ *
+ * Its own scene rather than a seventh window in the six-window one, so the frame
+ * budget that scene exists to measure keeps meaning what it says.
+ */
+export function renderKeybindings(options: KeybindingsRenderOptions = {}): KeybindingsFrame {
+  const theme = THEME;
+  const viewport = options.viewport ?? GOLDEN_VIEWPORT;
+  const atlas = bakeAtlas(theme);
+  const map = new InputMap();
+  const contexts = new ContextStack();
+  const screen = new KeybindingsScreen({ theme, map, contexts });
+  screen.buildAllTabs();
+
+  if (options.unbind !== undefined) {
+    map.bind(options.unbind, 'primary', null);
+    map.bind(options.unbind, 'secondary', null);
+  }
+  if (options.rebind !== undefined) {
+    screen.beginCapture(options.rebind.actionId, 'primary');
+    screen.captureKey(options.rebind.code, { shift: false, ctrl: false, alt: false, meta: false });
+  }
+  if (options.tab !== undefined) screen.tabs.select(options.tab);
+  if (options.filter !== undefined) screen.filter.setText(options.filter);
+  if (options.capture !== undefined) screen.beginCapture(options.capture.actionId, options.capture.slot);
+  screen.refresh();
+
+  const window = new UiWindow(screen, {
+    title: 'Keybindings',
+    at: { x: 8, y: 8 },
+    size: { width: viewport.width - 16, height: viewport.height - 16 },
+  });
+  const manager = new WindowManager();
+  const layers = new LayerStack();
+  layers.place('windows', manager);
+  manager.register(window, 'keybindings');
+
+  const root = new UiRoot(layers, { theme, atlas, viewport, windows: manager, layers });
+  manager.setViewport(viewport);
+  root.update(0);
+
+  const surface = new RasterSurface(atlas, viewport.width, viewport.height);
+  surface.clear(theme.color('ink'));
+  replay(surface, root.paint().finish());
+
+  return { surface, root, screen, map };
 }

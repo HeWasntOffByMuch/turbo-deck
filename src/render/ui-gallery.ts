@@ -17,6 +17,12 @@ import { UiRoot } from '../ui/core/root.js';
 import { NO_MODIFIERS, type Modifiers, type UiEvent } from '../ui/core/events.js';
 import { buildGallery } from '../ui/gallery/gallery.js';
 import { buildWindowsScene } from '../ui/gallery/windows-scene.js';
+import { ContextStack } from '../ui/core/events.js';
+import { LayerStack } from '../ui/core/layers.js';
+import { WindowManager } from '../ui/core/window-manager.js';
+import { InputMap } from '../ui/input/input-map.js';
+import { KeybindingsScreen } from '../ui/screens/keybindings.js';
+import { UiWindow } from '../ui/widgets/window.js';
 import { bakeAtlas } from '../ui/render/atlas.js';
 import { Canvas2dSurface } from '../ui/render/canvas2d.js';
 import { RasterSurface } from '../ui/render/raster.js';
@@ -58,17 +64,20 @@ function main(): void {
   // `?scene=windows` draws spec 122's six-window scene instead of the widget
   // gallery, so the cross-backend comparison covers both. Two pages would be two
   // copies of the glue below.
-  const wantsWindows = new URLSearchParams(globalThis.location.search).get('scene') === 'windows';
-  const scene = wantsWindows ? buildWindowsScene(THEME, viewport) : null;
-  const gallery = scene ? null : buildGallery(THEME);
-  const content = scene ? scene.root : gallery?.root;
+  const wanted = new URLSearchParams(globalThis.location.search).get('scene');
+  const scene = wanted === 'windows' ? buildWindowsScene(THEME, viewport) : null;
+  const keys = wanted === 'keys' ? buildKeysScene(viewport) : null;
+  const gallery = scene ?? keys ? null : buildGallery(THEME);
+  const content = scene?.root ?? keys?.root ?? gallery?.root;
   if (!content) throw new Error('no scene');
+  const manager = scene?.manager ?? keys?.manager;
+  const layerStack = scene?.root ?? keys?.root;
 
   const root = new UiRoot(content, {
     theme: THEME,
     atlas,
     viewport,
-    ...(scene ? { windows: scene.manager, layers: scene.root } : {}),
+    ...(manager && layerStack ? { windows: manager, layers: layerStack } : {}),
   });
   const surface = new Canvas2dSurface(canvas, atlas, frame.width, frame.height, { scale: frame.scale });
 
@@ -191,6 +200,32 @@ function main(): void {
       firstMismatch: mismatch,
     };
   }, 1200);
+}
+
+/**
+ * The keybinding window in a window (spec 123).
+ *
+ * A third scene rather than a seventh window in the six-window one, so the frame
+ * budget that scene measures keeps meaning what it says.
+ */
+function buildKeysScene(viewport: { width: number; height: number }): {
+  root: LayerStack;
+  manager: WindowManager;
+} {
+  const map = new InputMap();
+  const screen = new KeybindingsScreen({ theme: THEME, map, contexts: new ContextStack() });
+  screen.buildAllTabs();
+  const window = new UiWindow(screen, {
+    title: 'Keybindings',
+    at: { x: 8, y: 8 },
+    size: { width: viewport.width - 16, height: viewport.height - 16 },
+  });
+  const manager = new WindowManager();
+  const layers = new LayerStack();
+  layers.place('windows', manager);
+  manager.register(window, 'keybindings');
+  manager.setViewport(viewport);
+  return { root: layers, manager };
 }
 
 main();

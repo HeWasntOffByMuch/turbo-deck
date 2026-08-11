@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://turbo-deck/schemas/ui-bindings.schema.json",
+  "title": "UI action bindings",
+  "description": "Every action the game can be asked to do, and the keys it ships bound to (spec 123). Defaults are data rather than code, which is what lets the keybinding window offer reset without a build step. additionalProperties is false throughout.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "actions"],
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "actions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/action" }
+    }
+  },
+  "definitions": {
+    "chord": {
+      "description": "A physical key and its modifiers. `code` is KeyboardEvent.code, so a binding is to a position on the keyboard and survives a layout change.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "shift": { "type": "boolean" },
+        "ctrl": { "type": "boolean" },
+        "alt": { "type": "boolean" },
+        "meta": { "type": "boolean" }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "category", "label", "context", "primary"],
+      "properties": {
+        "id": {
+          "description": "Dotted and stable. Stored profiles reference it, so renaming one loses a player's binding.",
+          "type": "string",
+          "pattern": "^[a-z][a-zA-Z0-9]*\\.[a-zA-Z0-9]+$"
+        },
+        "category": {
+          "type": "string",
+          "enum": ["movement", "combat", "skillbar", "ui", "debug"]
+        },
+        "label": { "type": "string", "minLength": 1 },
+        "context": {
+          "description": "Which context the action resolves in. The same key can mean two things in two contexts, which is what lets a rebind row capture Digit1 without also casting.",
+          "type": "string",
+          "enum": ["gameplay", "ui"]
+        },
+        "primary": { "$ref": "#/definitions/chord" },
+        "secondary": { "$ref": "#/definitions/chord" }
+      }
+    }
+  }
+}

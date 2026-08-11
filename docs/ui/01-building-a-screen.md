@@ -1,12 +1,14 @@
 # 01 — building a screen with what exists now
 
 Phase 1 shipped the framework and nine widgets; phase 2 added windows, tabs,
-layers, tooltips and a saved layout. This is how to use them today, and what is
+layers, tooltips and a saved layout; phase 3 added actions, rebindable keys and
+the window that edits them. This is how to use them today, and what is
 deliberately not here yet.
 
 `docs/ui/00-architecture.md` is the design and the decisions;
 `specs/121-a-gui-the-tests-can-see.md` and
-`specs/122-windows-that-remember-where-they-were.md` are what was built. This file
+`specs/122-windows-that-remember-where-they-were.md` and
+`specs/123-a-key-is-a-binding-not-a-branch.md` are what was built. This file
 is the walkthrough.
 
 ---
@@ -21,7 +23,9 @@ src/ui/
   theme/     theme.json, its schema, the atlas source                       pure
   widgets/   Panel, Label, Button, Icon, Checkbox, Slider, TextField,
              ScrollView, Separator, Window, Tabs, Tooltip                   pure
-  gallery/   the two QA scenes and their goldens                            pure
+  input/     the action registry, the key map and its persistence            pure
+  screens/   the keybinding window                                          pure
+  gallery/   the three QA scenes and their goldens                          pure
   render/    atlas.ts, raster.ts (software), canvas2d.ts (browser)          only canvas2d is impure
 ```
 
@@ -219,11 +223,41 @@ an explicit formula and a browser does it with `drawImage`; the two agree exactl
 at whole-number scales and are free to disagree otherwise. A test asserts it over
 both scenes.
 
+## Actions and keybindings (phase 3)
+
+Nothing in gameplay reads a key. It asks the map what *actions* fired.
+
+```ts
+const map = new InputMap();
+loadBindings(storage, map);                       // player's profile, or defaults
+
+const actions = map.resolve(event.code, mods, 'gameplay');   // ['move.north']
+```
+
+- **Actions live in `src/ui/input/bindings.json`**, validated against
+  `schemas/ui-bindings.schema.json`. Defaults are data, so *reset* needs no build
+  step and the set of actions is a list you can read.
+- **A chord binds to `KeyboardEvent.code`** — a position on the keyboard, so a
+  binding survives a layout change. Modifiers are part of the match.
+- **Contexts separate `gameplay` from `ui`**, which is why `Digit1` can cast *and*
+  be captured by a rebind row without doing both.
+- **Conflicts are reported, never refused.** `bind` always succeeds; the screen
+  says what it clashes with. Refusing would make swapping two keys impossible —
+  every intermediate state is a conflict.
+- **A saved profile stores only what differs** from the defaults, so an action
+  added later still reaches a profile saved earlier.
+- **A release matches on the code alone**, whatever modifiers are down. Matching
+  the exact chord strands keys: press W, press Shift, release W, and the player
+  walks into a wall.
+
+Adding an action: a line in `bindings.json`, and a branch in `key-actions.ts` if
+gameplay has to do something about it. The schema catches a typo'd category and
+the tests catch an action with no default.
+
 ## What is not here yet
 
 | Want | Phase | Note |
 |---|---|---|
-| Rebindable actions, `InputMap` | 3 | widgets take key events directly for now |
 | Drag and drop, item grids, equipment | 4 | also needs a server-side container that does not exist |
 | Skillbar, HUD, character sheet | 5 | replacing the DOM HUD is a redesign, not a port |
 | Shops, trading, dialogs | 6 | also needs currency and trade on the wire |
@@ -268,6 +302,22 @@ Everything after the first `popClip` was quietly cropped. Nothing in `npm test`
 could see it; the cross-backend comparison found it as one pixel of the wrong
 colour in a scrollbar. That is the clearest argument for the two-backend design
 there is going to be.
+
+**ADR-109 — Bindings persist as a diff, not a dump.**
+Storing every binding means a player who saved a profile before an action existed
+never receives its default, and a rebalance of the shipped keys reaches nobody who
+has ever opened the screen. Costs an `isModified` check per action on save; buys
+defaults that keep arriving.
+
+**ADR-110 — A key release matches the code, not the chord.**
+Press W, press Shift, release W: an exact chord match finds nothing, so
+`move.north` stays held and the player walks into a wall. Release is a different
+question from press and needs a different lookup.
+
+**ADR-111 — The Play tab's key decision is a pure function.**
+`key-actions.ts` exists so the one thing phase 3 changed — what a key *means* —
+is assertable. A browser can tell you the page did not throw; it cannot tell you
+that a rebound key reaches the right ability.
 
 **ADR-106 — A layer is never a hit target, only its contents are.**
 Making non-interactive layers pointer-transparent and interactive ones opaque

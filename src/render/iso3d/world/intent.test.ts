@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MOVE_EAST, MOVE_NORTH, MOVE_SOUTH, MOVE_WEST } from '../../../ui/input/actions.js';
 import { ARRIVE_EPS, moveIntent, RoutePlanner, steerTo, type IntentInput } from './intent.js';
 import { createWorldColliders } from '../../../sim/collision.js';
 import { PATH_RETRY_TICKS, WORLD_BOUNDS } from '../../../sim/constants.js';
@@ -25,39 +26,37 @@ describe('moveIntent', () => {
   });
 
   it('walks the cardinals at unit speed', () => {
-    expect(intent({ held: new Set(['KeyW']) }).moveY).toBe(-1);
-    expect(intent({ held: new Set(['KeyS']) }).moveY).toBe(1);
-    expect(intent({ held: new Set(['KeyA']) }).moveX).toBe(-1);
-    expect(intent({ held: new Set(['KeyD']) }).moveX).toBe(1);
+    expect(intent({ held: new Set([MOVE_NORTH]) }).moveY).toBe(-1);
+    expect(intent({ held: new Set([MOVE_SOUTH]) }).moveY).toBe(1);
+    expect(intent({ held: new Set([MOVE_WEST]) }).moveX).toBe(-1);
+    expect(intent({ held: new Set([MOVE_EAST]) }).moveX).toBe(1);
   });
 
   it('normalises the diagonal, so W+D is not a sprint', () => {
-    const result = intent({ held: new Set(['KeyW', 'KeyD']) });
+    const result = intent({ held: new Set([MOVE_NORTH, MOVE_EAST]) });
     expect(Math.hypot(result.moveX, result.moveY)).toBeCloseTo(1, 9);
     expect(result.moveX).toBeCloseTo(Math.SQRT1_2, 9);
     expect(result.moveY).toBeCloseTo(-Math.SQRT1_2, 9);
   });
 
   it('cancels opposed keys', () => {
-    const result = intent({ held: new Set(['KeyW', 'KeyS', 'KeyA', 'KeyD']) });
+    const result = intent({ held: new Set([MOVE_NORTH, MOVE_SOUTH, MOVE_WEST, MOVE_EAST]) });
     expect(result.moveX).toBe(0);
     expect(result.moveY).toBe(0);
   });
 
-  it('treats the arrows as the same keys', () => {
-    expect(intent({ held: new Set(['ArrowUp', 'ArrowRight']) })).toEqual(
-      intent({ held: new Set(['KeyW', 'KeyD']) }),
-    );
-  });
+  // "The arrows walk too" used to be a second set of entries in this module's
+  // table. It is now the secondary binding of these four actions, asserted in
+  // `src/ui/input/input-map.test.ts` where a player can actually change it.
 
-  it('ignores keys that are not movement', () => {
-    const result = intent({ held: new Set(['ShiftLeft', 'Digit1', 'KeyD']) });
+  it('ignores held actions that are not movement', () => {
+    const result = intent({ held: new Set(['skillbar.1', 'ui.character', MOVE_EAST]) });
     expect(result.moveX).toBe(1);
   });
 
   it('faces where it is going', () => {
-    expect(intent({ held: new Set(['KeyA']) }).facing).toBeCloseTo(Math.PI, 9);
-    expect(intent({ held: new Set(['KeyS']) }).facing).toBeCloseTo(Math.PI / 2, 9);
+    expect(intent({ held: new Set([MOVE_WEST]) }).facing).toBeCloseTo(Math.PI, 9);
+    expect(intent({ held: new Set([MOVE_SOUTH]) }).facing).toBeCloseTo(Math.PI / 2, 9);
   });
 
   it('keeps its heading when it is standing still', () => {
@@ -90,14 +89,14 @@ describe('a standing move order', () => {
    * standing order first reads exactly like a stuck key.
    */
   it('lets held keys override the order', () => {
-    const result = intent({ held: new Set(['KeyW']), destination: { x: 0, y: 900 } });
+    const result = intent({ held: new Set([MOVE_NORTH]), destination: { x: 0, y: 900 } });
     expect(result.moveY).toBe(-1);
     expect(result.arrived).toBe(false);
   });
 
   it('does not report arrival while keys are steering', () => {
     const result = intent({
-      held: new Set(['KeyW']),
+      held: new Set([MOVE_NORTH]),
       self: ORIGIN,
       destination: { x: 0, y: 0 },
     });
@@ -123,7 +122,7 @@ describe('while casting', () => {
    * of what the very same input frame is about to cause.
    */
   it('walks anyway when a key is held, because that withdraws from the cast', () => {
-    const result = intent({ held: new Set(['KeyS']), castAim: { x: 100, y: 0 } });
+    const result = intent({ held: new Set([MOVE_SOUTH]), castAim: { x: 100, y: 0 } });
     expect(result.moveY).toBeCloseTo(1, 6);
     expect(result.facing).toBeCloseTo(Math.PI / 2, 6);
   });
@@ -428,7 +427,7 @@ describe('a body faces what it was told to attack (spec 090)', () => {
 
   it('lets a walk outrank the mark, so withdrawing still works', () => {
     const walking = intentWith({
-      held: new Set(['KeyD']),
+      held: new Set([MOVE_EAST]),
       targetAim: behind,
     });
     // Asking to move is how a blow is withdrawn from; a mark cannot veto it.

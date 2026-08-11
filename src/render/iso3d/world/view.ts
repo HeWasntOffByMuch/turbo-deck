@@ -49,7 +49,10 @@ import { facesAim } from '../../../server/sim/abilities.js';
 import { createHud, HOTBAR } from './hud.js';
 import { appearanceOf } from './appearance.js';
 import { effectsForBlow } from './vfx-wire.js';
-import { moveIntent, MOVE_KEYS, RoutePlanner } from './intent.js';
+import { moveIntent, RoutePlanner } from './intent.js';
+import { decideKeyDown, decideKeyUp } from './key-actions.js';
+import { InputMap, type Modifiers } from '../../../ui/input/input-map.js';
+import { loadBindings } from '../../../ui/input/binding-store.js';
 import { autoAttack } from './target.js';
 import { aimShape, castOrder, startAim, type AimGesture, type AimOrder } from './aim.js';
 import { TouchGestures, type TouchSample } from './touch.js';
@@ -296,7 +299,16 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   }
 
   // --- input -------------------------------------------------------------
+  /**
+   * Held *actions*, not key codes (spec 123).
+   *
+   * The map is per-view and loaded from the player's profile at mount; the
+   * storage is reached for here, at the DOM edge, exactly as the editor's
+   * autosave does it -- everything under src/ui/ takes a `StorageLike`.
+   */
   const held = new Set<string>();
+  const inputMap = new InputMap();
+  loadBindings(globalThis.localStorage ?? { getItem: () => null, setItem: () => undefined, removeItem: () => undefined }, inputMap);
   let cursor: { x: number; y: number } | null = null;
   let aim = { x: 0, y: 0 };
   /** The standing move order from the last right-click, in world units. */
@@ -443,40 +455,62 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     return entity.kind === EntityKind.Monster || entity.kind === EntityKind.Player;
   }
 
+  /**
+   * The only place in the game that turns a `KeyboardEvent` into a decision
+   * (spec 123).
+   *
+   * It asks the map what actions the key fires and acts on those; it never
+   * branches on a code or a letter. That is what makes every key here
+   * rebindable, and it is why `held` now holds action ids rather than key codes.
+   */
+  const modifiersOf = (event: KeyboardEvent): Modifiers => ({
+    shift: event.shiftKey,
+    ctrl: event.ctrlKey,
+    alt: event.altKey,
+    meta: event.metaKey,
+  });
+
   const onKeyDown = (event: KeyboardEvent): void => {
-    held.add(event.code);
-    const slot = HOTBAR[Number(event.key) - 1];
-    if (slot) {
-      pressAbility(slot);
+    const decision = decideKeyDown(inputMap, event.code, modifiersOf(event));
+
+    for (const action of decision.move) {
+      held.add(action);
+      // Any manual step also drops a standing order, for the same reason held
+      // keys outrank one in `moveIntent`: taking the keys is taking control.
+      //
+      // A *pending* aim survives it. Walking while you decide where to put a
+      // blast is the point of being allowed to decide; a confirmed order does
+      // not survive, because from then on it is steering and a held key already
+      // outranks a destination in `moveIntent`.
+      destination = null;
+      planner.clear();
+      targetId = null;
+      order = null;
+    }
+
+    for (const slot of decision.skillbar) {
+      const ability = HOTBAR[slot];
+      if (!ability) continue;
+      pressAbility(ability);
       event.preventDefault();
     }
-    // Escape calls off a wind-up. Cancelling refunds the cost and the cooldown,
-    // so what a called-off cast spends is exactly the time it took -- which is
-    // why the key is worth having somewhere that is not also the move button.
-    if (event.code === 'Escape') {
+
+    // Cancelling calls off a wind-up. It refunds the cost and the cooldown, so
+    // what a called-off cast spends is exactly the time it took -- which is why
+    // the action is worth having somewhere that is not also the move button.
+    if (decision.cancel) {
       client.cancelCast();
       // Withdrawing from a blow that the auto-attack would re-commit to on the
       // next tick is not withdrawing from anything.
       targetId = null;
       clearAim();
     }
-    // Any manual step also drops a standing order, for the same reason held
-    // keys outrank one in `moveIntent`: taking the keys is taking control.
-    //
-    // A *pending* aim survives it. Walking while you decide where to put a
-    // blast is the point of being allowed to decide; a confirmed order does not
-    // survive, because from then on it is steering and a held key already
-    // outranks a destination in `moveIntent`.
-    if (MOVE_KEYS[event.code]) {
-      destination = null;
-      planner.clear();
-      targetId = null;
-      order = null;
-    }
   };
+
   const onKeyUp = (event: KeyboardEvent): void => {
-    held.delete(event.code);
+    for (const action of decideKeyUp(inputMap, event.code)) held.delete(action);
   };
+
   const onMove = (event: MouseEvent): void => {
     const rect = canvas.getBoundingClientRect();
     cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };

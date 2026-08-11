@@ -137,6 +137,7 @@ const PURE_RENDER = [
   'src/render/iso3d/world/appearance.ts',
   'src/render/iso3d/world/cast.ts',
   'src/render/iso3d/world/intent.ts',
+  'src/render/iso3d/world/key-actions.ts',
   'src/render/iso3d/world/interpolate.ts',
   'src/render/iso3d/world/pixel-font.ts',
   'src/render/iso3d/world/spawner-overlay.ts',
@@ -391,6 +392,30 @@ export default tseslint.config(
       'no-restricted-properties': ['error', ...NO_AMBIENT_RANDOMNESS],
       'no-restricted-globals': ['error', ...NO_WALL_CLOCK_OR_DOM],
       'no-restricted-imports': ['error', NO_RENDERING_LIBRARIES],
+    },
+  },
+  {
+    // Nothing in the Play tab branches on a raw key (spec 123).
+    //
+    // `world/view.ts` is the one adapter: it asks the InputMap what actions a
+    // KeyboardEvent fires and acts on those, so every key there is rebindable.
+    // Anything else in this directory reading `.key` or comparing a `.code` is
+    // a decision the player cannot reach, which is the thing this phase removed.
+    //
+    // The editor and the sandboxes are deliberately not covered: they are dev
+    // surfaces, not player-facing input (docs/ui/00-architecture.md, decision 6).
+    files: ['src/render/iso3d/world/**/*.ts'],
+    ignores: ['src/render/iso3d/world/view.ts', 'src/render/iso3d/world/**/*.test.ts'],
+    rules: {
+      'no-restricted-properties': [
+        'error',
+        {
+          object: 'event',
+          property: 'key',
+          message:
+            'Gameplay does not read raw keys. Ask the InputMap what actions fired (src/ui/input/), so the binding is one a player can change.',
+        },
+      ],
     },
   },
   {
