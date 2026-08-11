@@ -1,5 +1,13 @@
 # 126 — an item you actually have
 
+> **The number is shared.** `specs/126-a-shockwave-is-a-ring-on-the-floor.md` carries it too: the VFX arc and
+> the GUI arc were written on parallel branches and both had taken it by the time
+> they met. Renumbering either would have rewritten a couple of hundred references
+> in files that are otherwise finished, so the number stays ambiguous and the
+> filename is what identifies this one. `main` already carries duplicate 118s for
+> the same reason.
+
+
 ## Problem
 
 There is no inventory. `PersistedPlayer` has six equipment slots holding item

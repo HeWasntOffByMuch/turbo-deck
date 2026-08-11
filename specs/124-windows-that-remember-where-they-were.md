@@ -1,4 +1,12 @@
-# 122 — windows that remember where they were
+# 124 — windows that remember where they were
+
+> **The number is shared.** `specs/124-an-aura-is-a-sigil.md` carries it too: the VFX arc and
+> the GUI arc were written on parallel branches and both had taken it by the time
+> they met. Renumbering either would have rewritten a couple of hundred references
+> in files that are otherwise finished, so the number stays ambiguous and the
+> filename is what identifies this one. `main` already carries duplicate 118s for
+> the same reason.
+
 
 ## Problem
 
