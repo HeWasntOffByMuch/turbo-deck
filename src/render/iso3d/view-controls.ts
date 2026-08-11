@@ -96,6 +96,15 @@ export interface ViewControls {
   pinchZoom(ratio: number): void;
   /** How long the camera takes to catch up to the unit it follows, ms (spec 039). */
   followLagMs(): number;
+  /**
+   * Swing the follow camera around the unit by this many degrees (spec 129).
+   *
+   * Writes the Orbit slider rather than holding a second angle beside it, the
+   * way `pinchZoom` writes the zoom: the panel stays the one place the camera's
+   * azimuth lives, and a player who turns with the keys then opens the menu
+   * finds the slider where they left the view.
+   */
+  orbitBy(degrees: number): void;
   /** Directional-light position/direction, world units. */
   lightOffset(): Vec3;
   /** Whether the unwalkable-terrain footprint overlay is shown. */
@@ -689,6 +698,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
       );
     },
     pinchZoom: (ratio: number) => zoom.setValue(pinchViewHalfWidth(zoom.value(), ratio)),
+    orbitBy: (degrees: number) => camAz.setValue(wrapDeg(camAz.value() + degrees)),
     cameraOffset: () =>
       orbitToOffset({ azimuth: camAz.value() * DEG, elevation: camEl.value() * DEG, distance: camOrbit.distance }),
     viewHalfWidth: () => zoom.value(),

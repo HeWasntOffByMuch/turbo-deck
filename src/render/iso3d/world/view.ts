@@ -44,6 +44,7 @@ import { StreamedMap } from '../../../server/client/streamed-map.js';
 import type { ViewHandle } from '../view-handle.js';
 import { createWeatherControls } from '../weather-controls.js';
 import { createVfxControls } from '../vfx-controls.js';
+import { orbitStep } from './orbit-keys.js';
 import { turnToward } from '../../../server/sim/movement.js';
 import { facesAim } from '../../../server/sim/abilities.js';
 import { createHud, HOTBAR } from './hud.js';
@@ -894,6 +895,13 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       client.advanceTick();
       sendInput();
     }
+
+    // Turning the view is the player's job now (spec 129), which is why nothing
+    // carves a hole in the rock any more. Driven off the held set rather than
+    // off key events, so holding a bracket is a continuous swing rather than a
+    // stutter at the OS repeat rate.
+    const swing = orbitStep(held, elapsed / 1000);
+    if (swing !== 0) scene.controls.orbitBy(swing);
 
     const view = client.view();
     ingestChunks(view);
