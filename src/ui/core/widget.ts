@@ -29,6 +29,7 @@ import {
   type Size,
 } from './geom.js';
 import type { Theme } from '../theme/theme.js';
+import type { MotionPreference } from './motion.js';
 import type { Atlas } from '../render/atlas.js';
 
 /**
@@ -54,6 +55,15 @@ export interface PaintContext extends LayoutContext {
    * field is reproducible.
    */
   readonly now: number;
+  /**
+   * Whether the player has asked for less motion (spec 133).
+   *
+   * Beside `now` because it is the same kind of thing: an input to what a frame
+   * looks like, handed in rather than sensed. Widgets read it through
+   * `animate()` rather than branching on it, so "reduce-motion is respected" is
+   * a property of `motion.ts` rather than a thing each widget must remember.
+   */
+  readonly motion: MotionPreference;
   /** The widget the pointer is over, if any. */
   readonly hovered: Widget | null;
   /** The widget holding pointer capture, if any. */

@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { DrawList } from '../core/draw-list.js';
 import type { DragPayload } from '../core/drag.js';
 import { bakeAtlas } from '../render/atlas.js';
+import { FULL_MOTION } from '../core/motion.js';
 import { THEME } from '../theme/theme.js';
 import { ItemSlot, isItemDrag, paintItem, type ItemDrag, type ItemView } from './item-slot.js';
 
@@ -19,6 +20,7 @@ const PAINT = {
   theme: THEME,
   atlas: ATLAS,
   now: 0,
+  motion: FULL_MOTION,
   hovered: null,
   pressed: null,
   focused: null,

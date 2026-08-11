@@ -15,6 +15,7 @@
  */
 
 import { ContextStack, type InputContextId, type UiEvent } from './events.js';
+import { FULL_MOTION, type MotionPreference } from './motion.js';
 import type { LayerStack } from './layers.js';
 import type { WindowManager } from './window-manager.js';
 import { DrawList } from './draw-list.js';
@@ -27,6 +28,16 @@ import type { Theme } from '../theme/theme.js';
 
 export interface UiRootOptions {
   readonly theme: Theme;
+  /**
+   * Whether the player has asked for less motion (spec 133).
+   *
+   * An option rather than something sensed, because nothing under `src/ui/` may
+   * touch the platform -- and because a preference no test can set is a
+   * preference nothing checks. `ui-layer.ts` reads the media query once per
+   * re-frame, in the same place and at the same cadence it already reads
+   * `(pointer: coarse)`.
+   */
+  readonly motion?: MotionPreference;
   readonly atlas: Atlas;
   readonly viewport: Size;
   /**
@@ -48,12 +59,14 @@ export class UiRoot {
   private viewportSize: Size;
   private layoutCount = 0;
   private now = 0;
+  private motionPreference: MotionPreference = FULL_MOTION;
 
   constructor(
     readonly content: Widget,
     private readonly options: UiRootOptions,
   ) {
     this.viewportSize = options.viewport;
+    this.motionPreference = options.motion ?? FULL_MOTION;
     this.router = new EventRouter({
       dragThreshold: options.theme.input.dragThreshold,
       doubleClickMs: options.theme.input.doubleClickMs,
@@ -141,6 +154,15 @@ export class UiRoot {
     return this.router.route(this.content, event, this.focus.focused);
   }
 
+  /** Told the preference changed, e.g. because the player changed it. */
+  setMotion(motion: MotionPreference): void {
+    this.motionPreference = motion;
+  }
+
+  get motion(): MotionPreference {
+    return this.motionPreference;
+  }
+
   reachesGameplay(kind: UiEvent['kind']): boolean {
     return this.contexts.reachesGameplay(kind);
   }
@@ -174,6 +196,7 @@ export class UiRoot {
       theme: this.options.theme,
       atlas: this.options.atlas,
       now: this.now,
+      motion: this.motionPreference,
       hovered: this.router.hoveredWidget,
       pressed: this.router.pressedWidget,
       focused: this.focus.focused,
