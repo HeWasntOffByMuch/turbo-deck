@@ -278,3 +278,42 @@ describe('the ghost that shows the wall', () => {
     expect(cutoutDiscards(1, 'ghost', 0, 0, GHOST_BAND_PERIOD * 0.9)).toBe(false);
   });
 });
+
+describe('what the mouse can reach', () => {
+  /**
+   * The pick walks the terrain hits near-to-far and takes the first one the cut
+   * has *not* removed, so these are the two answers that matter: rock the
+   * cutaway took is not clickable, and the floor under the body always is.
+   *
+   * Without the first, the porthole is a lie -- the rock in front of a body is
+   * gone from the picture and still there for the mouse, so a click beside your
+   * own unit lands on a tier top it cannot reach and it walks into a wall that
+   * is not drawn.
+   */
+  const removed = (frag: ViewPoint, fragWorldY: number, footY: number): boolean =>
+    cutoutCoverage(frag, body, P, fragWorldY, footY) < 1;
+
+  it('lets a click pass through the rock the cutaway removed', () => {
+    // A tier top standing a body's height over the floor, right in front.
+    expect(removed(inFront(0), 100, 40)).toBe(true);
+    expect(removed(inFront(P.inner * 0.5), 100, 40)).toBe(true);
+  });
+
+  it('keeps the floor under the body clickable', () => {
+    expect(removed(inFront(0), 40, 40)).toBe(false);
+  });
+
+  it('leaves rock outside the porthole solid to the mouse, as it is to the eye', () => {
+    // What you can see through you can click through, and nothing else --
+    // clicking through rock that is plainly drawn would be its own bug.
+    expect(removed(inFront(P.outer + 1), 100, 40)).toBe(false);
+  });
+
+  it('leaves rock behind the body solid to the mouse', () => {
+    expect(removed({ x: 0, y: 0, z: body.z - 200 }, 100, 40)).toBe(false);
+  });
+
+  it('makes everything clickable again when the cutaway is off', () => {
+    expect(cutoutCoverage(inFront(0), body, { ...P, style: 'off' }, 100, 40)).toBe(1);
+  });
+});

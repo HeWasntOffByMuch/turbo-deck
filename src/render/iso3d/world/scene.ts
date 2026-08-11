@@ -78,7 +78,7 @@ import type { PlayRequest } from './vfx-wire.js';
 import { HikeEdges } from '../hike-edges.js';
 import { advanceWind } from '../wind-uniforms.js';
 import { clearCutout, cutBodyUniform, cutParamsUniform } from '../cutout-uniforms.js';
-import { CUTOUT_DEFAULTS, styleCode, type CutoutStyle } from '../cutout.js';
+import { cutoutCoverage, CUTOUT_DEFAULTS, styleCode, type CutoutStyle } from '../cutout.js';
 import { FIXED_DAYLIGHT } from '../daynight.js';
 import {
   MAGIC_COLOR,
@@ -439,6 +439,11 @@ export class WorldScene {
   private readonly snapBefore = new THREE.Vector3();
 
   private readonly raycaster = new THREE.Raycaster();
+  /** Reused by `cutAway`, so a hover that runs every frame allocates nothing. */
+  private readonly cutProbe = new THREE.Vector3();
+  private readonly cutParams: { inner: number; outer: number; depthBias: number; style: CutoutStyle } = {
+    ...CUTOUT_DEFAULTS,
+  };
   private readonly ndc = new THREE.Vector2();
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private readonly hit = new THREE.Vector3();
@@ -731,9 +736,35 @@ export class WorldScene {
     // falls through to the y=0 plane below -- which is the right answer for a
     // world that has not been drawn yet.
     this.raycaster.intersectObjects(this.terrainMesh?.pickTargets ?? [], false, this.terrainHits);
-    const ground = this.terrainHits[0];
+    // The first hit the cutaway has *not* taken away (spec 126). Hits arrive
+    // sorted near-to-far, so this is still the nearest visible ground.
+    //
+    // Without it the porthole is a lie: the rock in front of a body is gone
+    // from the picture and still there for the mouse, so a click beside your
+    // own unit lands on a tier top it cannot reach and it walks into the wall
+    // you cannot see. What you can see through, you can click through -- one
+    // rule, and the same function decides both.
+    const ground = this.terrainHits.find((h) => !this.cutAway(h.point));
     const hit = ground ? ground.point : this.raycaster.ray.intersectPlane(this.groundPlane, this.hit);
     return hit ? { x: hit.x, y: hit.z } : { x: this.target.x, y: this.target.z };
+  }
+
+  /**
+   * Whether the cutaway has removed the geometry at this world point.
+   *
+   * The same `cutoutCoverage` the shader is transcribed from, handed the same
+   * body and the same numbers -- so the mouse and the picture cannot disagree
+   * about where the rock is. Anything the cut so much as softened counts as
+   * gone: half a wall is not something to aim a move order at.
+   */
+  private cutAway(worldPoint: THREE.Vector3): boolean {
+    const style = this.controls.cutout();
+    if (style === 'off') return false;
+    this.cutProbe.copy(worldPoint).applyMatrix4(this.camera.matrixWorldInverse);
+    this.cutParams.style = style;
+    return (
+      cutoutCoverage(this.cutProbe, cutBodyUniform.value, this.cutParams, worldPoint.y, cutBodyUniform.value.w) < 1
+    );
   }
 
   /**

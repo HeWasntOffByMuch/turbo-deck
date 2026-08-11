@@ -96,6 +96,22 @@ shell, and strata on the far faces of one read as a birdcage. With the porthole
 sized as it is, the wall is legible without any of this — which is why Clean is
 the default.
 
+### What you can see through, you can click through
+
+`screenToWorld` takes the first terrain hit the cut has **not** removed, rather
+than the first hit. Same `cutoutCoverage`, same body, same numbers — so the
+mouse and the picture cannot disagree about where the rock is.
+
+Without it the porthole is a lie. Only the *surfaces* are pick targets, so a
+click beside a body standing behind a tier lands on the tier's top: an order to
+somewhere it cannot reach, and it walks into a wall that is not drawn. That is
+worse than the occlusion was, because at least a visible wall can be walked
+around.
+
+Anything the cut so much as softened counts as gone — half a wall is not
+something to aim a move order at — and rock outside the porthole stays solid to
+the mouse exactly as it is to the eye.
+
 ### One uniform set, written once a frame
 
 `cutout-uniforms.ts` owns the `IUniform` objects, exactly as `wind-uniforms.ts`
@@ -133,6 +149,10 @@ no body in it.
 - The opening is around one body across, not four.
 - Each style's numeric code lands on the right side of every branch the GLSL
   tests, so a renumbering cannot silently draw a different style.
+- A click passes through rock the cutaway removed, and the floor under the body
+  stays clickable.
+- Rock outside the porthole, and rock behind the body, stay solid to the mouse.
+- With the cutaway off, everything is clickable again.
 
 ## Out of scope
 
