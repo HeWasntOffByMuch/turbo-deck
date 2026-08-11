@@ -1276,6 +1276,23 @@ export interface LoadedMap {
 }
 
 /**
+ * A `TerrainWorld` over the layers the store holds *right now*.
+ *
+ * A snapshot, deliberately, and not a live view (spec 121). `heightAt` runs for
+ * every entity on every tick on the server, so it is the last place to put an
+ * allocation or a set of cache lookups; the layer array it closes over is built
+ * once and iterated flat.
+ *
+ * The cost of that is a caller who adds a layer has to ask for a new world --
+ * which is the editor, once per tier drawn, and nothing else. `loadMap` builds
+ * the first one.
+ */
+export function worldFor(store: MapChunkStore): TerrainWorld {
+  const layers = store.layerIds.map((id) => bakedLayer(store, id)).filter((l): l is TerrainLayer => l !== null);
+  return createWorld(layers);
+}
+
+/**
  * What the mesher needs to know about one layer, read live off the store.
  *
  * Split out of `loadMap` (spec 121) because a store can gain a layer after it
@@ -1333,11 +1350,10 @@ export function meshLayerFor(store: MapChunkStore, layerId: string): MeshLayer |
  */
 export function loadMap(doc: MapDocument): LoadedMap {
   const store = new MapChunkStore(doc);
-  const layers = doc.layers.map((l) => bakedLayer(store, l.id)).filter((l): l is TerrainLayer => l !== null);
   return {
     doc,
     store,
-    world: createWorld(layers),
+    world: worldFor(store),
     chunks: store.buildChunks(),
     meshLayers: doc.layers.map((l) => meshLayerFor(store, l.id)).filter((l): l is MeshLayer => l !== null),
     props: doc.layers.flatMap((l) => store.props(l.id)),

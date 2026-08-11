@@ -7,6 +7,8 @@ import {
   type ChunkRect,
   type LoadedMap,
   type MapDocument,
+  meshLayerFor,
+  worldFor,
   type PartRecipe,
 } from '../../../terrain/index.js';
 import { PLAY_HEIGHT, PLAY_WIDTH } from '../../../shared/world.js';
@@ -46,7 +48,7 @@ import {
 } from './persistence.js';
 import { bakeEditorMap } from './map-source.js';
 import { buildEditorPanel, type EditorPanel } from './panel.js';
-import { createEditorSettings, cursorColor, cursorRadius } from './tools.js';
+import { createEditorSettings, cursorColor, cursorRadius, NEW_ROCK_TIER } from './tools.js';
 import {
   addPart,
   chunkRectArea,
@@ -56,6 +58,7 @@ import {
   removePart,
   uniquePartId,
 } from './parts.js';
+import { addRock, nextRockLayerId, removeRock, rockLayerAt, rockLayerIds, worldRectFrom } from './rock.js';
 import { fenceStroke, NO_FENCE_PATH, type FencePath } from './fence.js';
 import { eraseStroke, scatterStroke, terrainNormalAt } from './scatter.js';
 
@@ -83,6 +86,16 @@ import { eraseStroke, scatterStroke, terrainNormalAt } from './scatter.js';
  * - **A camera that follows nothing**, unlocked from the isometric constraint.
  *   See `camera.ts`, which owns every rule about where it may go.
  */
+
+/**
+ * How far a tier's underside is sunk below the lowest ground it covers.
+ *
+ * The skirt is drawn from the tier's rim straight down to this, so anything
+ * short of the ground leaves the slab hovering with daylight under it. A little
+ * past the lowest corner buries the base in the hillside, which is what makes a
+ * formation look like it grew out of the ground rather than being set on it.
+ */
+const BURY_DEPTH = 40;
 
 /** Sun and fill, matching the movement sandbox's unshadowed lighting. */
 const SUN_COLOR = 0xfff4e0;
@@ -297,6 +310,33 @@ class EditorScene {
   }
 
   /**
+   * Bring the mesh's layer set in line with the store's (spec 121).
+   *
+   * Drawing a tier adds a layer, carving the last of one away removes it, and
+   * undo does either -- so rather than have four call sites each remember which
+   * direction they moved, this reconciles both. Cheap: a map has a handful of
+   * layers, and it is only called when one has actually changed.
+   */
+  syncLayers(): void {
+    const held = new Set(this.map.store.layerIds);
+    const drawn = new Set(this.terrainMesh.layerIds());
+    for (const id of held) {
+      if (drawn.has(id)) continue;
+      const layer = meshLayerFor(this.map.store, id);
+      if (layer) this.terrainMesh.addLayer(layer);
+    }
+    for (const id of drawn) {
+      if (!held.has(id)) this.terrainMesh.removeLayer(id);
+    }
+    // `heightAt` closes over a fixed layer array so the server's per-tick path
+    // allocates nothing, which means a tier just drawn is invisible to it until
+    // the world is rebuilt. Doing it here rather than at each call site is what
+    // makes a stack stack: the next drag's height is taken from ground that now
+    // includes the tier under it.
+    this.map = { ...this.map, world: worldFor(this.map.store) };
+  }
+
+  /**
    * Where the cursor ray meets a horizontal plane, for aiming at ground that
    * does not exist yet (spec 084).
    *
@@ -447,6 +487,10 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   const partOutline = createArenaOutline(0x9fb8e8);
   partOutline.object.visible = false;
   scene.addOverlay(partOutline.object);
+  // A tier's drag draws its own rectangle too, in the rock tool's grey.
+  const rockOutline = createArenaOutline(0x9aa4b0);
+  rockOutline.object.visible = false;
+  scene.addOverlay(rockOutline.object);
   const navView = createNavView();
   scene.addOverlay(navView.object);
 
@@ -461,6 +505,8 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   let fencePath: FencePath = NO_FENCE_PATH;
   /** Where a part drag started, in world space. Null when none is in progress. */
   let partAnchor: { x: number; z: number } | null = null;
+  /** Where a tier drag started (spec 121). Null when none is in progress. */
+  let rockAnchor: { x: number; z: number } | null = null;
 
   /** Re-mesh a set of chunks, skipping the duplicates a drag produces. */
   const remesh = (dirty: readonly { cx: number; cz: number }[]): void => {
@@ -590,6 +636,102 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     return Math.max(0, declared - info.grid.totalCols * info.grid.totalRows);
   };
 
+  /**
+   * Everything a tier changes, and nothing it does not (spec 121).
+   *
+   * The same shape as `rebuiltAfterParts`, and deliberately smaller. A tier
+   * stands *on* the world rather than extending it, so none of the things that
+   * follow ground moving follow this: nav describes where a body may walk on
+   * the ground layer, the prop field is planted on the ground layer, and the
+   * camera fence comes from the ground layer's bounds. All three are untouched
+   * by a slab appearing above them.
+   */
+  const rebuiltAfterRock = (
+    rockLayer: string,
+    touched: readonly ChunkCoord[],
+    gone: readonly ChunkCoord[] = [],
+  ): void => {
+    for (const c of gone) scene.dropChunk(rockLayer, c.cx, c.cz);
+    // The ring too: a tier's neighbours decide where its skirt goes, so a chunk
+    // beside one that just changed has a wall to grow or drop.
+    for (const c of withNeighbours([...touched, ...gone])) scene.rebuildChunk(rockLayer, c.cx, c.cz);
+    revision.touch();
+    onPartsChanged();
+  };
+
+  /** Drag out a tier, or take a bite out of one. */
+  const commitRock = (a: { x: number; z: number }, b: { x: number; z: number }): void => {
+    const footprint = worldRectFrom(a, b);
+    const store = scene.map.store;
+
+    if (settings.rockTool === 'remove') {
+      // Named by pointing at it rather than chosen from a list first, the way
+      // removing a part is: the tier you can see is the one you mean.
+      const target = settings.rockLayer || rockLayerAt(store, a.x, a.z) || rockLayerAt(store, b.x, b.z);
+      if (!target) {
+        status = 'no tier under the cursor';
+        return;
+      }
+      const removed = removeRock(store, history, { layerId: target, footprint });
+      if (!removed.ok) {
+        status = `tier refused: ${removed.reason}`;
+        return;
+      }
+      if (removed.removedLayer) {
+        scene.syncLayers();
+        if (settings.rockLayer === target) settings.rockLayer = NEW_ROCK_TIER;
+      }
+      rebuiltAfterRock(target, removed.touched, removed.removed);
+      status =
+        `carved ${removed.cells} cells from "${target}"` + (removed.removedLayer ? ' (tier gone)' : '');
+      return;
+    }
+
+    // The tier's top is measured from the *highest* ground its footprint covers,
+    // so a rectangle dropped on a tier already standing rises above that one
+    // rather than being swallowed by it. The base is taken from the lowest, so
+    // the skirt buries itself in the hillside instead of floating over it.
+    const step = store.cellSize;
+    let hi = -Infinity;
+    let lo = Infinity;
+    for (let x = footprint.minX; x <= footprint.maxX + step; x += step) {
+      for (let z = footprint.minZ; z <= footprint.maxZ + step; z += step) {
+        const h = scene.map.world.heightAt(Math.min(x, footprint.maxX), Math.min(z, footprint.maxZ));
+        hi = Math.max(hi, h);
+        lo = Math.min(lo, h);
+      }
+    }
+    if (!Number.isFinite(hi)) {
+      status = 'that rectangle covers no ground';
+      return;
+    }
+
+    const isNew = settings.rockLayer === NEW_ROCK_TIER;
+    const layerIdForTier = isNew ? nextRockLayerId(store) : settings.rockLayer;
+    const ground = scene.map.store.layerInfo(layerId);
+    const added = addRock(store, history, {
+      layerId: layerIdForTier,
+      footprint,
+      top: hi + settings.rockHeight,
+      baseY: lo - BURY_DEPTH,
+      seed: (scene.document.seed ^ 0x0c1177) + store.layerIds.length,
+      origin: ground?.origin ?? { x: 0, z: 0 },
+    });
+    if (!added.ok) {
+      status = `tier refused: ${added.reason}`;
+      return;
+    }
+    if (added.createdLayer) {
+      scene.syncLayers();
+      // Armed on the tier just made, so the next drag extends it rather than
+      // silently starting another layer at the same height.
+      settings.rockLayer = added.layerId;
+      panel.refreshParts();
+    }
+    rebuiltAfterRock(added.layerId, [...added.created, ...added.touched]);
+    status = `tier "${added.layerId}": ${added.cells} cells at ${Math.round(hi + settings.rockHeight)}`;
+  };
+
   /** Bake the armed recipe into a chunk rectangle. */
   const commitPart = (rect: { minCx: number; minCz: number; maxCx: number; maxCz: number }): void => {
     const recipe = RECIPES.get(settings.recipe);
@@ -635,16 +777,40 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   const undo = (): void => {
     const { remeshed, removed, structural } = history.undo(scene.map.store);
     if (remeshed.length === 0 && removed.length === 0) return;
+    // The stroke may have been the one that created a tier's layer, or the one
+    // that carved the last of it away -- either way the mesh's layer set and the
+    // world's have just moved, and both directions are reconciled in one place.
+    if (structural) scene.syncLayers();
+    if (settings.rockLayer && !scene.map.store.layerInfo(settings.rockLayer)) {
+      settings.rockLayer = NEW_ROCK_TIER;
+    }
+
+    // Tiers rebuild on their own terms. Nav, the prop field and the camera fence
+    // all describe the ground layer, and none of them is changed by a slab
+    // above it appearing or going away.
+    for (const id of new Set([...remeshed, ...removed].map((r) => r.layerId))) {
+      if (id === layerId) continue;
+      rebuiltAfterRock(
+        id,
+        remeshed.filter((r) => r.layerId === id),
+        removed.filter((r) => r.layerId === id),
+      );
+    }
+
+    const groundRemeshed = remeshed.filter((r) => r.layerId === layerId);
+    const groundRemoved = removed.filter((r) => r.layerId === layerId);
+    if (groundRemeshed.length === 0 && groundRemoved.length === 0) return;
+
     // Undoing a part is the same shape of work as making one, so it goes
     // through the same targeted path rather than rebuilding the world (spec 085).
     if (structural) {
-      rebuiltAfterParts(remeshed, removed);
+      rebuiltAfterParts(groundRemeshed, groundRemoved);
       return;
     }
     revision.touch();
-    for (const c of remeshed) scene.rebuildChunk(c.layerId, c.cx, c.cz);
+    for (const c of groundRemeshed) scene.rebuildChunk(c.layerId, c.cx, c.cz);
     // Nav describes the ground, so undoing the ground has to undo nav with it.
-    rebakeNav(scene.map.store, layerId, remeshed, settings.walkSlope);
+    rebakeNav(scene.map.store, layerId, groundRemeshed, settings.walkSlope);
     scene.refreshProps();
     refreshMarkers();
     refreshNav();
@@ -735,6 +901,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     settings,
     recipeNames: [...RECIPES.keys()],
     partIds: () => scene.map.store.parts.map((p) => p.id),
+    rockLayerIds: () => rockLayerIds(scene.map.store),
     onRemoveNamedPart: () => {
       if (settings.removePartId) commitRemove(settings.removePartId);
       else status = 'no part selected to remove';
@@ -874,6 +1041,10 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       // A marker is placed on the press, not the drag: a spawn point is not a
       // bulk thing, and dragging would leave a trail of forty of them.
       partAnchor = settings.mode === 'part' && settings.partTool === 'add' && at ? { x: at.x, z: at.z } : null;
+      // Both tier tools drag out a rectangle, unlike a part's remove which
+      // names one thing under the cursor: carving a bite out of a tier is a
+      // region, so it is a drag in both directions.
+      rockAnchor = settings.mode === 'rock' && at ? { x: at.x, z: at.z } : null;
       // Remove happens on the press, like a marker: it names a thing already on
       // the ground rather than describing a region to fill.
       if (at && settings.mode === 'part' && settings.partTool === 'remove') {
@@ -940,6 +1111,14 @@ export function mountEditor(container: HTMLElement): ViewHandle {
           partOutline.object.visible = true;
           status = `${chunkRectArea(rect)} chunks: ${rect.minCx},${rect.minCz}..${rect.maxCx},${rect.maxCz}`;
         }
+      } else if (settings.mode === 'rock' && rockAnchor) {
+        // Exactly the rectangle that will be baked -- unsnapped, because
+        // `bakeRock` decides which cells are in by testing their centres and
+        // the quantisation belongs in that one place.
+        const rect = worldRectFrom(rockAnchor, at);
+        rockOutline.refresh(rect, groundAt);
+        rockOutline.object.visible = true;
+        status = `${Math.round(rect.maxX - rect.minX)} x ${Math.round(rect.maxZ - rect.minZ)}`;
       } else if (settings.mode === 'erase') {
         const circle = { x: at.x, z: at.z, radius: settings.radius };
         const props = eraseStroke(scene.map.store, layerId, circle, capture);
@@ -970,6 +1149,12 @@ export function mountEditor(container: HTMLElement): ViewHandle {
         const rect = at && partAnchor ? chunkRectFrom(scene.map.store, layerId, partAnchor, at) : null;
         if (rect) commitPart(rect);
         partAnchor = null;
+      } else if (settings.mode === 'rock') {
+        rockOutline.object.visible = false;
+        // `addRock`/`removeRock` open and close their own entry, so this must
+        // not be wrapped in one: a tier lands in one commit or not at all.
+        if (at && rockAnchor) commitRock(rockAnchor, at);
+        rockAnchor = null;
       } else history.endStroke();
       // Trees stand on the ground, and either the ground or the trees just
       // moved -- but only over the chunks the stroke actually touched, which is

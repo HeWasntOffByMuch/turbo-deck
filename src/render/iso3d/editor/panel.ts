@@ -5,8 +5,11 @@ import {
   MARKER_CHOICES,
   MODE_CHOICES,
   MODE_COLORS,
+  NEW_ROCK_TIER,
   PART_TOOL_CHOICES,
   PART_TOOL_COLORS,
+  ROCK_TOOL_CHOICES,
+  ROCK_TOOL_COLORS,
   SPAWNER_MONSTER_CHOICES,
   SPECIES_CHOICES,
   TERRAIN_TOOL_CHOICES,
@@ -135,6 +138,8 @@ export interface EditorPanelOptions {
   readonly onRemoveNamedPart: () => void;
   /** The parts currently in the map, re-read whenever the panel refreshes. */
   readonly partIds: () => readonly string[];
+  /** The tier layers currently in the map, newest last (spec 121). */
+  readonly rockLayerIds: () => readonly string[];
 }
 
 export interface EditorPanel {
@@ -328,6 +333,40 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   file.add({ load: opts.onLoad }, 'load').name('Load file (or drop one)');
   file.add({ discard: opts.onDiscardAutosave }, 'discard').name('Discard autosave');
 
+  const rock = gui.addFolder('Rock');
+  strip(
+    rock,
+    ROCK_TOOL_CHOICES,
+    2,
+    () => s.rockTool,
+    (tool) => {
+      s.rockTool = tool;
+    },
+    (tool) => ROCK_TOOL_COLORS[tool],
+  );
+  // Relative, and labelled as such: the number is how far this tier stands over
+  // whatever the drag lands on, so the same value builds the second storey of a
+  // stack as built the first.
+  rock.add(s, 'rockHeight', 30, 260, 5).name('Height above');
+
+  // The tier a drag extends, or a new one. Rebuilt rather than updated for the
+  // same reason the parts dropdown is: `options()` destroys the controller and
+  // appends a replacement, so the handle goes stale after one call. This is the
+  // last control in its folder, so re-appending leaves the layout put.
+  let tierName = rock.add(s, 'rockLayer', [NEW_ROCK_TIER]).name('Tier');
+  let shownTiers = '';
+  const refreshRockLayers = (): void => {
+    const ids = opts.rockLayerIds();
+    const joined = ids.join('\u0000');
+    if (joined === shownTiers) return;
+    shownTiers = joined;
+    const options = [NEW_ROCK_TIER, ...ids];
+    if (!options.includes(s.rockLayer)) s.rockLayer = NEW_ROCK_TIER;
+    tierName.destroy();
+    tierName = rock.add(s, 'rockLayer', options).name('Tier');
+  };
+  refreshRockLayers();
+
   /** Show only what the armed mode uses. */
   function applyVisibility(mode: EditorMode): void {
     const show = visibleGroups(mode);
@@ -337,6 +376,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
     fence.show(show.fence);
     markers.show(show.marker);
     parts.show(show.part);
+    rock.show(show.rock);
     // A folder that is hidden and closed comes back closed, which reads as an
     // empty panel the first time a tool is armed.
     for (const [folder, on] of [
@@ -345,6 +385,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
       [fence, show.fence],
       [markers, show.marker],
       [parts, show.part],
+      [rock, show.rock],
     ] as const) {
       if (on) folder.open();
     }
@@ -353,12 +394,16 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
 
   return {
     element: gui.domElement,
-    refreshParts: refreshPartIds,
+    refreshParts: (): void => {
+      refreshPartIds();
+      refreshRockLayers();
+    },
     refresh(): void {
       gui.controllersRecursive().forEach((c) => c.updateDisplay());
       for (const each of strips) each.refresh();
       showTileLength();
       refreshPartIds();
+      refreshRockLayers();
       applyVisibility(s.mode);
     },
     destroy(): void {
