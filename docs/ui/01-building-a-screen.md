@@ -22,9 +22,10 @@ src/ui/
   text/      the two glyph tables, measurement and wrapping                 pure
   theme/     theme.json, its schema, the atlas source                       pure
   widgets/   Panel, Label, Button, Icon, Checkbox, Slider, TextField,
-             ScrollView, Separator, Window, Tabs, Tooltip                   pure
+             ScrollView, Separator, Window, Tabs, Tooltip, ItemSlot,
+             DragGhost                                                      pure
   input/     the action registry, the key map and its persistence            pure
-  screens/   the keybinding window                                          pure
+  screens/   the keybinding window, the inventory                           pure
   gallery/   the three QA scenes and their goldens                          pure
   render/    atlas.ts, raster.ts (software), canvas2d.ts (browser)          only canvas2d is impure
 ```
@@ -254,14 +255,55 @@ Adding an action: a line in `bindings.json`, and a branch in `key-actions.ts` if
 gameplay has to do something about it. The schema catches a typo'd category and
 the tests catch an action with no default.
 
+## Dragging things about (phase 4)
+
+The inventory is the first screen with a *payload*: something is picked up in one
+widget and let go in another. Three pieces, and the split is the design.
+
+```ts
+const screen = new InventoryScreen({ theme: THEME, hitTest: (at) => layers.hitTest(at) });
+screen.focusManager = root.focus;              // so the arrows can move between cells
+layers.place('dragGhost', screen.ghost);       // the layer spec 124 declared and never used
+
+screen.setContainers(containerViewOf(client.view()));   // the adapter, outside src/ui/
+screen.onMove = (intent) => client.moveItem(intent.from, intent.to, intent.count);
+```
+
+- **The screen renders what it is handed and never edits itself.** A drag that
+  lands emits a `MoveIntent`; nothing on screen moves until the next
+  `setContainers`. `GameClient` already predicts and already replays what is in
+  flight (spec 126), so the view handed in is *already* optimistic — guessing
+  again in the widget would be a second copy of the truth, and a refused move
+  would need undo code instead of being the next call.
+- **`DragController` finds the target, the router does not.** The router derives
+  `dragStart`/`drag`/`dragEnd` and sends all three to the widget that took the
+  press; the controller hit-tests the release point and walks *up* to the nearest
+  `DropTarget` that accepts. Walking up matters: the cursor is over the label
+  inside a cell far more often than over the cell.
+- **A release over nothing is a cancel.** There is no ground to drop onto, so
+  losing an item by letting go in the wrong place is not a behaviour worth having.
+- **The ghost lives in a non-interactive layer.** It is *on* the cursor, so if it
+  could be hit-tested every drop would land on the thing being dragged.
+- **The keyboard is the same controller.** Enter picks up, Enter puts down,
+  Escape cancels — through `dropOnTarget`, so a pointer drag and a keyboard move
+  cannot mean different things.
+- **What a widget may know about an item is a view-model.** `src/ui/` may not
+  import `server/state`, so there is no `ItemStack` here — `ItemView` is a name,
+  a count, a sprite name and the slot it goes in, assembled by
+  `src/render/iso3d/world/inventory-model.ts`.
+
+Item art is `ITEM_ICONS` in `theme/atlas-source.ts`, 12x12 rather than the 7x7
+the signs use, and baked under `item:<name>`. An id with no art draws
+`item:unknown`, because a content edit must not be able to crash the interface.
+
 ## What is not here yet
 
 | Want | Phase | Note |
 |---|---|---|
-| Drag and drop, item grids, equipment | 4 | also needs a server-side container that does not exist |
 | Skillbar, HUD, character sheet | 5 | replacing the DOM HUD is a redesign, not a port |
 | Shops, trading, dialogs | 6 | also needs currency and trade on the wire |
 | Tweening, sound hooks, reduce-motion | 7 | |
+| The framework mounted in the Play tab | — | nothing mounts a `UiRoot` over the world yet; the gallery is still the only surface, and that seam wants a spec of its own |
 
 Two things are deliberately staying as they are: the Play tab's settings cog and
 the map editor's `lil-gui` panels. They want native range inputs and keyboard
@@ -345,3 +387,40 @@ Flat config merges last-wins *per rule name*, so a later block setting
 it. That is how `Math.random` and a three.js import went unchecked here for an
 afternoon. The blocks now repeat themselves on purpose, and a probe file that
 violates all seven boundaries is the check that they fire.
+
+---
+
+## ADR notes for phase 4
+
+**ADR-112 — The drop target is found by walking up from the hit, not by asking
+the source.**
+A cell that has anything drawn in it is not what the cursor is over; its label
+is. Consulting only the hit widget makes every drop onto an occupied cell land
+nowhere, which is the case that matters most. The walk stops at the first target
+that *accepts*, so a refusing cell is passed through rather than blocking the
+container behind it.
+
+**ADR-113 — The screen never applies its own drag.**
+It reads as a missing optimism and is the opposite: the client predicts the move
+and replays what is in flight, so the view the screen is handed already shows the
+result on the frame the drag was released. A widget that also moved its item
+would be a second copy of the same guess, and rolling back a refusal would need
+code — code that only ever runs on failure, which is where dead code hides.
+
+**ADR-114 — Half a stack is decided when the drag begins.**
+Shift at drop time is the more obvious design and it means the ghost cannot show
+what it is carrying, since it does not know yet. Deciding at pick-up lets the
+ghost draw the count for the whole drag, so what will move is visible the whole
+time rather than at the last moment.
+
+**ADR-115 — A refusal is nothing lighting up.**
+The alternative is a red highlight on every cell the cursor crosses, which is
+noise: a drag passes over a dozen cells that cannot take it on the way to the one
+that can. `canAcceptDrop` being false means the walk continues past, so a
+refusing cell never learns the cursor was there — and that absence *is* the
+answer.
+
+**ADR-116 — Item art is 12x12 and the signs stay 7x7.**
+A tick and a close cross are perfectly clear at seven pixels; a sword and a staff
+are not distinguishable at all. Scaling the 7x7 grid would give blocky signs and
+still-illegible objects, so the atlas bakes two sizes under two namespaces.

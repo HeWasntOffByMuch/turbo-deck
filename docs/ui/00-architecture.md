@@ -360,6 +360,22 @@ or a `SlotAddress` directly. The view-model the screen is handed has to carry
 plain rows -- id, count, name, slot -- assembled outside `src/ui/`. That is the
 rule working as intended, and spec 127 should say so rather than discovering it.
 
+**Done for phase 4's other half.** `specs/127-a-bag-you-can-drag-things-around.md`
+landed the screen: a `DragController` and a `DropTarget` interface in `ui/core/`,
+an `ItemSlot` and a `DragGhost` in `ui/widgets/`, `InventoryScreen` in
+`ui/screens/`, item art at 12x12 in the atlas, and
+`src/render/iso3d/world/inventory-model.ts` as the adapter that pays for the
+boundary above -- one pure function, tested in Node. The predicted cost was
+right: the screen holds `ItemView` rows and has never heard of an `ItemStack`.
+
+What is still not done, and is deliberately nobody's phase yet: **nothing mounts
+a `UiRoot` over the Play tab.** Phases 1-4 all deliver to the gallery, which is
+where the goldens and the cross-backend comparison live. Putting the framework on
+screen in the game means deciding what happens to the DOM HUD, which of the two
+owns the pointer, and how a UI scale interacts with the world's own buffer --
+`docs/ui/00-architecture.md` §12.15 left the last of those open on purpose. That
+is a spec, not a loose end to tack onto phase 5.
+
 ### 2.8 Phase 3 has to unify three input systems, not one
 
 Phase 3's done-condition is "nothing reads a raw key outside `ui/input`". Today there
