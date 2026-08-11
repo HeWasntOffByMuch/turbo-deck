@@ -149,6 +149,84 @@ export function styleCode(style: CutoutStyle): number {
   return style === 'stipple' ? 2 : style === 'hard' ? 1 : style === 'ghost' ? 0 : -1;
 }
 
+/**
+ * How far up the line toward the camera is worth looking, in world units, and
+ * how coarsely.
+ *
+ * `MARCH_RISE` is the tallest thing that could plausibly be standing between a
+ * body and this camera -- a couple of tiers plus the hill they sit on. Past that
+ * the ray is above the world and nothing further can hide anything. The step is
+ * a cell and a half, which is finer than any wall this world can build: a tier
+ * is dozens of cells across, so a step cannot pass through one unnoticed.
+ */
+export const MARCH_RISE = 420;
+export const MARCH_STEP = 33;
+/**
+ * How far above the terrain the line has to clear before it counts as open.
+ *
+ * The body stands *on* ground, so the first samples up the line are close to
+ * the surface it is standing on -- and on a slope facing the camera they can
+ * graze it. Without the clearance a unit walking up any hillside toward the
+ * camera declares itself hidden by the hill it is climbing.
+ */
+export const MARCH_CLEARANCE = 8;
+
+export interface WorldPoint {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
+/**
+ * Is anything actually standing between this body and the camera? (spec 128)
+ *
+ * The cut used to fire whenever there was rock *in front of* the body, which is
+ * not the same question and is wrong most of the time: stand on an open ledge
+ * with a wall a little nearer the camera but off to one side, and a bite is
+ * taken out of that wall for no reason at all.
+ *
+ * Answered off the heightfield rather than off the geometry. A raycast into the
+ * terrain mesh would work and costs thousands of triangle tests a frame; this
+ * walks the line from the body toward the camera and asks the same `heightAt`
+ * the sim uses whether the ground has risen above it. Two dozen samples, no
+ * meshes, no GL, and pure -- so it is tested in Node rather than in a
+ * screenshot.
+ */
+export function bodyIsHidden(
+  body: WorldPoint,
+  toCamera: WorldPoint,
+  heightAt: (x: number, z: number) => number,
+): boolean {
+  // Straight down the barrel of an orthographic camera that never tilts: if it
+  // is not rising, no amount of marching finds anything above the ray.
+  if (toCamera.y <= 1e-4) return false;
+  const maxT = MARCH_RISE / toCamera.y;
+  for (let t = MARCH_STEP; t <= maxT; t += MARCH_STEP) {
+    const y = body.y + toCamera.y * t;
+    const ground = heightAt(body.x + toCamera.x * t, body.z + toCamera.z * t);
+    if (ground > y + MARCH_CLEARANCE) return true;
+  }
+  return false;
+}
+
+/**
+ * Ease the opening toward where it should be, per second.
+ *
+ * The answer above is a yes or a no, and a hole that snaps into existence the
+ * instant a body steps behind a corner reads as a glitch rather than as the
+ * view getting out of the way. Scaling the radii by this makes it an iris.
+ */
+export const CUTOUT_EASE_PER_SECOND = 7;
+
+export function easeCutout(current: number, hidden: boolean, dt: number): number {
+  const target = hidden ? 1 : 0;
+  const k = Math.min(1, Math.max(0, dt) * CUTOUT_EASE_PER_SECOND);
+  const next = current + (target - current) * k;
+  // Snap the last sliver, so an opening that is meant to be shut is shut and
+  // the pick is not left able to click through a hole nobody can see.
+  return Math.abs(next - target) < 0.01 ? target : next;
+}
+
 export interface ViewPoint {
   readonly x: number;
   readonly y: number;

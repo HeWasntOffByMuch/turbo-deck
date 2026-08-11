@@ -78,7 +78,14 @@ import type { PlayRequest } from './vfx-wire.js';
 import { HikeEdges } from '../hike-edges.js';
 import { advanceWind } from '../wind-uniforms.js';
 import { clearCutout, cutBodyUniform, cutParamsUniform } from '../cutout-uniforms.js';
-import { cutoutCoverage, CUTOUT_DEFAULTS, styleCode, type CutoutStyle } from '../cutout.js';
+import {
+  bodyIsHidden,
+  cutoutCoverage,
+  CUTOUT_DEFAULTS,
+  easeCutout,
+  styleCode,
+  type CutoutStyle,
+} from '../cutout.js';
 import { FIXED_DAYLIGHT } from '../daynight.js';
 import {
   MAGIC_COLOR,
@@ -441,9 +448,17 @@ export class WorldScene {
   private readonly raycaster = new THREE.Raycaster();
   /** Reused by `cutAway`, so a hover that runs every frame allocates nothing. */
   private readonly cutProbe = new THREE.Vector3();
+  /**
+   * The radii *currently* in force, faded, and shared by the shader and the
+   * pick. One object, so the mouse cannot be clicking through an opening that
+   * has closed on screen.
+   */
   private readonly cutParams: { inner: number; outer: number; depthBias: number; style: CutoutStyle } = {
     ...CUTOUT_DEFAULTS,
   };
+  /** How far open the iris is, 0..1. Eased toward whether the body is hidden. */
+  private cutOpen = 0;
+  private readonly cutToCamera = new THREE.Vector3();
   private readonly ndc = new THREE.Vector2();
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private readonly hit = new THREE.Vector3();
@@ -761,7 +776,9 @@ export class WorldScene {
     const style = this.controls.cutout();
     if (style === 'off') return false;
     this.cutProbe.copy(worldPoint).applyMatrix4(this.camera.matrixWorldInverse);
-    this.cutParams.style = style;
+    // `cutParams` is whatever the last frame put in force, radii and all -- so a
+    // closing iris takes its clickable hole with it rather than leaving one
+    // behind for the mouse.
     return (
       cutoutCoverage(this.cutProbe, cutBodyUniform.value, this.cutParams, worldPoint.y, cutBodyUniform.value.w) < 1
     );
@@ -910,7 +927,22 @@ export class WorldScene {
    * own footing from flickering, and measuring from the ground would spend that
    * bias on the slope underneath instead of on the rock in front.
    */
-  private updateCutout(me: { x: number; y: number }, groundY: number, style: CutoutStyle): void {
+  private updateCutout(me: { x: number; y: number }, groundY: number, style: CutoutStyle, dt: number): void {
+    // Only cut when something is actually in the way (spec 128). The rule used
+    // to be "there is rock in front of the body", which is a different question
+    // and wrong most of the time -- stand on an open ledge with a wall a little
+    // nearer the camera and off to one side, and a bite came out of that wall
+    // for no reason.
+    //
+    // Answered off the heightfield, not the geometry: `getWorldDirection` is
+    // where the camera is looking, so its negation is the line to march.
+    this.camera.getWorldDirection(this.cutToCamera).negate();
+    const chest = groundY + DEFAULT_CANONICAL_HEIGHT * 0.5;
+    const hidden =
+      style !== 'off' &&
+      bodyIsHidden({ x: me.x, y: chest, z: me.y }, this.cutToCamera, (x, z) => this.ground(x, z));
+    this.cutOpen = easeCutout(this.cutOpen, hidden, dt);
+
     // The chest, pushed into view space for the hole's centre...
     cutBodyUniform.value.set(me.x, groundY + DEFAULT_CANONICAL_HEIGHT * 0.5, me.y, 1).applyMatrix4(
       this.camera.matrixWorldInverse,
@@ -981,7 +1013,7 @@ export class WorldScene {
     // way (spec 126). Here rather than earlier because it reads the camera's
     // inverse and that is only fresh from the line above; here rather than
     // later because the passes below draw with it.
-    this.updateCutout(me, groundY, this.controls.cutout());
+    this.updateCutout(me, groundY, this.controls.cutout(), dt);
     // Needs both of the above: it reads the rig's world position and pushes it
     // through the camera's inverse (spec 118).
     this.anchorPlayerLighting(view.selfEntityId);

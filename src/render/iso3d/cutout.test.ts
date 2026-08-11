@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_CANONICAL_HEIGHT } from '../../units/canonical-height.js';
 import {
   bayer4,
+  bodyIsHidden,
   cutoutCoverage,
   cutoutDiscards,
   CUTOUT_APPLY,
@@ -11,8 +12,10 @@ import {
   CUTOUT_PROLOGUE,
   CUTOUT_STYLES,
   FOOT_MARGIN,
+  easeCutout,
   GHOST_BAND_PERIOD,
   inGhostBand,
+  MARCH_RISE,
   styleCode,
   type ViewPoint,
 } from './cutout.js';
@@ -315,5 +318,73 @@ describe('what the mouse can reach', () => {
 
   it('makes everything clickable again when the cutaway is off', () => {
     expect(cutoutCoverage(inFront(0), body, { ...P, style: 'off' }, 100, 40)).toBe(1);
+  });
+});
+
+describe('whether anything is actually in the way (spec 128)', () => {
+  /** The camera's line, at this world's isometric pitch: up and back. */
+  const toCamera = { x: -0.57, y: 0.6, z: -0.57 };
+  const standing = { x: 0, y: 50, z: 0 };
+
+  it('says no over open ground', () => {
+    expect(bodyIsHidden(standing, toCamera, () => 40)).toBe(false);
+  });
+
+  it('says no when the rock is beside the line rather than on it', () => {
+    // A wall nearer the camera but off to one side -- the case that was cutting
+    // a bite out of a wall for no reason at all.
+    const heightAt = (x: number, z: number): number => (x > 200 && z > 200 ? 400 : 40);
+    expect(bodyIsHidden(standing, toCamera, heightAt)).toBe(false);
+  });
+
+  it('says yes when a wall stands on the line', () => {
+    // Toward the camera is -x and -z, so this is the ground the line runs over.
+    const heightAt = (x: number, z: number): number => (x < -60 && z < -60 ? 400 : 40);
+    expect(bodyIsHidden(standing, toCamera, heightAt)).toBe(true);
+  });
+
+  it('is not fooled by the hillside the body is climbing', () => {
+    // Ground rising gently along the line: without the clearance, every unit
+    // walking uphill toward the camera declares itself hidden by the hill.
+    const heightAt = (x: number, z: number): number => 50 + (-x - z) * 0.15;
+    expect(bodyIsHidden(standing, toCamera, heightAt)).toBe(false);
+  });
+
+  it('says no when the camera does not look down at all', () => {
+    expect(bodyIsHidden(standing, { x: -1, y: 0, z: 0 }, () => 10_000)).toBe(false);
+  });
+
+  it('stops looking once the line is above anything that could hide a body', () => {
+    let furthest = 0;
+    bodyIsHidden(standing, toCamera, (x, z) => {
+      furthest = Math.max(furthest, Math.hypot(x, z));
+      return 40;
+    });
+    // Bounded by MARCH_RISE / toCamera.y, not by the size of the world.
+    expect(furthest).toBeLessThan((MARCH_RISE / toCamera.y) * 1.05);
+  });
+});
+
+describe('the iris', () => {
+  it('opens toward one while the body is hidden and shuts toward zero after', () => {
+    let open = 0;
+    for (let i = 0; i < 20; i++) open = easeCutout(open, true, 1 / 60);
+    expect(open).toBeGreaterThan(0.5);
+    for (let i = 0; i < 60; i++) open = easeCutout(open, false, 1 / 60);
+    expect(open).toBe(0);
+  });
+
+  it('shuts exactly, so no clickable hole is left behind for the mouse', () => {
+    // A hole that only *nearly* closes is one the pick still lets a click
+    // through, at a spot where the screen shows solid rock.
+    expect(easeCutout(0.005, false, 1 / 60)).toBe(0);
+  });
+
+  it('reaches full open exactly rather than creeping', () => {
+    expect(easeCutout(0.995, true, 1 / 60)).toBe(1);
+  });
+
+  it('does not move backwards on a zero-length frame', () => {
+    expect(easeCutout(0.4, true, 0)).toBe(0.4);
   });
 });
