@@ -1,4 +1,8 @@
 import { hashUnit2 } from '../shared/hash.js';
+// The same reason `vegetation.ts` reads PLAYER_RADIUS from here: what the
+// authoring tool builds and what the sim will let a body walk have to be the one
+// number, or a stair is drawn that nothing can climb.
+import { MAX_STEP_HEIGHT } from '../sim/constants.js';
 import type { ChunkCoord } from './chunk.js';
 import {
   encodeRuns,
@@ -313,25 +317,75 @@ export interface BakeStairInput {
   readonly bottomHeight: number;
 }
 
-/** How many world units of run one painted tread covers. One cell. */
-const TREAD_CELLS = 1;
+/**
+ * Cells of run one step costs: a flat tread, and the riser beside it.
+ *
+ * Two rather than one plus a fraction because a run may be dragged diagonally,
+ * and a cell's extent along a 45-degree axis is `cellSize * sqrt(2)`. A band
+ * narrower than that can fall entirely between two cells and leave a step with
+ * no flat part in it at all.
+ */
+const STEP_CELLS = 2;
 
 /**
- * A ramp from a tier's top down to what it lands on (spec 124).
+ * The fewest risers a climb can be made of: the walkability floor.
+ *
+ * `MAX_STEP_HEIGHT` bounds a riser because of how it is *seen*, not how it is
+ * walked. Movement would permit far more -- a body covers ~2.5 units a tick, so
+ * a riser spread over a 22-unit cell is climbed in nine of them. The router is
+ * the tighter reader: it samples the ground every 10 units, and corner jitter
+ * can pull a riser cell down to a third of a cell wide, so in the worst case two
+ * adjacent samples straddle a whole riser with nothing between them. A stair the
+ * router will not route up is not a stair.
+ */
+function risersNeeded(climb: number): number {
+  return Math.max(1, Math.ceil(Math.abs(climb) / MAX_STEP_HEIGHT));
+}
+
+/** The shortest run that can hold the steps a climb needs, in world units. */
+export function minStairRun(climb: number, cellSize: number): number {
+  return (risersNeeded(climb) + 1) * STEP_CELLS * cellSize;
+}
+
+/**
+ * How many risers a run is built with (spec 131): the fewest the climb allows.
+ *
+ * The riser is the constant, not the tread. It is the thing a body has to get
+ * over and the thing an eye reads, so holding every stair in the world to the
+ * same rise is what makes them all look like stairs; how deep the treads come
+ * out is then however far the author dragged, divided between them.
+ *
+ * Filling the run with steps instead was tried and is worse. It pins the tread
+ * to the minimum a cell grid can express -- one flat cell, narrower than the
+ * body standing on it -- so a long drag gets a fine-toothed ramp, and the risers
+ * shrink until nothing casts a shadow. Taking the minimum makes a long drag a
+ * flight of broad terraces, which is what the reference is.
+ */
+export function stairRisers(climb: number): number {
+  return risersNeeded(climb);
+}
+
+/**
+ * A flight of steps from a tier's top down to what it lands on (specs 124, 131).
  *
  * Its own layer rather than cells added to the tier, because `bakeRock` refuses
  * a second height in one layer and is right to: a tier with two heights in it
- * is a ramp somebody strolls up rather than a cliff. A ramp is exactly what
- * this is, so it cannot live in a layer holding that rule. Costing nothing,
- * since `heightAt` takes the maximum over solid layers -- at the top the stair
- * and the tier agree, and along the run the stair simply wins over the ground.
+ * is a ramp somebody strolls up rather than a cliff. A flight is exactly that,
+ * so it cannot live in a layer holding that rule. Costing nothing, since
+ * `heightAt` takes the maximum over solid layers -- at the top the stair and the
+ * tier agree, and along the run the stair simply wins over the ground.
  *
- * The steps are paint. A corner carries one height, so a flat tread and a riser
- * need two cells between them -- 44 world units per step against a body 55 tall,
- * a staircase for something three times our size. Banding the material one cell
- * per tread reads as steps cut into rock at the scale the reference has them,
- * and the surface underfoot stays the smooth ramp that makes the climb work at
- * all.
+ * A corner carries one height, so a flat tread and a riser cannot share a cell.
+ * Spec 124 put the steps on the paint side of that and left the surface a smooth
+ * ramp; they are on the geometry side now. The run is divided into `risers + 1`
+ * treads at evenly spaced heights and a corner takes the height of the tread its
+ * position falls in -- so two corners in one tread are equal and the cell
+ * between them is flat, and two corners in neighbouring treads differ by a
+ * riser and the cell between them *is* the riser.
+ *
+ * Throws when the run is too short to hold those steps. Fitting them to the run
+ * instead would mean risers taller than a body can climb, and stretching the run
+ * would put rock where the author did not.
  */
 export function bakeStair(input: BakeStairInput): BakedRock {
   const { store, layerId, footprint, from, to, topHeight, bottomHeight } = input;
@@ -358,14 +412,21 @@ export function bakeStair(input: BakeStairInput): BakedRock {
   };
 
   const rock = materialIndex('rock');
-  const dirt = materialIndex('dirt');
   const range = cellRange(footprint, info.origin, store.cellSize);
   if (!range) return { created: [], touched: [], bounds: info.bounds, cells: 0 };
 
-  // One band per cell of run, so a tread is a cell deep whichever way the stair
-  // is drawn.
   const runLength = Math.sqrt(axisLength2);
-  const treads = Math.max(1, Math.round(runLength / (store.cellSize * TREAD_CELLS)));
+  const risers = stairRisers(top - bottom);
+  const shortest = minStairRun(top - bottom, store.cellSize);
+  if (runLength < shortest) {
+    throw new Error(
+      `bakeStair: a ${Math.round(Math.abs(top - bottom))}-unit climb needs ${risers} step(s) and ` +
+        `so a run of at least ${Math.round(shortest)} -- this one is ${Math.round(runLength)}`,
+    );
+  }
+  /** Which tread a point along the run belongs to, 0 at the top end. */
+  const treadAt = (x: number, z: number): number =>
+    Math.min(risers, Math.floor(along(x, z) * (risers + 1)));
 
   const cells = store.chunkCells;
   const created: ChunkCoord[] = [];
@@ -391,12 +452,10 @@ export function bakeStair(input: BakeStairInput): BakedRock {
           const col = startCol + i;
           if (col < range.minCol || col > range.maxCol) continue;
           const k = j * chunk.cols + i;
-          const x = info.origin.x + (col + 0.5) * store.cellSize;
-          const z = info.origin.z + (row + 0.5) * store.cellSize;
-          // Alternating bands along the run. Paint only: the cell's corners are
-          // on the ramp either way, so this changes how it looks and not how it
-          // walks.
-          materials[k] = Math.floor(along(x, z) * treads) % 2 === 0 ? rock : dirt;
+          // All of it rock (spec 131). The steps are geometry now, so they are
+          // read by the light falling on a tread and not on the riser under it,
+          // and a built thing is made of one material.
+          materials[k] = rock;
           if (solid[k] !== 1) {
             solid[k] = 1;
             changed++;
@@ -413,8 +472,10 @@ export function bakeStair(input: BakeStairInput): BakedRock {
         for (let i = 0; i <= chunk.cols; i++) {
           const x = info.origin.x + (startCol + i) * store.cellSize;
           const z = info.origin.z + (startRow + j) * store.cellSize;
-          const t = along(x, z);
-          heights[j * (chunk.cols + 1) + i] = quantize(top + (bottom - top) * t);
+          // The tread's height, not the ramp's: equal for two corners in one
+          // tread, so the cell between them is flat, and a riser apart for two
+          // in neighbouring treads, so the cell between them is the riser.
+          heights[j * (chunk.cols + 1) + i] = quantize(top + (bottom - top) * (treadAt(x, z) / risers));
         }
       }
 

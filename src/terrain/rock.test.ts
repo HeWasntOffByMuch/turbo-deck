@@ -1,9 +1,27 @@
 import { describe, expect, it } from 'vitest';
 
-import { MAP_VERSION, parseMap, serializeMap, type MapChunk, type MapDocument, type MapLayer } from './map.js';
+import {
+  decodeRuns,
+  MAP_VERSION,
+  parseMap,
+  serializeMap,
+  type MapChunk,
+  type MapDocument,
+  type MapLayer,
+} from './map.js';
 import { loadMap, MapChunkStore } from './map-world.js';
-import { bakeRock, bakeStair, carveRock, detailFormation, emptyRockLayer, formationAt } from './rock.js';
+import {
+  bakeRock,
+  bakeStair,
+  carveRock,
+  detailFormation,
+  emptyRockLayer,
+  formationAt,
+  minStairRun,
+  stairRisers,
+} from './rock.js';
 import { isWalkable } from '../server/sim/movement.js';
+import { MAX_STEP_HEIGHT } from '../sim/constants.js';
 import { materialIndex } from './types.js';
 
 /**
@@ -291,23 +309,92 @@ describe('a stack of tiers', () => {
   });
 });
 
-describe('a stair up a tier (spec 124)', () => {
-  /** Ground at 0, a tier at TOP over the east half, and a stair up to it. */
+describe('a stair up a tier (specs 124, 131)', () => {
+  /**
+   * A wider world than the rest of this file uses, because a flight of steps
+   * is long: a 60-unit climb is three risers, and every step wants a cell of
+   * flat tread plus a cell of riser.
+   */
+  const WIDE_CHUNKS = 4;
+  const WIDE = SPAN * WIDE_CHUNKS;
+  const STAIR = 'stair/1';
+  /** Where the tier's west face is, and so where the run starts. */
+  const FACE = 100;
+
+  function wideStore(): MapChunkStore {
+    const chunks: MapChunk[] = [];
+    for (let cz = 0; cz < WIDE_CHUNKS; cz++) {
+      for (let cx = 0; cx < WIDE_CHUNKS; cx++) chunks.push(groundChunk(cx, cz));
+    }
+    const layer: MapLayer = {
+      id: GROUND,
+      seed: 1,
+      origin: { x: 0, z: 0 },
+      bounds: { minX: 0, minZ: 0, maxX: WIDE, maxZ: WIDE },
+      baseY: -10,
+      waterLevel: null,
+      chunks,
+    };
+    const store = new MapChunkStore({
+      version: MAP_VERSION,
+      seed: 1,
+      grid: { cellSize: CELL, chunkCells: CHUNK_CELLS },
+      arena: { minX: 0, minZ: 0, maxX: WIDE, maxZ: WIDE },
+      layers: [layer],
+    });
+    store.addLayer(emptyRockLayer({ id: ROCK, seed: 7, origin: { x: 0, z: 0 }, baseY: -20 }));
+    return store;
+  }
+
+  /** Ground at 0, a tier at TOP over the east side, and a stair down off it. */
   function withStair(): MapChunkStore {
-    const store = withRockLayer();
-    bakeRock({ store, layerId: ROCK, footprint: { minX: 40, minZ: 0, maxX: 80, maxZ: 80 }, top: TOP });
-    store.addLayer(emptyRockLayer({ id: 'stair/1', seed: 9, origin: { x: 0, z: 0 }, baseY: -30 }));
+    const store = wideStore();
+    bakeRock({ store, layerId: ROCK, footprint: { minX: FACE, minZ: 0, maxX: WIDE, maxZ: WIDE }, top: TOP });
+    store.addLayer(emptyRockLayer({ id: STAIR, seed: 9, origin: { x: 0, z: 0 }, baseY: -30 }));
     bakeStair({
       store,
-      layerId: 'stair/1',
-      // A run west out of the tier, down onto the ground.
-      footprint: { minX: 0, minZ: 30, maxX: 45, maxZ: 50 },
-      from: { x: 45, z: 40 },
-      to: { x: 0, z: 40 },
+      layerId: STAIR,
+      // Starting *on* the tier rather than at its rim, which is the gesture the
+      // editor makes -- press on top, drag out onto the ground. The overlap
+      // matters: two layers jitter their corners independently, so a run that
+      // stopped exactly at the face would leave a seam where neither is solid
+      // and `heightAt` fell through to the meadow underneath.
+      footprint: { minX: 0, minZ: 60, maxX: FACE + 20, maxZ: 100 },
+      from: { x: FACE + 20, z: 80 },
+      to: { x: 0, z: 80 },
       topHeight: TOP,
       bottomHeight: 0,
     });
     return store;
+  }
+
+  /**
+   * Height along the whole run, sampled finely enough to see a tread inside a
+   * cell. Runs past the tier's face because the run starts up there.
+   */
+  function profile(world: { heightAt(x: number, z: number): number }, z: number): number[] {
+    const out: number[] = [];
+    for (let x = 0; x <= FACE + 20; x += 0.5) out.push(Math.round(world.heightAt(x, z) * 1000) / 1000);
+    return out;
+  }
+
+  /**
+   * Maximal stretches of exactly constant height, as `{ height, length }`.
+   *
+   * This is what tells a flight of steps from the ramp it used to be. On a ramp
+   * no two samples half a unit apart are ever equal; on steps the treads are
+   * long stretches of one number with a short climb between them.
+   */
+  function plateaus(heights: readonly number[], minLength = 4): { height: number; length: number }[] {
+    const out: { height: number; length: number }[] = [];
+    let start = 0;
+    for (let i = 1; i <= heights.length; i++) {
+      if (i < heights.length && heights[i] === heights[start]) continue;
+      const length = (i - start) * 0.5;
+      if (length >= minLength) out.push({ height: heights[start] ?? 0, length });
+      start = i;
+    }
+    return out;
   }
 
   it('lets a body walk the whole run up onto the tier', () => {
@@ -317,16 +404,16 @@ describe('a stair up a tier (spec 124)', () => {
     const perTick = 155 / 60;
 
     let x = 2;
-    let z = world.heightAt(x, 40);
+    let z = world.heightAt(x, 80);
     let blocked = false;
-    for (let tick = 0; tick < 400 && x < 60; tick++) {
+    for (let tick = 0; tick < 400 && x < FACE + 20; tick++) {
       const next = x + perTick;
-      if (!isWalkable({ x, y: 40, z }, next, 40, sampler)) {
+      if (!isWalkable({ x, y: 80, z }, next, 80, sampler)) {
         blocked = true;
         break;
       }
       x = next;
-      z = world.heightAt(x, 40);
+      z = world.heightAt(x, 80);
     }
     expect(blocked).toBe(false);
     // ...and it actually arrived on top rather than stopping partway.
@@ -342,7 +429,7 @@ describe('a stair up a tier (spec 124)', () => {
     let x = 2;
     let z = world.heightAt(x, 10);
     let blocked = false;
-    for (let tick = 0; tick < 400 && x < 60; tick++) {
+    for (let tick = 0; tick < 400 && x < FACE + 20; tick++) {
       const next = x + perTick;
       if (!isWalkable({ x, y: 10, z }, next, 10, sampler)) {
         blocked = true;
@@ -357,25 +444,90 @@ describe('a stair up a tier (spec 124)', () => {
 
   it('runs monotonically from the tier down to the ground', () => {
     const world = loadMap(withStair().toDocument()).world;
-    let previous = world.heightAt(44, 40);
-    for (let x = 44; x >= 1; x -= 1) {
-      const h = world.heightAt(x, 40);
+    let previous = world.heightAt(FACE + 19, 80);
+    for (let x = FACE + 19; x >= 1; x -= 0.5) {
+      const h = world.heightAt(x, 80);
       // Walking down the run, height never goes back up.
       expect(h).toBeLessThanOrEqual(previous + 0.001);
       previous = h;
     }
-    expect(world.heightAt(44, 40)).toBeCloseTo(TOP, 0);
-    // The bottom reaches the ground exactly at the end of the run, so a step
-    // *onto* it lands a little way up the ramp. What matters is that the step is
-    // one a body may take -- under MAX_STEP_HEIGHT -- not that it is zero.
-    expect(world.heightAt(1, 40)).toBeLessThan(24);
+  });
+
+  it('is a flight of flat treads, not a ramp', () => {
+    const world = loadMap(withStair().toDocument()).world;
+    const steps = plateaus(profile(world, 80));
+    // One tread per riser, plus the one at the top. Each is genuinely flat and
+    // wide enough to stand on -- a cell, less what the corner jitter takes.
+    expect(steps.map((s) => s.height)).toEqual([0, 20, 40, TOP]);
+    for (const step of steps) expect(step.length).toBeGreaterThan(CELL * 0.5);
+  });
+
+  it('meets the tier at the top and the ground at the bottom', () => {
+    // Read off the corners rather than off `heightAt`, which at the top of the
+    // run is answering for the tier as much as for the stair. These are the
+    // heights the stair itself was built at: evenly spaced, ending exactly on
+    // what it joins at either end, so there is no lip at the top or the foot.
+    const layer = withStair().toDocument().layers.find((l) => l.id === STAIR);
+    const levels = new Set<number>();
+    for (const chunk of layer?.chunks ?? []) for (const h of chunk.heights) levels.add(h);
+    expect([...levels].sort((a, b) => a - b)).toEqual([0, 20, 40, TOP]);
+  });
+
+  it('never asks for a climb a body cannot make', () => {
+    const world = loadMap(withStair().toDocument()).world;
+    const heights = profile(world, 80);
+    let worst = 0;
+    for (let i = 1; i < heights.length; i++) {
+      worst = Math.max(worst, Math.abs((heights[i] ?? 0) - (heights[i - 1] ?? 0)));
+    }
+    // Half a unit of travel per sample, so this is the riser's own steepness --
+    // and the risers are what a body has to get over.
+    expect(worst).toBeLessThan(MAX_STEP_HEIGHT);
+  });
+
+  it('is rock, all of it', () => {
+    const store = withStair();
+    const layer = store.toDocument().layers.find((l) => l.id === STAIR);
+    const rock = materialIndex('rock');
+    for (const chunk of layer?.chunks ?? []) {
+      const count = chunk.cols * chunk.rows;
+      for (const m of decodeRuns(chunk.materials, count)) expect(m).toBe(rock);
+    }
+  });
+
+  it('refuses a run too short to hold its steps', () => {
+    const store = wideStore();
+    store.addLayer(emptyRockLayer({ id: 'stair/2', seed: 9, origin: { x: 0, z: 0 }, baseY: -30 }));
+    expect(() =>
+      bakeStair({
+        store,
+        layerId: 'stair/2',
+        footprint: { minX: 0, minZ: 60, maxX: 45, maxZ: 100 },
+        from: { x: 45, z: 80 },
+        to: { x: 0, z: 80 },
+        topHeight: TOP,
+        bottomHeight: 0,
+      }),
+    ).toThrow(/run of at least/);
+  });
+
+  it('says how many steps a climb needs, and how long a run that wants', () => {
+    // Three risers of 20 for a 60-unit climb, and four treads plus their risers
+    // of run to put them in.
+    expect(stairRisers(TOP)).toBe(3);
+    expect(minStairRun(TOP, CELL)).toBe(80);
+    // The riser is what is held constant, so a longer drag is the same three
+    // steps with deeper treads rather than more of them.
+    expect(stairRisers(TOP)).toBe(3);
+    // A climb inside one step is still one step, never zero.
+    expect(stairRisers(4)).toBe(1);
   });
 
   it('agrees with itself across a chunk seam', () => {
     const store = withStair();
-    // The run crosses x = 40, which is the boundary between chunks 0 and 1.
+    // The run crosses x = 40 and x = 80, which are chunk boundaries.
     const doc2 = store.toDocument();
-    const layer = doc2.layers.find((l) => l.id === 'stair/1');
+    const layer = doc2.layers.find((l) => l.id === STAIR);
     const seen = new Map<string, number>();
     let compared = 0;
     for (const chunk of layer?.chunks ?? []) {
@@ -399,18 +551,6 @@ describe('a stair up a tier (spec 124)', () => {
 
   it('is deterministic', () => {
     expect(serializeMap(withStair().toDocument())).toBe(serializeMap(withStair().toDocument()));
-  });
-
-  it('bands the treads without moving the surface', () => {
-    const store = withStair();
-    const mesh = loadMap(store.toDocument()).meshLayers.find((l) => l.id === 'stair/1');
-    const materials = new Set<number>();
-    for (let col = 0; col < 4; col++) {
-      const m = mesh?.materialAt(col, 4);
-      if (m !== null && m !== undefined) materials.add(m);
-    }
-    // Rock and dirt alternating, so the run reads as steps.
-    expect(materials.size).toBeGreaterThan(1);
   });
 });
 

@@ -55,6 +55,13 @@ walkability one: the reference's steps are big terraced slabs, not a fire
 escape, and taking the ceiling of the climb limit makes each step as tall — and
 each tread as deep — as it is allowed to be.
 
+The riser is the constant here and the tread is what varies. Filling the run
+with steps instead — as many as it will hold — was tried and is worse: it pins
+the tread to the minimum a cell grid can express, one flat cell, which is
+narrower than the body standing on it, so a long drag comes out a fine-toothed
+ramp whose risers are too shallow to cast a shadow. Holding the rise constant
+makes a long drag a flight of broad terraces, which is what the reference is.
+
 `MAX_STEP_HEIGHT` is the bound because of how the riser is *seen*, not how it is
 walked. Movement would permit far more: a body covers ~2.5 units a tick, so a
 riser spread over a 22-unit cell is climbed in nine ticks and could be hundreds

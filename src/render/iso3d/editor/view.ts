@@ -729,7 +729,9 @@ export function mountEditor(container: HTMLElement): ViewHandle {
         scene.refreshPropsWithin(footprint);
         for (const c of stair.propChunks) scene.rebuildChunk(layerId, c.cx, c.cz);
       }
-      status = `stair "${stair.layerId}": ${stair.cells} cells, climbing ${Math.round(Math.abs(stairTop - stairBottom))}`;
+      status =
+        `stair "${stair.layerId}": ${stair.cells} cells, climbing ` +
+        `${Math.round(Math.abs(stairTop - stairBottom))} in ${stair.risers} step(s)`;
       return;
     }
 

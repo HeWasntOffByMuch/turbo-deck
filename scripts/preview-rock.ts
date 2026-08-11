@@ -204,15 +204,29 @@ async function main(): Promise<void> {
     await page.waitForTimeout(1000);
     await page.click('button[title="stair"]:visible');
     await page.waitForTimeout(300);
-    await drag(page, [600, 400], [420, 560]);
+    // Along the slab and off its far end, rather than over its short side: a
+    // flight of real steps needs a cell of tread and a cell of riser per step
+    // (spec 131), and this tier is far longer than it is wide.
+    await drag(page, [540, 315], [280, 135]);
     await page.mouse.up();
-    const afterStair = await waitForStatus(page, /stair "stair\/\d+": \d+ cells, climbing \d+/);
-    const stair = /stair "(stair\/\d+)": (\d+) cells, climbing (\d+)/.exec(afterStair);
-    check('the stair tool cuts a run', stair !== null, stair ? stair[0] : afterStair.slice(0, 160));
+    const afterStair = await waitForStatus(page, /stair "stair\/\d+": \d+ cells, climbing \d+ in \d+ step/);
+    const stair = /stair "(stair\/\d+)": (\d+) cells, climbing (\d+) in (\d+) step/.exec(afterStair);
+    check(
+      'the stair tool cuts a run',
+      stair !== null,
+      stair ? stair[0] : (/stair[^·]*/.exec(afterStair)?.[0] ?? afterStair.slice(-200)),
+    );
     check(
       'the run actually climbs something',
       stair !== null && Number(stair[3]) > 24,
       stair ? `climbs ${stair[3]}` : 'no climb reported',
+    );
+    // The steps are geometry now, so how many there are is a fact about the
+    // shape rather than about the paint.
+    check(
+      'it is built out of more than one step',
+      stair !== null && Number(stair[4]) > 1,
+      stair ? `${stair[4]} step(s)` : 'no steps reported',
     );
     await page.screenshot({ path: join(outDir, 'editor-rock-stair.png') });
 

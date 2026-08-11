@@ -6,6 +6,7 @@ import {
   emptyRockLayer,
   formationAt,
   paintGroundUnder,
+  stairRisers,
   type ChunkCoord,
   type MapChunkStore,
   type MapLayer,
@@ -320,6 +321,8 @@ export type AddStairResult =
       readonly layerId: string;
       readonly created: readonly ChunkCoord[];
       readonly cells: number;
+      /** How many risers it was built with (spec 131). */
+      readonly risers: number;
       readonly clearedProps: number;
       readonly propChunks: readonly ChunkCoord[];
     }
@@ -395,6 +398,7 @@ export function addStair(store: MapChunkStore, history: EditHistory, input: AddS
     layerId,
     created: baked.created,
     cells: baked.cells,
+    risers: stairRisers(climb),
     clearedProps: cleared.removed.length,
     propChunks: cleared.dirty,
   };
