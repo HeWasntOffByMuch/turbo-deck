@@ -338,9 +338,19 @@ describe('a tier an author actually baked', () => {
     bakeStair({
       store,
       layerId: 'stair/1',
-      footprint: { minX: 60, minZ: 195, maxX: 175, maxZ: 235 },
-      from: { x: 170, z: 215 },
-      to: { x: 65, z: 215 },
+      // The two edges of the flight (spec 132): where it meets the tier, and
+      // where its foot lands. Long enough that no tread is more than a body
+      // can climb.
+      edges: {
+        top: [
+          { x: 170, z: 195 },
+          { x: 170, z: 235 },
+        ],
+        foot: [
+          { x: 60, z: 195 },
+          { x: 60, z: 235 },
+        ],
+      },
       topHeight: TOP,
       bottomHeight: 0,
     });

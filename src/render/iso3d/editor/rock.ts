@@ -6,7 +6,9 @@ import {
   emptyRockLayer,
   formationAt,
   paintGroundUnder,
+  stairPlan,
   stairRisers,
+  type StairEdges,
   type ChunkCoord,
   type MapChunkStore,
   type MapLayer,
@@ -303,10 +305,10 @@ export function nextStairLayerId(store: MapChunkStore): string {
 }
 
 export interface AddStairInput {
-  readonly footprint: MapRect;
-  /** The high end of the run and the low end -- the drag's own direction. */
-  readonly from: MapPoint;
-  readonly to: MapPoint;
+  /** Where the flight meets the tier, and where its foot lands (spec 132). */
+  readonly edges: StairEdges;
+  /** The tier the head is drawn on. Notched, so the flight sits inside it. */
+  readonly tierLayerId: string;
   readonly topHeight: number;
   readonly bottomHeight: number;
   readonly seed: number;
@@ -323,6 +325,8 @@ export type AddStairResult =
       readonly cells: number;
       /** How many risers it was built with (spec 131). */
       readonly risers: number;
+      /** Cells cut out of the tier to make room for it (spec 132). */
+      readonly notched: number;
       readonly clearedProps: number;
       readonly propChunks: readonly ChunkCoord[];
     }
@@ -340,12 +344,32 @@ export function addStair(store: MapChunkStore, history: EditHistory, input: AddS
   if (Math.abs(climb) <= MIN_STAIR_CLIMB) {
     return {
       ok: false,
-      reason: `those two ends are ${Math.round(Math.abs(climb))} apart -- a body walks that without a stair`,
+      reason: `those two edges are ${Math.round(Math.abs(climb))} apart -- a body walks that without a stair`,
     };
+  }
+  const plan = stairPlan(input.edges);
+  if (!plan) {
+    return { ok: false, reason: 'those two edges do not enclose a flight -- they cross, or one is a point' };
   }
 
   const layerId = nextStairLayerId(store);
   history.beginStroke();
+  // Everything the stroke will touch is captured *before* anything moves: the
+  // tier the notch comes out of, the props under the flight, and the layer it
+  // is built in. A refusal past this point aborts and leaves the map alone.
+  history.captureBounds(store, input.tierLayerId);
+  for (const c of store.chunksInRect(input.tierLayerId, plan.bounds)) {
+    // Both, and before the cut: a chunk the notch merely bites into is restored
+    // from its snapshot, and one the notch empties has to be put back whole,
+    // and which of the two a chunk turns out to be is not known until after.
+    history.captureChunk(store, input.tierLayerId, c.cx, c.cz);
+    history.captureDeleted(store, input.tierLayerId, c.cx, c.cz);
+  }
+  if (input.propLayerId !== undefined && input.propLayerId !== input.tierLayerId) {
+    for (const c of store.chunksInRect(input.propLayerId, plan.bounds)) {
+      history.captureChunk(store, input.propLayerId, c.cx, c.cz);
+    }
+  }
   store.addLayer(
     emptyRockLayer({
       id: layerId,
@@ -356,20 +380,13 @@ export function addStair(store: MapChunkStore, history: EditHistory, input: AddS
       baseY: Math.min(input.topHeight, input.bottomHeight) - STAIR_BURY,
     }),
   );
-  if (input.propLayerId !== undefined) {
-    for (const c of store.chunksInRect(input.propLayerId, input.footprint)) {
-      history.captureChunk(store, input.propLayerId, c.cx, c.cz);
-    }
-  }
 
   let baked;
   try {
     baked = bakeStair({
       store,
       layerId,
-      footprint: input.footprint,
-      from: input.from,
-      to: input.to,
+      edges: input.edges,
       topHeight: input.topHeight,
       bottomHeight: input.bottomHeight,
     });
@@ -382,15 +399,32 @@ export function addStair(store: MapChunkStore, history: EditHistory, input: AddS
   if (baked.cells === 0) {
     store.removeLayer(layerId);
     history.abortStroke();
-    return { ok: false, reason: 'that run covers no cell -- drag out a longer one' };
+    return { ok: false, reason: 'that flight covers no cell -- draw the two edges further apart' };
   }
+
+  // The notch, and only now (spec 132). It has to come after the bake rather
+  // than before it, because `abortStroke` *discards* the recorded before-state
+  // rather than rolling back to it -- so anything written ahead of a refusal
+  // stays written. Cutting the tier first left a groove in it every time a
+  // flight was refused for being too short.
+  //
+  // The tier's cut rim is a definite hole, so the mesher grows a wall around it
+  // exactly as it does at the tier's outer edge, and because the flight
+  // descends inside that hole those walls *are* the staircase's flanks. Nothing
+  // has to draw them.
+  const notch = carveRock({
+    store,
+    layerId: input.tierLayerId,
+    footprint: plan.bounds,
+    contains: (x, z) => plan.contains(x, z),
+  });
 
   history.captureAddedLayer(layerId);
   for (const c of baked.created) history.captureCreated(layerId, c.cx, c.cz);
   const cleared =
     input.propLayerId === undefined
       ? { removed: [], dirty: [] }
-      : store.removePropsInRect(input.propLayerId, input.footprint);
+      : store.removePropsInRect(input.propLayerId, plan.bounds);
   history.endStroke();
 
   return {
@@ -399,6 +433,7 @@ export function addStair(store: MapChunkStore, history: EditHistory, input: AddS
     created: baked.created,
     cells: baked.cells,
     risers: stairRisers(climb),
+    notched: notch.cells,
     clearedProps: cleared.removed.length,
     propChunks: cleared.dirty,
   };

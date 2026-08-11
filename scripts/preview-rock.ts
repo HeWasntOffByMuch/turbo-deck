@@ -197,44 +197,69 @@ async function main(): Promise<void> {
     check('undo takes both tiers back, layers and all', tiersLeft.length === 0, tiersLeft.join(', ') || 'none');
     await page.screenshot({ path: join(outDir, 'editor-rock-undone.png') });
 
-    // Cut a stair into a fresh tier: drag from on top of it out onto the ground,
-    // which is the gesture -- down the stairs, the way you would walk them.
-    await drag(page, [330, 250], [820, 600]);
+    // A broad tier for the stair to be cut into. Deliberately fatter than the
+    // long thin slab above: a flight is drawn as two edges across the rock, and
+    // a slab only a few cells wide leaves nowhere to put the first one.
+    await drag(page, [300, 180], [900, 650]);
     await page.mouse.up();
-    await page.waitForTimeout(1000);
+    await waitForStatus(page, /tier "rock\/\d+"/);
+    await page.screenshot({ path: join(outDir, 'editor-rock-stair-tier.png') });
     await page.click('button[title="stair"]:visible');
     await page.waitForTimeout(300);
-    // Along the slab and off its far end, rather than over its short side: a
-    // flight of real steps needs a cell of tread and a cell of riser per step
-    // (spec 131), and this tier is far longer than it is wide.
-    await drag(page, [540, 315], [280, 135]);
+    // Two edges, not a rectangle (spec 132): the first across the tier where the
+    // flight meets it, the second out on the ground where its foot lands. Drawn
+    // across the slab's width and stepped back along its length, because a
+    // flight needs a cell of tread and a cell of riser per step.
+    await drag(page, [510, 360], [570, 270]);
     await page.mouse.up();
-    const afterStair = await waitForStatus(page, /stair "stair\/\d+": \d+ cells, climbing \d+ in \d+ step/);
-    const stair = /stair "(stair\/\d+)": (\d+) cells, climbing (\d+) in (\d+) step/.exec(afterStair);
+    const afterHead = await waitForStatus(page, /head on "rock\/\d+" at -?\d+/);
     check(
-      'the stair tool cuts a run',
+      'the first edge is taken as the head, on the tier it was drawn on',
+      /head on "rock\/\d+" at -?\d+ -- now draw the foot/.test(afterHead),
+      /head on[^\u00b7]*/.exec(afterHead)?.[0] ?? afterHead.slice(-200),
+    );
+
+    await drag(page, [235, 175], [295, 85]);
+    await page.mouse.up();
+    const afterStair = await waitForStatus(page, /stair "stair\/\d+": \d+ cells in \d+ step/);
+    const stair =
+      /stair "(stair\/\d+)": (\d+) cells in (\d+) step\(s\), climbing (\d+), notched (\d+)/.exec(afterStair);
+    check(
+      'the second edge commits the flight',
       stair !== null,
-      stair ? stair[0] : (/stair[^·]*/.exec(afterStair)?.[0] ?? afterStair.slice(-200)),
+      stair ? stair[0] : (/stair[^\u00b7]*/.exec(afterStair)?.[0] ?? afterStair.slice(-200)),
     );
     check(
-      'the run actually climbs something',
-      stair !== null && Number(stair[3]) > 24,
-      stair ? `climbs ${stair[3]}` : 'no climb reported',
+      'the flight actually climbs something',
+      stair !== null && Number(stair[4]) > 24,
+      stair ? `climbs ${stair[4]}` : 'no climb reported',
     );
     // The steps are geometry now, so how many there are is a fact about the
     // shape rather than about the paint.
     check(
       'it is built out of more than one step',
-      stair !== null && Number(stair[4]) > 1,
-      stair ? `${stair[4]} step(s)` : 'no steps reported',
+      stair !== null && Number(stair[3]) > 1,
+      stair ? `${stair[3]} step(s)` : 'no steps reported',
+    );
+    // ...and the tier it serves has a hole cut in it for the flight to sit in,
+    // which is the half that only exists once the two are one stroke.
+    check(
+      'it is notched into the tier rather than propped against it',
+      stair !== null && Number(stair[5]) > 0,
+      stair ? `notched ${stair[5]}` : 'nothing notched',
     );
     await page.screenshot({ path: join(outDir, 'editor-rock-stair.png') });
 
-    // A run between two points at the same height is not a stair.
-    await drag(page, [200, 640], [300, 700]);
+    // An edge drawn out on the meadow is not the head of anything: there is no
+    // tier under it for a flight to be cut into.
+    await drag(page, [200, 640], [260, 700]);
     await page.mouse.up();
-    const flat = await waitForStatus(page, /stair refused/);
-    check('a stair on flat ground is refused', /stair refused/.test(flat), flat.slice(0, 160));
+    const flat = await waitForStatus(page, /draw the first edge on a tier/);
+    check(
+      'an edge drawn off the rock is refused',
+      /draw the first edge on a tier/.test(flat),
+      /draw the first[^\u00b7]*/.exec(flat)?.[0] ?? flat.slice(-160),
+    );
 
     await page.keyboard.press('Control+z');
     await page.waitForTimeout(700);

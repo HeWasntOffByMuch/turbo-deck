@@ -8,10 +8,15 @@ import {
   type MapChunk,
   type MapDocument,
   type MapLayer,
+  type StairEdges,
 } from '../../../terrain/index.js';
+import { createWorldColliders } from '../../../sim/collision.js';
+import { MAX_STEP_HEIGHT, NAV_CELL_SIZE, PLAYER_RADIUS } from '../../../sim/constants.js';
+import { createNavGrid, findPath } from '../../../sim/pathfinding.js';
 import { EditHistory } from './history.js';
 import {
   addRock,
+  addStair,
   detailAt,
   isRockLayer,
   nextRockLayerId,
@@ -571,5 +576,228 @@ describe('the ground a tier stands on (spec 127)', () => {
     const { store, history } = setup();
     add(store, history, { minX: 0, minZ: 0, maxX: 20, maxZ: 20 });
     expect(store.cellAt(GROUND, 0, 0)?.materialIndex).toBe(GRASS_MATERIAL);
+  });
+});
+
+describe('a flight notched into a tier (spec 132)', () => {
+  /**
+   * A bigger world than the block above uses. A flight is long -- a 60-unit
+   * climb is three risers, and every step wants a cell of tread plus a cell of
+   * riser -- so it needs room the 2x2 fixture has not got.
+   */
+  const WIDE_CHUNKS = 4;
+  const WIDE = SPAN * WIDE_CHUNKS;
+  /** Where the tier's west face is. The head is drawn just inside it. */
+  const FACE = 100;
+
+  function wideSetup(): { store: MapChunkStore; history: EditHistory; before: string } {
+    const chunks: MapChunk[] = [];
+    for (let cz = 0; cz < WIDE_CHUNKS; cz++) {
+      for (let cx = 0; cx < WIDE_CHUNKS; cx++) chunks.push(groundChunk(cx, cz));
+    }
+    const layer: MapLayer = {
+      id: GROUND,
+      seed: 1,
+      origin: { x: 0, z: 0 },
+      bounds: { minX: 0, minZ: 0, maxX: WIDE, maxZ: WIDE },
+      baseY: -10,
+      waterLevel: null,
+      chunks,
+    };
+    const store = new MapChunkStore({
+      version: MAP_VERSION,
+      seed: 1,
+      grid: { cellSize: CELL, chunkCells: CHUNK_CELLS },
+      arena: { minX: 0, minZ: 0, maxX: WIDE, maxZ: WIDE },
+      layers: [layer],
+    });
+    const history = new EditHistory();
+    addRock(store, history, {
+      layerId: TIER,
+      footprint: { minX: FACE, minZ: 0, maxX: WIDE, maxZ: WIDE },
+      top: TOP,
+      baseY: -20,
+      seed: 7,
+      origin: { x: 0, z: 0 },
+    });
+    return { store, history, before: serializeMap(store.toDocument()) };
+  }
+
+  const EDGES: StairEdges = {
+    // Inside the tier, so the notch has rock to come out of.
+    top: [
+      { x: FACE + 20, z: 60 },
+      { x: FACE + 20, z: 100 },
+    ],
+    foot: [
+      { x: 0, z: 60 },
+      { x: 0, z: 100 },
+    ],
+  };
+
+  const cut = (store: MapChunkStore, history: EditHistory, edges: StairEdges = EDGES) =>
+    addStair(store, history, {
+      edges,
+      tierLayerId: TIER,
+      topHeight: TOP,
+      bottomHeight: 0,
+      seed: 9,
+      origin: { x: 0, z: 0 },
+      propLayerId: GROUND,
+    });
+
+  it('cuts the flight out of the tier and builds it in the gap', () => {
+    const { store, history } = wideSetup();
+    const stair = cut(store, history);
+    expect(stair.ok).toBe(true);
+    if (!stair.ok) return;
+
+    expect(stair.cells).toBeGreaterThan(0);
+    // The notch is the point: without it the flight is a ramp propped against
+    // an untouched wall rather than steps cut into rock.
+    expect(stair.notched).toBeGreaterThan(0);
+    expect(stair.risers).toBe(3);
+  });
+
+  it('leaves a hole in the tier exactly where the flight is', () => {
+    const { store, history } = wideSetup();
+    cut(store, history);
+    // Asked of the tier's own cells rather than of `heightAt`, which answers
+    // for the flight standing in the hole and so cannot tell a notch from an
+    // untouched tier at the head, where the two are at the same height.
+    const inside = { col: Math.floor((FACE + 10) / CELL), row: Math.floor(80 / CELL) };
+    const beside = { col: Math.floor((FACE + 10) / CELL), row: Math.floor(140 / CELL) };
+    expect(store.cellSolid(TIER, inside.col, inside.row)).toBe(false);
+    expect(store.cellSolid(TIER, beside.col, beside.row)).toBe(true);
+
+    // ...and the flight really is standing in that hole, descending.
+    const world = loadMap(store.toDocument()).world;
+    expect(world.heightAt(FACE + 10, 80)).toBe(TOP);
+    expect(world.heightAt(60, 80)).toBeGreaterThan(0);
+    expect(world.heightAt(60, 80)).toBeLessThan(TOP);
+  });
+
+  it('meets the tier at the head and the ground at the foot', () => {
+    const { store, history } = wideSetup();
+    cut(store, history);
+    const layer = store.toDocument().layers.find((l) => l.id.startsWith('stair/'));
+    const levels = new Set<number>();
+    for (const chunk of layer?.chunks ?? []) for (const h of chunk.heights) levels.add(h);
+    expect([...levels].sort((a, b) => a - b)).toEqual([0, 20, 40, TOP]);
+  });
+
+  it('takes the notch, the flight and the trees back in one undo', () => {
+    const { store, history, before } = wideSetup();
+    const stair = cut(store, history);
+    expect(stair.ok).toBe(true);
+    expect(serializeMap(store.toDocument())).not.toBe(before);
+    history.undo(store);
+    expect(serializeMap(store.toDocument())).toBe(before);
+  });
+
+  it('refuses two edges too close together, and leaves nothing behind', () => {
+    const { store, history, before } = wideSetup();
+    const stair = cut(store, history, {
+      top: [
+        { x: FACE + 20, z: 60 },
+        { x: FACE + 20, z: 100 },
+      ],
+      // Nowhere near far enough for a 60-unit climb.
+      foot: [
+        { x: FACE - 10, z: 60 },
+        { x: FACE - 10, z: 100 },
+      ],
+    });
+    expect(stair.ok).toBe(false);
+    // No layer, no hole, and no undo entry: the map is the file we started with.
+    expect(store.layerIds.filter((id) => id.startsWith('stair/'))).toEqual([]);
+    expect(serializeMap(store.toDocument())).toBe(before);
+  });
+
+  it('refuses edges that cross', () => {
+    const { store, history, before } = wideSetup();
+    const stair = cut(store, history, {
+      top: [
+        { x: FACE + 20, z: 60 },
+        { x: FACE + 20, z: 100 },
+      ],
+      foot: [
+        { x: 0, z: 100 },
+        { x: 0, z: 60 },
+      ],
+    });
+    // Reversing the foot is NOT crossing -- the pairing fixes it -- so this one
+    // has to succeed. The bow tie the pairing cannot fix is a foot drawn across
+    // the head, which `stairPlan` refuses.
+    expect(stair.ok).toBe(true);
+    expect(serializeMap(store.toDocument())).not.toBe(before);
+  });
+
+  it('is deterministic', () => {
+    const a = wideSetup();
+    cut(a.store, a.history);
+    const b = wideSetup();
+    cut(b.store, b.history);
+    expect(serializeMap(a.store.toDocument())).toBe(serializeMap(b.store.toDocument()));
+  });
+
+  /**
+   * The whole point, end to end: two edges drawn in the editor, and a body
+   * walks up what they built.
+   *
+   * Asserted here rather than beside the router because this is the only place
+   * the *editor's* flight exists -- `addStair` is what carves the notch, and a
+   * flight tested without one is not the thing that ships.
+   */
+  it('is a way up the tier, as far as the router is concerned', () => {
+    const { store, history } = wideSetup();
+    const before = createNavGrid(
+      createWorldColliders([], [], { x: 0, y: 0, w: WIDE, h: WIDE }),
+      PLAYER_RADIUS,
+      NAV_CELL_SIZE,
+      loadMap(store.toDocument()).world,
+    );
+    const from = { x: 40, y: 80 };
+    const onTop = { x: 130, y: 80 };
+    // Sealed to begin with: the tier is a wall and there is no route up it.
+    expect(findPath(before, from, onTop)).toEqual([]);
+
+    expect(cut(store, history).ok).toBe(true);
+    const ground = loadMap(store.toDocument()).world;
+    const after = createNavGrid(
+      createWorldColliders([], [], { x: 0, y: 0, w: WIDE, h: WIDE }),
+      PLAYER_RADIUS,
+      NAV_CELL_SIZE,
+      ground,
+    );
+    const path = findPath(after, from, onTop);
+
+    expect(ground.heightAt(onTop.x, onTop.y)).toBe(TOP);
+    expect(path.length).toBeGreaterThan(0);
+    // Arrives on top, rather than at the nearest cell it could reach -- which
+    // is what an unreachable goal relocates to and would otherwise look like a
+    // route that worked.
+    expect(path[path.length - 1]).toEqual(onTop);
+
+    // ...and every step of it is one a body may take, sampled between the
+    // waypoints rather than at them: a flight is walked as straight lines, and
+    // two good waypoints can still have a riser strung between them.
+    let worst = 0;
+    let anchorPoint = from;
+    for (const point of path) {
+      const steps = Math.max(1, Math.ceil(Math.hypot(point.x - anchorPoint.x, point.y - anchorPoint.y) / 2));
+      let previous = ground.heightAt(anchorPoint.x, anchorPoint.y);
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        const h = ground.heightAt(
+          anchorPoint.x + (point.x - anchorPoint.x) * t,
+          anchorPoint.y + (point.y - anchorPoint.y) * t,
+        );
+        worst = Math.max(worst, Math.abs(h - previous));
+        previous = h;
+      }
+      anchorPoint = point;
+    }
+    expect(worst).toBeLessThanOrEqual(MAX_STEP_HEIGHT);
   });
 });

@@ -69,8 +69,14 @@ the narrow one.
 
 `addStair` becomes two bakes in one stroke:
 
-1. **Carve** the quad out of the upper tier.
-2. **Bake** the flight into the same quad, in its own layer.
+1. **Bake** the flight into the quad, in its own layer.
+2. **Carve** the same quad out of the upper tier.
+
+In that order, and the order is load-bearing. `abortStroke` *discards* the
+recorded before-state rather than rolling back to it, so anything written ahead
+of a refusal stays written — carving first left a groove in the tier every time
+a flight was refused for being too short. The bake is the step that can refuse;
+nothing touches the tier until it has succeeded.
 
 Carving is what makes it a staircase cut into rock rather than a ramp propped
 against it. The tier's cut rim is a definite hole, so the mesher grows a wall

@@ -516,6 +516,20 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   let partAnchor: { x: number; z: number } | null = null;
   /** Where a tier drag started (spec 123). Null when none is in progress. */
   let rockAnchor: { x: number; z: number } | null = null;
+  /**
+   * The first of a stair's two edges, waiting for the second (spec 132).
+   *
+   * Held across strokes on purpose -- it is the one tool here that takes two
+   * drags -- and dropped whenever the tool or the mode changes, so a half-drawn
+   * flight cannot be finished by a gesture meant for something else.
+   */
+  let stairHead: {
+    line: [{ x: number; z: number }, { x: number; z: number }];
+    tierLayerId: string;
+    height: number;
+  } | null = null;
+  /** Shorter than this and a drag is a click, not an edge. */
+  const MIN_STAIR_EDGE = 8;
 
   /** Re-mesh a set of chunks, skipping the duplicates a drag produces. */
   const remesh = (dirty: readonly { cx: number; cz: number }[]): void => {
@@ -701,20 +715,43 @@ export function mountEditor(container: HTMLElement): ViewHandle {
     }
 
     if (settings.rockTool === 'stair') {
-      // The drag runs down the stairs, the way you would walk them: the anchor
-      // is the high end. Both heights are sampled before the stair exists, so
-      // they describe what it has to connect rather than itself.
-      // Read once, before the stair exists: after `syncLayers` the world
-      // includes the run itself, and sampling again would measure the thing
-      // that was just built rather than the two heights it connects.
-      const stairTop = scene.map.world.heightAt(a.x, a.z);
-      const stairBottom = scene.map.world.heightAt(b.x, b.z);
+      // Two lines, not a rectangle (spec 132): the first is where the flight
+      // meets the tier, the second is where its foot lands. Each is drawn *on*
+      // a layer and takes its height from that layer, which is the whole point
+      // -- the old tool raycast the ground under the two ends of one drag and
+      // could not tell tier top from the meadow behind it.
+      const mid = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 };
+      if (Math.hypot(b.x - a.x, b.z - a.z) < MIN_STAIR_EDGE) {
+        status = 'that edge is too short to be one -- drag out the width of the flight';
+        return;
+      }
+
+      if (!stairHead) {
+        const tier = rockLayerAt(store, mid.x, mid.z);
+        if (!tier) {
+          status = 'draw the first edge on a tier -- that is the rock the flight is cut into';
+          return;
+        }
+        stairHead = {
+          line: [{ x: a.x, z: a.z }, { x: b.x, z: b.z }],
+          tierLayerId: tier,
+          height: scene.map.world.heightAt(mid.x, mid.z),
+        };
+        status = `head on "${tier}" at ${Math.round(stairHead.height)} -- now draw the foot`;
+        return;
+      }
+
+      // Read before the flight exists: afterwards the world includes the run
+      // itself, and sampling again would measure what was just built rather
+      // than the thing it has to reach.
+      const head = stairHead;
+      stairHead = null;
+      const footHeight = scene.map.world.heightAt(mid.x, mid.z);
       const stair = addStair(store, history, {
-        footprint,
-        from: a,
-        to: b,
-        topHeight: stairTop,
-        bottomHeight: stairBottom,
+        edges: { top: head.line, foot: [{ x: a.x, z: a.z }, { x: b.x, z: b.z }] },
+        tierLayerId: head.tierLayerId,
+        topHeight: head.height,
+        bottomHeight: footHeight,
         seed: (scene.document.seed ^ 0x57a12) + store.layerIds.length,
         origin: scene.map.store.layerInfo(layerId)?.origin ?? { x: 0, z: 0 },
         propLayerId: layerId,
@@ -724,14 +761,23 @@ export function mountEditor(container: HTMLElement): ViewHandle {
         return;
       }
       scene.syncLayers();
+      // The notch took cells out of the tier, so that layer needs re-meshing
+      // too -- and its emptied chunks dropping, since a hole cut clean through
+      // one leaves nothing to draw.
+      const held = new Set(store.chunkCoords(head.tierLayerId).map((c) => `${c.cx},${c.cz}`));
+      const gone = store
+        .chunksInRect(head.tierLayerId, worldRectFrom(head.line[0], head.line[1]))
+        .filter((c) => !held.has(`${c.cx},${c.cz}`));
+      rebuiltAfterRock(head.tierLayerId, stair.created, gone);
       rebuiltAfterRock(stair.layerId, stair.created);
       if (stair.clearedProps > 0) {
         scene.refreshPropsWithin(footprint);
         for (const c of stair.propChunks) scene.rebuildChunk(layerId, c.cx, c.cz);
       }
       status =
-        `stair "${stair.layerId}": ${stair.cells} cells, climbing ` +
-        `${Math.round(Math.abs(stairTop - stairBottom))} in ${stair.risers} step(s)`;
+        `stair "${stair.layerId}": ${stair.cells} cells in ${stair.risers} step(s), ` +
+        `climbing ${Math.round(Math.abs(head.height - footHeight))}, ` +
+        `notched ${stair.notched} out of "${head.tierLayerId}"`;
       return;
     }
 

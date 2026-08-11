@@ -107,6 +107,14 @@ export interface CarveRockInput {
   readonly store: MapChunkStore;
   readonly layerId: string;
   readonly footprint: MapRect;
+  /**
+   * Narrows the cut to a shape inside `footprint` (spec 132).
+   *
+   * The remove tool passes nothing and takes the whole rectangle. Notching a
+   * flight into a tier passes the flight's own quad, so what comes out of the
+   * rock is the staircase's shape and the walls left around it are its flanks.
+   */
+  readonly contains?: (x: number, z: number) => boolean;
 }
 
 export interface CarvedRock {
@@ -305,14 +313,151 @@ export function paintGroundUnder(
   return [...dirty.values()];
 }
 
+// --- the quad between two lines (spec 132) ---------------------------------
+
+/** The two edges a flight is drawn from: where it meets the tier, and its foot. */
+export interface StairEdges {
+  /** The head of the flight, drawn on the upper layer. */
+  readonly top: readonly [MapPoint, MapPoint];
+  /** The foot, drawn on whatever it lands on. */
+  readonly foot: readonly [MapPoint, MapPoint];
+}
+
+/**
+ * The flight's plan: the quad between the two lines, and where a point sits
+ * in it.
+ *
+ * Built once and then asked, rather than recomputed per cell, because the bake
+ * asks both questions at every cell centre and every chunk corner it touches.
+ */
+export interface StairPlan {
+  /** The four corners, top edge first, in order around the quad. */
+  readonly corners: readonly MapPoint[];
+  /** Bounding rectangle, which is the cell range the bake has to walk. */
+  readonly bounds: MapRect;
+  /**
+   * The run measured where it is shortest.
+   *
+   * A flight between two lines that are not parallel has less run on one side
+   * than the other, and a step that fits at the wide end is a cliff at the
+   * narrow one -- so this, and not the average, is what has to hold the steps.
+   */
+  readonly narrowestRun: number;
+  /** True when a cell centre belongs to the flight. */
+  contains(x: number, z: number): boolean;
+  /** 0 along the top edge, 1 along the foot, clamped outside. */
+  runAt(x: number, z: number): number;
+}
+
+function cross(ax: number, az: number, bx: number, bz: number): number {
+  return ax * bz - az * bx;
+}
+
+/** Which side of the line `a -> b` a point falls on; sign is all that is read. */
+function side(a: MapPoint, b: MapPoint, x: number, z: number): number {
+  return cross(b.x - a.x, b.z - a.z, x - a.x, z - a.z);
+}
+
+/**
+ * The plan a pair of drawn lines describes, or null when they do not describe
+ * one (spec 132).
+ *
+ * Endpoints are paired by whichever of the two pairings spans less in total, so
+ * a head dragged left-to-right against a foot dragged right-to-left is the same
+ * flight rather than a bow tie. What is left after that pairing can still fail
+ * to be a flight -- a zero-length line, two lines that cross, a foot drawn
+ * behind the head -- and all of those come back null for the caller to refuse
+ * in its own words.
+ */
+export function stairPlan(edges: StairEdges): StairPlan | null {
+  const [t0, t1] = edges.top;
+  const [rawF0, rawF1] = edges.foot;
+  const span = (a: MapPoint, b: MapPoint): number => Math.hypot(b.x - a.x, b.z - a.z);
+  if (span(t0, t1) <= 0 || span(rawF0, rawF1) <= 0) return null;
+
+  const straight = span(t0, rawF0) + span(t1, rawF1);
+  const crossed = span(t0, rawF1) + span(t1, rawF0);
+  const f0 = crossed < straight ? rawF1 : rawF0;
+  const f1 = crossed < straight ? rawF0 : rawF1;
+
+  const corners = [t0, t1, f1, f0];
+  // Convex, which is what rules out the two ways a pair of lines fails to
+  // enclose a flight: crossing each other, and one folded back past the other.
+  let sign = 0;
+  for (let i = 0; i < 4; i++) {
+    const a = corners[i] as MapPoint;
+    const b = corners[(i + 1) % 4] as MapPoint;
+    const c = corners[(i + 2) % 4] as MapPoint;
+    const turn = cross(b.x - a.x, b.z - a.z, c.x - b.x, c.z - b.z);
+    if (turn === 0) continue;
+    if (sign === 0) sign = Math.sign(turn);
+    else if (Math.sign(turn) !== sign) return null;
+  }
+  if (sign === 0) return null;
+
+  // Unit normals, each pointing across the run at the other line. `runAt` is a
+  // ratio of these two distances rather than an inverse bilinear solve, and the
+  // reason is what it does at the ends of its range: parallel lines make the
+  // sum constant, so it is exactly the linear ramp the old axis projection was,
+  // and lines that meet make the loci of constant run straight lines through
+  // the meeting point, so the treads fan. Neither is a special case.
+  const normalOf = (a: MapPoint, b: MapPoint, towardX: number, towardZ: number): { x: number; z: number } => {
+    const length = span(a, b);
+    const nx = -(b.z - a.z) / length;
+    const nz = (b.x - a.x) / length;
+    const facing = nx * (towardX - a.x) + nz * (towardZ - a.z);
+    return facing < 0 ? { x: -nx, z: -nz } : { x: nx, z: nz };
+  };
+  const footMid = { x: (f0.x + f1.x) / 2, z: (f0.z + f1.z) / 2 };
+  const topMid = { x: (t0.x + t1.x) / 2, z: (t0.z + t1.z) / 2 };
+  const nTop = normalOf(t0, t1, footMid.x, footMid.z);
+  const nFoot = normalOf(f0, f1, topMid.x, topMid.z);
+
+  const distTop = (x: number, z: number): number => nTop.x * (x - t0.x) + nTop.z * (z - t0.z);
+  const distFoot = (x: number, z: number): number => nFoot.x * (x - f0.x) + nFoot.z * (z - f0.z);
+
+  let narrowestRun = Infinity;
+  for (const corner of corners) {
+    narrowestRun = Math.min(narrowestRun, distTop(corner.x, corner.z) + distFoot(corner.x, corner.z));
+  }
+  if (!(narrowestRun > 0)) return null;
+
+  const xs = corners.map((c) => c.x);
+  const zs = corners.map((c) => c.z);
+  return {
+    corners,
+    bounds: {
+      minX: Math.min(...xs),
+      minZ: Math.min(...zs),
+      maxX: Math.max(...xs),
+      maxZ: Math.max(...zs),
+    },
+    narrowestRun,
+    contains(x, z) {
+      for (let i = 0; i < 4; i++) {
+        const a = corners[i] as MapPoint;
+        const b = corners[(i + 1) % 4] as MapPoint;
+        if (side(a, b, x, z) * sign < 0) return false;
+      }
+      return true;
+    },
+    runAt(x, z) {
+      const a = distTop(x, z);
+      const b = distFoot(x, z);
+      const total = a + b;
+      if (total <= 0) return 0;
+      const t = a / total;
+      return t < 0 ? 0 : t > 1 ? 1 : t;
+    },
+  };
+}
+
 export interface BakeStairInput {
   readonly store: MapChunkStore;
   /** A stair layer of its own -- never the tier it serves. See below. */
   readonly layerId: string;
-  readonly footprint: MapRect;
-  /** The high end of the run, and the low end: the drag's own direction. */
-  readonly from: MapPoint;
-  readonly to: MapPoint;
+  /** Where the flight meets the tier, and where its foot lands (spec 132). */
+  readonly edges: StairEdges;
   readonly topHeight: number;
   readonly bottomHeight: number;
 }
@@ -388,45 +533,37 @@ export function stairRisers(climb: number): number {
  * would put rock where the author did not.
  */
 export function bakeStair(input: BakeStairInput): BakedRock {
-  const { store, layerId, footprint, from, to, topHeight, bottomHeight } = input;
+  const { store, layerId, edges, topHeight, bottomHeight } = input;
   const info = store.layerInfo(layerId);
   if (!info) throw new Error(`bakeStair: no layer ${layerId}`);
 
   const top = quantize(topHeight);
   const bottom = quantize(bottomHeight);
-  const axisX = to.x - from.x;
-  const axisZ = to.z - from.z;
-  const axisLength2 = axisX * axisX + axisZ * axisZ;
-  if (axisLength2 <= 0) throw new Error('bakeStair: the run has no direction');
+  const plan = stairPlan(edges);
+  if (!plan) throw new Error('bakeStair: those two lines do not enclose a flight');
 
+  const rock = materialIndex('rock');
+  const range = cellRange(plan.bounds, info.origin, store.cellSize);
+  if (!range) return { created: [], touched: [], bounds: info.bounds, cells: 0 };
+
+  const risers = stairRisers(top - bottom);
+  const shortest = minStairRun(top - bottom, store.cellSize);
+  if (plan.narrowestRun < shortest) {
+    throw new Error(
+      `bakeStair: a ${Math.round(Math.abs(top - bottom))}-unit climb needs ${risers} step(s) and ` +
+        `so ${Math.round(shortest)} of run -- these two lines are ${Math.round(plan.narrowestRun)} apart ` +
+        'at their closest',
+    );
+  }
   /**
-   * How far along the run a world point lies, clamped to the ends.
+   * Which tread a point belongs to, 0 at the head of the flight.
    *
    * Evaluated at a corner's *lattice* position, so it is a pure function of
    * world position and nothing else: two chunks that share a corner compute the
-   * same number, and no seam can open along a stair that crosses one.
+   * same number, and no seam can open along a flight that crosses one.
    */
-  const along = (x: number, z: number): number => {
-    const t = ((x - from.x) * axisX + (z - from.z) * axisZ) / axisLength2;
-    return t < 0 ? 0 : t > 1 ? 1 : t;
-  };
-
-  const rock = materialIndex('rock');
-  const range = cellRange(footprint, info.origin, store.cellSize);
-  if (!range) return { created: [], touched: [], bounds: info.bounds, cells: 0 };
-
-  const runLength = Math.sqrt(axisLength2);
-  const risers = stairRisers(top - bottom);
-  const shortest = minStairRun(top - bottom, store.cellSize);
-  if (runLength < shortest) {
-    throw new Error(
-      `bakeStair: a ${Math.round(Math.abs(top - bottom))}-unit climb needs ${risers} step(s) and ` +
-        `so a run of at least ${Math.round(shortest)} -- this one is ${Math.round(runLength)}`,
-    );
-  }
-  /** Which tread a point along the run belongs to, 0 at the top end. */
   const treadAt = (x: number, z: number): number =>
-    Math.min(risers, Math.floor(along(x, z) * (risers + 1)));
+    Math.min(risers, Math.floor(plan.runAt(x, z) * (risers + 1)));
 
   const cells = store.chunkCells;
   const created: ChunkCoord[] = [];
@@ -452,6 +589,12 @@ export function bakeStair(input: BakeStairInput): BakedRock {
           const col = startCol + i;
           if (col < range.minCol || col > range.maxCol) continue;
           const k = j * chunk.cols + i;
+          const x = info.origin.x + (col + 0.5) * store.cellSize;
+          const z = info.origin.z + (row + 0.5) * store.cellSize;
+          // The flight is the quad between the two lines, not the rectangle
+          // that bounds it (spec 132) -- so a cell in the corner of the bounding
+          // box, outside the run, stays a hole.
+          if (!plan.contains(x, z)) continue;
           // All of it rock (spec 131). The steps are geometry now, so they are
           // read by the light falling on a tread and not on the riser under it,
           // and a built thing is made of one material.
@@ -495,7 +638,7 @@ export function bakeStair(input: BakeStairInput): BakedRock {
 }
 
 export function carveRock(input: CarveRockInput): CarvedRock {
-  const { store, layerId, footprint } = input;
+  const { store, layerId, footprint, contains } = input;
   const info = store.layerInfo(layerId);
   if (!info) throw new Error(`carveRock: no layer ${layerId}`);
 
@@ -525,6 +668,11 @@ export function carveRock(input: CarveRockInput): CarvedRock {
           if (col < range.minCol || col > range.maxCol) continue;
           const k = j * chunk.cols + i;
           if (solid[k] !== 1) continue;
+          if (contains) {
+            const x = info.origin.x + (col + 0.5) * store.cellSize;
+            const z = info.origin.z + (row + 0.5) * store.cellSize;
+            if (!contains(x, z)) continue;
+          }
           solid[k] = 0;
           changed++;
         }

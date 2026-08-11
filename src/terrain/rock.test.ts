@@ -8,6 +8,7 @@ import {
   type MapChunk,
   type MapDocument,
   type MapLayer,
+  type MapPoint,
 } from './map.js';
 import { loadMap, MapChunkStore } from './map-world.js';
 import {
@@ -18,6 +19,7 @@ import {
   emptyRockLayer,
   formationAt,
   minStairRun,
+  stairPlan,
   stairRisers,
 } from './rock.js';
 import { isWalkable } from '../server/sim/movement.js';
@@ -354,14 +356,21 @@ describe('a stair up a tier (specs 124, 131)', () => {
     bakeStair({
       store,
       layerId: STAIR,
-      // Starting *on* the tier rather than at its rim, which is the gesture the
-      // editor makes -- press on top, drag out onto the ground. The overlap
-      // matters: two layers jitter their corners independently, so a run that
-      // stopped exactly at the face would leave a seam where neither is solid
-      // and `heightAt` fell through to the meadow underneath.
-      footprint: { minX: 0, minZ: 60, maxX: FACE + 20, maxZ: 100 },
-      from: { x: FACE + 20, z: 80 },
-      to: { x: 0, z: 80 },
+      // The head is drawn *on* the tier rather than at its rim, which is the
+      // gesture the editor makes. The overlap matters: two layers jitter their
+      // corners independently, so a flight that stopped exactly at the face
+      // would leave a seam where neither is solid and `heightAt` fell through to
+      // the meadow underneath.
+      edges: {
+        top: [
+          { x: FACE + 20, z: 60 },
+          { x: FACE + 20, z: 100 },
+        ],
+        foot: [
+          { x: 0, z: 60 },
+          { x: 0, z: 100 },
+        ],
+      },
       topHeight: TOP,
       bottomHeight: 0,
     });
@@ -502,13 +511,20 @@ describe('a stair up a tier (specs 124, 131)', () => {
       bakeStair({
         store,
         layerId: 'stair/2',
-        footprint: { minX: 0, minZ: 60, maxX: 45, maxZ: 100 },
-        from: { x: 45, z: 80 },
-        to: { x: 0, z: 80 },
+        edges: {
+          top: [
+            { x: 45, z: 60 },
+            { x: 45, z: 100 },
+          ],
+          foot: [
+            { x: 0, z: 60 },
+            { x: 0, z: 100 },
+          ],
+        },
         topHeight: TOP,
         bottomHeight: 0,
       }),
-    ).toThrow(/run of at least/);
+    ).toThrow(/of run/);
   });
 
   it('says how many steps a climb needs, and how long a run that wants', () => {
@@ -551,6 +567,147 @@ describe('a stair up a tier (specs 124, 131)', () => {
 
   it('is deterministic', () => {
     expect(serializeMap(withStair().toDocument())).toBe(serializeMap(withStair().toDocument()));
+  });
+
+  it('is the quad between the two edges, not the box around it', () => {
+    // A foot drawn well off to one side, so the bounding rectangle is much
+    // bigger than the flight and the difference is visible.
+    const store = wideStore();
+    bakeRock({ store, layerId: ROCK, footprint: { minX: FACE, minZ: 0, maxX: WIDE, maxZ: WIDE }, top: TOP });
+    store.addLayer(emptyRockLayer({ id: STAIR, seed: 9, origin: { x: 0, z: 0 }, baseY: -30 }));
+    bakeStair({
+      store,
+      layerId: STAIR,
+      edges: {
+        top: [
+          { x: FACE, z: 20 },
+          { x: FACE, z: 60 },
+        ],
+        foot: [
+          { x: 0, z: 100 },
+          { x: 0, z: 140 },
+        ],
+      },
+      topHeight: TOP,
+      bottomHeight: 0,
+    });
+    const plan = stairPlan({
+      top: [
+        { x: FACE, z: 20 },
+        { x: FACE, z: 60 },
+      ],
+      foot: [
+        { x: 0, z: 100 },
+        { x: 0, z: 140 },
+      ],
+    });
+    expect(plan).not.toBeNull();
+
+    // Every solid cell of the flight is inside the quad; the corners of the
+    // bounding box it is *not* in are holes.
+    const layer = store.toDocument().layers.find((l) => l.id === STAIR);
+    for (const chunk of layer?.chunks ?? []) {
+      const solid = decodeRuns(chunk.solid, chunk.cols * chunk.rows);
+      for (let j = 0; j < chunk.rows; j++) {
+        for (let i = 0; i < chunk.cols; i++) {
+          if (solid[j * chunk.cols + i] !== 1) continue;
+          const x = (chunk.cx * CHUNK_CELLS + i + 0.5) * CELL;
+          const z = (chunk.cz * CHUNK_CELLS + j + 0.5) * CELL;
+          expect(plan?.contains(x, z)).toBe(true);
+        }
+      }
+    }
+    // The far corner of the bounding box is outside the run.
+    expect(plan?.contains(FACE - 5, 135)).toBe(false);
+  });
+
+  it('builds the same flight whichever way the edges were dragged', () => {
+    const build = (reversed: boolean): string => {
+      const store = wideStore();
+      bakeRock({ store, layerId: ROCK, footprint: { minX: FACE, minZ: 0, maxX: WIDE, maxZ: WIDE }, top: TOP });
+      store.addLayer(emptyRockLayer({ id: STAIR, seed: 9, origin: { x: 0, z: 0 }, baseY: -30 }));
+      const top: [MapPoint, MapPoint] = [
+        { x: FACE + 20, z: 60 },
+        { x: FACE + 20, z: 100 },
+      ];
+      const foot: [MapPoint, MapPoint] = [
+        { x: 0, z: 60 },
+        { x: 0, z: 100 },
+      ];
+      bakeStair({
+        store,
+        layerId: STAIR,
+        edges: { top, foot: reversed ? [foot[1], foot[0]] : foot },
+        topHeight: TOP,
+        bottomHeight: 0,
+      });
+      return serializeMap(store.toDocument());
+    };
+    // Without the endpoint pairing this is a bow tie and the flight collapses.
+    expect(build(true)).toBe(build(false));
+  });
+
+  it('refuses two edges that cross', () => {
+    expect(
+      stairPlan({
+        top: [
+          { x: 0, z: 0 },
+          { x: 100, z: 0 },
+        ],
+        // Runs back through the head rather than facing it.
+        foot: [
+          { x: 50, z: -40 },
+          { x: 50, z: 40 },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it('refuses an edge that is a point', () => {
+    expect(
+      stairPlan({
+        top: [
+          { x: 0, z: 0 },
+          { x: 0, z: 0 },
+        ],
+        foot: [
+          { x: 0, z: 50 },
+          { x: 100, z: 50 },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it('fans the treads when the two edges are not parallel, and still walks', () => {
+    const store = wideStore();
+    bakeRock({ store, layerId: ROCK, footprint: { minX: FACE, minZ: 0, maxX: WIDE, maxZ: WIDE }, top: TOP });
+    store.addLayer(emptyRockLayer({ id: STAIR, seed: 9, origin: { x: 0, z: 0 }, baseY: -30 }));
+    // A narrow head opening out to a wide foot.
+    bakeStair({
+      store,
+      layerId: STAIR,
+      edges: {
+        top: [
+          { x: FACE + 20, z: 70 },
+          { x: FACE + 20, z: 90 },
+        ],
+        foot: [
+          { x: 0, z: 30 },
+          { x: 0, z: 130 },
+        ],
+      },
+      topHeight: TOP,
+      bottomHeight: 0,
+    });
+    const world = loadMap(store.toDocument()).world;
+    // Down the middle of the fan, every step is one a body may take -- which is
+    // the narrow end's constraint, since it has the least run to spend.
+    const heights = profile(world, 80);
+    let worst = 0;
+    for (let i = 1; i < heights.length; i++) {
+      worst = Math.max(worst, Math.abs((heights[i] ?? 0) - (heights[i - 1] ?? 0)));
+    }
+    expect(worst).toBeLessThan(MAX_STEP_HEIGHT);
   });
 });
 
