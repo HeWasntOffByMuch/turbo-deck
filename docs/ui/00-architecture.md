@@ -368,6 +368,22 @@ an `ItemSlot` and a `DragGhost` in `ui/widgets/`, `InventoryScreen` in
 boundary above -- one pure function, tested in Node. The predicted cost was
 right: the screen holds `ItemView` rows and has never heard of an `ItemStack`.
 
+**Phase 5, and the stat half of it.** `specs/128-a-bar-that-drains-without-a-relayout.md`
+landed the HUD, the skillbar and the character sheet, plus the one server change
+they needed: skill allocations on the `Stats` message, which had carried how many
+points were *left* and never what they had bought. The sheet's skill half is
+live; **base-stat allocation is not, and is not a UI decision** — `BaseStats` are
+chosen at creation and never recomputed, there is no allocate message and no
+respec rule to check one against. That is a server spec whenever somebody wants
+it, exactly as the container was.
+
+The phase also corrected a spec-124 declaration: the `hud` layer was
+`interactive: false`, which made the comment beside it ("ignores the pointer
+except where a widget in it explicitly opts back in") describe a mechanism that
+could not exist — a non-interactive layer is skipped wholesale, so a skillbar in
+it could never be clicked. Transparency belongs to `pointerTransparent` on the
+layer and its contents, which is where it already was for every other layer.
+
 What is still not done, and is deliberately nobody's phase yet: **nothing mounts
 a `UiRoot` over the Play tab.** Phases 1-4 all deliver to the gallery, which is
 where the goldens and the cross-backend comparison live. Putting the framework on

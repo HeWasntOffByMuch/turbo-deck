@@ -23,9 +23,10 @@ src/ui/
   theme/     theme.json, its schema, the atlas source                       pure
   widgets/   Panel, Label, Button, Icon, Checkbox, Slider, TextField,
              ScrollView, Separator, Window, Tabs, Tooltip, ItemSlot,
-             DragGhost                                                      pure
+             DragGhost, Meter, SkillSlot                                    pure
   input/     the action registry, the key map and its persistence            pure
-  screens/   the keybinding window, the inventory                           pure
+  screens/   the keybinding window, the inventory, the HUD, the character
+             sheet                                                          pure
   gallery/   the three QA scenes and their goldens                          pure
   render/    atlas.ts, raster.ts (software), canvas2d.ts (browser)          only canvas2d is impure
 ```
@@ -296,11 +297,38 @@ Item art is `ITEM_ICONS` in `theme/atlas-source.ts`, 12x12 rather than the 7x7
 the signs use, and baked under `item:<name>`. An id with no art draws
 `item:unknown`, because a content edit must not be able to crash the interface.
 
+## Things that change every frame (phase 5)
+
+The HUD is the first screen that is updated sixty times a second rather than on
+a click, and there is exactly one rule to follow:
+
+> **Anything that changes every frame is a plain field read at paint time. It
+> never invalidates layout.**
+
+```ts
+hud.setView(hudViewOf({ health, maxHealth, resource, maxResource, cooldowns, tick, ... }));
+```
+
+- `Meter.fraction` and `SkillSlot`'s sweep are fields with no setters. A bar
+  draining is one solid quad; a cooldown running is one more. Neither touches a
+  dirty flag, so a fight costs **zero** layout passes — `screens/hud.test.ts`
+  drives a hundred frames of changing numbers and asserts the counter never
+  moves. That assertion is the whole justification for retained mode.
+- What *does* invalidate is structural: an ability appearing in a slot, a cast
+  bar becoming visible. Twice per cast, not sixty times a second.
+- **The HUD does not eat the pointer.** Everything in it is
+  `pointerTransparent` except the slots. The `hud` layer became `interactive`
+  in this phase — it had been `interactive: false`, which made the comment
+  beside it ("ignores the pointer except where a widget opts back in")
+  describe a mechanism that could not exist.
+- **`canSpend` is answered by the server's own `validateSkillSpend`**, through
+  the adapter. A greyed-out button and a refused request cannot disagree, and
+  the tooltip explaining why is the server's own words.
+
 ## What is not here yet
 
 | Want | Phase | Note |
 |---|---|---|
-| Skillbar, HUD, character sheet | 5 | replacing the DOM HUD is a redesign, not a port |
 | Shops, trading, dialogs | 6 | also needs currency and trade on the wire |
 | Tweening, sound hooks, reduce-motion | 7 | |
 | The framework mounted in the Play tab | — | nothing mounts a `UiRoot` over the world yet; the gallery is still the only surface, and that seam wants a spec of its own |
@@ -424,3 +452,38 @@ answer.
 A tick and a close cross are perfectly clear at seven pixels; a sword and a staff
 are not distinguishable at all. Scaling the 7x7 grid would give blocky signs and
 still-illegible objects, so the atlas bakes two sizes under two namespaces.
+
+---
+
+## ADR notes for phase 5
+
+**ADR-117 — Nothing in this framework blends.**
+Every palette colour is opaque and every quad is drawn at full alpha. Not a style
+preference: a source-over blend is the one operation the software rasterizer and
+a browser canvas cannot be made to agree on byte for byte, and the cross-backend
+check caught it on the first translucent thing ever drawn here — a cooldown
+scrim, `rgb(20,18,26)` against `rgb(19,17,26)`. A "dimmed" look is a darker
+*opaque* token, and `budget.test.ts` asserts no draw command in any scene carries
+an alpha below 255.
+
+**ADR-118 — A cooldown is a vertical wipe, not a radial sweep.**
+The radial version is what every game uses and it needs a triangle fan or a mask;
+this draw list is rects and sprites. At twenty pixels a wipe reads as "filling
+back up" exactly as well and costs one quad.
+
+**ADR-119 — Captions are drawn in the body face, not the numeric one.**
+The numeric face is the game's damage-number font and its glyph table is
+`0123456789+-!`. It cannot spell `84/120`, and the first golden of a health bar
+showed exactly that: the slash silently missing. Anything with punctuation in it
+gets the 6x10 face, which is why a captioned bar is twelve pixels tall.
+
+**ADR-120 — A `Meter` does not `layoutGrow`.**
+A bar is thin along one axis and only its container knows which. Growing inside a
+`Column` stretched the experience bar into a green rectangle the height of the
+panel — visible in the first golden, and invisible in every unit test, because
+nothing about it is wrong until it is drawn.
+
+**ADR-121 — On cooldown and cannot-afford are drawn differently.**
+They look like the same "unavailable" state and they are two different problems
+with two different fixes — wait, or spend less. A single grey is a slot that
+tells you it will not fire and refuses to say why.
