@@ -70,6 +70,13 @@ import {
   SpawnerStateValue,
 } from './net/protocol.js';
 import { DEFAULT_SPAWN, PlayerManager } from './player/player-manager.js';
+import {
+  inTradeRange,
+  isSwappable,
+  partiesOf,
+  TradeRegistry,
+  type Trade,
+} from './player/trades.js';
 import { MemoryDataStore } from './state/memory-store.js';
 import type { DataStore } from './state/store.js';
 import type { Vec3 } from './state/types.js';
@@ -99,6 +106,7 @@ import { ChunkBudget, decideChunkRequest } from './world/map-request.js';
 import { FLAT_TERRAIN, type TerrainSampler } from './world/terrain.js';
 import { ZoneManager } from './world/zone-manager.js';
 import { buyPrice } from './data/vendors.js';
+import { TradeStageValue } from './net/protocol.js';
 
 export interface GameServerOptions {
   readonly seed?: number;
@@ -241,6 +249,8 @@ export class GameServer implements AdminHost {
   private readonly config = new LiveConfigStore();
   private readonly chunks: ChunkManager;
   private readonly players: PlayerManager;
+  /** Open trades, and the one-trade-per-player rule (spec 132). */
+  private readonly trades = new TradeRegistry();
   private readonly audit: AuditLog;
   private readonly admin: AdminRouter;
   private readonly loop: TickLoop;
@@ -512,6 +522,62 @@ export class GameServer implements AdminHost {
         break;
       }
 
+      case ClientMessageType.TradeInvite: {
+        if (connection.playerId === null) return;
+        const them = this.players.byEntityId(message.entityId);
+        if (!them) {
+          this.reportAction(connection, 'there is nobody there to trade with');
+          break;
+        }
+        const result = this.trades.invite(connection.playerId, them.playerId);
+        if (!result.ok) this.reportAction(connection, result.reason);
+        else this.publishTrade(result.trade);
+        break;
+      }
+
+      case ClientMessageType.TradeRespond: {
+        if (connection.playerId === null) return;
+        const result = this.trades.respond(connection.playerId, message.accept);
+        if (!result.ok) this.reportAction(connection, result.reason);
+        else this.publishTrade(result.trade);
+        break;
+      }
+
+      case ClientMessageType.TradeOffer: {
+        if (connection.playerId === null) return;
+        const holdings = this.players.holdingsOf(connection.playerId);
+        if (!holdings) return;
+        const result = this.trades.setOffer(connection.playerId, message.slots, message.coins, holdings);
+        if (!result.ok) this.reportAction(connection, result.reason);
+        else this.publishTrade(result.trade);
+        break;
+      }
+
+      case ClientMessageType.TradeAccept: {
+        if (connection.playerId === null) return;
+        const result = this.trades.accept(connection.playerId, message.revision);
+        if (!result.ok) {
+          this.reportAction(connection, result.reason);
+          break;
+        }
+        // Published before the swap runs, so both clients see the acceptance
+        // even when the exchange is then refused -- and then see why.
+        this.publishTrade(result.trade);
+        // Only once *both* sides have agreed. Settling on every acceptance runs
+        // the swap against a table one side has not answered, which refuses --
+        // and a refused settle cancels the trade, so the first player to say yes
+        // was ending it.
+        if (isSwappable(result.trade)) await this.settleTrade(result.trade);
+        break;
+      }
+
+      case ClientMessageType.TradeCancel: {
+        if (connection.playerId === null) return;
+        const ended = this.trades.cancelFor(connection.playerId, 'cancelled');
+        if (ended) this.endTrade(ended);
+        break;
+      }
+
       case ClientMessageType.SpendSkillPoint: {
         if (connection.playerId === null) return;
         const result = await this.players.spendSkillPoint(connection.playerId, message.skillId);
@@ -743,6 +809,13 @@ export class GameServer implements AdminHost {
 
   private async disconnect(connection: Connection): Promise<void> {
     if (!this.connections.has(connection)) return;
+    // Before the connection leaves the set, so the *other* side is still told
+    // (spec 132). A trade that outlived a disconnect would be a trade nobody
+    // can cancel and an item nobody can get back.
+    if (connection.playerId !== null) {
+      const ended = this.trades.cancelFor(connection.playerId, 'they disconnected');
+      if (ended) this.endTrade(ended);
+    }
     this.connections.delete(connection);
     if (connection.entityId >= 0) {
       this.chunks.remove(connection.entityId);
@@ -914,6 +987,141 @@ export class GameServer implements AdminHost {
     });
   }
 
+  // --- trade (spec 132) --------------------------------------------------
+
+  /** The stage byte the wire carries, from the stage the rules use. */
+  private static readonly TRADE_STAGES: Readonly<Record<Trade['stage'], number>> = {
+    offered: TradeStageValue.Offered,
+    open: TradeStageValue.Open,
+    confirmed: TradeStageValue.Confirmed,
+    done: TradeStageValue.Done,
+    cancelled: TradeStageValue.Cancelled,
+  };
+
+  /**
+   * Tell both sides where the trade now stands.
+   *
+   * Both, on every change, and each from their own point of view -- `you` is
+   * always the player being sent to. A client never derives what the other
+   * player is offering; it is told, and what it draws is what the server would
+   * swap.
+   */
+  private publishTrade(trade: Trade): void {
+    for (const playerId of partiesOf(trade)) {
+      const connection = this.connectionForPlayer(playerId);
+      if (!connection) continue;
+      const mine = trade.a.playerId === playerId;
+      this.send(connection, {
+        type: ServerMessageType.TradeState,
+        tradeId: trade.id,
+        stage: GameServer.TRADE_STAGES[trade.stage],
+        revision: trade.revision,
+        you: this.tradeSideView(mine ? trade.a : trade.b, trade.revision),
+        them: this.tradeSideView(mine ? trade.b : trade.a, trade.revision),
+        reason: trade.reason,
+      });
+    }
+  }
+
+  /**
+   * One side, resolved to items.
+   *
+   * Resolved here rather than sent as slot indices, because the other player
+   * cannot see into your bag and a bare index would mean nothing to them. A slot
+   * that has since emptied resolves to nothing, which is honest: it is exactly
+   * what the swap will refuse over.
+   */
+  private tradeSideView(
+    side: Trade['a'],
+    revision: number,
+  ): { playerId: string; displayName: string; offer: { defId: string; count: number }[]; coins: number; accepted: boolean } {
+    const session = this.players.get(side.playerId);
+    const bag = session?.record.inventory ?? [];
+    const offer: { defId: string; count: number }[] = [];
+    for (const entry of side.offer) {
+      const stack = bag[entry.index];
+      if (stack) offer.push({ defId: stack.defId, count: Math.min(entry.count, stack.count) });
+    }
+    return {
+      playerId: side.playerId,
+      displayName: session?.displayName ?? side.playerId,
+      offer,
+      coins: side.coins,
+      accepted: side.acceptedRevision === revision,
+    };
+  }
+
+  /**
+   * Run the exchange if both sides have agreed, and tell everyone either way.
+   *
+   * The order is the safety argument. The swap is computed from both players'
+   * current holdings; only if it succeeds are both written, in one call that
+   * assigns both before awaiting anything. A refusal cancels the trade with the
+   * reason attached, because a confirmed trade that silently did not happen is
+   * the worst of the three outcomes.
+   */
+  private async settleTrade(trade: Trade): Promise<void> {
+    const [aId, bId] = partiesOf(trade);
+    const a = this.players.holdingsOf(aId);
+    const b = this.players.holdingsOf(bId);
+    if (!a || !b) {
+      const ended = this.trades.cancelById(trade.id, 'one of you left');
+      if (ended) this.endTrade(ended);
+      return;
+    }
+
+    const result = this.trades.settle(trade, a, b);
+    if (!result.ok) {
+      const ended = this.trades.cancelById(trade.id, result.reason);
+      if (ended) this.endTrade(ended);
+      return;
+    }
+
+    const written = await this.players.applyTrade(aId, bId, result.a, result.b);
+    if (!written.ok) {
+      const ended = this.trades.cancelById(trade.id, written.reason);
+      if (ended) this.endTrade(ended);
+      return;
+    }
+
+    this.endTrade(this.trades.finish(trade));
+    for (const playerId of [aId, bId]) {
+      const connection = this.connectionForPlayer(playerId);
+      if (!connection) continue;
+      this.sendInventory(connection, 0);
+      this.sendStats(connection);
+    }
+  }
+
+  /** Tell both sides a trade is over, then stop holding it. */
+  private endTrade(trade: Trade): void {
+    this.publishTrade(trade);
+    this.trades.forget(trade.id);
+  }
+
+  /**
+   * The per-tick check: a trade ends when the players walk apart.
+   *
+   * On the tick rather than on a timer, because "how far apart are they" is a
+   * question about the simulation and the simulation is what advances in ticks.
+   * A player who has logged out has no session, which ends it too.
+   */
+  private sweepTrades(): void {
+    for (const trade of this.trades.live()) {
+      const [aId, bId] = partiesOf(trade);
+      const a = this.players.get(aId);
+      const b = this.players.get(bId);
+      if (!a || !b) {
+        const ended = this.trades.cancelById(trade.id, 'one of you left');
+        if (ended) this.endTrade(ended);
+        continue;
+      }
+      if (inTradeRange(a.record.position, b.record.position)) continue;
+      const ended = this.trades.cancelById(trade.id, 'you walked too far apart');
+      if (ended) this.endTrade(ended);
+    }
+  }
+
   // --- the tick ----------------------------------------------------------
 
   /** One authoritative step. Public so tests can drive it without a clock. */
@@ -1052,6 +1260,10 @@ export class GameServer implements AdminHost {
     }
 
     this.handleRespawns();
+    // Positions have just been mirrored back into the records, so this is the
+    // one moment in the tick where "how far apart are they" is answerable from
+    // the same numbers the sim used (spec 132).
+    this.sweepTrades();
 
     // Corrections and combat results go out the tick they happen -- they are
     // rare and latency is the whole point of them. Deltas are the bulk traffic
@@ -1206,6 +1418,14 @@ export class GameServer implements AdminHost {
           break;
         }
         case 'died': {
+          // A dead player is not at the table (spec 132). Before the experience
+          // award below, and before the `killerId` guard, because a player who
+          // died to a fall or to something with no killer is just as dead.
+          const dying = this.players.byEntityId(event.entityId);
+          if (dying) {
+            const ended = this.trades.cancelFor(dying.playerId, 'they were killed');
+            if (ended) this.endTrade(ended);
+          }
           if (event.killerId === null) break;
           const killer = this.players.byEntityId(event.killerId);
           const victim = this.state.entities.get(event.entityId);

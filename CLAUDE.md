@@ -392,7 +392,21 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  deterministic tick, world/ is chunking and zones, player/ derives
                  stats from ids and levels, state/ is the swappable DataStore,
                  admin/ is the token-gated admin namespace, client/ is the
-                 transport-agnostic session the renderer draws from. data/ holds
+                 transport-agnostic session the renderer draws from.
+                 player/trade.ts and trades.ts are the first exchange with two
+                 owners (spec 132), and the difference from the shop is not size:
+                 its failure mode is *duplication* rather than a wrong number, so
+                 the swap is one pure function returning four whole containers --
+                 both sides computed and checked before either is written, so
+                 there is no state in which one bag has been debited and the other
+                 has not. An acceptance names a revision and every edit bumps it,
+                 which turns the swap-it-at-the-last-instant scam into a
+                 mechanical impossibility rather than a race worth timing; and an
+                 offer names *slots*, resolved against the bag at swap time, so a
+                 bag that changed underneath refuses the whole trade instead of
+                 trading whatever is in that slot now. The property test counts
+                 both players together, because a swap that duplicated a sword
+                 leaves each bag individually plausible. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
                  `npm run server`, and `npm run server:bots` for load.
