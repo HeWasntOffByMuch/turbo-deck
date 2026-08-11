@@ -747,6 +747,61 @@ export class MapChunkStore {
   }
 
   /**
+   * Every chunk a world rectangle touches, in coordinates (spec 121).
+   *
+   * The rectangular counterpart of `chunksWithin`, and there for the same
+   * reason: a tool has to snapshot for undo before it mutates. A tier is drawn
+   * as a rectangle, and approximating one with the circle that contains it
+   * would capture -- and then clear -- ground well outside what was drawn.
+   */
+  chunksInRect(layerId: string, rect: MapRect): ChunkCoord[] {
+    const layer = this.layers.get(layerId);
+    if (!layer) return [];
+    const out: ChunkCoord[] = [];
+    for (const chunk of layer.chunks.values()) {
+      const maxX = chunk.originX + chunk.cols * this.cellSize;
+      const maxZ = chunk.originZ + chunk.rows * this.cellSize;
+      if (maxX < rect.minX || chunk.originX > rect.maxX) continue;
+      if (maxZ < rect.minZ || chunk.originZ > rect.maxZ) continue;
+      out.push({ cx: chunk.cx, cz: chunk.cz });
+    }
+    return out;
+  }
+
+  /**
+   * Remove props whose **centre** lies inside a world rectangle (spec 121).
+   *
+   * Centre rather than footprint overlap, matching `removePropsWithin`: a
+   * footprint test makes a big tree vanish while its trunk is well outside the
+   * rectangle, which reads as the tool having a mind of its own.
+   *
+   * This is what stops a formation being drawn straight through a stand of
+   * trees. They are planted on the ground layer and know nothing about a slab
+   * arriving above them, so somebody has to take them out, and the tool that
+   * put the rock there is the one that knows where it went.
+   */
+  removePropsInRect(layerId: string, rect: MapRect): { removed: Prop[]; dirty: ChunkCoord[] } {
+    const layer = this.layers.get(layerId);
+    if (!layer) return { removed: [], dirty: [] };
+    const removed: Prop[] = [];
+    const dirty: ChunkCoord[] = [];
+    for (const { cx, cz } of this.chunksInRect(layerId, rect)) {
+      const chunk = layer.chunks.get(key(cx, cz));
+      if (!chunk) continue;
+      const kept = chunk.props.filter((prop) => {
+        const inside = prop.x >= rect.minX && prop.x <= rect.maxX && prop.y >= rect.minZ && prop.y <= rect.maxZ;
+        if (inside) removed.push(prop);
+        return !inside;
+      });
+      if (kept.length === chunk.props.length) continue;
+      chunk.props.length = 0;
+      chunk.props.push(...kept);
+      dirty.push({ cx, cz });
+    }
+    return { removed, dirty };
+  }
+
+  /**
    * Every chunk a circle can reach, in coordinates.
    *
    * Exists so an editing tool can snapshot for undo *before* it mutates. A tool

@@ -46,7 +46,14 @@ function groundChunk(cx: number, cz: number): MapChunk {
     solid: [1, cells],
     materials: [2, cells],
     tones: [0, cells],
-    props: [],
+    // Four trees spread across the chunk, so a footprint can take some and
+    // leave others.
+    props: [
+      { species: 'tree', x: 5, z: 5, rotation: 0, scale: 1, tint: 0 },
+      { species: 'tree', x: 15, z: 15, rotation: 0, scale: 1, tint: 0 },
+      { species: 'tree', x: 25, z: 25, rotation: 0, scale: 1, tint: 0 },
+      { species: 'tree', x: 35, z: 35, rotation: 0, scale: 1, tint: 0 },
+    ],
     markers: [],
     nav: null,
   };
@@ -371,5 +378,84 @@ describe('finding the tier under a point', () => {
     });
     expect(rockLayerAt(store, 30, 30)).toBe('rock/2');
     expect(rockLayerAt(store, 10, 10)).toBe('rock/1');
+  });
+});
+
+describe('the trees under a tier', () => {
+  const addClearing = (
+    store: MapChunkStore,
+    history: EditHistory,
+    footprint = { minX: 0, minZ: 0, maxX: 20, maxZ: 20 },
+  ) =>
+    addRock(store, history, {
+      layerId: TIER,
+      footprint,
+      top: TOP,
+      baseY: -20,
+      seed: 7,
+      origin: { x: 0, z: 0 },
+      propLayerId: GROUND,
+    });
+
+  it('are taken out from under it, so nothing stands inside the rock', () => {
+    const { store, history } = setup();
+    const before = store.props(GROUND).length;
+    const result = addClearing(store, history);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.clearedProps).toBeGreaterThan(0);
+    expect(store.props(GROUND).length).toBe(before - result.clearedProps);
+  });
+
+  it('are left alone outside the footprint', () => {
+    const { store, history } = setup();
+    addClearing(store, history);
+    // The trees at 25,25 and 35,35 are outside a 0..20 rectangle.
+    const left = store.props(GROUND).map((p) => `${p.x},${p.y}`);
+    expect(left).toContain('25,25');
+    expect(left).toContain('35,35');
+    expect(left).not.toContain('5,5');
+  });
+
+  it('come back with one undo, along with the rock', () => {
+    const { store, history, before } = setup();
+    const result = addClearing(store, history);
+    expect(result.ok).toBe(true);
+
+    history.undo(store);
+    // Byte for byte: the trees, the tier and the layer all in one stroke.
+    expect(serializeMap(store.toDocument())).toBe(before);
+  });
+
+  it('are left standing when the tier is refused', () => {
+    const { store, history, before } = setup();
+    addClearing(store, history);
+    const settled = store.props(GROUND).length;
+
+    // A second height in the same tier: refused, and it must not eat a stand of
+    // trees on its way out.
+    const refused = addRock(store, history, {
+      layerId: TIER,
+      footprint: { minX: 20, minZ: 20, maxX: 40, maxZ: 40 },
+      top: TOP * 2,
+      baseY: -20,
+      seed: 7,
+      origin: { x: 0, z: 0 },
+      propLayerId: GROUND,
+    });
+    expect(refused.ok).toBe(false);
+    expect(store.props(GROUND).length).toBe(settled);
+    expect(before).not.toBe(serializeMap(store.toDocument()));
+  });
+
+  it('are left alone entirely when no prop layer is named', () => {
+    const { store, history } = setup();
+    const count = store.props(GROUND).length;
+    const result = add(store, history, { minX: 0, minZ: 0, maxX: 20, maxZ: 20 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.clearedProps).toBe(0);
+    expect(store.props(GROUND).length).toBe(count);
   });
 });

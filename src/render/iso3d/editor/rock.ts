@@ -140,6 +140,17 @@ export interface AddRockInput {
   readonly seed: number;
   /** Only read when the layer is created. Share the ground's, so grids align. */
   readonly origin: MapPoint;
+  /**
+   * The layer whose props are cleared under the footprint -- the ground.
+   *
+   * Trees are planted on the ground layer and know nothing about a slab
+   * arriving above them, so without this a tier is drawn straight through a
+   * stand of them. Cleared inside this call's own stroke, which is what makes
+   * undo put them back: a chunk snapshot carries its props.
+   *
+   * Omit to leave vegetation alone.
+   */
+  readonly propLayerId?: string;
 }
 
 export type AddRockResult =
@@ -151,6 +162,9 @@ export type AddRockResult =
       readonly created: readonly ChunkCoord[];
       readonly touched: readonly ChunkCoord[];
       readonly cells: number;
+      /** Props taken out from under it, and the ground chunks they stood on. */
+      readonly clearedProps: number;
+      readonly propChunks: readonly ChunkCoord[];
     }
   | { readonly ok: false; readonly reason: string };
 
@@ -188,6 +202,14 @@ export function addRock(store: MapChunkStore, history: EditHistory, input: AddRo
   // afterwards, and by then their arrays are the baked ones -- a snapshot taken
   // then would restore the change rather than undo it.
   for (const c of store.chunkCoords(input.layerId)) history.captureChunk(store, input.layerId, c.cx, c.cz);
+  // The ground under it too, before a single prop is removed. Captured even if
+  // the bake goes on to refuse -- `abortStroke` throws the whole entry away, so
+  // capturing too much is free and capturing too late is not recoverable.
+  if (input.propLayerId !== undefined) {
+    for (const c of store.chunksInRect(input.propLayerId, input.footprint)) {
+      history.captureChunk(store, input.propLayerId, c.cx, c.cz);
+    }
+  }
 
   let baked;
   try {
@@ -212,6 +234,13 @@ export function addRock(store: MapChunkStore, history: EditHistory, input: AddRo
   // that then refused would be an undo slot spent on nothing.
   if (!existed) history.captureAddedLayer(input.layerId);
   for (const c of baked.created) history.captureCreated(input.layerId, c.cx, c.cz);
+
+  // Only once the tier has actually committed: a refusal must not eat a stand
+  // of trees on its way out.
+  const cleared =
+    input.propLayerId === undefined
+      ? { removed: [], dirty: [] }
+      : store.removePropsInRect(input.propLayerId, input.footprint);
   history.endStroke();
 
   return {
@@ -221,6 +250,8 @@ export function addRock(store: MapChunkStore, history: EditHistory, input: AddRo
     created: baked.created,
     touched: baked.touched,
     cells: baked.cells,
+    clearedProps: cleared.removed.length,
+    propChunks: cleared.dirty,
   };
 }
 

@@ -122,7 +122,7 @@ async function main(): Promise<void> {
     await page.screenshot({ path: join(outDir, 'editor-rock-armed.png') });
 
     // Drag out the first tier over ground that is already there.
-    await drag(page, [430, 330], [700, 520]);
+    await drag(page, [330, 250], [820, 600]);
     const mid = await readStatus(page);
     check('the drag reports the rectangle it will bake', /\d+ x \d+/.test(mid), /(\d+ x \d+)/.exec(mid)?.[1] ?? mid);
     await page.screenshot({ path: join(outDir, 'editor-rock-selecting.png') });
@@ -132,6 +132,13 @@ async function main(): Promise<void> {
     const afterFirst = await readStatus(page);
     const first = /tier "(rock\/\d+)": (\d+) cells at (-?\d+)/.exec(afterFirst);
     check('releasing commits the tier', first !== null, first ? first[0] : afterFirst);
+    // Trees stand on the ground layer and know nothing about a slab arriving
+    // above them, so the tool that put the rock there has to take them out.
+    check(
+      'the trees under it are cleared',
+      /cleared \d+ props/.test(afterFirst),
+      /(cleared \d+ props)/.exec(afterFirst)?.[1] ?? 'no props cleared',
+    );
     await page.screenshot({ path: join(outDir, 'editor-rock-one.png') });
 
     // The tier just made should now be armed, so a second drag extends it.
@@ -147,7 +154,7 @@ async function main(): Promise<void> {
     const firstTop = Number(first?.[3] ?? '0');
     await page.selectOption('select:near(:text("Tier"))', '').catch(() => undefined);
     await page.waitForTimeout(200);
-    await drag(page, [500, 380], [630, 470]);
+    await drag(page, [500, 380], [700, 500]);
     await page.mouse.up();
     await page.waitForTimeout(1200);
     const afterSecond = await readStatus(page);
@@ -173,7 +180,7 @@ async function main(): Promise<void> {
     await page.screenshot({ path: join(outDir, 'editor-rock-undone.png') });
 
     // Re-draw one, then carve a bite out of it with the remove tool.
-    await drag(page, [430, 330], [700, 520]);
+    await drag(page, [330, 250], [820, 600]);
     await page.mouse.up();
     await page.waitForTimeout(1000);
     // `:visible` matters: the parts folder has a "remove" of its own and a
@@ -181,7 +188,7 @@ async function main(): Promise<void> {
     // rock mode is armed -- just hidden.
     await page.click('button[title="remove"]:visible');
     await page.waitForTimeout(300);
-    await drag(page, [450, 350], [560, 430]);
+    await drag(page, [380, 300], [560, 430]);
     await page.mouse.up();
     await page.waitForTimeout(1000);
     const afterCarve = await readStatus(page);

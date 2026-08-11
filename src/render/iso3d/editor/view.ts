@@ -716,6 +716,9 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       baseY: lo - BURY_DEPTH,
       seed: (scene.document.seed ^ 0x0c1177) + store.layerIds.length,
       origin: ground?.origin ?? { x: 0, z: 0 },
+      // Trees under a slab are trees standing inside it. Cleared in the same
+      // stroke, so one Ctrl+Z puts both the rock and the stand back.
+      propLayerId: layerId,
     });
     if (!added.ok) {
       status = `tier refused: ${added.reason}`;
@@ -729,7 +732,16 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       panel.refreshParts();
     }
     rebuiltAfterRock(added.layerId, [...added.created, ...added.touched]);
-    status = `tier "${added.layerId}": ${added.cells} cells at ${Math.round(hi + settings.rockHeight)}`;
+    if (added.clearedProps > 0) {
+      // Only the batches over the ground the tier covers, not every batch in
+      // the world -- the same region-sized invalidation a brush stroke uses
+      // (spec 086).
+      scene.refreshPropsWithin(footprint);
+      for (const c of added.propChunks) scene.rebuildChunk(layerId, c.cx, c.cz);
+    }
+    status =
+      `tier "${added.layerId}": ${added.cells} cells at ${Math.round(hi + settings.rockHeight)}` +
+      (added.clearedProps > 0 ? `, cleared ${added.clearedProps} props` : '');
   };
 
   /** Bake the armed recipe into a chunk rectangle. */
