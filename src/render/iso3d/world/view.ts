@@ -547,6 +547,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // same button.
     targetId = null;
     destination = scene.screenToWorld(cursor.x, cursor.y);
+    // And the only thing that says so on screen (spec 127): a wave where the
+    // click landed, which is over long before the walk is. Presentation only --
+    // the order above is what the sim hears, and it hears it either way.
+    scene.playMoveOrder(destination.x, destination.y);
     // And it withdraws from a blow, explicitly, rather than by implication
     // (spec 090). Spec 079's rule is that *asking to move* withdraws, and the
     // server reads that off the input's move vector -- but `moveIntent` yields
@@ -940,10 +944,6 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       alpha,
       tick: drawnTick,
       selfFacing: facing,
-      // A chase re-points its destination every tick as the target moves, so
-      // marking it would strobe a diamond along the ground for the whole run.
-      // The ring under the target is the marker while one is being attacked.
-      destination: targetId === null && order === null ? destination : null,
       cursor,
       targetEntityId: targetId,
       aim: aimIndicator(view, view.self ?? { x: 0, y: 0 }),

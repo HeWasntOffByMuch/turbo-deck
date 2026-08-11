@@ -522,6 +522,48 @@ describe('the hit vocabulary', () => {
     }
   });
 
+  it('answers a walk order with the wavefront and nothing else', () => {
+    // Spec 127. An order threw no rock, lit no fire and left no mark, so the
+    // only thing here is the wave the shockwave shares.
+    const order = LIBRARY.find((effect) => effect.id === 'order_move');
+    expect(order?.emitters.map((emitter) => emitter.id)).toEqual(['wave', 'wave_halo']);
+    // The same two the shockwave's ring is, to the number: one wavefront in the
+    // library, not two that drift.
+    const shock = LIBRARY.find((effect) => effect.id === 'shockwave_ring');
+    for (const id of ['wave', 'wave_halo']) {
+      const mine = order?.emitters.find((emitter) => emitter.id === id);
+      const theirs = shock?.emitters.find((emitter) => emitter.id === id);
+      expect(mine?.lifetimeTicks, id).toEqual(theirs?.lifetimeTicks);
+      expect(mine?.blend, id).toBe(theirs?.blend);
+      expect(mine?.mesh?.shape, id).toBe(theirs?.mesh?.shape);
+    }
+  });
+
+  it('makes the order cue small, brief and undroppable', () => {
+    const order = LIBRARY.find((effect) => effect.id === 'order_move');
+    const selected = LIBRARY.find((effect) => effect.id === 'aura_selected');
+    const peak = Math.max(
+      ...(order?.emitters.flatMap((emitter) => emitter.size.keys.map(([, value]) => value)) ?? [0]),
+    );
+    // Inside the sigil a selected unit already stands on: this is a
+    // confirmation, not an ability.
+    const sigil = Math.max(
+      ...(selected?.emitters
+        .find((emitter) => emitter.id === 'ring')
+        ?.size.keys.map(([, value]) => value) ?? [0]),
+    );
+    expect(peak).toBeLessThan(sigil);
+    // It ends on its own, and nothing about it is a rate: an order's cue that
+    // outlived the click would be the marker again by another name.
+    for (const emitter of order?.emitters ?? []) {
+      expect(emitter.emission.kind, emitter.id).toBe('burst');
+      expect(emitter.lifetimeTicks[1], emitter.id).toBeLessThanOrEqual(40);
+    }
+    // Information about your own input, so never the thing dropped when the
+    // budget is tight.
+    expect(order?.priority).toBe(3);
+  });
+
   it('has a death for each archetype, and they differ', () => {
     const deaths = LIBRARY.filter((effect) => effect.id.startsWith('death_'));
     expect(deaths.map((effect) => effect.id).sort()).toEqual(['death_ash', 'death_collapse', 'death_dissolve']);

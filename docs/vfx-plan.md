@@ -1289,6 +1289,29 @@ Two things the sheet caught:
 - **The warm pool is a scorch, and frost does not scorch.** `glow` in ice colours
   is a dark blue stain under the wave. The shockwave turns it off.
 
+### And then the wave got a second job (spec 127)
+
+A right-click on the ground used to park a gold octahedron there for the whole
+walk. It answered "did my click land" in the first quarter second and was
+scenery for the rest, and it was the only thing on screen that was a *symbol*
+rather than something that happened.
+
+So the wave pair moved out of `burst` into `waveEmitters(scale, hot, warm)` and
+`order_move` is that pair on its own — no crystal, no rock, nothing thrown,
+because an order throws nothing. Priority 3 like a telegraph: two particles cost
+nothing, and a click whose answer was dropped under budget pressure reads as a
+click that missed.
+
+What the screenshots settled: **a wavefront has a smallest legible size**, and
+this one is deliberately under it. The ring mesh is a fixed fraction of its own
+radius thick, so below about a 30-unit peak radius it goes sub-pixel at the
+virtual resolution and arrives as a scatter of lit pixels opening outward
+instead of a closed ring. `order_move` peaks at 15. That is the call: the cue is
+read as a flash at a position rather than as a shape, and a *legible ring* at
+the destination is most of what was wrong with the marker it replaced. Worth
+knowing before anyone reaches for this scale on an effect that is meant to be
+looked at.
+
 ---
 
 ## 6. Damage-type colour and shape language

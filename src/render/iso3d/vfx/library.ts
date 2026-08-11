@@ -465,6 +465,55 @@ export interface BurstParams {
 }
 
 /**
+ * A wavefront on the floor (spec 126): a bright leading edge and a wider,
+ * fainter half-step behind it, expanding and fading.
+ *
+ * Additive, because a wavefront is light rather than an object -- and two of
+ * them rather than one because a single ring is a hoop, where the reference has
+ * an edge with a glow trailing it.
+ *
+ * Its own function rather than a block inside {@link burst} because spec 127
+ * plays the wave with nothing around it, and a wave authored twice is two waves
+ * that drift apart the first time one of them is tuned.
+ */
+export function waveEmitters(s: number, hot: PaletteKey, warm: PaletteKey): Emitter[] {
+  return [
+    {
+      id: 'wave',
+      shape: { kind: 'point' },
+      emission: { kind: 'burst', count: 1 },
+      lifetimeTicks: [26, 30],
+      speed: [0, 0],
+      size: { keys: [[0, s * 0.25], [0.55, s * 1.9], [1, s * 2.4]] },
+      alpha: { keys: [[0, 0.95], [0.5, 0.75], [1, 0]] },
+      color: { stops: [[0, hot], [1, warm]] },
+      render: 'mesh',
+      mesh: { shape: 'ring' },
+      blend: 'additive',
+      offset: { x: 0, y: 2.5, z: 0 },
+    },
+    {
+      id: 'wave_halo',
+      shape: { kind: 'point' },
+      emission: { kind: 'burst', count: 1 },
+      lifetimeTicks: [28, 34],
+      speed: [0, 0],
+      size: { keys: [[0, s * 0.2], [0.55, s * 1.65], [1, s * 2.15]] },
+      alpha: { keys: [[0, 0.4], [0.5, 0.3], [1, 0]] },
+      // It fades toward `warm`, never toward `cool`. A wavefront that ends on
+      // the ramp's dark end goes *saturated* rather than dim as it thins, and on
+      // frost colours that is a navy hoop lying on the ground after the effect
+      // is over -- which reads as something broken, not as something fading.
+      color: { stops: [[0, warm], [1, warm]] },
+      render: 'mesh',
+      mesh: { shape: 'ring' },
+      blend: 'additive',
+      offset: { x: 0, y: 2, z: 0 },
+    },
+  ];
+}
+
+/**
  * A burst: a crystal that opens and closes (spec 125).
  *
  * The reference for impacts is not a flash, it is a *shape* -- a faceted star at
@@ -600,44 +649,7 @@ export function burst(params: BurstParams): EffectDefinition {
     });
   }
 
-  if (params.ring) {
-    // The wave: a bright leading edge and a wider, fainter half-step behind it.
-    // Additive, because a wavefront is light rather than an object -- and two of
-    // them rather than one because a single ring is a hoop, where the reference
-    // has an edge with a glow trailing it.
-    emitters.push({
-      id: 'wave',
-      shape: { kind: 'point' },
-      emission: { kind: 'burst', count: 1 },
-      lifetimeTicks: [26, 30],
-      speed: [0, 0],
-      size: { keys: [[0, s * 0.25], [0.55, s * 1.9], [1, s * 2.4]] },
-      alpha: { keys: [[0, 0.95], [0.5, 0.75], [1, 0]] },
-      color: { stops: [[0, params.hot], [1, params.warm]] },
-      render: 'mesh',
-      mesh: { shape: 'ring' },
-      blend: 'additive',
-      offset: { x: 0, y: 2.5, z: 0 },
-    });
-    emitters.push({
-      id: 'wave_halo',
-      shape: { kind: 'point' },
-      emission: { kind: 'burst', count: 1 },
-      lifetimeTicks: [28, 34],
-      speed: [0, 0],
-      size: { keys: [[0, s * 0.2], [0.55, s * 1.65], [1, s * 2.15]] },
-      alpha: { keys: [[0, 0.4], [0.5, 0.3], [1, 0]] },
-      // It fades toward `warm`, never toward `cool`. A wavefront that ends on
-      // the ramp's dark end goes *saturated* rather than dim as it thins, and on
-      // frost colours that is a navy hoop lying on the ground after the effect
-      // is over -- which reads as something broken, not as something fading.
-      color: { stops: [[0, params.warm], [1, params.warm]] },
-      render: 'mesh',
-      mesh: { shape: 'ring' },
-      blend: 'additive',
-      offset: { x: 0, y: 2, z: 0 },
-    });
-  }
+  if (params.ring) emitters.push(...waveEmitters(s, params.hot, params.warm));
 
   if (params.glow !== false) {
     // The warm pool the reference scorches into the ground. Not a decal: the
@@ -803,6 +815,23 @@ export const LIBRARY: readonly EffectDefinition[] = [
   // The one a player must never miss. Louder in the same language: a still sigil
   // ringed with shafts, never a different vocabulary.
   aura({ id: 'aura_telegraph', color: 'auraTelegraph', radius: 110, spin: 0, shafts: 10, priority: 3 }),
+
+  // --- orders ----------------------------------------------------------------
+  // Where a walk order landed (spec 127). The wavefront on its own: no crystal,
+  // no rock, nothing thrown -- an order threw nothing. Small enough to sit
+  // inside a selected unit's own sigil, because it answers "my click landed
+  // there" and then stops existing; the standing order it began is drawn by
+  // nothing at all.
+  //
+  // Priority 3 for the same reason a telegraph is: it is information about your
+  // own input, two particles cost nothing, and a click whose answer was dropped
+  // under budget pressure reads as a click that missed.
+  {
+    id: 'order_move',
+    priority: 3,
+    cullDistance: 1400,
+    emitters: waveEmitters(6.5, 'sparkHot', 'auraSelected'),
+  },
 
   // --- explosions ------------------------------------------------------------
   // The reference, at full size: a crystal that opens, throws rock and leaves a

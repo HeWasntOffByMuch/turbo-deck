@@ -499,11 +499,24 @@ async function main(): Promise<void> {
     await page.waitForTimeout(120);
 
     // Right-click a point on the ground: the move order the game had before the
-    // server existed (spec 064). The marker should appear and the figure walk to it.
-    await page.mouse.click(420, 560, { button: 'right' });
-    await page.waitForTimeout(500);
+    // server existed (spec 064). A wave goes off where the click landed (spec
+    // 127) and the figure walks to it.
+    //
+    // Photographed a fifth of a second in, not half a second: the cue is a
+    // wavefront that lives about thirty ticks now rather than a marker that
+    // stands there, so the old delay caught the frame *after* it and would have
+    // reported the feature missing. Not at the click either -- the ring starts
+    // at a quarter of its size and this one is small, so the first few frames
+    // are a handful of lit pixels. Mid-life is where it is widest and still
+    // near full alpha.
+    // Open grass rather than the old point, which was on the wall slab: the cue
+    // lies *on the ground* now, so a click behind a waist-high wall is a cue
+    // behind a waist-high wall, and the frame showed a sliver of ring and a lot
+    // of stone.
+    await page.mouse.click(330, 620, { button: 'right' });
+    await page.waitForTimeout(220);
     await shoot(page, 'world-move-order');
-    await page.waitForTimeout(1400);
+    await page.waitForTimeout(1680);
     await shoot(page, 'world-walking');
 
     // A hotbar press is a question now (spec 080), not the commitment. The
@@ -527,7 +540,7 @@ async function main(): Promise<void> {
       problems.push('right-click did not cancel the aim');
     }
     // ...and it really did move nothing: a cancel that fell through to a move
-    // order would have put a marker on the ground and started a walk.
+    // order would have started a walk.
     if (((await page.textContent('body')) ?? '').includes('Heavy Blow: moving into range')) {
       problems.push('right-click turned the aim into an order instead of cancelling it');
     }
