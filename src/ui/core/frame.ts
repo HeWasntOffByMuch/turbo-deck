@@ -77,6 +77,18 @@ export function tapCostInUiPixels(dpr: number, scale: number): number {
 export interface AutoScaleOptions {
   /** The smallest viewport, in UI pixels, that every screen is designed to fit. */
   readonly minViewport: Size;
+  /**
+   * The viewport to aim for when the window can afford it.
+   *
+   * The difference between the two is the difference between "every screen
+   * survives this" and "this is the size to draw at", and conflating them is
+   * what made the first mounted interface twice as chunky as it wanted to be:
+   * `minViewport` is a floor, and a rule that maximised the scale against a
+   * floor put two windows across the whole tab with nothing else on it.
+   *
+   * Defaults to {@link minViewport}, which is the old behaviour exactly.
+   */
+  readonly comfortViewport?: Size;
   /** Whether the pointer is a finger. Adds the tap-target requirement. */
   readonly coarsePointer: boolean;
   /**
@@ -89,15 +101,25 @@ export interface AutoScaleOptions {
 }
 
 /**
- * The largest scale whose viewport still holds `minViewport`.
+ * The largest scale whose viewport holds `comfortViewport`, falling back to the
+ * largest that holds `minViewport`.
  *
  * Largest, not smallest: a bigger scale is chunkier and more legible, and the
  * binding constraint is how much has to fit rather than how fine it can be. On a
  * coarse pointer the tap requirement usually binds first, which is the intended
  * behaviour -- a phone gets a chunky UI because a finger is chunky.
  *
- * Falls back to 1 when nothing fits, because a clipped interface is recoverable
- * and a zero-sized one is not.
+ * The two-viewport shape is the correction spec 131 asked for. Maximising
+ * against the *floor* means the interface is always as chunky as it can possibly
+ * be: on a 1280x800 tab that was scale 4 and a 320x200 viewport -- exactly the
+ * minimum -- so two windows filled the screen with the game barely visible
+ * behind them. Aiming at a viewport twice the floor gives scale 2 there and 3 on
+ * a 1920x1080 screen. The comfort is a *preference*: where it cannot be had --
+ * a phone, where a finger-sized button and a fine scale do not overlap -- the
+ * floor answers instead, and `largestScaleFitting` says what that costs.
+ *
+ * Falls back to 1 when nothing fits at all, because a clipped interface is
+ * recoverable and a zero-sized one is not.
  */
 export function autoUiScale(
   cssW: number,
@@ -105,11 +127,44 @@ export function autoUiScale(
   dpr: number,
   options: AutoScaleOptions,
 ): number {
-  let best = 1;
+  // Whichever asks for more room, per axis, so a comfort set below the floor
+  // cannot make the interface chunkier than every screen was designed to
+  // survive.
+  const comfort = {
+    width: Math.max(options.minViewport.width, options.comfortViewport?.width ?? 0),
+    height: Math.max(options.minViewport.height, options.comfortViewport?.height ?? 0),
+  };
+  return (
+    largestScaleFitting(cssW, cssH, dpr, options, comfort) ??
+    largestScaleFitting(cssW, cssH, dpr, options, options.minViewport) ??
+    1
+  );
+}
+
+/**
+ * The largest scale whose viewport holds `need` and whose taps fit, or null.
+ *
+ * The null is what makes the comfort a *preference* rather than a requirement,
+ * and the case that needs it is the phone. On the 844x390 frame at dpr 3 there
+ * is no scale at all that gives a 600x280 viewport and still keeps a finger-sized
+ * button under `maxTapUiPx`: the comfort wants a fine scale and the finger wants
+ * a chunky one, and on that screen they do not overlap. Asked for both at once
+ * the first cut of this returned 1, whose tap target is 132 UI pixels -- an
+ * interface no thumb can use, arrived at by a rule that was trying to make it
+ * *less* chunky. The floor is the answer there, and the floor gives scale 8.
+ */
+function largestScaleFitting(
+  cssW: number,
+  cssH: number,
+  dpr: number,
+  options: AutoScaleOptions,
+  need: Size,
+): number | null {
+  let best: number | null = null;
   for (const scale of UI_SCALES) {
     const frame = uiFrame(cssW, cssH, dpr, scale);
-    if (frame.width < options.minViewport.width) continue;
-    if (frame.height < options.minViewport.height) continue;
+    if (frame.width < need.width) continue;
+    if (frame.height < need.height) continue;
     if (options.coarsePointer && tapCostInUiPixels(dpr, scale) > options.maxTapUiPx) continue;
     best = scale;
   }

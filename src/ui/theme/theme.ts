@@ -71,6 +71,14 @@ export interface InputTokens {
   readonly maxTapUiPx: number;
   /** The smallest viewport every screen is designed to fit inside. */
   readonly minViewport: Size;
+  /**
+   * The viewport the auto scale aims for when the window can afford it.
+   *
+   * Twice the floor. A floor says what every screen must survive; this says what
+   * to draw at, and maximising the scale against the floor instead is what put
+   * two windows across a whole 1280x800 tab (spec 131).
+   */
+  readonly comfortViewport: Size;
   /** How long the pointer must rest before a tooltip appears. */
   readonly tooltipDelayMs: number;
   /** How much of a window's title bar must stay on screen. */

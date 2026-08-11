@@ -88,4 +88,84 @@ describe('autoUiScale', () => {
   it('falls back to 1 rather than 0 when nothing fits', () => {
     expect(autoUiScale(100, 60, 1, { minViewport, coarsePointer: false, maxTapUiPx: 20 })).toBe(1);
   });
+
+  /**
+   * The floor is not the target (spec 131's correction).
+   *
+   * Maximising the scale against `minViewport` makes the interface as chunky as
+   * it can possibly be by construction -- on a 1280x800 tab that is scale 4 and a
+   * viewport of exactly the minimum, which put two windows across the whole
+   * screen with the game barely visible behind them.
+   */
+  describe('with a comfort viewport', () => {
+    const comfortViewport = { width: minViewport.width * 2, height: minViewport.height * 2 };
+    const options = { minViewport, comfortViewport, coarsePointer: false, maxTapUiPx: 20 };
+
+    it('halves the scale on the two screens that matter', () => {
+      expect(autoUiScale(1280, 800, 1, { minViewport, coarsePointer: false, maxTapUiPx: 20 })).toBe(4);
+      expect(autoUiScale(1280, 800, 1, options)).toBe(2);
+
+      expect(autoUiScale(1920, 1080, 1, { minViewport, coarsePointer: false, maxTapUiPx: 20 })).toBe(6);
+      expect(autoUiScale(1920, 1080, 1, options)).toBe(3);
+    });
+
+    it('leaves the comfortable viewport actually comfortable', () => {
+      const frame = uiFrame(1280, 800, 1, autoUiScale(1280, 800, 1, options));
+      expect(frame.width).toBeGreaterThanOrEqual(comfortViewport.width);
+      expect(frame.height).toBeGreaterThanOrEqual(comfortViewport.height);
+    });
+
+    /**
+     * The floor is enforced beside the comfort, not replaced by it, so a comfort
+     * set too small cannot make the interface chunkier than every screen was
+     * designed to survive. It is the one thing a single-viewport rule would have
+     * quietly given up.
+     */
+    it('will not go chunkier than the floor allows, whatever the comfort says', () => {
+      const tiny = { width: 10, height: 10 };
+      const bare = { minViewport, coarsePointer: false, maxTapUiPx: 20 };
+      expect(autoUiScale(1280, 800, 1, { ...bare, comfortViewport: tiny })).toBe(
+        autoUiScale(1280, 800, 1, bare),
+      );
+    });
+
+    /** A window too small for the comfort still gets an interface, not nothing. */
+    it('gives the smallest window a scale of 1 rather than 0', () => {
+      expect(autoUiScale(320, 200, 1, options)).toBe(1);
+    });
+
+    /**
+     * The phone, which is where the comfort has to give way.
+     *
+     * On the 844x390 frame at dpr 3 there is no scale that gives the comfortable
+     * viewport *and* keeps a finger-sized button inside `maxTapUiPx`: the two
+     * requirements do not overlap on that screen. A rule that insisted on both
+     * returned scale 1, whose tap target is 132 UI pixels -- an interface no
+     * thumb can use, produced by a change whose whole purpose was to make it
+     * less chunky.
+     */
+    it('gives the comfort up rather than the finger, on a phone', () => {
+      const scale = autoUiScale(844, 390, 3, { ...options, coarsePointer: true });
+      expect(tapCostInUiPixels(3, scale)).toBeLessThanOrEqual(20);
+      const frame = uiFrame(844, 390, 3, scale);
+      expect(frame.width).toBeGreaterThanOrEqual(minViewport.width);
+      expect(frame.height).toBeGreaterThanOrEqual(minViewport.height);
+      // ...and it is the same answer the floor alone gave, unchanged by this.
+      expect(scale).toBe(autoUiScale(844, 390, 3, { minViewport, coarsePointer: true, maxTapUiPx: 20 }));
+    });
+
+    it('is the old rule exactly when no comfort is asked for', () => {
+      for (const [w, h, dpr] of [
+        [1280, 800, 1],
+        [1920, 1080, 2],
+        [640, 480, 1],
+        [100, 60, 1],
+      ] as const) {
+        const bare = { minViewport, coarsePointer: false, maxTapUiPx: 20 };
+        expect(autoUiScale(w, h, dpr, { ...bare, comfortViewport: minViewport })).toBe(
+          autoUiScale(w, h, dpr, bare),
+        );
+      }
+    });
+  });
 });

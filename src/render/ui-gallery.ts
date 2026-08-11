@@ -64,6 +64,7 @@ function main(): void {
   const dpr = globalThis.devicePixelRatio || 1;
   const scale = autoUiScale(app.clientWidth, app.clientHeight, dpr, {
     minViewport: THEME.input.minViewport,
+    comfortViewport: THEME.input.comfortViewport,
     coarsePointer: globalThis.matchMedia?.('(pointer: coarse)').matches ?? false,
     maxTapUiPx: THEME.input.maxTapUiPx,
   });

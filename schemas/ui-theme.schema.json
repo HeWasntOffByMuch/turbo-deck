@@ -40,22 +40,15 @@
     "input": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["dragThreshold", "doubleClickMs", "maxTapUiPx", "minViewport", "tooltipDelayMs", "minVisible"],
+      "required": ["dragThreshold", "doubleClickMs", "maxTapUiPx", "minViewport", "comfortViewport", "tooltipDelayMs", "minVisible"],
       "properties": {
         "dragThreshold": { "type": "integer", "minimum": 1 },
         "tooltipDelayMs": { "type": "integer", "minimum": 0 },
         "minVisible": { "type": "integer", "minimum": 1 },
         "doubleClickMs": { "type": "integer", "minimum": 1 },
         "maxTapUiPx": { "type": "integer", "minimum": 1 },
-        "minViewport": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["width", "height"],
-          "properties": {
-            "width": { "type": "integer", "minimum": 1 },
-            "height": { "type": "integer", "minimum": 1 }
-          }
-        }
+        "minViewport": { "$ref": "#/definitions/viewport" },
+        "comfortViewport": { "$ref": "#/definitions/viewport" }
       }
     },
     "widgets": {
@@ -65,6 +58,15 @@
     }
   },
   "definitions": {
+    "viewport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height"],
+      "properties": {
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 }
+      }
+    },
     "color": {
       "type": "string",
       "pattern": "^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"

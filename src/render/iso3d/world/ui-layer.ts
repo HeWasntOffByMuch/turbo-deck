@@ -125,6 +125,7 @@ export class UiLayer {
     const height = Math.max(1, this.host.clientHeight);
     const scale = autoUiScale(width, height, dpr, {
       minViewport: THEME.input.minViewport,
+      comfortViewport: THEME.input.comfortViewport,
       coarsePointer: globalThis.matchMedia?.('(pointer: coarse)').matches ?? false,
       maxTapUiPx: THEME.input.maxTapUiPx,
     });
@@ -222,6 +223,7 @@ export class UiLayer {
     this.surface.resize(next.width, next.height, next.scale);
     this.applyCssSize();
     this.screens.resize({ width: next.width, height: next.height });
+    this.screens.setSafeTop(this.toUi({ x: 0, y: chromeBottomCss() }).y);
     // The canvas's backing store was just reallocated, so whatever was on it is
     // gone -- and the same draw list would otherwise be skipped as unchanged and
     // leave the interface blank until something moved.
@@ -293,6 +295,24 @@ export class UiLayer {
     globalThis.removeEventListener('resize', this.onWindowResize);
     this.element.remove();
   }
+}
+
+/**
+ * How far down the tab's own chrome reaches, in CSS pixels.
+ *
+ * The tab bar is `position: fixed` over the whole view and wraps on a narrow
+ * window, so its height is a measurement rather than a constant -- and a window
+ * opened at the top margin opens underneath it. Nobody saw that while the
+ * interface was twice as chunky: a margin of 8 UI pixels was 32 real ones and
+ * cleared the bar by accident.
+ *
+ * Read once per re-measure, never per frame: `getBoundingClientRect` forces a
+ * layout flush, which is the cost this file already learned about the hard way.
+ * Zero when there is no bar, which is every headless and embedded case.
+ */
+function chromeBottomCss(): number {
+  const bar = document.querySelector<HTMLElement>('[data-tab-bar]');
+  return bar ? Math.max(0, bar.getBoundingClientRect().bottom) : 0;
 }
 
 /**
