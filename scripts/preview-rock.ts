@@ -229,6 +229,30 @@ async function main(): Promise<void> {
     check('the remove tool carves a bite out of a tier', /carved \d+ cells/.test(afterCarve), afterCarve.slice(0, 160));
     await page.screenshot({ path: join(outDir, 'editor-rock-carved.png') });
 
+    // Detail the formation: click it with the detail tool armed.
+    await page.click('button[title="add"]:visible');
+    await page.waitForTimeout(200);
+    await drag(page, [330, 250], [820, 600]);
+    await page.mouse.up();
+    await page.waitForTimeout(1000);
+    await page.click('button[title="detail"]:visible');
+    await page.waitForTimeout(300);
+    await page.mouse.move(560, 400);
+    await page.mouse.down();
+    await page.mouse.up();
+    // Short: the autosave timer writes its own message into the same status
+    // line, and a longer wait reads "autosaved" instead of what the tool said.
+    await page.waitForTimeout(400);
+    const afterDetail = await readStatus(page);
+    const detail = /detailed (\d+) tier\(s\): eroded (\d+), planted (\d+)/.exec(afterDetail);
+    check('the detail pass works a formation over', detail !== null, detail ? detail[0] : afterDetail.slice(0, 160));
+    check(
+      'it both chews the outline and plants the top',
+      detail !== null && Number(detail[2]) > 0 && Number(detail[3]) > 0,
+      detail ? `eroded ${detail[2]}, planted ${detail[3]}` : 'nothing',
+    );
+    await page.screenshot({ path: join(outDir, 'editor-rock-detailed.png') });
+
     console.log('\n----');
     if (problems.length === 0) console.log('nothing broke.');
     else {

@@ -61,6 +61,7 @@ import {
 import {
   addRock,
   addStair,
+  detailAt,
   nextRockLayerId,
   removeRock,
   rockLayerAt,
@@ -671,6 +672,33 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   const commitRock = (a: { x: number; z: number }, b: { x: number; z: number }): void => {
     const footprint = worldRectFrom(a, b);
     const store = scene.map.store;
+
+    if (settings.rockTool === 'detail') {
+      // A click rather than a drag: the formation is already a thing on the
+      // ground, so pointing at it is the whole selection.
+      const detail = detailAt(store, history, {
+        x: a.x,
+        z: a.z,
+        seed: Math.round(settings.rockDetailSeed),
+        erosion: settings.rockErosion,
+      });
+      if (!detail.ok) {
+        status = `detail refused: ${detail.reason}`;
+        return;
+      }
+      // Erosion can empty a chunk, so the mesh has to be told to stop drawing
+      // one -- and the ring around it re-meshed, since a neighbour losing its
+      // ground is a wall appearing.
+      for (const layerId2 of detail.layerIds) {
+        const held = new Set(store.chunkCoords(layerId2).map((c) => `${c.cx},${c.cz}`));
+        for (const c of detail.touched) {
+          if (!held.has(`${c.cx},${c.cz}`)) scene.dropChunk(layerId2, c.cx, c.cz);
+        }
+        rebuiltAfterRock(layerId2, detail.touched);
+      }
+      status = `detailed ${detail.layerIds.length} tier(s): eroded ${detail.erodedCells}, planted ${detail.plantedProps}`;
+      return;
+    }
 
     if (settings.rockTool === 'stair') {
       // The drag runs down the stairs, the way you would walk them: the anchor

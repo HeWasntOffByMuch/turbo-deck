@@ -12,6 +12,7 @@ import {
 import { EditHistory } from './history.js';
 import {
   addRock,
+  detailAt,
   isRockLayer,
   nextRockLayerId,
   removeRock,
@@ -457,5 +458,64 @@ describe('the trees under a tier', () => {
     if (!result.ok) return;
     expect(result.clearedProps).toBe(0);
     expect(store.props(GROUND).length).toBe(count);
+  });
+});
+
+describe('detailing from the editor (spec 125)', () => {
+  const bigTier = { minX: 0, minZ: 0, maxX: 70, maxZ: 70 };
+
+  it('detects the formation under the click and works it over', () => {
+    const { store, history } = setup();
+    add(store, history, bigTier);
+    const result = detailAt(store, history, { x: 35, z: 35, seed: 4, erosion: 0.5 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.layerIds).toEqual([TIER]);
+    expect(result.erodedCells).toBeGreaterThan(0);
+  });
+
+  it('says so over bare ground, and costs no undo', () => {
+    const { store, history } = setup();
+    add(store, history, { minX: 0, minZ: 0, maxX: 20, maxZ: 20 });
+    const depth = history.depth;
+    const result = detailAt(store, history, { x: 70, z: 70, seed: 4, erosion: 0.5 });
+
+    expect(result.ok).toBe(false);
+    expect(history.depth).toBe(depth);
+  });
+
+  it('takes the whole pass back with one undo', () => {
+    const { store, history } = setup();
+    add(store, history, bigTier);
+    const plain = serializeMap(store.toDocument());
+
+    detailAt(store, history, { x: 35, z: 35, seed: 4, erosion: 0.5 });
+    expect(serializeMap(store.toDocument())).not.toBe(plain);
+
+    history.undo(store);
+    expect(serializeMap(store.toDocument())).toBe(plain);
+  });
+
+  it('takes the tier back to nothing with a second undo', () => {
+    const { store, history, before } = setup();
+    add(store, history, bigTier);
+    detailAt(store, history, { x: 35, z: 35, seed: 4, erosion: 0.5 });
+
+    history.undo(store);
+    history.undo(store);
+    expect(serializeMap(store.toDocument())).toBe(before);
+  });
+
+  it('re-rolls to a different formation for a different seed', () => {
+    const one = setup();
+    add(one.store, one.history, bigTier);
+    detailAt(one.store, one.history, { x: 35, z: 35, seed: 4, erosion: 0.5 });
+
+    const two = setup();
+    add(two.store, two.history, bigTier);
+    detailAt(two.store, two.history, { x: 35, z: 35, seed: 9, erosion: 0.5 });
+
+    expect(serializeMap(one.store.toDocument())).not.toBe(serializeMap(two.store.toDocument()));
   });
 });

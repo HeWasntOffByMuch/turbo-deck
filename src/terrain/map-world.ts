@@ -634,6 +634,43 @@ export class MapChunkStore {
   }
 
   /**
+   * Make one cell solid or not (spec 125).
+   *
+   * `bakeRock` and `carveRock` write solidity a rectangle at a time, through
+   * whole chunks, because that is the shape of a drag. A detail pass changes
+   * one cell at a time from a hash of its own coordinates, which is the other
+   * shape and wants the other writer.
+   */
+  setCellSolid(layerId: string, col: number, row: number, solid: boolean): void {
+    const layer = this.layers.get(layerId);
+    if (!layer) return;
+    const slot = this.cellSlot(layer, col, row);
+    if (!slot) return;
+    slot.chunk.solid[slot.index] = solid ? 1 : 0;
+  }
+
+  /** Set one cell's tone variant, the second half of its colour (spec 125). */
+  setCellTone(layerId: string, col: number, row: number, tone: number): void {
+    const layer = this.layers.get(layerId);
+    if (!layer) return;
+    const slot = this.cellSlot(layer, col, row);
+    if (!slot) return;
+    slot.chunk.tones[slot.index] = tone;
+  }
+
+  /**
+   * Whether a chunk still has any ground in it (spec 125).
+   *
+   * Erosion works cell by cell and can empty a chunk without ever intending to,
+   * so the caller needs to be able to ask rather than to have tracked it.
+   */
+  chunkHasSolid(layerId: string, cx: number, cz: number): boolean {
+    const chunk = this.layers.get(layerId)?.chunks.get(key(cx, cz));
+    if (!chunk) return false;
+    return chunk.solid.some((s) => s === 1);
+  }
+
+  /**
    * A copy of one chunk's mutable arrays, for the undo stack (spec 050).
    *
    * Everything an edit can change, and nothing derived: `cornerX`, `cornerZ` and

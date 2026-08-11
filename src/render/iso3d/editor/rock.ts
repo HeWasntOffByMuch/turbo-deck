@@ -2,7 +2,9 @@ import {
   bakeRock,
   bakeStair,
   carveRock,
+  detailFormation,
   emptyRockLayer,
+  formationAt,
   type ChunkCoord,
   type MapChunkStore,
   type MapLayer,
@@ -381,6 +383,54 @@ export function addStair(store: MapChunkStore, history: EditHistory, input: AddS
     clearedProps: cleared.removed.length,
     propChunks: cleared.dirty,
   };
+}
+
+export type DetailResultOut =
+  | {
+      readonly ok: true;
+      readonly layerIds: readonly string[];
+      readonly touched: readonly ChunkCoord[];
+      readonly erodedCells: number;
+      readonly plantedProps: number;
+    }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * Run the detail pass over the formation under a point (spec 125).
+ *
+ * One atomic stroke over every tier in the stack, so one Ctrl+Z takes the whole
+ * pass back. That matters more here than for the other tools: the pass is
+ * deliberately not idempotent -- it records no "undetailed" state, so running it
+ * twice erodes twice -- and undo is the only way back to the shape that was
+ * drawn.
+ */
+export function detailAt(
+  store: MapChunkStore,
+  history: EditHistory,
+  input: { readonly x: number; readonly z: number; readonly seed: number; readonly erosion: number },
+): DetailResultOut {
+  const layerIds = formationAt(store, input.x, input.z, rockLayerIds(store));
+  if (layerIds.length === 0) return { ok: false, reason: 'no formation under the cursor' };
+
+  history.beginStroke();
+  for (const layerId of layerIds) {
+    history.captureBounds(store, layerId);
+    for (const c of store.chunkCoords(layerId)) {
+      history.captureChunk(store, layerId, c.cx, c.cz);
+      // Erosion can empty a chunk outright, and a snapshot cannot restore one
+      // that is no longer there.
+      history.captureDeleted(store, layerId, c.cx, c.cz);
+    }
+  }
+
+  const detail = detailFormation({ store, layerIds, seed: input.seed, erosion: input.erosion });
+  if (detail.erodedCells === 0 && detail.plantedProps === 0 && detail.touched.length === 0) {
+    history.abortStroke();
+    return { ok: false, reason: 'that formation has nothing to detail' };
+  }
+  history.endStroke();
+
+  return { ok: true, layerIds, touched: detail.touched, erodedCells: detail.erodedCells, plantedProps: detail.plantedProps };
 }
 
 export function removeRock(

@@ -36,9 +36,9 @@ export type PartTool = 'add' | 'remove';
 export const PART_TOOLS: readonly PartTool[] = ['add', 'remove'];
 
 /** What the rock mode's drag does (spec 123). */
-export type RockTool = 'add' | 'remove' | 'stair';
+export type RockTool = 'add' | 'remove' | 'stair' | 'detail';
 
-export const ROCK_TOOLS: readonly RockTool[] = ['add', 'remove', 'stair'];
+export const ROCK_TOOLS: readonly RockTool[] = ['add', 'remove', 'stair', 'detail'];
 
 /**
  * The `rockLayer` value meaning "start a new tier".
@@ -71,6 +71,8 @@ export const ROCK_TOOL_COLORS: Record<RockTool, number> = {
   // The tread band's own warm dirt, so the cursor says which of the two the
   // drag is about to leave behind.
   stair: 0xc8a06a,
+  // Moss green: the pass that puts grass and bushes on a tier.
+  detail: 0x8fc07a,
 };
 export const TOOL_COLORS: Record<TerrainTool, number> = {
   raise: 0x8fe08f,
@@ -137,6 +139,20 @@ export interface EditorSettings {
   rockHeight: number;
   /** Which tier a drag extends. `NEW_ROCK_TIER` starts the next one up. */
   rockLayer: string;
+  /**
+   * How hard the detail pass chews a formation's outline (spec 125).
+   *
+   * 0 leaves the rectangle exactly as it was drawn.
+   */
+  rockErosion: number;
+  /**
+   * The seed the detail pass runs from.
+   *
+   * A spinner rather than a button that re-rolls internally, so what a
+   * formation looks like is a fact about `(formation, seed)` rather than about
+   * how many times somebody has clicked.
+   */
+  rockDetailSeed: number;
 }
 
 export function createEditorSettings(): EditorSettings {
@@ -172,6 +188,8 @@ export function createEditorSettings(): EditorSettings {
     // body height so it reads as a storey.
     rockHeight: 70,
     rockLayer: NEW_ROCK_TIER,
+    rockErosion: 0.5,
+    rockDetailSeed: 1,
   };
 }
 

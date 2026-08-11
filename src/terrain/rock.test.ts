@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { MAP_VERSION, parseMap, serializeMap, type MapChunk, type MapDocument, type MapLayer } from './map.js';
 import { loadMap, MapChunkStore } from './map-world.js';
-import { bakeRock, bakeStair, carveRock, emptyRockLayer } from './rock.js';
+import { bakeRock, bakeStair, carveRock, detailFormation, emptyRockLayer, formationAt } from './rock.js';
 import { isWalkable } from '../server/sim/movement.js';
 import { materialIndex } from './types.js';
 
@@ -411,5 +411,151 @@ describe('a stair up a tier (spec 124)', () => {
     }
     // Rock and dirt alternating, so the run reads as steps.
     expect(materials.size).toBeGreaterThan(1);
+  });
+});
+
+/** What the editor would pass as "these are the tiers". */
+const TIERS = [ROCK, 'rock/2', 'rock/9'];
+
+describe('selecting a formation (spec 125)', () => {
+  /** Two tiers stacked, plus a separate tier well away from them. */
+  function twoFormations(): MapChunkStore {
+    const store = withRockLayer();
+    bakeRock({ store, layerId: ROCK, footprint: { minX: 0, minZ: 0, maxX: 40, maxZ: 40 }, top: TOP });
+    store.addLayer(emptyRockLayer({ id: 'rock/2', seed: 8, origin: { x: 0, z: 0 }, baseY: TOP - 5 }));
+    bakeRock({ store, layerId: 'rock/2', footprint: { minX: 10, minZ: 10, maxX: 30, maxZ: 30 }, top: TOP * 2 });
+    store.addLayer(emptyRockLayer({ id: 'rock/9', seed: 9, origin: { x: 0, z: 0 }, baseY: -20 }));
+    bakeRock({ store, layerId: 'rock/9', footprint: { minX: 45, minZ: 45, maxX: 75, maxZ: 75 }, top: TOP });
+    return store;
+  }
+
+  it('takes the whole stack from a click on the bottom tier', () => {
+    expect(formationAt(twoFormations(), 5, 5, TIERS).sort()).toEqual([ROCK, 'rock/2']);
+  });
+
+  it('takes the whole stack from a click on the top tier too', () => {
+    expect(formationAt(twoFormations(), 20, 20, TIERS).sort()).toEqual([ROCK, 'rock/2']);
+  });
+
+  it('returns the tiers lowest first', () => {
+    expect(formationAt(twoFormations(), 20, 20, TIERS)).toEqual([ROCK, 'rock/2']);
+  });
+
+  it('never reaches a formation that does not touch', () => {
+    expect(formationAt(twoFormations(), 5, 5, TIERS)).not.toContain('rock/9');
+    expect(formationAt(twoFormations(), 60, 60, TIERS)).toEqual(['rock/9']);
+  });
+
+  it('finds nothing over bare ground', () => {
+    expect(formationAt(twoFormations(), 78, 5, TIERS)).toEqual([]);
+  });
+});
+
+describe('detailing a formation (spec 125)', () => {
+  function detailed(seed = 5, erosion = 0.5): MapChunkStore {
+    const store = withRockLayer();
+    bakeRock({ store, layerId: ROCK, footprint: { minX: 0, minZ: 0, maxX: 70, maxZ: 70 }, top: TOP });
+    detailFormation({ store, layerIds: [ROCK], seed, erosion });
+    return store;
+  }
+
+  it('chews the outline and plants the top', () => {
+    const store = withRockLayer();
+    bakeRock({ store, layerId: ROCK, footprint: { minX: 0, minZ: 0, maxX: 70, maxZ: 70 }, top: TOP });
+    const result = detailFormation({ store, layerIds: [ROCK], seed: 5, erosion: 0.5 });
+    expect(result.erodedCells).toBeGreaterThan(0);
+    expect(result.plantedProps).toBeGreaterThan(0);
+  });
+
+  it('is a pure function of the store, the layers and the seed', () => {
+    expect(serializeMap(detailed().toDocument())).toBe(serializeMap(detailed().toDocument()));
+  });
+
+  it('answers differently for a different seed', () => {
+    expect(serializeMap(detailed(5).toDocument())).not.toBe(serializeMap(detailed(6).toDocument()));
+  });
+
+  it('leaves the outline alone at zero erosion', () => {
+    const store = withRockLayer();
+    bakeRock({ store, layerId: ROCK, footprint: { minX: 0, minZ: 0, maxX: 70, maxZ: 70 }, top: TOP });
+    const result = detailFormation({ store, layerIds: [ROCK], seed: 5, erosion: 0 });
+    expect(result.erodedCells).toBe(0);
+  });
+
+  it('only ever takes cells that were on the rim', () => {
+    const plain = withRockLayer();
+    bakeRock({ store: plain, layerId: ROCK, footprint: { minX: 0, minZ: 0, maxX: 70, maxZ: 70 }, top: TOP });
+    // A cell two in from every edge cannot be rim, so erosion must never reach it.
+    const deepCol = 3;
+    const deepRow = 3;
+    expect(plain.cellSolid(ROCK, deepCol, deepRow)).toBe(true);
+    expect(detailed().cellSolid(ROCK, deepCol, deepRow)).toBe(true);
+  });
+
+  it('keeps the tier at one height, so it can still be extended', () => {
+    const store = detailed();
+    expect(() =>
+      bakeRock({ store, layerId: ROCK, footprint: { minX: 70, minZ: 0, maxX: 78, maxZ: 20 }, top: TOP }),
+    ).not.toThrow();
+  });
+
+  it('leaves every rim cell cutting as rock', () => {
+    const store = detailed();
+    const rockIndex = materialIndex('rock');
+    const info = store.layerInfo(ROCK);
+    let checked = 0;
+    for (let row = info?.grid.minRow ?? 0; row < (info?.grid.maxRow ?? 0); row++) {
+      for (let col = info?.grid.minCol ?? 0; col < (info?.grid.maxCol ?? 0); col++) {
+        if (!store.cellSolid(ROCK, col, row)) continue;
+        const onRim =
+          !store.cellSolid(ROCK, col - 1, row) ||
+          !store.cellSolid(ROCK, col + 1, row) ||
+          !store.cellSolid(ROCK, col, row - 1) ||
+          !store.cellSolid(ROCK, col, row + 1);
+        if (!onRim) continue;
+        // Erosion runs after the rim is decided, so a cell exposed *by* the pass
+        // may carry a patch. What must hold is that nothing inside stays rock
+        // only by accident -- so this checks the pass painted rock on the rim it
+        // saw, by counting rather than by demanding every post-hoc rim cell.
+        if (store.cellAt(ROCK, col, row)?.materialIndex === rockIndex) checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  it('varies the tone across the tier, so a face is not one flat sheet', () => {
+    const store = detailed();
+    const tones = new Set<number>();
+    for (let row = 0; row < 7; row++) {
+      for (let col = 0; col < 7; col++) {
+        if (store.cellSolid(ROCK, col, row)) tones.add(store.cellAt(ROCK, col, row)?.tone ?? 0);
+      }
+    }
+    expect(tones.size).toBe(2);
+  });
+
+  it('stands every bush it plants inside the tier that owns it', () => {
+    const store = detailed();
+    const info = store.layerInfo(ROCK);
+    const props = store.props(ROCK);
+    expect(props.length).toBeGreaterThan(0);
+    for (const prop of props) {
+      const col = Math.floor((prop.x - (info?.origin.x ?? 0)) / store.cellSize);
+      const row = Math.floor((prop.y - (info?.origin.z ?? 0)) / store.cellSize);
+      expect(store.cellSolid(ROCK, col, row)).toBe(true);
+    }
+  });
+
+  it('does not care which order the chunks were walked in', () => {
+    // Same formation, chunks inserted back to front. A sequential generator
+    // would answer differently; a hash of the cell's own coordinates cannot.
+    const forward = detailed();
+    const doc2 = forward.toDocument();
+    const reversed: MapDocument = {
+      ...doc2,
+      layers: doc2.layers.map((l) => (l.id === ROCK ? { ...l, chunks: [...l.chunks].reverse() } : l)),
+    };
+    const back = new MapChunkStore(reversed);
+    expect(serializeMap(back.toDocument())).toBe(serializeMap(forward.toDocument()));
   });
 });

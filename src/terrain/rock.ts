@@ -1,3 +1,4 @@
+import { hashUnit2 } from '../shared/hash.js';
 import type { ChunkCoord } from './chunk.js';
 import {
   encodeRuns,
@@ -443,4 +444,220 @@ export function carveRock(input: CarveRockInput): CarvedRock {
   const bounds = store.heldBounds(layerId);
   if (bounds) store.setBounds(layerId, bounds);
   return { removed, touched, bounds, cells: cleared };
+}
+
+// --- detail (spec 125) -----------------------------------------------------
+
+/**
+ * Which tiers make up the formation standing at a point.
+ *
+ * Overlap in *plan*, not in height: a stack is exactly a set of tiers standing
+ * on each other's footprints, so this is what makes "select the formation" mean
+ * the whole thing you can see rather than the one slab you clicked. Lowest
+ * first, so a caller walking the result meets the tiers in the order they were
+ * built.
+ */
+export function formationAt(
+  store: MapChunkStore,
+  x: number,
+  z: number,
+  candidates: readonly string[],
+): string[] {
+  // The caller says which layers are tiers. What marks one is a naming
+  // convention owned by the editor (spec 123), and terrain has no business
+  // guessing at it -- handed the whole layer list this would happily decide the
+  // world's ground was part of the formation standing on it.
+  const tiers = candidates.filter((id) => {
+    const info = store.layerInfo(id);
+    return info !== undefined && info.grid.chunksX > 0;
+  });
+
+  const start = tiers.filter((id) => {
+    const info = store.layerInfo(id);
+    if (!info) return false;
+    const col = Math.floor((x - info.origin.x) / store.cellSize);
+    const row = Math.floor((z - info.origin.z) / store.cellSize);
+    return store.cellSolid(id, col, row);
+  });
+  if (start.length === 0) return [];
+
+  const overlaps = (a: string, b: string): boolean => {
+    const ia = store.layerInfo(a);
+    const ib = store.layerInfo(b);
+    if (!ia || !ib) return false;
+    return !(
+      ia.bounds.maxX <= ib.bounds.minX ||
+      ib.bounds.maxX <= ia.bounds.minX ||
+      ia.bounds.maxZ <= ib.bounds.minZ ||
+      ib.bounds.maxZ <= ia.bounds.minZ
+    );
+  };
+
+  const taken = new Set(start);
+  const queue = [...start];
+  while (queue.length > 0) {
+    const current = queue.shift() as string;
+    for (const id of tiers) {
+      if (taken.has(id) || !overlaps(current, id)) continue;
+      taken.add(id);
+      queue.push(id);
+    }
+  }
+
+  // Lowest tier first. Height is read off a solid cell, which every layer in
+  // here has by construction.
+  return [...taken].sort((a, b) => (tierHeightOf(store, a) ?? 0) - (tierHeightOf(store, b) ?? 0));
+}
+
+export interface DetailInput {
+  readonly store: MapChunkStore;
+  readonly layerIds: readonly string[];
+  readonly seed: number;
+  /** 0 leaves the outline alone, 1 chews it hard. */
+  readonly erosion?: number;
+}
+
+export interface DetailResult {
+  readonly touched: readonly ChunkCoord[];
+  readonly erodedCells: number;
+  readonly plantedProps: number;
+}
+
+/** How much of a rim the strongest erosion may take. */
+const MAX_EROSION = 0.55;
+/** Bushes per cell of tier top, away from the rim. */
+const PLANT_RATE = 0.09;
+
+/**
+ * Make a formation look like rock (spec 125).
+ *
+ * Every decision is a hash of the cell's own global coordinates, exactly as
+ * `cornerJitter` is, and never a draw from a threaded generator. A formation
+ * spans chunks; a sequential draw would answer differently depending on which
+ * chunk the loop reached first, and re-running the pass over one chunk would
+ * not reproduce what the whole formation produced.
+ *
+ * Deliberately not idempotent, and the spec says so: there is no "undetailed"
+ * state recorded, so running it twice erodes twice. Re-rolling is the editor's
+ * job -- it undoes the previous pass first.
+ */
+export function detailFormation(input: DetailInput): DetailResult {
+  const { store, layerIds, seed } = input;
+  const erosion = Math.max(0, Math.min(1, input.erosion ?? 0.5)) * MAX_EROSION;
+  const rock = materialIndex('rock');
+  const grass = materialIndex('grass');
+  const dirt = materialIndex('dirt');
+
+  const touched: ChunkCoord[] = [];
+  let erodedCells = 0;
+  let plantedProps = 0;
+
+  for (const layerId of layerIds) {
+    const info = store.layerInfo(layerId);
+    if (!info) continue;
+    const { minCol, minRow, maxCol, maxRow } = info.grid;
+
+    // The rim is decided against the layer as it is *now*, before a single cell
+    // is dropped. Reading it live would let the pass eat inwards: a cell the
+    // erosion just exposed would become rim and be reconsidered, and a
+    // formation dissolves from the outside in.
+    const wasSolid = (col: number, row: number): boolean => store.cellSolid(layerId, col, row);
+    const rim: { col: number; row: number }[] = [];
+    for (let row = minRow; row < maxRow; row++) {
+      for (let col = minCol; col < maxCol; col++) {
+        if (!wasSolid(col, row)) continue;
+        if (
+          !wasSolid(col - 1, row) ||
+          !wasSolid(col + 1, row) ||
+          !wasSolid(col, row - 1) ||
+          !wasSolid(col, row + 1)
+        ) {
+          rim.push({ col, row });
+        }
+      }
+    }
+    const isRim = new Set(rim.map((c) => `${c.col},${c.row}`));
+
+    const dirtyChunks = new Map<string, ChunkCoord>();
+    const markDirty = (col: number, row: number): void => {
+      const cx = Math.floor(col / store.chunkCells);
+      const cz = Math.floor(row / store.chunkCells);
+      dirtyChunks.set(`${cx},${cz}`, { cx: noNegZero(cx), cz: noNegZero(cz) });
+    };
+
+    // 1. Erosion. Rim only, and only the rim as it stood before this pass.
+    const dropped = new Set<string>();
+    if (erosion > 0) {
+      for (const { col, row } of rim) {
+        if (hashUnit2(col, row, seed) >= erosion) continue;
+        dropped.add(`${col},${row}`);
+      }
+    }
+
+    for (let row = minRow; row < maxRow; row++) {
+      for (let col = minCol; col < maxCol; col++) {
+        if (!wasSolid(col, row)) continue;
+        const key = `${col},${row}`;
+
+        if (dropped.has(key)) {
+          store.setCellSolid(layerId, col, row, false);
+          erodedCells++;
+          markDirty(col, row);
+          continue;
+        }
+
+        // 2. Tone. Both the top and the skirt hanging off it read this, so a
+        // face breaks into slabs rather than being one flat sheet.
+        store.setCellTone(layerId, col, row, hashUnit2(col, row, seed ^ 0x70e) < 0.5 ? 0 : 1);
+
+        // 3. Patches. The rim stays rock, so every cliff cuts as stone.
+        if (!isRim.has(key)) {
+          const h = hashUnit2(col, row, seed ^ 0x9a7c);
+          store.setCellMaterial(layerId, col, row, h < 0.32 ? grass : h < 0.46 ? dirt : rock);
+        } else {
+          store.setCellMaterial(layerId, col, row, rock);
+        }
+        markDirty(col, row);
+      }
+    }
+
+    // 4. Planting. On the top, away from the rim, and added to the *tier's* own
+    // layer so a bush stands at tier height and is carried off with the rock
+    // when the tier is carved away.
+    for (let row = minRow; row < maxRow; row++) {
+      for (let col = minCol; col < maxCol; col++) {
+        const key = `${col},${row}`;
+        if (dropped.has(key) || isRim.has(key) || !wasSolid(col, row)) continue;
+        if (hashUnit2(col, row, seed ^ 0x81a7) >= PLANT_RATE) continue;
+        const jx = hashUnit2(col, row, seed ^ 0x11) - 0.5;
+        const jz = hashUnit2(col, row, seed ^ 0x22) - 0.5;
+        const placed = store.addProp(layerId, {
+          kind: 'bush',
+          x: info.origin.x + (col + 0.5 + jx * 0.6) * store.cellSize,
+          y: info.origin.z + (row + 0.5 + jz * 0.6) * store.cellSize,
+          scale: 0.7 + hashUnit2(col, row, seed ^ 0x33) * 0.6,
+          rotation: hashUnit2(col, row, seed ^ 0x44) * Math.PI * 2,
+          tint: hashUnit2(col, row, seed ^ 0x55) * 2 - 1,
+        });
+        if (placed) {
+          plantedProps++;
+          markDirty(col, row);
+        }
+      }
+    }
+
+    // Bounds follow the chunks still held: erosion can empty one entirely.
+    for (const { cx, cz } of store.chunkCoords(layerId)) {
+      if (!store.chunkHasSolid(layerId, cx, cz)) {
+        store.removeChunk(layerId, cx, cz);
+        dirtyChunks.set(`${cx},${cz}`, { cx, cz });
+      }
+    }
+    const bounds = store.heldBounds(layerId);
+    if (bounds) store.setBounds(layerId, bounds);
+
+    touched.push(...dirtyChunks.values());
+  }
+
+  return { touched, erodedCells, plantedProps };
 }

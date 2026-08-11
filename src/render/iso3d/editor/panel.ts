@@ -348,6 +348,8 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   // whatever the drag lands on, so the same value builds the second storey of a
   // stack as built the first.
   rock.add(s, 'rockHeight', 30, 260, 5).name('Height above');
+  rock.add(s, 'rockErosion', 0, 1, 0.05).name('Erosion');
+  rock.add(s, 'rockDetailSeed', 1, 9999, 1).name('Detail seed');
 
   // The tier a drag extends, or a new one. Rebuilt rather than updated for the
   // same reason the parts dropdown is: `options()` destroys the controller and
