@@ -18,12 +18,21 @@ import type { Gesture, EventContext } from '../core/events.js';
 import type { Constraint, Rect, Size } from '../core/geom.js';
 import { alignTextX, centerTextY, drawTextClipped } from '../core/paint.js';
 import type { LayoutContext, PaintContext } from '../core/widget.js';
+import { SILENT, type SoundSink } from '../core/sound.js';
 import { fontById, measureText } from '../text/font.js';
 import type { FontId } from '../theme/theme.js';
 import { StyledWidget } from './base.js';
 
 export class Button extends StyledWidget {
   onPress: (() => void) | null = null;
+  /**
+   * Where a press announces itself (spec 133).
+   *
+   * Defaults to {@link SILENT} rather than being nullable, so the emission below
+   * needs no guard -- an optional sink is one chance per call site to forget the
+   * `?.`, and the site that gets forgotten is always the one added next.
+   */
+  sounds: SoundSink = SILENT;
   fontId: FontId = 'body';
   /** An icon sprite drawn before the label, or null for a plain text button. */
   iconName: string | null = null;
@@ -50,6 +59,10 @@ export class Button extends StyledWidget {
 
   press(): void {
     if (!this.enabled) return;
+    // At the intent, not the outcome: before `onPress`, and whether or not
+    // anything is listening to it. A button that stayed silent until a round
+    // trip later is a button that felt broken.
+    this.sounds.play('ui.press');
     this.onPress?.();
   }
 
