@@ -468,31 +468,31 @@
       "padding": 0,
       "states": {
         "normal": {
-          "fill": "panelSunken",
-          "frameTint": "edgeDark",
-          "text": "text",
-          "mark": "accent"
-        },
-        "hover": {
-          "fill": "panelSunken",
+          "fill": "ink",
           "frameTint": "edgeLight",
           "text": "text",
           "mark": "accent"
         },
+        "hover": {
+          "fill": "shadow",
+          "frameTint": "accent",
+          "text": "text",
+          "mark": "accent"
+        },
         "pressed": {
-          "fill": "ink",
-          "frameTint": "edgeDark",
+          "fill": "shadow",
+          "frameTint": "accentDark",
           "text": "text",
           "mark": "accent"
         },
         "disabled": {
-          "fill": "panel",
+          "fill": "shadow",
           "frameTint": "edgeDark",
           "text": "textDim",
           "mark": "textDim"
         },
         "focused": {
-          "fill": "panelSunken",
+          "fill": "ink",
           "frameTint": "focus",
           "text": "text",
           "mark": "accent"
