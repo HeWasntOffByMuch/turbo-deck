@@ -77,15 +77,6 @@ import type { GoreLevel } from '../vfx/decals.js';
 import type { PlayRequest } from './vfx-wire.js';
 import { HikeEdges } from '../hike-edges.js';
 import { advanceWind } from '../wind-uniforms.js';
-import { clearCutout, cutBodyUniform, cutParamsUniform } from '../cutout-uniforms.js';
-import {
-  bodyHiddenFraction,
-  cutoutCoverage,
-  CUTOUT_DEFAULTS,
-  easeCutout,
-  styleCode,
-  type CutoutStyle,
-} from '../cutout.js';
 import { FIXED_DAYLIGHT } from '../daynight.js';
 import {
   MAGIC_COLOR,
@@ -446,21 +437,6 @@ export class WorldScene {
   private readonly snapBefore = new THREE.Vector3();
 
   private readonly raycaster = new THREE.Raycaster();
-  /** Reused by `cutAway`, so a hover that runs every frame allocates nothing. */
-  private readonly cutProbe = new THREE.Vector3();
-  /**
-   * The radii *currently* in force, faded, and shared by the shader and the
-   * pick. One object, so the mouse cannot be clicking through an opening that
-   * has closed on screen.
-   */
-  private readonly cutParams: { inner: number; outer: number; depthBias: number; style: CutoutStyle } = {
-    ...CUTOUT_DEFAULTS,
-  };
-  /** How far open the iris is, 0..1. Eased toward whether the body is hidden. */
-  private cutOpen = 0;
-  private readonly cutToCamera = new THREE.Vector3();
-  /** Across the view, horizontally: where a corner actually clips a body. */
-  private readonly cutRight = new THREE.Vector3();
   private readonly ndc = new THREE.Vector2();
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private readonly hit = new THREE.Vector3();
@@ -753,38 +729,11 @@ export class WorldScene {
     // falls through to the y=0 plane below -- which is the right answer for a
     // world that has not been drawn yet.
     this.raycaster.intersectObjects(this.terrainMesh?.pickTargets ?? [], false, this.terrainHits);
-    // The first hit the cutaway has *not* taken away (spec 126). Hits arrive
-    // sorted near-to-far, so this is still the nearest visible ground.
-    //
-    // Without it the porthole is a lie: the rock in front of a body is gone
-    // from the picture and still there for the mouse, so a click beside your
-    // own unit lands on a tier top it cannot reach and it walks into the wall
-    // you cannot see. What you can see through, you can click through -- one
-    // rule, and the same function decides both.
-    const ground = this.terrainHits.find((h) => !this.cutAway(h.point));
+    const ground = this.terrainHits[0];
     const hit = ground ? ground.point : this.raycaster.ray.intersectPlane(this.groundPlane, this.hit);
     return hit ? { x: hit.x, y: hit.z } : { x: this.target.x, y: this.target.z };
   }
 
-  /**
-   * Whether the cutaway has removed the geometry at this world point.
-   *
-   * The same `cutoutCoverage` the shader is transcribed from, handed the same
-   * body and the same numbers -- so the mouse and the picture cannot disagree
-   * about where the rock is. Anything the cut so much as softened counts as
-   * gone: half a wall is not something to aim a move order at.
-   */
-  private cutAway(worldPoint: THREE.Vector3): boolean {
-    const style = this.controls.cutout();
-    if (style === 'off') return false;
-    this.cutProbe.copy(worldPoint).applyMatrix4(this.camera.matrixWorldInverse);
-    // `cutParams` is whatever the last frame put in force, radii and all -- so a
-    // closing iris takes its clickable hole with it rather than leaving one
-    // behind for the mouse.
-    return (
-      cutoutCoverage(this.cutProbe, cutBodyUniform.value, this.cutParams, worldPoint.y, cutBodyUniform.value.w) < 1
-    );
-  }
 
   /**
    * The unit at a canvas pixel, or null for empty ground (spec 070).
@@ -922,58 +871,6 @@ export class WorldScene {
     this.effects.push({ mesh, age: 0, ttl: Math.max(6, durationTicks) });
   }
 
-  /**
-   * Point the cutaway at the body (spec 126).
-   *
-   * Aimed at chest height rather than at the feet: the depth bias keeps a body's
-   * own footing from flickering, and measuring from the ground would spend that
-   * bias on the slope underneath instead of on the rock in front.
-   */
-  private updateCutout(me: { x: number; y: number }, groundY: number, style: CutoutStyle, dt: number): void {
-    // Only cut when something is actually in the way (spec 128). The rule used
-    // to be "there is rock in front of the body", which is a different question
-    // and wrong most of the time -- stand on an open ledge with a wall a little
-    // nearer the camera and off to one side, and a bite came out of that wall
-    // for no reason.
-    //
-    // Answered off the heightfield, not the geometry: `getWorldDirection` is
-    // where the camera is looking, so its negation is the line to march.
-    this.camera.getWorldDirection(this.cutToCamera).negate();
-    // Horizontal, across the view. `crossVectors` with world up, then flattened:
-    // the lateral samples are meant to span the body's *silhouette*, and a right
-    // vector that tilted with the camera's pitch would put them above and below
-    // it instead.
-    this.cutRight.set(this.cutToCamera.z, 0, -this.cutToCamera.x).normalize();
-    // All of it, not the chest alone. A unit at the corner of a tier with one
-    // shoulder behind it used to open the iris and take a crescent out of the
-    // wall while the unit was plainly visible the whole time -- so if any part of
-    // it can be seen, the world does not move.
-    const hidden =
-      style !== 'off' &&
-      bodyHiddenFraction(
-        { x: me.x, y: groundY, z: me.y },
-        this.cutToCamera,
-        this.cutRight,
-        DEFAULT_CANONICAL_HEIGHT,
-        (x, z) => this.ground(x, z),
-      ) >= 1;
-    this.cutOpen = easeCutout(this.cutOpen, hidden, dt);
-
-    // The chest, pushed into view space for the hole's centre...
-    cutBodyUniform.value.set(me.x, groundY + DEFAULT_CANONICAL_HEIGHT * 0.5, me.y, 1).applyMatrix4(
-      this.camera.matrixWorldInverse,
-    );
-    // ...and then `w` reused for the feet in *world* Y, which is what keeps the
-    // floor out of the cut and puts the ghost's strata at a height.
-    cutBodyUniform.value.w = groundY;
-    cutParamsUniform.value.set(
-      CUTOUT_DEFAULTS.inner,
-      CUTOUT_DEFAULTS.outer,
-      CUTOUT_DEFAULTS.depthBias,
-      styleCode(style),
-    );
-  }
-
   render(view: ClientView, frame: FrameInfo): void {
     this.resize();
     const dt = Math.min(0.05, Math.max(0, frame.dt));
@@ -1025,11 +922,6 @@ export class WorldScene {
 
     this.camera.updateMatrixWorld();
     this.scene.updateMatrixWorld();
-    // Where the body is, in view space, so whatever stands in front of it gives
-    // way (spec 126). Here rather than earlier because it reads the camera's
-    // inverse and that is only fresh from the line above; here rather than
-    // later because the passes below draw with it.
-    this.updateCutout(me, groundY, this.controls.cutout(), dt);
     // Needs both of the above: it reads the rig's world position and pushes it
     // through the camera's inverse (spec 118).
     this.anchorPlayerLighting(view.selfEntityId);
@@ -1105,10 +997,6 @@ export class WorldScene {
   }
 
   dispose(): void {
-    // The terrain materials are module-level singletons shared with the map
-    // editor, which has no body in it -- a radius left set here would cut a hole
-    // in a tab that cannot explain one (spec 126).
-    clearCutout();
     this.vfx.dispose();
     for (const body of this.bodies.values()) {
       this.scene.remove(body.group);

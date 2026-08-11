@@ -1,5 +1,4 @@
 import { RETRO_DEFAULTS, type BayerSize, type RetroSettings } from './retro.js';
-import { CUTOUT_DEFAULTS, type CutoutStyle } from './cutout.js';
 import {
   DEFAULT_PALETTE_ID,
   DEFAULT_VIRTUAL_SIZE,
@@ -103,15 +102,6 @@ export interface ViewControls {
   showUnwalkable(): boolean;
   /** Whether the map's spawn points and their timers are drawn (spec 076). */
   showSpawners(): boolean;
-  /**
-   * How rock in front of the body gives way (spec 126).
-   *
-   * A choice rather than a switch, because the two ways of drawing the hole
-   * look nothing alike and neither is obviously right: a clean bite is quiet,
-   * a stipple matches the retro pass's own grain, and `off` is for anyone who
-   * would rather learn the geometry than have it move.
-   */
-  cutout(): CutoutStyle;
   /** The retro dither/quantization filter's current settings (spec 038). */
   retro(): RetroSettings;
   /**
@@ -454,14 +444,6 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   const spawners = makeCheckbox('Spawners', false,
     'Mark every spawn point the map places, with what it spawns and how long until it comes back.');
 
-  const cutout = makeTextChoice('Cutaway',
-    [['ghost', 'Banded'], ['hard', 'Clean'], ['stipple', 'Stipple'], ['off', 'Off']] as const,
-    CUTOUT_DEFAULTS.style,
-    'What rock standing between the camera and your unit does. Banded keeps dark strata so ' +
-    'you can still see the wall you would walk into; clean cuts a plain hole; stipple ' +
-    'dissolves it in the retro filter\u2019s own weave; off leaves it solid. The ground is ' +
-    'never cut.');
-
   const retroOn = makeCheckbox('Retro filter', RETRO_DEFAULTS.enabled,
     'Quantize the image to a few colours per channel and dither across the bands, ' +
     'the way a machine with too few colours would.');
@@ -631,7 +613,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   const view = createSettingsMenu({ glyph: '⚙', label: 'View settings', group: menus });
   fill(view.panel, 'Restore the camera and the terrain overlays to their defaults.', [
     section('Camera'), camAz, camEl, zoom, followLag,
-    section('Terrain'), unwalkable, spawners, cutout,
+    section('Terrain'), unwalkable, spawners,
   ]);
 
   // The sun. The manual sliders live with the cycle rather than with the camera
@@ -715,7 +697,6 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
       orbitToOffset({ azimuth: lightAz.value() * DEG, elevation: lightEl.value() * DEG, distance: lightOrbit.distance }),
     showUnwalkable: () => unwalkable.checked(),
     showSpawners: () => spawners.checked(),
-    cutout: () => cutout.value() as CutoutStyle,
     retro: () => ({
       enabled: retroOn.checked(),
       levels: levels.value(),
