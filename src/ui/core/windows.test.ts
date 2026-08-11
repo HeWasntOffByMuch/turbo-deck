@@ -21,7 +21,7 @@ import { THEME } from '../theme/theme.js';
 import { Label } from '../widgets/label.js';
 import { TextField } from '../widgets/text-field.js';
 import { TabPanel } from '../widgets/tabs.js';
-import { clampToViewport, MIN_VISIBLE, UiWindow } from '../widgets/window.js';
+import { clampToViewport, MIN_VISIBLE, pullIntoViewport, UiWindow } from '../widgets/window.js';
 
 const ATLAS = bakeAtlas(THEME);
 const VIEWPORT: Size = { width: 320, height: 200 };
@@ -477,5 +477,75 @@ describe('clampToViewport', () => {
   it('leaves the point alone when the viewport is not known yet', () => {
     const at: Point = { x: -500, y: -500 };
     expect(clampToViewport(at, { width: 10, height: 10 }, { width: 0, height: 0 })).toEqual(at);
+  });
+});
+
+/**
+ * A viewport that changed under the windows (spec 137).
+ *
+ * The scale setting is the reason this matters. Going from 1x to 4x quarters
+ * the viewport's UI width, and every open window kept the size it had -- larger
+ * than the screen it was on, with both edges outside the tab and 24 pixels of
+ * title bar left to grab. The way back was the setting you could no longer see.
+ */
+describe('a viewport that shrank', () => {
+  it('never leaves a window bigger than the viewport', () => {
+    const test = harness(1, { width: 320, height: 200 });
+    const window = test.window('w0');
+    test.manager.open('w0');
+    test.frame();
+
+    test.root.resize({ width: 80, height: 50 });
+    test.frame(32);
+    expect(window.size.width).toBeLessThanOrEqual(80);
+    expect(window.size.height).toBeLessThanOrEqual(50);
+  });
+
+  it('pulls the whole window back on screen, not just its handle', () => {
+    const test = harness(1, { width: 320, height: 200 });
+    const window = test.window('w0');
+    test.manager.open('w0');
+    test.frame();
+
+    test.root.resize({ width: 120, height: 90 });
+    test.frame(32);
+    expect(window.at.x).toBeGreaterThanOrEqual(0);
+    expect(window.at.y).toBeGreaterThanOrEqual(0);
+    expect(window.at.x + window.size.width).toBeLessThanOrEqual(120);
+    expect(window.at.y + window.size.height).toBeLessThanOrEqual(90);
+  });
+
+  it('leaves a window that already fits exactly where it was', () => {
+    const test = harness(1, { width: 320, height: 200 });
+    const window = test.window('w0');
+    test.manager.open('w0');
+    test.frame();
+    const before = { ...window.at, ...window.size };
+
+    test.root.resize({ width: 300, height: 190 });
+    test.frame(32);
+    expect(window.at).toEqual({ x: before.x, y: before.y });
+    expect(window.size).toEqual({ width: before.width, height: before.height });
+  });
+});
+
+describe('pullIntoViewport', () => {
+  it('is a no-op for a window already fully on screen', () => {
+    const at: Point = { x: 20, y: 20 };
+    expect(pullIntoViewport(at, { width: 50, height: 50 }, VIEWPORT)).toEqual(at);
+  });
+
+  it('is stricter than the drag clamp, which is the whole point', () => {
+    const at: Point = { x: 300, y: 190 };
+    const size = { width: 100, height: 60 };
+    // The drag rule leaves a sliver on screen; this one puts it all back.
+    expect(clampToViewport(at, size, VIEWPORT).x).toBeGreaterThan(VIEWPORT.width - size.width);
+    expect(pullIntoViewport(at, size, VIEWPORT)).toEqual({ x: 220, y: 140 });
+  });
+
+  it('gives up gracefully when the window cannot fit at all', () => {
+    // Nothing sensible is possible, so the top-left corner is the answer: the
+    // title bar is reachable and the close button is where it always is.
+    expect(pullIntoViewport({ x: 40, y: 40 }, { width: 500, height: 500 }, VIEWPORT)).toEqual({ x: 0, y: 0 });
   });
 });

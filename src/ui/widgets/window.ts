@@ -158,12 +158,43 @@ export class UiWindow extends StyledWidget {
     this.invalidateMeasure();
   }
 
-  /** Told by the manager when the viewport changed. */
+  /**
+   * Told by the manager when the viewport changed.
+   *
+   * Shrinks as well as moves (spec 137), and that is the correction. Keeping
+   * only the handle reachable is the right rule for a *drag* -- a window wider
+   * than the screen has to be draggable or it is stuck -- but it is the wrong
+   * one for a viewport that just changed size underneath the window. Changing
+   * the interface scale from 1x to 4x cuts the viewport to a quarter of its UI
+   * width, and every window that was open stayed its old size: bigger than the
+   * screen, with 24 pixels of title bar showing and both of its edges outside
+   * the tab. That reads as "the settings broke my interface", and the way back
+   * is the setting you can no longer see.
+   *
+   * So: no window is ever larger than the viewport it lives in, and after a
+   * resize every window is *entirely* on screen rather than merely reachable.
+   */
   reclamp(viewport: Size): void {
-    const next = clampToViewport(this.position, this.box, viewport);
-    if (next.x === this.position.x && next.y === this.position.y) return;
+    if (viewport.width <= 0 || viewport.height <= 0) return;
+    const box = {
+      width: Math.min(this.box.width, viewport.width),
+      height: Math.min(this.box.height, viewport.height),
+    };
+    const next = pullIntoViewport(this.position, box, viewport);
+    if (
+      box.width === this.box.width &&
+      box.height === this.box.height &&
+      next.x === this.position.x &&
+      next.y === this.position.y
+    ) {
+      return;
+    }
+    const resized = box.width !== this.box.width || box.height !== this.box.height;
+    this.box = box;
     this.position = next;
-    this.invalidateArrange();
+    // A smaller box has to be measured again; a moved one only re-arranged.
+    if (resized) this.invalidateMeasure();
+    else this.invalidateArrange();
   }
 
   /**
@@ -386,11 +417,28 @@ function containsPointIn(rect: Rect, point: Point): boolean {
 }
 
 /**
+ * Put the whole window on screen (spec 137).
+ *
+ * The stricter of the two rules, and the one for a viewport that changed size
+ * rather than for a player who is dragging. A window the player pushed halfway
+ * off the edge stays where they put it until something moves the ground under
+ * it; when that happens, "reachable" is not enough -- an interface that rescaled
+ * itself into a corner is one whose settings look broken.
+ */
+export function pullIntoViewport(at: Point, size: Size, viewport: Size): Point {
+  if (viewport.width <= 0 || viewport.height <= 0) return at;
+  return {
+    x: Math.round(Math.max(0, Math.min(Math.max(0, viewport.width - size.width), at.x))),
+    y: Math.round(Math.max(0, Math.min(Math.max(0, viewport.height - size.height), at.y))),
+  };
+}
+
+/**
  * Keep at least `MIN_VISIBLE` pixels of the title bar on screen.
  *
  * Not "keep the whole window on screen": a window wider than the viewport would
  * then be unmovable, and on a phone that is most of them. What has to stay
- * reachable is the handle.
+ * reachable is the handle. This is the rule a *drag* obeys.
  */
 export function clampToViewport(at: Point, size: Size, viewport: Size): Point {
   if (viewport.width <= 0 || viewport.height <= 0) return at;
