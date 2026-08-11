@@ -337,6 +337,29 @@ half or waits on a stat-respec spec; the skill half can proceed now. This is a
 scheduling change, not a design one, and I would rather raise it than discover it in
 Phase 4.
 
+**Done for phase 4's half.** `specs/126-an-item-you-actually-have.md` landed the
+server side: `ItemStack`, a 24-slot `Inventory` on `PersistedPlayer`, one pure
+`applyMove` in `server/player/inventory.ts` that every equip/unequip/swap/merge/
+split goes through, `MoveItem` and `Inventory` on the wire, a starting kit, and
+the migration for saves that predate the field. Three things it settled that the
+screen inherits rather than decides:
+
+- **A drag is a `MoveRequest`** — a source address, a target address, a count.
+  The screen builds one and sends it; it never decides whether a move is legal.
+- **The read model is `view().inventory` / `view().equipment`**, whole containers
+  with the client's own in-flight guess already applied. There is no delta to
+  merge and no rollback path to write: a refused move is answered with the
+  server's containers at the same request id, and the guess is simply replaced.
+- **`applyMove` is pure and shared**, so the screen can predict by calling the
+  same function the server runs. That is what makes a drag feel instant without
+  the renderer containing an `if` that changes an outcome.
+
+One boundary the screen will meet: `src/ui/` may not import `server/state` or
+`server/player` (the `NO_SIM` lint rule), so a widget cannot name an `ItemStack`
+or a `SlotAddress` directly. The view-model the screen is handed has to carry
+plain rows -- id, count, name, slot -- assembled outside `src/ui/`. That is the
+rule working as intended, and spec 127 should say so rather than discovering it.
+
 ### 2.8 Phase 3 has to unify three input systems, not one
 
 Phase 3's done-condition is "nothing reads a raw key outside `ui/input`". Today there
