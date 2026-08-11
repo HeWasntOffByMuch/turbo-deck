@@ -36,6 +36,7 @@ function viewFixture(overrides: Partial<ClientView> = {}): ClientView {
     equipment: NO_EQUIPMENT,
     coins: 60,
     vendor: null,
+    vendorRevision: 0,
     level: 3,
     experience: 40,
     unspentSkillPoints: 1,
@@ -187,11 +188,23 @@ describe('what a shop tells the server', () => {
     expect(requests).toEqual(['vendor:vendor.quartermaster', 'vendor:']);
   });
 
-  it('shuts the window when the server stops sending a shop', () => {
+  /**
+   * "Not asked yet" and "asked, and the answer was no" are different states, and
+   * conflating them closed the shop on the frame it opened -- every time, so the
+   * key that opens it did nothing at all.
+   */
+  it('stays open while the server has not answered yet', () => {
     const { screens } = harness();
     screens.show('shop');
-    // The server never answered, or answered by walking us out of range.
-    screens.update(viewFixture({ vendor: null }), 0);
+    screens.update(viewFixture({ vendor: null, vendorRevision: 0 }), 0);
+    expect(screens.isOpen('shop')).toBe(true);
+  });
+
+  it('shuts the window when the server answers that there is no shop', () => {
+    const { screens } = harness();
+    screens.show('shop');
+    // The answer arrived -- walked out of range, or refused -- and it is empty.
+    screens.update(viewFixture({ vendor: null, vendorRevision: 1 }), 0);
     expect(screens.isOpen('shop')).toBe(false);
   });
 });

@@ -242,6 +242,11 @@ export interface ClientView {
    */
   readonly vendor: VendorView | null;
   /**
+   * Bumped by every answer the server gives about a shop, including an empty
+   * one. What tells "not asked yet" apart from "asked, and the answer was no".
+   */
+  readonly vendorRevision: number;
+  /**
    * The trade in progress, or null (spec 132).
    *
    * Whole, and replaced by whatever the server last said. A client never decides
@@ -420,6 +425,16 @@ export class GameClient {
   private inventory: Inventory = [];
   private coins = 0;
   private vendorView: VendorView | null = null;
+  /**
+   * How many answers about a shop this client has had (spec 131).
+   *
+   * A count rather than a flag, because the question it answers is "has the
+   * server replied *since I asked*" -- and a caller that only watched
+   * {@link vendorView} cannot tell "no answer yet" from "answered, and there is
+   * no shop". Which is exactly how the shop window used to open and shut itself
+   * on the same frame, forever.
+   */
+  private vendorReplies = 0;
   /** The trade this client is in, or null (spec 132). Replaced whole. */
   private tradeView: TradeView | null = null;
   private equipment: Equipment = EMPTY_EQUIPMENT;
@@ -1203,6 +1218,7 @@ export class GameClient {
       equipment: this.equipment,
       coins: this.coins,
       vendor: this.vendorView,
+      vendorRevision: this.vendorReplies,
       trade: this.tradeView,
       level: this.level,
       experience: this.experience,
@@ -1419,6 +1435,7 @@ export class GameClient {
         break;
 
       case ServerMessageType.VendorState:
+        this.vendorReplies += 1;
         this.vendorView =
           message.vendorId === ''
             ? null

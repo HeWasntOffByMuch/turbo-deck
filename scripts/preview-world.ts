@@ -429,6 +429,15 @@ async function main(): Promise<void> {
 
     await shoot(page, 'world-play');
 
+    // Every key that opens a window, before anything else happens (spec 131).
+    //
+    // Here rather than beside the rest of the interface checks at the bottom,
+    // because the shop is only served to somebody standing at a counter -- and
+    // by the end of this script the player has chased a Stalker halfway across
+    // the arena. At spawn they are inside both vendors' reach, which is where a
+    // player who has just pressed V will be.
+    await windowKeys(page, problems);
+
     // The spawner overlay (spec 076): open the cog, tick "Spawners", and
     // photograph what the map placed. Every enemy on screen came from one of
     // these markers, so a frame with bodies and no marks would mean the
@@ -835,6 +844,38 @@ async function main(): Promise<void> {
   } finally {
     await browser.close();
     server.kill();
+  }
+}
+
+/**
+ * Every key that opens a window, one at a time, opened and shut again.
+ *
+ * All five rather than the two this used to press. A binding that reaches
+ * nothing is exactly the state spec 131 was written to end -- `KeyI` did nothing
+ * for three phases while the keybinding screen cheerfully offered to rebind it
+ * -- and four of these five had never been pressed by anything but a unit test.
+ * The fifth, `KeyV`, turned out not to work at all.
+ */
+async function windowKeys(page: Page, problems: string[]): Promise<void> {
+  for (const [code, id] of [
+    ['KeyI', 'inventory'],
+    ['KeyB', 'inventory'],
+    ['KeyC', 'character'],
+    ['KeyK', 'keybindings'],
+    ['KeyV', 'shop'],
+  ] as const) {
+    const got = await pressAndWait(page, code, id);
+    if (got !== id) {
+      problems.push(`${code} opened "${got}" rather than the ${id}`);
+      continue;
+    }
+    const painted = (await paintedBox(page))?.painted ?? 0;
+    if (painted === 0) problems.push(`the ${id} opened on ${code} and drew nothing`);
+    console.log(`  ${code} opens the ${id} (${painted} pixels)`);
+    if (id === 'shop') await shoot(page, 'world-shop');
+    // Shut again, so the next key is measured on its own.
+    const shut = await pressAndWait(page, code, '');
+    if (shut !== '') problems.push(`${code} would not close the ${id}, leaving "${shut}"`);
   }
 }
 

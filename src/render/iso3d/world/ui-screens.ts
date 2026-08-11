@@ -34,6 +34,7 @@ import type { Modifiers, UiEvent } from '../../../ui/core/events.js';
 import { UNBOUNDED, type Point, type Size } from '../../../ui/core/geom.js';
 import { LayerStack } from '../../../ui/core/layers.js';
 import { UiRoot } from '../../../ui/core/root.js';
+import type { MotionPreference } from '../../../ui/core/motion.js';
 import { WindowManager } from '../../../ui/core/window-manager.js';
 import { bakeAtlas, type Atlas } from '../../../ui/render/atlas.js';
 import { BODY_FONT } from '../../../ui/text/font.js';
@@ -124,6 +125,18 @@ export class UiScreens {
   private now = 0;
   /** The shop the server says is open. What a Buy is addressed to. */
   private openVendorId = '';
+  /**
+   * The vendor answer count at the moment the shop was asked for.
+   *
+   * The shop window is the one screen whose contents have to arrive before it
+   * has anything to show, and "the server refused" is what closes it -- so
+   * without this it closed itself on the frame it opened, every time, because
+   * the answer had not come back yet. `KeyV` therefore did nothing at all, which
+   * is precisely the failure the whole mount was written to end.
+   */
+  private shopAskedAt = -1;
+  /** The last answer count seen, so {@link show} can stamp against it. */
+  private lastVendorRevision = 0;
 
   /** What the screens were last built from. See {@link containersChanged}. */
   private lastInventory: ClientView['inventory'] | null = null;
@@ -249,6 +262,7 @@ export class UiScreens {
     }
 
     this.openVendorId = view.vendor?.id ?? '';
+    this.lastVendorRevision = view.vendorRevision;
     if (this.isOpen('shop')) {
       const shopView = shopViewOf({
         vendor: view.vendor,
@@ -258,8 +272,11 @@ export class UiScreens {
       // The server shut it -- walked out of range, or refused to open one at
       // all. The window goes with it rather than sitting there with a price list
       // nobody can act on. A client never decides this for itself.
+      //
+      // ...but only once the server has actually answered. Before that there is
+      // no shop because nobody has said yet, which is a different thing from no.
       if (shopView) this.shop.setShop(shopView);
-      else this.close('shop');
+      else if (view.vendorRevision > this.shopAskedAt) this.close('shop');
     }
 
     // Placed *here*, after the screens have been fed, and not in `show`.
@@ -343,6 +360,11 @@ export class UiScreens {
     this.root.resize(viewport);
   }
 
+  /** Told whether the player has asked for less motion (spec 133). */
+  setMotion(motion: MotionPreference): void {
+    this.root.setMotion(motion);
+  }
+
   /** Told where the app's chrome ends. See {@link safeTop}. */
   setSafeTop(uiPixels: number): void {
     this.safeTop = Math.max(0, Math.floor(uiPixels));
@@ -379,8 +401,13 @@ export class UiScreens {
     }
     // Asked for before the window appears, so the first frame it is drawn on is
     // already the answer rather than an empty shop that fills in a moment later.
-    if (id === 'shop') this.options.onVendor(this.options.nearestVendor() ?? '');
-    this.windows.open(id);
+    if (id === 'shop') {
+      this.shopAskedAt = this.lastVendorRevision;
+      this.options.onVendor(this.options.nearestVendor() ?? '');
+    }
+    // Handed the time, so the window wipes into view (spec 133). It is the only
+    // caller that has one -- the goldens open a window settled, on purpose.
+    this.windows.open(id, this.now);
     if (!this.placed.has(id)) this.awaitingPlacement.add(id);
     this.syncContext();
   }
