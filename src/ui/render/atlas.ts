@@ -23,7 +23,15 @@
 import { multiply, WHITE, type Color } from '../core/color.js';
 import type { Rect } from '../core/geom.js';
 import { BODY_FONT, NUMERIC_FONT, type Font, type Glyph } from '../text/font.js';
-import { ICONS, ICON_SIZE, PATCHES, PATCH_PALETTE, type PatchSource } from '../theme/atlas-source.js';
+import {
+  ICONS,
+  ICON_SIZE,
+  ITEM_ICONS,
+  ITEM_ICON_SIZE,
+  PATCHES,
+  PATCH_PALETTE,
+  type PatchSource,
+} from '../theme/atlas-source.js';
 import type { Theme } from '../theme/theme.js';
 import { colorKey } from '../core/color.js';
 
@@ -138,6 +146,11 @@ export function bakeAtlas(theme: Theme, width = 256): Atlas {
   }
   for (const [name, rows] of Object.entries(ICONS)) {
     placements.push(gridPlacement(`icon:${name}`, rows, ICON_SIZE, ICON_SIZE, resolve));
+  }
+  // Item art is its own size (spec 127) and its own namespace, so `icon:close`
+  // and `item:sword` can never collide and neither has to know the other exists.
+  for (const [name, rows] of Object.entries(ITEM_ICONS)) {
+    placements.push(gridPlacement(`item:${name}`, rows, ITEM_ICON_SIZE, ITEM_ICON_SIZE, resolve));
   }
   placements.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
