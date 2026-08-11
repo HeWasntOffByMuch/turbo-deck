@@ -411,6 +411,11 @@ export class UiScreens {
       this.inventory.cancelDrag();
     }
     this.inventory.updateTooltip(nowMs);
+    // ...and a capture does not outlive the window it was armed in either. It
+    // holds `textEntry` while it waits, so a capture stranded by a window closing
+    // any other way -- the title bar's cross, a second press of K -- is an
+    // interface that swallows every key from then on.
+    if (!this.isOpen('options')) this.keybindings.cancelCapture();
 
     this.syncContext();
     this.root.update(nowMs);
@@ -479,6 +484,8 @@ export class UiScreens {
     readonly scaleChoice: string;
     readonly scaleRects: readonly { readonly id: string; readonly rect: Rect }[];
     readonly bagRects: readonly { readonly id: string; readonly rect: Rect }[];
+    readonly bindRects: readonly { readonly id: string; readonly rect: Rect }[];
+    readonly resetRects: readonly { readonly id: string; readonly rect: Rect }[];
   } {
     const tabs = this.optionsScreen.tabs;
     return {
@@ -500,7 +507,26 @@ export class UiScreens {
       // another, and a harness that cannot say *which* cell is a harness that
       // can only say some pixels changed.
       bagRects: this.inventory.bagSlots.map((cell, index) => ({ id: String(index), rect: cell.rect })),
+      // The keybinding rows' buttons, by action id (spec 138). Binding a key is
+      // two events a browser has to deliver in order -- a press on the button and
+      // then a key with no focus anywhere -- which is precisely the path that
+      // broke, and the resets are here so a harness can put back what it bound.
+      bindRects: this.rowButtons('bind:', ':primary'),
+      resetRects: this.rowButtons('reset:', ''),
     };
+  }
+
+  /** Where a keybinding row's buttons are, by action id. For the harness. */
+  private rowButtons(prefix: string, suffix: string): readonly { id: string; rect: Rect }[] {
+    const found: { id: string; rect: Rect }[] = [];
+    for (const widget of this.keybindings.walk()) {
+      if (!widget.visible || !widget.name.startsWith(prefix) || !widget.name.endsWith(suffix)) continue;
+      if (widget.rect.width === 0) continue;
+      const id = widget.name.slice(prefix.length, widget.name.length - suffix.length);
+      found.push({ id, rect: widget.rect });
+      if (found.length >= 4) break;
+    }
+    return found;
   }
 
   /** Whether something is in hand. For a test, and for the harness. */
@@ -727,6 +753,23 @@ export class UiScreens {
    * control keys from `key`, and a browser delivers both on one `keydown`.
    */
   handleKey(code: string, phase: 'down' | 'up', mods: Modifiers, text?: string): boolean {
+    // A capture in progress owns every key, Escape included.
+    //
+    // Handed here rather than routed, because routing a key means routing it to
+    // *focus* -- and since spec 137 a press no longer takes focus, so the button
+    // that armed the capture is not holding the keyboard and the screen the key
+    // has to reach is not focusable at all. The keybinding screen is the one
+    // thing in the interface whose whole job is to hear a key it was not given,
+    // so it is asked directly, from the one place that sees every key.
+    //
+    // It is also *before* Escape's list. A capture is the thing in front of you,
+    // like a drag: Escape has to call it off rather than close the window it was
+    // opened in -- which used to leave `textEntry` pushed with nothing to pop it,
+    // and from then on the interface swallowed every key in the game.
+    if (phase === 'down' && this.keybindings.capturing && this.keybindings.captureKey(code, mods)) {
+      return true;
+    }
+
     if (code === 'Escape' && phase === 'down') {
       return escapeTaken([
         () => this.inventory.cancelDrag(),
