@@ -75,11 +75,33 @@ export const ASSET_MANIFEST_HASH: string = MANIFEST.hash;
  * a change to either side's base cannot silently resolve to nothing.
  */
 function lookup<T>(table: Record<string, T>, path: string): T | undefined {
-  const suffix = `/assets/units/${path}`;
+  const suffix = `/assets/units/${normalize(path)}`;
   for (const [key, value] of Object.entries(table)) {
     if (key.endsWith(suffix)) return value;
   }
   return undefined;
+}
+
+/**
+ * Flattens `.` and `..` out of a manifest-relative path.
+ *
+ * A reference is relative to the document that *made* it, and a unit that
+ * borrows another's clip library reaches sideways to do it -- `../pig.skeleton.json`
+ * from a unit folder, `clips/walk.glb` from a library one folder over. The glob
+ * keys have no `..` in them, so a path carrying one matches nothing, and the two
+ * callers below both treat "no match" as "leave it out" rather than as an error.
+ * That is how the fox came to be drawn with an empty clip set: every lookup
+ * missed, every clip was skipped, and the body stood in its bind pose with the
+ * machine ticking happily above it.
+ */
+function normalize(path: string): string {
+  const out: string[] = [];
+  for (const part of path.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') out.pop();
+    else out.push(part);
+  }
+  return out.join('/');
 }
 
 const registry = new Map<AuthoredUnitId, AuthoredUnit>();
@@ -125,11 +147,28 @@ for (const entry of MANIFEST.units) {
     continue;
   }
 
-  // Clip ids are the keys the machine names; the paths come from the library.
+  // Clip ids are the keys the machine names; the paths come from the library --
+  // and they are relative to the *library*, not to the unit. Those are the same
+  // folder only while a unit owns its clips, which is the case this format
+  // exists to stop being the only one: a rig family's library serves every unit
+  // in it, and the second unit to join one is reaching into another folder.
+  // Resolving against `dir` silently found nothing there and left the clip out.
+  const clipDir = clipLibPath === undefined ? dir : clipLibPath.slice(0, clipLibPath.lastIndexOf('/') + 1);
   const clipUrls: Record<string, string> = {};
+  const unresolved: string[] = [];
   for (const clip of clipLib.clips) {
-    const url = lookup(glbUrls, `${dir}${clip.source}`);
+    const url = lookup(glbUrls, `${clipDir}${clip.source}`);
     if (url !== undefined) clipUrls[clip.id] = url;
+    else unresolved.push(clip.source);
+  }
+  // Said out loud, because the failure it replaces was silent in the one way
+  // that matters: a unit with no clips loads, draws, and poses nothing, which
+  // looks exactly like a unit whose animation is merely bad.
+  if (unresolved.length > 0) {
+    console.error(
+      `[units] "${entry.id}" could not resolve ${unresolved.length} clip(s) and will not animate them: ` +
+        `${unresolved.join(', ')}`,
+    );
   }
 
   const skeletonDoc = lookup(jsonDocs, `${dir}${unit.skeletonRef}`)?.default;
