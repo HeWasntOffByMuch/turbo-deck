@@ -804,6 +804,9 @@ export class GameServer implements AdminHost {
       level: session.record.level,
       experience: session.record.experience,
       unspentSkillPoints: session.record.unspentSkillPoints,
+      // What has actually been spent (spec 128), not just what is left to
+      // spend: a client told only the remainder cannot draw a tree.
+      skills: session.record.skills,
       stats: session.stats,
     });
   }

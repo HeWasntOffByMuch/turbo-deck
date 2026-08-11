@@ -72,6 +72,7 @@ import {
   type EffectiveStats,
   type Equipment,
   type Inventory,
+  type SkillAllocation,
   type SlotAddress,
 } from '../state/types.js';
 import { applyMove, type MoveRequest } from '../player/inventory.js';
@@ -207,6 +208,15 @@ export interface ClientView {
   readonly level: number;
   readonly experience: number;
   readonly unspentSkillPoints: number;
+  /**
+   * Every point this character has spent (spec 128).
+   *
+   * Where a skill tree's "you have three of five in this" comes from. Not
+   * derivable from {@link stats}: two different builds can add up to the same
+   * numbers, which is the same reason equipment had to be replicated rather
+   * than inferred.
+   */
+  readonly skills: readonly SkillAllocation[];
   readonly connected: boolean;
   /** Casts in progress, keyed by caster -- what to draw a wind-up bar over. */
   readonly casts: readonly KnownCast[];
@@ -370,6 +380,7 @@ export class GameClient {
   private level = 1;
   private experience = 0;
   private unspentSkillPoints = 0;
+  private skills: readonly SkillAllocation[] = [];
   private seq = 0;
   private connected = false;
   private resolveWelcome: ((info: WelcomeInfo) => void) | null = null;
@@ -1048,6 +1059,7 @@ export class GameClient {
       level: this.level,
       experience: this.experience,
       unspentSkillPoints: this.unspentSkillPoints,
+      skills: this.skills,
       connected: this.connected,
       casts: this.visibleCasts(),
       requestedAbilityId: this.requestedAbilityId,
@@ -1239,6 +1251,7 @@ export class GameClient {
         this.level = message.level;
         this.experience = message.experience;
         this.unspentSkillPoints = message.unspentSkillPoints;
+        this.skills = message.skills;
         break;
 
       case ServerMessageType.Delta: {

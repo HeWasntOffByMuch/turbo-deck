@@ -15,6 +15,7 @@ import {
   type EquipSlot,
   type Inventory,
   type ItemStack,
+  type SkillAllocation,
   type SlotAddress,
   type Vec3,
 } from '../state/types.js';
@@ -473,6 +474,18 @@ export interface StatsMessage {
   readonly level: number;
   readonly experience: number;
   readonly unspentSkillPoints: number;
+  /**
+   * Every point this character has spent (spec 128). Whole, never a delta.
+   *
+   * On this message rather than one of its own because it changes at exactly the
+   * moments `Stats` is already sent -- login, equip, unequip, spend, level -- and
+   * a second message on the same trigger is a second thing to keep in step.
+   *
+   * Without it a client can spend a point and is never told what it owns, so a
+   * skill tree cannot be drawn at all; the same hole spec 126 closed for
+   * equipment, and with the same answer.
+   */
+  readonly skills: readonly SkillAllocation[];
   readonly stats: EffectiveStats;
 }
 
@@ -708,6 +721,13 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
   };
 }
 
+function readSkills(reader: BufferReader): readonly SkillAllocation[] {
+  const count = reader.varuint();
+  const skills: SkillAllocation[] = new Array<SkillAllocation>(count);
+  for (let i = 0; i < count; i++) skills[i] = { skillId: reader.str(), level: reader.varuint() };
+  return skills;
+}
+
 function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
   writer
     .f32(stats.maxHealth)
@@ -817,6 +837,10 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
         .varuint(message.level)
         .varuint(message.experience)
         .varuint(message.unspentSkillPoints);
+      writer.varuint(message.skills.length);
+      for (const allocation of message.skills) {
+        writer.str(allocation.skillId).varuint(allocation.level);
+      }
       writeStats(writer, message.stats);
       break;
     case ServerMessageType.Inventory:
@@ -950,6 +974,7 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         level: reader.varuint(),
         experience: reader.varuint(),
         unspentSkillPoints: reader.varuint(),
+        skills: readSkills(reader),
         stats: readStats(reader),
       };
     case ServerMessageType.Inventory:

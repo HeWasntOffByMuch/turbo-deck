@@ -201,6 +201,20 @@ describe('game message round-trip', () => {
       level: 7,
       experience: 340,
       unspentSkillPoints: 2,
+      skills: [
+        { skillId: 'might.toughness', level: 3 },
+        { skillId: 'finesse.footwork', level: 1 },
+      ],
+      stats: STATS,
+    },
+    {
+      // ...and with nothing spent, which is every character's first minute.
+      type: ServerMessageType.Stats,
+      entityId: 1,
+      level: 1,
+      experience: 0,
+      unspentSkillPoints: 1,
+      skills: [],
       stats: STATS,
     },
     {
