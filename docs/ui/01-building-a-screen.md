@@ -137,7 +137,11 @@ slides off its widget before release is cancelled. Pointer capture is taken on
 `down` automatically, so a button dragged off of still owns its release.
 
 Keys go to whatever has focus, so a widget that wants the keyboard sets
-`focusable = true` and implements `onEvent`.
+`focusable = true` and implements `onEvent`. Since spec 137 a **press** only
+gives focus to a widget with `focusOnPress` — `TextField` and nothing else — so
+"the thing I just clicked" is not holding the keyboard. A screen that needs a key
+without anything focused asks the mount for it directly; see the capture in
+phase 3.
 
 ### Contexts, not flags
 
@@ -252,9 +256,22 @@ const actions = map.resolve(event.code, mods, 'gameplay');   // ['move.north']
   the exact chord strands keys: press W, press Shift, release W, and the player
   walks into a wall.
 
+- **A capture owns the keyboard while it waits** (spec 138). The mount hands keys
+  straight to `KeybindingsScreen.captureKey` — before Escape's list, so Escape
+  cancels the capture instead of closing the window it was armed in — rather than
+  routing them, because routing means routing to *focus* and a press does not
+  take focus any more. It used to work only by accident of the pressed button
+  holding the keyboard, and when that stopped, binding a key did nothing while
+  the armed capture went on swallowing every key in the game.
+
 Adding an action: a line in `bindings.json`, and a branch in `key-actions.ts` if
 gameplay has to do something about it. The schema catches a typo'd category and
 the tests catch an action with no default.
+
+**If you write a screen that needs a key nobody focused**, do what this does: ask
+for it in the mount, and cancel yourself when your window closes. Three things
+now hold something that outlives their window — the tooltip, a carry and a
+capture — and all three are cleared in the same frame check for the same reason.
 
 ## Dragging things about (phase 4)
 

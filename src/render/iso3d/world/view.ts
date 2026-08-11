@@ -257,6 +257,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     const tabs = boxes(readout.tabRects);
     const scales = boxes(readout.scaleRects);
     const cells = boxes(readout.bagRects);
+    const binds = boxes(readout.bindRects);
+    const resets = boxes(readout.resetRects);
     const text =
       `${windows}|${bag}|${readout.scale}|${readout.viewport.width}x${readout.viewport.height}` +
       `|${readout.tab}|${tabs}|${readout.scaleChoice}|${scales}|${cells}|${cellNames}`;
@@ -272,6 +274,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     root.dataset['uiScales'] = scales;
     root.dataset['uiCells'] = cells;
     root.dataset['uiCellNames'] = cellNames;
+    root.dataset['uiBinds'] = binds;
+    root.dataset['uiResets'] = resets;
   }
 
   const hud = createHud((x, y, lift) => scene.projectPoint(x, y, lift));
