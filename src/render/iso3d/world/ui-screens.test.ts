@@ -263,6 +263,43 @@ describe('who hears an input', () => {
     expect(screens.handleKey('KeyW', 'down', NONE)).toBe(false);
   });
 
+  /**
+   * The complaint spec 137 fixes: "my keys stop working when a window is open".
+   *
+   * Focus used to follow every press, so clicking a bag cell left it holding the
+   * arrow keys and clicking a button left it holding Space and Enter -- four
+   * movement bindings and a cast. Now a press hands the keyboard to a text field
+   * and to nothing else.
+   */
+  it('does not give the keyboard to whatever was clicked', () => {
+    const { screens } = harness();
+    screens.show('inventory');
+    screens.update(viewFixture({ inventory: starterInventory() }), 0);
+    const cell = [...screens.root.content.walk()].find((widget) => widget.name === 'bag:0');
+    if (!cell) throw new Error('the bag drew no cells');
+    screens.handlePointer('down', { x: cell.rect.x + 2, y: cell.rect.y + 2 }, 0, NONE);
+    expect(screens.root.focus.focused).toBeNull();
+    // ...so the arrows still walk, and Space still casts.
+    for (const code of ['ArrowUp', 'ArrowLeft', 'Space', 'Enter', 'KeyW']) {
+      expect(screens.handleKey(code, 'down', NONE)).toBe(false);
+    }
+  });
+
+  it('gives the keyboard to a text field, and takes it back on a click away', () => {
+    // The exception, and the reason the rule is a property rather than "never
+    // focus anything": a field you have to Tab into is a field nobody types in.
+    const { screens } = harness();
+    screens.show('options');
+    screens.update(viewFixture(), 0);
+    const field = [...screens.root.content.walk()].find((widget) => widget.focusOnPress);
+    if (!field) throw new Error('the options window has no text field on it');
+    screens.handlePointer('down', { x: field.rect.x + 2, y: field.rect.y + 2 }, 0, NONE);
+    expect(screens.root.focus.focused).toBe(field);
+
+    screens.handlePointer('down', { x: 399, y: 299 }, 0, NONE);
+    expect(screens.root.focus.focused).toBeNull();
+  });
+
   it('puts the ui context on the stack while something is open, and takes it off', () => {
     const { screens } = harness();
     expect(screens.root.contexts.ids()).toEqual(['gameplay']);
@@ -375,6 +412,23 @@ describe('the tooltip, over the world (spec 136)', () => {
     expect(screens.tooltipText).toBe('');
     screens.update(viewFixture({ inventory: starterInventory() }), 1000);
     expect(screens.tooltipText.length).toBeGreaterThan(0);
+  });
+
+  it('drops nothing but stops carrying when the bag closes', () => {
+    // The ghost lives above every window, like the tooltip, so closing the bag
+    // mid-carry left an item stuck to the cursor over the world (spec 137).
+    const { screens, requests } = bagOpen();
+    const cell = [...screens.root.content.walk()].find((widget) => widget.name === 'bag:0');
+    if (!cell) throw new Error('the bag drew no cells');
+    screens.handlePointer('down', { x: cell.rect.x + 2, y: cell.rect.y + 2 }, 0, NONE);
+    screens.handlePointer('up', { x: cell.rect.x + 2, y: cell.rect.y + 2 }, 0, NONE);
+    expect(screens.carrying).toBe(true);
+
+    screens.toggle('inventory');
+    screens.update(viewFixture({ inventory: starterInventory() }), 1200);
+    expect(screens.carrying).toBe(false);
+    // Nothing was asked of the server: it goes back where it came from.
+    expect(requests.filter((request) => request.startsWith('move:'))).toEqual([]);
   });
 
   it('shuts up when the bag does', () => {

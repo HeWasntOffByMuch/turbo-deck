@@ -43,6 +43,10 @@ export class TextField extends StyledWidget {
   constructor(initial = '', name = 'textField') {
     super('textField', name);
     this.focusable = true;
+    // The one widget a press hands the keyboard to (spec 137). A field you have
+    // to Tab into is a field nobody types in, and it is the only thing here that
+    // has any business swallowing a key.
+    this.focusOnPress = true;
     this.textValue = initial;
     this.caret = initial.length;
   }

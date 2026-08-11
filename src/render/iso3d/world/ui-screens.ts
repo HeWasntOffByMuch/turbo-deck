@@ -211,7 +211,6 @@ export class UiScreens {
     // places.
     this.inventory = new InventoryScreen({
       theme: THEME,
-      focus: this.root.focus,
       hitTest: (at) => this.layers.hitTest(at),
     });
     this.inventory.onMove = (intent) => {
@@ -402,7 +401,15 @@ export class UiScreens {
     // layer above every window rather than inside one, and the bag closes on a
     // *key*, which no pointer move follows -- so without this, closing it with
     // the cursor on an item leaves the box floating over the world.
-    if (!this.isOpen('inventory')) this.inventory.clearTooltip();
+    if (!this.isOpen('inventory')) {
+      this.inventory.clearTooltip();
+      // ...and nothing is left in hand either (spec 137). The ghost is in a
+      // layer above every window too, so closing the bag mid-carry left an item
+      // stuck to the cursor over the world with no way to put it down. The item
+      // goes back to the cell it came from, which is where it still is as far as
+      // the server is concerned.
+      this.inventory.cancelDrag();
+    }
     this.inventory.updateTooltip(nowMs);
 
     this.syncContext();
@@ -471,6 +478,7 @@ export class UiScreens {
     readonly tabRects: readonly { readonly id: string; readonly rect: Rect }[];
     readonly scaleChoice: string;
     readonly scaleRects: readonly { readonly id: string; readonly rect: Rect }[];
+    readonly bagRects: readonly { readonly id: string; readonly rect: Rect }[];
   } {
     const tabs = this.optionsScreen.tabs;
     return {
@@ -487,7 +495,17 @@ export class UiScreens {
       }),
       scaleChoice: String(this.display.selected),
       scaleRects: this.display.choiceRects(),
+      // ...and the bag's cells, in the same shape and for the same reason (spec
+      // 137). Carrying an item is now a click on one cell and a click on
+      // another, and a harness that cannot say *which* cell is a harness that
+      // can only say some pixels changed.
+      bagRects: this.inventory.bagSlots.map((cell, index) => ({ id: String(index), rect: cell.rect })),
     };
+  }
+
+  /** Whether something is in hand. For a test, and for the harness. */
+  get carrying(): boolean {
+    return this.inventory.drag.active !== null;
   }
 
   /** What the tooltip is saying, or `''` when it is not showing. */
@@ -664,19 +682,32 @@ export class UiScreens {
   /**
    * Offer a pointer event, in UI pixels. True when gameplay must not act on it.
    *
-   * A press also moves focus, so clicking a field and typing into it is one
-   * gesture rather than two. Done here rather than inside the router for the
-   * reason the gallery page does it too: focus follows the *press*, and the
-   * router's job is delivery.
+   * A press moves focus only onto something that wants the keyboard, which
+   * today is a text field and nothing else (spec 137). Done here rather than
+   * inside the router for the reason the gallery page does it too: focus follows
+   * the *press*, and the router's job is delivery.
    */
   handlePointer(phase: 'down' | 'up' | 'move', pos: Point, button: number, mods: Modifiers): boolean {
-    if (phase === 'down') this.root.focus.focus(this.layers.hitTest(pos));
+    if (phase === 'down') this.focusOnPress(pos);
     const consumed = this.root.handle({ kind: 'pointer', phase, pos, button, mods, time: this.now });
     // A move with no button down reaches no gesture, and two things need it: a
     // carry follows the cursor with nothing held, and a tooltip is by definition
     // about hovering (spec 136). This is the one place that sees every move.
     if (phase === 'move' && this.isOpen('inventory')) this.inventory.pointerMoved(pos, this.now);
     return !reachesGameplay(this.routingOf(consumed, 'pointer'));
+  }
+
+  /**
+   * Give the keyboard to what was pressed, if it is a thing that types.
+   *
+   * A press on anything else *clears* focus rather than leaving it, which is the
+   * half that matters: a text field that keeps the keyboard after you click
+   * away is a text field that goes on eating W, A, S and D.
+   */
+  private focusOnPress(pos: Point): void {
+    const hit = this.layers.hitTest(pos);
+    if (hit?.focusOnPress) this.root.focus.focus(hit);
+    else this.root.focus.focus(null);
   }
 
   handleWheel(pos: Point, delta: number, mods: Modifiers): boolean {

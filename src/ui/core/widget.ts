@@ -82,6 +82,20 @@ export abstract class Widget {
   enabled = true;
   focusable = false;
   /**
+   * Whether a press on this widget should give it the keyboard (spec 137).
+   *
+   * False for everything but a text field, and that is the whole of "an open
+   * window does not disable the game". Focus used to follow every press, so
+   * clicking a button in the bag left it holding Space and Enter, and clicking a
+   * cell left it holding the arrow keys -- all four of which are movement or
+   * combat bindings. The player's complaint was "my keys stop working when a
+   * window is open", and this was why.
+   *
+   * Tab still reaches everything `focusable`: keyboard navigation is unchanged,
+   * because Tab is not a thing anyone plays with.
+   */
+  focusOnPress = false;
+  /**
    * Whether the pointer can hit this widget at all.
    *
    * The HUD layer sets this false wholesale: it is always on top and must never
