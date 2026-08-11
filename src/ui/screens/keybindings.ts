@@ -136,6 +136,7 @@ export class KeybindingsScreen extends Column {
     this.resetAllButton.onPress = () => {
       this.options.map.reset();
       this.refresh();
+      this.onBindingsChanged?.();
     };
 
     const header = new Row('keybindingHeader');
@@ -204,6 +205,11 @@ export class KeybindingsScreen extends Column {
     this.options.map.reset(actionId);
     this.conflictNotice = '';
     this.refresh();
+    // Announced, like a binding is (spec 138). A reset writes the map exactly as
+    // `applyBinding` does, and it did not say so -- so the key went back to its
+    // default on screen and in the game, and the override it had just undone was
+    // still in the saved profile, waiting to come back on the next refresh.
+    this.onBindingsChanged?.();
   }
 
   /**
@@ -254,8 +260,10 @@ export class KeybindingsScreen extends Column {
       this.conflictNotice = '';
     }
     this.options.map.bind(actionId, slot, chord);
-    // The one place the map is written, so the one place that has to announce
-    // it. Anything else would be a second edit path to keep in step.
+    // Every path that writes the map announces it: this one, and the two resets.
+    // The alternative is a save that happens for some edits and not others, which
+    // is what shipped -- and the half that did not save was the half a player
+    // reaches for when they have made a mistake.
     this.onBindingsChanged?.();
   }
 

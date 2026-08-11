@@ -182,6 +182,26 @@ describe('reset', () => {
     built.resetAllButton.press();
     expect(map.toOverrides()).toEqual([]);
   });
+
+  /**
+   * A reset is a write, and a write that is not announced is not saved (spec
+   * 138). It shipped announcing only `bind`, so a key put back to its default
+   * came back rebound on the next refresh -- from a profile that still held the
+   * override the player had just undone.
+   */
+  it('says the map changed, so the profile is written', () => {
+    const { screen: built, map } = screen();
+    const changes: string[] = [];
+    built.onBindingsChanged = () => changes.push('changed');
+
+    map.bind('move.north', 'primary', { code: 'KeyT' });
+    built.resetAction('move.north');
+    expect(changes).toHaveLength(1);
+
+    map.bind('skillbar.1', 'primary', { code: 'KeyQ' });
+    built.resetAllButton.press();
+    expect(changes).toHaveLength(2);
+  });
 });
 
 describe('filtering', () => {
