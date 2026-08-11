@@ -700,8 +700,12 @@ async function main(): Promise<void> {
     const bow = page.locator('button', { hasText: 'Hunting Bow' }).first();
     if ((await bow.count()) > 0) {
       await bow.click();
-      await page.waitForTimeout(400);
-      const lit = await litWeapon(page);
+      // Polled, not slept on. A fixed 400ms was reading the switch *before* the
+      // answer landed: on a loaded page the round trip is comfortably longer
+      // than that, and this check spent a long time reporting "clicked Hunting
+      // Bow and lit Worn Sword" about a game that was equipping the bow
+      // correctly a second later. Same lesson as `waitForAim` above.
+      const lit = await waitForLitWeapon(page, 'Hunting Bow');
       console.log(`  weapon after clicking Hunting Bow: ${lit}`);
       if (lit !== 'Hunting Bow') {
         problems.push(`the weapon switch clicked Hunting Bow and lit ${lit}`);
@@ -836,8 +840,8 @@ async function main(): Promise<void> {
  * Which weapon the switch is showing as held.
  *
  * Read off the lit border rather than off a class, because that border is the
- * whole claim being checked: it is set from `stats.basicAttackId`, so a button
- * that lights is the server having answered.
+ * whole claim being checked: it is set from the *equipment* the server
+ * replicates (spec 126), so a button that lights is the server having answered.
  */
 async function litWeapon(page: Page): Promise<string> {
   return page.evaluate(() => {
@@ -852,6 +856,23 @@ async function litWeapon(page: Page): Promise<string> {
     const lit = buttons.find((button) => button.style.borderColor === 'rgb(255, 207, 107)');
     return lit?.getAttribute('aria-label') ?? 'nothing';
   });
+}
+
+/**
+ * Waits for the switch to light `wanted`, and reports what it settled on.
+ *
+ * Returns the last thing it saw when the wait runs out, so a genuine failure
+ * still names the weapon that is lit rather than saying "timed out".
+ */
+async function waitForLitWeapon(page: Page, wanted: string, timeoutMs = 5000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let seen = '';
+  while (Date.now() < deadline) {
+    seen = await litWeapon(page);
+    if (seen === wanted) return seen;
+    await page.waitForTimeout(120);
+  }
+  return seen;
 }
 
 /**
