@@ -318,7 +318,7 @@ class EditorScene {
   }
 
   /**
-   * Bring the mesh's layer set in line with the store's (spec 121).
+   * Bring the mesh's layer set in line with the store's (spec 123).
    *
    * Drawing a tier adds a layer, carving the last of one away removes it, and
    * undo does either -- so rather than have four call sites each remember which
@@ -513,7 +513,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   let fencePath: FencePath = NO_FENCE_PATH;
   /** Where a part drag started, in world space. Null when none is in progress. */
   let partAnchor: { x: number; z: number } | null = null;
-  /** Where a tier drag started (spec 121). Null when none is in progress. */
+  /** Where a tier drag started (spec 123). Null when none is in progress. */
   let rockAnchor: { x: number; z: number } | null = null;
 
   /** Re-mesh a set of chunks, skipping the duplicates a drag produces. */
@@ -645,7 +645,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   };
 
   /**
-   * Everything a tier changes, and nothing it does not (spec 121).
+   * Everything a tier changes, and nothing it does not (spec 123).
    *
    * The same shape as `rebuiltAfterParts`, and deliberately smaller. A tier
    * stands *on* the world rather than extending it, so none of the things that

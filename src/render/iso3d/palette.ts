@@ -121,7 +121,7 @@ export const TERRAIN_COLORS: Record<TerrainMaterial, readonly [number, number]> 
  * meets open air, so a coastline or a floating island reads as a solid mass and
  * not a paper cut-out.
  *
- * Keyed on the material of the ground *above* the wall (spec 121), because one
+ * Keyed on the material of the ground *above* the wall (spec 123), because one
  * pair cannot serve both jobs a skirt now does. The single warm pair this used
  * to be was authored for a coastline, where the ground above is sand and the
  * cut below it should read as the same beach in shadow. A rock formation's tier

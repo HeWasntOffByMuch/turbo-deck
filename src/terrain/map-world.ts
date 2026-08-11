@@ -284,7 +284,7 @@ export class MapChunkStore {
   }
 
   /**
-   * Add a layer after construction (spec 121).
+   * Add a layer after construction (spec 123).
    *
    * A formation is a layer, and the editor makes one every time somebody draws
    * a tier -- so a store has to be able to gain one the same way it gains a
@@ -313,7 +313,7 @@ export class MapChunkStore {
   }
 
   /**
-   * Drop a layer and everything it held (spec 121).
+   * Drop a layer and everything it held (spec 123).
    *
    * The inverse of `addLayer`, and what undoing a formation is: carving its
    * cells away empties its chunks, and an empty layer is one nobody wants left
@@ -747,7 +747,7 @@ export class MapChunkStore {
   }
 
   /**
-   * Every chunk a world rectangle touches, in coordinates (spec 121).
+   * Every chunk a world rectangle touches, in coordinates (spec 123).
    *
    * The rectangular counterpart of `chunksWithin`, and there for the same
    * reason: a tool has to snapshot for undo before it mutates. A tier is drawn
@@ -769,7 +769,7 @@ export class MapChunkStore {
   }
 
   /**
-   * Remove props whose **centre** lies inside a world rectangle (spec 121).
+   * Remove props whose **centre** lies inside a world rectangle (spec 123).
    *
    * Centre rather than footprint overlap, matching `removePropsWithin`: a
    * footprint test makes a big tree vanish while its trunk is well outside the
@@ -1079,7 +1079,7 @@ export class MapChunkStore {
       // construction survives a save (spec 084).
       ...(this.partList.length === 0 ? {} : { parts: this.partList }),
       // The layers *held*, not the ones the document arrived with. A store can
-      // gain a layer after construction (spec 121's formations) and lose one,
+      // gain a layer after construction (spec 123's formations) and lose one,
       // and mapping over the constructor's list would drop the first silently
       // and resurrect the second -- the same failure the chunk list and the
       // parts list each already had. Insertion order is document order, and
@@ -1333,7 +1333,7 @@ export interface LoadedMap {
 /**
  * A `TerrainWorld` over the layers the store holds *right now*.
  *
- * A snapshot, deliberately, and not a live view (spec 121). `heightAt` runs for
+ * A snapshot, deliberately, and not a live view (spec 123). `heightAt` runs for
  * every entity on every tick on the server, so it is the last place to put an
  * allocation or a set of cache lookups; the layer array it closes over is built
  * once and iterated flat.
@@ -1350,7 +1350,7 @@ export function worldFor(store: MapChunkStore): TerrainWorld {
 /**
  * What the mesher needs to know about one layer, read live off the store.
  *
- * Split out of `loadMap` (spec 121) because a store can gain a layer after it
+ * Split out of `loadMap` (spec 123) because a store can gain a layer after it
  * was loaded -- drawing a tier in the editor is exactly that -- and the mesh
  * for one has to come from somewhere. Everything it needs is in the store, so
  * the document is not a parameter and a layer that was never in a file works

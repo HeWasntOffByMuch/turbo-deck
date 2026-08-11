@@ -12,7 +12,7 @@ import type { MapChunkStore } from './map-world.js';
 import { materialIndex, type TerrainMaterial } from './types.js';
 
 /**
- * Authoring a rock formation (spec 121).
+ * Authoring a rock formation (spec 123).
  *
  * A formation is a layer. `types.ts` has said since spec 043 that terrain
  * stacks in layers and that a raised mass is "another layer with a high
@@ -276,7 +276,7 @@ export interface BakeStairInput {
 const TREAD_CELLS = 1;
 
 /**
- * A ramp from a tier's top down to what it lands on (spec 122).
+ * A ramp from a tier's top down to what it lands on (spec 124).
  *
  * Its own layer rather than cells added to the tier, because `bakeRock` refuses
  * a second height in one layer and is right to: a tier with two heights in it

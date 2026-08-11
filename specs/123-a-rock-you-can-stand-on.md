@@ -1,4 +1,4 @@
-# 121 — A rock you can stand on
+# 123 — A rock you can stand on
 
 ## Problem
 
@@ -160,7 +160,7 @@ field, no `MAP_VERSION` bump, no migration and no protocol change.
 
 - **The editor.** No tools, no cursor, no panel, no undo entries — this is the
   terrain-side function the tools will call, and it is tested headlessly.
-- **Stairs.** A tier is sealed until spec 122 gives it a way up.
+- **Stairs.** A tier is sealed until spec 124 gives it a way up.
 - **Detail.** Tops come out flat and one tone; rims come out as the footprint
   was drawn. Rim erosion, chamfers, tone variation and scatter are spec 124's.
 - **Pathfinding.** `NavGrid` is built from `WorldColliders` and never reads the

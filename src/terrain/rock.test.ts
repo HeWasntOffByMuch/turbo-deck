@@ -7,7 +7,7 @@ import { isWalkable } from '../server/sim/movement.js';
 import { materialIndex } from './types.js';
 
 /**
- * Authoring a formation (spec 121).
+ * Authoring a formation (spec 123).
  *
  * The properties worth pinning here are the ones the probe had to *measure* on
  * the real arena before the design was settled: that a tier's rim is a genuine
@@ -291,7 +291,7 @@ describe('a stack of tiers', () => {
   });
 });
 
-describe('a stair up a tier (spec 122)', () => {
+describe('a stair up a tier (spec 124)', () => {
   /** Ground at 0, a tier at TOP over the east half, and a stair up to it. */
   function withStair(): MapChunkStore {
     const store = withRockLayer();

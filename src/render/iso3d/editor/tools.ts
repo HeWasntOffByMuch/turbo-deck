@@ -35,7 +35,7 @@ export type PartTool = 'add' | 'remove';
 
 export const PART_TOOLS: readonly PartTool[] = ['add', 'remove'];
 
-/** What the rock mode's drag does (spec 121). */
+/** What the rock mode's drag does (spec 123). */
 export type RockTool = 'add' | 'remove' | 'stair';
 
 export const ROCK_TOOLS: readonly RockTool[] = ['add', 'remove', 'stair'];
@@ -123,7 +123,7 @@ export interface EditorSettings {
   partId: string;
   /** Which existing part the "remove named" button deletes. */
   removePartId: string;
-  // Rock (spec 121)
+  // Rock (spec 123)
   rockTool: RockTool;
   /**
    * How far this tier stands above whatever is already under it.

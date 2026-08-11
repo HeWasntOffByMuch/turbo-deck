@@ -138,7 +138,7 @@ export interface EditorPanelOptions {
   readonly onRemoveNamedPart: () => void;
   /** The parts currently in the map, re-read whenever the panel refreshes. */
   readonly partIds: () => readonly string[];
-  /** The tier layers currently in the map, newest last (spec 121). */
+  /** The tier layers currently in the map, newest last (spec 123). */
   readonly rockLayerIds: () => readonly string[];
 }
 

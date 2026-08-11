@@ -33,7 +33,7 @@ import type {
  * - it moves the layer's **declared bounds** and the document's **parts** list,
  *   neither of which lives on a chunk at all.
  *
- * A formation (spec 121) adds two more, because a tier *is* a layer: drawing the
+ * A formation (spec 123) adds two more, because a tier *is* a layer: drawing the
  * first one puts a layer in the document and carving the last of one away takes
  * it out, and neither is a chunk changing, appearing or vanishing.
  *
@@ -66,7 +66,7 @@ interface Entry {
   /** The parts list before the stroke changed it, or null if it did not. */
   parts: readonly MapPart[] | null;
   /**
-   * Layers this stroke created: undoing means dropping them again (spec 121).
+   * Layers this stroke created: undoing means dropping them again (spec 123).
    *
    * A tier is a layer, so drawing one adds a layer to the document and carving
    * the last of one away takes it out. Neither is a chunk changing, a chunk
@@ -209,7 +209,7 @@ export class EditHistory {
   }
 
   /**
-   * Record that this stroke *added* a layer (spec 121).
+   * Record that this stroke *added* a layer (spec 123).
    *
    * Call after adding it. The inverse is removing it, and that alone -- the
    * chunks a new layer gains in the same stroke are captured as created in the
@@ -220,7 +220,7 @@ export class EditHistory {
   }
 
   /**
-   * Record a layer whole, before this stroke removes it (spec 121).
+   * Record a layer whole, before this stroke removes it (spec 123).
    *
    * Takes the layer by value rather than reading it off the store, because the
    * caller has to have snapshotted it *before* carving anything -- by the time

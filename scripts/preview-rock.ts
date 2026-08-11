@@ -1,5 +1,5 @@
 /**
- * Drive the map editor's rock tools in a real browser (spec 121).
+ * Drive the map editor's rock tools in a real browser (spec 123).
  *
  * `editor/rock.ts` is tested headlessly and covers what a tier *does* to the
  * store, including undoing one byte for byte. What it cannot cover is whether

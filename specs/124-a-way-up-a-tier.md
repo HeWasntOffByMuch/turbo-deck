@@ -1,4 +1,4 @@
-# 122 — A way up a tier
+# 124 — A way up a tier
 
 ## Problem
 
@@ -25,7 +25,7 @@ export const STAIR_LAYER_PREFIX = 'stair/';
 
 Not cells added to the tier it serves. `bakeRock` refuses a second height in one
 layer, and it is right to — a tier with two heights in it is a ramp somebody
-strolls up rather than a cliff, which is the whole rule spec 121 turns on.
+strolls up rather than a cliff, which is the whole rule spec 123 turns on.
 A ramp *is* what a stair is, so it cannot live in a layer holding that rule.
 
 Its own layer costs nothing: `heightAt` already takes the maximum over solid

@@ -4,7 +4,7 @@ import { MAP_VERSION, parseMap, serializeMap, type MapChunk, type MapDocument, t
 import { loadMap, MapChunkStore } from './map-world.js';
 
 /**
- * A store that can gain and lose a layer (spec 121).
+ * A store that can gain and lose a layer (spec 123).
  *
  * A formation is a layer, so the editor makes one every time somebody draws a
  * tier. Until now a store's layers were fixed at construction and `toDocument`

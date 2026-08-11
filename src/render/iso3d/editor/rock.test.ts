@@ -21,7 +21,7 @@ import {
 } from './rock.js';
 
 /**
- * Drawing a tier from the editor (spec 121).
+ * Drawing a tier from the editor (spec 123).
  *
  * The half worth testing hard is undo. A tier is the first thing the editor can
  * draw that adds a *layer* to the document, and the seventh kind of "before" an

@@ -12,7 +12,7 @@ import {
 import type { EditHistory } from './history.js';
 
 /**
- * Adding and removing tiers of rock from the editor (spec 121).
+ * Adding and removing tiers of rock from the editor (spec 123).
  *
  * The bake is `bakeRock`/`carveRock` and is not reimplemented here -- what this
  * module owns is the editing half, exactly as `parts.ts` does for growth:
@@ -268,7 +268,7 @@ export function addRock(store: MapChunkStore, history: EditHistory, input: AddRo
   };
 }
 
-/** What marks a layer as a stair rather than a tier (spec 122). */
+/** What marks a layer as a stair rather than a tier (spec 124). */
 export const STAIR_LAYER_PREFIX = 'stair/';
 
 export function isStairLayer(layerId: string): boolean {
@@ -309,7 +309,7 @@ export type AddStairResult =
   | { readonly ok: false; readonly reason: string };
 
 /**
- * Cut a way up a tier (spec 122).
+ * Cut a way up a tier (spec 124).
  *
  * Always its own new layer: a stair is a ramp, and `bakeRock` refuses a second
  * height in a tier's layer precisely because a ramp is not a cliff. There is

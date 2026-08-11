@@ -98,7 +98,7 @@ export interface TerrainMeshHandle {
    */
   remove(layerId: string, cx: number, cz: number): boolean;
   /**
-   * Teach the mesh a layer that was not there when it was built (spec 121).
+   * Teach the mesh a layer that was not there when it was built (spec 123).
    *
    * The layer set used to be fixed at construction, which was true for as long
    * as a map's layers were. Drawing a tier adds one to the store mid-session,
@@ -258,7 +258,7 @@ function buildChunk(
       surface.quad(c00, c01, c11, c10, color, cavity);
 
       // Skirt every edge that faces open air, dropped to the layer's underside.
-      // The wall takes the material of the ground it hangs from (spec 121), so
+      // The wall takes the material of the ground it hangs from (spec 123), so
       // a coastline cuts as sand and a rock tier cuts as grey slate.
       const cliffPair = TERRAIN_CLIFF_COLORS[material];
       const cliff = linearColor(cliffPair[tone] ?? cliffPair[0]);
