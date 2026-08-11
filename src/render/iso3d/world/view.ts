@@ -237,6 +237,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     }
     const windows = readout.windows.join(',');
     const bag = readout.bag.filter((name) => name !== '').join(',');
+    // The same list with its gaps kept, so a harness can say *which cell* holds
+    // what (spec 137). Both, rather than one: the filtered one is what a person
+    // reads in a log, and the raw one is what an index means something in.
+    const cellNames = readout.bag.join(',');
     // The scale and the viewport are in the key as well as in the attributes: a
     // resize changes neither the windows nor the bag, and a readout that only
     // watched those would report the old frame forever.
@@ -247,9 +251,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       rects.map((box) => `${box.id}:${box.rect.x},${box.rect.y},${box.rect.width},${box.rect.height}`).join(';');
     const tabs = boxes(readout.tabRects);
     const scales = boxes(readout.scaleRects);
+    const cells = boxes(readout.bagRects);
     const text =
       `${windows}|${bag}|${readout.scale}|${readout.viewport.width}x${readout.viewport.height}` +
-      `|${readout.tab}|${tabs}|${readout.scaleChoice}|${scales}`;
+      `|${readout.tab}|${tabs}|${readout.scaleChoice}|${scales}|${cells}|${cellNames}`;
     if (text === lastUiReadout) return;
     lastUiReadout = text;
     root.dataset['uiWindows'] = windows;
@@ -260,6 +265,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     root.dataset['uiTabs'] = tabs;
     root.dataset['uiScaleChoice'] = readout.scaleChoice;
     root.dataset['uiScales'] = scales;
+    root.dataset['uiCells'] = cells;
+    root.dataset['uiCellNames'] = cellNames;
   }
 
   const hud = createHud((x, y, lift) => scene.projectPoint(x, y, lift));

@@ -285,9 +285,9 @@ screen.onMove = (intent) => client.moveItem(intent.from, intent.to, intent.count
   losing an item by letting go in the wrong place is not a behaviour worth having.
 - **The ghost lives in a non-interactive layer.** It is *on* the cursor, so if it
   could be hit-tested every drop would land on the thing being dragged.
-- **The keyboard is the same controller.** Enter picks up, Enter puts down,
-  Escape cancels — through `dropOnTarget`, so a pointer drag and a keyboard move
-  cannot mean different things.
+- **Escape cancels**, and says so, so the window it was grabbed in does not close
+  underneath the item. (Enter used to pick up and put down as well; spec 137 took
+  the keyboard back off the bag — see below.)
 - **What a widget may know about an item is a view-model.** `src/ui/` may not
   import `server/state`, so there is no `ItemStack` here — `ItemView` is a name,
   a count, a sprite name and the slot it goes in, assembled by
@@ -353,11 +353,11 @@ shop.onSell = (index) => client.sellItem(vendorId, index);
   you chose; a sale is undone by a six-entry buyback list a seventh sale pushes
   off the end. The asymmetry is why the dialog sits on exactly one button.
 
-## Picking things up (spec 136)
+## Picking things up (specs 136, 137)
 
-Six complaints about the bag, and one answer: touching an item should be easier
-than it was. Nothing here is new machinery — it is the phase-4 drag, reached a
-second way.
+Nine complaints about the bag across two rounds, and one answer: touching an
+item should be easier than it was. Nothing here is new machinery — it is the
+phase-4 `DragController`, reached by clicking instead of dragging.
 
 ```ts
 cell.onClick = (slot, gesture) => screen.clickCell(slot, gesture);
@@ -365,25 +365,46 @@ screen.pointerMoved(at, nowMs);            // hover -> tooltip, and the carry fo
 layers.place('tooltip', screen.tooltip);
 ```
 
-- **A click picks up and a click puts down.** `DragController` already models
-  "something is in hand, and here is where the cursor is", which is exactly what
-  carrying is; what changed is what starts and ends it. Press-drag-release still
-  works, because a drag that began is a carry that began — the two gestures are
-  one state machine reached two ways.
+- **A click picks up and a click puts down**, and dragging as a way to move an
+  item is gone. `click`, `dragEnd` and `doubleClick` all mean the same thing to a
+  cell, because each is one press and one release over it: a press that wandered
+  past the drag threshold produces `dragEnd` and no click, and putting something
+  straight back is two fast clicks whose second arrives as a double.
+- **Which click means what**: left takes the stack, right takes half rounding up,
+  shift+right takes one, shift+left wears it or takes it off. While carrying,
+  every button places — one rule, so nothing is left mysteriously in hand.
+- **The cell it came from is emptied**, by exactly what was taken. A cell that
+  still holds the thing in your hand is a lie, and a full cell has nowhere to put
+  it back. Putting it back there is a *cancel*, not a move onto itself.
 - **A cell's hit rect is bigger than its paint rect.** `SLOT_CATCH` is exactly
   half the gutter, so the expanded rects *tile*: every point in the grid belongs
   to one cell and none belongs to two. Overlap would be worse than the gap,
   because which cell won would depend on child order. This is the only place in
   the framework where the two rects differ, and `containsForHitTest` is the only
   hook that makes it possible.
-- **Right-click equips, and the screen still decides nothing.** It reads
-  `item.slot` off the view-model and emits the same `MoveIntent` a drag would;
-  `applyMove` on the server does the swap it has done since spec 126.
+- **The screen still decides nothing.** Equipping reads `item.slot` off the
+  view-model and emits the same `MoveIntent` a drag used to; `applyMove` on the
+  server does the swap it has done since spec 126.
 - **The tooltip is fed by the hover the router already tracks.** The delay is
   `theme.input.tooltipDelayMs` and the clock is the `nowMs` the mount hands in,
   like everything else here.
 
-The interface's scale became a setting on the same spec: `src/ui/input/
+### A press does not take the keyboard (spec 137)
+
+```ts
+this.focusOnPress = true;   // TextField, and nothing else
+```
+
+Focus used to follow every press, so an open window quietly held the arrow keys,
+Space and Enter — four movement bindings and a cast. Now a press focuses a widget
+that types and clears focus otherwise, item slots are not focusable at all, and
+Tab still reaches everything `focusable`. If you add a widget that genuinely
+needs the keyboard from a click, set `focusOnPress` and expect to justify it.
+
+A window still raises on a click and still tints its title bar when it is in
+front: Escape closes the front one, and the player has to be able to see which.
+
+The interface's scale became a setting on spec 136: `src/ui/input/
 display-store.ts` beside the bindings store, a `DisplayScreen` in the options
 window's second tab, and `resolveUiScale` in `core/frame.ts` — `'auto'` is
 `autoUiScale` unchanged, and a number is honoured outright rather than clamped

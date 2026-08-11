@@ -308,6 +308,19 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  that no `if` in the renderer changes an outcome is finally a fact
                  about the module graph. **No colour is spelled out** in a widget;
                  a hex literal there fails the build.
+                 Since spec 137 the bag is a *pointer* surface: one press and
+                 one release on a cell is the whole gesture vocabulary (left
+                 takes a stack, right takes half, shift+right takes one,
+                 shift+left wears it), a carry empties the cell it came from so
+                 it can be put back, and dragging an item is gone. The rule that
+                 came out of it and applies to every screen: **a press hands the
+                 keyboard only to something that types**. Focus used to follow
+                 every press, so an open window silently held the arrow keys,
+                 Space and Enter -- four movement bindings and a cast -- and the
+                 blue focus ring on a cell read as "active" when nothing was.
+                 `focusOnPress` is false on `Widget` and true on `TextField`
+                 alone; Tab still reaches everything focusable, because Tab is
+                 not a key anybody plays with.
                  The UI has a *scale*, not a resolution: one UI pixel is always a
                  whole number of device pixels and the viewport is whatever the
                  window leaves, so it never reads the world's `lowRes` setting --

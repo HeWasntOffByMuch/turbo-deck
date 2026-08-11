@@ -646,6 +646,13 @@ rather than an `if` in each window.
 Tab order is a depth-first walk of the focused window's subtree, filtered to
 `focusable && enabled && visible`. Focus never escapes its window.
 
+A **press** only takes focus for a widget with `focusOnPress`, which is `TextField`
+and nothing else (spec 137). Before that, focus followed every click, so an open
+window silently held the arrow keys, Space and Enter — all of them gameplay
+bindings. Keyboard navigation is unchanged: Tab still reaches everything
+focusable. If a widget you write genuinely needs the keyboard from a click, set
+the flag and be ready to say why the game can spare those keys.
+
 `createMenuGroup()` (`src/render/iso3d/menu-group.ts`) is the existing, tested "only
 one open at a time" state machine for the settings popovers. It is a good model for
 this and is worth reading before writing the window manager, but it should not be

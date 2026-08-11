@@ -1024,6 +1024,97 @@ async function clickUiBox(
   await page.waitForTimeout(120);
 }
 
+/**
+ * Moving an item, in the game (spec 137).
+ *
+ * A click takes it and a click puts it down, and *both* halves are only real
+ * once a browser has delivered two presses and a server has answered: the bag
+ * the harness reads back is the one the server replicated, not the one this
+ * screen hoped for. The cells' rects come off the readout, because a guessed
+ * coordinate that lands in a four-pixel gutter is a test that passes for the
+ * wrong reason.
+ *
+ * It also asks the question the whole focus change was about: with the bag open
+ * and a cell just clicked, does W still walk?
+ */
+async function carryingAnItem(page: Page, problems: string[]): Promise<void> {
+  const before = await uiReadout(page);
+  // The first occupied cell, and the last cell to put it in -- both by index
+  // into the *unfiltered* list, so a name and a rect mean the same cell.
+  const names = before.cellNames.split(',');
+  const filled = names.findIndex((name) => name !== '');
+  const empty = names.length - 1;
+  if (filled < 0 || names[empty] !== '') {
+    console.log(`  no measurement: no full cell and empty last cell to move between ("${before.bag}")`);
+    return;
+  }
+  const source = boxNamed(before.cells, String(filled));
+  const target = boxNamed(before.cells, String(empty));
+  if (!source || !target) {
+    problems.push(`the bag published no cells to click: "${before.cells.slice(0, 60)}"`);
+    return;
+  }
+
+  await clickUiBox(page, source);
+  const carrying = await waitFor(page, async () => {
+    const read = await uiReadout(page);
+    // The cell it came out of is empty while it is in hand, which is the half of
+    // spec 137 a player sees.
+    return read.cellNames.split(',')[filled] === '' ? read : null;
+  }, 4000);
+  if (!carrying) {
+    const now = await uiReadout(page);
+    problems.push(`clicking a bag cell did not take the item out of it: "${now.cellNames}"`);
+    return;
+  }
+  console.log(`  a click takes "${names[filled]}" out of cell ${filled}`);
+
+  // ...and the keys still belong to the game, which is the complaint that
+  // started spec 137. Pressed with the bag open and a cell just clicked.
+  const walked = await walksWhileHolding(page, 'KeyW', 700);
+  if (walked === null) console.log('  no measurement: the spawner ruler is off screen');
+  else if (!walked) problems.push('W did not walk with the bag open and a cell just clicked');
+  else console.log('  ...and W still walks while the bag is open and holding it');
+
+  await clickUiBox(page, target);
+  const moved = await waitFor(page, async () => {
+    const read = await uiReadout(page);
+    return read.cellNames.split(',')[empty] === names[filled] ? read : null;
+  }, 4000);
+  if (!moved) {
+    const now = await uiReadout(page);
+    problems.push(`putting "${names[filled]}" down in cell ${empty} did not take: "${now.cellNames}"`);
+  } else {
+    console.log(`  ...and a second click puts it down in cell ${empty}`);
+  }
+  await shoot(page, 'world-carry');
+}
+
+/**
+ * Hold a key and say whether the world moved under the camera.
+ *
+ * The spawner overlay again -- fixed world points with a DOM element each, so a
+ * camera that followed the player moved them and one that did not left them
+ * alone. Same instrument as `cameraMovedBy`, minus the click.
+ */
+async function walksWhileHolding(page: Page, code: string, ms: number): Promise<boolean | null> {
+  await waitForStillCamera(page);
+  const before = await overlayPoints(page, 'data-spawner');
+  if (before.size === 0) return null;
+  await page.keyboard.down(code);
+  await page.waitForTimeout(ms);
+  await page.keyboard.up(code);
+
+  const after = await overlayPoints(page, 'data-spawner');
+  let worst = 0;
+  for (const [key, start] of before) {
+    const end = after.get(key);
+    if (!end) continue;
+    worst = Math.max(worst, Math.hypot(end.x - start.x, end.y - start.y));
+  }
+  return worst > 8;
+}
+
 /** The brief's budget: a full UI update and draw, under this. */
 const UI_BUDGET_MS = 1.5;
 
@@ -1038,6 +1129,9 @@ interface UiReadout {
   /** The scale preference, and the Display tab's boxes in the same shape. */
   readonly scaleChoice: string;
   readonly scales: string;
+  /** The bag's cells, in the same shape again, and what is in each (spec 137). */
+  readonly cells: string;
+  readonly cellNames: string;
   readonly viewport: string;
   readonly frameMs: string;
   readonly worstMs: string;
@@ -1054,6 +1148,8 @@ async function uiReadout(page: Page): Promise<UiReadout> {
       tabs: host?.dataset['uiTabs'] ?? '',
       scaleChoice: host?.dataset['uiScaleChoice'] ?? '',
       scales: host?.dataset['uiScales'] ?? '',
+      cells: host?.dataset['uiCells'] ?? '',
+      cellNames: host?.dataset['uiCellNames'] ?? '',
       viewport: host?.dataset['uiViewport'] ?? '',
       frameMs: host?.dataset['uiFrameMs'] ?? '',
       worstMs: host?.dataset['uiWorstMs'] ?? '',
@@ -1240,6 +1336,7 @@ async function theInterface(page: Page, problems: string[]): Promise<void> {
     console.log(`  click beside the window: camera moved ${walked.toFixed(1)}px`);
   }
 
+  await carryingAnItem(page, problems);
   await escapeGoesToTheWindowFirst(page, problems);
 
   // The interface follows the tab, at a whole-number scale. A resize is the one
