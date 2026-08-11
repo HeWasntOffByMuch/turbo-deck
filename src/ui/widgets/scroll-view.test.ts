@@ -4,13 +4,26 @@ import { NO_MODIFIERS } from '../core/events.js';
 import { UNBOUNDED, type Constraint, type Size } from '../core/geom.js';
 import { UiRoot } from '../core/root.js';
 import { Widget, type LayoutContext } from '../core/widget.js';
+import { DrawList } from '../core/draw-list.js';
+import { FULL_MOTION } from '../core/motion.js';
 import { bakeAtlas } from '../render/atlas.js';
 import { THEME } from '../theme/theme.js';
 import { Label } from './label.js';
 import { ScrollView } from './scroll-view.js';
 
-const CONTEXT: LayoutContext = { theme: THEME, atlas: bakeAtlas(THEME) };
+const ATLAS = bakeAtlas(THEME);
+const CONTEXT: LayoutContext = { theme: THEME, atlas: ATLAS };
 const BAR = THEME.widget('scrollView').metric('barThickness', 6);
+/**
+ * How far inside its own frame a scroll view's content sits.
+ *
+ * Expressed here rather than baked into the numbers below, because the bug this
+ * guards against was three boxes disagreeing about it: the clip was inset and
+ * the arrange was not, so the leftmost column of every scrolled thing was
+ * clipped away. Assertions written as `rect.width - BAR` were asserting the
+ * disagreement.
+ */
+const INSET = 1;
 
 class Box extends Widget {
   constructor(private readonly size: Size, name = 'box') {
@@ -43,12 +56,12 @@ describe('scrolling actually moves the content', () => {
     // lie and the golden images agreed with it, because the thumb *had* moved.
     const view = new ScrollView(tallList(), 'scroll');
     const root = mounted(view);
-    expect(view.content.rect.y).toBe(0);
+    expect(view.content.rect.y).toBe(INSET);
 
     view.scrollTo(30);
     root.update(16);
     expect(view.scrollOffset).toBe(30);
-    expect(view.content.rect.y).toBe(-30);
+    expect(view.content.rect.y).toBe(INSET - 30);
   });
 
   it('marks the subtree so a clean ancestor still descends', () => {
@@ -64,7 +77,7 @@ describe('scrolling actually moves the content', () => {
     expect(outer.needsArrange).toBe(false);
     expect(outer.needsArrangeInSubtree).toBe(true);
     root.update(16);
-    expect(view.content.rect.y).toBe(view.rect.y - 20);
+    expect(view.content.rect.y).toBe(view.rect.y + INSET - 20);
   });
 
   it('clamps to the range and never scrolls past either end', () => {
@@ -76,7 +89,7 @@ describe('scrolling actually moves the content', () => {
     view.scrollTo(10_000);
     root.update(32);
     expect(view.scrollOffset).toBe(view.maxScroll);
-    expect(view.content.rect.y).toBe(view.rect.y - view.maxScroll);
+    expect(view.content.rect.y).toBe(view.rect.y + INSET - view.maxScroll);
   });
 
   it('scrolls on the wheel and stops at the ends', () => {
@@ -112,7 +125,7 @@ describe('the scrollbar always has its room', () => {
     // breaks its lines for a box it never gets.
     const view = new ScrollView(tallList(), 'scroll');
     const root = mounted(view, { width: 100, height: 50 });
-    expect(view.content.rect.width).toBe(view.rect.width - BAR);
+    expect(view.content.rect.width).toBe(view.rect.width - BAR - INSET * 2);
     expect(root.viewport.width).toBe(100);
   });
 
@@ -122,7 +135,7 @@ describe('the scrollbar always has its room', () => {
     const view = new ScrollView(tallList(1), 'scroll');
     mounted(view, { width: 100, height: 500 });
     expect(view.scrollable).toBe(false);
-    expect(view.content.rect.width).toBe(view.rect.width - BAR);
+    expect(view.content.rect.width).toBe(view.rect.width - BAR - INSET * 2);
   });
 
   it('wraps a label at the width the label is actually given', () => {
@@ -132,7 +145,7 @@ describe('the scrollbar always has its room', () => {
     mounted(view, { width: 120, height: 40 });
     // Every line must fit the arranged width, not the pre-bar one.
     for (const line of label.lines(label.rect.width)) {
-      expect(line.length * 7 - 1).toBeLessThanOrEqual(view.rect.width - BAR);
+      expect(line.length * 7 - 1).toBeLessThanOrEqual(view.rect.width - BAR - INSET * 2);
     }
   });
 });
@@ -167,5 +180,40 @@ describe('maxHeight', () => {
     const view = new ScrollView(tallList(), 'scroll');
     const constraint: Constraint = { maxWidth: 100, maxHeight: UNBOUNDED };
     expect(view.measure(constraint, CONTEXT).height).toBeLessThan(1000);
+  });
+
+  /**
+   * The invariant the 1px numbers above are only a proxy for: **everything the
+   * content draws is inside the clip the children are painted through.**
+   *
+   * This is the assertion that would have caught the shipped bug directly. The
+   * symptom was an item list whose first letter was subtly wrong -- "Worn Sword"
+   * drawn as "Vorn Sword" -- which reads as a font problem and sent me looking
+   * at the glyph table. It was a box disagreement, and a box disagreement is
+   * something a test can state exactly.
+   */
+  it('paints nothing outside the box it clips to', () => {
+    const label = new Label('Worn Sword');
+    const view = new ScrollView(label);
+    mounted(view, { width: 120, height: 60 });
+
+    const commands = new DrawList();
+    view.paint(commands, {
+      theme: THEME,
+      atlas: ATLAS,
+      now: 0,
+      motion: FULL_MOTION,
+      hovered: null,
+      pressed: null,
+      focused: null,
+    });
+
+    const clip = commands.finish().find((command) => command.kind === 'pushClip');
+    expect(clip?.kind).toBe('pushClip');
+    if (clip?.kind !== 'pushClip') return;
+    // Every edge of the content, inside every edge of the clip.
+    expect(label.rect.x).toBeGreaterThanOrEqual(clip.rect.x);
+    expect(label.rect.y).toBeGreaterThanOrEqual(clip.rect.y);
+    expect(label.rect.x + label.rect.width).toBeLessThanOrEqual(clip.rect.x + clip.rect.width);
   });
 });

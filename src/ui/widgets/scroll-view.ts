@@ -22,6 +22,16 @@ import { drawNineSlice } from '../core/paint.js';
 import type { LayoutContext, PaintContext, Widget } from '../core/widget.js';
 import { StyledWidget } from './base.js';
 
+/**
+ * How far inside its own frame the content sits, in UI pixels.
+ *
+ * One pixel, because the frame patch is one pixel of border. It is a constant
+ * rather than read from the patch because the clip that used it was already a
+ * constant, and the whole point of this value is that *every* box in this widget
+ * is derived from the same one.
+ */
+const INNER_INSET = 1;
+
 /** UI pixels per wheel notch. */
 const WHEEL_STEP = 12;
 
@@ -73,7 +83,23 @@ export class ScrollView extends StyledWidget {
   }
 
   private viewportHeight(): number {
-    return this.rect.height;
+    return Math.max(0, this.rect.height - INNER_INSET * 2);
+  }
+
+  /**
+   * The box the content lives in: the widget's rect, inside its own frame.
+   *
+   * One function, used by measure, arrange *and* paint, because the bug this
+   * replaces was those three disagreeing. The clip was inset by a pixel and the
+   * arrange was not, so the leftmost column of every scrolled thing was clipped
+   * away -- which read as an item list whose first letter was slightly wrong
+   * ("Worn Sword" as "Vorn Sword") and looked like a font bug.
+   *
+   * `window.ts` already carries the same lesson in its title bar: position and
+   * clip have to agree about which box they are talking about.
+   */
+  private innerRect(): Rect {
+    return shrink(this.rect, uniformInsets(INNER_INSET));
   }
 
   onEvent(context: EventContext): void {
@@ -117,26 +143,36 @@ export class ScrollView extends StyledWidget {
     // The width is the one the content will actually be *arranged* at, bar room
     // already taken out -- measuring it wider is how a wrapped label ends up
     // breaking its lines for a box it never gets.
-    const inner = Math.max(0, constraint.maxWidth - this.barRoom(context));
+    const inner = Math.max(0, constraint.maxWidth - this.barRoom(context) - INNER_INSET * 2);
     const size = this.content.measure({ maxWidth: inner, maxHeight: UNBOUNDED }, context);
     this.contentHeight = size.height;
     // Never taller than the content and never taller than the offer. Returning
     // the raw constraint would make a scroll view inside an unbounded measure
     // claim an unbounded height, and every ancestor would inherit it.
-    const offered = boundedOr(constraint.maxHeight, size.height);
+    // The content's height *plus its insets*, which is the height this widget
+    // actually needs. Taking the ceiling from the bare content height loses the
+    // two pixels the frame occupies, so a scroll view asked for exactly its
+    // content came back one pixel short and scrolled by one -- for everything,
+    // forever, which is a scrollbar on every list that fits.
+    const wanted = size.height + INNER_INSET * 2;
+    const offered = boundedOr(constraint.maxHeight, wanted);
     const ceiling = this.maxHeight === null ? offered : Math.min(offered, this.maxHeight);
-    return { width: size.width + this.barRoom(context), height: Math.min(ceiling, size.height) };
+    return {
+      width: size.width + this.barRoom(context) + INNER_INSET * 2,
+      height: Math.min(ceiling, wanted),
+    };
   }
 
   protected override arrangeSelf(rect: Rect, context: LayoutContext): void {
     // Clamp after a resize: shrinking the viewport can leave the offset past the
     // end, which would show blank space below the content.
     this.offset = Math.max(0, Math.min(this.maxScroll, this.offset));
+    const inner = shrink(rect, uniformInsets(INNER_INSET));
     this.content.arrange(
       {
-        x: rect.x,
-        y: rect.y - this.offset,
-        width: Math.max(0, rect.width - this.barRoom(context)),
+        x: inner.x,
+        y: inner.y - this.offset,
+        width: Math.max(0, inner.width - this.barRoom(context)),
         height: this.contentHeight,
       },
       context,
@@ -158,7 +194,7 @@ export class ScrollView extends StyledWidget {
    */
   protected override paintChildren(out: DrawList, context: PaintContext): void {
     const style = this.style(context);
-    const inner = shrink(this.rect, uniformInsets(1));
+    const inner = this.innerRect();
     out.pushClip(inner);
     super.paintChildren(out, context);
     out.popClip();
