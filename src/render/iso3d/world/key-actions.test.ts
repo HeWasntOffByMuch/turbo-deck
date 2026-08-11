@@ -82,7 +82,9 @@ describe('what a key press means to the Play tab', () => {
     expect(decideKeyDown(map, 'KeyI', NONE).windows).toEqual(['inventory']);
     expect(decideKeyDown(map, 'KeyB', NONE).windows).toEqual(['inventory']);
     expect(decideKeyDown(map, 'KeyC', NONE).windows).toEqual(['character']);
-    expect(decideKeyDown(map, 'KeyK', NONE).windows).toEqual(['keybindings']);
+    // K goes to the options window's keys tab: there is one keybindings screen
+    // and it lives in one place (spec 135).
+    expect(decideKeyDown(map, 'KeyK', NONE).windows).toEqual(['options']);
     expect(decideKeyDown(map, 'KeyV', NONE).windows).toEqual(['shop']);
   });
 

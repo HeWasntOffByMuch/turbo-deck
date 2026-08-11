@@ -129,6 +129,7 @@ async function play(drive: boolean): Promise<RunResult> {
       onTradeAccept: (revision) => requests.push(`tradeAccept:${revision}`),
       onTradeRespond: (accept) => requests.push(`tradeRespond:${accept}`),
       onTradeCancel: () => requests.push('tradeCancel'),
+      onBindingsChanged: () => requests.push('bindings'),
       nearestVendor: () => null,
     },
     VIEWPORT,
@@ -155,7 +156,7 @@ async function play(drive: boolean): Promise<RunResult> {
     if (tick === 2) {
       screens.show('inventory');
       screens.show('character');
-      screens.show('keybindings');
+      screens.show('options');
     }
 
     // Time is an argument here too: `tick * 16` rather than a clock, so this is

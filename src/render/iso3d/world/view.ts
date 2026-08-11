@@ -54,7 +54,7 @@ import { decideKeyDown, decideKeyUp } from './key-actions.js';
 import { UiLayer } from './ui-layer.js';
 import { nearestVendorTo } from './shop-model.js';
 import { InputMap, type Modifiers } from '../../../ui/input/input-map.js';
-import { loadBindings } from '../../../ui/input/binding-store.js';
+import { loadBindings, saveBindings } from '../../../ui/input/binding-store.js';
 import { autoAttack } from './target.js';
 import { aimShape, castOrder, startAim, type AimGesture, type AimOrder } from './aim.js';
 import { TouchGestures, type TouchSample } from './touch.js';
@@ -345,7 +345,17 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    */
   const held = new Set<string>();
   const inputMap = new InputMap();
-  loadBindings(globalThis.localStorage ?? { getItem: () => null, setItem: () => undefined, removeItem: () => undefined }, inputMap);
+  /**
+   * Where the key profile lives. Reached for here, at the DOM edge, exactly as
+   * the editor's autosave does it -- everything under src/ui/ takes a
+   * `StorageLike` and never a `Window`.
+   */
+  const bindingStorage = globalThis.localStorage ?? {
+    getItem: () => null,
+    setItem: () => undefined,
+    removeItem: () => undefined,
+  };
+  loadBindings(bindingStorage, inputMap);
 
   /**
    * The framework's interface, over the world (spec 131).
@@ -369,6 +379,9 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     onTradeAccept: (revision) => client.acceptTrade(revision),
     onTradeRespond: (accept) => client.respondToTrade(accept),
     onTradeCancel: () => client.cancelTrade(),
+    // Written straight through, because a key the player just changed and then
+    // lost to a refresh is worse than one that never saved at all.
+    onBindingsChanged: () => saveBindings(bindingStorage, inputMap),
     // Where the *player* is, not where the camera is looking: the server checks
     // the same distance from the same position, and asking about a shop the
     // server will refuse is how a window opens empty.
@@ -599,11 +612,24 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // what a called-off cast spends is exactly the time it took -- which is why
     // the action is worth having somewhere that is not also the move button.
     if (decision.cancel) {
+      // What Escape means when there is nothing to back out of (spec 135).
+      //
+      // The interface has already had it and did not want it -- no drag, no
+      // dialog, no window. So the question left is whether *gameplay* wants it,
+      // and it does exactly when there is something committed to: a wind-up, an
+      // aim, a standing order. When there is not, Escape is the menu, which is
+      // what it means in every game that has one.
+      //
+      // Asked here rather than in `ui-screens.ts` because this is the only place
+      // both facts are visible -- that half may not see a cast, on purpose.
+      const committed =
+        pendingAim !== null || order !== null || targetId !== null || client.view().selfRoot !== null;
       client.cancelCast();
       // Withdrawing from a blow that the auto-attack would re-commit to on the
       // next tick is not withdrawing from anything.
       targetId = null;
       clearAim();
+      if (!committed) ui.toggle('options');
     }
   };
 

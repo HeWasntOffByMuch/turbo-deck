@@ -861,7 +861,7 @@ async function windowKeys(page: Page, problems: string[]): Promise<void> {
     ['KeyI', 'inventory'],
     ['KeyB', 'inventory'],
     ['KeyC', 'character'],
-    ['KeyK', 'keybindings'],
+    ['KeyK', 'options'],
     ['KeyV', 'shop'],
   ] as const) {
     const got = await pressAndWait(page, code, id);
@@ -877,6 +877,37 @@ async function windowKeys(page: Page, problems: string[]): Promise<void> {
     const shut = await pressAndWait(page, code, '');
     if (shut !== '') problems.push(`${code} would not close the ${id}, leaving "${shut}"`);
   }
+
+  // Escape with nothing to back out of is the menu (spec 135).
+  const opened = await pressAndWait(page, 'Escape', 'options');
+  if (opened !== 'options') {
+    problems.push(`Escape with nothing committed opened "${opened}" rather than the options`);
+  } else {
+    const painted = (await paintedBox(page))?.painted ?? 0;
+    console.log(`  Escape opens the options (${painted} pixels)`);
+    await shoot(page, 'world-options');
+    // ...with the keys tab actually populated. It was not, the first time: a
+    // widget has one parent and the keybindings screen was in two windows, so
+    // whichever tab was built last emptied the other window.
+    const bindings = await page.evaluate(() => {
+      const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-ui-canvas]');
+      const context = canvas?.getContext('2d');
+      if (!canvas || !context) return 0;
+      const { data } = context.getImageData(0, 0, canvas.width, Math.floor(canvas.height));
+      let lit = 0;
+      // Text is drawn in the theme's `text` colour; counting *those* pixels is
+      // the difference between "a panel appeared" and "it has rows in it".
+      for (let i = 0; i < data.length; i += 4) {
+        if ((data[i] ?? 0) > 180 && (data[i + 1] ?? 0) > 180 && (data[i + 2] ?? 0) > 180) lit += 1;
+      }
+      return lit;
+    });
+    console.log(`  ...with ${bindings} pixels of text on its keys tab`);
+    if (bindings < 500) problems.push(`the options window opened with an empty keys tab (${bindings})`);
+  }
+  // ...and shuts it again, because closing the topmost window comes first.
+  const shut = await pressAndWait(page, 'Escape', '');
+  if (shut !== '') problems.push(`Escape would not close the options, leaving "${shut}"`);
 }
 
 /** The brief's budget: a full UI update and draw, under this. */
@@ -997,7 +1028,7 @@ async function paintedBox(
  * about the world.
  */
 async function theInterface(page: Page, problems: string[]): Promise<void> {
-  await page.keyboard.press('Escape');
+  await closeAllWindows(page);
   const before = await uiReadout(page);
   if (before.windows !== '') {
     problems.push(`the interface came up with ${before.windows} already open`);
@@ -1184,6 +1215,28 @@ async function setSpawners(page: Page, on: boolean): Promise<void> {
   if ((await box.isChecked()) !== on) await box.click();
   await page.click('button[aria-label="View settings"]');
   await page.waitForTimeout(300);
+}
+
+/**
+ * Press Escape until nothing is open, and no further.
+ *
+ * One more press would *open* the options window (spec 135): Escape closes the
+ * topmost window, and when there is none and nothing is committed to, it is the
+ * menu. So the loop has to stop at empty rather than pressing a fixed number of
+ * times -- which is how this harness left the options window open behind every
+ * assertion that followed.
+ */
+async function closeAllWindows(page: Page, tries = 8): Promise<void> {
+  for (let attempt = 0; attempt < tries; attempt += 1) {
+    const before = (await uiReadout(page)).windows;
+    if (before === '') return;
+    await page.keyboard.press('Escape');
+    // Waited *for the frame*, not for a fixed moment. This page renders a
+    // software-WebGL world and a frame can take most of a second under load, so
+    // a fixed wait sometimes read the state from before the press -- and pressed
+    // Escape again, which closed the window and then opened the menu back up.
+    await waitFor(page, async () => ((await uiReadout(page)).windows !== before ? true : null), 3000);
+  }
 }
 
 /** Press a key and wait for the interface to report the windows it opened. */

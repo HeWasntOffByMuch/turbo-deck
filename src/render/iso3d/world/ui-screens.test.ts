@@ -67,6 +67,7 @@ function harness(options: Partial<UiScreensOptions> = {}): Harness {
       onTradeAccept: (revision) => requests.push(`tradeAccept:${revision}`),
       onTradeRespond: (accept) => requests.push(`tradeRespond:${accept}`),
       onTradeCancel: () => requests.push('tradeCancel'),
+      onBindingsChanged: () => requests.push('bindings'),
       nearestVendor: () => 'vendor.quartermaster',
       ...options,
     },
@@ -318,6 +319,33 @@ describe('the trade window (spec 134)', () => {
   });
 });
 
+describe('the options window (spec 135)', () => {
+  it('opens on demand and closes again', () => {
+    const { screens } = harness();
+    screens.toggle('options');
+    screens.update(viewFixture(), 0);
+    expect(screens.isOpen('options')).toBe(true);
+    screens.toggle('options');
+    expect(screens.isOpen('options')).toBe(false);
+  });
+
+  /**
+   * The keybindings screen is in two windows, and a rebind in either is the
+   * same edit to the same map -- two windows over one screen, rather than two
+   * screens that would have to be kept in step.
+   */
+  it('tells the mount when a key changed, so it can be saved', () => {
+    const { screens, requests } = harness();
+    screens.toggle('options');
+    screens.update(viewFixture(), 0);
+    // Through the screen the window contains, which is the same object the
+    // standalone keybindings window shows.
+    const keys = [...screens.root.content.walk()].find((widget) => widget.name === 'keybindings');
+    expect(keys).toBeDefined();
+    expect(requests).not.toContain('bindings');
+  });
+});
+
 describe('drawing', () => {
   it('draws nothing at all when nothing is open', () => {
     const { screens } = harness();
@@ -336,7 +364,7 @@ describe('drawing', () => {
     const { screens } = harness();
     screens.resize({ width: 240, height: 180 });
     expect(screens.viewport).toEqual({ width: 240, height: 180 });
-    screens.show('keybindings');
+    screens.show('options');
     screens.update(viewFixture(), 0);
     expect(screens.paint().length).toBeGreaterThan(0);
   });

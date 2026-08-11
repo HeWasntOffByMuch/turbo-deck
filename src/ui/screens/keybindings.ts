@@ -254,7 +254,20 @@ export class KeybindingsScreen extends Column {
       this.conflictNotice = '';
     }
     this.options.map.bind(actionId, slot, chord);
+    // The one place the map is written, so the one place that has to announce
+    // it. Anything else would be a second edit path to keep in step.
+    this.onBindingsChanged?.();
   }
+
+  /**
+   * Told whenever the map was actually written to (spec 135).
+   *
+   * On the screen rather than on `InputMap`, because the map is a pure data
+   * structure that a dozen things read and exactly one thing edits -- and a
+   * change notification on the data would fire for a load as well as for a
+   * player's decision, which is how a profile gets saved over itself at boot.
+   */
+  onBindingsChanged: (() => void) | null = null;
 
   /** Rebuild every row's labels from the map. */
   refresh(): void {

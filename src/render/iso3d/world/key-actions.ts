@@ -23,7 +23,7 @@ import type { InputMap, Modifiers } from '../../../ui/input/input-map.js';
  * decision that had to import the DOM half to name its own result would be a
  * decision that could not be tested in Node.
  */
-export type WindowId = 'inventory' | 'character' | 'keybindings' | 'shop' | 'trade';
+export type WindowId = 'inventory' | 'character' | 'shop' | 'trade' | 'options';
 
 /**
  * Which window an action opens.
@@ -35,7 +35,12 @@ export type WindowId = 'inventory' | 'character' | 'keybindings' | 'shop' | 'tra
 const UI_WINDOWS: Readonly<Record<string, WindowId | undefined>> = {
   'ui.inventory': 'inventory',
   'ui.character': 'character',
-  'ui.keybindings': 'keybindings',
+  // Straight to the options window, on its keys tab. There is one keybindings
+  // screen and it lives in one place: a widget has one parent, so putting the
+  // same screen in a second window silently emptied whichever one was not
+  // holding it -- and two screens over one map would be two things to keep in
+  // step for no gain.
+  'ui.keybindings': 'options',
   'ui.shop': 'shop',
 };
 

@@ -44,6 +44,7 @@ import { InventoryScreen, type SlotRef } from '../../../ui/screens/inventory.js'
 import { KeybindingsScreen } from '../../../ui/screens/keybindings.js';
 import { ShopScreen } from '../../../ui/screens/shop.js';
 import { TradeScreen, type TradeUiView } from '../../../ui/screens/trade.js';
+import { OptionsScreen } from '../../../ui/screens/options.js';
 import { ScrollView } from '../../../ui/widgets/scroll-view.js';
 import { UiWindow } from '../../../ui/widgets/window.js';
 import type { InputMap } from '../../../ui/input/input-map.js';
@@ -77,14 +78,22 @@ export interface UiScreensOptions {
   readonly onTradeAccept: (revision: number) => void;
   readonly onTradeRespond: (accept: boolean) => void;
   readonly onTradeCancel: () => void;
+  /**
+   * The player changed a key (spec 135).
+   *
+   * A callback rather than this half writing storage, for the same reason the
+   * time is an argument: `src/ui/` may not touch the platform, and a save no
+   * test can observe is a save nothing checks.
+   */
+  readonly onBindingsChanged: () => void;
 }
 
 const WINDOW_TITLES: Readonly<Record<WindowId, string>> = {
   inventory: 'Inventory',
   character: 'Character',
   shop: 'Shop',
-  keybindings: 'Keybindings',
   trade: 'Trade',
+  options: 'Options',
 };
 
 /**
@@ -114,6 +123,7 @@ export class UiScreens {
   private readonly shop: ShopScreen;
   private readonly keybindings: KeybindingsScreen;
   private readonly trade: TradeScreen;
+  private readonly optionsScreen: OptionsScreen;
 
   /** Windows whose size and position have been chosen. See the header. */
   private readonly placed = new Set<WindowId>();
@@ -242,14 +252,23 @@ export class UiScreens {
       contexts: this.root.contexts,
     });
     this.keybindings.buildAllTabs();
+    this.keybindings.onBindingsChanged = () => {
+      options.onBindingsChanged();
+    };
+
+    // The keybindings screen lives here and nowhere else. It used to have a
+    // window of its own as well, which looked like a free convenience and was
+    // not: a widget has one parent, so the second window emptied the first the
+    // moment its tab was built. `K` opens this one, on this tab.
+    this.optionsScreen = new OptionsScreen({ theme: THEME, keys: this.keybindings });
 
     this.registerWindow('inventory', this.inventory);
     this.registerWindow('character', this.character);
     this.registerWindow('shop', this.shop);
     this.registerWindow('trade', this.trade);
-    // The only one the mount does not scroll: it has a filter field, tabs and a
-    // scroller of its own (spec 125).
-    this.registerWindow('keybindings', this.keybindings, false);
+    // Not scrolled by the mount: the keybindings page inside it has a filter
+    // field, tabs and a scroller of its own (spec 125).
+    this.registerWindow('options', this.optionsScreen, false);
   }
 
   /**
@@ -510,7 +529,9 @@ export class UiScreens {
 
   private sizeFor(id: WindowId, max: Size): Size {
     const content = this.contents.get(id);
-    if (id === 'keybindings' || !content) return max;
+    // Both of these are lists that want the room: the standalone keybindings
+    // window and the options window that contains the same screen.
+    if (id === 'options' || !content) return max;
 
     // The window's *content* is measured, not the screen inside it: the content
     // is a `ScrollView`, which takes its bar's width off before handing the rest
@@ -544,8 +565,9 @@ export class UiScreens {
       case 'shop':
       case 'trade':
         return { x: Math.max(MARGIN, Math.floor((viewport.width - size.width) / 2)), y: top };
+      case 'options':
+        return { x: Math.max(MARGIN, Math.floor((viewport.width - size.width) / 2)), y: top };
       case 'inventory':
-      case 'keybindings':
         return { x: MARGIN, y: top };
     }
   }

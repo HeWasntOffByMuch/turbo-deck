@@ -285,9 +285,10 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  a property over the whole easing table instead of a claim each
                  widget has to remember. text/ is the two bitmap faces; theme/ is theme.json plus the
                  atlas authored as text; widgets/ is the nine; screens/ is the
-                 five (the HUD, the bag, the sheet, the shop and the keybindings);
+                 seven (the HUD, the bag, the sheet, the shop, the keybindings,
+                 the trade table and the options window);
                  render/ is the only impure part. Everything else runs in Node.
-                 Since spec 131 four of the five screens are in the Play tab, over
+                 Since spec 131 all but the HUD are in the Play tab, over
                  the world -- mounted by src/render/iso3d/world/ui-screens.ts,
                  which is where a screen meets a `GameClient` and the only place
                  that is allowed to. The HUD stays in the gallery: the DOM one
