@@ -5,6 +5,7 @@ import { FENCE_KINDS, FENCE_TILE_LENGTH, type FenceKind, type Prop } from '../..
 import { applySway, bakeBend, disposeSway, tiltReach, type SwayInstance } from './sway.js';
 import { DEFAULT_CREASE_ANGLE, weldedNormals } from './shading.js';
 import { stiffness } from './wind.js';
+import { frondGap, frondHem, frondRim, type FrondPoint } from './frond.js';
 import {
   LOBED,
   lobedCrownRadius,
@@ -75,6 +76,8 @@ const HASH_JITTER_ROT = 0x5eed06;
 const HASH_JITTER_SIZE = 0x5eed07;
 /** A tree's own offset into the wind's clock (spec 074). */
 const HASH_WIND_PHASE = 0x5eed08;
+/** Which way a frond is turned on this tree (spec 121) -- its own channel, as above. */
+const HASH_SPIN = 0x5eed09;
 
 /**
  * How the three species divide the forest, as cumulative shares of the position
@@ -118,6 +121,13 @@ interface PropPart {
    * tree as a bare whip with a clump of foliage halfway up it.
    */
   readonly grownAt?: number;
+  /**
+   * The highest tier count this part is drawn for, `grownAt` being the floor
+   * (spec 122). Set with it to pick out *exactly* one count: the conifer trunks
+   * are one geometry per count, and a tree draws the one that ends in the frond
+   * it grew.
+   */
+  readonly grownUpTo?: number;
   /**
    * Which entry of the autumn ramp this part takes, defaulting to `tier`. The
    * conifers want the ramp to climb with the tier, dark base to bright crown;
@@ -183,6 +193,20 @@ interface PropPart {
   readonly swayTilt?: number;
   /** How far this part's geometry reaches from its own origin, for those bounds. */
   readonly swayReach?: number;
+  /**
+   * A full-turn spin about this part's *own* axis, radians, hashed per instance
+   * (spec 121).
+   *
+   * What makes one shared frond look like a forest of them: the geometry is the
+   * same buffer on every tree in the world and only the instance matrix differs,
+   * so the variety costs nothing to draw and nothing to store.
+   *
+   * Applied last in the quaternion chain and so *first* in the part's own frame,
+   * which is the whole difference between this and {@link jitterYaw}: the frond
+   * turns under the lean rather than turning the lean with it, so a tree's tiers
+   * still drift and lean as one thing while none of them line up.
+   */
+  readonly spinYaw?: number;
 }
 
 /**
@@ -218,16 +242,22 @@ const PINE_TIERS: readonly (readonly [radius: number, height: number, baseY: num
 /** Tier ramp, dark at the base to bright at the crown, however many tiers there are. */
 const TIER_COLORS = [PALETTE.leafDeep, PALETTE.leafMid, PALETTE.leafBright, PALETTE.leafBright] as const;
 
-/** A stack of cones on a square column: the fir and the pine. */
+/** A stack of fronds on a round tapered column: the fir and the pine. */
 interface ConiferShape {
   readonly kind: 'conifer';
-  /** Trunk box: a square column this wide. Its height is derived, below. */
-  readonly trunkWidth: number;
+  /** Trunk radius at the ground. Its height and its taper are derived, below. */
+  readonly trunkRadius: number;
+  /** Sides of the trunk's cross-section. */
+  readonly trunkSegments: number;
+  /** Rings up the trunk. What lets the wind *curve* it rather than tip it. */
+  readonly trunkRings: number;
   readonly tiers: readonly (readonly [radius: number, height: number, baseY: number])[];
   /** The tier counts an instance may take; the hash picks one, so repeats weight it. */
   readonly tierCounts: readonly number[];
   readonly driftMax: number;
   readonly leanMax: number;
+  /** Drives the hem each tier is cut with (spec 121); the tier index is mixed in. */
+  readonly seed: number;
 }
 
 /**
@@ -243,11 +273,17 @@ type SpeciesShape = ConiferShape | LobedShape;
 
 const FIR: ConiferShape = {
   kind: 'conifer',
-  trunkWidth: 12,
+  trunkRadius: 6,
+  trunkSegments: 7,
+  // Enough rings that the wind's quadratic bend draws a curve up the trunk
+  // rather than tipping a straight stick, and no more: a conifer's trunk is
+  // drawn a thousand times over and most of its length is behind foliage.
+  trunkRings: 4,
   tiers: FIR_TIERS,
   tierCounts: [2, 3, 3, 4],
   driftMax: 5,
   leanMax: 0.1,
+  seed: 0xf12,
 };
 
 /**
@@ -256,26 +292,64 @@ const FIR: ConiferShape = {
  */
 const PINE: ConiferShape = {
   kind: 'conifer',
-  trunkWidth: 12,
+  trunkRadius: 6,
+  trunkSegments: 7,
+  trunkRings: 4,
   tiers: PINE_TIERS,
   tierCounts: [2, 2, 3],
   driftMax: 9,
   leanMax: 0.19,
+  seed: 0x9143,
 };
 
 const SPECIES: Record<TreeSpecies, SpeciesShape> = { fir: FIR, pine: PINE, lobed: LOBED };
 
-/** Sides on a tier's cone. */
+/** Tips on a tier's frond, and so sides on the cone it is cut from. */
 const CONE_SEGMENTS = 7;
 /**
  * A cone's `radius` is the circumradius of that heptagon, so over a flat face
  * the foliage only reaches this fraction of it from the axis -- and a flat face
  * is what the trunk has to hide behind.
+ *
+ * Still exactly this once the hem is cut (spec 121), because a frond's vertices
+ * all sit *on* that cone: a horizontal slice above the hem crosses every edge
+ * from the apex to a rim vertex, an apex-to-surface edge lies on the cone, and
+ * so the slice is a polygon at the full cone radius on the rim's own bearings.
+ * A cleft only ever adds a bearing *within* a sector, so the widest gap is the
+ * heptagon's own step and this is its half-angle. {@link frondGap} is what holds
+ * that true, and `frond.test.ts` asserts it.
  */
 const CONE_COVER = Math.cos(Math.PI / CONE_SEGMENTS);
 
 /** Slack on the band edges, so a cone's own base does not round its way out of it. */
 const EPSILON = 1e-6;
+
+/**
+ * The hem each tier of each conifer is cut with (spec 121), built once.
+ *
+ * One frond per (species, tier), shared by every tree in the world: the variety
+ * between two of them is the per-instance spin, not a second buffer. Keyed by
+ * the species' own seed with the tier mixed in, so a tree's fronds differ from
+ * each other as well as from the cone they came from.
+ */
+const FROND_RIMS = new Map<string, readonly FrondPoint[]>();
+
+function tierRim(shape: ConiferShape, tier: number): readonly FrondPoint[] {
+  const key = `${shape.seed},${tier}`;
+  const known = FROND_RIMS.get(key);
+  if (known) return known;
+  const rim = frondRim(shape.seed + tier * 0x1f1f, CONE_SEGMENTS);
+  // Checked here rather than trusted, for the reason `sway.ts` checks its
+  // splices at module load: {@link CONE_COVER} is the half-angle of the widest
+  // gap in this rim, and a rim that opened one past the heptagon's step would
+  // cover the trunk *less* than the cone did while every number downstream went
+  // on saying it covered exactly as much.
+  if (frondGap(rim) > (2 * Math.PI) / CONE_SEGMENTS + EPSILON) {
+    throw new Error(`frond rim ${key} leaves a gap wider than the tip step`);
+  }
+  FROND_RIMS.set(key, rim);
+  return rim;
+}
 
 /** How far a tier may swing off the trunk's axis at full asymmetry. */
 function tierSway(shape: ConiferShape, tier: number): { drift: number; lean: number } {
@@ -298,8 +372,14 @@ function tierSway(shape: ConiferShape, tier: number): { drift: number; lean: num
  * face* that has to clear. The tier's own drift and lean count against it: the
  * cone leans about its own centre, which both slides the axis sideways by
  * `dy * tan(lean)` and tips the slice being cut at `y` further up the cone.
+ *
+ * Below the frond's hem (spec 121) the answer is `-Infinity` rather than a
+ * smaller number: down there the cutouts leave *nothing at all* at some
+ * bearings, and the prop is spun arbitrarily, so a tier does not hide a trunk's
+ * cap there at any depth. Saying so is what keeps the trunk's height derived
+ * rather than derived-from-a-solid-that-is-no-longer-solid.
  */
-function tierCover(shape: ConiferShape, tier: number, y: number, asymmetry: number): number {
+function tierReach(shape: ConiferShape, tier: number, y: number, asymmetry: number): number {
   const tierSpec = shape.tiers[tier];
   if (!tierSpec) return -Infinity;
   const [radius, height, baseY] = tierSpec;
@@ -308,64 +388,117 @@ function tierCover(shape: ConiferShape, tier: number, y: number, asymmetry: numb
   const lean = sway.lean * asymmetry;
   const dy = y - centre;
   const along = height / 2 + dy / Math.cos(lean);
-  if (along < -EPSILON || along > height + EPSILON) return -Infinity;
+  if (along < frondHem(tierRim(shape, tier)) * height - EPSILON) return -Infinity;
+  if (along > height + EPSILON) return -Infinity;
   const reach = radius * (1 - Math.min(Math.max(along, 0), height) / height) * CONE_COVER;
   const offAxis = Math.abs(sway.drift * asymmetry) + Math.abs(dy * Math.tan(lean));
-  return reach - offAxis - (shape.trunkWidth / 2) * Math.SQRT2;
+  return reach - offAxis;
+}
+
+/**
+ * How much foliage there is to spare around a trunk that ends at `y`.
+ *
+ * The frond's reach less the trunk's own -- a *radius* since spec 122 and not a
+ * box's half-diagonal, which is half of where the room at the top of a tall
+ * trunk comes from: a round column has no corner that has to clear as well.
+ */
+function tierCover(shape: ConiferShape, tier: number, y: number, asymmetry: number): number {
+  return tierReach(shape, tier, y, asymmetry) - coniferTrunkRadius(shape, y);
 }
 
 /** Foliage left to spare around the trunk's buried top, in prop-local units. */
 const TRUNK_BURIAL = 2;
 
 /**
- * How tall the trunk stands -- derived, not authored, because where it *ends*
- * is not a free choice. A trunk is a solid column that stops in mid-air, so
- * unless its top is buried inside a frond the cap and its corners hang out
- * through the cone's sloped side: the bug this replaces stood the fir's trunk
- * up to 86, where the frond around it has narrowed to a 3-unit radius, and the
- * top 5 units of column stuck out into open air on every fir in the world.
+ * How tall a conifer's trunk stands -- derived per *tree*, not per species
+ * (spec 122), because where it ends is not a free choice and the answer is
+ * different for a sapling and for a full-grown spire.
  *
- * So the trunk grows to the highest point its own species still covers: the
- * last height where a tier's cone clears the trunk's corner with room to spare,
- * at the worst lean and drift an instance can take (|asymmetry| = 1, which is
- * the worst case -- both terms only grow with it). Only the tiers *every*
- * instance grows count, since a two-tier sapling has no crown to hide in.
+ * It ends at the **hem of the topmost frond this tree grew**: the height at
+ * which that frond has closed all the way round (spec 121), and so the first
+ * height at which it hides what is inside it. Lower and the cap shows through a
+ * cutout; higher and the trunk is climbing through a crown it has already
+ * reached. What it replaces was one number per species -- the highest point the
+ * tiers *every* instance grows still covered -- which stopped a four-tier fir's
+ * trunk inside its second frond with two more hanging above it off nothing.
  */
-function buriedTrunkHeight(shape: ConiferShape): number {
-  const guaranteed = Math.min(...shape.tierCounts);
-  let best = 0;
-  for (let tier = 0; tier < guaranteed; tier++) {
-    const [, height, baseY] = shape.tiers[tier] ?? [0, 0, 0];
-    // The tier leans about its own centre, so its base sits here rather than at
-    // `baseY`. A cone narrows with height far faster than leaning slides it
-    // sideways, so cover falls off monotonically from that base to the tip: a
-    // tier covers the trunk at all only if it covers it down there, and one
-    // bisection then finds the height where it stops.
-    const centre = baseY + height / 2;
-    let lo = centre - (height / 2) * Math.cos(tierSway(shape, tier).lean);
-    let hi = baseY + height;
-    if (tierCover(shape, tier, lo, 1) < TRUNK_BURIAL) continue;
-    for (let i = 0; i < 48; i++) {
-      const mid = (lo + hi) / 2;
-      if (tierCover(shape, tier, mid, 1) >= TRUNK_BURIAL) lo = mid;
-      else hi = mid;
-    }
-    best = Math.max(best, lo);
-  }
-  return best;
+function coniferTrunkHeight(shape: ConiferShape, tierCount: number): number {
+  const tier = Math.max(0, Math.min(tierCount, shape.tiers.length) - 1);
+  const [, height, baseY] = shape.tiers[tier] ?? [0, 0, 0];
+  const hem = frondHem(tierRim(shape, tier)) * height;
+  // Measured on the *leaned* frond, at the worst lean an instance can take: the
+  // tier tips about its own centre, so a fixed world height sits further down
+  // the cone the harder it leans, and a trunk that ended at the upright hem
+  // would stand a hair proud of the hem on the trees that lean furthest.
+  const centre = baseY + height / 2;
+  return centre + (hem - height / 2) * Math.cos(tierSway(shape, tier).lean);
 }
 
-const TRUNK_HEIGHT: Record<TreeSpecies, number> = {
-  fir: buriedTrunkHeight(FIR),
-  pine: buriedTrunkHeight(PINE),
+/** The longest trunk a species grows: the profile every shorter one is a slice of. */
+function coniferTrunkSpan(shape: ConiferShape): number {
+  return Math.max(...shape.tierCounts.map((count) => coniferTrunkHeight(shape, count)));
+}
+
+/**
+ * How much of its base radius a trunk loses over its species' longest trunk --
+ * derived from the burial, for the same reason the height is (spec 122).
+ *
+ * The cap has to sit inside the frond above it by {@link TRUNK_BURIAL}, and at
+ * that frond's hem the room is whatever the tier table and the drift leave: the
+ * pine's topmost frond reaches 13.2 from the axis there and may slide 9 of that
+ * off the trunk's own axis, which leaves about a unit of trunk. So the taper is
+ * solved from the tightest variant the species grows, against the *species'*
+ * longest trunk rather than each variant's own -- one profile, sliced at
+ * different heights, so two neighbours of different sizes are the same
+ * thickness at the same height.
+ *
+ * Clamped into a band at both ends: under {@link TAPER_MIN} there is no visible
+ * taper at all, over {@link TAPER_MAX} the trunk is a spike, and a tier table
+ * that asked for more than that is asking for a frond that cannot hide a trunk
+ * -- which `trunkTopCover` is what says so, rather than this quietly obliging.
+ */
+const TAPER_MIN = 0.35;
+const TAPER_MAX = 0.85;
+
+function coniferTrunkTaper(shape: ConiferShape): number {
+  const span = coniferTrunkSpan(shape);
+  let taper = TAPER_MIN;
+  for (const count of new Set(shape.tierCounts)) {
+    const y = coniferTrunkHeight(shape, count);
+    if (y <= EPSILON) continue;
+    const tier = Math.min(count, shape.tiers.length) - 1;
+    // At the worst lean and drift an instance can take: both terms only grow
+    // with |asymmetry|, so 1 is the case to survive.
+    const room = tierReach(shape, tier, y, 1) - TRUNK_BURIAL;
+    const allowed = Math.max(0, room);
+    taper = Math.max(taper, (1 - allowed / shape.trunkRadius) * (span / y));
+  }
+  return Math.min(TAPER_MAX, taper);
+}
+
+/** Solved once per species, on first use -- adding a third conifer cannot forget it. */
+const TRUNK_TAPERS = new Map<ConiferShape, number>();
+
+function trunkTaper(shape: ConiferShape): number {
+  const known = TRUNK_TAPERS.get(shape);
+  if (known !== undefined) return known;
+  const taper = coniferTrunkTaper(shape);
+  TRUNK_TAPERS.set(shape, taper);
+  return taper;
+}
+
+/** The trunk's radius at height `y`, on the one profile the species' variants share. */
+function coniferTrunkRadius(shape: ConiferShape, y: number): number {
+  const u = Math.min(1, Math.max(0, y / coniferTrunkSpan(shape)));
+  return shape.trunkRadius * (1 - trunkTaper(shape) * u);
+}
+
+/** How tall this tree's trunk stands, in prop-local units (before scale). */
+export function trunkHeight(variant: TreeVariant): number {
+  const shape = SPECIES[variant.species];
   // Nothing to bury: the lobed trunk narrows to a single vertex, so it runs the
   // whole height of the tree and its "top" is a point in open air by design.
-  lobed: LOBED.height,
-};
-
-/** How tall a species' trunk stands, in prop-local units (before scale). */
-export function trunkHeight(species: TreeSpecies): number {
-  return TRUNK_HEIGHT[species];
+  return shape.kind === 'lobed' ? shape.height : coniferTrunkHeight(shape, variant.tierCount);
 }
 
 /**
@@ -375,14 +508,14 @@ export function trunkHeight(species: TreeSpecies): number {
  * with the prop together, so one number answers for every size it can grow to.
  *
  * `Infinity` for the lobed tree (spec 077), and that is the honest answer rather
- * than a dodge: the question is about a solid column's flat cap and its corners
- * hanging out through a sloped cone, and a trunk that tapers to a single vertex
- * has neither. The invariant is vacuous there, not satisfied by luck.
+ * than a dodge: the question is about a solid column's flat cap hanging out
+ * through a sloped cone, and a trunk that tapers to a single vertex has none.
+ * The invariant is vacuous there, not satisfied by luck.
  */
 export function trunkTopCover(variant: TreeVariant): number {
   const shape = SPECIES[variant.species];
   if (shape.kind === 'lobed') return Infinity;
-  const y = TRUNK_HEIGHT[variant.species];
+  const y = coniferTrunkHeight(shape, variant.tierCount);
   let best = -Infinity;
   const grown = Math.min(variant.tierCount, shape.tiers.length);
   for (let tier = 0; tier < grown; tier++) {
@@ -525,6 +658,88 @@ function lobedSlabGeometry(slab: SlabSpec, shape: LobedShape): THREE.BufferGeome
   return build();
 }
 
+/**
+ * A conifer's trunk (spec 122): a round column that thins as it climbs, up to
+ * the frond it ends inside.
+ *
+ * Standing on its own origin like the lobed trunk, so `offsetY` is zero and the
+ * baked bend weight is the local height over the species height -- which is what
+ * puts the trunk and the crown above it on one continuous curve rather than each
+ * running 0..1 within itself.
+ *
+ * The rings up its length are the difference between the wind *bending* it and
+ * the wind *tipping* it: the bend is quadratic in height, so with only a foot
+ * and a cap there is nothing in between to lag. The foot is capped for the
+ * reason the lobed trunk's is -- a tree stands on ground sampled at one point,
+ * so on a slope its foot is partly in the air and an open bottom shows daylight
+ * straight up the inside of it. The top is capped because that cap is the whole
+ * subject of {@link trunkTopCover}: it is buried in a frond, and it is a
+ * *surface* being buried rather than an absence.
+ */
+function coniferTrunkGeometry(shape: ConiferShape, height: number): THREE.BufferGeometry {
+  const sides = shape.trunkSegments;
+  const { tri, quad, build } = meshBuilder();
+  const ringY = (ring: number): number => (height * ring) / shape.trunkRings;
+  const at = (ring: number, side: number): Vec3 => {
+    const y = ringY(ring);
+    const radius = coniferTrunkRadius(shape, y);
+    const angle = (side / sides) * Math.PI * 2;
+    return [Math.cos(angle) * radius, y, Math.sin(angle) * radius];
+  };
+
+  const foot: Vec3 = [0, 0, 0];
+  const cap: Vec3 = [0, height, 0];
+  for (let side = 0; side < sides; side++) {
+    const next = (side + 1) % sides;
+    tri(foot, at(0, side), at(0, next));
+    for (let ring = 0; ring < shape.trunkRings; ring++) {
+      quad(at(ring, side), at(ring + 1, side), at(ring + 1, next), at(ring, next));
+    }
+    tri(cap, at(shape.trunkRings, next), at(shape.trunkRings, side));
+  }
+  return build();
+}
+
+/**
+ * One tier's frond: the cone it has always been, with its hem cut away
+ * (spec 121).
+ *
+ * Built about the same origin `THREE.ConeGeometry` used -- apex at `+height/2`,
+ * base plane at `-height/2` -- so every `offsetY`, every bend weight and every
+ * bounding sphere in the file goes on meaning what it meant.
+ *
+ * Each rim vertex sits on the cone's own surface at its own height, so its
+ * radius is `radius * (1 - lift)` and nothing here can put a vertex outside the
+ * silhouette it replaces. The triangles are chords of that cone, which is also
+ * what makes the faces between a low tip and a high cleft slant: a frond takes
+ * light unevenly for the same reason it reads as bitten.
+ *
+ * The underside is a fan from the base plane's centre out to the same rim. It is
+ * never seen from this camera -- it faces down -- but it is what the shadow pass
+ * casts from and what stops the frond being a shell you can see up the inside of
+ * from a hillside below.
+ */
+function frondGeometry(radius: number, height: number, rim: readonly FrondPoint[]): THREE.BufferGeometry {
+  const { tri, build } = meshBuilder();
+  const apex: Vec3 = [0, height / 2, 0];
+  const foot: Vec3 = [0, -height / 2, 0];
+  const at = (point: FrondPoint): Vec3 => {
+    const reach = radius * (1 - point.lift);
+    return [Math.cos(point.angle) * reach, -height / 2 + point.lift * height, Math.sin(point.angle) * reach];
+  };
+
+  for (let i = 0; i < rim.length; i++) {
+    const here = at(rim[i] as FrondPoint);
+    const next = at(rim[(i + 1) % rim.length] as FrondPoint);
+    // Wound the way `lobedSlabGeometry` winds its two faces: inner vertex first,
+    // then round the rim the one way for a surface facing up and out, the other
+    // for one facing down.
+    tri(apex, next, here);
+    tri(foot, here, next);
+  }
+  return build();
+}
+
 /** Two tones and no more, alternating up the cluster: the brief's flat palette. */
 const LOBED_TONES = [PALETTE.leafMid, PALETTE.leafBright] as const;
 
@@ -599,25 +814,29 @@ function lobedParts(shape: LobedShape): PropPart[] {
 function treeParts(species: TreeSpecies): PropPart[] {
   const shape = SPECIES[species];
   if (shape.kind === 'lobed') return lobedParts(shape);
-  const trunkWidth = shape.trunkWidth;
-  const height = trunkHeight(species);
   // The bend weight is measured against the tallest the species reaches, not
   // against the part, so the trunk and the crown above it lie on one continuous
   // curve rather than each running 0..1 within itself.
   const full = speciesHeight(species);
-  const parts: PropPart[] = [
-    {
-      geometry: new THREE.BoxGeometry(trunkWidth, height, trunkWidth),
-      offsetY: height / 2,
-      color: PALETTE.trunk,
-      foliage: false,
-      sway: true,
-    },
-  ];
+  // One trunk per tier count rather than one per species (spec 122): a tree ends
+  // its trunk in the frond it actually grew, and a sapling's is not a tall
+  // tree's cut short -- it is the same profile, stopped lower. The counts
+  // partition the trees between these batches, so a tree still draws exactly
+  // one and the world draws no more trunks than it did.
+  const parts: PropPart[] = [...new Set(shape.tierCounts)].map((count) => ({
+    geometry: coniferTrunkGeometry(shape, coniferTrunkHeight(shape, count)),
+    // Built standing on its own origin, so nothing to offset.
+    offsetY: 0,
+    color: PALETTE.trunk,
+    foliage: false,
+    sway: true,
+    grownAt: count,
+    grownUpTo: count,
+  }));
   shape.tiers.forEach(([radius, tierHeight, baseY], tier) => {
     const sway = tierSway(shape, tier);
     parts.push({
-      geometry: new THREE.ConeGeometry(radius, tierHeight, CONE_SEGMENTS),
+      geometry: frondGeometry(radius, tierHeight, tierRim(shape, tier)),
       offsetY: baseY + tierHeight / 2,
       color: TIER_COLORS[Math.min(tier, TIER_COLORS.length - 1)] ?? PALETTE.leafMid,
       foliage: true,
@@ -625,6 +844,9 @@ function treeParts(species: TreeSpecies): PropPart[] {
       driftMax: sway.drift,
       leanMax: sway.lean,
       sway: true,
+      // One frond per tier, turned differently on every tree it is drawn on
+      // (spec 121). A cone had nothing to turn.
+      spinYaw: Math.PI,
     });
   });
   for (const part of parts) bakeBend(part.geometry, part.offsetY, full);
@@ -633,8 +855,7 @@ function treeParts(species: TreeSpecies): PropPart[] {
 
 /** A species' trunk radius at the ground, whichever construction it is. */
 function speciesTrunkRadius(species: TreeSpecies): number {
-  const shape = SPECIES[species];
-  return shape.kind === 'lobed' ? shape.trunkRadius : shape.trunkWidth / 2;
+  return SPECIES[species].trunkRadius;
 }
 
 /**
@@ -1234,8 +1455,11 @@ export function speciesHeight(species: TreeSpecies): number {
     const crown = slabLayout(shape).reduce((high, slab) => Math.max(high, slab.y + slabRise(slab)), 0);
     return Math.max(crown, shape.height);
   }
-  const crown = shape.tiers.reduce((high, [, height, baseY]) => Math.max(high, baseY + height), 0);
-  return Math.max(crown, trunkHeight(species));
+  // The crown alone, since spec 122: the trunk ends inside the topmost frond a
+  // tree grew, so it can no longer be the tallest thing on the tree. Asked as a
+  // maximum anyway rather than as the last tier's top, because which tier is
+  // tallest is the tier table's business.
+  return shape.tiers.reduce((high, [, height, baseY]) => Math.max(high, baseY + height), 0);
 }
 
 /**
@@ -1428,10 +1652,19 @@ export function buildPropField(
     parts.forEach((part, partIndex) => {
       const tier = part.tier;
       // `tier + 1` is the rule the conifers have always used; `grownAt` is what
-      // lets the lobed canopy keep its topmost slab at every count (spec 077).
+      // lets the lobed canopy keep its topmost slab at every count (spec 077),
+      // and `grownUpTo` is the ceiling that picks out one count exactly, which
+      // is how a trunk knows which frond it is ending in (spec 122).
       const needs = part.grownAt ?? (tier === undefined ? 0 : tier + 1);
+      const upTo = part.grownUpTo ?? Infinity;
+      const bounded = needs > 0 || upTo < Infinity;
       const grown =
-        tier === undefined || !variants ? of : of.filter((prop) => (variants.get(prop)?.tierCount ?? 0) >= needs);
+        !bounded || !variants
+          ? of
+          : of.filter((prop) => {
+              const count = variants.get(prop)?.tierCount ?? 0;
+              return count >= needs && count <= upTo;
+            });
       if (grown.length === 0) return;
       const jitterPos = part.jitterX !== undefined || part.jitterZ !== undefined;
       const jitterRot = part.jitterYaw !== undefined || part.jitterRoll !== undefined;
@@ -1471,6 +1704,7 @@ export function buildPropField(
         const wobblePos = jitterPos ? wobble(HASH_JITTER_POS) : 0;
         const wobbleRot = jitterRot ? wobble(HASH_JITTER_ROT) : 0;
         const wobbleSize = jitterSize ? wobble(HASH_JITTER_SIZE) : 0;
+        const wobbleSpin = part.spinYaw === undefined ? 0 : wobble(HASH_SPIN);
 
         // Local offset, scaled with the prop and spun by its rotation. The
         // per-instance drift rides in that same local frame, so a leaning tree
@@ -1505,6 +1739,12 @@ export function buildPropField(
           leanAxis.set(Math.cos(variant.leanAngle), 0, Math.sin(variant.leanAngle));
           quaternion.multiply(tilt.setFromAxisAngle(leanAxis, lean));
         }
+        // Last in the chain and so first in the part's own frame (spec 121): the
+        // frond turns *under* the lean. Multiplied the other way round it would
+        // carry the lean's axis with it, and a tree's tiers would each drift one
+        // way while leaning another -- the frond tearing off the trunk it hangs
+        // on, which is the one thing the drift and the lean exist to avoid.
+        if (part.spinYaw) quaternion.multiply(tilt.setFromAxisAngle(up, part.spinYaw * wobbleSpin));
         if (prop.alignToNormal && normalAt) {
           const [nx, ny, nz] = normalAt(prop.x, prop.y);
           groundUp.set(nx, ny, nz);
