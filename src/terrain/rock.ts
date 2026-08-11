@@ -261,6 +261,46 @@ export function bakeRock(input: BakeRockInput): BakedRock {
   return { created, touched, bounds, cells: solidified };
 }
 
+/**
+ * Paint the ground under a tier as rock (spec 127).
+ *
+ * The ground a formation stands on *is* rocky ground, so this is true quite
+ * apart from being useful -- and it is very useful. The cutaway (spec 126)
+ * opens a porthole through the rock in front of a body, and what shows through
+ * it used to be meadow: a body standing in a green clearing that it cannot
+ * walk out of. Painted, the same porthole shows stone, and "there is rock here"
+ * needs no outline, no x-ray and no second pass to say.
+ *
+ * Returns the chunks that changed, so a caller re-meshes those and not the map.
+ */
+export function paintGroundUnder(
+  store: MapChunkStore,
+  layerId: string,
+  footprint: MapRect,
+  material: TerrainMaterial = 'rock',
+): ChunkCoord[] {
+  const info = store.layerInfo(layerId);
+  if (!info) return [];
+  const range = cellRange(footprint, info.origin, store.cellSize);
+  if (!range) return [];
+
+  const index = materialIndex(material);
+  const dirty = new Map<string, ChunkCoord>();
+  for (let row = range.minRow; row <= range.maxRow; row++) {
+    for (let col = range.minCol; col <= range.maxCol; col++) {
+      // Only ground that is actually there. Painting a hole does nothing and
+      // would still report its chunk as dirty.
+      if (!store.cellSolid(layerId, col, row)) continue;
+      if (store.cellAt(layerId, col, row)?.materialIndex === index) continue;
+      store.setCellMaterial(layerId, col, row, index);
+      const cx = Math.floor(col / store.chunkCells);
+      const cz = Math.floor(row / store.chunkCells);
+      dirty.set(`${cx},${cz}`, { cx: noNegZero(cx), cz: noNegZero(cz) });
+    }
+  }
+  return [...dirty.values()];
+}
+
 export interface BakeStairInput {
   readonly store: MapChunkStore;
   /** A stair layer of its own -- never the tier it serves. See below. */

@@ -5,6 +5,7 @@ import {
   detailFormation,
   emptyRockLayer,
   formationAt,
+  paintGroundUnder,
   type ChunkCoord,
   type MapChunkStore,
   type MapLayer,
@@ -163,7 +164,13 @@ export interface AddRockInput {
    * stand of them. Cleared inside this call's own stroke, which is what makes
    * undo put them back: a chunk snapshot carries its props.
    *
-   * Omit to leave vegetation alone.
+   * It is also painted as rock under the footprint (spec 127), which is both
+   * true -- the ground a formation stands on is rocky ground -- and the whole
+   * of what tells a player the space is not walkable. The cutaway opens a
+   * porthole through the rock in front of a body, and meadow showing through it
+   * reads as a clearing you could walk out of.
+   *
+   * Omit to leave the ground alone entirely.
    */
   readonly propLayerId?: string;
 }
@@ -179,6 +186,7 @@ export type AddRockResult =
       readonly cells: number;
       /** Props taken out from under it, and the ground chunks they stood on. */
       readonly clearedProps: number;
+      /** Ground chunks to re-mesh: props removed, material painted, or both. */
       readonly propChunks: readonly ChunkCoord[];
     }
   | { readonly ok: false; readonly reason: string };
@@ -256,7 +264,14 @@ export function addRock(store: MapChunkStore, history: EditHistory, input: AddRo
     input.propLayerId === undefined
       ? { removed: [], dirty: [] }
       : store.removePropsInRect(input.propLayerId, input.footprint);
+  // ...and the ground itself is stone now (spec 127). Same stroke, so one undo
+  // takes back the tier, the trees and the paint together.
+  const painted =
+    input.propLayerId === undefined ? [] : paintGroundUnder(store, input.propLayerId, input.footprint);
   history.endStroke();
+
+  const groundChunks = new Map<string, ChunkCoord>();
+  for (const c of [...cleared.dirty, ...painted]) groundChunks.set(`${c.cx},${c.cz}`, c);
 
   return {
     ok: true,
@@ -266,7 +281,7 @@ export function addRock(store: MapChunkStore, history: EditHistory, input: AddRo
     touched: baked.touched,
     cells: baked.cells,
     clearedProps: cleared.removed.length,
-    propChunks: cleared.dirty,
+    propChunks: [...groundChunks.values()],
   };
 }
 

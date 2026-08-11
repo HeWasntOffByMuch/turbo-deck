@@ -801,11 +801,16 @@ export function mountEditor(container: HTMLElement): ViewHandle {
       panel.refreshParts();
     }
     rebuiltAfterRock(added.layerId, [...added.created, ...added.touched]);
-    if (added.clearedProps > 0) {
-      // Only the batches over the ground the tier covers, not every batch in
-      // the world -- the same region-sized invalidation a brush stroke uses
-      // (spec 086).
-      scene.refreshPropsWithin(footprint);
+    if (added.propChunks.length > 0) {
+      // Ground chunks change for two reasons now: trees taken out from under the
+      // tier, and the ground under it painted as stone (spec 127). Either one
+      // needs the chunk re-meshed; only the first needs the prop field touched.
+      if (added.clearedProps > 0) {
+        // Only the batches over the ground the tier covers, not every batch in
+        // the world -- the same region-sized invalidation a brush stroke uses
+        // (spec 086).
+        scene.refreshPropsWithin(footprint);
+      }
       for (const c of added.propChunks) scene.rebuildChunk(layerId, c.cx, c.cz);
     }
     status =

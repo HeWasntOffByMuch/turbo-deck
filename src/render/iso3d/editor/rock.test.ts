@@ -519,3 +519,57 @@ describe('detailing from the editor (spec 125)', () => {
     expect(serializeMap(one.store.toDocument())).not.toBe(serializeMap(two.store.toDocument()));
   });
 });
+
+describe('the ground a tier stands on (spec 127)', () => {
+  const ROCK_MATERIAL = 4;
+  const GRASS_MATERIAL = 2;
+  const withGround = (
+    store: MapChunkStore,
+    history: EditHistory,
+    footprint = { minX: 0, minZ: 0, maxX: 20, maxZ: 20 },
+  ) =>
+    addRock(store, history, {
+      layerId: TIER,
+      footprint,
+      top: TOP,
+      baseY: -20,
+      seed: 7,
+      origin: { x: 0, z: 0 },
+      propLayerId: GROUND,
+    });
+
+  it('is painted as rock, so the cutaway shows stone and not meadow', () => {
+    const { store, history } = setup();
+    expect(store.cellAt(GROUND, 0, 0)?.materialIndex).toBe(GRASS_MATERIAL);
+    withGround(store, history);
+    expect(store.cellAt(GROUND, 0, 0)?.materialIndex).toBe(ROCK_MATERIAL);
+  });
+
+  it('leaves the ground outside the footprint alone', () => {
+    const { store, history } = setup();
+    withGround(store, history);
+    // The footprint reaches cell centres at 5 and 15, so cell 3 (centre 35) is out.
+    expect(store.cellAt(GROUND, 3, 3)?.materialIndex).toBe(GRASS_MATERIAL);
+  });
+
+  it('reports the ground chunks so only those are re-meshed', () => {
+    const { store, history } = setup();
+    const result = withGround(store, history);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.propChunks.length).toBeGreaterThan(0);
+  });
+
+  it('comes back with one undo, along with the tier and the trees', () => {
+    const { store, history, before } = setup();
+    withGround(store, history);
+    history.undo(store);
+    expect(serializeMap(store.toDocument())).toBe(before);
+  });
+
+  it('is left alone when no ground layer is named', () => {
+    const { store, history } = setup();
+    add(store, history, { minX: 0, minZ: 0, maxX: 20, maxZ: 20 });
+    expect(store.cellAt(GROUND, 0, 0)?.materialIndex).toBe(GRASS_MATERIAL);
+  });
+});

@@ -43,7 +43,9 @@ import { DEFAULT_SPAWN } from '../src/server/player/player-manager.js';
 import {
   encodeRuns,
   loadMap,
+  MapChunkStore,
   materialIndex,
+  paintGroundUnder,
   parseMap,
   quantize,
   serializeMap,
@@ -234,12 +236,19 @@ function buildProbeMap(
 
   const tier1Top = hi + TIER_RISE;
   const tier2Top = tier1Top + TIER_RISE;
+  // The ground a formation stands on is stone (spec 127). Painted here too, so
+  // what shows through the cutaway's porthole in these shots is what the editor
+  // would have produced.
+  const store = new MapChunkStore(doc);
+  paintGroundUnder(store, ground.id, lower);
+  const painted = store.toDocument();
+
   const layers = [
-    ...doc.layers,
+    ...painted.layers,
     buildTier('rock-1', 91, ground, cellSize, chunkCells, lower, tier1Top, lo - 60),
     buildTier('rock-2', 92, ground, cellSize, chunkCells, upper, tier2Top, tier1Top - 10),
   ];
-  return { doc: { ...doc, layers }, groundLo: lo, groundHi: hi, tier1Top, tier2Top };
+  return { doc: { ...painted, layers }, groundLo: lo, groundHi: hi, tier1Top, tier2Top };
 }
 
 async function main(): Promise<void> {
