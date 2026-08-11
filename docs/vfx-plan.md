@@ -1302,11 +1302,15 @@ because an order throws nothing. Priority 3 like a telegraph: two particles cost
 nothing, and a click whose answer was dropped under budget pressure reads as a
 click that missed.
 
-What the screenshots settled: **a wavefront has a smallest legible size.** The
-ring mesh is a fixed fraction of its own radius thick, so the first cut — a
-third smaller — came out as four dashes at the virtual resolution rather than as
-a ring. It sits just inside a selected unit's sigil now, which is as quiet as
-this shape goes.
+What the screenshots settled: **a wavefront has a smallest legible size**, and
+this one is deliberately under it. The ring mesh is a fixed fraction of its own
+radius thick, so below about a 30-unit peak radius it goes sub-pixel at the
+virtual resolution and arrives as a scatter of lit pixels opening outward
+instead of a closed ring. `order_move` peaks at 15. That is the call: the cue is
+read as a flash at a position rather than as a shape, and a *legible ring* at
+the destination is most of what was wrong with the marker it replaced. Worth
+knowing before anyone reaches for this scale on an effect that is meant to be
+looked at.
 
 ---
 

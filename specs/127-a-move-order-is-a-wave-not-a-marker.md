@@ -28,11 +28,16 @@ a standing marker is what one *is* when the thing being watched is a gait.
 reused whole, so there is one definition of what a wavefront looks like rather
 than two that drift. `order_move` is that pair on its own — no crystal, no
 rock, no dust, nothing thrown: a small ring on the floor with a softer halo
-behind it, half a second, gone. Its scale is 13, so it peaks at a radius just
-inside a unit's own selection sigil — a confirmation, not an ability, and the
-smallest it can be and still read: the ring mesh is a fixed fraction of its own
-radius thick, so a wave half this size is sub-pixel at the virtual resolution
-and comes out as four dashes rather than a ring.
+behind it, half a second, gone.
+
+Its scale is 6.5, which peaks at about half the radius of a unit's own
+selection sigil. That is deliberately below the size the shape draws cleanly
+at: the ring mesh is a fixed fraction of its own radius thick, so at this scale
+it is sub-pixel at the virtual resolution and lands as a scatter of lit pixels
+opening outward rather than as a closed ring. What is wanted here is the
+smallest possible "yes, there" — a cue this brief is read as a flash at a
+position, not as a shape, and a legible ring at the destination is most of what
+was wrong with the marker.
 
 Priority 3, like a telegraph, because it is information about your own input:
 two particles is nothing to draw, and a click whose answer was dropped under

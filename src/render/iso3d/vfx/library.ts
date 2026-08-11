@@ -830,7 +830,7 @@ export const LIBRARY: readonly EffectDefinition[] = [
     id: 'order_move',
     priority: 3,
     cullDistance: 1400,
-    emitters: waveEmitters(13, 'sparkHot', 'auraSelected'),
+    emitters: waveEmitters(6.5, 'sparkHot', 'auraSelected'),
   },
 
   // --- explosions ------------------------------------------------------------

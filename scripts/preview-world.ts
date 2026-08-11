@@ -502,21 +502,21 @@ async function main(): Promise<void> {
     // server existed (spec 064). A wave goes off where the click landed (spec
     // 127) and the figure walks to it.
     //
-    // Photographed a few ticks in, not half a second: the cue is a wavefront
-    // that lives about thirty ticks now rather than a marker that stands there,
-    // so the old delay caught the frame *after* it and would have reported the
-    // feature missing. Early, too, because the camera is already following the
-    // walk -- by the time the ring is at its widest the ground it is on has
-    // slid, and a frame of the ring under the body is the frame that says where
-    // the click went.
+    // Photographed a fifth of a second in, not half a second: the cue is a
+    // wavefront that lives about thirty ticks now rather than a marker that
+    // stands there, so the old delay caught the frame *after* it and would have
+    // reported the feature missing. Not at the click either -- the ring starts
+    // at a quarter of its size and this one is small, so the first few frames
+    // are a handful of lit pixels. Mid-life is where it is widest and still
+    // near full alpha.
     // Open grass rather than the old point, which was on the wall slab: the cue
     // lies *on the ground* now, so a click behind a waist-high wall is a cue
     // behind a waist-high wall, and the frame showed a sliver of ring and a lot
     // of stone.
     await page.mouse.click(330, 620, { button: 'right' });
-    await page.waitForTimeout(80);
+    await page.waitForTimeout(220);
     await shoot(page, 'world-move-order');
-    await page.waitForTimeout(1820);
+    await page.waitForTimeout(1680);
     await shoot(page, 'world-walking');
 
     // A hotbar press is a question now (spec 080), not the commitment. The
