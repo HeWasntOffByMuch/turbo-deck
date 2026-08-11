@@ -123,6 +123,19 @@ describe('what is mounted', () => {
     expect((scroller as ScrollView).scrollable).toBe(false);
   });
 
+  /**
+   * The app's chrome floats over the whole tab, so a window at the top margin
+   * opens underneath it. It went unseen for a while because the interface was
+   * twice as chunky and an 8-pixel margin happened to clear the bar.
+   */
+  it('opens below the chrome it is told about', () => {
+    const { screens } = harness();
+    screens.setSafeTop(30);
+    screens.show('inventory');
+    screens.update(viewFixture(), 0);
+    expect(windowSize(screens, 'inventory').y).toBeGreaterThanOrEqual(30);
+  });
+
   it('places a window inside the viewport and leaves it there', () => {
     const { screens } = harness();
     screens.show('inventory');

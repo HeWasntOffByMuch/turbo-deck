@@ -65,6 +65,11 @@ function main(): void {
   bar.style.cssText =
     'position:fixed;top:0;left:0;z-index:50;display:flex;gap:6px;flex-wrap:wrap;' +
     'padding:calc(6px + env(safe-area-inset-top)) 8px 0 calc(8px + env(safe-area-inset-left));';
+  // Named so a view can ask where the app's chrome ends. The bar is fixed and
+  // floats over the whole container, so anything a view opens at the top of the
+  // screen -- a framework window (spec 131) -- opens underneath it unless it
+  // knows. It wraps, so the height is a measurement rather than a constant.
+  bar.dataset['tabBar'] = '';
   const container = document.createElement('div');
   container.style.cssText = 'position:absolute;inset:0;overflow:auto;';
   app.append(container, bar);

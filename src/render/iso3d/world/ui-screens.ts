@@ -106,6 +106,17 @@ export class UiScreens {
   private readonly placed = new Set<WindowId>();
   /** ...and ones opened but not yet placed, because their screen is still empty. */
   private readonly awaitingPlacement = new Set<WindowId>();
+  /**
+   * How much of the top of the viewport the app's own chrome is sitting on, in
+   * UI pixels.
+   *
+   * The tab bar is fixed and floats over the whole tab, so a window opened at the
+   * margin opens underneath it -- which nobody noticed while the interface was
+   * twice as chunky, because a margin of 8 UI pixels was 32 real ones and cleared
+   * it by accident. Handed in rather than measured, because this half may not
+   * touch the DOM.
+   */
+  private safeTop = 0;
   /** The widget actually inside each window, which is what gets measured. */
   private readonly contents = new Map<WindowId, Widget>();
   /** Whether the `ui` context is on the stack -- pushed, popped, never toggled. */
@@ -332,6 +343,11 @@ export class UiScreens {
     this.root.resize(viewport);
   }
 
+  /** Told where the app's chrome ends. See {@link safeTop}. */
+  setSafeTop(uiPixels: number): void {
+    this.safeTop = Math.max(0, Math.floor(uiPixels));
+  }
+
   get viewport(): Size {
     return this.root.viewport;
   }
@@ -393,12 +409,13 @@ export class UiScreens {
     if (!window) return;
 
     const viewport = this.root.viewport;
+    const top = this.safeTop + MARGIN;
     const max = {
       width: Math.max(64, viewport.width - MARGIN * 2),
-      height: Math.max(48, viewport.height - MARGIN * 2),
+      height: Math.max(48, viewport.height - top - MARGIN),
     };
     const size = this.sizeFor(id, max);
-    window.restore(this.originFor(id, size, viewport), size, viewport);
+    window.restore(this.originFor(id, size, viewport, top), size, viewport);
   }
 
   private sizeFor(id: WindowId, max: Size): Size {
@@ -430,15 +447,15 @@ export class UiScreens {
    * combination worth reading at once -- what is worn against what it would do.
    * The shop opens in the middle, and the keybindings fill the tab.
    */
-  private originFor(id: WindowId, size: Size, viewport: Size): Point {
+  private originFor(id: WindowId, size: Size, viewport: Size, top: number): Point {
     switch (id) {
       case 'character':
-        return { x: Math.max(MARGIN, viewport.width - size.width - MARGIN), y: MARGIN };
+        return { x: Math.max(MARGIN, viewport.width - size.width - MARGIN), y: top };
       case 'shop':
-        return { x: Math.max(MARGIN, Math.floor((viewport.width - size.width) / 2)), y: MARGIN };
+        return { x: Math.max(MARGIN, Math.floor((viewport.width - size.width) / 2)), y: top };
       case 'inventory':
       case 'keybindings':
-        return { x: MARGIN, y: MARGIN };
+        return { x: MARGIN, y: top };
     }
   }
 
