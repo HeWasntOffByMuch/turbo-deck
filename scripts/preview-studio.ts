@@ -120,7 +120,7 @@ async function main(): Promise<void> {
     await page.goto(`http://localhost:${PORT}/`);
     await page.waitForTimeout(1500);
 
-    // --- the constraint: the other four tabs still mount ---------------------
+    // --- the constraint: the other tabs still mount --------------------------
     for (const label of ['Play', 'Movement sandbox', 'Rig debug', 'Map editor']) {
       await openTab(page, label);
       const size = await mountedSize(page);
@@ -131,6 +131,60 @@ async function main(): Promise<void> {
     }
 
     // --- the new tab ---------------------------------------------------------
+    // --- the VFX tab, and the layout trap it fell into (spec 122) ------------
+    //
+    // Checked here rather than by eye because the failure is invisible to every
+    // other kind of test: the shell writes `display:block` onto a tab's root on
+    // every activation, so a root that lays itself out with `display:flex` has
+    // its flex quietly replaced. Everything still mounts, every node is present,
+    // a node count passes -- and the three columns stack vertically, putting the
+    // preview below the fold behind a full-width list of names.
+    //
+    // So this asserts the *geometry*: the columns are side by side and the
+    // viewport is on screen.
+    await openTab(page, 'VFX');
+    const vfx = await page.evaluate(() => {
+      // Scoped to this tab's own root. Every tab that has been opened stays in
+      // the DOM behind `display:none`, so an unscoped `querySelector('canvas')`
+      // finds the Play tab's hidden one and measures a zero-sized rectangle.
+      const tab = document.getElementById('vfx-studio');
+      const inner = tab?.querySelector('[data-vfx-layout]');
+      const canvas = tab?.querySelector('canvas');
+      const box = canvas?.getBoundingClientRect();
+      const columns = inner
+        ? Array.from(inner.children).map((node) => {
+            const rect = node.getBoundingClientRect();
+            return { left: Math.round(rect.left), top: Math.round(rect.top), width: Math.round(rect.width) };
+          })
+        : [];
+      return {
+        found: tab !== null,
+        nodes: tab?.querySelectorAll('*').length ?? 0,
+        columns,
+        canvasTop: box ? Math.round(box.top) : -1,
+        canvasBottom: box ? Math.round(box.bottom) : -1,
+        viewportHeight: window.innerHeight,
+        scrollHeight: document.documentElement.scrollHeight,
+      };
+    });
+    if (!vfx.found) failures.push('the VFX tab did not mount an element with id vfx-studio');
+    console.log(`  VFX: ${vfx.nodes} nodes, canvas top ${vfx.canvasTop}, bottom ${vfx.canvasBottom}, viewport ${vfx.viewportHeight}`);
+    if (vfx.columns.length < 3) {
+      failures.push(`the VFX tab has ${vfx.columns.length} columns, expected at least 3`);
+    } else {
+      const tops = vfx.columns.slice(0, 3).map((column) => column.top);
+      const sameRow = Math.max(...tops) - Math.min(...tops) < 8;
+      if (!sameRow) failures.push(`the VFX columns are stacked, not side by side: tops ${tops.join(', ')}`);
+      const lefts = vfx.columns.slice(0, 3).map((column) => column.left);
+      if (new Set(lefts).size < 3) failures.push(`the VFX columns share a left edge: ${lefts.join(', ')}`);
+    }
+    if (vfx.canvasTop < 0 || vfx.canvasTop > vfx.viewportHeight * 0.5) {
+      failures.push(`the VFX preview starts at ${vfx.canvasTop}px, below the fold in a ${vfx.viewportHeight}px window`);
+    }
+    if (vfx.scrollHeight > vfx.viewportHeight + 8) {
+      failures.push(`the VFX tab scrolls: ${vfx.scrollHeight}px of content in ${vfx.viewportHeight}px`);
+    }
+
     await openTab(page, 'Studio');
     // The preview loads a real .glb and compiles the retro pass, which takes
     // longer than a tab switch.
@@ -269,7 +323,7 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  console.log('all five tabs mount, and the studio panel reads correctly with no server behind it');
+  console.log('all six tabs mount, the VFX tab lays out in columns, and the studio panel reads correctly with no server behind it');
 }
 
 await main();

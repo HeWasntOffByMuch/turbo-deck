@@ -164,6 +164,8 @@ const PURE_RENDER = [
   'src/render/iso3d/world/unit-catalog.ts',
   'src/render/iso3d/world/unit-driver.ts',
   'src/render/iso3d/world/unit-lod.ts',
+  'src/render/iso3d/world/vfx-wire.ts',
+  'src/render/iso3d/world/auras.ts',
   'src/render/iso3d/studio/image-check.ts',
   'src/render/iso3d/studio/image-check.test.ts',
   'src/render/iso3d/studio/plan.ts',
@@ -176,7 +178,50 @@ const PURE_RENDER = [
   'src/render/iso3d/studio/timeline.ts',
   'src/render/iso3d/studio/timing-bar.ts',
   'src/render/iso3d/studio/graph-layout.ts',
+  // The VFX tab's arithmetic (spec 122): the field table the parameter panel is
+  // generated from, the keyframe editing, and the JSON round trip that makes
+  // tuning into authoring. All three are answerable in Node, and all three are
+  // the sort of code that looks obviously right and is off by one -- a key that
+  // drags past its neighbour and corrupts the order, an export that is quietly
+  // lossy, a field nobody can edit because its row was never generated.
+  'src/render/iso3d/studio/vfx-fields.ts',
+  'src/render/iso3d/studio/curve-edit.ts',
+  'src/render/iso3d/studio/vfx-json.ts',
+  // How big a box the preview needs, measured by replaying the effect headlessly
+  // (spec 122). Arithmetic over a deterministic sim, so it is checked in Node.
+  'src/render/iso3d/studio/vfx-frame.ts',
+  'src/render/iso3d/studio/vfx-panels.test.ts',
   'src/render/iso3d/studio/panels.test.ts',
+  // The VFX core (spec 118). Every decision an effect makes is arithmetic --
+  // emission, integration, collision, curves, the budget -- and the promise the
+  // whole system rests on is that the same seed draws the same thing, which is
+  // only assertable where it can be replayed. The three.js half is the batches
+  // and the layer, and neither of those decides anything.
+  //
+  // `rng.ts` is the pointed one. It is a *mutable* generator, which the sim's own
+  // PRNG deliberately is not, because a particle loop cannot allocate per draw.
+  // It is linted as pure so that nothing else about it drifts, and it must never
+  // be imported by anything the deterministic core can reach.
+  'src/render/iso3d/vfx/rng.ts',
+  'src/render/iso3d/vfx/noise.ts',
+  'src/render/iso3d/vfx/curve.ts',
+  'src/render/iso3d/vfx/palette.ts',
+  'src/render/iso3d/vfx/shapes.ts',
+  // The solids particles are made of (spec 123). Geometry as arrays, generated
+  // rather than fetched -- so the silhouette a flame is read by is a thing a
+  // test in Node can hold to account.
+  'src/render/iso3d/vfx/meshes.ts',
+  'src/render/iso3d/vfx/types.ts',
+  'src/render/iso3d/vfx/compile.ts',
+  'src/render/iso3d/vfx/pool.ts',
+  'src/render/iso3d/vfx/system.ts',
+  'src/render/iso3d/vfx/registry.ts',
+  'src/render/iso3d/vfx/stress.ts',
+  'src/render/iso3d/vfx/splat.ts',
+  'src/render/iso3d/vfx/decals.ts',
+  'src/render/iso3d/vfx/library.ts',
+  'src/render/iso3d/vfx/probe-config.ts',
+  'src/render/iso3d/vfx/*.test.ts',
   'src/render/iso3d/editor/brush.ts',
   'src/render/iso3d/editor/camera.ts',
   'src/render/iso3d/editor/history.ts',
