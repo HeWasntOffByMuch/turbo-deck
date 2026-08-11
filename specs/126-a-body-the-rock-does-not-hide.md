@@ -56,18 +56,26 @@ the test asserts the two agree — the same arrangement `wind.ts` uses, for the
 same reason: a shader expression nobody can execute is where a typo lives
 forever.
 
-### Stippled, not faded
+### Discarded, not blended — and the pattern is a choice
 
-Coverage becomes a **dither discard** against a 4x4 Bayer threshold on
-`gl_FragCoord`, not an alpha blend. Three reasons, in order of how much they
-matter:
+Coverage becomes a `discard`, never an alpha blend, because a blended cutout
+needs the terrain drawn in sorted order against itself and a chunked mesh does
+not do that and should not start. `discard` also costs nothing when coverage is
+1, which it is for all but a few hundred fragments a frame.
 
-- A blended cutout needs the terrain drawn in sorted order against itself, which
-  a chunked mesh does not do and should not start doing.
-- The retro pass already posterises and dithers the whole frame (spec 038), so a
-  stipple is the grain the picture is already made of.
-- `discard` costs nothing when coverage is 1, which it is for all but a few
-  hundred fragments a frame.
+*How* it discards is a setting, `Cutaway`, in the View menu's Terrain section:
+
+- **Clean** (the default) takes the whole soft band, so the hole has a plain rim
+  and nothing moving inside it.
+- **Stipple** dithers the band against a 4x4 Bayer threshold, which is the
+  closer match to the retro pass's own weave (spec 038) — but over a hole this
+  size it reads as static across a third of the frame.
+- **Off** leaves the rock solid, for anyone who would rather learn the geometry
+  than watch it move.
+
+Three rather than one because the two ways of drawing the hole look nothing
+alike and neither is obviously right. Defaulting to the stipple and calling it
+settled was the wrong call.
 
 ### One uniform set, written once a frame
 
@@ -94,12 +102,15 @@ no body in it.
   tolerance.
 - The dither threshold covers all sixteen levels over a 4x4 block, so a coverage
   of 0.5 removes half the fragments rather than a diagonal band.
+- A clean cut discards the whole soft band whatever the pixel, so no dither
+  pattern survives in it; a stippled one keeps half of it; `off` keeps all.
+- No style ever discards a fragment at full coverage.
+- The default style is not the stipple.
 
 ## Out of scope
 
-- **A settings toggle.** The Play tab's corner has six buttons (spec 107) and a
-  seventh is a change to that menu, not to this. The constants live in one place
-  and are easy to lift into a panel later.
+- **A seventh corner button.** `Cutaway` is a row in the View menu that is
+  already there (spec 107), not a menu of its own. The radii stay constants.
 - **The prop field.** `applySway` replaces `#include <project_vertex>` with its
   own expanded source, so the anchor the cutout needs is gone by the time a tree
   is patched, and a `String.replace` that matches nothing returns the string

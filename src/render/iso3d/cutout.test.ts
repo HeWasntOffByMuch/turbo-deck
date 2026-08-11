@@ -3,10 +3,13 @@ import { describe, expect, it } from 'vitest';
 import {
   bayer4,
   cutoutCoverage,
+  cutoutDiscards,
   CUTOUT_APPLY,
   CUTOUT_DEFAULTS,
   CUTOUT_OFF,
   CUTOUT_PROLOGUE,
+  CUTOUT_STYLES,
+  styleCode,
   type ViewPoint,
 } from './cutout.js';
 
@@ -138,5 +141,62 @@ describe('the shader and the transcription', () => {
     // And the discard has to be a discard, not a fade -- a blended cutout needs
     // sorted terrain, which a chunked mesh does not give.
     expect(CUTOUT_APPLY).toContain('discard');
+  });
+});
+
+describe('how the hole is drawn', () => {
+  it('does not force a stipple on anybody: the default is a clean bite', () => {
+    expect(CUTOUT_DEFAULTS.style).toBe('hard');
+  });
+
+  it('takes the whole soft band when the cut is clean, so there is no noise in it', () => {
+    // Every threshold in the block, so this cannot pass by landing on a lucky
+    // pixel: a clean cut discards regardless of where the fragment sits.
+    for (let y = 0; y < 4; y++) {
+      for (let x = 0; x < 4; x++) {
+        expect(cutoutDiscards(0.5, 'hard', x, y)).toBe(true);
+        expect(cutoutDiscards(0.99, 'hard', x, y)).toBe(true);
+      }
+    }
+  });
+
+  it('dissolves the band when the cut is stippled', () => {
+    let kept = 0;
+    for (let y = 0; y < 4; y++) {
+      for (let x = 0; x < 4; x++) {
+        if (!cutoutDiscards(0.5, 'stipple', x, y)) kept++;
+      }
+    }
+    // Half in, half out -- which is the whole point of the style, and what
+    // makes it look different from the clean one.
+    expect(kept).toBe(8);
+  });
+
+  it('keeps everything when the cut is off, whatever the coverage', () => {
+    for (const cov of [0, 0.25, 0.5, 1]) {
+      expect(cutoutDiscards(cov, 'off', 0, 0)).toBe(false);
+    }
+    expect(cutoutCoverage({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: -1000 }, { ...CUTOUT_DEFAULTS, style: 'off' })).toBe(1);
+  });
+
+  it('never discards a fragment nothing is covering', () => {
+    for (const style of CUTOUT_STYLES) {
+      for (let y = 0; y < 4; y++) {
+        for (let x = 0; x < 4; x++) expect(cutoutDiscards(1, style, x, y)).toBe(false);
+      }
+    }
+  });
+
+  it('gives the shader a code per style, with off below zero', () => {
+    expect(styleCode('hard')).toBe(0);
+    expect(styleCode('stipple')).toBe(1);
+    // The GLSL tests `uCutParams.w < 0.0` for off and `< 0.5` for hard, so the
+    // three have to stay on opposite sides of both.
+    expect(styleCode('off')).toBeLessThan(0);
+  });
+
+  it('starts the shared uniform switched off, so no view inherits a hole', () => {
+    expect(CUTOUT_OFF.style).toBe('off');
+    expect(styleCode(CUTOUT_OFF.style)).toBeLessThan(0);
   });
 });

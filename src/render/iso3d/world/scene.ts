@@ -75,7 +75,7 @@ import { HikeBuffers } from '../hike-buffers.js';
 import { HikeEdges } from '../hike-edges.js';
 import { advanceWind } from '../wind-uniforms.js';
 import { clearCutout, cutBodyUniform, cutParamsUniform } from '../cutout-uniforms.js';
-import { CUTOUT_DEFAULTS } from '../cutout.js';
+import { CUTOUT_DEFAULTS, styleCode, type CutoutStyle } from '../cutout.js';
 import { FIXED_DAYLIGHT } from '../daynight.js';
 import {
   MAGIC_COLOR,
@@ -789,9 +789,14 @@ export class WorldScene {
    * own footing from flickering, and measuring from the ground would spend that
    * bias on the slope underneath instead of on the rock in front.
    */
-  private updateCutout(me: { x: number; y: number }, groundY: number): void {
+  private updateCutout(me: { x: number; y: number }, groundY: number, style: CutoutStyle): void {
     cutBodyUniform.value.set(me.x, groundY + DEFAULT_CANONICAL_HEIGHT * 0.5, me.y).applyMatrix4(this.camera.matrixWorldInverse);
-    cutParamsUniform.value.set(CUTOUT_DEFAULTS.inner, CUTOUT_DEFAULTS.outer, CUTOUT_DEFAULTS.depthBias);
+    cutParamsUniform.value.set(
+      CUTOUT_DEFAULTS.inner,
+      CUTOUT_DEFAULTS.outer,
+      CUTOUT_DEFAULTS.depthBias,
+      styleCode(style),
+    );
   }
 
   render(view: ClientView, frame: FrameInfo): void {
@@ -834,7 +839,7 @@ export class WorldScene {
     // way (spec 126). Here rather than earlier because it reads the camera's
     // inverse and that is only fresh from the line above; here rather than
     // later because the passes below draw with it.
-    this.updateCutout(me, groundY);
+    this.updateCutout(me, groundY, this.controls.cutout());
     // Needs both of the above: it reads the rig's world position and pushes it
     // through the camera's inverse (spec 118).
     this.anchorPlayerLighting(view.selfEntityId);

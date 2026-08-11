@@ -21,6 +21,18 @@
  * Pure: no three.js, no DOM, no clock.
  */
 
+/**
+ * How the cut is drawn.
+ *
+ * Three, because there is no one right answer and imposing one was the wrong
+ * call. A stipple matches the retro pass's own grain but is noisy on a large
+ * hole; a hard edge is quiet and reads as a clean bite; and somebody who would
+ * rather the rock simply stayed put should be able to say so.
+ */
+export type CutoutStyle = 'hard' | 'stipple' | 'off';
+
+export const CUTOUT_STYLES: readonly CutoutStyle[] = ['hard', 'stipple', 'off'];
+
 export interface CutoutParams {
   /** Fully cut within this, in world units measured across the view. */
   readonly inner: number;
@@ -35,6 +47,7 @@ export interface CutoutParams {
    * near side of the comparison.
    */
   readonly depthBias: number;
+  readonly style: CutoutStyle;
 }
 
 /**
@@ -49,10 +62,20 @@ export const CUTOUT_DEFAULTS: CutoutParams = {
   inner: 58,
   outer: 96,
   depthBias: 12,
+  // A clean bite rather than the stipple. The dither is the closer match to the
+  // retro pass's own grain, but over a hole this size it reads as static across
+  // a third of the frame, and it should not be what anybody gets without
+  // choosing it.
+  style: 'hard',
 };
 
 /** No cut at all: what every view that never writes the uniforms gets. */
-export const CUTOUT_OFF: CutoutParams = { inner: 0, outer: 0, depthBias: 0 };
+export const CUTOUT_OFF: CutoutParams = { inner: 0, outer: 0, depthBias: 0, style: 'off' };
+
+/** What the style is worth to the shader, which has no strings. */
+export function styleCode(style: CutoutStyle): number {
+  return style === 'stipple' ? 1 : style === 'hard' ? 0 : -1;
+}
 
 export interface ViewPoint {
   readonly x: number;
@@ -69,6 +92,7 @@ export interface ViewPoint {
  */
 export function cutoutCoverage(frag: ViewPoint, body: ViewPoint, params: CutoutParams): number {
   const { inner, outer, depthBias } = params;
+  if (params.style === 'off') return 1;
   // A zero radius is off, not a degenerate circle. Checked first so an unwritten
   // uniform costs one compare rather than a divide by zero.
   if (!(outer > 0)) return 1;
@@ -81,6 +105,23 @@ export function cutoutCoverage(frag: ViewPoint, body: ViewPoint, params: CutoutP
   if (distance >= outer) return 1;
   if (distance <= inner) return 0;
   return (distance - inner) / (outer - inner);
+}
+
+/**
+ * Whether this fragment is thrown away, given its coverage and where it is.
+ *
+ * The one place the three styles differ. `hard` takes everything the fade band
+ * would have softened, so the hole has a clean rim and no noise in it; `stipple`
+ * dithers the band against a Bayer threshold; `off` never discards, which is
+ * also what a zero radius gives.
+ */
+export function cutoutDiscards(coverage: number, style: CutoutStyle, x: number, y: number): boolean {
+  if (style === 'off') return false;
+  if (coverage >= 1) return false;
+  // A hard cut takes the whole soft band with it. Half-covered is inside the
+  // hole, not on its edge -- an edge drawn by a coverage test is the stipple.
+  if (style === 'hard') return coverage < 1;
+  return coverage <= bayer4(x, y);
 }
 
 /**
@@ -101,7 +142,7 @@ export function bayer4(x: number, y: number): number {
  */
 export const CUTOUT_PROLOGUE = /* glsl */ `
 uniform vec3 uCutBody;
-uniform vec3 uCutParams; // inner, outer, depthBias
+uniform vec4 uCutParams; // inner, outer, depthBias, style (-1 off, 0 hard, 1 stipple)
 varying vec3 vCutView;
 
 float cutoutBayer4(vec2 p) {
@@ -119,6 +160,7 @@ float cutoutCoverage() {
   float inner = uCutParams.x;
   float outer = uCutParams.y;
   float bias = uCutParams.z;
+  if (uCutParams.w < 0.0) return 1.0;
   if (outer <= 0.0) return 1.0;
   if (vCutView.z <= uCutBody.z + bias) return 1.0;
   float d = length(vCutView.xy - uCutBody.xy);
@@ -149,6 +191,11 @@ vCutView = mvPosition.xyz;
 export const CUTOUT_APPLY = /* glsl */ `
 {
   float cov = cutoutCoverage();
-  if (cov < 1.0 && cov <= cutoutBayer4(gl_FragCoord.xy)) discard;
+  if (cov < 1.0) {
+    // Hard takes the whole soft band, so the rim is clean and there is no noise
+    // inside it; stipple dithers the band instead.
+    if (uCutParams.w < 0.5) discard;
+    else if (cov <= cutoutBayer4(gl_FragCoord.xy)) discard;
+  }
 }
 `;

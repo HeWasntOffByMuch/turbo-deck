@@ -1,6 +1,13 @@
 import * as THREE from 'three';
 
-import { CUTOUT_APPLY, CUTOUT_PROLOGUE, CUTOUT_VERTEX_APPLY, CUTOUT_VERTEX_PROLOGUE, CUTOUT_OFF } from './cutout.js';
+import {
+  CUTOUT_APPLY,
+  CUTOUT_PROLOGUE,
+  CUTOUT_VERTEX_APPLY,
+  CUTOUT_VERTEX_PROLOGUE,
+  CUTOUT_OFF,
+  styleCode,
+} from './cutout.js';
 
 /**
  * The three.js half of the cutaway (spec 126).
@@ -19,9 +26,13 @@ import { CUTOUT_APPLY, CUTOUT_PROLOGUE, CUTOUT_VERTEX_APPLY, CUTOUT_VERTEX_PROLO
 /** The body's position in view space. Written once a frame by the Play view. */
 export const cutBodyUniform: THREE.IUniform<THREE.Vector3> = { value: new THREE.Vector3(0, 0, 0) };
 
-/** `(inner, outer, depthBias)`. An outer of zero is off. */
-export const cutParamsUniform: THREE.IUniform<THREE.Vector3> = {
-  value: new THREE.Vector3(CUTOUT_OFF.inner, CUTOUT_OFF.outer, CUTOUT_OFF.depthBias),
+/**
+ * `(inner, outer, depthBias, style)`. An outer of zero is off, and so is a
+ * negative style -- either is enough on its own, so a view that never writes
+ * these cannot half-enable the cut by touching one of them.
+ */
+export const cutParamsUniform: THREE.IUniform<THREE.Vector4> = {
+  value: new THREE.Vector4(CUTOUT_OFF.inner, CUTOUT_OFF.outer, CUTOUT_OFF.depthBias, styleCode(CUTOUT_OFF.style)),
 };
 
 /**
@@ -35,7 +46,7 @@ export const CUTOUT_UNIFORMS = {
 
 /** Stop cutting. Called when the Play view unmounts, so no tab inherits a hole. */
 export function clearCutout(): void {
-  cutParamsUniform.value.set(0, 0, 0);
+  cutParamsUniform.value.set(0, 0, 0, styleCode('off'));
 }
 
 /**
