@@ -68,6 +68,7 @@ function harness(options: Partial<UiScreensOptions> = {}): Harness {
       onTradeRespond: (accept) => requests.push(`tradeRespond:${accept}`),
       onTradeCancel: () => requests.push('tradeCancel'),
       onBindingsChanged: () => requests.push('bindings'),
+      onScaleChosen: (choice) => requests.push(`scale:${String(choice)}`),
       nearestVendor: () => 'vendor.quartermaster',
       ...options,
     },
@@ -343,6 +344,51 @@ describe('the options window (spec 135)', () => {
     const keys = [...screens.root.content.walk()].find((widget) => widget.name === 'keybindings');
     expect(keys).toBeDefined();
     expect(requests).not.toContain('bindings');
+  });
+});
+
+describe('the tooltip, over the world (spec 136)', () => {
+  /** The bag open with the starting kit in it, so a cell has something to say. */
+  function bagOpen(): ReturnType<typeof harness> {
+    const built = harness();
+    built.screens.show('inventory');
+    built.screens.update(viewFixture({ inventory: starterInventory() }), 0);
+    return built;
+  }
+
+  /** The middle of the first bag cell with an item in it. */
+  function overAnItem(screens: UiScreens): { x: number; y: number } {
+    const cell = [...screens.root.content.walk()].find(
+      (widget) => widget.name.startsWith('bag:') && (widget as { item?: unknown }).item != null,
+    );
+    if (!cell) throw new Error('no bag cell has an item in it');
+    return { x: cell.rect.x + 2, y: cell.rect.y + 2 };
+  }
+
+  it('says what the cursor is over, once the theme has waited', () => {
+    const { screens } = bagOpen();
+    const at = overAnItem(screens);
+    screens.handlePointer('move', at, 0, NONE);
+    screens.update(viewFixture({ inventory: starterInventory() }), 0);
+    // Nothing yet: a tooltip that appeared instantly would appear on the way
+    // past, which is the noise the delay exists to stop.
+    expect(screens.tooltipText).toBe('');
+    screens.update(viewFixture({ inventory: starterInventory() }), 1000);
+    expect(screens.tooltipText.length).toBeGreaterThan(0);
+  });
+
+  it('shuts up when the bag does', () => {
+    // The tooltip is in a layer above every window rather than inside one, and
+    // the bag closes on a key -- so nothing else would ever clear it, and the
+    // box would sit over the world until the mouse twitched.
+    const { screens } = bagOpen();
+    screens.handlePointer('move', overAnItem(screens), 0, NONE);
+    screens.update(viewFixture({ inventory: starterInventory() }), 1000);
+    expect(screens.tooltipText.length).toBeGreaterThan(0);
+
+    screens.toggle('inventory');
+    screens.update(viewFixture({ inventory: starterInventory() }), 1200);
+    expect(screens.tooltipText).toBe('');
   });
 });
 

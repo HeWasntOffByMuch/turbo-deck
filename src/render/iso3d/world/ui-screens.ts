@@ -398,6 +398,11 @@ export class UiScreens {
     // The tooltip's delay is time passing rather than an event, so it is
     // advanced once a frame from the time the mount was handed (spec 136).
     this.inventory.tooltip.viewport = this.root.viewport;
+    // ...and it says nothing at all when the bag is shut. The tooltip sits in a
+    // layer above every window rather than inside one, and the bag closes on a
+    // *key*, which no pointer move follows -- so without this, closing it with
+    // the cursor on an item leaves the box floating over the world.
+    if (!this.isOpen('inventory')) this.inventory.clearTooltip();
     this.inventory.updateTooltip(nowMs);
 
     this.syncContext();
@@ -483,6 +488,11 @@ export class UiScreens {
       scaleChoice: String(this.display.selected),
       scaleRects: this.display.choiceRects(),
     };
+  }
+
+  /** What the tooltip is saying, or `''` when it is not showing. */
+  get tooltipText(): string {
+    return this.inventory.tooltip.visible ? this.inventory.tooltip.label : '';
   }
 
   resize(viewport: Size): void {

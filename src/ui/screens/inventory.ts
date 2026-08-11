@@ -300,6 +300,18 @@ export class InventoryScreen extends Row {
     this.tooltip.update(nowMs, this.options.theme.input.tooltipDelayMs);
   }
 
+  /**
+   * Say nothing, whatever the cursor is over.
+   *
+   * The tooltip lives in a layer of its own, above every window, so it does not
+   * disappear when the bag does -- and the bag is shut with a *key*, which no
+   * pointer move follows. Without this, closing the bag with the cursor resting
+   * on an item leaves the box floating over the world until the mouse twitches.
+   */
+  clearTooltip(): void {
+    this.tooltip.point(null, { x: 0, y: 0 }, 0);
+  }
+
   /** The cell the pointer is over, catch included, or null. */
   cellUnder(at: Point): ItemSlot | null {
     for (const cell of [...this.bagCells, ...this.wornCells]) {
