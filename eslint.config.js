@@ -151,6 +151,10 @@ const PURE_RENDER = [
   // a phone is a sum, and an icon is a string.
   'src/render/iso3d/world/hud-layout.ts',
   'src/render/iso3d/world/icons.ts',
+  // The inventory's view-model (spec 127). The one file that reads both the
+  // replicated containers and the item table, out to the plain rows `src/ui/`
+  // is allowed to hold -- a mapping, and so checked in Node.
+  'src/render/iso3d/world/inventory-model.ts',
   'src/render/iso3d/world/*.test.ts',
   // The Studio tab's decision-making half (spec 109). image-check.ts measures a
   // reference image and plan.ts derives whether a generation establishes a rig
