@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { EFFECTS, REGISTRY } from './registry.js';
-import { LIBRARY, aura, fire, puff } from './library.js';
+import { LIBRARY, aura, burst, fire, puff } from './library.js';
 import { compileRegistry } from './compile.js';
 import { sampleCurve, compileCurve, sampleGradient, compileGradient } from './curve.js';
 import { VfxSystem } from './system.js';
@@ -95,7 +95,7 @@ describe('the registry as a whole', () => {
     // grows without bound the batching has stopped meaning anything. It is a
     // ceiling on what *could* be drawn: only a batch with something in it costs
     // a call, so a frame with one aura up draws three.
-    expect(REGISTRY.batches.length).toBeLessThanOrEqual(16);
+    expect(REGISTRY.batches.length).toBeLessThanOrEqual(20);
   });
 });
 
@@ -376,6 +376,109 @@ describe('the aura family', () => {
     expect(shafts?.shape).toEqual({ kind: 'circle', radius: 40 * 0.86, shell: true });
     expect(shafts?.mesh?.shape).toBe('shaft');
     expect(shafts?.blend).toBe('additive');
+  });
+});
+
+describe('the burst family', () => {
+  const byId = new Map(LIBRARY.map((effect) => [effect.id, effect]));
+
+  it('makes a hit the quiet end of an explosion, not a second vocabulary', () => {
+    const small = byId.get('hit_physical');
+    const large = byId.get('explosion_large');
+    expect(small?.emitters.map((emitter) => emitter.id)).toContain('spikes');
+    expect(large?.emitters.map((emitter) => emitter.id)).toContain('spikes');
+  });
+
+  it('aims its spikes down their own travel', () => {
+    // The reason ORIENT.velocity exists. A shard authored pointing at +Y and
+    // aimed by the batch radiates out of a point with nothing computing a
+    // rotation per particle.
+    for (const effect of LIBRARY) {
+      const spikes = effect.emitters.find((emitter) => emitter.id === 'spikes');
+      if (!spikes) continue;
+      expect(spikes.render, effect.id).toBe('mesh');
+      expect(spikes.mesh?.shape, effect.id).toBe('shard');
+      expect(spikes.blend, effect.id).toBe('alpha');
+    }
+  });
+
+  it('gives every burst a solid core rather than a stack of quads', () => {
+    for (const effect of LIBRARY) {
+      const core = effect.emitters.find((emitter) => emitter.id === 'core');
+      if (!core || !effect.emitters.some((emitter) => emitter.id === 'spikes')) continue;
+      expect(core.mesh?.shape, effect.id).toBe('starburst');
+      expect(core.emission, effect.id).toEqual({ kind: 'burst', count: 1 });
+    }
+  });
+
+  it('stops its spikes with drag rather than letting them fly away', () => {
+    // What reads as the burst opening is the size curve, not travel. Spikes that
+    // travelled would separate from the core and read as darts leaving.
+    const spikes = burst({ id: 'b', scale: 40, hot: 'fireCore', warm: 'fireBody', cool: 'fireDeep' })
+      .emitters.find((emitter) => emitter.id === 'spikes');
+    expect(spikes?.drag ?? 0).toBeGreaterThan(8);
+    const size = compileCurve(spikes?.size ?? { keys: [] });
+    expect(sampleCurve(size, 0.3)).toBeGreaterThan(sampleCurve(size, 0) * 3);
+    expect(sampleCurve(size, 1)).toBeLessThan(sampleCurve(size, 0.3));
+  });
+
+  it('scales every layer from the one number', () => {
+    const small = burst({ id: 'a', scale: 20, hot: 'fireCore', warm: 'fireBody', cool: 'fireDeep', chunks: 3 });
+    const large = burst({ id: 'b', scale: 80, hot: 'fireCore', warm: 'fireBody', cool: 'fireDeep', chunks: 3 });
+    const peak = (effect: typeof small, id: string): number => {
+      const emitter = effect.emitters.find((candidate) => candidate.id === id);
+      return Math.max(...(emitter?.size.keys.map(([, value]) => value) ?? [0]));
+    };
+    for (const id of ['core', 'spikes', 'shards', 'chunks', 'dust']) {
+      expect(peak(large, id) / peak(small, id), id).toBeCloseTo(4, 5);
+    }
+  });
+
+  it('drops the layers a variant does not want', () => {
+    const bare = burst({ id: 'a', scale: 20, hot: 'fireCore', warm: 'fireBody', cool: 'fireDeep', dust: false, glow: false });
+    const ids = bare.emitters.map((emitter) => emitter.id);
+    expect(ids).not.toContain('dust');
+    expect(ids).not.toContain('glow');
+    expect(ids).not.toContain('chunks');
+  });
+
+  it('throws rock that bounces rather than sinking into the floor', () => {
+    const chunks = byId.get('explosion_large')?.emitters.find((emitter) => emitter.id === 'chunks');
+    expect(chunks?.mesh?.shape).toBe('chunk');
+    expect(chunks?.collision?.maxBounces ?? 0).toBeGreaterThan(0);
+    expect(chunks?.gravity ?? 0).toBeLessThan(0);
+  });
+
+  it('fires a directed burst along the blow rather than in every direction', () => {
+    const jet = byId.get('explosion_directed')?.emitters.find((emitter) => emitter.id === 'spikes');
+    const ball = byId.get('explosion_large')?.emitters.find((emitter) => emitter.id === 'spikes');
+    const angle = (emitter: typeof jet): number =>
+      emitter?.shape.kind === 'cone' ? emitter.shape.angle : 0;
+    expect(angle(jet)).toBeLessThan(angle(ball) / 2);
+  });
+
+  it('lays the ground variant flat instead of pointing it up', () => {
+    const flat = byId.get('explosion_ground')?.emitters.find((emitter) => emitter.id === 'spikes');
+    // A circle emits in the ground plane; a cone emits into the sky.
+    expect(flat?.shape.kind).toBe('circle');
+  });
+
+  it('keeps every damage type on its own colours', () => {
+    const hot = (id: string): string | undefined => {
+      const core = byId.get(id)?.emitters.find((emitter) => emitter.id === 'core');
+      return core?.color.stops[0]?.[1];
+    };
+    const types = ['hit_physical', 'hit_fire', 'hit_poison', 'hit_ice', 'hit_lightning', 'hit_arcane'];
+    expect(new Set(types.map(hot)).size).toBe(types.length);
+  });
+
+  it('makes a crit the same burst, larger', () => {
+    const peak = (id: string): number => {
+      const spikes = byId.get(id)?.emitters.find((emitter) => emitter.id === 'spikes');
+      return Math.max(...(spikes?.size.keys.map(([, value]) => value) ?? [0]));
+    };
+    expect(peak('hit_critical')).toBeGreaterThan(peak('hit_physical'));
+    expect(peak('explosion_large')).toBeGreaterThan(peak('hit_critical'));
   });
 });
 

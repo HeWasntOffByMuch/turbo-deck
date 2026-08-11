@@ -27,7 +27,16 @@ export interface MeshData {
   readonly indices: Uint16Array;
 }
 
-export type MeshShape = 'blob' | 'tongue' | 'rune-ring' | 'rune-ring-thin' | 'diamond' | 'shaft';
+export type MeshShape =
+  | 'blob'
+  | 'tongue'
+  | 'rune-ring'
+  | 'rune-ring-thin'
+  | 'diamond'
+  | 'shaft'
+  | 'shard'
+  | 'starburst'
+  | 'chunk';
 
 /** A tiny deterministic hash, so a shape is a pure function of its seed. */
 function hash(index: number, seed: number): number {
@@ -333,6 +342,106 @@ export function shaftMesh(sides = 5, baseRadius = 0.045): MeshData {
 }
 
 /**
+ * The spike a burst is made of (spec 125): a short back pyramid, a waist, and a
+ * long taper to a point at +Y.
+ *
+ * Authored along +Y and used velocity-aligned, so a shard thrown out of a centre
+ * points the way it went and `size` is how far it reaches. The back pyramid is
+ * what keeps the inner end from being a flat lid -- in the reference every spike
+ * converges on the middle of the star, and a lid there reads as a plate.
+ */
+export function shardMesh(sides = 4, back = 0.14, waist = 0.06): MeshData {
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const count = Math.max(3, sides);
+
+  const tail = 0;
+  positions.push(0, tail, 0);
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2;
+    positions.push(Math.cos(angle) * waist, back, Math.sin(angle) * waist);
+  }
+  const tip = count + 1;
+  positions.push(0, 1, 0);
+
+  for (let i = 0; i < count; i++) {
+    const a = 1 + i;
+    const b = 1 + ((i + 1) % count);
+    // The back cone, then the long one.
+    indices.push(0, b, a);
+    indices.push(a, b, tip);
+  }
+  return unshare(positions, indices);
+}
+
+/**
+ * The white-hot middle of a burst: spikes fused into a ball.
+ *
+ * One mesh rather than an emitter of shards, because the core in the reference
+ * is a single object whose points all meet -- and because a dozen particles at
+ * the same place, each with its own alpha, is a bright smear rather than a star.
+ *
+ * The directions come off a Fibonacci lattice, which is the cheap way to get
+ * points that are actually spread over a sphere. Random ones bunch, and a bunched
+ * star has a bald patch that reads as a mistake at any resolution.
+ */
+export function starburstMesh(spikes = 11, seed = 4093): MeshData {
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const count = Math.max(4, spikes);
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  const core = 0.22;
+
+  for (let i = 0; i < count; i++) {
+    // Even in y, spiralled in longitude: the lattice.
+    const y = 1 - (i / (count - 1)) * 2;
+    const ring = Math.sqrt(Math.max(0, 1 - y * y));
+    const theta = golden * i;
+    const dx = Math.cos(theta) * ring;
+    const dz = Math.sin(theta) * ring;
+
+    // A basis about the spike, so its three base corners sit around it.
+    const ax = Math.abs(y) < 0.9 ? 0 : 1;
+    let ux = ax === 0 ? -dz : 0;
+    let uy = ax === 0 ? 0 : -dz;
+    let uz = ax === 0 ? dx : y;
+    const ulen = Math.hypot(ux, uy, uz) || 1;
+    ux /= ulen;
+    uy /= ulen;
+    uz /= ulen;
+    const vx = y * uz - dz * uy;
+    const vy = dz * ux - dx * uz;
+    const vz = dx * uy - y * ux;
+
+    // Spikes of two lengths, so the silhouette is not a sea urchin.
+    const reach = hash(i, seed) < 0.4 ? 0.55 : 1;
+    const base = positions.length / 3;
+    for (let corner = 0; corner < 3; corner++) {
+      const angle = (corner / 3) * Math.PI * 2;
+      const cos = Math.cos(angle) * core;
+      const sin = Math.sin(angle) * core;
+      positions.push(dx * core + ux * cos + vx * sin, y * core + uy * cos + vy * sin, dz * core + uz * cos + vz * sin);
+    }
+    positions.push(dx * reach, y * reach, dz * reach);
+    indices.push(base, base + 1, base + 3, base + 1, base + 2, base + 3, base + 2, base, base + 3);
+  }
+  return unshare(positions, indices);
+}
+
+/**
+ * A rock thrown clear of a burst: an icosahedron pushed about hard.
+ *
+ * The blob's shape with none of its subdivision and three times its jitter --
+ * twenty faces, and a radius that varies enough that no two silhouettes of it
+ * look alike. A smooth one is a pebble, and pebbles do not read as broken ground.
+ */
+export function chunkMesh(seed = 5501): MeshData {
+  const base = icosahedron();
+  const positions = base.positions.map((value, i) => value * (0.55 + hash(Math.floor(i / 3), seed) * 0.75));
+  return unshare(positions, base.indices);
+}
+
+/**
  * Split shared vertices so every triangle has its own, and give each its face
  * normal.
  *
@@ -416,6 +525,12 @@ function build(shape: MeshShape): MeshData {
       return diamondMesh();
     case 'shaft':
       return shaftMesh();
+    case 'shard':
+      return shardMesh();
+    case 'starburst':
+      return starburstMesh();
+    case 'chunk':
+      return chunkMesh();
     default:
       return blobMesh();
   }
@@ -429,7 +544,7 @@ function build(shape: MeshShape): MeshData {
  * the angle it was given -- a per-seed jitter on a ring puts its runes somewhere
  * different every time one is stamped.
  */
-export const ORIENT = { tumble: 0, uprightJittered: 1, exact: 2 } as const;
+export const ORIENT = { tumble: 0, uprightJittered: 1, exact: 2, velocity: 3 } as const;
 
 export function orientOf(shape: MeshShape): number {
   switch (shape) {
@@ -439,6 +554,8 @@ export function orientOf(shape: MeshShape): number {
     case 'rune-ring':
     case 'rune-ring-thin':
       return ORIENT.exact;
+    case 'shard':
+      return ORIENT.velocity;
     default:
       return ORIENT.tumble;
   }
@@ -446,5 +563,25 @@ export function orientOf(shape: MeshShape): number {
 
 /** Whether a shape is lit, or drawn as its own flat colour. Light is not shaded. */
 export function shadedShape(shape: MeshShape): boolean {
-  return shape === 'blob' || shape === 'diamond';
+  // The burst's crystal *is* faceted in the reference -- one face of a spike
+  // catches the light and the next does not, and that two-tone is most of what
+  // makes it read as a solid rather than as a painted ray.
+  return shape === 'blob' || shape === 'diamond' || shape === 'shard' || shape === 'starburst' || shape === 'chunk';
+}
+
+/**
+ * Whether a shape is brightest where it meets its own origin (spec 125).
+ *
+ * The burst's spikes are yellow-white where they converge and red at the tips,
+ * and that gradient runs along the *geometry*. A colour curve cannot say it: a
+ * ramp over a particle's life makes every spike in a fan the same colour at the
+ * same moment, which is a fan of identical darts rather than one crystal.
+ */
+export function coreGlowShape(shape: MeshShape): boolean {
+  return shape === 'shard' || shape === 'starburst';
+}
+
+/** Whether a shape's batch needs the particle's velocity uploaded (spec 125). */
+export function needsVelocity(shape: MeshShape): boolean {
+  return orientOf(shape) === ORIENT.velocity;
 }

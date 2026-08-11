@@ -92,6 +92,19 @@ export const DAMAGE_DEBRIS: Record<DamageType, string | null> = {
 };
 
 /**
+ * How far back along the blow a hit is drawn, in world units.
+ *
+ * About the radius of a body. The capsule the player is drawn as is ten units of
+ * radius; a little more puts the burst clear of the surface rather than half
+ * inside it, which is what stops a small hit disappearing when the target is
+ * between it and the camera.
+ */
+export const CONTACT_RADIUS = 12;
+
+/** And how far up it: a blow lands on a chest, not on a pair of boots. */
+export const CONTACT_LIFT = 6;
+
+/**
  * A seed that is a function of *where and when*, not of the client.
  *
  * Two players watching the same blow see the same spatter, which matters more
@@ -119,7 +132,20 @@ export function effectsForBlow(facts: CombatFacts, tick: number): readonly PlayR
   // to a fixed bearing when the two are stacked, which happens at point-blank.
   const dx = facts.x - facts.fromX;
   const dz = facts.z - facts.fromZ;
-  const rotation = dx * dx + dz * dz > 1e-3 ? Math.atan2(dz, dx) : 0;
+  const far = dx * dx + dz * dz;
+  const aimed = far > 1e-3;
+  const rotation = aimed ? Math.atan2(dz, dx) : 0;
+
+  // The contact point, which is not the target's own position (spec 125).
+  //
+  // A blow lands on the *face* the attacker is on, and a burst played at the
+  // middle of a body is a burst inside a body -- twenty units of capsule in front
+  // of it, which is why a small hit could be invisible from the near side. So
+  // step back along the incoming blow by about a body radius, and lift it to
+  // chest height rather than the feet.
+  const length = aimed ? Math.sqrt(far) : 1;
+  const backX = aimed ? (-dx / length) * CONTACT_RADIUS : 0;
+  const backZ = aimed ? (-dz / length) * CONTACT_RADIUS : 0;
 
   // A crit is the same language, louder -- never a different one.
   const scale = facts.critical ? 1.45 : 1;
@@ -129,9 +155,9 @@ export function effectsForBlow(facts: CombatFacts, tick: number): readonly PlayR
   // drawn twice rather than as two things happening.
   const at = (id: string, salt: number, sizeScale = 1): PlayRequest => ({
     id,
-    x: facts.x,
-    y: facts.y,
-    z: facts.z,
+    x: facts.x + backX,
+    y: facts.y + CONTACT_LIFT,
+    z: facts.z + backZ,
     rotation,
     scale: scale * sizeScale,
     seed: (seed ^ Math.imul(salt, 0x9e3779b1)) | 0,

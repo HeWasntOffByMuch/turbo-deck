@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { blowSeed, DAMAGE_EFFECTS, effectsForBlow, type CombatFacts } from './vfx-wire.js';
+import {
+  blowSeed,
+  CONTACT_LIFT,
+  CONTACT_RADIUS,
+  DAMAGE_EFFECTS,
+  effectsForBlow,
+  type CombatFacts,
+} from './vfx-wire.js';
 
 function facts(overrides: Partial<CombatFacts> = {}): CombatFacts {
   return {
@@ -19,6 +26,39 @@ function facts(overrides: Partial<CombatFacts> = {}): CombatFacts {
     ...overrides,
   };
 }
+
+describe('the contact point', () => {
+  it('lands on the face the attacker is on, not inside the body', () => {
+    // The attacker is at x = 60 and the target at x = 100, so the blow arrives
+    // travelling +x and the contact is a body radius back along it.
+    const played = effectsForBlow(facts(), 500);
+    for (const request of played) {
+      expect(request.x).toBeCloseTo(100 - CONTACT_RADIUS, 5);
+      expect(request.z).toBeCloseTo(200, 5);
+    }
+  });
+
+  it('follows the blow round, whichever way it came from', () => {
+    const played = effectsForBlow(facts({ fromX: 100, fromZ: 260 }), 500);
+    const first = played[0];
+    expect(first?.x).toBeCloseTo(100, 5);
+    expect(first?.z).toBeCloseTo(200 + CONTACT_RADIUS, 5);
+  });
+
+  it('lands on a chest rather than a pair of boots', () => {
+    expect(effectsForBlow(facts(), 500)[0]?.y).toBeCloseTo(20 + CONTACT_LIFT, 5);
+  });
+
+  it('falls back to the target at point blank rather than dividing by nothing', () => {
+    // Two bodies stacked, which happens, and a normalize on a zero vector is how
+    // a hit ends up at NaN and silently never draws.
+    const played = effectsForBlow(facts({ fromX: 100, fromZ: 200 }), 500);
+    const first = played[0];
+    expect(first?.x).toBe(100);
+    expect(first?.z).toBe(200);
+    expect(Number.isFinite(first?.rotation ?? NaN)).toBe(true);
+  });
+});
 
 describe('effectsForBlow', () => {
   it('draws blood from something that bleeds', () => {

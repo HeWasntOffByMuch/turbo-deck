@@ -438,59 +438,201 @@ export function aura(params: AuraParams): EffectDefinition {
   };
 }
 
-// --- hit effects -------------------------------------------------------------
+// --- bursts ------------------------------------------------------------------
+
+export interface BurstParams {
+  readonly id: string;
+  /** World units the longest spike reaches. Everything else is derived from it. */
+  readonly scale: number;
+  /** The white-hot middle. */
+  readonly hot: PaletteKey;
+  /** The body of a spike. */
+  readonly warm: PaletteKey;
+  /** Its tip, and what the debris fades to. */
+  readonly cool: PaletteKey;
+  readonly spikes?: number;
+  readonly chunks?: number;
+  /** Cone half-angle. `Math.PI` is a ball; a small one is a jet. */
+  readonly spread?: number;
+  /** Lay the fan along the floor instead of letting it fly up. */
+  readonly flat?: boolean;
+  readonly dust?: boolean;
+  readonly glow?: boolean;
+  readonly light?: boolean;
+  readonly priority?: Priority;
+}
 
 /**
- * The oversized flash at a contact point, tinted by damage type.
+ * A burst: a crystal that opens and closes (spec 125).
  *
- * Three ticks and deliberately much larger than the blow. At 300 pixels tall a
- * subtle flash is no flash; this is the layer that says *when*, and every damage
- * type gets one so that "something landed" reads before "what landed" does.
+ * The reference for impacts is not a flash, it is a *shape* -- a faceted star at
+ * the middle with a fan of long tapered spikes out of it, rocks thrown clear and
+ * dust at the base. Everything here is a solid, and the spikes are the reason
+ * `ORIENT.velocity` exists: a shard is authored pointing at +Y and the batch aims
+ * it down its own direction of travel, so a fan thrown out of a point radiates
+ * without anything having to compute a rotation per particle.
+ *
+ * ## The spikes barely move
+ *
+ * They are thrown at speed and stopped by heavy drag inside three or four ticks,
+ * and what actually reads as the burst opening is their *size* curve. That is
+ * deliberate: spikes that travelled would separate from the core and read as a
+ * ring of darts leaving, where the reference is one object flowering and closing.
+ * The drag never turns a velocity, only shrinks it, so the aim stays put while
+ * they stop.
+ *
+ * Scale is the one number. `play(id, { scale })` multiplies it, so a crit is the
+ * same burst read louder rather than a second definition.
  */
-function flash(id: string, hot: PaletteKey, cool: PaletteKey, size: number, priority: Priority = 2): EffectDefinition {
+export function burst(params: BurstParams): EffectDefinition {
+  const s = params.scale;
+  const spikes = params.spikes ?? 14;
+  const spread = params.spread ?? Math.PI;
+  const flat = params.flat === true;
+  // A ball, a jet, or a star lying on the floor. `circle` emits in the ground
+  // plane, which is what makes the flat variant fan outward rather than upward.
+  const fan = flat
+    ? ({ kind: 'circle', radius: s * 0.05, shell: true } as const)
+    : ({ kind: 'cone', angle: spread, radius: s * 0.05 } as const);
+
+  const emitters: Emitter[] = [
+    // (a) The core: one solid star, held for a few ticks. Not a stack of
+    // particles at the same place -- that is a bright smear, not a shape.
+    {
+      id: 'core',
+      shape: { kind: 'point' },
+      emission: { kind: 'burst', count: 1 },
+      lifetimeTicks: [10, 13],
+      speed: [0, 0],
+      size: { keys: [[0, s * 0.14], [0.25, s * 0.5], [0.6, s * 0.42], [1, 0]] },
+      alpha: { keys: [[0, 1], [0.7, 1], [1, 0]] },
+      color: { stops: [[0, params.hot], [0.6, params.hot], [1, params.warm]] },
+      angularVelocity: [-1.2, 1.2],
+      render: 'mesh',
+      mesh: { shape: 'starburst' },
+      blend: 'alpha',
+      offset: { x: 0, y: s * 0.06, z: 0 },
+    },
+    // (b) The fan. The whole read.
+    {
+      id: 'spikes',
+      shape: fan,
+      emission: { kind: 'burst', count: spikes },
+      lifetimeTicks: [12, 20],
+      speed: [s * 1.6, s * 3.2],
+      spreadRadians: flat ? 0.25 : 0.1,
+      drag: 14,
+      size: { keys: [[0, s * 0.2], [0.3, s], [0.7, s * 0.8], [1, 0]] },
+      alpha: { keys: [[0, 1], [0.75, 1], [1, 0]] },
+      color: { stops: [[0, params.hot], [0.35, params.warm], [1, params.cool]] },
+      render: 'mesh',
+      mesh: { shape: 'shard' },
+      blend: 'alpha',
+      offset: { x: 0, y: flat ? s * 0.03 : s * 0.05, z: 0 },
+    },
+    // (c) The few that get away: smaller shards that keep going and fall. The
+    // reference has these scattered well outside the star, and without them the
+    // burst reads as a decal rather than as something that threw material.
+    {
+      id: 'shards',
+      shape: { kind: 'cone', angle: spread, radius: s * 0.08 },
+      emission: { kind: 'burst', count: Math.max(3, Math.round(spikes * 0.5)) },
+      lifetimeTicks: [16, 30],
+      speed: [s * 3, s * 6.5],
+      spreadRadians: 0.35,
+      gravity: -s * 12,
+      drag: 1.4,
+      size: { keys: [[0, s * 0.2], [0.4, s * 0.16], [1, s * 0.05]] },
+      alpha: { keys: [[0, 1], [0.7, 1], [1, 0]] },
+      color: { stops: [[0, params.warm], [1, params.cool]] },
+      render: 'mesh',
+      mesh: { shape: 'shard' },
+      blend: 'alpha',
+    },
+  ];
+
+  if (params.chunks && params.chunks > 0) {
+    // (d) Rock. It bounces, because debris that sinks into the floor is the one
+    // thing that says "particle" out loud.
+    emitters.push({
+      id: 'chunks',
+      shape: { kind: 'cone', angle: Math.min(spread, 1.1), radius: s * 0.1 },
+      emission: { kind: 'burst', count: params.chunks },
+      lifetimeTicks: [26, 52],
+      speed: [s * 2.4, s * 5.5],
+      spreadRadians: 0.6,
+      gravity: -s * 14,
+      drag: 0.7,
+      angularVelocity: [-8, 8],
+      size: { keys: [[0, s * 0.1], [1, s * 0.08]] },
+      alpha: { keys: [[0, 1], [0.85, 1], [1, 0]] },
+      color: { stops: [[0, 'dustStone'], [1, 'physicalGrey']] },
+      render: 'mesh',
+      mesh: { shape: 'chunk' },
+      blend: 'alpha',
+      collision: { restitution: 0.35, friction: 0.6, maxBounces: 2 },
+    });
+  }
+
+  if (params.dust !== false) {
+    emitters.push({
+      id: 'dust',
+      // At the base and no further. The first cut was half again this size at
+      // half again this alpha, and six ticks after the bang the explosion was a
+      // white boulder with an orange star somewhere inside it -- the dust has to
+      // sit under the crystal, not replace it.
+      shape: { kind: 'circle', radius: s * 0.22 },
+      emission: { kind: 'burst', count: 6 },
+      lifetimeTicks: [20, 34],
+      speed: [s * 0.6, s * 1.4],
+      spreadRadians: 1.45,
+      drag: 2.4,
+      acceleration: { x: 0, y: s * 0.25, z: 0 },
+      angularVelocity: [-0.7, 0.7],
+      size: { keys: [[0, s * 0.12], [0.5, s * 0.22], [1, s * 0.32]] },
+      alpha: { keys: [[0, 0], [0.2, 0.34], [0.6, 0.24], [1, 0]] },
+      color: { stops: [[0, 'dustStone'], [1, 'physicalGrey']] },
+      render: 'mesh',
+      mesh: { shape: 'blob' },
+      blend: 'alpha',
+    });
+  }
+
+  if (params.glow !== false) {
+    // The warm pool the reference scorches into the ground. Not a decal: the
+    // decal field is blood's (spec 120) and a burn wants its own splat profile,
+    // so this fades instead of staying. Noted in docs/vfx-plan.md.
+    emitters.push({
+      id: 'glow',
+      shape: { kind: 'point' },
+      emission: { kind: 'burst', count: 1 },
+      lifetimeTicks: [18, 24],
+      speed: [0, 0],
+      size: { keys: [[0, s * 0.5], [0.3, s * 1.15], [1, s * 1.3]] },
+      alpha: { keys: [[0, 0.7], [0.4, 0.45], [1, 0]] },
+      color: { stops: [[0, params.warm], [1, params.cool]] },
+      render: 'ground-quad',
+      blend: 'dither-cutout',
+      sprite: { sheet: 'glow', frames: 1, fps: 0 },
+      offset: { x: 0, y: 1.5, z: 0 },
+    });
+  }
+
+  if (params.light) {
+    const core = emitters[0];
+    if (core) {
+      emitters[0] = {
+        ...core,
+        light: { color: params.warm, intensity: { keys: [[0, 1.4], [1, 0]] }, radius: s * 5 },
+      };
+    }
+  }
+
   return {
-    id,
-    priority,
-    cullDistance: 1500,
-    emitters: [
-      // The halo, in the type's *cool* colour, dithered so it dissolves into the
-      // frame's weave rather than banding against it.
-      {
-        id: 'halo',
-        shape: { kind: 'point' },
-        emission: { kind: 'burst', count: 1 },
-        lifetimeTicks: [4, 5],
-        speed: [0, 0],
-        size: { keys: [[0, size], [1, size * 1.6]] },
-        alpha: { keys: [[0, 0.8], [1, 0]] },
-        color: { stops: [[0, cool]] },
-        render: 'billboard',
-        blend: 'additive',
-        sprite: { sheet: 'glow', frames: 1, fps: 0 },
-      },
-      // The core, and the reason this is two emitters rather than one.
-      //
-      // The first version was a single dithered halo running hot-to-cool over its
-      // life, and on the library contact sheet all seven damage types came out as
-      // the same desaturated grey-brown smudge: at this size the dithered falloff
-      // is most of the disc, so most of what reaches the screen is the *faint*
-      // outer stipple and the hue never gets a chance to say anything. A small
-      // hard-edged centre at full alpha is what makes a lightning hit look like
-      // lightning and an ice hit look like ice.
-      {
-        id: 'core',
-        shape: { kind: 'point' },
-        emission: { kind: 'burst', count: 1 },
-        lifetimeTicks: [3, 4],
-        speed: [0, 0],
-        size: { keys: [[0, size * 0.5], [0.6, size * 0.62], [1, size * 0.2]] },
-        alpha: { keys: [[0, 1], [0.7, 1], [1, 0]] },
-        color: { stops: [[0, hot], [0.7, hot], [1, cool]] },
-        render: 'billboard',
-        blend: 'additive',
-        sprite: { sheet: 'disc', frames: 1, fps: 0 },
-      },
-    ],
+    id: params.id,
+    priority: params.priority ?? 2,
+    cullDistance: 1800,
+    emitters,
   };
 }
 
@@ -621,16 +763,30 @@ export const LIBRARY: readonly EffectDefinition[] = [
   // ringed with shafts, never a different vocabulary.
   aura({ id: 'aura_telegraph', color: 'auraTelegraph', radius: 110, spin: 0, shafts: 10, priority: 3 }),
 
-  // --- hit effects, one flash per damage type --------------------------------
-  flash('impact_flash', 'physicalBone', 'physicalGrey', 15),
-  flash('hit_physical', 'physicalBone', 'physicalGrey', 15),
-  flash('hit_fire', 'fireCore', 'fireDeep', 18),
-  flash('hit_poison', 'poisonPale', 'poisonMurk', 16),
-  flash('hit_ice', 'iceWhite', 'iceDeep', 16),
-  flash('hit_lightning', 'boltWhite', 'boltViolet', 20),
-  flash('hit_arcane', 'arcaneLilac', 'arcaneDeep', 17),
-  // Louder in the same language: bigger flash, never a different colour scheme.
-  flash('hit_critical', 'sparkHot', 'sparkWarm', 26, 3),
+  // --- explosions ------------------------------------------------------------
+  // The reference, at full size: a crystal that opens, throws rock and leaves a
+  // warm mark. Everything below it is the same builder with smaller numbers.
+  burst({ id: 'explosion_large', scale: 88, hot: 'fireCore', warm: 'fireBody', cool: 'fireDeep', spikes: 30, chunks: 12, light: true, priority: 3 }),
+  burst({ id: 'explosion_small', scale: 46, hot: 'fireCore', warm: 'fireBody', cool: 'fireDeep', spikes: 20, chunks: 6, light: true }),
+  // A jet rather than a ball: a charge that went off against something, so it
+  // fires along the blow instead of in every direction.
+  burst({ id: 'explosion_directed', scale: 62, hot: 'fireCore', warm: 'fireBody', cool: 'fireDeep', spikes: 20, chunks: 6, spread: 0.55, light: true }),
+  // Along the floor. The star a ground slam leaves, which reads at a glance from
+  // directly above where an upright one is a dot.
+  burst({ id: 'explosion_ground', scale: 70, hot: 'fireCore', warm: 'fireBody', cool: 'fireDeep', spikes: 26, chunks: 8, flat: true, light: true }),
+
+  // --- hit effects, one burst per damage type --------------------------------
+  // The same crystal, small. A hit is not a different vocabulary from an
+  // explosion; it is the quiet end of one.
+  burst({ id: 'impact_flash', scale: 17, hot: 'physicalBone', warm: 'physicalGrey', cool: 'dustStone', spikes: 12, dust: false }),
+  burst({ id: 'hit_physical', scale: 18, hot: 'physicalBone', warm: 'physicalGrey', cool: 'dustStone', spikes: 13, chunks: 3 }),
+  burst({ id: 'hit_fire', scale: 22, hot: 'fireCore', warm: 'fireBody', cool: 'fireDeep', spikes: 15, light: true }),
+  burst({ id: 'hit_poison', scale: 19, hot: 'poisonPale', warm: 'poisonDeep', cool: 'poisonMurk', spikes: 12 }),
+  burst({ id: 'hit_ice', scale: 20, hot: 'iceWhite', warm: 'icePale', cool: 'iceDeep', spikes: 15, chunks: 4 }),
+  burst({ id: 'hit_lightning', scale: 24, hot: 'boltWhite', warm: 'boltYellow', cool: 'boltViolet', spikes: 16, dust: false, light: true }),
+  burst({ id: 'hit_arcane', scale: 21, hot: 'arcaneLilac', warm: 'arcaneMagenta', cool: 'arcaneDeep', spikes: 14, dust: false }),
+  // Louder in the same language: a bigger crystal, never a different one.
+  burst({ id: 'hit_critical', scale: 34, hot: 'sparkHot', warm: 'sparkWarm', cool: 'sparkEmber', spikes: 22, chunks: 4, priority: 3, light: true }),
 
   // Chips and dust: what a physical blow throws that a magical one does not.
   {

@@ -39,7 +39,7 @@ import * as THREE from 'three';
 import { BLEND, RENDER } from './compile.js';
 import type { ParticlePool } from './pool.js';
 import { sheetFrames, spriteSheet } from './textures.js';
-import { orientOf, particleMesh, shadedShape, type MeshShape } from './meshes.js';
+import { coreGlowShape, needsVelocity, orientOf, particleMesh, shadedShape, type MeshShape } from './meshes.js';
 
 /** Instances one batch is built to hold. Grown by rebuilding, never per frame. */
 const INITIAL_CAPACITY = 256;
@@ -348,6 +348,7 @@ export function modeCode(render: number): number {
 
 const MESH_VERTEX_SHADER = /* glsl */ `
 attribute vec3 iOffset;
+attribute vec3 iVelocity;
 attribute float iSize;
 attribute float iRotation;
 attribute vec3 iColor;
@@ -357,6 +358,28 @@ attribute float iSeed;
 varying vec3 vColor;
 varying float vAlpha;
 varying vec3 vNormal;
+
+/**
+ * A basis whose +Y is the direction given, rolled about itself (spec 125).
+ *
+ * (No backticks in here -- this is a template literal and one closes it.)
+ *
+ * Direction and not speed. Drag scales a velocity and never turns it, so the
+ * axis of a thrown spike is stable all the way down -- but it does shrink toward
+ * zero, which is what the guard is for.
+ */
+mat3 aimedAt(vec3 dir, float roll) {
+  float speed = length(dir);
+  vec3 up = speed > 0.0001 ? dir / speed : vec3(0.0, 1.0, 0.0);
+  // Any vector not parallel to up: choosing by the largest component of up is
+  // what keeps the cross product away from zero whichever way it points.
+  vec3 other = abs(up.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+  vec3 right = normalize(cross(other, up));
+  vec3 fwd = cross(up, right);
+  float c = cos(roll);
+  float s = sin(roll);
+  return mat3(right * c + fwd * s, up, fwd * c - right * s);
+}
 
 /** Three angles hashed out of the seed: a fixed tumble, so blobs differ. */
 vec3 tumble(float seed) {
@@ -386,11 +409,19 @@ void main() {
   mat3 basis =
     uOrient < 0.5 ? rotation(tumble(iSeed) + vec3(0.0, iRotation, 0.0)) :
     uOrient < 1.5 ? rotation(vec3(0.0, iRotation + tumble(iSeed).y, 0.0)) :
-                    rotation(vec3(0.0, iRotation, 0.0));
+    uOrient < 2.5 ? rotation(vec3(0.0, iRotation, 0.0)) :
+                    aimedAt(iVelocity, tumble(iSeed).x);
 
   vec3 local = basis * (position * iSize);
   vNormal = normalize(basis * normal);
-  vColor = iColor;
+  // The white-hot middle, baked into the geometry rather than into the colour
+  // ramp (spec 125). A gradient over a particle's *life* makes every spike in a
+  // fan the same colour at the same moment; the reference is yellow-white where
+  // the spikes meet and red at their tips, which is a gradient along the shape.
+  // Distance from the shape's own origin works for both the spike and the star,
+  // because both are authored radiating out of it.
+  float hotter = 1.0 + uCoreGlow * 0.9 * (1.0 - clamp(length(position), 0.0, 1.0));
+  vColor = iColor * hotter;
   vAlpha = iAlpha;
   gl_Position = projectionMatrix * viewMatrix * vec4(iOffset + local, 1.0);
 }
@@ -425,18 +456,22 @@ export class MeshParticleBatch {
   private capacity = INITIAL_CAPACITY;
 
   private offset!: THREE.InstancedBufferAttribute;
+  private velocity!: THREE.InstancedBufferAttribute;
   private size!: THREE.InstancedBufferAttribute;
   private rotation!: THREE.InstancedBufferAttribute;
   private color!: THREE.InstancedBufferAttribute;
   private alpha!: THREE.InstancedBufferAttribute;
   private seed!: THREE.InstancedBufferAttribute;
+  /** Only a shape that aims itself pays for a velocity upload. */
+  private readonly aims: boolean;
 
   constructor(
     readonly blend: number,
     readonly shape: MeshShape,
   ) {
+    this.aims = needsVelocity(shape);
     this.material = new THREE.ShaderMaterial({
-      vertexShader: `uniform float uOrient;\n${MESH_VERTEX_SHADER}`,
+      vertexShader: `uniform float uOrient;\nuniform float uCoreGlow;\n${MESH_VERTEX_SHADER}`,
       fragmentShader: MESH_FRAGMENT_SHADER,
       uniforms: {
         // Roughly the scene's own key light, so a blob is lit like the ground.
@@ -445,6 +480,7 @@ export class MeshParticleBatch {
         // colour; a blob and a diamond are objects and catch the key.
         uShading: { value: shadedShape(shape) ? 1 : 0 },
         uOrient: { value: orientOf(shape) },
+        uCoreGlow: { value: coreGlowShape(shape) ? 1 : 0 },
       },
       transparent: true,
       // Same pair as the quad batches, and the same two jobs: the right blend
@@ -477,6 +513,7 @@ export class MeshParticleBatch {
       return attribute;
     };
     this.offset = instanced(3);
+    this.velocity = instanced(3);
     this.size = instanced(1);
     this.rotation = instanced(1);
     this.color = instanced(3);
@@ -484,6 +521,7 @@ export class MeshParticleBatch {
     this.seed = instanced(1);
 
     geometry.setAttribute('iOffset', this.offset);
+    geometry.setAttribute('iVelocity', this.velocity);
     geometry.setAttribute('iSize', this.size);
     geometry.setAttribute('iRotation', this.rotation);
     geometry.setAttribute('iColor', this.color);
@@ -513,6 +551,11 @@ export class MeshParticleBatch {
     this.offset.array[o] = pool.x[i] ?? 0;
     this.offset.array[o + 1] = pool.y[i] ?? 0;
     this.offset.array[o + 2] = pool.z[i] ?? 0;
+    if (this.aims) {
+      this.velocity.array[o] = pool.vx[i] ?? 0;
+      this.velocity.array[o + 1] = pool.vy[i] ?? 0;
+      this.velocity.array[o + 2] = pool.vz[i] ?? 0;
+    }
     this.color.array[o] = pool.r[i] ?? 0;
     this.color.array[o + 1] = pool.g[i] ?? 0;
     this.color.array[o + 2] = pool.b[i] ?? 0;
@@ -526,7 +569,7 @@ export class MeshParticleBatch {
     this.geometry.instanceCount = count;
     this.mesh.visible = count > 0;
     if (count === 0) return;
-    for (const attribute of [this.offset, this.color]) {
+    for (const attribute of this.aims ? [this.offset, this.color, this.velocity] : [this.offset, this.color]) {
       attribute.addUpdateRange(0, count * 3);
       attribute.needsUpdate = true;
     }

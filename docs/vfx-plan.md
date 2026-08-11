@@ -1,7 +1,8 @@
 # VFX and particles — plan
 
-Status: **Phases 0–3 landed. Fire and smoke re-authored as solids (spec 123);
-auras re-authored as drawn sigils (spec 124), at its review gate.**
+Status: **Phases 0–3 landed. Fire and smoke re-authored as solids (spec 123),
+auras as drawn sigils (spec 124), impacts as crystals (spec 125) — the last of
+those at its review gate.**
 
 | Phase | State |
 |---|---|
@@ -13,7 +14,8 @@ auras re-authored as drawn sigils (spec 124), at its review gate.**
 | 2d — the effect library: fire, smoke, auras, hit vocabulary (spec 121) | done |
 | 3 — the VFX tab and the stress numbers (spec 122) | done |
 | art direction: fire and smoke as solids (spec 123) | done |
-| art direction: auras as drawn sigils (spec 124) | **at the review gate** |
+| art direction: auras as drawn sigils (spec 124) | done |
+| art direction: impacts as crystals (spec 125) | **at the review gate** |
 
 This is the living document for the VFX arc. It is updated as decisions land, and
 it is where the damage-type colour/shape language is written down so future
@@ -1164,6 +1166,83 @@ one has teeth. The top-edge check has never been seen to fire, and the script
 says so rather than implying otherwise. A third check — "the ring is closed" —
 was written, found to pass on the very bug it was for (the telegraph's ten shafts
 put enough ink above the ring's middle to hide the clipped half) and deleted.
+
+---
+
+## 5j. An impact is a crystal (spec 125)
+
+The last of the art-direction passes. The hit vocabulary was a dithered halo with
+a hard core in it — the right answer for "something landed" at three ticks, and
+the wrong answer for *what* landed. The reference is a **crystal**: a bright
+faceted star at the middle, a fan of long tapered spikes out of it, rocks thrown
+clear, dust at the base.
+
+### The one thing the machinery could not do
+
+Everything in that description is a solid, and specs 123–124 had already built
+solids. What was missing is orientation: **a spike must point the way it is
+travelling.** The mesh batch could tumble, stand upright or hold an exact angle,
+and none of those aims a shard outward from a centre. `ORIENT.velocity` is the
+fourth mode; the batch uploads `iVelocity` only for the shapes that use it.
+
+Direction rather than speed, and that distinction is load-bearing: a spike is
+thrown hard and stopped by drag inside three or four ticks. Drag *scales* a
+velocity and never turns it, so the axis is stable all the way down — but it
+shrinks toward zero, which is what the guard in `aimedAt` is for.
+
+### The spikes barely move
+
+What reads as the burst opening is the **size** curve, not travel. Spikes that
+actually travelled separated from the core and read as a ring of darts leaving,
+where the reference is one object flowering and closing. So: thrown at speed,
+stopped by a drag of 14, and grown from a fifth of their reach to full and back.
+
+### The hot centre is baked into the geometry
+
+A colour ramp runs over a particle's *life*, which makes every spike in a fan the
+same colour at the same moment. The reference is yellow-white where the spikes
+converge and red at their tips — a gradient along the **shape**. So the mesh
+shader brightens by distance from the shape's own origin, for the shard and the
+star alike, since both are authored radiating out of it. One uniform, and it is
+most of why the crystal reads.
+
+### One builder, every impact
+
+`burst({ id, scale, hot, warm, cool, spikes, chunks, spread, flat, dust, glow,
+light })`. `explosion_large`, `_small`, `_directed` (a jet) and `_ground` (flat
+along the floor) are new; **every `hit_<type>`, `impact_flash` and `hit_critical`
+is now the same crystal, small** — the ids did not change, so no call site did
+either. A hit is not a different vocabulary from an explosion; it is the quiet
+end of one.
+
+### The contact point
+
+Hits played at the target's own position, which is *inside* the target — twenty
+units of capsule in front of it, so a small burst could be invisible from the near
+side. `effectsForBlow` now steps back along the incoming blow by a body radius
+and lifts to chest height. A blow lands on a face, not in a torso.
+
+### What the sheet changed
+
+`scripts/preview-bursts.ts` frames each burst by `previewFrame` — the same
+measurement the Studio viewport uses — and photographs three moments: the crystal
+flowering, its full reach, and what is left after it has gone. Two rounds of
+tuning came out of it:
+
+- **The spikes were broad triangles**, not needles. The shard's waist went from
+  0.11 to 0.06 and its counts up by half.
+- **The dust ate the explosion.** Six ticks after the bang, `explosion_large` was
+  a white boulder with an orange star somewhere inside it. Dust is now a third
+  smaller, a third fainter, greyer, and rises a quarter as fast — it sits under
+  the crystal instead of replacing it.
+
+### Still open
+
+- Scorch decals. Blood owns the decal field (spec 120) and a burn wants its own
+  splat profile, so a burst leaves a fading warm pool instead of a mark. Worth
+  building when something actually calls `explosion_*`.
+- Nothing plays the explosions yet: no ability names one. They are reachable from
+  the Studio VFX tab and from a `play()` call that does not exist.
 
 ---
 

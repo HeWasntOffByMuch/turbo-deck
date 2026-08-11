@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
   blobMesh,
+  chunkMesh,
   diamondMesh,
   ORIENT,
   orientOf,
   particleMesh,
   runeRingMesh,
+  needsVelocity,
   shadedShape,
   shaftMesh,
+  shardMesh,
+  starburstMesh,
   tongueMesh,
   type MeshData,
 } from './meshes.js';
@@ -51,6 +55,9 @@ const SHAPES: [string, () => MeshData][] = [
   ['rune-ring', () => runeRingMesh()],
   ['diamond', () => diamondMesh()],
   ['shaft', () => shaftMesh()],
+  ['shard', () => shardMesh()],
+  ['starburst', () => starburstMesh()],
+  ['chunk', () => chunkMesh()],
 ];
 
 describe('the geometry is closed and sane', () => {
@@ -338,11 +345,109 @@ describe('the diamond and the shaft', () => {
   });
 });
 
+describe('the burst crystal', () => {
+  it('the shard is a spike pointing at +Y, so size is reach', () => {
+    const mesh = shardMesh();
+    let top = -Infinity;
+    let topR = 0;
+    let base = Infinity;
+    for (let i = 0; i < mesh.positions.length; i += 3) {
+      const x = mesh.positions[i] ?? 0;
+      const y = mesh.positions[i + 1] ?? 0;
+      const z = mesh.positions[i + 2] ?? 0;
+      base = Math.min(base, y);
+      if (y > top) {
+        top = y;
+        topR = Math.sqrt(x * x + z * z);
+      }
+    }
+    expect(base).toBe(0);
+    expect(top).toBe(1);
+    expect(topR).toBeCloseTo(0, 6);
+  });
+
+  it('the shard is widest near its base, so it tapers rather than swells', () => {
+    const mesh = shardMesh(4, 0.2, 0.11);
+    let widestAt = 0;
+    let widest = 0;
+    for (let i = 0; i < mesh.positions.length; i += 3) {
+      const x = mesh.positions[i] ?? 0;
+      const y = mesh.positions[i + 1] ?? 0;
+      const z = mesh.positions[i + 2] ?? 0;
+      const radius = Math.sqrt(x * x + z * z);
+      if (radius <= widest) continue;
+      widest = radius;
+      widestAt = y;
+    }
+    expect(widestAt).toBeLessThan(0.35);
+    expect(widest).toBeCloseTo(0.11, 5);
+  });
+
+  it('the starburst is spiky rather than round', () => {
+    const mesh = starburstMesh();
+    let near = Infinity;
+    let far = 0;
+    for (let i = 0; i < mesh.positions.length; i += 3) {
+      const radius = Math.hypot(mesh.positions[i] ?? 0, mesh.positions[i + 1] ?? 0, mesh.positions[i + 2] ?? 0);
+      near = Math.min(near, radius);
+      far = Math.max(far, radius);
+    }
+    expect(far / near).toBeGreaterThan(3);
+    expect(far).toBeCloseTo(1, 5);
+  });
+
+  it('spreads its spikes over the sphere rather than bunching them', () => {
+    // A lattice, not random directions. Random ones cluster, and a cluster
+    // leaves a bald patch that reads as a mistake at any resolution.
+    const mesh = starburstMesh(11);
+    const tips: [number, number, number][] = [];
+    for (let i = 0; i < mesh.positions.length; i += 3) {
+      const x = mesh.positions[i] ?? 0;
+      const y = mesh.positions[i + 1] ?? 0;
+      const z = mesh.positions[i + 2] ?? 0;
+      const radius = Math.hypot(x, y, z);
+      if (radius < 0.5) continue;
+      tips.push([x / radius, y / radius, z / radius]);
+    }
+    expect(tips.length).toBeGreaterThan(0);
+    for (let i = 0; i < tips.length; i++) {
+      for (let j = i + 1; j < tips.length; j++) {
+        const a = tips[i] as [number, number, number];
+        const b = tips[j] as [number, number, number];
+        const dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        // Vertices of the *same* spike share a direction; different spikes must
+        // not. 0.999 separates the two without a magic angle.
+        if (dot > 0.999) continue;
+        expect(dot).toBeLessThan(0.9);
+      }
+    }
+  });
+
+  it('the chunk is an angular rock, not a pebble', () => {
+    const mesh = chunkMesh();
+    expect(mesh.indices.length / 3).toBe(20);
+    const radii: number[] = [];
+    for (let i = 0; i < mesh.positions.length; i += 3) {
+      radii.push(Math.hypot(mesh.positions[i] ?? 0, mesh.positions[i + 1] ?? 0, mesh.positions[i + 2] ?? 0));
+    }
+    // Much rougher than a blob's 0.22 of lumpiness: a smooth rock is a pebble.
+    expect(Math.max(...radii) / Math.min(...radii)).toBeGreaterThan(1.5);
+  });
+});
+
 describe('orientation is a property of the shape', () => {
   it('a sigil takes exactly the angle it was given', () => {
     // A per-seed jitter would put the runes somewhere different every stamp.
     expect(orientOf('rune-ring')).toBe(ORIENT.exact);
     expect(orientOf('rune-ring-thin')).toBe(ORIENT.exact);
+  });
+
+  it('a shard aims down its own velocity, and only a shard pays for that', () => {
+    expect(orientOf('shard')).toBe(ORIENT.velocity);
+    expect(needsVelocity('shard')).toBe(true);
+    for (const shape of ['blob', 'tongue', 'rune-ring', 'diamond', 'shaft', 'starburst', 'chunk'] as const) {
+      expect(needsVelocity(shape), shape).toBe(false);
+    }
   });
 
   it('flames and shafts stand up; blobs and diamonds tumble', () => {
@@ -358,6 +463,11 @@ describe('orientation is a property of the shape', () => {
     expect(shadedShape('rune-ring')).toBe(false);
     expect(shadedShape('blob')).toBe(true);
     expect(shadedShape('diamond')).toBe(true);
+    // The burst's crystal is faceted in the reference: one face catches the key
+    // and the next does not, and that two-tone is most of what makes it solid.
+    expect(shadedShape('shard')).toBe(true);
+    expect(shadedShape('starburst')).toBe(true);
+    expect(shadedShape('chunk')).toBe(true);
   });
 });
 
@@ -419,7 +529,7 @@ describe('the compiled registry', () => {
     // that has anything in it, and a frame with one aura up draws three.
     // Every solid shape costs a batch per blend it is used with, so this moves
     // when a shape is added and must be moved deliberately.
-    expect(compiled.batches.length).toBeLessThanOrEqual(16);
+    expect(compiled.batches.length).toBeLessThanOrEqual(20);
   });
 });
 
