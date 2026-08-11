@@ -276,8 +276,14 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  subdirectory of src/render/ because layer 1 belongs to no engine.
                  core/ is layout, hit-testing, focus, event routing and the widget
                  tree; text/ is the two bitmap faces; theme/ is theme.json plus the
-                 atlas authored as text; widgets/ is the nine; render/ is the only
-                 impure part. Everything else runs in Node.
+                 atlas authored as text; widgets/ is the nine; screens/ is the
+                 five (the HUD, the bag, the sheet, the shop and the keybindings);
+                 render/ is the only impure part. Everything else runs in Node.
+                 Since spec 131 four of the five screens are in the Play tab, over
+                 the world -- mounted by src/render/iso3d/world/ui-screens.ts,
+                 which is where a screen meets a `GameClient` and the only place
+                 that is allowed to. The HUD stays in the gallery: the DOM one
+                 ships, and swapping it is a redesign rather than a mount.
                  Three rules the code rests on, all of them enforced rather than
                  honoured. **Time is an argument** -- `UiRoot.update(nowMs)`, and
                  nothing under src/ui/ may read `Date` or `performance`, which is
@@ -421,8 +427,24 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  icons.ts (how big the HUD is on a finger and what the weapon
                  switch draws, spec 094 -- the sizes are a sum, so "eight buttons
                  still fit across a phone" fails in Node rather than in a
-                 screenshot)
-                 are pure and tested headlessly; scene.ts, shot.ts, hud.ts and
+                 screenshot),
+                 inventory-model.ts, character-model.ts and shop-model.ts (what
+                 the bag, the sheet and the shop are handed -- `src/ui/` may not
+                 reach the sim, so the replicated facts and the content tables
+                 are turned into plain rows out here, and whether a button is
+                 live is answered by running the *server's own* rule against the
+                 client's copy so a greyed-out button and a refusal cannot
+                 disagree), and ui-routing.ts and ui-screens.ts (the interface's
+                 mount, spec 131: who hears an input, and the four screens, their
+                 windows and what each is handed per frame). ui-screens.ts is
+                 pure for one specific reason -- mounting an interface over the
+                 sim gets the same assertion animation got, the same fight twice
+                 with the screens driven and without, identical authoritative
+                 state, and that is impossible if running it needs a canvas
+                 (`mount-presentation.test.ts`)
+                 are pure and tested headlessly; scene.ts, shot.ts, hud.ts,
+                 ui-layer.ts (the second canvas, the scale and one coordinate
+                 conversion -- the whole impure half of the mount) and
                  view.ts are the three.js/DOM half. `npx tsx scripts/preview-world.ts`
                  photographs the real page into .claude/screenshots/world-*.png,
                  and `npx tsx scripts/preview-shots.ts` flies the real ShotRig

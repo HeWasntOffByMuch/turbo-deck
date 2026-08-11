@@ -158,5 +158,42 @@ And the rule this repo already has a precedent for (`presentation-only.test.ts`)
   readout. Those are world-anchored and stay where they are.
 
 Tested by `src/render/iso3d/world/ui-routing.test.ts`,
+`src/render/iso3d/world/ui-screens.test.ts`,
 `src/render/iso3d/world/mount-presentation.test.ts`, and the browser assertions
 in `scripts/preview-world.ts`.
+
+## What the implementation changed
+
+Four things the shape above got wrong, recorded because each was a decision
+rather than a detail.
+
+**The mount is two files, not one.** `ui-layer.ts` above was going to be the one
+impure file; it turned out that the same rule spec 111 applies to animation --
+run the fight twice, once with the layer driven and once without, and require
+identical authoritative state -- is impossible to apply if the only way to run
+the interface is to have a canvas. So `ui-screens.ts` holds the four screens,
+their windows and the event routing, is pure, is linted as part of the
+deterministic core, and runs in Node; `ui-layer.ts` is the canvas, the scale, one
+coordinate conversion and a blit.
+
+**`ui.shop` is a new binding.** The three `ui.*` actions phase 3 defined do not
+include one for a shop, and "opened by the actions that already exist" was
+therefore a shop that could not be opened. It is `V`, in `bindings.json`, beside
+the other three.
+
+**A window is sized on its first *update*, not on the keypress.** A screen that
+has never been handed anything is smaller than the same screen a frame later --
+an inventory with no bag and no paperdoll measures 211x114 against the 214x162
+it becomes -- so a window sized at the press opened two equipment rows short and
+scrolled for the rest of the session.
+
+**The budget needed two fixes and is reported as a median.** The mount was
+rebuilding every view-model and re-blitting an unchanged picture sixty times a
+second: 2.7ms and 7.3ms of a 1.5ms budget. The view-models are now rebuilt only
+when the replicated facts have actually been replaced (an identity check, which
+is exact -- `GameClient` replaces them whole and never edits one in place), and
+an unchanged draw list is not drawn again. The number asserted on is the median
+of the last two seconds, which is what `preview-ui-gallery.ts` established the
+0.9ms figure with and therefore the only one comparable to it; the worst frame is
+printed beside it and not asserted, because this browser has no GPU and the tail
+is a fact about SwiftShader rather than about the interface.

@@ -398,13 +398,31 @@ which is a different risk profile and deserves the same treatment the container
 got -- its own server spec, its own property test, and the UI after it. Doing it
 as a corner of the shop spec would have been the wrong shape.
 
-What is still not done, and is deliberately nobody's phase yet: **nothing mounts
-a `UiRoot` over the Play tab.** Phases 1-4 all deliver to the gallery, which is
-where the goldens and the cross-backend comparison live. Putting the framework on
-screen in the game means deciding what happens to the DOM HUD, which of the two
-owns the pointer, and how a UI scale interacts with the world's own buffer --
-`docs/ui/00-architecture.md` §12.15 left the last of those open on purpose. That
-is a spec, not a loose end to tack onto phase 5.
+What was for a long time nobody's phase -- **nothing mounts a `UiRoot` over the
+Play tab** -- is spec 131, and it is done. Phases 1-5 all delivered to the
+gallery, which is where the goldens and the cross-backend comparison live; the
+mount is `world/ui-layer.ts` (a second canvas, the scale, and one coordinate
+conversion) over `world/ui-screens.ts` (the four screens, their windows, and who
+gets an event). The three questions it had to answer, answered:
+
+- **What happens to the DOM HUD.** Nothing. It ships, it is tuned for touch, and
+  it carries the world-anchored half -- health bars over bodies, damage numbers,
+  the target readout -- which is a different positioning problem from a window
+  and is *correctly* letterboxed. Swapping it is a redesign with its own visual
+  decisions and would have put two arguments in one diff.
+- **Which of the two owns the pointer.** Neither, in the browser's sense: the UI
+  canvas is `pointer-events: none` and the events go on arriving at the
+  listeners `view.ts` already owns, which offer them to the interface first and
+  ask `ui-routing.ts` two questions about the answer -- did a widget consume it,
+  and is a context above gameplay swallowing that kind at all.
+- **How a UI scale interacts with the world's buffer.** It does not. §2.3 had
+  already settled that the UI has a scale rather than a resolution, so the canvas
+  is the size of the tab at `autoUiScale` and never reads `lowRes`.
+
+The rule that kept the mount honest is the one animation got in spec 111:
+`ui-screens.ts` is pure, so `mount-presentation.test.ts` plays the same fight
+twice -- once with every screen driven and every event fed to it, once with none
+of it -- and requires the authoritative state to be identical byte for byte.
 
 ### 2.8 Phase 3 has to unify three input systems, not one
 
@@ -772,8 +790,10 @@ panels are the same case.
 This is duplication, and it is the right duplication. `TODO.md` should record it so
 that it is a decision rather than an oversight.
 
-**The Play tab keeps its DOM HUD until Phase 5**, and the framework does not touch it
-before then.
+**The Play tab keeps its DOM HUD.** Spec 131 mounted the framework beside it rather
+than over it, and named the reason: the HUD's anchors are in canvas space and
+letterbox with the picture, which is the opposite of what a window wants. Replacing
+it is a redesign with its own visual decisions, not a corner of a mounting spec.
 
 ---
 
