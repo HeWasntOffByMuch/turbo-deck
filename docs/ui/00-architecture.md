@@ -384,6 +384,20 @@ could not exist — a non-interactive layer is skipped wholesale, so a skillbar 
 it could never be clicked. Transparency belongs to `pointerTransparent` on the
 layer and its contents, which is where it already was for every other layer.
 
+**Phase 6, minus its second half.**
+`specs/129-something-to-spend-and-somewhere-to-spend-it.md` and
+`specs/130-a-shop-and-the-question-it-asks.md` landed the currency, the prices,
+two vendors, buyback, the shop screen and the framework's first modal — which
+finally put something in the `modal` layer spec 124 declared and left empty.
+
+**Player-to-player trade is not done, and was not attempted.** It is the other
+third of the brief's phase 6, and it is a different system from a vendor: a
+two-sided offer, a confirmation either side can withdraw, and an atomic swap
+between two bags. Its failure mode is *duplication* rather than a wrong number,
+which is a different risk profile and deserves the same treatment the container
+got -- its own server spec, its own property test, and the UI after it. Doing it
+as a corner of the shop spec would have been the wrong shape.
+
 What is still not done, and is deliberately nobody's phase yet: **nothing mounts
 a `UiRoot` over the Play tab.** Phases 1-4 all deliver to the gallery, which is
 where the goldens and the cross-backend comparison live. Putting the framework on

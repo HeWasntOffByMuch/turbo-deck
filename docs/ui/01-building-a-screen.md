@@ -23,10 +23,10 @@ src/ui/
   theme/     theme.json, its schema, the atlas source                       pure
   widgets/   Panel, Label, Button, Icon, Checkbox, Slider, TextField,
              ScrollView, Separator, Window, Tabs, Tooltip, ItemSlot,
-             DragGhost, Meter, SkillSlot                                    pure
+             DragGhost, Meter, SkillSlot, Dialog                            pure
   input/     the action registry, the key map and its persistence            pure
   screens/   the keybinding window, the inventory, the HUD, the character
-             sheet                                                          pure
+             sheet, the shop                                                pure
   gallery/   the three QA scenes and their goldens                          pure
   render/    atlas.ts, raster.ts (software), canvas2d.ts (browser)          only canvas2d is impure
 ```
@@ -325,11 +325,39 @@ hud.setView(hudViewOf({ health, maxHealth, resource, maxResource, cooldowns, tic
   the adapter. A greyed-out button and a refused request cannot disagree, and
   the tooltip explaining why is the server's own words.
 
+## Asking before you act (phase 6)
+
+The shop is the first screen with a **modal** on it, and the `modal` layer had
+been declared since spec 124 with nothing ever in it.
+
+```ts
+const shop = new ShopScreen({ theme: THEME, contexts, focus: root.focus });
+layers.place('modal', shop.dialog);          // the layer is what blocks; not the widget
+shop.onSell = (index) => client.sellItem(vendorId, index);
+```
+
+- **The layer makes it modal, not the dialog.** `LayerStack.hitTest` already
+  stops at a blocking layer with a visible child, so a click beside the dialog
+  reaches nothing. What `Dialog` adds is the keyboard and the context push.
+- **It pushes `modal` while it is open** and pops it on the way out — including
+  when it closes by confirming, which is the path that is easy to forget.
+- **Escape reaches the dialog before the window manager**, exactly as a drag
+  does (ADR-112's sibling). Dismissing the thing in front of you must not close
+  the thing behind it.
+- **`focus` must be the root's `FocusManager`.** Keys route to whatever
+  `UiRoot.focus` holds, so a dialog focused in a manager of your own is a dialog
+  no keystroke ever reaches — and it looks completely fine on screen. This has
+  now cost debugging time twice; if a keyboard path does nothing, check this
+  first.
+- **Selling asks and buying does not.** A purchase is undone by a sale at a loss
+  you chose; a sale is undone by a six-entry buyback list a seventh sale pushes
+  off the end. The asymmetry is why the dialog sits on exactly one button.
+
 ## What is not here yet
 
 | Want | Phase | Note |
 |---|---|---|
-| Shops, trading, dialogs | 6 | also needs currency and trade on the wire |
+| Player-to-player trade | 6½ | a two-sided offer, a withdrawable confirmation and an atomic swap: its own spec, server first |
 | Tweening, sound hooks, reduce-motion | 7 | |
 | The framework mounted in the Play tab | — | nothing mounts a `UiRoot` over the world yet; the gallery is still the only surface, and that seam wants a spec of its own |
 
@@ -487,3 +515,26 @@ nothing about it is wrong until it is drawn.
 They look like the same "unavailable" state and they are two different problems
 with two different fixes — wait, or spend less. A single grey is a slot that
 tells you it will not fire and refuses to say why.
+
+---
+
+## ADR notes for phase 6
+
+**ADR-122 — A dialog is a box that places itself.**
+Dropped into the modal layer it inherits a full-viewport rect and stretches to
+fill it, which the first golden showed as a four-hundred-pixel panel holding one
+short question. It measures narrower than it is offered and centres itself, the
+same way the tooltip does and for the same reason: its parent is a layer, and
+being handed a layer's rect *is* the instruction to place yourself in it.
+
+**ADR-123 — The client predicts nothing about money.**
+Every other screen since phase 4 draws an optimistic guess, because the client
+already had one. A price is the server's and a purse is the server's, so there is
+nothing to guess with — and a balance that flickered to a wrong number and
+settled would be worse than one that waits a round trip.
+
+**ADR-124 — A greyed-out button asks the server's own function.**
+`shop-model.ts` runs the real `buy`/`sell` against the client's copy of the bag
+rather than reimplementing "can you afford it and is there room". Same rule the
+character sheet follows for `validateSkillSpend`, and it means the reason a
+button gives is the reason a refusal would have given.
