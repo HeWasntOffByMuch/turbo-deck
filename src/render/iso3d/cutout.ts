@@ -210,6 +210,55 @@ export function bodyIsHidden(
 }
 
 /**
+ * Where on the body to look from, as fractions of its height: up from the feet,
+ * and sideways across the view.
+ *
+ * One sample was not enough, and the way it failed is instructive. Marching from
+ * the chest alone answers "is the chest hidden", so a unit standing at the
+ * corner of a tier with one shoulder behind it opened the iris and took a
+ * crescent out of the wall -- while the unit was plainly visible the whole time.
+ *
+ * Knees, chest and head span the silhouette vertically; the two lateral samples
+ * span it across the view, which is the direction a corner actually clips a
+ * body. Five marches is about a hundred `heightAt` calls a frame, which is what
+ * the movement code spends on one entity in a tick.
+ */
+export const BODY_SAMPLES: readonly { readonly up: number; readonly side: number }[] = [
+  { up: 0.15, side: 0 },
+  { up: 0.5, side: 0 },
+  { up: 0.9, side: 0 },
+  { up: 0.5, side: -0.35 },
+  { up: 0.5, side: 0.35 },
+];
+
+/**
+ * How much of the body the ground is standing in front of, in [0, 1].
+ *
+ * The caller wants **all** of it before it opens anything: if any part of a unit
+ * can be seen, the view has no business moving the world. A threshold below one
+ * is the behaviour this replaced -- a hole appearing beside a unit you were
+ * already looking at.
+ */
+export function bodyHiddenFraction(
+  feet: WorldPoint,
+  toCamera: WorldPoint,
+  right: WorldPoint,
+  bodyHeight: number,
+  heightAt: (x: number, z: number) => number,
+): number {
+  let hidden = 0;
+  for (const sample of BODY_SAMPLES) {
+    const at: WorldPoint = {
+      x: feet.x + right.x * sample.side * bodyHeight,
+      y: feet.y + sample.up * bodyHeight,
+      z: feet.z + right.z * sample.side * bodyHeight,
+    };
+    if (bodyIsHidden(at, toCamera, heightAt)) hidden++;
+  }
+  return hidden / BODY_SAMPLES.length;
+}
+
+/**
  * Ease the opening toward where it should be, per second.
  *
  * The answer above is a yes or a no, and a hole that snaps into existence the

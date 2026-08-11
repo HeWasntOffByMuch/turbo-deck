@@ -42,6 +42,32 @@ on a slope facing the camera they graze it — without the clearance, every unit
 walking uphill toward the camera declares itself hidden by the hill it is
 climbing.
 
+### All of the body, not one point of it
+
+```ts
+export function bodyHiddenFraction(
+  feet: WorldPoint,
+  toCamera: WorldPoint,
+  right: WorldPoint,   // horizontal, across the view
+  bodyHeight: number,
+  heightAt: (x: number, z: number) => number,
+): number;
+```
+
+Marching from the chest alone answers "is the chest hidden", which is a third
+question again. A unit standing at the corner of a tier with one shoulder behind
+it opened the iris and took a crescent out of the wall while the unit was
+plainly visible the whole time.
+
+`BODY_SAMPLES` spans the silhouette: knees, chest and head vertically, and two
+more across the view — which is the direction a corner actually clips a body.
+The caller wants the fraction to be **1**. If any part of a unit can be seen,
+the view has no business moving the world; a threshold below one is the
+behaviour this replaced.
+
+Five marches is about a hundred `heightAt` calls a frame, which is what the
+movement code already spends on a single entity in one tick.
+
 ### An iris, not a switch
 
 ```ts
@@ -64,7 +90,12 @@ closing iris takes its clickable hole with it.
 
 ## Invariants tested
 
-- Open ground: not hidden.
+- Open ground: nothing hidden.
+- A walled courtyard: all of it hidden.
+- A corner clipping one side of the body: some but not all — the reported case,
+  and the one that must not open anything.
+- A wall too low to cover the head: not all.
+- The samples span the body both up and across, not just up.
 - Rock nearer the camera but off the line: not hidden. This is the reported bug.
 - A wall standing on the line: hidden.
 - A hillside the body is climbing: not hidden.

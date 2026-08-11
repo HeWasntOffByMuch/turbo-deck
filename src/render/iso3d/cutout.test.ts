@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_CANONICAL_HEIGHT } from '../../units/canonical-height.js';
 import {
   bayer4,
+  bodyHiddenFraction,
   bodyIsHidden,
+  BODY_SAMPLES,
   cutoutCoverage,
   cutoutDiscards,
   CUTOUT_APPLY,
@@ -386,5 +388,46 @@ describe('the iris', () => {
 
   it('does not move backwards on a zero-length frame', () => {
     expect(easeCutout(0.4, true, 0)).toBe(0.4);
+  });
+});
+
+describe('how much of the body is hidden (spec 128)', () => {
+  const toCamera = { x: -0.57, y: 0.6, z: -0.57 };
+  const right = { x: -0.707, y: 0, z: 0.707 };
+  const feet = { x: 0, y: 50, z: 0 };
+  const H = DEFAULT_CANONICAL_HEIGHT;
+  const fraction = (heightAt: (x: number, z: number) => number): number =>
+    bodyHiddenFraction(feet, toCamera, right, H, heightAt);
+
+  it('is zero over open ground', () => {
+    expect(fraction(() => 40)).toBe(0);
+  });
+
+  it('is one inside a walled courtyard', () => {
+    expect(fraction((x, z) => (x < -40 && z < -40 ? 500 : 40))).toBe(1);
+  });
+
+  it('is short of one when a corner clips only part of the body', () => {
+    // A wall covering one side of the line: the samples across the view
+    // disagree, which is exactly the case that used to open a crescent beside a
+    // unit you could see perfectly well.
+    const wall = (x: number, z: number): number => (x < -40 && z < -40 && x - z > 0 ? 500 : 40);
+    const partial = fraction(wall);
+    expect(partial).toBeGreaterThan(0);
+    expect(partial).toBeLessThan(1);
+  });
+
+  it('looks from more than one height, so a low wall does not read as a full one', () => {
+    // Hides the knees only: the line from a low sample meets the wall, the line
+    // from the head clears it.
+    const lowWall = (x: number, z: number): number => (x < -40 && x > -120 && z < -40 && z > -120 ? 70 : 40);
+    expect(fraction(lowWall)).toBeLessThan(1);
+  });
+
+  it('spans the body sideways as well as up', () => {
+    const sides = new Set(BODY_SAMPLES.map((s) => s.side));
+    const ups = new Set(BODY_SAMPLES.map((s) => s.up));
+    expect(sides.size).toBeGreaterThan(1);
+    expect(ups.size).toBeGreaterThan(1);
   });
 });

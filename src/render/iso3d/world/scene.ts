@@ -79,7 +79,7 @@ import { HikeEdges } from '../hike-edges.js';
 import { advanceWind } from '../wind-uniforms.js';
 import { clearCutout, cutBodyUniform, cutParamsUniform } from '../cutout-uniforms.js';
 import {
-  bodyIsHidden,
+  bodyHiddenFraction,
   cutoutCoverage,
   CUTOUT_DEFAULTS,
   easeCutout,
@@ -459,6 +459,8 @@ export class WorldScene {
   /** How far open the iris is, 0..1. Eased toward whether the body is hidden. */
   private cutOpen = 0;
   private readonly cutToCamera = new THREE.Vector3();
+  /** Across the view, horizontally: where a corner actually clips a body. */
+  private readonly cutRight = new THREE.Vector3();
   private readonly ndc = new THREE.Vector2();
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private readonly hit = new THREE.Vector3();
@@ -937,10 +939,24 @@ export class WorldScene {
     // Answered off the heightfield, not the geometry: `getWorldDirection` is
     // where the camera is looking, so its negation is the line to march.
     this.camera.getWorldDirection(this.cutToCamera).negate();
-    const chest = groundY + DEFAULT_CANONICAL_HEIGHT * 0.5;
+    // Horizontal, across the view. `crossVectors` with world up, then flattened:
+    // the lateral samples are meant to span the body's *silhouette*, and a right
+    // vector that tilted with the camera's pitch would put them above and below
+    // it instead.
+    this.cutRight.set(this.cutToCamera.z, 0, -this.cutToCamera.x).normalize();
+    // All of it, not the chest alone. A unit at the corner of a tier with one
+    // shoulder behind it used to open the iris and take a crescent out of the
+    // wall while the unit was plainly visible the whole time -- so if any part of
+    // it can be seen, the world does not move.
     const hidden =
       style !== 'off' &&
-      bodyIsHidden({ x: me.x, y: chest, z: me.y }, this.cutToCamera, (x, z) => this.ground(x, z));
+      bodyHiddenFraction(
+        { x: me.x, y: groundY, z: me.y },
+        this.cutToCamera,
+        this.cutRight,
+        DEFAULT_CANONICAL_HEIGHT,
+        (x, z) => this.ground(x, z),
+      ) >= 1;
     this.cutOpen = easeCutout(this.cutOpen, hidden, dt);
 
     // The chest, pushed into view space for the hole's centre...
