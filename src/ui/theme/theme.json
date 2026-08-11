@@ -39,8 +39,8 @@
       "height": 140
     },
     "comfortViewport": {
-      "width": 600,
-      "height": 280
+      "width": 1200,
+      "height": 560
     },
     "tooltipDelayMs": 400,
     "minVisible": 24

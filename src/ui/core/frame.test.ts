@@ -129,7 +129,23 @@ describe('autoUiScale', () => {
       );
     });
 
-    /** A window too small for the comfort still gets an interface, not nothing. */
+    /**
+     * A window too small for the comfort gets the *finest* scale, not the
+     * chunkiest.
+     *
+     * Falling back to "largest that fits the floor" is the original rule, and
+     * reinstating it here made the interface jump from scale 1 to scale 3 as the
+     * tab shrank -- chunkier on a smaller screen, which is backwards.
+     */
+    it('goes finer, not chunkier, on a window that cannot afford the comfort', () => {
+      const small = { width: 1024, height: 700 };
+      const bare = { minViewport, coarsePointer: false, maxTapUiPx: 20 };
+      const wanted = { width: 1200, height: 560 };
+      expect(autoUiScale(small.width, small.height, 1, { ...bare, comfortViewport: wanted })).toBe(1);
+      // ...and the floor alone would have said 3.
+      expect(autoUiScale(small.width, small.height, 1, bare)).toBe(3);
+    });
+
     it('gives the smallest window a scale of 1 rather than 0', () => {
       expect(autoUiScale(320, 200, 1, options)).toBe(1);
     });
