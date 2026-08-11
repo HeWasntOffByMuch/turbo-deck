@@ -274,8 +274,16 @@ src/server/studio/  the unit authoring service (spec 108). Node-only, wired in f
                  .studio/ and is gitignored.
 src/ui/          the GUI framework (spec 123), and a top-level peer rather than a
                  subdirectory of src/render/ because layer 1 belongs to no engine.
-                 core/ is layout, hit-testing, focus, event routing and the widget
-                 tree; text/ is the two bitmap faces; theme/ is theme.json plus the
+                 core/ is layout, hit-testing, focus, event routing, the widget
+                 tree, and since spec 133 motion and sound: a tween is a pure
+                 function of the time it is handed rather than an animator with a
+                 clock (an animator would make every golden a question about when
+                 the test ran), and a sound is a *name* emitted into a sink, so
+                 this layer never learns what a sound is. Reduce-motion rides on
+                 the paint context beside the time and is checked inside
+                 `animate` rather than at each call site, which is what lets it be
+                 a property over the whole easing table instead of a claim each
+                 widget has to remember. text/ is the two bitmap faces; theme/ is theme.json plus the
                  atlas authored as text; widgets/ is the nine; screens/ is the
                  five (the HUD, the bag, the sheet, the shop and the keybindings);
                  render/ is the only impure part. Everything else runs in Node.

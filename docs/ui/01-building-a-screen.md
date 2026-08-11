@@ -358,7 +358,7 @@ shop.onSell = (index) => client.sellItem(vendorId, index);
 | Want | Phase | Note |
 |---|---|---|
 | Player-to-player trade | 6½ | a two-sided offer, a withdrawable confirmation and an atomic swap: its own spec, server first |
-| Tweening, sound hooks, reduce-motion | 7 | |
+| Tweening, sound hooks, reduce-motion | 7 | Done (spec 133). A tween is `motion.ts` arithmetic read at paint time; a sound is a `UiSoundId` emitted into a `SoundSink`; `PaintContext.motion` carries the preference. Two things animate -- a window wiping in and a meter chasing -- and nothing else. |
 | The framework mounted in the Play tab | — | nothing mounts a `UiRoot` over the world yet; the gallery is still the only surface, and that seam wants a spec of its own |
 
 Two things are deliberately staying as they are: the Play tab's settings cog and
