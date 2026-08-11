@@ -535,6 +535,8 @@ export interface ShopRenderOptions {
   readonly buyback?: boolean;
   /** A thinner purse, so the greyed-out treatment is in the frame. */
   readonly coins?: number;
+  /** Catch the dialog partway through arriving, at this time (spec 133). */
+  readonly confirmArrivingAt?: number;
 }
 
 /**
@@ -614,8 +616,10 @@ export function renderShop(options: ShopRenderOptions = {}): ShopFrame {
   root.update(0);
 
   if (options.confirmRow !== undefined) {
-    shop.askToSell(options.confirmRow);
-    root.update(0);
+    // With a time it arrives, without one it is already there -- and it has to
+    // be one or the other, because a dialog that is open ignores a second ask.
+    shop.askToSell(options.confirmRow, options.confirmArrivingAt === undefined ? undefined : 0);
+    root.update(options.confirmArrivingAt ?? 0);
   }
 
   const surface = new RasterSurface(atlas, viewport.width, viewport.height);

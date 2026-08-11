@@ -307,6 +307,13 @@ describe('sprites blit at a whole-number scale', () => {
    * frame everyone else sees once things have settled -- not a similar one, and
    * not one three frames further along.
    */
+  /** The modal arrives too, now that a press can tell it what time it is. */
+  it('wipes a modal in, and refuses to when motion is reduced', () => {
+    const arriving = renderShop({ confirmRow: 0, confirmArrivingAt: 15 });
+    const settledShop = renderShop({ confirmRow: 0 });
+    expect(Buffer.from(arriving.surface.pixels)).not.toEqual(Buffer.from(settledShop.surface.pixels));
+  });
+
   it('draws a reduce-motion frame identically to a settled one', () => {
     const arriving = renderWindows({ focusWindow: 'character', arriving: 'character', now: 60 });
     const reduced = renderWindows({

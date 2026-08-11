@@ -24,7 +24,15 @@ import type { FontId } from '../theme/theme.js';
 import { StyledWidget } from './base.js';
 
 export class Button extends StyledWidget {
-  onPress: (() => void) | null = null;
+  /**
+   * What the press means, handed the time it happened at (spec 133).
+   *
+   * The time comes from the *gesture*, which has carried one since spec 123 --
+   * so a handler that wants to start an animation has a number without anything
+   * threading a clock down to it. Most handlers ignore the argument, which is
+   * why it is an argument rather than a second callback.
+   */
+  onPress: ((nowMs: number) => void) | null = null;
   /**
    * Where a press announces itself (spec 133).
    *
@@ -57,17 +65,17 @@ export class Button extends StyledWidget {
     this.invalidateMeasure();
   }
 
-  press(): void {
+  press(nowMs = 0): void {
     if (!this.enabled) return;
     // At the intent, not the outcome: before `onPress`, and whether or not
     // anything is listening to it. A button that stayed silent until a round
     // trip later is a button that felt broken.
     this.sounds.play('ui.press');
-    this.onPress?.();
+    this.onPress?.(nowMs);
   }
 
   onGesture(gesture: Gesture): void {
-    if (gesture.kind === 'click' && gesture.button === 0) this.press();
+    if (gesture.kind === 'click' && gesture.button === 0) this.press(gesture.time);
   }
 
   /**
@@ -80,7 +88,7 @@ export class Button extends StyledWidget {
     const event = context.event;
     if (event.kind !== 'key' || event.phase !== 'down') return;
     if (event.code !== 'Space' && event.code !== 'Enter' && event.code !== 'NumpadEnter') return;
-    this.press();
+    this.press(event.time);
     context.stopPropagation();
   }
 

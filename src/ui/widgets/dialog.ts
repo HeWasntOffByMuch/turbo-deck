@@ -15,7 +15,9 @@ import { Row } from '../core/containers.js';
 import type { ContextStack, EventContext } from '../core/events.js';
 import type { FocusManager } from '../core/focus.js';
 import { uniformInsets, type Constraint, type Rect, type Size } from '../core/geom.js';
-import type { LayoutContext } from '../core/widget.js';
+import type { DrawList } from '../core/draw-list.js';
+import { animate, MOTION, settled, type Tween } from '../core/motion.js';
+import type { LayoutContext, PaintContext } from '../core/widget.js';
 import type { Theme } from '../theme/theme.js';
 import { Button, Separator } from './button.js';
 import { Label } from './label.js';
@@ -53,6 +55,15 @@ export class Dialog extends Panel {
   private readonly titleLabel: Label;
   private readonly messageLabel: Label;
   private readonly cancellable: boolean;
+  /**
+   * How much of the dialog is revealed, 0..1.
+   *
+   * The same clip the window uses and for the same reason: the draw list has no
+   * transform, so a thing cannot be moved once painted -- and re-arranging to
+   * slide would move the buttons out from under a cursor that is already over
+   * them. `outBack` rather than `outQuad`, because a modal has to *arrive*.
+   */
+  private reveal: Tween = settled(1);
   private open = false;
 
   constructor(options: DialogOptions) {
@@ -107,16 +118,51 @@ export class Dialog extends Panel {
    * `UiRoot.focus` holds, so a dialog focused in a manager of somebody's own is
    * a dialog no keystroke ever reaches -- and it looks completely fine on screen.
    */
-  show(contexts: ContextStack, focus?: FocusManager): void {
+  /**
+   * Put the question up, arriving at `nowMs` if a caller knows one (spec 133).
+   *
+   * Optional, and the reason it can be supplied at all is that a `Button` hands
+   * its press handler the *gesture's* time -- so the screen that opens a dialog
+   * from a click has a number without anything threading a clock down to it.
+   * Omitted means "already there", which is what the goldens and the layout
+   * tests want.
+   */
+  show(contexts: ContextStack, focus?: FocusManager, nowMs?: number): void {
     if (this.open) return;
     this.open = true;
     this.visible = true;
+    this.reveal =
+      nowMs === undefined
+        ? settled(1)
+        : { from: 0, to: 1, startMs: nowMs, durationMs: MOTION.modal.durationMs, easing: MOTION.modal.easing };
     contexts.push('modal');
     focus?.focus(this.confirmButton);
     this.invalidateMeasure();
   }
 
   /** Hide it and pop the context. Safe to call on a dialog that is not open. */
+  /**
+   * Painted inside its own clip while it is arriving.
+   *
+   * Overriding `paint` rather than `paintSelf`, because the reveal has to take
+   * the question and its buttons with it -- a frame wiping in over text that was
+   * already there reads as a bug rather than an animation.
+   */
+  override paint(out: DrawList, context: PaintContext): void {
+    if (!this.visible) return;
+    const shown = animate(this.reveal, context.now, context.motion);
+    if (shown >= 1) {
+      super.paint(out, context);
+      return;
+    }
+    out.pushClip({
+      ...this.rect,
+      height: Math.max(1, Math.round(this.rect.height * Math.max(0, shown))),
+    });
+    super.paint(out, context);
+    out.popClip();
+  }
+
   hide(contexts: ContextStack, focus?: FocusManager): void {
     if (!this.open) return;
     this.open = false;

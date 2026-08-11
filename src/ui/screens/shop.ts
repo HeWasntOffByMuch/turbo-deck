@@ -71,7 +71,7 @@ class ShopLine extends Row {
   private readonly nameLabel = new Label('', 'body');
   private readonly priceLabel = new Label('', 'body');
 
-  constructor(name: string, action: string, theme: Theme, onPress: () => void) {
+  constructor(name: string, action: string, theme: Theme, onPress: (nowMs: number) => void) {
     super(name);
     this.gap = theme.spacing.xs;
     this.nameLabel.layoutGrow = 1;
@@ -172,7 +172,7 @@ export class ShopScreen extends Column {
 
     this.sellIndices = view.sellable.map((row) => row.index);
     sync(this.sellLines, this.sellColumn, view.sellable.length, (index) =>
-      new ShopLine(`sell:${index}`, 'Sell', this.options.theme, () => this.askToSell(index)),
+      new ShopLine(`sell:${index}`, 'Sell', this.options.theme, (nowMs) => this.askToSell(index, nowMs)),
     );
     for (const [index, line] of this.sellLines.entries()) {
       const row = view.sellable[index];
@@ -211,12 +211,14 @@ export class ShopScreen extends Column {
    * stacking a dialog on a dialog -- there is one modal layer and one thing in
    * front of you, and two would leave the first one buried and unanswerable.
    */
-  askToSell(row: number): void {
+  askToSell(row: number, nowMs?: number): void {
     const entry = this.shown?.sellable[row];
     if (!entry || !entry.enabled) return;
     this.pendingSale = { index: entry.index, name: entry.name, price: entry.price };
     this.dialog.ask('Sell', `Sell ${entry.name} for ${entry.price} coins?`);
-    this.dialog.show(this.options.contexts, this.options.focus);
+    // The time comes from the press that opened it (spec 133). This screen has
+    // no clock and wants none; the gesture knew when it happened.
+    this.dialog.show(this.options.contexts, this.options.focus, nowMs);
   }
 
   private confirmSale(): void {

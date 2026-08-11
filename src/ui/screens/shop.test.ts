@@ -13,6 +13,7 @@ import { LayerStack } from '../core/layers.js';
 import { UiRoot } from '../core/root.js';
 import { bakeAtlas } from '../render/atlas.js';
 import { THEME } from '../theme/theme.js';
+import { Button } from '../widgets/button.js';
 import { ShopScreen, type ShopView } from './shop.js';
 
 function row(defId: string, price: number, enabled = true, blocked = ''): ShopView['stock'][number] {
@@ -67,10 +68,10 @@ function harness(view = viewOf()): Harness {
 }
 
 /** The Buy/Sell/Back button on the nth line of a section. */
-function buttonIn(shop: ShopScreen, section: string, index: number): { onPress: (() => void) | null; enabled: boolean } {
+function buttonIn(shop: ShopScreen, section: string, index: number): Button {
   for (const widget of shop.walk()) {
     if (widget.name === `${section}:${index}:button`) {
-      return widget as unknown as { onPress: (() => void) | null; enabled: boolean };
+      return widget as Button;
     }
   }
   throw new Error(`no ${section}:${index} button`);
@@ -79,21 +80,21 @@ function buttonIn(shop: ShopScreen, section: string, index: number): { onPress: 
 describe('buying', () => {
   it('emits the item and changes nothing on screen', () => {
     const test = harness();
-    buttonIn(test.shop, 'stock', 0).onPress?.();
+    buttonIn(test.shop, 'stock', 0).onPress?.(0);
     expect(test.bought).toEqual(['potion.minor']);
     expect(test.shop.view?.coins).toBe(60);
   });
 
   it('does not ask first', () => {
     const test = harness();
-    buttonIn(test.shop, 'stock', 0).onPress?.();
+    buttonIn(test.shop, 'stock', 0).onPress?.(0);
     expect(test.shop.dialog.isOpen).toBe(false);
   });
 
   it('greys out what the rules refused, and emits nothing when it is clicked', () => {
     const test = harness();
     expect(buttonIn(test.shop, 'stock', 1).enabled).toBe(false);
-    buttonIn(test.shop, 'stock', 1).onPress?.();
+    buttonIn(test.shop, 'stock', 1).onPress?.(0);
     expect(test.bought).toEqual([]);
   });
 });
@@ -101,7 +102,7 @@ describe('buying', () => {
 describe('selling', () => {
   it('asks before it sells, naming the item and the price', () => {
     const test = harness();
-    buttonIn(test.shop, 'sell', 0).onPress?.();
+    buttonIn(test.shop, 'sell', 0).onPress?.(0);
     expect(test.shop.dialog.isOpen).toBe(true);
     expect(test.shop.dialog.question).toContain('bow.hunting');
     expect(test.shop.dialog.question).toContain('12');
@@ -113,25 +114,25 @@ describe('selling', () => {
     const test = harness();
     // The second sellable row is bag slot 7, and the intent has to carry the
     // slot -- a row index would sell whatever happened to be listed second.
-    buttonIn(test.shop, 'sell', 1).onPress?.();
-    test.shop.dialog.confirmButton.onPress?.();
+    buttonIn(test.shop, 'sell', 1).onPress?.(0);
+    test.shop.dialog.confirmButton.onPress?.(0);
     expect(test.sold).toEqual([7]);
   });
 
   it('emits exactly once when confirmed', () => {
     const test = harness();
-    buttonIn(test.shop, 'sell', 0).onPress?.();
-    test.shop.dialog.confirmButton.onPress?.();
+    buttonIn(test.shop, 'sell', 0).onPress?.(0);
+    test.shop.dialog.confirmButton.onPress?.(0);
     // A second confirm on a closed dialog is not a second sale.
-    test.shop.dialog.confirmButton.onPress?.();
+    test.shop.dialog.confirmButton.onPress?.(0);
     expect(test.sold).toEqual([3]);
     expect(test.shop.pending).toBeNull();
   });
 
   it('emits nothing when cancelled', () => {
     const test = harness();
-    buttonIn(test.shop, 'sell', 0).onPress?.();
-    test.shop.dialog.cancelButton.onPress?.();
+    buttonIn(test.shop, 'sell', 0).onPress?.(0);
+    test.shop.dialog.cancelButton.onPress?.(0);
     expect(test.sold).toEqual([]);
     expect(test.shop.dialog.isOpen).toBe(false);
     expect(test.contexts.has('modal')).toBe(false);
@@ -140,19 +141,19 @@ describe('selling', () => {
   /** One modal layer, one thing in front of you. */
   it('replaces the question rather than stacking a second dialog', () => {
     const test = harness();
-    buttonIn(test.shop, 'sell', 0).onPress?.();
-    buttonIn(test.shop, 'sell', 1).onPress?.();
+    buttonIn(test.shop, 'sell', 0).onPress?.(0);
+    buttonIn(test.shop, 'sell', 1).onPress?.(0);
     expect(test.shop.dialog.question).toContain('sword.worn');
     expect(test.shop.pending?.index).toBe(7);
     // Still one push: one pop closes it.
-    test.shop.dialog.cancelButton.onPress?.();
+    test.shop.dialog.cancelButton.onPress?.(0);
     expect(test.contexts.has('modal')).toBe(false);
     expect(test.contexts.depth()).toBe(1);
   });
 
   it('drops a pending question when the thing it was about has gone', () => {
     const test = harness();
-    buttonIn(test.shop, 'sell', 0).onPress?.();
+    buttonIn(test.shop, 'sell', 0).onPress?.(0);
     expect(test.shop.pending).not.toBeNull();
 
     // The resend that completed the sale: slot 3 is not sellable any more.
@@ -164,7 +165,7 @@ describe('selling', () => {
   it('reports whether it swallowed an Escape', () => {
     const test = harness();
     expect(test.shop.dismiss()).toBe(false);
-    buttonIn(test.shop, 'sell', 0).onPress?.();
+    buttonIn(test.shop, 'sell', 0).onPress?.(0);
     expect(test.shop.dismiss()).toBe(true);
     expect(test.shop.dismiss()).toBe(false);
   });
@@ -173,7 +174,7 @@ describe('selling', () => {
 describe('buying back', () => {
   it('lists what was sold, and emits its index', () => {
     const test = harness(viewOf({ buyback: [row('bow.hunting', 12)] }));
-    buttonIn(test.shop, 'buyback', 0).onPress?.();
+    buttonIn(test.shop, 'buyback', 0).onPress?.(0);
     expect(test.backed).toEqual([0]);
   });
 

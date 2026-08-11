@@ -59,7 +59,7 @@ constraint means they do it in whole pixels.
 
 ### What actually animates
 
-Two, and no more:
+Three, and no more:
 
 1. **A window opening** — wipes into view from its own top edge. `outQuad`,
    ~120ms. Its *layout* is final from the first frame; only how much of it is
@@ -68,14 +68,16 @@ Two, and no more:
    health bar reads as a hit rather than as a different number. `outQuad`,
    ~180ms.
 
-**A modal is not one of them, and the reason is worth writing down.** It uses the
-same mechanism the moment somebody hands it a time — and nobody can. A dialog is
-opened from a `Button`'s press handler deep inside `ShopScreen`, which knows what
-was clicked and not what o'clock it is; the time only exists at
-`UiRoot.update(nowMs)`, four frames of call stack away. Threading it down would
-mean every screen callback taking a timestamp it has no other use for, which is a
-worse trade than a modal that cuts. `MOTION.modal` is defined and unused, and
-that is the honest state of it.
+3. **A modal appearing** — the same wipe, faster and with an overshoot, because
+   a modal has to *arrive* rather than drift in. `outBack`, ~90ms.
+
+**How a modal gets a time**, which looked like the thing that would stop it: a
+dialog is opened from a `Button`'s press handler deep inside `ShopScreen`, which
+knows what was clicked and not what o'clock it is — and threading a timestamp
+through every screen callback for one effect would be a worse trade than a modal
+that cuts. It turns out nothing needs threading. **The gesture has carried a time
+since spec 123**, so `Button` hands its handler the time of the press that caused
+it. Most handlers ignore the argument; the one that opens a dialog does not.
 
 **A wipe rather than a slide, and that is forced rather than chosen.** The draw
 list has six operations and none of them is a transform, so there is no way to

@@ -88,7 +88,7 @@ describe('the character sheet', () => {
     const { screen } = harness();
     const spent: string[] = [];
     screen.onSpend = (id) => spent.push(id);
-    screen.rowFor('might.toughness')?.spendButton.onPress?.();
+    screen.rowFor('might.toughness')?.spendButton.onPress?.(0);
     expect(spent).toEqual(['might.toughness']);
   });
 
@@ -96,7 +96,7 @@ describe('the character sheet', () => {
   it('does not raise a level itself when the button is pressed', () => {
     const { screen } = harness();
     screen.onSpend = () => undefined;
-    screen.rowFor('might.toughness')?.spendButton.onPress?.();
+    screen.rowFor('might.toughness')?.spendButton.onPress?.(0);
     expect(screen.rowFor('might.toughness')?.skill?.level).toBe(2);
   });
 
