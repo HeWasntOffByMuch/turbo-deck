@@ -162,6 +162,16 @@ const PURE_RENDER = [
   // The shop's view-model (spec 130), which asks the server's own buy/sell
   // whether a button is live.
   'src/render/iso3d/world/shop-model.ts',
+  // Who hears an input once the interface has been offered it (spec 131). The
+  // ordering that decides whether the game hears you is arithmetic over two
+  // booleans, and it belongs somewhere it can be replayed rather than clicked.
+  'src/render/iso3d/world/ui-routing.ts',
+  // The interface's tree, its windows and what they are handed (spec 131). The
+  // whole mount except the canvas, kept pure for one specific reason: mounting
+  // an interface over the sim gets the same assertion animation got -- the same
+  // fight twice, once with the screens driven and once without, identical
+  // authoritative state -- and that is impossible if running it needs a canvas.
+  'src/render/iso3d/world/ui-screens.ts',
   'src/render/iso3d/world/*.test.ts',
   // The Studio tab's decision-making half (spec 109). image-check.ts measures a
   // reference image and plan.ts derives whether a generation establishes a rig
