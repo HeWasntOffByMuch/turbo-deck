@@ -37,6 +37,11 @@ export class Tooltip extends StyledWidget {
   viewport: Size = { width: 0, height: 0 };
 
   private text = '';
+
+  /** What it is currently saying. Read by tests and by nothing else. */
+  get label(): string {
+    return this.text;
+  }
   private anchor: Point = { x: 0, y: 0 };
   private since = -1;
   private lines: readonly string[] = [];

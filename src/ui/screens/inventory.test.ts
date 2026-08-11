@@ -357,4 +357,216 @@ describe('layout', () => {
     expect(says(1)).toBe('potion x6');
     expect(says(9)).toBe('');
   });
+
+  // --- spec 136 ---------------------------------------------------------
+
+  /** A click, through the gesture the router would deliver for a short press. */
+  function clickCell(
+    test: Harness,
+    ref: { container: 'inventory' | 'equipment'; index: number },
+    button = 0,
+    mods: Modifiers = NO_MODIFIERS,
+  ): void {
+    const cell = test.screen.cellAt(ref);
+    if (!cell) throw new Error('no such cell');
+    const pos = {
+      x: cell.rect.x + Math.floor(cell.rect.width / 2),
+      y: cell.rect.y + Math.floor(cell.rect.height / 2),
+    };
+    test.screen.clickCell(cell, {
+      kind: 'click',
+      pos,
+      delta: { x: 0, y: 0 },
+      button,
+      mods,
+      time: 0,
+    });
+  }
+
+  describe('clicking to carry (spec 136)', () => {
+    it('takes on the first click and puts down on the second', () => {
+      const test = harness();
+      clickCell(test, inv(0));
+      // In hand, and nothing has moved: the screen never edits itself.
+      expect(test.screen.drag.active).not.toBeNull();
+      expect(test.moves).toEqual([]);
+
+      clickCell(test, inv(5));
+      expect(test.screen.drag.active).toBeNull();
+      expect(test.moves).toEqual([{ from: inv(0), to: inv(5), count: 0 }]);
+    });
+
+    /**
+     * The two gestures are one state machine reached two ways, so they must
+     * produce the same request -- otherwise "it worked when I dragged it" is a
+     * real sentence and one of the two paths is wrong.
+     */
+    it('reaches the same move a drag would', () => {
+      const dragged = harness();
+      dragBetween(dragged, inv(0), inv(5));
+
+      const clicked = harness();
+      clickCell(clicked, inv(0));
+      clickCell(clicked, inv(5));
+
+      expect(clicked.moves).toEqual(dragged.moves);
+    });
+
+    it('leaves it in hand when the cell refuses', () => {
+      const test = harness();
+      // A sword into the head slot: refused, and there is no floor to lose it on.
+      clickCell(test, inv(0));
+      clickCell(test, worn(2));
+      expect(test.screen.drag.active).not.toBeNull();
+      expect(test.moves).toEqual([]);
+    });
+
+    it('does nothing on an empty cell with empty hands', () => {
+      const test = harness();
+      clickCell(test, inv(20));
+      expect(test.screen.drag.active).toBeNull();
+      expect(test.moves).toEqual([]);
+    });
+
+    it('still halves a stack when shift is held', () => {
+      const test = harness();
+      // Slot 1 holds six potions; half of six is three.
+      clickCell(test, inv(1), 0, { ...NO_MODIFIERS, shift: true });
+      clickCell(test, inv(9));
+      expect(test.moves[0]?.count).toBe(3);
+    });
+  });
+
+  describe('right-clicking to equip (spec 136)', () => {
+    it('sends a bag item to the slot it names', () => {
+      const test = harness();
+      // Slot 0 holds a sword, which is `mainHand` -- the first paperdoll slot.
+      clickCell(test, inv(0), 2);
+      expect(test.moves).toEqual([{ from: inv(0), to: worn(0), count: 0 }]);
+    });
+
+    it('sends a worn item back to the first free bag cell', () => {
+      const test = harness(
+        viewOf({
+          worn: {
+            mainHand: item('sword', 'mainHand'),
+            offHand: null,
+            head: null,
+            chest: null,
+            legs: null,
+            trinket: null,
+          },
+        }),
+      );
+      clickCell(test, worn(0), 2);
+      const move = test.moves[0];
+      expect(move?.from).toEqual(worn(0));
+      expect(move?.to.container).toBe('inventory');
+      // The first cell that is actually empty, not merely the first cell.
+      expect(test.screen.bagSlots[move?.to.index ?? -1]?.item).toBeNull();
+    });
+
+    it('does nothing for something that is not equipment', () => {
+      const test = harness();
+      // Slot 1 is a potion: no `slot`, so it is not equipment.
+      clickCell(test, inv(1), 2);
+      expect(test.moves).toEqual([]);
+    });
+
+    it('does nothing while something is in hand', () => {
+      const test = harness();
+      clickCell(test, inv(0));
+      clickCell(test, inv(1), 2);
+      expect(test.moves).toEqual([]);
+    });
+  });
+
+  describe('the tooltip (spec 136)', () => {
+    it('says what the item under the pointer is, after the delay', () => {
+      const test = harness();
+      const cell = test.screen.cellAt(inv(0));
+      if (!cell) throw new Error('no cell');
+      test.screen.pointerMoved({ x: cell.rect.x + 2, y: cell.rect.y + 2 }, 0);
+      test.screen.updateTooltip(0);
+      expect(test.screen.tooltip.visible).toBe(false);
+
+      test.screen.updateTooltip(THEME.input.tooltipDelayMs + 1);
+      expect(test.screen.tooltip.visible).toBe(true);
+      expect(test.screen.tooltip.label).toContain('sword');
+    });
+
+    it('says nothing over an empty cell', () => {
+      const test = harness();
+      const cell = test.screen.cellAt(inv(20));
+      if (!cell) throw new Error('no cell');
+      test.screen.pointerMoved({ x: cell.rect.x + 2, y: cell.rect.y + 2 }, 0);
+      test.screen.updateTooltip(THEME.input.tooltipDelayMs + 1);
+      expect(test.screen.tooltip.visible).toBe(false);
+    });
+  });
+
+  /**
+   * The gutter belongs to the nearer cell, and to exactly one of them (spec 136).
+   *
+   * This is the property `SLOT_CATCH` exists for and the reason it is half the
+   * grid's gap rather than any other number. Overlap would be worse than the gap
+   * it fixes: two cells claiming a pixel makes the winner depend on child order,
+   * which is invisible on screen and therefore unfixable by a player.
+   *
+   * Walked over every pixel of the grid rather than sampled, because the failure
+   * is one column wide.
+   */
+  describe('the drop gutter (spec 136)', () => {
+    it('gives every pixel of the bag to exactly one cell', () => {
+      const test = harness();
+      const cells = test.screen.bagSlots;
+      const first = cells[0];
+      const last = cells[cells.length - 1];
+      if (!first || !last) throw new Error('no cells');
+
+      const bounds = {
+        left: first.rect.x,
+        top: first.rect.y,
+        right: last.rect.x + last.rect.width,
+        bottom: last.rect.y + last.rect.height,
+      };
+
+      let claimedTwice = 0;
+      let claimedNever = 0;
+      for (let y = bounds.top; y < bounds.bottom; y += 1) {
+        for (let x = bounds.left; x < bounds.right; x += 1) {
+          let claims = 0;
+          for (const cell of cells) {
+            const rect = cell.catchRect();
+            if (x < rect.x || x >= rect.x + rect.width) continue;
+            if (y < rect.y || y >= rect.y + rect.height) continue;
+            claims += 1;
+          }
+          if (claims > 1) claimedTwice += 1;
+          if (claims === 0) claimedNever += 1;
+        }
+      }
+      expect(claimedTwice).toBe(0);
+      expect(claimedNever).toBe(0);
+    });
+
+    /** ...and the gap was real before it, so the test above is worth having. */
+    it('was not already covered by the drawn rects alone', () => {
+      const test = harness();
+      const cells = test.screen.bagSlots;
+      const a = cells[0];
+      const b = cells[1];
+      if (!a || !b) throw new Error('no cells');
+      expect(b.rect.x).toBeGreaterThan(a.rect.x + a.rect.width);
+      // ...and the catch closes it exactly, with nothing to spare.
+      expect(a.catchRect().x + a.catchRect().width).toBe(b.catchRect().x);
+    });
+
+    it('leaves the drawn rect alone, so nothing looks different', () => {
+      const test = harness();
+      const cell = test.screen.bagSlots[0];
+      expect(cell?.rect.width).toBe(20);
+      expect(cell?.rect.height).toBe(20);
+    });
+  });
 });

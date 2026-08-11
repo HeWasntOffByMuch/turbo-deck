@@ -18,12 +18,13 @@
 
 import { Column, Grid, Row } from '../core/containers.js';
 import { DragController, type DragPayload } from '../core/drag.js';
-import type { EventContext, Modifiers } from '../core/events.js';
+import type { EventContext, Gesture, Modifiers } from '../core/events.js';
 import { uniformInsets, type Point } from '../core/geom.js';
 import type { FocusManager } from '../core/focus.js';
 import type { Widget } from '../core/widget.js';
 import type { Theme } from '../theme/theme.js';
 import { DragGhost } from '../widgets/drag-ghost.js';
+import { Tooltip } from '../widgets/tooltip.js';
 import { ItemSlot, SLOT_SIDE, type ItemDrag, type ItemView, type SlotRef } from '../widgets/item-slot.js';
 import { Label } from '../widgets/label.js';
 
@@ -74,6 +75,14 @@ const DEFAULT_SLOTS = 24;
 
 export class InventoryScreen extends Row {
   readonly ghost = new DragGhost();
+  /**
+   * What a hovered item says about itself (spec 136).
+   *
+   * Owned here and placed in the tooltip layer by the mount, exactly as the
+   * ghost is -- both are things this screen produces that belong above every
+   * window rather than inside one.
+   */
+  readonly tooltip = new Tooltip('itemTooltip');
   readonly drag: DragController;
   onMove: ((intent: MoveIntent) => void) | null = null;
   /**
@@ -213,6 +222,9 @@ export class InventoryScreen extends Row {
     cell.onActivate = (slot) => {
       this.activate(slot);
     };
+    cell.onClick = (slot, gesture) => {
+      this.clickCell(slot, gesture);
+    };
     cell.onDropItem = (drag, to) => {
       this.emitMove(drag, to);
     };
@@ -233,6 +245,109 @@ export class InventoryScreen extends Row {
     const count = mods?.shift ? Math.max(1, Math.floor(item.count / 2)) : item.count;
     this.drag.begin({ source: slot, data: { from: slot.ref, item, count } satisfies ItemDrag }, at);
     return true;
+  }
+
+  /**
+   * A click on a cell (spec 136).
+   *
+   * The genre's gesture rather than the web's: a click takes what is here and
+   * the next click puts it down, so moving something across the bag is two taps
+   * rather than a press held over a distance. Press-drag-release still works and
+   * costs nothing to keep -- a drag that began *is* a carry that began, and
+   * letting go over a cell is a click on it. Two ways into one state machine.
+   */
+  clickCell(slot: ItemSlot, gesture: Gesture): void {
+    if (gesture.button === 2) {
+      this.equipToggle(slot);
+      return;
+    }
+    if (gesture.button !== 0) return;
+    if (this.drag.active) {
+      this.placeOn(slot);
+      return;
+    }
+    this.pickUp(slot, gesture.pos, gesture.mods);
+  }
+
+  /**
+   * Put down what is in hand, here.
+   *
+   * A cell that refuses leaves the item in hand rather than dropping it: a
+   * mis-aimed click costs a click, and there is no floor in this game to lose
+   * things on.
+   */
+  placeOn(slot: ItemSlot): boolean {
+    if (!this.drag.active) return false;
+    return this.drag.dropOnTarget(slot);
+  }
+
+  /**
+   * Where the cursor is, when nothing is holding a button (spec 136).
+   *
+   * Two things need it and neither can get it from a gesture. A carry follows
+   * the cursor with no button down, so the ghost has nothing to ride on; and a
+   * tooltip is about *hovering*, which is by definition not a press. The mount
+   * hands both in from the one place that sees every move.
+   */
+  pointerMoved(at: Point, nowMs: number): void {
+    if (this.drag.active) this.drag.moveTo(at);
+    const over = this.cellUnder(at);
+    this.tooltip.point(over ? this.tooltipFor(over) : null, at, nowMs);
+  }
+
+  /** Advance the tooltip's delay. Called once a frame by the mount. */
+  updateTooltip(nowMs: number): void {
+    this.tooltip.update(nowMs, this.options.theme.input.tooltipDelayMs);
+  }
+
+  /** The cell the pointer is over, catch included, or null. */
+  cellUnder(at: Point): ItemSlot | null {
+    for (const cell of [...this.bagCells, ...this.wornCells]) {
+      if (!cell.visible || !cell.item) continue;
+      const rect = cell.catchRect();
+      if (at.x < rect.x || at.x >= rect.x + rect.width) continue;
+      if (at.y < rect.y || at.y >= rect.y + rect.height) continue;
+      return cell;
+    }
+    return null;
+  }
+
+  /**
+   * Right-click: wear it, or take it off (spec 136).
+   *
+   * The screen does not decide what equips where. It reads `item.slot`, which is
+   * already on the view-model, and emits the same move a drag would -- so the
+   * swap with whatever is worn is `applyMove`'s, which has done exactly that
+   * since spec 126. An item with no slot is not equipment and nothing happens.
+   */
+  equipToggle(slot: ItemSlot): void {
+    const item = slot.item;
+    if (!item || this.drag.active) return;
+
+    if (slot.ref.container === 'equipment') {
+      const free = this.firstFreeBagIndex();
+      if (free === null) return;
+      this.onMove?.({ from: slot.ref, to: { container: 'inventory', index: free }, count: 0 });
+      return;
+    }
+    if (item.slot === null) return;
+    const target = this.slotIds.indexOf(item.slot);
+    if (target < 0) return;
+    this.onMove?.({ from: slot.ref, to: { container: 'equipment', index: target }, count: 0 });
+  }
+
+  /**
+   * The first empty bag cell, or null when there is none.
+   *
+   * Taking something off needs somewhere to put it, and the server would refuse
+   * a move into a full bag anyway -- answering here means the click does nothing
+   * visible rather than producing a refusal the player did not ask for.
+   */
+  private firstFreeBagIndex(): number | null {
+    for (const [index, cell] of this.bagCells.entries()) {
+      if (!cell.item) return index;
+    }
+    return null;
   }
 
   /** Enter on a cell: pick up if hands are empty, put down if they are not. */

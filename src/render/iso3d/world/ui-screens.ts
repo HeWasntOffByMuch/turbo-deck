@@ -207,6 +207,9 @@ export class UiScreens {
       options.onMove(intent.from, intent.to, intent.count);
     };
     this.layers.place('dragGhost', this.inventory.ghost);
+    // Above every window, like the ghost, because a tooltip about a cell in one
+    // window must not be clipped by the window next to it (spec 136).
+    this.layers.place('tooltip', this.inventory.tooltip);
 
     this.character = new CharacterScreen({ theme: THEME });
     this.character.onSpend = (skillId) => {
@@ -371,6 +374,11 @@ export class UiScreens {
       if (!this.isOpen('trade')) this.show('trade');
       this.trade.setTrade(this.endedTrade);
     }
+
+    // The tooltip's delay is time passing rather than an event, so it is
+    // advanced once a frame from the time the mount was handed (spec 136).
+    this.inventory.tooltip.viewport = this.root.viewport;
+    this.inventory.updateTooltip(nowMs);
 
     this.syncContext();
     this.root.update(nowMs);
@@ -602,6 +610,10 @@ export class UiScreens {
   handlePointer(phase: 'down' | 'up' | 'move', pos: Point, button: number, mods: Modifiers): boolean {
     if (phase === 'down') this.root.focus.focus(this.layers.hitTest(pos));
     const consumed = this.root.handle({ kind: 'pointer', phase, pos, button, mods, time: this.now });
+    // A move with no button down reaches no gesture, and two things need it: a
+    // carry follows the cursor with nothing held, and a tooltip is by definition
+    // about hovering (spec 136). This is the one place that sees every move.
+    if (phase === 'move' && this.isOpen('inventory')) this.inventory.pointerMoved(pos, this.now);
     return !reachesGameplay(this.routingOf(consumed, 'pointer'));
   }
 
