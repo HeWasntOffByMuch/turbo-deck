@@ -1289,6 +1289,25 @@ Two things the sheet caught:
 - **The warm pool is a scorch, and frost does not scorch.** `glow` in ice colours
   is a dark blue stain under the wave. The shockwave turns it off.
 
+### And then the wave got a second job (spec 127)
+
+A right-click on the ground used to park a gold octahedron there for the whole
+walk. It answered "did my click land" in the first quarter second and was
+scenery for the rest, and it was the only thing on screen that was a *symbol*
+rather than something that happened.
+
+So the wave pair moved out of `burst` into `waveEmitters(scale, hot, warm)` and
+`order_move` is that pair on its own — no crystal, no rock, nothing thrown,
+because an order throws nothing. Priority 3 like a telegraph: two particles cost
+nothing, and a click whose answer was dropped under budget pressure reads as a
+click that missed.
+
+What the screenshots settled: **a wavefront has a smallest legible size.** The
+ring mesh is a fixed fraction of its own radius thick, so the first cut — a
+third smaller — came out as four dashes at the virtual resolution rather than as
+a ring. It sits just inside a selected unit's sigil now, which is as quiet as
+this shape goes.
+
 ---
 
 ## 6. Damage-type colour and shape language
