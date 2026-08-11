@@ -1,3 +1,4 @@
+import { SEA_LEVEL } from '../shared/world.js';
 import { createLayer, type TerrainFeature } from './features.js';
 import { createWorld, type Rect, type TerrainWorld } from './types.js';
 
@@ -39,7 +40,7 @@ export interface ArenaWorldOptions {
 export const DEFAULT_ARENA_WORLD: ArenaWorldOptions = { playWidth: 1200, playHeight: 900, bleed: 1600 };
 
 /** Sea level. Below the play area's lowest ground, so only the basins flood. */
-export const WATER_LEVEL = -60;
+export const WATER_LEVEL = SEA_LEVEL;
 /** Underside of the ground layer; open edges skirt down to it. */
 const BASE_Y = -260;
 /**

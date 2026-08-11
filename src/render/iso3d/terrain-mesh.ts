@@ -97,6 +97,21 @@ export interface TerrainMeshHandle {
    * the world. Returns false if nothing was drawn there.
    */
   remove(layerId: string, cx: number, cz: number): boolean;
+  /**
+   * Teach the mesh a layer that was not there when it was built (spec 123).
+   *
+   * The layer set used to be fixed at construction, which was true for as long
+   * as a map's layers were. Drawing a tier adds one to the store mid-session,
+   * and `rebuild` silently draws nothing for a chunk whose layer it has never
+   * heard of -- so the formation would be walked on and collided with and
+   * simply not be visible. Replacing an id already known re-points it, which is
+   * what an undo that puts a layer back needs.
+   */
+  addLayer(layer: MeshLayer): void;
+  /** Forget a layer and drop everything drawn for it. Returns false if unknown. */
+  removeLayer(layerId: string): boolean;
+  /** Which layers are currently drawable, so a caller can reconcile against a store. */
+  layerIds(): string[];
   dispose(): void;
 }
 
@@ -243,7 +258,10 @@ function buildChunk(
       surface.quad(c00, c01, c11, c10, color, cavity);
 
       // Skirt every edge that faces open air, dropped to the layer's underside.
-      const cliff = linearColor(TERRAIN_CLIFF_COLORS[tone] ?? TERRAIN_CLIFF_COLORS[0]);
+      // The wall takes the material of the ground it hangs from (spec 123), so
+      // a coastline cuts as sand and a rock tier cuts as grey slate.
+      const cliffPair = TERRAIN_CLIFF_COLORS[material];
+      const cliff = linearColor(cliffPair[tone] ?? cliffPair[0]);
       const wall = (a: Corner, b: Corner): void => {
         walls.quad(a, b, [b[0], baseY, b[2]], [a[0], baseY, a[2]], cliff);
       };
@@ -456,6 +474,22 @@ export function buildTerrainMeshFromChunks(
       if (layer) draw(layer, chunk);
     },
     remove: erase,
+    addLayer(layer: MeshLayer): void {
+      byId.set(layer.id, layer);
+    },
+    removeLayer(layerId: string): boolean {
+      if (!byId.delete(layerId)) return false;
+      // Everything drawn for it goes with it, or a tier that was carved away
+      // keeps its geometry in the scene with nothing behind it.
+      for (const key of [...drawn.keys()]) {
+        const slot = drawn.get(key);
+        if (slot?.chunk.layerId === layerId) erase(layerId, slot.chunk.coord.cx, slot.chunk.coord.cz);
+      }
+      return true;
+    },
+    layerIds(): string[] {
+      return [...byId.keys()];
+    },
     dispose(): void {
       // Water owns a material and a shore texture of its own, so it is freed
       // first and taken out of the group; the surface and wall materials are

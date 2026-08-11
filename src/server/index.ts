@@ -32,7 +32,7 @@ import { BROADCAST_RATE, SERVER_TICK_RATE } from './config.js';
 import { WebSocketTransport } from './net/transport-ws.js';
 import { GameServer } from './server.js';
 import { createStudio } from './studio/index.js';
-import { buildWorld, buildWorldFromMap } from './world/build.js';
+import { buildWorld, buildWorldFromMap, warmRouting } from './world/build.js';
 import { loadMapFile, mapPathFromEnv } from './world/map-file.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -71,6 +71,12 @@ const world =
         console.log(`[server] map ${file.path} (seed ${file.doc.seed})`);
         return buildWorldFromMap(file.doc, file.text);
       })();
+
+// Route planning wants the ground sampled into a grid, which is around a second
+// on a real map (spec 130). Doing it here means it lands in boot, beside reading
+// the map, rather than inside the first tick where a monster's line to a player
+// is blocked.
+warmRouting(world);
 
 /**
  * The unit authoring service (spec 108). Mounted unconditionally; it refuses to

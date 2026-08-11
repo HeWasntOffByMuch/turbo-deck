@@ -24,3 +24,14 @@ export const WORLD_MIN_X = -WORLD_BLEED;
 export const WORLD_MIN_Y = -WORLD_BLEED;
 export const WORLD_MAX_X = PLAY_WIDTH + WORLD_BLEED;
 export const WORLD_MAX_Y = PLAY_HEIGHT + WORLD_BLEED;
+
+/**
+ * Sea level. Below the play area's lowest ground, so only the basins flood.
+ *
+ * Here for the same reason the extent above is (spec 130): the terrain draws
+ * the shore at this height, the sim refuses to let a body stand under it, and
+ * the router will not plan a route through it. Three readers of one number, so
+ * it is written down once. `src/terrain/world.ts` re-exports it as `WATER_LEVEL`,
+ * which is what the terrain has always called it.
+ */
+export const SEA_LEVEL = -60;

@@ -728,6 +728,7 @@ export class WorldScene {
     return hit ? { x: hit.x, y: hit.z } : { x: this.target.x, y: this.target.z };
   }
 
+
   /**
    * The unit at a canvas pixel, or null for empty ground (spec 070).
    *
