@@ -22,7 +22,7 @@
 import type { DragPayload, DropTarget } from '../core/drag.js';
 import type { DrawList } from '../core/draw-list.js';
 import type { EventContext, Gesture } from '../core/events.js';
-import type { Constraint, Rect, Size } from '../core/geom.js';
+import type { Constraint, Point, Rect, Size } from '../core/geom.js';
 import { drawNineSlice, drawText } from '../core/paint.js';
 import type { LayoutContext, PaintContext } from '../core/widget.js';
 import { fontById, measureText } from '../text/font.js';
@@ -68,6 +68,26 @@ export function isItemDrag(data: unknown): data is ItemDrag {
 /** The side of a cell, in UI pixels. A 12px icon with two pixels of air. */
 export const SLOT_SIDE = 20;
 
+/**
+ * How far past its own edge a cell answers the pointer, in UI pixels (spec 136).
+ *
+ * The gutter between cells belongs to nobody, so a release a couple of pixels
+ * off lands on nothing and the item goes back where it came from. At a UI scale
+ * of 1 that gutter is four real pixels and it eats a genuine fraction of drops.
+ *
+ * **Exactly half the gutter**, so the expanded rects *tile*: every point in the
+ * grid belongs to one cell and no point belongs to two. Overlap would be worse
+ * than the gap -- two cells claiming a pixel makes the winner depend on child
+ * order, which is invisible and therefore unfixable by a player. Half is the
+ * only number with that property, which is why it is derived from the grid's own
+ * spacing rather than typed.
+ *
+ * The *paint* rect is untouched. A cell that drew itself two pixels larger would
+ * close the gutter it is reaching into, and the grid would stop reading as a
+ * grid.
+ */
+export const SLOT_CATCH = 2;
+
 export class ItemSlot extends StyledWidget implements DropTarget {
   item: ItemView | null = null;
   /** For an equipment cell: the slot id it takes. Null accepts anything. */
@@ -92,11 +112,21 @@ export class ItemSlot extends StyledWidget implements DropTarget {
   onDragDrop: ((gesture: Gesture) => void) | null = null;
   /** Enter or Space, for the keyboard's pick-up/put-down. */
   onActivate: ((slot: ItemSlot) => void) | null = null;
+  /**
+   * A press and release that did not become a drag (spec 136).
+   *
+   * The primary gesture now: a click takes what is here, and the next click puts
+   * it down. The router already tells `click` and `dragEnd` apart -- a press that
+   * passed the drag threshold produces one, a press that did not produces the
+   * other -- so the two ways of moving an item cannot both fire for one press.
+   */
+  onClick: ((slot: ItemSlot, gesture: Gesture) => void) | null = null;
 
   onGesture(gesture: Gesture): void {
     if (gesture.kind === 'dragStart') this.onPickUp?.(this, gesture);
     else if (gesture.kind === 'drag') this.onDragMove?.(gesture);
     else if (gesture.kind === 'dragEnd') this.onDragDrop?.(gesture);
+    else if (gesture.kind === 'click') this.onClick?.(this, gesture);
   }
 
   onEvent(context: EventContext): void {
@@ -148,6 +178,33 @@ export class ItemSlot extends StyledWidget implements DropTarget {
 
   protected override measureSelf(_constraint: Constraint, _context: LayoutContext): Size {
     return { width: SLOT_SIDE, height: SLOT_SIDE };
+  }
+
+  /** The rect this cell answers the pointer over: its own, plus the catch. */
+  catchRect(): Rect {
+    return {
+      x: this.rect.x - SLOT_CATCH,
+      y: this.rect.y - SLOT_CATCH,
+      width: this.rect.width + SLOT_CATCH * 2,
+      height: this.rect.height + SLOT_CATCH * 2,
+    };
+  }
+
+  /**
+   * Hit-tested over {@link catchRect} rather than the drawn rect.
+   *
+   * The one place the two are allowed to differ, and the whole of spec 136's
+   * gutter fix. Everything else about this widget -- what it draws, what it
+   * measures to, where the grid puts it -- is unchanged.
+   */
+  protected override containsForHitTest(point: Point): boolean {
+    const rect = this.catchRect();
+    return (
+      point.x >= rect.x &&
+      point.x < rect.x + rect.width &&
+      point.y >= rect.y &&
+      point.y < rect.y + rect.height
+    );
   }
 
   protected override paintSelf(out: DrawList, context: PaintContext): void {

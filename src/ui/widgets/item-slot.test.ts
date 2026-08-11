@@ -12,7 +12,15 @@ import type { DragPayload } from '../core/drag.js';
 import { bakeAtlas } from '../render/atlas.js';
 import { FULL_MOTION } from '../core/motion.js';
 import { THEME } from '../theme/theme.js';
-import { ItemSlot, isItemDrag, paintItem, type ItemDrag, type ItemView } from './item-slot.js';
+import {
+  ItemSlot,
+  isItemDrag,
+  paintItem,
+  SLOT_CATCH,
+  SLOT_SIDE,
+  type ItemDrag,
+  type ItemView,
+} from './item-slot.js';
 
 const ATLAS = bakeAtlas(THEME);
 
@@ -118,5 +126,83 @@ describe('paintItem', () => {
     const three = new DrawList();
     paintItem(three, PAINT, item('potion', null, 3), box);
     expect(carried.finish()).toEqual(three.finish());
+  });
+});
+
+describe('the catch around a cell (spec 136)', () => {
+  const NO_MODS = { shift: false, ctrl: false, alt: false, meta: false };
+
+  function gesture(kind: 'click' | 'dragStart' | 'dragEnd', button = 0) {
+    return {
+      kind,
+      pos: { x: 0, y: 0 },
+      delta: { x: 0, y: 0 },
+      button,
+      mods: NO_MODS,
+      time: 0,
+    } as const;
+  }
+
+  /** A cell placed where the grid would put it, so the rects are real. */
+  function placed(x: number, y: number): ItemSlot {
+    const cell = new ItemSlot({ container: 'inventory', index: 0 });
+    cell.rect = { x, y, width: SLOT_SIDE, height: SLOT_SIDE };
+    return cell;
+  }
+
+  it('answers the pointer past its own edge, by exactly the catch', () => {
+    const cell = placed(10, 10);
+    expect(cell.catchRect()).toEqual({
+      x: 10 - SLOT_CATCH,
+      y: 10 - SLOT_CATCH,
+      width: SLOT_SIDE + SLOT_CATCH * 2,
+      height: SLOT_SIDE + SLOT_CATCH * 2,
+    });
+  });
+
+  it('is half the gutter the grid leaves, so the catches tile', () => {
+    // The number's whole justification. Two cells a gutter apart: their catches
+    // meet exactly, with no pixel in both and no pixel in neither.
+    const gutter = THEME.spacing.xs;
+    expect(SLOT_CATCH * 2).toBe(gutter);
+    const a = placed(0, 0);
+    const b = placed(SLOT_SIDE + gutter, 0);
+    const left = a.catchRect();
+    const right = b.catchRect();
+    expect(left.x + left.width).toBe(right.x);
+  });
+
+  it('does not draw itself any bigger', () => {
+    // The paint rect is untouched, which is what keeps a grid reading as a grid
+    // -- and what makes this spec invisible to the goldens.
+    const cell = placed(10, 10);
+    expect(cell.rect).toEqual({ x: 10, y: 10, width: SLOT_SIDE, height: SLOT_SIDE });
+  });
+
+  it('hit-tests over the catch, and stops there', () => {
+    const cell = placed(10, 10);
+    const hits = (x: number, y: number): boolean => cell.hitTest({ x, y }) === cell;
+    expect(hits(10, 10)).toBe(true);
+    // Into the gutter above and to the left...
+    expect(hits(10 - SLOT_CATCH, 10 - SLOT_CATCH)).toBe(true);
+    // ...and one pixel further out, which is the next cell's half.
+    expect(hits(10 - SLOT_CATCH - 1, 10)).toBe(false);
+    expect(hits(10 + SLOT_SIDE + SLOT_CATCH, 10)).toBe(false);
+  });
+
+  it('reports a click, separately from a drag', () => {
+    const cell = placed(0, 0);
+    const seen: string[] = [];
+    cell.onClick = (_slot, g) => seen.push(`click:${g.button}`);
+    cell.onPickUp = () => seen.push('pickUp');
+    cell.onDragDrop = () => seen.push('drop');
+
+    cell.onGesture(gesture('click'));
+    cell.onGesture(gesture('click', 2));
+    cell.onGesture(gesture('dragStart'));
+    cell.onGesture(gesture('dragEnd'));
+    // The right button reaches the screen too: the cell reports what happened
+    // and the screen decides that button 2 means equip.
+    expect(seen).toEqual(['click:0', 'click:2', 'pickUp', 'drop']);
   });
 });
