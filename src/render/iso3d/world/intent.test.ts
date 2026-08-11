@@ -198,6 +198,37 @@ describe('RoutePlanner', () => {
     expect(next?.y).not.toBeCloseTo(450, 0);
   });
 
+  /**
+   * Spec 130. The same wall made of rock rather than of collider -- which is
+   * what a tier drawn in the map editor is. Nothing is in the way, so the
+   * planner used to hand back null and let the player march at the cliff.
+   */
+  it('routes around a ridge, which is not a collider at all', () => {
+    const ridge = {
+      colliders: createWorldColliders([], [], WORLD_BOUNDS),
+      radius: 16,
+      ground: { heightAt: (x: number, y: number) => (x >= 740 && x <= 780 && y >= 250 && y <= 650 ? 200 : 0) },
+    };
+    const planner = new RoutePlanner();
+    const next = planner.next({ x: 600, y: 450 }, { x: 900, y: 450 }, ridge, 0);
+
+    expect(next).not.toBeNull();
+    expect(planner.searches).toBe(1);
+    expect(next?.y).not.toBeCloseTo(450, 0);
+  });
+
+  it('still plans nothing when the ground between is walkable', () => {
+    const rolling = {
+      colliders: createWorldColliders([], [], WORLD_BOUNDS),
+      radius: 16,
+      // A gentle rise: 20 units over 300, nothing a body notices.
+      ground: { heightAt: (x: number) => x / 15 },
+    };
+    const planner = new RoutePlanner();
+    expect(planner.next({ x: 600, y: 450 }, { x: 900, y: 450 }, rolling, 0)).toBeNull();
+    expect(planner.searches).toBe(0);
+  });
+
   /** The point of the cache: one search, then many ticks of following it. */
   it('searches once and follows the route for many ticks', () => {
     const planner = new RoutePlanner();

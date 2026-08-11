@@ -27,7 +27,7 @@ import { GameClient } from '../../../server/client/game-client.js';
 import { createWorldPredictor } from '../../../server/client/prediction.js';
 import { LoopbackTransport } from '../../../server/net/transport-loop.js';
 import { GameServer } from '../../../server/server.js';
-import { buildWorldFromMap } from '../../../server/world/build.js';
+import { buildWorldFromMap, warmRouting } from '../../../server/world/build.js';
 import {
   BROADCAST_EVERY_N_TICKS,
   SERVER_PLAYER_RADIUS,
@@ -96,6 +96,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // being drawn by the critter rig after being pointed at an authored unit.
   setAuthoredUnits({ ...DEFAULT_AUTHORED_UNITS, ...unitsFromQuery() });
   const world = buildWorldFromMap(parseMap(mapText), mapText);
+  // Same reason as the server (spec 130): sampling the ground into a nav grid is
+  // around a second on a real map, and it belongs beside the rest of the page's
+  // start-up rather than in the frame where the first move order is given.
+  warmRouting(world);
 
   const transport = new LoopbackTransport();
   const server = new GameServer({ seed, built: world, transport });
@@ -124,7 +128,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   });
 
   /** The world a move order routes through -- the one the server is colliding against. */
-  const pathWorld = { colliders: world.colliders, radius: SERVER_PLAYER_RADIUS };
+  const pathWorld = { colliders: world.colliders, radius: SERVER_PLAYER_RADIUS, ground: world.sampler };
   const planner = new RoutePlanner();
 
   // The scene draws the map the *client* was sent, not the document the in-tab
