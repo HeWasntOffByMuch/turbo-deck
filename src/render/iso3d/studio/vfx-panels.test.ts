@@ -26,7 +26,7 @@ import {
 import { effectFromJson, effectToJson } from './vfx-json.js';
 import { EFFECTS } from '../vfx/registry.js';
 import { compileRegistry } from '../vfx/compile.js';
-import type { Emitter } from '../vfx/types.js';
+import type { EffectDefinition, Emitter } from '../vfx/types.js';
 import type { Curve, Gradient } from '../vfx/curve.js';
 
 const BOX: Box = { x: 10, y: 20, width: 200, height: 100 };
@@ -41,6 +41,26 @@ function sampleEmitter(): Emitter {
 // --- the field table ---------------------------------------------------------
 
 describe('EMITTER_FIELDS', () => {
+  it('lets a person change how many particles there are', () => {
+    // Spec 126. Every other knob was on the panel and this one was not, which
+    // made the tool useless for the first thing anybody reaches for.
+    const paths = new Set(EMITTER_FIELDS.map((field) => field.path));
+    for (const path of ['emission.kind', 'emission.count', 'emission.perSecond', 'emission.delayTicks', 'emission.overTicks']) {
+      expect(paths.has(path), path).toBe(true);
+    }
+  });
+
+  it('covers every emission key a shipped emitter actually uses', () => {
+    const paths = new Set(EMITTER_FIELDS.map((field) => field.path));
+    for (const effect of EFFECTS) {
+      for (const emitter of effect.emitters) {
+        for (const key of Object.keys(emitter.emission)) {
+          expect(paths.has(`emission.${key}`), `emission.${key}`).toBe(true);
+        }
+      }
+    }
+  });
+
   it('covers every key of Emitter exactly once, or names it as deliberately unedited', () => {
     // The check that makes a new field in the format fail a test rather than
     // being silently un-tunable -- which is invisible until somebody goes
@@ -348,6 +368,27 @@ describe('effectToJson and effectFromJson', () => {
       }),
     );
     expect('error' in result && result.error).toContain('size');
+  });
+
+  it('round-trips an edited particle count', () => {
+    // Tuning is the authoring workflow, so the number a person just changed has
+    // to survive the export -- a count that only existed in the preview is the
+    // exact failure the round-trip test family exists for.
+    const source = EFFECTS.find((effect) => effect.id === 'hit_physical');
+    expect(source).toBeDefined();
+    const edited: EffectDefinition = {
+      ...(source as EffectDefinition),
+      emitters: (source as EffectDefinition).emitters.map((emitter) =>
+        emitter.id === 'spikes'
+          ? (writeField(emitter, 'emission.count', 44) as typeof emitter)
+          : emitter,
+      ),
+    };
+    const parsed = effectFromJson(effectToJson(edited));
+    expect('effect' in parsed).toBe(true);
+    if (!('effect' in parsed)) return;
+    const spikes = parsed.effect.emitters.find((emitter) => emitter.id === 'spikes');
+    expect(spikes?.emission).toEqual({ kind: 'burst', count: 44 });
   });
 
   it('keeps an absent optional field absent rather than writing undefined', () => {

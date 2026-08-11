@@ -1,8 +1,8 @@
 # VFX and particles — plan
 
 Status: **Phases 0–3 landed. Fire and smoke re-authored as solids (spec 123),
-auras as drawn sigils (spec 124), impacts as crystals (spec 125) — the last of
-those at its review gate.**
+auras as drawn sigils (spec 124), impacts as crystals (spec 125), the shockwave
+combined and the counts made tunable (spec 126) — the last at its review gate.**
 
 | Phase | State |
 |---|---|
@@ -15,7 +15,8 @@ those at its review gate.**
 | 3 — the VFX tab and the stress numbers (spec 122) | done |
 | art direction: fire and smoke as solids (spec 123) | done |
 | art direction: auras as drawn sigils (spec 124) | done |
-| art direction: impacts as crystals (spec 125) | **at the review gate** |
+| art direction: impacts as crystals (spec 125) | done |
+| the shockwave, and tunable counts (spec 126) | **at the review gate** |
 
 This is the living document for the VFX arc. It is updated as decisions land, and
 it is where the damage-type colour/shape language is written down so future
@@ -1243,6 +1244,50 @@ tuning came out of it:
   building when something actually calls `explosion_*`.
 - Nothing plays the explosions yet: no ability names one. They are reachable from
   the Studio VFX tab and from a `play()` call that does not exist.
+
+---
+
+## 5k. The shockwave, and the one knob the tool would not turn (spec 126)
+
+### The panel refused to change how many
+
+`EMITTER_FIELDS` generates the whole parameter panel from a table, and `emission`
+was in `UNEDITED_KEYS` — declared deliberately unedited, with a real reason: it is
+a tagged union whose shape changes with its kind. The consequence was that the
+number a person reaches for *first* while tuning, how many particles, was the one
+number the tool would not move. Everything else had a slider.
+
+It is five rows now: `emission.kind`, `count`, `perSecond`, `delayTicks`,
+`overTicks`. A row that does not apply to the current kind is inert rather than
+hidden — the panel is generated from a flat table, and a conditional row is a
+second mechanism bought for one saved click. The edit round-trips through the
+JSON export, which is the point of the whole tab.
+
+**No global "more particles" multiplier.** The budget already scales counts
+*down* under pressure (`INTENSITY_SCALE`), and a second global scaling them up
+would fight it. Density is per-effect config, which is the rule the arc is built
+on. The shipped bursts also got roughly half again as many spikes, shards, chunks
+and dust — they were authored against a budget that turned out to have room.
+
+### The shockwave is the combined thing
+
+`shockwave_ring` was a single dithered ground quad that grew. The reference is a
+crystal, streaks laid flat along the ground, a crater of scattered rock **and** a
+bright wavefront outrunning all of it. Spec 125 had built four of those five, so
+this is `burst({ flat: true, ring: true })` in frost colours — one more mesh
+(`ringMesh`, a plain flat annulus, deliberately not `rune-ring`: that one is a
+symbol, this is an edge) and two instances of it, a leading edge and a fainter
+half-step behind.
+
+Two things the sheet caught:
+
+- **A wavefront must not fade toward the ramp's dark end.** The halo ran
+  `warm → cool`, and on frost colours `cool` is a deep navy: additive or not, a
+  thinning ring that *saturates* as it dims left a dark hoop lying on the ground
+  after the effect was over, which reads as broken rather than as fading. It ends
+  on `warm` now.
+- **The warm pool is a scorch, and frost does not scorch.** `glow` in ice colours
+  is a dark blue stain under the wave. The shockwave turns it off.
 
 ---
 

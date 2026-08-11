@@ -6,6 +6,7 @@ import {
   ORIENT,
   orientOf,
   particleMesh,
+  ringMesh,
   runeRingMesh,
   needsVelocity,
   shadedShape,
@@ -58,6 +59,7 @@ const SHAPES: [string, () => MeshData][] = [
   ['shard', () => shardMesh()],
   ['starburst', () => starburstMesh()],
   ['chunk', () => chunkMesh()],
+  ['ring', () => ringMesh()],
 ];
 
 describe('the geometry is closed and sane', () => {
@@ -435,6 +437,51 @@ describe('the burst crystal', () => {
   });
 });
 
+describe('the wavefront', () => {
+  const mesh = ringMesh(0.13, 56);
+
+  it('lies on the ground, like the sigil and unlike everything else', () => {
+    for (let i = 1; i < mesh.positions.length; i += 3) {
+      expect(mesh.positions[i] ?? 1).toBe(0);
+    }
+    for (let i = 0; i < mesh.normals.length; i += 3) {
+      expect(Math.abs(mesh.normals[i + 1] ?? 0)).toBeCloseTo(1, 5);
+    }
+    expect(orientOf('ring')).toBe(ORIENT.exact);
+  });
+
+  it('is an annulus rather than a disc, at unit outer radius', () => {
+    let inner = Infinity;
+    let outer = 0;
+    for (let i = 0; i < mesh.positions.length; i += 3) {
+      const radius = Math.hypot(mesh.positions[i] ?? 0, mesh.positions[i + 2] ?? 0);
+      inner = Math.min(inner, radius);
+      outer = Math.max(outer, radius);
+    }
+    expect(outer).toBeCloseTo(1, 5);
+    expect(inner).toBeCloseTo(0.87, 5);
+  });
+
+  it('has no runes on it, so it is a wavefront and not a symbol', () => {
+    // Every vertex is on one of two radii. A mark between them would put one
+    // somewhere else, which is what makes `rune-ring` a different shape.
+    for (let i = 0; i < mesh.positions.length; i += 3) {
+      const radius = Math.hypot(mesh.positions[i] ?? 0, mesh.positions[i + 2] ?? 0);
+      const onEdge = Math.abs(radius - 1) < 1e-5 || Math.abs(radius - 0.87) < 1e-5;
+      expect(onEdge, `radius ${radius}`).toBe(true);
+    }
+  });
+
+  it('widens with the ring it belongs to', () => {
+    const wide = ringMesh(0.4, 16);
+    let inner = Infinity;
+    for (let i = 0; i < wide.positions.length; i += 3) {
+      inner = Math.min(inner, Math.hypot(wide.positions[i] ?? 0, wide.positions[i + 2] ?? 0));
+    }
+    expect(inner).toBeCloseTo(0.6, 5);
+  });
+});
+
 describe('orientation is a property of the shape', () => {
   it('a sigil takes exactly the angle it was given', () => {
     // A per-seed jitter would put the runes somewhere different every stamp.
@@ -445,7 +492,7 @@ describe('orientation is a property of the shape', () => {
   it('a shard aims down its own velocity, and only a shard pays for that', () => {
     expect(orientOf('shard')).toBe(ORIENT.velocity);
     expect(needsVelocity('shard')).toBe(true);
-    for (const shape of ['blob', 'tongue', 'rune-ring', 'diamond', 'shaft', 'starburst', 'chunk'] as const) {
+    for (const shape of ['blob', 'tongue', 'rune-ring', 'diamond', 'shaft', 'starburst', 'chunk', 'ring'] as const) {
       expect(needsVelocity(shape), shape).toBe(false);
     }
   });

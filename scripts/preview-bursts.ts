@@ -61,7 +61,11 @@ async function main(): Promise<void> {
   const browser = await chromium.launch({ executablePath: CHROMIUM_PATH, args: CHROMIUM_ARGS });
 
   const bursts = EFFECTS.filter(
-    (effect) => effect.id.startsWith('explosion_') || effect.id.startsWith('hit_') || effect.id === 'impact_flash',
+    (effect) =>
+      effect.id.startsWith('explosion_') ||
+      effect.id.startsWith('hit_') ||
+      effect.id === 'impact_flash' ||
+      effect.id === 'shockwave_ring',
   );
   const tiles: { label: string; png: PNG; particles: number; draws: number }[] = [];
   const problems: string[] = [];

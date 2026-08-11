@@ -36,7 +36,8 @@ export type MeshShape =
   | 'shaft'
   | 'shard'
   | 'starburst'
-  | 'chunk';
+  | 'chunk'
+  | 'ring';
 
 /** A tiny deterministic hash, so a shape is a pure function of its seed. */
 function hash(index: number, seed: number): number {
@@ -342,6 +343,35 @@ export function shaftMesh(sides = 5, baseRadius = 0.045): MeshData {
 }
 
 /**
+ * A wavefront (spec 126): a plain flat annulus in the XZ plane, unit outer radius.
+ *
+ * Not `rune-ring`. That one has two bands and a ring of marks between them,
+ * which is a *symbol*; this is the edge of something travelling. The width is
+ * proportional, so a bigger instance is a thicker ring -- which is what the
+ * reference shows, a leading edge that fattens as it spreads.
+ */
+export function ringMesh(width = 0.07, segments = 56): MeshData {
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const count = Math.max(8, segments);
+  const inner = Math.max(0.02, 1 - width);
+
+  for (let i = 0; i < count; i++) {
+    const a = (i / count) * Math.PI * 2;
+    const b = ((i + 1) / count) * Math.PI * 2;
+    const at = positions.length / 3;
+    positions.push(
+      Math.cos(a) * inner, 0, Math.sin(a) * inner,
+      Math.cos(b) * inner, 0, Math.sin(b) * inner,
+      Math.cos(b), 0, Math.sin(b),
+      Math.cos(a), 0, Math.sin(a),
+    );
+    indices.push(at, at + 2, at + 1, at, at + 3, at + 2);
+  }
+  return unshare(positions, indices);
+}
+
+/**
  * The spike a burst is made of (spec 125): a short back pyramid, a waist, and a
  * long taper to a point at +Y.
  *
@@ -531,6 +561,8 @@ function build(shape: MeshShape): MeshData {
       return starburstMesh();
     case 'chunk':
       return chunkMesh();
+    case 'ring':
+      return ringMesh();
     default:
       return blobMesh();
   }
@@ -553,6 +585,7 @@ export function orientOf(shape: MeshShape): number {
       return ORIENT.uprightJittered;
     case 'rune-ring':
     case 'rune-ring-thin':
+    case 'ring':
       return ORIENT.exact;
     case 'shard':
       return ORIENT.velocity;

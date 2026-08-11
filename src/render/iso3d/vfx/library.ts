@@ -458,6 +458,8 @@ export interface BurstParams {
   readonly flat?: boolean;
   readonly dust?: boolean;
   readonly glow?: boolean;
+  /** A wavefront on the floor, expanding past the fan and outliving it. */
+  readonly ring?: boolean;
   readonly light?: boolean;
   readonly priority?: Priority;
 }
@@ -536,7 +538,7 @@ export function burst(params: BurstParams): EffectDefinition {
     {
       id: 'shards',
       shape: { kind: 'cone', angle: spread, radius: s * 0.08 },
-      emission: { kind: 'burst', count: Math.max(3, Math.round(spikes * 0.5)) },
+      emission: { kind: 'burst', count: Math.max(5, Math.round(spikes * 0.8)) },
       lifetimeTicks: [16, 30],
       speed: [s * 3, s * 6.5],
       spreadRadians: 0.35,
@@ -582,7 +584,7 @@ export function burst(params: BurstParams): EffectDefinition {
       // white boulder with an orange star somewhere inside it -- the dust has to
       // sit under the crystal, not replace it.
       shape: { kind: 'circle', radius: s * 0.22 },
-      emission: { kind: 'burst', count: 6 },
+      emission: { kind: 'burst', count: 9 },
       lifetimeTicks: [20, 34],
       speed: [s * 0.6, s * 1.4],
       spreadRadians: 1.45,
@@ -595,6 +597,45 @@ export function burst(params: BurstParams): EffectDefinition {
       render: 'mesh',
       mesh: { shape: 'blob' },
       blend: 'alpha',
+    });
+  }
+
+  if (params.ring) {
+    // The wave: a bright leading edge and a wider, fainter half-step behind it.
+    // Additive, because a wavefront is light rather than an object -- and two of
+    // them rather than one because a single ring is a hoop, where the reference
+    // has an edge with a glow trailing it.
+    emitters.push({
+      id: 'wave',
+      shape: { kind: 'point' },
+      emission: { kind: 'burst', count: 1 },
+      lifetimeTicks: [26, 30],
+      speed: [0, 0],
+      size: { keys: [[0, s * 0.25], [0.55, s * 1.9], [1, s * 2.4]] },
+      alpha: { keys: [[0, 0.95], [0.5, 0.75], [1, 0]] },
+      color: { stops: [[0, params.hot], [1, params.warm]] },
+      render: 'mesh',
+      mesh: { shape: 'ring' },
+      blend: 'additive',
+      offset: { x: 0, y: 2.5, z: 0 },
+    });
+    emitters.push({
+      id: 'wave_halo',
+      shape: { kind: 'point' },
+      emission: { kind: 'burst', count: 1 },
+      lifetimeTicks: [28, 34],
+      speed: [0, 0],
+      size: { keys: [[0, s * 0.2], [0.55, s * 1.65], [1, s * 2.15]] },
+      alpha: { keys: [[0, 0.4], [0.5, 0.3], [1, 0]] },
+      // It fades toward `warm`, never toward `cool`. A wavefront that ends on
+      // the ramp's dark end goes *saturated* rather than dim as it thins, and on
+      // frost colours that is a navy hoop lying on the ground after the effect
+      // is over -- which reads as something broken, not as something fading.
+      color: { stops: [[0, params.warm], [1, params.warm]] },
+      render: 'mesh',
+      mesh: { shape: 'ring' },
+      blend: 'additive',
+      offset: { x: 0, y: 2, z: 0 },
     });
   }
 
@@ -766,27 +807,27 @@ export const LIBRARY: readonly EffectDefinition[] = [
   // --- explosions ------------------------------------------------------------
   // The reference, at full size: a crystal that opens, throws rock and leaves a
   // warm mark. Everything below it is the same builder with smaller numbers.
-  burst({ id: 'explosion_large', scale: 88, hot: 'fireCore', warm: 'fireBody', cool: 'fireDeep', spikes: 30, chunks: 12, light: true, priority: 3 }),
-  burst({ id: 'explosion_small', scale: 46, hot: 'fireCore', warm: 'fireBody', cool: 'fireDeep', spikes: 20, chunks: 6, light: true }),
+  burst({ id: 'explosion_large', scale: 88, hot: 'fireCore', warm: 'fireBody', cool: 'fireDeep', spikes: 44, chunks: 18, light: true, priority: 3 }),
+  burst({ id: 'explosion_small', scale: 46, hot: 'fireCore', warm: 'fireBody', cool: 'fireDeep', spikes: 30, chunks: 10, light: true }),
   // A jet rather than a ball: a charge that went off against something, so it
   // fires along the blow instead of in every direction.
-  burst({ id: 'explosion_directed', scale: 62, hot: 'fireCore', warm: 'fireBody', cool: 'fireDeep', spikes: 20, chunks: 6, spread: 0.55, light: true }),
+  burst({ id: 'explosion_directed', scale: 62, hot: 'fireCore', warm: 'fireBody', cool: 'fireDeep', spikes: 30, chunks: 9, spread: 0.55, light: true }),
   // Along the floor. The star a ground slam leaves, which reads at a glance from
   // directly above where an upright one is a dot.
-  burst({ id: 'explosion_ground', scale: 70, hot: 'fireCore', warm: 'fireBody', cool: 'fireDeep', spikes: 26, chunks: 8, flat: true, light: true }),
+  burst({ id: 'explosion_ground', scale: 70, hot: 'fireCore', warm: 'fireBody', cool: 'fireDeep', spikes: 38, chunks: 12, flat: true, light: true }),
 
   // --- hit effects, one burst per damage type --------------------------------
   // The same crystal, small. A hit is not a different vocabulary from an
   // explosion; it is the quiet end of one.
-  burst({ id: 'impact_flash', scale: 17, hot: 'physicalBone', warm: 'physicalGrey', cool: 'dustStone', spikes: 12, dust: false }),
-  burst({ id: 'hit_physical', scale: 18, hot: 'physicalBone', warm: 'physicalGrey', cool: 'dustStone', spikes: 13, chunks: 3 }),
-  burst({ id: 'hit_fire', scale: 22, hot: 'fireCore', warm: 'fireBody', cool: 'fireDeep', spikes: 15, light: true }),
-  burst({ id: 'hit_poison', scale: 19, hot: 'poisonPale', warm: 'poisonDeep', cool: 'poisonMurk', spikes: 12 }),
-  burst({ id: 'hit_ice', scale: 20, hot: 'iceWhite', warm: 'icePale', cool: 'iceDeep', spikes: 15, chunks: 4 }),
-  burst({ id: 'hit_lightning', scale: 24, hot: 'boltWhite', warm: 'boltYellow', cool: 'boltViolet', spikes: 16, dust: false, light: true }),
-  burst({ id: 'hit_arcane', scale: 21, hot: 'arcaneLilac', warm: 'arcaneMagenta', cool: 'arcaneDeep', spikes: 14, dust: false }),
+  burst({ id: 'impact_flash', scale: 17, hot: 'physicalBone', warm: 'physicalGrey', cool: 'dustStone', spikes: 17, dust: false }),
+  burst({ id: 'hit_physical', scale: 18, hot: 'physicalBone', warm: 'physicalGrey', cool: 'dustStone', spikes: 18, chunks: 5 }),
+  burst({ id: 'hit_fire', scale: 22, hot: 'fireCore', warm: 'fireBody', cool: 'fireDeep', spikes: 21, light: true }),
+  burst({ id: 'hit_poison', scale: 19, hot: 'poisonPale', warm: 'poisonDeep', cool: 'poisonMurk', spikes: 17 }),
+  burst({ id: 'hit_ice', scale: 20, hot: 'iceWhite', warm: 'icePale', cool: 'iceDeep', spikes: 21, chunks: 6 }),
+  burst({ id: 'hit_lightning', scale: 24, hot: 'boltWhite', warm: 'boltYellow', cool: 'boltViolet', spikes: 22, dust: false, light: true }),
+  burst({ id: 'hit_arcane', scale: 21, hot: 'arcaneLilac', warm: 'arcaneMagenta', cool: 'arcaneDeep', spikes: 20, dust: false }),
   // Louder in the same language: a bigger crystal, never a different one.
-  burst({ id: 'hit_critical', scale: 34, hot: 'sparkHot', warm: 'sparkWarm', cool: 'sparkEmber', spikes: 22, chunks: 4, priority: 3, light: true }),
+  burst({ id: 'hit_critical', scale: 34, hot: 'sparkHot', warm: 'sparkWarm', cool: 'sparkEmber', spikes: 30, chunks: 7, priority: 3, light: true }),
 
   // Chips and dust: what a physical blow throws that a magical one does not.
   {
@@ -830,29 +871,27 @@ export const LIBRARY: readonly EffectDefinition[] = [
     ],
   },
 
-  // The directional shockwave: a ring on the ground that runs outward along the
-  // blow. Direction is information, and this is the cheapest way to say it.
-  {
+  // The shockwave: the combined thing the reference shows (spec 126). The same
+  // crystal and the same thrown rock as an explosion, laid flat so the streaks
+  // run along the ground, plus a wavefront that outruns and outlives all of it.
+  // Frost-coloured, because that is what a shockwave is here -- an impact that
+  // pushed rather than burned.
+  burst({
     id: 'shockwave_ring',
+    scale: 64,
+    hot: 'iceWhite',
+    warm: 'icePale',
+    cool: 'iceDeep',
+    spikes: 42,
+    chunks: 16,
+    flat: true,
+    ring: true,
+    // No warm pool. `glow` is the scorch a fire leaves, and in frost colours it
+    // is a dark blue stain sitting under the wave for ten ticks after the wave
+    // has gone -- which on the sheet reads as a bug rather than as ice.
+    glow: false,
     priority: 2,
-    cullDistance: 1600,
-    emitters: [
-      {
-        id: 'ring',
-        shape: { kind: 'point' },
-        emission: { kind: 'burst', count: 1 },
-        lifetimeTicks: [10, 12],
-        speed: [0, 0],
-        size: { keys: [[0, 8], [1, 70]] },
-        alpha: { keys: [[0, 0.85], [1, 0]] },
-        color: { stops: [[0, 'physicalBone'], [1, 'dustStone']] },
-        render: 'ground-quad',
-        blend: 'dither-cutout',
-        sprite: { sheet: 'ring_thin', frames: 1, fps: 0 },
-        offset: { x: 0, y: 2, z: 0 },
-      },
-    ],
-  },
+  }),
 
   // A block: a hard flash at the point of contact and a shower off the guard.
   {

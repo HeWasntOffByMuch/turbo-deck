@@ -488,12 +488,38 @@ describe('the hit vocabulary', () => {
     expect(slash?.emitters[0]?.shape.kind).toBe('arc');
   });
 
-  it('spreads the shockwave on the ground so its direction reads', () => {
+  it('is the combined thing: a crystal, flat streaks, rock and a wavefront', () => {
+    // Spec 126. The reference shows all four at once, and the wave is the part
+    // that says shockwave rather than explosion.
     const wave = LIBRARY.find((effect) => effect.id === 'shockwave_ring');
-    const ring = wave?.emitters[0];
-    expect(ring?.render).toBe('ground-quad');
-    const flat = compileCurve(ring?.size ?? { keys: [] });
-    expect(sampleCurve(flat, 1)).toBeGreaterThan(sampleCurve(flat, 0) * 4);
+    const ids = wave?.emitters.map((emitter) => emitter.id) ?? [];
+    expect(ids).toEqual(expect.arrayContaining(['core', 'spikes', 'chunks', 'wave', 'wave_halo']));
+    // The streaks run along the floor: a circle emits in the ground plane where
+    // a cone emits into the sky.
+    expect(wave?.emitters.find((emitter) => emitter.id === 'spikes')?.shape.kind).toBe('circle');
+  });
+
+  it('outruns and outlives its own fan', () => {
+    const wave = LIBRARY.find((effect) => effect.id === 'shockwave_ring');
+    const of = (id: string) => wave?.emitters.find((emitter) => emitter.id === id);
+    const peak = (id: string): number =>
+      Math.max(...(of(id)?.size.keys.map(([, value]) => value) ?? [0]));
+    expect(peak('wave')).toBeGreaterThan(peak('spikes') * 1.5);
+    expect(of('wave')?.lifetimeTicks[0] ?? 0).toBeGreaterThan(of('spikes')?.lifetimeTicks[1] ?? 0);
+    const size = compileCurve(of('wave')?.size ?? { keys: [] });
+    expect(sampleCurve(size, 1)).toBeGreaterThan(sampleCurve(size, 0) * 4);
+  });
+
+  it('adds the wave only where it was asked for', () => {
+    const plain = burst({ id: 'a', scale: 40, hot: 'iceWhite', warm: 'icePale', cool: 'iceDeep' });
+    expect(plain.emitters.some((emitter) => emitter.id === 'wave')).toBe(false);
+    const waved = burst({ id: 'b', scale: 40, hot: 'iceWhite', warm: 'icePale', cool: 'iceDeep', ring: true });
+    expect(waved.emitters.filter((emitter) => emitter.id.startsWith('wave'))).toHaveLength(2);
+    for (const emitter of waved.emitters.filter((entry) => entry.id.startsWith('wave'))) {
+      expect(emitter.mesh?.shape).toBe('ring');
+      // Light, not an object.
+      expect(emitter.blend).toBe('additive');
+    }
   });
 
   it('has a death for each archetype, and they differ', () => {

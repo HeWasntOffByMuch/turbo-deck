@@ -34,6 +34,7 @@ export interface FieldSpec {
 export const RENDER_MODES = ['billboard', 'stretched', 'axis-billboard', 'ground-quad', 'ribbon', 'mesh'] as const;
 export const BLEND_MODES = ['alpha', 'additive', 'dither-cutout'] as const;
 export const SHAPE_KINDS = ['point', 'sphere', 'hemisphere', 'cone', 'box', 'circle', 'mesh', 'arc'] as const;
+export const EMISSION_KINDS = ['burst', 'rate', 'ramp'] as const;
 /** The solids a `mesh` particle can be (spec 123). */
 export const MESH_SHAPES = [
   'blob',
@@ -45,6 +46,7 @@ export const MESH_SHAPES = [
   'shard',
   'starburst',
   'chunk',
+  'ring',
 ] as const;
 
 /**
@@ -57,6 +59,16 @@ export const MESH_SHAPES = [
 export const EMITTER_FIELDS: readonly FieldSpec[] = [
   // --- emission ---
   { path: 'shape.kind', label: 'Shape', kind: 'enum', options: SHAPE_KINDS, tip: 'The volume particles are born in.' },
+  // How many, which is the number a person reaches for first while tuning and
+  // was the one field the panel would not move (spec 126). A row that does not
+  // apply to the current kind is inert rather than hidden: the panel is
+  // generated from a flat table, and a conditional row is a second mechanism
+  // bought for one saved click.
+  { path: 'emission.kind', label: 'Emit as', kind: 'enum', options: EMISSION_KINDS, tip: 'Burst fires once; rate runs forever; ramp runs a curve.' },
+  { path: 'emission.count', label: 'Count', kind: 'number', min: 1, max: 200, step: 1, tip: 'Particles in a burst. The intensity knob.' },
+  { path: 'emission.perSecond', label: 'Per second', kind: 'number', min: 0, max: 300, step: 0.5, tip: 'Particles a second, for rate.' },
+  { path: 'emission.delayTicks', label: 'Delay', kind: 'number', min: 0, max: 240, step: 1, tip: 'Ticks before a burst fires.' },
+  { path: 'emission.overTicks', label: 'Ramp over', kind: 'number', min: 1, max: 600, step: 1, tip: 'Ticks a ramp spends walking its curve.' },
   { path: 'lifetimeTicks', label: 'Lifetime', kind: 'range', min: 1, max: 400, step: 1, tip: 'Ticks. Each particle draws its own.' },
   { path: 'speed', label: 'Speed', kind: 'range', min: 0, max: 800, step: 1, tip: 'World units per second along the shape direction.' },
   { path: 'spreadRadians', label: 'Spread', kind: 'number', min: 0, max: 3.15, step: 0.01, tip: 'Cone half-angle on top of the shape.' },
@@ -105,9 +117,6 @@ export const EMITTER_FIELDS: readonly FieldSpec[] = [
 export const UNEDITED_KEYS: readonly (keyof Emitter)[] = [
   // Identity, not a parameter.
   'id',
-  // Emission is a tagged union whose shape changes with its kind, so it gets its
-  // own row rather than a generic one.
-  'emission',
   // Sprite sheets are generated, so choosing one is picking from a fixed list
   // that lives with the textures rather than with the emitter fields.
   'sprite',
