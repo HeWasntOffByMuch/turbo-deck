@@ -15,7 +15,7 @@
  */
 
 import { itemById } from '../../../server/data/items.js';
-import { sellPrice, vendorById } from '../../../server/data/vendors.js';
+import { ALL_VENDORS, sellPrice, vendorById, withinReach } from '../../../server/data/vendors.js';
 import { buy, sell } from '../../../server/player/shop.js';
 import type { Inventory } from '../../../server/state/types.js';
 import type { SellableRow, ShopRow, ShopView } from '../../../ui/screens/shop.js';
@@ -38,6 +38,30 @@ export interface ShopSource {
 
 function nameOf(defId: string): string {
   return itemById(defId)?.name ?? defId;
+}
+
+/**
+ * Which vendor a player standing here can trade with, or null (spec 131).
+ *
+ * The client picks *which* shop to ask about; the server still decides whether
+ * it will serve one, and answers an out-of-range request with nothing. So this
+ * being wrong costs an empty window rather than a trade the rules refused --
+ * which is why a guess is safe to make on this side at all.
+ *
+ * Nearest, not first: the two vendors overlap near the spawn, and "whichever is
+ * earlier in the table" would mean one of them could never be reached.
+ */
+export function nearestVendorTo(x: number, y: number): string | null {
+  let best: string | null = null;
+  let bestDistance = Infinity;
+  for (const vendor of ALL_VENDORS) {
+    if (!withinReach(vendor, x, y)) continue;
+    const distance = Math.hypot(vendor.x - x, vendor.y - y);
+    if (distance >= bestDistance) continue;
+    bestDistance = distance;
+    best = vendor.id;
+  }
+  return best;
 }
 
 /**
