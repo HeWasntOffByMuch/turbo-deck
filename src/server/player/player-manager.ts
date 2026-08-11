@@ -41,6 +41,7 @@ import {
   type ShopOutcome,
 } from './shop.js';
 import { spendSkillPoint, sanitizeSkills } from './skills.js';
+import type { Holdings } from './trade.js';
 import { clampHealthToStats, clampResourceToStats, computeEffectiveStats } from './stats.js';
 
 /** Stats a brand new character starts with, before any allocation. */
@@ -410,6 +411,49 @@ export class PlayerManager {
     const outcome = buyBack(session.record.inventory, session.record.coins, entry);
     const buyback = outcome.ok ? { ...session.buyback, [vendorId]: forgetSale(list, index) } : session.buyback;
     return this.settle(playerId, session, outcome, buyback);
+  }
+
+  /** What a trade's rules need to see of a player (spec 132). */
+  holdingsOf(playerId: string): Holdings | null {
+    const session = this.sessions.get(playerId);
+    if (!session) return null;
+    return { inventory: session.record.inventory, coins: session.record.coins };
+  }
+
+  /**
+   * Write both sides of a settled trade.
+   *
+   * One method rather than two calls to a per-player one, and that is the whole
+   * safety argument at this level: the swap has already produced two whole
+   * containers, and this assigns both before it awaits anything. There is no
+   * point between the two writes where a caller could be interrupted and leave
+   * an item in both bags -- which is the failure this feature exists to be
+   * careful about.
+   *
+   * The `await`s that follow are stat recalculations, and by then the exchange
+   * has already happened.
+   */
+  async applyTrade(
+    aId: string,
+    bId: string,
+    a: Holdings,
+    b: Holdings,
+  ): Promise<{ readonly ok: boolean; readonly reason: string }> {
+    const aSession = this.sessions.get(aId);
+    const bSession = this.sessions.get(bId);
+    if (!aSession || !bSession) return { ok: false, reason: 'one of you is not logged in' };
+
+    this.commit({
+      ...aSession,
+      record: { ...aSession.record, inventory: a.inventory, coins: a.coins },
+    });
+    this.commit({
+      ...bSession,
+      record: { ...bSession.record, inventory: b.inventory, coins: b.coins },
+    });
+    await this.recalculate(aId);
+    await this.recalculate(bId);
+    return { ok: true, reason: '' };
   }
 
   /** Validated in `skills.ts`; a rejection leaves the record untouched. */
