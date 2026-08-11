@@ -87,6 +87,28 @@ export function worldRectFrom(
   };
 }
 
+/**
+ * The tier standing at a world point, or null if there is none.
+ *
+ * Highest first, so clicking a stack names the one you can actually see rather
+ * than the slab buried under it. This is what lets the remove tool work by
+ * pointing at rock instead of by choosing a layer from a list first -- the same
+ * call `partAt` makes for the same reason.
+ */
+export function rockLayerAt(store: MapChunkStore, x: number, z: number): string | null {
+  let best: { id: string; top: number } | null = null;
+  for (const id of rockLayerIds(store)) {
+    const info = store.layerInfo(id);
+    if (!info) continue;
+    const col = Math.floor((x - info.origin.x) / store.cellSize);
+    const row = Math.floor((z - info.origin.z) / store.cellSize);
+    if (!store.cellSolid(id, col, row)) continue;
+    const top = store.cornerHeight(id, col, row);
+    if (!best || top > best.top) best = { id, top };
+  }
+  return best?.id ?? null;
+}
+
 /** A layer taken out whole, so undo can put it back. */
 function snapshotLayer(store: MapChunkStore, layerId: string): MapLayer | null {
   const info = store.layerInfo(layerId);

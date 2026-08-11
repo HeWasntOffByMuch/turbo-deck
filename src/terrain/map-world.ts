@@ -1276,6 +1276,57 @@ export interface LoadedMap {
 }
 
 /**
+ * What the mesher needs to know about one layer, read live off the store.
+ *
+ * Split out of `loadMap` (spec 121) because a store can gain a layer after it
+ * was loaded -- drawing a tier in the editor is exactly that -- and the mesh
+ * for one has to come from somewhere. Everything it needs is in the store, so
+ * the document is not a parameter and a layer that was never in a file works
+ * the same as one that was.
+ *
+ * Returns null for a layer the store does not hold.
+ */
+export function meshLayerFor(store: MapChunkStore, layerId: string): MeshLayer | null {
+  const initial = store.layerInfo(layerId);
+  if (!initial) return null;
+  const fallbackBounds = initial.bounds;
+
+  // The extent the layer *declares*, not the one its chunks describe: on a
+  // streaming client those differ by exactly the chunks still in flight, and
+  // that gap is what has to read as "unknown" rather than "no ground". The
+  // declared extent is known from `MapInfo` before any chunk lands, so this
+  // answers correctly from the first frame (specs 078, 083).
+  //
+  // Read through the store on every call rather than captured once: the grid is
+  // *replaced* when a chunk arrives or a part is grown (spec 084), so a snapshot
+  // taken here freezes the world's edge where it was at load time. Everything
+  // past it then answers `false` -- "no ground" -- and the mesher walls off
+  // ground that exists, which is a map with a hole in it.
+  const declared = (col: number, row: number): boolean => {
+    const d = store.layerInfo(layerId)?.grid.declared;
+    return d !== undefined && col >= d.minCol && row >= d.minRow && col < d.maxCol && row < d.maxRow;
+  };
+
+  return {
+    id: layerId,
+    // Live too, and for the same reason: a grown layer covers more than the
+    // rectangle the document was loaded with.
+    get bounds(): MapRect {
+      return store.layerInfo(layerId)?.bounds ?? fallbackBounds;
+    },
+    get waterLevel(): number | null {
+      return store.layerInfo(layerId)?.waterLevel ?? null;
+    },
+    // Outside the declared extent is a definite no -- that is the world's edge,
+    // and the wall there is real. Inside it with no chunk behind it is `null`:
+    // unknown, and not something to grow a cliff along (spec 078).
+    solidAt: (col: number, row: number): boolean | null =>
+      declared(col, row) ? (store.cellAt(layerId, col, row)?.solid ?? null) : false,
+    materialAt: (col: number, row: number): number | null => store.cellAt(layerId, col, row)?.materialIndex ?? null,
+  };
+}
+
+/**
  * Rebuild a world from a document. The result is array-backed all the way down:
  * `world` for anything that samples the ground, `chunks` for the mesher, `props`
  * for the instanced field, and `store` for whatever wants to edit it.
@@ -1288,38 +1339,7 @@ export function loadMap(doc: MapDocument): LoadedMap {
     store,
     world: createWorld(layers),
     chunks: store.buildChunks(),
-    meshLayers: doc.layers.map((l) => {
-      // The extent the layer *declares*, not the one its chunks describe: on a
-      // streaming client those differ by exactly the chunks still in flight,
-      // and that gap is what has to read as "unknown" rather than "no ground".
-      // The declared extent is known from `MapInfo` before any chunk lands, so
-      // this answers correctly from the first frame (specs 078, 083).
-      //
-      // Read through the store on every call rather than captured once: the
-      // grid is *replaced* when a chunk arrives or a part is grown (spec 084),
-      // so a snapshot taken here freezes the world's edge where it was at load
-      // time. Everything past it then answers `false` -- "no ground" -- and the
-      // mesher walls off ground that exists, which is a map with a hole in it.
-      const declared = (col: number, row: number): boolean => {
-        const d = store.layerInfo(l.id)?.grid.declared;
-        return d !== undefined && col >= d.minCol && row >= d.minRow && col < d.maxCol && row < d.maxRow;
-      };
-      return {
-        id: l.id,
-        // Live too, and for the same reason: a grown layer covers more than the
-        // rectangle the document was loaded with.
-        get bounds(): MapRect {
-          return store.layerInfo(l.id)?.bounds ?? l.bounds;
-        },
-        waterLevel: l.waterLevel,
-        // Outside the declared extent is a definite no -- that is the world's
-        // edge, and the wall there is real. Inside it with no chunk behind it is
-        // `null`: unknown, and not something to grow a cliff along (spec 078).
-        solidAt: (col: number, row: number): boolean | null =>
-          declared(col, row) ? (store.cellAt(l.id, col, row)?.solid ?? null) : false,
-        materialAt: (col: number, row: number): number | null => store.cellAt(l.id, col, row)?.materialIndex ?? null,
-      };
-    }),
+    meshLayers: doc.layers.map((l) => meshLayerFor(store, l.id)).filter((l): l is MeshLayer => l !== null),
     props: doc.layers.flatMap((l) => store.props(l.id)),
     markers: doc.layers.flatMap((l) => store.markers(l.id)),
   };

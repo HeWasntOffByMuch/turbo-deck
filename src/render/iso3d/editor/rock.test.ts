@@ -10,7 +10,15 @@ import {
   type MapLayer,
 } from '../../../terrain/index.js';
 import { EditHistory } from './history.js';
-import { addRock, isRockLayer, nextRockLayerId, removeRock, rockLayerIds, worldRectFrom } from './rock.js';
+import {
+  addRock,
+  isRockLayer,
+  nextRockLayerId,
+  removeRock,
+  rockLayerAt,
+  rockLayerIds,
+  worldRectFrom,
+} from './rock.js';
 
 /**
  * Drawing a tier from the editor (spec 121).
@@ -327,5 +335,41 @@ describe('a stack drawn tier by tier', () => {
     expect(serializeMap(store.toDocument())).toBe(oneTier);
     history.undo(store);
     expect(serializeMap(store.toDocument())).toBe(before);
+  });
+});
+
+describe('finding the tier under a point', () => {
+  it('names nothing over bare ground', () => {
+    const { store, history } = setup();
+    add(store, history, { minX: 0, minZ: 0, maxX: 20, maxZ: 20 });
+    expect(rockLayerAt(store, 70, 70)).toBeNull();
+  });
+
+  it('names the tier standing there', () => {
+    const { store, history } = setup();
+    add(store, history, { minX: 0, minZ: 0, maxX: 20, maxZ: 20 });
+    expect(rockLayerAt(store, 5, 5)).toBe(TIER);
+  });
+
+  it('names the highest of a stack, not the slab under it', () => {
+    const { store, history } = setup();
+    addRock(store, history, {
+      layerId: 'rock/1',
+      footprint: { minX: 0, minZ: 0, maxX: 60, maxZ: 60 },
+      top: TOP,
+      baseY: -20,
+      seed: 7,
+      origin: { x: 0, z: 0 },
+    });
+    addRock(store, history, {
+      layerId: 'rock/2',
+      footprint: { minX: 20, minZ: 20, maxX: 40, maxZ: 40 },
+      top: TOP * 2,
+      baseY: TOP - 5,
+      seed: 8,
+      origin: { x: 0, z: 0 },
+    });
+    expect(rockLayerAt(store, 30, 30)).toBe('rock/2');
+    expect(rockLayerAt(store, 10, 10)).toBe('rock/1');
   });
 });

@@ -97,6 +97,21 @@ export interface TerrainMeshHandle {
    * the world. Returns false if nothing was drawn there.
    */
   remove(layerId: string, cx: number, cz: number): boolean;
+  /**
+   * Teach the mesh a layer that was not there when it was built (spec 121).
+   *
+   * The layer set used to be fixed at construction, which was true for as long
+   * as a map's layers were. Drawing a tier adds one to the store mid-session,
+   * and `rebuild` silently draws nothing for a chunk whose layer it has never
+   * heard of -- so the formation would be walked on and collided with and
+   * simply not be visible. Replacing an id already known re-points it, which is
+   * what an undo that puts a layer back needs.
+   */
+  addLayer(layer: MeshLayer): void;
+  /** Forget a layer and drop everything drawn for it. Returns false if unknown. */
+  removeLayer(layerId: string): boolean;
+  /** Which layers are currently drawable, so a caller can reconcile against a store. */
+  layerIds(): string[];
   dispose(): void;
 }
 
@@ -459,6 +474,22 @@ export function buildTerrainMeshFromChunks(
       if (layer) draw(layer, chunk);
     },
     remove: erase,
+    addLayer(layer: MeshLayer): void {
+      byId.set(layer.id, layer);
+    },
+    removeLayer(layerId: string): boolean {
+      if (!byId.delete(layerId)) return false;
+      // Everything drawn for it goes with it, or a tier that was carved away
+      // keeps its geometry in the scene with nothing behind it.
+      for (const key of [...drawn.keys()]) {
+        const slot = drawn.get(key);
+        if (slot?.chunk.layerId === layerId) erase(layerId, slot.chunk.coord.cx, slot.chunk.coord.cz);
+      }
+      return true;
+    },
+    layerIds(): string[] {
+      return [...byId.keys()];
+    },
     dispose(): void {
       // Water owns a material and a shore texture of its own, so it is freed
       // first and taken out of the group; the surface and wall materials are
