@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { MemoryDataStore } from '../state/memory-store.js';
 import { SERVER_TICK_RATE } from '../config.js';
 import { abilityById, ALL_ABILITIES } from '../data/abilities.js';
-import { EMPTY_EQUIPMENT, type PersistedPlayer } from '../state/types.js';
+import { EMPTY_EQUIPMENT, emptyInventory, type PersistedPlayer } from '../state/types.js';
 import { ZoneManager } from '../world/zone-manager.js';
 import { CHARACTERS, type Character } from '../../sim/characters.js';
 import {
@@ -36,6 +36,8 @@ function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
     baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
     skills: [],
     equipment: EMPTY_EQUIPMENT,
+    inventory: emptyInventory(),
+    coins: 0,
     position: { x: 600, y: 450, z: 0 },
     facing: 0,
     currentZone: 'hearth',
@@ -308,6 +310,8 @@ describe('persistence never carries a derived stat', () => {
     expect(Object.keys(saved ?? {}).sort()).toEqual(
       [
         'baseStats',
+        // A live resource, like health -- not a derived stat (spec 129).
+        'coins',
         'currentZone',
         'displayName',
         'equipment',
@@ -315,6 +319,9 @@ describe('persistence never carries a derived stat', () => {
         'facing',
         'health',
         'id',
+        // Ids and counts, like `equipment` -- an item's numbers stay in the
+        // table (spec 126).
+        'inventory',
         'level',
         'position',
         'resource',

@@ -272,6 +272,83 @@ src/server/studio/  the unit authoring service (spec 108). Node-only, wired in f
                  jobs.json is rewritten
                  atomically; ledger.jsonl is append-only. State lives in
                  .studio/ and is gitignored.
+src/ui/          the GUI framework (spec 123), and a top-level peer rather than a
+                 subdirectory of src/render/ because layer 1 belongs to no engine.
+                 core/ is layout, hit-testing, focus, event routing, the widget
+                 tree, and since spec 133 motion and sound: a tween is a pure
+                 function of the time it is handed rather than an animator with a
+                 clock (an animator would make every golden a question about when
+                 the test ran), and a sound is a *name* emitted into a sink, so
+                 this layer never learns what a sound is. Reduce-motion rides on
+                 the paint context beside the time and is checked inside
+                 `animate` rather than at each call site, which is what lets it be
+                 a property over the whole easing table instead of a claim each
+                 widget has to remember. text/ is the two bitmap faces; theme/ is theme.json plus the
+                 atlas authored as text; widgets/ is the nine; screens/ is the
+                 eight (the HUD, the bag, the sheet, the shop, the keybindings,
+                 the trade table, the options window and its display page);
+                 input/ is the actions, the key map and the two preferences that
+                 outlive a session -- the bindings and the interface scale, each
+                 a versioned document over an injected `StorageLike` that never
+                 throws, because a corrupt preference must cost defaults rather
+                 than a black screen;
+                 render/ is the only impure part. Everything else runs in Node.
+                 Since spec 131 all but the HUD are in the Play tab, over
+                 the world -- mounted by src/render/iso3d/world/ui-screens.ts,
+                 which is where a screen meets a `GameClient` and the only place
+                 that is allowed to. The HUD stays in the gallery: the DOM one
+                 ships, and swapping it is a redesign rather than a mount.
+                 Three rules the code rests on, all of them enforced rather than
+                 honoured. **Time is an argument** -- `UiRoot.update(nowMs)`, and
+                 nothing under src/ui/ may read `Date` or `performance`, which is
+                 what makes an input-replay test exact rather than approximately
+                 reproducible. **A widget cannot reach the sim** -- it may read the
+                 content tables, as the HUD already does, but lint refuses it
+                 `server/sim`, `world`, `player` and `state`, so the CLAUDE.md rule
+                 that no `if` in the renderer changes an outcome is finally a fact
+                 about the module graph. **No colour is spelled out** in a widget;
+                 a hex literal there fails the build.
+                 Since spec 137 the bag is a *pointer* surface: one press and
+                 one release on a cell is the whole gesture vocabulary (left
+                 takes a stack, right takes half, shift+right takes one,
+                 shift+left wears it), a carry empties the cell it came from so
+                 it can be put back, and dragging an item is gone. The rule that
+                 came out of it and applies to every screen: **a press hands the
+                 keyboard only to something that types**. Focus used to follow
+                 every press, so an open window silently held the arrow keys,
+                 Space and Enter -- four movement bindings and a cast -- and the
+                 blue focus ring on a cell read as "active" when nothing was.
+                 `focusOnPress` is false on `Widget` and true on `TextField`
+                 alone; Tab still reaches everything focusable, because Tab is
+                 not a key anybody plays with.
+                 The UI has a *scale*, not a resolution: one UI pixel is always a
+                 whole number of device pixels and the viewport is whatever the
+                 window leaves, so it never reads the world's `lowRes` setting --
+                 which is off by default and may go. A camera needs a fixed aspect
+                 because it has to frame consistently; an interface does not.
+                 Since spec 136 that scale is a *setting* on the options window's
+                 Display tab, and `auto` -- the default -- is `autoUiScale`
+                 unchanged. A chosen number is honoured outright rather than
+                 clamped back against the auto rules: those exist to choose for
+                 somebody who has not, and a preference that silently became a
+                 different number would fail on exactly the screens somebody
+                 would want to change it on.
+                 render/ has three backends behind six methods. raster.ts is pure
+                 software and is the golden-image oracle, which is what lets a
+                 screen be compared byte for byte inside `npm test` with no GPU and
+                 no browser -- every other visual check in this repo photographs a
+                 browser and none of them run in CI. canvas2d.ts is what ships. A
+                 WebGL one is deferred until the frame budget asks for it; the
+                 measurement so far is 0.9ms against a 1.5ms budget.
+                 Having two unrelated backends is not redundancy, it is the check:
+                 `npx tsx scripts/preview-ui-gallery.ts` renders the same tree
+                 through both and compares them pixel for pixel. It immediately
+                 caught the thing offscreen testing never could -- a 2D canvas clip
+                 only ever narrows, so recomputing the clip after each pop (which is
+                 what raster.ts correctly does) left everything after the first
+                 `popClip` quietly cropped in the browser and perfect in Node.
+                 `npm run bake:ui-goldens` accepts a visual change; CI re-bakes and
+                 requires no diff, like the unit manifest.
 src/render/      the client: a tab shell over the play view, the two tuning
                  sandboxes and the map editor
 src/render/cloth/ pure cloth simulation for the robed character (spec 046) --
@@ -349,7 +426,21 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  deterministic tick, world/ is chunking and zones, player/ derives
                  stats from ids and levels, state/ is the swappable DataStore,
                  admin/ is the token-gated admin namespace, client/ is the
-                 transport-agnostic session the renderer draws from. data/ holds
+                 transport-agnostic session the renderer draws from.
+                 player/trade.ts and trades.ts are the first exchange with two
+                 owners (spec 132), and the difference from the shop is not size:
+                 its failure mode is *duplication* rather than a wrong number, so
+                 the swap is one pure function returning four whole containers --
+                 both sides computed and checked before either is written, so
+                 there is no state in which one bag has been debited and the other
+                 has not. An acceptance names a revision and every edit bumps it,
+                 which turns the swap-it-at-the-last-instant scam into a
+                 mechanical impossibility rather than a race worth timing; and an
+                 offer names *slots*, resolved against the bag at swap time, so a
+                 bag that changed underneath refuses the whole trade instead of
+                 trading whatever is in that slot now. The property test counts
+                 both players together, because a swap that duplicated a sword
+                 leaves each bag individually plausible. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
                  `npm run server`, and `npm run server:bots` for load.
@@ -384,8 +475,24 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  icons.ts (how big the HUD is on a finger and what the weapon
                  switch draws, spec 094 -- the sizes are a sum, so "eight buttons
                  still fit across a phone" fails in Node rather than in a
-                 screenshot)
-                 are pure and tested headlessly; scene.ts, shot.ts, hud.ts and
+                 screenshot),
+                 inventory-model.ts, character-model.ts and shop-model.ts (what
+                 the bag, the sheet and the shop are handed -- `src/ui/` may not
+                 reach the sim, so the replicated facts and the content tables
+                 are turned into plain rows out here, and whether a button is
+                 live is answered by running the *server's own* rule against the
+                 client's copy so a greyed-out button and a refusal cannot
+                 disagree), and ui-routing.ts and ui-screens.ts (the interface's
+                 mount, spec 131: who hears an input, and the four screens, their
+                 windows and what each is handed per frame). ui-screens.ts is
+                 pure for one specific reason -- mounting an interface over the
+                 sim gets the same assertion animation got, the same fight twice
+                 with the screens driven and without, identical authoritative
+                 state, and that is impossible if running it needs a canvas
+                 (`mount-presentation.test.ts`)
+                 are pure and tested headlessly; scene.ts, shot.ts, hud.ts,
+                 ui-layer.ts (the second canvas, the scale and one coordinate
+                 conversion -- the whole impure half of the mount) and
                  view.ts are the three.js/DOM half. `npx tsx scripts/preview-world.ts`
                  photographs the real page into .claude/screenshots/world-*.png,
                  and `npx tsx scripts/preview-shots.ts` flies the real ShotRig

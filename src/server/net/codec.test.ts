@@ -24,7 +24,8 @@ import {
   isAdminRequest,
   ServerMessageType,
 } from './protocol.js';
-import type { EffectiveStats } from '../state/types.js';
+import { EMPTY_EQUIPMENT, emptyInventory, type EffectiveStats } from '../state/types.js';
+import { maxStackOf } from '../data/items.js';
 
 const STATS: EffectiveStats = {
   maxHealth: 137.5,
@@ -134,6 +135,41 @@ describe('game message round-trip', () => {
       afterInputSeq: 9001,
     },
     { type: ClientMessageType.CancelCast, afterInputSeq: 9002 },
+    { type: ClientMessageType.OpenVendor, vendorId: 'vendor.armourer' },
+    { type: ClientMessageType.OpenVendor, vendorId: '' },
+    {
+      type: ClientMessageType.BuyItem,
+      requestId: 3,
+      vendorId: 'vendor.quartermaster',
+      defId: 'potion.minor',
+      count: 5,
+    },
+    {
+      // A negative count is a rule refusal with a reason, so it has to survive
+      // the wire to be refused (spec 126's lesson about a slot index).
+      type: ClientMessageType.SellItem,
+      requestId: 4,
+      vendorId: 'vendor.quartermaster',
+      index: -1,
+      count: -2,
+    },
+    { type: ClientMessageType.BuyBack, requestId: 5, vendorId: 'vendor.quartermaster', index: 0 },
+    {
+      type: ClientMessageType.MoveItem,
+      requestId: 7,
+      from: { container: 'inventory', index: 3 },
+      to: { container: 'equipment', index: 0 },
+      count: 0,
+    },
+    {
+      // An out-of-range index is a *rule* refusal, so it has to survive the
+      // wire to be refused with a reason -- a signed index, not a length.
+      type: ClientMessageType.MoveItem,
+      requestId: 8,
+      from: { container: 'inventory', index: -1 },
+      to: { container: 'inventory', index: 5 },
+      count: 4,
+    },
   ];
 
   it.each(clientMessages.map((m) => [m.type, m] as const))(
@@ -184,6 +220,20 @@ describe('game message round-trip', () => {
       level: 7,
       experience: 340,
       unspentSkillPoints: 2,
+      skills: [
+        { skillId: 'might.toughness', level: 3 },
+        { skillId: 'finesse.footwork', level: 1 },
+      ],
+      stats: STATS,
+    },
+    {
+      // ...and with nothing spent, which is every character's first minute.
+      type: ServerMessageType.Stats,
+      entityId: 1,
+      level: 1,
+      experience: 0,
+      unspentSkillPoints: 1,
+      skills: [],
       stats: STATS,
     },
     {
@@ -211,6 +261,43 @@ describe('game message round-trip', () => {
       atTick: 1750,
     },
     { type: ServerMessageType.Cooldowns, entries: [], resource: 0, atTick: 0 },
+    // An empty bag, a full one, and a stack at its ceiling (spec 126) -- the
+    // three shapes a container has, and the codec has to carry all of them.
+    {
+      type: ServerMessageType.Inventory,
+      requestId: 0,
+      inventory: emptyInventory(),
+      equipment: EMPTY_EQUIPMENT,
+      coins: 137,
+    },
+    {
+      type: ServerMessageType.Inventory,
+      requestId: 12,
+      inventory: [...emptyInventory()].map(() => ({ defId: 'sword.worn', count: 1 })),
+      equipment: { ...EMPTY_EQUIPMENT, mainHand: 'bow.hunting', chest: 'chest.leather' },
+      coins: 137,
+    },
+    {
+      type: ServerMessageType.Inventory,
+      requestId: 3,
+      inventory: [...emptyInventory()].map((_, i) =>
+        i === 2 ? { defId: 'potion.minor', count: maxStackOf('potion.minor') } : null,
+      ),
+      equipment: EMPTY_EQUIPMENT,
+      coins: 137,
+    },
+    {
+      type: ServerMessageType.VendorState,
+      vendorId: 'vendor.quartermaster',
+      name: 'Quartermaster',
+      stock: [
+        { defId: 'potion.minor', price: 9 },
+        { defId: 'sword.worn', price: 18 },
+      ],
+      buyback: [{ defId: 'chest.leather', count: 1, price: 8 }],
+    },
+    // A shop with nothing in it, and the empty id that means "closed".
+    { type: ServerMessageType.VendorState, vendorId: '', name: '', stock: [], buyback: [] },
     { type: ServerMessageType.Pong, nonce: 88, serverTick: 1000 },
     { type: ServerMessageType.Error, code: 7, message: 'rejected' },
     { type: ServerMessageType.Disconnect, reason: 'kicked' },

@@ -69,6 +69,47 @@ export const EMPTY_EQUIPMENT: Equipment = {
 };
 
 /**
+ * One occupied inventory slot (spec 126): a definition id and how many.
+ *
+ * No instance id and no shape. An item *is* its definition plus a count, which
+ * keeps `data/items.ts`'s rule intact -- buffing a sword buffs every sword --
+ * and keeps a slot addressable by index, which is all a uniform grid needs.
+ * Durability, sockets and multi-cell footprints all land as fields here or on
+ * the definition when they arrive.
+ */
+export interface ItemStack {
+  readonly defId: string;
+  /** >= 1, and <= the definition's `maxStack`. */
+  readonly count: number;
+}
+
+/** Fixed-length. A null slot is an empty one; the array never shortens. */
+export type Inventory = readonly (ItemStack | null)[];
+
+export const INVENTORY_SLOTS = 24;
+
+/** A bag of the right length with nothing in it. A new array every call. */
+export function emptyInventory(): Inventory {
+  return new Array<ItemStack | null>(INVENTORY_SLOTS).fill(null);
+}
+
+export type ContainerId = 'inventory' | 'equipment';
+
+/**
+ * One addressable slot, in either container (spec 126).
+ *
+ * Here in the shared vocabulary rather than beside the rules that use it,
+ * because the wire format needs to name a slot too and `net/` is not allowed to
+ * depend on anything but this file. `player/inventory.ts` re-exports it, so the
+ * rules and the codec cannot disagree about what an address is.
+ */
+export interface SlotAddress {
+  readonly container: ContainerId;
+  /** An index into the inventory, or the ordinal of an {@link EquipSlot}. */
+  readonly index: number;
+}
+
+/**
  * Everything about a player that survives a disconnect.
  *
  * Note what is *not* here: no maxHealth, no attack damage, no movement speed,
@@ -90,6 +131,12 @@ export interface PersistedPlayer {
   readonly baseStats: BaseStats;
   readonly skills: readonly SkillAllocation[];
   readonly equipment: Equipment;
+  /**
+   * What the player is carrying (spec 126). Exactly {@link INVENTORY_SLOTS}
+   * entries once loaded; a save written before this field existed comes back
+   * with an empty bag and keeps whatever it had equipped.
+   */
+  readonly inventory: Inventory;
   readonly position: Vec3;
   /** Heading in radians, 0 = +x. */
   readonly facing: number;
@@ -102,6 +149,13 @@ export interface PersistedPlayer {
   readonly health: number;
   /** Ability resource, clamped the same way. Live, not derived. */
   readonly resource: number;
+  /**
+   * What this character can spend (spec 129).
+   *
+   * A live resource like health, not a derived stat: it is changed by an
+   * exchange and never recomputed from a table.
+   */
+  readonly coins: number;
 }
 
 /**

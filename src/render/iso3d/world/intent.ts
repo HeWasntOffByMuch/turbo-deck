@@ -16,6 +16,7 @@
  * decides, and if these drift the only symptom is a rubber-band.
  */
 
+import { MOVE_EAST, MOVE_NORTH, MOVE_SOUTH, MOVE_WEST } from '../../../ui/input/actions.js';
 import { PATH_RETRY_TICKS } from '../../../sim/constants.js';
 import { findPath, navGridFor, pathClear, type NavGround } from '../../../sim/pathfinding.js';
 import type { WorldColliders } from '../../../sim/types.js';
@@ -51,18 +52,20 @@ export interface MoveIntent {
 }
 
 /**
- * Which key codes drive which way, in the sim's axes: +y is "down the screen"
+ * Which *actions* drive which way, in the sim's axes: +y is "down the screen"
  * (south), matching the terrain module's `z`.
+ *
+ * Four entries, not eight (spec 125). This used to be keyed by `KeyboardEvent.code`
+ * and list WASD and the arrows separately -- which is two bindings of one action
+ * spelled as two actions, and put "the arrows walk too" in a table no player
+ * could reach. The arrows are now the secondary binding of these four, in
+ * `src/ui/input/bindings.json`, where they can be changed.
  */
-export const MOVE_KEYS: Readonly<Record<string, readonly [number, number]>> = {
-  KeyW: [0, -1],
-  ArrowUp: [0, -1],
-  KeyS: [0, 1],
-  ArrowDown: [0, 1],
-  KeyA: [-1, 0],
-  ArrowLeft: [-1, 0],
-  KeyD: [1, 0],
-  ArrowRight: [1, 0],
+export const MOVE_ACTIONS: Readonly<Record<string, readonly [number, number]>> = {
+  [MOVE_NORTH]: [0, -1],
+  [MOVE_SOUTH]: [0, 1],
+  [MOVE_WEST]: [-1, 0],
+  [MOVE_EAST]: [1, 0],
 };
 
 /**
@@ -73,7 +76,7 @@ export const MOVE_KEYS: Readonly<Record<string, readonly [number, number]>> = {
 export const ARRIVE_EPS = 6;
 
 export interface IntentInput {
-  /** Key codes currently down. */
+  /** Action ids currently held. See {@link MOVE_ACTIONS}. */
   readonly held: ReadonlySet<string>;
   /** Where the body is now -- the predicted position, not the replica. */
   readonly self: Point;
@@ -187,7 +190,7 @@ function keyDirection(held: ReadonlySet<string>): Point | null {
   let x = 0;
   let y = 0;
   for (const code of held) {
-    const axis = MOVE_KEYS[code];
+    const axis = MOVE_ACTIONS[code];
     if (!axis) continue;
     x += axis[0];
     y += axis[1];

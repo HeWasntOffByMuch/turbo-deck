@@ -36,6 +36,37 @@ export const ClientMessageType = {
    * nothing when it is off.
    */
   WatchSpawners: 0x0b,
+  /**
+   * Move one item from one slot to another (spec 126).
+   *
+   * The only container write there is: equip, unequip, swap, merge and split are
+   * all this message with different addresses, which is why there is one
+   * handler to keep honest rather than six.
+   */
+  MoveItem: 0x0c,
+  /** Ask what a vendor is offering (spec 129). Refused out of range. */
+  OpenVendor: 0x0d,
+  BuyItem: 0x0e,
+  SellItem: 0x0f,
+  /** Undo a sale, at what it paid. */
+  BuyBack: 0x10,
+  /**
+   * Trade, in five messages (spec 132).
+   *
+   * `TradeOffer` sets a side's offer *whole* rather than adding to it, for the
+   * reason `MoveItem` is one message: a protocol with `add` and `remove` has two
+   * handlers that can disagree about what is on the table, and the thing on the
+   * table is exactly what must not be ambiguous.
+   *
+   * `TradeAccept` names the revision it is accepting. Every edit bumps that, so
+   * an offer swapped in the instant before the exchange resolves invalidates the
+   * acceptance instead of being swapped under somebody who never saw it.
+   */
+  TradeInvite: 0x11,
+  TradeRespond: 0x12,
+  TradeOffer: 0x13,
+  TradeAccept: 0x14,
+  TradeCancel: 0x15,
 } as const;
 
 export const ServerMessageType = {
@@ -78,6 +109,47 @@ export const ServerMessageType = {
    * `WatchSpawners`.
    */
   SpawnerStates: 0x51,
+  /**
+   * What the player is carrying and wearing, whole (spec 126).
+   *
+   * Whole rather than as a delta, and deliberately: twenty-four slots of an id
+   * and a count is a few hundred bytes, where a delta would be a second
+   * description of the same state that can drift from it. The client's
+   * optimistic guess is *replaced* by what arrives, so rollback is not a code
+   * path -- it is what happens when the resend disagrees, and it therefore
+   * cannot rot from disuse.
+   */
+  Inventory: 0x52,
+  /**
+   * What a vendor is offering, and what can be bought back from it (spec 129).
+   *
+   * An empty `vendorId` means "the shop is closed" -- the answer to walking away
+   * and to a refusal alike, so a client never has to infer that it has been shut
+   * out from the absence of a message.
+   */
+  VendorState: 0x53,
+  /**
+   * The whole trade as it now stands, to both sides (spec 132).
+   *
+   * Whole and to both, on every change, for the reason `Inventory` is whole: a
+   * client never derives what the other player is offering, it is told -- and
+   * what it draws is exactly what the server would swap. It carries the
+   * revision, which is what an acceptance has to name.
+   *
+   * A `stage` of `done` or `cancelled` is the last one a trade sends, and it
+   * carries the reason so a player is told *why* rather than watching a window
+   * disappear.
+   */
+  TradeState: 0x54,
+} as const;
+
+/** A trade's stage, as a byte (spec 132). Mirrors `TradeStage` in `trade.ts`. */
+export const TradeStageValue = {
+  Offered: 0,
+  Open: 1,
+  Confirmed: 2,
+  Done: 3,
+  Cancelled: 4,
 } as const;
 
 /** What a spawner is doing, as a byte (spec 076). */

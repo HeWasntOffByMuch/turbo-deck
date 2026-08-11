@@ -1,0 +1,134 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://turbo-deck/schemas/ui-theme.schema.json",
+  "title": "UI theme",
+  "description": "The one document every widget's colours, spacing and per-state styling come from (spec 123). additionalProperties is false throughout, so a typo'd key is an error with a pointer at it rather than a token that silently does nothing.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "palette", "spacing", "fonts", "input", "widgets"],
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "palette": {
+      "description": "Named colours. Capped at 16 so the art stays coherent and so the set can sit against the world's own limited palette.",
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 16,
+      "additionalProperties": { "$ref": "#/definitions/color" }
+    },
+    "spacing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit", "xs", "sm", "md", "lg", "xl"],
+      "properties": {
+        "unit": { "type": "integer", "minimum": 1 },
+        "xs": { "$ref": "#/definitions/step" },
+        "sm": { "$ref": "#/definitions/step" },
+        "md": { "$ref": "#/definitions/step" },
+        "lg": { "$ref": "#/definitions/step" },
+        "xl": { "$ref": "#/definitions/step" }
+      }
+    },
+    "fonts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["body", "numeric"],
+      "properties": {
+        "body": { "type": "string", "enum": ["body", "numeric"] },
+        "numeric": { "type": "string", "enum": ["body", "numeric"] }
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dragThreshold", "doubleClickMs", "maxTapUiPx", "minViewport", "comfortViewport", "tooltipDelayMs", "minVisible"],
+      "properties": {
+        "dragThreshold": { "type": "integer", "minimum": 1 },
+        "tooltipDelayMs": { "type": "integer", "minimum": 0 },
+        "minVisible": { "type": "integer", "minimum": 1 },
+        "doubleClickMs": { "type": "integer", "minimum": 1 },
+        "maxTapUiPx": { "type": "integer", "minimum": 1 },
+        "minViewport": { "$ref": "#/definitions/viewport" },
+        "comfortViewport": { "$ref": "#/definitions/viewport" }
+      }
+    },
+    "widgets": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/definitions/widgetStyle" }
+    }
+  },
+  "definitions": {
+    "viewport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height"],
+      "properties": {
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "color": {
+      "type": "string",
+      "pattern": "^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+    },
+    "step": {
+      "description": "A spacing value. Non-negative; the loader additionally checks it is a multiple of `unit`, which a JSON Schema cannot express.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "paletteRef": {
+      "description": "The name of an entry in `palette`. Resolution is checked by the loader, not here.",
+      "type": "string",
+      "minLength": 1
+    },
+    "stateStyle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fill", "frameTint", "text"],
+      "properties": {
+        "fill": { "$ref": "#/definitions/paletteRef" },
+        "frameTint": { "$ref": "#/definitions/paletteRef" },
+        "text": { "$ref": "#/definitions/paletteRef" },
+        "mark": {
+          "description": "The accent a widget draws its own furniture in -- a checkbox's tick, a slider's knob, a caret, a scrollbar's thumb.",
+          "$ref": "#/definitions/paletteRef"
+        }
+      }
+    },
+    "widgetStyle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frame", "padding", "states"],
+      "properties": {
+        "frame": {
+          "description": "The 9-slice patch this widget's chrome is drawn from. Checked against the baked atlas by the loader.",
+          "type": "string",
+          "minLength": 1
+        },
+        "padding": { "$ref": "#/definitions/step" },
+        "minWidth": { "type": "integer", "minimum": 0 },
+        "minHeight": { "type": "integer", "minimum": 0 },
+        "boxSize": { "type": "integer", "minimum": 1 },
+        "trackThickness": { "type": "integer", "minimum": 1 },
+        "knobWidth": { "type": "integer", "minimum": 1 },
+        "knobHeight": { "type": "integer", "minimum": 1 },
+        "barThickness": { "type": "integer", "minimum": 1 },
+        "thickness": { "type": "integer", "minimum": 1 },
+        "caretWidth": { "type": "integer", "minimum": 1 },
+        "gripSize": { "type": "integer", "minimum": 1 },
+        "states": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["normal", "hover", "pressed", "disabled", "focused"],
+          "properties": {
+            "normal": { "$ref": "#/definitions/stateStyle" },
+            "hover": { "$ref": "#/definitions/stateStyle" },
+            "pressed": { "$ref": "#/definitions/stateStyle" },
+            "disabled": { "$ref": "#/definitions/stateStyle" },
+            "focused": { "$ref": "#/definitions/stateStyle" }
+          }
+        }
+      }
+    }
+  }
+}

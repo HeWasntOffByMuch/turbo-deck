@@ -9,18 +9,39 @@
  */
 
 import type { ZoneManager } from '../world/zone-manager.js';
-import { itemById } from '../data/items.js';
+import { STARTING_KIT } from '../data/items.js';
 import type { DataStore } from '../state/store.js';
 import {
   EMPTY_EQUIPMENT,
+  EQUIP_SLOTS,
+  emptyInventory,
   isEquipSlot,
   type BaseStats,
   type EffectiveStats,
-  type EquipSlot,
+  type Equipment,
+  type Inventory,
   type PersistedPlayer,
   type Vec3,
 } from '../state/types.js';
+import {
+  addToInventory,
+  applyMove,
+  equipmentAddress,
+  sanitizeInventory,
+  type MoveRequest,
+} from './inventory.js';
+import { vendorById, withinReach, type VendorDefinition } from '../data/vendors.js';
+import {
+  buy,
+  buyBack,
+  forgetSale,
+  rememberSale,
+  sell,
+  type BuybackEntry,
+  type ShopOutcome,
+} from './shop.js';
 import { spendSkillPoint, sanitizeSkills } from './skills.js';
+import type { Holdings } from './trade.js';
 import { clampHealthToStats, clampResourceToStats, computeEffectiveStats } from './stats.js';
 
 /** Stats a brand new character starts with, before any allocation. */
@@ -34,11 +55,37 @@ export const DEFAULT_BASE_STATS: BaseStats = {
 /** Where a character with no saved position wakes up: the safe hub. */
 export const DEFAULT_SPAWN: Vec3 = { x: 600, y: 450, z: 0 };
 
-export const STARTER_EQUIPMENT: Readonly<Record<EquipSlot, string | null>> = {
+export const STARTER_EQUIPMENT: Equipment = {
   ...EMPTY_EQUIPMENT,
   mainHand: 'sword.worn',
   chest: 'chest.leather',
 };
+
+/**
+ * The starting kit, minus what the character is already wearing (spec 126).
+ *
+ * Subtracted rather than granted twice: `STARTER_EQUIPMENT` puts a worn sword
+ * and a jerkin on, and handing a second copy of each into the bag would be the
+ * first duplication bug in a system whose whole point is that nothing is
+ * duplicated.
+ */
+export function starterInventory(): Inventory {
+  const worn = new Set(EQUIP_SLOTS.map((slot) => STARTER_EQUIPMENT[slot]).filter((id) => id !== null));
+  let bag = emptyInventory();
+  for (const entry of STARTING_KIT) {
+    if (worn.delete(entry.defId) && entry.count === 1) continue;
+    bag = addToInventory(bag, entry) ?? bag;
+  }
+  return bag;
+}
+
+/**
+ * What a new character has to spend (spec 129).
+ *
+ * Enough for a potion and a shield, not enough for the armourer's stock: a purse
+ * that could buy anything makes the first shop a menu rather than a choice.
+ */
+export const STARTING_COINS = 60;
 
 /** Skill points granted per level gained. */
 export const SKILL_POINTS_PER_LEVEL = 1;
@@ -59,6 +106,14 @@ export interface PlayerSession {
   readonly muted: boolean;
   /** Highest input seq applied, echoed in deltas so the client can reconcile. */
   readonly lastAppliedInputSeq: number;
+  /**
+   * What this player can buy back, per vendor (spec 129).
+   *
+   * On the session and never on the record: a buyback list that survived a
+   * logout would be a shop remembering a transaction from last week, and the
+   * whole point of it is undoing the click you just made.
+   */
+  readonly buyback: Readonly<Record<string, readonly BuybackEntry[]>>;
 }
 
 export type PlayerActionResult =
@@ -82,7 +137,19 @@ export class PlayerManager {
   async login(playerId: string, displayName: string): Promise<PlayerSession> {
     const loaded = await this.store.loadPlayer(playerId);
     const record: PersistedPlayer = loaded
-      ? { ...loaded, skills: sanitizeSkills(loaded.skills) }
+      ? // A save from before spec 126 has no `inventory` at all; it loads as an
+        // empty bag and keeps whatever it was wearing. Nobody is stripped by an
+        // upgrade, and nobody is handed a second starting kit for logging in.
+        {
+          ...loaded,
+          skills: sanitizeSkills(loaded.skills),
+          inventory: sanitizeInventory(loaded.inventory),
+          // A save from before spec 129 has no purse. It loads as the starting
+          // one rather than as zero: an upgrade must not rob anybody, and there
+          // is no way to tell "spent it all" from "never had any" in a field
+          // that was not there.
+          coins: Number.isFinite(loaded.coins) ? Math.max(0, Math.floor(loaded.coins)) : STARTING_COINS,
+        }
       : this.createCharacter(playerId, displayName);
 
     const stats = computeEffectiveStats(record);
@@ -101,6 +168,7 @@ export class PlayerManager {
       stats,
       muted: (await this.store.getMute(playerId)) !== null,
       lastAppliedInputSeq: 0,
+      buyback: {},
     };
     this.sessions.set(playerId, session);
     await this.store.savePlayer(session.record);
@@ -114,6 +182,7 @@ export class PlayerManager {
       baseStats: DEFAULT_BASE_STATS,
       skills: [],
       equipment: STARTER_EQUIPMENT,
+      inventory: starterInventory(),
       position: DEFAULT_SPAWN,
       facing: 0,
       currentZone: this.zones.zoneIdAt(DEFAULT_SPAWN.x, DEFAULT_SPAWN.y),
@@ -122,6 +191,7 @@ export class PlayerManager {
       unspentSkillPoints: 1,
       health: 0,
       resource: 0,
+      coins: STARTING_COINS,
     };
   }
 
@@ -183,38 +253,207 @@ export class PlayerManager {
     return next;
   }
 
-  async equip(playerId: string, slot: string, itemId: string): Promise<PlayerActionResult> {
+  /**
+   * The one write into either container (spec 126).
+   *
+   * Everything below goes through here, and here goes through `applyMove` --
+   * which is pure, so the rules that decide whether a move is legal are testable
+   * without a session, a store or a clock.
+   */
+  async moveItem(playerId: string, request: MoveRequest): Promise<PlayerActionResult> {
     const session = this.sessions.get(playerId);
     if (!session) return { ok: false, reason: 'not logged in' };
-    if (!isEquipSlot(slot)) return { ok: false, reason: `no such slot: ${slot}` };
 
-    const item = itemById(itemId);
-    if (!item) return { ok: false, reason: `no such item: ${itemId}` };
-    if (item.slot !== slot) return { ok: false, reason: `${item.name} does not go in ${slot}` };
-    if (session.record.level < item.levelRequirement) {
-      return { ok: false, reason: `${item.name} requires level ${item.levelRequirement}` };
-    }
+    const outcome = applyMove(
+      session.record.inventory,
+      session.record.equipment,
+      request,
+      session.record.level,
+    );
+    if (!outcome.ok) return { ok: false, reason: outcome.reason };
 
     this.commit({
       ...session,
-      record: { ...session.record, equipment: { ...session.record.equipment, [slot]: itemId } },
+      record: { ...session.record, inventory: outcome.inventory, equipment: outcome.equipment },
     });
     const updated = await this.recalculate(playerId);
     return updated ? { ok: true, session: updated } : { ok: false, reason: 'not logged in' };
   }
 
+  /**
+   * Wear the first one of `itemId` in the bag.
+   *
+   * Kept for the HUD's weapon switch, which knows an item id and not a slot
+   * index, and reimplemented over `moveItem` rather than beside it -- so it
+   * obeys ownership for free instead of having its own copy of the rules to
+   * forget one of. Strictly redundant with `MoveItem` once nothing sends it.
+   */
+  async equip(playerId: string, slot: string, itemId: string): Promise<PlayerActionResult> {
+    const session = this.sessions.get(playerId);
+    if (!session) return { ok: false, reason: 'not logged in' };
+    if (!isEquipSlot(slot)) return { ok: false, reason: `no such slot: ${slot}` };
+
+    const index = session.record.inventory.findIndex((stack) => stack?.defId === itemId);
+    if (index < 0) return { ok: false, reason: `you are not carrying ${itemId}` };
+
+    return this.moveItem(playerId, {
+      from: { container: 'inventory', index },
+      to: equipmentAddress(slot),
+      count: 1,
+    });
+  }
+
+  /** Take off what is in `slot` and put it in the first free bag slot. */
   async unequip(playerId: string, slot: string): Promise<PlayerActionResult> {
     const session = this.sessions.get(playerId);
     if (!session) return { ok: false, reason: 'not logged in' };
     if (!isEquipSlot(slot)) return { ok: false, reason: `no such slot: ${slot}` };
     if (session.record.equipment[slot] === null) return { ok: false, reason: `${slot} is empty` };
 
+    const free = session.record.inventory.findIndex((stack) => stack === null);
+    if (free < 0) return { ok: false, reason: 'your bag is full' };
+
+    return this.moveItem(playerId, {
+      from: equipmentAddress(slot),
+      to: { container: 'inventory', index: free },
+    });
+  }
+
+  /**
+   * Where a shop's transactions land (spec 129).
+   *
+   * The proximity check lives here rather than in `shop.ts` because where a
+   * player is standing is session state -- so the pure half stays drivable
+   * without a world, and there is exactly one place that knows a shop has a
+   * counter you have to walk up to.
+   */
+  private vendorInReach(session: PlayerSession, vendorId: string): VendorDefinition | string {
+    const vendor = vendorById(vendorId);
+    if (!vendor) return `no such vendor: ${vendorId}`;
+    const at = session.record.position;
+    if (!withinReach(vendor, at.x, at.y)) return `you are too far from the ${vendor.name}`;
+    return vendor;
+  }
+
+  /** What this vendor is offering, or null when it cannot be reached. */
+  vendorFor(playerId: string, vendorId: string): VendorDefinition | null {
+    const session = this.sessions.get(playerId);
+    if (!session) return null;
+    const found = this.vendorInReach(session, vendorId);
+    return typeof found === 'string' ? null : found;
+  }
+
+  /** The sales this player can undo at this vendor, newest first. */
+  buybackFor(playerId: string, vendorId: string): readonly BuybackEntry[] {
+    return this.sessions.get(playerId)?.buyback[vendorId] ?? [];
+  }
+
+  private async settle(
+    playerId: string,
+    session: PlayerSession,
+    outcome: ShopOutcome,
+    buyback: Readonly<Record<string, readonly BuybackEntry[]>>,
+  ): Promise<PlayerActionResult> {
+    if (!outcome.ok) return { ok: false, reason: outcome.reason };
     this.commit({
       ...session,
-      record: { ...session.record, equipment: { ...session.record.equipment, [slot]: null } },
+      buyback,
+      record: { ...session.record, inventory: outcome.inventory, coins: outcome.coins },
     });
     const updated = await this.recalculate(playerId);
     return updated ? { ok: true, session: updated } : { ok: false, reason: 'not logged in' };
+  }
+
+  async buyItem(
+    playerId: string,
+    vendorId: string,
+    defId: string,
+    count: number,
+  ): Promise<PlayerActionResult> {
+    const session = this.sessions.get(playerId);
+    if (!session) return { ok: false, reason: 'not logged in' };
+    const vendor = this.vendorInReach(session, vendorId);
+    if (typeof vendor === 'string') return { ok: false, reason: vendor };
+
+    const outcome = buy(session.record.inventory, session.record.coins, vendor, defId, count);
+    return this.settle(playerId, session, outcome, session.buyback);
+  }
+
+  async sellItem(
+    playerId: string,
+    vendorId: string,
+    index: number,
+    count: number,
+  ): Promise<PlayerActionResult> {
+    const session = this.sessions.get(playerId);
+    if (!session) return { ok: false, reason: 'not logged in' };
+    const vendor = this.vendorInReach(session, vendorId);
+    if (typeof vendor === 'string') return { ok: false, reason: vendor };
+
+    const outcome = sell(session.record.inventory, session.record.coins, vendor, index, count);
+    const buyback =
+      outcome.ok && outcome.sold
+        ? { ...session.buyback, [vendorId]: rememberSale(session.buyback[vendorId] ?? [], outcome.sold) }
+        : session.buyback;
+    return this.settle(playerId, session, outcome, buyback);
+  }
+
+  async buyBackItem(playerId: string, vendorId: string, index: number): Promise<PlayerActionResult> {
+    const session = this.sessions.get(playerId);
+    if (!session) return { ok: false, reason: 'not logged in' };
+    const vendor = this.vendorInReach(session, vendorId);
+    if (typeof vendor === 'string') return { ok: false, reason: vendor };
+
+    const list = session.buyback[vendorId] ?? [];
+    const entry = list[index];
+    if (!entry) return { ok: false, reason: 'nothing to buy back there' };
+
+    const outcome = buyBack(session.record.inventory, session.record.coins, entry);
+    const buyback = outcome.ok ? { ...session.buyback, [vendorId]: forgetSale(list, index) } : session.buyback;
+    return this.settle(playerId, session, outcome, buyback);
+  }
+
+  /** What a trade's rules need to see of a player (spec 132). */
+  holdingsOf(playerId: string): Holdings | null {
+    const session = this.sessions.get(playerId);
+    if (!session) return null;
+    return { inventory: session.record.inventory, coins: session.record.coins };
+  }
+
+  /**
+   * Write both sides of a settled trade.
+   *
+   * One method rather than two calls to a per-player one, and that is the whole
+   * safety argument at this level: the swap has already produced two whole
+   * containers, and this assigns both before it awaits anything. There is no
+   * point between the two writes where a caller could be interrupted and leave
+   * an item in both bags -- which is the failure this feature exists to be
+   * careful about.
+   *
+   * The `await`s that follow are stat recalculations, and by then the exchange
+   * has already happened.
+   */
+  async applyTrade(
+    aId: string,
+    bId: string,
+    a: Holdings,
+    b: Holdings,
+  ): Promise<{ readonly ok: boolean; readonly reason: string }> {
+    const aSession = this.sessions.get(aId);
+    const bSession = this.sessions.get(bId);
+    if (!aSession || !bSession) return { ok: false, reason: 'one of you is not logged in' };
+
+    this.commit({
+      ...aSession,
+      record: { ...aSession.record, inventory: a.inventory, coins: a.coins },
+    });
+    this.commit({
+      ...bSession,
+      record: { ...bSession.record, inventory: b.inventory, coins: b.coins },
+    });
+    await this.recalculate(aId);
+    await this.recalculate(bId);
+    return { ok: true, reason: '' };
   }
 
   /** Validated in `skills.ts`; a rejection leaves the record untouched. */

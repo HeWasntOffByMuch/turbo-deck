@@ -436,12 +436,16 @@ export function createHud(project: Projector): HudHandle {
     noticeAge += 1;
     notices.textContent = noticeAge < 120 ? notice : '';
 
-    // Lit from the stat block, never from the last click: the server decides
-    // what is in this character's hand, and a refused equip leaves the old one
-    // lit rather than a button that lies.
-    const held = view.stats?.basicAttackId ?? BASIC_ATTACK_ID;
+    // Lit from what the server says is *worn*, never from the last click and no
+    // longer from the stat block (spec 126). Inferring the weapon from
+    // `basicAttackId` was a guess with a wrong answer in it -- every melee item
+    // in the table names the same swing, so the switch lit whichever one it
+    // happened to list first and reported "clicked Hunting Bow, lit Worn Sword".
+    // A refused equip still leaves the old one lit, because the equipment that
+    // arrives is the server's and not this client's hope.
+    const held = view.equipment.mainHand;
     for (const weapon of weaponSlots) {
-      const current = weapon.abilityId === held;
+      const current = weapon.itemId === held;
       weapon.button.style.borderColor = current ? '#ffcf6b' : '#33405a';
       weapon.button.style.background = current ? '#243044' : '#182130';
       weapon.button.style.color = current ? '#f2f6fb' : '#98a4b4';

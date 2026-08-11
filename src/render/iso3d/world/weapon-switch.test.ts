@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { abilityById, BASIC_ATTACK_ID } from '../../../server/data/abilities.js';
-import { ALL_ITEMS } from '../../../server/data/items.js';
+import { ALL_ITEMS, STARTING_KIT } from '../../../server/data/items.js';
 import { WEAPON_SWITCH } from './hud.js';
 
 describe('the weapon switch', () => {
@@ -38,6 +38,16 @@ describe('the weapon switch', () => {
       const item = ALL_ITEMS.find((candidate) => candidate.id === entry.itemId);
       expect(item?.levelRequirement).toBe(1);
     }
+  });
+
+  /**
+   * Since spec 126 the server refuses to equip what a player is not carrying,
+   * so "the level lets you" stopped being the whole answer -- the switch clicks
+   * an item id, and an id that is in nobody's bag is a button that does nothing.
+   */
+  it('offers only weapons a fresh character is actually given', () => {
+    const granted = new Set(STARTING_KIT.map((entry) => entry.defId));
+    for (const entry of WEAPON_SWITCH) expect(granted.has(entry.itemId)).toBe(true);
   });
 
   it('names a real item and a real ability in every entry', () => {

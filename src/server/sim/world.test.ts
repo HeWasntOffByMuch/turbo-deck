@@ -10,7 +10,7 @@ import {
   projectileLifetimeTicks,
   projectileSpeedFor,
 } from '../player/stats.js';
-import { EMPTY_EQUIPMENT, type EffectiveStats, type PersistedPlayer } from '../state/types.js';
+import { EMPTY_EQUIPMENT, emptyInventory, type EffectiveStats, type PersistedPlayer } from '../state/types.js';
 import { chunkKeyOf } from '../world/chunks.js';
 import { FLAT_TERRAIN, type TerrainSampler } from '../world/terrain.js';
 import { SHOT_LAUNCH_HEIGHT } from './ballistics.js';
@@ -37,6 +37,8 @@ const RECORD: PersistedPlayer = {
   baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
   skills: [],
   equipment: EMPTY_EQUIPMENT,
+  inventory: emptyInventory(),
+  coins: 0,
   position: { x: 600, y: 450, z: 0 },
   facing: 0,
   currentZone: 'hearth',

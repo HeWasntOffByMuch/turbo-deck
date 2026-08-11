@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ALL_SKILLS, SKILL_BRANCHES, TIER_POINT_GATE, skillById } from '../data/skills.js';
-import { EMPTY_EQUIPMENT, type PersistedPlayer } from '../state/types.js';
+import { EMPTY_EQUIPMENT, emptyInventory, type PersistedPlayer } from '../state/types.js';
 import {
   lockedBranches,
   pointsInBranch,
@@ -16,6 +16,8 @@ function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
     baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
     skills: [],
     equipment: EMPTY_EQUIPMENT,
+    inventory: emptyInventory(),
+    coins: 0,
     position: { x: 0, y: 0, z: 0 },
     facing: 0,
     currentZone: 'hearth',

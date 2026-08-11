@@ -1,0 +1,106 @@
+/**
+ * The scale preference (spec 136).
+ *
+ * The store's whole job is to be unshakeable: whatever is in storage, the game
+ * opens. So most of this is junk going in and `'auto'` coming out.
+ */
+
+import { describe, expect, it } from 'vitest';
+import {
+  DISPLAY_KEY,
+  DISPLAY_VERSION,
+  loadScale,
+  migrateDisplay,
+  parseDisplay,
+  saveScale,
+  scaleLabel,
+  SCALE_CHOICES,
+  type ScaleChoice,
+} from './display-store.js';
+import type { StorageLike } from '../core/layout-store.js';
+
+function storage(): StorageLike & { map: Map<string, string> } {
+  const map = new Map<string, string>();
+  return {
+    map,
+    getItem: (key) => map.get(key) ?? null,
+    setItem: (key, value) => {
+      map.set(key, value);
+    },
+    removeItem: (key) => {
+      map.delete(key);
+    },
+  };
+}
+
+describe('the scale preference across a reload', () => {
+  it('reads back what was written, for every choice offered', () => {
+    for (const choice of SCALE_CHOICES) {
+      const store = storage();
+      saveScale(store, choice);
+      expect(loadScale(store)).toBe(choice);
+    }
+  });
+
+  it('is auto when nothing was ever written', () => {
+    expect(loadScale(storage())).toBe('auto');
+  });
+
+  it('writes under one key, so nothing else has to know the shape', () => {
+    const store = storage();
+    saveScale(store, 3);
+    expect([...store.map.keys()]).toEqual([DISPLAY_KEY]);
+    expect(JSON.parse(store.map.get(DISPLAY_KEY) ?? '')).toEqual({
+      version: DISPLAY_VERSION,
+      scale: 3,
+    });
+  });
+});
+
+describe('what the store refuses', () => {
+  it('falls back to auto rather than throwing on junk', () => {
+    const store = storage();
+    store.setItem(DISPLAY_KEY, 'not json {');
+    expect(loadScale(store)).toBe('auto');
+  });
+
+  it('refuses a scale that is not one of the choices', () => {
+    // 5 is a real `UI_SCALES` entry and still not offered here, which is the
+    // case that would slip through a `typeof value === 'number'` check.
+    expect(migrateDisplay({ version: 1, scale: 5 })).toBeNull();
+    expect(migrateDisplay({ version: 1, scale: 0 })).toBeNull();
+    expect(migrateDisplay({ version: 1, scale: 2.5 })).toBeNull();
+    expect(migrateDisplay({ version: 1, scale: '2' })).toBeNull();
+  });
+
+  it('refuses a document from a build that knew more than this one', () => {
+    expect(migrateDisplay({ version: DISPLAY_VERSION + 1, scale: 2 })).toBeNull();
+  });
+
+  it('refuses a document with no version', () => {
+    expect(migrateDisplay({ scale: 2 })).toBeNull();
+    expect(parseDisplay('null')).toBeNull();
+    expect(parseDisplay(null)).toBeNull();
+  });
+
+  it('accepts the document it writes', () => {
+    const store = storage();
+    saveScale(store, 'auto');
+    expect(parseDisplay(store.getItem(DISPLAY_KEY))).toEqual({
+      version: DISPLAY_VERSION,
+      scale: 'auto',
+    });
+  });
+});
+
+describe('what a choice is called', () => {
+  it('names auto and the numbers', () => {
+    expect(scaleLabel('auto')).toBe('Auto');
+    expect(SCALE_CHOICES.filter((c): c is Exclude<ScaleChoice, 'auto'> => c !== 'auto').map(scaleLabel)).toEqual([
+      '1x',
+      '2x',
+      '3x',
+      '4x',
+    ]);
+  });
+});

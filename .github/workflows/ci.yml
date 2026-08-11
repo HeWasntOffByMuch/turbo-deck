@@ -24,3 +24,10 @@ jobs:
       # than a client refused at connect for reasons nobody can explain.
       - run: npm run bake:units
       - run: git diff --exit-code assets/units/manifest.json
+      # The gallery's golden images are committed so a visual change reviews as a
+      # picture rather than as a diff nobody can read. Same failure mode as the
+      # manifest above: change a widget, forget to re-bake, and the PNGs still
+      # show the old one. Re-baking and requiring no diff makes that a red build.
+      # (`npm test` already compares against them; this catches a stale *commit*.)
+      - run: npm run bake:ui-goldens
+      - run: git diff --exit-code src/ui/gallery/goldens

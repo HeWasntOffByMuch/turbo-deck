@@ -22,7 +22,7 @@ import { computeEffectiveStats } from '../src/server/player/stats.js';
 import { launchAngle } from '../src/server/sim/ballistics.js';
 import { EntityKindValue, type ServerInput, type ServerWorldState } from '../src/server/sim/types.js';
 import { createWorldState, spawnEntity, step, type StepContext } from '../src/server/sim/world.js';
-import { EMPTY_EQUIPMENT, type PersistedPlayer } from '../src/server/state/types.js';
+import { EMPTY_EQUIPMENT, emptyInventory, type PersistedPlayer } from '../src/server/state/types.js';
 import { chunkKeyOf } from '../src/server/world/chunks.js';
 import { FLAT_TERRAIN, type TerrainSampler } from '../src/server/world/terrain.js';
 import { ZoneManager } from '../src/server/world/zone-manager.js';
@@ -39,6 +39,8 @@ const RECORD: PersistedPlayer = {
   baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
   skills: [],
   equipment: EMPTY_EQUIPMENT,
+  inventory: emptyInventory(),
+  coins: 0,
   position: { x: ORIGIN.x, y: ORIGIN.y, z: 0 },
   facing: 0,
   currentZone: 'greenmarch',

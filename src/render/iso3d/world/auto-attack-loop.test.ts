@@ -19,7 +19,7 @@ import { DEFAULT_LIVE_CONFIG } from '../../../server/config.js';
 import { abilityById } from '../../../server/data/abilities.js';
 import { monsterById } from '../../../server/data/monsters.js';
 import { computeEffectiveStats } from '../../../server/player/stats.js';
-import { EMPTY_EQUIPMENT, type PersistedPlayer } from '../../../server/state/types.js';
+import { EMPTY_EQUIPMENT, emptyInventory, type PersistedPlayer } from '../../../server/state/types.js';
 import { chunkKeyOf } from '../../../server/world/chunks.js';
 import { FLAT_TERRAIN } from '../../../server/world/terrain.js';
 import { ZoneManager } from '../../../server/world/zone-manager.js';
@@ -35,6 +35,8 @@ const RECORD: PersistedPlayer = {
   baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
   skills: [],
   equipment: EMPTY_EQUIPMENT,
+  inventory: emptyInventory(),
+  coins: 0,
   position: { x: 0, y: 0, z: 0 },
   facing: 0,
   currentZone: 'greenmarch',

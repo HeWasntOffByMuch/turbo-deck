@@ -50,7 +50,14 @@ import { facesAim } from '../../../server/sim/abilities.js';
 import { createHud, HOTBAR } from './hud.js';
 import { appearanceOf } from './appearance.js';
 import { effectsForBlow } from './vfx-wire.js';
-import { moveIntent, MOVE_KEYS, RoutePlanner } from './intent.js';
+import { moveIntent, RoutePlanner } from './intent.js';
+import { decideKeyDown, decideKeyUp } from './key-actions.js';
+import { UiLayer } from './ui-layer.js';
+import { nearestVendorTo } from './shop-model.js';
+import { InputMap, type Modifiers } from '../../../ui/input/input-map.js';
+import { loadBindings, saveBindings } from '../../../ui/input/binding-store.js';
+import { loadScale, saveScale } from '../../../ui/input/display-store.js';
+import type { Rect } from '../../../ui/core/geom.js';
 import { autoAttack } from './target.js';
 import { aimShape, castOrder, startAim, type AimGesture, type AimOrder } from './aim.js';
 import { TouchGestures, type TouchSample } from './touch.js';
@@ -212,6 +219,61 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     root.dataset['authoredStates'] = readout.states;
   }
 
+  /**
+   * Mirrors what the interface is showing onto the root element (spec 131).
+   *
+   * The same window `publishUnitReadout` opens, and needed for the same reason
+   * turned up a level: the interface draws to a canvas, so a browser harness has
+   * no DOM to ask whether the bag on screen is the bag the server sent. Written
+   * only when it changes; read by `preview-world.ts` and by nothing in the game.
+   */
+  let lastUiReadout = '';
+  let lastUiCost = '';
+  function publishUiReadout(): void {
+    const readout = ui.readout();
+    // Its own comparison, because this one moves on its own: it is the worst of
+    // a sliding window and would otherwise force a style invalidation on every
+    // frame the interface got slightly slower.
+    const cost = `${readout.frameMs.toFixed(2)}/${readout.worstFrameMs.toFixed(2)}`;
+    if (cost !== lastUiCost) {
+      lastUiCost = cost;
+      root.dataset['uiFrameMs'] = readout.frameMs.toFixed(2);
+      root.dataset['uiWorstMs'] = readout.worstFrameMs.toFixed(2);
+    }
+    const windows = readout.windows.join(',');
+    const bag = readout.bag.filter((name) => name !== '').join(',');
+    // The same list with its gaps kept, so a harness can say *which cell* holds
+    // what (spec 137). Both, rather than one: the filtered one is what a person
+    // reads in a log, and the raw one is what an index means something in.
+    const cellNames = readout.bag.join(',');
+    // The scale and the viewport are in the key as well as in the attributes: a
+    // resize changes neither the windows nor the bag, and a readout that only
+    // watched those would report the old frame forever.
+    // The options window's tab strip, in UI pixels: `id:x,y,w,h` apiece (spec
+    // 136). The harness clicks a tab with it, because the alternative is a
+    // guessed offset that passes for the wrong reason the day the layout moves.
+    const boxes = (rects: readonly { readonly id: string; readonly rect: Rect }[]): string =>
+      rects.map((box) => `${box.id}:${box.rect.x},${box.rect.y},${box.rect.width},${box.rect.height}`).join(';');
+    const tabs = boxes(readout.tabRects);
+    const scales = boxes(readout.scaleRects);
+    const cells = boxes(readout.bagRects);
+    const text =
+      `${windows}|${bag}|${readout.scale}|${readout.viewport.width}x${readout.viewport.height}` +
+      `|${readout.tab}|${tabs}|${readout.scaleChoice}|${scales}|${cells}|${cellNames}`;
+    if (text === lastUiReadout) return;
+    lastUiReadout = text;
+    root.dataset['uiWindows'] = windows;
+    root.dataset['uiBag'] = bag;
+    root.dataset['uiScale'] = String(readout.scale);
+    root.dataset['uiViewport'] = `${readout.viewport.width}x${readout.viewport.height}`;
+    root.dataset['uiTab'] = readout.tab;
+    root.dataset['uiTabs'] = tabs;
+    root.dataset['uiScaleChoice'] = readout.scaleChoice;
+    root.dataset['uiScales'] = scales;
+    root.dataset['uiCells'] = cells;
+    root.dataset['uiCellNames'] = cellNames;
+  }
+
   const hud = createHud((x, y, lift) => scene.projectPoint(x, y, lift));
   /** The overlay's current box, so it is only rewritten when the letterbox moves. */
   let hudBox = { x: -1, y: -1, width: -1, height: -1 };
@@ -301,7 +363,69 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   }
 
   // --- input -------------------------------------------------------------
+  /**
+   * Held *actions*, not key codes (spec 125).
+   *
+   * The map is per-view and loaded from the player's profile at mount; the
+   * storage is reached for here, at the DOM edge, exactly as the editor's
+   * autosave does it -- everything under src/ui/ takes a `StorageLike`.
+   */
   const held = new Set<string>();
+  const inputMap = new InputMap();
+  /**
+   * Where the key profile lives. Reached for here, at the DOM edge, exactly as
+   * the editor's autosave does it -- everything under src/ui/ takes a
+   * `StorageLike` and never a `Window`.
+   */
+  const bindingStorage = globalThis.localStorage ?? {
+    getItem: () => null,
+    setItem: () => undefined,
+    removeItem: () => undefined,
+  };
+  loadBindings(bindingStorage, inputMap);
+
+  /**
+   * The framework's interface, over the world (spec 131).
+   *
+   * Built after the map so it sits above the world canvas in the DOM, and given
+   * the same `inputMap` the keys are read through -- so rebinding a key in the
+   * keybinding window rebinds it in the game, because there is one map.
+   *
+   * Every callback below is a *request*: the screens emit intents and the server
+   * decides. Nothing here writes to a container, a purse or a skill tree.
+   */
+  const ui = new UiLayer(root, {
+    map: inputMap,
+    onMove: (from, to, count) => client.moveItem(from, to, count),
+    onSpend: (skillId) => client.spendSkillPoint(skillId),
+    onBuy: (vendorId, defId) => client.buyItem(vendorId, defId),
+    onSell: (vendorId, index) => client.sellItem(vendorId, index),
+    onBuyBack: (vendorId, index) => client.buyBack(vendorId, index),
+    onVendor: (vendorId) => client.openVendor(vendorId),
+    onTradeOffer: (slots, coins) => client.offerInTrade(slots, coins),
+    onTradeAccept: (revision) => client.acceptTrade(revision),
+    onTradeRespond: (accept) => client.respondToTrade(accept),
+    onTradeCancel: () => client.cancelTrade(),
+    // Written straight through, because a key the player just changed and then
+    // lost to a refresh is worse than one that never saved at all.
+    onBindingsChanged: () => saveBindings(bindingStorage, inputMap),
+    // Honoured and saved in the same breath, for the same reason (spec 136):
+    // the interface re-frames on the next update, so a preference that failed
+    // to save would be one the player watched work and then lose.
+    onScaleChosen: (choice) => {
+      ui.setScaleChoice(choice);
+      saveScale(bindingStorage, choice);
+    },
+    // The one place the platform is asked, beside the media queries.
+    scale: loadScale(bindingStorage),
+    // Where the *player* is, not where the camera is looking: the server checks
+    // the same distance from the same position, and asking about a shop the
+    // server will refuse is how a window opens empty.
+    nearestVendor: () => {
+      const me = client.view().self;
+      return me ? nearestVendorTo(me.x, me.y) : null;
+    },
+  });
   let cursor: { x: number; y: number } | null = null;
   let aim = { x: 0, y: 0 };
   /** The standing move order from the last right-click, in world units. */
@@ -448,48 +572,139 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     return entity.kind === EntityKind.Monster || entity.kind === EntityKind.Player;
   }
 
+  /**
+   * The only place in the game that turns a `KeyboardEvent` into a decision
+   * (spec 125).
+   *
+   * It asks the map what actions the key fires and acts on those; it never
+   * branches on a code or a letter. That is what makes every key here
+   * rebindable, and it is why `held` now holds action ids rather than key codes.
+   */
+  const modifiersOf = (event: KeyboardEvent): Modifiers => ({
+    shift: event.shiftKey,
+    ctrl: event.ctrlKey,
+    alt: event.altKey,
+    meta: event.metaKey,
+  });
+
+  /**
+   * The printable character a key produced, or undefined.
+   *
+   * A text field takes characters from a `text` event and control keys from a
+   * `key` one, and a browser delivers both on one `keydown` -- so the character
+   * has to be pulled out here, at the DOM edge. Anything with a modifier that
+   * makes it a command rather than a letter is not text.
+   */
+  const textOf = (event: KeyboardEvent): string | undefined =>
+    event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey ? event.key : undefined;
+
   const onKeyDown = (event: KeyboardEvent): void => {
-    held.add(event.code);
-    const slot = HOTBAR[Number(event.key) - 1];
-    if (slot) {
-      pressAbility(slot);
+    // Offered to the interface first, and gameplay hears it only if the
+    // interface did not take it (spec 131). Tab is the one key the router never
+    // routes: it moves focus, and it must not also reach the browser's own.
+    if (event.code === 'Tab' && ui.anyOpen) {
+      event.preventDefault();
+      ui.moveFocus(event.shiftKey ? -1 : 1);
+      return;
+    }
+    if (ui.handleKey(event.code, 'down', modifiersOf(event), textOf(event))) {
+      // Held actions are cleared for the same reason `blur` clears them: keys
+      // pressed while the interface has the keyboard get no release the game
+      // will see, and a stranded `move.north` walks into a wall.
+      held.clear();
+      return;
+    }
+
+    const decision = decideKeyDown(inputMap, event.code, modifiersOf(event));
+
+    for (const id of decision.windows) {
+      ui.toggle(id);
       event.preventDefault();
     }
-    // Escape calls off a wind-up. Cancelling refunds the cost and the cooldown,
-    // so what a called-off cast spends is exactly the time it took -- which is
-    // why the key is worth having somewhere that is not also the move button.
-    if (event.code === 'Escape') {
-      client.cancelCast();
-      // Withdrawing from a blow that the auto-attack would re-commit to on the
-      // next tick is not withdrawing from anything.
-      targetId = null;
-      clearAim();
-    }
-    // Any manual step also drops a standing order, for the same reason held
-    // keys outrank one in `moveIntent`: taking the keys is taking control.
-    //
-    // A *pending* aim survives it. Walking while you decide where to put a
-    // blast is the point of being allowed to decide; a confirmed order does not
-    // survive, because from then on it is steering and a held key already
-    // outranks a destination in `moveIntent`.
-    if (MOVE_KEYS[event.code]) {
+
+    for (const action of decision.move) {
+      held.add(action);
+      // Any manual step also drops a standing order, for the same reason held
+      // keys outrank one in `moveIntent`: taking the keys is taking control.
+      //
+      // A *pending* aim survives it. Walking while you decide where to put a
+      // blast is the point of being allowed to decide; a confirmed order does
+      // not survive, because from then on it is steering and a held key already
+      // outranks a destination in `moveIntent`.
       destination = null;
       planner.clear();
       targetId = null;
       order = null;
     }
+
+    for (const slot of decision.skillbar) {
+      const ability = HOTBAR[slot];
+      if (!ability) continue;
+      pressAbility(ability);
+      event.preventDefault();
+    }
+
+    // Cancelling calls off a wind-up. It refunds the cost and the cooldown, so
+    // what a called-off cast spends is exactly the time it took -- which is why
+    // the action is worth having somewhere that is not also the move button.
+    if (decision.cancel) {
+      // What Escape means when there is nothing to back out of (spec 135).
+      //
+      // The interface has already had it and did not want it -- no drag, no
+      // dialog, no window. So the question left is whether *gameplay* wants it,
+      // and it does exactly when there is something committed to: a wind-up, an
+      // aim, a standing order. When there is not, Escape is the menu, which is
+      // what it means in every game that has one.
+      //
+      // Asked here rather than in `ui-screens.ts` because this is the only place
+      // both facts are visible -- that half may not see a cast, on purpose.
+      const committed =
+        pendingAim !== null || order !== null || targetId !== null || client.view().selfRoot !== null;
+      client.cancelCast();
+      // Withdrawing from a blow that the auto-attack would re-commit to on the
+      // next tick is not withdrawing from anything.
+      targetId = null;
+      clearAim();
+      if (!committed) ui.toggle('options');
+    }
   };
+
   const onKeyUp = (event: KeyboardEvent): void => {
-    held.delete(event.code);
+    ui.handleKey(event.code, 'up', modifiersOf(event));
+    // Released whatever the interface said, always. A release that the UI
+    // swallowed is a held action with no way out, and the symptom is walking
+    // into a wall until the same key is pressed and released again.
+    for (const action of decideKeyUp(inputMap, event.code)) held.delete(action);
   };
-  const onMove = (event: MouseEvent): void => {
+
+  const mouseModifiers = (event: MouseEvent): Modifiers => ({
+    shift: event.shiftKey,
+    ctrl: event.ctrlKey,
+    alt: event.altKey,
+    meta: event.metaKey,
+  });
+  /** A mouse event in the coordinates the canvas and the UI layer share. */
+  const pointIn = (event: MouseEvent): { x: number; y: number } => {
     const rect = canvas.getBoundingClientRect();
-    cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  };
+
+  const onMove = (event: MouseEvent): void => {
+    const at = pointIn(event);
+    // A cursor over a window is not a cursor over the world: leaving it set
+    // would go on highlighting a body under the panel and aiming at it.
+    cursor = ui.handlePointer('move', at, -1, mouseModifiers(event)) ? null : at;
   };
   const onLeave = (): void => {
     cursor = null;
   };
+  const onMouseUp = (event: MouseEvent): void => {
+    // The world has nothing to do with a mouse release -- an order is given on
+    // the press -- but a drag ends on one, so the interface has to hear it.
+    ui.handlePointer('up', pointIn(event), event.button, mouseModifiers(event));
+  };
   const onMouseDown = (event: MouseEvent): void => {
+    if (ui.handlePointer('down', pointIn(event), event.button, mouseModifiers(event))) return;
     const rect = canvas.getBoundingClientRect();
     cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
 
@@ -504,6 +719,20 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // One button does both, and which one it does is decided by what is under
     // it (spec 070).
     if (event.button !== 2) return;
+
+    // ...and shift makes it a third thing (spec 134): an offer to trade with the
+    // player under the cursor. On the button that already means "act on that
+    // body" rather than a key of its own, because a trade is aimed at somebody
+    // and a key is not. Anything that is not another player is left alone --
+    // and the server checks again.
+    if (event.shiftKey) {
+      const under = cursor ? scene.pickUnitAt(cursor.x, cursor.y) : null;
+      const picked = under === null ? null : client.view().entities.find((e) => e.id === under);
+      if (picked && picked.kind === EntityKind.Player && picked.id !== client.view().selfEntityId) {
+        client.inviteToTrade(picked.id);
+      }
+      return;
+    }
 
     // Right-click over a pending aim means *no*, and only that: no move order,
     // no attack order, nothing under the cursor acted on. The button that calls
@@ -616,9 +845,26 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   };
 
   const onPointerUp = (event: PointerEvent): void => {
-    if (event.pointerType !== 'touch') return;
+    if (event.pointerType !== 'touch') {
+      onMouseUp(event);
+      return;
+    }
     const gesture = gestures.up(sampleOf(event));
     if (gesture?.kind === 'tap') onTap(gesture.x, gesture.y);
+  };
+
+  /**
+   * The wheel, offered to the interface before the camera zoom takes it.
+   *
+   * On `root` and in the capture phase because the zoom listener is on the
+   * canvas (`scene.controls.attachWheelZoom`), and stopping propagation here is
+   * the only way to reach it first without that function learning about this
+   * one. Scrolling a shop's stock must not also pull the camera in.
+   */
+  const onWheel = (event: WheelEvent): void => {
+    if (!ui.handleWheel(pointIn(event), event.deltaY, mouseModifiers(event))) return;
+    event.preventDefault();
+    event.stopPropagation();
   };
 
   const onPointerCancel = (event: PointerEvent): void => {
@@ -990,6 +1236,12 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
     publishUnitReadout();
 
+    // Last, over everything (spec 131). It is handed `now` rather than reading
+    // one: nothing under `src/ui/` may touch a clock, which is what makes an
+    // input replay of this interface exact rather than approximate.
+    ui.update(view, now);
+    publishUiReadout();
+
     raf = requestAnimationFrame(frame);
   }
 
@@ -1009,6 +1261,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       canvas.addEventListener('pointerup', onPointerUp);
       canvas.addEventListener('pointercancel', onPointerCancel);
       canvas.addEventListener('mouseleave', onLeave);
+      root.addEventListener('wheel', onWheel, { capture: true, passive: false });
       document.documentElement.addEventListener('contextmenu', onContextMenu);
 
       void client.connect();
@@ -1027,6 +1280,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       canvas.removeEventListener('pointerup', onPointerUp);
       canvas.removeEventListener('pointercancel', onPointerCancel);
       canvas.removeEventListener('mouseleave', onLeave);
+      root.removeEventListener('wheel', onWheel, { capture: true });
       document.documentElement.removeEventListener('contextmenu', onContextMenu);
       held.clear();
       // A tab switched away mid-pinch must not leave fingers down.

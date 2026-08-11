@@ -30,6 +30,7 @@ import {
   type MapInfoMessage,
   type ServerChatMessage,
   type SpawnerStatus,
+  type TradeSideView,
 } from '../net/messages.js';
 import {
   CastEndReasonValue,
@@ -38,6 +39,7 @@ import {
   ClientMessageType,
   CorrectionReason,
   ServerMessageType,
+  TradeStageValue,
 } from '../net/protocol.js';
 import { MAP_CHUNK_REQUEST_RADIUS, PROTOCOL_VERSION } from '../config.js';
 
@@ -67,7 +69,15 @@ const CHUNK_REQUEST_INTERVAL_TICKS = 3;
  */
 const CHUNK_THROTTLE_BACKOFF_TICKS = 15;
 import { abilityById } from '../data/abilities.js';
-import type { EffectiveStats } from '../state/types.js';
+import {
+  EMPTY_EQUIPMENT,
+  type EffectiveStats,
+  type Equipment,
+  type Inventory,
+  type SkillAllocation,
+  type SlotAddress,
+} from '../state/types.js';
+import { applyMove, type MoveRequest } from '../player/inventory.js';
 import { createFlatPredictor, PredictionBuffer, type PredictedInput, type PredictStep } from './prediction.js';
 import { ReplicatedWorld } from './replica.js';
 import {
@@ -114,6 +124,30 @@ export interface GameClientOptions {
 
 /** What the renderer reads. Read-only, and free of anything derived. */
 /** The map, as a renderer sees it (spec 072). */
+/** A shop as the client sees it (spec 129). Prices are the server's, always. */
+export interface VendorView {
+  readonly id: string;
+  readonly name: string;
+  readonly stock: readonly { readonly defId: string; readonly price: number }[];
+  readonly buyback: readonly {
+    readonly defId: string;
+    readonly count: number;
+    readonly price: number;
+  }[];
+}
+
+/** A trade as the client sees it (spec 132). Replaced whole, never derived. */
+export interface TradeView {
+  readonly id: number;
+  /** One of `TradeStageValue`. */
+  readonly stage: number;
+  /** What an acceptance has to name. A stale one is not an acceptance. */
+  readonly revision: number;
+  readonly you: TradeSideView;
+  readonly them: TradeSideView;
+  readonly reason: string;
+}
+
 export interface ClientMapView {
   readonly info: MapInfoMessage;
   readonly chunks: readonly HeldChunk[];
@@ -186,9 +220,53 @@ export interface ClientView {
    */
   readonly spawners: readonly SpawnerStatus[];
   readonly stats: EffectiveStats | null;
+  /**
+   * What the player is carrying and wearing (spec 126), with any move still in
+   * flight already drawn in. Empty until the first `Inventory` message lands.
+   *
+   * This is where a paperdoll comes from. It is *not* derivable from
+   * {@link stats}: two swords with the same numbers are the same stat block and
+   * different pictures, which is why the HUD's weapon switch used to click
+   * "Hunting Bow" and light "Worn Sword".
+   */
+  readonly inventory: Inventory;
+  readonly equipment: Equipment;
+  /** What the player can spend (spec 129). */
+  readonly coins: number;
+  /**
+   * The shop that is open, or null.
+   *
+   * Whole, and replaced by whatever the server last said -- including an empty
+   * one, which is how walking out of range closes it. A client never decides for
+   * itself that a shop is shut.
+   */
+  readonly vendor: VendorView | null;
+  /**
+   * Bumped by every answer the server gives about a shop, including an empty
+   * one. What tells "not asked yet" apart from "asked, and the answer was no".
+   */
+  readonly vendorRevision: number;
+  /**
+   * The trade in progress, or null (spec 132).
+   *
+   * Whole, and replaced by whatever the server last said. A client never decides
+   * for itself that a trade has ended -- the same rule the shop follows, and for
+   * a stronger reason: a window that closed itself would be a window that thinks
+   * an exchange happened when it may not have.
+   */
+  readonly trade: TradeView | null;
   readonly level: number;
   readonly experience: number;
   readonly unspentSkillPoints: number;
+  /**
+   * Every point this character has spent (spec 128).
+   *
+   * Where a skill tree's "you have three of five in this" comes from. Not
+   * derivable from {@link stats}: two different builds can add up to the same
+   * numbers, which is the same reason equipment had to be replicated rather
+   * than inferred.
+   */
+  readonly skills: readonly SkillAllocation[];
   readonly connected: boolean;
   /** Casts in progress, keyed by caster -- what to draw a wind-up bar over. */
   readonly casts: readonly KnownCast[];
@@ -334,9 +412,40 @@ export class GameClient {
   /** The spawner readout, when it has been asked for (spec 076). */
   private spawners: readonly SpawnerStatus[] = [];
   private stats: EffectiveStats | null = null;
+  /**
+   * The containers as the server last described them, and the guess drawn on top
+   * (spec 126).
+   *
+   * Two copies on purpose, and the same shape prediction has for movement: the
+   * server's word is what a replay starts from, and the predicted pair is what a
+   * view reads. Keeping only the guess would leave nothing to roll back *to*.
+   */
+  private serverInventory: Inventory = [];
+  private serverEquipment: Equipment = EMPTY_EQUIPMENT;
+  private inventory: Inventory = [];
+  private coins = 0;
+  private vendorView: VendorView | null = null;
+  /**
+   * How many answers about a shop this client has had (spec 131).
+   *
+   * A count rather than a flag, because the question it answers is "has the
+   * server replied *since I asked*" -- and a caller that only watched
+   * {@link vendorView} cannot tell "no answer yet" from "answered, and there is
+   * no shop". Which is exactly how the shop window used to open and shut itself
+   * on the same frame, forever.
+   */
+  private vendorReplies = 0;
+  /** The trade this client is in, or null (spec 132). Replaced whole. */
+  private tradeView: TradeView | null = null;
+  private equipment: Equipment = EMPTY_EQUIPMENT;
+  /** Moves sent and not yet answered, oldest first. */
+  private readonly pendingMoves: { readonly requestId: number; readonly request: MoveRequest }[] = [];
+  private moveRequests = 0;
+  private shopRequests = 0;
   private level = 1;
   private experience = 0;
   private unspentSkillPoints = 0;
+  private skills: readonly SkillAllocation[] = [];
   private seq = 0;
   private connected = false;
   private resolveWelcome: ((info: WelcomeInfo) => void) | null = null;
@@ -511,6 +620,148 @@ export class GameClient {
 
   unequip(slot: string): void {
     this.channel.send(encodeClientMessage({ type: ClientMessageType.Unequip, slot }));
+  }
+
+  /**
+   * Ask to move an item, and draw the result immediately (spec 126).
+   *
+   * Predicted, unlike a cast: the rules are pure and this client has the same
+   * copy of them the server runs, so guessing costs nothing when it is right and
+   * is undone by the answer when it is wrong. `count` of 0 means the whole stack.
+   *
+   * Returns the request id, so a caller can tell its own move from a resend.
+   */
+  moveItem(from: SlotAddress, to: SlotAddress, count = 0): number {
+    if (!this.connected) return 0;
+    this.moveRequests += 1;
+    const requestId = this.moveRequests;
+    const request: MoveRequest = { from, to, ...(count === 0 ? {} : { count }) };
+    this.pendingMoves.push({ requestId, request });
+    this.replayMoves();
+    this.channel.send(
+      encodeClientMessage({ type: ClientMessageType.MoveItem, requestId, from, to, count }),
+    );
+    return requestId;
+  }
+
+  /**
+   * Rebuild the predicted containers from the server's last word plus every
+   * move still in flight.
+   *
+   * The same shape as movement reconciliation, and for the same reason: with two
+   * drags in flight, the answer to the first one describes a world where the
+   * second has not happened, and adopting it wholesale would make the second
+   * drag flicker back for a round trip. A refused move simply is not in this
+   * list any more, so the rollback is this function finding one fewer.
+   */
+  private replayMoves(): void {
+    let bag = this.serverInventory;
+    let worn = this.serverEquipment;
+    for (const pending of this.pendingMoves) {
+      const outcome = applyMove(bag, worn, pending.request, this.level);
+      // A guess the local rules refuse is simply not drawn. The server is about
+      // to refuse it too, and predicting an illegal move is worse than lagging.
+      if (!outcome.ok) continue;
+      bag = outcome.inventory;
+      worn = outcome.equipment;
+    }
+    this.inventory = bag;
+    this.equipment = worn;
+  }
+
+  /**
+   * Ask what a vendor has, or close whatever is open with an empty id.
+   *
+   * Nothing about a shop is predicted. A purchase is not a drag -- there is no
+   * ghost to draw and no gesture to keep up with -- and the money is the one
+   * number nobody wants to watch flicker and settle.
+   */
+  /**
+   * The last trade to end, and how (spec 132).
+   *
+   * Kept because the ending is the one message a player most needs and the
+   * trade itself is gone by then: "cancelled -- you walked too far apart" has to
+   * outlive the trade it describes.
+   */
+  private lastTrade: TradeView | null = null;
+
+  get endedTrade(): TradeView | null {
+    return this.lastTrade;
+  }
+
+  inviteToTrade(entityId: number): void {
+    if (!this.connected) return;
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.TradeInvite, entityId }));
+  }
+
+  respondToTrade(accept: boolean): void {
+    if (!this.connected) return;
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.TradeRespond, accept }));
+  }
+
+  offerInTrade(slots: readonly { readonly index: number; readonly count: number }[], coins: number): void {
+    if (!this.connected) return;
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.TradeOffer, slots, coins }));
+  }
+
+  acceptTrade(revision: number): void {
+    if (!this.connected) return;
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.TradeAccept, revision }));
+  }
+
+  cancelTrade(): void {
+    if (!this.connected) return;
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.TradeCancel }));
+  }
+
+  openVendor(vendorId: string): void {
+    if (!this.connected) return;
+    if (vendorId === '') this.vendorView = null;
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.OpenVendor, vendorId }));
+  }
+
+  buyItem(vendorId: string, defId: string, count = 1): number {
+    if (!this.connected) return 0;
+    this.shopRequests += 1;
+    this.channel.send(
+      encodeClientMessage({
+        type: ClientMessageType.BuyItem,
+        requestId: this.shopRequests,
+        vendorId,
+        defId,
+        count,
+      }),
+    );
+    return this.shopRequests;
+  }
+
+  sellItem(vendorId: string, index: number, count = 1): number {
+    if (!this.connected) return 0;
+    this.shopRequests += 1;
+    this.channel.send(
+      encodeClientMessage({
+        type: ClientMessageType.SellItem,
+        requestId: this.shopRequests,
+        vendorId,
+        index,
+        count,
+      }),
+    );
+    return this.shopRequests;
+  }
+
+  buyBack(vendorId: string, index: number): number {
+    if (!this.connected) return 0;
+    this.shopRequests += 1;
+    this.channel.send(
+      encodeClientMessage({
+        type: ClientMessageType.BuyBack,
+        requestId: this.shopRequests,
+        vendorId,
+        index,
+      }),
+    );
+    return this.shopRequests;
   }
 
   spendSkillPoint(skillId: string): void {
@@ -963,9 +1214,16 @@ export class GameClient {
       map: this.mapView(),
       spawners: this.spawners,
       stats: this.stats,
+      inventory: this.inventory,
+      equipment: this.equipment,
+      coins: this.coins,
+      vendor: this.vendorView,
+      vendorRevision: this.vendorReplies,
+      trade: this.tradeView,
       level: this.level,
       experience: this.experience,
       unspentSkillPoints: this.unspentSkillPoints,
+      skills: this.skills,
       connected: this.connected,
       casts: this.visibleCasts(),
       requestedAbilityId: this.requestedAbilityId,
@@ -1140,11 +1398,61 @@ export class GameClient {
         }
         break;
 
+      case ServerMessageType.Inventory:
+        this.serverInventory = message.inventory;
+        this.serverEquipment = message.equipment;
+        this.coins = message.coins;
+        // Everything up to and including the answered request has been settled,
+        // whether it was taken or refused -- the containers that arrived are the
+        // truth about both. What is left is what is still in flight.
+        while ((this.pendingMoves[0]?.requestId ?? Infinity) <= message.requestId) {
+          this.pendingMoves.shift();
+        }
+        this.replayMoves();
+        break;
+
+      case ServerMessageType.TradeState:
+        // Replaced whole, and a `tradeId` of 0 means "you are not in one" --
+        // which is how a window is closed. A client never decides for itself
+        // that a trade has ended, exactly as it never decides a shop has shut.
+        this.tradeView =
+          message.tradeId === 0
+            ? null
+            : {
+                id: message.tradeId,
+                stage: message.stage,
+                revision: message.revision,
+                you: message.you,
+                them: message.them,
+                reason: message.reason,
+              };
+        // A finished trade is told once and then forgotten, so what is left is
+        // the inventory the server has already sent alongside it.
+        if (message.stage === TradeStageValue.Done || message.stage === TradeStageValue.Cancelled) {
+          this.lastTrade = this.tradeView;
+          this.tradeView = null;
+        }
+        break;
+
+      case ServerMessageType.VendorState:
+        this.vendorReplies += 1;
+        this.vendorView =
+          message.vendorId === ''
+            ? null
+            : {
+                id: message.vendorId,
+                name: message.name,
+                stock: message.stock,
+                buyback: message.buyback,
+              };
+        break;
+
       case ServerMessageType.Stats:
         this.stats = message.stats;
         this.level = message.level;
         this.experience = message.experience;
         this.unspentSkillPoints = message.unspentSkillPoints;
+        this.skills = message.skills;
         break;
 
       case ServerMessageType.Delta: {
