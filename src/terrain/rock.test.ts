@@ -459,12 +459,11 @@ describe('detailing a formation (spec 125)', () => {
     return store;
   }
 
-  it('chews the outline and plants the top', () => {
+  it('chews the outline', () => {
     const store = withRockLayer();
     bakeRock({ store, layerId: ROCK, footprint: { minX: 0, minZ: 0, maxX: 70, maxZ: 70 }, top: TOP });
     const result = detailFormation({ store, layerIds: [ROCK], seed: 5, erosion: 0.5 });
     expect(result.erodedCells).toBeGreaterThan(0);
-    expect(result.plantedProps).toBeGreaterThan(0);
   });
 
   it('is a pure function of the store, the layers and the seed', () => {
@@ -499,50 +498,21 @@ describe('detailing a formation (spec 125)', () => {
     ).not.toThrow();
   });
 
-  it('leaves every rim cell cutting as rock', () => {
+  it('leaves the tops exactly as they were: flat, stone, and nothing standing on them', () => {
+    const plain = withRockLayer();
+    bakeRock({ store: plain, layerId: ROCK, footprint: { minX: 0, minZ: 0, maxX: 70, maxZ: 70 }, top: TOP });
+    const rock = materialIndex('rock');
     const store = detailed();
-    const rockIndex = materialIndex('rock');
-    const info = store.layerInfo(ROCK);
-    let checked = 0;
-    for (let row = info?.grid.minRow ?? 0; row < (info?.grid.maxRow ?? 0); row++) {
-      for (let col = info?.grid.minCol ?? 0; col < (info?.grid.maxCol ?? 0); col++) {
-        if (!store.cellSolid(ROCK, col, row)) continue;
-        const onRim =
-          !store.cellSolid(ROCK, col - 1, row) ||
-          !store.cellSolid(ROCK, col + 1, row) ||
-          !store.cellSolid(ROCK, col, row - 1) ||
-          !store.cellSolid(ROCK, col, row + 1);
-        if (!onRim) continue;
-        // Erosion runs after the rim is decided, so a cell exposed *by* the pass
-        // may carry a patch. What must hold is that nothing inside stays rock
-        // only by accident -- so this checks the pass painted rock on the rim it
-        // saw, by counting rather than by demanding every post-hoc rim cell.
-        if (store.cellAt(ROCK, col, row)?.materialIndex === rockIndex) checked++;
-      }
-    }
-    expect(checked).toBeGreaterThan(0);
-  });
-
-  it('varies the tone across the tier, so a face is not one flat sheet', () => {
-    const store = detailed();
-    const tones = new Set<number>();
+    // Every cell still standing is stone, one tone, with nothing planted on it.
+    // The pass used to dress the tops with grass, dirt, a tone per cell and
+    // bushes, and a tier came out reading as a meadow with a cliff under it.
+    expect(store.props(ROCK)).toHaveLength(0);
     for (let row = 0; row < 7; row++) {
       for (let col = 0; col < 7; col++) {
-        if (store.cellSolid(ROCK, col, row)) tones.add(store.cellAt(ROCK, col, row)?.tone ?? 0);
+        if (!store.cellSolid(ROCK, col, row)) continue;
+        expect(store.cellAt(ROCK, col, row)?.materialIndex).toBe(rock);
+        expect(store.cellAt(ROCK, col, row)?.tone).toBe(0);
       }
-    }
-    expect(tones.size).toBe(2);
-  });
-
-  it('stands every bush it plants inside the tier that owns it', () => {
-    const store = detailed();
-    const info = store.layerInfo(ROCK);
-    const props = store.props(ROCK);
-    expect(props.length).toBeGreaterThan(0);
-    for (const prop of props) {
-      const col = Math.floor((prop.x - (info?.origin.x ?? 0)) / store.cellSize);
-      const row = Math.floor((prop.y - (info?.origin.z ?? 0)) / store.cellSize);
-      expect(store.cellSolid(ROCK, col, row)).toBe(true);
     }
   });
 

@@ -244,12 +244,12 @@ async function main(): Promise<void> {
     // line, and a longer wait reads "autosaved" instead of what the tool said.
     await page.waitForTimeout(400);
     const afterDetail = await readStatus(page);
-    const detail = /detailed (\d+) tier\(s\): eroded (\d+), planted (\d+)/.exec(afterDetail);
+    const detail = /detailed (\d+) tier\(s\): eroded (\d+) cells/.exec(afterDetail);
     check('the detail pass works a formation over', detail !== null, detail ? detail[0] : afterDetail.slice(0, 160));
     check(
-      'it both chews the outline and plants the top',
-      detail !== null && Number(detail[2]) > 0 && Number(detail[3]) > 0,
-      detail ? `eroded ${detail[2]}, planted ${detail[3]}` : 'nothing',
+      'it chews the outline',
+      detail !== null && Number(detail[2]) > 0,
+      detail ? `eroded ${detail[2]}` : 'nothing',
     );
     await page.screenshot({ path: join(outDir, 'editor-rock-detailed.png') });
 

@@ -560,13 +560,10 @@ export interface DetailInput {
 export interface DetailResult {
   readonly touched: readonly ChunkCoord[];
   readonly erodedCells: number;
-  readonly plantedProps: number;
 }
 
 /** How much of a rim the strongest erosion may take. */
 const MAX_EROSION = 0.55;
-/** Bushes per cell of tier top, away from the rim. */
-const PLANT_RATE = 0.09;
 
 /**
  * Make a formation look like rock (spec 125).
@@ -580,17 +577,17 @@ const PLANT_RATE = 0.09;
  * Deliberately not idempotent, and the spec says so: there is no "undetailed"
  * state recorded, so running it twice erodes twice. Re-rolling is the editor's
  * job -- it undoes the previous pass first.
+ *
+ * It touches the rim and nothing else. Dressing the *tops* -- grass and dirt
+ * patches, a tone per cell, bushes standing on them -- made a tier read as a
+ * meadow with a cliff under it. A tier top is stone.
  */
 export function detailFormation(input: DetailInput): DetailResult {
   const { store, layerIds, seed } = input;
   const erosion = Math.max(0, Math.min(1, input.erosion ?? 0.5)) * MAX_EROSION;
-  const rock = materialIndex('rock');
-  const grass = materialIndex('grass');
-  const dirt = materialIndex('dirt');
 
   const touched: ChunkCoord[] = [];
   let erodedCells = 0;
-  let plantedProps = 0;
 
   for (const layerId of layerIds) {
     const info = store.layerInfo(layerId);
@@ -616,7 +613,6 @@ export function detailFormation(input: DetailInput): DetailResult {
         }
       }
     }
-    const isRim = new Set(rim.map((c) => `${c.col},${c.row}`));
 
     const dirtyChunks = new Map<string, ChunkCoord>();
     const markDirty = (col: number, row: number): void => {
@@ -625,65 +621,18 @@ export function detailFormation(input: DetailInput): DetailResult {
       dirtyChunks.set(`${cx},${cz}`, { cx: noNegZero(cx), cz: noNegZero(cz) });
     };
 
-    // 1. Erosion. Rim only, and only the rim as it stood before this pass.
-    const dropped = new Set<string>();
-    if (erosion > 0) {
-      for (const { col, row } of rim) {
-        if (hashUnit2(col, row, seed) >= erosion) continue;
-        dropped.add(`${col},${row}`);
-      }
-    }
-
-    for (let row = minRow; row < maxRow; row++) {
-      for (let col = minCol; col < maxCol; col++) {
-        if (!wasSolid(col, row)) continue;
-        const key = `${col},${row}`;
-
-        if (dropped.has(key)) {
-          store.setCellSolid(layerId, col, row, false);
-          erodedCells++;
-          markDirty(col, row);
-          continue;
-        }
-
-        // 2. Tone. Both the top and the skirt hanging off it read this, so a
-        // face breaks into slabs rather than being one flat sheet.
-        store.setCellTone(layerId, col, row, hashUnit2(col, row, seed ^ 0x70e) < 0.5 ? 0 : 1);
-
-        // 3. Patches. The rim stays rock, so every cliff cuts as stone.
-        if (!isRim.has(key)) {
-          const h = hashUnit2(col, row, seed ^ 0x9a7c);
-          store.setCellMaterial(layerId, col, row, h < 0.32 ? grass : h < 0.46 ? dirt : rock);
-        } else {
-          store.setCellMaterial(layerId, col, row, rock);
-        }
-        markDirty(col, row);
-      }
-    }
-
-    // 4. Planting. On the top, away from the rim, and added to the *tier's* own
-    // layer so a bush stands at tier height and is carried off with the rock
-    // when the tier is carved away.
-    for (let row = minRow; row < maxRow; row++) {
-      for (let col = minCol; col < maxCol; col++) {
-        const key = `${col},${row}`;
-        if (dropped.has(key) || isRim.has(key) || !wasSolid(col, row)) continue;
-        if (hashUnit2(col, row, seed ^ 0x81a7) >= PLANT_RATE) continue;
-        const jx = hashUnit2(col, row, seed ^ 0x11) - 0.5;
-        const jz = hashUnit2(col, row, seed ^ 0x22) - 0.5;
-        const placed = store.addProp(layerId, {
-          kind: 'bush',
-          x: info.origin.x + (col + 0.5 + jx * 0.6) * store.cellSize,
-          y: info.origin.z + (row + 0.5 + jz * 0.6) * store.cellSize,
-          scale: 0.7 + hashUnit2(col, row, seed ^ 0x33) * 0.6,
-          rotation: hashUnit2(col, row, seed ^ 0x44) * Math.PI * 2,
-          tint: hashUnit2(col, row, seed ^ 0x55) * 2 - 1,
-        });
-        if (placed) {
-          plantedProps++;
-          markDirty(col, row);
-        }
-      }
+    // Erosion, and nothing else. The pass used to dress the *tops* as well --
+    // grass and dirt patches, a tone per cell, bushes -- and a tier came out
+    // looking like a meadow somebody had dropped a cliff under. A tier top is
+    // stone: flat, one colour, and none of this pass's business. What is left
+    // is the one thing that changes a formation's *shape*, which is the outline
+    // it was dragged as, and the Erosion slider turns even that off at zero.
+    if (erosion <= 0) continue;
+    for (const { col, row } of rim) {
+      if (hashUnit2(col, row, seed) >= erosion) continue;
+      store.setCellSolid(layerId, col, row, false);
+      erodedCells++;
+      markDirty(col, row);
     }
 
     // Bounds follow the chunks still held: erosion can empty one entirely.
@@ -699,5 +648,5 @@ export function detailFormation(input: DetailInput): DetailResult {
     touched.push(...dirtyChunks.values());
   }
 
-  return { touched, erodedCells, plantedProps };
+  return { touched, erodedCells };
 }

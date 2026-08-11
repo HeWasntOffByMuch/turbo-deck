@@ -696,7 +696,7 @@ export function mountEditor(container: HTMLElement): ViewHandle {
         }
         rebuiltAfterRock(layerId2, detail.touched);
       }
-      status = `detailed ${detail.layerIds.length} tier(s): eroded ${detail.erodedCells}, planted ${detail.plantedProps}`;
+      status = `detailed ${detail.layerIds.length} tier(s): eroded ${detail.erodedCells} cells`;
       return;
     }
 

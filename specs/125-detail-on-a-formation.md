@@ -58,22 +58,19 @@ threaded through a loop gives a different answer depending on which chunk was
 walked first. Hashing makes the traversal order unobservable, so re-running the
 pass on one chunk reproduces what the whole formation produced.
 
-Four passes, in this order:
+One pass, and only one:
 
-1. **Rim erosion.** A solid cell with at least one non-solid orthogonal
-   neighbour is dropped when its hash falls under the erosion threshold. Only
-   the rim, only once — cells the pass itself exposes are not reconsidered, or a
-   formation dissolves from the outside in. A cell is never dropped if it would
-   leave a neighbour of a *higher* tier standing on nothing.
-2. **Tone.** Every solid cell takes tone 0 or 1 from its hash. Both the top and
-   the skirt hanging off it read from this, so a face breaks into slabs.
-3. **Top patches.** A solid cell not on the rim may become `grass` or `dirt`,
-   biased toward `dirt` next to a stair's landing. The rim keeps `rock`, so a
-   tier's edge always cuts as stone.
-4. **Planting.** Bushes on tier tops away from the rim, at a density scaled to
-   the tier's area, positioned at cell centres jittered by their own hash and
-   added to the *tier's* layer — so they stand at tier height, and carving the
-   tier away takes them with it.
+**Rim erosion.** A solid cell with at least one non-solid orthogonal neighbour
+is dropped when its hash falls under the erosion threshold. Only the rim, only
+once — cells the pass itself exposes are not reconsidered, or a formation
+dissolves from the outside in.
+
+It used to do three more: a tone per cell, patches of grass and worn dirt on the
+tops, and bushes planted on them. All three are gone. A tier top is stone —
+flat, one colour, nothing growing on it — and dressing it made a formation read
+as a meadow somebody had dropped a cliff under. The *outline* is the only thing
+here that changes what a formation is, and the Erosion slider turns even that
+off at zero.
 
 ### From the editor
 
@@ -101,8 +98,7 @@ undoes the previous pass before applying a new one when the seed changes.
   that serves it.
 - A tier still standing after the pass keeps its single height, so `bakeRock`
   will still extend it.
-- The rim stays `rock` after the patch pass, so every cliff cuts as stone.
-- Every planted prop stands within the tier that owns it.
+- Tops are left exactly as baked: stone, one tone, nothing standing on them.
 - One undo returns the document byte for byte.
 
 ## Out of scope

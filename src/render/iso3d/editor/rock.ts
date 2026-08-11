@@ -406,7 +406,6 @@ export type DetailResultOut =
       readonly layerIds: readonly string[];
       readonly touched: readonly ChunkCoord[];
       readonly erodedCells: number;
-      readonly plantedProps: number;
     }
   | { readonly ok: false; readonly reason: string };
 
@@ -439,13 +438,13 @@ export function detailAt(
   }
 
   const detail = detailFormation({ store, layerIds, seed: input.seed, erosion: input.erosion });
-  if (detail.erodedCells === 0 && detail.plantedProps === 0 && detail.touched.length === 0) {
+  if (detail.erodedCells === 0 && detail.touched.length === 0) {
     history.abortStroke();
     return { ok: false, reason: 'that formation has nothing to detail' };
   }
   history.endStroke();
 
-  return { ok: true, layerIds, touched: detail.touched, erodedCells: detail.erodedCells, plantedProps: detail.plantedProps };
+  return { ok: true, layerIds, touched: detail.touched, erodedCells: detail.erodedCells };
 }
 
 export function removeRock(

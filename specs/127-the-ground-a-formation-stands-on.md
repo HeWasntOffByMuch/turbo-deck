@@ -2,17 +2,10 @@
 
 ## Problem
 
-The cutaway (spec 126) opens a porthole through the rock in front of a body, and
-what shows through it is whatever the ground under the formation happens to be —
-meadow, usually. So a unit standing behind a tier appears in a small green
-clearing that it cannot walk out of, and the only thing on screen saying "rock"
-is the wall around the hole that the porthole just removed.
-
-Two more elaborate answers were considered and both are bigger than the problem.
-Drawing the rock's **outlines** through the porthole means the depth prepass and
-the colour pass deliberately disagree about the world, and the outline pass is a
-hike-look switch that is off by default. An **x-ray silhouette** of the body over
-intact rock is another pass, another render target and a depth trick per body.
+Meadow runs right up to and under a formation, so wherever the ground under one
+is visible — from above, through a gap between tiers, or once the camera has
+been turned to look past it — the eye reads walkable grass in a place nothing
+can walk.
 
 The cheap answer is that the premise is wrong. The ground under a formation is
 not meadow. It is rock, and always was.
