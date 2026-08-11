@@ -9,7 +9,12 @@ const SHIFT: Modifiers = { ...NONE, shift: true };
 describe('what a key press means to the Play tab', () => {
   it('walks on the movement keys', () => {
     const map = new InputMap();
-    expect(decideKeyDown(map, 'KeyW', NONE)).toEqual({ move: ['move.north'], skillbar: [], cancel: false });
+    expect(decideKeyDown(map, 'KeyW', NONE)).toEqual({
+      move: ['move.north'],
+      skillbar: [],
+      cancel: false,
+      windows: [],
+    });
     expect(decideKeyDown(map, 'KeyD', NONE).move).toEqual(['move.east']);
   });
 
@@ -63,6 +68,37 @@ describe('what a key press means to the Play tab', () => {
     const map = new InputMap();
     map.bind('combat.cancel', 'primary', null);
     expect(decideKeyDown(map, 'Escape', NONE).cancel).toBe(false);
+  });
+
+  /**
+   * The four `ui.*` actions (spec 131).
+   *
+   * They have been in `bindings.json` since phase 3 and reached nothing at all,
+   * which is why "pressing I does nothing" was true for three phases while the
+   * keybinding screen cheerfully offered to rebind it.
+   */
+  it('opens a window on the ui actions', () => {
+    const map = new InputMap();
+    expect(decideKeyDown(map, 'KeyI', NONE).windows).toEqual(['inventory']);
+    expect(decideKeyDown(map, 'KeyB', NONE).windows).toEqual(['inventory']);
+    expect(decideKeyDown(map, 'KeyC', NONE).windows).toEqual(['character']);
+    expect(decideKeyDown(map, 'KeyK', NONE).windows).toEqual(['keybindings']);
+    expect(decideKeyDown(map, 'KeyV', NONE).windows).toEqual(['shop']);
+  });
+
+  it('opens nothing on a gameplay key', () => {
+    const map = new InputMap();
+    expect(decideKeyDown(map, 'KeyW', NONE).windows).toEqual([]);
+    expect(decideKeyDown(map, 'Digit1', NONE).windows).toEqual([]);
+  });
+
+  it('follows a rebind, like everything else here', () => {
+    const map = new InputMap();
+    map.bind('ui.inventory', 'primary', { code: 'KeyG' });
+    expect(decideKeyDown(map, 'KeyG', NONE).windows).toEqual(['inventory']);
+    // KeyB is still the secondary, so the bag still opens on it.
+    expect(decideKeyDown(map, 'KeyB', NONE).windows).toEqual(['inventory']);
+    expect(decideKeyDown(map, 'KeyI', NONE).windows).toEqual([]);
   });
 });
 

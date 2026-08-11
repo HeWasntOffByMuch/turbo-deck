@@ -15,6 +15,30 @@ import { MOVE_ACTIONS } from './intent.js';
 import { skillbarIndex } from '../../../ui/input/actions.js';
 import type { InputMap, Modifiers } from '../../../ui/input/input-map.js';
 
+/**
+ * A window the interface can open (spec 131).
+ *
+ * Named here rather than in `ui-layer.ts` because that file is the one impure
+ * one in the mount and this is the type a *decision* is expressed in. A pure
+ * decision that had to import the DOM half to name its own result would be a
+ * decision that could not be tested in Node.
+ */
+export type WindowId = 'inventory' | 'character' | 'keybindings' | 'shop';
+
+/**
+ * Which window an action opens.
+ *
+ * The three on the left have been in `bindings.json` since phase 3 and reached
+ * nothing; `ui.shop` joins them here because a shop that cannot be opened is not
+ * mounted. A table rather than a switch, so adding a screen is a row.
+ */
+const UI_WINDOWS: Readonly<Record<string, WindowId | undefined>> = {
+  'ui.inventory': 'inventory',
+  'ui.character': 'character',
+  'ui.keybindings': 'keybindings',
+  'ui.shop': 'shop',
+};
+
 /** What the Play tab should do about one action firing. */
 export interface KeyDecision {
   /** Move actions to add to the held set. */
@@ -23,9 +47,11 @@ export interface KeyDecision {
   readonly skillbar: readonly number[];
   /** Whether a wind-up should be called off. */
   readonly cancel: boolean;
+  /** Windows to open or close, in the order their actions fired (spec 131). */
+  readonly windows: readonly WindowId[];
 }
 
-export const NO_DECISION: KeyDecision = { move: [], skillbar: [], cancel: false };
+export const NO_DECISION: KeyDecision = { move: [], skillbar: [], cancel: false, windows: [] };
 
 /** The action id that calls off a wind-up. */
 export const CANCEL_ACTION = 'combat.cancel';
@@ -39,6 +65,7 @@ export const CANCEL_ACTION = 'combat.cancel';
 export function decideKeyDown(map: InputMap, code: string, mods: Modifiers): KeyDecision {
   const move: string[] = [];
   const skillbar: number[] = [];
+  const windows: WindowId[] = [];
   let cancel = false;
 
   for (const action of map.resolve(code, mods, 'gameplay')) {
@@ -51,10 +78,15 @@ export function decideKeyDown(map: InputMap, code: string, mods: Modifiers): Key
       skillbar.push(slot);
       continue;
     }
+    const window = UI_WINDOWS[action];
+    if (window) {
+      windows.push(window);
+      continue;
+    }
     if (action === CANCEL_ACTION) cancel = true;
   }
 
-  return { move, skillbar, cancel };
+  return { move, skillbar, cancel, windows };
 }
 
 /**

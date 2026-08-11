@@ -23,6 +23,7 @@
     { "id": "ui.character", "category": "ui", "label": "Character sheet", "context": "gameplay", "primary": { "code": "KeyC" } },
     { "id": "ui.inventory", "category": "ui", "label": "Inventory", "context": "gameplay", "primary": { "code": "KeyI" }, "secondary": { "code": "KeyB" } },
     { "id": "ui.keybindings", "category": "ui", "label": "Keybindings", "context": "gameplay", "primary": { "code": "KeyK" } },
+    { "id": "ui.shop", "category": "ui", "label": "Shop", "context": "gameplay", "primary": { "code": "KeyV" } },
     { "id": "ui.closeTopmost", "category": "ui", "label": "Close window", "context": "ui", "primary": { "code": "Escape" } },
     { "id": "ui.focusNext", "category": "ui", "label": "Next control", "context": "ui", "primary": { "code": "Tab" } },
     { "id": "ui.focusPrevious", "category": "ui", "label": "Previous control", "context": "ui", "primary": { "code": "Tab", "shift": true } },
