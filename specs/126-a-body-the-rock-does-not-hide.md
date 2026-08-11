@@ -72,8 +72,8 @@ matter:
 ### One uniform set, written once a frame
 
 `cutout-uniforms.ts` owns the `IUniform` objects, exactly as `wind-uniforms.ts`
-does, and the terrain surface, the terrain walls and the prop field are all
-handed *those objects*. A radius of zero means no cut, which is the default and
+does, and the terrain surface and the terrain walls are both handed *those
+objects*. A radius of zero means no cut, which is the default and
 what every view that never writes it gets — the map editor draws exactly what it
 drew before.
 
@@ -100,7 +100,13 @@ no body in it.
 - **A settings toggle.** The Play tab's corner has six buttons (spec 107) and a
   seventh is a change to that menu, not to this. The constants live in one place
   and are easy to lift into a panel later.
-- **Cutting anything but terrain and props.** Monsters do not occlude — they are
+- **The prop field.** `applySway` replaces `#include <project_vertex>` with its
+  own expanded source, so the anchor the cutout needs is gone by the time a tree
+  is patched, and a `String.replace` that matches nothing returns the string
+  unchanged -- it would compile perfectly and cut nothing. `patchCutout` throws
+  rather than allowing that, and trees are a pre-existing annoyance that
+  formations did not introduce. Rock is what this is for.
+- **Cutting monsters.** They do not occlude — they are
   body-sized and moving, and a stipple around each one reads as a bug.
 - **An x-ray silhouette.** Drawing the body's outline over what hides it is the
   other common answer and a bigger change: another pass, another render target,

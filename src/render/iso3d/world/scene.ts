@@ -74,6 +74,8 @@ import { RetroPass } from '../retro-pass.js';
 import { HikeBuffers } from '../hike-buffers.js';
 import { HikeEdges } from '../hike-edges.js';
 import { advanceWind } from '../wind-uniforms.js';
+import { clearCutout, cutBodyUniform, cutParamsUniform } from '../cutout-uniforms.js';
+import { CUTOUT_DEFAULTS } from '../cutout.js';
 import { FIXED_DAYLIGHT } from '../daynight.js';
 import {
   MAGIC_COLOR,
@@ -780,6 +782,18 @@ export class WorldScene {
     this.effects.push({ mesh, age: 0, ttl: Math.max(6, durationTicks) });
   }
 
+  /**
+   * Point the cutaway at the body (spec 126).
+   *
+   * Aimed at chest height rather than at the feet: the depth bias keeps a body's
+   * own footing from flickering, and measuring from the ground would spend that
+   * bias on the slope underneath instead of on the rock in front.
+   */
+  private updateCutout(me: { x: number; y: number }, groundY: number): void {
+    cutBodyUniform.value.set(me.x, groundY + DEFAULT_CANONICAL_HEIGHT * 0.5, me.y).applyMatrix4(this.camera.matrixWorldInverse);
+    cutParamsUniform.value.set(CUTOUT_DEFAULTS.inner, CUTOUT_DEFAULTS.outer, CUTOUT_DEFAULTS.depthBias);
+  }
+
   render(view: ClientView, frame: FrameInfo): void {
     this.resize();
     const dt = Math.min(0.05, Math.max(0, frame.dt));
@@ -816,6 +830,11 @@ export class WorldScene {
 
     this.camera.updateMatrixWorld();
     this.scene.updateMatrixWorld();
+    // Where the body is, in view space, so whatever stands in front of it gives
+    // way (spec 126). Here rather than earlier because it reads the camera's
+    // inverse and that is only fresh from the line above; here rather than
+    // later because the passes below draw with it.
+    this.updateCutout(me, groundY);
     // Needs both of the above: it reads the rig's world position and pushes it
     // through the camera's inverse (spec 118).
     this.anchorPlayerLighting(view.selfEntityId);
@@ -891,6 +910,10 @@ export class WorldScene {
   }
 
   dispose(): void {
+    // The terrain materials are module-level singletons shared with the map
+    // editor, which has no body in it -- a radius left set here would cut a hole
+    // in a tab that cannot explain one (spec 126).
+    clearCutout();
     for (const body of this.bodies.values()) {
       this.scene.remove(body.group);
       if (body.shot?.trace) this.scene.remove(body.shot.trace);

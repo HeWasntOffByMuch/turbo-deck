@@ -13,6 +13,7 @@ import {
   type TerrainWorld,
 } from '../../terrain/index.js';
 import { TERRAIN_CLIFF_COLORS, TERRAIN_COLORS } from './palette.js';
+import { patchCutout } from './cutout-uniforms.js';
 import { shoreField } from './shore-sdf.js';
 import { WATER } from './wind.js';
 import { buildWaterQuad, disposeWaterQuad } from './water-material.js';
@@ -71,6 +72,12 @@ patchTerrainCurvature(surfaceMaterial);
 // triplanar.
 patchTerrainDetail(surfaceMaterial);
 patchTerrainDetail(wallMaterial);
+// ...and both give way in front of a body (spec 126). Last, so it composes over
+// the two patches above rather than replacing either. A radius of zero is the
+// default, so the map editor -- which shares these very materials and has no
+// body in it -- draws exactly what it drew before.
+patchCutout(surfaceMaterial, 'terrain-surface');
+patchCutout(wallMaterial, 'terrain-wall');
 
 /** The material index water cells carry, resolved once. */
 const WATER_MATERIAL = materialIndex('water');
