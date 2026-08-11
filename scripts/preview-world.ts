@@ -822,6 +822,8 @@ async function main(): Promise<void> {
     await shoot(page, 'world-after-combat');
     console.log(`  ticks advanced during the walk: ${(await readTick(page)) - before}`);
 
+    await theInterface(page, problems);
+
     const status = await page.textContent('body');
     console.log('\nHUD read back:', status?.slice(0, 200).replace(/\s+/g, ' '));
 
@@ -833,6 +835,409 @@ async function main(): Promise<void> {
   } finally {
     await browser.close();
     server.kill();
+  }
+}
+
+/** The brief's budget: a full UI update and draw, under this. */
+const UI_BUDGET_MS = 1.5;
+
+/** What the interface has published about itself this frame (spec 131). */
+interface UiReadout {
+  readonly windows: string;
+  readonly bag: string;
+  readonly scale: string;
+  readonly viewport: string;
+  readonly frameMs: string;
+  readonly worstMs: string;
+}
+
+async function uiReadout(page: Page): Promise<UiReadout> {
+  return page.evaluate(() => {
+    const host = document.querySelector<HTMLElement>('[data-ui-windows]');
+    return {
+      windows: host?.dataset['uiWindows'] ?? '',
+      bag: host?.dataset['uiBag'] ?? '',
+      scale: host?.dataset['uiScale'] ?? '',
+      viewport: host?.dataset['uiViewport'] ?? '',
+      frameMs: host?.dataset['uiFrameMs'] ?? '',
+      worstMs: host?.dataset['uiWorstMs'] ?? '',
+    };
+  });
+}
+
+/** Polls until the open windows read `wanted`, and reports what it settled on. */
+async function waitForWindows(page: Page, wanted: string, timeoutMs = 4000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let seen = '';
+  while (Date.now() < deadline) {
+    seen = (await uiReadout(page)).windows;
+    if (seen === wanted) return seen;
+    await page.waitForTimeout(100);
+  }
+  return seen;
+}
+
+/**
+ * What the UI canvas actually has on it, in CSS pixels.
+ *
+ * Read back off the canvas rather than inferred from the readout, because those
+ * are two different claims: the readout says a window is *open*, and this says
+ * pixels were *drawn*. Spec 101 shipped a correct mask over a pass that cleared
+ * the canvas before blending it, and every offscreen measurement was right while
+ * the screen was black -- so "the model says so" is not evidence about a picture.
+ *
+ * Returns the painted bounding box, converted to page coordinates so a click can
+ * be aimed at it, and the count of pixels that are not transparent.
+ */
+async function paintedBox(
+  page: Page,
+): Promise<{ painted: number; x: number; y: number; width: number; height: number } | null> {
+  return page.evaluate(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-ui-canvas]');
+    if (!canvas) return null;
+    const context = canvas.getContext('2d');
+    if (!context) return null;
+    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+    let painted = 0;
+    let minX = canvas.width;
+    let minY = canvas.height;
+    let maxX = -1;
+    let maxY = -1;
+    for (let i = 3, pixel = 0; i < data.length; i += 4, pixel += 1) {
+      if (data[i] === 0) continue;
+      painted += 1;
+      const x = pixel % canvas.width;
+      const y = (pixel - x) / canvas.width;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+    const box = canvas.getBoundingClientRect();
+    if (maxX < 0) return { painted: 0, x: 0, y: 0, width: 0, height: 0 };
+    // Device pixels back to page ones. The canvas is pinned to the tab's corner,
+    // so its own rect is the whole conversion.
+    const sx = box.width / canvas.width;
+    const sy = box.height / canvas.height;
+    return {
+      painted,
+      x: box.left + minX * sx,
+      y: box.top + minY * sy,
+      width: (maxX - minX + 1) * sx,
+      height: (maxY - minY + 1) * sy,
+    };
+  });
+}
+
+/**
+ * The interface, in the game (spec 131).
+ *
+ * Five phases of `src/ui/` existed with nothing in the Play tab calling any of
+ * it, so what this checks is the mount rather than the widgets: that a key opens
+ * a window, that the bag it draws is the bag the *server* sent, that a click on
+ * a window is not also a move order and a click beside one still is, and that
+ * Escape shuts the window before gameplay hears it.
+ *
+ * The window ruler is the spawner overlay -- fixed world points with a DOM
+ * element each, so a camera that panned moved them and a camera that did not
+ * left them exactly where they were. Same instrument the damage-number check
+ * uses, for the same reason: it measures the world rather than this file's guess
+ * about the world.
+ */
+async function theInterface(page: Page, problems: string[]): Promise<void> {
+  await page.keyboard.press('Escape');
+  const before = await uiReadout(page);
+  if (before.windows !== '') {
+    problems.push(`the interface came up with ${before.windows} already open`);
+  }
+  if ((await paintedBox(page))?.painted !== 0) {
+    problems.push('the UI canvas had pixels on it with nothing open');
+  }
+
+  // The spawner overlay on, as the ruler. Set rather than toggled: the damage
+  // number check before this one turns it on and returns early when it has
+  // nothing to measure, leaving it on -- and a blind toggle then turns the ruler
+  // off and every measurement below reports "no marks on screen".
+  await setSpawners(page, true);
+
+  const opened = await pressAndWait(page, 'KeyI', 'inventory');
+  if (opened !== 'inventory') {
+    problems.push(`pressing the inventory key opened "${opened}"`);
+    return;
+  }
+  await shoot(page, 'world-inventory');
+
+  const box = await paintedBox(page);
+  if (!box || box.painted === 0) {
+    problems.push('the inventory opened and the UI canvas stayed blank');
+    return;
+  }
+  console.log(`  UI canvas: ${box.painted} pixels painted over ${Math.round(box.width)}x${Math.round(box.height)}`);
+
+  // The bag it draws is the bag the server sent, and not the gallery's demo bag
+  // -- which is a real risk, because the two hold overlapping items on purpose.
+  //
+  // Asserted on the *unworn* half of the starting kit, deliberately. A weapon is
+  // not stable: this script clicks the HUD's weapon switch earlier, which is an
+  // ordinary equip, so by now whichever weapon it chose is on the character and
+  // the one it replaced is back in the bag. The greaves and the salve are never
+  // touched by anything above.
+  const bag = (await uiReadout(page)).bag;
+  console.log(`  bag on screen: ${bag}`);
+  for (const name of ["Traveller's Greaves", 'Minor Salve']) {
+    if (!bag.includes(name)) {
+      problems.push(`the bag on screen is missing ${name} from the server's starting kit: "${bag}"`);
+    }
+  }
+
+  // A click on the window is not also a move order. Aimed at the middle of what
+  // was actually painted, so it cannot miss the window by a layout change --
+  // and after the camera has stopped, or the previous order's remaining travel
+  // would be read as this click's.
+  const still = await cameraMovedBy(page, box.x + box.width / 2, box.y + box.height / 2);
+  if (still === null) {
+    console.log('  no measurement: the spawner ruler is off screen');
+  } else if (still > 3) {
+    problems.push(`a right-click on an open window moved the camera ${still.toFixed(1)}px`);
+  } else {
+    console.log(`  click on the window: camera moved ${still.toFixed(1)}px`);
+  }
+
+  // ...and a click beside it still moves, so mounting the interface has not
+  // eaten the game. The pixel has to be clear of every body and outside the
+  // window: a click on a monster is an attack order, and one already in range
+  // does not walk anywhere at all.
+  const ground = await clearGroundPixel(page, box);
+  const walked = ground === null ? null : await cameraMovedBy(page, ground.x, ground.y);
+  if (ground === null) {
+    console.log('  no measurement: no clear ground beside the window this frame');
+  } else if (walked === null) {
+    console.log('  no measurement: the spawner ruler is off screen');
+  } else if (walked < 4) {
+    problems.push(`a right-click beside the window moved the camera only ${walked.toFixed(1)}px`);
+  } else {
+    console.log(`  click beside the window: camera moved ${walked.toFixed(1)}px`);
+  }
+
+  await escapeGoesToTheWindowFirst(page, problems);
+
+  // The interface follows the tab, at a whole-number scale. A resize is the one
+  // thing that can put a UI pixel on a fraction of a device pixel, which is the
+  // rule the whole `frame.ts` exists to keep.
+  const tab = page.viewportSize() ?? { width: 1280, height: 800 };
+  await page.setViewportSize({ width: 1024, height: 700 });
+  await page.waitForTimeout(400);
+  const resized = await uiReadout(page);
+  const scale = Number(resized.scale);
+  if (!Number.isInteger(scale) || scale < 1) {
+    problems.push(`the UI scale is not a whole number after a resize: "${resized.scale}"`);
+  } else {
+    console.log(`  after resize: scale ${scale}, viewport ${resized.viewport}`);
+  }
+  const canvasFits = await page.evaluate(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-ui-canvas]');
+    if (!canvas) return null;
+    const host = canvas.parentElement;
+    if (!host) return null;
+    return { css: canvas.getBoundingClientRect().width, host: host.clientWidth };
+  });
+  // Never wider than the tab, and never short by a whole UI pixel: the remainder
+  // is dropped rather than half a UI pixel being drawn (`uiFrame`).
+  if (canvasFits && (canvasFits.css > canvasFits.host || canvasFits.css <= canvasFits.host - scale)) {
+    problems.push(`the UI canvas is ${canvasFits.css}px in a ${canvasFits.host}px tab at scale ${scale}`);
+  }
+  await page.setViewportSize({ width: tab.width, height: tab.height });
+  await page.waitForTimeout(300);
+
+  // The budget, measured where it is real: the interface's own update and draw,
+  // with two windows open over a live fight.
+  //
+  // The pointer is walked across them throughout, and that is required rather
+  // than realism for its own sake. A still interface is not redrawn at all, so a
+  // measurement taken over a window nobody is touching times a few hundred
+  // frames of doing nothing and reports 0.00ms however slow the drawing is.
+  // Moving the cursor changes what is hovered, which is what makes each of these
+  // frames a full update *and* draw.
+  await pressAndWait(page, 'KeyI', 'inventory');
+  await pressAndWait(page, 'KeyC', 'inventory,character');
+  const over = await paintedBox(page);
+  for (let step = 0; step < 40 && over; step += 1) {
+    await page.mouse.move(
+      over.x + (over.width * ((step * 7) % 20)) / 20,
+      over.y + (over.height * ((step * 11) % 20)) / 20,
+    );
+    await page.waitForTimeout(60);
+  }
+  const read = await uiReadout(page);
+  const cost = Number(read.frameMs);
+
+  // The median, which is the number the gallery's budget was established with
+  // (`preview-ui-gallery.ts`) and therefore the only one comparable to it. The
+  // worst is printed beside it and deliberately not asserted on: this browser
+  // has no GPU, the world is rendering through SwiftShader on the same thread,
+  // and the tail is a fact about that rather than about the interface.
+  console.log(
+    `  UI frame with two windows open: ${cost.toFixed(2)}ms median, ${read.worstMs}ms worst (budget ${UI_BUDGET_MS}ms)`,
+  );
+  if (!Number.isFinite(cost) || Number(read.worstMs) <= 0) {
+    problems.push('the interface never reported a frame cost');
+  } else if (cost > UI_BUDGET_MS) {
+    problems.push(`the UI frame cost ${cost.toFixed(2)}ms, over the ${UI_BUDGET_MS}ms budget`);
+  }
+  await shoot(page, 'world-ui-windows');
+
+  // Put the world back the way the rest of the script expects it.
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await setSpawners(page, false);
+}
+
+/** Put the spawner overlay in a known state, whatever it was in before. */
+async function setSpawners(page: Page, on: boolean): Promise<void> {
+  await page.click('button[aria-label="View settings"]');
+  await page.waitForTimeout(120);
+  const box = page.locator('label:has-text("Spawners") input[type=checkbox]');
+  if ((await box.isChecked()) !== on) await box.click();
+  await page.click('button[aria-label="View settings"]');
+  await page.waitForTimeout(300);
+}
+
+/** Press a key and wait for the interface to report the windows it opened. */
+async function pressAndWait(page: Page, code: string, wanted: string): Promise<string> {
+  await page.keyboard.press(code);
+  return waitForWindows(page, wanted);
+}
+
+/**
+ * How far the camera moved after a right-click at this pixel, in CSS pixels.
+ *
+ * Null when the ruler is not on screen. Sampled until it settles rather than
+ * after a fixed wait: how far a step gets in half a second depends on the
+ * machine, and this one is running the world on software WebGL.
+ */
+async function cameraMovedBy(page: Page, x: number, y: number): Promise<number | null> {
+  await waitForStillCamera(page);
+  const before = await overlayPoints(page, 'data-spawner');
+  if (before.size === 0) return null;
+  await page.mouse.click(x, y, { button: 'right' });
+
+  let moved = 0;
+  for (let waited = 0; waited < 1600; waited += 200) {
+    await page.waitForTimeout(200);
+    const after = await overlayPoints(page, 'data-spawner');
+    let worst = 0;
+    for (const [key, start] of before) {
+      const end = after.get(key);
+      if (!end) continue;
+      worst = Math.max(worst, Math.hypot(end.x - start.x, end.y - start.y));
+    }
+    moved = Math.max(moved, worst);
+    if (moved > 4) break;
+  }
+  return moved;
+}
+
+/**
+ * Wait until the camera has stopped, so the next measurement starts from rest.
+ *
+ * A move order given earlier is still being walked when this block begins, and
+ * the travel left in it reads as motion the click under test caused -- which is
+ * exactly the difference between "a click on a window is not a move order" and
+ * "a click on a window moved the camera four pixels".
+ */
+async function waitForStillCamera(page: Page, timeoutMs = 4000): Promise<void> {
+  let last = await overlayPoints(page, 'data-spawner');
+  for (let waited = 0; waited < timeoutMs; waited += 150) {
+    await page.waitForTimeout(150);
+    const now = await overlayPoints(page, 'data-spawner');
+    let moved = 0;
+    for (const [key, start] of last) {
+      const end = now.get(key);
+      if (end) moved = Math.max(moved, Math.hypot(end.x - start.x, end.y - start.y));
+    }
+    last = now;
+    if (moved < 1) return;
+  }
+}
+
+/**
+ * A pixel that is bare ground, outside `avoid`, or null.
+ *
+ * Both halves matter. A click on a body is an *attack* order, and a body already
+ * within reach is attacked without walking a step -- so a "did the game still
+ * hear that" measurement aimed at a monster reports a camera that never moved
+ * and looks exactly like a mounted interface having eaten the game.
+ */
+async function clearGroundPixel(
+  page: Page,
+  avoid: { x: number; y: number; width: number; height: number },
+): Promise<{ x: number; y: number } | null> {
+  const viewport = page.viewportSize() ?? { width: 1280, height: 800 };
+  const bodies = await bodiesOnScreen(page);
+  // Across the middle band: above it is sky at this camera pitch and below it is
+  // the HUD, and neither is ground a right-click can be given to.
+  for (const fx of [0.8, 0.7, 0.6, 0.9, 0.5]) {
+    for (const fy of [0.35, 0.45, 0.25, 0.55]) {
+      const point = { x: viewport.width * fx, y: viewport.height * fy };
+      if (
+        point.x >= avoid.x - GAP_OFFSET &&
+        point.x <= avoid.x + avoid.width + GAP_OFFSET &&
+        point.y >= avoid.y - GAP_OFFSET &&
+        point.y <= avoid.y + avoid.height + GAP_OFFSET
+      ) {
+        continue;
+      }
+      const clear = bodies.every((bar) => {
+        const at = bodyPoint(bar);
+        return Math.hypot(at.x - point.x, at.y - point.y) > GAP_CLEARANCE;
+      });
+      if (clear) return point;
+    }
+  }
+  return null;
+}
+
+/**
+ * Escape shuts the window before gameplay hears it (spec 131).
+ *
+ * Measured against a *pending aim*, which is the only observable that can tell
+ * the two apart: if the first Escape reached gameplay it would throw the aim
+ * away, and if the second one did not, the aim would still be up. Soft when the
+ * aim never starts -- a skill on cooldown is a fact about the fight, not a
+ * failure of the ordering.
+ */
+async function escapeGoesToTheWindowFirst(page: Page, problems: string[]): Promise<void> {
+  const open = await pressAndWait(page, 'KeyI', 'inventory');
+  if (open !== 'inventory') {
+    console.log('  no measurement: the inventory would not reopen');
+    return;
+  }
+  await page.mouse.move(760, 340);
+  await page.keyboard.press('Digit6');
+  if (!/^aiming/.test(await waitForAim(page, /^aiming/, 1200))) {
+    console.log('  no measurement: nothing was off cooldown to aim');
+    await page.keyboard.press('Escape');
+    return;
+  }
+
+  await page.keyboard.press('Escape');
+  const closed = await waitForWindows(page, '');
+  if (closed !== '') {
+    problems.push(`Escape left "${closed}" open`);
+    return;
+  }
+  if (!/^aiming/.test(await waitForAim(page, /^aiming/, 600))) {
+    problems.push('Escape closed the window and threw the aim away as well');
+    return;
+  }
+  console.log('  Escape closed the window and left the aim alone');
+
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+  if (/^aiming/.test((await page.textContent('body')) ?? '')) {
+    problems.push('a second Escape with no window open never reached gameplay');
+  } else {
+    console.log('  ...and the second one reached gameplay');
   }
 }
 
