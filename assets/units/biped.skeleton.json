@@ -2,137 +2,963 @@
   "$comment": "The canonical biped rig family (spec 107). PROVISIONAL: the bone contract, the sockets and the height are written down, but bindPose is null because no rig has been measured against it yet. Since spec 115 that is a state the pipeline can actually leave: exporting a job whose rig completed fills this in from the measured rig and keeps everything already decided here. Once filled in it is never rewritten -- a later unit of the family is checked against it instead, because the family's one clip library is what animates all of them. canonicalHeight is DEFAULT_CANONICAL_HEIGHT from src/units/canonical-height.ts: the height the renderer already draws a player at, (cow.metrics.headY 69 + headRadius 10.5) * PLAYER_FIGURE.bodyScale 0.7. World units, not metres -- a terrain chunk is 616 across. src/render/iso3d/world/unit-scale.test.ts asserts the three cannot drift apart.",
   "formatVersion": 1,
   "id": "biped",
-  "naming": "mixamo",
+  "naming": "tripo",
   "upAxis": "+Y",
   "forwardAxis": "+X",
   "canonicalHeight": 55.65,
   "boneBudget": {
-    "min": 15,
-    "max": 30
+    "min": 41,
+    "max": 41
   },
   "bones": [
     {
-      "name": "mixamorig:Hips",
+      "name": "Root",
       "parent": null
     },
     {
-      "name": "mixamorig:Spine",
-      "parent": "mixamorig:Hips"
+      "name": "Hip",
+      "parent": "Root"
     },
     {
-      "name": "mixamorig:Spine1",
-      "parent": "mixamorig:Spine"
+      "name": "Pelvis",
+      "parent": "Hip"
     },
     {
-      "name": "mixamorig:Spine2",
-      "parent": "mixamorig:Spine1"
+      "name": "L_Thigh",
+      "parent": "Pelvis"
     },
     {
-      "name": "mixamorig:Neck",
-      "parent": "mixamorig:Spine2"
+      "name": "L_Calf",
+      "parent": "L_Thigh"
     },
     {
-      "name": "mixamorig:Head",
-      "parent": "mixamorig:Neck"
+      "name": "L_Foot",
+      "parent": "L_Calf"
     },
     {
-      "name": "mixamorig:HeadTop_End",
-      "parent": "mixamorig:Head"
+      "name": "L_ToeBase",
+      "parent": "L_Foot"
     },
     {
-      "name": "mixamorig:LeftShoulder",
-      "parent": "mixamorig:Spine2"
+      "name": "L_CalfTwist01",
+      "parent": "L_Calf"
     },
     {
-      "name": "mixamorig:LeftArm",
-      "parent": "mixamorig:LeftShoulder"
+      "name": "L_CalfTwist02",
+      "parent": "L_CalfTwist01"
     },
     {
-      "name": "mixamorig:LeftForeArm",
-      "parent": "mixamorig:LeftArm"
+      "name": "L_ThighTwist01",
+      "parent": "L_Thigh"
     },
     {
-      "name": "mixamorig:LeftHand",
-      "parent": "mixamorig:LeftForeArm"
+      "name": "L_ThighTwist02",
+      "parent": "L_ThighTwist01"
     },
     {
-      "name": "mixamorig:RightShoulder",
-      "parent": "mixamorig:Spine2"
+      "name": "R_Thigh",
+      "parent": "Pelvis"
     },
     {
-      "name": "mixamorig:RightArm",
-      "parent": "mixamorig:RightShoulder"
+      "name": "R_ThighTwist01",
+      "parent": "R_Thigh"
     },
     {
-      "name": "mixamorig:RightForeArm",
-      "parent": "mixamorig:RightArm"
+      "name": "R_ThighTwist02",
+      "parent": "R_ThighTwist01"
     },
     {
-      "name": "mixamorig:RightHand",
-      "parent": "mixamorig:RightForeArm"
+      "name": "R_Calf",
+      "parent": "R_Thigh"
     },
     {
-      "name": "mixamorig:LeftUpLeg",
-      "parent": "mixamorig:Hips"
+      "name": "R_Foot",
+      "parent": "R_Calf"
     },
     {
-      "name": "mixamorig:LeftLeg",
-      "parent": "mixamorig:LeftUpLeg"
+      "name": "R_ToeBase",
+      "parent": "R_Foot"
     },
     {
-      "name": "mixamorig:LeftFoot",
-      "parent": "mixamorig:LeftLeg"
+      "name": "R_CalfTwist01",
+      "parent": "R_Calf"
     },
     {
-      "name": "mixamorig:LeftToeBase",
-      "parent": "mixamorig:LeftFoot"
+      "name": "R_CalfTwist02",
+      "parent": "R_CalfTwist01"
     },
     {
-      "name": "mixamorig:LeftToe_End",
-      "parent": "mixamorig:LeftToeBase"
+      "name": "Waist",
+      "parent": "Hip"
     },
     {
-      "name": "mixamorig:RightUpLeg",
-      "parent": "mixamorig:Hips"
+      "name": "Spine01",
+      "parent": "Waist"
     },
     {
-      "name": "mixamorig:RightLeg",
-      "parent": "mixamorig:RightUpLeg"
+      "name": "Spine02",
+      "parent": "Spine01"
     },
     {
-      "name": "mixamorig:RightFoot",
-      "parent": "mixamorig:RightLeg"
+      "name": "NeckTwist01",
+      "parent": "Spine02"
     },
     {
-      "name": "mixamorig:RightToeBase",
-      "parent": "mixamorig:RightFoot"
+      "name": "NeckTwist02",
+      "parent": "NeckTwist01"
     },
     {
-      "name": "mixamorig:RightToe_End",
-      "parent": "mixamorig:RightToeBase"
+      "name": "Head",
+      "parent": "NeckTwist02"
+    },
+    {
+      "name": "L_Clavicle",
+      "parent": "Spine02"
+    },
+    {
+      "name": "L_Upperarm",
+      "parent": "L_Clavicle"
+    },
+    {
+      "name": "L_Forearm",
+      "parent": "L_Upperarm"
+    },
+    {
+      "name": "L_ForearmTwist01",
+      "parent": "L_Forearm"
+    },
+    {
+      "name": "L_ForearmTwist02",
+      "parent": "L_ForearmTwist01"
+    },
+    {
+      "name": "L_Hand",
+      "parent": "L_Forearm"
+    },
+    {
+      "name": "L_UpperarmTwist01",
+      "parent": "L_Upperarm"
+    },
+    {
+      "name": "L_UpperarmTwist02",
+      "parent": "L_UpperarmTwist01"
+    },
+    {
+      "name": "R_Clavicle",
+      "parent": "Spine02"
+    },
+    {
+      "name": "R_Upperarm",
+      "parent": "R_Clavicle"
+    },
+    {
+      "name": "R_UpperarmTwist01",
+      "parent": "R_Upperarm"
+    },
+    {
+      "name": "R_UpperarmTwist02",
+      "parent": "R_UpperarmTwist01"
+    },
+    {
+      "name": "R_Forearm",
+      "parent": "R_Upperarm"
+    },
+    {
+      "name": "R_ForearmTwist01",
+      "parent": "R_Forearm"
+    },
+    {
+      "name": "R_ForearmTwist02",
+      "parent": "R_ForearmTwist01"
+    },
+    {
+      "name": "R_Hand",
+      "parent": "R_Forearm"
     }
   ],
-  "sockets": [
-    {
-      "id": "weapon.main",
-      "bone": "mixamorig:RightHand"
-    },
-    {
-      "id": "weapon.off",
-      "bone": "mixamorig:LeftHand"
-    },
-    {
-      "id": "fx.cast",
-      "bone": "mixamorig:RightHand"
-    },
-    {
-      "id": "fx.body",
-      "bone": "mixamorig:Spine2"
-    },
-    {
-      "id": "anchor.head",
-      "bone": "mixamorig:Head"
-    }
-  ],
-  "bindPose": null
+  "sockets": [],
+  "bindPose": {
+    "source": "fox_a_pose.glb",
+    "bones": [
+      {
+        "name": "Root",
+        "translation": [
+          0.20869651436805725,
+          0,
+          -0.0022697921376675367
+        ],
+        "rotation": [
+          -0.5,
+          0.5,
+          0.5,
+          0.5
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "Hip",
+        "translation": [
+          -1.4893910105229224e-8,
+          5.960464477539063e-8,
+          0.3564453423023224
+        ],
+        "rotation": [
+          0.39188605546951294,
+          -0.3918846547603607,
+          -0.19333545863628387,
+          0.8096129298210144
+        ],
+        "scale": [
+          1,
+          1.0000001192092896,
+          1.0000001192092896
+        ]
+      },
+      {
+        "name": "Pelvis",
+        "translation": [
+          -3.8300640881061554e-8,
+          -1.107682692236267e-7,
+          -4.1443854570388794e-8
+        ],
+        "rotation": [
+          -0.1258310228586197,
+          -0.8609547019004822,
+          -0.25728005170822144,
+          0.42039331793785095
+        ],
+        "scale": [
+          1,
+          0.9999998807907104,
+          1
+        ]
+      },
+      {
+        "name": "L_Thigh",
+        "translation": [
+          -0.09512664377689362,
+          0.004027071408927441,
+          0.0010727787157520652
+        ],
+        "rotation": [
+          0.9834410548210144,
+          -0.02704019285738468,
+          0.0035840386990457773,
+          0.17916402220726013
+        ],
+        "scale": [
+          1,
+          0.9999999403953552,
+          1
+        ]
+      },
+      {
+        "name": "L_Calf",
+        "translation": [
+          0.000017329351976513863,
+          0.1906300187110901,
+          0.00004650231494451873
+        ],
+        "rotation": [
+          0.16360284388065338,
+          0.0022684952709823847,
+          -0.06049126759171486,
+          0.9846673607826233
+        ],
+        "scale": [
+          1.0000001192092896,
+          1,
+          0.9999999403953552
+        ]
+      },
+      {
+        "name": "L_Foot",
+        "translation": [
+          -0.000009780575055629015,
+          0.1444225162267685,
+          0.00003104731149505824
+        ],
+        "rotation": [
+          0.5310482382774353,
+          -0.045869678258895874,
+          0.13595373928546906,
+          0.8351050019264221
+        ],
+        "scale": [
+          1,
+          1,
+          1.0000001192092896
+        ]
+      },
+      {
+        "name": "L_ToeBase",
+        "translation": [
+          -5.820766091346741e-9,
+          0.035547807812690735,
+          1.7660143569742104e-8
+        ],
+        "rotation": [
+          -5.473996722571428e-8,
+          -0.050552383065223694,
+          -4.6052431201815125e-8,
+          0.9987214207649231
+        ],
+        "scale": [
+          0.9999999403953552,
+          1,
+          0.9999999403953552
+        ]
+      },
+      {
+        "name": "L_CalfTwist01",
+        "translation": [
+          1.7462298274040222e-9,
+          -0.00008436758071184158,
+          1.4500578515708185e-10
+        ],
+        "rotation": [
+          -1.0905497838109568e-8,
+          -6.856437195779108e-9,
+          1.5323166735470295e-8,
+          1
+        ],
+        "scale": [
+          1,
+          1.0000001192092896,
+          1
+        ]
+      },
+      {
+        "name": "L_CalfTwist02",
+        "translation": [
+          -3.958120942115784e-9,
+          0.060254428535699844,
+          9.309493620435205e-9
+        ],
+        "rotation": [
+          -1.8537585910749499e-9,
+          6.877147740169676e-10,
+          -7.066410034894943e-8,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "L_ThighTwist01",
+        "translation": [
+          -1.5832483768463135e-8,
+          -0.00009536277502775192,
+          -7.87441720717652e-8
+        ],
+        "rotation": [
+          1.1004370747969006e-7,
+          9.157555069805312e-8,
+          -5.034962669014931e-8,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "L_ThighTwist02",
+        "translation": [
+          5.820766091346741e-9,
+          0.09534244239330292,
+          -1.4846026630266351e-8
+        ],
+        "rotation": [
+          4.070799519695356e-8,
+          5.372061129271799e-11,
+          -8.96397978067398e-9,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          0.9999999403953552
+        ]
+      },
+      {
+        "name": "R_Thigh",
+        "translation": [
+          0.09510590136051178,
+          -0.0043767900206148624,
+          -0.0009391405619680882
+        ],
+        "rotation": [
+          0.9825080037117004,
+          -0.027841409668326378,
+          0.003837798023596406,
+          0.18408723175525665
+        ],
+        "scale": [
+          1,
+          1,
+          0.9999987483024597
+        ]
+      },
+      {
+        "name": "R_ThighTwist01",
+        "translation": [
+          -2.1420419216156006e-8,
+          -0.00009212549775838852,
+          -1.7705568566839247e-8
+        ],
+        "rotation": [
+          -2.9350792019045002e-8,
+          1.0858560273163675e-8,
+          -3.236345946788788e-8,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "R_ThighTwist02",
+        "translation": [
+          -3.4924596548080444e-9,
+          0.09208378940820694,
+          2.0240189968490085e-8
+        ],
+        "rotation": [
+          -7.438902116518875e-8,
+          -5.997549124003854e-10,
+          -2.5436747819185257e-8,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          0.9999999403953552
+        ]
+      },
+      {
+        "name": "R_Calf",
+        "translation": [
+          0.000022897496819496155,
+          0.18411728739738464,
+          0.00005084923395770602
+        ],
+        "rotation": [
+          0.1790974736213684,
+          0.0056547122076153755,
+          -0.07934467494487762,
+          0.9806103110313416
+        ],
+        "scale": [
+          0.9999999403953552,
+          0.9999999403953552,
+          0.9999999403953552
+        ]
+      },
+      {
+        "name": "R_Foot",
+        "translation": [
+          5.3551048040390015e-8,
+          0.14513137936592102,
+          0.000030107636121101677
+        ],
+        "rotation": [
+          0.5115219354629517,
+          0.043103381991386414,
+          0.02422799915075302,
+          0.8578463792800903
+        ],
+        "scale": [
+          1,
+          1,
+          1.0000001192092896
+        ]
+      },
+      {
+        "name": "R_ToeBase",
+        "translation": [
+          2.3632310330867767e-8,
+          0.0342700369656086,
+          -4.1030379094308955e-9
+        ],
+        "rotation": [
+          5.2841038211681735e-8,
+          0.012368127703666687,
+          1.5084122395592203e-8,
+          0.9999235272407532
+        ],
+        "scale": [
+          1,
+          0.9999999403953552,
+          0.9999999403953552
+        ]
+      },
+      {
+        "name": "R_CalfTwist01",
+        "translation": [
+          -4.307366907596588e-9,
+          -0.00008474662899971008,
+          -8.749925228812572e-10
+        ],
+        "rotation": [
+          1.16918982939751e-7,
+          9.81450796189165e-8,
+          9.051291272044182e-9,
+          1
+        ],
+        "scale": [
+          1,
+          1.0000001192092896,
+          1.0000001192092896
+        ]
+      },
+      {
+        "name": "R_CalfTwist02",
+        "translation": [
+          1.8510036170482635e-8,
+          0.06054931879043579,
+          -8.288473907214211e-9
+        ],
+        "rotation": [
+          -1.3076849825210957e-7,
+          2.786707309354597e-9,
+          3.582681529223919e-8,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "Waist",
+        "translation": [
+          0.00002625852357596159,
+          0.00005060055264038965,
+          0.000020442414097487926
+        ],
+        "rotation": [
+          -0.1258312314748764,
+          -0.8609546422958374,
+          -0.257280170917511,
+          0.4203933775424957
+        ],
+        "scale": [
+          1.0000001192092896,
+          1.0000001192092896,
+          1
+        ]
+      },
+      {
+        "name": "Spine01",
+        "translation": [
+          3.637978807091713e-10,
+          0.06070920452475548,
+          -3.1111835330221993e-9
+        ],
+        "rotation": [
+          1.1003193378655851e-7,
+          1.3141152521711774e-7,
+          -1.9173512555425987e-7,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1.0000001192092896
+        ]
+      },
+      {
+        "name": "Spine02",
+        "translation": [
+          -8.731149137020111e-10,
+          0.12128184735774994,
+          1.4759282684906339e-8
+        ],
+        "rotation": [
+          5.143448333910783e-8,
+          -9.671281731016279e-8,
+          -1.2369127944111824e-9,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1.0000001192092896
+        ]
+      },
+      {
+        "name": "NeckTwist01",
+        "translation": [
+          -6.83940015733242e-10,
+          0.10606488585472107,
+          6.802113872161897e-10
+        ],
+        "rotation": [
+          3.7303745870076455e-8,
+          1.0922386906031534e-7,
+          -1.8344507024536938e-9,
+          1
+        ],
+        "scale": [
+          1,
+          1.0000001192092896,
+          1.0000001192092896
+        ]
+      },
+      {
+        "name": "NeckTwist02",
+        "translation": [
+          4.94765117764473e-10,
+          0.03602594509720802,
+          -1.1483118456112607e-8
+        ],
+        "rotation": [
+          1.671409108894295e-7,
+          -3.815626925529614e-8,
+          1.5387740859296173e-8,
+          1
+        ],
+        "scale": [
+          0.9999999403953552,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "Head",
+        "translation": [
+          -9.094947017729282e-10,
+          0.020920807495713234,
+          1.8667408951955622e-8
+        ],
+        "rotation": [
+          -1.2143297567490663e-7,
+          3.579043728052511e-10,
+          -2.1560481400229037e-8,
+          1
+        ],
+        "scale": [
+          1,
+          0.9999999403953552,
+          1
+        ]
+      },
+      {
+        "name": "L_Clavicle",
+        "translation": [
+          -0.019960390403866768,
+          0.1061781495809555,
+          -1.1153628243221192e-8
+        ],
+        "rotation": [
+          0.6402720212936401,
+          -0.7669249176979065,
+          0.03743434324860573,
+          0.021831560879945755
+        ],
+        "scale": [
+          1.0000001192092896,
+          1.0000001192092896,
+          1.0000001192092896
+        ]
+      },
+      {
+        "name": "L_Upperarm",
+        "translation": [
+          0.0001647459575906396,
+          0.08800559490919113,
+          0.000011173662642249838
+        ],
+        "rotation": [
+          0.054872673004865646,
+          0.023843852803111076,
+          -0.5492122769355774,
+          0.8335384130477905
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "L_Forearm",
+        "translation": [
+          -0.00000930391252040863,
+          0.17562958598136902,
+          0.000008195385817089118
+        ],
+        "rotation": [
+          0.028238855302333832,
+          0.040167517960071564,
+          0.03442954272031784,
+          0.9982002377510071
+        ],
+        "scale": [
+          1.0000001192092896,
+          1.0000001192092896,
+          1
+        ]
+      },
+      {
+        "name": "L_ForearmTwist01",
+        "translation": [
+          3.725290298461914e-9,
+          -0.00006953999400138855,
+          -4.310429346787714e-8
+        ],
+        "rotation": [
+          3.465154918558255e-8,
+          1.446110786673671e-7,
+          -1.969747245311737e-7,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          0.9999999403953552
+        ]
+      },
+      {
+        "name": "L_ForearmTwist02",
+        "translation": [
+          -4.470348358154297e-8,
+          0.06950393319129944,
+          2.835200518802594e-8
+        ],
+        "rotation": [
+          -3.418328731186193e-9,
+          -1.4569260997632227e-7,
+          7.171185245624656e-8,
+          1
+        ],
+        "scale": [
+          0.9999998807907104,
+          0.9999997615814209,
+          0.9999999403953552
+        ]
+      },
+      {
+        "name": "L_Hand",
+        "translation": [
+          -3.91155481338501e-7,
+          0.13889096677303314,
+          0.000005081191829958698
+        ],
+        "rotation": [
+          0.1096750795841217,
+          0.138246089220047,
+          0.02305963635444641,
+          0.9840364456176758
+        ],
+        "scale": [
+          1,
+          0.9999999403953552,
+          0.9999998807907104
+        ]
+      },
+      {
+        "name": "L_UpperarmTwist01",
+        "translation": [
+          -9.313225746154785e-9,
+          -0.00008779671043157578,
+          -3.446004370744049e-9
+        ],
+        "rotation": [
+          1.2784614256133864e-8,
+          2.80274505826128e-8,
+          -4.207249730825424e-7,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "L_UpperarmTwist02",
+        "translation": [
+          2.2351741790771484e-8,
+          0.08783353865146637,
+          -1.459311960161358e-8
+        ],
+        "rotation": [
+          1.3066733117739204e-7,
+          -6.953783326935081e-8,
+          6.123445928096771e-7,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "R_Clavicle",
+        "translation": [
+          0.019960366189479828,
+          0.10587950795888901,
+          -1.7288350306898792e-8
+        ],
+        "rotation": [
+          0.6447589993476868,
+          0.7628627419471741,
+          -0.018355123698711395,
+          0.04460298642516136
+        ],
+        "scale": [
+          1,
+          0.9999999403953552,
+          1
+        ]
+      },
+      {
+        "name": "R_Upperarm",
+        "translation": [
+          -0.00016384024638682604,
+          0.08785329014062881,
+          0.000020487172150751576
+        ],
+        "rotation": [
+          0.09774865955114365,
+          -0.043604250997304916,
+          0.5552822947502136,
+          0.8247457146644592
+        ],
+        "scale": [
+          0.9999999403953552,
+          0.9999998807907104,
+          1
+        ]
+      },
+      {
+        "name": "R_UpperarmTwist01",
+        "translation": [
+          6.891787052154541e-8,
+          -0.00008679740130901337,
+          -6.393065632437356e-9
+        ],
+        "rotation": [
+          -5.830005278539829e-8,
+          -9.394962319220213e-8,
+          2.7194619178771973e-7,
+          1
+        ],
+        "scale": [
+          1,
+          1.0000001192092896,
+          1.0000001192092896
+        ]
+      },
+      {
+        "name": "R_UpperarmTwist02",
+        "translation": [
+          6.51925802230835e-8,
+          0.08673852682113647,
+          2.8899421522510238e-8
+        ],
+        "rotation": [
+          5.097379229823673e-8,
+          6.142977326817345e-8,
+          -3.550666747287323e-7,
+          1
+        ],
+        "scale": [
+          1.0000001192092896,
+          1.0000001192092896,
+          1
+        ]
+      },
+      {
+        "name": "R_Forearm",
+        "translation": [
+          0.000011738389730453491,
+          0.17342819273471832,
+          0.000014520840522891376
+        ],
+        "rotation": [
+          0.054055437445640564,
+          -0.07739583402872086,
+          -0.050779446959495544,
+          0.9942380785942078
+        ],
+        "scale": [
+          0.9999999403953552,
+          1.0000001192092896,
+          0.9999999403953552
+        ]
+      },
+      {
+        "name": "R_ForearmTwist01",
+        "translation": [
+          -3.725290298461914e-9,
+          -0.00006305426359176636,
+          9.625495067666634e-9
+        ],
+        "rotation": [
+          -3.0591259303491825e-8,
+          9.00294168104665e-8,
+          -1.471489667892456e-7,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1.0000001192092896
+        ]
+      },
+      {
+        "name": "R_ForearmTwist02",
+        "translation": [
+          1.7136335372924805e-7,
+          0.06305910646915436,
+          -6.914959271853149e-9
+        ],
+        "rotation": [
+          5.302013050823007e-9,
+          -2.9812529334094506e-8,
+          1.5366822481155396e-7,
+          1
+        ],
+        "scale": [
+          0.9999999403953552,
+          1,
+          0.9999999403953552
+        ]
+      },
+      {
+        "name": "R_Hand",
+        "translation": [
+          -0.0000017620623111724854,
+          0.1260174959897995,
+          -0.00000489902504341444
+        ],
+        "rotation": [
+          -0.09900195151567459,
+          0.13315458595752716,
+          0.021067282184958458,
+          0.985913097858429
+        ],
+        "scale": [
+          1,
+          1,
+          1.0000001192092896
+        ]
+      }
+    ]
+  }
 }
