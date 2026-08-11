@@ -27,6 +27,7 @@ import { KeybindingsScreen } from '../screens/keybindings.js';
 import { InventoryScreen, type ContainerView, type ItemView, type SlotRef } from '../screens/inventory.js';
 import { HudScreen, type HudView } from '../screens/hud.js';
 import { CharacterScreen, type CharacterView, type SkillView } from '../screens/character.js';
+import { ShopScreen, type ShopRow, type ShopView } from '../screens/shop.js';
 import { Tooltip } from '../widgets/tooltip.js';
 import { UiWindow } from '../widgets/window.js';
 
@@ -505,6 +506,110 @@ export function renderPlay(options: PlayRenderOptions = {}): PlayFrame {
   replay(surface, root.paint().finish());
 
   return { surface, root, hud, sheet };
+}
+
+export interface ShopFrame {
+  readonly surface: RasterSurface;
+  readonly root: UiRoot;
+  readonly shop: ShopScreen;
+}
+
+export interface ShopRenderOptions {
+  readonly viewport?: Size;
+  /** Open the sell confirmation on this row, so the modal is in the frame. */
+  readonly confirmRow?: number;
+  /** Show the buyback list with something in it. */
+  readonly buyback?: boolean;
+  /** A thinner purse, so the greyed-out treatment is in the frame. */
+  readonly coins?: number;
+}
+
+/**
+ * A shop to photograph.
+ *
+ * Written out here rather than run through the game's adapter, for the reason
+ * `demoCharacter` gives: `src/ui/` may not import the game's renderer, and a
+ * golden built from the live tables would move every time somebody retuned a
+ * price.
+ */
+export function demoShop(options: ShopRenderOptions = {}): ShopView {
+  const coins = options.coins ?? 60;
+  // `affordable` is a *purchase* rule. Selling does not depend on the purse, and
+  // the first bake of these goldens greyed out a Hunting Bow because the player
+  // had eight coins -- which is nonsense, and which nothing but the picture was
+  // ever going to say.
+  const line = (defId: string, name: string, price: number, count = 1, affordable = true): ShopRow => ({
+    defId,
+    name,
+    icon: `item:${defId}`,
+    count,
+    price,
+    enabled: affordable,
+    blockedBecause: affordable ? '' : `${price} coins, and you have ${coins}`,
+  });
+  const forSale = (defId: string, name: string, price: number, count = 1): ShopRow =>
+    line(defId, name, price, count, price <= coins);
+
+  return {
+    name: 'Quartermaster',
+    coins,
+    stock: [
+      forSale('potion', 'Minor Salve', 9),
+      forSale('sword', 'Worn Sword', 18),
+      forSale('shield', 'Oak Shield', 60),
+      forSale('chest', 'Scalemail', 240),
+    ],
+    sellable: [
+      { ...line('bow', 'Hunting Bow', 12), index: 3 },
+      { ...line('helm', 'Leather Cap', 6), index: 5 },
+      { ...line('potion', 'Minor Salve', 6, 3), index: 9 },
+    ],
+    buyback: options.buyback ? [forSale('legs', "Traveller's Greaves", 7)] : [],
+  };
+}
+
+/**
+ * The shop, rasterised, with its confirmation optionally up (spec 130).
+ *
+ * The modal case is the one that could not be checked any other way: whether the
+ * dialog is drawn *over* the shop rather than behind it is a fact about the
+ * layer order, and the layer order is only visible in pixels.
+ */
+export function renderShop(options: ShopRenderOptions = {}): ShopFrame {
+  const theme = THEME;
+  const viewport = options.viewport ?? GOLDEN_VIEWPORT;
+  const atlas = bakeAtlas(theme);
+  const layers = new LayerStack();
+  const manager = new WindowManager();
+  layers.place('windows', manager);
+
+  const contexts = new ContextStack();
+  const root = new UiRoot(layers, { theme, atlas, viewport, windows: manager, layers });
+  const shop = new ShopScreen({ theme, contexts, focus: root.focus });
+  shop.setShop(demoShop(options));
+  layers.place('modal', shop.dialog);
+
+  manager.register(
+    new UiWindow(new ScrollView(shop, 'shopScroll'), {
+      title: 'Shop',
+      at: { x: 8, y: 8 },
+      size: { width: Math.min(viewport.width - 16, 220), height: Math.min(viewport.height - 16, 260) },
+    }),
+    'shop',
+  );
+  manager.setViewport(viewport);
+  root.update(0);
+
+  if (options.confirmRow !== undefined) {
+    shop.askToSell(options.confirmRow);
+    root.update(0);
+  }
+
+  const surface = new RasterSurface(atlas, viewport.width, viewport.height);
+  surface.clear(theme.color('ink'));
+  replay(surface, root.paint().finish());
+
+  return { surface, root, shop };
 }
 
 export interface KeybindingsFrame {

@@ -14,6 +14,7 @@
 import { PNG } from 'pngjs';
 import type {
   InventoryRenderOptions,
+  ShopRenderOptions,
   PlayRenderOptions,
   KeybindingsRenderOptions,
   RenderOptions,
@@ -219,6 +220,42 @@ export const PLAY_GOLDEN_CASES: readonly PlayGoldenCase[] = [
     name: 'play-small',
     options: { viewport: { width: 300, height: 140 } },
     covers: 'the smallest supported viewport, HUD and window together',
+  },
+];
+
+export interface ShopGoldenCase {
+  readonly name: string;
+  readonly options: ShopRenderOptions;
+  readonly covers: string;
+}
+
+/**
+ * The shop and its dialog (spec 130).
+ *
+ * The confirmation frame is the one that could not be checked any other way:
+ * whether a modal is drawn over the screen rather than behind it is a fact about
+ * the layer order, and the layer order is only visible in pixels.
+ */
+export const SHOP_GOLDEN_CASES: readonly ShopGoldenCase[] = [
+  {
+    name: 'shop',
+    options: {},
+    covers: 'stock, what is yours, an empty buyback said in words, and a purse',
+  },
+  {
+    name: 'shop-confirm',
+    options: { confirmRow: 0 },
+    covers: 'the first thing ever in the modal layer, drawn over the screen it blocks',
+  },
+  {
+    name: 'shop-poor',
+    options: { coins: 8, buyback: true },
+    covers: 'what cannot be afforded, greyed out, beside a buyback that can',
+  },
+  {
+    name: 'shop-small',
+    options: { viewport: { width: 300, height: 140 }, confirmRow: 1 },
+    covers: 'the smallest supported viewport, with the dialog still readable on it',
   },
 ];
 

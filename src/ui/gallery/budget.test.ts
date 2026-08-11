@@ -4,7 +4,7 @@ import { renderGallery, renderPlay } from './render.js';
 import { UiRoot } from '../core/root.js';
 import { bakeAtlas } from '../render/atlas.js';
 import { THEME } from '../theme/theme.js';
-import { renderInventory, renderKeybindings, renderWindows } from './render.js';
+import { renderInventory, renderKeybindings, renderShop, renderWindows } from './render.js';
 
 /**
  * The brief's budget is "full UI update + draw under 1.5 ms with 6 windows
@@ -121,6 +121,7 @@ describe('nothing is drawn translucent', () => {
         carryToCell: { container: 'inventory', index: 20 },
       }),
     play: () => renderPlay({ cast: 0.5, cooldowns: { 0: 0.4, 3: 0.9 } }),
+    shop: () => renderShop({ confirmRow: 0, buyback: true }),
   };
 
   for (const [name, build] of Object.entries(scenes)) {

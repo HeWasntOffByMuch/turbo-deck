@@ -25,9 +25,10 @@ import { KeybindingsScreen } from '../ui/screens/keybindings.js';
 import { InventoryScreen } from '../ui/screens/inventory.js';
 import { HudScreen } from '../ui/screens/hud.js';
 import { CharacterScreen } from '../ui/screens/character.js';
+import { ShopScreen } from '../ui/screens/shop.js';
 import { ItemSlot } from '../ui/widgets/item-slot.js';
 import { Anchor } from '../ui/core/containers.js';
-import { demoCharacter, demoContainers, demoHud } from '../ui/gallery/render.js';
+import { demoCharacter, demoContainers, demoHud, demoShop } from '../ui/gallery/render.js';
 import { ScrollView } from '../ui/widgets/scroll-view.js';
 import { Tooltip } from '../ui/widgets/tooltip.js';
 import { UiWindow } from '../ui/widgets/window.js';
@@ -77,11 +78,12 @@ function main(): void {
   const keys = wanted === 'keys' ? buildKeysScene(viewport) : null;
   const bag = wanted === 'bag' ? buildBagScene(viewport) : null;
   const play = wanted === 'play' ? buildPlayScene(viewport) : null;
-  const gallery = scene ?? keys ?? bag ?? play ? null : buildGallery(THEME);
-  const content = scene?.root ?? keys?.root ?? bag?.root ?? play?.root ?? gallery?.root;
+  const shop = wanted === 'shop' ? buildShopScene(viewport) : null;
+  const gallery = scene ?? keys ?? bag ?? play ?? shop ? null : buildGallery(THEME);
+  const content = scene?.root ?? keys?.root ?? bag?.root ?? play?.root ?? shop?.root ?? gallery?.root;
   if (!content) throw new Error('no scene');
-  const manager = scene?.manager ?? keys?.manager ?? bag?.manager ?? play?.manager;
-  const layerStack = scene?.root ?? keys?.root ?? bag?.root ?? play?.root;
+  const manager = scene?.manager ?? keys?.manager ?? bag?.manager ?? play?.manager ?? shop?.manager;
+  const layerStack = scene?.root ?? keys?.root ?? bag?.root ?? play?.root ?? shop?.root;
 
   const root = new UiRoot(content, {
     theme: THEME,
@@ -334,6 +336,41 @@ function buildPlayScene(viewport: { width: number; height: number }): {
     });
   };
   return { root: layers, manager, tick };
+}
+
+/**
+ * The shop and its dialog (spec 130).
+ *
+ * The scene that puts something in the `modal` layer for the first time, so the
+ * cross-backend comparison finally covers a layer that was declared in spec 124
+ * and never drawn.
+ */
+function buildShopScene(viewport: { width: number; height: number }): {
+  root: LayerStack;
+  manager: WindowManager;
+} {
+  const layers = new LayerStack();
+  const manager = new WindowManager();
+  layers.place('windows', manager);
+
+  const contexts = new ContextStack();
+  const screen = new ShopScreen({ theme: THEME, contexts });
+  screen.setShop(demoShop({ buyback: true }));
+  layers.place('modal', screen.dialog);
+
+  manager.register(
+    new UiWindow(new ScrollView(screen, 'shopScroll'), {
+      title: 'Shop',
+      at: { x: 8, y: 8 },
+      size: { width: Math.min(220, viewport.width - 16), height: Math.min(260, viewport.height - 16) },
+      resizable: true,
+    }),
+    'shop',
+  );
+  manager.setViewport(viewport);
+  // Open on the question, so the modal is what a photograph shows.
+  screen.askToSell(0);
+  return { root: layers, manager };
 }
 
 main();

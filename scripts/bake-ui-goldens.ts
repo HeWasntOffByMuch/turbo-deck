@@ -18,6 +18,7 @@ import {
   INVENTORY_GOLDEN_CASES,
   KEYBINDING_GOLDEN_CASES,
   PLAY_GOLDEN_CASES,
+  SHOP_GOLDEN_CASES,
   WINDOW_GOLDEN_CASES,
 } from '../src/ui/gallery/goldens.js';
 import {
@@ -25,6 +26,7 @@ import {
   renderInventory,
   renderKeybindings,
   renderPlay,
+  renderShop,
   renderWindows,
 } from '../src/ui/gallery/render.js';
 
@@ -66,8 +68,16 @@ for (const item of PLAY_GOLDEN_CASES) {
   console.log(`${item.name}.png  ${frame.surface.width}x${frame.surface.height}  ${item.covers}`);
 }
 
+for (const item of SHOP_GOLDEN_CASES) {
+  const frame = renderShop(item.options);
+  const png = encodePng(frame.surface.width, frame.surface.height, frame.surface.pixels);
+  writeFileSync(`${directory}${item.name}.png`, png);
+  console.log(`${item.name}.png  ${frame.surface.width}x${frame.surface.height}  ${item.covers}`);
+}
+
 const total =
   GOLDEN_CASES.length +
+  SHOP_GOLDEN_CASES.length +
   PLAY_GOLDEN_CASES.length +
   WINDOW_GOLDEN_CASES.length +
   KEYBINDING_GOLDEN_CASES.length +
