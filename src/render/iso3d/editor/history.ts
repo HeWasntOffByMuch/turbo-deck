@@ -1,4 +1,12 @@
-import type { ChunkCoord, ChunkSnapshot, MapChunk, MapChunkStore, MapPart, MapRect } from '../../../terrain/index.js';
+import type {
+  ChunkCoord,
+  ChunkSnapshot,
+  MapChunk,
+  MapChunkStore,
+  MapLayer,
+  MapPart,
+  MapRect,
+} from '../../../terrain/index.js';
 
 /**
  * Undo for the map editor (spec 050, widened in 082).
@@ -25,7 +33,11 @@ import type { ChunkCoord, ChunkSnapshot, MapChunk, MapChunkStore, MapPart, MapRe
  * - it moves the layer's **declared bounds** and the document's **parts** list,
  *   neither of which lives on a chunk at all.
  *
- * So an entry holds five kinds of "before" rather than one. The original
+ * A formation (spec 121) adds two more, because a tier *is* a layer: drawing the
+ * first one puts a layer in the document and carving the last of one away takes
+ * it out, and neither is a chunk changing, appearing or vanishing.
+ *
+ * So an entry holds seven kinds of "before" rather than one. The original
  * `captureChunk` keeps its exact meaning, so no tool that predates this changes
  * behaviour.
  */
@@ -53,6 +65,18 @@ interface Entry {
   readonly bounds: Map<string, MapRect>;
   /** The parts list before the stroke changed it, or null if it did not. */
   parts: readonly MapPart[] | null;
+  /**
+   * Layers this stroke created: undoing means dropping them again (spec 121).
+   *
+   * A tier is a layer, so drawing one adds a layer to the document and carving
+   * the last of one away takes it out. Neither is a chunk changing, a chunk
+   * appearing, a chunk vanishing, or the bounds moving -- it is the seventh kind
+   * of "before" this entry holds, and without it the first formation somebody
+   * draws is one no undo can take back.
+   */
+  readonly addedLayers: Set<string>;
+  /** Layers this stroke removed, whole. Undoing means putting them back. */
+  readonly removedLayers: Map<string, MapLayer>;
 }
 
 /** What an undo changed, so the view knows exactly what to rebuild. */
@@ -88,6 +112,8 @@ function newEntry(): Entry {
     deleted: new Map(),
     bounds: new Map(),
     parts: null,
+    addedLayers: new Set(),
+    removedLayers: new Map(),
   };
 }
 
@@ -97,7 +123,9 @@ function isEmpty(entry: Entry): boolean {
     entry.created.size === 0 &&
     entry.deleted.size === 0 &&
     entry.bounds.size === 0 &&
-    entry.parts === null
+    entry.parts === null &&
+    entry.addedLayers.size === 0 &&
+    entry.removedLayers.size === 0
   );
 }
 
@@ -181,6 +209,53 @@ export class EditHistory {
   }
 
   /**
+   * Record that this stroke *added* a layer (spec 121).
+   *
+   * Call after adding it. The inverse is removing it, and that alone -- the
+   * chunks a new layer gains in the same stroke are captured as created in the
+   * ordinary way, so undo has already taken them out by the time the layer goes.
+   */
+  captureAddedLayer(layerId: string): void {
+    this.open?.addedLayers.add(layerId);
+  }
+
+  /**
+   * Record a layer whole, before this stroke removes it (spec 121).
+   *
+   * Takes the layer by value rather than reading it off the store, because the
+   * caller has to have snapshotted it *before* carving anything -- by the time
+   * a carve has emptied a layer there is nothing left to capture, and the state
+   * worth restoring is the one from before the stroke, not the empty one from
+   * just before the delete.
+   *
+   * Restoring it supersedes any per-chunk capture for the same layer, which is
+   * why undo puts layers back first: everything after it then writes the same
+   * bytes into a layer that already has them.
+   */
+  captureRemovedLayer(layer: MapLayer): void {
+    const entry = this.open;
+    if (!entry || entry.removedLayers.has(layer.id)) return;
+    entry.removedLayers.set(layer.id, layer);
+  }
+
+  /**
+   * Throw away the open stroke without pushing it.
+   *
+   * `endStroke` already drops an entry that captured nothing, which covers a
+   * click that missed. It does not cover an operation that had to capture
+   * *before* it could find out it was going to refuse -- a tier bake has to
+   * snapshot the chunks it might touch ahead of the bake, and a refusal would
+   * then push an entry describing a world that never changed. Undoing that is a
+   * no-op the user has to press twice, and the stroke they actually wanted back
+   * is one deeper than the stack says.
+   *
+   * Only safe when the caller has left the store as it found it.
+   */
+  abortStroke(): void {
+    this.open = null;
+  }
+
+  /**
    * Close the open stroke. An entry that captured nothing is dropped rather than
    * pushed -- a click that missed the terrain must not cost an undo slot.
    */
@@ -207,6 +282,14 @@ export class EditHistory {
 
     const remeshed: ChunkRef[] = [];
     const removed: ChunkRef[] = [];
+    // Layers first, and whole. A restored layer arrives with its pre-stroke
+    // chunks already in it, so every per-chunk restore below writes bytes that
+    // are already there -- and a `deleted` chunk belonging to a layer that had
+    // gone would otherwise have had nowhere to be inserted into.
+    for (const layer of entry.removedLayers.values()) {
+      if (!store.addLayer(layer)) continue;
+      for (const chunk of layer.chunks) remeshed.push({ layerId: layer.id, cx: chunk.cx, cz: chunk.cz });
+    }
     for (const snapshot of entry.modified.values()) {
       store.restoreChunk(snapshot);
       remeshed.push({ layerId: snapshot.layerId, cx: snapshot.cx, cz: snapshot.cz });
@@ -220,8 +303,19 @@ export class EditHistory {
     }
     for (const [layerId, bounds] of entry.bounds) store.setBounds(layerId, bounds);
     if (entry.parts !== null) store.setParts(entry.parts);
+    // Layers the stroke added go last: their chunks were captured as created
+    // and have already been removed above, so this only drops the empty shell.
+    for (const layerId of entry.addedLayers) store.removeLayer(layerId);
 
-    return { remeshed, removed, structural: entry.created.size > 0 || entry.deleted.size > 0 };
+    return {
+      remeshed,
+      removed,
+      structural:
+        entry.created.size > 0 ||
+        entry.deleted.size > 0 ||
+        entry.addedLayers.size > 0 ||
+        entry.removedLayers.size > 0,
+    };
   }
 
   /** Forget everything, e.g. after loading a different map. */

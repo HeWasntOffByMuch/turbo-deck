@@ -409,6 +409,18 @@ export class MapChunkStore {
     };
   }
 
+  /**
+   * Which chunks a layer holds, in the order `toDocument` emits them.
+   *
+   * Exists so a caller can take a layer out whole and put it back -- undoing a
+   * formation that emptied its own layer needs the chunk list *before* the
+   * stroke, and by the time the layer is gone there is nothing left to ask.
+   */
+  chunkCoords(layerId: string): ChunkCoord[] {
+    const layer = this.layers.get(layerId);
+    return layer ? sortedCoords(layer) : [];
+  }
+
   /** How many chunks the layer holds, or the whole store if no layer is named. */
   chunkCount(layerId?: string): number {
     if (layerId !== undefined) return this.layers.get(layerId)?.chunks.size ?? 0;
