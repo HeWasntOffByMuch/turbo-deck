@@ -124,6 +124,42 @@ export interface OpenVendorMessage {
   readonly vendorId: string;
 }
 
+/**
+ * The five trade messages (spec 132).
+ *
+ * There is no `tradeId` on any of them, and that is deliberate: a player is in
+ * at most one trade, so the id would be a field a client could get wrong for no
+ * benefit. The server looks it up from who is asking, which is the one answer
+ * that cannot be spoofed.
+ */
+export interface TradeInviteMessage {
+  readonly type: typeof ClientMessageType.TradeInvite;
+  /** Who to ask, by the entity they are driving. */
+  readonly entityId: number;
+}
+
+export interface TradeRespondMessage {
+  readonly type: typeof ClientMessageType.TradeRespond;
+  readonly accept: boolean;
+}
+
+/** One side's whole offer, replacing whatever was on the table. */
+export interface TradeOfferMessage {
+  readonly type: typeof ClientMessageType.TradeOffer;
+  readonly slots: readonly { readonly index: number; readonly count: number }[];
+  readonly coins: number;
+}
+
+export interface TradeAcceptMessage {
+  readonly type: typeof ClientMessageType.TradeAccept;
+  /** Which revision is being accepted. A stale one is not an acceptance. */
+  readonly revision: number;
+}
+
+export interface TradeCancelMessage {
+  readonly type: typeof ClientMessageType.TradeCancel;
+}
+
 export interface BuyItemMessage {
   readonly type: typeof ClientMessageType.BuyItem;
   readonly requestId: number;
@@ -221,6 +257,11 @@ export type ClientMessage =
   | BuyItemMessage
   | SellItemMessage
   | BuyBackMessage
+  | TradeInviteMessage
+  | TradeRespondMessage
+  | TradeOfferMessage
+  | TradeAcceptMessage
+  | TradeCancelMessage
   | SpendSkillPointMessage
   | ChatMessage
   | UseAbilityMessage
@@ -250,6 +291,22 @@ function readAddress(reader: BufferReader): SlotAddress {
     container: container === CONTAINER_BYTE.inventory ? 'inventory' : 'equipment',
     index: reader.varint(),
   };
+}
+
+/** One side of a trade, as the wire carries it (spec 132). */
+function writeTradeSide(writer: BufferWriter, side: TradeSideView): void {
+  writer.str(side.playerId).str(side.displayName).varuint(side.offer.length);
+  for (const entry of side.offer) writer.str(entry.defId).varuint(entry.count);
+  writer.varuint(side.coins).u8(side.accepted ? 1 : 0);
+}
+
+function readTradeSide(reader: BufferReader): TradeSideView {
+  const playerId = reader.str();
+  const displayName = reader.str();
+  const count = reader.varuint();
+  const offer: { defId: string; count: number }[] = [];
+  for (let i = 0; i < count; i++) offer.push({ defId: reader.str(), count: reader.varuint() });
+  return { playerId, displayName, offer, coins: reader.varuint(), accepted: reader.u8() !== 0 };
 }
 
 /**
@@ -341,6 +398,24 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
       break;
     case ClientMessageType.BuyBack:
       writer.varuint(message.requestId).str(message.vendorId).varint(message.index);
+      break;
+    case ClientMessageType.TradeInvite:
+      writer.varuint(message.entityId);
+      break;
+    case ClientMessageType.TradeRespond:
+      writer.u8(message.accept ? 1 : 0);
+      break;
+    case ClientMessageType.TradeOffer:
+      writer.varuint(message.slots.length);
+      // Signed, like every other slot index on this wire (spec 126): a
+      // nonsensical offer is a rule refusal with a reason, not a corrupt frame.
+      for (const slot of message.slots) writer.varint(slot.index).varint(slot.count);
+      writer.varint(message.coins);
+      break;
+    case ClientMessageType.TradeAccept:
+      writer.varint(message.revision);
+      break;
+    case ClientMessageType.TradeCancel:
       break;
     case ClientMessageType.SpendSkillPoint:
       writer.str(message.skillId);
@@ -434,6 +509,20 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
         vendorId: reader.str(),
         index: reader.varint(),
       };
+    case ClientMessageType.TradeInvite:
+      return { type: ClientMessageType.TradeInvite, entityId: reader.varuint() };
+    case ClientMessageType.TradeRespond:
+      return { type: ClientMessageType.TradeRespond, accept: reader.u8() !== 0 };
+    case ClientMessageType.TradeOffer: {
+      const count = reader.varuint();
+      const slots: { index: number; count: number }[] = [];
+      for (let i = 0; i < count; i++) slots.push({ index: reader.varint(), count: reader.varint() });
+      return { type: ClientMessageType.TradeOffer, slots, coins: reader.varint() };
+    }
+    case ClientMessageType.TradeAccept:
+      return { type: ClientMessageType.TradeAccept, revision: reader.varint() };
+    case ClientMessageType.TradeCancel:
+      return { type: ClientMessageType.TradeCancel };
     case ClientMessageType.SpendSkillPoint:
       return { type: ClientMessageType.SpendSkillPoint, skillId: reader.str() };
     case ClientMessageType.Chat:
@@ -606,6 +695,37 @@ export interface VendorStateMessage {
   }[];
 }
 
+/** One side of a trade, as the other side is allowed to see it (spec 132). */
+export interface TradeSideView {
+  readonly playerId: string;
+  readonly displayName: string;
+  /**
+   * What is on the table, resolved to items.
+   *
+   * Resolved rather than sent as slot indices, because the *other* side cannot
+   * see into your bag and a bare index would mean nothing to them. The offering
+   * side gets the same view, which is deliberate: both players are then looking
+   * at the same description of the same table.
+   */
+  readonly offer: readonly { readonly defId: string; readonly count: number }[];
+  readonly coins: number;
+  readonly accepted: boolean;
+}
+
+export interface TradeStateMessage {
+  readonly type: typeof ServerMessageType.TradeState;
+  /** 0 means "you are not in a trade", which is how a window is closed. */
+  readonly tradeId: number;
+  /** One of `TradeStageValue`. */
+  readonly stage: number;
+  readonly revision: number;
+  /** Always the side of the player being sent to; `them` is the other. */
+  readonly you: TradeSideView;
+  readonly them: TradeSideView;
+  /** Why it ended, when it ended badly. Empty otherwise. */
+  readonly reason: string;
+}
+
 export interface ServerChatMessage {
   readonly type: typeof ServerMessageType.Chat;
   readonly channel: number;
@@ -739,6 +859,7 @@ export type ServerMessage =
   | StatsMessage
   | InventoryMessage
   | VendorStateMessage
+  | TradeStateMessage
   | ServerChatMessage
   | PongMessage
   | ErrorMessage
@@ -959,6 +1080,12 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
         writer.str(entry.defId).varuint(entry.count).varuint(entry.price);
       }
       break;
+    case ServerMessageType.TradeState:
+      writer.varuint(message.tradeId).u8(message.stage).varuint(message.revision);
+      writeTradeSide(writer, message.you);
+      writeTradeSide(writer, message.them);
+      writer.str(message.reason);
+      break;
     case ServerMessageType.Chat:
       writer.u8(message.channel).str(message.from).str(message.text);
       break;
@@ -1108,6 +1235,14 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         buyback.push({ defId: reader.str(), count: reader.varuint(), price: reader.varuint() });
       }
       return { type: ServerMessageType.VendorState, vendorId, name, stock, buyback };
+    }
+    case ServerMessageType.TradeState: {
+      const tradeId = reader.varuint();
+      const stage = reader.u8();
+      const revision = reader.varuint();
+      const you = readTradeSide(reader);
+      const them = readTradeSide(reader);
+      return { type: ServerMessageType.TradeState, tradeId, stage, revision, you, them, reason: reader.str() };
     }
     case ServerMessageType.Chat:
       return {

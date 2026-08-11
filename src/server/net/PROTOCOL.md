@@ -407,6 +407,49 @@ Nothing here is predicted by the client. A purchase is not a drag: there is no
 ghost to draw and no gesture to keep up with, and the money is the one number
 nobody wants to watch flicker and settle.
 
+### `0x11 TradeInvite` — `varuint entityId`
+### `0x12 TradeRespond` — `u8 accept`
+### `0x13 TradeOffer` — `varuint slotCount` · per slot: `varint index` · `varint count` · `varint coins`
+### `0x14 TradeAccept` — `varint revision`
+### `0x15 TradeCancel` — no payload
+
+Trading with another player (spec 132). **None of them carries a trade id**: a
+player is in at most one trade, so an id would be a field a client could get
+wrong for no benefit, and the server resolves it from who is asking -- the one
+answer that cannot be spoofed.
+
+`TradeOffer` sets a side's offer **whole**, replacing what was there, for the
+reason `MoveItem` is one message: a protocol with `add` and `remove` has two
+handlers that can disagree about what is on the table, and the thing on the table
+is exactly what must not be ambiguous. Indices and counts are signed, like every
+other slot on this wire.
+
+`TradeAccept` names the revision it is accepting, and a stale one is refused
+rather than upgraded. Every edit to either offer bumps the revision and clears
+**both** acceptances, which is what makes the swap-it-at-the-last-instant scam a
+mechanical impossibility rather than a race worth timing.
+
+Each of the five is answered with a `TradeState` to *both* sides. A refusal also
+gets `Error(RejectedAction)`, to the side that asked.
+
+### `0x54 TradeState`
+`varuint tradeId` · `u8 stage` · `varuint revision` · `you` · `them` · `str reason`,
+where each side is `str playerId` · `str displayName` · `varuint offerCount` ·
+per entry: `str defId` · `varuint count` · `varuint coins` · `u8 accepted`
+
+The whole trade, to both sides, on every change (spec 132). `you` is always the
+player being sent to. `stage` is one of `TradeStageValue`; `done` and `cancelled`
+are the last message a trade sends, and `reason` says why it ended badly.
+
+An offer is **resolved to items** rather than sent as slot indices: the other
+player cannot see into your bag, and a bare index would mean nothing to them. The
+offering side gets the same view, so both players are looking at the same
+description of the same table.
+
+A trade ends on a cancel from either side, a disconnect, either player dying,
+the two of them walking further apart than `TRADE_RANGE`, or the swap being
+refused -- and the reason is carried in all five cases. There is no timeout.
+
 ### `0x53 VendorState`
 `str vendorId` · `str name` · `varuint stockCount` · per entry: `str defId` ·
 `varuint price` · `varuint buybackCount` · per entry: `str defId` ·

@@ -30,6 +30,7 @@ import {
   type MapInfoMessage,
   type ServerChatMessage,
   type SpawnerStatus,
+  type TradeSideView,
 } from '../net/messages.js';
 import {
   CastEndReasonValue,
@@ -38,6 +39,7 @@ import {
   ClientMessageType,
   CorrectionReason,
   ServerMessageType,
+  TradeStageValue,
 } from '../net/protocol.js';
 import { MAP_CHUNK_REQUEST_RADIUS, PROTOCOL_VERSION } from '../config.js';
 
@@ -134,6 +136,18 @@ export interface VendorView {
   }[];
 }
 
+/** A trade as the client sees it (spec 132). Replaced whole, never derived. */
+export interface TradeView {
+  readonly id: number;
+  /** One of `TradeStageValue`. */
+  readonly stage: number;
+  /** What an acceptance has to name. A stale one is not an acceptance. */
+  readonly revision: number;
+  readonly you: TradeSideView;
+  readonly them: TradeSideView;
+  readonly reason: string;
+}
+
 export interface ClientMapView {
   readonly info: MapInfoMessage;
   readonly chunks: readonly HeldChunk[];
@@ -227,6 +241,15 @@ export interface ClientView {
    * itself that a shop is shut.
    */
   readonly vendor: VendorView | null;
+  /**
+   * The trade in progress, or null (spec 132).
+   *
+   * Whole, and replaced by whatever the server last said. A client never decides
+   * for itself that a trade has ended -- the same rule the shop follows, and for
+   * a stronger reason: a window that closed itself would be a window that thinks
+   * an exchange happened when it may not have.
+   */
+  readonly trade: TradeView | null;
   readonly level: number;
   readonly experience: number;
   readonly unspentSkillPoints: number;
@@ -397,6 +420,8 @@ export class GameClient {
   private inventory: Inventory = [];
   private coins = 0;
   private vendorView: VendorView | null = null;
+  /** The trade this client is in, or null (spec 132). Replaced whole. */
+  private tradeView: TradeView | null = null;
   private equipment: Equipment = EMPTY_EQUIPMENT;
   /** Moves sent and not yet answered, oldest first. */
   private readonly pendingMoves: { readonly requestId: number; readonly request: MoveRequest }[] = [];
@@ -636,6 +661,44 @@ export class GameClient {
    * ghost to draw and no gesture to keep up with -- and the money is the one
    * number nobody wants to watch flicker and settle.
    */
+  /**
+   * The last trade to end, and how (spec 132).
+   *
+   * Kept because the ending is the one message a player most needs and the
+   * trade itself is gone by then: "cancelled -- you walked too far apart" has to
+   * outlive the trade it describes.
+   */
+  private lastTrade: TradeView | null = null;
+
+  get endedTrade(): TradeView | null {
+    return this.lastTrade;
+  }
+
+  inviteToTrade(entityId: number): void {
+    if (!this.connected) return;
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.TradeInvite, entityId }));
+  }
+
+  respondToTrade(accept: boolean): void {
+    if (!this.connected) return;
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.TradeRespond, accept }));
+  }
+
+  offerInTrade(slots: readonly { readonly index: number; readonly count: number }[], coins: number): void {
+    if (!this.connected) return;
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.TradeOffer, slots, coins }));
+  }
+
+  acceptTrade(revision: number): void {
+    if (!this.connected) return;
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.TradeAccept, revision }));
+  }
+
+  cancelTrade(): void {
+    if (!this.connected) return;
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.TradeCancel }));
+  }
+
   openVendor(vendorId: string): void {
     if (!this.connected) return;
     if (vendorId === '') this.vendorView = null;
@@ -1140,6 +1203,7 @@ export class GameClient {
       equipment: this.equipment,
       coins: this.coins,
       vendor: this.vendorView,
+      trade: this.tradeView,
       level: this.level,
       experience: this.experience,
       unspentSkillPoints: this.unspentSkillPoints,
@@ -1329,6 +1393,29 @@ export class GameClient {
           this.pendingMoves.shift();
         }
         this.replayMoves();
+        break;
+
+      case ServerMessageType.TradeState:
+        // Replaced whole, and a `tradeId` of 0 means "you are not in one" --
+        // which is how a window is closed. A client never decides for itself
+        // that a trade has ended, exactly as it never decides a shop has shut.
+        this.tradeView =
+          message.tradeId === 0
+            ? null
+            : {
+                id: message.tradeId,
+                stage: message.stage,
+                revision: message.revision,
+                you: message.you,
+                them: message.them,
+                reason: message.reason,
+              };
+        // A finished trade is told once and then forgotten, so what is left is
+        // the inventory the server has already sent alongside it.
+        if (message.stage === TradeStageValue.Done || message.stage === TradeStageValue.Cancelled) {
+          this.lastTrade = this.tradeView;
+          this.tradeView = null;
+        }
         break;
 
       case ServerMessageType.VendorState:
