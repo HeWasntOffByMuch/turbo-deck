@@ -58,7 +58,15 @@ import {
   removePart,
   uniquePartId,
 } from './parts.js';
-import { addRock, nextRockLayerId, removeRock, rockLayerAt, rockLayerIds, worldRectFrom } from './rock.js';
+import {
+  addRock,
+  addStair,
+  nextRockLayerId,
+  removeRock,
+  rockLayerAt,
+  rockLayerIds,
+  worldRectFrom,
+} from './rock.js';
 import { fenceStroke, NO_FENCE_PATH, type FencePath } from './fence.js';
 import { eraseStroke, scatterStroke, terrainNormalAt } from './scatter.js';
 
@@ -663,6 +671,39 @@ export function mountEditor(container: HTMLElement): ViewHandle {
   const commitRock = (a: { x: number; z: number }, b: { x: number; z: number }): void => {
     const footprint = worldRectFrom(a, b);
     const store = scene.map.store;
+
+    if (settings.rockTool === 'stair') {
+      // The drag runs down the stairs, the way you would walk them: the anchor
+      // is the high end. Both heights are sampled before the stair exists, so
+      // they describe what it has to connect rather than itself.
+      // Read once, before the stair exists: after `syncLayers` the world
+      // includes the run itself, and sampling again would measure the thing
+      // that was just built rather than the two heights it connects.
+      const stairTop = scene.map.world.heightAt(a.x, a.z);
+      const stairBottom = scene.map.world.heightAt(b.x, b.z);
+      const stair = addStair(store, history, {
+        footprint,
+        from: a,
+        to: b,
+        topHeight: stairTop,
+        bottomHeight: stairBottom,
+        seed: (scene.document.seed ^ 0x57a12) + store.layerIds.length,
+        origin: scene.map.store.layerInfo(layerId)?.origin ?? { x: 0, z: 0 },
+        propLayerId: layerId,
+      });
+      if (!stair.ok) {
+        status = `stair refused: ${stair.reason}`;
+        return;
+      }
+      scene.syncLayers();
+      rebuiltAfterRock(stair.layerId, stair.created);
+      if (stair.clearedProps > 0) {
+        scene.refreshPropsWithin(footprint);
+        for (const c of stair.propChunks) scene.rebuildChunk(layerId, c.cx, c.cz);
+      }
+      status = `stair "${stair.layerId}": ${stair.cells} cells, climbing ${Math.round(Math.abs(stairTop - stairBottom))}`;
+      return;
+    }
 
     if (settings.rockTool === 'remove') {
       // Named by pointing at it rather than chosen from a list first, the way

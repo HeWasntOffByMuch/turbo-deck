@@ -1,5 +1,6 @@
 import {
   bakeRock,
+  bakeStair,
   carveRock,
   emptyRockLayer,
   type ChunkCoord,
@@ -41,6 +42,18 @@ import type { EditHistory } from './history.js';
  * which is a destructive accident rather than an operation anybody wants.
  */
 export const ROCK_LAYER_PREFIX = 'rock/';
+
+/**
+ * The smallest climb worth cutting a stair into.
+ *
+ * `MAX_STEP_HEIGHT` is 24, so anything under it is ground a body already walks
+ * over. A "stair" there is a discoloured rectangle, and refusing one is how the
+ * tool says so rather than leaving somebody to wonder why it did nothing.
+ */
+const MIN_STAIR_CLIMB = 24;
+
+/** How far a run's underside is sunk below its low end, so its sides bury. */
+const STAIR_BURY = 40;
 
 export function isRockLayer(layerId: string): boolean {
   return layerId.startsWith(ROCK_LAYER_PREFIX);
@@ -249,6 +262,121 @@ export function addRock(store: MapChunkStore, history: EditHistory, input: AddRo
     createdLayer: !existed,
     created: baked.created,
     touched: baked.touched,
+    cells: baked.cells,
+    clearedProps: cleared.removed.length,
+    propChunks: cleared.dirty,
+  };
+}
+
+/** What marks a layer as a stair rather than a tier (spec 122). */
+export const STAIR_LAYER_PREFIX = 'stair/';
+
+export function isStairLayer(layerId: string): boolean {
+  return layerId.startsWith(STAIR_LAYER_PREFIX);
+}
+
+/** A stair id not already taken, numbered like a tier's. */
+export function nextStairLayerId(store: MapChunkStore): string {
+  const taken = new Set(store.layerIds);
+  for (let n = 1; ; n++) {
+    const candidate = `${STAIR_LAYER_PREFIX}${n}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
+
+export interface AddStairInput {
+  readonly footprint: MapRect;
+  /** The high end of the run and the low end -- the drag's own direction. */
+  readonly from: MapPoint;
+  readonly to: MapPoint;
+  readonly topHeight: number;
+  readonly bottomHeight: number;
+  readonly seed: number;
+  readonly origin: MapPoint;
+  /** Cleared under the run, as a tier clears them. */
+  readonly propLayerId?: string;
+}
+
+export type AddStairResult =
+  | {
+      readonly ok: true;
+      readonly layerId: string;
+      readonly created: readonly ChunkCoord[];
+      readonly cells: number;
+      readonly clearedProps: number;
+      readonly propChunks: readonly ChunkCoord[];
+    }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * Cut a way up a tier (spec 122).
+ *
+ * Always its own new layer: a stair is a ramp, and `bakeRock` refuses a second
+ * height in a tier's layer precisely because a ramp is not a cliff. There is
+ * nothing to extend, either -- a second run is a second stair.
+ */
+export function addStair(store: MapChunkStore, history: EditHistory, input: AddStairInput): AddStairResult {
+  const climb = input.topHeight - input.bottomHeight;
+  if (Math.abs(climb) <= MIN_STAIR_CLIMB) {
+    return {
+      ok: false,
+      reason: `those two ends are ${Math.round(Math.abs(climb))} apart -- a body walks that without a stair`,
+    };
+  }
+
+  const layerId = nextStairLayerId(store);
+  history.beginStroke();
+  store.addLayer(
+    emptyRockLayer({
+      id: layerId,
+      seed: input.seed,
+      origin: input.origin,
+      // Below the low end, so the run's own side walls bury themselves rather
+      // than standing on nothing.
+      baseY: Math.min(input.topHeight, input.bottomHeight) - STAIR_BURY,
+    }),
+  );
+  if (input.propLayerId !== undefined) {
+    for (const c of store.chunksInRect(input.propLayerId, input.footprint)) {
+      history.captureChunk(store, input.propLayerId, c.cx, c.cz);
+    }
+  }
+
+  let baked;
+  try {
+    baked = bakeStair({
+      store,
+      layerId,
+      footprint: input.footprint,
+      from: input.from,
+      to: input.to,
+      topHeight: input.topHeight,
+      bottomHeight: input.bottomHeight,
+    });
+  } catch (error) {
+    store.removeLayer(layerId);
+    history.abortStroke();
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+
+  if (baked.cells === 0) {
+    store.removeLayer(layerId);
+    history.abortStroke();
+    return { ok: false, reason: 'that run covers no cell -- drag out a longer one' };
+  }
+
+  history.captureAddedLayer(layerId);
+  for (const c of baked.created) history.captureCreated(layerId, c.cx, c.cz);
+  const cleared =
+    input.propLayerId === undefined
+      ? { removed: [], dirty: [] }
+      : store.removePropsInRect(input.propLayerId, input.footprint);
+  history.endStroke();
+
+  return {
+    ok: true,
+    layerId,
+    created: baked.created,
     cells: baked.cells,
     clearedProps: cleared.removed.length,
     propChunks: cleared.dirty,

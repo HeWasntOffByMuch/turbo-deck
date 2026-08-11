@@ -179,6 +179,40 @@ async function main(): Promise<void> {
     check('undo takes both tiers back, layers and all', tiersLeft.length === 0, tiersLeft.join(', ') || 'none');
     await page.screenshot({ path: join(outDir, 'editor-rock-undone.png') });
 
+    // Cut a stair into a fresh tier: drag from on top of it out onto the ground,
+    // which is the gesture -- down the stairs, the way you would walk them.
+    await drag(page, [330, 250], [820, 600]);
+    await page.mouse.up();
+    await page.waitForTimeout(1000);
+    await page.click('button[title="stair"]:visible');
+    await page.waitForTimeout(300);
+    await drag(page, [600, 400], [420, 560]);
+    await page.mouse.up();
+    await page.waitForTimeout(1000);
+    const afterStair = await readStatus(page);
+    const stair = /stair "(stair\/\d+)": (\d+) cells, climbing (\d+)/.exec(afterStair);
+    check('the stair tool cuts a run', stair !== null, stair ? stair[0] : afterStair.slice(0, 160));
+    check(
+      'the run actually climbs something',
+      stair !== null && Number(stair[3]) > 24,
+      stair ? `climbs ${stair[3]}` : 'no climb reported',
+    );
+    await page.screenshot({ path: join(outDir, 'editor-rock-stair.png') });
+
+    // A run between two points at the same height is not a stair.
+    await drag(page, [200, 640], [300, 700]);
+    await page.mouse.up();
+    await page.waitForTimeout(700);
+    const flat = await readStatus(page);
+    check('a stair on flat ground is refused', /stair refused/.test(flat), flat.slice(0, 160));
+
+    await page.keyboard.press('Control+z');
+    await page.waitForTimeout(700);
+    await page.keyboard.press('Control+z');
+    await page.waitForTimeout(700);
+    await page.click('button[title="add"]:visible');
+    await page.waitForTimeout(300);
+
     // Re-draw one, then carve a bite out of it with the remove tool.
     await drag(page, [330, 250], [820, 600]);
     await page.mouse.up();

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { MAP_VERSION, parseMap, serializeMap, type MapChunk, type MapDocument, type MapLayer } from './map.js';
 import { loadMap, MapChunkStore } from './map-world.js';
-import { bakeRock, carveRock, emptyRockLayer } from './rock.js';
+import { bakeRock, bakeStair, carveRock, emptyRockLayer } from './rock.js';
+import { isWalkable } from '../server/sim/movement.js';
 import { materialIndex } from './types.js';
 
 /**
@@ -287,5 +288,128 @@ describe('a stack of tiers', () => {
     expect(world.heightAt(30, 30)).toBe(TOP * 2); // upper tier
     expect(world.heightAt(10, 10)).toBe(TOP); // lower tier
     expect(world.heightAt(70, 70)).toBe(0); // ground
+  });
+});
+
+describe('a stair up a tier (spec 122)', () => {
+  /** Ground at 0, a tier at TOP over the east half, and a stair up to it. */
+  function withStair(): MapChunkStore {
+    const store = withRockLayer();
+    bakeRock({ store, layerId: ROCK, footprint: { minX: 40, minZ: 0, maxX: 80, maxZ: 80 }, top: TOP });
+    store.addLayer(emptyRockLayer({ id: 'stair/1', seed: 9, origin: { x: 0, z: 0 }, baseY: -30 }));
+    bakeStair({
+      store,
+      layerId: 'stair/1',
+      // A run west out of the tier, down onto the ground.
+      footprint: { minX: 0, minZ: 30, maxX: 45, maxZ: 50 },
+      from: { x: 45, z: 40 },
+      to: { x: 0, z: 40 },
+      topHeight: TOP,
+      bottomHeight: 0,
+    });
+    return store;
+  }
+
+  it('lets a body walk the whole run up onto the tier', () => {
+    const world = loadMap(withStair().toDocument()).world;
+    const sampler = { heightAt: (x: number, y: number): number => world.heightAt(x, y) };
+    // Base move speed, as the sim runs it.
+    const perTick = 155 / 60;
+
+    let x = 2;
+    let z = world.heightAt(x, 40);
+    let blocked = false;
+    for (let tick = 0; tick < 400 && x < 60; tick++) {
+      const next = x + perTick;
+      if (!isWalkable({ x, y: 40, z }, next, 40, sampler)) {
+        blocked = true;
+        break;
+      }
+      x = next;
+      z = world.heightAt(x, 40);
+    }
+    expect(blocked).toBe(false);
+    // ...and it actually arrived on top rather than stopping partway.
+    expect(z).toBeCloseTo(TOP, 1);
+  });
+
+  it('does not open the rest of the tier: the rim beside it still refuses', () => {
+    const world = loadMap(withStair().toDocument()).world;
+    const sampler = { heightAt: (x: number, y: number): number => world.heightAt(x, y) };
+    const perTick = 155 / 60;
+
+    // Same walk east, but along z = 10 where there is no stair.
+    let x = 2;
+    let z = world.heightAt(x, 10);
+    let blocked = false;
+    for (let tick = 0; tick < 400 && x < 60; tick++) {
+      const next = x + perTick;
+      if (!isWalkable({ x, y: 10, z }, next, 10, sampler)) {
+        blocked = true;
+        break;
+      }
+      x = next;
+      z = world.heightAt(x, 10);
+    }
+    expect(blocked).toBe(true);
+    expect(z).toBeLessThan(TOP / 2);
+  });
+
+  it('runs monotonically from the tier down to the ground', () => {
+    const world = loadMap(withStair().toDocument()).world;
+    let previous = world.heightAt(44, 40);
+    for (let x = 44; x >= 1; x -= 1) {
+      const h = world.heightAt(x, 40);
+      // Walking down the run, height never goes back up.
+      expect(h).toBeLessThanOrEqual(previous + 0.001);
+      previous = h;
+    }
+    expect(world.heightAt(44, 40)).toBeCloseTo(TOP, 0);
+    // The bottom reaches the ground exactly at the end of the run, so a step
+    // *onto* it lands a little way up the ramp. What matters is that the step is
+    // one a body may take -- under MAX_STEP_HEIGHT -- not that it is zero.
+    expect(world.heightAt(1, 40)).toBeLessThan(24);
+  });
+
+  it('agrees with itself across a chunk seam', () => {
+    const store = withStair();
+    // The run crosses x = 40, which is the boundary between chunks 0 and 1.
+    const doc2 = store.toDocument();
+    const layer = doc2.layers.find((l) => l.id === 'stair/1');
+    const seen = new Map<string, number>();
+    let compared = 0;
+    for (const chunk of layer?.chunks ?? []) {
+      for (let j = 0; j <= chunk.rows; j++) {
+        for (let i = 0; i <= chunk.cols; i++) {
+          const col = chunk.cx * CHUNK_CELLS + i;
+          const row = chunk.cz * CHUNK_CELLS + j;
+          const h = chunk.heights[j * (chunk.cols + 1) + i] ?? 0;
+          const key = `${col},${row}`;
+          const already = seen.get(key);
+          if (already === undefined) seen.set(key, h);
+          else {
+            expect(h).toBe(already);
+            compared++;
+          }
+        }
+      }
+    }
+    expect(compared).toBeGreaterThan(0);
+  });
+
+  it('is deterministic', () => {
+    expect(serializeMap(withStair().toDocument())).toBe(serializeMap(withStair().toDocument()));
+  });
+
+  it('bands the treads without moving the surface', () => {
+    const store = withStair();
+    const mesh = loadMap(store.toDocument()).meshLayers.find((l) => l.id === 'stair/1');
+    const materials = new Set<number>();
+    for (let col = 0; col < 4; col++) {
+      const m = mesh?.materialAt(col, 4);
+      if (m !== null && m !== undefined) materials.add(m);
+    }
+    // Rock and dirt alternating, so the run reads as steps.
+    expect(materials.size).toBeGreaterThan(1);
   });
 });

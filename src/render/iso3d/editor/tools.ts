@@ -36,9 +36,9 @@ export type PartTool = 'add' | 'remove';
 export const PART_TOOLS: readonly PartTool[] = ['add', 'remove'];
 
 /** What the rock mode's drag does (spec 121). */
-export type RockTool = 'add' | 'remove';
+export type RockTool = 'add' | 'remove' | 'stair';
 
-export const ROCK_TOOLS: readonly RockTool[] = ['add', 'remove'];
+export const ROCK_TOOLS: readonly RockTool[] = ['add', 'remove', 'stair'];
 
 /**
  * The `rockLayer` value meaning "start a new tier".
@@ -68,6 +68,9 @@ export const PART_TOOL_COLORS: Record<PartTool, number> = {
 export const ROCK_TOOL_COLORS: Record<RockTool, number> = {
   add: 0x9aa4b0,
   remove: 0xe08f8f,
+  // The tread band's own warm dirt, so the cursor says which of the two the
+  // drag is about to leave behind.
+  stair: 0xc8a06a,
 };
 export const TOOL_COLORS: Record<TerrainTool, number> = {
   raise: 0x8fe08f,

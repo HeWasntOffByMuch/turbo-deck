@@ -260,6 +260,138 @@ export function bakeRock(input: BakeRockInput): BakedRock {
   return { created, touched, bounds, cells: solidified };
 }
 
+export interface BakeStairInput {
+  readonly store: MapChunkStore;
+  /** A stair layer of its own -- never the tier it serves. See below. */
+  readonly layerId: string;
+  readonly footprint: MapRect;
+  /** The high end of the run, and the low end: the drag's own direction. */
+  readonly from: MapPoint;
+  readonly to: MapPoint;
+  readonly topHeight: number;
+  readonly bottomHeight: number;
+}
+
+/** How many world units of run one painted tread covers. One cell. */
+const TREAD_CELLS = 1;
+
+/**
+ * A ramp from a tier's top down to what it lands on (spec 122).
+ *
+ * Its own layer rather than cells added to the tier, because `bakeRock` refuses
+ * a second height in one layer and is right to: a tier with two heights in it
+ * is a ramp somebody strolls up rather than a cliff. A ramp is exactly what
+ * this is, so it cannot live in a layer holding that rule. Costing nothing,
+ * since `heightAt` takes the maximum over solid layers -- at the top the stair
+ * and the tier agree, and along the run the stair simply wins over the ground.
+ *
+ * The steps are paint. A corner carries one height, so a flat tread and a riser
+ * need two cells between them -- 44 world units per step against a body 55 tall,
+ * a staircase for something three times our size. Banding the material one cell
+ * per tread reads as steps cut into rock at the scale the reference has them,
+ * and the surface underfoot stays the smooth ramp that makes the climb work at
+ * all.
+ */
+export function bakeStair(input: BakeStairInput): BakedRock {
+  const { store, layerId, footprint, from, to, topHeight, bottomHeight } = input;
+  const info = store.layerInfo(layerId);
+  if (!info) throw new Error(`bakeStair: no layer ${layerId}`);
+
+  const top = quantize(topHeight);
+  const bottom = quantize(bottomHeight);
+  const axisX = to.x - from.x;
+  const axisZ = to.z - from.z;
+  const axisLength2 = axisX * axisX + axisZ * axisZ;
+  if (axisLength2 <= 0) throw new Error('bakeStair: the run has no direction');
+
+  /**
+   * How far along the run a world point lies, clamped to the ends.
+   *
+   * Evaluated at a corner's *lattice* position, so it is a pure function of
+   * world position and nothing else: two chunks that share a corner compute the
+   * same number, and no seam can open along a stair that crosses one.
+   */
+  const along = (x: number, z: number): number => {
+    const t = ((x - from.x) * axisX + (z - from.z) * axisZ) / axisLength2;
+    return t < 0 ? 0 : t > 1 ? 1 : t;
+  };
+
+  const rock = materialIndex('rock');
+  const dirt = materialIndex('dirt');
+  const range = cellRange(footprint, info.origin, store.cellSize);
+  if (!range) return { created: [], touched: [], bounds: info.bounds, cells: 0 };
+
+  // One band per cell of run, so a tread is a cell deep whichever way the stair
+  // is drawn.
+  const runLength = Math.sqrt(axisLength2);
+  const treads = Math.max(1, Math.round(runLength / (store.cellSize * TREAD_CELLS)));
+
+  const cells = store.chunkCells;
+  const created: ChunkCoord[] = [];
+  const touched: ChunkCoord[] = [];
+  let solidified = 0;
+
+  for (let cz = Math.floor(range.minRow / cells); cz <= Math.floor(range.maxRow / cells); cz++) {
+    for (let cx = Math.floor(range.minCol / cells); cx <= Math.floor(range.maxCol / cells); cx++) {
+      const startCol = cx * cells;
+      const startRow = cz * cells;
+      const held = store.exportChunk(layerId, cx, cz);
+      const chunk = held ?? blankChunk(cx, cz, cells, bottom, rock);
+      const count = chunk.cols * chunk.rows;
+      const solid = decodeRuns(chunk.solid, count);
+      const materials = decodeRuns(chunk.materials, count);
+      const heights = [...chunk.heights];
+
+      let changed = 0;
+      for (let j = 0; j < chunk.rows; j++) {
+        const row = startRow + j;
+        if (row < range.minRow || row > range.maxRow) continue;
+        for (let i = 0; i < chunk.cols; i++) {
+          const col = startCol + i;
+          if (col < range.minCol || col > range.maxCol) continue;
+          const k = j * chunk.cols + i;
+          const x = info.origin.x + (col + 0.5) * store.cellSize;
+          const z = info.origin.z + (row + 0.5) * store.cellSize;
+          // Alternating bands along the run. Paint only: the cell's corners are
+          // on the ramp either way, so this changes how it looks and not how it
+          // walks.
+          materials[k] = Math.floor(along(x, z) * treads) % 2 === 0 ? rock : dirt;
+          if (solid[k] !== 1) {
+            solid[k] = 1;
+            changed++;
+          }
+        }
+      }
+      if (changed === 0) continue;
+      solidified += changed;
+
+      // Every corner of the chunk, not only the ones around solid cells: a rim
+      // corner is shared with the hole beside it and the skirt hangs from it, so
+      // it has to sit on the ramp too.
+      for (let j = 0; j <= chunk.rows; j++) {
+        for (let i = 0; i <= chunk.cols; i++) {
+          const x = info.origin.x + (startCol + i) * store.cellSize;
+          const z = info.origin.z + (startRow + j) * store.cellSize;
+          const t = along(x, z);
+          heights[j * (chunk.cols + 1) + i] = quantize(top + (bottom - top) * t);
+        }
+      }
+
+      store.insertChunk(layerId, {
+        ...chunk,
+        heights,
+        solid: encodeRuns(solid),
+        materials: encodeRuns(materials),
+      });
+      (held ? touched : created).push({ cx: noNegZero(cx), cz: noNegZero(cz) });
+    }
+  }
+
+  const bounds = store.heldBounds(layerId) ?? info.bounds;
+  store.setBounds(layerId, bounds);
+  return { created, touched, bounds, cells: solidified };
+}
+
 export function carveRock(input: CarveRockInput): CarvedRock {
   const { store, layerId, footprint } = input;
   const info = store.layerInfo(layerId);
