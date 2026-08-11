@@ -1,13 +1,12 @@
 /**
- * The inventory screen (spec 127).
+ * The inventory screen (specs 127, 136, 137).
  *
- * The assertions that matter are the two halves of one rule: a drag emits an
- * intent, and a drag changes nothing on screen. Everything else here is detail
- * around that -- the refusals, the split, the keyboard, the ghost.
+ * The assertions that matter are the two halves of one rule: a click emits an
+ * intent, and the server is what moves anything. Everything else here is detail
+ * around that -- the refusals, the split, the ghost, the gutter.
  */
 
 import { describe, expect, it } from 'vitest';
-import { FocusManager } from '../core/focus.js';
 import { NO_MODIFIERS, type Modifiers } from '../core/events.js';
 import { LayerStack } from '../core/layers.js';
 import { UiRoot } from '../core/root.js';
@@ -46,13 +45,11 @@ interface Harness {
   readonly screen: InventoryScreen;
   readonly moves: MoveIntent[];
   readonly root: UiRoot;
-  readonly focus: FocusManager;
 }
 
 function harness(view = viewOf()): Harness {
-  const focus = new FocusManager();
   const layers = new LayerStack();
-  const screen = new InventoryScreen({ theme: THEME, focus, hitTest: (at) => layers.hitTest(at) });
+  const screen = new InventoryScreen({ theme: THEME, hitTest: (at) => layers.hitTest(at) });
   layers.place('windows', screen);
   layers.place('dragGhost', screen.ghost);
   screen.setContainers(view);
@@ -67,26 +64,29 @@ function harness(view = viewOf()): Harness {
     layers,
   });
   root.update(0);
-  return { screen, moves, root, focus };
+  return { screen, moves, root };
 }
 
-/** Drag from one cell to another, through the controller as a pointer would. */
-function dragBetween(
-  test: Harness,
-  from: { container: 'inventory' | 'equipment'; index: number },
-  to: { container: 'inventory' | 'equipment'; index: number },
-  mods: Modifiers = NO_MODIFIERS,
-): void {
-  const source = test.screen.cellAt(from);
-  const target = test.screen.cellAt(to);
-  if (!source || !target) throw new Error('no such cell');
-  test.screen.pickUp(source, { x: source.rect.x + 2, y: source.rect.y + 2 }, mods);
-  const centre = {
-    x: target.rect.x + Math.floor(target.rect.width / 2),
-    y: target.rect.y + Math.floor(target.rect.height / 2),
+interface Ref {
+  readonly container: 'inventory' | 'equipment';
+  readonly index: number;
+}
+
+/** A press and release on a cell, as the router would deliver it. */
+function clickCell(test: Harness, ref: Ref, button = 0, mods: Modifiers = NO_MODIFIERS): void {
+  const cell = test.screen.cellAt(ref);
+  if (!cell) throw new Error('no such cell');
+  const pos = {
+    x: cell.rect.x + Math.floor(cell.rect.width / 2),
+    y: cell.rect.y + Math.floor(cell.rect.height / 2),
   };
-  test.screen.drag.moveTo(centre);
-  test.screen.drag.drop(centre);
+  test.screen.clickCell(cell, { kind: 'click', pos, delta: { x: 0, y: 0 }, button, mods, time: 0 });
+}
+
+/** Take from one cell and put down on another: the whole gesture, twice a click. */
+function carryBetween(test: Harness, from: Ref, to: Ref, button = 0, mods: Modifiers = NO_MODIFIERS): void {
+  clickCell(test, from, button, mods);
+  clickCell(test, to);
 }
 
 const inv = (index: number) => ({ container: 'inventory', index }) as const;
@@ -101,9 +101,9 @@ describe('the inventory screen', () => {
     expect(screen.equipmentSlots).toHaveLength(SLOTS.length);
   });
 
-  it('emits one intent for a drag between two bag cells', () => {
+  it('emits one intent for a carry between two bag cells', () => {
     const test = harness();
-    dragBetween(test, inv(0), inv(5));
+    carryBetween(test, inv(0), inv(5));
     expect(test.moves).toEqual([{ from: inv(0), to: inv(5), count: 0 }]);
   });
 
@@ -114,7 +114,7 @@ describe('the inventory screen', () => {
    */
   it('moves nothing on screen until it is told to', () => {
     const test = harness();
-    dragBetween(test, inv(0), inv(5));
+    carryBetween(test, inv(0), inv(5));
     expect(test.screen.cellAt(inv(0))?.item?.defId).toBe('sword');
     expect(test.screen.cellAt(inv(5))?.item).toBeNull();
 
@@ -126,20 +126,29 @@ describe('the inventory screen', () => {
 
   it('equips into a slot the item belongs in', () => {
     const test = harness();
-    dragBetween(test, inv(0), worn(0));
+    carryBetween(test, inv(0), worn(0));
     expect(test.moves).toEqual([{ from: inv(0), to: worn(0), count: 0 }]);
   });
 
   it('refuses an equipment slot the item does not belong in, and says nothing', () => {
     const test = harness();
-    dragBetween(test, inv(0), worn(2));
+    carryBetween(test, inv(0), worn(2));
     expect(test.moves).toEqual([]);
   });
 
-  it('refuses to drop a carried item on the cell it came from', () => {
+  /**
+   * Putting it back where it came from (spec 137).
+   *
+   * A cancel rather than a refusal, and the difference is visible: the cell is
+   * empty while the item is in hand, so "you cannot drop it there" would leave
+   * the player holding something with nowhere to put it back.
+   */
+  it('puts a carried item back into the cell it came from', () => {
     const test = harness();
-    dragBetween(test, inv(0), inv(0));
+    carryBetween(test, inv(0), inv(0));
     expect(test.moves).toEqual([]);
+    expect(test.screen.drag.active).toBeNull();
+    expect(test.screen.cellAt(inv(0))?.item?.defId).toBe('sword');
   });
 
   it('cancels a release over nothing', () => {
@@ -152,22 +161,10 @@ describe('the inventory screen', () => {
     expect(test.screen.drag.active).toBeNull();
   });
 
-  it('takes half a stack when shift is held as the drag begins', () => {
-    const test = harness();
-    dragBetween(test, inv(1), inv(7), { ...NO_MODIFIERS, shift: true });
-    expect(test.moves).toEqual([{ from: inv(1), to: inv(7), count: 3 }]);
-  });
-
-  /** A plain drag says 0, which the wire reads as the whole stack (spec 126). */
+  /** A plain carry says 0, which the wire reads as the whole stack (spec 126). */
   it('says zero rather than the count for a whole stack', () => {
     const test = harness();
-    dragBetween(test, inv(1), inv(7));
-    expect(test.moves[0]?.count).toBe(0);
-  });
-
-  it('shift-drag of a single item still carries one', () => {
-    const test = harness();
-    dragBetween(test, inv(0), inv(7), { ...NO_MODIFIERS, shift: true });
+    carryBetween(test, inv(1), inv(7));
     expect(test.moves[0]?.count).toBe(0);
   });
 });
@@ -228,81 +225,20 @@ describe('the drag ghost', () => {
   });
 });
 
-describe('the keyboard', () => {
-  it('picks up and puts down with the same intent a drag makes', () => {
-    const test = harness();
-    const source = test.screen.cellAt(inv(0));
-    const target = test.screen.cellAt(worn(0));
-    if (!source || !target) throw new Error('no cell');
-
-    test.screen.activate(source);
-    expect(test.screen.drag.active).not.toBeNull();
-    test.screen.activate(target);
-    expect(test.moves).toEqual([{ from: inv(0), to: worn(0), count: 0 }]);
-  });
-
-  it('keeps the item in hand when the target refuses', () => {
-    const test = harness();
-    const source = test.screen.cellAt(inv(0));
-    const head = test.screen.cellAt(worn(2));
-    if (!source || !head) throw new Error('no cell');
-
-    test.screen.activate(source);
-    test.screen.activate(head);
-    expect(test.moves).toEqual([]);
-    expect(test.screen.drag.active).not.toBeNull();
-  });
-
-  it('cancels a drag on Escape, and reports that it did', () => {
+describe('Escape, with something in hand', () => {
+  it('cancels the carry and reports that it did', () => {
     const test = harness();
     const source = test.screen.cellAt(inv(0));
     if (!source) throw new Error('no cell');
     expect(test.screen.cancelDrag()).toBe(false);
-    test.screen.activate(source);
+    clickCell(test, inv(0));
     expect(test.screen.cancelDrag()).toBe(true);
     expect(test.screen.drag.active).toBeNull();
-    // With nothing in hand it declines again, so Escape falls through to the
-    // window manager rather than being swallowed.
+    // ...and the cell it came out of has it again.
+    expect(test.screen.cellAt(inv(0))?.item?.defId).toBe('sword');
+    // With nothing in hand it declines, so Escape falls through to the window
+    // manager rather than being swallowed.
     expect(test.screen.cancelDrag()).toBe(false);
-  });
-
-  it('moves focus by one across the grid and by a row down it', () => {
-    const test = harness();
-    const first = test.screen.cellAt(inv(0));
-    if (!first) throw new Error('no cell');
-    test.focus.focus(first);
-
-    expect(test.screen.moveFocus(1, 0)).toBe(true);
-    expect(test.focus.focused).toBe(test.screen.cellAt(inv(1)));
-    expect(test.screen.moveFocus(0, 1)).toBe(true);
-    expect(test.focus.focused).toBe(test.screen.cellAt(inv(7)));
-  });
-
-  /** Clamped rather than wrapped: a grid has edges you can see. */
-  it('stops at the edges instead of wrapping around them', () => {
-    const test = harness();
-    const first = test.screen.cellAt(inv(0));
-    if (!first) throw new Error('no cell');
-    test.focus.focus(first);
-    expect(test.screen.moveFocus(-1, 0)).toBe(false);
-    expect(test.screen.moveFocus(0, -1)).toBe(false);
-    expect(test.focus.focused).toBe(first);
-
-    const lastInRow = test.screen.cellAt(inv(5));
-    if (!lastInRow) throw new Error('no cell');
-    test.focus.focus(lastInRow);
-    // Right from the end of a row is not the start of the next one.
-    expect(test.screen.moveFocus(1, 0)).toBe(false);
-  });
-
-  it('walks the paperdoll one slot at a time, and not sideways', () => {
-    const test = harness();
-    const head = test.screen.cellAt(worn(2));
-    if (!head) throw new Error('no cell');
-    test.focus.focus(head);
-    expect(test.screen.moveFocus(0, 1)).toBe(true);
-    expect(test.focus.focused).toBe(test.screen.cellAt(worn(3)));
-    expect(test.screen.moveFocus(1, 0)).toBe(false);
   });
 });
 
@@ -358,58 +294,21 @@ describe('layout', () => {
     expect(says(9)).toBe('');
   });
 
-  // --- spec 136 ---------------------------------------------------------
+  // --- specs 136 and 137 -------------------------------------------------
 
-  /** A click, through the gesture the router would deliver for a short press. */
-  function clickCell(
-    test: Harness,
-    ref: { container: 'inventory' | 'equipment'; index: number },
-    button = 0,
-    mods: Modifiers = NO_MODIFIERS,
-  ): void {
-    const cell = test.screen.cellAt(ref);
-    if (!cell) throw new Error('no such cell');
-    const pos = {
-      x: cell.rect.x + Math.floor(cell.rect.width / 2),
-      y: cell.rect.y + Math.floor(cell.rect.height / 2),
-    };
-    test.screen.clickCell(cell, {
-      kind: 'click',
-      pos,
-      delta: { x: 0, y: 0 },
-      button,
-      mods,
-      time: 0,
-    });
-  }
-
-  describe('clicking to carry (spec 136)', () => {
+  describe('clicking to carry', () => {
     it('takes on the first click and puts down on the second', () => {
       const test = harness();
       clickCell(test, inv(0));
-      // In hand, and nothing has moved: the screen never edits itself.
+      // In hand, and nothing has moved on the server: the screen never edits
+      // itself. What it *does* do is empty the cell it came out of.
       expect(test.screen.drag.active).not.toBeNull();
       expect(test.moves).toEqual([]);
+      expect(test.screen.cellAt(inv(0))?.item).toBeNull();
 
       clickCell(test, inv(5));
       expect(test.screen.drag.active).toBeNull();
       expect(test.moves).toEqual([{ from: inv(0), to: inv(5), count: 0 }]);
-    });
-
-    /**
-     * The two gestures are one state machine reached two ways, so they must
-     * produce the same request -- otherwise "it worked when I dragged it" is a
-     * real sentence and one of the two paths is wrong.
-     */
-    it('reaches the same move a drag would', () => {
-      const dragged = harness();
-      dragBetween(dragged, inv(0), inv(5));
-
-      const clicked = harness();
-      clickCell(clicked, inv(0));
-      clickCell(clicked, inv(5));
-
-      expect(clicked.moves).toEqual(dragged.moves);
     });
 
     it('leaves it in hand when the cell refuses', () => {
@@ -427,21 +326,72 @@ describe('layout', () => {
       expect(test.screen.drag.active).toBeNull();
       expect(test.moves).toEqual([]);
     });
+  });
 
-    it('still halves a stack when shift is held', () => {
+  /**
+   * How much comes out of a stack (spec 137).
+   *
+   * The genre's split, and the one the player asked for: left takes the lot,
+   * right takes half, shift+right takes one.
+   */
+  describe('taking part of a stack', () => {
+    it('takes the whole stack on a left click', () => {
       const test = harness();
-      // Slot 1 holds six potions; half of six is three.
-      clickCell(test, inv(1), 0, { ...NO_MODIFIERS, shift: true });
-      clickCell(test, inv(9));
+      carryBetween(test, inv(1), inv(9));
+      // Zero on the wire is "all of it" (spec 126).
+      expect(test.moves).toEqual([{ from: inv(1), to: inv(9), count: 0 }]);
+    });
+
+    it('takes half on a right click, rounding up', () => {
+      const test = harness();
+      // Slot 1 holds six potions.
+      carryBetween(test, inv(1), inv(9), 2);
       expect(test.moves[0]?.count).toBe(3);
+      // ...and the three left behind are still drawn in the cell while the
+      // other three are in hand.
+      const test2 = harness();
+      clickCell(test2, inv(1), 2);
+      expect(test2.screen.cellAt(inv(1))?.item?.count).toBe(3);
+    });
+
+    it('takes one on shift+right, whatever the stack', () => {
+      const test = harness();
+      carryBetween(test, inv(1), inv(9), 2, { ...NO_MODIFIERS, shift: true });
+      expect(test.moves[0]?.count).toBe(1);
+      const test2 = harness();
+      clickCell(test2, inv(1), 2, { ...NO_MODIFIERS, shift: true });
+      expect(test2.screen.cellAt(inv(1))?.item?.count).toBe(5);
+    });
+
+    it('takes the one item there is, on either right-click, when there is no stack', () => {
+      for (const mods of [NO_MODIFIERS, { ...NO_MODIFIERS, shift: true }]) {
+        const test = harness();
+        carryBetween(test, inv(0), inv(9), 2, mods);
+        // A single item is the whole stack, so the wire says zero.
+        expect(test.moves).toEqual([{ from: inv(0), to: inv(9), count: 0 }]);
+      }
+    });
+
+    it('empties the cell entirely when the whole stack is taken', () => {
+      const test = harness();
+      clickCell(test, inv(1));
+      expect(test.screen.cellAt(inv(1))?.item).toBeNull();
+    });
+
+    it('puts the rest of a split back when the carry is cancelled', () => {
+      const test = harness();
+      clickCell(test, inv(1), 2);
+      expect(test.screen.cellAt(inv(1))?.item?.count).toBe(3);
+      test.screen.cancelDrag();
+      expect(test.screen.cellAt(inv(1))?.item?.count).toBe(6);
     });
   });
 
-  describe('right-clicking to equip (spec 136)', () => {
+  describe('shift+left to wear it', () => {
     it('sends a bag item to the slot it names', () => {
       const test = harness();
       // Slot 0 holds a sword, which is `mainHand` -- the first paperdoll slot.
-      clickCell(test, inv(0), 2);
+      clickCell(test, inv(0), 0, { ...NO_MODIFIERS, shift: true });
       expect(test.moves).toEqual([{ from: inv(0), to: worn(0), count: 0 }]);
     });
 
@@ -458,7 +408,7 @@ describe('layout', () => {
           },
         }),
       );
-      clickCell(test, worn(0), 2);
+      clickCell(test, worn(0), 0, { ...NO_MODIFIERS, shift: true });
       const move = test.moves[0];
       expect(move?.from).toEqual(worn(0));
       expect(move?.to.container).toBe('inventory');
@@ -469,15 +419,17 @@ describe('layout', () => {
     it('does nothing for something that is not equipment', () => {
       const test = harness();
       // Slot 1 is a potion: no `slot`, so it is not equipment.
-      clickCell(test, inv(1), 2);
+      clickCell(test, inv(1), 0, { ...NO_MODIFIERS, shift: true });
       expect(test.moves).toEqual([]);
     });
 
-    it('does nothing while something is in hand', () => {
+    it('puts down what is in hand rather than equipping, when hands are full', () => {
       const test = harness();
       clickCell(test, inv(0));
-      clickCell(test, inv(1), 2);
-      expect(test.moves).toEqual([]);
+      clickCell(test, inv(1), 0, { ...NO_MODIFIERS, shift: true });
+      // A click while carrying is a placement, whatever button or modifier it
+      // arrived with -- one rule, so nothing is ever left mysteriously in hand.
+      expect(test.moves).toEqual([{ from: inv(0), to: inv(1), count: 0 }]);
     });
   });
 

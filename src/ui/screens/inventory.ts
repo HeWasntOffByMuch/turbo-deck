@@ -18,9 +18,8 @@
 
 import { Column, Grid, Row } from '../core/containers.js';
 import { DragController, type DragPayload } from '../core/drag.js';
-import type { EventContext, Gesture, Modifiers } from '../core/events.js';
+import type { Gesture } from '../core/events.js';
 import { uniformInsets, type Point } from '../core/geom.js';
-import type { FocusManager } from '../core/focus.js';
 import type { Widget } from '../core/widget.js';
 import type { Theme } from '../theme/theme.js';
 import { DragGhost } from '../widgets/drag-ghost.js';
@@ -58,8 +57,6 @@ export interface InventoryOptions {
   /** How wide the bag is. 24 slots over 6 columns is the server's shape. */
   readonly columns?: number;
   readonly slotCount?: number;
-  /** So the keyboard can move focus between cells. */
-  readonly focus?: FocusManager;
   /**
    * Where to look for a drop target.
    *
@@ -85,14 +82,6 @@ export class InventoryScreen extends Row {
   readonly tooltip = new Tooltip('itemTooltip');
   readonly drag: DragController;
   onMove: ((intent: MoveIntent) => void) | null = null;
-  /**
-   * Who holds the keyboard, so the arrows can move it between cells.
-   *
-   * Settable as well as constructable, because the manager that matters is
-   * `UiRoot`'s and a root is built *around* its content -- so a caller cannot
-   * have both at once at construction time.
-   */
-  focusManager: FocusManager | null;
 
   private readonly bagCells: ItemSlot[] = [];
   private readonly wornCells: ItemSlot[] = [];
@@ -100,10 +89,20 @@ export class InventoryScreen extends Row {
   private readonly grid: Grid;
   private readonly paperdoll: Column;
   private level = 1;
+  /**
+   * The last thing this screen was handed, so it can be drawn again.
+   *
+   * Kept because what is *shown* is the view minus what is in hand, and the hand
+   * changes on a click rather than on a message. Re-deriving beats storing the
+   * adjusted copy: there is one place that decides what a cell holds, and it
+   * reads the server's answer every time.
+   */
+  private view: ContainerView | null = null;
+  /** What is in hand and where it came from, so that cell can be drawn empty. */
+  private carried: { readonly from: SlotRef; readonly count: number } | null = null;
 
   constructor(private readonly options: InventoryOptions) {
     super('inventory');
-    this.focusManager = options.focus ?? null;
     const theme = options.theme;
     this.gap = theme.spacing.sm;
     this.padding = uniformInsets(theme.spacing.xs);
@@ -156,17 +155,41 @@ export class InventoryScreen extends Row {
    * -- and so a cell mid-drag is still the same object when the drag ends.
    */
   setContainers(view: ContainerView): void {
+    this.view = view;
     this.level = view.level;
     const ids = view.slots.map((slot) => slot.id);
     if (ids.join('|') !== this.slotIds.join('|')) this.rebuildPaperdoll(view.slots);
+    this.render();
+  }
 
+  /**
+   * Put the last view on the cells, minus whatever is in hand.
+   *
+   * The one place a cell's contents are decided, called both when a message
+   * arrives and when the hand changes. Everything else about this screen still
+   * holds: it renders what it was handed, and the hand is something it was
+   * handed too -- by the player, a moment ago.
+   */
+  private render(): void {
+    const view = this.view;
+    if (!view) return;
     for (let i = 0; i < this.bagCells.length; i++) {
-      this.bagCells[i]?.setItem(view.bag[i] ?? null);
+      this.bagCells[i]?.setItem(this.showing({ container: 'inventory', index: i }, view.bag[i] ?? null));
     }
     for (let i = 0; i < this.wornCells.length; i++) {
       const id = this.slotIds[i];
-      this.wornCells[i]?.setItem(id === undefined ? null : view.worn[id] ?? null);
+      const worn = id === undefined ? null : view.worn[id] ?? null;
+      this.wornCells[i]?.setItem(this.showing({ container: 'equipment', index: i }, worn));
     }
+  }
+
+  /** What a cell draws: what the server says, less what was taken out of it. */
+  private showing(ref: SlotRef, item: ItemView | null): ItemView | null {
+    const carried = this.carried;
+    if (!item || !carried) return item;
+    if (carried.from.container !== ref.container || carried.from.index !== ref.index) return item;
+    const left = item.count - carried.count;
+    return left > 0 ? { ...item, count: left } : null;
   }
 
   /** What the tooltip says over a cell, or empty when there is nothing there. */
@@ -210,18 +233,6 @@ export class InventoryScreen extends Row {
 
   private makeCell(ref: SlotRef, name: string): ItemSlot {
     const cell = new ItemSlot(ref, name);
-    cell.onPickUp = (slot, gesture) => {
-      this.pickUp(slot, gesture.pos, gesture.mods);
-    };
-    cell.onDragMove = (gesture) => {
-      this.drag.moveTo(gesture.pos);
-    };
-    cell.onDragDrop = (gesture) => {
-      this.drag.drop(gesture.pos);
-    };
-    cell.onActivate = (slot) => {
-      this.activate(slot);
-    };
     cell.onClick = (slot, gesture) => {
       this.clickCell(slot, gesture);
     };
@@ -232,52 +243,79 @@ export class InventoryScreen extends Row {
   }
 
   /**
-   * Start carrying what is in `slot`.
+   * Start carrying `count` of what is in `slot`.
    *
-   * Half a stack is taken by holding Shift **here**, when the drag begins, rather
-   * than when it ends: the ghost carries a count and draws it, so what is being
-   * carried is visible for the whole drag instead of being decided at the last
-   * moment over a cell.
+   * How much is decided here, when the carry begins, rather than when it ends:
+   * the ghost carries a count and draws it, so what is in hand is visible for
+   * the whole carry instead of being settled at the last moment over a cell.
+   *
+   * The cell it came from is emptied of exactly that much (spec 137). That is
+   * what makes putting it back possible -- a cell still holding the thing in
+   * your hand has nowhere for it to go, and it is also simply a lie about where
+   * the item is.
    */
-  pickUp(slot: ItemSlot, at: Point, mods?: Modifiers): boolean {
+  pickUp(slot: ItemSlot, at: Point, count = slot.item?.count ?? 0): boolean {
     const item = slot.item;
     if (!item || this.drag.active) return false;
-    const count = mods?.shift ? Math.max(1, Math.floor(item.count / 2)) : item.count;
-    this.drag.begin({ source: slot, data: { from: slot.ref, item, count } satisfies ItemDrag }, at);
+    const taken = Math.max(1, Math.min(count, item.count));
+    this.drag.begin({ source: slot, data: { from: slot.ref, item, count: taken } satisfies ItemDrag }, at);
+    this.carried = { from: slot.ref, count: taken };
+    this.render();
     return true;
   }
 
   /**
-   * A click on a cell (spec 136).
+   * A click on a cell (spec 136, rewritten by spec 137).
    *
-   * The genre's gesture rather than the web's: a click takes what is here and
-   * the next click puts it down, so moving something across the bag is two taps
-   * rather than a press held over a distance. Press-drag-release still works and
-   * costs nothing to keep -- a drag that began *is* a carry that began, and
-   * letting go over a cell is a click on it. Two ways into one state machine.
+   * Five gestures, and the split is the genre's rather than this file's:
+   *
+   * | gesture | with empty hands | while carrying |
+   * |---|---|---|
+   * | left | take the stack | put it all down |
+   * | right | take half | put it all down |
+   * | shift+right | take one | put it all down |
+   * | shift+left | wear it, or take it off | put it all down |
+   *
+   * Half rounds **up**, so one of three leaves you carrying two. That is the
+   * convention every chest in the genre uses, and the alternative loses a
+   * pointless argument about what half of one is.
    */
   clickCell(slot: ItemSlot, gesture: Gesture): void {
-    if (gesture.button === 2) {
-      this.equipToggle(slot);
-      return;
-    }
-    if (gesture.button !== 0) return;
     if (this.drag.active) {
       this.placeOn(slot);
       return;
     }
-    this.pickUp(slot, gesture.pos, gesture.mods);
+    const item = slot.item;
+    if (!item) return;
+
+    if (gesture.button === 0) {
+      if (gesture.mods.shift) this.equipToggle(slot);
+      else this.pickUp(slot, gesture.pos, item.count);
+      return;
+    }
+    if (gesture.button !== 2) return;
+    this.pickUp(slot, gesture.pos, gesture.mods.shift ? 1 : Math.ceil(item.count / 2));
   }
 
   /**
    * Put down what is in hand, here.
    *
-   * A cell that refuses leaves the item in hand rather than dropping it: a
+   * Putting it back where it came from is a cancel rather than a move: the cell
+   * is empty because this screen emptied it, so the honest answer is to undo
+   * that rather than to ask the server to move an item onto itself -- which it
+   * refuses, with a message about a mistake the player did not make.
+   *
+   * A cell that refuses leaves the item in hand rather than dropping it. A
    * mis-aimed click costs a click, and there is no floor in this game to lose
    * things on.
    */
   placeOn(slot: ItemSlot): boolean {
     if (!this.drag.active) return false;
+    const from = this.carried?.from;
+    if (from && from.container === slot.ref.container && from.index === slot.ref.index) {
+      this.cancelDrag();
+      return true;
+    }
     return this.drag.dropOnTarget(slot);
   }
 
@@ -390,6 +428,14 @@ export class InventoryScreen extends Row {
   private onDragChanged(payload: DragPayload | null, at: Point): void {
     const data = payload?.data as ItemDrag | undefined;
     this.ghost.show(data?.item ?? null, data?.count ?? 0, at);
+    // Hands empty again: the cell it came from goes back to showing whatever the
+    // server last said was in it. Done here rather than at the three call sites
+    // that can end a carry -- a placement, a cancel and a refused drop all arrive
+    // through this one callback.
+    if (payload === null && this.carried !== null) {
+      this.carried = null;
+      this.render();
+    }
     const hovering = this.drag.hovering;
     for (const cell of [...this.bagCells, ...this.wornCells]) {
       const lit = payload !== null && (hovering as unknown) === (cell as unknown);
@@ -410,51 +456,7 @@ export class InventoryScreen extends Row {
     this.drag.cancel();
     return true;
   }
-
-  /**
-   * Arrow keys move focus between cells, within one container.
-   *
-   * Clamped rather than wrapped, unlike Tab: a grid has edges you can see, and
-   * an arrow that teleports from the top-left cell to the bottom-right one reads
-   * as a bug. Tab still walks the whole screen, wrapping, as it does everywhere.
-   */
-  moveFocus(dx: number, dy: number): boolean {
-    const focus = this.focusManager;
-    const current = focus?.focused;
-    if (!focus || !(current instanceof ItemSlot)) return false;
-
-    const inBag = current.ref.container === 'inventory';
-    const list = inBag ? this.bagCells : this.wornCells;
-    const columns = inBag ? this.grid.columns : 1;
-    const index = current.ref.index;
-    // A one-wide paperdoll has no horizontal neighbours, so a left arrow there
-    // is a no-op rather than an off-by-one into the row above.
-    const next = index + dx + dy * columns;
-    if (dx !== 0 && columns === 1) return false;
-    if (dx !== 0 && Math.floor(index / columns) !== Math.floor(next / columns)) return false;
-    const target = list[next];
-    if (!target) return false;
-    return focus.focus(target);
-  }
-
-  onEvent(context: EventContext): void {
-    const event = context.event;
-    if (event.kind !== 'key' || event.phase !== 'down') return;
-    if (event.code === 'Escape' && this.cancelDrag()) {
-      context.stopPropagation();
-      return;
-    }
-    const step = ARROWS[event.code];
-    if (step && this.moveFocus(step.x, step.y)) context.stopPropagation();
-  }
 }
-
-const ARROWS: Readonly<Record<string, Point | undefined>> = {
-  ArrowLeft: { x: -1, y: 0 },
-  ArrowRight: { x: 1, y: 0 },
-  ArrowUp: { x: 0, y: -1 },
-  ArrowDown: { x: 0, y: 1 },
-};
 
 function heading(text: string): Label {
   const label = new Label(text, 'body');

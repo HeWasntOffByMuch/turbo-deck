@@ -248,7 +248,12 @@ export class TradeScreen extends Column {
     while (this.bagCells.length < view.bag.length) {
       const index = this.bagCells.length;
       const cell = new ItemSlot({ container: 'inventory', index }, `trade:bag:${index}`);
-      cell.onActivate = () => this.toggle(index);
+      // A click, not Enter (spec 137). This was `onActivate` -- the keyboard's
+      // pick-up -- which meant a cell could only be put on the table by
+      // focusing it first, and a player with a mouse could not offer anything
+      // at all. The cells stopped being focusable when the bag's arrow keys
+      // went back to being movement keys, which is what surfaced it.
+      cell.onClick = () => this.toggle(index);
       this.bagCells.push(cell);
       this.grid.add(cell);
     }

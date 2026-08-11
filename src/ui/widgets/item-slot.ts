@@ -21,7 +21,7 @@
 
 import type { DragPayload, DropTarget } from '../core/drag.js';
 import type { DrawList } from '../core/draw-list.js';
-import type { EventContext, Gesture } from '../core/events.js';
+import type { Gesture } from '../core/events.js';
 import type { Constraint, Point, Rect, Size } from '../core/geom.js';
 import { drawNineSlice, drawText } from '../core/paint.js';
 import type { LayoutContext, PaintContext } from '../core/widget.js';
@@ -104,37 +104,27 @@ export class ItemSlot extends StyledWidget implements DropTarget {
   dropCandidate = false;
   /** Emitted when a drop is accepted here. The screen turns it into an intent. */
   onDropItem: ((drag: ItemDrag, to: SlotRef) => void) | null = null;
-  /** A press moved past the drag threshold on this cell. */
-  onPickUp: ((slot: ItemSlot, gesture: Gesture) => void) | null = null;
-  /** The cursor moved while this cell holds the press. */
-  onDragMove: ((gesture: Gesture) => void) | null = null;
-  /** The button came up. The screen asks the controller where it landed. */
-  onDragDrop: ((gesture: Gesture) => void) | null = null;
-  /** Enter or Space, for the keyboard's pick-up/put-down. */
-  onActivate: ((slot: ItemSlot) => void) | null = null;
   /**
-   * A press and release that did not become a drag (spec 136).
+   * A press and release on this cell (spec 137).
    *
-   * The primary gesture now: a click takes what is here, and the next click puts
-   * it down. The router already tells `click` and `dragEnd` apart -- a press that
-   * passed the drag threshold produces one, a press that did not produces the
-   * other -- so the two ways of moving an item cannot both fire for one press.
+   * The only gesture this widget has, and it is fed by three of the router's --
+   * which is not an oversight but the point. Every one of them is one press and
+   * one release over this cell, and carrying needs nothing else:
+   *
+   *  - `click`, the ordinary case;
+   *  - `dragEnd`, because a press that wanders past the drag threshold produces
+   *    one and *no* click, so ignoring it would make an unsteady click on a cell
+   *    do nothing at all;
+   *  - `doubleClick`, because taking something and putting it straight back is
+   *    two fast clicks on one cell, and dropping the second would leave the
+   *    player holding an item they had already put down.
    */
   onClick: ((slot: ItemSlot, gesture: Gesture) => void) | null = null;
 
   onGesture(gesture: Gesture): void {
-    if (gesture.kind === 'dragStart') this.onPickUp?.(this, gesture);
-    else if (gesture.kind === 'drag') this.onDragMove?.(gesture);
-    else if (gesture.kind === 'dragEnd') this.onDragDrop?.(gesture);
-    else if (gesture.kind === 'click') this.onClick?.(this, gesture);
-  }
-
-  onEvent(context: EventContext): void {
-    const event = context.event;
-    if (event.kind !== 'key' || event.phase !== 'down') return;
-    if (event.code !== 'Enter' && event.code !== 'NumpadEnter' && event.code !== 'Space') return;
-    this.onActivate?.(this);
-    context.stopPropagation();
+    if (gesture.kind === 'click' || gesture.kind === 'doubleClick' || gesture.kind === 'dragEnd') {
+      this.onClick?.(this, gesture);
+    }
   }
 
   constructor(
@@ -142,7 +132,10 @@ export class ItemSlot extends StyledWidget implements DropTarget {
     name = 'itemSlot',
   ) {
     super('itemSlot', name);
-    this.focusable = true;
+    // Not focusable (spec 137). A focused cell drew a blue ring that read as
+    // "active" when nothing was active, and it held the arrow keys -- which are
+    // how the player walks. The bag is a pointer surface; the keyboard belongs
+    // to the game.
     this.layoutAlign = 'start';
   }
 

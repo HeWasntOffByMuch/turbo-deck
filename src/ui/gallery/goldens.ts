@@ -194,7 +194,7 @@ export const INVENTORY_GOLDEN_CASES: readonly InventoryGoldenCase[] = [
       pickUp: { container: 'inventory', index: 0 },
       carryToCell: { container: 'inventory', index: 20 },
     },
-    covers: 'the ghost under the cursor and the cell it would land on, lit',
+    covers: 'the ghost under the cursor, the cell it came from emptied, and the one it would land on, lit',
   },
   {
     name: 'bag-refused',
@@ -206,8 +206,8 @@ export const INVENTORY_GOLDEN_CASES: readonly InventoryGoldenCase[] = [
   },
   {
     name: 'bag-tooltip',
-    options: { tooltipOver: { container: 'inventory', index: 8 }, focus: { container: 'inventory', index: 8 } },
-    covers: 'a stack named and counted, and a focused cell',
+    options: { tooltipOver: { container: 'inventory', index: 8 } },
+    covers: 'a stack named and counted, over the cell it belongs to',
   },
   {
     name: 'bag-small',

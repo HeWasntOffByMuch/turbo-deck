@@ -132,13 +132,13 @@ describe('paintItem', () => {
 describe('the catch around a cell (spec 136)', () => {
   const NO_MODS = { shift: false, ctrl: false, alt: false, meta: false };
 
-  function gesture(kind: 'click' | 'dragStart' | 'dragEnd', button = 0) {
+  function gesture(kind: 'click' | 'doubleClick' | 'dragStart' | 'dragEnd', button = 0, shift = false) {
     return {
       kind,
       pos: { x: 0, y: 0 },
       delta: { x: 0, y: 0 },
       button,
-      mods: NO_MODS,
+      mods: { ...NO_MODS, shift },
       time: 0,
     } as const;
   }
@@ -190,19 +190,30 @@ describe('the catch around a cell (spec 136)', () => {
     expect(hits(10 + SLOT_SIDE + SLOT_CATCH, 10)).toBe(false);
   });
 
-  it('reports a click, separately from a drag', () => {
+  it('reports every press and release, and nothing else (spec 137)', () => {
     const cell = placed(0, 0);
     const seen: string[] = [];
-    cell.onClick = (_slot, g) => seen.push(`click:${g.button}`);
-    cell.onPickUp = () => seen.push('pickUp');
-    cell.onDragDrop = () => seen.push('drop');
+    cell.onClick = (_slot, g) => seen.push(`click:${g.button}${g.mods.shift ? '+shift' : ''}`);
 
     cell.onGesture(gesture('click'));
     cell.onGesture(gesture('click', 2));
-    cell.onGesture(gesture('dragStart'));
+    cell.onGesture(gesture('click', 2, true));
+    // A press that wandered past the drag threshold: still one press and one
+    // release over this cell, and ignoring it would make an unsteady click do
+    // nothing at all.
     cell.onGesture(gesture('dragEnd'));
-    // The right button reaches the screen too: the cell reports what happened
-    // and the screen decides that button 2 means equip.
-    expect(seen).toEqual(['click:0', 'click:2', 'pickUp', 'drop']);
+    // Taking something and putting it straight back is two fast clicks on one
+    // cell, and the second of those arrives as a double.
+    cell.onGesture(gesture('doubleClick'));
+    // ...while the start of a press is not a gesture of its own.
+    cell.onGesture(gesture('dragStart'));
+
+    expect(seen).toEqual(['click:0', 'click:2', 'click:2+shift', 'click:0', 'click:0']);
+  });
+
+  it('is not focusable, so it never holds the arrow keys (spec 137)', () => {
+    // The bag is a pointer surface. A focused cell drew a blue ring that read as
+    // "active" when nothing was, and held four keys the player walks with.
+    expect(placed(0, 0).focusable).toBe(false);
   });
 });

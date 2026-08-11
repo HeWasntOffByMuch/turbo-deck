@@ -195,8 +195,6 @@ export interface InventoryRenderOptions {
   readonly carryToCell?: SlotRef;
   /** Show the tooltip over this cell, with the delay already elapsed. */
   readonly tooltipOver?: SlotRef;
-  /** Which cell to paint as focused, so the keyboard path has a picture. */
-  readonly focus?: SlotRef;
 }
 
 /**
@@ -296,14 +294,9 @@ export function renderInventory(options: InventoryRenderOptions = {}): Inventory
   manager.register(window, 'inventory');
 
   const root = new UiRoot(layers, { theme, atlas, viewport, windows: manager, layers });
-  // The root owns the focus manager the paint context reads, so the screen is
-  // pointed at that one rather than at the placeholder it was built with --
-  // otherwise a focused cell is focused in a manager nothing draws from.
-  screen.focusManager = root.focus;
   manager.setViewport(viewport);
   root.update(0);
 
-  if (options.focus !== undefined) root.focus.focus(screen.cellAt(options.focus));
   if (options.pickUp !== undefined) {
     const cell = screen.cellAt(options.pickUp);
     if (cell) {
