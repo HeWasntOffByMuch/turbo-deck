@@ -31,6 +31,7 @@ import { CharacterScreen, type CharacterView, type SkillView } from '../screens/
 import { ShopScreen, type ShopRow, type ShopView } from '../screens/shop.js';
 import { Tooltip } from '../widgets/tooltip.js';
 import { UiWindow } from '../widgets/window.js';
+import { TradeScreen, type TradeUiView } from '../screens/trade.js';
 
 export interface GalleryFrame {
   readonly surface: RasterSurface;
@@ -697,4 +698,76 @@ export function renderKeybindings(options: KeybindingsRenderOptions = {}): Keybi
   replay(surface, root.paint().finish());
 
   return { surface, root, screen, map };
+}
+
+export interface TradeFrame {
+  readonly surface: RasterSurface;
+  readonly root: UiRoot;
+  readonly screen: TradeScreen;
+}
+
+export interface TradeRenderOptions {
+  readonly viewport?: Size;
+  /** Show the ending instead of a live table. */
+  readonly over?: boolean;
+}
+
+/**
+ * A trade to photograph (spec 134).
+ *
+ * Written out here rather than run through the game's adapter, for the reason
+ * `demoShop` gives: `src/ui/` may not import the game's renderer, and a golden
+ * built from the live tables would move every time somebody renamed an item.
+ */
+export function demoTrade(options: TradeRenderOptions = {}): TradeUiView {
+  const bag: (ItemView | null)[] = [
+    { defId: 'bow', name: 'Hunting Bow', count: 1, slot: 'mainHand', icon: 'item:bow', levelRequirement: 1 },
+    { defId: 'potion', name: 'Minor Salve', count: 3, slot: null, icon: 'item:potion', levelRequirement: 1 },
+    { defId: 'helm', name: 'Leather Cap', count: 1, slot: 'head', icon: 'item:helm', levelRequirement: 1 },
+    null,
+    null,
+    null,
+  ];
+  return {
+    stage: options.over === true ? 'over' : 'open',
+    you: { name: 'You', rows: [{ name: 'Hunting Bow', count: 1 }], coins: 20, accepted: false },
+    them: { name: 'Kestrel', rows: [{ name: 'Oak Shield', count: 1 }], coins: 0, accepted: true },
+    bag,
+    offered: [0],
+    coins: 20,
+    purse: 60,
+    revision: 3,
+    reason: options.over === true ? 'cancelled -- you walked too far apart' : '',
+  };
+}
+
+/** The trade window, rasterised. Its own scene, like every screen since 127. */
+export function renderTrade(options: TradeRenderOptions = {}): TradeFrame {
+  const theme = THEME;
+  const viewport = options.viewport ?? GOLDEN_VIEWPORT;
+  const atlas = bakeAtlas(theme);
+  const layers = new LayerStack();
+  const manager = new WindowManager();
+  layers.place('windows', manager);
+
+  const screen = new TradeScreen({ theme });
+  screen.setTrade(demoTrade(options));
+  const scroller = new ScrollView(screen, 'tradeScroll');
+  manager.register(
+    new UiWindow(scroller, {
+      title: 'Trade',
+      at: { x: 8, y: 8 },
+      size: { width: Math.min(viewport.width - 16, 200), height: Math.min(viewport.height - 16, 280) },
+    }),
+    'trade',
+  );
+
+  const root = new UiRoot(layers, { theme, atlas, viewport, windows: manager, layers });
+  manager.setViewport(viewport);
+  root.update(0);
+
+  const surface = new RasterSurface(atlas, viewport.width, viewport.height);
+  surface.clear(theme.color('ink'));
+  replay(surface, root.paint().finish());
+  return { surface, root, screen };
 }

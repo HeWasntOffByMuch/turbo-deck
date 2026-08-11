@@ -19,6 +19,7 @@ import type {
   KeybindingsRenderOptions,
   RenderOptions,
   WindowsRenderOptions,
+  TradeRenderOptions,
 } from './render.js';
 
 export interface GoldenCase {
@@ -61,6 +62,26 @@ export const GOLDEN_CASES: readonly GoldenCase[] = [
     name: 'small',
     options: { viewport: { width: 300, height: 140 } },
     covers: "the theme's minViewport, where the gallery has to scroll rather than squash",
+  },
+];
+
+/** The trade window (spec 134): live, and ended. */
+export interface TradeGoldenCase {
+  readonly name: string;
+  readonly options: TradeRenderOptions;
+  readonly covers: string;
+}
+
+export const TRADE_GOLDEN_CASES: readonly TradeGoldenCase[] = [
+  {
+    name: 'trade',
+    options: {},
+    covers: 'both offers, their acceptance, the coins and the bag slot that is spoken for',
+  },
+  {
+    name: 'trade-over',
+    options: { over: true },
+    covers: 'the ending, with the reason and nothing left to press but Close',
   },
 ];
 

@@ -43,6 +43,7 @@ import { CharacterScreen } from '../../../ui/screens/character.js';
 import { InventoryScreen, type SlotRef } from '../../../ui/screens/inventory.js';
 import { KeybindingsScreen } from '../../../ui/screens/keybindings.js';
 import { ShopScreen } from '../../../ui/screens/shop.js';
+import { TradeScreen, type TradeUiView } from '../../../ui/screens/trade.js';
 import { ScrollView } from '../../../ui/widgets/scroll-view.js';
 import { UiWindow } from '../../../ui/widgets/window.js';
 import type { InputMap } from '../../../ui/input/input-map.js';
@@ -51,6 +52,7 @@ import type { ClientView } from '../../../server/client/game-client.js';
 import { characterViewOf } from './character-model.js';
 import { containerViewOf } from './inventory-model.js';
 import { shopViewOf } from './shop-model.js';
+import { tradeViewOf } from './trade-model.js';
 import type { WindowId } from './key-actions.js';
 import { escapeTaken, reachesGameplay, type Routing } from './ui-routing.js';
 
@@ -67,6 +69,14 @@ export interface UiScreensOptions {
   readonly onVendor: (vendorId: string) => void;
   /** Which shop to ask for. Answered from where the player is standing. */
   readonly nearestVendor: () => string | null;
+  /** Trade (spec 134). Every one of these is a request; the server decides. */
+  readonly onTradeOffer: (
+    slots: readonly { readonly index: number; readonly count: number }[],
+    coins: number,
+  ) => void;
+  readonly onTradeAccept: (revision: number) => void;
+  readonly onTradeRespond: (accept: boolean) => void;
+  readonly onTradeCancel: () => void;
 }
 
 const WINDOW_TITLES: Readonly<Record<WindowId, string>> = {
@@ -74,6 +84,7 @@ const WINDOW_TITLES: Readonly<Record<WindowId, string>> = {
   character: 'Character',
   shop: 'Shop',
   keybindings: 'Keybindings',
+  trade: 'Trade',
 };
 
 /**
@@ -102,6 +113,7 @@ export class UiScreens {
   private readonly character: CharacterScreen;
   private readonly shop: ShopScreen;
   private readonly keybindings: KeybindingsScreen;
+  private readonly trade: TradeScreen;
 
   /** Windows whose size and position have been chosen. See the header. */
   private readonly placed = new Set<WindowId>();
@@ -137,6 +149,16 @@ export class UiScreens {
   private shopAskedAt = -1;
   /** The last answer count seen, so {@link show} can stamp against it. */
   private lastVendorRevision = 0;
+  /**
+   * The trade as it ended, kept after the trade itself is gone (spec 134).
+   *
+   * The ending is the one thing the interface most needs to say -- "cancelled --
+   * you walked too far apart" -- and by the time it can be said the server has
+   * already forgotten the trade. A window that vanished would leave the player
+   * wondering whether it went through. Cleared when they close it, or when a new
+   * trade starts.
+   */
+  private endedTrade: TradeUiView | null = null;
 
   /** What the screens were last built from. See {@link containersChanged}. */
   private lastInventory: ClientView['inventory'] | null = null;
@@ -193,6 +215,27 @@ export class UiScreens {
     };
     this.layers.place('modal', this.shop.dialog);
 
+    this.trade = new TradeScreen({ theme: THEME });
+    this.trade.onOffer = (slots, coins) => {
+      options.onTradeOffer(slots, coins);
+    };
+    this.trade.onAccept = (revision) => {
+      options.onTradeAccept(revision);
+    };
+    this.trade.onRespond = (accept) => {
+      options.onTradeRespond(accept);
+    };
+    this.trade.onCancel = () => {
+      // Closing an ended trade is a local act -- there is nothing left to tell
+      // the server about -- so it shuts the window instead of sending a cancel
+      // for a trade that is already gone.
+      if (this.trade.view?.stage === 'over') {
+        this.endedTrade = null;
+        this.close('trade');
+      }
+      else options.onTradeCancel();
+    };
+
     this.keybindings = new KeybindingsScreen({
       theme: THEME,
       map: options.map,
@@ -203,6 +246,7 @@ export class UiScreens {
     this.registerWindow('inventory', this.inventory);
     this.registerWindow('character', this.character);
     this.registerWindow('shop', this.shop);
+    this.registerWindow('trade', this.trade);
     // The only one the mount does not scroll: it has a filter field, tabs and a
     // scroller of its own (spec 125).
     this.registerWindow('keybindings', this.keybindings, false);
@@ -289,6 +333,25 @@ export class UiScreens {
     // looked like a layout bug and was a sequencing one.
     for (const id of this.awaitingPlacement) this.placeWindow(id);
     this.awaitingPlacement.clear();
+
+    // The trade window is not on a key: a trade is something the *other* player
+    // starts, so the window follows the server exactly as the shop does. It
+    // opens when a trade appears and closes when the player dismisses the
+    // ending -- not when the trade ends, because the ending is the one thing
+    // the interface most needs to say.
+    const tradeView = tradeViewOf({
+      trade: view.trade,
+      inventory: view.inventory,
+      coins: view.coins,
+    });
+    if (tradeView) {
+      if (!this.isOpen('trade')) this.show('trade');
+      this.endedTrade = tradeView.stage === 'over' ? tradeView : null;
+      this.trade.setTrade(tradeView);
+    } else if (this.endedTrade) {
+      if (!this.isOpen('trade')) this.show('trade');
+      this.trade.setTrade(this.endedTrade);
+    }
 
     this.syncContext();
     this.root.update(nowMs);
@@ -479,6 +542,7 @@ export class UiScreens {
       case 'character':
         return { x: Math.max(MARGIN, viewport.width - size.width - MARGIN), y: top };
       case 'shop':
+      case 'trade':
         return { x: Math.max(MARGIN, Math.floor((viewport.width - size.width) / 2)), y: top };
       case 'inventory':
       case 'keybindings':

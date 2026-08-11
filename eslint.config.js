@@ -165,6 +165,12 @@ const PURE_RENDER = [
   // Who hears an input once the interface has been offered it (spec 131). The
   // ordering that decides whether the game hears you is arithmetic over two
   // booleans, and it belongs somewhere it can be replayed rather than clicked.
+  // The trade screen's view-model (spec 134), and the one piece of arithmetic
+  // the mount needed: the wire carries a side's offer as *items* because the
+  // other player cannot see into your bag, so the slots to light in your own
+  // are matched back -- consumingly, or two stacks of the same thing light one
+  // slot twice.
+  'src/render/iso3d/world/trade-model.ts',
   'src/render/iso3d/world/ui-routing.ts',
   // The interface's tree, its windows and what they are handed (spec 131). The
   // whole mount except the canvas, kept pure for one specific reason: mounting

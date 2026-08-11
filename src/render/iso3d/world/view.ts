@@ -365,6 +365,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     onSell: (vendorId, index) => client.sellItem(vendorId, index),
     onBuyBack: (vendorId, index) => client.buyBack(vendorId, index),
     onVendor: (vendorId) => client.openVendor(vendorId),
+    onTradeOffer: (slots, coins) => client.offerInTrade(slots, coins),
+    onTradeAccept: (revision) => client.acceptTrade(revision),
+    onTradeRespond: (accept) => client.respondToTrade(accept),
+    onTradeCancel: () => client.cancelTrade(),
     // Where the *player* is, not where the camera is looking: the server checks
     // the same distance from the same position, and asking about a shop the
     // server will refuse is how a window opens empty.
@@ -653,6 +657,20 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // One button does both, and which one it does is decided by what is under
     // it (spec 070).
     if (event.button !== 2) return;
+
+    // ...and shift makes it a third thing (spec 134): an offer to trade with the
+    // player under the cursor. On the button that already means "act on that
+    // body" rather than a key of its own, because a trade is aimed at somebody
+    // and a key is not. Anything that is not another player is left alone --
+    // and the server checks again.
+    if (event.shiftKey) {
+      const under = cursor ? scene.pickUnitAt(cursor.x, cursor.y) : null;
+      const picked = under === null ? null : client.view().entities.find((e) => e.id === under);
+      if (picked && picked.kind === EntityKind.Player && picked.id !== client.view().selfEntityId) {
+        client.inviteToTrade(picked.id);
+      }
+      return;
+    }
 
     // Right-click over a pending aim means *no*, and only that: no move order,
     // no attack order, nothing under the cursor acted on. The button that calls

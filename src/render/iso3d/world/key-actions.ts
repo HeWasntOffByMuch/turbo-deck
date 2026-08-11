@@ -23,7 +23,7 @@ import type { InputMap, Modifiers } from '../../../ui/input/input-map.js';
  * decision that had to import the DOM half to name its own result would be a
  * decision that could not be tested in Node.
  */
-export type WindowId = 'inventory' | 'character' | 'keybindings' | 'shop';
+export type WindowId = 'inventory' | 'character' | 'keybindings' | 'shop' | 'trade';
 
 /**
  * Which window an action opens.

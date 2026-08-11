@@ -20,6 +20,7 @@ import {
   PLAY_GOLDEN_CASES,
   SHOP_GOLDEN_CASES,
   WINDOW_GOLDEN_CASES,
+  TRADE_GOLDEN_CASES,
 } from '../src/ui/gallery/goldens.js';
 import {
   renderGallery,
@@ -27,6 +28,7 @@ import {
   renderKeybindings,
   renderPlay,
   renderShop,
+  renderTrade,
   renderWindows,
 } from '../src/ui/gallery/render.js';
 
@@ -42,6 +44,13 @@ for (const item of GOLDEN_CASES) {
 
 for (const item of WINDOW_GOLDEN_CASES) {
   const frame = renderWindows(item.options);
+  const png = encodePng(frame.surface.width, frame.surface.height, frame.surface.pixels);
+  writeFileSync(`${directory}${item.name}.png`, png);
+  console.log(`${item.name}.png  ${frame.surface.width}x${frame.surface.height}  ${item.covers}`);
+}
+
+for (const item of TRADE_GOLDEN_CASES) {
+  const frame = renderTrade(item.options);
   const png = encodePng(frame.surface.width, frame.surface.height, frame.surface.pixels);
   writeFileSync(`${directory}${item.name}.png`, png);
   console.log(`${item.name}.png  ${frame.surface.width}x${frame.surface.height}  ${item.covers}`);
@@ -80,6 +89,7 @@ const total =
   SHOP_GOLDEN_CASES.length +
   PLAY_GOLDEN_CASES.length +
   WINDOW_GOLDEN_CASES.length +
+  TRADE_GOLDEN_CASES.length +
   KEYBINDING_GOLDEN_CASES.length +
   INVENTORY_GOLDEN_CASES.length;
 console.log(`\n${total} golden(s) written to src/ui/gallery/goldens/`);

@@ -37,6 +37,7 @@ function viewFixture(overrides: Partial<ClientView> = {}): ClientView {
     coins: 60,
     vendor: null,
     vendorRevision: 0,
+    trade: null,
     level: 3,
     experience: 40,
     unspentSkillPoints: 1,
@@ -62,6 +63,10 @@ function harness(options: Partial<UiScreensOptions> = {}): Harness {
       onSell: (vendorId, index) => requests.push(`sell:${vendorId}:${index}`),
       onBuyBack: (vendorId, index) => requests.push(`buyback:${vendorId}:${index}`),
       onVendor: (vendorId) => requests.push(`vendor:${vendorId}`),
+      onTradeOffer: (slots, coins) => requests.push(`tradeOffer:${slots.length}:${coins}`),
+      onTradeAccept: (revision) => requests.push(`tradeAccept:${revision}`),
+      onTradeRespond: (accept) => requests.push(`tradeRespond:${accept}`),
+      onTradeCancel: () => requests.push('tradeCancel'),
       nearestVendor: () => 'vendor.quartermaster',
       ...options,
     },
@@ -268,6 +273,48 @@ describe('who hears an input', () => {
     screens.close('inventory');
     screens.close('character');
     expect(screens.root.contexts.ids()).toEqual(['gameplay']);
+  });
+});
+
+describe('the trade window (spec 134)', () => {
+  const openTrade = {
+    id: 1,
+    stage: 1,
+    revision: 3,
+    you: { playerId: 'you', displayName: 'You', offer: [], coins: 0, accepted: false },
+    them: { playerId: 'ben', displayName: 'Ben', offer: [], coins: 0, accepted: false },
+    reason: '',
+  };
+
+  /**
+   * Not on a key, because a trade is something the *other* player starts. The
+   * window follows the server exactly as the shop does.
+   */
+  it('opens itself when a trade appears', () => {
+    const { screens } = harness();
+    expect(screens.isOpen('trade')).toBe(false);
+    screens.update(viewFixture({ trade: openTrade }), 0);
+    expect(screens.isOpen('trade')).toBe(true);
+  });
+
+  /**
+   * ...and does *not* close itself when the trade ends. The ending is the one
+   * thing the interface most needs to say, and by then the server has forgotten
+   * the trade -- a window that vanished would leave the player wondering whether
+   * it went through.
+   */
+  it('stays up on the ending, showing why', () => {
+    const { screens } = harness();
+    screens.update(viewFixture({ trade: openTrade }), 0);
+    screens.update(
+      viewFixture({ trade: { ...openTrade, stage: 4, reason: 'you walked too far apart' } }),
+      16,
+    );
+    expect(screens.isOpen('trade')).toBe(true);
+
+    // The server has forgotten it; the window has not.
+    screens.update(viewFixture({ trade: null }), 32);
+    expect(screens.isOpen('trade')).toBe(true);
   });
 });
 
