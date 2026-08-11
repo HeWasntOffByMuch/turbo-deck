@@ -220,6 +220,10 @@ export class UiLayer {
       return;
     }
     this.frame = next;
+    // Read here, at the same cadence and in the same place as `(pointer:
+    // coarse)` above (spec 133). Nothing under `src/ui/` may ask the platform
+    // anything, and a preference sensed inside a widget is one no test can set.
+    this.screens.setMotion({ reduced: prefersReducedMotion() });
     this.surface.resize(next.width, next.height, next.scale);
     this.applyCssSize();
     this.screens.resize({ width: next.width, height: next.height });
@@ -295,6 +299,18 @@ export class UiLayer {
     globalThis.removeEventListener('resize', this.onWindowResize);
     this.element.remove();
   }
+}
+
+/**
+ * Whether the player has asked their system for less motion.
+ *
+ * Defaults to *full* motion when the query cannot be asked, which is the right
+ * way round: an interface that animated nothing because it could not read a
+ * preference would be silently broken, where one that animates when it should
+ * not is visibly wrong and gets fixed.
+ */
+function prefersReducedMotion(): boolean {
+  return globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 }
 
 /**

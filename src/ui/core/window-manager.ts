@@ -18,6 +18,7 @@
 import type { Constraint, Point, Rect, Size } from './geom.js';
 import { Widget, type LayoutContext } from './widget.js';
 import type { UiWindow } from '../widgets/window.js';
+import { MOTION } from './motion.js';
 
 export class WindowManager extends Widget {
   /** Back to front. The last entry is the one on top. */
@@ -123,10 +124,19 @@ export class WindowManager extends Widget {
     return true;
   }
 
-  open(id: string): boolean {
+  /**
+   * Show a window, wiping it into view from `nowMs` (spec 133).
+   *
+   * The time is optional and omitting it means "already there", which keeps
+   * every existing caller -- the goldens, the layout tests -- taking a settled
+   * window. A frame that wanted an animation always knows what time it is; one
+   * that does not, does not want one.
+   */
+  open(id: string, nowMs?: number): boolean {
     const window = this.windows.get(id);
     if (!window || window.visible) return false;
     window.visible = true;
+    if (nowMs !== undefined) window.appear(nowMs, MOTION.window.durationMs, MOTION.window.easing);
     this.focus(id);
     this.invalidateMeasure();
     return true;

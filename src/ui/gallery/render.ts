@@ -20,6 +20,7 @@ import { Anchor } from '../core/containers.js';
 import { buildGallery } from './gallery.js';
 import { buildWindowsScene } from './windows-scene.js';
 import { ContextStack } from '../core/events.js';
+import { REDUCED_MOTION } from '../core/motion.js';
 import { LayerStack } from '../core/layers.js';
 import { WindowManager } from '../core/window-manager.js';
 import { InputMap } from '../input/input-map.js';
@@ -121,6 +122,10 @@ export interface WindowsRenderOptions {
   /** Show a tooltip anchored here, with the delay already elapsed. */
   readonly tooltipAt?: { x: number; y: number };
   readonly tooltipText?: string;
+  /** Reopen this window at time 0, so it is caught mid-reveal (spec 133). */
+  readonly arriving?: string;
+  /** ...and refuse the animation, which must give the settled frame exactly. */
+  readonly reduced?: boolean;
 }
 
 /**
@@ -144,6 +149,14 @@ export function renderWindows(options: WindowsRenderOptions = {}): WindowsFrame 
   });
 
   const now = options.now ?? 0;
+  if (options.reduced === true) root.setMotion(REDUCED_MOTION);
+  if (options.arriving !== undefined) {
+    // Shut and reopened at zero, so `now` lands partway through the reveal. The
+    // scene builds its windows open, and a window that is already there has
+    // nothing to animate.
+    scene.manager.close(options.arriving);
+    scene.manager.open(options.arriving, 0);
+  }
   if (options.tab !== undefined) scene.tabs.select(options.tab);
   if (options.focusWindow !== undefined) scene.manager.focus(options.focusWindow);
   if (options.tooltipAt !== undefined) {

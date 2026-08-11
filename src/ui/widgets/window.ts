@@ -29,6 +29,7 @@ import {
   type Rect,
   type Size,
 } from '../core/geom.js';
+import { animate, settled, type Easing, type Tween } from '../core/motion.js';
 import { alignTextX, centerTextY, drawNineSlice, drawTextClipped } from '../core/paint.js';
 import type { LayoutContext, PaintContext, Widget } from '../core/widget.js';
 import { fontById, measureText } from '../text/font.js';
@@ -60,6 +61,20 @@ export class UiWindow extends StyledWidget {
 
   /** A pinned window is not closed by Escape. The player's choice, per window. */
   pinned = false;
+  /**
+   * How much of the window is revealed, 0..1 (spec 133).
+   *
+   * A **clip**, not a slide, and that is forced rather than chosen: the draw
+   * list has six operations and none of them is a transform, so there is no way
+   * to move a painted subtree. Sliding would mean re-arranging, which relayouts
+   * every frame and -- worse -- moves the hit-test rects, so a click during the
+   * animation lands somewhere other than where it looked.
+   *
+   * Clipping has neither problem. The layout is final from the first frame, the
+   * content is drawn exactly where it will stay, and the window wipes into view
+   * from its own top edge.
+   */
+  private reveal: Tween = settled(1);
   onClose: (() => void) | null = null;
 
   /** Top-left, in UI pixels. Assigned by the manager, not by a parent's layout. */
@@ -149,6 +164,51 @@ export class UiWindow extends StyledWidget {
     if (next.x === this.position.x && next.y === this.position.y) return;
     this.position = next;
     this.invalidateArrange();
+  }
+
+  /**
+   * Start the window wiping into view.
+   *
+   * Called by whoever opened it, because "opened" is the manager's word: a
+   * window's `visible` flag is set from three places, and a tween started inside
+   * the setter would restart on a re-show that was really a raise.
+   */
+  appear(nowMs: number, durationMs: number, easing: Easing): void {
+    this.reveal = { from: 0, to: 1, startMs: nowMs, durationMs, easing };
+  }
+
+  /**
+   * The rect to clip the window to this frame, or null once it is fully there.
+   *
+   * Null rather than the whole rect, so a settled window costs no clip at all --
+   * the common case by an enormous margin, and a `pushClip`/`popClip` pair on
+   * every window on every frame would be a permanent cost for a 120ms effect.
+   */
+  revealClip(context: PaintContext): Rect | null {
+    const shown = animate(this.reveal, context.now, context.motion);
+    if (shown >= 1) return null;
+    // At least one row, so a window at the very start of its reveal is a hairline
+    // rather than nothing -- an empty clip and a missing window look identical.
+    return { ...this.rect, height: Math.max(1, Math.round(this.rect.height * Math.max(0, shown))) };
+  }
+
+  /**
+   * Painted inside its own clip while it is arriving.
+   *
+   * Overriding `paint` rather than `paintSelf`, because the reveal has to take
+   * the *content* with it: a frame that wiped in over content that was already
+   * there would look like a bug rather than an animation.
+   */
+  override paint(out: DrawList, context: PaintContext): void {
+    if (!this.visible) return;
+    const clip = this.revealClip(context);
+    if (!clip) {
+      super.paint(out, context);
+      return;
+    }
+    out.pushClip(clip);
+    super.paint(out, context);
+    out.popClip();
   }
 
   requestClose(): void {
@@ -246,12 +306,13 @@ export class UiWindow extends StyledWidget {
     const style = this.style(context);
     const focused = this.hasFocusWithin(context);
     const state = style.state(focused ? 'focused' : 'normal');
+    const frame: Rect = this.rect;
 
-    out.solid(this.rect, state.fill);
-    drawNineSlice(out, context.atlas.patch(style.frame), this.rect, state.frameTint);
+    out.solid(frame, state.fill);
+    drawNineSlice(out, context.atlas.patch(style.frame), frame, state.frameTint);
 
     // The title bar: the one loud thing in the interface, and only when focused.
-    const bar: Rect = { x: this.rect.x, y: this.rect.y, width: this.rect.width, height: this.titleHeight(context) };
+    const bar: Rect = { x: frame.x, y: frame.y, width: frame.width, height: this.titleHeight(context) };
     out.solid(bar, focused ? context.theme.color('accentDark') : context.theme.color('panelRaised'));
     drawNineSlice(out, context.atlas.patch(focused ? 'heavy' : 'frame'), bar, state.frameTint);
 

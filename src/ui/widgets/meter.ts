@@ -17,6 +17,7 @@
 
 import type { DrawList } from '../core/draw-list.js';
 import { boundedOr, type Constraint, type Rect, type Size } from '../core/geom.js';
+import { animate, MOTION, settled, tweenTo, type Tween } from '../core/motion.js';
 import { alignTextX, centerTextY, drawTextClipped } from '../core/paint.js';
 import type { LayoutContext, PaintContext } from '../core/widget.js';
 import { fontById } from '../text/font.js';
@@ -33,6 +34,11 @@ export class Meter extends StyledWidget {
    * quad drawn outside the widget.
    */
   fraction = 1;
+  /**
+   * The bar the *eye* sees, which lags {@link fraction} when a caller asked for
+   * the chase. A settled tween when nobody has, so the two agree exactly.
+   */
+  private chase: Tween = settled(1);
   /** The palette token the fill is drawn in. Never a colour -- lint refuses one. */
   fillToken = 'danger';
   /** Optional text over the bar, e.g. "84/120". Empty draws none. */
@@ -82,6 +88,25 @@ export class Meter extends StyledWidget {
     this.fraction = max > 0 ? current / max : 0;
   }
 
+  /**
+   * Set the value and let the bar *chase* it (spec 133).
+   *
+   * A separate method rather than a flag on `setValue`, because the two are
+   * different intents: the HUD's health bar wants the chase, and a bar being
+   * scrubbed by a slider wants to be where the finger is. A caller that does not
+   * know what time it is cannot ask for a chase, which is the right shape.
+   *
+   * The chase is what makes a hit read as a hit. Assigning the number leaves the
+   * player with a bar that is simply a different length, and no sense of having
+   * lost anything.
+   */
+  setValueAnimated(current: number, max: number, nowMs: number): void {
+    const next = max > 0 ? Math.min(1, Math.max(0, current / max)) : 0;
+    if (next === this.chase.to) return;
+    this.chase = tweenTo(this.chase, next, nowMs, MOTION.meter.durationMs, MOTION.meter.easing);
+    this.fraction = next;
+  }
+
   protected override measureSelf(constraint: Constraint, _context: LayoutContext): Size {
     return {
       width: Math.min(boundedOr(constraint.maxWidth, PREFERRED_WIDTH), PREFERRED_WIDTH),
@@ -99,7 +124,10 @@ export class Meter extends StyledWidget {
       width: Math.max(0, this.rect.width - 2),
       height: Math.max(0, this.rect.height - 2),
     };
-    const width = Math.round(inner.width * this.filled);
+    // Paint-time, and the only place the tween is read. Nothing here can
+    // change a measured size, so a bar in motion costs no layout at all.
+    const shown = Math.min(1, Math.max(0, animate(this.chase, context.now, context.motion)));
+    const width = Math.round(inner.width * (this.chase.durationMs > 0 ? shown : this.filled));
     if (width > 0) {
       out.solid({ ...inner, width }, context.theme.color(this.fillToken));
     }

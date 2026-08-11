@@ -94,6 +94,19 @@ export const WINDOW_GOLDEN_CASES: readonly WindowsGoldenCase[] = [
     covers: 'a tooltip flipping away from the bottom-right corner rather than overflowing',
   },
   {
+    name: 'windows-arriving',
+    options: { focusWindow: 'character', arriving: 'character', now: 60 },
+    covers: 'a window caught halfway through wiping into view (spec 133)',
+  },
+  {
+    // The interesting one. Identical inputs to the case above, and it has to
+    // come out identical to the *settled* frame -- because reduce-motion is not
+    // a faster animation, it is no animation.
+    name: 'windows-reduced',
+    options: { focusWindow: 'character', arriving: 'character', now: 60, reduced: true },
+    covers: 'the same frame with reduce-motion, which must show a window fully there',
+  },
+  {
     name: 'windows-small',
     options: { viewport: { width: 300, height: 140 } },
     covers: 'every window pulled back on screen at the smallest supported viewport',

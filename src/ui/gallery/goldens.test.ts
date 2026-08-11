@@ -298,4 +298,27 @@ describe('sprites blit at a whole-number scale', () => {
       'inventory+drag',
     );
   });
+
+  /**
+   * Reduce-motion is not a faster animation, it is no animation (spec 133).
+   *
+   * Asserted in *pixels* rather than as a draw-list count, because that is the
+   * claim: the frame a player who asked for less motion sees has to be the
+   * frame everyone else sees once things have settled -- not a similar one, and
+   * not one three frames further along.
+   */
+  it('draws a reduce-motion frame identically to a settled one', () => {
+    const arriving = renderWindows({ focusWindow: 'character', arriving: 'character', now: 60 });
+    const reduced = renderWindows({
+      focusWindow: 'character',
+      arriving: 'character',
+      now: 60,
+      reduced: true,
+    });
+    const settled = renderWindows({ focusWindow: 'character' });
+
+    expect(Buffer.from(reduced.surface.pixels)).toEqual(Buffer.from(settled.surface.pixels));
+    // ...and it really was mid-animation, so the equality above means something.
+    expect(Buffer.from(arriving.surface.pixels)).not.toEqual(Buffer.from(settled.surface.pixels));
+  });
 });

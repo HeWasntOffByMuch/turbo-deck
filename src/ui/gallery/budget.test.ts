@@ -4,7 +4,12 @@ import { renderGallery, renderPlay } from './render.js';
 import { UiRoot } from '../core/root.js';
 import { bakeAtlas } from '../render/atlas.js';
 import { THEME } from '../theme/theme.js';
-import { renderInventory, renderKeybindings, renderShop, renderWindows } from './render.js';
+import { renderInventory, renderKeybindings, renderShop, renderWindows, GOLDEN_VIEWPORT } from './render.js';
+import { LayerStack } from '../core/layers.js';
+import { WindowManager } from '../core/window-manager.js';
+import { UiWindow } from '../widgets/window.js';
+import { Label } from '../widgets/label.js';
+import { REDUCED_MOTION } from '../core/motion.js';
 
 /**
  * The brief's budget is "full UI update + draw under 1.5 ms with 6 windows
@@ -18,6 +23,66 @@ import { renderInventory, renderKeybindings, renderShop, renderWindows } from '.
  * `scripts/preview-ui-gallery.ts` reports the real milliseconds from a browser.
  */
 describe('frame budget', () => {
+  /**
+   * An animating window costs no layout (spec 133).
+   *
+   * The assertion that stops a tween quietly becoming a per-frame relayout the
+   * next time somebody animates something. A window wiping into view is a
+   * *clip*, computed while painting from the time it was handed; if this ever
+   * fails, an animation has started changing a measured size and the whole
+   * dirty-flag design has stopped paying for itself.
+   */
+  it('runs no layout while a window is animating', () => {
+    const atlas = bakeAtlas(THEME);
+    const layers = new LayerStack();
+    const manager = new WindowManager();
+    layers.place('windows', manager);
+    const window = new UiWindow(new Label('inside'), { title: 'Arriving', at: { x: 8, y: 8 } });
+    manager.register(window, 'arriving');
+    window.visible = false;
+
+    const root = new UiRoot(layers, { theme: THEME, atlas, viewport: GOLDEN_VIEWPORT, windows: manager, layers });
+    manager.setViewport(GOLDEN_VIEWPORT);
+    root.update(0);
+    manager.open('arriving', 0);
+    root.update(0);
+    const settledPasses = root.layoutPasses;
+
+    // A hundred frames spanning the whole animation and well past it.
+    for (let frame = 1; frame <= 100; frame += 1) {
+      root.update(frame * 4);
+      root.paint();
+    }
+    expect(root.layoutPasses).toBe(settledPasses);
+  });
+
+  /** ...and it was really animating, so the assertion above means something. */
+  it('draws a partly-revealed window differently from a settled one', () => {
+    const atlas = bakeAtlas(THEME);
+    const layers = new LayerStack();
+    const manager = new WindowManager();
+    layers.place('windows', manager);
+    const window = new UiWindow(new Label('inside'), { title: 'Arriving', at: { x: 8, y: 8 } });
+    manager.register(window, 'arriving');
+    window.visible = false;
+    const root = new UiRoot(layers, { theme: THEME, atlas, viewport: GOLDEN_VIEWPORT, windows: manager, layers });
+    manager.setViewport(GOLDEN_VIEWPORT);
+    manager.open('arriving', 0);
+    root.update(0);
+
+    root.update(20);
+    const arriving = root.paint().finish().length;
+    root.update(5000);
+    const settled = root.paint().finish().length;
+    // The clip pair is the difference, and it is gone once the window is there.
+    expect(arriving).toBeGreaterThan(settled);
+
+    // ...and with reduce-motion it is settled from the first frame.
+    root.setMotion(REDUCED_MOTION);
+    root.update(20);
+    expect(root.paint().finish().length).toBe(settled);
+  });
+
   it('does no layout work at all on a still frame', () => {
     // The whole justification for retained mode over immediate. If this fails,
     // six open windows cost a full relayout sixty times a second for nothing.
