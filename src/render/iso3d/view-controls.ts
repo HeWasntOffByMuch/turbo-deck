@@ -455,10 +455,12 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     'Mark every spawn point the map places, with what it spawns and how long until it comes back.');
 
   const cutout = makeTextChoice('Cutaway',
-    [['hard', 'Clean'], ['stipple', 'Stipple'], ['off', 'Off']] as const,
+    [['ghost', 'Banded'], ['hard', 'Clean'], ['stipple', 'Stipple'], ['off', 'Off']] as const,
     CUTOUT_DEFAULTS.style,
-    'What rock standing between the camera and your unit does. Clean cuts a plain hole; ' +
-    'stipple dissolves it in the retro filter\u2019s own weave; off leaves it solid.');
+    'What rock standing between the camera and your unit does. Banded keeps dark strata so ' +
+    'you can still see the wall you would walk into; clean cuts a plain hole; stipple ' +
+    'dissolves it in the retro filter\u2019s own weave; off leaves it solid. The ground is ' +
+    'never cut.');
 
   const retroOn = makeCheckbox('Retro filter', RETRO_DEFAULTS.enabled,
     'Quantize the image to a few colours per channel and dither across the bands, ' +

@@ -24,14 +24,61 @@
 /**
  * How the cut is drawn.
  *
- * Three, because there is no one right answer and imposing one was the wrong
- * call. A stipple matches the retro pass's own grain but is noisy on a large
- * hole; a hard edge is quiet and reads as a clean bite; and somebody who would
- * rather the rock simply stayed put should be able to say so.
+ * Four, because there is no one right answer and imposing one was the wrong
+ * call twice over. A stipple matches the retro pass's own grain but is noisy;
+ * `ghost` keeps dark strata on the vertical faces so the wall still reads;
+ * `hard` is a plain quiet opening; and somebody who would rather the rock stayed
+ * put should be able to say so.
+ *
+ * `hard` is the default now that the hole is a porthole rather than a crater.
+ * `ghost` was the default for one round and was worse than it sounds: cutting a
+ * tier's *top* exposes the inside of a hollow shell, and banding the far faces
+ * of it reads as a birdcage rather than as a wall.
  */
-export type CutoutStyle = 'hard' | 'stipple' | 'off';
+export type CutoutStyle = 'ghost' | 'hard' | 'stipple' | 'off';
 
-export const CUTOUT_STYLES: readonly CutoutStyle[] = ['hard', 'stipple', 'off'];
+export const CUTOUT_STYLES: readonly CutoutStyle[] = ['ghost', 'hard', 'stipple', 'off'];
+
+/**
+ * How tall one band of the ghost is, in world units, and how much of it is
+ * kept.
+ *
+ * Sized against a tier: the editor's default tier stands 70 units, so a 20-unit
+ * band puts three or four strata on a face -- enough to read its height and its
+ * edges, few enough to see straight through. The duty cycle is what is *left*,
+ * so a quarter of the wall survives and three quarters of the body behind it is
+ * visible.
+ */
+export const GHOST_BAND_PERIOD = 20;
+export const GHOST_BAND_DUTY = 0.18;
+
+/**
+ * How level a surface has to be before the bands are abandoned and it is simply
+ * cut, as `abs(worldNormal.y)`.
+ *
+ * Banding on world height is the right idea on a *wall*, where a 4-unit stratum
+ * is a 4-unit stripe. On a tier's flat top it is a disaster: the whole surface
+ * shares one height, so a band either swallows all of it or none, and anything
+ * gently sloping turns into bars metres wide fanning across the screen. Only
+ * the vertical faces carry the strata; the tops give way cleanly, which is also
+ * what they should do, since a roof is not a thing you walk into.
+ */
+export const GHOST_MAX_UP = 0.55;
+/** How far the kept bands are pushed toward black, so they read as a section. */
+export const GHOST_DARKEN = 0.55;
+
+/**
+ * How far above the feet the floor guard still protects, in world units.
+ *
+ * Not a tolerance for its own sake. The body's `groundY` is sampled from the
+ * heightfield at a point, while the surface under it is drawn from *jittered*
+ * corners a fraction off that lattice, so the two disagree by a hair -- and an
+ * exact comparison then cuts the very ground the body is standing on, in a ring
+ * around its feet, straight through to the sky. A shin's worth of margin also
+ * spares the low lip a tier leaves where it meets the floor, which is never
+ * what is hiding anybody.
+ */
+export const FOOT_MARGIN = 6;
 
 export interface CutoutParams {
   /** Fully cut within this, in world units measured across the view. */
@@ -51,6 +98,27 @@ export interface CutoutParams {
 }
 
 /**
+ * Where the body's feet are, in world Y.
+ *
+ * The cut needs this quite apart from the view-space maths, for two separate
+ * reasons that happen to want the same number:
+ *
+ * - **Nothing below the feet is ever cut.** Ground in front of a body does
+ *   technically hide its shins under this camera, and cutting it opened a hole
+ *   straight through the world to the sky. The floor is not the problem and
+ *   must not be the casualty.
+ * - **The ghost's bands are horizontal**, measured in world Y, so they read as
+ *   strata standing at a height rather than as a screen-space pattern sliding
+ *   across the rock as the camera tracks.
+ */
+export interface BodyPlace {
+  /** Chest height in *view* space: the centre of the hole. */
+  readonly view: ViewPoint;
+  /** The ground the body is standing on, in *world* Y. */
+  readonly footY: number;
+}
+
+/**
  * Sized off the body rather than off the screen.
  *
  * A unit is 55.65 units tall (`DEFAULT_CANONICAL_HEIGHT`), so `inner` is about
@@ -59,13 +127,17 @@ export interface CutoutParams {
  * again, which is the difference between a hole and a soft eye.
  */
 export const CUTOUT_DEFAULTS: CutoutParams = {
-  inner: 58,
-  outer: 96,
+  // A porthole, not a crater.
+  //
+  // These started at 58/96 -- a hole 190 units across, nearly four bodies wide.
+  // It answered "where is my unit" and then asked a worse one: the wall it took
+  // out is still solid to walk into, and with that much of it gone there was
+  // nothing left on screen to say where. At 26/40 the opening is about one body
+  // across, so the unit is plainly visible and the wall either side of it is
+  // still standing to be read.
+  inner: 26,
+  outer: 40,
   depthBias: 12,
-  // A clean bite rather than the stipple. The dither is the closer match to the
-  // retro pass's own grain, but over a hole this size it reads as static across
-  // a third of the frame, and it should not be what anybody gets without
-  // choosing it.
   style: 'hard',
 };
 
@@ -74,7 +146,7 @@ export const CUTOUT_OFF: CutoutParams = { inner: 0, outer: 0, depthBias: 0, styl
 
 /** What the style is worth to the shader, which has no strings. */
 export function styleCode(style: CutoutStyle): number {
-  return style === 'stipple' ? 1 : style === 'hard' ? 0 : -1;
+  return style === 'stipple' ? 2 : style === 'hard' ? 1 : style === 'ghost' ? 0 : -1;
 }
 
 export interface ViewPoint {
@@ -90,12 +162,16 @@ export interface ViewPoint {
  * `z` is further away and a larger one is nearer. "In front of the body" is
  * therefore `frag.z > body.z + bias`.
  */
-export function cutoutCoverage(frag: ViewPoint, body: ViewPoint, params: CutoutParams): number {
+export function cutoutCoverage(frag: ViewPoint, body: ViewPoint, params: CutoutParams, fragWorldY?: number, footY?: number): number {
   const { inner, outer, depthBias } = params;
   if (params.style === 'off') return 1;
   // A zero radius is off, not a degenerate circle. Checked first so an unwritten
   // uniform costs one compare rather than a divide by zero.
   if (!(outer > 0)) return 1;
+  // The floor is never the problem. Ground at or below the body's feet is what
+  // it is standing on and what everything around it is standing on, and cutting
+  // it opens a hole through the world to the sky.
+  if (fragWorldY !== undefined && footY !== undefined && fragWorldY <= footY + FOOT_MARGIN) return 1;
   // Behind the body, or level with it, hides nothing.
   if (frag.z <= body.z + depthBias) return 1;
 
@@ -115,13 +191,29 @@ export function cutoutCoverage(frag: ViewPoint, body: ViewPoint, params: CutoutP
  * dithers the band against a Bayer threshold; `off` never discards, which is
  * also what a zero radius gives.
  */
-export function cutoutDiscards(coverage: number, style: CutoutStyle, x: number, y: number): boolean {
+export function cutoutDiscards(
+  coverage: number,
+  style: CutoutStyle,
+  x: number,
+  y: number,
+  fragWorldY = 0,
+  upness = 0,
+): boolean {
   if (style === 'off') return false;
   if (coverage >= 1) return false;
   // A hard cut takes the whole soft band with it. Half-covered is inside the
   // hole, not on its edge -- an edge drawn by a coverage test is the stipple.
-  if (style === 'hard') return coverage < 1;
+  if (style === 'hard') return true;
+  if (style === 'ghost') return !inGhostBand(fragWorldY, upness);
   return coverage <= bayer4(x, y);
+}
+
+/** Whether this height falls in one of the ghost's kept strata. */
+export function inGhostBand(worldY: number, upness = 0): boolean {
+  // A surface facing the sky carries no strata: see `GHOST_MAX_UP`.
+  if (Math.abs(upness) > GHOST_MAX_UP) return false;
+  const t = worldY / GHOST_BAND_PERIOD;
+  return t - Math.floor(t) < GHOST_BAND_DUTY;
 }
 
 /**
@@ -141,9 +233,13 @@ export function bayer4(x: number, y: number): number {
  * stage. `vCutView` is written by the vertex half below.
  */
 export const CUTOUT_PROLOGUE = /* glsl */ `
-uniform vec3 uCutBody;
-uniform vec4 uCutParams; // inner, outer, depthBias, style (-1 off, 0 hard, 1 stipple)
+uniform vec4 uCutBody;  // xyz: chest in view space. w: the feet, in world Y.
+uniform vec4 uCutParams; // inner, outer, depthBias, style (-1 off, 0 ghost, 1 hard, 2 stipple)
+uniform vec4 uCutGhost;  // band period, duty, darken, foot margin
+uniform float uCutMaxUp; // above this the surface is level and is simply cut
 varying vec3 vCutView;
+varying float vCutWorldY;
+varying float vCutUp;
 
 float cutoutBayer4(vec2 p) {
   vec2 c = mod(p, 4.0);
@@ -162,6 +258,11 @@ float cutoutCoverage() {
   float bias = uCutParams.z;
   if (uCutParams.w < 0.0) return 1.0;
   if (outer <= 0.0) return 1.0;
+  // The floor is never the problem, and cutting it opens a hole to the sky.
+  // The margin is load-bearing: the body's ground height is sampled off the
+  // lattice and the surface is drawn from jittered corners, so an exact test
+  // cuts a ring out of the floor the body is standing on.
+  if (vCutWorldY <= uCutBody.w + uCutGhost.w) return 1.0;
   if (vCutView.z <= uCutBody.z + bias) return 1.0;
   float d = length(vCutView.xy - uCutBody.xy);
   if (d >= outer) return 1.0;
@@ -173,6 +274,8 @@ float cutoutCoverage() {
 /** Carried through the vertex stage. Appended after `#include <common>` there. */
 export const CUTOUT_VERTEX_PROLOGUE = /* glsl */ `
 varying vec3 vCutView;
+varying float vCutWorldY;
+varying float vCutUp;
 `;
 
 /**
@@ -182,6 +285,8 @@ varying vec3 vCutView;
  */
 export const CUTOUT_VERTEX_APPLY = /* glsl */ `
 vCutView = mvPosition.xyz;
+vCutWorldY = ( modelMatrix * vec4( transformed, 1.0 ) ).y;
+vCutUp = normalize( mat3( modelMatrix ) * objectNormal ).y;
 `;
 
 /**
@@ -192,10 +297,22 @@ export const CUTOUT_APPLY = /* glsl */ `
 {
   float cov = cutoutCoverage();
   if (cov < 1.0) {
-    // Hard takes the whole soft band, so the rim is clean and there is no noise
-    // inside it; stipple dithers the band instead.
-    if (uCutParams.w < 0.5) discard;
-    else if (cov <= cutoutBayer4(gl_FragCoord.xy)) discard;
+    float style = uCutParams.w;
+    if (style < 0.5) {
+      // Ghost: keep a stratum every period world units, darkened, so the wall
+      // still reads as a wall you would walk into.
+      // A level surface carries no strata -- one height across the whole of it
+      // makes a band either swallow it or miss it, and a gentle slope turns the
+      // stripes into bars metres wide.
+      if (abs(vCutUp) > uCutMaxUp) discard;
+      float band = fract(vCutWorldY / uCutGhost.x);
+      if (band >= uCutGhost.y) discard;
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.0), uCutGhost.z);
+    } else if (style < 1.5) {
+      discard;
+    } else if (cov <= cutoutBayer4(gl_FragCoord.xy)) {
+      discard;
+    }
   }
 }
 `;

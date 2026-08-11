@@ -21,10 +21,24 @@ and the outline passes assume — is built on it not moving.
 
 ### The rule
 
-A fragment is cut when it is **nearer the camera than the body** and **within a
-radius of it, measured across the view**. Both halves are in view space, so the
-radius is world units rather than pixels and the cut is the same size at any
-resolution or window shape.
+A fragment is cut when it is **nearer the camera than the body**, **within a
+radius of it measured across the view**, and **standing above the body's feet**.
+The first two are in view space, so the radius is world units rather than pixels
+and the cut is the same size at any resolution or window shape.
+
+The third is in world Y and is not a refinement — without it the cut goes
+through the floor as readily as through a wall, and the hole opens onto the sky.
+The ground is never what is hiding anybody. A shin's margin comes with it,
+because the body's ground height is sampled off the lattice while the surface
+under it is drawn from jittered corners, and an exact test cuts a ring out of the
+floor the body is standing on.
+
+The radius is the other half of the answer, and the first attempt got it wrong.
+At 58/96 the opening was 190 units across, nearly four bodies wide: it answered
+"where is my unit" and then asked a worse question, because the wall it removed
+is still solid to walk into and there was no longer enough of it on screen to
+say where. A porthole of about one body across shows the unit and leaves the
+wall either side standing to be read.
 
 ```ts
 // src/render/iso3d/cutout.ts — pure, no three.js, no DOM.
@@ -65,17 +79,22 @@ not do that and should not start. `discard` also costs nothing when coverage is
 
 *How* it discards is a setting, `Cutaway`, in the View menu's Terrain section:
 
-- **Clean** (the default) takes the whole soft band, so the hole has a plain rim
-  and nothing moving inside it.
-- **Stipple** dithers the band against a 4x4 Bayer threshold, which is the
-  closer match to the retro pass's own weave (spec 038) — but over a hole this
-  size it reads as static across a third of the frame.
-- **Off** leaves the rock solid, for anyone who would rather learn the geometry
-  than watch it move.
+- **Clean** (the default) takes the whole soft band, so the opening has a plain
+  rim and nothing moving inside it.
+- **Banded** keeps dark strata on the *vertical* faces, on world height, so a
+  cut wall still reads as a wall. Level surfaces are cut plainly: one height
+  across the whole of a tier top makes a band either swallow it or miss it, and
+  a gentle slope turns the stripes into bars metres wide.
+- **Stipple** dithers against a 4x4 Bayer threshold — the closest match to the
+  retro pass's own weave (spec 038), and the noisiest.
+- **Off** leaves the rock solid.
 
-Three rather than one because the two ways of drawing the hole look nothing
-alike and neither is obviously right. Defaulting to the stipple and calling it
-settled was the wrong call.
+Four rather than one because none of them is obviously right, and two rounds of
+picking a default proved it. Banded was the default for one of those rounds and
+is worth the warning: cutting a tier's *top* exposes the inside of a hollow
+shell, and strata on the far faces of one read as a birdcage. With the porthole
+sized as it is, the wall is legible without any of this — which is why Clean is
+the default.
 
 ### One uniform set, written once a frame
 
@@ -106,6 +125,14 @@ no body in it.
   pattern survives in it; a stippled one keeps half of it; `off` keeps all.
 - No style ever discards a fragment at full coverage.
 - The default style is not the stipple.
+- Nothing at or below the body's feet is ever cut, however squarely it is in the
+  way — plus a shin of margin, since the sampled ground and the drawn one differ.
+- What stands above the feet past that margin is still cut.
+- The banded style keeps its strata regardless of the pixel, so it is a section
+  and not a dither, and abandons them on a surface too level to carry one.
+- The opening is around one body across, not four.
+- Each style's numeric code lands on the right side of every branch the GLSL
+  tests, so a renumbering cannot silently draw a different style.
 
 ## Out of scope
 

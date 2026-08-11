@@ -790,7 +790,13 @@ export class WorldScene {
    * bias on the slope underneath instead of on the rock in front.
    */
   private updateCutout(me: { x: number; y: number }, groundY: number, style: CutoutStyle): void {
-    cutBodyUniform.value.set(me.x, groundY + DEFAULT_CANONICAL_HEIGHT * 0.5, me.y).applyMatrix4(this.camera.matrixWorldInverse);
+    // The chest, pushed into view space for the hole's centre...
+    cutBodyUniform.value.set(me.x, groundY + DEFAULT_CANONICAL_HEIGHT * 0.5, me.y, 1).applyMatrix4(
+      this.camera.matrixWorldInverse,
+    );
+    // ...and then `w` reused for the feet in *world* Y, which is what keeps the
+    // floor out of the cut and puts the ghost's strata at a height.
+    cutBodyUniform.value.w = groundY;
     cutParamsUniform.value.set(
       CUTOUT_DEFAULTS.inner,
       CUTOUT_DEFAULTS.outer,

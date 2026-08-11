@@ -6,6 +6,11 @@ import {
   CUTOUT_VERTEX_APPLY,
   CUTOUT_VERTEX_PROLOGUE,
   CUTOUT_OFF,
+  FOOT_MARGIN,
+  GHOST_BAND_DUTY,
+  GHOST_BAND_PERIOD,
+  GHOST_DARKEN,
+  GHOST_MAX_UP,
   styleCode,
 } from './cutout.js';
 
@@ -23,8 +28,12 @@ import {
  * singletons shared with the map editor -- a tab with no body in it.
  */
 
-/** The body's position in view space. Written once a frame by the Play view. */
-export const cutBodyUniform: THREE.IUniform<THREE.Vector3> = { value: new THREE.Vector3(0, 0, 0) };
+/**
+ * `xyz`: the body's chest in view space, the centre of the hole. `w`: the ground
+ * it is standing on, in *world* Y -- nothing at or below that is ever cut, so
+ * the floor survives and the hole does not open onto the sky.
+ */
+export const cutBodyUniform: THREE.IUniform<THREE.Vector4> = { value: new THREE.Vector4(0, 0, 0, 0) };
 
 /**
  * `(inner, outer, depthBias, style)`. An outer of zero is off, and so is a
@@ -35,13 +44,23 @@ export const cutParamsUniform: THREE.IUniform<THREE.Vector4> = {
   value: new THREE.Vector4(CUTOUT_OFF.inner, CUTOUT_OFF.outer, CUTOUT_OFF.depthBias, styleCode(CUTOUT_OFF.style)),
 };
 
+/** Band period, duty and darkening for the ghost. Constants, but shared the same way. */
+export const cutGhostUniform: THREE.IUniform<THREE.Vector4> = {
+  value: new THREE.Vector4(GHOST_BAND_PERIOD, GHOST_BAND_DUTY, GHOST_DARKEN, FOOT_MARGIN),
+};
+
 /**
  * Spread rather than copied: `{...CUTOUT_UNIFORMS}` makes a new object holding
  * the *same* `IUniform` instances, which is the sharing this module is for.
  */
+/** How level a surface may be before the ghost stops banding it. */
+export const cutMaxUpUniform: THREE.IUniform<number> = { value: GHOST_MAX_UP };
+
 export const CUTOUT_UNIFORMS = {
   uCutBody: cutBodyUniform,
   uCutParams: cutParamsUniform,
+  uCutGhost: cutGhostUniform,
+  uCutMaxUp: cutMaxUpUniform,
 };
 
 /** Stop cutting. Called when the Play view unmounts, so no tab inherits a hole. */
@@ -94,13 +113,11 @@ export function patchCutout(material: THREE.Material, tag: string): void {
     // position to carry, and by `fog_vertex` it is out of scope.
     shader.vertexShader = splice(shader.vertexShader, '#include <project_vertex>', CUTOUT_VERTEX_APPLY, 'vertex');
     shader.fragmentShader = splice(shader.fragmentShader, '#include <common>', CUTOUT_PROLOGUE, 'fragment');
-    // First thing in the body, so a cut fragment costs no lighting.
-    shader.fragmentShader = splice(
-      shader.fragmentShader,
-      '#include <clipping_planes_fragment>',
-      CUTOUT_APPLY,
-      'fragment',
-    );
+    // After `color_fragment` rather than at the top of the body: the ghost
+    // darkens what it keeps, and `diffuseColor` does not exist before there.
+    // `patchTerrainStreak` splices at the same anchor and re-emits it, so both
+    // land -- its tint first, then this over the top.
+    shader.fragmentShader = splice(shader.fragmentShader, '#include <color_fragment>', CUTOUT_APPLY, 'fragment');
   };
   material.customProgramCacheKey = (): string => `cutout:${tag}:${existingKey?.() ?? ''}`;
   material.needsUpdate = true;
