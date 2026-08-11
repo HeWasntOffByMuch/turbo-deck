@@ -66,6 +66,25 @@ slider under the player's eyes.
 Play's frame loop calls it from the `held` key set it already keeps for
 movement. No new listener, no key state of its own.
 
+The Orbit slider becomes continuous (`step: 'any'`), for the same reason the
+zoom did in spec 042. A range input snaps whatever is written to it to its step,
+and a frame's share of the swing is a fraction of a degree — on a step of 1 that
+rounding *is* the rotation, so the view turns 60°/s at 60fps rather than 90, and
+above about 180fps it does not turn at all, because half a degree rounds back to
+where it started. The readout still shows whole degrees.
+
+### It is checked in a browser
+
+`createViewControls` builds DOM and the suite runs on `environment: 'node'`, so
+neither `orbitBy` nor the frame loop that calls it is reachable from Vitest —
+which is where both of this feature's real bugs lived. `npx tsx
+scripts/probe-orbit.ts` drives the built page: it holds each key for a second,
+reads the slider back, and photographs the frame either side.
+
+The assertion that earns its keep is the *ceiling* on how far a second of
+holding turns. "It moved, and clockwise" passes happily when degrees have been
+handed to a helper that wanted radians and multiplied by 57.3.
+
 ## Invariants tested
 
 - Neither key held is exactly zero degrees, not a rounding error.
@@ -75,6 +94,14 @@ movement. No new listener, no key state of its own.
   amount.
 - A monstrous frame is clamped rather than trusted.
 - A negative `dt` never turns the view backwards.
+
+In a browser, because they cannot be asserted anywhere else:
+
+- Each key turns the view, in its own direction, and by no more than the rate it
+  claims.
+- The frame really is drawn from somewhere else afterwards — the widget moving
+  is not the camera moving.
+- The angle stays on the slider's 0–360 track rather than piling up at a stop.
 
 ## Out of scope
 

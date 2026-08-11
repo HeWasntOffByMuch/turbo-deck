@@ -355,6 +355,17 @@ function wrapDeg(radians: number): number {
   return ((Math.round(radians / DEG) % 360) + 360) % 360;
 }
 
+/**
+ * Bring an angle that is *already* in degrees into [0, 360), fraction intact.
+ *
+ * Distinct from {@link wrapDeg} above, which converts as well as wraps, and the
+ * two are one typo apart: handing degrees to that one multiplies them by 57.3
+ * and the camera jumps somewhere unrelated on every frame.
+ */
+function wrapTurn(degrees: number): number {
+  return ((degrees % 360) + 360) % 360;
+}
+
 export interface ViewControlOptions {
   /** Zoom the panel opens at (and resets to); defaults to the game's wide shot. */
   readonly zoom?: number;
@@ -380,8 +391,15 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   const lighting = opts.lighting ?? true;
   const menus = opts.group ?? createMenuGroup();
 
-  const camAz = makeSlider('Orbit', 0, 360, 1, wrapDeg(camOrbit.azimuth), '°',
-    'Rotate the follow camera around the unit (compass azimuth, in degrees).');
+  // Continuous ('any') for the same reason the zoom below is (spec 042): a range
+  // input snaps whatever is written to it to its step, and the keyboard swing
+  // (spec 129) writes a fraction of a degree per frame. On a step of 1 that
+  // rounding *is* the rotation -- the view turns 60°/s at 60fps and not at all
+  // above ~180fps, where a frame's share is under half a degree and lands back
+  // on the integer it started from. The readout still shows whole degrees.
+  const camAz = makeSlider('Orbit', 0, 360, 'any', wrapDeg(camOrbit.azimuth), '°',
+    'Rotate the follow camera around the unit (compass azimuth, in degrees). ' +
+    'The [ and ] keys turn it too.');
   const camEl = makeSlider('Height', CAMERA_ELEVATION_MIN_DEG, CAMERA_ELEVATION_MAX_DEG, 1, Math.round(camOrbit.elevation / DEG), '°',
     'Camera elevation angle above the ground, in degrees — higher looks more top-down.');
   // Continuous ('any'), so the wheel's fractional spans survive the round trip
@@ -698,7 +716,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
       );
     },
     pinchZoom: (ratio: number) => zoom.setValue(pinchViewHalfWidth(zoom.value(), ratio)),
-    orbitBy: (degrees: number) => camAz.setValue(wrapDeg(camAz.value() + degrees)),
+    orbitBy: (degrees: number) => camAz.setValue(wrapTurn(camAz.value() + degrees)),
     cameraOffset: () =>
       orbitToOffset({ azimuth: camAz.value() * DEG, elevation: camEl.value() * DEG, distance: camOrbit.distance }),
     viewHalfWidth: () => zoom.value(),
