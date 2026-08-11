@@ -917,11 +917,62 @@ async function windowKeys(page: Page, problems: string[]): Promise<void> {
     });
     console.log(`  ...with ${bindings} pixels of text on its keys tab`);
     if (bindings < 500) problems.push(`the options window opened with an empty keys tab (${bindings})`);
+    await bindingAKey(page, problems);
     await theDisplayTab(page, problems);
   }
   // ...and shuts it again, because closing the topmost window comes first.
   const shut = await pressAndWait(page, 'Escape', '');
   if (shut !== '') problems.push(`Escape would not close the options, leaving "${shut}"`);
+}
+
+/**
+ * Rebinding a key, in the game (spec 138).
+ *
+ * A press on a row's button and then a key -- two events with nothing focused in
+ * between, which is exactly the path that broke. Binding used to work only
+ * because the pressed button held the keyboard, so when a press stopped taking
+ * focus (spec 137) the capture never heard a thing: pressing a key did nothing,
+ * and the capture that stayed armed held `textEntry` and swallowed every key in
+ * the game from then on. Both halves are checked here, in a browser, because
+ * both halves are about *delivery*.
+ *
+ * Whatever it binds, it puts back with the row's own Reset -- the rest of this
+ * script walks with W, and a harness that rebinds the movement keys under
+ * itself would fail somewhere else entirely.
+ */
+async function bindingAKey(page: Page, problems: string[]): Promise<void> {
+  const before = await uiReadout(page);
+  const first = before.binds.split(';')[0]?.split(':')[0] ?? '';
+  const button = first === '' ? null : boxNamed(before.binds, first);
+  if (!button) {
+    problems.push(`the keys tab published no rows to click: "${before.binds.slice(0, 60)}"`);
+    return;
+  }
+
+  await clickUiBox(page, button);
+  await page.keyboard.press('KeyT');
+  const stored = await waitFor(page, async () => {
+    const text = await page.evaluate(() => globalThis.localStorage?.getItem('turbo-deck.ui.bindings') ?? '');
+    return text.includes('"KeyT"') ? text : null;
+  }, 4000);
+  if (!stored) {
+    problems.push(`pressing a key after the bind button bound nothing (${first})`);
+  } else {
+    console.log(`  binding ${first} to T takes, and saves`);
+  }
+
+  // The other half of the complaint -- that the keyboard still works afterwards --
+  // is asserted in `ui-screens.test.ts` rather than here. It wants the spawner
+  // overlay as a ruler and the overlay is not up yet at this point in the script,
+  // so a check here would quietly measure nothing and report a pass.
+
+  const reset = boxNamed((await uiReadout(page)).resets, first);
+  if (reset) await clickUiBox(page, reset);
+  const restored = await waitFor(page, async () => {
+    const text = await page.evaluate(() => globalThis.localStorage?.getItem('turbo-deck.ui.bindings') ?? '');
+    return text.includes('"KeyT"') ? null : text;
+  }, 4000);
+  if (!restored) problems.push(`the row's Reset did not put ${first} back`);
 }
 
 /**
@@ -1145,6 +1196,9 @@ interface UiReadout {
   /** The bag's cells, in the same shape again, and what is in each (spec 137). */
   readonly cells: string;
   readonly cellNames: string;
+  /** A keybinding row's two buttons, by action id (spec 138). */
+  readonly binds: string;
+  readonly resets: string;
   readonly viewport: string;
   readonly frameMs: string;
   readonly worstMs: string;
@@ -1163,6 +1217,8 @@ async function uiReadout(page: Page): Promise<UiReadout> {
       scales: host?.dataset['uiScales'] ?? '',
       cells: host?.dataset['uiCells'] ?? '',
       cellNames: host?.dataset['uiCellNames'] ?? '',
+      binds: host?.dataset['uiBinds'] ?? '',
+      resets: host?.dataset['uiResets'] ?? '',
       viewport: host?.dataset['uiViewport'] ?? '',
       frameMs: host?.dataset['uiFrameMs'] ?? '',
       worstMs: host?.dataset['uiWorstMs'] ?? '',

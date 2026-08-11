@@ -57,6 +57,9 @@ export interface UiReadout {
   readonly scaleRects: readonly { readonly id: string; readonly rect: Rect }[];
   /** Where each bag cell is, in UI pixels, so a harness can click one. */
   readonly bagRects: readonly { readonly id: string; readonly rect: Rect }[];
+  /** ...and a keybinding row's two buttons, by action id. */
+  readonly bindRects: readonly { readonly id: string; readonly rect: Rect }[];
+  readonly resetRects: readonly { readonly id: string; readonly rect: Rect }[];
   /** Device pixels per UI pixel. Whole, always -- the rule the frame exists for. */
   readonly scale: number;
   readonly viewport: { readonly width: number; readonly height: number };
