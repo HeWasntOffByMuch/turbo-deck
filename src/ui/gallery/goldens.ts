@@ -14,6 +14,7 @@
 import { PNG } from 'pngjs';
 import type {
   InventoryRenderOptions,
+  PlayRenderOptions,
   KeybindingsRenderOptions,
   RenderOptions,
   WindowsRenderOptions,
@@ -177,6 +178,47 @@ export const INVENTORY_GOLDEN_CASES: readonly InventoryGoldenCase[] = [
     name: 'bag-small',
     options: { viewport: { width: 300, height: 140 } },
     covers: 'the smallest supported viewport, where the window scrolls rather than the cells squashing',
+  },
+];
+
+export interface PlayGoldenCase {
+  readonly name: string;
+  readonly options: PlayRenderOptions;
+  readonly covers: string;
+}
+
+/**
+ * The HUD and the character sheet (spec 128).
+ *
+ * The frames worth a picture are the ones where a *state* is being drawn rather
+ * than a value: a cast bar that exists, a cooldown wedge, a slot that cannot be
+ * paid for, and a branch that has been locked out.
+ */
+export const PLAY_GOLDEN_CASES: readonly PlayGoldenCase[] = [
+  {
+    name: 'play',
+    options: {},
+    covers: 'bars, a full skillbar and the character sheet beside it',
+  },
+  {
+    name: 'play-casting',
+    options: { cast: 0.6, cooldowns: { 1: 0.75, 5: 0.3 } },
+    covers: 'a cast bar in flight and two cooldown wedges at different depths',
+  },
+  {
+    name: 'play-spent',
+    options: { resource: 6, cooldowns: { 0: 0.5 } },
+    covers: 'a drained pool: what cannot be afforded reads differently from what is on cooldown',
+  },
+  {
+    name: 'play-locked',
+    options: { tab: 'arcane', spend: ['might.toughness'] },
+    covers: 'a branch locked out by a commitment, said in words rather than by dim buttons',
+  },
+  {
+    name: 'play-small',
+    options: { viewport: { width: 300, height: 140 } },
+    covers: 'the smallest supported viewport, HUD and window together',
   },
 ];
 

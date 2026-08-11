@@ -6,9 +6,16 @@ import {
   GOLDEN_CASES,
   INVENTORY_GOLDEN_CASES,
   KEYBINDING_GOLDEN_CASES,
+  PLAY_GOLDEN_CASES,
   WINDOW_GOLDEN_CASES,
 } from './goldens.js';
-import { renderGallery, renderInventory, renderKeybindings, renderWindows } from './render.js';
+import {
+  renderGallery,
+  renderInventory,
+  renderKeybindings,
+  renderPlay,
+  renderWindows,
+} from './render.js';
 import { buildGallery } from './gallery.js';
 import { bakeAtlas } from '../render/atlas.js';
 import { THEME } from '../theme/theme.js';
@@ -83,6 +90,25 @@ describe('golden images', () => {
   for (const item of INVENTORY_GOLDEN_CASES) {
     it(`${item.name} matches, pixel for pixel (${item.covers})`, () => {
       const frame = renderInventory(item.options);
+      const actual = {
+        width: frame.surface.width,
+        height: frame.surface.height,
+        pixels: frame.surface.pixels,
+      };
+      const expected = decodePng(readFileSync(new URL(`${item.name}.png`, directory)));
+      const difference = firstDifference(actual, expected);
+      expect(
+        difference,
+        difference === null
+          ? ''
+          : `${item.name} differs -- ${difference}. Look at the change, then run \`npm run bake:ui-goldens\` to accept it.`,
+      ).toBe(null);
+    });
+  }
+
+  for (const item of PLAY_GOLDEN_CASES) {
+    it(`${item.name} matches, pixel for pixel (${item.covers})`, () => {
+      const frame = renderPlay(item.options);
       const actual = {
         width: frame.surface.width,
         height: frame.surface.height,
@@ -231,6 +257,10 @@ describe('sprites blit at a whole-number scale', () => {
 
   it('in the keybinding window', () => {
     check(renderKeybindings().root.paint().finish(), 'keybindings');
+  });
+
+  it('in the HUD, including a cooldown wedge', () => {
+    check(renderPlay({ cast: 0.5, cooldowns: { 0: 0.5 } }).root.paint().finish(), 'play');
   });
 
   it('in the inventory, including the ghost mid-drag', () => {

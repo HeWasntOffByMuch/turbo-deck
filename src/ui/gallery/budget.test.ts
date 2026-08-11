@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { buildGallery } from './gallery.js';
-import { renderGallery } from './render.js';
+import { renderGallery, renderPlay } from './render.js';
 import { UiRoot } from '../core/root.js';
 import { bakeAtlas } from '../render/atlas.js';
 import { THEME } from '../theme/theme.js';
+import { renderInventory, renderKeybindings, renderWindows } from './render.js';
 
 /**
  * The brief's budget is "full UI update + draw under 1.5 ms with 6 windows
@@ -66,12 +67,75 @@ describe('frame budget', () => {
     expect(sprites).toBeGreaterThan(solids);
   });
 
+  /**
+   * The HUD is the one screen drawn every frame of a fight, so its draw-call
+   * count is the number the brief's budget is actually spent on. A ceiling
+   * rather than a target: it fails when something starts emitting a quad per
+   * pixel, which is the failure worth catching.
+   *
+   * That it costs no *layout* while everything on it animates is asserted in
+   * `screens/hud.test.ts`, where the frames can be driven one at a time.
+   */
+  it('keeps the HUD and the character sheet inside a draw-call budget', () => {
+    const frame = renderPlay({ cast: 0.5, cooldowns: { 0: 0.4, 3: 0.9 } });
+    const list = frame.root.paint();
+    expect(list.length).toBeGreaterThan(0);
+    expect(list.length).toBeLessThan(1200);
+  });
+
   it('never leaves the clip stack unbalanced', () => {
     // `finish()` throws on an unbalanced stack; a widget that pushes and forgets
     // to pop clips everything drawn after it, which looks like the *next* widget
     // being broken.
     for (const scrollTo of [0, 100, 260, 10_000]) {
       expect(() => renderGallery({ scrollTo }).root.paint().finish()).not.toThrow();
+    }
+    // The HUD clips a key label and the sheet clips a tab strip, so both push.
+    expect(() => renderPlay({ cast: 0.5 }).root.paint().finish()).not.toThrow();
+    expect(() => renderPlay({ viewport: { width: 300, height: 140 } }).root.paint().finish()).not.toThrow();
+  });
+});
+
+/**
+ * Nothing in this framework blends.
+ *
+ * Every palette colour is opaque and every quad is drawn at full alpha, which is
+ * not a style preference: a source-over blend is the one operation the software
+ * rasterizer and a browser canvas cannot be made to agree on byte for byte. They
+ * round it differently, and `scripts/preview-ui-gallery.ts` caught exactly that
+ * on the first translucent thing ever drawn here -- a cooldown scrim, off by one
+ * in two channels.
+ *
+ * The rule that replaced it: a "dimmed" look is a darker *opaque* token. This is
+ * the check that keeps it true, since the alternative is finding out in a
+ * browser months later.
+ */
+describe('nothing is drawn translucent', () => {
+  const scenes = {
+    widgets: () => renderGallery(),
+    windows: () => renderWindows({ focusWindow: 'character' }),
+    keys: () => renderKeybindings(),
+    bag: () =>
+      renderInventory({
+        pickUp: { container: 'inventory', index: 0 },
+        carryToCell: { container: 'inventory', index: 20 },
+      }),
+    play: () => renderPlay({ cast: 0.5, cooldowns: { 0: 0.4, 3: 0.9 } }),
+  };
+
+  for (const [name, build] of Object.entries(scenes)) {
+    it(`in the ${name} scene`, () => {
+      for (const command of build().root.paint().finish()) {
+        const alpha =
+          command.kind === 'solid' ? command.color.a : command.kind === 'sprite' ? command.tint.a : 255;
+        expect(alpha, `${name}: a ${command.kind} at alpha ${alpha}`).toBe(255);
+      }
+    });
+  }
+
+  it('has no translucent colour in the palette at all', () => {
+    for (const [name, color] of Object.entries(THEME.palette)) {
+      expect(color.a, name).toBe(255);
     }
   });
 });

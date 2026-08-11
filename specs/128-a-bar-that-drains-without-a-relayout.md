@@ -80,7 +80,11 @@ export interface HudView {
   /** Null when nothing is winding up. */
   readonly cast: { readonly name: string; readonly progress: number } | null;
   readonly slots: readonly (AbilityView | null)[];
-  readonly level: number;
+  /**
+   * What each slot's key is called, beside the abilities rather than on them:
+   * an *empty* slot still has a key, and "4 fires nothing yet" is worth saying.
+   */
+  readonly keyLabels: readonly string[];
 }
 
 export interface AbilityView {
@@ -91,7 +95,6 @@ export interface AbilityView {
   /** 0..1 remaining, already computed against the tick being drawn. */
   readonly sweep: number;
   readonly affordable: boolean;
-  readonly keyLabel: string;
 }
 
 export class HudScreen extends Column {

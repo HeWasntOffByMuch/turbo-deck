@@ -23,8 +23,11 @@ import { WindowManager } from '../ui/core/window-manager.js';
 import { InputMap } from '../ui/input/input-map.js';
 import { KeybindingsScreen } from '../ui/screens/keybindings.js';
 import { InventoryScreen } from '../ui/screens/inventory.js';
+import { HudScreen } from '../ui/screens/hud.js';
+import { CharacterScreen } from '../ui/screens/character.js';
 import { ItemSlot } from '../ui/widgets/item-slot.js';
-import { demoContainers } from '../ui/gallery/render.js';
+import { Anchor } from '../ui/core/containers.js';
+import { demoCharacter, demoContainers, demoHud } from '../ui/gallery/render.js';
 import { ScrollView } from '../ui/widgets/scroll-view.js';
 import { Tooltip } from '../ui/widgets/tooltip.js';
 import { UiWindow } from '../ui/widgets/window.js';
@@ -73,11 +76,12 @@ function main(): void {
   const scene = wanted === 'windows' ? buildWindowsScene(THEME, viewport) : null;
   const keys = wanted === 'keys' ? buildKeysScene(viewport) : null;
   const bag = wanted === 'bag' ? buildBagScene(viewport) : null;
-  const gallery = scene ?? keys ?? bag ? null : buildGallery(THEME);
-  const content = scene?.root ?? keys?.root ?? bag?.root ?? gallery?.root;
+  const play = wanted === 'play' ? buildPlayScene(viewport) : null;
+  const gallery = scene ?? keys ?? bag ?? play ? null : buildGallery(THEME);
+  const content = scene?.root ?? keys?.root ?? bag?.root ?? play?.root ?? gallery?.root;
   if (!content) throw new Error('no scene');
-  const manager = scene?.manager ?? keys?.manager ?? bag?.manager;
-  const layerStack = scene?.root ?? keys?.root ?? bag?.root;
+  const manager = scene?.manager ?? keys?.manager ?? bag?.manager ?? play?.manager;
+  const layerStack = scene?.root ?? keys?.root ?? bag?.root ?? play?.root;
 
   const root = new UiRoot(content, {
     theme: THEME,
@@ -143,6 +147,10 @@ function main(): void {
     root.update(timestamp);
     scene?.tooltip.update(timestamp, THEME.input.tooltipDelayMs);
     bag?.tooltip.update(timestamp, THEME.input.tooltipDelayMs);
+    // Driven every frame on purpose: this scene is here to prove that a screen
+    // whose numbers change sixty times a second still costs no layout, and the
+    // probe reports the milliseconds it takes.
+    play?.tick(timestamp);
     const list = root.paint();
     const commands = list.finish();
     drawCalls = commands.length;
@@ -274,6 +282,58 @@ function buildBagScene(viewport: { width: number; height: number }): {
     tooltip.point(cell ? screen.tooltipFor(cell) : null, at, now);
   };
   return { root: layers, manager, tooltip, hover };
+}
+
+/**
+ * The HUD and the character sheet (spec 128), animating.
+ *
+ * The only scene here that is *updated* every frame rather than merely redrawn,
+ * which is the whole point: the frame cost reported for it is the cost of a
+ * fight, and the cross-backend comparison covers a cooldown wedge and a bar
+ * partway along -- neither of which the static scenes contain.
+ */
+function buildPlayScene(viewport: { width: number; height: number }): {
+  root: LayerStack;
+  manager: WindowManager;
+  tick: (nowMs: number) => void;
+} {
+  const layers = new LayerStack();
+  const manager = new WindowManager();
+  layers.place('windows', manager);
+
+  const hud = new HudScreen({ theme: THEME });
+  const frame = new Anchor('hudFrame');
+  frame.pointerTransparent = true;
+  frame.place(hud, 'bottomLeft');
+  layers.place('hud', frame);
+
+  const sheet = new CharacterScreen({ theme: THEME });
+  sheet.setCharacter(demoCharacter([]));
+  manager.register(
+    new UiWindow(new ScrollView(sheet, 'sheetScroll'), {
+      title: 'Character',
+      at: { x: Math.max(8, viewport.width - 210), y: 8 },
+      size: { width: Math.min(200, viewport.width - 16), height: Math.min(220, viewport.height - 16) },
+      resizable: true,
+    }),
+    'character',
+  );
+  manager.setViewport(viewport);
+
+  const tick = (nowMs: number): void => {
+    // A six-second loop: health drains, the pool refills, two cooldowns run at
+    // different rates and a cast comes and goes.
+    const phase = (nowMs % 6000) / 6000;
+    hud.setView({
+      ...demoHud({
+        cooldowns: { 1: Math.max(0, 1 - phase * 1.4), 5: Math.max(0, 1 - phase * 3) },
+        resource: 8 + 42 * phase,
+      }),
+      health: { current: 20 + 118 * (1 - phase), max: 138 },
+      cast: phase < 0.5 ? { name: 'Iron Maul', progress: phase * 2 } : null,
+    });
+  };
+  return { root: layers, manager, tick };
 }
 
 main();

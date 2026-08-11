@@ -16,6 +16,7 @@ import { RasterSurface } from '../render/raster.js';
 import { THEME, type Theme } from '../theme/theme.js';
 import type { Widget } from '../core/widget.js';
 import { ScrollView } from '../widgets/scroll-view.js';
+import { Anchor } from '../core/containers.js';
 import { buildGallery } from './gallery.js';
 import { buildWindowsScene } from './windows-scene.js';
 import { ContextStack } from '../core/events.js';
@@ -24,6 +25,8 @@ import { WindowManager } from '../core/window-manager.js';
 import { InputMap } from '../input/input-map.js';
 import { KeybindingsScreen } from '../screens/keybindings.js';
 import { InventoryScreen, type ContainerView, type ItemView, type SlotRef } from '../screens/inventory.js';
+import { HudScreen, type HudView } from '../screens/hud.js';
+import { CharacterScreen, type CharacterView, type SkillView } from '../screens/character.js';
 import { Tooltip } from '../widgets/tooltip.js';
 import { UiWindow } from '../widgets/window.js';
 
@@ -313,6 +316,195 @@ export function renderInventory(options: InventoryRenderOptions = {}): Inventory
   replay(surface, root.paint().finish());
 
   return { surface, root, screen };
+}
+
+export interface PlayFrame {
+  readonly surface: RasterSurface;
+  readonly root: UiRoot;
+  readonly hud: HudScreen;
+  readonly sheet: CharacterScreen;
+}
+
+export interface PlayRenderOptions {
+  readonly viewport?: Size;
+  /** How far through a cast, or null for nothing winding up. */
+  readonly cast?: number;
+  /** Slot index -> how much cooldown is left, 0..1. */
+  readonly cooldowns?: Readonly<Record<number, number>>;
+  /** Drain the pool, so the unaffordable treatment is in the frame. */
+  readonly resource?: number;
+  /** Which character-sheet tab to show. */
+  readonly tab?: string;
+  /** Spend these first, so a locked branch and a filled row are in the frame. */
+  readonly spend?: readonly string[];
+}
+
+const DEMO_ABILITIES: readonly { readonly id: string; readonly icon: string; readonly cost: number }[] = [
+  { id: 'melee.slash', icon: 'ability:slash', cost: 0 },
+  { id: 'melee.heavy', icon: 'ability:heavy', cost: 12 },
+  { id: 'bolt.arcane', icon: 'ability:bolt', cost: 8 },
+  { id: 'bolt.lob', icon: 'ability:lob', cost: 14 },
+  { id: 'bolt.seek', icon: 'ability:seek', cost: 10 },
+  { id: 'ground.quake', icon: 'ability:quake', cost: 22 },
+  { id: 'self.mend', icon: 'ability:mend', cost: 18 },
+  { id: 'channel.drain', icon: 'ability:drain', cost: 16 },
+];
+
+const DEMO_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8'];
+
+/**
+ * A HUD to photograph.
+ *
+ * Local rather than built from the game's tables, like the inventory's demo bag
+ * and for the same reason: a golden that moved when somebody retuned a cooldown
+ * would be a golden nobody trusted.
+ */
+export function demoHud(options: PlayRenderOptions = {}): HudView {
+  const resource = options.resource ?? 34;
+  return {
+    health: { current: 84, max: 138 },
+    resource: { current: resource, max: 50 },
+    cast: options.cast === undefined ? null : { name: 'Iron Maul', progress: options.cast },
+    slots: DEMO_ABILITIES.map((ability, index) => {
+      const sweep = options.cooldowns?.[index] ?? 0;
+      return {
+        id: ability.id,
+        name: ability.id,
+        icon: ability.icon,
+        cost: ability.cost,
+        sweep,
+        affordable: resource >= ability.cost,
+        secondsLeft: sweep * 8,
+      };
+    }),
+    keyLabels: DEMO_KEYS,
+  };
+}
+
+/**
+ * A character sheet to photograph.
+ *
+ * Written out here rather than run through the game's adapter, for two reasons.
+ * `src/ui/` may not import the game's renderer at all -- lint refuses it, and it
+ * refused this on the first attempt -- and a golden built from the live skill
+ * table would move every time somebody retuned a branch. The *adapter* is tested
+ * against the real rules in `character-model.test.ts`; this is a picture.
+ */
+export function demoCharacter(spend: readonly string[] = []): CharacterView {
+  const taken = new Set(spend);
+  const points = Math.max(0, 3 - spend.length);
+  const skill = (id: string, name: string, tier: number, blocked: string): SkillView => ({
+    id,
+    name,
+    tier,
+    level: taken.has(id) ? 1 : 0,
+    maxLevel: 5,
+    description: `${name}: what it does, in a sentence long enough to wrap.`,
+    canSpend: points > 0 && blocked === '',
+    blockedBecause: blocked,
+  });
+
+  const mightTaken = spend.some((id) => id.startsWith('might.'));
+  return {
+    name: 'Kestrel',
+    level: 6,
+    experience: { current: 180, toNext: 400 },
+    unspentPoints: points,
+    stats: [
+      { label: 'Health', value: '138' },
+      { label: 'Damage', value: '12' },
+      { label: 'Range', value: '56' },
+      { label: 'Speed', value: '2.0/s' },
+      { label: 'Armour', value: '12%' },
+      { label: 'Crit', value: '5%' },
+    ],
+    branches: [
+      {
+        id: 'might',
+        name: 'Might',
+        locked: false,
+        pointsSpent: spend.filter((id) => id.startsWith('might.')).length,
+        skills: [
+          skill('might.toughness', 'Toughness', 1, ''),
+          skill('might.cleave', 'Cleave', 2, 'tier 2 needs 3 points in might, has 1'),
+        ],
+      },
+      {
+        id: 'finesse',
+        name: 'Finesse',
+        locked: false,
+        pointsSpent: 0,
+        skills: [skill('finesse.footwork', 'Footwork', 1, '')],
+      },
+      {
+        id: 'arcane',
+        name: 'Arcane',
+        locked: mightTaken,
+        pointsSpent: 0,
+        skills: [
+          skill(
+            'arcane.focus',
+            'Focus',
+            1,
+            mightTaken ? 'the arcane branch is locked out by an earlier commitment' : '',
+          ),
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * The HUD over a window with the character sheet in it (spec 128).
+ *
+ * Both in one frame because that is how they are actually seen -- a sheet open
+ * over a fight -- and because it puts a `hud` layer and a `windows` layer in the
+ * same picture, which is the arrangement the layer order exists for.
+ */
+export function renderPlay(options: PlayRenderOptions = {}): PlayFrame {
+  const theme = THEME;
+  const viewport = options.viewport ?? GOLDEN_VIEWPORT;
+  const atlas = bakeAtlas(theme);
+  const layers = new LayerStack();
+  const manager = new WindowManager();
+  layers.place('windows', manager);
+
+  const hud = new HudScreen({ theme });
+  hud.setView(demoHud(options));
+  // Anchored bottom-left, where a HUD lives. The layer fills the viewport and a
+  // screen dropped straight into it would sit in the top-left corner under the
+  // first window somebody opened.
+  const hudFrame = new Anchor('hudFrame');
+  hudFrame.pointerTransparent = true;
+  hudFrame.place(hud, 'bottomLeft');
+  layers.place('hud', hudFrame);
+
+  const sheet = new CharacterScreen({ theme });
+  sheet.setCharacter(demoCharacter(options.spend ?? []));
+  const window = new UiWindow(new ScrollView(sheet, 'sheetScroll'), {
+    title: 'Character',
+    at: { x: 150, y: 8 },
+    size: {
+      width: Math.max(120, Math.min(viewport.width - 158, 200)),
+      height: Math.max(80, Math.min(viewport.height - 16, 220)),
+    },
+  });
+  manager.register(window, 'character');
+
+  const root = new UiRoot(layers, { theme, atlas, viewport, windows: manager, layers });
+  manager.setViewport(viewport);
+  root.update(0);
+  if (options.tab !== undefined) sheet.tabs.select(options.tab);
+  // Re-set after the tab is open: a tab's content is built on first selection
+  // (spec 124), so its rows have never been told what is in them.
+  sheet.setCharacter(demoCharacter(options.spend ?? []));
+  root.update(0);
+
+  const surface = new RasterSurface(atlas, viewport.width, viewport.height);
+  surface.clear(theme.color('ink'));
+  replay(surface, root.paint().finish());
+
+  return { surface, root, hud, sheet };
 }
 
 export interface KeybindingsFrame {
