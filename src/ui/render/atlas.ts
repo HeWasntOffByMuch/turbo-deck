@@ -24,6 +24,8 @@ import { multiply, WHITE, type Color } from '../core/color.js';
 import type { Rect } from '../core/geom.js';
 import { BODY_FONT, NUMERIC_FONT, type Font, type Glyph } from '../text/font.js';
 import {
+  ABILITY_ICONS,
+  ABILITY_ICON_SIZE,
   ICONS,
   ICON_SIZE,
   ITEM_ICONS,
@@ -151,6 +153,9 @@ export function bakeAtlas(theme: Theme, width = 256): Atlas {
   // and `item:sword` can never collide and neither has to know the other exists.
   for (const [name, rows] of Object.entries(ITEM_ICONS)) {
     placements.push(gridPlacement(`item:${name}`, rows, ITEM_ICON_SIZE, ITEM_ICON_SIZE, resolve));
+  }
+  for (const [name, rows] of Object.entries(ABILITY_ICONS)) {
+    placements.push(gridPlacement(`ability:${name}`, rows, ABILITY_ICON_SIZE, ABILITY_ICON_SIZE, resolve));
   }
   placements.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 

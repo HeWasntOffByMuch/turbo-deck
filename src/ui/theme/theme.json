@@ -16,7 +16,7 @@
     "danger": "#d0796f",
     "success": "#7fae3f",
     "focus": "#9fd8ff",
-    "overlay": "#0f0d14a8"
+    "overlay": "#0f0d14"
   },
   "spacing": {
     "unit": 4,
@@ -420,6 +420,42 @@
           "fill": "panelRaised",
           "frameTint": "focus",
           "text": "text"
+        }
+      }
+    },
+    "meter": {
+      "frame": "sunken",
+      "padding": 0,
+      "states": {
+        "normal": {
+          "fill": "panelSunken",
+          "frameTint": "edgeDark",
+          "text": "text",
+          "mark": "danger"
+        },
+        "hover": {
+          "fill": "panelSunken",
+          "frameTint": "edgeDark",
+          "text": "text",
+          "mark": "danger"
+        },
+        "pressed": {
+          "fill": "panelSunken",
+          "frameTint": "edgeDark",
+          "text": "text",
+          "mark": "danger"
+        },
+        "disabled": {
+          "fill": "panel",
+          "frameTint": "edgeDark",
+          "text": "textDim",
+          "mark": "textDim"
+        },
+        "focused": {
+          "fill": "panelSunken",
+          "frameTint": "focus",
+          "text": "text",
+          "mark": "danger"
         }
       }
     },

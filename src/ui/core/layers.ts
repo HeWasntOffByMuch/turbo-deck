@@ -36,9 +36,16 @@ export interface LayerSpec {
 }
 
 export const LAYERS: readonly LayerSpec[] = [
-  // Always on, never focusable, ignores the pointer except where a widget in it
-  // explicitly opts back in.
-  { id: 'hud', blocksBelow: false, interactive: false },
+  // Always on, and the pointer passes straight through it *except* where a
+  // widget in it opts back in -- a skillbar slot is a button and has to be
+  // clickable (spec 128).
+  //
+  // This said `interactive: false` until phase 5, which made the sentence above
+  // impossible: a non-interactive layer is skipped entirely, so nothing inside
+  // it could opt back in and the comment described a mechanism that did not
+  // exist. The transparency is `pointerTransparent` on the layer and on
+  // everything in it that is not a button, which is where it belonged all along.
+  { id: 'hud', blocksBelow: false, interactive: true },
   { id: 'windows', blocksBelow: false, interactive: true },
   // The thing under the cursor mid-drag. It must never be hit-tested: it *is*
   // the cursor, and a drop target under it has to be findable.

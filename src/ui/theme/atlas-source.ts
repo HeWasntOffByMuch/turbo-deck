@@ -367,3 +367,140 @@ export const ITEM_ICONS: Readonly<Record<string, readonly string[]>> = {
     '...TTTTTT...',
   ],
 };
+
+/**
+ * Ability art (spec 128), on the item size.
+ *
+ * The same twelve pixels, because a skill slot and an inventory cell are the
+ * same box and a player looks at both in the same glance -- two sizes of object
+ * art would read as two art styles. Its own namespace so `item:sword` and
+ * `ability:slash` can never collide.
+ *
+ * Each of these has to read at a glance *while something is trying to kill you*,
+ * which is a harder bar than an inventory icon and is why they lean on
+ * silhouette rather than detail: a wedge, a ring, a crack.
+ */
+export const ABILITY_ICON_SIZE = ITEM_ICON_SIZE;
+
+export const ABILITY_ICONS: Readonly<Record<string, readonly string[]>> = {
+  /** A swing: three strokes of an arc, thickest in the middle. */
+  slash: [
+    '.........TT.',
+    '......TTTT..',
+    '....TTTT....',
+    '...TTT......',
+    '..TTT.......',
+    '..TT........',
+    '.TT.........',
+    '.TT.........',
+    '..T.........',
+    '..TT........',
+    '...TT.......',
+    '....TTT.....',
+  ],
+  /** A heavy blow: a maul head coming down. */
+  heavy: [
+    '..TTTTTTTT..',
+    '.TTTTTTTTTT.',
+    '.TTTTTTTTTT.',
+    '.TTTTTTTTTT.',
+    '..TTTTTTTT..',
+    '.....TT.....',
+    '.....TT.....',
+    '.....TT.....',
+    '.....TT.....',
+    '.....TT.....',
+    '....AAAA....',
+    '....AAAA....',
+  ],
+  /** An arcane bolt: an orb with a tail. */
+  bolt: [
+    '.........AA.',
+    '........AAAA',
+    '.......AAAA.',
+    '......AAAA..',
+    '.....AAAA...',
+    '....AAAA....',
+    '...AAAA.....',
+    '..AAAA......',
+    '.TAAA.......',
+    'TTAA........',
+    'TT..........',
+    'T...........',
+  ],
+  /** A lobbed pot: a flask with an arc over it. */
+  lob: [
+    '.....T......',
+    '...TT.......',
+    '..T.........',
+    '.T..........',
+    '.T..........',
+    '....TTTT....',
+    '...T....T...',
+    '..T.AAAA.T..',
+    '.T.AAAAAA.T.',
+    '.T.AAAAAA.T.',
+    '..T.AAAA.T..',
+    '...TTTTTT...',
+  ],
+  /** A seeking bolt: a dart that has turned. */
+  seek: [
+    '.........TTT',
+    '.........TTT',
+    '........TTT.',
+    '.......TTT..',
+    '......TTT...',
+    '.....TTT....',
+    '....TTT.....',
+    '...TTT......',
+    '..TTT.......',
+    '.TTT...AAA..',
+    'TTT...AAAAA.',
+    'TT....AAAAA.',
+  ],
+  /** A quake: ground with a crack through it. */
+  quake: [
+    '............',
+    '............',
+    '.....T......',
+    '....T.......',
+    '.....T......',
+    '......T.....',
+    '.....T......',
+    'TTTTTTTTTTTT',
+    'TTTT.TT.TTTT',
+    'TT..T....T.T',
+    'T..........T',
+    '............',
+  ],
+  /** A mend: a cross, the one sign nobody has to learn. */
+  mend: [
+    '....SSSS....',
+    '....SAAS....',
+    '....SAAS....',
+    'SSSSSAASSSSS',
+    'SAAAAAAAAAAS',
+    'SAAAAAAAAAAS',
+    'SSSSSAASSSSS',
+    '....SAAS....',
+    '....SAAS....',
+    '....SAAS....',
+    '....SSSS....',
+    '............',
+  ],
+  /** A drain: a funnel with something falling into it. */
+  drain: [
+    'TT........TT',
+    '.TT......TT.',
+    '..TT....TT..',
+    '...TT..TT...',
+    '....TTTT....',
+    '.....TT.....',
+    '.....TT.....',
+    '....AAAA....',
+    '...AAAAAA...',
+    '...AAAAAA...',
+    '....AAAA....',
+    '.....AA.....',
+  ],
+};
