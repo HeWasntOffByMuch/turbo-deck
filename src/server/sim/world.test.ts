@@ -816,6 +816,62 @@ describe('monsters find their way round', () => {
   });
 
   /**
+   * Spec 130. The same wall again, built out of rock instead of out of a
+   * collider -- which is what an author drawing a tier in the map editor makes.
+   *
+   * Nothing here was a collider, so `segmentClear` reported the way clear and
+   * the monster walked at a two-hundred-unit cliff face for as long as the
+   * player stood behind it. It never asked for a route, so a router that knew
+   * about cliffs would not have been consulted either: the fix is in both
+   * halves, and this is the assertion that they were both made.
+   */
+  describe('a wall the map made out of rock', () => {
+    /** A ridge over the same ground the collider wall covers, open north and south. */
+    const RIDGE: TerrainSampler = {
+      heightAt: (x, y) => (x >= 740 && x <= 780 && y >= 250 && y <= 650 ? 200 : 0),
+    };
+
+    function chaseRidge(ticks: number): { distance: number; x: number; y: number } {
+      let state = createWorldState(1);
+      const player = withPlayer(state, 600, 450);
+      state = player.state;
+      const monster = withMonster(state, 'stalker', 900, 450, { targetId: player.id });
+      state = monster.state;
+
+      const ctx = context({ terrain: RIDGE, activeChunks: activeAround({ x: 750, y: 450 }) });
+      for (let i = 0; i < ticks; i++) state = step(state, [], ctx).state;
+
+      const at = state.entities.get(monster.id)?.position;
+      return {
+        distance: Math.hypot((at?.x ?? 0) - 600, (at?.y ?? 0) - 450),
+        x: at?.x ?? 0,
+        y: at?.y ?? 0,
+      };
+    }
+
+    it('is gone round, not pressed into', () => {
+      const after = chaseRidge(SERVER_TICK_RATE * 8);
+      expect(after.distance).toBeLessThan(Math.hypot(900 - 600, 0) * 0.35);
+      expect(after.x).toBeLessThan(740);
+    });
+
+    it('never puts the body on top of the ridge', () => {
+      let state = createWorldState(1);
+      const player = withPlayer(state, 600, 450);
+      state = player.state;
+      const monster = withMonster(state, 'stalker', 900, 450, { targetId: player.id });
+      state = monster.state;
+
+      const ctx = context({ terrain: RIDGE, activeChunks: activeAround({ x: 750, y: 450 }) });
+      for (let i = 0; i < SERVER_TICK_RATE * 8; i++) {
+        state = step(state, [], ctx).state;
+        const at = state.entities.get(monster.id)?.position;
+        if (at) expect(RIDGE.heightAt(at.x, at.y)).toBe(0);
+      }
+    });
+  });
+
+  /**
    * Spec 073. A failed search leaves an empty path, which read as an exhausted
    * one -- so the case that costs the most ran on the cadence that costs the
    * most, sixty times a second, per monster.

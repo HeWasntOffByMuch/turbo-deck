@@ -23,8 +23,7 @@
  */
 
 import { Rng } from '../../shared/prng.js';
-import { segmentClear } from '../../sim/collision.js';
-import { findPath, navGridFor } from '../../sim/pathfinding.js';
+import { findPath, navGridFor, pathClear } from '../../sim/pathfinding.js';
 import { PATH_REPLAN_TICKS, PATH_RETRY_TICKS, PATH_WAYPOINT_EPS } from '../../sim/constants.js';
 import type { Vec2, WorldColliders } from '../../sim/types.js';
 import type { LiveConfig } from '../config.js';
@@ -924,7 +923,11 @@ function routeToward(
   const from: Vec2 = { x: monster.position.x, y: monster.position.y };
   const to: Vec2 = { x: goal.x, y: goal.y };
 
-  if (segmentClear(from, to, monster.radius, context.world)) {
+  // The ground is part of "nothing is between us" (spec 130): a cliff face is
+  // not a collider, so the collider test alone sent a monster striding at a
+  // seventy-unit wall without ever asking for a route.
+  const grid = navGridFor(monster.radius, context.world, context.terrain);
+  if (pathClear(grid, from, to)) {
     return { direction: unit(to.x - from.x, to.y - from.y), entity: forgetPath(monster) };
   }
 
@@ -946,7 +949,6 @@ function routeToward(
 
   let entity = monster;
   if (exhausted || goalMoved || tick >= monster.repathAtTick) {
-    const grid = navGridFor(monster.radius, context.world);
     const path = findPath(grid, from, to);
     entity = {
       ...monster,

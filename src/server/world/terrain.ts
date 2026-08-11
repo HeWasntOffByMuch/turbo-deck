@@ -7,8 +7,8 @@
  * is three lines at the bottom.
  */
 
+import { MAX_STEP_HEIGHT, WALKABLE_MIN_HEIGHT } from '../../sim/constants.js';
 import type { TerrainWorld } from '../../terrain/types.js';
-import { WATER_LEVEL } from '../../terrain/world.js';
 
 export interface TerrainSampler {
   /**
@@ -22,15 +22,14 @@ export interface TerrainSampler {
 export const FLAT_TERRAIN: TerrainSampler = { heightAt: () => 0 };
 
 /**
- * The steepest single-tick climb a body may make. A move that would gain more
- * height than this is a cliff, and refusing it is what stops a client walking
- * up a wall -- the heightfield half of collision, next to the collider half in
- * `src/sim/collision.ts`.
+ * The walkability contract, re-exported from where it now lives (spec 130).
+ *
+ * Both numbers moved into `src/sim/constants.ts` when the router started having
+ * to refuse exactly the steps this file's callers refuse. They are still named
+ * here because this is where the server's half of the question is asked, and
+ * because moving a constant should not be a diff across a dozen call sites.
  */
-export const MAX_STEP_HEIGHT = 24;
-
-/** Ground at or below this is deep water; nothing walks there. */
-export const WALKABLE_MIN_HEIGHT = WATER_LEVEL;
+export { MAX_STEP_HEIGHT, WALKABLE_MIN_HEIGHT };
 
 export function terrainSamplerFrom(world: TerrainWorld): TerrainSampler {
   return { heightAt: (x, y) => world.heightAt(x, y) };

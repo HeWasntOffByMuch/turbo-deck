@@ -29,7 +29,7 @@ import type { ClientView } from '../../../server/client/game-client.js';
 import { EntityKind } from '../../../server/net/protocol.js';
 import { abilityById } from '../../../server/data/abilities.js';
 import { PALETTE } from '../palette.js';
-import { castsShadows, makeMoveMarker, makeUnwalkableField, makeWall } from '../meshes.js';
+import { castsShadows, makeUnwalkableField, makeWall } from '../meshes.js';
 import { ARENA_OBSTACLES } from '../../../sim/constants.js';
 import { vegetationColliders } from '../../../terrain/vegetation.js';
 import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-mesh.js';
@@ -171,8 +171,6 @@ export interface FrameInfo {
    * and a turn the player is making themselves must not lag by an interval.
    */
   readonly selfFacing: number;
-  /** The standing move order to mark on the ground, or null (spec 064). */
-  readonly destination: { readonly x: number; readonly y: number } | null;
   /**
    * Where the mouse is inside the canvas, in CSS pixels, or null when it has
    * left. Drives the hover highlight (spec 070) and nothing else -- the pick is
@@ -371,8 +369,6 @@ export class WorldScene {
    * else in the repo.
    */
   private readonly vfx: VfxLayer;
-  /** Marks the standing move order on the ground (spec 064). */
-  private readonly moveMarker = makeMoveMarker();
 
   private readonly motion = new EntityMotion();
   private readonly bodies = new Map<number, Body>();
@@ -519,8 +515,6 @@ export class WorldScene {
       },
     });
     this.scene.add(this.vfx.root);
-    this.moveMarker.visible = false;
-    this.scene.add(this.moveMarker);
 
     this.targetRing = new THREE.Mesh(
       new THREE.RingGeometry(22, 27, 24),
@@ -734,6 +728,7 @@ export class WorldScene {
     return hit ? { x: hit.x, y: hit.z } : { x: this.target.x, y: this.target.z };
   }
 
+
   /**
    * The unit at a canvas pixel, or null for empty ground (spec 070).
    *
@@ -817,6 +812,25 @@ export class WorldScene {
     });
   }
 
+  /**
+   * A walk order was given here (spec 127).
+   *
+   * The whole picture of a move order: a wave on the ground where the click
+   * landed, half a second, gone. Nothing is left behind and nothing draws the
+   * standing order afterwards -- the answer a player wants is *did that land*,
+   * and it is answered while they are still looking at the cursor.
+   */
+  playMoveOrder(x: number, z: number): void {
+    this.vfx.play('order_move', {
+      x,
+      y: this.ground(x, z) + 2,
+      z,
+      // Derived from where it landed, like a blast's, so nothing about this
+      // reaches for a clock or a random number.
+      seed: (Math.round(x) * 73856093) ^ (Math.round(z) * 19349663),
+    });
+  }
+
   /** 0 off, 1 reduced, 2 full. Off removes the decal work, not just the pixels. */
   setGore(level: GoreLevel): void {
     this.vfx.setGore(level);
@@ -884,13 +898,6 @@ export class WorldScene {
     this.syncBodies(view, frame, dt);
     this.carryTorch(view.selfEntityId);
 
-    // Where the last right-click landed. A move order you cannot see is an
-    // order you cannot tell from a missed click.
-    this.moveMarker.visible = frame.destination !== null;
-    if (frame.destination) {
-      const { x, y } = frame.destination;
-      this.moveMarker.position.set(x, this.ground(x, y) + 6, y);
-    }
     this.syncTelegraphs(view, frame);
     this.ageEffects();
     // Advanced on whole 60Hz steps, never on `dt`: an effect stepped by elapsed

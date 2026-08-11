@@ -1,6 +1,7 @@
 import {
   PLAY_HEIGHT,
   PLAY_WIDTH,
+  SEA_LEVEL,
   WORLD_MAX_X,
   WORLD_MAX_Y,
   WORLD_MIN_X,
@@ -167,6 +168,20 @@ export const ARENA_OBSTACLES: readonly Rect[] = [
 // overlap, which is invisible on a 44-unit body. Cost is trivial: the arena
 // holds a few dozen units at most.
 export const SEPARATION_ITERATIONS = 4;
+
+// --- Walking on ground that has height (spec 056) ---
+// The steepest single-tick climb a body may make. A move that would gain more
+// height than this is a cliff, and refusing it is what stops a client walking up
+// a wall -- the heightfield half of collision, next to the collider half in
+// collision.ts.
+//
+// Here rather than in the server since spec 130, because the router has to
+// refuse exactly the steps movement refuses. `src/server/world/terrain.ts`
+// re-exports it, so the sim's own callers are unchanged.
+export const MAX_STEP_HEIGHT = 24;
+// Ground at or below this is deep water; nothing walks there, and nothing is
+// routed through it.
+export const WALKABLE_MIN_HEIGHT = SEA_LEVEL;
 
 // --- Pathfinding (spec 037) ---
 // Nav-grid cell size, and so the pitch at which the world is sampled. A cell is

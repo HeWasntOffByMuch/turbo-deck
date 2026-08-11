@@ -17,9 +17,8 @@
  */
 
 import { MOVE_EAST, MOVE_NORTH, MOVE_SOUTH, MOVE_WEST } from '../../../ui/input/actions.js';
-import { segmentClear } from '../../../sim/collision.js';
 import { PATH_RETRY_TICKS } from '../../../sim/constants.js';
-import { findPath, navGridFor } from '../../../sim/pathfinding.js';
+import { findPath, navGridFor, pathClear, type NavGround } from '../../../sim/pathfinding.js';
 import type { WorldColliders } from '../../../sim/types.js';
 
 export interface Point {
@@ -31,6 +30,11 @@ export interface Point {
 export interface PathWorld {
   readonly colliders: WorldColliders;
   readonly radius: number;
+  /**
+   * The ground a route is planned over (spec 130). Omitted is flat, which is
+   * what a sandbox has and what a test that only cares about trees wants.
+   */
+  readonly ground?: NavGround;
 }
 
 export interface MoveIntent {
@@ -278,7 +282,10 @@ export class RoutePlanner {
       this.clear();
       return null;
     }
-    if (segmentClear(self, destination, world.radius, world.colliders)) {
+    const grid = navGridFor(world.radius, world.colliders, world.ground);
+    // The ground is part of "nothing is between us" (spec 130): a cliff is not a
+    // collider, so this used to send a move order straight into one.
+    if (pathClear(grid, self, destination)) {
       this.clear();
       return null;
     }
@@ -297,7 +304,7 @@ export class RoutePlanner {
     const exhausted = !failed && this.index >= this.path.length;
 
     if (goalMoved || exhausted || tick >= this.replanAtTick) {
-      this.path = findPath(navGridFor(world.radius, world.colliders), self, destination);
+      this.path = findPath(grid, self, destination);
       this.index = 0;
       this.goal = destination;
       this.searched = true;

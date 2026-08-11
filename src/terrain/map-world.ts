@@ -6,6 +6,7 @@ import {
   quantize,
   type MapChunk,
   type MapDocument,
+  type MapLayer,
   type MapMarker,
   type MapPart,
   type MapPoint,
@@ -283,6 +284,46 @@ export class MapChunkStore {
   }
 
   /**
+   * Add a layer after construction (spec 123).
+   *
+   * A formation is a layer, and the editor makes one every time somebody draws
+   * a tier -- so a store has to be able to gain one the same way it gains a
+   * chunk. The new layer goes on the end, which is where `toDocument` will emit
+   * it; layer order carries no meaning to `heightAt`, which takes a maximum
+   * over all of them.
+   *
+   * Returns false if the id is taken, rather than replacing: overwriting a
+   * layer would drop every chunk it held, and no caller wants that by accident.
+   */
+  addLayer(layer: MapLayer): boolean {
+    if (this.layers.has(layer.id)) return false;
+    const chunks = new Map<string, StoredChunk>();
+    for (const chunk of layer.chunks) chunks.set(key(chunk.cx, chunk.cz), this.storeChunk(chunk, layer.origin));
+    this.layers.set(layer.id, {
+      id: layer.id,
+      seed: layer.seed,
+      origin: layer.origin,
+      bounds: layer.bounds,
+      baseY: layer.baseY,
+      waterLevel: layer.waterLevel,
+      grid: grid(chunks.values(), layer.origin, layer.bounds, this.cellSize),
+      chunks,
+    });
+    return true;
+  }
+
+  /**
+   * Drop a layer and everything it held (spec 123).
+   *
+   * The inverse of `addLayer`, and what undoing a formation is: carving its
+   * cells away empties its chunks, and an empty layer is one nobody wants left
+   * in the file. Returns false if there was no such layer.
+   */
+  removeLayer(layerId: string): boolean {
+    return this.layers.delete(layerId);
+  }
+
+  /**
    * Add (or replace) one chunk after construction (spec 072).
    *
    * A store is a sparse map from `(cx, cz)` to arrays, not a dense grid, so a
@@ -366,6 +407,18 @@ export class MapChunkStore {
       maxX: layer.origin.x + layer.grid.maxCol * span,
       maxZ: layer.origin.z + layer.grid.maxRow * span,
     };
+  }
+
+  /**
+   * Which chunks a layer holds, in the order `toDocument` emits them.
+   *
+   * Exists so a caller can take a layer out whole and put it back -- undoing a
+   * formation that emptied its own layer needs the chunk list *before* the
+   * stroke, and by the time the layer is gone there is nothing left to ask.
+   */
+  chunkCoords(layerId: string): ChunkCoord[] {
+    const layer = this.layers.get(layerId);
+    return layer ? sortedCoords(layer) : [];
   }
 
   /** How many chunks the layer holds, or the whole store if no layer is named. */
@@ -581,6 +634,43 @@ export class MapChunkStore {
   }
 
   /**
+   * Make one cell solid or not (spec 125).
+   *
+   * `bakeRock` and `carveRock` write solidity a rectangle at a time, through
+   * whole chunks, because that is the shape of a drag. A detail pass changes
+   * one cell at a time from a hash of its own coordinates, which is the other
+   * shape and wants the other writer.
+   */
+  setCellSolid(layerId: string, col: number, row: number, solid: boolean): void {
+    const layer = this.layers.get(layerId);
+    if (!layer) return;
+    const slot = this.cellSlot(layer, col, row);
+    if (!slot) return;
+    slot.chunk.solid[slot.index] = solid ? 1 : 0;
+  }
+
+  /** Set one cell's tone variant, the second half of its colour (spec 125). */
+  setCellTone(layerId: string, col: number, row: number, tone: number): void {
+    const layer = this.layers.get(layerId);
+    if (!layer) return;
+    const slot = this.cellSlot(layer, col, row);
+    if (!slot) return;
+    slot.chunk.tones[slot.index] = tone;
+  }
+
+  /**
+   * Whether a chunk still has any ground in it (spec 125).
+   *
+   * Erosion works cell by cell and can empty a chunk without ever intending to,
+   * so the caller needs to be able to ask rather than to have tracked it.
+   */
+  chunkHasSolid(layerId: string, cx: number, cz: number): boolean {
+    const chunk = this.layers.get(layerId)?.chunks.get(key(cx, cz));
+    if (!chunk) return false;
+    return chunk.solid.some((s) => s === 1);
+  }
+
+  /**
    * A copy of one chunk's mutable arrays, for the undo stack (spec 050).
    *
    * Everything an edit can change, and nothing derived: `cornerX`, `cornerZ` and
@@ -689,6 +779,61 @@ export class MapChunkStore {
       chunk.props.length = 0;
       chunk.props.push(...kept);
       dirty.push({ cx: chunk.cx, cz: chunk.cz });
+    }
+    return { removed, dirty };
+  }
+
+  /**
+   * Every chunk a world rectangle touches, in coordinates (spec 123).
+   *
+   * The rectangular counterpart of `chunksWithin`, and there for the same
+   * reason: a tool has to snapshot for undo before it mutates. A tier is drawn
+   * as a rectangle, and approximating one with the circle that contains it
+   * would capture -- and then clear -- ground well outside what was drawn.
+   */
+  chunksInRect(layerId: string, rect: MapRect): ChunkCoord[] {
+    const layer = this.layers.get(layerId);
+    if (!layer) return [];
+    const out: ChunkCoord[] = [];
+    for (const chunk of layer.chunks.values()) {
+      const maxX = chunk.originX + chunk.cols * this.cellSize;
+      const maxZ = chunk.originZ + chunk.rows * this.cellSize;
+      if (maxX < rect.minX || chunk.originX > rect.maxX) continue;
+      if (maxZ < rect.minZ || chunk.originZ > rect.maxZ) continue;
+      out.push({ cx: chunk.cx, cz: chunk.cz });
+    }
+    return out;
+  }
+
+  /**
+   * Remove props whose **centre** lies inside a world rectangle (spec 123).
+   *
+   * Centre rather than footprint overlap, matching `removePropsWithin`: a
+   * footprint test makes a big tree vanish while its trunk is well outside the
+   * rectangle, which reads as the tool having a mind of its own.
+   *
+   * This is what stops a formation being drawn straight through a stand of
+   * trees. They are planted on the ground layer and know nothing about a slab
+   * arriving above them, so somebody has to take them out, and the tool that
+   * put the rock there is the one that knows where it went.
+   */
+  removePropsInRect(layerId: string, rect: MapRect): { removed: Prop[]; dirty: ChunkCoord[] } {
+    const layer = this.layers.get(layerId);
+    if (!layer) return { removed: [], dirty: [] };
+    const removed: Prop[] = [];
+    const dirty: ChunkCoord[] = [];
+    for (const { cx, cz } of this.chunksInRect(layerId, rect)) {
+      const chunk = layer.chunks.get(key(cx, cz));
+      if (!chunk) continue;
+      const kept = chunk.props.filter((prop) => {
+        const inside = prop.x >= rect.minX && prop.x <= rect.maxX && prop.y >= rect.minZ && prop.y <= rect.maxZ;
+        if (inside) removed.push(prop);
+        return !inside;
+      });
+      if (kept.length === chunk.props.length) continue;
+      chunk.props.length = 0;
+      chunk.props.push(...kept);
+      dirty.push({ cx, cz });
     }
     return { removed, dirty };
   }
@@ -970,9 +1115,13 @@ export class MapChunkStore {
       // Held here rather than read off `this.doc`, so a part added since
       // construction survives a save (spec 084).
       ...(this.partList.length === 0 ? {} : { parts: this.partList }),
-      layers: this.doc.layers.map((docLayer) => {
-        const layer = this.layers.get(docLayer.id);
-        if (!layer) return docLayer;
+      // The layers *held*, not the ones the document arrived with. A store can
+      // gain a layer after construction (spec 123's formations) and lose one,
+      // and mapping over the constructor's list would drop the first silently
+      // and resurrect the second -- the same failure the chunk list and the
+      // parts list each already had. Insertion order is document order, and
+      // `addLayer` appends.
+      layers: [...this.layers.values()].map((layer) => {
         return {
           id: layer.id,
           seed: layer.seed,
@@ -1219,50 +1368,86 @@ export interface LoadedMap {
 }
 
 /**
+ * A `TerrainWorld` over the layers the store holds *right now*.
+ *
+ * A snapshot, deliberately, and not a live view (spec 123). `heightAt` runs for
+ * every entity on every tick on the server, so it is the last place to put an
+ * allocation or a set of cache lookups; the layer array it closes over is built
+ * once and iterated flat.
+ *
+ * The cost of that is a caller who adds a layer has to ask for a new world --
+ * which is the editor, once per tier drawn, and nothing else. `loadMap` builds
+ * the first one.
+ */
+export function worldFor(store: MapChunkStore): TerrainWorld {
+  const layers = store.layerIds.map((id) => bakedLayer(store, id)).filter((l): l is TerrainLayer => l !== null);
+  return createWorld(layers);
+}
+
+/**
+ * What the mesher needs to know about one layer, read live off the store.
+ *
+ * Split out of `loadMap` (spec 123) because a store can gain a layer after it
+ * was loaded -- drawing a tier in the editor is exactly that -- and the mesh
+ * for one has to come from somewhere. Everything it needs is in the store, so
+ * the document is not a parameter and a layer that was never in a file works
+ * the same as one that was.
+ *
+ * Returns null for a layer the store does not hold.
+ */
+export function meshLayerFor(store: MapChunkStore, layerId: string): MeshLayer | null {
+  const initial = store.layerInfo(layerId);
+  if (!initial) return null;
+  const fallbackBounds = initial.bounds;
+
+  // The extent the layer *declares*, not the one its chunks describe: on a
+  // streaming client those differ by exactly the chunks still in flight, and
+  // that gap is what has to read as "unknown" rather than "no ground". The
+  // declared extent is known from `MapInfo` before any chunk lands, so this
+  // answers correctly from the first frame (specs 078, 083).
+  //
+  // Read through the store on every call rather than captured once: the grid is
+  // *replaced* when a chunk arrives or a part is grown (spec 084), so a snapshot
+  // taken here freezes the world's edge where it was at load time. Everything
+  // past it then answers `false` -- "no ground" -- and the mesher walls off
+  // ground that exists, which is a map with a hole in it.
+  const declared = (col: number, row: number): boolean => {
+    const d = store.layerInfo(layerId)?.grid.declared;
+    return d !== undefined && col >= d.minCol && row >= d.minRow && col < d.maxCol && row < d.maxRow;
+  };
+
+  return {
+    id: layerId,
+    // Live too, and for the same reason: a grown layer covers more than the
+    // rectangle the document was loaded with.
+    get bounds(): MapRect {
+      return store.layerInfo(layerId)?.bounds ?? fallbackBounds;
+    },
+    get waterLevel(): number | null {
+      return store.layerInfo(layerId)?.waterLevel ?? null;
+    },
+    // Outside the declared extent is a definite no -- that is the world's edge,
+    // and the wall there is real. Inside it with no chunk behind it is `null`:
+    // unknown, and not something to grow a cliff along (spec 078).
+    solidAt: (col: number, row: number): boolean | null =>
+      declared(col, row) ? (store.cellAt(layerId, col, row)?.solid ?? null) : false,
+    materialAt: (col: number, row: number): number | null => store.cellAt(layerId, col, row)?.materialIndex ?? null,
+  };
+}
+
+/**
  * Rebuild a world from a document. The result is array-backed all the way down:
  * `world` for anything that samples the ground, `chunks` for the mesher, `props`
  * for the instanced field, and `store` for whatever wants to edit it.
  */
 export function loadMap(doc: MapDocument): LoadedMap {
   const store = new MapChunkStore(doc);
-  const layers = doc.layers.map((l) => bakedLayer(store, l.id)).filter((l): l is TerrainLayer => l !== null);
   return {
     doc,
     store,
-    world: createWorld(layers),
+    world: worldFor(store),
     chunks: store.buildChunks(),
-    meshLayers: doc.layers.map((l) => {
-      // The extent the layer *declares*, not the one its chunks describe: on a
-      // streaming client those differ by exactly the chunks still in flight,
-      // and that gap is what has to read as "unknown" rather than "no ground".
-      // The declared extent is known from `MapInfo` before any chunk lands, so
-      // this answers correctly from the first frame (specs 078, 083).
-      //
-      // Read through the store on every call rather than captured once: the
-      // grid is *replaced* when a chunk arrives or a part is grown (spec 084),
-      // so a snapshot taken here freezes the world's edge where it was at load
-      // time. Everything past it then answers `false` -- "no ground" -- and the
-      // mesher walls off ground that exists, which is a map with a hole in it.
-      const declared = (col: number, row: number): boolean => {
-        const d = store.layerInfo(l.id)?.grid.declared;
-        return d !== undefined && col >= d.minCol && row >= d.minRow && col < d.maxCol && row < d.maxRow;
-      };
-      return {
-        id: l.id,
-        // Live too, and for the same reason: a grown layer covers more than the
-        // rectangle the document was loaded with.
-        get bounds(): MapRect {
-          return store.layerInfo(l.id)?.bounds ?? l.bounds;
-        },
-        waterLevel: l.waterLevel,
-        // Outside the declared extent is a definite no -- that is the world's
-        // edge, and the wall there is real. Inside it with no chunk behind it is
-        // `null`: unknown, and not something to grow a cliff along (spec 078).
-        solidAt: (col: number, row: number): boolean | null =>
-          declared(col, row) ? (store.cellAt(l.id, col, row)?.solid ?? null) : false,
-        materialAt: (col: number, row: number): number | null => store.cellAt(l.id, col, row)?.materialIndex ?? null,
-      };
-    }),
+    meshLayers: doc.layers.map((l) => meshLayerFor(store, l.id)).filter((l): l is MeshLayer => l !== null),
     props: doc.layers.flatMap((l) => store.props(l.id)),
     markers: doc.layers.flatMap((l) => store.markers(l.id)),
   };
