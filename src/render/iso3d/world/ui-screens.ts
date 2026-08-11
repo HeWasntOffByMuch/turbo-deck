@@ -31,7 +31,7 @@
 
 import type { DrawCommand } from '../../../ui/core/draw-list.js';
 import type { Modifiers, UiEvent } from '../../../ui/core/events.js';
-import { UNBOUNDED, type Point, type Size } from '../../../ui/core/geom.js';
+import { UNBOUNDED, type Point, type Rect, type Size } from '../../../ui/core/geom.js';
 import { LayerStack } from '../../../ui/core/layers.js';
 import { UiRoot } from '../../../ui/core/root.js';
 import type { MotionPreference } from '../../../ui/core/motion.js';
@@ -45,6 +45,8 @@ import { KeybindingsScreen } from '../../../ui/screens/keybindings.js';
 import { ShopScreen } from '../../../ui/screens/shop.js';
 import { TradeScreen, type TradeUiView } from '../../../ui/screens/trade.js';
 import { OptionsScreen } from '../../../ui/screens/options.js';
+import { DisplayScreen } from '../../../ui/screens/display.js';
+import type { ScaleChoice } from '../../../ui/input/display-store.js';
 import { ScrollView } from '../../../ui/widgets/scroll-view.js';
 import { UiWindow } from '../../../ui/widgets/window.js';
 import type { InputMap } from '../../../ui/input/input-map.js';
@@ -86,6 +88,14 @@ export interface UiScreensOptions {
    * test can observe is a save nothing checks.
    */
   readonly onBindingsChanged: () => void;
+  /**
+   * The player picked an interface scale (spec 136).
+   *
+   * Same shape and same reason as `onBindingsChanged`: this half neither reads
+   * the window nor writes storage. It emits the choice; the mount honours it,
+   * saves it, and hands the result back through {@link UiScreens.setScale}.
+   */
+  readonly onScaleChosen: (choice: ScaleChoice) => void;
 }
 
 const WINDOW_TITLES: Readonly<Record<WindowId, string>> = {
@@ -124,6 +134,7 @@ export class UiScreens {
   private readonly keybindings: KeybindingsScreen;
   private readonly trade: TradeScreen;
   private readonly optionsScreen: OptionsScreen;
+  private readonly display: DisplayScreen;
 
   /** Windows whose size and position have been chosen. See the header. */
   private readonly placed = new Set<WindowId>();
@@ -263,7 +274,16 @@ export class UiScreens {
     // window of its own as well, which looked like a free convenience and was
     // not: a widget has one parent, so the second window emptied the first the
     // moment its tab was built. `K` opens this one, on this tab.
-    this.optionsScreen = new OptionsScreen({ theme: THEME, keys: this.keybindings });
+    this.display = new DisplayScreen({ theme: THEME });
+    this.display.onScaleChosen = (choice) => {
+      options.onScaleChosen(choice);
+    };
+
+    this.optionsScreen = new OptionsScreen({
+      theme: THEME,
+      keys: this.keybindings,
+      display: this.display,
+    });
 
     this.registerWindow('inventory', this.inventory);
     this.registerWindow('character', this.character);
@@ -439,15 +459,47 @@ export class UiScreens {
    * assertion that could only say "some pixels changed" would pass just as
    * happily over a demo bag as over the real one.
    */
-  readout(): { readonly windows: readonly WindowId[]; readonly bag: readonly string[] } {
+  readout(): {
+    readonly windows: readonly WindowId[];
+    readonly bag: readonly string[];
+    readonly tab: string;
+    readonly tabRects: readonly { readonly id: string; readonly rect: Rect }[];
+    readonly scaleChoice: string;
+    readonly scaleRects: readonly { readonly id: string; readonly rect: Rect }[];
+  } {
+    const tabs = this.optionsScreen.tabs;
     return {
       windows: this.opened(),
       bag: this.inventory.bagSlots.map((cell) => cell.item?.name ?? ''),
+      // The options window's tab strip, in UI pixels (spec 136). A harness
+      // cannot click a tab it cannot find, and every other way of finding one --
+      // a guessed offset, a scan for lit pixels -- is a measurement of the
+      // layout rather than of the thing being checked.
+      tab: tabs.activeId,
+      tabRects: tabs.tabIds.flatMap((id) => {
+        const rect = tabs.tabRect(id);
+        return rect ? [{ id, rect }] : [];
+      }),
+      scaleChoice: String(this.display.selected),
+      scaleRects: this.display.choiceRects(),
     };
   }
 
   resize(viewport: Size): void {
     this.root.resize(viewport);
+  }
+
+  /**
+   * Told what the scale preference is, and what it worked out to (spec 136).
+   *
+   * Both, because they are different facts: the preference is what the player
+   * chose and `effective` is what the interface is actually being drawn at, and
+   * the whole point of showing the second is that `auto` does not say which.
+   * The Display page never sets its own tick -- this is what does.
+   */
+  setScale(choice: ScaleChoice, effective: number): void {
+    this.display.setChoice(choice);
+    this.display.setEffectiveScale(effective);
   }
 
   /** Told whether the player has asked for less motion (spec 133). */

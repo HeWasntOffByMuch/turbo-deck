@@ -55,6 +55,8 @@ import { UiLayer } from './ui-layer.js';
 import { nearestVendorTo } from './shop-model.js';
 import { InputMap, type Modifiers } from '../../../ui/input/input-map.js';
 import { loadBindings, saveBindings } from '../../../ui/input/binding-store.js';
+import { loadScale, saveScale } from '../../../ui/input/display-store.js';
+import type { Rect } from '../../../ui/core/geom.js';
 import { autoAttack } from './target.js';
 import { aimShape, castOrder, startAim, type AimGesture, type AimOrder } from './aim.js';
 import { TouchGestures, type TouchSample } from './touch.js';
@@ -238,13 +240,26 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // The scale and the viewport are in the key as well as in the attributes: a
     // resize changes neither the windows nor the bag, and a readout that only
     // watched those would report the old frame forever.
-    const text = `${windows}|${bag}|${readout.scale}|${readout.viewport.width}x${readout.viewport.height}`;
+    // The options window's tab strip, in UI pixels: `id:x,y,w,h` apiece (spec
+    // 136). The harness clicks a tab with it, because the alternative is a
+    // guessed offset that passes for the wrong reason the day the layout moves.
+    const boxes = (rects: readonly { readonly id: string; readonly rect: Rect }[]): string =>
+      rects.map((box) => `${box.id}:${box.rect.x},${box.rect.y},${box.rect.width},${box.rect.height}`).join(';');
+    const tabs = boxes(readout.tabRects);
+    const scales = boxes(readout.scaleRects);
+    const text =
+      `${windows}|${bag}|${readout.scale}|${readout.viewport.width}x${readout.viewport.height}` +
+      `|${readout.tab}|${tabs}|${readout.scaleChoice}|${scales}`;
     if (text === lastUiReadout) return;
     lastUiReadout = text;
     root.dataset['uiWindows'] = windows;
     root.dataset['uiBag'] = bag;
     root.dataset['uiScale'] = String(readout.scale);
     root.dataset['uiViewport'] = `${readout.viewport.width}x${readout.viewport.height}`;
+    root.dataset['uiTab'] = readout.tab;
+    root.dataset['uiTabs'] = tabs;
+    root.dataset['uiScaleChoice'] = readout.scaleChoice;
+    root.dataset['uiScales'] = scales;
   }
 
   const hud = createHud((x, y, lift) => scene.projectPoint(x, y, lift));
@@ -382,6 +397,15 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // Written straight through, because a key the player just changed and then
     // lost to a refresh is worse than one that never saved at all.
     onBindingsChanged: () => saveBindings(bindingStorage, inputMap),
+    // Honoured and saved in the same breath, for the same reason (spec 136):
+    // the interface re-frames on the next update, so a preference that failed
+    // to save would be one the player watched work and then lose.
+    onScaleChosen: (choice) => {
+      ui.setScaleChoice(choice);
+      saveScale(bindingStorage, choice);
+    },
+    // The one place the platform is asked, beside the media queries.
+    scale: loadScale(bindingStorage),
     // Where the *player* is, not where the camera is looking: the server checks
     // the same distance from the same position, and asking about a shop the
     // server will refuse is how a window opens empty.

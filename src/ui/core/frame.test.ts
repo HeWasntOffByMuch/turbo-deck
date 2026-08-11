@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { autoUiScale, MIN_TAP_PX, tapCostInUiPixels, uiFrame, UI_SCALES } from './frame.js';
+import {
+  autoUiScale,
+  MIN_TAP_PX,
+  resolveUiScale,
+  tapCostInUiPixels,
+  uiFrame,
+  UI_SCALES,
+} from './frame.js';
 
 describe('uiFrame', () => {
   it('gives a whole-number scale and an integral viewport', () => {
@@ -183,5 +190,46 @@ describe('autoUiScale', () => {
         );
       }
     });
+  });
+});
+
+describe('resolveUiScale', () => {
+  const minViewport = { width: 300, height: 140 };
+  const options = {
+    minViewport,
+    comfortViewport: { width: 1200, height: 560 },
+    coarsePointer: false,
+    maxTapUiPx: 20,
+  };
+
+  it('defers to autoUiScale when nobody has chosen', () => {
+    for (const [w, h, dpr] of [
+      [1280, 800, 1],
+      [1920, 1080, 2],
+      [844, 390, 3],
+    ] as const) {
+      expect(resolveUiScale(null, w, h, dpr, options)).toBe(autoUiScale(w, h, dpr, options));
+    }
+  });
+
+  it('honours a choice outright, even where auto would disagree', () => {
+    // The point of the setting. Auto picks 1 on this window -- the comfort
+    // viewport is nearly the whole of it -- and a player who asked for 4 gets
+    // 4, not "4 clamped back to what we would have chosen anyway".
+    expect(autoUiScale(1280, 800, 1, options)).toBe(1);
+    expect(resolveUiScale(4, 1280, 800, 1, options)).toBe(4);
+    expect(resolveUiScale(2, 1280, 800, 1, options)).toBe(2);
+  });
+
+  it('is the scale the frame is then built at', () => {
+    const frame = uiFrame(1280, 800, 1, resolveUiScale(3, 1280, 800, 1, options));
+    expect(frame.scale).toBe(3);
+    expect(frame.width).toBe(Math.floor(1280 / 3));
+  });
+
+  it('never lets a UI pixel be fractional or smaller than a device pixel', () => {
+    expect(resolveUiScale(0, 1280, 800, 1, options)).toBe(1);
+    expect(resolveUiScale(-2, 1280, 800, 1, options)).toBe(1);
+    expect(resolveUiScale(2.7, 1280, 800, 1, options)).toBe(2);
   });
 });

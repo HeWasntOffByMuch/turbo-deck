@@ -218,6 +218,13 @@ export class TabPanel extends Column {
     return this.entries.map((entry) => entry.id);
   }
 
+  /** Where one tab's header is, clipped to the strip. Null for an unknown id. */
+  tabRect(id: string): Rect | null {
+    const entry = this.entries.find((candidate) => candidate.id === id);
+    if (!entry || !entry.tab.visible) return null;
+    return intersect(entry.tab.rect, this.strip.rect);
+  }
+
   /** Whether a tab's content has been built yet. Asserted by the tests. */
   isBuilt(id: string): boolean {
     return this.entries.find((entry) => entry.id === id)?.content !== null;

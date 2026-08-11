@@ -154,6 +154,31 @@ export function autoUiScale(
   return comfortable.length > 0 ? (comfortable[comfortable.length - 1] ?? 1) : (usable[0] ?? 1);
 }
 
+/**
+ * The scale to draw at, given what the player asked for (spec 136).
+ *
+ * `null` means they have not asked, and the answer is {@link autoUiScale}
+ * exactly as before. A number is honoured outright rather than clamped against
+ * the rules above: those rules exist to choose for somebody who has not chosen,
+ * and a preference that silently became a different number would be a setting
+ * that does not work on precisely the screens somebody would want to change it
+ * on. It is still floored at 1 and made whole, because a fractional UI pixel is
+ * not a thing this framework can draw.
+ *
+ * Here rather than in the mount because it is a rule, and the mount is the file
+ * that may read a window. Pure, so the table in `frame.test.ts` can cover it.
+ */
+export function resolveUiScale(
+  choice: number | null,
+  cssW: number,
+  cssH: number,
+  dpr: number,
+  options: AutoScaleOptions,
+): number {
+  if (choice === null) return autoUiScale(cssW, cssH, dpr, options);
+  return Math.max(1, Math.floor(choice) || 1);
+}
+
 /** Every scale whose viewport holds `need` and whose taps fit, finest first. */
 function scalesFitting(
   cssW: number,

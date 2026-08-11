@@ -904,10 +904,124 @@ async function windowKeys(page: Page, problems: string[]): Promise<void> {
     });
     console.log(`  ...with ${bindings} pixels of text on its keys tab`);
     if (bindings < 500) problems.push(`the options window opened with an empty keys tab (${bindings})`);
+    await theDisplayTab(page, problems);
   }
   // ...and shuts it again, because closing the topmost window comes first.
   const shut = await pressAndWait(page, 'Escape', '');
   if (shut !== '') problems.push(`Escape would not close the options, leaving "${shut}"`);
+}
+
+/**
+ * The options window's second tab, and the setting on it (spec 136).
+ *
+ * Clicked rather than asserted on in Node, because every part of this that can
+ * be wrong is on the far side of a canvas: whether the tab was added to the
+ * strip at all, whether a click on it reaches a widget through the mount's
+ * coordinate conversion, and whether the choice reaches the *frame* -- which is
+ * the one thing no headless test can see, since `autoUiScale` lives on the DOM
+ * side of the split.
+ *
+ * Both boxes it clicks are found from the readout rather than from an offset
+ * measured off a screenshot. A guessed coordinate passes for the wrong reason
+ * the first time the layout moves, and this window has two tabs today precisely
+ * because things get added to it.
+ */
+async function theDisplayTab(page: Page, problems: string[]): Promise<void> {
+  const start = await uiReadout(page);
+  const tab = boxNamed(start.tabs, 'display');
+  if (!tab) {
+    problems.push(`the options window has no display tab: "${start.tabs}"`);
+    return;
+  }
+  await clickUiBox(page, tab);
+  const onTab = await waitFor(page, async () => {
+    const read = await uiReadout(page);
+    return read.tab === 'display' ? read : null;
+  }, 4000);
+  if (!onTab) {
+    problems.push('clicking the Display tab did not select it');
+    return;
+  }
+  console.log(`  the options window's Display tab selects, showing ${onTab.scaleChoice}`);
+  await shoot(page, 'world-display');
+
+  // ...and the setting on it reaches the frame. `2x` rather than whatever auto
+  // chose, so the assertion is "the number the player picked" and not "some
+  // number changed".
+  const wanted = start.scale === '2' ? '3' : '2';
+  const box = boxNamed(onTab.scales, wanted);
+  if (!box) {
+    problems.push(`the Display tab offers no ${wanted}x: "${onTab.scales}"`);
+    return;
+  }
+  await clickUiBox(page, box);
+  const scaled = await waitFor(page, async () => {
+    const read = await uiReadout(page);
+    return read.scale === wanted ? read : null;
+  }, 4000);
+  if (!scaled) {
+    const now = await uiReadout(page);
+    problems.push(`choosing ${wanted}x left the interface at scale ${now.scale} (choice "${now.scaleChoice}")`);
+  } else {
+    console.log(`  choosing ${wanted}x re-framed the interface: ${scaled.viewport} UI px at scale ${scaled.scale}`);
+    // Saved, because a setting that does not survive a refresh is one the
+    // player has to make every time.
+    const stored = await page.evaluate(() => globalThis.localStorage?.getItem('turbo-deck.ui.display') ?? '');
+    if (!stored.includes(`"scale":${wanted}`)) {
+      problems.push(`choosing ${wanted}x stored "${stored}"`);
+    } else {
+      console.log(`  ...and saved it: ${stored}`);
+    }
+  }
+
+  // Back to Auto, so the rest of the script measures the interface it expects.
+  const back = boxNamed((await uiReadout(page)).scales, 'auto');
+  if (back) await clickUiBox(page, back);
+  await waitFor(page, async () => ((await uiReadout(page)).scaleChoice === 'auto' ? true : null), 4000);
+}
+
+/** One `id:x,y,w,h` out of a readout's box list, in UI pixels. */
+function boxNamed(list: string, id: string): { x: number; y: number; width: number; height: number } | null {
+  for (const entry of list.split(';')) {
+    const [name, rect] = entry.split(':');
+    if (name !== id || !rect) continue;
+    const [x, y, width, height] = rect.split(',').map(Number);
+    if (x === undefined || y === undefined || width === undefined || height === undefined) return null;
+    return { x, y, width, height };
+  }
+  return null;
+}
+
+/**
+ * Click the middle of a UI-pixel rect, converted the way the mount converts.
+ *
+ * The inverse of `UiLayer.toUi`. Derived from the canvas's own CSS box over the
+ * viewport it is reporting -- `cssWidth / uiWidth` is exactly `scale / dpr`, and
+ * asking the page for it means the harness never has to know either number.
+ */
+async function clickUiBox(
+  page: Page,
+  box: { x: number; y: number; width: number; height: number },
+): Promise<void> {
+  const read = await uiReadout(page);
+  const uiWidth = Number(read.viewport.split('x')[0]);
+  if (!Number.isFinite(uiWidth) || uiWidth <= 0) return;
+  const at = await page.evaluate(
+    ([bx, by, bw, bh, width]) => {
+      const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-ui-canvas]');
+      if (!canvas) return null;
+      const rect = canvas.getBoundingClientRect();
+      const perUiPixel = rect.width / (width ?? 1);
+      return {
+        x: rect.left + ((bx ?? 0) + (bw ?? 0) / 2) * perUiPixel,
+        y: rect.top + ((by ?? 0) + (bh ?? 0) / 2) * perUiPixel,
+      };
+    },
+    [box.x, box.y, box.width, box.height, uiWidth] as const,
+  );
+  if (!at) return;
+  await page.mouse.click(at.x, at.y);
+  await page.waitForTimeout(120);
 }
 
 /** The brief's budget: a full UI update and draw, under this. */
@@ -918,6 +1032,12 @@ interface UiReadout {
   readonly windows: string;
   readonly bag: string;
   readonly scale: string;
+  /** The options window's active tab, and every tab as `id:x,y,w,h` (spec 136). */
+  readonly tab: string;
+  readonly tabs: string;
+  /** The scale preference, and the Display tab's boxes in the same shape. */
+  readonly scaleChoice: string;
+  readonly scales: string;
   readonly viewport: string;
   readonly frameMs: string;
   readonly worstMs: string;
@@ -930,6 +1050,10 @@ async function uiReadout(page: Page): Promise<UiReadout> {
       windows: host?.dataset['uiWindows'] ?? '',
       bag: host?.dataset['uiBag'] ?? '',
       scale: host?.dataset['uiScale'] ?? '',
+      tab: host?.dataset['uiTab'] ?? '',
+      tabs: host?.dataset['uiTabs'] ?? '',
+      scaleChoice: host?.dataset['uiScaleChoice'] ?? '',
+      scales: host?.dataset['uiScales'] ?? '',
       viewport: host?.dataset['uiViewport'] ?? '',
       frameMs: host?.dataset['uiFrameMs'] ?? '',
       worstMs: host?.dataset['uiWorstMs'] ?? '',

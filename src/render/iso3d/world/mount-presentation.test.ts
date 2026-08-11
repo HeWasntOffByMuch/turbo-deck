@@ -130,6 +130,7 @@ async function play(drive: boolean): Promise<RunResult> {
       onTradeRespond: (accept) => requests.push(`tradeRespond:${accept}`),
       onTradeCancel: () => requests.push('tradeCancel'),
       onBindingsChanged: () => requests.push('bindings'),
+      onScaleChosen: (choice) => requests.push(`scale:${String(choice)}`),
       nearestVendor: () => null,
     },
     VIEWPORT,

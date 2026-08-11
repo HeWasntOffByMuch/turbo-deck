@@ -24,7 +24,7 @@
  * DOM and us.
  */
 
-import { autoUiScale, uiFrame, type UiFrame } from '../../../ui/core/frame.js';
+import { resolveUiScale, uiFrame, type UiFrame } from '../../../ui/core/frame.js';
 import { replay, type DrawCommand } from '../../../ui/core/draw-list.js';
 import type { Modifiers } from '../../../ui/core/events.js';
 import type { Point, Rect } from '../../../ui/core/geom.js';
@@ -34,9 +34,13 @@ import { THEME } from '../../../ui/theme/theme.js';
 import type { ClientView } from '../../../server/client/game-client.js';
 import type { WindowId } from './key-actions.js';
 import { UiScreens, type UiScreensOptions } from './ui-screens.js';
+import type { ScaleChoice } from '../../../ui/input/display-store.js';
 
 export type { WindowId } from './key-actions.js';
-export type UiLayerOptions = UiScreensOptions;
+export interface UiLayerOptions extends UiScreensOptions {
+  /** The saved scale preference, read at the DOM edge. `'auto'` by default. */
+  readonly scale?: ScaleChoice;
+}
 
 /** How many *drawn* frames the reported cost is taken over. Two seconds at 60fps. */
 const COST_WINDOW = 120;
@@ -45,6 +49,12 @@ const COST_WINDOW = 120;
 export interface UiReadout {
   readonly windows: readonly WindowId[];
   readonly bag: readonly string[];
+  /** The options window's active tab, and where every tab is, in UI pixels. */
+  readonly tab: string;
+  readonly tabRects: readonly { readonly id: string; readonly rect: Rect }[];
+  /** The scale preference, and where each choice's box is, in UI pixels. */
+  readonly scaleChoice: string;
+  readonly scaleRects: readonly { readonly id: string; readonly rect: Rect }[];
   /** Device pixels per UI pixel. Whole, always -- the rule the frame exists for. */
   readonly scale: number;
   readonly viewport: { readonly width: number; readonly height: number };
@@ -60,6 +70,8 @@ export class UiLayer {
 
   private readonly surface: Canvas2dSurface;
   private frame: UiFrame;
+  /** `'auto'` defers to {@link autoUiScale}; a number overrides it (spec 136). */
+  private scaleChoice: ScaleChoice = 'auto';
   private readonly costs = new Float64Array(COST_WINDOW);
   private costCursor = 0;
   /** The picture as last drawn, so an unchanged one is not drawn again. */
@@ -95,8 +107,10 @@ export class UiLayer {
     this.element.dataset['uiCanvas'] = '';
     host.append(this.element);
 
+    this.scaleChoice = options.scale ?? 'auto';
     this.frame = this.measureFrame();
     this.screens = new UiScreens(options, { width: this.frame.width, height: this.frame.height });
+    this.screens.setScale(this.scaleChoice, this.frame.scale);
     this.surface = new Canvas2dSurface(
       this.element,
       this.screens.atlas,
@@ -123,13 +137,33 @@ export class UiLayer {
     const dpr = globalThis.devicePixelRatio || 1;
     const width = Math.max(1, this.host.clientWidth);
     const height = Math.max(1, this.host.clientHeight);
-    const scale = autoUiScale(width, height, dpr, {
+    // The rule itself is `resolveUiScale`, next to `autoUiScale` where it
+    // belongs (spec 136). This file measures; it does not decide.
+    const scale = resolveUiScale(this.scaleChoice === 'auto' ? null : this.scaleChoice, width, height, dpr, {
       minViewport: THEME.input.minViewport,
       comfortViewport: THEME.input.comfortViewport,
       coarsePointer: globalThis.matchMedia?.('(pointer: coarse)').matches ?? false,
       maxTapUiPx: THEME.input.maxTapUiPx,
     });
     return uiFrame(width, height, dpr, scale);
+  }
+
+  /**
+   * Take a new scale preference and re-frame on the next update.
+   *
+   * The re-measure is deferred rather than done here for the reason the whole
+   * `frameDirty` flag exists: this is called from a click handler, and
+   * `clientWidth` in one forces the layout flush that cost 19ms a frame.
+   */
+  setScaleChoice(choice: ScaleChoice): void {
+    if (choice === this.scaleChoice) return;
+    this.scaleChoice = choice;
+    this.frameDirty = true;
+    this.screens.setScale(choice, this.frame.scale);
+  }
+
+  get scale(): number {
+    return this.frame.scale;
   }
 
   /**
@@ -220,6 +254,7 @@ export class UiLayer {
       return;
     }
     this.frame = next;
+    this.screens.setScale(this.scaleChoice, next.scale);
     // Read here, at the same cadence and in the same place as `(pointer:
     // coarse)` above (spec 133). Nothing under `src/ui/` may ask the platform
     // anything, and a preference sensed inside a widget is one no test can set.
