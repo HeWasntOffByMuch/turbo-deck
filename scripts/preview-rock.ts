@@ -79,6 +79,26 @@ async function readStatus(page: Page): Promise<string> {
   return body.replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Read the status line until it says what a tool was expected to say.
+ *
+ * A fixed wait cannot work here: the autosave timer writes its own message into
+ * the same line, so a read that is too late says "autosaved" and a read that is
+ * too early says nothing yet -- and which of those you get depends on how fast
+ * the machine is. Polling takes the first frame in which the tool has reported,
+ * whichever side of the autosave that falls.
+ */
+async function waitForStatus(page: Page, pattern: RegExp, timeoutMs = 4000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let last = '';
+  for (;;) {
+    last = await readStatus(page);
+    if (pattern.test(last)) return last;
+    if (Date.now() >= deadline) return last;
+    await page.waitForTimeout(100);
+  }
+}
+
 /** Press, move in steps so the drag handler runs, and stop short of releasing. */
 async function drag(page: Page, from: [number, number], to: [number, number]): Promise<void> {
   await page.mouse.move(from[0], from[1]);
@@ -128,8 +148,7 @@ async function main(): Promise<void> {
     await page.screenshot({ path: join(outDir, 'editor-rock-selecting.png') });
 
     await page.mouse.up();
-    await page.waitForTimeout(1200);
-    const afterFirst = await readStatus(page);
+    const afterFirst = await waitForStatus(page, /tier "rock\/\d+": \d+ cells at -?\d+/);
     const first = /tier "(rock\/\d+)": (\d+) cells at (-?\d+)/.exec(afterFirst);
     check('releasing commits the tier', first !== null, first ? first[0] : afterFirst);
     // Trees stand on the ground layer and know nothing about a slab arriving
@@ -156,8 +175,7 @@ async function main(): Promise<void> {
     await page.waitForTimeout(200);
     await drag(page, [500, 380], [700, 500]);
     await page.mouse.up();
-    await page.waitForTimeout(1200);
-    const afterSecond = await readStatus(page);
+    const afterSecond = await waitForStatus(page, /tier "rock\/\d+": \d+ cells at -?\d+/);
     const second = /tier "(rock\/\d+)": (\d+) cells at (-?\d+)/.exec(afterSecond);
     const secondTop = Number(second?.[3] ?? '0');
     check('a second tier lands, in its own layer', second !== null && second[1] !== first?.[1], second ? second[0] : afterSecond);
@@ -188,8 +206,7 @@ async function main(): Promise<void> {
     await page.waitForTimeout(300);
     await drag(page, [600, 400], [420, 560]);
     await page.mouse.up();
-    await page.waitForTimeout(1000);
-    const afterStair = await readStatus(page);
+    const afterStair = await waitForStatus(page, /stair "stair\/\d+": \d+ cells, climbing \d+/);
     const stair = /stair "(stair\/\d+)": (\d+) cells, climbing (\d+)/.exec(afterStair);
     check('the stair tool cuts a run', stair !== null, stair ? stair[0] : afterStair.slice(0, 160));
     check(
@@ -202,8 +219,7 @@ async function main(): Promise<void> {
     // A run between two points at the same height is not a stair.
     await drag(page, [200, 640], [300, 700]);
     await page.mouse.up();
-    await page.waitForTimeout(700);
-    const flat = await readStatus(page);
+    const flat = await waitForStatus(page, /stair refused/);
     check('a stair on flat ground is refused', /stair refused/.test(flat), flat.slice(0, 160));
 
     await page.keyboard.press('Control+z');
@@ -224,8 +240,7 @@ async function main(): Promise<void> {
     await page.waitForTimeout(300);
     await drag(page, [380, 300], [560, 430]);
     await page.mouse.up();
-    await page.waitForTimeout(1000);
-    const afterCarve = await readStatus(page);
+    const afterCarve = await waitForStatus(page, /carved \d+ cells/);
     check('the remove tool carves a bite out of a tier', /carved \d+ cells/.test(afterCarve), afterCarve.slice(0, 160));
     await page.screenshot({ path: join(outDir, 'editor-rock-carved.png') });
 
@@ -240,10 +255,7 @@ async function main(): Promise<void> {
     await page.mouse.move(560, 400);
     await page.mouse.down();
     await page.mouse.up();
-    // Short: the autosave timer writes its own message into the same status
-    // line, and a longer wait reads "autosaved" instead of what the tool said.
-    await page.waitForTimeout(400);
-    const afterDetail = await readStatus(page);
+    const afterDetail = await waitForStatus(page, /detailed \d+ tier\(s\)/);
     const detail = /detailed (\d+) tier\(s\): eroded (\d+) cells/.exec(afterDetail);
     check('the detail pass works a formation over', detail !== null, detail ? detail[0] : afterDetail.slice(0, 160));
     check(
