@@ -122,6 +122,18 @@ export interface GameClientOptions {
 
 /** What the renderer reads. Read-only, and free of anything derived. */
 /** The map, as a renderer sees it (spec 072). */
+/** A shop as the client sees it (spec 129). Prices are the server's, always. */
+export interface VendorView {
+  readonly id: string;
+  readonly name: string;
+  readonly stock: readonly { readonly defId: string; readonly price: number }[];
+  readonly buyback: readonly {
+    readonly defId: string;
+    readonly count: number;
+    readonly price: number;
+  }[];
+}
+
 export interface ClientMapView {
   readonly info: MapInfoMessage;
   readonly chunks: readonly HeldChunk[];
@@ -205,6 +217,16 @@ export interface ClientView {
    */
   readonly inventory: Inventory;
   readonly equipment: Equipment;
+  /** What the player can spend (spec 129). */
+  readonly coins: number;
+  /**
+   * The shop that is open, or null.
+   *
+   * Whole, and replaced by whatever the server last said -- including an empty
+   * one, which is how walking out of range closes it. A client never decides for
+   * itself that a shop is shut.
+   */
+  readonly vendor: VendorView | null;
   readonly level: number;
   readonly experience: number;
   readonly unspentSkillPoints: number;
@@ -373,10 +395,13 @@ export class GameClient {
   private serverInventory: Inventory = [];
   private serverEquipment: Equipment = EMPTY_EQUIPMENT;
   private inventory: Inventory = [];
+  private coins = 0;
+  private vendorView: VendorView | null = null;
   private equipment: Equipment = EMPTY_EQUIPMENT;
   /** Moves sent and not yet answered, oldest first. */
   private readonly pendingMoves: { readonly requestId: number; readonly request: MoveRequest }[] = [];
   private moveRequests = 0;
+  private shopRequests = 0;
   private level = 1;
   private experience = 0;
   private unspentSkillPoints = 0;
@@ -602,6 +627,63 @@ export class GameClient {
     }
     this.inventory = bag;
     this.equipment = worn;
+  }
+
+  /**
+   * Ask what a vendor has, or close whatever is open with an empty id.
+   *
+   * Nothing about a shop is predicted. A purchase is not a drag -- there is no
+   * ghost to draw and no gesture to keep up with -- and the money is the one
+   * number nobody wants to watch flicker and settle.
+   */
+  openVendor(vendorId: string): void {
+    if (!this.connected) return;
+    if (vendorId === '') this.vendorView = null;
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.OpenVendor, vendorId }));
+  }
+
+  buyItem(vendorId: string, defId: string, count = 1): number {
+    if (!this.connected) return 0;
+    this.shopRequests += 1;
+    this.channel.send(
+      encodeClientMessage({
+        type: ClientMessageType.BuyItem,
+        requestId: this.shopRequests,
+        vendorId,
+        defId,
+        count,
+      }),
+    );
+    return this.shopRequests;
+  }
+
+  sellItem(vendorId: string, index: number, count = 1): number {
+    if (!this.connected) return 0;
+    this.shopRequests += 1;
+    this.channel.send(
+      encodeClientMessage({
+        type: ClientMessageType.SellItem,
+        requestId: this.shopRequests,
+        vendorId,
+        index,
+        count,
+      }),
+    );
+    return this.shopRequests;
+  }
+
+  buyBack(vendorId: string, index: number): number {
+    if (!this.connected) return 0;
+    this.shopRequests += 1;
+    this.channel.send(
+      encodeClientMessage({
+        type: ClientMessageType.BuyBack,
+        requestId: this.shopRequests,
+        vendorId,
+        index,
+      }),
+    );
+    return this.shopRequests;
   }
 
   spendSkillPoint(skillId: string): void {
@@ -1056,6 +1138,8 @@ export class GameClient {
       stats: this.stats,
       inventory: this.inventory,
       equipment: this.equipment,
+      coins: this.coins,
+      vendor: this.vendorView,
       level: this.level,
       experience: this.experience,
       unspentSkillPoints: this.unspentSkillPoints,
@@ -1237,6 +1321,7 @@ export class GameClient {
       case ServerMessageType.Inventory:
         this.serverInventory = message.inventory;
         this.serverEquipment = message.equipment;
+        this.coins = message.coins;
         // Everything up to and including the answered request has been settled,
         // whether it was taken or refused -- the containers that arrived are the
         // truth about both. What is left is what is still in flight.
@@ -1244,6 +1329,18 @@ export class GameClient {
           this.pendingMoves.shift();
         }
         this.replayMoves();
+        break;
+
+      case ServerMessageType.VendorState:
+        this.vendorView =
+          message.vendorId === ''
+            ? null
+            : {
+                id: message.vendorId,
+                name: message.name,
+                stock: message.stock,
+                buyback: message.buyback,
+              };
         break;
 
       case ServerMessageType.Stats:

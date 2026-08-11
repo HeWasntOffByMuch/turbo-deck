@@ -242,6 +242,7 @@ function ticksFor(weapon: string | null): number {
     skills: [],
     equipment: { ...EMPTY_EQUIPMENT, ...(weapon ? { mainHand: weapon } : {}) },
     inventory: emptyInventory(),
+    coins: 0,
     position: { x: 0, y: 0, z: 0 },
     facing: 0,
     currentZone: 'greenmarch',

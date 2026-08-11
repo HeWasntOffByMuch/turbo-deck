@@ -388,10 +388,43 @@ interest set: these are markers a level designer placed, so there are tens of
 them, and an overlay that faded out at the interest radius would be worst at
 exactly the question it exists to answer.
 
+### `0x0d OpenVendor` — `str vendorId`
+### `0x0e BuyItem` — `varuint requestId` · `str vendorId` · `str defId` · `varint count`
+### `0x0f SellItem` — `varuint requestId` · `str vendorId` · `varint index` · `varint count`
+### `0x10 BuyBack` — `varuint requestId` · `str vendorId` · `varint index`
+
+Trading with a vendor (spec 129). `OpenVendor` with an empty id closes whatever
+is open. Counts and indices are **signed** for the same reason a slot address is:
+a nonsensical value is a rule refusal carrying a reason, not a corrupt frame and
+a dropped connection.
+
+All three transactions are answered with an `Inventory` at the request id — which
+now carries the purse as well as the bag, because a purchase changes both at the
+same instant — plus a fresh `VendorState`, since a sale changes what can be
+bought back. A refusal also gets `Error(RejectedAction)`.
+
+Nothing here is predicted by the client. A purchase is not a drag: there is no
+ghost to draw and no gesture to keep up with, and the money is the one number
+nobody wants to watch flicker and settle.
+
+### `0x53 VendorState`
+`str vendorId` · `str name` · `varuint stockCount` · per entry: `str defId` ·
+`varuint price` · `varuint buybackCount` · per entry: `str defId` ·
+`varuint count` · `varuint price`
+
+What a vendor offers and what can be undone (spec 129). **An empty `vendorId`
+means the shop is closed** — the answer to walking away, to a vendor that does
+not exist, and to standing too far off. A client is told rather than left holding
+a stale price list it can keep clicking.
+
+Prices are the server's, computed from `value` in `data/items.ts` times the
+vendor's rate at the moment of the answer. Buying rounds up and selling rounds
+down, so a round trip never profits.
+
 ### `0x52 Inventory`
 `varuint requestId` · `varuint slots` · per slot: `str defId` (empty = the slot
 is empty) · `varuint count` (absent for an empty slot) · then one `str` per
-`EquipSlot`, in `EQUIP_SLOTS` order (empty = nothing worn)
+`EquipSlot`, in `EQUIP_SLOTS` order (empty = nothing worn) · `varuint coins`
 
 What the player is carrying and wearing (spec 126). `requestId` is the `MoveItem`
 this answers, or `0` for an unprompted resend — login, and the equip/unequip

@@ -112,6 +112,43 @@ export interface MoveItemMessage {
   readonly count: number;
 }
 
+/**
+ * Ask a vendor what they have (spec 129).
+ *
+ * Answered with a `VendorState`, or with one carrying an empty id when the
+ * player is not close enough -- which is also how a shop is closed.
+ */
+export interface OpenVendorMessage {
+  readonly type: typeof ClientMessageType.OpenVendor;
+  /** Empty closes whatever is open. */
+  readonly vendorId: string;
+}
+
+export interface BuyItemMessage {
+  readonly type: typeof ClientMessageType.BuyItem;
+  readonly requestId: number;
+  readonly vendorId: string;
+  readonly defId: string;
+  readonly count: number;
+}
+
+export interface SellItemMessage {
+  readonly type: typeof ClientMessageType.SellItem;
+  readonly requestId: number;
+  readonly vendorId: string;
+  /** An inventory slot. Equipment is never sold off the body (spec 129). */
+  readonly index: number;
+  readonly count: number;
+}
+
+export interface BuyBackMessage {
+  readonly type: typeof ClientMessageType.BuyBack;
+  readonly requestId: number;
+  readonly vendorId: string;
+  /** An index into the buyback list the server last sent. */
+  readonly index: number;
+}
+
 export interface SpendSkillPointMessage {
   readonly type: typeof ClientMessageType.SpendSkillPoint;
   readonly skillId: string;
@@ -180,6 +217,10 @@ export type ClientMessage =
   | EquipMessage
   | UnequipMessage
   | MoveItemMessage
+  | OpenVendorMessage
+  | BuyItemMessage
+  | SellItemMessage
+  | BuyBackMessage
   | SpendSkillPointMessage
   | ChatMessage
   | UseAbilityMessage
@@ -289,6 +330,18 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
       writeAddress(writer, message.to);
       writer.varuint(message.count);
       break;
+    case ClientMessageType.OpenVendor:
+      writer.str(message.vendorId);
+      break;
+    case ClientMessageType.BuyItem:
+      writer.varuint(message.requestId).str(message.vendorId).str(message.defId).varint(message.count);
+      break;
+    case ClientMessageType.SellItem:
+      writer.varuint(message.requestId).str(message.vendorId).varint(message.index).varint(message.count);
+      break;
+    case ClientMessageType.BuyBack:
+      writer.varuint(message.requestId).str(message.vendorId).varint(message.index);
+      break;
     case ClientMessageType.SpendSkillPoint:
       writer.str(message.skillId);
       break;
@@ -353,6 +406,33 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
         from: readAddress(reader),
         to: readAddress(reader),
         count: reader.varuint(),
+      };
+    case ClientMessageType.OpenVendor:
+      return { type: ClientMessageType.OpenVendor, vendorId: reader.str() };
+    case ClientMessageType.BuyItem:
+      return {
+        type: ClientMessageType.BuyItem,
+        requestId: reader.varuint(),
+        vendorId: reader.str(),
+        defId: reader.str(),
+        // Signed, like a slot index (spec 126): a nonsensical count is a rule
+        // refusal with a reason, not a corrupt frame and a dropped connection.
+        count: reader.varint(),
+      };
+    case ClientMessageType.SellItem:
+      return {
+        type: ClientMessageType.SellItem,
+        requestId: reader.varuint(),
+        vendorId: reader.str(),
+        index: reader.varint(),
+        count: reader.varint(),
+      };
+    case ClientMessageType.BuyBack:
+      return {
+        type: ClientMessageType.BuyBack,
+        requestId: reader.varuint(),
+        vendorId: reader.str(),
+        index: reader.varint(),
       };
     case ClientMessageType.SpendSkillPoint:
       return { type: ClientMessageType.SpendSkillPoint, skillId: reader.str() };
@@ -503,6 +583,27 @@ export interface InventoryMessage {
   readonly requestId: number;
   readonly inventory: Inventory;
   readonly equipment: Equipment;
+  /**
+   * What the player can spend (spec 129).
+   *
+   * On this message because a purchase changes the bag and the purse at the same
+   * instant, and two messages for one event is two things to keep in step.
+   */
+  readonly coins: number;
+}
+
+/** What a vendor is offering, and what can be undone (spec 129). */
+export interface VendorStateMessage {
+  readonly type: typeof ServerMessageType.VendorState;
+  /** Empty means the shop is closed -- see `ServerMessageType.VendorState`. */
+  readonly vendorId: string;
+  readonly name: string;
+  readonly stock: readonly { readonly defId: string; readonly price: number }[];
+  readonly buyback: readonly {
+    readonly defId: string;
+    readonly count: number;
+    readonly price: number;
+  }[];
 }
 
 export interface ServerChatMessage {
@@ -637,6 +738,7 @@ export type ServerMessage =
   | CombatResultMessage
   | StatsMessage
   | InventoryMessage
+  | VendorStateMessage
   | ServerChatMessage
   | PongMessage
   | ErrorMessage
@@ -847,6 +949,15 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
       writer.varuint(message.requestId);
       writeInventory(writer, message.inventory);
       writeEquipment(writer, message.equipment);
+      writer.varuint(message.coins);
+      break;
+    case ServerMessageType.VendorState:
+      writer.str(message.vendorId).str(message.name).varuint(message.stock.length);
+      for (const entry of message.stock) writer.str(entry.defId).varuint(entry.price);
+      writer.varuint(message.buyback.length);
+      for (const entry of message.buyback) {
+        writer.str(entry.defId).varuint(entry.count).varuint(entry.price);
+      }
       break;
     case ServerMessageType.Chat:
       writer.u8(message.channel).str(message.from).str(message.text);
@@ -983,7 +1094,21 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         requestId: reader.varuint(),
         inventory: readInventory(reader),
         equipment: readEquipment(reader),
+        coins: reader.varuint(),
       };
+    case ServerMessageType.VendorState: {
+      const vendorId = reader.str();
+      const name = reader.str();
+      const stockCount = reader.varuint();
+      const stock: { defId: string; price: number }[] = [];
+      for (let i = 0; i < stockCount; i++) stock.push({ defId: reader.str(), price: reader.varuint() });
+      const buybackCount = reader.varuint();
+      const buyback: { defId: string; count: number; price: number }[] = [];
+      for (let i = 0; i < buybackCount; i++) {
+        buyback.push({ defId: reader.str(), count: reader.varuint(), price: reader.varuint() });
+      }
+      return { type: ServerMessageType.VendorState, vendorId, name, stock, buyback };
+    }
     case ServerMessageType.Chat:
       return {
         type: ServerMessageType.Chat,

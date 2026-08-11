@@ -38,6 +38,7 @@ const RECORD: PersistedPlayer = {
   skills: [],
   equipment: EMPTY_EQUIPMENT,
   inventory: emptyInventory(),
+  coins: 0,
   position: { x: 600, y: 450, z: 0 },
   facing: 0,
   currentZone: 'hearth',

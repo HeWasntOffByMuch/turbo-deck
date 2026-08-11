@@ -31,6 +31,13 @@ export interface ItemDefinition {
    */
   readonly basicAttackId?: string;
   /**
+   * Base worth in coins (spec 129).
+   *
+   * `0` means it cannot be sold -- and therefore cannot be bought either, since
+   * both prices are derived from this one number. Not the same as free.
+   */
+  readonly value: number;
+  /**
    * How many of this fit in one inventory slot (spec 126). Absent means 1.
    *
    * A weapon does not stack and a potion does, and that is the whole of it --
@@ -44,6 +51,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   // --- weapons ---
   {
     id: 'sword.worn',
+    value: 12,
     name: 'Worn Sword',
     slot: 'mainHand',
     levelRequirement: 1,
@@ -51,6 +59,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'sword.keen',
+    value: 90,
     name: 'Keen Longsword',
     slot: 'mainHand',
     levelRequirement: 5,
@@ -60,6 +69,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'maul.iron',
+    value: 110,
     name: 'Iron Maul',
     slot: 'mainHand',
     levelRequirement: 5,
@@ -67,6 +77,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'staff.emberwood',
+    value: 95,
     name: 'Emberwood Staff',
     slot: 'mainHand',
     levelRequirement: 4,
@@ -74,6 +85,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'bow.hunting',
+    value: 30,
     name: 'Hunting Bow',
     slot: 'mainHand',
     // Level 1 like the worn sword: these are the starting alternatives, and a
@@ -86,6 +98,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'stars.weighted',
+    value: 26,
     name: 'Weighted Stars',
     slot: 'mainHand',
     levelRequirement: 1,
@@ -95,6 +108,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   // --- off hand ---
   {
     id: 'shield.oak',
+    value: 40,
     name: 'Oak Shield',
     slot: 'offHand',
     levelRequirement: 2,
@@ -102,6 +116,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'focus.quartz',
+    value: 55,
     name: 'Quartz Focus',
     slot: 'offHand',
     levelRequirement: 3,
@@ -110,6 +125,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   // --- armour ---
   {
     id: 'helm.leather',
+    value: 15,
     name: 'Leather Cap',
     slot: 'head',
     levelRequirement: 1,
@@ -117,6 +133,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'helm.plated',
+    value: 120,
     name: 'Plated Helm',
     slot: 'head',
     levelRequirement: 6,
@@ -124,6 +141,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'chest.leather',
+    value: 22,
     name: 'Leather Jerkin',
     slot: 'chest',
     levelRequirement: 1,
@@ -131,6 +149,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'chest.scale',
+    value: 160,
     name: 'Scalemail',
     slot: 'chest',
     levelRequirement: 7,
@@ -138,6 +157,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'legs.traveller',
+    value: 18,
     name: "Traveller's Greaves",
     slot: 'legs',
     levelRequirement: 1,
@@ -146,6 +166,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   // --- trinkets ---
   {
     id: 'trinket.swiftband',
+    value: 70,
     name: 'Swiftband',
     slot: 'trinket',
     levelRequirement: 3,
@@ -153,6 +174,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'trinket.bloodstone',
+    value: 210,
     name: 'Bloodstone',
     slot: 'trinket',
     levelRequirement: 8,
@@ -164,6 +186,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   // table with no stackable item in it makes `maxStack` a hypothesis.
   {
     id: 'potion.minor',
+    value: 6,
     name: 'Minor Salve',
     slot: null,
     levelRequirement: 1,

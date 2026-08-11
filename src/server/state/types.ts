@@ -149,6 +149,13 @@ export interface PersistedPlayer {
   readonly health: number;
   /** Ability resource, clamped the same way. Live, not derived. */
   readonly resource: number;
+  /**
+   * What this character can spend (spec 129).
+   *
+   * A live resource like health, not a derived stat: it is changed by an
+   * exchange and never recomputed from a table.
+   */
+  readonly coins: number;
 }
 
 /**

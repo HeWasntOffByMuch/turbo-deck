@@ -120,6 +120,7 @@ function fastCharacter(dexterity: number, skilled: boolean): PersistedPlayer {
       : [],
     equipment: { ...EMPTY_EQUIPMENT, mainHand: 'stars.weighted' },
     inventory: emptyInventory(),
+    coins: 0,
     position: { ...DEFAULT_SPAWN },
     facing: 0,
     currentZone: 'hub',

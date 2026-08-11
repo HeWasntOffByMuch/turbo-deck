@@ -37,6 +37,7 @@ function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
     skills: [],
     equipment: EMPTY_EQUIPMENT,
     inventory: emptyInventory(),
+    coins: 0,
     position: { x: 600, y: 450, z: 0 },
     facing: 0,
     currentZone: 'hearth',
@@ -309,6 +310,8 @@ describe('persistence never carries a derived stat', () => {
     expect(Object.keys(saved ?? {}).sort()).toEqual(
       [
         'baseStats',
+        // A live resource, like health -- not a derived stat (spec 129).
+        'coins',
         'currentZone',
         'displayName',
         'equipment',

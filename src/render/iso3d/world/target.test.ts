@@ -54,6 +54,7 @@ function gate(abilityId: string, from: Point, targetRadius: number): CastDecisio
     skills: [],
     equipment: EMPTY_EQUIPMENT,
     inventory: emptyInventory(),
+    coins: 0,
     position: { x: 0, y: 0, z: 0 },
     facing: 0,
     currentZone: 'greenmarch',

@@ -30,6 +30,16 @@ import {
   sanitizeInventory,
   type MoveRequest,
 } from './inventory.js';
+import { vendorById, withinReach, type VendorDefinition } from '../data/vendors.js';
+import {
+  buy,
+  buyBack,
+  forgetSale,
+  rememberSale,
+  sell,
+  type BuybackEntry,
+  type ShopOutcome,
+} from './shop.js';
 import { spendSkillPoint, sanitizeSkills } from './skills.js';
 import { clampHealthToStats, clampResourceToStats, computeEffectiveStats } from './stats.js';
 
@@ -68,6 +78,14 @@ export function starterInventory(): Inventory {
   return bag;
 }
 
+/**
+ * What a new character has to spend (spec 129).
+ *
+ * Enough for a potion and a shield, not enough for the armourer's stock: a purse
+ * that could buy anything makes the first shop a menu rather than a choice.
+ */
+export const STARTING_COINS = 60;
+
 /** Skill points granted per level gained. */
 export const SKILL_POINTS_PER_LEVEL = 1;
 
@@ -87,6 +105,14 @@ export interface PlayerSession {
   readonly muted: boolean;
   /** Highest input seq applied, echoed in deltas so the client can reconcile. */
   readonly lastAppliedInputSeq: number;
+  /**
+   * What this player can buy back, per vendor (spec 129).
+   *
+   * On the session and never on the record: a buyback list that survived a
+   * logout would be a shop remembering a transaction from last week, and the
+   * whole point of it is undoing the click you just made.
+   */
+  readonly buyback: Readonly<Record<string, readonly BuybackEntry[]>>;
 }
 
 export type PlayerActionResult =
@@ -113,7 +139,16 @@ export class PlayerManager {
       ? // A save from before spec 126 has no `inventory` at all; it loads as an
         // empty bag and keeps whatever it was wearing. Nobody is stripped by an
         // upgrade, and nobody is handed a second starting kit for logging in.
-        { ...loaded, skills: sanitizeSkills(loaded.skills), inventory: sanitizeInventory(loaded.inventory) }
+        {
+          ...loaded,
+          skills: sanitizeSkills(loaded.skills),
+          inventory: sanitizeInventory(loaded.inventory),
+          // A save from before spec 129 has no purse. It loads as the starting
+          // one rather than as zero: an upgrade must not rob anybody, and there
+          // is no way to tell "spent it all" from "never had any" in a field
+          // that was not there.
+          coins: Number.isFinite(loaded.coins) ? Math.max(0, Math.floor(loaded.coins)) : STARTING_COINS,
+        }
       : this.createCharacter(playerId, displayName);
 
     const stats = computeEffectiveStats(record);
@@ -132,6 +167,7 @@ export class PlayerManager {
       stats,
       muted: (await this.store.getMute(playerId)) !== null,
       lastAppliedInputSeq: 0,
+      buyback: {},
     };
     this.sessions.set(playerId, session);
     await this.store.savePlayer(session.record);
@@ -154,6 +190,7 @@ export class PlayerManager {
       unspentSkillPoints: 1,
       health: 0,
       resource: 0,
+      coins: STARTING_COINS,
     };
   }
 
@@ -279,6 +316,100 @@ export class PlayerManager {
       from: equipmentAddress(slot),
       to: { container: 'inventory', index: free },
     });
+  }
+
+  /**
+   * Where a shop's transactions land (spec 129).
+   *
+   * The proximity check lives here rather than in `shop.ts` because where a
+   * player is standing is session state -- so the pure half stays drivable
+   * without a world, and there is exactly one place that knows a shop has a
+   * counter you have to walk up to.
+   */
+  private vendorInReach(session: PlayerSession, vendorId: string): VendorDefinition | string {
+    const vendor = vendorById(vendorId);
+    if (!vendor) return `no such vendor: ${vendorId}`;
+    const at = session.record.position;
+    if (!withinReach(vendor, at.x, at.y)) return `you are too far from the ${vendor.name}`;
+    return vendor;
+  }
+
+  /** What this vendor is offering, or null when it cannot be reached. */
+  vendorFor(playerId: string, vendorId: string): VendorDefinition | null {
+    const session = this.sessions.get(playerId);
+    if (!session) return null;
+    const found = this.vendorInReach(session, vendorId);
+    return typeof found === 'string' ? null : found;
+  }
+
+  /** The sales this player can undo at this vendor, newest first. */
+  buybackFor(playerId: string, vendorId: string): readonly BuybackEntry[] {
+    return this.sessions.get(playerId)?.buyback[vendorId] ?? [];
+  }
+
+  private async settle(
+    playerId: string,
+    session: PlayerSession,
+    outcome: ShopOutcome,
+    buyback: Readonly<Record<string, readonly BuybackEntry[]>>,
+  ): Promise<PlayerActionResult> {
+    if (!outcome.ok) return { ok: false, reason: outcome.reason };
+    this.commit({
+      ...session,
+      buyback,
+      record: { ...session.record, inventory: outcome.inventory, coins: outcome.coins },
+    });
+    const updated = await this.recalculate(playerId);
+    return updated ? { ok: true, session: updated } : { ok: false, reason: 'not logged in' };
+  }
+
+  async buyItem(
+    playerId: string,
+    vendorId: string,
+    defId: string,
+    count: number,
+  ): Promise<PlayerActionResult> {
+    const session = this.sessions.get(playerId);
+    if (!session) return { ok: false, reason: 'not logged in' };
+    const vendor = this.vendorInReach(session, vendorId);
+    if (typeof vendor === 'string') return { ok: false, reason: vendor };
+
+    const outcome = buy(session.record.inventory, session.record.coins, vendor, defId, count);
+    return this.settle(playerId, session, outcome, session.buyback);
+  }
+
+  async sellItem(
+    playerId: string,
+    vendorId: string,
+    index: number,
+    count: number,
+  ): Promise<PlayerActionResult> {
+    const session = this.sessions.get(playerId);
+    if (!session) return { ok: false, reason: 'not logged in' };
+    const vendor = this.vendorInReach(session, vendorId);
+    if (typeof vendor === 'string') return { ok: false, reason: vendor };
+
+    const outcome = sell(session.record.inventory, session.record.coins, vendor, index, count);
+    const buyback =
+      outcome.ok && outcome.sold
+        ? { ...session.buyback, [vendorId]: rememberSale(session.buyback[vendorId] ?? [], outcome.sold) }
+        : session.buyback;
+    return this.settle(playerId, session, outcome, buyback);
+  }
+
+  async buyBackItem(playerId: string, vendorId: string, index: number): Promise<PlayerActionResult> {
+    const session = this.sessions.get(playerId);
+    if (!session) return { ok: false, reason: 'not logged in' };
+    const vendor = this.vendorInReach(session, vendorId);
+    if (typeof vendor === 'string') return { ok: false, reason: vendor };
+
+    const list = session.buyback[vendorId] ?? [];
+    const entry = list[index];
+    if (!entry) return { ok: false, reason: 'nothing to buy back there' };
+
+    const outcome = buyBack(session.record.inventory, session.record.coins, entry);
+    const buyback = outcome.ok ? { ...session.buyback, [vendorId]: forgetSale(list, index) } : session.buyback;
+    return this.settle(playerId, session, outcome, buyback);
   }
 
   /** Validated in `skills.ts`; a rejection leaves the record untouched. */

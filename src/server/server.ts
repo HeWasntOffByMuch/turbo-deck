@@ -98,6 +98,7 @@ import type { MapIndex } from './world/map-index.js';
 import { ChunkBudget, decideChunkRequest } from './world/map-request.js';
 import { FLAT_TERRAIN, type TerrainSampler } from './world/terrain.js';
 import { ZoneManager } from './world/zone-manager.js';
+import { buyPrice } from './data/vendors.js';
 
 export interface GameServerOptions {
   readonly seed?: number;
@@ -182,6 +183,8 @@ interface Connection {
   readonly pendingCasts: PendingCast[];
   /** Cancels, stamped the same way. */
   readonly pendingCancels: PendingCancel[];
+  /** The shop this connection has open, or '' (spec 129). */
+  openVendorId: string;
   /** Bumped by every cast or cancel, so the two queues can be put back in order. */
   asks: number;
   /** The last input seq handed to the sim, so a gap in the stream is visible. */
@@ -320,6 +323,7 @@ export class GameServer implements AdminHost {
       respawnAtTick: 0,
       pendingCasts: [],
       pendingCancels: [],
+      openVendorId: '',
       asks: 0,
       appliedSeq: 0,
       lastDriftTick: 0,
@@ -456,6 +460,55 @@ export class GameServer implements AdminHost {
         // Answered either way, at the id that was asked. A refusal that said
         // nothing but "no" would leave the client's guess standing.
         this.sendInventory(connection, message.requestId);
+        break;
+      }
+
+      case ClientMessageType.OpenVendor:
+        if (connection.playerId === null) return;
+        this.sendVendorState(connection, message.vendorId);
+        break;
+
+      case ClientMessageType.BuyItem: {
+        if (connection.playerId === null) return;
+        const result = await this.players.buyItem(
+          connection.playerId,
+          message.vendorId,
+          message.defId,
+          message.count,
+        );
+        this.reportAction(connection, result.ok ? null : result.reason);
+        this.sendInventory(connection, message.requestId);
+        // The stock list itself never changes, but the buyback half of it does,
+        // and a shop that answered a sale with a stale undo list would offer to
+        // undo something twice.
+        this.sendVendorState(connection, connection.openVendorId);
+        break;
+      }
+
+      case ClientMessageType.SellItem: {
+        if (connection.playerId === null) return;
+        const result = await this.players.sellItem(
+          connection.playerId,
+          message.vendorId,
+          message.index,
+          message.count,
+        );
+        this.reportAction(connection, result.ok ? null : result.reason);
+        this.sendInventory(connection, message.requestId);
+        this.sendVendorState(connection, connection.openVendorId);
+        break;
+      }
+
+      case ClientMessageType.BuyBack: {
+        if (connection.playerId === null) return;
+        const result = await this.players.buyBackItem(
+          connection.playerId,
+          message.vendorId,
+          message.index,
+        );
+        this.reportAction(connection, result.ok ? null : result.reason);
+        this.sendInventory(connection, message.requestId);
+        this.sendVendorState(connection, connection.openVendorId);
         break;
       }
 
@@ -828,6 +881,36 @@ export class GameServer implements AdminHost {
       requestId,
       inventory: session.record.inventory,
       equipment: session.record.equipment,
+      coins: session.record.coins,
+    });
+  }
+
+  /**
+   * What the vendor this player has open is offering (spec 129).
+   *
+   * An empty id closes the shop, and is also the answer to a request the server
+   * will not serve -- a client that walked out of range is *told*, rather than
+   * being left with a stale price list it can click.
+   */
+  private sendVendorState(connection: Connection, vendorId: string): void {
+    if (connection.playerId === null) return;
+    const vendor = vendorId === '' ? null : this.players.vendorFor(connection.playerId, vendorId);
+    if (!vendor) {
+      connection.openVendorId = '';
+      this.send(connection, { type: ServerMessageType.VendorState, vendorId: '', name: '', stock: [], buyback: [] });
+      return;
+    }
+    connection.openVendorId = vendor.id;
+    this.send(connection, {
+      type: ServerMessageType.VendorState,
+      vendorId: vendor.id,
+      name: vendor.name,
+      stock: vendor.stock.map((defId) => ({ defId, price: buyPrice(defId, vendor) })),
+      buyback: this.players.buybackFor(connection.playerId, vendor.id).map((entry) => ({
+        defId: entry.defId,
+        count: entry.count,
+        price: entry.price,
+      })),
     });
   }
 

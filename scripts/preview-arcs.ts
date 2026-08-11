@@ -40,6 +40,7 @@ const RECORD: PersistedPlayer = {
   skills: [],
   equipment: EMPTY_EQUIPMENT,
   inventory: emptyInventory(),
+  coins: 0,
   position: { x: ORIGIN.x, y: ORIGIN.y, z: 0 },
   facing: 0,
   currentZone: 'greenmarch',

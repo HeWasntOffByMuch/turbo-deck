@@ -135,6 +135,25 @@ describe('game message round-trip', () => {
       afterInputSeq: 9001,
     },
     { type: ClientMessageType.CancelCast, afterInputSeq: 9002 },
+    { type: ClientMessageType.OpenVendor, vendorId: 'vendor.armourer' },
+    { type: ClientMessageType.OpenVendor, vendorId: '' },
+    {
+      type: ClientMessageType.BuyItem,
+      requestId: 3,
+      vendorId: 'vendor.quartermaster',
+      defId: 'potion.minor',
+      count: 5,
+    },
+    {
+      // A negative count is a rule refusal with a reason, so it has to survive
+      // the wire to be refused (spec 126's lesson about a slot index).
+      type: ClientMessageType.SellItem,
+      requestId: 4,
+      vendorId: 'vendor.quartermaster',
+      index: -1,
+      count: -2,
+    },
+    { type: ClientMessageType.BuyBack, requestId: 5, vendorId: 'vendor.quartermaster', index: 0 },
     {
       type: ClientMessageType.MoveItem,
       requestId: 7,
@@ -249,12 +268,14 @@ describe('game message round-trip', () => {
       requestId: 0,
       inventory: emptyInventory(),
       equipment: EMPTY_EQUIPMENT,
+      coins: 137,
     },
     {
       type: ServerMessageType.Inventory,
       requestId: 12,
       inventory: [...emptyInventory()].map(() => ({ defId: 'sword.worn', count: 1 })),
       equipment: { ...EMPTY_EQUIPMENT, mainHand: 'bow.hunting', chest: 'chest.leather' },
+      coins: 137,
     },
     {
       type: ServerMessageType.Inventory,
@@ -263,7 +284,20 @@ describe('game message round-trip', () => {
         i === 2 ? { defId: 'potion.minor', count: maxStackOf('potion.minor') } : null,
       ),
       equipment: EMPTY_EQUIPMENT,
+      coins: 137,
     },
+    {
+      type: ServerMessageType.VendorState,
+      vendorId: 'vendor.quartermaster',
+      name: 'Quartermaster',
+      stock: [
+        { defId: 'potion.minor', price: 9 },
+        { defId: 'sword.worn', price: 18 },
+      ],
+      buyback: [{ defId: 'chest.leather', count: 1, price: 8 }],
+    },
+    // A shop with nothing in it, and the empty id that means "closed".
+    { type: ServerMessageType.VendorState, vendorId: '', name: '', stock: [], buyback: [] },
     { type: ServerMessageType.Pong, nonce: 88, serverTick: 1000 },
     { type: ServerMessageType.Error, code: 7, message: 'rejected' },
     { type: ServerMessageType.Disconnect, reason: 'kicked' },

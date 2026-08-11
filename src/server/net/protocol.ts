@@ -44,6 +44,12 @@ export const ClientMessageType = {
    * handler to keep honest rather than six.
    */
   MoveItem: 0x0c,
+  /** Ask what a vendor is offering (spec 129). Refused out of range. */
+  OpenVendor: 0x0d,
+  BuyItem: 0x0e,
+  SellItem: 0x0f,
+  /** Undo a sale, at what it paid. */
+  BuyBack: 0x10,
 } as const;
 
 export const ServerMessageType = {
@@ -97,6 +103,14 @@ export const ServerMessageType = {
    * cannot rot from disuse.
    */
   Inventory: 0x52,
+  /**
+   * What a vendor is offering, and what can be bought back from it (spec 129).
+   *
+   * An empty `vendorId` means "the shop is closed" -- the answer to walking away
+   * and to a refusal alike, so a client never has to infer that it has been shut
+   * out from the absence of a message.
+   */
+  VendorState: 0x53,
 } as const;
 
 /** What a spawner is doing, as a byte (spec 076). */
