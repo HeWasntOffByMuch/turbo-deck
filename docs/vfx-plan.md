@@ -1113,6 +1113,60 @@ Three things it caught:
 
 ---
 
+## 5i. The preview was lying about what it drew
+
+Two reports about the VFX tab's viewport, one of which turned out to be a real
+clipping bug rather than a framing one.
+
+### The far plane sat exactly on the origin
+
+`new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 6000)` — hand-picked, and the
+camera orbits at a distance of **6000**. So the middle of the scene was precisely
+on the far plane and everything past it was clipped: half the ground vanished
+behind a hard horizon, the far side of an aura's ring was sliced off, and an
+effect that drifted away from the camera simply stopped being drawn. Raising the
+camera swept that plane through the scene, which is what "the auras get cut off
+on top" was.
+
+It now uses `CAMERA_NEAR`/`CAMERA_FAR` from `view-settings.ts` — the Play tab's
+own numbers, which is what this preview claims to be using everywhere else.
+
+### One dummy, standing exactly where the effect plays
+
+An effect spawns at the origin and the dummy stood there too. A capsule is twenty
+units across and forty tall, so a hit flash was inside a solid: "sometimes I
+can't see the effects". There are three dummies now, none of them at the origin,
+at different heights — the first is the attach target and the others are there
+for scale.
+
+### `previewFrame`, and what it is honestly for
+
+`vfx-frame.ts` measures an effect by playing it headlessly in a real `VfxSystem`
+and reading the extent off the pool, and the preview's box is never tighter than
+that. Measured, because a bound derived from the authored numbers has to know
+that a `size` of 110 is a *radius* for a sigil lying flat, a *height* for a flame
+standing up and a half-width for a billboard — three special cases and a fourth
+waiting for the next shape. A bounding **sphere** rather than a box, because the
+camera orbits and a box that fits head-on does not fit from above.
+
+Being straight about it: this is not what fixed the report. The tightest zoom the
+panel offers is a half-width of 200 and the widest aura needs about 127, so
+nothing in the library was ever cropped by the frustum. What it does buy is the
+camera aiming at the effect's own middle instead of a fixed height — a campfire
+was previously pointed at knee level — and a guarantee for the next effect that
+is bigger than anything here.
+
+### The check, and which half of it can fail
+
+`scripts/preview-vfx-frame.ts` photographs the tab at three cameras. Putting the
+old `6000` back makes all three frames fail on "sky in the top corner", so that
+one has teeth. The top-edge check has never been seen to fire, and the script
+says so rather than implying otherwise. A third check — "the ring is closed" —
+was written, found to pass on the very bug it was for (the telegraph's ten shafts
+put enough ink above the ring's middle to hide the clipped half) and deleted.
+
+---
+
 ## 6. Damage-type colour and shape language
 
 Written here so future effects stay coherent. Colours become named `PALETTE`

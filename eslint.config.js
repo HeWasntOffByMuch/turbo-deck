@@ -187,6 +187,9 @@ const PURE_RENDER = [
   'src/render/iso3d/studio/vfx-fields.ts',
   'src/render/iso3d/studio/curve-edit.ts',
   'src/render/iso3d/studio/vfx-json.ts',
+  // How big a box the preview needs, measured by replaying the effect headlessly
+  // (spec 122). Arithmetic over a deterministic sim, so it is checked in Node.
+  'src/render/iso3d/studio/vfx-frame.ts',
   'src/render/iso3d/studio/vfx-panels.test.ts',
   'src/render/iso3d/studio/panels.test.ts',
   // The VFX core (spec 118). Every decision an effect makes is arithmetic --

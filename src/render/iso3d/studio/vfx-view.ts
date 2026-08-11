@@ -29,6 +29,7 @@ import * as THREE from 'three';
 import { RetroPass } from '../retro-pass.js';
 import { createViewControls, type ViewControls } from '../view-controls.js';
 import { internalRenderSize } from '../view-frame.js';
+import { CAMERA_FAR, CAMERA_NEAR } from '../view-settings.js';
 import { VfxLayer } from '../vfx/layer.js';
 import { compileRegistry } from '../vfx/compile.js';
 import { EFFECTS } from '../vfx/registry.js';
@@ -59,6 +60,7 @@ import {
   type Box,
 } from './curve-edit.js';
 import { effectFromJson, effectToJson } from './vfx-json.js';
+import { previewFrame, type PreviewFrame } from './vfx-frame.js';
 
 const MONO = "'Courier New',ui-monospace,monospace";
 const PANEL = 'background:#16161e;border:1px solid #2a2a3a;padding:10px;box-sizing:border-box;';
@@ -121,6 +123,8 @@ export function mountVfxStudio(container: HTMLElement): ViewHandle {
   let groundIndex = 1;
   let handle = 0;
   let looping = true;
+  /** The box the current effect needs, measured off a headless replay of it. */
+  let fit: PreviewFrame = { span: 220, centreY: 26 };
 
   // --- the viewport --------------------------------------------------------
   const canvas = el('canvas', 'display:block;width:100%;image-rendering:pixelated;background:#101018;');
@@ -142,20 +146,44 @@ export function mountVfxStudio(container: HTMLElement): ViewHandle {
   scene.add(sun);
 
   /**
-   * The dummy: a body at the player's real drawn height, so an attached effect
-   * is judged against something the right size. A unit that is subtly the wrong
+   * The dummies: bodies at the player's real drawn height, so an effect is
+   * judged against something the right size. A unit that is subtly the wrong
    * scale looks fine alone and wrong beside anything.
+   *
+   * Several of them, and none at the origin. One dummy standing exactly where
+   * the effect plays swallows it -- a capsule is twenty units across and forty
+   * tall, so a hit flash spawned at the middle of it is simply inside a solid
+   * and the report is "sometimes I cannot see the effect". The first one is the
+   * attach target; the rest are there to stand next to.
    */
+  const DUMMIES = [
+    { x: -34, z: 0, height: 34 },
+    { x: 32, z: 22, height: 30 },
+    { x: 6, z: -40, height: 40 },
+  ] as const;
+
   const dummy = new THREE.Group();
-  const dummyBody = new THREE.Mesh(
-    new THREE.CapsuleGeometry(10, 34, 4, 8),
-    new THREE.MeshLambertMaterial({ color: 0x615a8c, flatShading: true }),
-  );
-  dummyBody.position.y = 28;
-  dummy.add(dummyBody);
+  DUMMIES.forEach((spot, index) => {
+    const body = new THREE.Mesh(
+      new THREE.CapsuleGeometry(10, spot.height, 4, 8),
+      // The attach target reads as the one being acted on; the others are scale.
+      new THREE.MeshLambertMaterial({ color: index === 0 ? 0x615a8c : 0x4a4560, flatShading: true }),
+    );
+    body.position.set(spot.x, spot.height * 0.5 + 11, spot.z);
+    dummy.add(body);
+  });
   scene.add(dummy);
 
-  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 6000);
+  /** Where an attached effect rides: the first dummy's chest. */
+  const ATTACH = DUMMIES[0];
+
+  // The Play tab's own near and far, not a hand-picked pair.
+  //
+  // This was `(1, 6000)` and the camera orbits at a distance of 6000, which put
+  // the *origin itself* exactly on the far plane: everything past the middle of
+  // the scene was clipped away, so half the ground was missing behind a hard
+  // horizon and an effect that drifted away from the camera simply vanished.
+  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, CAMERA_NEAR, CAMERA_FAR);
   let cameraSpan = 220;
 
   const HOOKS = {
@@ -163,9 +191,9 @@ export function mountVfxStudio(container: HTMLElement): ViewHandle {
     attach: (_entity: number, _socket: string, out: Float32Array, at: number): boolean => {
       // The socket preview: a point that moves, because an attached effect judged
       // against a stationary body is judged against the easy case.
-      out[at] = dummy.position.x;
+      out[at] = dummy.position.x + ATTACH.x;
       out[at + 1] = 34;
-      out[at + 2] = dummy.position.z;
+      out[at + 2] = dummy.position.z + ATTACH.z;
       return true;
     },
   };
@@ -209,6 +237,11 @@ export function mountVfxStudio(container: HTMLElement): ViewHandle {
     layer.dispose();
     layer = makeLayer();
     scene.add(layer.root);
+    const spawnY = attachToSocket ? 34 : 30;
+    // Measured once here rather than every frame: the sim is deterministic, so
+    // the answer cannot change between frames, and a box recomputed per frame
+    // would creep as the effect grew.
+    fit = previewFrame(edited, spawnY);
     handle = layer.play(edited.id, {
       x: 0,
       y: attachToSocket ? 0 : 30,
@@ -618,10 +651,15 @@ export function mountVfxStudio(container: HTMLElement): ViewHandle {
     retro.setSize(size.width, size.height);
     canvas.style.height = `${height}px`;
     const aspect = size.width / size.height;
-    camera.left = -cameraSpan * aspect * 0.5;
-    camera.right = cameraSpan * aspect * 0.5;
-    camera.top = cameraSpan * 0.5;
-    camera.bottom = -cameraSpan * 0.5;
+    // Never tighter than the effect needs. The zoom slider still zooms *out*,
+    // and a hundred-unit aura is no longer cropped the moment the camera is
+    // raised -- which it was, because a ring seen from above is twice as tall on
+    // screen as one seen edge-on and the box was a fixed multiple of the zoom.
+    const span = Math.max(cameraSpan, fit.span);
+    camera.left = -span * aspect * 0.5;
+    camera.right = span * aspect * 0.5;
+    camera.top = span * 0.5;
+    camera.bottom = -span * 0.5;
     camera.updateProjectionMatrix();
   }
 
@@ -642,14 +680,16 @@ export function mountVfxStudio(container: HTMLElement): ViewHandle {
     resize();
     const offset = controls.cameraOffset();
     camera.position.set(offset.x, offset.y, offset.z);
-    camera.lookAt(0, 26, 0);
+    // Aimed at the effect's own middle, not at a fixed height: a tall effect
+    // pointed at knee level is cropped at the top with empty ground below it.
+    camera.lookAt(0, fit.centreY, 0);
 
     // Measured around the VFX work only, which is the number the readout claims.
     const started = performance.now();
-    layer.setViewpoint(0, 26, 0);
+    layer.setViewpoint(0, fit.centreY, 0);
     // Whichever way the turntable has left the camera pointing, so the solids
     // sort correctly from every angle rather than only the isometric one.
-    layer.setViewDirection(-offset.x, 26 - offset.y, -offset.z);
+    layer.setViewDirection(-offset.x, fit.centreY - offset.y, -offset.z);
     layer.update(ticks);
     vfxCost = vfxCost * 0.9 + (performance.now() - started) * 0.1;
 
