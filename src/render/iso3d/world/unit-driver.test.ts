@@ -388,7 +388,11 @@ describe('the pig, driven to a stop through its own machine', () => {
   const DIR = 'assets/units/pig_a_pose_full';
   const read = (name: string): unknown =>
     JSON.parse(readFileSync(join(process.cwd(), DIR, name), 'utf8'));
-  const bundle = loadUnitBundle(read('pig_a_pose_full.unitdef.json'), read('pig.core.cliplib.json'));
+  // The clip library lives a directory up, with the family (spec 139): it is
+  // the biped family's, not this body's, and every member reads the same one.
+  const readFamily = (name: string): unknown =>
+    JSON.parse(readFileSync(join(process.cwd(), 'assets/units', name), 'utf8'));
+  const bundle = loadUnitBundle(read('pig_a_pose_full.unitdef.json'), readFamily('biped.core.cliplib.json'));
 
   /** Weight of one clip in a tick's poses, summed over both blending layers. */
   const weightOf = (poses: readonly { clipId: string; weight: number }[], clipId: string): number =>
@@ -473,7 +477,11 @@ describe('hasDeathAnimation', () => {
   const DIR = 'assets/units/pig_a_pose_full';
   const read = (name: string): unknown =>
     JSON.parse(readFileSync(join(process.cwd(), DIR, name), 'utf8'));
-  const bundle = loadUnitBundle(read('pig_a_pose_full.unitdef.json'), read('pig.core.cliplib.json'));
+  // The clip library lives a directory up, with the family (spec 139): it is
+  // the biped family's, not this body's, and every member reads the same one.
+  const readFamily = (name: string): unknown =>
+    JSON.parse(readFileSync(join(process.cwd(), 'assets/units', name), 'utf8'));
+  const bundle = loadUnitBundle(read('pig_a_pose_full.unitdef.json'), readFamily('biped.core.cliplib.json'));
 
   it('is true for the pig, which has a terminal state to fall into', () => {
     const unit = bundle.value?.unit;

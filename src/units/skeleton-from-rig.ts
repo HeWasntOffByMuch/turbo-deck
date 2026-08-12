@@ -140,7 +140,7 @@ export function skeletonFromRig(glb: GlbBinary, options: DeriveOptions): Derived
   }
 
   // What the rig *is*, not what was hoped for (spec 120). Recording a guess is
-  // how `pig.skeleton.json` came to claim the mixamo contract while carrying
+  // how `biped.skeleton.json` came to claim the mixamo contract while carrying
   // `L_Hand`, `Spine02` and `Hip` -- a document that validated, and three
   // separate consumers that silently found nothing in it.
   const boneNames = bones.map((bone) => bone.name);

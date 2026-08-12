@@ -43,6 +43,21 @@ export interface AuthoredUnit {
 }
 
 /**
+ * A rig family's clips, addressable without naming a body (spec 139).
+ *
+ * The clip library belongs to the family, not to whichever unit was generated
+ * first, and there is one caller that has a family and no unit at all: the
+ * Studio previewing a job that established a rig and bought no retarget. That
+ * job's own `clipGlbs` is empty, and before this the preview mounted a
+ * motionless body -- the exact case a family exists to serve.
+ */
+export interface FamilyAssets {
+  readonly id: string;
+  readonly clipLib: ClipLib;
+  readonly clipUrls: Readonly<Record<string, string>>;
+}
+
+/**
  * Every asset under `assets/units/`, keyed by the path Vite resolved it from.
  *
  * Eager, because the alternative is a promise per file and a loader that cannot
@@ -86,7 +101,7 @@ function lookup<T>(table: Record<string, T>, path: string): T | undefined {
  * Flattens `.` and `..` out of a manifest-relative path.
  *
  * A reference is relative to the document that *made* it, and a unit that
- * borrows another's clip library reaches sideways to do it -- `../pig.skeleton.json`
+ * borrows another's clip library reaches sideways to do it -- `../biped.skeleton.json`
  * from a unit folder, `clips/walk.glb` from a library one folder over. The glob
  * keys have no `..` in them, so a path carrying one matches nothing, and the two
  * callers below both treat "no match" as "leave it out" rather than as an error.
@@ -107,6 +122,7 @@ function normalize(path: string): string {
 const registry = new Map<AuthoredUnitId, AuthoredUnit>();
 /** Why a unit is not in the registry, so a caller can say more than "missing". */
 const refusals = new Map<AuthoredUnitId, string>();
+const families = new Map<string, FamilyAssets>();
 
 /**
  * The rig's root bone, read off the skeleton document rather than assumed.
@@ -188,6 +204,14 @@ for (const entry of MANIFEST.units) {
       ...(rootBone === undefined ? {} : { rootBone }),
     },
   });
+
+  // The family's clips, reachable without naming a member (spec 139). Every
+  // member resolves the same library to the same URLs, so the first one to
+  // register wins and the rest agree with it -- and a caller that has a family
+  // id and no member (the Studio previewing a job that bought no retarget) can
+  // still get a clip set.
+  const familyId = clipLib.id.replace(/\.core$/, '');
+  if (!families.has(familyId)) families.set(familyId, { id: familyId, clipLib, clipUrls });
 }
 
 /** The unit, or null when it is not there or did not validate. */
@@ -203,4 +227,14 @@ export function authoredUnitRefusal(id: AuthoredUnitId): string | null {
 /** Every unit this build can draw, for a panel or a `?units=` typo. */
 export function authoredUnitIds(): readonly AuthoredUnitId[] {
   return [...registry.keys()].sort();
+}
+
+/** A rig family's clip library and clip URLs, or null if nothing declares it. */
+export function familyAssets(id: string): FamilyAssets | null {
+  return families.get(id) ?? null;
+}
+
+/** Every family this build has clips for. */
+export function familyIds(): readonly string[] {
+  return [...families.keys()].sort();
 }

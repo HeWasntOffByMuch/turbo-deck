@@ -22,12 +22,12 @@ import type { Skeleton } from './types.js';
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const glb = splitGlb(new Uint8Array(readFileSync(join(repoRoot, 'assets', 'units', 'dev', 'mannequin.glb'))));
 const authored = JSON.parse(
-  readFileSync(join(repoRoot, 'assets', 'units', 'dev', 'biped-dev.skeleton.json'), 'utf8'),
+  readFileSync(join(repoRoot, 'assets', 'units', 'dev', 'mannequin-dev.skeleton.json'), 'utf8'),
 ) as Skeleton;
 
 function derive(): Skeleton {
   const result = skeletonFromRig(glb, {
-    id: 'biped-dev',
+    id: 'mannequin-dev',
     source: 'mannequin.glb',
     canonicalHeight: DEFAULT_CANONICAL_HEIGHT,
   });

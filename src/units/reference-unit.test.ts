@@ -9,7 +9,8 @@
 
 import { describe, expect, it } from 'vitest';
 import skeletonDoc from '../../assets/units/biped.skeleton.json' with { type: 'json' };
-import devSkeletonDoc from '../../assets/units/dev/biped-dev.skeleton.json' with { type: 'json' };
+import devSkeletonDoc from '../../assets/units/dev/mannequin-dev.skeleton.json' with { type: 'json' };
+import devUnitDef from '../../assets/units/dev/mannequin.unitdef.json' with { type: 'json' };
 import { readGlbJson, writeGlb } from './glb.js';
 import { BONE_NAMES, bindPositions, buildReferenceUnit, REFERENCE_HEIGHT } from './reference-unit.js';
 import { validateSkeleton } from './validate.js';
@@ -26,10 +27,14 @@ interface GltfNode {
 // --- the rig -----------------------------------------------------------------
 
 describe('the reference rig', () => {
-  it('is the same bone contract as the canonical skeleton', () => {
-    // The whole point of one canonical rig: a second family may exist, but a
-    // biped's bones are the bones, so clips bind by name across both.
-    expect(BONE_NAMES).toEqual(skeletonDoc.bones.map((bone) => bone.name));
+  it('is the same bone contract as its own committed skeleton', () => {
+    // The generator and the document it wrote have to agree, or the mannequin
+    // is checked against a contract it does not meet. It is held against
+    // `mannequin-dev` rather than against the shipped family (spec 139): this
+    // rig is mixamo-named and hand-authored, and the family real bodies animate
+    // on is tripo-named and measured off a generated rig. Two vocabularies, on
+    // purpose, and this is the one that keeps the mixamo half exercised.
+    expect(BONE_NAMES).toEqual(devSkeletonDoc.bones.map((bone) => bone.name));
   });
 
   it('validates, with a measured bind pose rather than a provisional one', () => {
@@ -39,12 +44,16 @@ describe('the reference rig', () => {
     expect(unit.skeleton.bindPose).not.toBeNull();
   });
 
-  it('leaves the canonical skeleton provisional', () => {
-    // Filling `biped.skeleton.json` in from a rig we drew ourselves would defeat
-    // the check it exists to make against a real generated one.
-    expect(skeletonDoc.bindPose).toBeNull();
-    expect(devSkeletonDoc.bindPose).not.toBeNull();
+  it('never becomes the family real bodies are held against', () => {
+    // The point this has always been making, now that the shipped family has a
+    // bind pose of its own (spec 139): a rig we drew ourselves must not be the
+    // contract a generated one is checked against, because then the check is
+    // against our own assumptions rather than against a real rig. So the two
+    // stay separate families, and the shipped one was measured off a body that
+    // actually came back from the auto-rig.
     expect(devSkeletonDoc.id).not.toBe(skeletonDoc.id);
+    expect(devSkeletonDoc.naming).not.toBe(skeletonDoc.naming);
+    expect(skeletonDoc.bindPose?.source).not.toBe(devUnitDef.meshRef);
   });
 
   it('stands at the height a real rig arrives at, not at world scale', () => {

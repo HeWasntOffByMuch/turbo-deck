@@ -308,8 +308,17 @@ async function main(): Promise<void> {
 
     // A failed fetch to a server that is not running logs a network error the
     // page cannot suppress; that one is expected here and is not a defect.
+    //
+    // Neither is the travel notice. `UnitRig` reports a corrected clip through
+    // `console.error` on purpose -- stripping travel *quietly* is how a clip
+    // authored with a two-metre stride ships as one that moon-walks -- and the
+    // Play tab loads the player's unit, so visiting it at all prints one per
+    // affected clip. Matched on its own shape rather than by widening the net,
+    // so an unexpected `[units]` error still fails this.
     const unexpected = consoleErrors.filter(
-      (message) => !/failed to load resource|net::ERR_|fetch/i.test(message),
+      (message) =>
+        !/failed to load resource|net::ERR_|fetch/i.test(message) &&
+        !/^\[units\] .*travels .* over the clip/i.test(message),
     );
     for (const message of unexpected) failures.push(`console error: ${message}`);
 
