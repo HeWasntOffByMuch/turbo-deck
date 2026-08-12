@@ -470,6 +470,21 @@ export class WorldScene {
     // posterized frame.
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.BasicShadowMap;
+    // Shadow maps are built once a frame, by us, rather than once per
+    // `renderer.render` call.
+    //
+    // three rebuilds every shadow map at the top of *each* `render`, and this
+    // frame calls `render` over the whole scene more than once: the hike buffers
+    // capture depth and normals, then the retro pass draws the picture. Left on
+    // three's default, that is the sun's 1024x1024 map and the torch's six
+    // 512x512 cube faces rendered twice from an identical camera over identical
+    // geometry -- measured at 1040 of the frame's 2673 draw calls, thrown away.
+    //
+    // `needsUpdate` is set in `render` below, immediately before the pass that
+    // actually samples the maps. The capture pass writes view-space normals and
+    // depth through an override material and never reads a shadow, so it is
+    // content with whatever is already there.
+    this.renderer.shadowMap.autoUpdate = false;
     this.scene.background = this.background;
 
     const frustum = cameraFrustum(DEFAULT_VIEW_HALF_WIDTH, 1);
@@ -1018,6 +1033,11 @@ export class WorldScene {
         this.background,
         hike.ink ? hike : null,
       );
+      // The one pass in the frame that samples a shadow map, so the one pass
+      // that pays for building them (see `autoUpdate` in the constructor).
+      // three clears the flag itself once the maps are drawn, which is what
+      // keeps the mask pass inside `retro.render` from rebuilding them again.
+      this.renderer.shadowMap.needsUpdate = true;
       this.retro.render(this.renderer, this.scene, this.camera);
       // Over the finished frame, which is where a line belongs: the fills are
       // settled, so the outline is a constant dark value rather than something
