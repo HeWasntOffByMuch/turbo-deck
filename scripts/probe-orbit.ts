@@ -15,6 +15,13 @@
  *
  * Serves `dist/` rather than the dev server, so what is driven is what ships.
  * Exits non-zero if a key did not turn the view.
+ *
+ * Since spec 140 it drives the two-finger swipe as well, in a second, phone-
+ * shaped context -- and the keyboard half is a regression test now rather than a
+ * feature check: `[` and `]` were dead for eleven specs, because `orbitStep`
+ * reads key codes and the set it was handed started holding rebindable action
+ * ids in spec 125. The pure test passed the whole time. This is the check that
+ * would not have.
  */
 
 import { spawn } from 'node:child_process';
@@ -22,7 +29,7 @@ import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium, type Page } from 'playwright';
+import { chromium, type Browser, type CDPSession, type Page } from 'playwright';
 import { PNG } from 'pngjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -39,6 +46,13 @@ const CHROMIUM_ARGS = [
 
 /** Degrees per second the keys are meant to turn at; mirrors `orbit-keys.ts`. */
 const DEG_PER_SECOND = 90;
+/** Degrees per canvas pixel a two-finger swipe turns at; mirrors it too (spec 140). */
+const DEG_PER_PX = 0.25;
+
+interface Point {
+  readonly x: number;
+  readonly y: number;
+}
 
 const problems: string[] = [];
 function check(what: string, ok: boolean, saw: string): void {
@@ -78,6 +92,21 @@ async function orbitDegrees(page: Page): Promise<number> {
   });
 }
 
+/**
+ * The same angle, without the panel.
+ *
+ * A phone does not build the settings popovers at all (spec 140), so the slider
+ * `orbitDegrees` reads is not in the document on exactly the device the swipe is
+ * for. `view.ts` publishes the number it writes as `data-camera-orbit`, the same
+ * way it publishes the interface's scale and open windows. `data-camera-zoom`
+ * sits beside it, and `scripts/preview-touch.ts` reads that one for the same
+ * reason: the pinch writes a slider a phone does not have either.
+ */
+async function publishedOrbit(page: Page): Promise<number> {
+  const text = await page.getAttribute('[data-camera-orbit]', 'data-camera-orbit');
+  return text === null ? Number.NaN : Number(text);
+}
+
 /** Hold a key down for a while, and report how long it was actually held. */
 async function hold(page: Page, ...codes: string[]): Promise<{ before: number; after: number; seconds: number }> {
   const before = await orbitDegrees(page);
@@ -109,6 +138,101 @@ function pixelsChanged(a: Buffer, b: Buffer): number {
     if (dr > 8 || dg > 8 || db > 8) changed += 1;
   }
   return changed;
+}
+
+/**
+ * Turn the camera with two fingers, in a phone-shaped frame (spec 140).
+ *
+ * Its own context because the gesture only exists on a touch device, and
+ * `hasTouch` is what makes `(pointer: coarse)` match -- which is also what takes
+ * the settings panel away, so the angle is read from `data-camera-orbit`.
+ *
+ * Through CDP rather than Playwright's touchscreen, for the reason
+ * `preview-touch.ts` gives: it has no two-finger gesture, and two fingers are
+ * the whole of this.
+ */
+async function probeSwipe(browser: Browser, desktop: Page): Promise<void> {
+  // The keyboard page goes first. Both tabs run a whole server, a whole world
+  // and a three.js frame loop, and on a software rasteriser two of them at once
+  // is what turns a 4-second cold start into a 60-second timeout -- which reads
+  // as "the phone build never came up" and is really "the machine is busy".
+  await desktop.close();
+
+  const context = await browser.newContext({
+    viewport: { width: 844, height: 390 },
+    hasTouch: true,
+    isMobile: true,
+  });
+  try {
+    const page = await context.newPage();
+    page.on('pageerror', (error) => problems.push(String(error)));
+    const cdp = await context.newCDPSession(page);
+
+    await page.goto(`http://localhost:${PORT}/?seed=20260806`, { waitUntil: 'load' });
+    await page.waitForSelector('[data-world-ready="true"]', { timeout: 120_000 });
+    await page.waitForTimeout(2000);
+
+    // The panel is gone on a finger, which is itself worth saying out loud here:
+    // if it came back, the rest of this probe would be reading the wrong thing.
+    check(
+      'a phone has no settings panel to read the angle off',
+      !Number.isFinite(await orbitDegrees(page)),
+      'the Orbit slider is in the document',
+    );
+
+    const start = await publishedOrbit(page);
+    check('a phone publishes the camera angle', Number.isFinite(start), String(start));
+
+    const DISTANCE = 300;
+    const before = await page.screenshot({ path: join(outDir, 'orbit-swipe-before.png') });
+    await swipe(cdp, { x: 250, y: 195 }, DISTANCE);
+    await page.waitForTimeout(300);
+    const swung = turnBetween(start, await publishedOrbit(page));
+
+    // Right, so the world follows the fingers and the camera goes anticlockwise.
+    check('a two-finger swipe right turns the view anticlockwise', swung < -1, `${swung.toFixed(1)}°`);
+    // The ceiling again, and for the same reason: "it moved, and the right way"
+    // passes happily when degrees have been handed to something wanting radians.
+    check(
+      'it turns at about the rate it claims',
+      Math.abs(swung) <= DISTANCE * DEG_PER_PX * 1.15,
+      `${swung.toFixed(1)}° for ${DISTANCE}px, at most ${(DISTANCE * DEG_PER_PX).toFixed(0)}°`,
+    );
+
+    const after = await page.screenshot({ path: join(outDir, 'orbit-swipe-after.png') });
+    const moved = pixelsChanged(before, after);
+    check('the frame is drawn from somewhere else afterwards', moved > 20_000, `${moved} px differ`);
+
+    // ...and the other way turns back.
+    const mid = await publishedOrbit(page);
+    await swipe(cdp, { x: 550, y: 195 }, -DISTANCE);
+    await page.waitForTimeout(300);
+    const back = turnBetween(mid, await publishedOrbit(page));
+    check('a two-finger swipe left turns the view clockwise', back > 1, `${back.toFixed(1)}°`);
+  } finally {
+    await context.close();
+  }
+}
+
+/**
+ * Two fingers sliding sideways, their separation held.
+ *
+ * Stepped rather than jumped, because each report is measured against the last
+ * one -- and both fingers are moved on every step, since a browser delivers one
+ * pointer per event and a step that moved only one would be half spread.
+ */
+async function swipe(cdp: CDPSession, start: Point, by: number, steps = 12): Promise<void> {
+  const SPREAD = 120;
+  const at = (dx: number): { x: number; y: number; id: number }[] => [
+    { x: start.x + dx, y: start.y, id: 1 },
+    { x: start.x + SPREAD + dx, y: start.y, id: 2 },
+  ];
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: at(0) });
+  for (let step = 1; step <= steps; step++) {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: at((by * step) / steps) });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
 }
 
 async function main(): Promise<void> {
@@ -173,6 +297,16 @@ async function main(): Promise<void> {
     // rather than pile up against the stop.
     const wrapped = await orbitDegrees(page);
     check('the angle stays on the slider’s track', wrapped >= 0 && wrapped <= 360, String(wrapped));
+
+    // The published angle is the panel's, so a probe that cannot see the panel
+    // is reading the same number and not a second one that could drift.
+    check(
+      'the published angle agrees with the slider',
+      Math.abs(turnBetween(wrapped, await publishedOrbit(page))) < 0.02,
+      `${wrapped} vs ${await publishedOrbit(page)}`,
+    );
+
+    await probeSwipe(browser, page);
 
     console.log('\n----');
     if (problems.length === 0) console.log('nothing broke.');

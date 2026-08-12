@@ -85,12 +85,28 @@ describe('TouchGestures — a second finger is not a tap', () => {
   });
 });
 
-describe('TouchGestures — pinch', () => {
+describe('TouchGestures — two fingers, spreading', () => {
   it('reports the ratio of the spread since the last report', () => {
     const gestures = new TouchGestures();
     gestures.down({ id: 1, x: 0, y: 0 });
     gestures.down({ id: 2, x: 100, y: 0 });
-    expect(gestures.move({ id: 2, x: 200, y: 0 })).toEqual({ kind: 'pinch', ratio: 2 });
+    // One finger moved 100 and the other stayed, so the midpoint moved half of
+    // that: a spread taken from one end is also a slide, and both are reported.
+    expect(gestures.move({ id: 2, x: 200, y: 0 })).toEqual({ kind: 'twoFinger', ratio: 2, dragX: 50 });
+  });
+
+  it('reports a spread about a still midpoint as zoom alone', () => {
+    // Both fingers moving out equally: this is the gesture the zoom is for, and
+    // it must not also turn the camera. The two halves have to be added up to
+    // see that -- a browser moves one pointer per event, so the first report of
+    // any two-finger gesture has one finger moved and the other not.
+    const gestures = new TouchGestures();
+    gestures.down({ id: 1, x: 100, y: 0 });
+    gestures.down({ id: 2, x: 200, y: 0 });
+    const first = gestures.move({ id: 1, x: 50, y: 0 });
+    const second = gestures.move({ id: 2, x: 250, y: 0 });
+    expect(ratioOf(first) * ratioOf(second)).toBeCloseTo(2, 10);
+    expect(dragOf(first) + dragOf(second)).toBeCloseTo(0, 10);
   });
 
   it('composes successive moves multiplicatively into the total spread', () => {
@@ -110,7 +126,11 @@ describe('TouchGestures — pinch', () => {
     const gestures = new TouchGestures();
     gestures.down({ id: 1, x: 0, y: 0 });
     gestures.down({ id: 2, x: 400, y: 0 });
-    expect(gestures.move({ id: 2, x: 100, y: 0 })).toEqual({ kind: 'pinch', ratio: 0.25 });
+    expect(gestures.move({ id: 2, x: 100, y: 0 })).toEqual({
+      kind: 'twoFinger',
+      ratio: 0.25,
+      dragX: -150,
+    });
   });
 
   it('measures the spread in both axes', () => {
@@ -118,37 +138,99 @@ describe('TouchGestures — pinch', () => {
     gestures.down({ id: 1, x: 0, y: 0 });
     gestures.down({ id: 2, x: 30, y: 40 });
     // 3-4-5: the separation is 50, and doubling each leg doubles it.
-    expect(gestures.move({ id: 2, x: 60, y: 80 })).toEqual({ kind: 'pinch', ratio: 2 });
+    expect(gestures.move({ id: 2, x: 60, y: 80 })).toEqual({ kind: 'twoFinger', ratio: 2, dragX: 15 });
   });
 
-  it('emits nothing rather than a non-finite ratio from a zero separation', () => {
+  it('costs the zoom and not the swipe when the fingers start on top of each other', () => {
     const gestures = new TouchGestures();
     gestures.down({ id: 1, x: 50, y: 50 });
     gestures.down({ id: 2, x: 50, y: 50 });
-    // Both fingers on the same point: there is no separation to take a ratio
-    // against, and 100/0 would send the zoom to a bound in one frame.
-    const first = gestures.move({ id: 2, x: 150, y: 50 });
-    expect(first).toBeNull();
+    // No separation to take a ratio against, and 100/0 would send the zoom to a
+    // bound in one frame. The midpoint is measurable either way, so the swipe
+    // still arrives -- a ratio of exactly 1 is "no zoom", not "no gesture".
+    expect(gestures.move({ id: 2, x: 150, y: 50 })).toEqual({ kind: 'twoFinger', ratio: 1, dragX: 50 });
     // ...and once they have parted, the next move measures against that.
-    expect(gestures.move({ id: 2, x: 300, y: 50 })).toEqual({ kind: 'pinch', ratio: 2.5 });
+    expect(gestures.move({ id: 2, x: 300, y: 50 })).toEqual({ kind: 'twoFinger', ratio: 2.5, dragX: 75 });
   });
 
-  it('reports no pinch with one finger down', () => {
+  it('reports nothing with one finger down', () => {
     const gestures = new TouchGestures();
     gestures.down({ id: 1, x: 0, y: 0 });
     expect(gestures.move({ id: 1, x: 80, y: 0 })).toBeNull();
   });
 
-  it('measures a resumed pinch from where the fingers are, not where they were', () => {
+  it('measures a resumed gesture from where the fingers are, not where they were', () => {
     const gestures = new TouchGestures();
     gestures.down({ id: 1, x: 0, y: 0 });
     gestures.down({ id: 2, x: 100, y: 0 });
     gestures.move({ id: 2, x: 200, y: 0 });
     gestures.up({ id: 2, x: 200, y: 0 });
     // A second finger lands somewhere new; the first move after it must not read
-    // the stale 200 as its baseline and lurch.
+    // the stale 200 as its baseline and lurch -- in the zoom or in the swing.
     gestures.down({ id: 3, x: 50, y: 0 });
-    expect(gestures.move({ id: 3, x: 100, y: 0 })).toEqual({ kind: 'pinch', ratio: 2 });
+    expect(gestures.move({ id: 3, x: 100, y: 0 })).toEqual({ kind: 'twoFinger', ratio: 2, dragX: 25 });
+  });
+});
+
+describe('TouchGestures — two fingers, swiping', () => {
+  /**
+   * Move both fingers the same distance and report the whole of it.
+   *
+   * A browser delivers one pointer per event, so a two-finger slide arrives as
+   * two reports: the first has one finger moved and the other not, which is a
+   * spread as much as a slide. Only the pair of them is the gesture, so the
+   * ratios are composed and the drags added, exactly as the view does per frame.
+   */
+  function slide(gestures: TouchGestures, from: number, by: number): { ratio: number; dragX: number } {
+    const first = gestures.move({ id: 1, x: from + by, y: 0 });
+    const second = gestures.move({ id: 2, x: from + 100 + by, y: 0 });
+    return {
+      ratio: ratioOf(first) * ratioOf(second),
+      dragX: dragOf(first) + dragOf(second),
+    };
+  }
+
+  it('reports a slide with the separation held as swipe alone', () => {
+    const gestures = new TouchGestures();
+    gestures.down({ id: 1, x: 100, y: 0 });
+    gestures.down({ id: 2, x: 200, y: 0 });
+    const gesture = slide(gestures, 100, 60);
+    // The separation is exactly what it was, so the zoom is untouched -- and the
+    // swipe is the whole distance the hand travelled.
+    expect(gesture.ratio).toBeCloseTo(1, 10);
+    expect(gesture.dragX).toBeCloseTo(60, 10);
+  });
+
+  it('adds up successive swipes into the whole slide', () => {
+    // The mirror of the ratio composing multiplicatively: a swipe reported
+    // against its own start would turn the camera by the whole gesture again on
+    // every frame of it.
+    const gestures = new TouchGestures();
+    gestures.down({ id: 1, x: 0, y: 0 });
+    gestures.down({ id: 2, x: 100, y: 0 });
+    let total = 0;
+    for (let step = 1; step <= 4; step += 1) {
+      total += dragOf(gestures.move({ id: 1, x: step * 10, y: 0 }));
+      total += dragOf(gestures.move({ id: 2, x: 100 + step * 10, y: 0 }));
+    }
+    expect(total).toBeCloseTo(40, 10);
+  });
+
+  it('swipes the other way for the other direction', () => {
+    const gestures = new TouchGestures();
+    gestures.down({ id: 1, x: 400, y: 0 });
+    gestures.down({ id: 2, x: 500, y: 0 });
+    expect(slide(gestures, 400, -80).dragX).toBeCloseTo(-80, 10);
+  });
+
+  it('ignores vertical travel: a swipe up and down turns nothing', () => {
+    const gestures = new TouchGestures();
+    gestures.down({ id: 1, x: 0, y: 0 });
+    gestures.down({ id: 2, x: 100, y: 0 });
+    gestures.move({ id: 1, x: 0, y: 200 });
+    const gesture = gestures.move({ id: 2, x: 100, y: 200 });
+    if (gesture?.kind !== 'twoFinger') throw new Error('expected two fingers');
+    expect(gesture.dragX).toBe(0);
   });
 });
 
@@ -179,8 +261,14 @@ describe('TouchGestures — cancel and clear', () => {
   });
 });
 
-/** The ratio of a gesture that must be a pinch, so the assertions stay readable. */
+/** The zoom of a gesture that must be two fingers, so the assertions stay readable. */
 function ratioOf(gesture: TouchGesture | null): number {
-  if (!gesture || gesture.kind !== 'pinch') throw new Error('expected a pinch');
+  if (!gesture || gesture.kind !== 'twoFinger') throw new Error('expected two fingers');
   return gesture.ratio;
+}
+
+/** The swing of a gesture that must be two fingers. */
+function dragOf(gesture: TouchGesture | null): number {
+  if (!gesture || gesture.kind !== 'twoFinger') throw new Error('expected two fingers');
+  return gesture.dragX;
 }

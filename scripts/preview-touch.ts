@@ -159,11 +159,32 @@ async function bodiesOnScreen(page: Page): Promise<Bar[]> {
  * so.
  */
 async function readZoom(page: Page): Promise<number> {
-  return page.evaluate(() => {
-    const inputs = Array.from(document.querySelectorAll('input[type=range]'));
-    const zoom = inputs.find((input) => (input as HTMLInputElement).max === '1400');
-    return zoom ? Number((zoom as HTMLInputElement).value) : NaN;
-  });
+  // Off the published attribute rather than off the Zoom slider: a phone does
+  // not build the settings panel at all since spec 140, and the pinch has to be
+  // checkable on the device it is for. It is the same number the slider holds --
+  // `view.ts` writes it from `ViewControls.viewHalfWidth()`.
+  const text = await page.getAttribute('[data-camera-zoom]', 'data-camera-zoom');
+  return text === null ? Number.NaN : Number(text);
+}
+
+/**
+ * Wait for a window to be open (or shut), and report the list either way.
+ *
+ * Polled rather than slept against, because the *first* window opened in a
+ * session is slow: laying a screen out, baking its atlas and painting it lands
+ * in one frame, on top of a world that is already using most of the budget. A
+ * fixed 250ms saw the state from before the tap and reported the button broken
+ * -- which is the same class of mistake the tap budget was in spec 093.
+ */
+async function waitForWindow(page: Page, id: string, open: boolean, timeoutMs = 6000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let windows = '';
+  while (Date.now() < deadline) {
+    windows = (await page.getAttribute('[data-ui-windows]', 'data-ui-windows')) ?? '';
+    if (windows.split(',').includes(id) === open) return windows;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return windows;
 }
 
 async function waitForTick(page: Page, ticks: number, timeoutMs = 90_000): Promise<void> {
@@ -224,6 +245,110 @@ async function main(): Promise<void> {
     const tapHint = /tap ground to move[^\n]*/.exec(hint)?.[0] ?? '';
     console.log(`  hint line: ${tapHint || '(still the mouse one)'}`);
     if (!tapHint) problems.push('the HUD is still telling a phone to right-click');
+
+    // --- a phone is offered the game and nothing else (spec 140) -----------
+    //
+    // The fullscreen button is not a tab and is meant to be there: it is the one
+    // control left in the bar, because a third of this frame is browser chrome.
+    const workbenches = await page.$$eval('[data-tab-bar] button', (nodes) =>
+      nodes
+        .filter((node) => !/Fullscreen|Leave fullscreen/.test(node.getAttribute('aria-label') ?? ''))
+        .map((node) => node.textContent ?? ''),
+    );
+    console.log(`  tab buttons in the bar: ${workbenches.length === 0 ? 'none' : workbenches.join(', ')}`);
+    if (workbenches.length > 0) problems.push(`a phone is still offered ${workbenches.join(', ')}`);
+
+    // The seven tuning popovers are not built at all, so the corner is world.
+    const cogs = await page.$$eval('button', (nodes) =>
+      nodes.filter((node) =>
+        /View settings|Day and night|Player lights|Retro filter|Hike look|Weather|Effects/.test(
+          node.getAttribute('aria-label') ?? node.getAttribute('title') ?? '',
+        ),
+      ).length,
+    );
+    console.log(`  tuning popovers on screen: ${cogs}`);
+    if (cogs > 0) problems.push(`${cogs} tuning popover(s) are still built on a phone`);
+
+    // ...and the developer readout is written but not drawn, which is what the
+    // tick-reading above depends on. Asserted on the painted box, not on text.
+    const readoutDrawn = await page.evaluate(() => {
+      // The *innermost* match. Every ancestor of the readout contains its text
+      // too -- the HUD root's `textContent` starts with "tick 3 delta 0" -- so a
+      // `find` over every div reports the HUD's own box and calls it drawn.
+      const panels = Array.from(document.querySelectorAll('div')).filter(
+        (node) => /^tick \d+\s+delta/.test(node.textContent ?? '') && node.children.length === 0,
+      );
+      const readout = panels[panels.length - 1];
+      if (!readout) return 'absent';
+      return readout.getBoundingClientRect().height > 0 ? 'drawn' : 'hidden';
+    });
+    console.log(`  developer readout: ${readoutDrawn}`);
+    if (readoutDrawn === 'drawn') problems.push('the developer readout is drawn on a phone');
+    if (readoutDrawn === 'absent') {
+      problems.push('the developer readout is gone entirely, and it is this harness’s clock');
+    }
+
+    // --- the three window buttons open their windows ------------------------
+    //
+    // The reason they exist: I, C and Escape are the only other way in, and a
+    // phone has none of the three.
+    for (const [id, name] of [
+      ['inventory', 'Bag'],
+      ['character', 'Gear'],
+      ['options', 'Options'],
+    ] as const) {
+      const button = await page.$(`[data-window="${id}"]`);
+      if (!button) {
+        problems.push(`no ${name} button on the HUD`);
+        continue;
+      }
+      const box = await button.boundingBox();
+      if (!box) {
+        problems.push(`the ${name} button is not laid out`);
+        continue;
+      }
+      // A real finger on the button, not `.click()`: the whole question is
+      // whether a touch reaches it rather than being eaten by the world.
+      const centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+      await tap(cdp, centre);
+      const opened = await waitForWindow(page, id, true);
+      console.log(`  tapped ${name}: windows now "${opened || 'none'}"`);
+      if (!opened.split(',').includes(id)) problems.push(`tapping ${name} did not open ${id}`);
+      // ...and it closes again, so the button is a toggle rather than a one-way
+      // door on a device with no Escape key.
+      await tap(cdp, centre);
+      const closed = await waitForWindow(page, id, false);
+      if (closed.split(',').includes(id)) problems.push(`tapping ${name} again did not close ${id}`);
+    }
+    await shoot(page, 'touch-windows');
+
+    // --- a tap inside an open window is not also a move order ---------------
+    const bagButton = await page.$('[data-window="inventory"]');
+    const bagBox = await bagButton?.boundingBox();
+    if (bagBox) {
+      await tap(cdp, { x: bagBox.x + bagBox.width / 2, y: bagBox.y + bagBox.height / 2 });
+      await waitForWindow(page, 'inventory', true);
+      const cells = (await page.getAttribute('[data-ui-cells]', 'data-ui-cells')) ?? '';
+      const first = /(-?\d+),(-?\d+),(\d+),(\d+)/.exec(cells.split(';')[0] ?? '');
+      const scale = Number((await page.getAttribute('[data-ui-scale]', 'data-ui-scale')) ?? '1');
+      if (first) {
+        // UI pixels back to CSS pixels: the layer scales by `scale` over dpr.
+        const dpr = await page.evaluate(() => window.devicePixelRatio);
+        const cx = ((Number(first[1]) + Number(first[3]) / 2) * scale) / dpr;
+        const cy = ((Number(first[2]) + Number(first[4]) / 2) * scale) / dpr;
+        const before = await readTarget(page);
+        await tap(cdp, { x: cx, y: cy });
+        await page.waitForTimeout(300);
+        const after = await readTarget(page);
+        console.log(`  tap inside the open bag at ${Math.round(cx)},${Math.round(cy)}: "${before}" -> "${after}"`);
+        if (after !== before) {
+          problems.push(`a tap inside the bag reached the world ("${before}" -> "${after}")`);
+        }
+      }
+      // Leave it closed, so the rest of the run sees the world.
+      await tap(cdp, { x: bagBox.x + bagBox.width / 2, y: bagBox.y + bagBox.height / 2 });
+      await waitForWindow(page, 'inventory', false);
+    }
 
     // --- the fullscreen button exists on a coarse pointer -------------------
     const fullscreen = await page.$$eval('button', (nodes) =>
