@@ -36,7 +36,7 @@ function main(): void {
   const frame = bodyFrame(nodes, naming);
   if (!frame) throw new Error('the pig rig has no measurable body frame');
   const skeleton = validateSkeleton(
-    JSON.parse(readFileSync(join(repoRoot, 'assets', 'units', 'pig.skeleton.json'), 'utf8')),
+    JSON.parse(readFileSync(join(repoRoot, 'assets', 'units', 'biped.skeleton.json'), 'utf8')),
   ).value;
   const socket = skeleton?.sockets.find((entry) => entry.id === 'weapon.main');
   const bone = nodes.find((node) => node.name === socket?.bone);

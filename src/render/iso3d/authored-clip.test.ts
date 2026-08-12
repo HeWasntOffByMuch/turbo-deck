@@ -29,6 +29,8 @@ import { STRIKE_CLIP_ID, STRIKE_DURATION_MS } from '../../units/pig-strike.js';
 import { rootMotionTrackNames, trackTravel } from '../../units/root-motion.js';
 
 const UNIT_DIR = join(process.cwd(), 'assets', 'units', 'pig_a_pose_full');
+/** The family's clips, which moved out of the unit folder when the fox joined. */
+const CLIP_DIR = join(process.cwd(), 'assets', 'units', 'clips');
 
 function read(path: string): ArrayBuffer {
   const bytes = readFileSync(path);
@@ -50,7 +52,7 @@ async function parseClip(path: string): Promise<AnimationClip> {
 }
 
 describe('the authored swing, through three’s own loader', async () => {
-  const clip = await parseClip(join(UNIT_DIR, 'clips', `${STRIKE_CLIP_ID}.glb`));
+  const clip = await parseClip(join(CLIP_DIR, `${STRIKE_CLIP_ID}.glb`));
   const meshBones = new Set(
     readNodeTree(splitGlb(new Uint8Array(readFileSync(join(UNIT_DIR, 'pig_a_pose_full.glb'))))).map((node) => node.name),
   );

@@ -24,11 +24,13 @@ import { CastPhaseValue, EntityActivity } from '../../../server/net/protocol.js'
 import { driveUnit, type UnitFacts } from './unit-driver.js';
 
 const UNIT_DIR = join(process.cwd(), 'assets', 'units', 'pig_a_pose_full');
+/** The family's own documents, one level above each member. */
+const FAMILY_DIR = join(process.cwd(), 'assets', 'units');
 
 describe('the trigger finally reaches a state', () => {
   const bundle = loadUnitBundle(
     JSON.parse(readFileSync(join(UNIT_DIR, 'pig_a_pose_full.unitdef.json'), 'utf8')),
-    JSON.parse(readFileSync(join(UNIT_DIR, 'pig.core.cliplib.json'), 'utf8')),
+    JSON.parse(readFileSync(join(FAMILY_DIR, 'biped.core.cliplib.json'), 'utf8')),
   );
 
   it('loads the pig’s own documents without an error', () => {

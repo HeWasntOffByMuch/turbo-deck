@@ -10,7 +10,7 @@
  *
  * So this states the orientation in the *body's* own axes, which is the only
  * frame the requirement is expressible in, and prints the euler degrees that
- * produce it. Paste them into `pig.skeleton.json`; `preview-weapon.ts` is what
+ * produce it. Paste them into `biped.skeleton.json`; `preview-weapon.ts` is what
  * confirms the result looks like what the words meant.
  */
 
@@ -28,6 +28,8 @@ import { validateSkeleton } from '../src/units/validate.js';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const UNIT_DIR = join(repoRoot, 'assets', 'units', 'pig_a_pose_full');
+/** The family's clips, which moved out of the unit folder when the fox joined. */
+const CLIP_DIR = join(repoRoot, 'assets', 'units', 'clips');
 
 function scaled(v: Vec3, k: number): Vec3 {
   return [v[0] * k, v[1] * k, v[2] * k];
@@ -44,9 +46,9 @@ function main(): void {
   const frame = bodyFrame(nodes, naming);
   if (!frame) throw new Error('the pig rig has no measurable body frame');
   const skeleton = validateSkeleton(
-    JSON.parse(readFileSync(join(repoRoot, 'assets', 'units', 'pig.skeleton.json'), 'utf8')),
+    JSON.parse(readFileSync(join(repoRoot, 'assets', 'units', 'biped.skeleton.json'), 'utf8')),
   ).value;
-  if (!skeleton) throw new Error('pig.skeleton.json does not validate');
+  if (!skeleton) throw new Error('biped.skeleton.json does not validate');
 
   const forward = frame.forward;
   const up = frame.up;
@@ -65,7 +67,7 @@ function main(): void {
   // The idle's right hand barely moves over its fifteen seconds (the blade's
   // elevation varies by under two degrees), so any frame will do and frame zero
   // is the one that needs no explaining.
-  const idle = splitGlb(new Uint8Array(readFileSync(join(UNIT_DIR, 'clips', 'idle.glb'))));
+  const idle = splitGlb(new Uint8Array(readFileSync(join(CLIP_DIR, 'idle.glb'))));
   const world = poseWorldMatrices(nodes, clipPoseAt(idle, nodes, 0));
   const strikeGuard = poseWorldMatrices(nodes, poseAt(PIG_STRIKE, { nodes, naming }, STRIKE_KEY_MS.guard));
   const round = (value: number): number => Math.round(value * 10) / 10;

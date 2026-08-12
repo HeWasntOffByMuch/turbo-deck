@@ -146,7 +146,7 @@ function matrixToQuat(m: readonly number[]): Quat {
 /**
  * The socket rotation that puts a held weapon into a chosen world orientation.
  *
- * The calibration in `pig.skeleton.json` used to be *swept* -- candidate euler
+ * The calibration in `biped.skeleton.json` used to be *swept* -- candidate euler
  * triples rendered side by side until one looked right. That is the correct way
  * to answer "which of these looks better" and a poor way to answer "hold it
  * edge-up, pointing forward", because the second question has an exact answer

@@ -99,7 +99,7 @@ describe('the body frame', () => {
     // measurement. They have disagreed before, on a different rig, and the
     // symptom was a unit that faced the camera and walked backwards.
     const skeleton = JSON.parse(
-      readFileSync(join(process.cwd(), 'assets', 'units', 'pig.skeleton.json'), 'utf8'),
+      readFileSync(join(process.cwd(), 'assets', 'units', 'biped.skeleton.json'), 'utf8'),
     ) as { forwardAxis: string; upAxis: string };
     expect(skeleton.forwardAxis).toBe('+X');
     expect(frame.forward[0]).toBeGreaterThan(0.99);

@@ -9,7 +9,7 @@
  * pure and lives in `src/units/`, and this file is only the part that cannot be,
  * which is reading a rig off disk and putting bytes back.
  *
- * The rig is read from **the mesh**, not from `pig.skeleton.json`. The document
+ * The rig is read from **the mesh**, not from `biped.skeleton.json`. The document
  * would do for the bone names, and the difference is the bind rotations: those
  * are what every authored offset is composed onto and what three will actually
  * load. Reading them from the file the game fetches is the only way the two
@@ -34,8 +34,10 @@ import type { PoseKey } from '../src/units/clip-author.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const UNIT_DIR = join(repoRoot, 'assets', 'units', 'pig_a_pose_full');
+/** The family's clips, which moved out of the unit folder when the fox joined. */
+const CLIP_DIR = join(repoRoot, 'assets', 'units', 'clips');
 const MESH = join(UNIT_DIR, 'pig_a_pose_full.glb');
-const OUT = join(UNIT_DIR, 'clips', `${STRIKE_CLIP_ID}.glb`);
+const OUT = join(CLIP_DIR, `${STRIKE_CLIP_ID}.glb`);
 
 const GENERATOR = 'turbo-deck authored clip (spec 139)';
 

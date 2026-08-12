@@ -40,6 +40,8 @@ import type { Vec3 } from './types.js';
 
 const ITEMS = join(process.cwd(), 'assets', 'items');
 const UNIT_DIR = join(process.cwd(), 'assets', 'units', 'pig_a_pose_full');
+/** The family's clips, which moved out of the unit folder when the fox joined. */
+const CLIP_DIR = join(process.cwd(), 'assets', 'units', 'clips');
 
 /** The bounds of a `.glb`, off the POSITION accessors the spec guarantees. */
 function boundsOf(path: string): MeshBounds {
@@ -197,7 +199,7 @@ describe('the weapons that actually ship', () => {
       JSON.parse(readFileSync(join(ITEMS, id, `${id}.weapondef.json`), 'utf8')),
     ).value;
     const skeleton = validateSkeleton(
-      JSON.parse(readFileSync(join(process.cwd(), 'assets', 'units', 'pig.skeleton.json'), 'utf8')),
+      JSON.parse(readFileSync(join(process.cwd(), 'assets', 'units', 'biped.skeleton.json'), 'utf8')),
     ).value;
     expect(weapon).not.toBeNull();
     expect(skeleton).not.toBeNull();
@@ -258,9 +260,9 @@ describe('how the pig holds a sword', () => {
   const frame = bodyFrame(nodes, naming);
   if (!frame) throw new Error('the pig rig has no measurable body frame');
   const skeleton = validateSkeleton(
-    JSON.parse(readFileSync(join(process.cwd(), 'assets', 'units', 'pig.skeleton.json'), 'utf8')),
+    JSON.parse(readFileSync(join(process.cwd(), 'assets', 'units', 'biped.skeleton.json'), 'utf8')),
   ).value;
-  if (!skeleton) throw new Error('pig.skeleton.json does not validate');
+  if (!skeleton) throw new Error('biped.skeleton.json does not validate');
 
   const FORWARD = frame.forward;
   const UP = frame.up;
@@ -373,7 +375,7 @@ describe('how the pig holds a sword', () => {
    * wearing a sword is in essentially all of the time.
    */
   const idlePose = clipPoseAt(
-    splitGlb(new Uint8Array(readFileSync(join(UNIT_DIR, 'clips', 'idle.glb')))),
+    splitGlb(new Uint8Array(readFileSync(join(CLIP_DIR, 'idle.glb')))),
     nodes,
     0,
   );

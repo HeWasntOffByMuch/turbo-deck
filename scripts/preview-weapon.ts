@@ -10,7 +10,7 @@
 // guess about which way a hand points. The whole grip chain runs here exactly as
 // `weapon-rig.ts` builds it in the browser -- the same `gripTransform`, the same
 // socket euler order -- so a number that looks right in this picture is a number
-// that can be pasted into `pig.skeleton.json` and be right there too.
+// that can be pasted into `biped.skeleton.json` and be right there too.
 //
 // The rasteriser is the one from `preview-strike.ts`, which is the one from
 // `preview-deform.ts`. Copied for the reason those say: there is no GPU here.
@@ -212,10 +212,10 @@ function main(): void {
   const rig = { nodes, naming };
 
   const skeleton = validateSkeleton(
-    JSON.parse(readFileSync(join(repoRoot, 'assets', 'units', 'pig.skeleton.json'), 'utf8')),
+    JSON.parse(readFileSync(join(repoRoot, 'assets', 'units', 'biped.skeleton.json'), 'utf8')),
   ).value;
   if (!skeleton) {
-    console.error('pig.skeleton.json does not validate');
+    console.error('biped.skeleton.json does not validate');
     process.exitCode = 1;
     return;
   }

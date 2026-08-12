@@ -38,6 +38,8 @@ import { validateSkeleton } from '../src/units/validate.js';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const UNIT_DIR = join(repoRoot, 'assets', 'units', 'pig_a_pose_full');
+/** The family's clips, which moved out of the unit folder when the fox joined. */
+const CLIP_DIR = join(repoRoot, 'assets', 'units', 'clips');
 
 /** How wide a slab of the body counts as "beside the socket", in rig units. */
 const BAND = 0.1;
@@ -50,14 +52,14 @@ function main(): void {
   const frame = bodyFrame(nodes, naming);
   if (!frame) throw new Error('the pig rig has no measurable body frame');
   const skeleton = validateSkeleton(
-    JSON.parse(readFileSync(join(repoRoot, 'assets', 'units', 'pig.skeleton.json'), 'utf8')),
+    JSON.parse(readFileSync(join(repoRoot, 'assets', 'units', 'biped.skeleton.json'), 'utf8')),
   ).value;
-  if (!skeleton) throw new Error('pig.skeleton.json does not validate');
+  if (!skeleton) throw new Error('biped.skeleton.json does not validate');
 
   const right: Vec3 = [-frame.lateral[0], -frame.lateral[1], -frame.lateral[2]];
   const dot = (a: Vec3, b: Vec3): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
-  const idle = splitGlb(new Uint8Array(readFileSync(join(UNIT_DIR, 'clips', 'idle.glb'))));
+  const idle = splitGlb(new Uint8Array(readFileSync(join(CLIP_DIR, 'idle.glb'))));
   const world = poseWorldMatrices(nodes, clipPoseAt(idle, nodes, 0));
   const mesh = readSkinnedMesh(glb);
   if (!mesh) throw new Error('the pig mesh has no skin to measure a surface from');

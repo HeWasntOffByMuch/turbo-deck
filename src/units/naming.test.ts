@@ -8,8 +8,8 @@ function bonesOf(path: string): string[] {
   return doc.bones.map((bone) => bone.name);
 }
 
-const PIG = bonesOf('assets/units/pig.skeleton.json');
-const MANNEQUIN = bonesOf('assets/units/dev/biped-dev.skeleton.json');
+const PIG = bonesOf('assets/units/biped.skeleton.json');
+const MANNEQUIN = bonesOf('assets/units/dev/mannequin-dev.skeleton.json');
 
 describe('boneKey', () => {
   it('reduces the three ways a mixamo bone is spelled to one', () => {

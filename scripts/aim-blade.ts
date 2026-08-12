@@ -174,7 +174,7 @@ function main(): void {
   const rig = { nodes, naming } as const;
 
   const skeleton = validateSkeleton(
-    JSON.parse(readFileSync(join(repoRoot, 'assets', 'units', 'pig.skeleton.json'), 'utf8')),
+    JSON.parse(readFileSync(join(repoRoot, 'assets', 'units', 'biped.skeleton.json'), 'utf8')),
   ).value;
   const socket = skeleton?.sockets.find((entry) => entry.id === 'weapon.main');
   const bone = nodes.find((node) => node.name === socket?.bone);
@@ -280,7 +280,7 @@ function main(): void {
       `\n  reach: shoulder at ${at.map((v) => v.toFixed(2)).join(',')}  upper arm ${upper.toFixed(3)}  forearm ${fore.toFixed(3)}`,
     );
   }
-  console.log('\n  the arm, solved against the socket calibration in pig.skeleton.json\n');
+  console.log('\n  the arm, solved against the socket calibration in biped.skeleton.json\n');
   // The guard is the chain's first link: it is already correct, and every key
   // after it is pulled toward the one before.
   let previous = KNOBS.map((knob) => (key('guard')[knob.role] as BoneTurns | undefined)?.[knob.axis] ?? 0);

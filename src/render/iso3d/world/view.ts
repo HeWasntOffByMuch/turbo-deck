@@ -66,6 +66,7 @@ import { TouchGestures, type TouchSample } from './touch.js';
 import { DEFAULT_HEADROOM, WorldScene, type AimIndicator } from './scene.js';
 import { spawnerLabels } from './spawner-overlay.js';
 import type { WorldAnchor } from './damage-popup.js';
+import { castRefusalText } from './error-log.js';
 
 const TICK_MS = 1000 / SERVER_TICK_RATE;
 
@@ -374,7 +375,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     scene.addEffect(effect.effectId, effect.x, effect.y, effect.radius, effect.durationTicks);
   });
   client.onCastRejected((abilityId, reason) => {
-    hud.notice(`${abilityById(abilityId)?.name ?? abilityId}: ${reason}`);
+    hud.error(castRefusalText(abilityById(abilityId)?.name ?? abilityId, reason));
   });
 
   /** The world point of a body the scene has not drawn, out of the last delta. */
@@ -529,10 +530,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     });
 
     if (start.kind === 'refused') {
-      // Said out loud in the same line the server's refusals use, so a dead
-      // press is never silent. Nothing else moves: a key that does nothing does
-      // nothing, so a standing aim is left exactly as it was.
-      hud.notice(`${ability.name}: ${start.reason}`);
+      // Said out loud in the same stack the server's refusals land in, so a
+      // dead press is never silent. Nothing else moves: a key that does nothing
+      // does nothing, so a standing aim is left exactly as it was.
+      hud.error(castRefusalText(ability.name, start.reason));
       return;
     }
     if (start.kind === 'cast') {
@@ -1310,10 +1311,18 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       style.height = `${box.height}px`;
     }
 
-    hud.update(view, scene.screenAnchors(), drawnTick, client.correctionCount, targetId, {
-      abilityId: pendingAim?.abilityId ?? order?.abilityId ?? null,
-      pending: pendingAim !== null,
-    });
+    hud.update(
+      view,
+      scene.screenAnchors(),
+      drawnTick,
+      client.correctionCount,
+      targetId,
+      {
+        abilityId: pendingAim?.abilityId ?? order?.abilityId ?? null,
+        pending: pendingAim !== null,
+      },
+      now,
+    );
     // Read back off the interface rather than remembered from the press
     // (spec 140), so a window opened by a key lights its button too.
     hud.showOpenWindows(ui.opened());

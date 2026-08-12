@@ -33,8 +33,12 @@ import type { NamingSpec } from './naming.js';
 import { poseWorldMatrices } from './skin.js';
 
 const UNIT_DIR = join(process.cwd(), 'assets', 'units', 'pig_a_pose_full');
+/** The family's own documents, one level above each member. */
+const FAMILY_DIR = join(process.cwd(), 'assets', 'units');
+/** The family's clips, which moved out of the unit folder when the fox joined. */
+const CLIP_DIR = join(process.cwd(), 'assets', 'units', 'clips');
 const MESH = join(UNIT_DIR, 'pig_a_pose_full.glb');
-const CLIP = join(UNIT_DIR, 'clips', `${STRIKE_CLIP_ID}.glb`);
+const CLIP = join(CLIP_DIR, `${STRIKE_CLIP_ID}.glb`);
 
 /**
  * The rig, its vocabulary and its measured frame, resolved together.
@@ -111,7 +115,7 @@ describe('the pig swing lands when the ability says it does', () => {
   });
 
   it('agrees with the clip library that ships beside it', () => {
-    const lib = JSON.parse(readFileSync(join(UNIT_DIR, 'pig.core.cliplib.json'), 'utf8')) as {
+    const lib = JSON.parse(readFileSync(join(FAMILY_DIR, 'biped.core.cliplib.json'), 'utf8')) as {
       clips: { id: string; durationMs: number; loop: boolean; events: { name: string; normalizedTime: number }[] }[];
     };
     const clip = lib.clips.find((entry) => entry.id === STRIKE_CLIP_ID);

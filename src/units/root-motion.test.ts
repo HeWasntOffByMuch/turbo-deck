@@ -260,15 +260,15 @@ describe('withoutTravel', () => {
 
 describe('travelMessage', () => {
   it('names the clip, the bone and how far it went', () => {
-    const message = travelMessage('pig.core', 'run', 'Hip', 2.86018);
-    expect(message).toContain('pig.core/run');
+    const message = travelMessage('biped.core', 'run', 'Hip', 2.86018);
+    expect(message).toContain('biped.core/run');
     expect(message).toContain('"Hip"');
     expect(message).toContain('2.860');
   });
 });
 
-describe('travelChannels, over the committed pig clips (spec 118)', () => {
-  const clips = join('assets', 'units', 'pig_a_pose_full', 'clips');
+describe('travelChannels, over the committed biped clips (spec 118)', () => {
+  const clips = join('assets', 'units', 'clips');
   /** A tenth of the rig's reach. The pig's skeleton spans about one unit. */
   const MINIMUM = 0.1;
 

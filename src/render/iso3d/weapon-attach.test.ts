@@ -10,7 +10,7 @@
  * building a pivot, three composing it under a bone, and a world matrix coming
  * out the far end. No WebGL is involved -- a scene graph is arithmetic.
  *
- * The **bones come from `pig.skeleton.json`'s bind pose, not from the `.glb`**,
+ * The **bones come from `biped.skeleton.json`'s bind pose, not from the `.glb`**,
  * and that is a limitation worth naming rather than hiding. The pig's mesh
  * carries a texture, so `GLTFLoader` reaches for an image decoder, and there is
  * no DOM in `npm test`; adding jsdom to load one mesh would be a dependency
@@ -112,8 +112,8 @@ describe('a weapon hung off a pig', () => {
   let skeleton: Skeleton;
 
   beforeAll(() => {
-    const parsed = validateSkeleton(JSON.parse(readFileSync(join(UNITS, 'pig.skeleton.json'), 'utf8')));
-    if (!parsed.value) throw new Error('pig.skeleton.json does not validate');
+    const parsed = validateSkeleton(JSON.parse(readFileSync(join(UNITS, 'biped.skeleton.json'), 'utf8')));
+    if (!parsed.value) throw new Error('biped.skeleton.json does not validate');
     skeleton = parsed.value;
     pig = buildRig(skeleton);
   });

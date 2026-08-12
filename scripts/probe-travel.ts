@@ -87,6 +87,14 @@ async function main(): Promise<void> {
   });
   await new Promise<void>((resolve) => server.listen(PORT, resolve));
   const base = `http://localhost:${PORT}/${dir}/`;
+  // A clip's `source` is relative to the library that lists it, and the library
+  // is not always in the unit's own folder -- a unit that joins an established
+  // rig family borrows that family's clips from wherever they already live.
+  // Resolving them against the unit instead fetches five 404s, and `UnitRig`
+  // skips a clip it cannot load, so the rig comes up with no actions at all and
+  // every bone reads as FROZEN. That is indistinguishable from the greedy
+  // correction this probe exists to catch, and it is the wrong bug.
+  const clipBase = `http://localhost:${PORT}/${join(dir, unitDoc.clipLibRef, '..')}/`;
 
   const failures: string[] = [];
   try {
@@ -94,7 +102,7 @@ async function main(): Promise<void> {
     await rig.load(
       {
         meshUrl: base + unitDoc.meshRef,
-        clipUrls: Object.fromEntries(clipDoc.clips.map((clip) => [clip.id, base + clip.source])),
+        clipUrls: Object.fromEntries(clipDoc.clips.map((clip) => [clip.id, clipBase + clip.source])),
         importScale: unitDoc.import.scale,
       },
       dir.split('/').pop() ?? 'unit',

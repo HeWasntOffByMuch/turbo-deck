@@ -623,7 +623,26 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  acceleration: a step from run to nothing swapped the pose in one
                  tick under a cross-fade that never saw it, which is why setting
                  off blended and stopping cut)
-                 pixel-font.ts (a 5x7 glyph table, since nothing may be fetched)
+                 pixel-font.ts (a 5x7 glyph table, since nothing may be
+                 fetched -- the digits since spec 065 and the capitals since
+                 143, when the refusals started drawing words), error-log.ts
+                 (the stack of refusals in the bottom-right corner, spec 143:
+                 lifetime, coalescing, order and fade, pure, with hud.ts holding
+                 nothing but the elements. The line before it was one shared
+                 string at the top of the frame that a second refusal
+                 overwrote, decayed by counting 120 *frames* -- two seconds at
+                 60fps and five-sixths of one at 144. A message now lives in
+                 milliseconds; the column's bottom is pinned so it grows
+                 upward, newest at the bottom; and an identical text coalesces
+                 with a count, because auto-attack refuses once a tick and
+                 sixty lines a second is not a warning.
+                 `npx tsx scripts/preview-refusals.ts` is the half no headless
+                 test can see: it spends a real cast in a real browser, reads
+                 the lines back off `data-text`, and measures them against the
+                 window buttons -- which is how the first version was caught
+                 drawing three lines of red across the Bag and Gear buttons,
+                 having cleared one button's height where they are a column of
+                 three)
                  and touch.ts (taps and two-finger gestures, specs 093/140 --
                  bounded by distance and never by time, because an event's stamp
                  measures the renderer's load rather than the finger; and two

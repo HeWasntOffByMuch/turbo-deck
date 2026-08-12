@@ -69,7 +69,7 @@ describe('validateSkeleton', () => {
     ];
 
     it('refuses a document that claims a contract its bones do not follow', () => {
-      // The exact shape `pig.skeleton.json` shipped in: tripo bones under a
+      // The exact shape `biped.skeleton.json` shipped in: tripo bones under a
       // mixamo claim. It validated clean, and every lookup that trusted the
       // field then found nothing -- sockets, facing, bind pose -- each failing
       // silently and separately.

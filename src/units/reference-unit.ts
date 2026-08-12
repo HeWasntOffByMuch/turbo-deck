@@ -419,7 +419,7 @@ export function buildReferenceUnit(canonicalHeight: number): ReferenceUnit {
     $comment:
       'The development reference rig (spec 110). Same bone contract as biped.skeleton.json, but with a MEASURED bind pose, because this rig was drawn here rather than generated. The canonical skeleton stays provisional until a real Tripo rig is measured against it -- filling it in from this one would defeat the check it exists to make.',
     formatVersion: 1,
-    id: 'biped-dev',
+    id: 'mannequin-dev',
     naming: 'mixamo',
     upAxis: '+Y',
     forwardAxis: '+X',
