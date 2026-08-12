@@ -179,11 +179,35 @@
   "sockets": [
     {
       "id": "weapon.main",
-      "bone": "R_Hand"
+      "bone": "R_Hand",
+      "offset": [
+        0,
+        0.02,
+        0
+      ],
+      "rotationDeg": [
+        -145.7,
+        74.8,
+        -122.9
+      ]
     },
     {
       "id": "weapon.off",
       "bone": "L_Hand"
+    },
+    {
+      "id": "weapon.stow",
+      "bone": "Spine02",
+      "offset": [
+        -0.165,
+        0.06,
+        0.09
+      ],
+      "rotationDeg": [
+        167.6,
+        88.9,
+        -16.1
+      ]
     },
     {
       "id": "fx.cast",

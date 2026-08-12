@@ -59,6 +59,7 @@ change a game outcome.
 | `npm run typecheck` | `tsc --noEmit` against the strict tsconfig |
 | `npm run lint` | ESLint over the whole repo |
 | `npm run validate:units` | Validate every authored unit document in `assets/units/` |
+| `npm run validate:items` | Validate every weapon document in `assets/items/`, against its own mesh |
 | `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
@@ -107,7 +108,8 @@ merge time.
 
 ```
 specs/           spec markdown, one file per system, written before its code
-schemas/         JSON Schema (draft-07) for the three unit documents, committed
+schemas/         JSON Schema (draft-07) for the three unit documents and the weapon
+                 document (spec 140), committed
                  and validated against in CI. additionalProperties is false
                  throughout, so a typo'd key in a hand-edited file is an error with
                  a pointer at it rather than a field that silently does nothing.
@@ -132,6 +134,25 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  the recipe's field in over a short skirt.
 src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
                  collision and pathfinding helpers the server collides against
+src/items/       held objects (spec 140). A weapon is a RIGID body, so it gets a
+                 small document and explicitly none of the bind-pose, skinning,
+                 retarget and family machinery src/units/ exists to manage for a
+                 thing that deforms -- both supplied meshes confirm it, with no
+                 skin, no animation and every node transform identity. What the
+                 document carries is what the mesh cannot say about itself:
+                 `grip.at` (the point that sits in the palm), `grip.point` (which
+                 way the business end runs) and `grip.flat` (the blade's flat
+                 normal, which fixes the roll `point` alone leaves free), plus a
+                 `lengthWorld` -- a length rather than a scale factor, because
+                 nobody can check a scale and anybody can hold a length up
+                 against the body beside it. grip.ts is the arithmetic and states
+                 canonical weapon space once: blade +Y, flat +Z, edge +X, origin
+                 at the grip. Where a grip sits in a particular palm is a fact
+                 about the *body*, so that half lives on the skeleton's socket as
+                 `rotationDeg` -- euler degrees, because it is the one field in
+                 the format somebody finds by dragging a slider, and one
+                 calibration serves every weapon that rig ever holds.
+                 `npm run validate:items`.
 src/units/       the unit authoring format and its validator (spec 107): the three
                  JSON documents a unit is made of -- skeleton.json (one rig family,
                  its bone vocabulary, canonical height), cliplib.json (clips for a
@@ -145,6 +166,115 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  through this one parser. The rule the format exists to enforce is
                  that gameplay timing is authoritative and the clip is rescaled to
                  fit, bounded in both directions. `npm run validate:units`.
+                 pose.ts, clip-author.ts and pig-strike.ts are how a clip gets
+                 *authored* rather than bought (spec 139). pose.ts is the body's
+                 own axes, measured off the rig -- promoted out of mesh-check.ts,
+                 because the extreme pose that predicts what a slash does to a
+                 mesh and the real slash have to be in the same frame or the
+                 prediction predicts nothing. Its fourth axis, `flex`, is the
+                 hinge a bone actually has, taken from its *furthest* child: the
+                 first child of a generated forearm is a twist bone sharing its
+                 parent's origin, so "the child" measured from noise and every
+                 elbow folded backwards. Its fifth, `twist`, is the roll about a
+                 bone's own length -- a wrist turning the edge into a cut. Body
+                 axes cannot express one, because a roll written in them is a
+                 different rotation at every moment of a swing. clip-author.ts samples key poses into
+                 rotation channels, and the rule that shapes it is that glTF's
+                 LINEAR is the only interpolation glb.ts writes -- so the easing
+                 that makes a strike read has to be baked into 60Hz samples,
+                 because nothing downstream can add it back. clip-sample.ts is
+                 the same reading for a clip this project *bought* rather than
+                 wrote (spec 143) -- rotation channels out of a retargeted .glb,
+                 returned as offsets against bind so `poseWorldMatrices` takes
+                 either kind and a measurement need not care which it has. It
+                 exists because a socket calibration is only exactly right at one
+                 pose and nothing could sample the pose a body actually spends
+                 its life in: `weapon.main` was solved against the swing's own
+                 guard key, so the blade pointed forward for two frames of an
+                 800ms clip and hung straight down the rest of the time.
+                 pig-strike.ts is the
+                 pig's swing itself: seven full-body poses over 800ms, contact at
+                 500ms because that is `melee.slash`'s wind-up and the frame the
+                 picture lands and the frame the damage lands are the same frame.
+                 Its legs are the one part that is *solved* rather than authored
+                 (spec 143). The pig stands on its left foot and the pelvis yaws
+                 54 degrees over it, so authored by eye that foot skated a fifth
+                 of the rig's height across the floor while planted flat -- the
+                 most legible failure an animation has, because it is not a limb
+                 reading badly, it is the whole body appearing to skate. Two
+                 things move it and only one is a rotation: the pelvis *turning*
+                 is cancelled exactly at the hip (both are rotations about the
+                 body's up, and rotations about a shared axis commute, so the
+                 counter-turn still means "world up" however far the pelvis has
+                 gone), while the pelvis *carrying the hip joint* -- 0.115 off its
+                 own axis -- cannot be cancelled by any rotation below it and is
+                 the leg reaching for the ground. `npx tsx scripts/plant-foot.ts`
+                 is that solve, and three things in it were each learned by
+                 writing the version without them: it pins the ankle AND the toe,
+                 because a foot free to spin on the spot is the same lie as one
+                 that slides; it charges per degree of bend, because a leg is a
+                 linkage and the unpenalised solve pinned the foot perfectly by
+                 snapping the knee straight; and it anchors on the guard pose
+                 rather than the key's current values, or each run measures its
+                 own last output and running the solver twice is a change.
+                 `npx tsx scripts/make-pig-strike.ts` writes the committed .glb;
+                 `npx tsx scripts/preview-strike.ts` photographs it frame by
+                 frame with a blade proxy in the hand, because a swing judged on
+                 the arm alone is judged on the half of the silhouette that is
+                 not the point -- but that proxy runs down the hand bone's own
+                 +Y and predates `weapon.main`'s calibration, so it is evidence
+                 about the arm and not about the grip.
+                 `npx tsx scripts/preview-weapon.ts` is the one that puts the real
+                 mesh through the real chain.
+                 The rule the swing's wrist angles are subject to: **a hand pose
+                 is not a portable number** (spec 143). What a blade does is the
+                 hand's orientation composed with the socket's calibration, so
+                 re-solving the socket silently re-aimed the blade at every pose
+                 in the clip whose wrist was authored against the old one -- a
+                 constant 105 degrees, which put the blade at the floor at the
+                 top of the wind-up and swung it *up* through the strike. Every
+                 test passed, because they all measure where the hand IS and the
+                 arm still went over the shoulder; none measured what stuck out
+                 of it. So `npx tsx scripts/aim-blade.ts` states the requirement
+                 in the frame it is actually about -- where the blade points, in
+                 the body's axes -- and solves the wrist for it, and only the
+                 wrist, since a hand is a leaf bone and rotating it turns what
+                 the hand carries and moves nothing else. Re-solve the socket
+                 and re-run it. `npx tsx scripts/probe-blade.ts` is the
+                 diagnostic beside it and samples every frame rather than the
+                 keys, because what a player reports -- "it points at the ground
+                 for a moment" -- is a statement about the frames *between*
+                 keys, and the keys are the only thing anybody reads while
+                 authoring.
+                 Two rules the wind-up itself is subject to (spec 143). **A raise
+                 is one movement**: the `rise` key is a pose the blade passes
+                 through, eased `in` to it and `out` of it, because it used to be
+                 a `dip` that arrived at zero velocity with the next segment
+                 leaving from zero -- the blade held still 140ms, turned a
+                 hundred degrees in 80, and held still another 160, which is a
+                 dead beat, a whip and a dead beat, and reads as two raises. What
+                 measures it is the *spread* -- when the raise is a tenth done and
+                 when it is nine tenths done -- because counting humps in the rate
+                 finds one either way and the fault was the stillness around it.
+                 **The elbow raises the sword, not the torso**: the first version
+                 abducted the shoulder 116 degrees with the elbow straight and
+                 twisted the torso 81 to make up the difference, and a pig winding
+                 up to chop looked like a pig turning round to leave. That
+                 preference lives as weights in aim-blade.ts rather than as angles
+                 in the clip, and the solver needs a *place for the hand* beside
+                 the blade's direction (solved on aim alone it tucked the hand
+                 inside the pig and left the strike no reach) and a grid of
+                 starting points (an arm reaching a place has answers separated by
+                 ridges a descent will not cross), and a place for the *elbow*, because a
+                 blade direction and a hand position still leave the elbow free
+                 to swing around the line between them like a door -- it went
+                 inboard, 0.02 from the spine on a pig whose ribs reach 0.179,
+                 and every other measurement was happy. The rule under all three:
+                 **a chain has more freedom than the constraints on it, and what
+                 is left unstated is not left alone**, it is decided by whatever
+                 the strain term happens to prefer. Hand and elbow targets are a
+                 linkage rather than two wishes -- upper arm 0.178, forearm 0.114
+                 -- and a pair 0.071 apart is not a pose.
                  naming.ts is the two bone vocabularies and the one way to look a
                  bone up across them (spec 120). There are two in the tree
                  permanently: the reference mannequin is authored and
@@ -568,6 +698,39 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  switch and the window buttons draw, specs 094/140 -- the sizes
                  are a sum, so "eight buttons still fit across a phone, clear of
                  both corner rows" fails in Node rather than in a screenshot),
+                 health-bar.ts (the white chunk a blow leaves on a floating bar,
+                 spec 145: the fill is replicated health and is never delayed,
+                 and the ground it gave up is held behind it for a beat so the
+                 size of the blow is readable off the bar rather than only off
+                 the number floating away from it. The decision in it is a
+                 *throttle* -- the first blow of a burst opens the window and
+                 every blow inside it grows the same chunk -- and it is a
+                 leading-edge throttle rather than a debounce on purpose, since
+                 under a debounce a body taking sustained fire holds a growing
+                 white chunk that never resolves, which is the state that reads
+                 as a bug. Time is an argument, and the argument is the *drawn*
+                 tick the bodies under it are interpolated by, not a second
+                 clock. Since spec 146 the same file also answers the *instant*
+                 of contact -- a decaying oscillation that knocks the bar off its
+                 anchor -- and the two rules are opposites on purpose: a chunk is
+                 a measurement and merges across a burst, a kick is a contact and
+                 every blow restarts it. `npx tsx scripts/probe-health-flash.ts`
+                 is the half that only exists in a browser: it picks a fight on
+                 the shipped page and samples both bands' widths off the real DOM
+                 every frame, because a white band stacked behind an opaque track
+                 passes every test in Node and draws nothing. The thing worth
+                 knowing about it is that this environment paints about five
+                 frames a second under software GL -- at any viewport size, since
+                 it is the scene update that costs -- so a 200ms kick gets one
+                 sample and reads as no kick at all. It runs the *page's* clock
+                 slowed eightfold instead, by wrapping the animation frame the
+                 renderer takes its elapsed time from: the same ticks and the
+                 same events, spread over enough drawn frames to see. That also
+                 got the picture, which two freezes could not -- pausing the
+                 debugger halts the renderer and the capture never returns, and
+                 pausing virtual time works but leaves the clock racing
+                 afterwards, which silently starved the next measurement of
+                 frames),
                  inventory-model.ts, character-model.ts and shop-model.ts (what
                  the bag, the sheet and the shop are handed -- `src/ui/` may not
                  reach the sim, so the replicated facts and the content tables
@@ -817,9 +980,38 @@ src/render/iso3d/lobe.ts  the lobed canopy tree's shape (spec 077): the union of
                  `props.ts` turns it into buffers; `npx tsx scripts/preview-trees.ts`
                  photographs every tree the world grows to
                  .claude/screenshots/trees.png.
+src/render/iso3d/weapon-rig.ts, unit-rig.ts's attach()  a weapon in a hand (spec
+                 140). Three nodes, because three transforms answer to three
+                 owners: the socket's pivot belongs to the skeleton, the align
+                 belongs to the weapon document, and the mesh's own origin
+                 belongs to whoever exported it. Parented, never copied -- a held
+                 thing rides the pose through three's own graph, so there is no
+                 per-frame code for it at all; reading the bone's world matrix
+                 each frame would put the weapon on the renderer's clock while
+                 the pose is on the machine's, and spec 118 throttles how often
+                 that pose is applied. The pivot also undoes the host's import
+                 scale, so `lengthWorld` is in world units and a sword is one
+                 size whatever holds it. Both of the pig's socket calibrations
+                 were found by sweeping candidates through the offscreen
+                 rasteriser rather than derived: `npx tsx scripts/preview-weapon.ts`
+                 photographs the real mesh at the real pose, and `SWEEP=` puts
+                 four candidate rotations side by side in one strip.
 src/render/iso3d/movement.ts, debug-view.ts  the two tuning sandboxes (specs
                  032/033/035/046, back since 066): one unit, no game, so a gait,
-                 a cloth solve or a turn rate can be watched in isolation. The
+                 a cloth solve or a turn rate can be watched in isolation.
+                 Since spec 140 the movement sandbox also drives an *authored*
+                 unit -- one chip per entry in the manifest, so `authored:pig_a_pose_full`
+                 is the generated body posed by its state machine and `pig` is
+                 still the procedural critter. sandbox-attack.ts is a rehearsal
+                 of a cast and says so: not a sim, no server sees it, and what it
+                 reproduces exactly is the one rule that makes an animation
+                 legible -- the timing is authoritative and the clip is rescaled
+                 to fit it, via `timeScaleFor`. Drag the wind-up to 900ms and the
+                 swing slows to land on it. sandbox-dummy.ts is something to hit,
+                 flinching on the tick the blow lands, because "the blade looks
+                 like it arrives about now" is not a claim anybody can make about
+                 a number. Both pure and tested headlessly;
+                 `npx tsx scripts/preview-sandbox-swing.ts` drives the real page. The
                  rig debugger adds a top+side split, slow-mo/single-step and the
                  joint and cloth overlays. Both drive sandbox-mover.ts -- a pure,
                  headlessly tested position/heading/move-order driver, NOT a

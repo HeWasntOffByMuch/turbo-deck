@@ -141,6 +141,11 @@ const PURE_RENDER = [
   'src/render/iso3d/world/interpolate.ts',
   'src/render/iso3d/world/pixel-font.ts',
   'src/render/iso3d/world/spawner-overlay.ts',
+  // The white chunk a blow leaves on a floating bar (spec 145). A throttle is a
+  // fact about a sequence of timed reads, and the time is an argument -- which
+  // is what lets "a burst is one chunk" be replayed in Node rather than counted
+  // by eye in a fight nobody can repeat.
+  'src/render/iso3d/world/health-bar.ts',
   // Touch gesture recognition (spec 093). A tap is a fact about a sequence of
   // timed samples -- the timestamps are passed in on the sample rather than read
   // from a clock here, which is exactly what lets the rules be replayed in Node
