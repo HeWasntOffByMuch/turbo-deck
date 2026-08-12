@@ -153,9 +153,34 @@ never call `setExempt`, so they render exactly as they do today.
   and the two share one `DepthTexture` that only the scene buffer disposes.
 
 `WorldScene`'s half — that the exempt list is every body with `kind ===
-'player'` and nothing else — is **not** covered. It is three lines inside the
-three.js half of the renderer, which has no headless test anywhere in the tree;
-`scripts/preview-world.ts` is what looks at it.
+'player'` and nothing else — is **not** covered by `npm test`. It is three
+lines inside the three.js half of the renderer, which has no headless test
+anywhere in the tree.
+
+## What only a GPU can answer
+
+Every way this fails needs a GL context to fail in, so two probes carry the
+other half. Both use the palette as the oracle: with one set, every pixel
+`RetroPass` emits is exactly one of sixteen known colours, so "which pixels
+escaped the quantize" is an equality test rather than a threshold.
+
+`npx tsx scripts/probe-exempt.ts` drives the real Play tab and throws the real
+switch. It reports the off-palette pixels in the middle of the frame with the
+exemption off and on, and the largest connected run of them — the mask has to
+be a body, so a count is not enough. Measured per frame and never as a
+difference between two, because the world is live and `preview-hike.ts` already
+found that differencing two screenshots a second apart reports ~19% change
+everywhere with a feature switched off.
+
+`npx tsx scripts/probe-shading.ts` carries the part the live world cannot. A
+player is normally standing in the open, where an unoccluded mask and a
+correctly depth-tested one are the *same silhouette* — and walking into
+woodland does not settle it either, since a walk cycle shrinks the blob about
+as much as a tree does. So `runExempt` builds the occluder instead of looking
+for one: a wall over half an exempt box, measured on the **wall**, because a
+leaking mask marks a pixel and the colour under that pixel is whatever the
+scene drew there. The exposed half must escape the palette and the covered half
+must not.
 
 ## Out of scope
 

@@ -542,6 +542,42 @@ src/render/iso3d/unit-rig.ts  a loaded authored unit, posed by a machine (spec
                  AND one whose hips never move, since a correction that ate the
                  pose scores a perfect zero on the first test alone. No GL
                  context: nothing in it rasterises.
+src/render/iso3d/retro.ts, retro-pass.ts  the retro filter (specs 038/102/138):
+                 the scene drawn into a low-resolution buffer, then painted over
+                 the canvas through a shader that grades it, quantizes every
+                 channel to a handful of steps -- or onto a named palette -- and
+                 dithers the band edges with a Bayer matrix. retro.ts is the
+                 arithmetic, pure and tested headlessly, and the shader beside it
+                 computes the same expression per channel.
+                 Since spec 138 the pass takes a set of *objects* whose pixels
+                 skip the quantize, and `WorldScene` names every player: the
+                 pixel grid, the grade and the distance ink say where a body is
+                 and an exempt body keeps all three, while the dither and the
+                 quantize say what it is made of, so it keeps its colours. The
+                 mask is rendered at the scene buffer's own resolution into a
+                 target *sharing its depth attachment*, which is what makes it
+                 one small draw rather than a second frame -- the world's depth
+                 is already there, so a body behind a tree fails the test and
+                 marks nothing. Two rules that follow: only the owner may dispose
+                 that texture, and the mask pass clears colour ONLY, since the
+                 depth it would clear is the whole mechanism.
+                 The pass has no idea what a player is and must not learn --
+                 `setExempt` takes objects because `WorldScene` is the only thing
+                 that knows, which is also why every other caller (the probes,
+                 the Studio preview, the wind rig) pays nothing.
+                 `npx tsx scripts/probe-exempt.ts` drives the real Play tab with
+                 a palette set, so "which pixels escaped the quantize" is an
+                 equality test rather than a threshold, and reports the largest
+                 *connected* run of them -- a mask has to be a body, so a count
+                 is not enough. It measures each frame against the palette rather
+                 than differencing two, because the world is live. It cannot
+                 check occlusion, and deliberately does not try: a player stands
+                 in the open, where a broken depth test draws the same
+                 silhouette, and a walk cycle shrinks the blob about as much as a
+                 tree does. `runExempt` in shading-probe.ts settles that by
+                 building an occluder instead of hoping to walk behind one, and
+                 measures the *wall*, because a leaking mask marks a pixel and
+                 the colour under it belongs to whatever the scene drew there.
 src/render/iso3d/view-controls.ts, menu-group.ts, settings-menu.ts  the Play
                  tab's settings (specs 033/034/107): six buttons in the top-right
                  corner -- view, day and night, player lights, retro filter, hike
