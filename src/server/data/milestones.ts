@@ -73,8 +73,8 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'agility',
     threshold: TIER_1,
     name: 'Quick Recovery',
-    effect: 'Walking out of a follow-through grants Flow for 1.2s: +5% movement per stack, up to three.',
-    grants: { traits: { flowTicks: SCALING.agility.flowTicks, flowMovePct: SCALING.agility.flowMovePct } },
+    effect: 'Walking out of a follow-through grants Flow for 1.2s, up to three stacks.',
+    grants: { traits: { flowTicks: SCALING.agility.flowTicks, flowBackswingPct: 0.03 } },
   },
   {
     id: 'agi.mobile',

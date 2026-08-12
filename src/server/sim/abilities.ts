@@ -159,7 +159,7 @@ export function attackTimingFor(
         // interval (spec 147). Deliberately the only stat that does: a cooldown
         // is a statement about how often an effect may exist, and only the stat
         // that owns "getting more out of limited tools" gets to argue with it.
-        baseAttackTimeTicks: ability.cooldownTicks * cooldownScaleFor(ability, entity),
+        baseAttackTimeTicks: ability.cooldownTicks * cooldownScaleFor(ability, entity, tick),
         baseAttackPointTicks: ability.windupTicks * shaped,
         baseAttackBackswingTicks: ability.backswingTicks ?? 0,
       },
@@ -244,13 +244,24 @@ export function backswingScaleFor(entity: TimingSubject, tick: number): number {
 /** Wisdom's cooldown scale, plus the Ranger pair's reach into projectiles. */
 export function cooldownScaleFor(
   ability: AbilityDefinition,
-  entity: Pick<ServerEntity, 'stats'>,
+  entity: TimingSubject,
+  tick = 0,
 ): number {
   const traits = entity.stats.traits;
   const handling =
     traits.handlingCooldowns > 0 && ability.projectile !== undefined ? traits.handlingScale : 1;
-  return Math.max(0.2, traits.cooldownScale * handling);
+  // The Archmage pair: a *prepared* cast comes back sooner. Read here rather
+  // than at the commit because the cooldown is settled in the same snapshot the
+  // timing is (spec 144), and this is where that snapshot is taken.
+  const prepared =
+    traits.preparedMastery > 0 && hasStatus(entity.statuses ?? NO_STATUSES, StatusId.Prepared, tick)
+      ? 1 - PREPARED_COOLDOWN_REFUND
+      : 1;
+  return Math.max(0.2, traits.cooldownScale * handling * prepared);
 }
+
+/** What a prepared cast takes off its own cooldown, for the Archmage pair. */
+export const PREPARED_COOLDOWN_REFUND = 0.25;
 
 /**
  * What this cast actually costs (spec 147).

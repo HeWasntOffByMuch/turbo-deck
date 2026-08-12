@@ -12,7 +12,16 @@
  * fails.
  */
 
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+
+function readdirDeep(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const path = join(dir, entry);
+    return statSync(path).isDirectory() ? readdirDeep(path) : [path];
+  });
+}
 import {
   ATTRIBUTES,
   ATTRIBUTE_KEYS,
@@ -268,6 +277,48 @@ describe('the modifier currency', () => {
     expect(summed.maxHealth).toBe(1);
     expect(summed.traits.maxPoise).toBe(5);
     expect(summed.traits.staggerPower).toBe(0);
+  });
+});
+
+describe('every trait actually reaches the sim', () => {
+  it('is read by name somewhere under src/server/, or it is dead content', () => {
+    // The test that would have caught three pieces of content that were shipped
+    // and did nothing: `flowMovePct`, `secondWindHeal` and `secondWindBelow`
+    // were derived, replicated and printed, and no line in the sim ever asked
+    // for them. A milestone that grants nothing is worse than a milestone that
+    // is missing, because the sheet says it works.
+    //
+    // A grep rather than an execution trace, deliberately: what is being
+    // checked is that somebody *wired it up*, and a name that appears nowhere
+    // cannot have been. A trait genuinely meant to be inert can be listed here
+    // with a reason.
+    const inert = new Set<string>([
+      // Read by `derived.ts` to decide whether the geometry is switched on at
+      // all, and never by the sim -- the geometry is what the sim reads.
+      'shapingCostRelief',
+      // The sheet's number. `stat-skills.ts` reads Mastery off the held levels
+      // rather than off the bundle, because the bundle is derived from them and
+      // asking it here would be the one cycle this design does not have.
+      'masteryRelief',
+    ]);
+
+    // `derived.ts` is excluded, and excluding it is the whole point: it is the
+    // *producer*, and every trait necessarily appears there as `t.thing` on the
+    // line that computes it. Searching it too made the first version of this
+    // test vacuous -- it passed with the reader deleted, which is exactly the
+    // failure it exists to catch.
+    const roots = ['src/server/sim', 'src/server/player', 'src/server/world'];
+    const sources = roots
+      .flatMap((root) => readdirDeep(root))
+      .filter((file) => file.endsWith('.ts') && !file.endsWith('.test.ts'))
+      .filter((file) => !file.endsWith('derived.ts'))
+      .map((file) => readFileSync(file, 'utf8'))
+      .join('\n');
+
+    const unread = TRAIT_WIRE_ORDER.filter(
+      (key) => !inert.has(key) && !new RegExp(`\\.${key}\\b`).test(sources),
+    );
+    expect(unread, `traits nothing reads: ${unread.join(', ')}`).toEqual([]);
   });
 });
 

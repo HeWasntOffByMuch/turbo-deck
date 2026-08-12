@@ -155,9 +155,8 @@ export const SCALING = {
     /** Armour per point -- half Constitution's, and the reason is footwork. */
     armorPer: 0.004,
     damagePer: 0.15,
-    /** How long one `flow` stack lives, and what a stack is worth. */
+    /** How long one `flow` stack lives, and how many may be held. */
     flowTicks: seconds(1.2),
-    flowMovePct: 0.05,
     flowMaxStacks: 3,
   },
 

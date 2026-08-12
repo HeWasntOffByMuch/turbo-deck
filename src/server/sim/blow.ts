@@ -34,6 +34,7 @@
 
 import type { Rng } from '../../shared/prng.js';
 import { SERVER_TICK_RATE } from '../config.js';
+import { SCALING } from '../data/scaling.js';
 import type { AbilityDefinition } from '../data/abilities.js';
 import { applyArmor } from '../player/stats.js';
 import { applyPoiseDamage, isResolute, poiseDamageOf } from './poise.js';
@@ -262,7 +263,7 @@ export function resolveBlow(
     weakPoint,
     killed,
     damage,
-    overkill: killed && toHealth >= targetIn.health * (1 + 0.25),
+    overkill: killed && toHealth >= targetIn.health * (1 + SCALING.combat.overkillFraction),
   });
 
   return { attacker, target, events, rng };

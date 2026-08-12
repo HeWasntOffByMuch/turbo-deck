@@ -31,8 +31,16 @@ import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../config.js';
 import { monsterById } from '../data/monsters.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
 import { NO_ATTACK_SPEED } from './attack-timing.js';
+import { SECOND_WIND_COOLDOWN_TICKS } from './blow.js';
 import { regenPoise } from './poise.js';
-import { applyStatus, expireStatuses, hasStatus, NO_STATUSES, StatusId } from './statuses.js';
+import {
+  applyStatus,
+  clearStatus,
+  expireStatuses,
+  hasStatus,
+  NO_STATUSES,
+  StatusId,
+} from './statuses.js';
 import type { EffectiveStats, Vec3 } from '../state/types.js';
 import { chunkKeyOf, type ChunkKey } from '../world/chunks.js';
 import type { SpawnPoint } from '../world/spawners.js';
@@ -833,15 +841,34 @@ export function advanceProgression(
   const shield = shieldLive ? entity.shield : 0;
   const poise = regenPoise(entity, tick, moved, staggered);
 
+  // Second Wind (spec 147). Constitution's one comeback, and the *only* thing
+  // in this system that restores health without a heal being cast.
+  //
+  // Three guards, and each closes a loop the others do not: it needs the
+  // threshold to have been crossed, it needs its own long cooldown carried as a
+  // status, and -- the one that matters -- it will not fire again until the
+  // body has climbed back *above* the threshold, so somebody sitting at 29%
+  // health does not get a heartbeat every twenty seconds.
+  let health = entity.health;
+  const armed = traits.secondWindHeal > 0 && entity.stats.maxHealth > 0 && health > 0;
+  const hurt = armed && health / entity.stats.maxHealth <= traits.secondWindBelow;
+  if (armed && !hurt) {
+    statuses = clearStatus(statuses, StatusId.SecondWindSpent);
+  } else if (hurt && !hasStatus(statuses, StatusId.SecondWindSpent, tick)) {
+    health = Math.min(entity.stats.maxHealth, health + entity.stats.maxHealth * traits.secondWindHeal);
+    statuses = applyStatus(statuses, StatusId.SecondWindSpent, tick, SECOND_WIND_COOLDOWN_TICKS);
+  }
+
   if (
     statuses === entity.statuses &&
     stillSinceTick === entity.stillSinceTick &&
     shield === entity.shield &&
-    poise === entity.poise
+    poise === entity.poise &&
+    health === entity.health
   ) {
     return entity;
   }
-  return { ...entity, statuses, stillSinceTick, shield, poise };
+  return { ...entity, statuses, stillSinceTick, shield, poise, health };
 }
 
 /**

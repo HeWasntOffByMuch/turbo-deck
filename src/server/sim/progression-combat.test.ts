@@ -30,15 +30,23 @@ import {
   attackTimingFor,
   backswingScaleFor,
   castRangeFor,
+  cooldownScaleFor,
   overflowCostFor,
   resourceCostFor,
   windupScaleFor,
 } from './abilities.js';
 import { resolveBlow, SUNDER_TICKS } from './blow.js';
 import { applyPoiseDamage, isResolute, poiseArmorOf, poiseDamageOf, regenPoise, STAGGER_IMMUNE_TICKS } from './poise.js';
-import { applyStatus, NO_STATUSES, statusOf, StatusId, type Statuses } from './statuses.js';
+import {
+  applyStatus,
+  hasStatus,
+  NO_STATUSES,
+  statusOf,
+  StatusId,
+  type Statuses,
+} from './statuses.js';
 import { ActivityValue, CastPhase, EntityKindValue, type CastState, type ServerEntity } from './types.js';
-import { blankProgression } from './world.js';
+import { advanceProgression, blankProgression } from './world.js';
 
 // --------------------------------------------------------------------------
 
@@ -508,6 +516,94 @@ describe('arcane overflow', () => {
     const paired = statsFor({ intelligence: SCALING.attributeHardCap, constitution: 25 });
     expect(paired.traits.overflowHealthPerResource).toBeLessThan(
       alone.traits.overflowHealthPerResource,
+    );
+  });
+});
+
+describe('Second Wind', () => {
+  // The one thing in this system that restores health without a heal. It is
+  // driven from the timers pass rather than from a blow, so it is tested there.
+  const conStats = (): EffectiveStats =>
+    statsFor({ constitution: 25 }, { statSkills: [{ skillId: 'con.secondWind', level: 3 }] });
+
+  it('does nothing while the body is healthy', () => {
+    const stats = conStats();
+    expect(stats.traits.secondWindHeal).toBeGreaterThan(0);
+    const healthy = body(stats);
+    expect(advanceProgression(healthy, 1, false).health).toBe(healthy.health);
+  });
+
+  it('fires once below the threshold, and not again', () => {
+    const stats = conStats();
+    const hurt = { ...body(stats), health: stats.maxHealth * 0.2 };
+    const revived = advanceProgression(hurt, 1, false);
+    expect(revived.health).toBeGreaterThan(hurt.health);
+    expect(hasStatus(revived.statuses, StatusId.SecondWindSpent, 1)).toBe(true);
+
+    // Knocked back down inside the window: nothing, because it is spent.
+    const again = advanceProgression({ ...revived, health: stats.maxHealth * 0.1 }, 2, false);
+    expect(again.health).toBe(stats.maxHealth * 0.1);
+  });
+
+  it('re-arms only once the body has climbed back out', () => {
+    // The guard that stops somebody parked at 29% health getting a heartbeat.
+    const stats = conStats();
+    const hurt = { ...body(stats), health: stats.maxHealth * 0.2 };
+    const spent = advanceProgression(hurt, 1, false);
+    expect(hasStatus(spent.statuses, StatusId.SecondWindSpent, 1)).toBe(true);
+
+    const recovered = advanceProgression({ ...spent, health: stats.maxHealth }, 2, false);
+    expect(hasStatus(recovered.statuses, StatusId.SecondWindSpent, 2)).toBe(false);
+  });
+
+  it('is nothing at all for a body without the skill', () => {
+    const stats = statsFor({ constitution: 40 });
+    const hurt = { ...body(stats), health: 5 };
+    expect(advanceProgression(hurt, 1, false).health).toBe(5);
+  });
+});
+
+describe('prepared casting', () => {
+  it('is primed by stillness and by nothing else', () => {
+    const stats = statsFor({ intelligence: 35 });
+    expect(stats.traits.prepareTicks).toBeGreaterThan(0);
+
+    let self = body(stats, { stillSinceTick: 0 });
+    // Moving keeps stamping the clock forward, so it never primes.
+    for (let tick = 1; tick <= stats.traits.prepareTicks + 10; tick++) {
+      self = advanceProgression(self, tick, true);
+    }
+    expect(hasStatus(self.statuses, StatusId.Prepared, 999)).toBe(false);
+
+    let still = body(stats, { stillSinceTick: 0 });
+    for (let tick = 1; tick <= stats.traits.prepareTicks + 1; tick++) {
+      still = advanceProgression(still, tick, false);
+    }
+    expect(hasStatus(still.statuses, StatusId.Prepared, 999)).toBe(true);
+  });
+
+  it('halves the next non-basic wind-up, and leaves the weapon alone', () => {
+    const stats = statsFor({ intelligence: 35 });
+    const primed = applyStatus(NO_STATUSES, StatusId.Prepared, 0, 9999);
+    expect(windupScaleFor(QUAKE, { stats, statuses: primed }, 0)).toBeLessThan(
+      windupScaleFor(QUAKE, { stats, statuses: NO_STATUSES }, 0),
+    );
+    expect(windupScaleFor(SLASH, { stats, statuses: primed }, 0)).toBe(
+      windupScaleFor(SLASH, { stats, statuses: NO_STATUSES }, 0),
+    );
+  });
+
+  it('refunds part of the cooldown for the Archmage pair, and nobody else', () => {
+    const primed = applyStatus(NO_STATUSES, StatusId.Prepared, 0, 9999);
+    const mage = statsFor({ intelligence: 35 });
+    expect(cooldownScaleFor(QUAKE, { stats: mage, statuses: primed }, 0)).toBe(
+      cooldownScaleFor(QUAKE, { stats: mage, statuses: NO_STATUSES }, 0),
+    );
+
+    const archmage = statsFor({ intelligence: 35, wisdom: 25 });
+    expect(archmage.traits.preparedMastery).toBe(1);
+    expect(cooldownScaleFor(QUAKE, { stats: archmage, statuses: primed }, 0)).toBeLessThan(
+      cooldownScaleFor(QUAKE, { stats: archmage, statuses: NO_STATUSES }, 0),
     );
   });
 });

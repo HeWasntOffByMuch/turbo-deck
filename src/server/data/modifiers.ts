@@ -59,7 +59,6 @@ export interface TraitModifier {
   readonly flowTicks?: number;
   /** Sums, applied as `flowTicks * (1 + total)`. */
   readonly flowDurationPct?: number;
-  readonly flowMovePct?: number;
   readonly flowBackswingPct?: number;
   readonly flowCostPct?: number;
   readonly flowArmorPct?: number;
@@ -210,7 +209,6 @@ function zeroTraits(): TraitTotals {
     handlingCooldowns: 0,
     flowTicks: 0,
     flowDurationPct: 0,
-    flowMovePct: 0,
     flowBackswingPct: 0,
     flowCostPct: 0,
     flowArmorPct: 0,

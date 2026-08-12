@@ -277,8 +277,17 @@ export interface TraitStats {
   readonly handlingCooldowns: number;
   /** Ticks a `flow` stack lives for. 0 means this body cannot gain flow. */
   readonly flowTicks: number;
-  /** Move speed, backswing, cost, damage reduction and weak point, per stack. */
-  readonly flowMovePct: number;
+  /**
+   * What one Flow stack is worth: follow-through, cost, damage reduction and
+   * weak-point chance.
+   *
+   * Deliberately **not** move speed, though the fantasy wants it to be. Flow is
+   * a status and statuses are not replicated, so a body moving 15% faster than
+   * its replicated `moveSpeed` would diverge from its own client's prediction on
+   * every tick it held a stack -- a correction per tick for the one build most
+   * likely to notice. Agility's raw speed lives on `moveSpeed`, which *is*
+   * replicated and *is* predicted; Flow is about recovery and offence.
+   */
   readonly flowBackswingPct: number;
   readonly flowCostPct: number;
   readonly flowArmorPct: number;
@@ -417,7 +426,6 @@ export const TRAIT_WIRE_ORDER: readonly (keyof TraitStats)[] = [
   'handlingScale',
   'handlingCooldowns',
   'flowTicks',
-  'flowMovePct',
   'flowBackswingPct',
   'flowCostPct',
   'flowArmorPct',

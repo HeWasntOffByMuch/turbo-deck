@@ -88,7 +88,7 @@ const DEFINITIONS: readonly StatSkillDefinition[] = [
     { traits: { backswingReduction: 0.1 } },
     'You are rooted for less of every attack. You do not attack more often.'),
   skill('agi.mobileOffense', 'agility', 'Mobile Offense', T1, 3, 'on cancelling a follow-through',
-    { traits: { flowTicks: Math.round(SCALING.agility.flowTicks * 0.15), flowMovePct: 0.015 } },
+    { traits: { flowTicks: Math.round(SCALING.agility.flowTicks * 0.15), flowBackswingPct: 0.01 } },
     'Breaking out of a swing feeds your momentum instead of wasting it.'),
   skill('agi.lightfoot', 'agility', 'Lightfoot', T2, 3, 'passive',
     { moveSpeed: 6, armor: 0.008 },
