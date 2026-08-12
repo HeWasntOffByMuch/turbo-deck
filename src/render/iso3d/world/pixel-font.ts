@@ -25,8 +25,13 @@ export const GLYPH_SPACING = 1;
 
 /**
  * Every character the HUD can emit: the digits, a sign for heals and negatives,
- * and a bang for a critical. Anything else falls back to a solid block, which is
- * visibly wrong rather than invisibly missing.
+ * a bang for a critical, and since spec 143 the capitals, a colon and a full
+ * stop, because the refusal stack in the corner draws words. Anything else falls
+ * back to a solid block, which is visibly wrong rather than invisibly missing.
+ *
+ * One case, deliberately. A lower case would double the table for the benefit of
+ * one screen, and every caller here is a short shout: a damage number, or
+ * `SLASH: ON COOLDOWN`. `ErrorLog` uppercases before it gets this far.
  */
 const GLYPHS: Readonly<Record<string, readonly string[]>> = {
   '0': ['.###.', '#...#', '#..##', '#.#.#', '##..#', '#...#', '.###.'],
@@ -42,7 +47,35 @@ const GLYPHS: Readonly<Record<string, readonly string[]>> = {
   '+': ['.....', '..#..', '..#..', '#####', '..#..', '..#..', '.....'],
   '-': ['.....', '.....', '.....', '#####', '.....', '.....', '.....'],
   '!': ['..#..', '..#..', '..#..', '..#..', '..#..', '.....', '..#..'],
+  ':': ['.....', '..#..', '..#..', '.....', '..#..', '..#..', '.....'],
+  '.': ['.....', '.....', '.....', '.....', '.....', '..#..', '..#..'],
   ' ': ['.....', '.....', '.....', '.....', '.....', '.....', '.....'],
+  A: ['.###.', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
+  B: ['####.', '#...#', '#...#', '####.', '#...#', '#...#', '####.'],
+  C: ['.###.', '#...#', '#....', '#....', '#....', '#...#', '.###.'],
+  D: ['####.', '#...#', '#...#', '#...#', '#...#', '#...#', '####.'],
+  E: ['#####', '#....', '#....', '####.', '#....', '#....', '#####'],
+  F: ['#####', '#....', '#....', '####.', '#....', '#....', '#....'],
+  G: ['.###.', '#...#', '#....', '#.###', '#...#', '#...#', '.###.'],
+  H: ['#...#', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
+  I: ['.###.', '..#..', '..#..', '..#..', '..#..', '..#..', '.###.'],
+  J: ['..###', '...#.', '...#.', '...#.', '...#.', '#..#.', '.##..'],
+  K: ['#...#', '#..#.', '#.#..', '##...', '#.#..', '#..#.', '#...#'],
+  L: ['#....', '#....', '#....', '#....', '#....', '#....', '#####'],
+  M: ['#...#', '##.##', '#.#.#', '#.#.#', '#...#', '#...#', '#...#'],
+  N: ['#...#', '##..#', '##..#', '#.#.#', '#..##', '#..##', '#...#'],
+  O: ['.###.', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
+  P: ['####.', '#...#', '#...#', '####.', '#....', '#....', '#....'],
+  Q: ['.###.', '#...#', '#...#', '#...#', '#.#.#', '#..#.', '.##.#'],
+  R: ['####.', '#...#', '#...#', '####.', '#.#..', '#..#.', '#...#'],
+  S: ['.####', '#....', '#....', '.###.', '....#', '....#', '####.'],
+  T: ['#####', '..#..', '..#..', '..#..', '..#..', '..#..', '..#..'],
+  U: ['#...#', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
+  V: ['#...#', '#...#', '#...#', '#...#', '#...#', '.#.#.', '..#..'],
+  W: ['#...#', '#...#', '#...#', '#.#.#', '#.#.#', '##.##', '#...#'],
+  X: ['#...#', '#...#', '.#.#.', '..#..', '.#.#.', '#...#', '#...#'],
+  Y: ['#...#', '#...#', '.#.#.', '..#..', '..#..', '..#..', '..#..'],
+  Z: ['#####', '....#', '...#.', '..#..', '.#...', '#....', '#####'],
 };
 
 const FALLBACK: readonly string[] = [
@@ -79,8 +112,11 @@ export function textWidth(text: string): number {
 
 /**
  * The lit pixels of `text`, in font-pixel coordinates with the origin at the
- * top left. One rect per lit pixel: runs are *not* merged, because the SVG path
- * below is built once per damage number and a number is at most five glyphs.
+ * top left. One rect per lit pixel: runs are *not* merged, because a path is
+ * built once per message rather than once per frame, and because `src/ui/`'s
+ * numeric face is derived from this function one pixel at a time -- a merged
+ * run would arrive there as a single lit pixel and the rest of the glyph would
+ * go dark.
  */
 export function glyphRects(text: string): readonly PixelRect[] {
   const rects: PixelRect[] = [];

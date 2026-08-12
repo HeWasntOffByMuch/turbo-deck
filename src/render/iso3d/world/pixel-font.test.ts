@@ -11,8 +11,11 @@ import {
   textWidth,
 } from './pixel-font.js';
 
-/** Everything the HUD can put on screen through this font. */
-const HUD_CHARACTERS = '0123456789+-! ';
+/**
+ * Everything the HUD can put on screen through this font: the damage numbers
+ * (spec 065) and, since spec 143, the words in the refusal stack.
+ */
+const HUD_CHARACTERS = '0123456789+-!:. ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
 describe('the glyph table', () => {
   it('is 5x7 for every glyph, with no ragged rows', () => {
@@ -42,9 +45,13 @@ describe('the glyph table', () => {
   });
 
   it('gives distinct shapes to characters that must not be confused', () => {
-    // A damage number is read at a glance; these are the classic collisions.
+    // A damage number is read at a glance and a refusal is read out of the
+    // corner of an eye. Over the whole table rather than over the digits, which
+    // is what catches the pairs the letters brought with them: O and 0, I and 1,
+    // S and 5, Z and 2.
     const shapes = new Map<string, string>();
-    for (const character of '0123456789') {
+    for (const character of glyphNames()) {
+      if (character === ' ') continue;
       const path = glyphPath(character);
       const clash = shapes.get(path);
       expect(clash, `${character} draws the same as ${clash}`).toBeUndefined();
@@ -82,8 +89,11 @@ describe('layout', () => {
   });
 
   it('falls back to a solid block rather than drawing nothing', () => {
-    expect(hasGlyph('Z')).toBe(false);
-    expect(glyphRects('Z')).toHaveLength(GLYPH_WIDTH * GLYPH_HEIGHT);
+    // The face has one case on purpose (spec 143), so a lower-case letter is as
+    // absent as an accent is.
+    expect(hasGlyph('z')).toBe(false);
+    expect(glyphRects('z')).toHaveLength(GLYPH_WIDTH * GLYPH_HEIGHT);
+    expect(hasGlyph('\u00e9')).toBe(false);
   });
 });
 
