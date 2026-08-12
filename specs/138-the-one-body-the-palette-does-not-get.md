@@ -100,12 +100,21 @@ every direct child of the scene hidden except the exempt roots, and a flat
 white unlit `overrideMaterial`. It draws into a second render target **that
 shares the scene target's `DepthTexture`**, with `depthWrite` off.
 
-That sharing is the whole trick, and it is why this costs one small draw rather
-than a second full scene render. The depth of the finished world is already
-sitting in that attachment from the pass that just ran, so a player standing
-behind a tree fails the depth test and leaves no mask — the tree in front of
-them quantizes like the rest of the world, because as far as the mask is
-concerned the player is not there.
+That sharing is why this costs one small draw rather than a second full scene
+render: the depth of the finished world is already sitting in that attachment
+from the pass that just ran, so the mask can only mark pixels the body actually
+won.
+
+**The depth test is insurance, not a feature this game currently needs.** At the
+default 27° camera nothing in the arena was ever observed drawing in front of
+the player — 96 frames of walking three directions never split the exempt
+silhouette or dropped it below two thirds of its area, and that variation is the
+gait — and there is no fade-the-occluder system here to suggest otherwise. It is
+kept because the depth is already allocated and the test is two lines, and
+because "nothing occludes the player" is a fact about today's map and prop set
+rather than a rule anything enforces: a taller prop, a cliff, or a hand-edited
+map would break it silently, and a mask drawn without depth would then paint an
+unquantized player-shaped hole through whatever stood in front.
 
 Two consequences worth writing down:
 
@@ -172,15 +181,14 @@ difference between two, because the world is live and `preview-hike.ts` already
 found that differencing two screenshots a second apart reports ~19% change
 everywhere with a feature switched off.
 
-`npx tsx scripts/probe-shading.ts` carries the part the live world cannot. A
-player is normally standing in the open, where an unoccluded mask and a
-correctly depth-tested one are the *same silhouette* — and walking into
-woodland does not settle it either, since a walk cycle shrinks the blob about
-as much as a tree does. So `runExempt` builds the occluder instead of looking
-for one: a wall over half an exempt box, measured on the **wall**, because a
-leaking mask marks a pixel and the colour under that pixel is whatever the
-scene drew there. The exposed half must escape the palette and the covered half
-must not.
+`npx tsx scripts/probe-shading.ts` carries the depth test, which the live world
+cannot check *because* nothing in it occludes the player: an unoccluded mask and
+a correctly depth-tested one are the same silhouette, and walking does not
+settle it since the gait moves the blob more than anything in the map does. So
+`runExempt` builds the occluder instead of looking for one: a wall over half an
+exempt box, measured on the **wall**, because a leaking mask marks a pixel and
+the colour under that pixel is whatever the scene drew there. The exposed half
+must escape the palette and the covered half must not.
 
 ## Out of scope
 

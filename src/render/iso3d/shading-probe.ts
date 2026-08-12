@@ -928,11 +928,12 @@ function runPalette(): PaletteProbeCase {
  * Does the exemption mask stop at the things standing in front of it? (spec 138)
  *
  * The live-world probe (`scripts/probe-exempt.ts`) can show that the player's
- * pixels escape the palette, and it does. What it cannot show is *occlusion*:
- * the player is normally standing in the open, and an unoccluded mask and a
- * correctly depth-tested one are the same silhouette when nothing is in front
- * of the body. Walking into woodland does not settle it either -- the blob does
- * shrink, but a walk cycle swings the arms and legs and shrinks it too.
+ * pixels escape the palette, and it does. What it cannot show is the *depth
+ * test*, and the reason is worth stating: nothing in that arena ever draws in
+ * front of the player. At the default 27-degree camera, 96 frames of walking
+ * never split the exempt silhouette or cost it a third of its area, and that
+ * spread is the gait. With no occluder to be found, a mask drawn with no depth
+ * at all produces the identical frame.
  *
  * So the occluder is built rather than found. A wall covers the left half of an
  * exempt box and nothing else, which makes the answer a rectangle: the exposed

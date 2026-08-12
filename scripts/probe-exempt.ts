@@ -305,16 +305,16 @@ try {
     }
   }
 
-  // Occlusion is NOT checked here, on purpose. Everything above passes just as
-  // happily with the depth test broken: the player is normally standing in the
-  // open, where an unoccluded mask and a correctly depth-tested one are the
-  // same silhouette. Walking into the treeline does not rescue it either -- the
-  // blob does shrink by about a fifth, and so does a standing body the moment
-  // the walk cycle swings an arm across it, so the number cannot tell a tree
-  // from a gait. That check lived here briefly and passed for the wrong reason.
+  // The depth test is NOT checked here, on purpose, and cannot be: nothing in
+  // this arena draws in front of the player. At the default 27-degree camera,
+  // 96 frames of walking three directions never split the exempt silhouette and
+  // never cost it a third of its area -- that spread is the gait. With no
+  // occluder to find, a mask drawn with no depth at all renders the identical
+  // picture, so every number above is blind to it.
   //
-  // `runExempt` in shading-probe.ts settles it instead, by building an occluder
-  // rather than hoping to walk behind one.
+  // A walk-into-the-trees check lived here briefly and passed, which is worse
+  // than failing: it was reading the walk cycle. `runExempt` in shading-probe.ts
+  // settles it by building a wall rather than hoping to walk behind one.
 
   const problems = logs.filter(
     (line) => /error|fail|could not compile|INVALID_/i.test(line) && !/favicon|404|\[units\]/i.test(line),

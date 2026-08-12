@@ -227,9 +227,16 @@ function makeDitherTexture(size: BayerSize): THREE.DataTexture {
  *
  * Unlit and unfogged, because the mask is asking "is this pixel the player",
  * not "what colour is the player" -- the colour is already in the scene buffer.
- * `depthWrite` off and `depthTest` on is the whole occlusion story: the depth
- * of the finished world is in the attachment this target shares with the scene
- * buffer, so a body behind a tree fails the test and marks nothing.
+ *
+ * `depthWrite` off and `depthTest` on against the depth this target shares with
+ * the scene buffer, so the mask can only ever mark pixels the body actually
+ * won. Worth knowing that this is insurance rather than something the current
+ * game exercises: at the default 27-degree camera nothing in the arena was ever
+ * observed drawing in front of the player, and there is no fade-the-occluder
+ * system here to imply otherwise. It stays because the depth is already
+ * allocated and the test is two lines, and because "nothing occludes the
+ * player" is a fact about today's map and props rather than a rule anything
+ * enforces.
  */
 /**
  * Let a render target go of its depth texture.
