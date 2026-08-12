@@ -139,7 +139,7 @@ const plan = planConnection(location.search, location, sessionStorage, () => cry
 
 `warmRouting(world)` (~1s) and the local `buildWorldFromMap` stay on both paths
 for now — the drawn world already comes from `StreamedMap` and only the
-predictor and `RoutePlanner` read the local build. Spec 145 is what removes it.
+predictor and `RoutePlanner` read the local build. Spec 146 is what removes it.
 
 ### The ground a prediction stands on
 
@@ -167,7 +167,7 @@ either field is `null` the predictor takes the flat step — the same
   local build **only if `info.mapId === mapIdOf(mapText)`**. On a mismatch it
   stays empty, the client predicts flat, and the status line says so.
 
-This is the seam spec 145 fills: collider paging replaces "fill from the local
+This is the seam spec 146 fills: collider paging replaces "fill from the local
 build on a matching id" with "grow from `StreamedMap`", and nothing else moves.
 Failing *safe* rather than *wrongly* is the property, and it is the reason the
 holder exists in 144 rather than 145.
@@ -255,10 +255,10 @@ be reached from Node.
 
 ## Out of scope
 
-- **Collider paging** — spec 145. Until then a remote client on a map that is
+- **Collider paging** — spec 146. Until then a remote client on a map that is
   not the one it bundled predicts flat, deliberately and visibly.
 - **Separated spawns, nameplates, replicated turn rate, PvP verification** —
-  spec 146. Two players connected today spawn on the identical
+  spec 145. Two players connected today spawn on the identical
   `DEFAULT_SPAWN {600, 450}` and interpenetrate, because nothing collides
   entity against entity.
 - **Reconnect, heartbeat, timeout** — spec 149. A closed socket says "closed"
@@ -268,7 +268,7 @@ be reached from Node.
 - **Loss, jitter and reorder** — spec 147. Note latency simulation already
   exists (four copies of a `DelayLine`); that spec extracts one rather than
   inventing one.
-- **Rate matching** (148), **lag compensation** (150), **hostile-client
+- **Rate matching** (148), **lag compensation** (149), **hostile-client
   hardening** (151).
 - **Anything needing a second machine**, TLS, accounts, or a database. The
   `?server=<url>` escape hatch is there so none of that is needed to test.

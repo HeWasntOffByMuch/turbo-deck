@@ -1,4 +1,4 @@
-# turbo-deck wire protocol v9
+# turbo-deck wire protocol v11
 
 Binary, not JSON. Every frame is a WebSocket **binary** message whose first byte
 is the message type; the rest is a type-specific payload. All multi-byte numbers
@@ -6,6 +6,26 @@ are **little-endian**.
 
 Implemented by `protocol.ts` (type bytes), `codec.ts` (primitives),
 `messages.ts` (game messages) and `admin-messages.ts` (the `admin:*` namespace).
+
+## Where the socket is
+
+The server shares one port with the admin console (`PORT`, default 8787) and
+accepts the upgrade on **any path** — `WebSocketTransport` passes no `path` to
+`WebSocketServer`. Clients nevertheless agree on `/ws` (spec 144,
+`connection.ts`'s `WS_PATH`), because the dev proxy has to route on something
+and it cannot be `/`, where vite's own HMR socket lives. So:
+
+| Client | Dials |
+|---|---|
+| Browser, `npm run dev` | `ws://localhost:5173/ws`, proxied to `:8787` by vite |
+| Browser, direct | `ws://<host>:8787/ws` |
+| Node bots (`server:bots`) | `ws://localhost:8787` — the bare origin, still accepted |
+
+Three transports implement `Channel`: `transport-loop.ts` (in-tab
+single-player), `transport-ws.ts` (the server's accept side and a Node client),
+and `transport-browser.ts` (the DOM `WebSocket`). A browser client must set
+`binaryType = 'arraybuffer'`; the frames are binary in both directions and a
+text frame is dropped rather than parsed.
 
 ## Primitives
 

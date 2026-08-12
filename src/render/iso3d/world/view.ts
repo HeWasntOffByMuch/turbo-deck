@@ -24,9 +24,16 @@
  */
 
 import { GameClient } from '../../../server/client/game-client.js';
-import { createWorldPredictor } from '../../../server/client/prediction.js';
 import { LoopbackTransport } from '../../../server/net/transport-loop.js';
+import { connectChannel } from '../../../server/net/transport-browser.js';
 import { GameServer } from '../../../server/server.js';
+import { planConnection } from './connection.js';
+import { createConnectionBanner } from './connection-banner.js';
+import { createGroundPredictor, emptyGround, fillGround } from './prediction-ground.js';
+import { mapIdOf } from '../../../server/world/map-index.js';
+import type { Channel } from '../../../server/net/transport.js';
+import type { WorldColliders } from '../../../sim/types.js';
+import type { TerrainSampler } from '../../../server/world/terrain.js';
 import { buildWorldFromMap, warmRouting } from '../../../server/world/build.js';
 import {
   BROADCAST_EVERY_N_TICKS,
@@ -111,34 +118,86 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // start-up rather than in the frame where the first move order is given.
   warmRouting(world);
 
-  const transport = new LoopbackTransport();
-  const server = new GameServer({ seed, built: world, transport });
-  // Wired by hand rather than through `server.start()`: that would spin up the
-  // server's own wall-clock loop, and this view already drives the tick from its
-  // animation frame. Registering the handler is the half we want.
-  transport.onConnection((channel) => server.accept(channel));
-  const client = new GameClient(transport.connect(), {
-    playerId: 'you',
-    displayName: 'You',
+  // The one branch in this file that decides what kind of game this is
+  // (spec 144). No `?server` is single-player over a loopback, exactly as
+  // before; `?server` connects out and constructs no server at all.
+  const plan = planConnection(location.search, location, sessionStorage, () =>
+    crypto.randomUUID(),
+  );
+
+  /**
+   * What the predictor is allowed to collide against.
+   *
+   * Filled synchronously here on the loopback path, because the map this tab
+   * built *is* the map its in-tab server is colliding against -- the same
+   * objects the predictor has always closed over. On a socket it stays empty
+   * until `MapInfo` proves the server is on this same document, and the client
+   * predicts flat until then. See prediction-ground.ts.
+   */
+  const ground = emptyGround();
+  if (plan.mode === 'loopback') fillGround(ground, world.colliders, world.sampler);
+
+  const banner = createConnectionBanner(root);
+  let transport: LoopbackTransport | null = null;
+  let server: GameServer | null = null;
+  let channel: Channel;
+  if (plan.mode === 'loopback') {
+    transport = new LoopbackTransport();
+    server = new GameServer({ seed, built: world, transport });
+    // Wired by hand rather than through `server.start()`: that would spin up the
+    // server's own wall-clock loop, and this view already drives the tick from its
+    // animation frame. Registering the handler is the half we want.
+    const listening = server;
+    transport.onConnection((c) => listening.accept(c));
+    channel = transport.connect();
+  } else {
+    channel = connectChannel(plan.url, { onPhase: (phase) => banner.set(phase, plan.url) });
+  }
+
+  const client = new GameClient(channel, {
+    playerId: plan.mode === 'remote' ? plan.playerId : 'you',
+    displayName: plan.mode === 'remote' ? plan.displayName : 'You',
     // What this build's assets hash to (spec 113). The in-tab server has no
-    // manifest of its own, so today this always passes -- it is sent anyway
-    // because this is the one client construction site, and a real socket is a
-    // transport swap away.
+    // manifest of its own, so it always passes there; a real server compares it
+    // and refuses a mismatch, which is why the banner has to be able to say a
+    // connection was refused rather than merely lost.
     assetManifest: ASSET_MANIFEST_HASH,
     // Predict against the world the server is colliding against (spec 063), so
-    // a tree stops the local guess where it stops the authoritative one.
+    // a tree stops the local guess where it stops the authoritative one -- but
+    // only once it is known to *be* that world (spec 144).
     predictor: (stats, tickRate) =>
-      createWorldPredictor({
-        world: world.colliders,
-        terrain: world.sampler,
+      createGroundPredictor({
+        ground,
         radius: SERVER_PLAYER_RADIUS,
         speed: stats.moveSpeed,
         tickRate,
       }),
   });
+  if (plan.mode === 'remote') {
+    void client.connect().catch((error: unknown) => {
+      banner.refuse(error instanceof Error ? error.message : String(error));
+    });
+  }
 
-  /** The world a move order routes through -- the one the server is colliding against. */
-  const pathWorld = { colliders: world.colliders, radius: SERVER_PLAYER_RADIUS, ground: world.sampler };
+  /**
+   * The world a move order routes through -- the one the server is colliding
+   * against, or null while that is not known. `RoutePlanner` treats a null
+   * world as "walk straight at it", which is the same fail-safe the flat
+   * predictor is: wrong in the direction the server quietly corrects.
+   *
+   * Rebuilt rather than mutated when the ground arrives, because `navGridFor`
+   * memoizes on the colliders' object identity -- handing it a mutated object
+   * would cache a grid of the world as it was and never notice.
+   */
+  let pathWorld: { colliders: WorldColliders; radius: number; ground: TerrainSampler } | null = null;
+  function syncPathWorld(): void {
+    const { colliders, terrain } = ground;
+    pathWorld =
+      colliders && terrain
+        ? { colliders, radius: SERVER_PLAYER_RADIUS, ground: terrain }
+        : null;
+  }
+  syncPathWorld();
   const planner = new RoutePlanner();
 
   // The scene draws the map the *client* was sent, not the document the in-tab
@@ -170,6 +229,19 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     if (!streamed) {
       streamed = new StreamedMap(map.info);
       scene.setMap(streamed);
+      // The first moment a remote client can know whether the map it bundled is
+      // the map the server is colliding against (spec 144). `mapId` is a hash of
+      // the exact serialized document, so this is an identity test rather than a
+      // guess -- and on a mismatch the honest move is to keep predicting flat and
+      // say so, rather than to collide against somebody else's forest.
+      if (plan.mode === 'remote') {
+        if (map.info.mapId === mapIdOf(mapText)) {
+          fillGround(ground, world.colliders, world.sampler);
+          syncPathWorld();
+        } else {
+          banner.note('different map — prediction off');
+        }
+      }
     }
 
     let arrived = 0;
@@ -1238,8 +1310,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       accumulator -= TICK_MS;
       ticks += 1;
       // The in-tab server advances on the same fixed step it would over a wire;
-      // this view just happens to be the thing driving its clock.
-      server.tick();
+      // this view just happens to be the thing driving its clock. Over a real
+      // socket there is no server here to drive -- the client's own clock below
+      // is the only one this tab owns (spec 144).
+      server?.tick();
       // The client keeps its own clock (spec 065's follow-up): deltas are
       // suppressed when nothing changed, so `view.tick` is not one.
       client.advanceTick();
