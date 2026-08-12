@@ -1,5 +1,5 @@
 /**
- * Which bodies get eased, and how fast we believe they turn (spec 140).
+ * Which bodies get eased, and how fast we believe they turn (spec 142).
  *
  * The interesting cases are the ones that must *not* be eased -- a projectile's
  * facing is its path, and easing it draws the nose off the curve on the frame it

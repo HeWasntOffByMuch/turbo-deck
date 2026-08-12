@@ -374,7 +374,7 @@ export class WorldScene {
 
   private readonly motion = new EntityMotion();
   /**
-   * The drawn yaw, eased (spec 140). A second presentation-only track beside
+   * The drawn yaw, eased (spec 142). A second presentation-only track beside
    * `motion`: the sim owns the heading, this owns how a body gets to it.
    */
   private readonly turnEase = new TurnEase();
@@ -1142,7 +1142,7 @@ export class WorldScene {
     const live = new Set(view.entities.map((entity) => entity.id));
     this.motion.retain(live);
     // The drawn yaw keeps per-body state for the same reason the drawn position
-    // does, and is dropped on the same pass (spec 140).
+    // does, and is dropped on the same pass (spec 142).
     this.turnEase.retain(live);
   }
 
@@ -1167,7 +1167,7 @@ export class WorldScene {
       // What the sim says this body's heading is -- the prediction for our own
       // body, the smoothed replica for everything else.
       const heading = isSelf ? frame.selfFacing : (pose?.facing ?? entity.facing);
-      // What to actually yaw it by (spec 140). `turnToward` steps angular
+      // What to actually yaw it by (spec 142). `turnToward` steps angular
       // velocity from nothing to the full rate in one tick and back in one tick;
       // this gives that a beginning and an end. Presentation only: `heading` is
       // what every decision is still made against, and nothing reads this back.

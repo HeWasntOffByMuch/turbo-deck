@@ -1,5 +1,5 @@
 /**
- * The drawn turn's beginning and end (spec 140).
+ * The drawn turn's beginning and end (spec 142).
  *
  * The properties worth asserting are all relationships to the sim rather than
  * chosen numbers: the drawn body arrives where the server put it, never turns

@@ -90,7 +90,7 @@ interface RunResult {
   readonly states: readonly string[];
   readonly events: readonly FiredEvent[];
   /**
-   * The eased drawn yaw beside the heading it was eased toward (spec 140), so a
+   * The eased drawn yaw beside the heading it was eased toward (spec 142), so a
    * run that silently stopped easing cannot pass the assertion above.
    */
   readonly yaws: readonly { drawn: number; heading: number; limits: TurnLimits }[];
@@ -157,7 +157,7 @@ async function play(animate: boolean): Promise<RunResult> {
 
     // The animation layer, driven exactly as the scene drives it.
     for (const entity of view.entities) {
-      // The eased yaw (spec 140), driven the same way -- one step per entity per
+      // The eased yaw (spec 142), driven the same way -- one step per entity per
       // frame, off the replicated heading, exactly as `syncBodies` does it.
       const limits = turnLimitsFor(entity, entity.id === view.selfEntityId, view.stats?.turnRate ?? null, 60);
       if (limits !== null) {
@@ -209,7 +209,7 @@ describe('animation is presentation only', () => {
   }, 30_000);
 
   it('was actually easing a yaw, and easing it away from the heading', async () => {
-    // The same guard for spec 140's half: a run whose ease returned the
+    // The same guard for spec 142's half: a run whose ease returned the
     // authoritative heading unchanged would pass the assertion above while
     // testing nothing. The player is turning continuously here, so the drawn yaw
     // must differ from the replicated one somewhere -- and by no more than the

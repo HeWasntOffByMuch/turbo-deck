@@ -598,12 +598,12 @@ src/render/iso3d/turn-swing.ts  what a pivot does to a body's extremities (spec
                  frame captioned "the turn is over". The window is fixed in world
                  space and the collider ring is drawn, both for the same reason --
                  auto-framing each cell would hide the only thing being shown.
-                 Since spec 140 it draws two rows, the rule and what is actually
+                 Since spec 142 it draws two rows, the rule and what is actually
                  drawn, and writes turnaround-rate.png beside them -- angular rate
                  against time, where the raw rule is a rectangle and the ease is a
                  trapezoid. Everything else here draws a heading, and a heading was
                  never what was wrong.
-src/render/iso3d/turn-ease.ts  the drawn turn's beginning and end (spec 140).
+src/render/iso3d/turn-ease.ts  the drawn turn's beginning and end (spec 142).
                  `turnToward` is a step function on angular velocity: nothing, then
                  the full rate for every tick, then nothing. Spec 139 gated the
                  *peak* of the sweep that produces and this is the other half --

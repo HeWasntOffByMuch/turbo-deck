@@ -1,5 +1,5 @@
 /**
- * How fast a drawn body is allowed to be turning (spec 140).
+ * How fast a drawn body is allowed to be turning (spec 142).
  *
  * The ease in `turn-ease.ts` needs a rate to cap the drawn yaw at, because a
  * follower that may exceed the sim's own rate to catch up would raise the peak

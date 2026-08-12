@@ -1,5 +1,5 @@
 /**
- * Giving the drawn turn a beginning and an end (spec 140).
+ * Giving the drawn turn a beginning and an end (spec 142).
  *
  * `turnToward` is a step function on angular velocity: a body is turning at
  * nothing, then at its full rate for every tick of the turn, then at nothing

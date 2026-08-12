@@ -22,7 +22,7 @@
  * origin is where the server put it. Nothing here is a model of the game's turn;
  * it is the game's turn, drawn.
  *
- * Since spec 140 it draws two turns rather than one: the raw rule and the eased
+ * Since spec 142 it draws two turns rather than one: the raw rule and the eased
  * drawn yaw, at the same timestamps. The strip is what the ease *is* -- the same
  * headings, reached on a different schedule -- and `turnaround-rate.png` beside it
  * is the point of the spec, because the complaint was never about a heading. It is
@@ -293,7 +293,7 @@ async function main(): Promise<void> {
 
     // --- the rate plot -----------------------------------------------------
     //
-    // The picture of spec 140. Everything else here draws a heading, and a
+    // The picture of spec 142. Everything else here draws a heading, and a
     // heading is not what was wrong.
     const peakRaw = Math.max(...series.map((point) => point.rawRate));
     const peakEased = Math.max(...series.map((point) => point.easedRate));
