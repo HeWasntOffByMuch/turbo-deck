@@ -24,6 +24,7 @@ import {
   UNKNOWN_ABILITY_ICON,
 } from './character-model.js';
 import { HOTBAR } from './hud.js';
+import { NO_ATTACK_SPEED } from '../../../server/sim/attack-timing.js';
 
 const STATS: EffectiveStats = {
   maxHealth: 138,
@@ -31,7 +32,8 @@ const STATS: EffectiveStats = {
   turnRate: 210,
   attackDamage: 12,
   attackRange: 56,
-  attackDelayTicks: 30,
+  baseAttackTimeTicks: 30,
+  ...NO_ATTACK_SPEED,
   armor: 0.12,
   spellPower: 1.2,
   critChance: 0.05,
@@ -204,6 +206,6 @@ describe('the character view', () => {
       expect(row.value).not.toContain('undefined');
     }
     // Ticks are a server unit; the sheet says swings per second.
-    expect(view.stats.find((row) => row.label === 'Speed')?.value).toBe('2.0/s');
+    expect(view.stats.find((row) => row.label === 'Speed')?.value).toBe('2.00/s');
   });
 });

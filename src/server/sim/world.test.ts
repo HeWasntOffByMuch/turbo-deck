@@ -1173,10 +1173,10 @@ describe('shots that travel', () => {
   });
 
   it('lands on the same tick however fast the weapon attacks (spec 088)', () => {
-    /** The tick a shot from a body with this attack delay arrives on. */
-    function arrival(attackDelayTicks: number): number | null {
+    /** The tick a shot from a body with this Base Attack Time arrives on. */
+    function arrival(baseAttackTimeTicks: number): number | null {
       let state = createWorldState(4);
-      const player = withPlayer(state, 600, 450, { ...PLAYER_STATS, attackDelayTicks });
+      const player = withPlayer(state, 600, 450, { ...PLAYER_STATS, baseAttackTimeTicks });
       state = player.state;
       const mark = withMonster(state, 'dummy', 900, 450);
       state = mark.state;

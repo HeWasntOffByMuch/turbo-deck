@@ -252,7 +252,7 @@ function ticksFor(weapon: string | null): number {
     health: 100,
     resource: 20,
   });
-  return stats.attackDelayTicks * SWINGS;
+  return stats.baseAttackTimeTicks * SWINGS;
 }
 
 /**
@@ -406,7 +406,7 @@ async function twoShots(): Promise<{
     // as a second bar.
     const drawn = view.casts.find((cast) => cast.entityId === view.selfEntityId);
     if (drawn) {
-      lastProgress = castBar(drawn, view.estimatedTick, abilityById(drawn.abilityId)).progress;
+      lastProgress = castBar(drawn, view.estimatedTick).progress;
     }
     if (!drawn) windingUp = false;
     else if (drawn.phase === CastPhaseValue.Windup) windingUp = true;
@@ -437,7 +437,7 @@ async function twoShots(): Promise<{
       orderedAt = ticks;
       facing = self.facing;
       windupTicks = abilityById('ranged.shot')?.windupTicks ?? 0;
-      delayTicks = view.stats.attackDelayTicks;
+      delayTicks = view.stats.baseAttackTimeTicks;
       // Half a revolution at this body's own rate, in ticks.
       turnTicks = Math.ceil(180 / (view.stats.turnRate / SERVER_TICK_RATE));
       continue;
@@ -543,12 +543,16 @@ describe('two shots, from a body that had to turn right round (spec 090)', () =>
     // nothing may be spent turning, waiting for a stale replica to agree, or
     // restarting a wind-up both ends disagreed about.
     //
-    // The wind-up is in the interval because the cooldown starts at the release
-    // rather than the commit (spec 091), so the clock the second shot waits on
-    // does not start until the first arrow is away. That is the cadence a player
-    // sees between two loosed shots; `attackDelayTicks` on its own is the gap
-    // between one shot and the *start* of the next draw.
-    const cadence = run.delayTicks + run.windupTicks;
+    // The interval *contains* the wind-up since spec 144: it is measured from
+    // the tick the draw begins, not from the tick the arrow leaves. So the gap
+    // between two loosed shots is one Base Attack Time and nothing more -- the
+    // second draw starts while the first shot's interval is still running, and
+    // finishes exactly as it expires.
+    //
+    // This is the line spec 091 got wrong and 144 corrects: `delay + windup`
+    // was one wind-up too long, which is why two bodies on the same BAT with
+    // different weapons used to attack at different rates.
+    const cadence = run.delayTicks;
     expect(run.secondAt - run.firstAt, `interval: ${seen}`).toBeLessThanOrEqual(
       cadence + INTERVAL_SLACK,
     );

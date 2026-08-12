@@ -171,19 +171,32 @@ export interface EffectiveStats {
   readonly attackDamage: number;
   readonly attackRange: number;
   /**
-   * Ticks that must pass after a basic attack before the next may begin
-   * (spec 088).
+   * Base Attack Time: ticks between one basic attack starting and the next,
+   * before attack speed (specs 088, 144).
    *
-   * The whole answer, and the only one: nothing divides it and nothing else is
-   * consulted. It replaced a base cadence, a multiplier over that base, and a
-   * helper that divided one by the other at every call site -- three names for
-   * one number, which is why asking "when can this body swing again" used to
-   * have no field to read.
+   * Spec 088 stored the *resolved* interval here and called it
+   * `attackDelayTicks`. 144 splits it, because the interval is now a computed
+   * thing -- attack speed divides it, and divides the wind-up and the backswing
+   * by the same amount -- and a stored copy of a computed number is a second
+   * source of truth for exactly the question that must only have one.
    *
-   * Modifiers are resolved on the way in, in `computeEffectiveStats`: a weapon
-   * that says `attackSpeedPct` still means *percent faster*, and shortens this.
+   * What a body waits between blows is `resolveAttackTiming(...).intervalTicks`,
+   * from `sim/attack-timing.ts`, and nothing else answers it.
    */
-  readonly attackDelayTicks: number;
+  readonly baseAttackTimeTicks: number;
+  /**
+   * Additive flat attack speed (spec 144). **0 is base, 100 is twice the rate.**
+   *
+   * Deliberately still zero for every player: spec 091 took the attack cadence
+   * off the weapon on purpose and this is not the spec that puts it back. The
+   * field is the socket a future item or buff plugs into, and monsters may
+   * author it in their rows today.
+   */
+  readonly attackSpeed: number;
+  /** Percent attack-speed multiplier. 1 is none (spec 144). */
+  readonly attackSpeedMultiplier: number;
+  /** Percent attack-speed slow multiplier. 1 is none (spec 144). */
+  readonly attackSpeedSlowMultiplier: number;
   /** Fraction of incoming damage removed, 0..MAX_ARMOR. */
   readonly armor: number;
   /** Multiplier on ability damage. */

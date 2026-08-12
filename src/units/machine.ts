@@ -140,6 +140,20 @@ export class UnitMachine {
   private activeAction: ActionTiming | null = null;
   private actionStartTick = 0;
   private tickCount = 0;
+  /**
+   * A multiplier on the playback rate of one-shot states (spec 144).
+   *
+   * Attack speed shortens the gameplay wind-up, so the clip that draws it has to
+   * shorten by the same factor or the two come apart -- a body that commits in
+   * 0.2s while its swing animation takes 0.4s is drawn still winding up after
+   * the arrow has left. `startAction` already rescales a clip to fit gameplay
+   * timing; this is the same rule reaching the trigger-driven path, which enters
+   * a state directly and never consults an action's timing at all.
+   *
+   * One-shots only, and deliberately: the same factor applied to a locomotion
+   * loop would make a hasted body's legs run faster than it travels.
+   */
+  private actionRateScale = 1;
 
   constructor(options: MachineOptions) {
     this.unit = options.unit;
@@ -220,6 +234,17 @@ export class UnitMachine {
   /** Raises a trigger, consumed by the first transition that reads it. */
   trigger(name: string): void {
     this.pendingTriggers.add(name);
+  }
+
+  /**
+   * How fast one-shot states play, 1 being the clip's authored speed.
+   *
+   * Applied when a state is *entered*, not continuously, so a rate change
+   * halfway through a swing does not jerk the pose -- which is the same
+   * snapshot rule the sim applies to the timing this is derived from.
+   */
+  setActionRate(scale: number): void {
+    this.actionRateScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
   }
 
   /**
@@ -526,7 +551,7 @@ export class UnitMachine {
     this.current = {
       stateId,
       clipTick: -1,
-      rate: rate ?? next.timeScale,
+      rate: (rate ?? next.timeScale) * (next.category === 'oneshot' ? this.actionRateScale : 1),
       finished: false,
     };
     if (next.clipRef !== this.activeAction?.clipRef) this.activeAction = null;

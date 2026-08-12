@@ -582,6 +582,48 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  stats from ids and levels, state/ is the swappable DataStore,
                  admin/ is the token-gated admin namespace, client/ is the
                  transport-agnostic session the renderer draws from.
+                 sim/attack-timing.ts is how long an attack takes, in every sense
+                 of the question (spec 144), and the only place any of it is
+                 worked out. The idea it exists to hold is that the **attack
+                 interval and the attack animation are two spans that start
+                 together and end apart**: an interval from the wind-up's first
+                 tick, an attack point partway through it where the blow becomes
+                 real, and a backswing after that which may be walked out of for
+                 free. One factor -- `(1 + attackSpeed/100) * mult * slowMult`,
+                 HoN's, where +100 is twice the rate -- divides all three, so
+                 attacking faster shortens the swing rather than only the
+                 standing still.
+                 The attack point is a *boundary*, and `abilities.ts` has two
+                 differently-named cancellations either side of it because the
+                 outcomes have nothing in common: `cancelWindup` refunds
+                 everything and the attack did not happen, `cancelBackswing`
+                 returns the legs and nothing else because it already did.
+                 Which is the whole feature -- skipping a follow-through buys
+                 movement and can never buy a faster next attack, since the tick
+                 governing the next one was written down at the attack point and
+                 no cancellation path writes it again.
+                 Two rules learned by getting them wrong first. The interval is
+                 measured from `windupStartTick`, not from the commit: spec 065
+                 turns the body before the swing begins, and counting the turn
+                 against the cadence would make a body that had to come round
+                 attack more slowly forever. And the timing is *snapshotted* on
+                 the cast, so a buff landing mid-wind-up belongs to the next
+                 attack -- recomputing per tick lets a haste buff at 90% of a
+                 swing put the release in the past.
+                 The same-tick ordering had to be picked rather than derived, and
+                 `cancelWindup` picks it: movement runs before casts, so a
+                 withdrawal on tick T is *seen* before the release T is about to
+                 process, and the release tick belongs to the attack. The last
+                 tick a withdrawal works on is `releaseTick - 1`, asserted from
+                 both sides in `sim/attack-cancel.test.ts`.
+                 Where a player's attack speed comes from is deliberately still
+                 nowhere: spec 091 took the cadence off the weapon on purpose and
+                 144 built over that rather than reversing it, so the stat is a
+                 socket at zero and monsters author BAT per row as they already
+                 did. `npx tsx scripts/probe-attack.ts --cancel=never|backswing`
+                 prints the two timelines side by side, and the invariant reads
+                 off the summaries: same attacks, same cadence, a body rooted 24
+                 ticks per cycle or 1.
                  player/trade.ts and trades.ts are the first exchange with two
                  owners (spec 132), and the difference from the shop is not size:
                  its failure mode is *duplication* rather than a wrong number, so

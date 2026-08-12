@@ -422,7 +422,7 @@ describe('wind-up', () => {
     ).toHaveLength(1);
   });
 
-  it('does not withdraw from a blow that has already landed', () => {
+  it('cancels only the backswing once the blow has landed (spec 144)', () => {
     let state = createWorldState(1);
     const player = withPlayer(state, 600, 450);
     state = player.state;
@@ -434,16 +434,28 @@ describe('wind-up', () => {
 
     let during = commit;
     while (during.state.tick < releaseTick) during = run(during.state, 1);
+    // The blow has committed: slash has a follow-through, so the cast is now in
+    // its backswing rather than over, and the interval has been stamped.
+    const committed = during.state.entities.get(player.id);
+    expect(committed?.cast?.committed).toBe(true);
+    expect(committed?.cast?.phase).toBe(CastPhase.Backswing);
+    const stamped = committed?.cooldowns['melee.slash'] ?? 0;
+    expect(stamped).toBeGreaterThan(0);
+
+    // Walking now skips the rest of the animation and nothing else. It is
+    // reported as its own kind of ending, so a client cannot mistake it for the
+    // withdrawal that refunds -- and the interval stamped at the attack point
+    // is untouched, to the tick.
+    const after = run(during.state, 1, { 0: [input(player.id, { moveX: 0, moveY: 1 })] });
+    expect(after.state.entities.get(player.id)?.cast).toBeNull();
+    expect(after.state.entities.get(player.id)?.cooldowns['melee.slash']).toBe(stamped);
     expect(
-      during.events.some(
-        (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Released,
+      after.events.some(
+        (event) =>
+          event.kind === 'castEnded' && event.reason === CastEndReason.BackswingCancelled,
       ),
     ).toBe(true);
-
-    // Walking now is an ordinary walk away from a blow that went off, and the
-    // cooldown it started is still standing.
-    const after = run(during.state, 1, { 0: [input(player.id, { moveX: 0, moveY: 1 })] });
-    expect(after.state.entities.get(player.id)?.cooldowns['melee.slash']).toBeGreaterThan(0);
+    // And emphatically *not* the reason that means the attack never happened.
     expect(
       after.events.some(
         (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Cancelled,
@@ -1137,9 +1149,10 @@ describe('cast phases reach the client', () => {
     const phases = result.events
       .filter((event) => event.kind === 'castStarted')
       .map((event) => (event.kind === 'castStarted' ? event.phase : -1));
-    // Committed facing the aim, so no turn -- and nothing after the wind-up,
-    // because the release is the end of the cast (spec 068).
-    expect(phases).toEqual([CastPhase.Windup]);
+    // Committed facing the aim, so no turn. The backswing is announced as a
+    // phase of its own (spec 144), which is the "this attack has committed"
+    // notice: the client's bar has to stop saying "you may still withdraw".
+    expect(phases).toEqual([CastPhase.Windup, CastPhase.Backswing]);
 
     const ended = result.events.filter(
       (event) => event.kind === 'castEnded' && event.reason === CastEndReason.Released,
@@ -1521,8 +1534,8 @@ describe('a named target (spec 070)', () => {
   });
 
   it('stamps a basic attack from the caster, and everything else from the table', () => {
-    const quick: EffectiveStats = { ...STATS, attackDelayTicks: 20 };
-    const slow: EffectiveStats = { ...STATS, attackDelayTicks: 40 };
+    const quick: EffectiveStats = { ...STATS, baseAttackTimeTicks: 20 };
+    const slow: EffectiveStats = { ...STATS, baseAttackTimeTicks: 40 };
 
     let state = createWorldState(6);
     const fast = withPlayer(state, 600, 450, quick);

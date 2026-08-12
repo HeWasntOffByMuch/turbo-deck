@@ -1450,6 +1450,7 @@ export class GameServer implements AdminHost {
             entityId: event.entityId,
             abilityId: event.abilityId,
             phase: event.phase,
+            startTick: event.startTick,
             releaseTick: event.releaseTick,
             endTick: event.endTick,
             targetX: event.targetX,

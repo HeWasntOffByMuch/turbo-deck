@@ -11,6 +11,7 @@
 import type { Rng } from '../../shared/prng.js';
 import type { Vec2 } from '../../sim/types.js';
 import type { EffectiveStats, Vec3 } from '../state/types.js';
+import type { AttackTiming } from './attack-timing.js';
 
 export const EntityKindValue = {
   Player: 0,
@@ -39,6 +40,15 @@ export const CastPhase = {
   Windup: 0,
   Channel: 1,
   /**
+   * The follow-through after the blow has landed (spec 144).
+   *
+   * The body is rooted and may walk out of it, and walking out costs nothing --
+   * the attack has already happened and its interval is already running. This is
+   * the phase where {@link CastState.committed} is true, which is the whole
+   * distinction the spec exists to draw.
+   */
+  Backswing: 2,
+  /**
    * Committed, but not yet pointing at what it committed to (spec 065). The
    * cost is spent and the aim is captured; the wind-up clock has not started.
    */
@@ -48,9 +58,23 @@ export const CastPhase = {
 /** Why a cast stopped, so the client can play the right thing. */
 export const CastEndReason = {
   Released: 0,
+  /**
+   * Withdrawn from before the attack point. **The attack did not happen**: no
+   * blow, no projectile, cost refunded, no interval started.
+   */
   Cancelled: 1,
   /** Knocked out of it. Death only, since spec 068: a hit no longer does this. */
   Interrupted: 2,
+  /**
+   * Walked out of the follow-through (spec 144). **The attack already happened**
+   * and only the remaining animation was skipped -- nothing is refunded and the
+   * interval runs on untouched.
+   *
+   * A reason of its own rather than a second `Cancelled`, because the client
+   * hands back its predicted cooldown on anything that is not `Released` and
+   * this is the one cancellation that must keep it.
+   */
+  BackswingCancelled: 3,
 } as const;
 
 /**
@@ -60,15 +84,47 @@ export const CastEndReason = {
  */
 export interface CastState {
   readonly abilityId: string;
+  /** Tick the request was committed to, turn included. */
   readonly startedTick: number;
+  /**
+   * Tick the wind-up clock started, which is the tick the *attack* started
+   * (spec 144).
+   *
+   * Not the same as {@link startedTick} whenever the body had to turn first
+   * (spec 065): the cost is spent at the commit but the swing has not begun, so
+   * the attack interval is measured from here. Re-stamped by `advanceCast` when
+   * the turn completes, and equal to `startedTick` when there was no turn.
+   */
+  readonly windupStartTick: number;
   /** Tick the effect lands. Cancelling before this costs nothing but time. */
   readonly releaseTick: number;
   /**
-   * Tick the caster is free again: the release for everything but a channel,
-   * whose pulses run past it (spec 068).
+   * Tick the caster is free again: the release plus the backswing for a basic
+   * attack (spec 144), the release itself for everything else (spec 068), and
+   * the end of the pulses for a channel.
    */
   readonly endTick: number;
   readonly phase: number;
+  /**
+   * False until the attack point, true from it on (spec 144).
+   *
+   * The boundary the whole cancellation model turns on, stored rather than
+   * inferred from `tick >= releaseTick` because the two are not the same
+   * question: a cast that was withdrawn from a tick before its release is
+   * uncommitted forever, and a caller holding it a tick later would read the
+   * comparison and conclude the blow had landed.
+   */
+  readonly committed: boolean;
+  /**
+   * The timing this attack runs on, worked out once at the start and never
+   * again (spec 144).
+   *
+   * Snapshotted so that a buff landing mid-swing affects the *next* attack
+   * rather than jumping this one forward or backward. Recomputing per tick would
+   * mean a haste buff at 90% of a wind-up could put the release in the past, and
+   * a slow could push it away faster than the clock approaches it.
+   */
+  readonly timing: AttackTiming;
   /** Aim captured at commit, so turning mid-cast cannot re-aim a landed blow. */
   readonly targetX: number;
   readonly targetY: number;
@@ -153,8 +209,6 @@ export interface ServerEntity {
   readonly stats: EffectiveStats;
   readonly activity: number;
   readonly activityUntilTick: number;
-  /** Earliest tick this entity may attack again. */
-  readonly attackReadyTick: number;
   /** Body radius for collision. */
   readonly radius: number;
   /** Homing target for a monster; null when idle or player-controlled. */
@@ -321,10 +375,21 @@ export type ServerSimEvent =
     }
   | { readonly kind: 'attackMissed'; readonly attackerId: number }
   | {
+      /**
+       * A cast entered a phase: the commit itself, the turn completing, the
+       * attack point being reached (`phase: Backswing`), or a channel opening.
+       *
+       * One event for all of them, because the client's job is the same in
+       * every case -- redraw the bar against the new clock. Read as combat
+       * hooks: `phase: Windup` after `Turning` is *attack started*, and
+       * `phase: Backswing` is *attack committed* (spec 144).
+       */
       readonly kind: 'castStarted';
       readonly entityId: number;
       readonly abilityId: string;
       readonly phase: number;
+      /** The tick the wind-up began, so a scaled bar has an origin (spec 144). */
+      readonly startTick: number;
       readonly releaseTick: number;
       readonly endTick: number;
       readonly targetX: number;
