@@ -479,10 +479,23 @@ function cancelWindup(
   // opposite of the truth.
   const turning = cast.phase === CastPhase.Turning;
   if (!interrupting && !turning && tick >= cast.releaseTick && cast.phase !== CastPhase.Channel) {
-    // Uncommitted, past its own release tick and not a channel: only reachable
-    // for a cast whose release is being processed this very tick, by a caller
-    // that ran before `advanceCast`. Left alone rather than called off, so the
-    // blow that is about to go off does.
+    // **The same-tick ordering rule, and the one place it is decided.**
+    //
+    // Within a tick, movement runs before casts, so a withdrawal delivered on
+    // tick T is seen before the release that tick T is about to process. That
+    // makes "cancel on the attack point" ambiguous unless somebody picks, and
+    // this line picks: **the release tick belongs to the attack.** The last
+    // tick a withdrawal works on is `releaseTick - 1`.
+    //
+    // Which is the behaviour spec 062 already had -- the guard was written for
+    // a recovery phase that spec 068 removed -- and it is the right way round:
+    // a wind-up long enough to be read has to have a moment where reading it is
+    // too late, and that moment being the tick the blow lands is the only one
+    // that needs no explaining. The alternative gives the attacker a free look
+    // at the defender's last frame.
+    //
+    // Not reachable for a *committed* cast: `cancelCast` sends those to
+    // `cancelBackswing` before this function is called.
     return NOT_CANCELLED(entity);
   }
 
