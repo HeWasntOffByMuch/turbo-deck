@@ -22,6 +22,7 @@ import { THEME } from '../theme/theme.js';
 import { Label } from '../widgets/label.js';
 import { TextField } from '../widgets/text-field.js';
 import { TabPanel } from '../widgets/tabs.js';
+import { ScrollView } from '../widgets/scroll-view.js';
 import { clampToViewport, MIN_VISIBLE, pullIntoViewport, UiWindow } from '../widgets/window.js';
 
 const ATLAS = bakeAtlas(THEME);
@@ -209,6 +210,57 @@ describe('resizing', () => {
 
     expect(window.size.width).toBeGreaterThan(before.width);
     expect(window.size.height).toBeGreaterThan(before.height);
+  });
+
+  /**
+   * The grip also beats a scrollbar, which is a newer collision than the content.
+   *
+   * The bar column is `barThickness` (6) wide down the right edge of the scroll
+   * view's inner rect, and the scroll view is the window's content box inset by
+   * one -- so its bottom-right corner lands inside the 7x7 grip and overlaps it
+   * by a 2x2 square. Since the scroll view began taking drags on its bar, that
+   * corner is a press two widgets both want. The grip wins because it is 7px
+   * square in total and the bar has the whole rest of its column.
+   */
+  it('gives the grip a press that a scrollbar would otherwise take', () => {
+    const manager = new WindowManager();
+    const layers = new LayerStack();
+    layers.place('windows', manager);
+    const list = new Column('list');
+    for (let i = 0; i < 40; i++) list.add(new Label(`line ${i}`, 'body'));
+    const scroller = new ScrollView(list, 'scroll');
+    const window = new UiWindow(scroller, {
+      title: 'Log',
+      at: { x: 8, y: 8 },
+      size: { width: 120, height: 80 },
+      resizable: true,
+    });
+    manager.register(window, 'log');
+    const root = new UiRoot(layers, { theme: THEME, atlas: ATLAS, viewport: VIEWPORT, windows: manager, layers });
+    root.update(0);
+    // The premise: there really is a bar here to compete with.
+    expect(scroller.scrollable).toBe(true);
+
+    const before = { ...window.size };
+    const scrolled = scroller.scrollOffset;
+    const grip = window.gripRect(root.layoutContext());
+    // The *contested* pixels, not the corner. The window's own padding band --
+    // the outer 4 pixels of the grip -- belongs to nothing else and would pass
+    // this test with the override deleted, which is a test that proves nothing.
+    // One in from the grip's top-left is inside the bar column and inside the
+    // scroll view's inner rect, so it is a press both widgets want.
+    const from = { x: grip.x + 1, y: grip.y + 1 };
+    expect(scroller.hitTest({ x: from.x, y: from.y - grip.height })).not.toBe(null);
+
+    root.handle(pointer('down', from.x, from.y, 0));
+    root.handle(pointer('move', from.x + 40, from.y + 30, 10));
+    root.update(16);
+
+    expect(window.size.width).toBeGreaterThan(before.width);
+    expect(window.size.height).toBeGreaterThan(before.height);
+    // ...and the list did not scroll under it, which is what the other reading
+    // of that press would have done.
+    expect(scroller.scrollOffset).toBe(scrolled);
   });
 
   it('does not resize a window that was not built resizable', () => {
