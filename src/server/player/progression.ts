@@ -100,7 +100,13 @@ function attributesFrom(baseStats: BaseStats, granted: Readonly<ModifierTotals>)
     wisdom: 0,
   };
   for (const key of BASE_STAT_KEYS) {
-    attributes[key] = Math.max(0, baseStats[key] + granted[key]);
+    // Held finite as well as non-negative. `Math.max(0, NaN)` is NaN, so a save
+    // with a corrupt number in it used to poison every derived stat downstream
+    // -- and a body whose maxHealth is NaN cannot be damaged, because
+    // `Math.max(0, NaN - 10)` is NaN too. A corrupt save should cost defaults,
+    // not an invulnerable character.
+    const raw = baseStats[key] + granted[key];
+    attributes[key] = Number.isFinite(raw) ? Math.max(0, raw) : 0;
   }
   return attributes;
 }

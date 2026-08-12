@@ -166,7 +166,11 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
   const bonus = progression.totals;
   const attributes = progression.attributes;
   const { strength, agility, intelligence, constitution, perception, wisdom } = attributes;
-  const levels = Math.max(0, player.level - 1);
+  // Held finite as well as non-negative, for the reason `attributesFrom` holds
+  // the attributes: a corrupt save should cost a character their bonuses, not
+  // make them unkillable. `Math.max(0, NaN)` is NaN, and a maxHealth of NaN is a
+  // body that `Math.max(0, health - damage)` can never reduce.
+  const levels = Number.isFinite(player.level) ? Math.max(0, player.level - 1) : 0;
 
   const flatHealth =
     PLAYER_MAX_HEALTH +
