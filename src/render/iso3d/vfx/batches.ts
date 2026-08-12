@@ -95,12 +95,29 @@ void main() {
     float len = length(flat2);
     vec3 right = len > 0.0001 ? flat2 / len : vec3(1.0, 0.0, 0.0);
     world += (right * corner.x + vec3(0.0, 1.0, 0.0) * corner.y) * iSize;
-  } else {
+  } else if (iMode < 3.5) {
     // Flat on the ground plane, spun about Y. Decals, scorch marks, ground glow.
     float c = cos(iRotation);
     float s = sin(iRotation);
     vec2 spun = vec2(corner.x * c - corner.y * s, corner.x * s + corner.y * c);
     world += vec3(spun.x, 0.0, spun.y) * iSize;
+  } else {
+    // One link of a ribbon (spec 139). The instance is a *segment*, not a
+    // particle: iOffset is where it starts, iVelocity is the vector to where it
+    // ends, and iSize/iStretch are the widths at those two ends. No new
+    // attribute -- a chain of these is a bent, tapering streak built out of the
+    // row the batch already uploads.
+    float t = corner.y + 0.5;
+    // Along the segment in *world* space, so a link pointing at the camera
+    // foreshortens for the same reason a stretched spark shortens.
+    world = iOffset + iVelocity * t;
+    vec2 screenSeg = vec2(dot(iVelocity, camRight), dot(iVelocity, camUp));
+    float segLength = length(screenSeg);
+    vec2 dir = segLength > 0.0001 ? screenSeg / segLength : vec2(0.0, 1.0);
+    vec2 perp = vec2(-dir.y, dir.x);
+    // corner.x spans [-0.5, 0.5], so this is the full width at that end.
+    float segWidth = mix(iSize, iStretch, t);
+    world += (camRight * perp.x + camUp * perp.y) * (corner.x * segWidth);
   }
 
   vColor = iColor;
@@ -303,6 +320,37 @@ export class ParticleBatch {
     this.stretch.array[at] = stretch;
   }
 
+  /**
+   * Copy one ribbon segment into slot `at` (spec 139).
+   *
+   * Geometry from `segments` -- the flat `from/to/widths` rows `ribbonSegments`
+   * writes -- and colour, alpha and frame from the particle that owns the chain,
+   * so every link of a streak is the one colour the gradient says it is at that
+   * moment. `iVelocity` carries the segment vector rather than a velocity; the
+   * shader's mode 4 is the only reader and it says so.
+   */
+  writeSegment(at: number, pool: ParticlePool, i: number, segments: Float32Array, segAt: number): void {
+    const o = at * 3;
+    const fromX = segments[segAt] ?? 0;
+    const fromY = segments[segAt + 1] ?? 0;
+    const fromZ = segments[segAt + 2] ?? 0;
+    this.offset.array[o] = fromX;
+    this.offset.array[o + 1] = fromY;
+    this.offset.array[o + 2] = fromZ;
+    this.velocity.array[o] = (segments[segAt + 3] ?? 0) - fromX;
+    this.velocity.array[o + 1] = (segments[segAt + 4] ?? 0) - fromY;
+    this.velocity.array[o + 2] = (segments[segAt + 5] ?? 0) - fromZ;
+    this.color.array[o] = pool.r[i] ?? 0;
+    this.color.array[o + 1] = pool.g[i] ?? 0;
+    this.color.array[o + 2] = pool.b[i] ?? 0;
+    this.size.array[at] = segments[segAt + 6] ?? 0;
+    this.stretch.array[at] = segments[segAt + 7] ?? 0;
+    this.rotation.array[at] = 0;
+    this.alpha.array[at] = pool.a[i] ?? 0;
+    this.mode.array[at] = MODE_RIBBON;
+    this.frame.array[at] = pool.frame[i] ?? 0;
+  }
+
   /** Publish `count` instances and flag the ranges the GPU has to re-read. */
   end(count: number): void {
     this.geometry.instanceCount = count;
@@ -326,6 +374,9 @@ export class ParticleBatch {
   }
 }
 
+/** The `iMode` a ribbon segment is written with. Its own code since spec 139. */
+export const MODE_RIBBON = 4;
+
 /** Every render mode's integer code, for the shader's `iMode`. */
 export function modeCode(render: number): number {
   switch (render) {
@@ -335,10 +386,14 @@ export function modeCode(render: number): number {
       return 2;
     case RENDER['ground-quad']:
       return 3;
-    // A ribbon is drawn as a chain of stretched quads by the layer. `mesh` never
-    // reaches here -- it has its own batch (spec 123), and it used to fold into
-    // this default and silently come out as a billboard, which is why fire and
-    // smoke read as flat sprites no matter how they were authored.
+    // A ribbon is a chain of these, one instance per link, written by the layer
+    // through `writeSegment` (spec 139). It used to fall through to the default
+    // and come back a billboard -- the same silent stub `mesh` was until spec
+    // 123, and with the same symptom: the value round-tripped perfectly and
+    // nothing drew what it named.
+    case RENDER.ribbon:
+      return MODE_RIBBON;
+    // `mesh` never reaches here: it has its own batch.
     default:
       return 0;
   }

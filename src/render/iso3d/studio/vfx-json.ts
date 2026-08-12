@@ -177,7 +177,7 @@ function readEmitter(raw: unknown, index: number, errors: string[]): Emitter | u
     render,
     blend,
   };
-  const optionalNumbers = ['spreadRadians', 'gravity', 'drag', 'stretch', 'ribbonSpacing'] as const;
+  const optionalNumbers = ['spreadRadians', 'gravity', 'drag', 'stretch', 'ribbonSpacing', 'ribbonTaper'] as const;
   for (const key of optionalNumbers) {
     const value = asNumber(raw[key], `${where}.${key}`, errors);
     if (value !== undefined) out[key] = value;

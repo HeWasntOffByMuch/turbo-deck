@@ -184,6 +184,30 @@ export interface EdgeProbeCase {
 }
 
 /** What quantizing onto a palette produced (spec 102). */
+export interface ExemptProbeCase {
+  /**
+   * Fraction of the *exposed* half of the exempt body that escaped the palette.
+   *
+   * The feature, stated as a number. Near 1: the body kept its colours.
+   */
+  readonly exposedOff: number;
+  /**
+   * Fraction of the wall standing in front of the body's other half that
+   * escaped the palette.
+   *
+   * **The claim this case exists for.** The mask depth-tests against the buffer
+   * the scene pass just wrote, so a body behind a wall must mark nothing and
+   * the wall must quantize like everything else. Near 0 is correct; near 1 is a
+   * mask drawn with no depth at all -- a player glowing through every tree they
+   * walk behind.
+   */
+  readonly occludedOff: number;
+  /** The same wall, away from the body. The control: must be 0 either way. */
+  readonly wallOff: number;
+  /** The whole frame with nothing named exempt. Must be 0: this is the baseline. */
+  readonly baselineOff: number;
+}
+
 export interface PaletteProbeCase {
   /** Distinct colours in the frame. Must not exceed the palette's size. */
   readonly distinct: number;
@@ -348,6 +372,8 @@ declare global {
     paletteProbe?: PaletteProbeCase;
     /** What the distance treatment did (spec 103). */
     inkProbe?: InkProbeCase;
+    /** Whether the exemption mask is occluded by the world (spec 138). */
+    exemptProbe?: ExemptProbeCase;
     /** What baking the ground's creases did (spec 104). */
     curvatureProbe?: CurvatureProbeCase;
     /** What the soft-shadow filter did (spec 105). */
@@ -896,6 +922,133 @@ function runPalette(): PaletteProbeCase {
     distinctStepped: seenStepped.size,
     changedFrame: changed,
   };
+}
+
+/**
+ * Does the exemption mask stop at the things standing in front of it? (spec 138)
+ *
+ * The live-world probe (`scripts/probe-exempt.ts`) can show that the player's
+ * pixels escape the palette, and it does. What it cannot show is the *depth
+ * test*, and the reason is worth stating: nothing in that arena ever draws in
+ * front of the player. At the default 27-degree camera, 96 frames of walking
+ * never split the exempt silhouette or cost it a third of its area, and that
+ * spread is the gait. With no occluder to be found, a mask drawn with no depth
+ * at all produces the identical frame.
+ *
+ * So the occluder is built rather than found. A wall covers the left half of an
+ * exempt box and nothing else, which makes the answer a rectangle: the exposed
+ * half must escape the palette and the covered half must not. The wall is what
+ * is measured, not the body -- if the mask leaks, the wall's own pixels are the
+ * ones that come back unquantized, because the mask marks a *pixel* and the
+ * colour under that pixel belongs to whatever the scene drew there.
+ *
+ * Unlit materials on purpose: a lit surface's colour depends on where the sun
+ * is, and this case needs colours that are far from every palette entry by
+ * construction, so that "was it quantized" is not a question about shading.
+ */
+function runExempt(): ExemptProbeCase {
+  const canvas = document.createElement('canvas');
+  canvas.width = CELL_W;
+  canvas.height = CELL_H;
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, preserveDrawingBuffer: true });
+
+  const scene = new THREE.Scene();
+  // Far from every entry of the world palette, so quantizing one visibly moves
+  // it and "off palette" means "was not quantized" rather than "happened to
+  // land on a colour that already was".
+  scene.background = new THREE.Color(0x202020);
+
+  const body = new THREE.Group();
+  body.add(new THREE.Mesh(
+    new THREE.PlaneGeometry(100, 100),
+    new THREE.MeshBasicMaterial({ color: 0xff00ff }),
+  ));
+  body.position.set(0, 0, 0);
+  scene.add(body);
+
+  // Nearer the camera, covering x in [-60, 0]: the body's left half and a strip
+  // of background beside it.
+  const wall = new THREE.Mesh(
+    new THREE.PlaneGeometry(60, 200),
+    new THREE.MeshBasicMaterial({ color: 0x00ff88 }),
+  );
+  wall.position.set(-30, 0, 100);
+  scene.add(wall);
+
+  const halfX = 120;
+  const halfY = (halfX * CELL_H) / CELL_W;
+  const camera = new THREE.OrthographicCamera(-halfX, halfX, halfY, -halfY, 1, 2000);
+  camera.position.set(0, 0, 600);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld(true);
+
+  const colors = paletteById('world') ?? [];
+  const allowed = new Set(colors);
+  const retro = new RetroPass(CELL_W, CELL_H, RETRO_DEFAULTS);
+  retro.setPalette(colors);
+  const gl = renderer.getContext();
+
+  const shoot = (): Uint8Array => {
+    retro.render(renderer, scene, camera);
+    const out = new Uint8Array(CELL_W * CELL_H * 4);
+    gl.readPixels(0, 0, CELL_W, CELL_H, gl.RGBA, gl.UNSIGNED_BYTE, out);
+    return out;
+  };
+
+  /**
+   * Fraction of a world-space rectangle whose pixels are not palette colours.
+   *
+   * `readPixels` hands back rows bottom-up, which is the same direction as the
+   * world's +y here, so the row arithmetic needs no flip -- and the rectangles
+   * are inset by a pixel on every side so an edge texel shared with a neighbour
+   * cannot decide the answer.
+   */
+  const offPalette = (pixels: Uint8Array, x0: number, x1: number, y0: number, y1: number): number => {
+    // Clamped to the buffer: a rectangle that runs off the top reads zeroes out
+    // of the end of the array, and zero is not a palette colour -- which scores
+    // as a mask leak and sends somebody looking for a bug in the shader.
+    const clamp = (v: number, hi: number): number => Math.min(hi, Math.max(0, v));
+    const px = (x: number): number => clamp(Math.round(((x + halfX) / (2 * halfX)) * CELL_W), CELL_W);
+    const py = (y: number): number => clamp(Math.round(((y + halfY) / (2 * halfY)) * CELL_H), CELL_H);
+    let off = 0;
+    let total = 0;
+    for (let y = py(y0) + 1; y < py(y1) - 1; y++) {
+      for (let x = px(x0) + 1; x < px(x1) - 1; x++) {
+        const at = (y * CELL_W + x) * 4;
+        const hex = ((pixels[at] ?? 0) << 16) | ((pixels[at + 1] ?? 0) << 8) | (pixels[at + 2] ?? 0);
+        total += 1;
+        if (!allowed.has(hex)) off += 1;
+      }
+    }
+    return total === 0 ? 0 : off / total;
+  };
+
+  // Nothing exempt: the whole frame is the palette, which is what makes every
+  // off-palette pixel below attributable to the mask rather than to the scene.
+  const baseline = shoot();
+  let baselineOff = 0;
+  let counted = 0;
+  for (let i = 0; i < baseline.length; i += 4) {
+    const hex = ((baseline[i] ?? 0) << 16) | ((baseline[i + 1] ?? 0) << 8) | (baseline[i + 2] ?? 0);
+    counted += 1;
+    if (!allowed.has(hex)) baselineOff += 1;
+  }
+
+  retro.setExempt([body]);
+  const masked = shoot();
+
+  const result: ExemptProbeCase = {
+    exposedOff: offPalette(masked, 10, 50, -40, 40),
+    occludedOff: offPalette(masked, -50, -10, -40, 40),
+    // Well inside the frame: the camera's vertical half-extent is 90 world
+    // units, and a rectangle that runs past it measures the end of the array.
+    wallOff: offPalette(masked, -55, -10, 55, 85),
+    baselineOff: baselineOff / counted,
+  };
+
+  retro.dispose();
+  renderer.dispose();
+  return result;
 }
 
 /**
@@ -1796,6 +1949,7 @@ window.bufferProbe = [runBuffers('depth'), runBuffers('normals')];
 window.edgeProbe = runEdges();
 window.paletteProbe = runPalette();
 window.inkProbe = runInk();
+window.exemptProbe = runExempt();
 window.curvatureProbe = runCurvature();
 window.shadowProbe = runShadows();
 window.detailProbe = runDetail();

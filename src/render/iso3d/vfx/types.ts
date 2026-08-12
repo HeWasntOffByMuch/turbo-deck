@@ -170,6 +170,15 @@ export interface Emitter {
    * a streak sampled per frame is a third as long at 144Hz as it is at 48Hz.
    */
   readonly ribbonSpacing?: number;
+  /**
+   * Width at a `ribbon`'s tail as a fraction of its head. Default 0.15.
+   *
+   * The knob that decides whether a streak reads as a comet or as a bar, and it
+   * is width rather than alpha on purpose (spec 139): the frame is quantized to
+   * a few levels, so a fade along a three-pixel streak arrives as a hard notch
+   * where geometry that narrows simply narrows.
+   */
+  readonly ribbonTaper?: number;
 
   readonly render: RenderMode;
   readonly blend: Blend;

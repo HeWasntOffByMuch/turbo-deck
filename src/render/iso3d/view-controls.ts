@@ -484,6 +484,9 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     'How many pixels wide one dither cell is — bigger makes the pattern itself chunky.');
   const pixelSize = makeSlider('Pixel size', 1, 4, 1, RETRO_DEFAULTS.pixelSize, '×',
     'Divides the internal render resolution: bigger pixels, fewer of them.');
+  const excludePlayer = makeCheckbox('Spare the player', RETRO_DEFAULTS.excludePlayer,
+    'Let players keep their own colours: same pixels, same grade, same distance, ' +
+    'but not counted onto the palette.');
 
   // The colour grade over the finished frame (spec 047). Independent of the
   // retro filter above: a grade applies whether or not the image is dithered.
@@ -675,7 +678,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   // only one of them is conditional.
   const filter = createSettingsMenu({ glyph: '▦', label: 'Retro filter', group: menus, fontSize: 16 });
   fill(filter.panel, 'Restore the retro filter and the colour grade to their defaults.', [
-    section('Retro'), retroOn, levels, dither, weave, weaveScale, pixelSize,
+    section('Retro'), retroOn, levels, dither, weave, weaveScale, pixelSize, excludePlayer,
     ...(lighting ? [section('Colour'), gradeChoice, gradeStrength] : []),
   ]);
 
@@ -732,6 +735,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
       matrixSize: weave.value() as BayerSize,
       ditherScale: weaveScale.value(),
       pixelSize: pixelSize.value(),
+      excludePlayer: excludePlayer.checked(),
     }),
     hike: () => {
       const size = virtualSizeById(virtualSize.value());
