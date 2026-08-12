@@ -507,6 +507,27 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  switch and the window buttons draw, specs 094/140 -- the sizes
                  are a sum, so "eight buttons still fit across a phone, clear of
                  both corner rows" fails in Node rather than in a screenshot),
+                 health-bar.ts (the white chunk a blow leaves on a floating bar,
+                 spec 143: the fill is replicated health and is never delayed,
+                 and the ground it gave up is held behind it for a beat so the
+                 size of the blow is readable off the bar rather than only off
+                 the number floating away from it. The decision in it is a
+                 *throttle* -- the first blow of a burst opens the window and
+                 every blow inside it grows the same chunk -- and it is a
+                 leading-edge throttle rather than a debounce on purpose, since
+                 under a debounce a body taking sustained fire holds a growing
+                 white chunk that never resolves, which is the state that reads
+                 as a bug. Time is an argument, and the argument is the *drawn*
+                 tick the bodies under it are interpolated by, not a second
+                 clock. `npx tsx scripts/probe-health-flash.ts` is the half that
+                 only exists in a browser: it picks a fight on the shipped page
+                 and samples both bands' widths off the real DOM every frame,
+                 because a white band stacked behind an opaque track passes every
+                 test in Node and draws nothing. Its picture is taken with the
+                 page's *clock* stopped -- a screenshot costs longer under
+                 software GL than the flash lasts, so the first two runs
+                 photographed a bar that had already drained, and pausing the
+                 debugger instead hangs the capture outright),
                  inventory-model.ts, character-model.ts and shop-model.ts (what
                  the bag, the sheet and the shop are handed -- `src/ui/` may not
                  reach the sim, so the replicated facts and the content tables
