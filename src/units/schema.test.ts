@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import skeletonDoc from '../../assets/units/biped.skeleton.json' with { type: 'json' };
 import mannequinSkeletonDoc from '../../assets/units/dev/mannequin-dev.skeleton.json' with { type: 'json' };
 import { clipLibFixture, skeletonFixture, unitDefFixture } from './fixtures.js';
+import { weaponDefFixture } from '../items/fixtures.js';
 import { compileAllSchemas, SCHEMAS, validateAgainstSchema, type DocumentKind } from './schema.js';
 import { validateSkeleton } from './validate.js';
 
@@ -70,6 +71,7 @@ describe('formatVersion', () => {
         skeleton: { ...skeletonFixture() },
         cliplib: { ...clipLibFixture() },
         unitdef: { ...unitDefFixture() },
+        weapondef: { ...weaponDefFixture() },
       }[kind] as Record<string, unknown>;
       delete fixture['formatVersion'];
       const issues = validateAgainstSchema(kind, fixture);
@@ -107,6 +109,7 @@ describe('additionalProperties', () => {
         skeleton: skeletonFixture(),
         cliplib: clipLibFixture(),
         unitdef: unitDefFixture(),
+        weapondef: weaponDefFixture(),
       }[kind];
       const issues = validateAgainstSchema(kind, { ...fixture, surprise: true });
       expect(issues.map((issue) => issue.code)).toContain('schema.additionalProperties');

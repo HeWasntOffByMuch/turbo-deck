@@ -1,8 +1,8 @@
-# 144 — A bar flinches
+# 146 — A bar flinches
 
 ## Problem
 
-Spec 143 gave a bar a memory of the blow that just landed, but the bar itself
+Spec 145 gave a bar a memory of the blow that just landed, but the bar itself
 still hangs perfectly still while it takes one. The white chunk answers "how
 much" and answers it over the next half-second; what is missing is the instant
 of contact — the bar should be *knocked*, so a hit registers in the frame it

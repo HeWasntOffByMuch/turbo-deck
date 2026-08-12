@@ -221,7 +221,7 @@ describe('the flinch a blow gives a bar', () => {
   });
 
   it('kicks once per blow, where the chunk grows once per burst', () => {
-    // The two rules pull in opposite directions on purpose (spec 144), so this
+    // The two rules pull in opposite directions on purpose (spec 146), so this
     // is the assertion that they are actually independent.
     const flashes = new HealthFlashes();
     flashes.read(BODY, 100, 100, 0);

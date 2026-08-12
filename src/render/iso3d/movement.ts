@@ -31,7 +31,18 @@ import {
   panelButtonRow,
   type TuningGroup,
 } from './tuning-panel.js';
-import type { SandboxUnit, UnitKind } from './unit.js';
+import { authoredIdOf, isAuthoredKind, type SandboxUnit, type UnitKind } from './unit.js';
+import { AuthoredUnit } from './authored-unit.js';
+import { authoredUnitAssets, authoredUnitIds, authoredUnitRefusal } from './world/unit-assets.js';
+import { weaponAssets, weaponIds } from './weapon-assets.js';
+import { SandboxDummy, DUMMY_DISTANCE } from './sandbox-dummy.js';
+import {
+  ATTACK_READY,
+  defaultAttackTuning,
+  stepAttack,
+  type AttackState,
+  type AttackTuning,
+} from './sandbox-attack.js';
 import { createViewControls, type ViewControls } from './view-controls.js';
 import { CAMERA_FAR, CAMERA_NEAR, DEFAULT_CAMERA_OFFSET, DEFAULT_VIEW_HALF_WIDTH } from './view-settings.js';
 import { viewSeed } from './seed.js';
@@ -99,6 +110,15 @@ class MovementScene {
   private readonly critterTuning: CritterTuning = defaultCritterTuning();
   private active: SandboxUnit = this.spider;
   private activeCritter: CritterRig | null = null;
+  /**
+   * The authored units (spec 140), built lazily and kept: a body is three
+   * documents and four `.glb`s over the network, so switching away and back
+   * should not pay for it twice.
+   */
+  private readonly authoredUnits = new Map<string, AuthoredUnit>();
+  private activeAuthored: AuthoredUnit | null = null;
+  /** Something to hit, and the only thing in this tab that reacts to a swing. */
+  private readonly dummy = new SandboxDummy();
   private readonly headingArrow = makeHeadingArrow();
   private readonly sun = new THREE.DirectionalLight(0xfff4e0, 2.1);
   private readonly unwalkable = new THREE.Group();
@@ -163,6 +183,14 @@ class MovementScene {
     this.moveMarker.visible = false;
     this.scene.add(this.moveMarker);
 
+    // Something to hit (spec 140), standing in front of the spawn so a swing
+    // has a subject without anybody having to walk anywhere first.
+    const dummyX = ARENA_WIDTH / 2 + DUMMY_DISTANCE;
+    const dummyZ = ARENA_HEIGHT / 2;
+    this.dummy.group.position.set(dummyX, this.terrain.heightAt(dummyX, dummyZ), dummyZ);
+    this.dummy.group.rotation.y = Math.PI / 2;
+    this.scene.add(this.dummy.group);
+
     // The wheel over the view is the zoom, alongside the panel's slider (spec 042).
     this.controls.attachWheelZoom(canvas);
   }
@@ -202,16 +230,58 @@ class MovementScene {
     return this.active.locomotionState;
   }
 
+  /** The authored unit currently being controlled, if the active unit is one. */
+  get authoredUnit(): AuthoredUnit | null {
+    return this.activeAuthored;
+  }
+
+  /** The dummy, so the loop can settle it when a swing lands. */
+  get hitTarget(): SandboxDummy {
+    return this.dummy;
+  }
+
   /** Swap the controllable unit, keeping the sim (position/heading) running. */
   setUnit(kind: UnitKind): void {
     const critter = isCritterId(kind) ? this.ensureCritter(kind) : null;
+    const authored = isAuthoredKind(kind) ? this.ensureAuthored(authoredIdOf(kind)) : null;
     this.activeCritter = critter;
+    this.activeAuthored = authored;
     const next =
-      critter ?? (kind === 'walker' ? this.walker : kind === 'robe' ? this.ensureRobe() : this.spider);
+      authored ??
+      critter ??
+      (kind === 'walker' ? this.walker : kind === 'robe' ? this.ensureRobe() : this.spider);
     if (next === this.active) return;
     this.scene.remove(this.active.group);
     this.active = next;
     this.scene.add(this.active.group);
+  }
+
+  /**
+   * Build an authored unit on first use and start its documents loading.
+   *
+   * The load is deliberately not awaited: `setUnit` is called from a click
+   * handler, and a picker that froze until a mesh arrived would be a worse tool
+   * than one that shows an empty group for a frame. `UnitRig` draws nothing
+   * until it resolves and says why in `error` if it never does.
+   */
+  private ensureAuthored(id: string): AuthoredUnit | null {
+    const existing = this.authoredUnits.get(id);
+    if (existing) return existing;
+
+    const found = authoredUnitAssets(id);
+    if (!found?.skeleton) {
+      console.error(`[sandbox] no authored unit "${id}": ${authoredUnitRefusal(id) ?? 'it has no skeleton document'}`);
+      return null;
+    }
+    const unit = new AuthoredUnit({
+      unit: found.unit,
+      clipLib: found.clipLib,
+      skeleton: found.skeleton,
+      assets: found.assets,
+    });
+    this.authoredUnits.set(id, unit);
+    void unit.load();
+    return unit;
   }
 
   /** Build the robed figure on first use; its cloth is not free to construct. */
@@ -358,6 +428,53 @@ const MOVEMENT_GROUP: TuningGroup<MechTuning> = {
       step: 10,
       key: 'turnRate',
       tip: 'How fast the unit rotates to face its destination, in degrees per second. MOBA movement turns to face before it travels.',
+    },
+  ],
+};
+
+/**
+ * The attack timings (spec 140), which drive the rehearsal rather than any rig.
+ *
+ * Beside the movement group and above the unit's own knobs, because these two
+ * are what the *body* does and everything below them is what the body looks
+ * like. Dragging the wind-up retimes the swing: the clip is rescaled to fit the
+ * timing, never the other way round, which is the rule this tab exists to make
+ * visible.
+ */
+const ATTACK_GROUP: TuningGroup<AttackTuning> = {
+  title: 'Attack',
+  rows: [
+    {
+      label: 'Wind-up (ms)',
+      min: 100,
+      max: 1600,
+      step: 10,
+      key: 'windupMs',
+      tip: 'From committing to the blow to the blow landing. melee.slash ships at 500ms. The swing is rescaled to fit this, so a long wind-up is a slow swing rather than a pause before a fast one.',
+    },
+    {
+      label: 'Active (ms)',
+      min: 20,
+      max: 600,
+      step: 10,
+      key: 'activeMs',
+      tip: 'How long the blade is considered to be passing through. Animation only here -- the server frees the caster at the release.',
+    },
+    {
+      label: 'Recovery (ms)',
+      min: 0,
+      max: 900,
+      step: 10,
+      key: 'recoveryMs',
+      tip: 'The settle after the blow. Part of what the clip is stretched over, so a longer recovery slows the whole swing.',
+    },
+    {
+      label: 'Cooldown (ms)',
+      min: 100,
+      max: 3000,
+      step: 25,
+      key: 'cooldownMs',
+      tip: 'From the START of one swing to when the next may begin, which is how melee.slash stamps it -- a long wind-up eats into the cooldown rather than adding to it.',
     },
   ],
 };
@@ -598,6 +715,16 @@ export interface SandboxPanelOptions {
   readonly robe: RobeTuning;
   /** The critters' shared cosmetic tuning. */
   readonly critter: CritterTuning;
+  /**
+   * The attack rehearsal's timings (spec 140), edited live like the rest.
+   *
+   * Optional, because the rig debugger mounts this same panel and has no
+   * authored unit to swing anything: absent means the attack rows and the
+   * weapon picker are never built into the tree at all, rather than built and
+   * hidden. A control that visibly does nothing is this tab's one standing rule
+   * against itself (spec 047).
+   */
+  readonly attack?: AttackTuning;
   /** Restore the active unit's tuning to its defaults. */
   readonly onReset: () => void;
   readonly onUnit: (kind: UnitKind) => void;
@@ -610,6 +737,12 @@ export interface SandboxPanelOptions {
   readonly onDrop: () => void;
   readonly onGust: () => void;
   readonly onResettle: () => void;
+  /** Throw a swing from the panel, for somebody who would rather click than type. */
+  readonly onSwing?: () => void;
+  /** Put a weapon in the hand, or `null` to empty it. */
+  readonly onWeapon?: (id: string | null) => void;
+  /** Draw it or sheathe it. */
+  readonly onSheathed?: (sheathed: boolean) => void;
 }
 
 export interface SandboxPanel {
@@ -643,6 +776,14 @@ const UNIT_CHIPS: readonly { kind: UnitKind; label: string; tip: string }[] = [
     kind: id as UnitKind,
     label: CRITTERS[id].name,
     tip: `${CRITTERS[id].blurb} Pick a coat below to recolour it.`,
+  })),
+  // One chip per authored unit (spec 140), generated from what this build has --
+  // so exporting a unit puts it in the picker without this file changing, the
+  // same property the critter chips above have.
+  ...authoredUnitIds().map((id) => ({
+    kind: `authored:${id}` as UnitKind,
+    label: id.replace(/_/g, ' '),
+    tip: `The authored unit "${id}": a generated body posed by its own state machine, with a weapon in its hand. Space swings it.`,
   })),
 ];
 
@@ -685,6 +826,8 @@ export function buildPanel(opts: SandboxPanelOptions): SandboxPanel {
   };
 
   const movement = buildTuningSection([MOVEMENT_GROUP], opts.mech);
+  const attackTarget = opts.attack ?? null;
+  const attack = buildTuningSection([ATTACK_GROUP], attackTarget ?? defaultAttackTuning());
   const mech = buildTuningSection(MECH_TUNING_GROUPS, opts.mech);
   const robe = buildTuningSection(ROBE_TUNING_GROUPS, opts.robe);
   const critter = buildTuningSection(CRITTER_TUNING_GROUPS, opts.critter);
@@ -706,12 +849,69 @@ export function buildPanel(opts: SandboxPanelOptions): SandboxPanel {
     ),
   );
 
-  panel.append(picker, movement.element, mech.element, robe.element, robeActions, coats.element, critter.element);
+  // The authored unit's own controls: a swing, a weapon, and whether it is
+  // drawn. Built once and shown only for an authored unit, the same way the
+  // robe's cloth buttons are.
+  const authoredActions = document.createElement('div');
+  authoredActions.appendChild(
+    panelButtonRow(
+      panelButton('Swing', 'Throw one attack (or press Space). Refused while the last one is still running or on cooldown.', () => opts.onSwing?.()),
+    ),
+  );
+
+  const weaponLabel = document.createElement('div');
+  weaponLabel.textContent = 'Weapon';
+  weaponLabel.title = 'Which held object goes in the weapon.main socket. Read from assets/items/, so a new weapon appears here on its own.';
+  weaponLabel.style.cssText = 'color:#f0f0f8;font-weight:600;margin:10px 0 4px;letter-spacing:.03em;';
+  const weaponRow = document.createElement('div');
+  weaponRow.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;margin:0 0 6px;';
+  const weaponChips: HTMLButtonElement[] = [];
+  const weaponOptions: (string | null)[] = [null, ...weaponIds()];
+  weaponOptions.forEach((id, index) => {
+    const btn = document.createElement('button');
+    btn.textContent = id === null ? 'None' : (weaponAssets(id)?.def.name ?? id);
+    btn.title = id === null ? 'Empty the hand.' : `Hold ${id}.`;
+    styleChip(btn, index === 1);
+    btn.addEventListener('click', () => {
+      weaponChips.forEach((chip, other) => styleChip(chip, other === index));
+      opts.onWeapon?.(id);
+    });
+    weaponRow.appendChild(btn);
+    weaponChips.push(btn);
+  });
+
+  const sheathe = document.createElement('label');
+  sheathe.style.cssText = `${LABEL_CSS}display:flex;align-items:center;gap:6px;margin:2px 0 4px;cursor:pointer;`;
+  const sheatheBox = document.createElement('input');
+  sheatheBox.type = 'checkbox';
+  sheatheBox.style.accentColor = '#4a7fb0';
+  sheatheBox.addEventListener('change', () => opts.onSheathed?.(sheatheBox.checked));
+  sheathe.append(sheatheBox, document.createTextNode('Sheathed (weapon.stow)'));
+  sheathe.title = 'Move the weapon to the stow socket on the back. Instant -- the unsheathing animation is not built yet.';
+  authoredActions.append(weaponLabel, weaponRow, sheathe);
+
+  panel.append(
+    picker,
+    movement.element,
+    attack.element,
+    authoredActions,
+    mech.element,
+    robe.element,
+    robeActions,
+    coats.element,
+    critter.element,
+  );
 
   const showUnit = (kind: UnitKind): void => {
     const isRobe = kind === 'robe';
     const isCritter = isCritterId(kind);
-    mech.setVisible(!isRobe && !isCritter);
+    const isAuthored = isAuthoredKind(kind) && attackTarget !== null;
+    // The attack rehearsal only drives an authored unit's machine: the mech, the
+    // robe and the critters have no swing to play, and a slider that visibly
+    // does nothing is worse than an absent one (spec 047's rule for this tab).
+    attack.setVisible(isAuthored);
+    authoredActions.style.display = isAuthored ? 'block' : 'none';
+    mech.setVisible(!isRobe && !isCritter && !isAuthored);
     robe.setVisible(isRobe);
     robeActions.style.display = isRobe ? 'block' : 'none';
     critter.setVisible(isCritter);
@@ -745,6 +945,7 @@ export function buildPanel(opts: SandboxPanelOptions): SandboxPanel {
     element: panel,
     sync: () => {
       movement.sync();
+      attack.sync();
       mech.sync();
       robe.sync();
       critter.sync();
@@ -786,19 +987,43 @@ export function mountMovement(container: HTMLElement): ViewHandle {
   let state: MoverState = initMover({ x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 });
 
   let unit: UnitKind = 'spider';
+  // The attack rehearsal's state and its tuning (spec 140). The tuning is the
+  // object the panel's sliders mutate in place, exactly like every other tuning
+  // in this tab; the state is the tick machine that reads it.
+  const attackTuning: AttackTuning = defaultAttackTuning();
+  let attackState: AttackState = ATTACK_READY;
+  let weaponId: string | null = weaponIds()[0] ?? null;
+  let sheathed = false;
+
+  /** Puts the picked weapon on whichever authored unit is active. */
+  const applyWeapon = (): void => {
+    const authored = scene.authoredUnit;
+    if (!authored) return;
+    const entry = weaponId === null ? null : weaponAssets(weaponId);
+    void authored
+      .setWeapon(entry === null ? null : { def: entry.def, meshUrl: entry.meshUrl })
+      .then(() => authored.setSheathed(sheathed));
+  };
+
   const panel = buildPanel({
     mech: tuning,
     robe: scene.robe,
     critter: scene.critter,
+    attack: attackTuning,
     onReset: () => {
       if (unit === 'robe') Object.assign(scene.robe, defaultRobeTuning());
       else if (isCritterId(unit)) Object.assign(scene.critter, defaultCritterTuning());
+      else if (isAuthoredKind(unit)) Object.assign(attackTuning, defaultAttackTuning());
       else Object.assign(tuning, defaultMechTuning());
       panel.sync();
     },
     onUnit: (kind) => {
       unit = kind;
       scene.setUnit(kind);
+      // A body that has just been built is holding nothing, so the picked
+      // weapon has to be put back into it -- switching units and finding an
+      // empty hand would read as the weapon picker having broken.
+      applyWeapon();
     },
     onCoat: (hex) => scene.critterUnit?.setCoat(hex),
     coatOf: (kind) => (isCritterId(kind) ? scene.critterUnit?.coat ?? null : null),
@@ -806,6 +1031,15 @@ export function mountMovement(container: HTMLElement): ViewHandle {
     onDrop: () => scene.robeUnit?.drop(),
     onGust: () => scene.robeUnit?.gust(),
     onResettle: () => scene.robeUnit?.resettle(),
+    onSwing: () => input.queueAttack(),
+    onWeapon: (id) => {
+      weaponId = id;
+      applyWeapon();
+    },
+    onSheathed: (next) => {
+      sheathed = next;
+      scene.authoredUnit?.setSheathed(next);
+    },
   });
   layout.appendChild(panel.element);
   // The camera/light control panel (spec 033/034) sits alongside the tuning panel.
@@ -814,7 +1048,9 @@ export function mountMovement(container: HTMLElement): ViewHandle {
   const setStatus = (): void => {
     const name = characterAt(state.characterIndex).name;
     const unitName = UNIT_CHIPS.find((u) => u.kind === unit)?.label ?? 'Spider';
-    status.textContent = `Unit: ${unitName}  ·  Archetype: ${name} (C to cycle)  ·  gait: ${scene.unitState}`;
+    const authored = scene.authoredUnit;
+    const swing = authored === null ? '' : `  ·  attack: ${attackState.phase}  ·  ${authored.debugLine}`;
+    status.textContent = `Unit: ${unitName}  ·  Archetype: ${name} (C to cycle)  ·  gait: ${scene.unitState}${swing}`;
   };
   setStatus();
 
@@ -848,6 +1084,7 @@ export function mountMovement(container: HTMLElement): ViewHandle {
         ...(input.takeMoveOrder() ? { moveTarget: scene.screenToWorld(cursor.x, cursor.y) } : {}),
         ...(input.takeCycleCharacter() ? { cycleCharacter: true } : {}),
       };
+      const before = state.position;
       state = stepMover(state, moverInput, world);
       // A cosmetic hop: the mover has no notion of height, so this never enters
       // its input and can decide no outcome.
@@ -855,6 +1092,23 @@ export function mountMovement(container: HTMLElement): ViewHandle {
         scene.robeUnit?.jump();
         scene.critterUnit?.jump();
       }
+
+      // The swing (spec 140). All of it is on the tick clock: the rehearsal, the
+      // machine it drives, and the dummy's flinch -- so the blow lands on the
+      // same tick whatever the frame rate, and the three cannot drift apart.
+      const swung = input.takeAttack();
+      const step = stepAttack(attackState, attackTuning, swung, TICK_MS);
+      attackState = step.state;
+      const authored = scene.authoredUnit;
+      if (authored) {
+        // Speed measured off the drawn positions rather than off the mover's
+        // own number, so the blend tree matches the feet the eye is following.
+        const travelled = Math.hypot(state.position.x - before.x, state.position.y - before.y);
+        authored.stepTicks(1, travelled / (TICK_MS / 1000), step.started, attackTuning);
+      }
+      if (step.hit) scene.hitTarget.hit();
+      scene.hitTarget.step(1);
+
       syncCharacter();
       accumulator -= TICK_MS;
     }

@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "validate:units": "tsx scripts/validate-units.ts",
+    "validate:items": "tsx scripts/validate-items.ts",
     "bake:units": "tsx scripts/bake-units.ts",
     "build": "vite build",
     "dev": "vite",

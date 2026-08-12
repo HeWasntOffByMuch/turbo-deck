@@ -1,5 +1,5 @@
 /**
- * Measure the white chunk on a real health bar, in a real browser (spec 143).
+ * Measure the white chunk on a real health bar, in a real browser (spec 145).
  *
  *   npm run build && npx tsx scripts/probe-health-flash.ts
  *
@@ -68,7 +68,7 @@ interface Sample {
   readonly id: string;
   readonly health: number;
   readonly ghost: number;
-  /** Where the bar was placed this frame, in CSS pixels (spec 144). */
+  /** Where the bar was placed this frame, in CSS pixels (spec 146). */
   readonly left: number;
   readonly top: number;
   /**
@@ -193,7 +193,7 @@ function flashes(track: readonly Sample[]): { start: number; end: number; peak: 
 }
 
 /**
- * Whether the bars actually flinched, and how hard (spec 144).
+ * Whether the bars actually flinched, and how hard (spec 146).
  *
  * A bar is placed over a body that is walking, so it moves anyway -- the thing
  * that tells a kick apart from a stroll is that a kick *reverses*: at 60Hz a

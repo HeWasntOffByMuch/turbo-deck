@@ -9,9 +9,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   centredClearance,
+  errorLineWidth,
+  errorStackBottom,
   hudLayout,
   MIN_TAP_PX,
   PHONE_LANDSCAPE,
+  stripHeight,
   stripWidth,
 } from './hud-layout.js';
 import { HOTBAR, SYSTEM_BUTTONS, WEAPON_SWITCH } from './hud.js';
@@ -114,5 +117,39 @@ describe('the HUD layout', () => {
     expect(stripWidth({ width: 10, height: 10 }, 4, 3)).toBe(38);
     expect(stripWidth({ width: 10, height: 10 }, 4, 1)).toBe(10);
     expect(stripWidth({ width: 10, height: 10 }, 4, 0)).toBe(0);
+    expect(stripHeight({ width: 10, height: 20 }, 4, 3)).toBe(68);
+    expect(stripHeight({ width: 10, height: 20 }, 4, 1)).toBe(20);
+    expect(stripHeight({ width: 10, height: 20 }, 4, 0)).toBe(0);
+  });
+
+  /**
+   * The refusal stack shares the bottom-right corner with the window buttons
+   * (spec 143), and those are a column of three on a desktop and a row of three
+   * on a phone. Clearing one button's height was the first thing written and the
+   * first screenshot showed why it is wrong: three lines of red across the Bag
+   * and Gear buttons.
+   */
+  it('lifts the refusal stack clear of the whole window-button group', () => {
+    const buttons = SYSTEM_BUTTONS.length;
+    for (const layout of [desktop, compact]) {
+      const group = layout.systemIconOnly
+        ? layout.systemButton.height
+        : stripHeight(layout.systemButton, layout.systemGap, buttons);
+      expect(errorStackBottom(layout, buttons)).toBeGreaterThan(layout.edge + group);
+    }
+    // A captioned column is three buttons tall; an icon row is one.
+    expect(errorStackBottom(desktop, buttons)).toBeGreaterThan(
+      errorStackBottom(compact, buttons),
+    );
+  });
+
+  it('draws a refusal wider on a desktop than on a phone, and both fit', () => {
+    const line = 'THROWING STAR: NOT ENOUGH RESOURCE X12';
+    expect(errorLineWidth(desktop, line)).toBeGreaterThan(errorLineWidth(compact, line));
+    expect(errorLineWidth(compact, line)).toBeLessThanOrEqual(
+      PHONE_LANDSCAPE.width - compact.edge * 2,
+    );
+    // Empty is the margin the outline lives in, not a negative box.
+    expect(errorLineWidth(desktop, '')).toBe(2 * desktop.errorScale);
   });
 });

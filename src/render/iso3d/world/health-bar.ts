@@ -1,5 +1,5 @@
 /**
- * The white chunk a blow leaves on a floating health bar (spec 143).
+ * The white chunk a blow leaves on a floating health bar (spec 145).
  * Pure -- no three.js, no DOM, and time is an argument.
  *
  * A bar has three flat states: the fill a body still has, the ground it gave up
@@ -39,7 +39,7 @@ export const FLASH_HOLD_MS = 375;
 export const FLASH_DRAIN_MS = 220;
 
 /**
- * The flinch (spec 144): how long a blow knocks the bar for, how far the
+ * The flinch (spec 146): how long a blow knocks the bar for, how far the
  * biggest one throws it, and how fast it rattles while it settles.
  *
  * 15Hz over 200ms is three cycles, and the rate is picked against the *sampling*
@@ -70,7 +70,7 @@ export interface BarFill {
   readonly health: number;
   /** Where the white ends, 0..1. Never below `health`. */
   readonly ghost: number;
-  /** CSS pixels to add to where the bar is placed, sideways (spec 144). */
+  /** CSS pixels to add to where the bar is placed, sideways (spec 146). */
   readonly shakeX: number;
   /** CSS pixels to add to where the bar is placed, vertically. */
   readonly shakeY: number;
@@ -92,7 +92,7 @@ interface Track {
   /**
    * When the last blow landed, or null once its kick is spent.
    *
-   * Separate from `since` because the two rules disagree on purpose (spec 144):
+   * Separate from `since` because the two rules disagree on purpose (spec 146):
    * the chunk is a measurement and merges across a burst, the kick is a contact
    * and does not.
    */
@@ -153,7 +153,7 @@ export class HealthFlashes {
         track.ghost = Math.max(this.ghostAt(track, now), current);
         track.since = now;
       }
-      // The kick, on the other hand, restarts on *every* blow (spec 144). It is
+      // The kick, on the other hand, restarts on *every* blow (spec 146). It is
       // contact rather than measurement: a burst that grows one chunk is still
       // three separate hits, and a bar under sustained fire should rattle.
       track.struck = now;
