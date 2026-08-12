@@ -50,7 +50,10 @@ Elements built once and mutated per frame in `update()`:
 - `status` — the dev readout (tick/hp/target/aim line), hidden (`display:none`,
   not removed) when `!layout.showsReadout` — kept alive because
   `scripts/preview-touch.ts` reads it out of `document.body.textContent`.
-- `notices`, `spawnerLayer` (spawner marks, one div per spawner id, keyed by
+- `errors` (the refusal stack, spec 143 -- pinned by its `bottom` and its
+  `right` so appending a line grows the column upward, one `<div>` per live
+  message keyed by `ErrorLog` id, each holding a `pixelTextSvg` in red),
+  `spawnerLayer` (spawner marks, one div per spawner id, keyed by
   `dataset['spawner']`), `bar` (hotbar), `aimHint` (compact-only), `weapons`
   (weapon switch), per-entity health/cast `Bar`s (`barFor(id)`, keyed by
   `dataset['entity']`), and damage-number elements (`popupElements`, keyed by
@@ -99,8 +102,9 @@ Elements built once and mutated per frame in `update()`:
 
 ### `pixel-font.ts` (153 lines) — pure, draws into an SVG string (not canvas2d)
 
-- 5x7 bitmap glyph table `GLYPHS: Record<string, string[]>` (digits, `+ - !
-  space`), `GLYPH_WIDTH=5 GLYPH_HEIGHT=7 GLYPH_SPACING=1`.
+- 5x7 bitmap glyph table `GLYPHS: Record<string, string[]>` (digits, `+ - ! : .
+  space`, and `A`-`Z` since spec 143 -- one case, on purpose),
+  `GLYPH_WIDTH=5 GLYPH_HEIGHT=7 GLYPH_SPACING=1`.
 - `glyphRects(text): PixelRect[]` → one unmerged rect per lit pixel;
   `glyphPath(text): string` → one SVG path `d` of axis-aligned rect commands;
   `pixelTextSvg(text, {scale=3, fill, outline}): string` returns a

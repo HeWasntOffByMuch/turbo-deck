@@ -36,12 +36,22 @@ import { appearanceOf, displayName } from './appearance.js';
 import { pixelTextSvg } from './pixel-font.js';
 import { isHandheldDevice } from '../device.js';
 import { DamagePopups, type Projector, type WorldAnchor } from './damage-popup.js';
-import { hudLayout } from './hud-layout.js';
+import { ErrorLog } from './error-log.js';
+import { errorStackBottom, hudLayout } from './hud-layout.js';
 import { systemIconSvg, weaponIconSvg, type SystemIconId } from './icons.js';
 import type { WindowId } from './key-actions.js';
 
 /** The slot being aimed (spec 080). The aim indicator's colour, in the DOM. */
 const AIM_HIGHLIGHT = '#7fd4ff';
+
+/**
+ * The refusal stack's ink (spec 143).
+ *
+ * Bright rather than blood-coloured: it is drawn over a world that already has
+ * dark reds in it -- the health bars, the blood -- and a warning has to be the
+ * most saturated thing in its corner or it reads as scenery.
+ */
+const ERROR_RED = '#ff3b3b';
 
 /** Which abilities the hotbar offers, in order. Keys 1..n. */
 export const HOTBAR: readonly string[] = [
@@ -122,6 +132,14 @@ export interface HudHandle {
      * Lights the slot it came from and says what the next click will do.
      */
     aiming: { readonly abilityId: string | null; readonly pending: boolean },
+    /**
+     * The frame's timestamp, straight from `requestAnimationFrame` (spec 143).
+     *
+     * The refusal stack decays in seconds rather than in frames, and it is the
+     * frame loop that already holds a clock -- passing it in keeps the HUD to
+     * one, shared with everything else the frame does.
+     */
+    nowMs: number,
   ): void;
   /**
    * A hit landed on `entityId`, at the world point `at` (spec 096).
@@ -133,8 +151,14 @@ export interface HudHandle {
    * fan a burst out into lanes.
    */
   addDamage(entityId: number, at: WorldAnchor, damage: number, crit: boolean): void;
-  /** The server refused a cast, and said why. */
-  notice(text: string): void;
+  /**
+   * Something was refused, and this is what to say about it (spec 143).
+   *
+   * Takes a finished line rather than an ability and a reason: the wording lives
+   * in `error-log.ts` where it can be tested against every code the server can
+   * send, and this end places elements.
+   */
+  error(text: string): void;
   /**
    * Draw the spawner overlay, or clear it (spec 076).
    *
@@ -210,11 +234,22 @@ export function createHud(project: Projector): HudHandle {
   }
   root.append(status);
 
-  const notices = document.createElement('div');
-  notices.style.cssText =
-    'position:absolute;left:50%;transform:translateX(-50%);font:13px ui-monospace,Menlo,monospace;' +
-    `color:#ffa07a;text-shadow:0 1px 2px #000;top:${layout.showsReadout ? 86 : 12}px;`;
-  root.append(notices);
+  // The refusal stack (spec 143). Its *bottom* is pinned and it has no height of
+  // its own, which is the whole trick: appending a line makes the box taller and
+  // it grows upward, so the newest message is always the bottom one and every
+  // older one is pushed toward the top of the screen. Sat above the window
+  // buttons, the one thing already in this corner.
+  const errors = document.createElement('div');
+  errors.style.cssText =
+    `position:absolute;right:calc(${layout.edge}px + env(safe-area-inset-right));` +
+    `bottom:calc(${errorStackBottom(layout, SYSTEM_BUTTONS.length)}px + env(safe-area-inset-bottom));` +
+    `display:flex;flex-direction:column;align-items:flex-end;gap:${layout.errorGap}px;` +
+    'pointer-events:none;';
+  // Invisible handles, like `data-entity` on a health bar: the column and each
+  // line's text, so `scripts/preview-refusals.ts` can read what is actually on
+  // screen instead of re-deriving it. Nothing in the game reads them.
+  errors.dataset['errorStack'] = 'true';
+  root.append(errors);
 
   // The spawner overlay lives in its own layer so clearing it is one truncation
   // rather than a walk looking for which children were spawners.
@@ -400,8 +435,9 @@ export function createHud(project: Projector): HudHandle {
   /** The numbers' whole life lives in the pure field; this holds their elements. */
   const popups = new DamagePopups();
   const popupElements = new Map<number, HTMLElement>();
-  let notice = '';
-  let noticeAge = 999;
+  /** Same division as the numbers: the field decides, this holds the elements. */
+  const errorLog = new ErrorLog();
+  const errorElements = new Map<number, HTMLElement>();
 
   function barFor(id: number): Bar {
     const existing = bars.get(id);
@@ -439,6 +475,11 @@ export function createHud(project: Projector): HudHandle {
     popupElements.delete(id);
   }
 
+  function dropError(id: number): void {
+    errorElements.get(id)?.remove();
+    errorElements.delete(id);
+  }
+
   function update(
     view: ClientView,
     anchors: readonly ScreenAnchor[],
@@ -446,6 +487,7 @@ export function createHud(project: Projector): HudHandle {
     corrections: number,
     targetId: number | null,
     aiming: { readonly abilityId: string | null; readonly pending: boolean },
+    nowMs: number,
   ): void {
     const byId = new Map(view.entities.map((entity) => [entity.id, entity]));
     const casts = new Map(view.casts.map((cast) => [cast.entityId, cast]));
@@ -512,8 +554,28 @@ export function createHud(project: Projector): HudHandle {
       element.style.opacity = placement.opacity.toFixed(3);
     }
 
-    noticeAge += 1;
-    notices.textContent = noticeAge < 120 ? notice : '';
+    // The refusal stack (spec 143). Elements are only ever appended, and the
+    // field only ever expires from the front, so DOM order stays the field's
+    // order without anything here sorting: oldest at the top, newest at the
+    // bottom edge the column is pinned to.
+    const errorStep = errorLog.step(nowMs);
+    for (const id of errorStep.expired) dropError(id);
+    for (const line of errorStep.live) {
+      const element = errorElements.get(line.id);
+      if (!element) continue;
+      // Only when it changes: a repeat rewrites the line to carry its count, and
+      // every other frame this is the same string it already holds.
+      if (element.dataset['text'] !== line.text) {
+        element.dataset['text'] = line.text;
+        element.innerHTML = pixelTextSvg(line.text, {
+          scale: layout.errorScale,
+          fill: ERROR_RED,
+          outline: '#1a0406',
+        });
+      }
+      const opacity = line.opacity.toFixed(3);
+      if (element.style.opacity !== opacity) element.style.opacity = opacity;
+    }
 
     // Lit from what the server says is *worn*, never from the last click and no
     // longer from the stat block (spec 126). Inferring the weapon from
@@ -658,9 +720,19 @@ export function createHud(project: Projector): HudHandle {
       // is an element nobody will place again.
       for (const id of added.expired) dropPopup(id);
     },
-    notice(text) {
-      notice = text;
-      noticeAge = 0;
+    error(text) {
+      const added = errorLog.add(text);
+      // Nothing is created for a repeat: `add` folded it into a line that
+      // already has an element, and the next frame rewrites that line's text.
+      if (!errorElements.has(added.id)) {
+        const element = document.createElement('div');
+        element.style.cssText = 'display:block;';
+        errors.append(element);
+        errorElements.set(added.id, element);
+      }
+      // Whatever the field dropped to stay under capacity is an element nobody
+      // will place again.
+      for (const id of added.expired) dropError(id);
     },
     showOpenWindows(open) {
       for (const slot of systemSlots) {
