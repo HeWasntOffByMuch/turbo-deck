@@ -22,14 +22,23 @@ import addFormats from 'ajv-formats';
 import cliplibSchema from '../../schemas/cliplib.schema.json' with { type: 'json' };
 import skeletonSchema from '../../schemas/skeleton.schema.json' with { type: 'json' };
 import unitdefSchema from '../../schemas/unitdef.schema.json' with { type: 'json' };
+import weapondefSchema from '../../schemas/weapondef.schema.json' with { type: 'json' };
 import { error, type Issue } from './issues.js';
 
-export type DocumentKind = 'skeleton' | 'cliplib' | 'unitdef';
+/**
+ * `weapondef` is here rather than in a second ajv setup of its own (spec 140).
+ * A weapon is not a unit and lives in `src/items/`, but the *structural* half of
+ * validating an authored document is the same job whatever the document is --
+ * and the CommonJS interop shim below is the kind of thing that should exist
+ * once in a repo rather than once per format.
+ */
+export type DocumentKind = 'skeleton' | 'cliplib' | 'unitdef' | 'weapondef';
 
 export const SCHEMAS: Readonly<Record<DocumentKind, object>> = {
   skeleton: skeletonSchema,
   cliplib: cliplibSchema,
   unitdef: unitdefSchema,
+  weapondef: weapondefSchema,
 };
 
 /**

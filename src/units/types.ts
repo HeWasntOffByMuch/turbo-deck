@@ -37,6 +37,16 @@ export interface SkeletonSocket {
   readonly id: string;
   readonly bone: string;
   readonly offset?: Vec3;
+  /**
+   * Euler degrees, applied XYZ in the bone's local frame (spec 140).
+   *
+   * Where a grip sits in a palm and which way a held thing points out of it are
+   * facts about the *body*, not about the sword -- so one calibration here
+   * serves every weapon, and a second rig costs one tuning session rather than
+   * one per item. Degrees because this is the field somebody drags a slider to
+   * find.
+   */
+  readonly rotationDeg?: Vec3;
 }
 
 export interface BindBone {

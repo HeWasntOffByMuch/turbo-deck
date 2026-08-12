@@ -32,6 +32,8 @@ import {
   withoutTravel,
 } from '../../units/root-motion.js';
 import type { PoseSample } from '../../units/machine.js';
+import type { SkeletonSocket } from '../../units/types.js';
+import { socketPivot } from './weapon-rig.js';
 
 /** Where a unit's bytes are. Ids match the clip library's, not the file names. */
 export interface UnitAssets {
@@ -192,6 +194,12 @@ export class UnitRig {
   private restPose = new Map<string, readonly [number, number, number]>();
   /** How far the rig reaches in its own units, which sets what counts as travel. */
   private reach = 0;
+  /** The skeleton's sockets by id, so `attach` can name one (spec 140). */
+  private readonly sockets = new Map<string, SkeletonSocket>();
+  /** What is currently hung off each socket, so a switch replaces rather than adds. */
+  private readonly attached = new Map<string, THREE.Group>();
+  /** The host's import scale, which a socket pivot has to undo (spec 140). */
+  private importScale = 1;
 
   /** Why the load failed, or null. */
   get error(): string | null {
@@ -234,6 +242,7 @@ export class UnitRig {
       const gltf = await loader.loadAsync(assets.meshUrl);
       const model = gltf.scene;
       model.scale.setScalar(assets.importScale);
+      this.importScale = assets.importScale;
       model.traverse((object) => {
         if (!(object instanceof THREE.Mesh)) return;
         object.castShadow = true;
@@ -241,6 +250,10 @@ export class UnitRig {
         retexture(object);
       });
 
+      // Every attachment was a child of the *old* model's bones, so a reload
+      // orphans them. Cleared here rather than in `dispose`, because a rig that
+      // reloads is not a rig that is going away.
+      this.attached.clear();
       this.object.clear();
       this.object.add(model);
       this.model = model;
@@ -373,6 +386,74 @@ export class UnitRig {
   }
 
   /**
+   * Hangs an object off a named socket (spec 140).
+   *
+   * **Parented, not copied.** The object becomes a child of the socket's bone
+   * through a pivot carrying the socket's own offset and rotation, so it rides
+   * the pose through three's own graph and there is no per-frame code for it
+   * anywhere. Reading the bone's world matrix each frame and writing it onto a
+   * detached object would produce the same picture at 144fps and a weapon
+   * lagging its own hand at every rate below that, because spec 118's LOD
+   * throttles how often a pose is applied and a copy would be on the renderer's
+   * clock rather than the machine's.
+   *
+   * Replaces rather than accumulates: attaching twice to one socket leaves one
+   * object, which is what a weapon switch needs and is the difference between
+   * changing swords and holding two.
+   *
+   * Returns false when the rig has no such socket or no such bone -- a caller
+   * that wanted a sword drawn should be able to tell that it was not, rather
+   * than find out by looking.
+   */
+  attach(socketId: string, object: THREE.Object3D): boolean {
+    const socket = this.sockets.get(socketId);
+    const bone = socket === undefined ? undefined : this.model?.getObjectByName(socket.bone);
+    if (!socket || !bone) return false;
+
+    this.detach(socketId);
+    // The pivot undoes the host's import scale, so what hangs off it is in
+    // **world** units. Everything under a bone inherits the ~56x the model root
+    // carries, and a weapon whose document says "38 world units long" would
+    // otherwise be drawn 56 times that. Compensating here rather than in the
+    // weapon means a sword is one size whatever holds it, and the socket's own
+    // `offset` stays in the rig units every other vec3 in a skeleton document
+    // is in -- three applies translation before scale, so the two do not fight.
+    const pivot = socketPivot(socket.offset, socket.rotationDeg, this.importScale);
+    pivot.name = `socket:${socketId}`;
+    pivot.add(object);
+    bone.add(pivot);
+    this.attached.set(socketId, pivot);
+    return true;
+  }
+
+  /** Empties a socket. Safe on one that was never filled. */
+  detach(socketId: string): void {
+    const pivot = this.attached.get(socketId);
+    if (!pivot) return;
+    pivot.removeFromParent();
+    pivot.clear();
+    this.attached.delete(socketId);
+  }
+
+  /** Which sockets currently hold something, for a panel or a test. */
+  attachedSockets(): readonly string[] {
+    return [...this.attached.keys()];
+  }
+
+  /**
+   * The sockets this rig knows about, from the skeleton document.
+   *
+   * Handed in rather than read off the `.glb`, because a socket is authored --
+   * it is a *name* for a bone plus a calibration, and neither is in the mesh.
+   * Set before `load` or after; the attachments are rebuilt either way, since a
+   * caller that swapped skeletons mid-session has bigger problems than this.
+   */
+  setSockets(sockets: readonly SkeletonSocket[]): void {
+    this.sockets.clear();
+    for (const socket of sockets) this.sockets.set(socket.id, socket);
+  }
+
+  /**
    * Scales the model so it stands exactly `targetHeight` tall, and says what
    * scale that took.
    *
@@ -444,6 +525,7 @@ export class UnitRig {
   }
 
   dispose(): void {
+    for (const socket of [...this.attached.keys()]) this.detach(socket);
     this.mixer?.stopAllAction();
     this.mixer = null;
     this.actions.clear();
