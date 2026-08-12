@@ -4,6 +4,7 @@ import {
   CHUNK_WORLD_SIZE,
   decalGrid,
   decalGridIndices,
+  decalGridNormals,
   decalGridUvs,
   DecalField,
   type Decal,
@@ -281,6 +282,57 @@ describe('decalGrid', () => {
     const out = new Float32Array(2 * 2 * 3);
     decalGrid(decalAt(0, 0), 2, () => 10, 2, out);
     for (let i = 0; i < 4; i++) expect(out[i * 3 + 1] ?? 0).toBeGreaterThan(10);
+  });
+});
+
+describe('decalGridNormals', () => {
+  it('stands a flat patch straight up', () => {
+    const positions = new Float32Array(4 * 4 * 3);
+    const normals = new Float32Array(4 * 4 * 3);
+    decalGrid(decalAt(0, 0), 4, () => 12, 0, positions);
+    decalGridNormals(positions, 4, normals);
+    for (let i = 0; i < 16; i++) {
+      expect(normals[i * 3] ?? 0).toBeCloseTo(0, 6);
+      expect(normals[i * 3 + 1] ?? 0).toBeCloseTo(1, 6);
+      expect(normals[i * 3 + 2] ?? 0).toBeCloseTo(0, 6);
+    }
+  });
+
+  it('tilts into a slope, and away from the way it rises', () => {
+    // Ground climbing towards +X, so the surface normal leans towards -X. A
+    // normal that came back +Y here is a decal that takes the sun as though it
+    // were on the flat, which is the whole complaint.
+    const positions = new Float32Array(4 * 4 * 3);
+    const normals = new Float32Array(4 * 4 * 3);
+    decalGrid(decalAt(0, 0), 4, (x) => x * 0.5, 0, positions);
+    decalGridNormals(positions, 4, normals);
+    for (let i = 0; i < 16; i++) {
+      expect(normals[i * 3] ?? 0).toBeLessThan(-0.4);
+      expect(normals[i * 3 + 1] ?? 0).toBeGreaterThan(0.4);
+    }
+  });
+
+  it('is unit length everywhere, on any ground', () => {
+    const positions = new Float32Array(5 * 5 * 3);
+    const normals = new Float32Array(5 * 5 * 3);
+    decalGrid(decalAt(40, -10, 60, 0.7), 5, (x, z) => Math.sin(x * 0.05) * 14 + Math.cos(z * 0.03) * 9, 0, positions);
+    decalGridNormals(positions, 5, normals);
+    for (let i = 0; i < 25; i++) {
+      const length = Math.hypot(normals[i * 3] ?? 0, normals[i * 3 + 1] ?? 0, normals[i * 3 + 2] ?? 0);
+      expect(length).toBeCloseTo(1, 5);
+    }
+  });
+
+  it('points out of the ground rather than into it, whatever the decal is turned to', () => {
+    // The sign of the cross product, which is a coin flip to write and a black
+    // decal to get wrong.
+    for (const rotation of [0, 1.1, Math.PI, -2.4]) {
+      const positions = new Float32Array(4 * 4 * 3);
+      const normals = new Float32Array(4 * 4 * 3);
+      decalGrid(decalAt(0, 0, 40, rotation), 4, (x, z) => x * 0.2 - z * 0.35, 0, positions);
+      decalGridNormals(positions, 4, normals);
+      for (let i = 0; i < 16; i++) expect(normals[i * 3 + 1] ?? 0).toBeGreaterThan(0);
+    }
   });
 });
 

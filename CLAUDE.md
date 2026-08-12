@@ -567,6 +567,50 @@ src/render/iso3d/turn-swing.ts  what a pivot does to a body's extremities (spec
                  frame captioned "the turn is over". The window is fixed in world
                  space and the collider ring is drawn, both for the same reason --
                  auto-framing each cell would hide the only thing being shown.
+src/render/iso3d/retro.ts, retro-pass.ts  the retro filter (specs 038/102/138):
+                 the scene drawn into a low-resolution buffer, then painted over
+                 the canvas through a shader that grades it, quantizes every
+                 channel to a handful of steps -- or onto a named palette -- and
+                 dithers the band edges with a Bayer matrix. retro.ts is the
+                 arithmetic, pure and tested headlessly, and the shader beside it
+                 computes the same expression per channel.
+                 Since spec 138 the pass takes a set of *objects* whose pixels
+                 skip the quantize, and `WorldScene` names every player: the
+                 pixel grid, the grade and the distance ink say where a body is
+                 and an exempt body keeps all three, while the dither and the
+                 quantize say what it is made of, so it keeps its colours. The
+                 mask is rendered at the scene buffer's own resolution into a
+                 target *sharing its depth attachment*, which is what makes it
+                 one small draw rather than a second frame. Two rules follow:
+                 only the owner may dispose that texture, and the mask pass
+                 clears colour ONLY, since the depth it would clear is what
+                 keeps the mask to pixels the body actually won. That depth test
+                 is insurance rather than something the game exercises -- at the
+                 default 27-degree camera nothing in the arena was ever observed
+                 drawing in front of the player, and there is no fade-the-
+                 occluder system here -- but "nothing occludes the player" is a
+                 fact about today's map and props, not a rule anything enforces,
+                 and a maskless-depth version would paint an unquantized
+                 player-shaped hole through whatever stood in front.
+                 The pass has no idea what a player is and must not learn --
+                 `setExempt` takes objects because `WorldScene` is the only thing
+                 that knows, which is also why every other caller (the probes,
+                 the Studio preview, the wind rig) pays nothing.
+                 `npx tsx scripts/probe-exempt.ts` drives the real Play tab with
+                 a palette set, so "which pixels escaped the quantize" is an
+                 equality test rather than a threshold, and reports the largest
+                 *connected* run of them -- a mask has to be a body, so a count
+                 is not enough. It measures each frame against the palette rather
+                 than differencing two, because the world is live. It cannot
+                 check the depth test, and deliberately does not try: nothing in
+                 this arena draws in front of the player, so a broken depth test
+                 renders the identical silhouette, and across 96 frames of
+                 walking the blob never split and never lost a third of its area
+                 -- that is the gait, not an occluder. `runExempt` in
+                 shading-probe.ts settles it by building a wall instead of hoping
+                 to walk behind one, and measures the *wall*, because a leaking
+                 mask marks a pixel and the colour under it belongs to whatever
+                 the scene drew there.
 src/render/iso3d/view-controls.ts, menu-group.ts, settings-menu.ts  the Play
                  tab's settings (specs 033/034/107): six buttons in the top-right
                  corner -- view, day and night, player lights, retro filter, hike

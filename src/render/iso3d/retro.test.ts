@@ -6,6 +6,8 @@ import {
   bayerTextureData,
   bayerThresholds,
   ditherChannel,
+  exemptChannel,
+  exemptionIsLive,
   nearestPaletteColor,
   paletteChannels,
   paletteSpacing,
@@ -218,5 +220,103 @@ describe('palette upload (spec 102)', () => {
         expect((bytes[i * 4 + c] ?? 0) / 255).toBeCloseTo(channels[i * 3 + c] ?? 0, 6);
       }
     }
+  });
+});
+
+// --- the exemption (spec 138) ------------------------------------------------
+
+/** A spread of shades, thresholds and tunings to assert the exemption over. */
+const SHADES = [0, 0.03, 0.17, 0.32, 0.5, 0.64, 0.79, 0.95, 1];
+const THRESHOLDS = [0.03125, 0.28125, 0.5, 0.71875, 0.96875];
+const TUNINGS: readonly (readonly [number, number])[] = [
+  [2, 0],
+  [2, 1],
+  [12, 0.05],
+  [12, 1.5],
+  [16, 0.5],
+];
+
+describe('exemptChannel', () => {
+  it('returns an exempt pixel completely untouched', () => {
+    // The property the whole spec rests on. Not "quantized more gently" -- a
+    // body on 64 steps instead of 12 is still a body the palette got to.
+    for (const [levels, strength] of TUNINGS) {
+      for (const v of SHADES) {
+        for (const threshold of THRESHOLDS) {
+          expect(exemptChannel(v, threshold, levels, strength, 1)).toBe(v);
+        }
+      }
+    }
+  });
+
+  it('is the dither term for term when nothing is exempt', () => {
+    // So the unexempt path is provably the path that shipped before spec 138.
+    for (const [levels, strength] of TUNINGS) {
+      for (const v of SHADES) {
+        for (const threshold of THRESHOLDS) {
+          expect(exemptChannel(v, threshold, levels, strength, 0)).toBeCloseTo(
+            ditherChannel(v, threshold, levels, strength),
+            12,
+          );
+        }
+      }
+    }
+  });
+
+  it('is a mix, so a partial mask lands between the two', () => {
+    // Nothing produces a partial mask today; this is the claim that a strength
+    // slider is a uniform rather than a rewrite.
+    const [v, threshold, levels, strength] = [0.42, 0.28125, 4, 1];
+    const crushed = ditherChannel(v, threshold, levels, strength);
+    expect(crushed).not.toBeCloseTo(v, 6);
+    expect(exemptChannel(v, threshold, levels, strength, 0.5)).toBeCloseTo(
+      (crushed + v) / 2,
+      12,
+    );
+  });
+
+  it('clamps a mask outside 0..1 rather than extrapolating past either end', () => {
+    const [v, threshold, levels, strength] = [0.42, 0.28125, 4, 1];
+    expect(exemptChannel(v, threshold, levels, strength, 2)).toBe(v);
+    expect(exemptChannel(v, threshold, levels, strength, -1)).toBeCloseTo(
+      ditherChannel(v, threshold, levels, strength),
+      12,
+    );
+  });
+});
+
+describe('exemptionIsLive', () => {
+  const on = RETRO_DEFAULTS;
+  const off = { ...RETRO_DEFAULTS, enabled: false };
+
+  it('is false when nobody has been named exempt', () => {
+    // Every caller but the Play tab: the probes, the Studio preview and the
+    // wind rig build a RetroPass and never call setExempt, and none of them
+    // should pay for a mask draw.
+    expect(exemptionIsLive(on, false, 0)).toBe(false);
+    expect(exemptionIsLive(on, true, 0)).toBe(false);
+  });
+
+  it('is false when the setting is off', () => {
+    expect(exemptionIsLive({ ...on, excludePlayer: false }, false, 1)).toBe(false);
+    expect(exemptionIsLive({ ...off, excludePlayer: false }, true, 1)).toBe(false);
+  });
+
+  it('is false with the filter off and no palette, because there is nothing to be exempt from', () => {
+    expect(exemptionIsLive(off, false, 1)).toBe(false);
+  });
+
+  it('is true with the filter off when a palette is set', () => {
+    // A palette snaps colours with the retro filter switched off -- it is the
+    // reason spec 102 runs the quad at all -- so there is something to escape.
+    expect(exemptionIsLive(off, true, 1)).toBe(true);
+  });
+
+  it('is true in the case the spec was written for', () => {
+    expect(exemptionIsLive(on, false, 1)).toBe(true);
+  });
+
+  it('is on by default, so the player is spared without anybody finding the switch', () => {
+    expect(RETRO_DEFAULTS.excludePlayer).toBe(true);
   });
 });

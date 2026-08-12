@@ -34,6 +34,14 @@ export interface RetroSettings {
   readonly ditherScale: number;
   /** Divisor on the internal render resolution (1..4): bigger = chunkier pixels. */
   readonly pixelSize: number;
+  /**
+   * Leave exempt pixels out of the dither and the quantize (spec 138).
+   *
+   * Who is exempt is not a question this module can answer -- `RetroPass`
+   * takes the objects from its caller, and the only caller that names any is
+   * the Play tab, which names the player. Inert everywhere else.
+   */
+  readonly excludePlayer: boolean;
 }
 
 /**
@@ -49,6 +57,7 @@ export const RETRO_DEFAULTS: RetroSettings = {
   matrixSize: 4,
   ditherScale: 1,
   pixelSize: 1,
+  excludePlayer: true,
 };
 
 /**
@@ -121,6 +130,55 @@ export function quantizeChannel(v: number, levels: number): number {
 export function ditherChannel(v: number, threshold: number, levels: number, strength: number): number {
   const steps = Math.max(1, levels - 1);
   return quantizeChannel(v + ((threshold - 0.5) * strength) / steps, levels);
+}
+
+// --- the exemption (spec 138) ------------------------------------------------
+
+/**
+ * The dither, unless this pixel is exempt -- the reference model for the mix at
+ * the bottom of the shader.
+ *
+ * `mask` is what the mask buffer holds for this pixel: 1 inside an exempt body,
+ * 0 everywhere else. An exempt pixel is returned *unchanged*, not quantized
+ * more gently: the point is a body whose colours survive, and a body on 64
+ * steps instead of 12 is still a body the palette got to.
+ *
+ * Written as a mix rather than a branch because that is what the shader does,
+ * and because it is the whole cost of a partial exemption if one is ever
+ * wanted. Values between 0 and 1 are therefore meaningful here, and nothing
+ * currently produces one.
+ */
+export function exemptChannel(
+  v: number,
+  threshold: number,
+  levels: number,
+  strength: number,
+  mask: number,
+): number {
+  const m = Math.min(1, Math.max(0, mask));
+  return ditherChannel(v, threshold, levels, strength) * (1 - m) + v * m;
+}
+
+/**
+ * Whether the exemption is worth rendering a mask for.
+ *
+ * Three ways to be inert, and the reason to check all of them here rather than
+ * in the pass is that the mask costs a draw: nobody named exempt (every caller
+ * but the Play tab), the setting off, or nothing to be exempt *from*.
+ *
+ * That last one is why this takes `hasPalette` rather than reading
+ * `settings.enabled` alone. A palette snaps colours with the retro filter
+ * switched off -- it is the reason spec 102 runs the quad at all -- so a
+ * palettized frame has something for a body to be exempt from even though the
+ * filter is off.
+ */
+export function exemptionIsLive(
+  settings: RetroSettings,
+  hasPalette: boolean,
+  exemptCount: number,
+): boolean {
+  if (!settings.excludePlayer || exemptCount <= 0) return false;
+  return settings.enabled || hasPalette;
 }
 
 // --- quantizing onto a palette (spec 102) ------------------------------------
