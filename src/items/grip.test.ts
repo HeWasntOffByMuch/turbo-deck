@@ -30,13 +30,15 @@ import { checkWeaponSockets, validateWeaponDef } from './validate.js';
 import { validateSkeleton } from '../units/validate.js';
 import { readNodeTree, splitGlb } from '../units/glb-read.js';
 import { bodyFrame, boneNode, namingOf, worldPosition } from '../units/pose.js';
-import { poseWorldMatrices } from '../units/skin.js';
+import { poseWorldMatrices, type PoseRotations } from '../units/skin.js';
+import { clipPoseAt } from '../units/clip-sample.js';
 import { poseAt } from '../units/clip-author.js';
 import { PIG_STRIKE, STRIKE_KEY_MS } from '../units/pig-strike.js';
 import type { NamingSpec } from '../units/naming.js';
 import type { Vec3 } from './types.js';
 
 const ITEMS = join(process.cwd(), 'assets', 'items');
+const UNIT_DIR = join(process.cwd(), 'assets', 'units', 'pig_a_pose_full');
 
 /** The bounds of a `.glb`, off the POSITION accessors the spec guarantees. */
 function boundsOf(path: string): MeshBounds {
@@ -247,7 +249,7 @@ describe('vector helpers', () => {
  */
 describe('how the pig holds a sword', () => {
   const nodes = readNodeTree(
-    splitGlb(new Uint8Array(readFileSync(join(process.cwd(), 'assets', 'units', 'pig_a_pose_full', 'pig_a_pose_full.glb')))),
+    splitGlb(new Uint8Array(readFileSync(join(UNIT_DIR, 'pig_a_pose_full.glb')))),
   );
   const detected = namingOf(nodes);
   if (detected === 'unknown') throw new Error('the pig rig is in no vocabulary this project reads');
@@ -264,12 +266,12 @@ describe('how the pig holds a sword', () => {
   /** `lateral` points to the pig's left, so the right is its negation. */
   const RIGHT: Vec3 = [-frame.lateral[0], -frame.lateral[1], -frame.lateral[2]];
 
-  /** Canonical weapon axes in world space, for a socket at a moment of the swing. */
-  function axesAt(socketId: string, ms: number): { blade: Vec3; flat: Vec3 } {
+  /** Canonical weapon axes in world space, for a socket in a given pose. */
+  function axesIn(socketId: string, pose: PoseRotations): { blade: Vec3; flat: Vec3 } {
     const socket = skeleton?.sockets.find((entry) => entry.id === socketId);
     const bone = nodes.find((node) => node.name === socket?.bone);
     if (!socket || !bone) throw new Error(`no socket ${socketId}`);
-    const world = poseWorldMatrices(nodes, poseAt(PIG_STRIKE, { nodes, naming }, ms))[bone.index] ?? [];
+    const world = poseWorldMatrices(nodes, pose)[bone.index] ?? [];
     // The bone's rotation with its scale divided out, as three basis vectors.
     const basis = [0, 1, 2].map((column) => {
       const raw: Vec3 = [world[column * 4] ?? 0, world[column * 4 + 1] ?? 0, world[column * 4 + 2] ?? 0];
@@ -291,6 +293,28 @@ describe('how the pig holds a sword', () => {
     // Canonical weapon space: blade +Y, flat +Z.
     return { blade: intoWorld([0, 1, 0]), flat: intoWorld([0, 0, 1]) };
   }
+
+  const axesAt = (socketId: string, ms: number): { blade: Vec3; flat: Vec3 } =>
+    axesIn(socketId, poseAt(PIG_STRIKE, { nodes, naming }, ms));
+
+  /**
+   * The same, in the pig's idle -- which is where a sheathed sword is judged.
+   *
+   * A scabbard is strapped to the chest, so it rides whatever the chest does:
+   * at the swing's guard key the chest is already yawed ten degrees into the
+   * wind-up, and a sword hanging correctly off it leans by exactly that much.
+   * Asserting "no sideways lean" against that pose measures the *torso*, not the
+   * scabbard, and the only way to pass it would be to hang the sword crooked so
+   * it comes out straight one frame in eight hundred.
+   *
+   * Idle is also the pose `weapon.stow` was calibrated at, and the pose a pig
+   * wearing a sword is in essentially all of the time.
+   */
+  const idlePose = clipPoseAt(
+    splitGlb(new Uint8Array(readFileSync(join(UNIT_DIR, 'clips', 'idle.glb')))),
+    nodes,
+    0,
+  );
 
   it('points the blade forward and a little up at guard, never down', () => {
     const { blade } = axesAt('weapon.main', STRIKE_KEY_MS.guard);
@@ -331,6 +355,11 @@ describe('how the pig holds a sword', () => {
     // The right leg is the wielding side. It goes back during the wind-up and
     // comes through as the blow lands -- which is where the weight for the
     // swing comes from, and without it the pig is a torso rotating in place.
+    //
+    // The *stance* half of this claim -- how far, and that the left foot stays
+    // put while it happens -- lives in `pig-strike.test.ts` beside the table it
+    // is a fact about. What this file keeps is the half spec 140 cares about:
+    // that the leg on the sword's side is the one that moves.
     const footAt = (role: 'rightFoot' | 'leftFoot', ms: number): number => {
       const bone = boneNode(nodes, naming, role);
       if (!bone) throw new Error(`no ${role}`);
@@ -345,14 +374,19 @@ describe('how the pig holds a sword', () => {
     const contactGap = footAt('rightFoot', STRIKE_KEY_MS.contact) - footAt('leftFoot', STRIKE_KEY_MS.contact);
 
     // Braced: the right foot is further behind the left at the top of the
-    // wind-up than it was at rest, by a real fraction of a body.
-    expect(loadGap).toBeLessThan(guardGap - 0.15);
+    // wind-up than it was at rest. The threshold used to be 0.15 and the swing
+    // used to clear it easily -- on a gap that was closing from both ends,
+    // because the left foot was sliding forward under the pelvis by more than
+    // the right foot was stepping back. Planting the left foot cost this
+    // two thirds of its number and none of its motion.
+    expect(loadGap).toBeLessThan(guardGap - 0.08);
     // Driven through: by contact it has come forward past where it started.
-    expect(contactGap).toBeGreaterThan(loadGap + 0.3);
+    expect(contactGap).toBeGreaterThan(loadGap + 0.22);
+    expect(contactGap).toBeGreaterThan(guardGap);
   });
 
   it('sheathes it upright and leaning back, in the pig’s own fore-aft plane', () => {
-    const { blade, flat } = axesAt('weapon.stow', STRIKE_KEY_MS.guard);
+    const { blade, flat } = axesIn('weapon.stow', idlePose);
     // Hilt up and forward, tip down and back: 30 degrees off vertical, so the
     // blade axis is -cos(30) up and -sin(30) forward.
     expect(dot(blade, UP)).toBeCloseTo(-Math.cos(Math.PI / 6), 1);
@@ -362,5 +396,43 @@ describe('how the pig holds a sword', () => {
     expect(Math.abs(dot(blade, RIGHT))).toBeLessThan(0.12);
     // Same roll as in the hand.
     expect(Math.abs(dot(flat, RIGHT))).toBeGreaterThan(0.95);
+  });
+
+  it('wears it on the left, which is the side a right hand draws from', () => {
+    // The socket's *offset*, which is the half of a calibration that a rotation
+    // cannot express and that is easy to leave at zero without noticing: a
+    // correctly-angled sword hung on the body's midline looks like it is growing
+    // out of the spine. The pig wields right-handed, so the scabbard goes on the
+    // left, and it goes out far enough to clear the torso rather than merely
+    // being on the correct side of it.
+    const socket = skeleton?.sockets.find((entry) => entry.id === 'weapon.stow');
+    const bone = nodes.find((node) => node.name === socket?.bone);
+    const spine = boneNode(nodes, naming, 'chest');
+    const shoulder = boneNode(nodes, naming, 'leftArm');
+    if (!socket || !bone || !spine || !shoulder) throw new Error('no stow socket to measure');
+
+    const world = poseWorldMatrices(nodes, idlePose);
+    const offset = socket.offset ?? [0, 0, 0];
+    const m = world[bone.index] ?? [];
+    // The socket's own place: the bone's origin plus its offset, taken through
+    // the bone's basis, which is what `socketPivot` builds in the scene graph.
+    const place = (axis: number): number =>
+      (m[12 + axis] ?? 0) +
+      (m[axis] ?? 0) * (offset[0] ?? 0) +
+      (m[4 + axis] ?? 0) * (offset[1] ?? 0) +
+      (m[8 + axis] ?? 0) * (offset[2] ?? 0);
+
+    const midline = world[spine.index] ?? [];
+    const from: Vec3 = [place(0) - (midline[12] ?? 0), place(1) - (midline[13] ?? 0), place(2) - (midline[14] ?? 0)];
+    const sideways = dot(from, RIGHT);
+
+    // Left of the spine, by most of the way out to the shoulder -- the body's
+    // own width rather than a number chosen here, so this survives a re-rig.
+    const arm = worldPosition(shoulder);
+    const half = Math.abs(
+      dot([arm[0] - (midline[12] ?? 0), arm[1] - (midline[13] ?? 0), arm[2] - (midline[14] ?? 0)], RIGHT),
+    );
+    expect(half).toBeGreaterThan(0);
+    expect(sideways).toBeLessThan(-0.5 * half);
   });
 });

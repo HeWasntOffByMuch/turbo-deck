@@ -181,7 +181,7 @@
       "id": "weapon.main",
       "bone": "R_Hand",
       "offset": [0, 0.02, 0],
-      "rotationDeg": [167.8, 37, 176]
+      "rotationDeg": [-145.7, 74.8, -122.9]
     },
     {
       "id": "weapon.off",
@@ -190,8 +190,8 @@
     {
       "id": "weapon.stow",
       "bone": "Spine02",
-      "offset": [-0.02, 0.06, 0.1],
-      "rotationDeg": [180, 67.1, -26.6]
+      "offset": [-0.165, 0.06, 0.09],
+      "rotationDeg": [167.6, 88.9, -16.1]
     },
     {
       "id": "fx.cast",

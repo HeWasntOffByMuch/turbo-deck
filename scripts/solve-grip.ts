@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { poseAt } from '../src/units/clip-author.js';
+import { clipPoseAt } from '../src/units/clip-sample.js';
 import { readNodeTree, splitGlb } from '../src/units/glb-read.js';
 import { PIG_STRIKE, STRIKE_KEY_MS } from '../src/units/pig-strike.js';
 import { bodyFrame, namingOf, type Vec3 } from '../src/units/pose.js';
@@ -52,10 +53,21 @@ function main(): void {
   // `lateral` points to the pig's LEFT, so its negation is the right.
   const right = scaled(frame.lateral, -1);
 
-  // The hand is solved at the swing's guard pose rather than at the bind pose:
-  // the grip is fixed to the hand, so it can only be exactly right at one pose,
-  // and the one worth being right at is the one the swing starts and ends in.
-  const world = poseWorldMatrices(nodes, poseAt(PIG_STRIKE, { nodes, naming }, STRIKE_KEY_MS.guard));
+  // **The hand is solved at `idle`**, not at the swing's own guard key.
+  //
+  // A grip is fixed to the hand, so the calibration can only be exactly right at
+  // one pose, and choosing which one is the whole decision. It was the swing's
+  // guard -- a pose the pig holds for a few frames of an 800ms clip -- so the
+  // sword pointed forward for two frames a swing and hung straight down for the
+  // rest of the time, which is when anybody is looking at it. `idle` is where a
+  // body spends its life.
+  //
+  // The idle's right hand barely moves over its fifteen seconds (the blade's
+  // elevation varies by under two degrees), so any frame will do and frame zero
+  // is the one that needs no explaining.
+  const idle = splitGlb(new Uint8Array(readFileSync(join(UNIT_DIR, 'clips', 'idle.glb'))));
+  const world = poseWorldMatrices(nodes, clipPoseAt(idle, nodes, 0));
+  const strikeGuard = poseWorldMatrices(nodes, poseAt(PIG_STRIKE, { nodes, naming }, STRIKE_KEY_MS.guard));
   const round = (value: number): number => Math.round(value * 10) / 10;
 
   const targets: { socket: string; blade: Vec3; flat: Vec3; why: string }[] = [
@@ -90,6 +102,11 @@ function main(): void {
     const euler = socketEulerFor(world[bone.index] ?? [], target.blade, target.flat);
     console.log(`\n  ${target.socket} on ${socket.bone} -- ${target.why}`);
     console.log(`    "rotationDeg": [${euler.map(round).join(', ')}]`);
+    // What the same socket would need if the swing's guard were the reference
+    // instead: printed so the gap between the two poses is visible rather than
+    // a surprise the next time somebody wonders why the guard key looks off.
+    const alternative = socketEulerFor(strikeGuard[bone.index] ?? [], target.blade, target.flat);
+    console.log(`    (at the swing's guard key it would want [${alternative.map(round).join(', ')}])`);
   }
 }
 

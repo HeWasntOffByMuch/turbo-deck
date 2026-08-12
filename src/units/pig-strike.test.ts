@@ -122,6 +122,72 @@ describe('the pig swing lands when the ability says it does', () => {
   });
 });
 
+describe('the stance the swing is thrown from', () => {
+  /** The end of a foot chain: an ankle's own yaw is invisible without the toe. */
+  function toeOf(from: number): number {
+    const kids = nodes.filter((node) => node.parent === from);
+    const last = kids[kids.length - 1];
+    return last ? toeOf(last.index) : from;
+  }
+
+  const leftFoot = boneNode(nodes, naming, 'leftFoot');
+  const rightFoot = boneNode(nodes, naming, 'rightFoot');
+  if (!leftFoot || !rightFoot) throw new Error('the pig rig has no feet');
+  const leftToe = toeOf(leftFoot.index);
+
+  const EVERY_KEY = Object.values(STRIKE_KEY_MS);
+
+  it('never moves the left foot, which is what the pig is standing on', () => {
+    // The support leg. Its foot is flat on the ground with the body's weight on
+    // it, so the pelvis turns *over* it -- and authored by eye it did the
+    // opposite, skating 0.19 (a fifth of the rig's height) across the floor
+    // while still planted flat. That is the single most legible way an animation
+    // can look wrong, because it is not a limb reading badly, it is the whole
+    // body appearing to slide.
+    //
+    // Both ends of the foot, because pinning the ankle alone leaves it free to
+    // pivot about it, and a foot that spins on the spot is the same lie.
+    const rest = { ankle: placeAt(leftFoot.index, 0), toe: placeAt(leftToe, 0) };
+    for (const ms of EVERY_KEY) {
+      expect(distance(placeAt(leftFoot.index, ms), rest.ankle), `left ankle at ${ms}ms`).toBeLessThan(0.02 * HEIGHT);
+      expect(distance(placeAt(leftToe, ms), rest.toe), `left toe at ${ms}ms`).toBeLessThan(0.02 * HEIGHT);
+    }
+  });
+
+  it('holds the left knee near its guard bend rather than pumping it', () => {
+    // The other half of the same claim, and the reason `plant-foot.ts` charges
+    // for bend. A leg is a linkage: an unpenalised solve pins the foot perfectly
+    // by snapping the knee straight, which is a foot that stays put under a leg
+    // that visibly does not.
+    const knee = boneNode(nodes, naming, 'leftLeg');
+    if (!knee) throw new Error('the pig rig has no left knee');
+    const rest = placeAt(knee.index, 0);
+    for (const ms of EVERY_KEY) {
+      expect(distance(placeAt(knee.index, ms), rest), `left knee at ${ms}ms`).toBeLessThan(0.09 * HEIGHT);
+    }
+  });
+
+  it('steps the wielding-side foot back to brace, then drives it through', () => {
+    // The right leg is the wielding side: back through the wind-up, forward past
+    // the left as the blow lands. That is where the weight comes from, and
+    // without it the pig is a torso rotating in place.
+    //
+    // Measured as the *right foot's own* travel, not as the gap between the
+    // feet. The gap is what spec 140 asserted and it flattered this by roughly
+    // two thirds, because the left foot was sliding the other way underneath it
+    // -- so a right leg that barely moved scored as a full step.
+    const forwardAt = (ms: number): number => placeAt(rightFoot.index, ms).forward;
+    const rest = forwardAt(0);
+
+    expect(forwardAt(STRIKE_KEY_MS.load) - rest, 'braced back').toBeLessThan(-0.08 * HEIGHT);
+    expect(forwardAt(STRIKE_CONTACT_MS) - forwardAt(STRIKE_KEY_MS.load), 'driven through').toBeGreaterThan(0.22 * HEIGHT);
+    // Past where it started, not merely back to it: the weight has transferred.
+    expect(forwardAt(STRIKE_CONTACT_MS)).toBeGreaterThan(rest);
+    // And returned, so a second swing starts from the stance the first left.
+    expect(forwardAt(STRIKE_KEY_MS.settle)).toBeCloseTo(rest, 6);
+  });
+});
+
 describe('the shape of the swing', () => {
   it('takes the hand over the head and behind the shoulder to load', () => {
     const load = handAt(STRIKE_KEY_MS.load);

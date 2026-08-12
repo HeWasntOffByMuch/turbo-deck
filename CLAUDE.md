@@ -182,15 +182,50 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  rotation channels, and the rule that shapes it is that glTF's
                  LINEAR is the only interpolation glb.ts writes -- so the easing
                  that makes a strike read has to be baked into 60Hz samples,
-                 because nothing downstream can add it back. pig-strike.ts is the
+                 because nothing downstream can add it back. clip-sample.ts is
+                 the same reading for a clip this project *bought* rather than
+                 wrote (spec 143) -- rotation channels out of a retargeted .glb,
+                 returned as offsets against bind so `poseWorldMatrices` takes
+                 either kind and a measurement need not care which it has. It
+                 exists because a socket calibration is only exactly right at one
+                 pose and nothing could sample the pose a body actually spends
+                 its life in: `weapon.main` was solved against the swing's own
+                 guard key, so the blade pointed forward for two frames of an
+                 800ms clip and hung straight down the rest of the time.
+                 pig-strike.ts is the
                  pig's swing itself: seven full-body poses over 800ms, contact at
                  500ms because that is `melee.slash`'s wind-up and the frame the
                  picture lands and the frame the damage lands are the same frame.
+                 Its legs are the one part that is *solved* rather than authored
+                 (spec 143). The pig stands on its left foot and the pelvis yaws
+                 54 degrees over it, so authored by eye that foot skated a fifth
+                 of the rig's height across the floor while planted flat -- the
+                 most legible failure an animation has, because it is not a limb
+                 reading badly, it is the whole body appearing to skate. Two
+                 things move it and only one is a rotation: the pelvis *turning*
+                 is cancelled exactly at the hip (both are rotations about the
+                 body's up, and rotations about a shared axis commute, so the
+                 counter-turn still means "world up" however far the pelvis has
+                 gone), while the pelvis *carrying the hip joint* -- 0.115 off its
+                 own axis -- cannot be cancelled by any rotation below it and is
+                 the leg reaching for the ground. `npx tsx scripts/plant-foot.ts`
+                 is that solve, and three things in it were each learned by
+                 writing the version without them: it pins the ankle AND the toe,
+                 because a foot free to spin on the spot is the same lie as one
+                 that slides; it charges per degree of bend, because a leg is a
+                 linkage and the unpenalised solve pinned the foot perfectly by
+                 snapping the knee straight; and it anchors on the guard pose
+                 rather than the key's current values, or each run measures its
+                 own last output and running the solver twice is a change.
                  `npx tsx scripts/make-pig-strike.ts` writes the committed .glb;
                  `npx tsx scripts/preview-strike.ts` photographs it frame by
                  frame with a blade proxy in the hand, because a swing judged on
                  the arm alone is judged on the half of the silhouette that is
-                 not the point.
+                 not the point -- but that proxy runs down the hand bone's own
+                 +Y and predates `weapon.main`'s calibration, so it is evidence
+                 about the arm and not about the grip.
+                 `npx tsx scripts/preview-weapon.ts` is the one that puts the real
+                 mesh through the real chain.
                  naming.ts is the two bone vocabularies and the one way to look a
                  bone up across them (spec 120). There are two in the tree
                  permanently: the reference mannequin is authored and

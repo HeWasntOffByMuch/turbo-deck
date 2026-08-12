@@ -46,7 +46,7 @@
  * Pure, and part of the deterministic core.
  */
 
-import type { AuthoredClip, PoseKey } from './clip-author.js';
+import type { AuthoredClip, PoseKey, PoseTable } from './clip-author.js';
 import type { ClipEvent } from './types.js';
 
 /** The clip id, which is the retarget's own preset vocabulary (`scaffold.ts`). */
@@ -75,7 +75,93 @@ export const STRIKE_KEY_MS = {
 } as const;
 
 /**
- * The stance the swing starts and ends in.
+ * The stance, and why it is solved rather than authored.
+ *
+ * The pig throws this swing off its left leg: that foot is flat on the ground
+ * with the body's weight on it, so it does not move -- everything above it moves
+ * *over* it. Authored by eye it did the opposite. The pelvis yaws 54 degrees
+ * between the load and the follow-through, the whole leg chain was carried round
+ * with it, and the left ankle skated 0.19 rig units across the floor -- half the
+ * pig's own hips-to-head height -- with the foot still planted flat on it.
+ *
+ * Two separate things move that foot, and only one of them is a rotation. The
+ * pelvis turning can be answered by turning the hip back. The pelvis carrying
+ * the hip *joint* cannot: the left hip sits 0.115 off the pelvis's own axis, so
+ * the joint rides an arc of its own -- 0.068 at the follow-through -- and no
+ * rotation of the leg below it puts the leg back. Holding the foot through that
+ * is the leg reaching for the ground: two angles at the hip and one at the knee,
+ * and no closed form.
+ *
+ * So both legs come from `npx tsx scripts/plant-foot.ts`, which states where each
+ * foot should be in world terms and solves the six angles that put it there. It
+ * pins the ankle *and* the toe, because pinning the ankle alone leaves the foot
+ * free to spin about it and a foot that pivots on the spot is the same lie as
+ * one that slides; and it pays a price per degree of bend, because a leg is a
+ * linkage and an unpenalised solve holds the foot perfectly still by snapping the
+ * knee straight.
+ *
+ * The right leg is the same solve with the opposite brief -- it is the wielding
+ * side, so it steps back to brace and drives through as the blow lands. Its
+ * travel used to be *measured* against a left foot that was itself sliding,
+ * which flattered it by roughly two thirds; the honest step is smaller than the
+ * old numbers said, and it is also the whole step rather than half of one.
+ *
+ * Left foot: 0.19 of drift down to 0.013. `pig-strike.test.ts` bounds what is
+ * left rather than trusting it.
+ */
+const STANCE = {
+  guard: {
+    leftUpLeg: { lateral: 6, forward: 4, up: 0 },
+    leftLeg: { lateral: 30 },
+    leftFoot: { lateral: -22, up: 0 },
+    rightUpLeg: { lateral: 12, forward: -4, up: 0 },
+    rightLeg: { lateral: 30 },
+    rightFoot: { lateral: -18, up: 0 },
+  },
+  dip: {
+    leftUpLeg: { lateral: 4.1, forward: 5, up: -0.4 },
+    leftLeg: { lateral: 30.5 },
+    leftFoot: { lateral: -22.2, up: -0.1 },
+    rightUpLeg: { lateral: 22.1, forward: -2.3, up: -0.9 },
+    rightLeg: { lateral: 19.8 },
+    rightFoot: { lateral: -12.8, up: -0.2 },
+  },
+  coil: {
+    leftUpLeg: { lateral: 12.7, forward: -0.9, up: 1.4 },
+    leftLeg: { lateral: 27.4 },
+    leftFoot: { lateral: -20.8, up: 0.3 },
+    rightUpLeg: { lateral: 24.8, forward: -15.2, up: 1.9 },
+    rightLeg: { lateral: 14.1 },
+    rightFoot: { lateral: -6.8, up: 0.3 },
+  },
+  load: {
+    leftUpLeg: { lateral: 14.1, forward: -2.3, up: 1.8 },
+    leftLeg: { lateral: 26.6 },
+    leftFoot: { lateral: -20.4, up: 0.3 },
+    rightUpLeg: { lateral: 23.9, forward: -17.9, up: 2.5 },
+    rightLeg: { lateral: 13.6 },
+    rightFoot: { lateral: -6.1, up: 0.4 },
+  },
+  contact: {
+    leftUpLeg: { lateral: -6.6, forward: 8, up: -2 },
+    leftLeg: { lateral: 30.8 },
+    leftFoot: { lateral: -23, up: -0.5 },
+    rightUpLeg: { lateral: -15.5, forward: 0.7, up: -2.6 },
+    rightLeg: { lateral: 54.2 },
+    rightFoot: { lateral: -22, up: -1 },
+  },
+  follow: {
+    leftUpLeg: { lateral: -10.4, forward: 8, up: -2.4 },
+    leftLeg: { lateral: 29.9 },
+    leftFoot: { lateral: -23, up: -0.6 },
+    rightUpLeg: { lateral: -23.3, forward: -2.1, up: -0.4 },
+    rightLeg: { lateral: 55.9 },
+    rightFoot: { lateral: -21.9, up: -1.3 },
+  },
+} as const satisfies Record<string, PoseTable>;
+
+/**
+ * The pose the swing starts and ends in, legs included.
  *
  * Deliberately close to the pig's own idle rather than to its bind pose. The
  * transition into the swing is a 60ms cross-fade with the idle on the other side
@@ -93,19 +179,17 @@ const GUARD = {
   neck: { up: 10, lateral: 4 },
   head: { lateral: 2 },
   rightShoulder: { forward: -10 },
-  rightArm: { lateral: -34, forward: -16 },
-  rightForeArm: { flex: 96 },
-  rightHand: { lateral: -30, up: -14 },
+  // Fitted to the *idle* clip's right arm rather than authored by eye, so the
+  // blade points where `weapon.main` was calibrated to point and the cross-fade
+  // out of idle has almost nothing to move. See `scripts/solve-grip.ts`.
+  rightArm: { lateral: 14.8, forward: 38, up: 21.8 },
+  rightForeArm: { flex: 48 },
+  rightHand: { lateral: 6, up: -26, twist: -24 },
   leftShoulder: { forward: 6 },
   leftArm: { lateral: -26, forward: 12 },
   leftForeArm: { flex: 62 },
   leftHand: { lateral: 6 },
-  rightUpLeg: { lateral: 12, forward: -4 },
-  rightLeg: { lateral: 30 },
-  rightFoot: { lateral: -18 },
-  leftUpLeg: { lateral: 6, forward: 4 },
-  leftLeg: { lateral: 30 },
-  leftFoot: { lateral: -22 },
+  ...STANCE.guard,
 } as const;
 
 const KEYS: readonly PoseKey[] = [
@@ -136,12 +220,7 @@ const KEYS: readonly PoseKey[] = [
       leftArm: { lateral: -32, forward: 14 },
       leftForeArm: { flex: 58 },
       leftHand: { lateral: 6 },
-      rightUpLeg: { lateral: 22, forward: -4 },
-      rightLeg: { lateral: 30 },
-      rightFoot: { lateral: -18 },
-      leftUpLeg: { lateral: 4, forward: 4 },
-      leftLeg: { lateral: 32 },
-      leftFoot: { lateral: -24 },
+      ...STANCE.dip,
     },
   },
   {
@@ -167,12 +246,7 @@ const KEYS: readonly PoseKey[] = [
       leftArm: { lateral: -48, forward: 6 },
       leftForeArm: { flex: 96 },
       leftHand: { lateral: 10 },
-      rightUpLeg: { lateral: 40, forward: -8, up: -10 },
-      rightLeg: { lateral: 26 },
-      rightFoot: { lateral: -30 },
-      leftUpLeg: { lateral: -8, forward: 6, up: -6 },
-      leftLeg: { lateral: 30 },
-      leftFoot: { lateral: -16 },
+      ...STANCE.coil,
     },
   },
   {
@@ -196,12 +270,7 @@ const KEYS: readonly PoseKey[] = [
       leftArm: { lateral: -52, forward: 4 },
       leftForeArm: { flex: 100 },
       leftHand: { lateral: 12 },
-      rightUpLeg: { lateral: 46, forward: -8, up: -12 },
-      rightLeg: { lateral: 24 },
-      rightFoot: { lateral: -32 },
-      leftUpLeg: { lateral: -12, forward: 6, up: -8 },
-      leftLeg: { lateral: 30 },
-      leftFoot: { lateral: -14 },
+      ...STANCE.load,
     },
   },
   {
@@ -227,12 +296,7 @@ const KEYS: readonly PoseKey[] = [
       leftArm: { lateral: 26, forward: -20 },
       leftForeArm: { flex: 48 },
       leftHand: { lateral: 4 },
-      rightUpLeg: { lateral: 10, forward: -6, up: 10 },
-      rightLeg: { lateral: 30 },
-      rightFoot: { lateral: -22 },
-      leftUpLeg: { lateral: 6, forward: 6, up: 8 },
-      leftLeg: { lateral: 34 },
-      leftFoot: { lateral: -26 },
+      ...STANCE.contact,
     },
   },
   {
@@ -256,12 +320,7 @@ const KEYS: readonly PoseKey[] = [
       leftArm: { lateral: 36, forward: -28 },
       leftForeArm: { flex: 56 },
       leftHand: { lateral: 2 },
-      rightUpLeg: { lateral: -10, forward: -6, up: 14 },
-      rightLeg: { lateral: 26 },
-      rightFoot: { lateral: -18 },
-      leftUpLeg: { lateral: 18, forward: 6, up: 12 },
-      leftLeg: { lateral: 36 },
-      leftFoot: { lateral: -28 },
+      ...STANCE.follow,
     },
   },
   {
