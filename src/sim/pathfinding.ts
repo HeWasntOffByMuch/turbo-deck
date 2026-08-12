@@ -57,6 +57,13 @@ export const NAV_BLOCKED = 2;
 export interface NavGround {
   /** Ground height at a world point; `y` is the ground plane's second axis. */
   heightAt(x: number, y: number): number;
+  /**
+   * Whether the ground here is actually known (spec 146). Absent means all of
+   * it, which is what every non-streaming caller means. An unknown cell is left
+   * open rather than graded as water: a streaming client that walled off the
+   * ground it had not been sent yet would refuse to route across its own map.
+   */
+  knows?(x: number, y: number): boolean;
 }
 
 /**
@@ -350,8 +357,24 @@ export function createNavGrid(
   // stands in a lake, so nothing is routed through one -- and grading it here
   // rather than at step time means the component flood already knows an island
   // is an island.
+  //
+  // Ground the sampler admits it does not have is left open (spec 146). On a
+  // streaming client an unarrived cell samples as an extrapolation of the held
+  // extent, which grades as water often enough to wall the map off along the
+  // edge of what has loaded -- a route refusing to cross ground the player can
+  // see. Optimistic is the right direction: the step-time check still refuses a
+  // real cliff once the ground is in hand.
+  const knowsGround = ground.knows;
   for (let index = 0; index < cells.length; index++) {
-    if ((heights[index] ?? 0) <= WALKABLE_MIN_HEIGHT) cells[index] = NAV_BLOCKED;
+    if ((heights[index] ?? 0) > WALKABLE_MIN_HEIGHT) continue;
+    if (knowsGround !== undefined) {
+      const col = index % cols;
+      const row = (index - col) / cols;
+      const x = bounds.x + (col + 0.5) * cellSize;
+      const y = bounds.y + (row + 0.5) * cellSize;
+      if (!knowsGround.call(ground, x, y)) continue;
+    }
+    cells[index] = NAV_BLOCKED;
   }
 
   // Two passes over the same obstacles at two inflations: the body plus its

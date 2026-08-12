@@ -16,6 +16,22 @@ export interface TerrainSampler {
    * what the terrain module calls `z`. See {@link import('../state/types.js').Vec3}.
    */
   heightAt(x: number, y: number): number;
+  /**
+   * Whether this sampler actually knows the ground here (spec 146).
+   *
+   * **Absent means "all of it"**, which is what the server, the loopback client
+   * and every test that hands over a built world or `FLAT_TERRAIN` mean -- so
+   * adding this changed nothing for any of them. Only a *streaming* client can
+   * answer anything else, and it has to, because ground that has not arrived
+   * does not sample as missing: it extrapolates the held extent's last cell and
+   * comes back as a confident cliff.
+   */
+  knows?(x: number, y: number): boolean;
+}
+
+/** A sampler that admits what it does not have. See {@link TerrainSampler.knows}. */
+export interface CoverageSampler extends TerrainSampler {
+  knows(x: number, y: number): boolean;
 }
 
 /** A featureless plane, for tests and for a server booted without terrain. */

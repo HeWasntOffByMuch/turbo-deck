@@ -109,6 +109,35 @@ async function main(): Promise<void> {
       }
     }
 
+    // Walk, and watch the correction count (spec 146).
+    //
+    // This is the one thing that can tell whether the *streamed* colliders are
+    // the ones the server is using. A remote client no longer bundles the map:
+    // if its predictor were guessing against ground it did not have, every tree
+    // and every shoreline would be a correction, and the number below would
+    // climb steadily instead of sitting still.
+    const corrections = async (page: Page): Promise<number> => {
+      const text = await page.evaluate(() => document.body.innerText);
+      return Number(/corrections (\d+)/.exec(text)?.[1] ?? -1);
+    };
+    const before = await corrections(ana);
+    await ana.keyboard.down('w');
+    await ana.waitForTimeout(2500);
+    await ana.keyboard.up('w');
+    await ana.keyboard.down('d');
+    await ana.waitForTimeout(2500);
+    await ana.keyboard.up('d');
+    await ana.waitForTimeout(500);
+    const after = await corrections(ana);
+    console.log(`[Ana] corrections ${before} -> ${after} over five seconds of walking`);
+    if (before < 0 || after < 0) {
+      console.error('FAIL: could not read the correction count');
+      failed = true;
+    } else if (after - before > 10) {
+      console.error(`FAIL: ${after - before} corrections while walking -- prediction is not agreeing with the server`);
+      failed = true;
+    }
+
     await ana.screenshot({ path: '.claude/screenshots/multiplayer-ana.png' });
     await ben.screenshot({ path: '.claude/screenshots/multiplayer-ben.png' });
     console.log('wrote .claude/screenshots/multiplayer-{ana,ben}.png');

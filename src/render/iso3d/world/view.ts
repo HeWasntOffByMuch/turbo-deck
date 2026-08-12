@@ -35,6 +35,7 @@ import type { Channel } from '../../../server/net/transport.js';
 import type { WorldColliders } from '../../../sim/types.js';
 import type { TerrainSampler } from '../../../server/world/terrain.js';
 import { buildWorldFromMap, warmRouting } from '../../../server/world/build.js';
+import { warmNavGrids } from '../../../sim/pathfinding.js';
 import {
   BROADCAST_EVERY_N_TICKS,
   SERVER_PLAYER_RADIUS,
@@ -112,11 +113,6 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // default roster on every mount -- which is exactly how the player went on
   // being drawn by the critter rig after being pointed at an authored unit.
   setAuthoredUnits({ ...DEFAULT_AUTHORED_UNITS, ...unitsFromQuery() });
-  const world = buildWorldFromMap(parseMap(mapText), mapText);
-  // Same reason as the server (spec 130): sampling the ground into a nav grid is
-  // around a second on a real map, and it belongs beside the rest of the page's
-  // start-up rather than in the frame where the first move order is given.
-  warmRouting(world);
 
   // The one branch in this file that decides what kind of game this is
   // (spec 144). No `?server` is single-player over a loopback, exactly as
@@ -124,6 +120,23 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   const plan = planConnection(location.search, location, sessionStorage, () =>
     crypto.randomUUID(),
   );
+
+  /**
+   * The bundled map -- built for single-player, and for nothing else (spec 146).
+   *
+   * A remote client does not read this file at all now. Its ground arrives as
+   * `MapInfo` plus chunks and its colliders grow with them, which is both the
+   * only correct answer for a server on a map nobody bundled and the only way
+   * that path is ever exercised: used whenever the two happened to agree, it
+   * would be a path that only runs in the case it is broken in.
+   */
+  const local = plan.mode === 'loopback' ? buildWorldFromMap(parseMap(mapText), mapText) : null;
+  // Same reason as the server (spec 130): sampling the ground into a nav grid is
+  // around a second on a real map, and it belongs beside the rest of the page's
+  // start-up rather than in the frame where the first move order is given. The
+  // streaming client's equivalent is on the settle in `ingestChunks`, which is
+  // the earliest moment it could possibly be done.
+  if (local) warmRouting(local);
 
   /**
    * What the predictor is allowed to collide against.
@@ -135,23 +148,25 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * predicts flat until then. See prediction-ground.ts.
    */
   const ground = emptyGround();
-  if (plan.mode === 'loopback') fillGround(ground, world.colliders, world.sampler);
+  if (local) fillGround(ground, local.colliders, local.sampler);
 
   const banner = createConnectionBanner(root);
   let transport: LoopbackTransport | null = null;
   let server: GameServer | null = null;
   let channel: Channel;
-  if (plan.mode === 'loopback') {
+  if (plan.mode === 'remote') {
+    channel = connectChannel(plan.url, { onPhase: (phase) => banner.set(phase, plan.url) });
+  } else {
     transport = new LoopbackTransport();
-    server = new GameServer({ seed, built: world, transport });
+    // `local` is non-null on this branch by construction; the server is the
+    // only thing that needs it as a value rather than as a possibility.
+    server = new GameServer({ seed, ...(local ? { built: local } : {}), transport });
     // Wired by hand rather than through `server.start()`: that would spin up the
     // server's own wall-clock loop, and this view already drives the tick from its
     // animation frame. Registering the handler is the half we want.
     const listening = server;
     transport.onConnection((c) => listening.accept(c));
     channel = transport.connect();
-  } else {
-    channel = connectChannel(plan.url, { onPhase: (phase) => banner.set(phase, plan.url) });
   }
 
   const client = new GameClient(channel, {
@@ -223,18 +238,12 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     if (!streamed) {
       streamed = new StreamedMap(map.info);
       scene.setMap(streamed);
-      // The first moment a remote client can know whether the map it bundled is
-      // the map the server is colliding against (spec 144). `mapId` is a hash of
-      // the exact serialized document, so this is an identity test rather than a
-      // guess -- and on a mismatch the honest move is to keep predicting flat and
-      // say so, rather than to collide against somebody else's forest.
-      if (plan.mode === 'remote') {
-        if (map.info.mapId === mapIdOf(mapText)) {
-          fillGround(ground, world.colliders, world.sampler);
-          syncPathWorld();
-        } else {
-          banner.note('different map — prediction off');
-        }
+      // Reported, not acted on (spec 146). Under 144 a mismatch turned
+      // prediction off, because the alternative was colliding against a forest
+      // the server did not have; now the colliders come from the stream either
+      // way and this is just a useful thing to see in a screenshot.
+      if (plan.mode === 'remote' && map.info.mapId !== mapIdOf(mapText)) {
+        banner.note(`server map ${map.info.mapId.slice(0, 8)}`);
       }
     }
 
@@ -258,6 +267,17 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     } else if (propsDirty && ++settledFrames >= PROP_SETTLE_FRAMES) {
       propsDirty = false;
       scene.refreshProps();
+      // And the ground the *predictor* stands on, on the same settle and for
+      // the same reason (spec 146). A fresh colliders object costs a nav grid,
+      // because `navGridFor` memoizes on its identity -- so this must happen
+      // once per burst of arrivals rather than once per arrival. Warmed here
+      // too, since the alternative is paying for it inside the frame that gives
+      // the first move order.
+      if (plan.mode === 'remote' && streamed) {
+        fillGround(ground, streamed.snapshotColliders(), streamed.sampler());
+        syncPathWorld();
+        if (pathWorld) warmNavGrids(pathWorld.colliders, pathWorld.ground, [SERVER_PLAYER_RADIUS]);
+      }
       // The world is now drawn: terrain meshed and props standing on it.
       //
       // Announced because streaming took that fact away from anyone watching
