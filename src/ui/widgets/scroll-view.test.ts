@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Column } from '../core/containers.js';
-import { NO_MODIFIERS } from '../core/events.js';
+import { NO_MODIFIERS, wheelNotches } from '../core/events.js';
 import { UNBOUNDED, type Constraint, type Size } from '../core/geom.js';
 import { UiRoot } from '../core/root.js';
 import { Widget, type LayoutContext } from '../core/widget.js';
@@ -103,6 +103,34 @@ describe('scrolling actually moves the content', () => {
       root.handle({ kind: 'wheel', pos: { x: 10, y: 10 }, delta: 1, mods: NO_MODIFIERS, time: 100 + i });
     }
     expect(view.scrollOffset).toBe(0);
+  });
+
+  it('goes the way a browser wheel is pointing', () => {
+    // The direction only exists once a DOM `deltaY` has been converted, and the
+    // conversion was the half that was wrong: the Play tab forwarded `deltaY`
+    // raw, so every window in the game scrolled backwards while this file's own
+    // wheel tests -- which mint a `delta` themselves -- stayed green. Asserted
+    // through `wheelNotches` so the two ends cannot drift apart again.
+    const view = new ScrollView(tallList(), 'scroll');
+    const root = mounted(view);
+    const wheel = (deltaY: number, time: number): void => {
+      root.handle({ kind: 'wheel', pos: { x: 10, y: 10 }, delta: wheelNotches(deltaY), mods: NO_MODIFIERS, time });
+    };
+
+    // Pulling the wheel towards you (a positive `deltaY`) walks down the list.
+    wheel(100, 0);
+    expect(view.scrollOffset).toBeGreaterThan(0);
+    const down = view.scrollOffset;
+
+    // And pushing it away comes back up, by the same amount.
+    wheel(-100, 1);
+    expect(view.scrollOffset).toBe(0);
+
+    // A notch is a notch: the browser's magnitude says which device and which
+    // `deltaMode`, never how far. One line-mode notch moves as far as one
+    // pixel-mode notch, rather than a hundredth as far.
+    wheel(3, 2);
+    expect(view.scrollOffset).toBe(down);
   });
 
   it('re-clamps when the viewport grows past the content', () => {

@@ -60,6 +60,7 @@ import { InputMap, type Modifiers } from '../../../ui/input/input-map.js';
 import { loadBindings, saveBindings } from '../../../ui/input/binding-store.js';
 import { loadScale, saveScale } from '../../../ui/input/display-store.js';
 import type { Rect } from '../../../ui/core/geom.js';
+import { wheelNotches } from '../../../ui/core/events.js';
 import { autoAttack } from './target.js';
 import { aimShape, castOrder, startAim, type AimGesture, type AimOrder } from './aim.js';
 import { TouchGestures, type TouchSample } from './touch.js';
@@ -950,9 +951,13 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * canvas (`scene.controls.attachWheelZoom`), and stopping propagation here is
    * the only way to reach it first without that function learning about this
    * one. Scrolling a shop's stock must not also pull the camera in.
+   *
+   * `deltaY` is converted rather than forwarded: the interface counts notches
+   * and points the other way (`wheelNotches`). Handed the raw number, every
+   * window in the game scrolled backwards and a notch of it went end to end.
    */
   const onWheel = (event: WheelEvent): void => {
-    if (!ui.handleWheel(pointIn(event), event.deltaY, mouseModifiers(event))) return;
+    if (!ui.handleWheel(pointIn(event), wheelNotches(event.deltaY), mouseModifiers(event))) return;
     event.preventDefault();
     event.stopPropagation();
   };

@@ -47,10 +47,30 @@ export interface PointerEventData {
 export interface WheelEventData {
   readonly kind: 'wheel';
   readonly pos: Point;
-  /** Positive scrolls content up (the usual "away from the user" direction). */
+  /** Notches. Positive scrolls content up (the usual "away from the user" direction). */
   readonly delta: number;
   readonly mods: Modifiers;
   readonly time: number;
+}
+
+/**
+ * A browser `WheelEvent.deltaY` as this layer's `delta`.
+ *
+ * Two conversions in one, and the Play tab was getting both wrong by passing
+ * `deltaY` straight through. The *sign* is opposite: a DOM `deltaY` is positive
+ * when the content should move up the screen, and this layer's `delta` is
+ * positive when it should move down, so every window in the game scrolled
+ * backwards. And the *unit* is not the same: `deltaY` is a distance in the mode
+ * the browser chose (~100 px per notch on a mouse, 1 per page elsewhere), while
+ * a widget multiplies `delta` by its own step -- so a single notch asked a
+ * scroll view for 1200 UI pixels and every list jumped end to end.
+ *
+ * Taking the sign is what makes those two facts one function: the browser's
+ * magnitude carries a device and a `deltaMode` this layer has no way to
+ * interpret, and a notch is the only thing a widget's step is written against.
+ */
+export function wheelNotches(deltaY: number): number {
+  return -Math.sign(deltaY);
 }
 
 export interface KeyEventData {

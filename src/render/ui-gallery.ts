@@ -14,7 +14,7 @@
 import { replay } from '../ui/core/draw-list.js';
 import { autoUiScale, uiFrame } from '../ui/core/frame.js';
 import { UiRoot } from '../ui/core/root.js';
-import { NO_MODIFIERS, type Modifiers, type UiEvent } from '../ui/core/events.js';
+import { NO_MODIFIERS, wheelNotches, type Modifiers, type UiEvent } from '../ui/core/events.js';
 import { buildGallery } from '../ui/gallery/gallery.js';
 import { buildWindowsScene } from '../ui/gallery/windows-scene.js';
 import { ContextStack } from '../ui/core/events.js';
@@ -129,7 +129,7 @@ function main(): void {
   });
   canvas.addEventListener('wheel', (event) => {
     event.preventDefault();
-    send({ kind: 'wheel', pos: toUi(event.clientX, event.clientY), delta: -Math.sign(event.deltaY), mods: NO_MODIFIERS, time: now });
+    send({ kind: 'wheel', pos: toUi(event.clientX, event.clientY), delta: wheelNotches(event.deltaY), mods: NO_MODIFIERS, time: now });
   }, { passive: false });
   globalThis.addEventListener('keydown', (event) => {
     if (event.key === 'Tab') {
