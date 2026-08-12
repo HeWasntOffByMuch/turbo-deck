@@ -22,6 +22,8 @@ import {
   namingOf,
   turnQuat,
   worldPosition,
+  boneDirection,
+  twistAxis,
   type BodyFrame,
   type Vec3,
 } from './pose.js';
@@ -182,5 +184,45 @@ describe('a turn is applied in the bone’s own frame', () => {
   it('returns nothing for a bone the rig does not have', () => {
     const synthetic: readonly GlbReadNode[] = [];
     expect(turnQuat({ bone: 'rightArm', axis: 'up', degrees: 30 }, frame, synthetic, naming)).toBeNull();
+  });
+});
+
+describe('twist, the roll a bone has about its own length', () => {
+  it('turns the hand about the forearm, since a hand has no child to point along', () => {
+    // A wrist rolls about the bone above it. Without the parent fallback there
+    // is no axis at all for a leaf bone, and the roll that makes a blade cut
+    // edge-first would have nowhere to live.
+    const forearm = worldPosition(RIGHT_FOREARM);
+    const hand = worldPosition(RIGHT_HAND);
+    const along: Vec3 = [hand[0] - forearm[0], hand[1] - forearm[1], hand[2] - forearm[2]];
+    const axis = twistAxis(pig, RIGHT_HAND, frame);
+    const length = Math.hypot(...along);
+    expect(Math.abs(dot(axis, [along[0] / length, along[1] / length, along[2] / length]))).toBeGreaterThan(0.99);
+  });
+
+  it('runs a bone along its own furthest child, never a twist stub', () => {
+    const direction = boneDirection(pig, RIGHT_FOREARM);
+    const from = worldPosition(RIGHT_FOREARM);
+    const to = worldPosition(RIGHT_HAND);
+    const along: Vec3 = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+    const length = Math.hypot(...along);
+    expect(direction).not.toBeNull();
+    expect(dot(direction ?? [0, 0, 0], [along[0] / length, along[1] / length, along[2] / length])).toBeGreaterThan(0.99);
+  });
+
+  it('leaves the bone pointing where it was, which is what a roll means', () => {
+    // The distinguishing property: a twist moves the hand nowhere, because the
+    // hand is *on* the axis. Every other pose axis moves it.
+    const before = place('R_Hand', []);
+    const twisted = place('R_Hand', [{ bone: 'rightHand', axis: 'twist', degrees: 70 }]);
+    const bent = place('R_Hand', [{ bone: 'rightHand', axis: 'lateral', degrees: 70 }]);
+    const moved = (a: Vec3, b: Vec3): number => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+    expect(moved(before, twisted)).toBeLessThan(1e-6);
+    expect(moved(before, bent)).toBeLessThan(1e-6);
+
+    // ...but it does turn what the hand *carries*, which a rotation of the
+    // hand's own frame is the only way to see.
+    const forearmTwist = place('R_Hand', [{ bone: 'rightForeArm', axis: 'twist', degrees: 70 }]);
+    expect(moved(before, forearmTwist)).toBeLessThan(0.01);
   });
 });

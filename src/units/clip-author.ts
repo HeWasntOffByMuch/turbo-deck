@@ -109,7 +109,7 @@ export interface AuthoredClip {
  * multi-axis key an intrinsic sequence: the same convention a joint rotation
  * order is in every DCC tool that has one.
  */
-const AXIS_ORDER: readonly PoseAxis[] = ['lateral', 'forward', 'up', 'flex'];
+const AXIS_ORDER: readonly PoseAxis[] = ['lateral', 'forward', 'up', 'flex', 'twist'];
 
 const IDENTITY: Quat = [0, 0, 0, 1];
 

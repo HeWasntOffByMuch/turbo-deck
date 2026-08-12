@@ -64,7 +64,36 @@ the stick's knot sits at `z 0.68..0.84` where the sword's guard sits at
 per file* rather than promoting to a rule, because the third weapon will come
 from somewhere else.
 
-### 2. The hand's calibration belongs to the skeleton, not to the weapon
+### 2. The hand's calibration belongs to the skeleton, and is solved
+
+The weapon document says only what is true of its own mesh. Where a grip sits in
+a pig's palm, and which way a held thing points out of it, is a fact about the
+**pig** — so it lives on the socket, and one calibration serves every weapon.
+
+What the sword has to look like, stated in the body's own axes:
+
+- **Held**, at rest: the blade runs **forward and 20° up**. Never down, never
+  across the body.
+- **Sheathed**: the blade lies in the pig's own fore-aft vertical plane — flat
+  against the back, not crossing it diagonally — hilt up by the right shoulder,
+  tip down and behind, **30° off vertical**.
+- **Both**: the blade's **edges point up and down** and its **flats face the
+  pig's left and right**. Side-on you see the width of the blade; head-on it is
+  a line.
+
+Those are exact, so they are **solved rather than swept**. `socketEulerFor`
+inverts the composition `socketPivot` builds — bone world matrix, socket
+rotation, canonical weapon space — and returns the euler degrees that put the
+blade and flat on chosen world axes. `scripts/solve-grip.ts` states the
+requirement in the body's axes and prints the numbers to paste in.
+
+The first pass got this wrong by sweeping candidate angles and picking the one
+that looked best, which is the right method for "which of these reads better"
+and the wrong one for a requirement with an exact answer. The blade came out
+rolled about 90° from where it should have been, and it looked *almost* right in
+a screenshot — which is exactly how a sweep fails.
+
+### 2b. Where the calibration lives
 
 The weapon document says only what is true of its own mesh. Where a grip sits in
 a pig's palm, and which way a held thing points out of it, is a fact about the
@@ -82,6 +111,19 @@ quaternion cannot be dragged. Applied XYZ in the bone's local frame.
 
 `weapon.stow` is added to `STANDARD_SOCKETS` on the `chest` role, so it is
 derived for every future family rather than hand-written into one document.
+
+### 2c. `twist`, and why a swing needs one
+
+A blade is a plane. A chop that arrives with its flat leading is a slap, so the
+edge has to turn into the direction of travel as the arm comes over — and none
+of `pose.ts`'s three body axes can express a roll about a bone's own length. A
+roll written in body axes is a *different rotation at every moment of a swing*,
+because the bone it applies to is turning.
+
+So `twist` joins `flex` as a second bone-local axis: rotation about the bone's
+own direction, taken from its furthest child, or from its parent for a leaf like
+a hand — which is what makes a wrist roll about the forearm rather than about
+nothing.
 
 ### 3. `UnitRig.attach`, and the sandbox to see it in
 
@@ -138,8 +180,19 @@ the wind-up.
   measured along the object's own axis rather than off a bounding box, because a
   held sword is diagonal and its widest axis-aligned side is shorter than the
   blade.
-- **The blade does not roll**: the flat normal maps to a fixed axis of the
-  socket frame, so a weapon authored flat-up is drawn flat-up.
+- **The blade is held the way it was asked to be**: at guard the blade is within
+  ~30° of straight forward and 20° up, the flat's normal is within ~10° of the
+  body's lateral axis, and it is level — the three ways of saying "edges up and
+  down, flats to the sides".
+- **Sheathed it is upright and leaning back**: 30° off vertical, hilt forward and
+  up, tip back and down, with no sideways lean out of the fore-aft plane, and the
+  same roll as in the hand.
+- **The roll comes back**: the blade's orientation at the last frame of the swing
+  is the orientation at the first, so a swing never leaves the sword quietly
+  rotated in the hand. Mid-swing it *does* roll, and must.
+- **The wielding-side leg braces**: the right foot is a sixth of a body further
+  behind the left at the top of the wind-up than at rest, and has driven forward
+  past that by contact.
 - **`lengthWorld` is honoured** whatever the mesh was authored at *and* whatever
   scale the bone chain carries — the pivot undoes the host's ~56x import scale,
   and getting that wrong draws a sword 56 times too big.
@@ -160,7 +213,17 @@ the wind-up.
 
 ## What the checks could not reach
 
-Two honest gaps, recorded rather than papered over.
+Three honest gaps, recorded rather than papered over.
+
+**The swing arc is not planar, so the blade tumbles through the cut.** Measured:
+the flat's alignment with the hand's direction of travel averages ~0.4 over the
+100ms of the strike and touches 1.0 — the blade passing flat-first — at about
+480ms. `twist` is the control that would fix it and no value of it helps much,
+which is the diagnosis rather than a failure of tuning: the hand's path from the
+top of the wind-up to contact swings wide to the right before coming down, so no
+fixed roll can keep an edge leading through it. The fix is to make the arm's
+path planar, which is a change to the arm keys and deserves its own pass. What
+this spec asked for was the orientation at rest and sheathed, and that is exact.
 
 The Node test builds the pig's bones from `pig.skeleton.json`'s **bind pose**
 rather than from the `.glb`. The pig's mesh carries a texture, so `GLTFLoader`

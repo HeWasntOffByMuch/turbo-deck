@@ -25,8 +25,15 @@ import {
   type MeshBounds,
   type Quat,
 } from './grip.js';
+import { quatFromEulerXyz, rotateByQuat } from './grip.js';
 import { checkWeaponSockets, validateWeaponDef } from './validate.js';
 import { validateSkeleton } from '../units/validate.js';
+import { readNodeTree, splitGlb } from '../units/glb-read.js';
+import { bodyFrame, boneNode, namingOf, worldPosition } from '../units/pose.js';
+import { poseWorldMatrices } from '../units/skin.js';
+import { poseAt } from '../units/clip-author.js';
+import { PIG_STRIKE, STRIKE_KEY_MS } from '../units/pig-strike.js';
+import type { NamingSpec } from '../units/naming.js';
 import type { Vec3 } from './types.js';
 
 const ITEMS = join(process.cwd(), 'assets', 'items');
@@ -225,5 +232,135 @@ describe('vector helpers', () => {
   it('cross and dot agree with the right-hand rule', () => {
     expect(cross([1, 0, 0], [0, 1, 0])).toEqual([0, 0, 1]);
     expect(dot([1, 2, 3], [4, 5, 6])).toBe(32);
+  });
+});
+
+/**
+ * The pig's own calibration, against the four things it was asked to be.
+ *
+ * Pure, and no three: a bone's world matrix comes from `poseWorldMatrices`, the
+ * socket's rotation from the document, and canonical weapon space from
+ * `grip.ts`. So "the blade points forward and the flats face sideways" is an
+ * arithmetic claim about committed files rather than something read off a
+ * screenshot -- which matters, because it is the requirement that was got wrong
+ * the first time and looked *almost* right in a picture.
+ */
+describe('how the pig holds a sword', () => {
+  const nodes = readNodeTree(
+    splitGlb(new Uint8Array(readFileSync(join(process.cwd(), 'assets', 'units', 'pig_a_pose_full', 'pig_a_pose_full.glb')))),
+  );
+  const detected = namingOf(nodes);
+  if (detected === 'unknown') throw new Error('the pig rig is in no vocabulary this project reads');
+  const naming: NamingSpec = detected;
+  const frame = bodyFrame(nodes, naming);
+  if (!frame) throw new Error('the pig rig has no measurable body frame');
+  const skeleton = validateSkeleton(
+    JSON.parse(readFileSync(join(process.cwd(), 'assets', 'units', 'pig.skeleton.json'), 'utf8')),
+  ).value;
+  if (!skeleton) throw new Error('pig.skeleton.json does not validate');
+
+  const FORWARD = frame.forward;
+  const UP = frame.up;
+  /** `lateral` points to the pig's left, so the right is its negation. */
+  const RIGHT: Vec3 = [-frame.lateral[0], -frame.lateral[1], -frame.lateral[2]];
+
+  /** Canonical weapon axes in world space, for a socket at a moment of the swing. */
+  function axesAt(socketId: string, ms: number): { blade: Vec3; flat: Vec3 } {
+    const socket = skeleton?.sockets.find((entry) => entry.id === socketId);
+    const bone = nodes.find((node) => node.name === socket?.bone);
+    if (!socket || !bone) throw new Error(`no socket ${socketId}`);
+    const world = poseWorldMatrices(nodes, poseAt(PIG_STRIKE, { nodes, naming }, ms))[bone.index] ?? [];
+    // The bone's rotation with its scale divided out, as three basis vectors.
+    const basis = [0, 1, 2].map((column) => {
+      const raw: Vec3 = [world[column * 4] ?? 0, world[column * 4 + 1] ?? 0, world[column * 4 + 2] ?? 0];
+      const length = Math.hypot(...raw) || 1;
+      return [raw[0] / length, raw[1] / length, raw[2] / length] as Vec3;
+    });
+    const pivot = quatFromEulerXyz((socket.rotationDeg ?? [0, 0, 0]) as Vec3);
+    const intoWorld = (local: Vec3): Vec3 => {
+      const turned = rotateByQuat(pivot, local);
+      const out: [number, number, number] = [0, 0, 0];
+      basis.forEach((axis, index) => {
+        const k = turned[index] ?? 0;
+        out[0] += axis[0] * k;
+        out[1] += axis[1] * k;
+        out[2] += axis[2] * k;
+      });
+      return out;
+    };
+    // Canonical weapon space: blade +Y, flat +Z.
+    return { blade: intoWorld([0, 1, 0]), flat: intoWorld([0, 0, 1]) };
+  }
+
+  it('points the blade forward and a little up at guard, never down', () => {
+    const { blade } = axesAt('weapon.main', STRIKE_KEY_MS.guard);
+    expect(dot(blade, FORWARD)).toBeGreaterThan(0.85);
+    // 20 degrees up: sin(20) is 0.34.
+    expect(dot(blade, UP)).toBeCloseTo(0.34, 1);
+  });
+
+  it('holds it edge up and down, with the flats facing the pig’s sides', () => {
+    // The requirement stated three ways because it is the one that was wrong:
+    // the flat's normal is the body's lateral axis, it is level, and the blade
+    // is therefore edge-on when the pig is seen head-on.
+    const { flat } = axesAt('weapon.main', STRIKE_KEY_MS.guard);
+    expect(Math.abs(dot(flat, RIGHT))).toBeGreaterThan(0.98);
+    expect(Math.abs(dot(flat, UP))).toBeLessThan(0.1);
+  });
+
+  it('comes back to the same roll it started in', () => {
+    // Mid-swing the blade *must* roll -- a grip is fixed to the hand, the arm
+    // turns, and an edge that never turned into the cut would be a blade held
+    // rigid through an arc. What is required is that the rest orientation is
+    // the one asked for at both ends, so a swing does not leave the sword
+    // quietly rotated in the hand.
+    const start = axesAt('weapon.main', STRIKE_KEY_MS.guard);
+    const end = axesAt('weapon.main', STRIKE_KEY_MS.settle);
+    expect(dot(start.flat, end.flat)).toBeGreaterThan(0.999);
+    expect(dot(start.blade, end.blade)).toBeGreaterThan(0.999);
+  });
+
+  it('never dangles the blade straight down out of the hand', () => {
+    for (const ms of [0, 130, 300, 400, 500, 600, 800]) {
+      const { blade } = axesAt('weapon.main', ms);
+      expect(dot(blade, UP), `blade points down at ${ms}ms`).toBeGreaterThan(-0.95);
+    }
+  });
+
+  it('steps the wielding-side leg back to brace, then drives it through', () => {
+    // The right leg is the wielding side. It goes back during the wind-up and
+    // comes through as the blow lands -- which is where the weight for the
+    // swing comes from, and without it the pig is a torso rotating in place.
+    const footAt = (role: 'rightFoot' | 'leftFoot', ms: number): number => {
+      const bone = boneNode(nodes, naming, role);
+      if (!bone) throw new Error(`no ${role}`);
+      const world = poseWorldMatrices(nodes, poseAt(PIG_STRIKE, { nodes, naming }, ms))[bone.index] ?? [];
+      const hips = boneNode(nodes, naming, 'hips');
+      const at = worldPosition(hips ?? bone);
+      return dot([(world[12] ?? 0) - at[0], (world[13] ?? 0) - at[1], (world[14] ?? 0) - at[2]], FORWARD);
+    };
+
+    const guardGap = footAt('rightFoot', STRIKE_KEY_MS.guard) - footAt('leftFoot', STRIKE_KEY_MS.guard);
+    const loadGap = footAt('rightFoot', STRIKE_KEY_MS.load) - footAt('leftFoot', STRIKE_KEY_MS.load);
+    const contactGap = footAt('rightFoot', STRIKE_KEY_MS.contact) - footAt('leftFoot', STRIKE_KEY_MS.contact);
+
+    // Braced: the right foot is further behind the left at the top of the
+    // wind-up than it was at rest, by a real fraction of a body.
+    expect(loadGap).toBeLessThan(guardGap - 0.15);
+    // Driven through: by contact it has come forward past where it started.
+    expect(contactGap).toBeGreaterThan(loadGap + 0.3);
+  });
+
+  it('sheathes it upright and leaning back, in the pig’s own fore-aft plane', () => {
+    const { blade, flat } = axesAt('weapon.stow', STRIKE_KEY_MS.guard);
+    // Hilt up and forward, tip down and back: 30 degrees off vertical, so the
+    // blade axis is -cos(30) up and -sin(30) forward.
+    expect(dot(blade, UP)).toBeCloseTo(-Math.cos(Math.PI / 6), 1);
+    expect(dot(blade, FORWARD)).toBeCloseTo(-Math.sin(Math.PI / 6), 1);
+    // No sideways lean: it lies in the plane through the spine and the facing
+    // direction rather than crossing the back diagonally.
+    expect(Math.abs(dot(blade, RIGHT))).toBeLessThan(0.12);
+    // Same roll as in the hand.
+    expect(Math.abs(dot(flat, RIGHT))).toBeGreaterThan(0.95);
   });
 });

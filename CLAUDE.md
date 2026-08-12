@@ -175,7 +175,10 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  hinge a bone actually has, taken from its *furthest* child: the
                  first child of a generated forearm is a twist bone sharing its
                  parent's origin, so "the child" measured from noise and every
-                 elbow folded backwards. clip-author.ts samples key poses into
+                 elbow folded backwards. Its fifth, `twist`, is the roll about a
+                 bone's own length -- a wrist turning the edge into a cut. Body
+                 axes cannot express one, because a roll written in them is a
+                 different rotation at every moment of a swing. clip-author.ts samples key poses into
                  rotation channels, and the rule that shapes it is that glTF's
                  LINEAR is the only interpolation glb.ts writes -- so the easing
                  that makes a strike read has to be baked into 60Hz samples,

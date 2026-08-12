@@ -42,8 +42,20 @@ export type Vec3 = readonly [number, number, number];
  * can say "swing the arm back" and cannot say "bend the elbow". So `flex` is
  * measured per bone -- see {@link flexAxis} -- and positive `flex` carries that
  * bone's child forward, which is what an elbow and a knee both do.
+ *
+ * `twist` is the other bone-local one: rotation about the bone's *own length*,
+ * which is a wrist rolling over or a forearm pronating. The three body axes
+ * cannot express it either -- and unlike `flex`, which merely reads awkwardly
+ * without a name, a roll written in body axes is a different rotation at every
+ * moment of a swing, because the bone it applies to is turning.
+ *
+ * It is what makes a sword *cut*. A blade is a plane, and a chop that arrives
+ * with its flat leading is a slap; the edge has to be turned into the direction
+ * of travel, which for a diagonal cut means rolling the wrist as the arm comes
+ * over. Before this existed the pig's blade arrived flat-on and there was no
+ * number anywhere that could have fixed it.
  */
-export type PoseAxis = 'lateral' | 'forward' | 'up' | 'flex';
+export type PoseAxis = 'lateral' | 'forward' | 'up' | 'flex' | 'twist';
 
 export interface PoseTurn {
   /** The bone by role, resolved through the rig's own vocabulary (spec 120). */
@@ -94,6 +106,46 @@ export function bodyFrame(nodes: readonly GlbReadNode[], naming: NamingSpec): Bo
   const lateral = normalize(cross(UP, forward));
   if (lateral === null) return null;
   return { lateral, forward, up: UP };
+}
+
+/**
+ * The direction a bone runs, from its own origin toward its furthest child.
+ *
+ * The furthest rather than the first, for the reason {@link flexAxis} spells
+ * out: a generated rig puts a zero-length twist bone first and the direction
+ * comes out of floating-point noise. A bone with no child at all -- a hand, a
+ * head -- borrows the direction of the bone it hangs off, which is what makes
+ * a wrist roll about the forearm rather than about nothing.
+ */
+export function boneDirection(nodes: readonly GlbReadNode[], node: GlbReadNode): Vec3 | null {
+  const from = worldPosition(node);
+  let furthest = 0;
+  let direction: Vec3 | null = null;
+  for (const candidate of nodes) {
+    if (candidate.parent !== node.index) continue;
+    const to = worldPosition(candidate);
+    const offset: Vec3 = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+    const length = magnitude(offset);
+    if (length <= furthest) continue;
+    furthest = length;
+    direction = offset;
+  }
+  if (direction !== null) return normalize(direction);
+
+  const parent = node.parent === null ? undefined : nodes[node.parent];
+  if (!parent) return null;
+  const at = worldPosition(parent);
+  return normalize([from[0] - at[0], from[1] - at[1], from[2] - at[2]]);
+}
+
+/**
+ * A bone's roll: rotation about its own length.
+ *
+ * Falls back to the body's `forward` for a bone with no measurable direction,
+ * which is not meaningful but is at least a rotation rather than a NaN.
+ */
+export function twistAxis(nodes: readonly GlbReadNode[], node: GlbReadNode, frame: BodyFrame): Vec3 {
+  return boneDirection(nodes, node) ?? frame.forward;
 }
 
 /**
@@ -161,7 +213,12 @@ export function turnQuat(
 ): { bone: string; rotation: [number, number, number, number] } | null {
   const node = boneNode(nodes, naming, turn.bone);
   if (!node) return null;
-  const axis = turn.axis === 'flex' ? flexAxis(nodes, node, frame) : frame[turn.axis];
+  const axis =
+    turn.axis === 'flex'
+      ? flexAxis(nodes, node, frame)
+      : turn.axis === 'twist'
+        ? twistAxis(nodes, node, frame)
+        : frame[turn.axis];
   const local = intoLocalFrame(axis, node.world);
   if (magnitude(local) < 1e-6) return null;
   return { bone: node.name, rotation: axisQuat(local, (turn.degrees * Math.PI) / 180) };
