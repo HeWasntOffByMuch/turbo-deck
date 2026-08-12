@@ -118,6 +118,20 @@ seeded, so a failure is a replay rather than a story.
 - **Nothing already true was broken.** The existing suites — inventory, shop,
   trade, combat, the two-player and resume tests — are unmodified and pass.
 
+## What writing the tests found
+
+The fuzzed trade property **passed while doing nothing**. Random sequences drawn
+from the five verbs never complete a trade — the protocol needs an invite
+answered before anything else means anything — so "the totals are unchanged" was
+being asserted over sixteen runs in which no swap ever happened. A property
+about conservation is trivially true of a world where nothing moved.
+
+The fix is a fixed prologue and a random tail, and the guard against it
+happening again is a counter: the test asserts that at least one sequence
+reached a completed swap. Five of sixteen do, at the committed seed. That
+assertion is worth more than the property it protects, because the property
+cannot fail loudly and this can.
+
 ## Out of scope
 
 - **Authentication.** Anybody who knows a `playerId` can still log in as it.

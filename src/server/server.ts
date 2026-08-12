@@ -109,6 +109,7 @@ import type { BuiltMapWorld, BuiltWorld } from './world/build.js';
 import type { SpawnPoint } from './world/spawners.js';
 import type { MapIndex } from './world/map-index.js';
 import { ChunkBudget, decideChunkRequest } from './world/map-request.js';
+import { MAX_FRAME_BYTES, MAX_NAME_LENGTH, RateLimiter } from './net/rate-limit.js';
 import { FLAT_TERRAIN, type TerrainSampler } from './world/terrain.js';
 import { ZoneManager } from './world/zone-manager.js';
 import { buyPrice } from './data/vendors.js';
@@ -199,6 +200,8 @@ interface Connection {
   sentResourceTick: number;
   /** Token bucket on map chunk sends (spec 072). */
   readonly chunkBudget: ChunkBudget;
+  /** How often this connection may say a thing (spec 151). */
+  readonly limiter: RateLimiter;
   /** Whether this client asked for the spawner readout (spec 076). */
   watchingSpawners: boolean;
   /**
@@ -393,6 +396,7 @@ export class GameServer implements AdminHost {
         SERVER_TICK_RATE,
         this.state.tick,
       ),
+      limiter: new RateLimiter(this.state.tick),
       watchingSpawners: false,
       queueFloor: Number.POSITIVE_INFINITY,
       sessionToken: '',
@@ -412,9 +416,18 @@ export class GameServer implements AdminHost {
   /** Exposed for tests: feed a frame in without a socket. */
   async receive(connection: Connection, frame: Uint8Array): Promise<void> {
     if (frame.length === 0) return;
+    // Bounded before it is decoded (spec 151): the size is checked rather than
+    // discovered. The largest legitimate frame is under a hundred bytes.
+    if (frame.length > MAX_FRAME_BYTES) return;
     // Anything at all counts as a heartbeat (spec 150). The client pings twice
     // a second on its own, so silence really is silence.
     connection.lastSeenTick = this.state.tick;
+
+    // Silently, because answering a flood is participating in it (spec 151).
+    if (!connection.limiter.allow(frame[0] ?? 0, this.state.tick)) {
+      if (connection.limiter.flooding) this.drop(connection, 'flooding');
+      return;
+    }
     const type = frame[0] ?? 0;
 
     if (isAdminRequest(type)) {
@@ -454,7 +467,10 @@ export class GameServer implements AdminHost {
           connection,
           message.protocolVersion,
           message.playerId,
-          message.displayName,
+          // Bounded because it is now broadcast to every client in interest
+          // (spec 145): an unbounded name went from a string nobody read to a
+          // way to make the server send everybody a megabyte.
+          message.displayName.slice(0, MAX_NAME_LENGTH),
           message.assetManifest,
           message.resumeToken,
         );
