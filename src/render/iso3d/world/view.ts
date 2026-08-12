@@ -231,6 +231,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    */
   let lastUiReadout = '';
   let lastUiCost = '';
+  /** The last camera pair published, so a still view invalidates no styles. */
+  let lastCamera = '';
   function publishUiReadout(): void {
     const readout = ui.readout();
     // Its own comparison, because this one moves on its own: it is the worst of
@@ -1315,6 +1317,20 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // Read back off the interface rather than remembered from the press
     // (spec 139), so a window opened by a key lights its button too.
     hud.showOpenWindows(ui.opened());
+
+    // Where the view is looking from and how wide it frames, for the probes.
+    // They used to read the Orbit and Zoom sliders, and on a phone the panel
+    // those live in is not in the document at all now (spec 139) -- so the two
+    // gestures that write them would be checkable everywhere except on the
+    // device they exist for. Invisible, like every other `data-` handle here;
+    // it is not a readout.
+    const camera = `${scene.controls.orbitDegrees().toFixed(2)}|${scene.controls.viewHalfWidth().toFixed(2)}`;
+    if (camera !== lastCamera) {
+      lastCamera = camera;
+      const [orbit, zoom] = camera.split('|');
+      root.dataset['cameraOrbit'] = orbit;
+      root.dataset['cameraZoom'] = zoom;
+    }
 
     // The setting is the subscription (spec 076): turning it on is what asks
     // the server for the timers, and turning it off is what stops them coming.

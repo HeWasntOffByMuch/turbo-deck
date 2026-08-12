@@ -105,6 +105,15 @@ export interface ViewControls {
    * finds the slider where they left the view.
    */
   orbitBy(degrees: number): void;
+  /**
+   * Where the view is looking from, in degrees on the slider's 0..360 track.
+   *
+   * The same number `orbitBy` writes, read back. It exists because on a phone
+   * the panel is not built at all (spec 139), so the slider a probe used to read
+   * the angle off is not in the document -- and a two-finger swipe has to be
+   * checkable on exactly the device it is for.
+   */
+  orbitDegrees(): number;
   /** Directional-light position/direction, world units. */
   lightOffset(): Vec3;
   /** Whether the unwalkable-terrain footprint overlay is shown. */
@@ -720,6 +729,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     },
     pinchZoom: (ratio: number) => zoom.setValue(pinchViewHalfWidth(zoom.value(), ratio)),
     orbitBy: (degrees: number) => camAz.setValue(wrapTurn(camAz.value() + degrees)),
+    orbitDegrees: () => camAz.value(),
     cameraOffset: () =>
       orbitToOffset({ azimuth: camAz.value() * DEG, elevation: camEl.value() * DEG, distance: camOrbit.distance }),
     viewHalfWidth: () => zoom.value(),
