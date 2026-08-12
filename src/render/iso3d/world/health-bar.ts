@@ -38,13 +38,46 @@ export const FLASH_HOLD_MS = 375;
  */
 export const FLASH_DRAIN_MS = 220;
 
-/** What to draw for one body this frame. Both fractions of the full bar. */
+/**
+ * The flinch (spec 144): how long a blow knocks the bar for, how far the
+ * biggest one throws it, and how fast it rattles while it settles.
+ *
+ * 15Hz over 200ms is three cycles, and the rate is picked against the *sampling*
+ * rather than by eye: the sim runs at 60Hz, and an oscillation much above this
+ * is sampled barely twice a cycle, which draws an erratic stagger instead of a
+ * rattle. The distance is small on purpose -- the bar hangs over a head and has
+ * to still be over that head afterwards.
+ */
+export const SHAKE_MS = 200;
+export const SHAKE_PIXELS = 2.6;
+export const SHAKE_HZ = 15;
+
+/**
+ * The blow, as a fraction of the body's own health, that kicks at full strength.
+ *
+ * A fraction rather than a number of points, because the bar is a fraction: a
+ * 30-damage hit is a scratch on a boss and most of a Grazer, and the flinch
+ * should say which of those just happened.
+ */
+const SHAKE_FULL_BLOW = 0.25;
+
+/** What even the smallest blow is worth, so a scratch still registers. */
+const SHAKE_FLOOR = 0.35;
+
+/** What to draw for one body this frame. */
 export interface BarFill {
   /** The fill the body still has, 0..1. */
   readonly health: number;
   /** Where the white ends, 0..1. Never below `health`. */
   readonly ghost: number;
+  /** CSS pixels to add to where the bar is placed, sideways (spec 144). */
+  readonly shakeX: number;
+  /** CSS pixels to add to where the bar is placed, vertically. */
+  readonly shakeY: number;
 }
+
+/** A bar with nothing to say: no chunk, no kick. */
+const STILL = { shakeX: 0, shakeY: 0 } as const;
 
 /**
  * One body's memory. Health is kept in health units rather than as a fraction
@@ -56,6 +89,16 @@ interface Track {
   ghost: number;
   /** When the window opened, or null when there is nothing to draw. */
   since: number | null;
+  /**
+   * When the last blow landed, or null once its kick is spent.
+   *
+   * Separate from `since` because the two rules disagree on purpose (spec 144):
+   * the chunk is a measurement and merges across a burst, the kick is a contact
+   * and does not.
+   */
+  struck: number | null;
+  /** How hard the last blow was, 0..1 of full strength. */
+  force: number;
 }
 
 /** Clamp into 0..1, and answer 0 for a NaN rather than passing one to the DOM. */
@@ -87,9 +130,15 @@ export class HealthFlashes {
       // First sight of a body is never a blow: a monster that spawns already
       // wounded, or one that walks into view mid fight, must not flash for
       // damage nobody here saw land.
-      this.tracks.set(id, { health: current, ghost: current, since: null });
+      this.tracks.set(id, {
+        health: current,
+        ghost: current,
+        since: null,
+        struck: null,
+        force: 0,
+      });
       const seen = unit(max > 0 ? current / max : 0);
-      return { health: seen, ghost: seen };
+      return { health: seen, ghost: seen, ...STILL };
     }
 
     if (current < track.health) {
@@ -104,6 +153,12 @@ export class HealthFlashes {
         track.ghost = Math.max(this.ghostAt(track, now), current);
         track.since = now;
       }
+      // The kick, on the other hand, restarts on *every* blow (spec 144). It is
+      // contact rather than measurement: a burst that grows one chunk is still
+      // three separate hits, and a bar under sustained fire should rattle.
+      track.struck = now;
+      const blow = max > 0 ? (track.health - current) / max : 0;
+      track.force = Math.max(SHAKE_FLOOR, Math.min(1, blow / SHAKE_FULL_BLOW));
     } else if (current > track.health) {
       // A heal. The fill may have caught the white up; if it has, there is
       // nothing left to say and the window closes rather than pinning a chunk
@@ -126,7 +181,11 @@ export class HealthFlashes {
     const fill = max > 0 ? current / max : 0;
     const ghost = max > 0 ? this.ghostAt(track, now) / max : 0;
     const drawnFill = unit(fill);
-    return { health: drawnFill, ghost: Math.max(drawnFill, unit(ghost)) };
+    return {
+      health: drawnFill,
+      ghost: Math.max(drawnFill, unit(ghost)),
+      ...this.shakeAt(track, now),
+    };
   }
 
   /**
@@ -145,6 +204,38 @@ export class HealthFlashes {
   /** How many bodies are remembered. For tests, and for anyone counting. */
   get tracked(): number {
     return this.tracks.size;
+  }
+
+  /**
+   * How far the bar is knocked off its anchor right now, in CSS pixels.
+   *
+   * A decaying oscillation on `cos`, not `sin`, so the bar is *already*
+   * displaced in the frame the blow lands -- a kick that started from zero and
+   * swung out a quarter cycle later would put the biggest movement 17ms after
+   * the hit, which is exactly late enough to stop reading as contact.
+   *
+   * The envelope is quadratic rather than exponential for one reason: it
+   * reaches zero *at* `SHAKE_MS` instead of approaching it, so the bar settles
+   * onto its anchor rather than snapping the last fraction of a pixel back when
+   * the kick is dropped.
+   */
+  private shakeAt(track: Track, now: number): { shakeX: number; shakeY: number } {
+    if (track.struck === null) return STILL;
+    const elapsed = now - track.struck;
+    // A clock that stepped backwards holds the kick's start rather than
+    // producing a phase from a negative time.
+    if (elapsed < 0) return { shakeX: SHAKE_PIXELS * track.force, shakeY: 0 };
+    if (elapsed >= SHAKE_MS) {
+      track.struck = null;
+      return STILL;
+    }
+    const left = 1 - elapsed / SHAKE_MS;
+    const envelope = left * left;
+    const angle = (2 * Math.PI * SHAKE_HZ * elapsed) / 1000;
+    const amplitude = SHAKE_PIXELS * track.force * envelope;
+    // Vertically at less than half, because a bar that jumps as far up as it
+    // does sideways reads as the body moving rather than as the bar being hit.
+    return { shakeX: amplitude * Math.cos(angle), shakeY: amplitude * 0.4 * Math.sin(angle) };
   }
 
   /** Where the white ends right now, in health units. */

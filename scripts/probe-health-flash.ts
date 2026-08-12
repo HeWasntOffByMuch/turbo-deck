@@ -20,11 +20,11 @@
 
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, type Page } from 'playwright';
-import { FLASH_DRAIN_MS, FLASH_HOLD_MS } from '../src/render/iso3d/world/health-bar.js';
+import { FLASH_DRAIN_MS, FLASH_HOLD_MS, SHAKE_MS } from '../src/render/iso3d/world/health-bar.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = join(root, '.claude', 'screenshots');
@@ -35,6 +35,26 @@ const CHROMIUM_ARGS = ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '-
 
 /** How long to watch a fight for, in ms. Long enough for several bursts. */
 const WATCH_MS = 9_000;
+
+/**
+ * How far the game's clock is slowed for the flinch measurement, and how long
+ * in real seconds to watch it for.
+ *
+ * This environment paints about five frames a second under software GL, whatever
+ * the viewport size -- it is the scene update that costs, not the fill -- so a
+ * 200ms kick at 15Hz gets one sample, and one sample is not an oscillation. It
+ * was measured as zero direction changes on a bar that was flinching perfectly
+ * well.
+ *
+ * So the *page's* clock is slowed instead. The renderer turns elapsed real time
+ * into ticks and everything downstream is a function of ticks, so a scaled
+ * animation-frame stamp is slow motion and nothing else: the same ticks, the
+ * same events, the same kick, spread over eight drawn frames instead of one.
+ * The trade is that game seconds cost eight real ones, which is why this runs
+ * for a minute to see a couple of swings land.
+ */
+const TIME_SCALE = 0.125;
+const FLINCH_WATCH_MS = 60_000;
 
 /**
  * How much wider the white must be than the fill to count as drawn, as a
@@ -48,6 +68,9 @@ interface Sample {
   readonly id: string;
   readonly health: number;
   readonly ghost: number;
+  /** Where the bar was placed this frame, in CSS pixels (spec 144). */
+  readonly left: number;
+  readonly top: number;
 }
 
 async function waitForServer(url: string): Promise<void> {
@@ -91,7 +114,14 @@ async function watchBars(page: Page, ms: number): Promise<Sample[]> {
   // `__name` helper, which does not exist in the page and throws on the first
   // call. Every function crossing into the browser here is anonymous.
   return page.evaluate(async (duration) => {
-    const samples: { t: number; id: string; health: number; ghost: number }[] = [];
+    const samples: {
+      t: number;
+      id: string;
+      health: number;
+      ghost: number;
+      left: number;
+      top: number;
+    }[] = [];
     const start = performance.now();
     while (performance.now() - start < duration) {
       await new Promise((resolve) => requestAnimationFrame(resolve));
@@ -108,6 +138,11 @@ async function watchBars(page: Page, ms: number): Promise<Sample[]> {
           id: holder.dataset['entity'] ?? '',
           health: parseFloat(fill.style.width) / 100,
           ghost: parseFloat(ghost.style.width) / 100,
+          // `style.left` rather than `offsetLeft`: the flinch is a couple of
+          // pixels and the placement is written to fractions of one, which an
+          // integer offset would round away.
+          left: parseFloat(holder.style.left || '0'),
+          top: parseFloat(holder.style.top || '0'),
         });
       }
     }
@@ -139,6 +174,70 @@ function flashes(track: readonly Sample[]): { start: number; end: number; peak: 
   }
   if (open) runs.push(open);
   return runs;
+}
+
+/**
+ * Whether the bars actually flinched, and how hard (spec 144).
+ *
+ * A bar is placed over a body that is walking, so it moves anyway -- the thing
+ * that tells a kick apart from a stroll is that a kick *reverses*: at 60Hz a
+ * 15Hz rattle changes direction two or three times inside its 200ms, and a body
+ * crossing the screen never does. So the measurement is direction changes in
+ * the window after a blow, against direction changes outside every window.
+ */
+function reportFlinches(samples: readonly Sample[], scale: number, problems: string[]): void {
+  // The samples are stamped in real milliseconds and the kick lasts a fixed
+  // number of *game* ones, so the window is the kick divided by the slowdown.
+  const window = SHAKE_MS / scale;
+  let best = 0;
+  let struck = 0;
+  let quiet = 0;
+  let quietFrames = 0;
+  let travelled = 0;
+  for (const id of [...new Set(samples.map((sample) => sample.id))]) {
+    const track = forBody(samples, id);
+    const blows = track.filter((sample, index) => index > 0 && sample.health < (track[index - 1]?.health ?? 0));
+    struck += blows.length;
+    for (const blow of blows) {
+      const during = track.filter((sample) => sample.t >= blow.t && sample.t <= blow.t + window);
+      best = Math.max(best, reversals(during));
+    }
+    // Everything at least a kick away from any blow, as the control.
+    const calm = track.filter((sample) => !blows.some((blow) => sample.t >= blow.t && sample.t <= blow.t + window));
+    quiet += reversals(calm);
+    quietFrames += calm.length;
+    for (let i = 1; i < track.length; i++) {
+      travelled = Math.max(travelled, Math.abs((track[i]?.left ?? 0) - (track[i - 1]?.left ?? 0)));
+    }
+  }
+  console.log(
+    `  ${struck} blow(s) seen; biggest flinch ${best} direction changes in the kick's ${SHAKE_MS}ms ` +
+      `(${quiet} in ${quietFrames} unstruck frames, biggest step ${travelled.toFixed(2)}px)`,
+  );
+  // A run that saw no blows has measured nothing, and saying "no bar flinched"
+  // about it would be a harness failure wearing a product failure's clothes.
+  if (struck === 0) {
+    problems.push('the stepped run never saw a blow land, so the flinch went unmeasured');
+    return;
+  }
+  // Two reversals is one full rattle. One could be a body turning round.
+  if (best < 2) problems.push(`no bar ever flinched: best was ${best} direction changes after a blow`);
+}
+
+/** How many times a run of placements changed direction sideways. */
+function reversals(track: readonly Sample[]): number {
+  let count = 0;
+  let previous = 0;
+  for (let i = 1; i < track.length; i++) {
+    const step = (track[i]?.left ?? 0) - (track[i - 1]?.left ?? 0);
+    // A step of nothing is not a direction; the anchor is written to fractions
+    // of a pixel, so anything smaller than this is the projection breathing.
+    if (Math.abs(step) < 0.05) continue;
+    const direction = Math.sign(step);
+    if (previous !== 0 && direction !== previous) count++;
+    previous = direction;
+  }
+  return count;
 }
 
 /**
@@ -230,6 +329,29 @@ async function main(): Promise<void> {
       }
     });
 
+    // A clock the harness can slow down, installed before the page's own script
+    // runs. `__timeScale` stays at 1 for everything except the flinch, so the
+    // flash measurement and the picture are of a game running at normal speed.
+    //
+    // Wrapping the animation frame rather than `performance.now` because that is
+    // where the renderer reads its elapsed time from -- the stamp the callback is
+    // handed. It accumulates a scaled timeline instead of scaling the stamp
+    // itself, so slowing down mid-session cannot jump the clock backwards.
+    await page.addInitScript(() => {
+      const win = window as unknown as { __timeScale: number };
+      win.__timeScale = 1;
+      const real = window.requestAnimationFrame.bind(window);
+      let last: number | null = null;
+      let scaled = 0;
+      window.requestAnimationFrame = (callback: FrameRequestCallback): number =>
+        real((stamp) => {
+          if (last === null) last = stamp;
+          scaled += (stamp - last) * win.__timeScale;
+          last = stamp;
+          callback(scaled);
+        });
+    });
+
     // Pinned seed, like every other harness here: a world that moved between
     // runs cannot tell a regression from a Tuesday.
     await page.goto(`http://localhost:${PORT}/?seed=20260806`, { waitUntil: 'load' });
@@ -243,17 +365,30 @@ async function main(): Promise<void> {
     const samples = await watchBars(page, WATCH_MS);
     reportFlashes(samples, problems);
 
-    // Then pick another fight for the picture. Two fights rather than one,
-    // because a Grazer does not survive nine seconds of Slash -- by the end of
-    // the sampling run every bar left on screen is at full health with nothing
-    // to show, and a picture taken then is of a bar that is merely red.
-    if (!(await pickAFight(page))) problems.push('nothing left to fight for the picture');
+    // Then the flinch, and the picture, both in slow motion (see TIME_SCALE).
+    // A second fight for each, because a Grazer does not survive nine seconds
+    // of Slash: by the end of a sampling run every bar left on screen is at
+    // full health with nothing to show.
+    await page.evaluate((scale) => {
+      (window as unknown as { __timeScale: number }).__timeScale = scale;
+    }, TIME_SCALE);
 
-    // Clipped to the bar rather than the whole frame, and the clip is chosen
-    // from the same poll that found the chunk. A full-page shot costs more than
-    // the flash lasts under software GL -- the poll would report a chunk and
-    // the picture would be of the bar half a second later, drained and red,
-    // which is exactly what the first run of this produced.
+    if (await pickAFight(page)) {
+      reportFlinches(await watchBars(page, FLINCH_WATCH_MS), TIME_SCALE, problems);
+    } else {
+      problems.push('nothing left to fight for the flinch');
+    }
+
+    // The picture, from the same slowed clock. A screenshot costs a few hundred
+    // milliseconds under software GL and the whole flash lasts about six
+    // hundred, so at full speed the poll found a chunk and the shot came back
+    // showing a bar that had already drained -- twice. In slow motion the same
+    // flash is five real seconds wide and an ordinary screenshot lands inside
+    // it, which beats the two freezes tried before this: pausing the debugger
+    // halts the renderer's main thread and the capture never returns at all,
+    // and pausing virtual time works but leaves the page's clock racing
+    // afterwards, which silently starved the flinch watch of frames.
+    if (!(await pickAFight(page))) problems.push('nothing left to fight for the picture');
     let caught: { x: number; y: number; chunk: number } | null = null;
     for (let attempt = 0; attempt < 600 && !caught; attempt++) {
       caught = await page.evaluate((visible) => {
@@ -272,36 +407,18 @@ async function main(): Promise<void> {
       }, VISIBLE);
     }
     if (caught) {
-      // Freeze the page before photographing it.
-      //
-      // A screenshot costs a few hundred milliseconds under software GL and the
-      // whole flash lasts about six hundred, so a shot taken *after* the poll
-      // found a chunk is a picture of the bar half a second later -- drained,
-      // red, and proving nothing. Two runs of this produced exactly that.
-      //
-      // Frozen by stopping the page's *clock*: no timer fires, no animation
-      // frame is served, so the bar holds the widths that were measured and the
-      // world holds the frame they were measured against. Not by pausing the
-      // debugger, which was tried first and is worse than useless here -- it
-      // halts the renderer's main thread, and a capture then never returns.
-      const cdp = await page.context().newCDPSession(page);
-      await cdp.send('Emulation.setVirtualTimePolicy', { policy: 'pause' });
       // The bar is 52 CSS px wide and hangs by its own middle; a band either
       // side shows the world it has to read against.
-      const clip = {
-        x: Math.max(0, caught.x - 130),
-        y: Math.max(0, caught.y - 70),
-        width: 260,
-        height: 120,
-      };
-      // Captured through CDP rather than `page.screenshot`, which settles the
-      // page by waiting on an animation frame that a stopped clock never serves.
-      const shot = await cdp.send('Page.captureScreenshot', {
-        format: 'png',
-        clip: { ...clip, scale: 1 },
+      await page.screenshot({
+        path: join(outDir, 'health-flash.png'),
+        clip: {
+          x: Math.max(0, caught.x - 130),
+          y: Math.max(0, caught.y - 70),
+          width: 260,
+          height: 120,
+        },
+        scale: 'css',
       });
-      await writeFile(join(outDir, 'health-flash.png'), Buffer.from(shot.data, 'base64'));
-      await cdp.send('Emulation.setVirtualTimePolicy', { policy: 'advance' });
       console.log(`  wrote health-flash.png -- a ${(caught.chunk * 100).toFixed(0)}% chunk showing`);
     } else {
       await page.screenshot({ path: join(outDir, 'health-flash.png') });

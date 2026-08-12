@@ -32,8 +32,10 @@ export interface BarFill {
 ```
 
 A decaying oscillation off the time since the last blow: `cos` on x and `sin` on
-y over one exponential envelope, so the bar jumps at contact rather than easing
-into a swing. Amplitude scales with the size of the blow relative to the body's
+y over one envelope, so the bar jumps at contact rather than easing into a
+swing. The envelope is quadratic rather than exponential so that it reaches zero
+*at* `SHAKE_MS` rather than approaching it, and the bar settles onto its anchor
+instead of snapping back. Amplitude scales with the size of the blow relative to the body's
 own `maxHealth`, floored so a scratch still registers, capped so a killing blow
 does not throw the bar off the head it belongs to.
 

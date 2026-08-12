@@ -501,13 +501,17 @@ export function createHud(project: Projector): HudHandle {
       // a miss rather than a forgiven near-miss.
       if (anchor.id === view.selfEntityId) element.root.dataset['self'] = '';
       else delete element.root.dataset['self'];
-      element.root.style.left = `${anchor.x}px`;
-      element.root.style.top = `${anchor.y}px`;
 
       // The fill is replicated health and nothing here delays it; the white
       // band behind it is the chunk the last blow took (spec 143), decided in
       // the pure field off the same presentation clock the bars are placed by.
       const fill = flashes.read(anchor.id, entity.health, entity.maxHealth, tick * TICK_MS);
+      // The flinch (spec 144) moves the *bar*, not the body: it is added to the
+      // anchor here rather than being a transform of its own, because the
+      // holder's transform is what centres it over the head and a second one
+      // would have to know about the first.
+      element.root.style.left = `${anchor.x + fill.shakeX}px`;
+      element.root.style.top = `${anchor.y + fill.shakeY}px`;
       element.health.style.width = `${fill.health * 100}%`;
       element.ghost.style.width = `${fill.ghost * 100}%`;
       element.health.style.background = entity.id === view.selfEntityId ? BAR_SELF : BAR_ENEMY;

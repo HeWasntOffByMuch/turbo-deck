@@ -519,15 +519,27 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  white chunk that never resolves, which is the state that reads
                  as a bug. Time is an argument, and the argument is the *drawn*
                  tick the bodies under it are interpolated by, not a second
-                 clock. `npx tsx scripts/probe-health-flash.ts` is the half that
-                 only exists in a browser: it picks a fight on the shipped page
-                 and samples both bands' widths off the real DOM every frame,
-                 because a white band stacked behind an opaque track passes every
-                 test in Node and draws nothing. Its picture is taken with the
-                 page's *clock* stopped -- a screenshot costs longer under
-                 software GL than the flash lasts, so the first two runs
-                 photographed a bar that had already drained, and pausing the
-                 debugger instead hangs the capture outright),
+                 clock. Since spec 144 the same file also answers the *instant*
+                 of contact -- a decaying oscillation that knocks the bar off its
+                 anchor -- and the two rules are opposites on purpose: a chunk is
+                 a measurement and merges across a burst, a kick is a contact and
+                 every blow restarts it. `npx tsx scripts/probe-health-flash.ts`
+                 is the half that only exists in a browser: it picks a fight on
+                 the shipped page and samples both bands' widths off the real DOM
+                 every frame, because a white band stacked behind an opaque track
+                 passes every test in Node and draws nothing. The thing worth
+                 knowing about it is that this environment paints about five
+                 frames a second under software GL -- at any viewport size, since
+                 it is the scene update that costs -- so a 200ms kick gets one
+                 sample and reads as no kick at all. It runs the *page's* clock
+                 slowed eightfold instead, by wrapping the animation frame the
+                 renderer takes its elapsed time from: the same ticks and the
+                 same events, spread over enough drawn frames to see. That also
+                 got the picture, which two freezes could not -- pausing the
+                 debugger halts the renderer and the capture never returns, and
+                 pausing virtual time works but leaves the clock racing
+                 afterwards, which silently starved the next measurement of
+                 frames),
                  inventory-model.ts, character-model.ts and shop-model.ts (what
                  the bag, the sheet and the shop are handed -- `src/ui/` may not
                  reach the sim, so the replicated facts and the content tables
