@@ -429,6 +429,10 @@ export function buildReferenceUnit(canonicalHeight: number): ReferenceUnit {
     sockets: [
       { id: 'weapon.main', bone: 'mixamorig:RightHand' },
       { id: 'weapon.off', bone: 'mixamorig:LeftHand' },
+      // Where a sheathed weapon rides (spec 140). On the chest, matching
+      // `STANDARD_SOCKETS` -- the derivation and this authored document have to
+      // agree, and a test asserts that they do.
+      { id: 'weapon.stow', bone: 'mixamorig:Spine2' },
       { id: 'fx.cast', bone: 'mixamorig:RightHand' },
       { id: 'fx.body', bone: 'mixamorig:Spine2' },
       { id: 'anchor.head', bone: 'mixamorig:Head' },

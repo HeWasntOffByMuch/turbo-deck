@@ -228,9 +228,17 @@ export class UnitMachine {
    * The clip is rescaled to the action, never the other way round: the rate
    * comes from {@link timeScaleFor}, so the wind-up is exactly as long as the
    * timing says and the animation is what bends.
+   *
+   * `override` replaces the table's timing for this one firing, for a *tool*
+   * that is tuning the timing -- the movement sandbox's attack sliders, and the
+   * Studio timing panel when it grows a play button. It changes no document and
+   * survives nothing: the next firing without one is the shipped timing again.
+   * The clip it names still has to be the action's, because a state is found by
+   * `clipRef` and an override that renamed it would enter a different state.
    */
-  startAction(actionId: string): boolean {
-    const action = this.actions.get(actionId);
+  startAction(actionId: string, override?: ActionTiming): boolean {
+    const table = this.actions.get(actionId);
+    const action = override === undefined ? table : { ...override, clipRef: table?.clipRef ?? override.clipRef };
     if (!action) return false;
     const state = [...this.states.values()].find((candidate) => candidate.clipRef === action.clipRef);
     if (!state) return false;

@@ -112,10 +112,11 @@ describe('a rig on the tripo vocabulary (spec 120)', () => {
 
   it('derives the same socket roles the mixamo rig gets, on this rig\'s own bones', () => {
     // The agreement that makes a role-based table a replacement rather than a
-    // second code path: same five ids, spelled the way this rig spells them.
+    // second code path: same ids, spelled the way this rig spells them.
     expect(derived?.sockets).toEqual([
       { id: 'weapon.main', bone: 'R_Hand' },
       { id: 'weapon.off', bone: 'L_Hand' },
+      { id: 'weapon.stow', bone: 'Spine02' },
       { id: 'fx.cast', bone: 'R_Hand' },
       { id: 'fx.body', bone: 'Spine02' },
       { id: 'anchor.head', bone: 'Head' },

@@ -30,7 +30,7 @@ import manifestDoc from '../../../../assets/units/manifest.json' with { type: 'j
 import { bundleErrorText, loadUnitBundle } from '../../../units/bundle.js';
 import { validateSkeleton } from '../../../units/validate.js';
 import type { UnitManifest } from '../../../units/manifest.js';
-import type { ClipLib, UnitDef } from '../../../units/types.js';
+import type { ClipLib, Skeleton, UnitDef } from '../../../units/types.js';
 import type { UnitAssets } from '../unit-rig.js';
 
 /** Any unit id the manifest carries. Checked against the registry, not the type. */
@@ -40,6 +40,16 @@ export interface AuthoredUnit {
   readonly unit: UnitDef;
   readonly clipLib: ClipLib;
   readonly assets: UnitAssets;
+  /**
+   * The family's skeleton, when it validated (spec 140).
+   *
+   * Carried because a socket is authored -- it names a bone and a calibration,
+   * and neither is anywhere in the `.glb`. Nothing could hang a sword off a unit
+   * without it. Optional rather than required: the loader already tolerates a
+   * skeleton document it could not resolve, and refusing to draw a *body* over a
+   * missing socket table would be the wrong trade.
+   */
+  readonly skeleton?: Skeleton;
 }
 
 /**
@@ -82,21 +92,35 @@ function lookup<T>(table: Record<string, T>, path: string): T | undefined {
   return undefined;
 }
 
+/**
+ * A document's reference to another, as a path relative to `assets/units/`.
+ *
+ * `..` has to be collapsed, and the reason is not hypothetical: every unit's
+ * `skeletonRef` is `../<family>.skeleton.json`, because a family document sits
+ * one level above the units that share it. Joining those naively gives
+ * `pig_a_pose_full/../pig.skeleton.json`, which matches no glob key -- so the
+ * skeleton silently resolved to nothing, the root-bone hint was quietly absent,
+ * and (spec 140) there were no sockets to hang a weapon off.
+ */
+function resolveRef(dir: string, ref: string): string {
+  const segments: string[] = [];
+  for (const part of `${dir}${ref}`.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') segments.pop();
+    else segments.push(part);
+  }
+  return segments.join('/');
+}
+
 const registry = new Map<AuthoredUnitId, AuthoredUnit>();
 /** Why a unit is not in the registry, so a caller can say more than "missing". */
 const refusals = new Map<AuthoredUnitId, string>();
 
-/**
- * The rig's root bone, read off the skeleton document rather than assumed.
- *
- * Undefined turns the root-motion check off instead of pointing it at a guess.
- * A wrong root either misses translation that is there or condemns a track the
- * rig needed -- and three sanitises `:` out of bone names, so a name from a
- * document has to be checked against the loaded rig anyway.
- */
-function rootBoneOf(doc: unknown): string | undefined {
-  return validateSkeleton(doc).value?.bones.find((bone) => bone.parent === null)?.name;
-}
+// The rig's root bone is read off the validated skeleton below rather than
+// assumed. Undefined turns the root-motion check off instead of pointing it at a
+// guess: a wrong root either misses translation that is there or condemns a
+// track the rig needed, and three sanitises `:` out of bone names, so a name
+// from a document has to be checked against the loaded rig anyway.
 
 for (const entry of MANIFEST.units) {
   const unitDocPath = entry.entries.find((file) => file.path.endsWith('.unitdef.json'))?.path;
@@ -119,7 +143,7 @@ for (const entry of MANIFEST.units) {
   }
   const { unit, clipLib } = bundle.value;
 
-  const meshUrl = lookup(glbUrls, `${dir}${unit.meshRef}`);
+  const meshUrl = lookup(glbUrls, resolveRef(dir, unit.meshRef));
   if (meshUrl === undefined) {
     refusals.set(entry.id, `its mesh ${unit.meshRef} is not in the bundle`);
     continue;
@@ -128,16 +152,18 @@ for (const entry of MANIFEST.units) {
   // Clip ids are the keys the machine names; the paths come from the library.
   const clipUrls: Record<string, string> = {};
   for (const clip of clipLib.clips) {
-    const url = lookup(glbUrls, `${dir}${clip.source}`);
+    const url = lookup(glbUrls, resolveRef(dir, clip.source));
     if (url !== undefined) clipUrls[clip.id] = url;
   }
 
-  const skeletonDoc = lookup(jsonDocs, `${dir}${unit.skeletonRef}`)?.default;
-  const rootBone = skeletonDoc === undefined ? undefined : rootBoneOf(skeletonDoc);
+  const skeletonDoc = lookup(jsonDocs, resolveRef(dir, unit.skeletonRef))?.default;
+  const skeleton = skeletonDoc === undefined ? null : validateSkeleton(skeletonDoc).value;
+  const rootBone = skeleton?.bones.find((bone) => bone.parent === null)?.name;
 
   registry.set(unit.id, {
     unit,
     clipLib,
+    ...(skeleton === null ? {} : { skeleton }),
     assets: {
       meshUrl,
       clipUrls,

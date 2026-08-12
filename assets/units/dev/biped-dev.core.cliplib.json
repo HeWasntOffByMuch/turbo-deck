@@ -51,7 +51,7 @@
       "events": [
         {
           "name": "swing.start",
-          "normalizedTime": 0.018867924528301886
+          "normalizedTime": 0
         },
         {
           "name": "swing.impact",

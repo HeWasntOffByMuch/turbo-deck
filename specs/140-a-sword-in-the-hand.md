@@ -117,8 +117,15 @@ Four additions:
   in front of the spawn. It flinches on the tick the swing's `hit` lands, which
   is what makes "did the picture and the blow agree" answerable by looking.
 - **Panel controls**: movement (already there), attack timing, and a weapon
-  picker over `assets/items/` plus *sheathed / drawn*, plus live grip
-  calibration sliders so the socket numbers above are tuned rather than guessed.
+  picker over `assets/items/` plus *sheathed / drawn*.
+
+The grip calibration itself is tuned in `scripts/preview-weapon.ts` rather than
+in the panel. It photographs the real mesh at the real pose offscreen, and
+`SWEEP=0/0/0,-30/0/0,-50/0/0` puts candidate rotations side by side in one
+strip — which beats a slider, because the number has to be right at *both* ends
+of the swing at once and a slider can only show one pose at a time. That is how
+`-45` was found: it points the blade forward at guard and vertical at the top of
+the wind-up.
 
 ## Invariants tested
 
@@ -126,16 +133,21 @@ Four additions:
   grip whose `point` and `flat` are the same axis or opposite ones — a
   degenerate basis is the one error that produces a NaN transform and an
   invisible weapon rather than a wrong-looking one.
-- **The grip transform puts the grip point at the socket**, to within a
-  rounding error, and puts the tip `lengthWorld` away from it along the socket's
-  own forward — asserted in Node against the real `.glb`, no GL context.
+- **The grip transform puts the grip point at the socket**, to within a world
+  unit on a body 55 tall, and the drawn tip-to-butt span equals `lengthWorld` —
+  measured along the object's own axis rather than off a bounding box, because a
+  held sword is diagonal and its widest axis-aligned side is shorter than the
+  blade.
 - **The blade does not roll**: the flat normal maps to a fixed axis of the
   socket frame, so a weapon authored flat-up is drawn flat-up.
-- **`lengthWorld` is honoured**: the drawn tip-to-pommel span equals it,
-  whatever the mesh was authored at, for both supplied meshes at once.
+- **`lengthWorld` is honoured** whatever the mesh was authored at *and* whatever
+  scale the bone chain carries — the pivot undoes the host's ~56x import scale,
+  and getting that wrong draws a sword 56 times too big.
 - **`attach` puts the object under the socket's bone**, and a second `attach` to
   the same socket replaces rather than accumulates — the failure mode being two
   swords in one hand after a weapon switch.
+- **It rides the pose**: rotating a shoulder moves the weapon, with no per-frame
+  code between the two.
 - **A stowed weapon is on the chest and a drawn one is in the hand**, and never
   both.
 - **The cast rehearsal lands its hit on the tick the wind-up ends**, at every
@@ -145,6 +157,24 @@ Four additions:
 - **The rehearsal is pure**: same inputs, same ticks, same result, no clock.
 - The pig's swing still lands where spec 139 says, with a weapon attached — the
   attachment must not touch the pose.
+
+## What the checks could not reach
+
+Two honest gaps, recorded rather than papered over.
+
+The Node test builds the pig's bones from `pig.skeleton.json`'s **bind pose**
+rather than from the `.glb`. The pig's mesh carries a texture, so `GLTFLoader`
+reaches for an image decoder and there is no DOM in `npm test`; adding jsdom to
+load one mesh is a dependency bought for a single assertion. The bind pose in
+that document was measured off exactly that `.glb`, and it is the frame the
+socket offsets are expressed in anyway — but it is not the loaded rig, and
+`scripts/preview-sandbox-swing.ts` is what covers that end.
+
+And `preview-weapon.ts` reimplements the grip chain as matrices rather than
+importing `WeaponRig`, because the offscreen rasteriser has no scene graph. It
+therefore cannot catch a mistake in `attach`: it would make the same mistake
+independently and agree with itself. That is why the browser driver exists as
+well, and why `weapon-attach.test.ts` runs the chain through three's own graph.
 
 ## Out of scope
 

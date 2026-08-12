@@ -35,6 +35,23 @@ export interface SandboxUnit {
  * The units the sandbox and debug views can control.
  *
  * Every critter species (spec 055) is a unit kind by construction, so adding an
- * animal puts it in both pickers without either view learning its name.
+ * animal puts it in both pickers without either view learning its name. Since
+ * spec 140 an *authored* unit is one too, under its own prefix -- `pig` the
+ * critter is a procedural rig built from a data file and `authored:pig_a_pose_full`
+ * is a generated body posed by a state machine, and the two share a name and
+ * nothing else.
  */
-export type UnitKind = 'spider' | 'walker' | 'robe' | CritterId;
+export type AuthoredKind = `authored:${string}`;
+export type UnitKind = 'spider' | 'walker' | 'robe' | CritterId | AuthoredKind;
+
+/** The prefix that tells the two pigs apart. */
+export const AUTHORED_PREFIX = 'authored:';
+
+export function isAuthoredKind(kind: UnitKind): kind is AuthoredKind {
+  return kind.startsWith(AUTHORED_PREFIX);
+}
+
+/** The unit id inside an authored kind, e.g. `pig_a_pose_full`. */
+export function authoredIdOf(kind: AuthoredKind): string {
+  return kind.slice(AUTHORED_PREFIX.length);
+}

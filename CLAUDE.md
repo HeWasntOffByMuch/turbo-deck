@@ -59,6 +59,7 @@ change a game outcome.
 | `npm run typecheck` | `tsc --noEmit` against the strict tsconfig |
 | `npm run lint` | ESLint over the whole repo |
 | `npm run validate:units` | Validate every authored unit document in `assets/units/` |
+| `npm run validate:items` | Validate every weapon document in `assets/items/`, against its own mesh |
 | `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
@@ -107,7 +108,8 @@ merge time.
 
 ```
 specs/           spec markdown, one file per system, written before its code
-schemas/         JSON Schema (draft-07) for the three unit documents, committed
+schemas/         JSON Schema (draft-07) for the three unit documents and the weapon
+                 document (spec 140), committed
                  and validated against in CI. additionalProperties is false
                  throughout, so a typo'd key in a hand-edited file is an error with
                  a pointer at it rather than a field that silently does nothing.
@@ -132,6 +134,25 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  the recipe's field in over a short skirt.
 src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
                  collision and pathfinding helpers the server collides against
+src/items/       held objects (spec 140). A weapon is a RIGID body, so it gets a
+                 small document and explicitly none of the bind-pose, skinning,
+                 retarget and family machinery src/units/ exists to manage for a
+                 thing that deforms -- both supplied meshes confirm it, with no
+                 skin, no animation and every node transform identity. What the
+                 document carries is what the mesh cannot say about itself:
+                 `grip.at` (the point that sits in the palm), `grip.point` (which
+                 way the business end runs) and `grip.flat` (the blade's flat
+                 normal, which fixes the roll `point` alone leaves free), plus a
+                 `lengthWorld` -- a length rather than a scale factor, because
+                 nobody can check a scale and anybody can hold a length up
+                 against the body beside it. grip.ts is the arithmetic and states
+                 canonical weapon space once: blade +Y, flat +Z, edge +X, origin
+                 at the grip. Where a grip sits in a particular palm is a fact
+                 about the *body*, so that half lives on the skeleton's socket as
+                 `rotationDeg` -- euler degrees, because it is the one field in
+                 the format somebody finds by dragging a slider, and one
+                 calibration serves every weapon that rig ever holds.
+                 `npm run validate:items`.
 src/units/       the unit authoring format and its validator (spec 107): the three
                  JSON documents a unit is made of -- skeleton.json (one rig family,
                  its bone vocabulary, canonical height), cliplib.json (clips for a
@@ -670,9 +691,38 @@ src/render/iso3d/lobe.ts  the lobed canopy tree's shape (spec 077): the union of
                  `props.ts` turns it into buffers; `npx tsx scripts/preview-trees.ts`
                  photographs every tree the world grows to
                  .claude/screenshots/trees.png.
+src/render/iso3d/weapon-rig.ts, unit-rig.ts's attach()  a weapon in a hand (spec
+                 140). Three nodes, because three transforms answer to three
+                 owners: the socket's pivot belongs to the skeleton, the align
+                 belongs to the weapon document, and the mesh's own origin
+                 belongs to whoever exported it. Parented, never copied -- a held
+                 thing rides the pose through three's own graph, so there is no
+                 per-frame code for it at all; reading the bone's world matrix
+                 each frame would put the weapon on the renderer's clock while
+                 the pose is on the machine's, and spec 118 throttles how often
+                 that pose is applied. The pivot also undoes the host's import
+                 scale, so `lengthWorld` is in world units and a sword is one
+                 size whatever holds it. Both of the pig's socket calibrations
+                 were found by sweeping candidates through the offscreen
+                 rasteriser rather than derived: `npx tsx scripts/preview-weapon.ts`
+                 photographs the real mesh at the real pose, and `SWEEP=` puts
+                 four candidate rotations side by side in one strip.
 src/render/iso3d/movement.ts, debug-view.ts  the two tuning sandboxes (specs
                  032/033/035/046, back since 066): one unit, no game, so a gait,
-                 a cloth solve or a turn rate can be watched in isolation. The
+                 a cloth solve or a turn rate can be watched in isolation.
+                 Since spec 140 the movement sandbox also drives an *authored*
+                 unit -- one chip per entry in the manifest, so `authored:pig_a_pose_full`
+                 is the generated body posed by its state machine and `pig` is
+                 still the procedural critter. sandbox-attack.ts is a rehearsal
+                 of a cast and says so: not a sim, no server sees it, and what it
+                 reproduces exactly is the one rule that makes an animation
+                 legible -- the timing is authoritative and the clip is rescaled
+                 to fit it, via `timeScaleFor`. Drag the wind-up to 900ms and the
+                 swing slows to land on it. sandbox-dummy.ts is something to hit,
+                 flinching on the tick the blow lands, because "the blade looks
+                 like it arrives about now" is not a claim anybody can make about
+                 a number. Both pure and tested headlessly;
+                 `npx tsx scripts/preview-sandbox-swing.ts` drives the real page. The
                  rig debugger adds a top+side split, slow-mo/single-step and the
                  joint and cloth overlays. Both drive sandbox-mover.ts -- a pure,
                  headlessly tested position/heading/move-order driver, NOT a

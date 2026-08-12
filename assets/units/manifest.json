@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "hash": "def2c3c27a86cc6b09eb68d95015f91b7f5fc83dc504b038b606e0206911f134",
+  "hash": "732ec9dd13b21c63e4253f16c68042523bf2f4663613f87cc5d0d76aa624b697",
   "builtStages": [],
   "units": [
     {
@@ -19,8 +19,8 @@
         },
         {
           "path": "dev/biped-dev.core.cliplib.json",
-          "sha256": "cce76f3de68ac8ac8b9848097b363418588cedad12376cac9e50443ad78305f5",
-          "bytes": 1312
+          "sha256": "15301f536f3b55c9a639d257d799871df08445408ef7b1ab08161f3bf95eb744",
+          "bytes": 1293
         },
         {
           "path": "dev/clips/idle.glb",

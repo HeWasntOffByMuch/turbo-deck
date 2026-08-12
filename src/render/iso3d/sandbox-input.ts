@@ -18,6 +18,11 @@
 export const CYCLE_CHARACTER_KEY = 'KeyC';
 /** Hop the robed figure or the critter (spec 046). Cosmetic; the mover never sees it. */
 export const JUMP_KEY = 'KeyJ';
+/**
+ * Throw a swing (spec 140). Space, because it is the key a hand already rests
+ * on and because nothing in this tab scrolls.
+ */
+export const ATTACK_KEY = 'Space';
 
 export interface ScreenPoint {
   readonly x: number;
@@ -30,6 +35,7 @@ export class SandboxInput {
   private rightClicked = false;
   private queuedCycleCharacter = false;
   private queuedJump = false;
+  private queuedAttack = false;
   private attached: Window | null = null;
 
   constructor(private readonly canvas: HTMLCanvasElement) {}
@@ -37,6 +43,11 @@ export class SandboxInput {
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     if (e.code === CYCLE_CHARACTER_KEY) this.queuedCycleCharacter = true;
     else if (e.code === JUMP_KEY) this.queuedJump = true;
+    else if (e.code === ATTACK_KEY) {
+      // Space scrolls a page by default, and this tab sits in a scrolling shell.
+      e.preventDefault();
+      this.queuedAttack = true;
+    }
   };
 
   private readonly onMouseMove = (e: MouseEvent): void => {
@@ -100,5 +111,23 @@ export class SandboxInput {
     const jumped = this.queuedJump;
     this.queuedJump = false;
     return jumped;
+  }
+
+  /**
+   * Consume a pending swing (spec 140).
+   *
+   * Separate from the mover's input for the same reason the hop is: the mover
+   * has no notion of an attack, so this reaches the rig and the rehearsal and
+   * nothing else, and can decide no outcome.
+   */
+  takeAttack(): boolean {
+    const swung = this.queuedAttack;
+    this.queuedAttack = false;
+    return swung;
+  }
+
+  /** Raise a swing from something that is not a key -- the panel's button. */
+  queueAttack(): void {
+    this.queuedAttack = true;
   }
 }

@@ -239,13 +239,11 @@ function main(): void {
   const lo: [number, number, number] = [Infinity, Infinity, Infinity];
   const hi: [number, number, number] = [-Infinity, -Infinity, -Infinity];
   for (const surface of weaponSurfaces) {
-    for (let v = 0; v + 2 < surface.positions.length; v += 3) {
-      for (let axis = 0; axis < 3; axis += 1) {
-        const value = surface.positions[v + axis] ?? 0;
-        lo[axis] = Math.min(lo[axis] ?? Infinity, value);
-        hi[axis] = Math.max(hi[axis] ?? -Infinity, value);
-      }
-    }
+    surface.positions.forEach((value, index) => {
+      const axis = index % 3;
+      lo[axis] = Math.min(lo[axis] ?? Infinity, value);
+      hi[axis] = Math.max(hi[axis] ?? -Infinity, value);
+    });
   }
   const grip = gripTransform(weapon, { min: lo, max: hi });
 
@@ -309,7 +307,8 @@ function main(): void {
   const sweepAt = Number(process.env['AT'] ?? 0);
   const times: number[] = [];
   if (sweep.length > 0) {
-    for (let i = 0; i < sweep.length; i += 1) times.push(sweepAt);
+    // One column per candidate, all at the same moment of the swing.
+    times.push(...sweep.map(() => sweepAt));
   } else {
     const from = Number(process.env['FROM'] ?? 0);
     const to = Number(process.env['TO'] ?? PIG_STRIKE.durationMs);

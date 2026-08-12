@@ -122,6 +122,10 @@
       "bone": "mixamorig:LeftHand"
     },
     {
+      "id": "weapon.stow",
+      "bone": "mixamorig:Spine2"
+    },
+    {
       "id": "fx.cast",
       "bone": "mixamorig:RightHand"
     },
