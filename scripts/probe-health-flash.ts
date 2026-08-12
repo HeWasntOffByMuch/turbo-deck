@@ -71,6 +71,13 @@ interface Sample {
   /** Where the bar was placed this frame, in CSS pixels (spec 144). */
   readonly left: number;
   readonly top: number;
+  /**
+   * Where the health track really landed, measured from the pixel the bar was
+   * placed at. Constant unless something changed the holder's own height.
+   */
+  readonly drop: number;
+  /** Whether a wind-up bar was showing under it this frame. */
+  readonly casting: boolean;
 }
 
 async function waitForServer(url: string): Promise<void> {
@@ -121,6 +128,8 @@ async function watchBars(page: Page, ms: number): Promise<Sample[]> {
       ghost: number;
       left: number;
       top: number;
+      drop: number;
+      casting: boolean;
     }[] = [];
     const start = performance.now();
     while (performance.now() - start < duration) {
@@ -143,6 +152,13 @@ async function watchBars(page: Page, ms: number): Promise<Sample[]> {
           // integer offset would round away.
           left: parseFloat(holder.style.left || '0'),
           top: parseFloat(holder.style.top || '0'),
+          // Where the track *actually* sits, against where the bar was placed.
+          // The holder is anchored by its bottom, so anything that changes its
+          // height moves the health bar -- and this is the only way to see that
+          // from outside: both numbers move together under the flinch, so the
+          // difference is the layout on its own.
+          drop: (track as HTMLElement).getBoundingClientRect().top - parseFloat(holder.style.top || '0'),
+          casting: (holder.children[1] as HTMLElement | undefined)?.style.display !== 'none',
         });
       }
     }
@@ -222,6 +238,39 @@ function reportFlinches(samples: readonly Sample[], scale: number, problems: str
   }
   // Two reversals is one full rattle. One could be a body turning round.
   if (best < 2) problems.push(`no bar ever flinched: best was ${best} direction changes after a blow`);
+}
+
+/**
+ * Whether a wind-up ever moved the health bar.
+ *
+ * The cast bar appears under the health bar the moment a body commits to a
+ * blow, and the holder both bars live in is anchored by its bottom -- so for as
+ * long as the cast bar took part in layout, every wind-up in the game shoved the
+ * health bar up by its height and dropped it back when the swing landed. That is
+ * invisible to a screenshot and invisible to the widths: it is the *height* of
+ * an element that is sometimes there. Measured as the gap between where the bar
+ * was placed and where its track really landed, which is constant if and only if
+ * nothing changes the holder's height.
+ */
+function reportSteadiness(samples: readonly Sample[], problems: string[]): void {
+  let casting = 0;
+  let worst = 0;
+  for (const id of [...new Set(samples.map((sample) => sample.id))]) {
+    const track = forBody(samples, id);
+    casting += track.filter((sample) => sample.casting).length;
+    const drops = track.map((sample) => sample.drop);
+    const low = Math.min(...drops);
+    const high = Math.max(...drops);
+    worst = Math.max(worst, high - low);
+  }
+  console.log(`  bar drift while ${casting} wind-up frames were drawn: ${worst.toFixed(2)}px`);
+  if (casting === 0) {
+    problems.push('no wind-up bar was ever drawn, so nothing checked whether one moves the bar');
+    return;
+  }
+  // Sub-pixel is the projection landing on a different device pixel; anything
+  // approaching the cast bar's own height is it pushing the health bar around.
+  if (worst > 1) problems.push(`a wind-up moved the health bar by ${worst.toFixed(2)}px`);
 }
 
 /** How many times a run of placements changed direction sideways. */
@@ -364,6 +413,7 @@ async function main(): Promise<void> {
     // Sample every frame while that fight runs, and say what the bars did.
     const samples = await watchBars(page, WATCH_MS);
     reportFlashes(samples, problems);
+    reportSteadiness(samples, problems);
 
     // Then the flinch, and the picture, both in slow motion (see TIME_SCALE).
     // A second fight for each, because a Grazer does not survive nine seconds

@@ -454,9 +454,19 @@ export function createHud(project: Projector): HudHandle {
     health.style.cssText = `position:absolute;left:0;top:0;height:100%;width:100%;background:${BAR_ENEMY};`;
     healthTrack.append(ghost, health);
 
+    // Hung off the health track rather than stacked under it in flow.
+    //
+    // The holder is anchored by its *bottom* -- `translate(-50%,-100%)` puts its
+    // last row over the head -- so a cast bar that took part in layout made the
+    // holder taller the instant a wind-up began, and the health bar above it
+    // jumped up by its height and dropped back when the swing landed. Every
+    // wind-up in the game twitched the thing a player is reading. Out of flow it
+    // cannot change the holder's height, so the health bar holds still and the
+    // cast bar hangs below it.
     const cast = document.createElement('div');
     cast.style.cssText =
-      'height:4px;margin-top:2px;background:rgba(0,0,0,.65);border-radius:2px;overflow:hidden;display:none;';
+      'position:absolute;left:0;right:0;top:calc(100% + 2px);height:4px;' +
+      'background:rgba(0,0,0,.65);border-radius:2px;overflow:hidden;display:none;';
     const castFill = document.createElement('div');
     castFill.style.cssText = 'height:100%;width:0;background:#ffcf6b;';
     cast.append(castFill);
