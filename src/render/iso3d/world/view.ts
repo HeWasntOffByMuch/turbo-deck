@@ -44,7 +44,7 @@ import { StreamedMap } from '../../../server/client/streamed-map.js';
 import type { ViewHandle } from '../view-handle.js';
 import { createWeatherControls } from '../weather-controls.js';
 import { createVfxControls } from '../vfx-controls.js';
-import { orbitStep } from './orbit-keys.js';
+import { orbitDrag, orbitStep } from './orbit-keys.js';
 import { turnToward } from '../../../server/sim/movement.js';
 import { facesAim } from '../../../server/sim/abilities.js';
 import { createHud, HOTBAR } from './hud.js';
@@ -795,10 +795,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     client.cancelCast();
   }
 
-  // --- touch (spec 093) --------------------------------------------------
+  // --- touch (specs 093, 139) --------------------------------------------
   //
   // One gesture has to carry both mouse buttons, so a tap is answered by
-  // whatever is being asked rather than meaning one fixed thing.
+  // whatever is being asked rather than meaning one fixed thing. Two fingers
+  // carry the zoom and the camera's swing at once (spec 139).
   const gestures = new TouchGestures();
 
   /**
@@ -842,10 +843,17 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       return;
     }
     const gesture = gestures.move(sampleOf(event));
-    // The pinch is the only thing a touch drag does. Deliberately not a camera
-    // pan: the camera follows the player (spec 039), and a view that could be
-    // dragged off them would need a way back that this spec does not add.
-    if (gesture?.kind === 'pinch') scene.controls.pinchZoom(gesture.ratio);
+    if (gesture?.kind !== 'twoFinger') return;
+    // Both halves of what two fingers did, applied together (spec 139). A pure
+    // spread arrives with `dragX` at zero and a pure swipe with `ratio` at one,
+    // so neither call costs anything when it is not what the hand meant -- and
+    // nothing here has to decide which gesture this "really" is.
+    scene.controls.pinchZoom(gesture.ratio);
+    // Turning, not panning. The camera still follows the player (spec 039);
+    // what a swipe moves is which side of them it watches from, which is the
+    // one thing a rock standing in the way needs (spec 129).
+    const swing = orbitDrag(gesture.dragX);
+    if (swing !== 0) scene.controls.orbitBy(swing);
   };
 
   const onPointerUp = (event: PointerEvent): void => {

@@ -20,9 +20,29 @@ export interface TouchSample {
   readonly y: number;
 }
 
+/**
+ * Two fingers moving, as one report (spec 139).
+ *
+ * A real two-finger gesture is a spread and a slide at the same time, and there
+ * is no honest way to pick which one it "really" is -- a hand that separates its
+ * fingers also drifts, and a hand that swipes also opens a little. So both are
+ * measured and reported together, and the view applies both: a pure spread
+ * arrives with `dragX` at zero and a pure swipe with `ratio` at one, so neither
+ * costs anything when it is not what the player meant.
+ *
+ * Both are measured against the *previous report* rather than the gesture's
+ * start, so successive moves compose -- multiplicatively in `ratio`, additively
+ * in `dragX` -- instead of each re-applying the whole gesture.
+ */
 export type TouchGesture =
   | { readonly kind: 'tap'; readonly x: number; readonly y: number }
-  | { readonly kind: 'pinch'; readonly ratio: number };
+  | {
+      readonly kind: 'twoFinger';
+      /** The finger separation now, over the separation at the last report. */
+      readonly ratio: number;
+      /** How far the midpoint slid sideways since then, canvas pixels. */
+      readonly dragX: number;
+    };
 
 /**
  * A tap is bounded by distance and *not* by time, which is worth explaining
@@ -69,6 +89,12 @@ export class TouchGestures {
    * spread instead of each re-applying it from the beginning.
    */
   private lastSpread: number | null = null;
+  /**
+   * The midpoint's x the last report was measured against, or null when two
+   * fingers are not down. Kept beside {@link lastSpread} and set and cleared
+   * with it, because they are two measurements of one gesture.
+   */
+  private lastMidX: number | null = null;
 
   down(sample: TouchSample): void {
     this.live.set(sample.id, {
@@ -83,10 +109,11 @@ export class TouchGestures {
     if (this.live.size > 1) {
       for (const pointer of this.live.values()) pointer.tapAlive = false;
       this.lastSpread = this.spread();
+      this.lastMidX = this.midX();
     }
   }
 
-  /** Report the pinch this move produced, if two fingers are down. */
+  /** Report what two fingers did to the zoom and to the view, if two are down. */
   move(sample: TouchSample): TouchGesture | null {
     const pointer = this.live.get(sample.id);
     if (!pointer) return null;
@@ -99,25 +126,32 @@ export class TouchGestures {
 
     if (this.live.size !== 2) return null;
     const spread = this.spread();
-    const previous = this.lastSpread;
-    // Fingers exactly on top of each other have no separation to take a ratio
-    // against; wait for them to part rather than emitting an infinity.
-    if (spread === null || spread === 0) return null;
-    if (previous === null || previous === 0) {
-      this.lastSpread = spread;
-      return null;
-    }
+    const midX = this.midX();
+    if (spread === null || midX === null) return null;
+    const previousSpread = this.lastSpread;
+    const previousMidX = this.lastMidX;
     this.lastSpread = spread;
-    return { kind: 'pinch', ratio: spread / previous };
+    this.lastMidX = midX;
+    // Fingers exactly on top of each other have no separation to take a ratio
+    // against, and 100/0 would send the zoom to a bound in one frame. That costs
+    // the zoom for this report and nothing else: the midpoint is measurable
+    // whatever the separation is, so the swipe still arrives (spec 139).
+    const zoomable = spread > 0 && previousSpread !== null && previousSpread > 0;
+    return {
+      kind: 'twoFinger',
+      ratio: zoomable ? spread / previousSpread : 1,
+      dragX: previousMidX === null ? 0 : midX - previousMidX,
+    };
   }
 
   /** Report the tap this lift completed, if it stayed one. */
   up(sample: TouchSample): TouchGesture | null {
     const pointer = this.live.get(sample.id);
     this.live.delete(sample.id);
-    // Dropping below two ends the pinch. The finger still down does not become a
-    // tap -- it has already been disqualified, and it never lifted to claim one.
-    if (this.live.size < 2) this.lastSpread = null;
+    // Dropping below two ends the two-finger gesture. The finger still down does
+    // not become a tap -- it has already been disqualified, and it never lifted
+    // to claim one.
+    if (this.live.size < 2) this.endTwoFinger();
     if (!pointer || !pointer.tapAlive) return null;
     if (Math.hypot(sample.x - pointer.startX, sample.y - pointer.startY) > TAP_SLOP_PX) return null;
     // Where it went *down*. That is the point the player aimed at; the drift on
@@ -128,18 +162,24 @@ export class TouchGestures {
   /** Drop one pointer without it ever producing a gesture. */
   cancel(id: number): void {
     this.live.delete(id);
-    if (this.live.size < 2) this.lastSpread = null;
+    if (this.live.size < 2) this.endTwoFinger();
   }
 
   /** Drop everything -- the view was hidden, or the window lost focus mid-gesture. */
   clear(): void {
     this.live.clear();
-    this.lastSpread = null;
+    this.endTwoFinger();
   }
 
   /** How many fingers are down, for the cursor and for tests. */
   get active(): number {
     return this.live.size;
+  }
+
+  /** Forget both baselines together: they describe one gesture that is over. */
+  private endTwoFinger(): void {
+    this.lastSpread = null;
+    this.lastMidX = null;
   }
 
   /** The distance between the two live pointers, or null unless there are exactly two. */
@@ -148,5 +188,13 @@ export class TouchGestures {
     const [a, b] = [...this.live.values()];
     if (!a || !b) return null;
     return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  /** Where the two live pointers are centred horizontally, or null unless there are two. */
+  private midX(): number | null {
+    if (this.live.size !== 2) return null;
+    const [a, b] = [...this.live.values()];
+    if (!a || !b) return null;
+    return (a.x + b.x) / 2;
   }
 }

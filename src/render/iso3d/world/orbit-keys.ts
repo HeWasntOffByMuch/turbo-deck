@@ -32,6 +32,34 @@ export const ORBIT_DEG_PER_SECOND = 90;
  * Both keys held cancel rather than fighting: a player who has rolled a finger
  * across both wants the view to stop, not to pick whichever was pressed last.
  */
+/**
+ * How far a two-finger swipe turns the view, degrees per canvas pixel (spec 139).
+ *
+ * Per pixel rather than per second, because a drag is direct manipulation and
+ * its rate is the finger. A little over a half turn across an 844px landscape
+ * frame -- the same order as the keyboard's four-second sweep, so getting behind
+ * a formation is one gesture, and a flick does not spin the world.
+ */
+export const ORBIT_DEG_PER_PX = 0.25;
+
+/**
+ * Degrees to turn for a swipe of `dragXPx`. Positive is clockwise, as above.
+ *
+ * The world follows the fingers: swiping right turns the camera anticlockwise,
+ * so the ground under the hand travels with it rather than against it.
+ * A non-finite drag turns nothing, the same contract `zoomSpan` has -- a swipe
+ * arrives as a difference between two measurements and a lost pointer can make
+ * one of them a NaN.
+ */
+export function orbitDrag(dragXPx: number): number {
+  // Zero is checked as well as finiteness so that a still hand turns by `0`
+  // rather than by `-0`. Nothing downstream can tell them apart -- `-0 === 0` --
+  // but a negated product hands back a signed zero for half its inputs, and a
+  // "turned nothing" that has a direction in it is a thing to explain later.
+  if (!Number.isFinite(dragXPx) || dragXPx === 0) return 0;
+  return -dragXPx * ORBIT_DEG_PER_PX;
+}
+
 export function orbitStep(held: ReadonlySet<string>, dt: number): number {
   const left = held.has(ORBIT_LEFT_KEY);
   const right = held.has(ORBIT_RIGHT_KEY);
