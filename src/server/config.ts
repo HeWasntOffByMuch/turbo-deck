@@ -98,8 +98,14 @@ export const INTEREST_CHUNK_RADIUS = 8;
  * overlay behind the "show spawners" setting (spec 076).
  * 9: the stat block names the body's auto-attack, so a client knows what its
  * right-click reaches with rather than assuming a sword (spec 079).
+ * 10, 11: two bumps that were never written down here. Recovered in spec 145
+ * rather than left as a gap, since this list is the only account of what a
+ * version number means and a hole in it makes every entry below it suspect.
+ * 12: an entity delta can carry who a player is -- their name and their turn
+ * rate -- so another player is somebody rather than an anonymous shape, and
+ * `turn-limits.ts` stops guessing a rate it was never sent (spec 145).
  */
-export const PROTOCOL_VERSION = 11;
+export const PROTOCOL_VERSION = 12;
 
 /**
  * How far from a map chunk a player may be and still be sent it (spec 072).

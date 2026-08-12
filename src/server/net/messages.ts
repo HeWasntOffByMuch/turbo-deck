@@ -593,6 +593,9 @@ export interface EntityDelta {
   readonly activity?: number;
   readonly activityUntilTick?: number;
   readonly level?: number;
+  /** Spec 145, players only. See {@link EntityField.Identity}. */
+  readonly name?: string;
+  readonly turnRate?: number;
 }
 
 export interface DeltaMessage {
@@ -882,6 +885,7 @@ const FIELD_FACING = 1 << 2;
 const FIELD_HEALTH = 1 << 3;
 const FIELD_ACTIVITY = 1 << 4;
 const FIELD_LEVEL = 1 << 5;
+const FIELD_IDENTITY = 1 << 6;
 
 function writeEntityDelta(writer: BufferWriter, entity: EntityDelta): void {
   writer.varuint(entity.id).u8(entity.fields);
@@ -898,6 +902,9 @@ function writeEntityDelta(writer: BufferWriter, entity: EntityDelta): void {
     writer.u8(entity.activity ?? 0).u32(entity.activityUntilTick ?? 0);
   }
   if (entity.fields & FIELD_LEVEL) writer.varuint(entity.level ?? 1);
+  if (entity.fields & FIELD_IDENTITY) {
+    writer.str(entity.name ?? '').f32(entity.turnRate ?? 0);
+  }
 }
 
 function readEntityDelta(reader: BufferReader): EntityDelta {
@@ -912,6 +919,8 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
   let activity: number | undefined;
   let activityUntilTick: number | undefined;
   let level: number | undefined;
+  let name: string | undefined;
+  let turnRate: number | undefined;
   if (fields & FIELD_SPAWN) {
     kind = reader.u8();
     typeId = reader.str();
@@ -929,6 +938,10 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
     activityUntilTick = reader.u32();
   }
   if (fields & FIELD_LEVEL) level = reader.varuint();
+  if (fields & FIELD_IDENTITY) {
+    name = reader.str();
+    turnRate = reader.f32();
+  }
   return {
     id,
     fields,
@@ -941,6 +954,8 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
     ...(activity === undefined ? {} : { activity }),
     ...(activityUntilTick === undefined ? {} : { activityUntilTick }),
     ...(level === undefined ? {} : { level }),
+    ...(name === undefined ? {} : { name }),
+    ...(turnRate === undefined ? {} : { turnRate }),
   };
 }
 

@@ -252,6 +252,14 @@ export const EntityField = {
   Health: 1 << 3,
   Activity: 1 << 4,
   Level: 1 << 5,
+  /**
+   * Who this is: `str name` and `f32 turnRate` (spec 145). Players only -- a
+   * monster's name and turn rate are in `MONSTERS`, which the client already
+   * has, and a content table on the wire is what "an entity only ever stores an
+   * id" exists to prevent. A player's name is the one field on an entity that a
+   * human typed and no table can answer.
+   */
+  Identity: 1 << 6,
 } as const;
 
 export const EntityKind = {

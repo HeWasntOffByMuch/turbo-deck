@@ -173,12 +173,6 @@ export function mountWorld(container: HTMLElement): ViewHandle {
         tickRate,
       }),
   });
-  if (plan.mode === 'remote') {
-    void client.connect().catch((error: unknown) => {
-      banner.refuse(error instanceof Error ? error.message : String(error));
-    });
-  }
-
   /**
    * The world a move order routes through -- the one the server is colliding
    * against, or null while that is not known. `RoutePlanner` treats a null
@@ -1463,7 +1457,16 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       root.addEventListener('wheel', onWheel, { capture: true, passive: false });
       document.documentElement.addEventListener('contextmenu', onContextMenu);
 
-      void client.connect();
+      // Exactly once, and here rather than at construction: `start()` is what
+      // the shell calls when this tab becomes visible, and a Hello sent twice
+      // on one socket used to spawn a second body and orphan the first.
+      if (plan.mode === 'remote') {
+        void client.connect().catch((error: unknown) => {
+          banner.refuse(error instanceof Error ? error.message : String(error));
+        });
+      } else {
+        void client.connect();
+      }
 
       last = 0;
       accumulator = 0;

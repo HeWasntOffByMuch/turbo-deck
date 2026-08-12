@@ -112,6 +112,8 @@ export const SYSTEM_BUTTONS: readonly {
 
 interface Bar {
   readonly root: HTMLElement;
+  /** Another player's name, over their body (spec 145). Empty for everything else. */
+  readonly name: HTMLElement;
   readonly health: HTMLElement;
   readonly cast: HTMLElement;
   readonly castFill: HTMLElement;
@@ -450,6 +452,22 @@ export function createHud(project: Projector): HudHandle {
     // instead of re-deriving the camera projection and testing its own copy.
     holder.dataset['entity'] = String(id);
 
+    // Above the health track, so the holder's translate(-50%,-100%) puts the
+    // name over the body rather than through it. Hidden unless there is a name
+    // to draw, which is another player and nobody else.
+    const name = document.createElement('div');
+    name.style.cssText = [
+      'display:none',
+      'margin-bottom:2px',
+      'text-align:center',
+      'font:10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace',
+      'color:#e8e8ea',
+      'text-shadow:0 1px 2px rgba(0,0,0,.9)',
+      'white-space:nowrap',
+      'overflow:hidden',
+      'text-overflow:ellipsis',
+    ].join(';');
+
     const healthTrack = document.createElement('div');
     healthTrack.style.cssText = 'height:4px;background:rgba(0,0,0,.65);border-radius:2px;overflow:hidden;';
     const health = document.createElement('div');
@@ -463,9 +481,9 @@ export function createHud(project: Projector): HudHandle {
     castFill.style.cssText = 'height:100%;width:0;background:#ffcf6b;';
     cast.append(castFill);
 
-    holder.append(healthTrack, cast);
+    holder.append(name, healthTrack, cast);
     root.append(holder);
-    const made: Bar = { root: holder, health, cast, castFill };
+    const made: Bar = { root: holder, name, health, cast, castFill };
     bars.set(id, made);
     return made;
   }
@@ -511,6 +529,26 @@ export function createHud(project: Projector): HudHandle {
       else delete element.root.dataset['self'];
       element.root.style.left = `${anchor.x}px`;
       element.root.style.top = `${anchor.y}px`;
+
+      // Another player's name over their body (spec 145). Not our own -- you
+      // know who you are, and a label on your own head is one more thing
+      // between you and the fight.
+      const label =
+        entity.kind === EntityKind.Player && entity.id !== view.selfEntityId
+          ? displayName(entity)
+          : '';
+      if (label === '') {
+        element.name.style.display = 'none';
+        element.name.textContent = '';
+        delete element.name.dataset['name'];
+      } else {
+        element.name.style.display = 'block';
+        element.name.textContent = label;
+        // Read by `scripts/preview-multiplayer.ts`, for the same reason the
+        // health bar carries `data-entity`: so a probe can assert on the name
+        // without re-deriving the camera projection.
+        element.name.dataset['name'] = label;
+      }
 
       const fraction = entity.maxHealth > 0 ? Math.max(0, Math.min(1, entity.health / entity.maxHealth)) : 0;
       element.health.style.width = `${fraction * 100}%`;

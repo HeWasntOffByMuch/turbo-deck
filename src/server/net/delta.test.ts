@@ -177,4 +177,64 @@ describe('delta tracking', () => {
 
     expect(delta).toBeLessThan(full / 10);
   });
+
+  describe('identity (spec 145)', () => {
+    const player = (id: number): ServerEntity =>
+      entity(id, { kind: EntityKindValue.Player, typeId: 'player', ownerPlayerId: `p${id}` });
+    const named = (e: ServerEntity): string | null =>
+      e.kind === EntityKindValue.Player ? `Name${e.id}` : null;
+
+    it('rides with the first sight of a player, and names them', () => {
+      const tracker = new DeltaTracker();
+      const delta = tracker.build(1, 0, [player(3)], named);
+      const upsert = delta.upserts[0];
+      if (!upsert) throw new Error('expected an upsert');
+      expect(upsert.fields & EntityField.Identity).toBeTruthy();
+      expect(upsert.name).toBe('Name3');
+      expect(upsert.turnRate).toBe(STATS.turnRate);
+    });
+
+    it('is absent for anything a content table already answers for', () => {
+      const tracker = new DeltaTracker();
+      // A monster: `named` returns null, so no identity and no bytes.
+      const delta = tracker.build(1, 0, [entity(9)], named);
+      const upsert = delta.upserts[0];
+      if (!upsert) throw new Error('expected an upsert');
+      expect(upsert.fields & EntityField.Identity).toBeFalsy();
+      expect(upsert.name).toBeUndefined();
+    });
+
+    it('costs nothing after the first sight', () => {
+      const tracker = new DeltaTracker();
+      tracker.build(1, 0, [player(3)], named);
+      // Moved, but still the same person at the same turn rate.
+      const delta = tracker.build(2, 0, [moved(player(3), 140, 200)], named);
+      const upsert = delta.upserts[0];
+      if (!upsert) throw new Error('expected an upsert');
+      expect(upsert.fields & EntityField.Position).toBeTruthy();
+      expect(upsert.fields & EntityField.Identity).toBeFalsy();
+    });
+
+    it('is re-sent when the turn rate moves, because dexterity can change it', () => {
+      const tracker = new DeltaTracker();
+      tracker.build(1, 0, [player(3)], named);
+      const faster = entity(3, {
+        kind: EntityKindValue.Player,
+        typeId: 'player',
+        ownerPlayerId: 'p3',
+        stats: { ...STATS, turnRate: STATS.turnRate + 40 },
+      });
+      const delta = tracker.build(2, 0, [faster], named);
+      const upsert = delta.upserts[0];
+      if (!upsert) throw new Error('expected an upsert');
+      expect(upsert.fields & EntityField.Identity).toBeTruthy();
+      expect(upsert.turnRate).toBe(STATS.turnRate + 40);
+    });
+
+    it('survives the wire unchanged', () => {
+      const tracker = new DeltaTracker();
+      const delta = tracker.build(1, 0, [player(3), entity(9)], named);
+      expect(decodeServerMessage(encodeServerMessage(delta))).toEqual(delta);
+    });
+  });
 });

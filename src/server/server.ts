@@ -19,7 +19,7 @@
  */
 
 import { DEFAULT_WORLD } from '../sim/collision.js';
-import type { WorldColliders } from '../sim/types.js';
+import type { Vec2, WorldColliders } from '../sim/types.js';
 import { AuditLog } from './admin/audit.js';
 import {
   AdminRouter,
@@ -99,6 +99,9 @@ import {
 } from './sim/world.js';
 import { NullTransport, type Channel, type ServerTransport } from './net/transport.js';
 import { ChunkManager } from './world/chunk-manager.js';
+import { spawnAround } from './world/spawn-around.js';
+import { circleBlocked } from '../sim/collision.js';
+import { WALKABLE_MIN_HEIGHT } from '../sim/constants.js';
 import type { BuiltMapWorld, BuiltWorld } from './world/build.js';
 import type { SpawnPoint } from './world/spawners.js';
 import type { MapIndex } from './world/map-index.js';
@@ -669,6 +672,19 @@ export class GameServer implements AdminHost {
       this.drop(connection, 'asset manifest mismatch');
       return;
     }
+    // One Hello per connection (spec 145). A second one used to log in again on
+    // the same socket, spawn a second body, and overwrite `connection.entityId`
+    // with it -- so the first entity belonged to nobody, was reaped by nothing,
+    // and stood in the world until the server restarted. A client that says
+    // hello twice is broken or lying, and either way the answer is the same.
+    if (connection.playerId !== null) {
+      this.send(connection, {
+        type: ServerMessageType.Error,
+        code: ErrorCode.RejectedAction,
+        message: 'already connected',
+      });
+      return;
+    }
     if (playerId.length === 0 || playerId.length > 64) {
       this.send(connection, {
         type: ServerMessageType.Error,
@@ -690,11 +706,16 @@ export class GameServer implements AdminHost {
     }
 
     const session = await this.players.login(playerId, displayName);
+    // Not on top of whoever is already standing there (spec 145). A saved
+    // position that is clear comes back unchanged, so this only ever moves
+    // somebody who would have logged in inside another body.
+    const at = this.clearSpawnNear(session.record.position);
+    const position: Vec3 = { x: at.x, y: at.y, z: this.terrain.heightAt(at.x, at.y) };
     const spawned = spawnEntity(this.state, {
       kind: EntityKindValue.Player,
       typeId: 'player',
       ownerPlayerId: playerId,
-      position: session.record.position,
+      position,
       facing: session.record.facing,
       stats: session.stats,
       radius: PLAYER_BODY_RADIUS,
@@ -707,7 +728,7 @@ export class GameServer implements AdminHost {
 
     connection.playerId = playerId;
     connection.entityId = spawned.entity.id;
-    this.chunks.place(spawned.entity.id, session.record.position.x, session.record.position.y, true);
+    this.chunks.place(spawned.entity.id, position.x, position.y, true);
 
     this.send(connection, {
       type: ServerMessageType.Welcome,
@@ -1282,6 +1303,37 @@ export class GameServer implements AdminHost {
   }
 
   /**
+   * What a body is called, for the `Identity` field (spec 145). Null for
+   * anything a content table already answers for -- every monster, prop and
+   * projectile -- so only players cost the bytes.
+   */
+  private nameOf(entity: ServerEntity): string | null {
+    if (entity.kind !== EntityKindValue.Player) return null;
+    if (entity.ownerPlayerId === null) return null;
+    return this.players.get(entity.ownerPlayerId)?.record.displayName ?? null;
+  }
+
+  /**
+   * `base`, or the nearest ring point clear of every other player (spec 145).
+   *
+   * `except` is the entity being respawned, which is standing where it fell and
+   * must not be asked to dodge itself.
+   */
+  private clearSpawnNear(base: Vec3, except = -1): Vec2 {
+    const occupied: Vec2[] = [];
+    for (const entity of this.state.entities.values()) {
+      if (entity.kind !== EntityKindValue.Player) continue;
+      if (entity.id === except) continue;
+      if (entity.health <= 0) continue;
+      occupied.push({ x: entity.position.x, y: entity.position.y });
+    }
+    return spawnAround(base, occupied, PLAYER_BODY_RADIUS * 2.5, (x, y) => {
+      if (this.terrain.heightAt(x, y) <= WALKABLE_MIN_HEIGHT) return false;
+      return !circleBlocked({ x, y }, PLAYER_BODY_RADIUS, this.colliders);
+    });
+  }
+
+  /**
    * What every spawner is doing, for a client drawing the overlay (spec 076).
    *
    * Built from the map's spawn points rather than from the state map, so a
@@ -1290,7 +1342,15 @@ export class GameServer implements AdminHost {
    */
   private sendSpawnerStates(connection: Connection): void {
     const tick = this.state.tick;
-    const spawners: SpawnerStatus[] = this.spawnPoints.map((point) => {
+    // Bounded by interest (spec 076's out-of-scope, closed in spec 145). The
+    // whole map's markers went to every watcher, which was fine for one client
+    // on a map with tens of them and is the wrong shape for either number
+    // growing. Same interest window the entity deltas use, one method away.
+    const near = new Set(this.chunks.interestChunks(connection.entityId));
+    const visible = this.spawnPoints.filter((point) =>
+      near.has(this.chunks.keyAt(point.x, point.y)),
+    );
+    const spawners: SpawnerStatus[] = visible.map((point) => {
       const live = this.state.spawners.get(point.id);
       const occupied = live?.entityId != null && this.state.entities.has(live.entityId);
       return {
@@ -1337,7 +1397,7 @@ export class GameServer implements AdminHost {
 
       const session = this.players.get(connection.playerId);
       if (!session) continue;
-      const at = DEFAULT_SPAWN;
+      const at = this.clearSpawnNear(DEFAULT_SPAWN, entity.id);
       const position: Vec3 = { x: at.x, y: at.y, z: this.terrain.heightAt(at.x, at.y) };
       this.state = replaceEntity(this.state, {
         ...entity,
@@ -1531,6 +1591,7 @@ export class GameServer implements AdminHost {
         this.state.tick,
         session?.lastAppliedInputSeq ?? 0,
         visible,
+        (entity) => this.nameOf(entity),
       );
       // Silence is meaningful: a client whose world did not change gets nothing.
       if (DeltaTracker.isEmpty(delta)) continue;

@@ -27,12 +27,14 @@ import { CHARACTERS } from '../../../sim/characters.js';
 import type { TurnLimits } from '../turn-ease.js';
 
 /**
- * The rate a remote player is eased at, degrees per second.
+ * The rate a remote player is eased at before their own has arrived, degrees
+ * per second.
  *
- * A player's rate is a base plus a term per point of dexterity, and neither the
- * dexterity nor the derived rate is replicated for anybody but ourselves. The
- * fastest base in the table is the closest honest answer available: it is above
- * the slowest character rather than below every geared one, and being wrong in
+ * Since spec 145 a player's real rate rides on the entity's `Identity` field,
+ * so this is the fallback for the frames between a body entering interest and
+ * its first delta rather than the permanent guess it used to be. The fastest
+ * base in the table is the closest honest answer available: it is above the
+ * slowest character rather than below every geared one, and being wrong in
  * either direction only moves how much ease that one body gets.
  */
 export const REMOTE_PLAYER_TURN_RATE = Math.max(
@@ -41,7 +43,7 @@ export const REMOTE_PLAYER_TURN_RATE = Math.max(
 
 /** What `turn-ease.ts` should cap this body at, or null if it must not be eased. */
 export function turnLimitsFor(
-  entity: { readonly kind: number; readonly typeId: string },
+  entity: { readonly kind: number; readonly typeId: string; readonly turnRate?: number },
   isSelf: boolean,
   selfTurnRate: number | null,
   tickRate: number,
@@ -65,7 +67,13 @@ export function turnLimitsFor(
   }
 
   if (entity.kind === EntityKind.Player) {
-    return { degreesPerSecond: REMOTE_PLAYER_TURN_RATE, tickRate };
+    // Zero means the Identity field has not landed yet, not a body that cannot
+    // turn -- a player always can.
+    const replicated = entity.turnRate ?? 0;
+    return {
+      degreesPerSecond: replicated > 0 ? replicated : REMOTE_PLAYER_TURN_RATE,
+      tickRate,
+    };
   }
 
   // Props do not turn, and anything this file has not heard of is drawn the way

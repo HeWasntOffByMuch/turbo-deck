@@ -243,7 +243,17 @@ export function isHostile(
   if (target.kind === EntityKindValue.Projectile) return false;
   if (attacker.kind === target.kind) {
     if (attacker.kind !== EntityKindValue.Player) return false;
-    return zones.zoneAt(attacker.position.x, attacker.position.y).pvp;
+    // Both ends, not just the attacker's (spec 145). Reading the attacker's
+    // zone alone let somebody stand in the wilds and reach into Hearthstead,
+    // which is not what a safe zone means to the person standing in one; the
+    // mirror version -- the target's zone alone -- lets a target retreat into
+    // safety mid-swing. The cost of requiring both is that you cannot strike
+    // *out* of a safe zone either, which is the same exploit wearing the other
+    // hat, so it is a cost worth paying.
+    return (
+      zones.zoneAt(attacker.position.x, attacker.position.y).pvp &&
+      zones.zoneAt(target.position.x, target.position.y).pvp
+    );
   }
   return attacker.kind !== EntityKindValue.Prop && target.kind !== EntityKindValue.Prop;
 }

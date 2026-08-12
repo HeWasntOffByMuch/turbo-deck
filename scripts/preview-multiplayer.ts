@@ -90,6 +90,25 @@ async function main(): Promise<void> {
       failed = true;
     }
 
+    // Each tab draws the *other's* name over their body (spec 145). Read off
+    // `data-name` rather than the pixels, for the same reason as above.
+    for (const [name, page, other] of [['Ana', ana, 'Ben'], ['Ben', ben, 'Ana']] as const) {
+      try {
+        await page.waitForFunction(
+          (want: string) =>
+            Array.from(document.querySelectorAll<HTMLElement>('[data-name]')).some(
+              (el) => el.dataset['name'] === want,
+            ),
+          other,
+          { timeout: CONNECT_TIMEOUT_MS },
+        );
+        console.log(`[${name}] sees ${other} by name`);
+      } catch {
+        console.error(`FAIL: ${name} never saw a nameplate for ${other}`);
+        failed = true;
+      }
+    }
+
     await ana.screenshot({ path: '.claude/screenshots/multiplayer-ana.png' });
     await ben.screenshot({ path: '.claude/screenshots/multiplayer-ben.png' });
     console.log('wrote .claude/screenshots/multiplayer-{ana,ben}.png');
