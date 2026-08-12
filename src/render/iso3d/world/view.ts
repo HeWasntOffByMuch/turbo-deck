@@ -375,6 +375,23 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * autosave does it -- everything under src/ui/ takes a `StorageLike`.
    */
   const held = new Set<string>();
+  /**
+   * Held raw key *codes*, for the input that is deliberately not rebindable.
+   *
+   * Today that is the two camera keys and nothing else (spec 129 chose two
+   * hard-coded codes on purpose, since there was no binding surface when it was
+   * written). It is a second set rather than an entry in `bindings.json` because
+   * the profile is a versioned document with golden images over the actions it
+   * lists, and a camera section in it is a larger change than this.
+   *
+   * It exists at all because the camera keys have been dead since spec 125:
+   * `orbitStep` asks for `BracketLeft`/`BracketRight` and `held` has stored
+   * rebindable action ids ever since, so nothing was ever added for them and
+   * `[` and `]` turned nothing on any device (spec 139). The unit test passed
+   * throughout -- the arithmetic was never wrong, the wiring was -- which is why
+   * `scripts/probe-orbit.ts` drives a real page.
+   */
+  const heldKeys = new Set<string>();
   const inputMap = new InputMap();
   /**
    * Where the key profile lives. Reached for here, at the DOM edge, exactly as
@@ -614,10 +631,16 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     if (ui.handleKey(event.code, 'down', modifiersOf(event), textOf(event))) {
       // Held actions are cleared for the same reason `blur` clears them: keys
       // pressed while the interface has the keyboard get no release the game
-      // will see, and a stranded `move.north` walks into a wall.
+      // will see, and a stranded `move.north` walks into a wall. A stranded
+      // camera key is the same bug with the view spinning instead.
       held.clear();
+      heldKeys.clear();
       return;
     }
+
+    // Recorded before the map is consulted, because these are the keys the map
+    // does not know about (spec 139).
+    heldKeys.add(event.code);
 
     const decision = decideKeyDown(inputMap, event.code, modifiersOf(event));
 
@@ -675,6 +698,9 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
   const onKeyUp = (event: KeyboardEvent): void => {
     ui.handleKey(event.code, 'up', modifiersOf(event));
+    // Dropped whatever the interface said, for the reason below: a release the
+    // UI swallowed is a key held forever, and here that is a view that spins.
+    heldKeys.delete(event.code);
     // Released whatever the interface said, always. A release that the UI
     // swallowed is a held action with no way out, and the symptom is walking
     // into a wall until the same key is pressed and released again.
@@ -892,6 +918,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   const onContextMenu = (event: Event): void => event.preventDefault();
   const onBlur = (): void => {
     held.clear();
+    heldKeys.clear();
     // A gesture interrupted by losing focus never sends its pointerup, and the
     // next finger down would otherwise land mid-pinch.
     gestures.clear();
@@ -1166,7 +1193,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // carves a hole in the rock any more. Driven off the held set rather than
     // off key events, so holding a bracket is a continuous swing rather than a
     // stutter at the OS repeat rate.
-    const swing = orbitStep(held, elapsed / 1000);
+    //
+    // `heldKeys`, not `held`: this reads key *codes*, and `held` has carried
+    // rebindable action ids since spec 125 -- which is what left these two keys
+    // dead for eleven specs (spec 139).
+    const swing = orbitStep(heldKeys, elapsed / 1000);
     if (swing !== 0) scene.controls.orbitBy(swing);
 
     const view = client.view();
@@ -1295,6 +1326,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       root.removeEventListener('wheel', onWheel, { capture: true });
       document.documentElement.removeEventListener('contextmenu', onContextMenu);
       held.clear();
+      heldKeys.clear();
       // A tab switched away mid-pinch must not leave fingers down.
       gestures.clear();
     },
