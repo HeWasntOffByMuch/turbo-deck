@@ -744,7 +744,23 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  sim gets the same assertion animation got, the same fight twice
                  with the screens driven and without, identical authoritative
                  state, and that is impossible if running it needs a canvas
-                 (`mount-presentation.test.ts`)
+                 (`mount-presentation.test.ts`),
+                 and monster-look.ts (what a monster's rig is *built* with, spec
+                 152, beside the appearance.ts that says which rig draws it:
+                 body shape, colours and the tuning overrides. Every monster was
+                 `new MechRig(typeId)` -- the defaults at size 1 in
+                 `enemyColor`'s fallback, because that function still switches on
+                 three sim type names no row in MONSTERS has used since spec 062
+                 -- so four enemies shared one silhouette and there was nowhere
+                 to say an enemy is small. The rule it holds is that **a sim
+                 number has one home and it is not here**: `MechRigTuning` is the
+                 rig's tuning minus `moveSpeed` and `turnRate`, the two fields
+                 the rig itself has never read and that exist only because the
+                 movement sandbox needed somewhere to hang its overrides, so a
+                 look that could name them would be a second place to write down
+                 how fast a monster moves. Pure, which is also why the merge onto
+                 `defaultMechTuning()` happens in scene.ts rather than here:
+                 nothing in this directory's pure half imports the rig module)
                  are pure and tested headlessly; scene.ts, shot.ts, hud.ts,
                  ui-layer.ts (the second canvas, the scale and one coordinate
                  conversion -- the whole impure half of the mount) and
@@ -756,6 +772,16 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  real arena (`?units=grazer:mannequin`) and asserts a skinned
                  body with 25 bones is being posed -- the half of spec 111 that
                  only exists once a browser has fetched a .glb and skinned it.
+                 `npx tsx scripts/preview-monsters.ts` is the contact sheet of
+                 the roster (spec 152), built through the same look table and the
+                 same MechRig scene.ts uses and rasterised in software. Two
+                 things it does that preview-critters.ts does not, both for one
+                 reason: **one world-space window for every cell**, because
+                 auto-framing each subject on its own extent hides the only thing
+                 a row of monsters is being asked -- whether the small one is
+                 small -- and the collider drawn as a ring, since the drawn size
+                 and the collider are authored in different files and nothing
+                 forces them to agree.
                  `presentation-only.test.ts` beside them is the brief's
                  assertion: the same seed and inputs twice, once with the
                  animation layer driven and once without, and the authoritative

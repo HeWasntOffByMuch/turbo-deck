@@ -37,8 +37,14 @@ export interface MonsterLook {
 }
 
 export function monsterLookFor(typeId: string): MonsterLook | null;
-export function mechTuningFor(typeId: string): MechTuning;  // merged onto the defaults
 ```
+
+There is deliberately no `mechTuningFor` here merging the overrides onto
+`defaultMechTuning()`, which was the first shape and is the obvious one. That
+function lives in the rig module, and importing it would pull three.js into the
+world view's pure half — where nothing outside `scene.ts` and `shot.ts` has ever
+reached for it. So `MechTuning` comes in as a type and is erased, and the merge
+is a spread at the one place a rig is actually constructed.
 
 The `Omit` is the point, not a detail. Move speed and turn rate exist on
 `MechTuning` because the movement sandbox needs somewhere to hang its two sim
@@ -88,6 +94,16 @@ fits through.
 
 Three spawners go into `maps/arena.json` as a nest, so the enemy exists in the
 world rather than only in a table.
+
+`npx tsx scripts/preview-monsters.ts` is the picture, because a look is a thing
+you check by looking at it and there was no way to see a monster short of
+starting a server and walking to one. It builds each rig the way `scene.ts` does
+and rasterises it in software, with two decisions taken against
+`preview-critters.ts`'s: one world-space window for every cell rather than
+framing each subject on its own extent — the thing being checked is that a small
+enemy is small, and auto-framing hides exactly that — and the collider drawn as
+a ring, since the drawn size and the collider are authored in different files and
+nothing forces them to agree.
 
 ## Invariants tested
 
