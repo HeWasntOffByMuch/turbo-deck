@@ -78,6 +78,7 @@ import {
   type SlotAddress,
 } from '../state/types.js';
 import { applyMove, type MoveRequest } from '../player/inventory.js';
+import { NOMINAL, observeQueue, type RateMatchState } from './rate-match.js';
 import { createFlatPredictor, PredictionBuffer, type PredictedInput, type PredictStep } from './prediction.js';
 import { ReplicatedWorld } from './replica.js';
 import {
@@ -188,6 +189,11 @@ export interface ClientView {
    * decision on this client is made from.
    */
   readonly roundTripTicks: number;
+  /**
+   * Multiplier on the client's tick duration, steering its clock towards the
+   * server's (spec 148). 1 is nominal; above 1 the client ticks slower.
+   */
+  readonly tickScale: number;
   /**
    * Ticks until the server acts on the input being sent now: the depth of its
    * input queue (spec 069). Diagnostics, and what a predicted cast is stamped
@@ -405,6 +411,8 @@ export class GameClient {
   private readonly world = new ReplicatedWorld();
   private prediction: PredictionBuffer | null = null;
   private welcome: WelcomeInfo | null = null;
+  /** How this client's clock is being steered against the server's (spec 148). */
+  private rateMatch: RateMatchState = NOMINAL;
   /** The map and the chunks of it that have arrived (spec 072). */
   private mapCache: MapChunkCache | null = null;
   /** Ticks to wait before asking for chunks again, after being throttled. */
@@ -1206,6 +1214,10 @@ export class GameClient {
       tick: this.world.tick,
       estimatedTick: this.estimated,
       roundTripTicks: this.roundTrips.length === 0 ? 0 : Math.min(...this.roundTrips),
+      // What the frame loop should multiply its tick duration by (spec 148).
+      // Presentation pacing, not state: the sim never reads it, and a replay
+      // that ignored it would produce the identical authoritative world.
+      tickScale: this.rateMatch.tickScale,
       commitDelayTicks: this.commitDelayTicks(),
       entities: this.world.all(),
       self: this.prediction?.drawn ?? null,
@@ -1614,6 +1626,11 @@ export class GameClient {
         // The pong says which tick the server was on when it answered, so this
         // is a direct reading of the clock rather than an extrapolation.
         this.estimated = Math.max(this.estimated, message.serverTick + this.oneWayTicks());
+        // And steer by it (spec 148). The depth is the server's own count of
+        // what it has not consumed yet; the controller turns it into a scale on
+        // this client's tick duration, which is the only thing this end can
+        // change about the rate the two clocks disagree at.
+        this.rateMatch = observeQueue(this.rateMatch, message.inputQueueFloor);
         break;
       }
     }

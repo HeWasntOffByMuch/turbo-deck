@@ -1355,12 +1355,18 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   function frame(now: number): void {
     const elapsed = last === 0 ? TICK_MS : now - last;
     last = now;
-    accumulator = Math.min(accumulator + elapsed, TICK_MS * MAX_CATCH_UP_TICKS);
+    // Steered by the server's own count of what it has not consumed yet
+    // (spec 148). This is the render loop doing the job CLAUDE.md gives it --
+    // turning real time into a number of fixed ticks -- and not an `if` that
+    // changes an outcome: the timestep the sim runs on is still 1/60, and what
+    // moves is how often wall-clock time produces one.
+    const tickMs = TICK_MS * (client.view().tickScale || 1);
+    accumulator = Math.min(accumulator + elapsed, tickMs * MAX_CATCH_UP_TICKS);
     sinceDelta += elapsed;
 
     let ticks = 0;
-    while (accumulator >= TICK_MS) {
-      accumulator -= TICK_MS;
+    while (accumulator >= tickMs) {
+      accumulator -= tickMs;
       ticks += 1;
       wireTick += 1;
       // Released before the tick that will read them, so a frame due on this

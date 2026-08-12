@@ -162,6 +162,11 @@ interface Connection {
   /** Tick this player is put back on their feet; 0 when they are alive. */
   respawnAtTick: number;
   /**
+   * The smallest this connection's input queue has been since the last pong
+   * (spec 148). Reset when reported; see the field on `PongMessage`.
+   */
+  queueFloor: number;
+  /**
    * The cooldown map last sent to this client. Compared by *identity*: entities
    * are immutable and the map is only rebuilt when it actually changes, so this
    * is a pointer compare per connection per tick rather than a walk.
@@ -305,6 +310,20 @@ export class GameServer implements AdminHost {
     return this.config;
   }
 
+  /**
+   * How many of a player's inputs are sitting unconsumed (spec 148).
+   *
+   * The number the pong carries, readable from this end too -- a rate-matching
+   * test wants the truth every tick rather than the 2Hz sample the client sees,
+   * and the admin console has an obvious use for it.
+   */
+  inputQueueDepth(playerId: string): number {
+    for (const connection of this.connections) {
+      if (connection.playerId === playerId) return connection.inputs.length;
+    }
+    return 0;
+  }
+
   get playerManager(): PlayerManager {
     return this.players;
   }
@@ -350,6 +369,7 @@ export class GameServer implements AdminHost {
         this.state.tick,
       ),
       watchingSpawners: false,
+      queueFloor: Number.POSITIVE_INFINITY,
     };
     this.connections.add(connection);
     channel.onMessage((bytes) => {
@@ -440,7 +460,12 @@ export class GameServer implements AdminHost {
           type: ServerMessageType.Pong,
           nonce: message.nonce,
           serverTick: this.state.tick,
+          // The floor since the last pong, not the depth right now (spec 148).
+          // Only this end knows it, and the instant would not be the quantity
+          // that matters even if the client could infer it.
+          inputQueueFloor: Math.min(connection.queueFloor, connection.inputs.length),
         });
+        connection.queueFloor = Number.POSITIVE_INFINITY;
         break;
 
       case ClientMessageType.Equip: {
@@ -1149,6 +1174,10 @@ export class GameServer implements AdminHost {
   tick(): void {
     const inputs: ServerInput[] = [];
     for (const connection of this.connections) {
+      // Sampled every tick at the same point -- before this tick's input is
+      // taken -- so the floor the pong reports is measured against a consistent
+      // instant rather than against wherever a 2Hz sample happened to land.
+      connection.queueFloor = Math.min(connection.queueFloor, connection.inputs.length);
       const next = connection.inputs.shift();
       // The stream has reached `applied`, so anything asked for at or before it
       // is due now. A request stamped ahead of the queue waits for its input --

@@ -298,7 +298,7 @@ describe('game message round-trip', () => {
     },
     // A shop with nothing in it, and the empty id that means "closed".
     { type: ServerMessageType.VendorState, vendorId: '', name: '', stock: [], buyback: [] },
-    { type: ServerMessageType.Pong, nonce: 88, serverTick: 1000 },
+    { type: ServerMessageType.Pong, nonce: 88, serverTick: 1000, inputQueueFloor: 4 },
     { type: ServerMessageType.Error, code: 7, message: 'rejected' },
     { type: ServerMessageType.Disconnect, reason: 'kicked' },
   ];

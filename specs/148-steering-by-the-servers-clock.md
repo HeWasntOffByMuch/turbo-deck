@@ -29,8 +29,19 @@ are paid for by the drift correction, which is to say by the player.
 
 ### One number on the wire
 
-`PongMessage` gains `inputQueueDepth: varuint` — how many of this connection's
-inputs were unconsumed when the pong was written. `PROTOCOL_VERSION` 12 → 13.
+`PongMessage` gains `inputQueueFloor: varuint` — the **smallest** this
+connection's queue got since the last pong, sampled every tick at the same
+point and reset when reported. `PROTOCOL_VERSION` 12 → 13.
+
+A floor rather than an instantaneous reading, and this is the correction the
+implementation forced. Pongs arrive at 2Hz; the queue oscillates at 60Hz
+between "the input that just arrived" and "nothing". Sampled at an instant, a
+*starving* connection reads 1 about as often as 0, which sits inside the
+deadband — so the first version of this steered a fast clock correctly and was
+completely blind to a slow one, and the test that should have caught it was
+measuring starvation the controller could not see. The floor says exactly what
+is wanted in both directions: if it ever reached zero the server starved, and if
+it never dropped below forty the queue is forty deep.
 
 ### A controller, pure
 

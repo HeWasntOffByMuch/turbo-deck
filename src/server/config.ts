@@ -104,8 +104,11 @@ export const INTEREST_CHUNK_RADIUS = 8;
  * 12: an entity delta can carry who a player is -- their name and their turn
  * rate -- so another player is somebody rather than an anonymous shape, and
  * `turn-limits.ts` stops guessing a rate it was never sent (spec 145).
+ * 13: the pong says how deep this connection's input queue is, so the client
+ * can steer its own clock by it rather than drifting until the queue caps and
+ * the server drops the oldest thing in it (spec 148).
  */
-export const PROTOCOL_VERSION = 12;
+export const PROTOCOL_VERSION = 13;
 
 /**
  * How far from a map chunk a player may be and still be sent it (spec 072).

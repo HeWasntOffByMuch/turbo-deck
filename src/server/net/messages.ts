@@ -740,6 +740,24 @@ export interface PongMessage {
   readonly type: typeof ServerMessageType.Pong;
   readonly nonce: number;
   readonly serverTick: number;
+  /**
+   * The **smallest** this connection's input queue got since the last pong
+   * (spec 148).
+   *
+   * A floor rather than an instantaneous reading, because the instant is not
+   * the quantity that matters and cannot even see the failure. Pongs arrive at
+   * 2Hz; the queue oscillates at 60Hz between "the input that just arrived" and
+   * "nothing". Sampled, a starving connection reads 1 about as often as 0 and
+   * the controller sits in its deadband while the server ticks on empty. The
+   * floor over the interval says exactly what is wanted: if it ever reached
+   * zero the server starved, and if it never dropped below forty the queue is
+   * forty deep.
+   *
+   * On `Pong` rather than `Delta` because a delta is suppressed when the world
+   * did not change, and the controller must not go blind in exactly the quiet
+   * moments drift accumulates through.
+   */
+  readonly inputQueueFloor: number;
 }
 
 export interface ErrorMessage {
@@ -1105,7 +1123,7 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
       writer.u8(message.channel).str(message.from).str(message.text);
       break;
     case ServerMessageType.Pong:
-      writer.u32(message.nonce).u32(message.serverTick);
+      writer.u32(message.nonce).u32(message.serverTick).varuint(message.inputQueueFloor);
       break;
     case ServerMessageType.Error:
       writer.u16(message.code).str(message.message);
@@ -1267,7 +1285,12 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         text: reader.str(),
       };
     case ServerMessageType.Pong:
-      return { type: ServerMessageType.Pong, nonce: reader.u32(), serverTick: reader.u32() };
+      return {
+        type: ServerMessageType.Pong,
+        nonce: reader.u32(),
+        serverTick: reader.u32(),
+        inputQueueFloor: reader.varuint(),
+      };
     case ServerMessageType.Error:
       return { type: ServerMessageType.Error, code: reader.u16(), message: reader.str() };
     case ServerMessageType.Disconnect:
