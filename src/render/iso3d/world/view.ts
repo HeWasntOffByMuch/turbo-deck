@@ -829,6 +829,24 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   const gestures = new TouchGestures();
 
   /**
+   * The fingers the interface owns, decided on the way down (spec 139).
+   *
+   * Ownership is per pointer and settled once, at `pointerdown`, rather than
+   * asked again on every move: a finger that started on a window must not become
+   * half of a pinch when it slides off the edge of it, and a finger that started
+   * on the world must not be swallowed by a window that opened underneath it
+   * mid-gesture. It is also what keeps `TouchGestures` seeing a consistent set --
+   * a `down` it never got must not be followed by an `up` it does.
+   */
+  const interfaceFingers = new Set<number>();
+
+  /**
+   * A touch has no modifier keys. Shared rather than built per event, because it
+   * is the same four falses every time.
+   */
+  const touchModifiers: Modifiers = { shift: false, ctrl: false, alt: false, meta: false };
+
+  /**
    * A tap: the order, or the answer to an aim, depending on what is pending.
    *
    * The one place touch and mouse deliberately disagree is the last branch. A
@@ -860,12 +878,24 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // compatibility mouse events that would reach nothing anyway -- off a canvas
     // that has its own reading of the gesture.
     event.preventDefault();
+    // Offered to the interface first, exactly as a mouse press is (spec 139).
+    // Without this a window drawn over the world was scenery: the tap under it
+    // ordered the player to walk to wherever the window was, and nothing in the
+    // bag, the sheet or the options window could be pressed at all.
+    if (ui.handlePointer('down', pointIn(event), 0, touchModifiers)) {
+      interfaceFingers.add(event.pointerId);
+      return;
+    }
     gestures.down(sampleOf(event));
   };
 
   const onPointerMove = (event: PointerEvent): void => {
     if (event.pointerType !== 'touch') {
       onMove(event);
+      return;
+    }
+    if (interfaceFingers.has(event.pointerId)) {
+      ui.handlePointer('move', pointIn(event), 0, touchModifiers);
       return;
     }
     const gesture = gestures.move(sampleOf(event));
@@ -887,6 +917,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       onMouseUp(event);
       return;
     }
+    if (interfaceFingers.delete(event.pointerId)) {
+      ui.handlePointer('up', pointIn(event), 0, touchModifiers);
+      return;
+    }
     const gesture = gestures.up(sampleOf(event));
     if (gesture?.kind === 'tap') onTap(gesture.x, gesture.y);
   };
@@ -906,7 +940,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   };
 
   const onPointerCancel = (event: PointerEvent): void => {
-    if (event.pointerType === 'touch') gestures.cancel(event.pointerId);
+    if (event.pointerType !== 'touch') return;
+    // A finger the interface owns is dropped rather than lifted: a cancel is the
+    // browser taking the gesture away, which is not a press being completed.
+    if (interfaceFingers.delete(event.pointerId)) return;
+    gestures.cancel(event.pointerId);
   };
 
   /** A pointer event as the recogniser's plain, canvas-relative sample. */
@@ -922,6 +960,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // A gesture interrupted by losing focus never sends its pointerup, and the
     // next finger down would otherwise land mid-pinch.
     gestures.clear();
+    interfaceFingers.clear();
   };
 
   // --- the loop ----------------------------------------------------------
@@ -1329,6 +1368,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       heldKeys.clear();
       // A tab switched away mid-pinch must not leave fingers down.
       gestures.clear();
+      interfaceFingers.clear();
     },
   };
 }
