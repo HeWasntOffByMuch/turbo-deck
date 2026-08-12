@@ -41,6 +41,18 @@ export interface HudLayout {
   readonly showsKeyNumber: boolean;
   /** Whether the diagnostic readout is drawn (it is written either way). */
   readonly showsReadout: boolean;
+  /**
+   * Whether the tuning popovers in the top-right corner are built at all
+   * (spec 140) -- the view cog, day and night, the player's lights, the retro
+   * filter, the hike look, the weather and the effects.
+   *
+   * A separate field from {@link showsReadout} even though both are false on a
+   * phone today, because they are two different things that happen to go
+   * together: one is a text panel this file's HUD writes, the other is seven
+   * popovers `view.ts` builds. One boolean over both would read as a rule, and
+   * the day a phone wants the retro filter switch back, only one of them flips.
+   */
+  readonly showsTuningMenus: boolean;
   /** One weapon-switch button. */
   readonly weapon: BoxSize;
   readonly weaponGap: number;
@@ -49,6 +61,12 @@ export interface HudLayout {
   /** Which way the switch stacks: a row along the bottom, or a column up the side. */
   readonly weaponDirection: 'row' | 'column';
   readonly weaponIconPx: number;
+  /** One window button: the bag, the sheet, the options window (spec 140). */
+  readonly systemButton: BoxSize;
+  readonly systemGap: number;
+  /** Whether a window button is its icon alone, with the name only as a label. */
+  readonly systemIconOnly: boolean;
+  readonly systemIconPx: number;
   /** The gap between the HUD and the edge of the frame, before any safe-area inset. */
   readonly edge: number;
 }
@@ -61,6 +79,7 @@ const DESKTOP: HudLayout = {
   slotCountdownPx: 15,
   showsKeyNumber: true,
   showsReadout: true,
+  showsTuningMenus: true,
   // Wider than the 132 it was before the icon: the icon and its gap take 22px
   // off the label, and "Weighted Stars" is exactly long enough to wrap onto a
   // second line and out of the button when it does.
@@ -69,6 +88,13 @@ const DESKTOP: HudLayout = {
   weaponIconOnly: false,
   weaponDirection: 'column',
   weaponIconPx: 16,
+  // Captioned on a desktop, for the same reason the weapon switch is: there is
+  // room, and "Bag" beside a bag is what makes the second button obviously the
+  // sheet rather than something else with a person on it.
+  systemButton: { width: 104, height: 30 },
+  systemGap: 4,
+  systemIconOnly: false,
+  systemIconPx: 16,
   edge: 16,
 };
 
@@ -89,11 +115,18 @@ const COMPACT: HudLayout = {
   slotCountdownPx: 13,
   showsKeyNumber: false,
   showsReadout: false,
+  showsTuningMenus: false,
   weapon: { width: 46, height: 46 },
   weaponGap: 5,
   weaponIconOnly: true,
   weaponDirection: 'row',
   weaponIconPx: 24,
+  // The same square as a weapon button, and a row along the other edge: the two
+  // groups mirror each other and the hotbar sits centred between them.
+  systemButton: { width: 46, height: 46 },
+  systemGap: 5,
+  systemIconOnly: true,
+  systemIconPx: 24,
   edge: 12,
 };
 

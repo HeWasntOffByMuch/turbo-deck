@@ -350,7 +350,13 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  `npm run bake:ui-goldens` accepts a visual change; CI re-bakes and
                  requires no diff, like the unit manifest.
 src/render/      the client: a tab shell over the play view, the two tuning
-                 sandboxes and the map editor
+                 sandboxes and the map editor. iso3d/shell-tabs.ts is the one
+                 decision in the shell worth failing a test over (spec 140): a
+                 coarse pointer is offered the tabs marked `game` and nothing
+                 else, because five of the six are workbenches a finger cannot
+                 drive, and with one tab left there are no tab buttons to draw.
+                 The bar stays -- ui-layer measures it to know where the app's
+                 chrome ends, and the fullscreen button lives in it.
 src/render/cloth/ pure cloth simulation for the robed character (spec 046) --
                  solver, wind, patterns, colliders and figure metrics. No
                  three.js and no DOM, so it runs and is tested headlessly.
@@ -469,13 +475,19 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  tick under a cross-fade that never saw it, which is why setting
                  off blended and stopping cut)
                  pixel-font.ts (a 5x7 glyph table, since nothing may be fetched)
-                 and touch.ts (taps and pinches, spec 093 -- bounded by distance
-                 and never by time, because an event's stamp measures the
-                 renderer's load rather than the finger), hud-layout.ts and
+                 and touch.ts (taps and two-finger gestures, specs 093/140 --
+                 bounded by distance and never by time, because an event's stamp
+                 measures the renderer's load rather than the finger; and two
+                 fingers report what they did to their separation AND to their
+                 midpoint in one breath, because a real gesture is a spread and a
+                 slide at once and reporting one of them makes the other
+                 unreachable -- a pure spread arrives with `dragX` at zero, a
+                 pure swipe with `ratio` at one, and the swipe turns the camera),
+                 hud-layout.ts and
                  icons.ts (how big the HUD is on a finger and what the weapon
-                 switch draws, spec 094 -- the sizes are a sum, so "eight buttons
-                 still fit across a phone" fails in Node rather than in a
-                 screenshot),
+                 switch and the window buttons draw, specs 094/140 -- the sizes
+                 are a sum, so "eight buttons still fit across a phone, clear of
+                 both corner rows" fails in Node rather than in a screenshot),
                  inventory-model.ts, character-model.ts and shop-model.ts (what
                  the bag, the sheet and the shop are handed -- `src/ui/` may not
                  reach the sim, so the replicated facts and the content tables
@@ -595,7 +607,13 @@ src/render/iso3d/view-controls.ts, menu-group.ts, settings-menu.ts  the Play
                  machine rather than a document; settings-menu.ts is the button,
                  the popover and the heading the panels share. The widgets
                  themselves are the state: nothing is persisted and every session
-                 opens at defaults.
+                 opens at defaults. None of them is built on a phone (spec 140):
+                 they are tuning panels twenty rows deep, and the seven of them
+                 pile into the corner of an 844x390 frame. ViewControls is still
+                 *constructed* there -- the camera reads its sliders and `orbitBy`
+                 writes them -- so the angle and the zoom span are also published
+                 as `data-camera-orbit` and `data-camera-zoom`, because both
+                 probes used to read them off inputs that a phone has not got.
 src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
                  read by the tree sway, the water and the streak layer over the
                  ground, plus the shore distance transform the water's bands step

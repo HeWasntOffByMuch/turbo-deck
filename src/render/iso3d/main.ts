@@ -24,11 +24,20 @@ import { mountWorld } from './world/view.js';
 import { mountMovement } from './movement.js';
 import { mountDebug } from './debug-view.js';
 import type { ViewHandle } from './view-handle.js';
-import { createFullscreenButton } from './fullscreen.js';
+import { createFullscreenButton, isCoarsePointer } from './fullscreen.js';
+import { showsTabButtons, visibleTabs } from './shell-tabs.js';
 
 interface Tab {
   readonly label: string;
   readonly mount: (container: HTMLElement) => ViewHandle;
+  /**
+   * Whether this tab is the game rather than a workbench (spec 140).
+   *
+   * A phone is offered only the tabs that carry it: the editor is a three-button
+   * drag model and the sandboxes and studios are walls of sliders, so on a
+   * finger they are buttons that lead somewhere unusable.
+   */
+  readonly game?: boolean;
   /**
    * Whether the view owns the whole window (spec 041), with its own UI floating
    * over it, rather than laying out normally below the tab bar. A property
@@ -42,8 +51,8 @@ function main(): void {
   const app = document.getElementById('app');
   if (!app) throw new Error('missing #app');
 
-  const tabs: readonly Tab[] = [
-    { label: 'Play', mount: mountWorld, fullscreen: true },
+  const all: readonly Tab[] = [
+    { label: 'Play', mount: mountWorld, fullscreen: true, game: true },
     { label: 'Movement sandbox', mount: mountMovement },
     { label: 'Rig debug', mount: mountDebug },
     { label: 'Map editor', mount: mountEditor, fullscreen: true },
@@ -55,6 +64,9 @@ function main(): void {
     // other benches rather than owning the screen.
     { label: 'VFX', mount: mountVfxStudio },
   ];
+
+  // A phone gets the game and nothing else (spec 140).
+  const tabs = visibleTabs(all, isCoarsePointer());
 
   // The bar floats over the game window rather than pushing it down (spec 041);
   // the container beneath it is the full viewport, and the sandbox tabs scroll
@@ -109,18 +121,28 @@ function main(): void {
     buttons.forEach((btn, j) => styleButton(btn, j === i));
   };
 
-  tabs.forEach((tab, i) => {
-    const btn = document.createElement('button');
-    btn.textContent = tab.label;
-    styleButton(btn, false);
-    btn.addEventListener('click', () => activate(i));
-    bar.appendChild(btn);
-    buttons.push(btn);
-  });
+  // No buttons when there is only one tab to be on: a strip you cannot leave is
+  // furniture, and on a phone it is furniture across the top of the world. The
+  // bar itself stays -- `ui-layer.ts` measures it to know where the app's chrome
+  // ends, and the fullscreen button below lives in it.
+  if (showsTabButtons(tabs)) {
+    tabs.forEach((tab, i) => {
+      const btn = document.createElement('button');
+      btn.textContent = tab.label;
+      styleButton(btn, false);
+      btn.addEventListener('click', () => activate(i));
+      bar.appendChild(btn);
+      buttons.push(btn);
+    });
+  }
 
   // On a phone the browser chrome is a third of a landscape screen (spec 093).
   // Null on anything that cannot go fullscreen or is not driven by a finger, so
-  // the desktop bar keeps its four buttons.
+  // the desktop bar keeps its tab buttons and nothing else.
+  //
+  // It is the one control left in the bar on a phone (spec 140), and it stays
+  // for the reason the rest went: the whole point of a phone pass is the frame,
+  // and a third of this one is browser chrome.
   const fullscreen = createFullscreenButton(app, { style: (btn) => styleButton(btn, false) });
   if (fullscreen) bar.appendChild(fullscreen);
 

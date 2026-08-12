@@ -44,10 +44,12 @@ import { StreamedMap } from '../../../server/client/streamed-map.js';
 import type { ViewHandle } from '../view-handle.js';
 import { createWeatherControls } from '../weather-controls.js';
 import { createVfxControls } from '../vfx-controls.js';
-import { orbitStep } from './orbit-keys.js';
+import { orbitDrag, orbitStep } from './orbit-keys.js';
 import { turnToward } from '../../../server/sim/movement.js';
 import { facesAim } from '../../../server/sim/abilities.js';
 import { createHud, HOTBAR } from './hud.js';
+import { hudLayout } from './hud-layout.js';
+import { isCoarsePointer } from '../fullscreen.js';
 import { appearanceOf } from './appearance.js';
 import { effectsForBlow } from './vfx-wire.js';
 import { moveIntent, RoutePlanner } from './intent.js';
@@ -229,6 +231,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    */
   let lastUiReadout = '';
   let lastUiCost = '';
+  /** The last camera pair published, so a still view invalidates no styles. */
+  let lastCamera = '';
   function publishUiReadout(): void {
     const readout = ui.readout();
     // Its own comparison, because this one moves on its own: it is the worst of
@@ -287,31 +291,44 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // `Stats`. Nothing here decides what the right-click then does -- the next
   // frame simply reads the stat and asks for whatever it names.
   hud.onEquip((itemId) => client.equip('mainHand', itemId));
+  // The same call a key binding makes (spec 140). The button knows which window
+  // it names and nothing else about what opening one costs.
+  hud.onOpen((id) => ui.toggle(id));
 
   // The settings buttons float over the top-right corner of the game window: the
   // view cog (spec 034), the day/night clock, the player's lights, the retro
   // filter and the hike look (spec 107), then the weather (spec 075). A popover
   // each rather than one drawer for all of them -- and one group, so opening any
   // of them closes the rest instead of stacking six panels into one corner.
-  const weather = createWeatherControls({ group: scene.controls.menus });
-  // The seventh button (spec 121). Both settings are pushed straight into the
-  // layer rather than polled: the intensity is a budget the sim reads, and gore
-  // is a switch the decal field acts on rather than a flag anything draws past.
-  const vfxControls = createVfxControls({
-    group: scene.controls.menus,
-    onChange: (settings) => {
-      scene.setVfxIntensity(settings.intensity);
-      scene.setGore(settings.gore);
-    },
-  });
-  const buttons = document.createElement('div');
-  // Inset against the notch and the home indicator (spec 093): in landscape the
-  // cutout is on a side edge, which is exactly where these sit.
-  buttons.style.cssText =
-    'position:absolute;top:calc(8px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));' +
-    'z-index:30;display:flex;gap:6px;';
-  buttons.append(scene.controls.element, weather.element, vfxControls.element);
-  root.append(hud.element, buttons);
+  //
+  // Not on a phone (spec 140). They are tuning panels twenty rows deep, and on
+  // an 844x390 frame the seven of them pile into the corner underneath the tab
+  // bar. `scene.controls` is still *built* -- the camera reads its sliders, and
+  // `orbitBy` writes them -- it simply has nowhere to be pressed, so a phone
+  // gets the defaults and the options window (spec 135) instead.
+  const showsTuningMenus = hudLayout(isCoarsePointer()).showsTuningMenus;
+  if (showsTuningMenus) {
+    const weather = createWeatherControls({ group: scene.controls.menus });
+    // The seventh button (spec 121). Both settings are pushed straight into the
+    // layer rather than polled: the intensity is a budget the sim reads, and gore
+    // is a switch the decal field acts on rather than a flag anything draws past.
+    const vfxControls = createVfxControls({
+      group: scene.controls.menus,
+      onChange: (settings) => {
+        scene.setVfxIntensity(settings.intensity);
+        scene.setGore(settings.gore);
+      },
+    });
+    const buttons = document.createElement('div');
+    // Inset against the notch and the home indicator (spec 093): in landscape the
+    // cutout is on a side edge, which is exactly where these sit.
+    buttons.style.cssText =
+      'position:absolute;top:calc(8px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));' +
+      'z-index:30;display:flex;gap:6px;';
+    buttons.append(scene.controls.element, weather.element, vfxControls.element);
+    root.append(buttons);
+  }
+  root.append(hud.element);
 
   /** Where a blow lands on a body, in world units above its feet. */
   const BLOOD_HEIGHT = 26;
@@ -375,6 +392,23 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * autosave does it -- everything under src/ui/ takes a `StorageLike`.
    */
   const held = new Set<string>();
+  /**
+   * Held raw key *codes*, for the input that is deliberately not rebindable.
+   *
+   * Today that is the two camera keys and nothing else (spec 129 chose two
+   * hard-coded codes on purpose, since there was no binding surface when it was
+   * written). It is a second set rather than an entry in `bindings.json` because
+   * the profile is a versioned document with golden images over the actions it
+   * lists, and a camera section in it is a larger change than this.
+   *
+   * It exists at all because the camera keys have been dead since spec 125:
+   * `orbitStep` asks for `BracketLeft`/`BracketRight` and `held` has stored
+   * rebindable action ids ever since, so nothing was ever added for them and
+   * `[` and `]` turned nothing on any device (spec 140). The unit test passed
+   * throughout -- the arithmetic was never wrong, the wiring was -- which is why
+   * `scripts/probe-orbit.ts` drives a real page.
+   */
+  const heldKeys = new Set<string>();
   const inputMap = new InputMap();
   /**
    * Where the key profile lives. Reached for here, at the DOM edge, exactly as
@@ -614,10 +648,16 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     if (ui.handleKey(event.code, 'down', modifiersOf(event), textOf(event))) {
       // Held actions are cleared for the same reason `blur` clears them: keys
       // pressed while the interface has the keyboard get no release the game
-      // will see, and a stranded `move.north` walks into a wall.
+      // will see, and a stranded `move.north` walks into a wall. A stranded
+      // camera key is the same bug with the view spinning instead.
       held.clear();
+      heldKeys.clear();
       return;
     }
+
+    // Recorded before the map is consulted, because these are the keys the map
+    // does not know about (spec 140).
+    heldKeys.add(event.code);
 
     const decision = decideKeyDown(inputMap, event.code, modifiersOf(event));
 
@@ -675,6 +715,9 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
   const onKeyUp = (event: KeyboardEvent): void => {
     ui.handleKey(event.code, 'up', modifiersOf(event));
+    // Dropped whatever the interface said, for the reason below: a release the
+    // UI swallowed is a key held forever, and here that is a view that spins.
+    heldKeys.delete(event.code);
     // Released whatever the interface said, always. A release that the UI
     // swallowed is a held action with no way out, and the symptom is walking
     // into a wall until the same key is pressed and released again.
@@ -795,11 +838,30 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     client.cancelCast();
   }
 
-  // --- touch (spec 093) --------------------------------------------------
+  // --- touch (specs 093, 140) --------------------------------------------
   //
   // One gesture has to carry both mouse buttons, so a tap is answered by
-  // whatever is being asked rather than meaning one fixed thing.
+  // whatever is being asked rather than meaning one fixed thing. Two fingers
+  // carry the zoom and the camera's swing at once (spec 140).
   const gestures = new TouchGestures();
+
+  /**
+   * The fingers the interface owns, decided on the way down (spec 140).
+   *
+   * Ownership is per pointer and settled once, at `pointerdown`, rather than
+   * asked again on every move: a finger that started on a window must not become
+   * half of a pinch when it slides off the edge of it, and a finger that started
+   * on the world must not be swallowed by a window that opened underneath it
+   * mid-gesture. It is also what keeps `TouchGestures` seeing a consistent set --
+   * a `down` it never got must not be followed by an `up` it does.
+   */
+  const interfaceFingers = new Set<number>();
+
+  /**
+   * A touch has no modifier keys. Shared rather than built per event, because it
+   * is the same four falses every time.
+   */
+  const touchModifiers: Modifiers = { shift: false, ctrl: false, alt: false, meta: false };
 
   /**
    * A tap: the order, or the answer to an aim, depending on what is pending.
@@ -833,6 +895,14 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // compatibility mouse events that would reach nothing anyway -- off a canvas
     // that has its own reading of the gesture.
     event.preventDefault();
+    // Offered to the interface first, exactly as a mouse press is (spec 140).
+    // Without this a window drawn over the world was scenery: the tap under it
+    // ordered the player to walk to wherever the window was, and nothing in the
+    // bag, the sheet or the options window could be pressed at all.
+    if (ui.handlePointer('down', pointIn(event), 0, touchModifiers)) {
+      interfaceFingers.add(event.pointerId);
+      return;
+    }
     gestures.down(sampleOf(event));
   };
 
@@ -841,16 +911,31 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       onMove(event);
       return;
     }
+    if (interfaceFingers.has(event.pointerId)) {
+      ui.handlePointer('move', pointIn(event), 0, touchModifiers);
+      return;
+    }
     const gesture = gestures.move(sampleOf(event));
-    // The pinch is the only thing a touch drag does. Deliberately not a camera
-    // pan: the camera follows the player (spec 039), and a view that could be
-    // dragged off them would need a way back that this spec does not add.
-    if (gesture?.kind === 'pinch') scene.controls.pinchZoom(gesture.ratio);
+    if (gesture?.kind !== 'twoFinger') return;
+    // Both halves of what two fingers did, applied together (spec 140). A pure
+    // spread arrives with `dragX` at zero and a pure swipe with `ratio` at one,
+    // so neither call costs anything when it is not what the hand meant -- and
+    // nothing here has to decide which gesture this "really" is.
+    scene.controls.pinchZoom(gesture.ratio);
+    // Turning, not panning. The camera still follows the player (spec 039);
+    // what a swipe moves is which side of them it watches from, which is the
+    // one thing a rock standing in the way needs (spec 129).
+    const swing = orbitDrag(gesture.dragX);
+    if (swing !== 0) scene.controls.orbitBy(swing);
   };
 
   const onPointerUp = (event: PointerEvent): void => {
     if (event.pointerType !== 'touch') {
       onMouseUp(event);
+      return;
+    }
+    if (interfaceFingers.delete(event.pointerId)) {
+      ui.handlePointer('up', pointIn(event), 0, touchModifiers);
       return;
     }
     const gesture = gestures.up(sampleOf(event));
@@ -872,7 +957,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   };
 
   const onPointerCancel = (event: PointerEvent): void => {
-    if (event.pointerType === 'touch') gestures.cancel(event.pointerId);
+    if (event.pointerType !== 'touch') return;
+    // A finger the interface owns is dropped rather than lifted: a cancel is the
+    // browser taking the gesture away, which is not a press being completed.
+    if (interfaceFingers.delete(event.pointerId)) return;
+    gestures.cancel(event.pointerId);
   };
 
   /** A pointer event as the recogniser's plain, canvas-relative sample. */
@@ -884,9 +973,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   const onContextMenu = (event: Event): void => event.preventDefault();
   const onBlur = (): void => {
     held.clear();
+    heldKeys.clear();
     // A gesture interrupted by losing focus never sends its pointerup, and the
     // next finger down would otherwise land mid-pinch.
     gestures.clear();
+    interfaceFingers.clear();
   };
 
   // --- the loop ----------------------------------------------------------
@@ -1158,7 +1249,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // carves a hole in the rock any more. Driven off the held set rather than
     // off key events, so holding a bracket is a continuous swing rather than a
     // stutter at the OS repeat rate.
-    const swing = orbitStep(held, elapsed / 1000);
+    //
+    // `heldKeys`, not `held`: this reads key *codes*, and `held` has carried
+    // rebindable action ids since spec 125 -- which is what left these two keys
+    // dead for eleven specs (spec 140).
+    const swing = orbitStep(heldKeys, elapsed / 1000);
     if (swing !== 0) scene.controls.orbitBy(swing);
 
     const view = client.view();
@@ -1219,6 +1314,23 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       abilityId: pendingAim?.abilityId ?? order?.abilityId ?? null,
       pending: pendingAim !== null,
     });
+    // Read back off the interface rather than remembered from the press
+    // (spec 140), so a window opened by a key lights its button too.
+    hud.showOpenWindows(ui.opened());
+
+    // Where the view is looking from and how wide it frames, for the probes.
+    // They used to read the Orbit and Zoom sliders, and on a phone the panel
+    // those live in is not in the document at all now (spec 140) -- so the two
+    // gestures that write them would be checkable everywhere except on the
+    // device they exist for. Invisible, like every other `data-` handle here;
+    // it is not a readout.
+    const camera = `${scene.controls.orbitDegrees().toFixed(2)}|${scene.controls.viewHalfWidth().toFixed(2)}`;
+    if (camera !== lastCamera) {
+      lastCamera = camera;
+      const [orbit, zoom] = camera.split('|');
+      root.dataset['cameraOrbit'] = orbit;
+      root.dataset['cameraZoom'] = zoom;
+    }
 
     // The setting is the subscription (spec 076): turning it on is what asks
     // the server for the timers, and turning it off is what stops them coming.
@@ -1287,8 +1399,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       root.removeEventListener('wheel', onWheel, { capture: true });
       document.documentElement.removeEventListener('contextmenu', onContextMenu);
       held.clear();
+      heldKeys.clear();
       // A tab switched away mid-pinch must not leave fingers down.
       gestures.clear();
+      interfaceFingers.clear();
     },
   };
 }
