@@ -40,7 +40,8 @@ import { type HikeSettings } from '../hike.js';
 import { CURVATURE_UNIFORMS } from '../terrain-curvature.js';
 import { installPoissonShadows, shadowRadiusFor } from '../shadow-pcf.js';
 import { DETAIL_UNIFORMS, buildDetailTexture } from '../terrain-detail.js';
-import { MechRig } from '../rigs.js';
+import { MechRig, defaultMechTuning } from '../rigs.js';
+import { monsterLookFor } from './monster-look.js';
 import { CritterRig, defaultCritterTuning } from '../critter.js';
 import { CRITTERS } from '../../critters/index.js';
 import { attachHighlight, type HighlightHandle } from '../highlight.js';
@@ -1579,7 +1580,18 @@ export class WorldScene {
     } else {
       // No authored unit for this type, so the procedural rig it has always
       // had. Additive on purpose: the roster moves over when there is a roster.
-      const mech = new MechRig(typeId);
+      //
+      // What that rig is built with comes from the look table (spec 152), and a
+      // type with no row there gets exactly what it got before: the defaults,
+      // the chassis body and `enemyColor`'s answer. The tuning is merged here
+      // rather than in the table because `defaultMechTuning` lives in the rig
+      // module, and the pure half of this directory does not import three.
+      const look = monsterLookFor(typeId);
+      const mech = new MechRig(typeId, look?.bodyColor, {
+        tuning: { ...defaultMechTuning(), ...look?.tuning },
+        ...(look?.body === undefined ? {} : { body: look.body }),
+        ...(look?.legColor === undefined ? {} : { legColor: look.legColor }),
+      });
       body = {
         group: mech.group,
         kind: 'monster',

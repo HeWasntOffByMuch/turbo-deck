@@ -135,6 +135,11 @@ const PURE_RENDER = [
   'src/render/iso3d/surface-detail.ts',
   'src/render/iso3d/surface-detail.test.ts',
   'src/render/iso3d/world/appearance.ts',
+  // What a monster's rig is built with (spec 152) -- the drawn half of an enemy,
+  // beside the file that says which rig draws it. Pure for the reason the rest
+  // of this directory's decision-making is: a look is a row of numbers, and a
+  // row of numbers is checkable in Node against the table it must not duplicate.
+  'src/render/iso3d/world/monster-look.ts',
   'src/render/iso3d/world/cast.ts',
   'src/render/iso3d/world/intent.ts',
   'src/render/iso3d/world/key-actions.ts',
