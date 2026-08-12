@@ -34,7 +34,7 @@ import { castBar } from './cast.js';
 import { aimGesture } from './aim.js';
 import { appearanceOf, displayName } from './appearance.js';
 import { pixelTextSvg } from './pixel-font.js';
-import { isCoarsePointer } from '../fullscreen.js';
+import { isHandheldDevice } from '../device.js';
 import { DamagePopups, type Projector, type WorldAnchor } from './damage-popup.js';
 import { hudLayout } from './hud-layout.js';
 import { systemIconSvg, weaponIconSvg, type SystemIconId } from './icons.js';
@@ -188,7 +188,7 @@ export function createHud(project: Projector): HudHandle {
   // The one device question, asked once (spec 094). Everything below reads sizes
   // out of the table rather than deciding them, so what "compact" means is
   // asserted in Node instead of measured on a phone.
-  const layout = hudLayout(isCoarsePointer());
+  const layout = hudLayout(isHandheldDevice());
 
   const root = document.createElement('div');
   root.style.cssText = 'position:absolute;inset:0;pointer-events:none;overflow:hidden;';
@@ -300,6 +300,12 @@ export function createHud(project: Projector): HudHandle {
   // The weapon switch (spec 079), bottom left and out of the hotbar's way.
   // Which one is lit is read back off `stats.basicAttackId` -- the server's
   // answer -- so a refused equip simply leaves the old one lit.
+  //
+  // Not built at all on a phone (spec 141): three permanent buttons is a lot of
+  // corner for a choice made rarely, and the bag and the sheet both make it and
+  // are both one tap away. Built or not, the element is created and simply never
+  // appended when the layout says no -- the update loop below styles these
+  // buttons every frame and a conditional `weaponSlots` would put a branch in it.
   const weapons = document.createElement('div');
   weapons.style.cssText =
     `position:absolute;left:calc(${layout.edge}px + env(safe-area-inset-left));bottom:${bottom};` +
@@ -310,7 +316,7 @@ export function createHud(project: Projector): HudHandle {
     // half the map. Icons carry their own backing, so the compact row drops the
     // panel and the padding with the caption.
     (layout.weaponIconOnly ? '' : 'background:rgba(10,14,20,.72);padding:8px;border-radius:6px;');
-  root.append(weapons);
+  if (layout.showsWeaponSwitch) root.append(weapons);
 
   if (!layout.weaponIconOnly) {
     const weaponCaption = document.createElement('div');
@@ -707,7 +713,7 @@ function targetLine(view: ClientView, targetId: number | null): string {
  */
 let touchHintsCache: boolean | null = null;
 function touchHints(): boolean {
-  touchHintsCache ??= isCoarsePointer();
+  touchHintsCache ??= isHandheldDevice();
   return touchHintsCache;
 }
 

@@ -8,7 +8,7 @@
  * weapon switch on a device nobody in the room is holding.
  *
  * Nothing here reads the window. The one input is whether the pointer is a
- * finger (`isCoarsePointer`, spec 093), because a phone does not become a
+ * finger (`isHandheldDevice`, spec 141), because a phone does not become a
  * desktop and a desktop with a narrow window is still driven by a mouse.
  */
 
@@ -53,6 +53,15 @@ export interface HudLayout {
    * the day a phone wants the retro filter switch back, only one of them flips.
    */
   readonly showsTuningMenus: boolean;
+  /**
+   * Whether the weapon switch is drawn at all (spec 141).
+   *
+   * False on a phone. It is three permanent buttons spending the bottom-left
+   * corner on a choice a player makes rarely, and both windows that can make it
+   * -- the bag and the sheet -- are one tap away since spec 140. Nothing becomes
+   * unreachable; a corner is freed.
+   */
+  readonly showsWeaponSwitch: boolean;
   /** One weapon-switch button. */
   readonly weapon: BoxSize;
   readonly weaponGap: number;
@@ -80,6 +89,7 @@ const DESKTOP: HudLayout = {
   showsKeyNumber: true,
   showsReadout: true,
   showsTuningMenus: true,
+  showsWeaponSwitch: true,
   // Wider than the 132 it was before the icon: the icon and its gap take 22px
   // off the label, and "Weighted Stars" is exactly long enough to wrap onto a
   // second line and out of the button when it does.
@@ -116,6 +126,7 @@ const COMPACT: HudLayout = {
   showsKeyNumber: false,
   showsReadout: false,
   showsTuningMenus: false,
+  showsWeaponSwitch: false,
   weapon: { width: 46, height: 46 },
   weaponGap: 5,
   weaponIconOnly: true,
