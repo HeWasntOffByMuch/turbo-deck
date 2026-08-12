@@ -151,7 +151,13 @@ function pixelsChanged(a: Buffer, b: Buffer): number {
  * `preview-touch.ts` gives: it has no two-finger gesture, and two fingers are
  * the whole of this.
  */
-async function probeSwipe(browser: Browser): Promise<void> {
+async function probeSwipe(browser: Browser, desktop: Page): Promise<void> {
+  // The keyboard page goes first. Both tabs run a whole server, a whole world
+  // and a three.js frame loop, and on a software rasteriser two of them at once
+  // is what turns a 4-second cold start into a 60-second timeout -- which reads
+  // as "the phone build never came up" and is really "the machine is busy".
+  await desktop.close();
+
   const context = await browser.newContext({
     viewport: { width: 844, height: 390 },
     hasTouch: true,
@@ -163,7 +169,7 @@ async function probeSwipe(browser: Browser): Promise<void> {
     const cdp = await context.newCDPSession(page);
 
     await page.goto(`http://localhost:${PORT}/?seed=20260806`, { waitUntil: 'load' });
-    await page.waitForSelector('[data-world-ready="true"]', { timeout: 60_000 });
+    await page.waitForSelector('[data-world-ready="true"]', { timeout: 120_000 });
     await page.waitForTimeout(2000);
 
     // The panel is gone on a finger, which is itself worth saying out loud here:
@@ -300,7 +306,7 @@ async function main(): Promise<void> {
       `${wrapped} vs ${await publishedOrbit(page)}`,
     );
 
-    await probeSwipe(browser);
+    await probeSwipe(browser, page);
 
     console.log('\n----');
     if (problems.length === 0) console.log('nothing broke.');
