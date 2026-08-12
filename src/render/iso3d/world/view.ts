@@ -520,6 +520,16 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   client.onCastRejected((abilityId, reason) => {
     hud.error(castRefusalText(abilityById(abilityId)?.name ?? abilityId, reason));
   });
+  // Every *other* refusal, into the same stack (spec 147).
+  //
+  // The server already answered a refused allocation, a refused respec and a
+  // refused equip with a reason, and this client dropped all three on the floor:
+  // nothing listened to `onError` at all. A "+" that goes grey and then does
+  // nothing when pressed reads as the game being broken rather than as the rule
+  // it is, and the refusal stack spec 143 built is exactly the place to say so.
+  client.onError((_code, message) => {
+    if (message.length > 0) hud.error(message);
+  });
 
   /** The world point of a body the scene has not drawn, out of the last delta. */
   function replicaAnchor(entityId: number): WorldAnchor | null {
