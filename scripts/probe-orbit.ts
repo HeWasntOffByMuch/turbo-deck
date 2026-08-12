@@ -16,7 +16,7 @@
  * Serves `dist/` rather than the dev server, so what is driven is what ships.
  * Exits non-zero if a key did not turn the view.
  *
- * Since spec 139 it drives the two-finger swipe as well, in a second, phone-
+ * Since spec 140 it drives the two-finger swipe as well, in a second, phone-
  * shaped context -- and the keyboard half is a regression test now rather than a
  * feature check: `[` and `]` were dead for eleven specs, because `orbitStep`
  * reads key codes and the set it was handed started holding rebindable action
@@ -46,7 +46,7 @@ const CHROMIUM_ARGS = [
 
 /** Degrees per second the keys are meant to turn at; mirrors `orbit-keys.ts`. */
 const DEG_PER_SECOND = 90;
-/** Degrees per canvas pixel a two-finger swipe turns at; mirrors it too (spec 139). */
+/** Degrees per canvas pixel a two-finger swipe turns at; mirrors it too (spec 140). */
 const DEG_PER_PX = 0.25;
 
 interface Point {
@@ -95,7 +95,7 @@ async function orbitDegrees(page: Page): Promise<number> {
 /**
  * The same angle, without the panel.
  *
- * A phone does not build the settings popovers at all (spec 139), so the slider
+ * A phone does not build the settings popovers at all (spec 140), so the slider
  * `orbitDegrees` reads is not in the document on exactly the device the swipe is
  * for. `view.ts` publishes the number it writes as `data-camera-orbit`, the same
  * way it publishes the interface's scale and open windows. `data-camera-zoom`
@@ -141,7 +141,7 @@ function pixelsChanged(a: Buffer, b: Buffer): number {
 }
 
 /**
- * Turn the camera with two fingers, in a phone-shaped frame (spec 139).
+ * Turn the camera with two fingers, in a phone-shaped frame (spec 140).
  *
  * Its own context because the gesture only exists on a touch device, and
  * `hasTouch` is what makes `(pointer: coarse)` match -- which is also what takes

@@ -1,5 +1,5 @@
 /**
- * Which tabs a device is offered (spec 139).
+ * Which tabs a device is offered (spec 140).
  *
  * The tab bar has grown to six entries and five of them are workbenches: the map
  * editor is a three-button drag model (spec 049), and the two sandboxes and the

@@ -44,7 +44,7 @@ describe('turning the camera with the keyboard (spec 129)', () => {
   });
 });
 
-describe('turning the camera with two fingers (spec 139)', () => {
+describe('turning the camera with two fingers (spec 140)', () => {
   it('turns nothing for a swipe that went nowhere', () => {
     expect(orbitDrag(0)).toBe(0);
   });

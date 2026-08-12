@@ -109,7 +109,7 @@ export interface ViewControls {
    * Where the view is looking from, in degrees on the slider's 0..360 track.
    *
    * The same number `orbitBy` writes, read back. It exists because on a phone
-   * the panel is not built at all (spec 139), so the slider a probe used to read
+   * the panel is not built at all (spec 140), so the slider a probe used to read
    * the angle off is not in the document -- and a two-finger swipe has to be
    * checkable on exactly the device it is for.
    */

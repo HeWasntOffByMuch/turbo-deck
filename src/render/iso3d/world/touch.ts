@@ -21,7 +21,7 @@ export interface TouchSample {
 }
 
 /**
- * Two fingers moving, as one report (spec 139).
+ * Two fingers moving, as one report (spec 140).
  *
  * A real two-finger gesture is a spread and a slide at the same time, and there
  * is no honest way to pick which one it "really" is -- a hand that separates its
@@ -135,7 +135,7 @@ export class TouchGestures {
     // Fingers exactly on top of each other have no separation to take a ratio
     // against, and 100/0 would send the zoom to a bound in one frame. That costs
     // the zoom for this report and nothing else: the midpoint is measurable
-    // whatever the separation is, so the swipe still arrives (spec 139).
+    // whatever the separation is, so the swipe still arrives (spec 140).
     const zoomable = spread > 0 && previousSpread !== null && previousSpread > 0;
     return {
       kind: 'twoFinger',

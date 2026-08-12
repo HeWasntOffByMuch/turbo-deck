@@ -27,13 +27,7 @@ export const ORBIT_RIGHT_KEY = 'BracketRight';
 export const ORBIT_DEG_PER_SECOND = 90;
 
 /**
- * Degrees to turn this frame. Positive is clockwise.
- *
- * Both keys held cancel rather than fighting: a player who has rolled a finger
- * across both wants the view to stop, not to pick whichever was pressed last.
- */
-/**
- * How far a two-finger swipe turns the view, degrees per canvas pixel (spec 139).
+ * How far a two-finger swipe turns the view, degrees per canvas pixel (spec 140).
  *
  * Per pixel rather than per second, because a drag is direct manipulation and
  * its rate is the finger. A little over a half turn across an 844px landscape
@@ -60,6 +54,12 @@ export function orbitDrag(dragXPx: number): number {
   return -dragXPx * ORBIT_DEG_PER_PX;
 }
 
+/**
+ * Degrees to turn this frame. Positive is clockwise.
+ *
+ * Both keys held cancel rather than fighting: a player who has rolled a finger
+ * across both wants the view to stop, not to pick whichever was pressed last.
+ */
 export function orbitStep(held: ReadonlySet<string>, dt: number): number {
   const left = held.has(ORBIT_LEFT_KEY);
   const right = held.has(ORBIT_RIGHT_KEY);

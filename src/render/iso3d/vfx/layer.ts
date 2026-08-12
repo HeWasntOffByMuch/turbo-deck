@@ -29,6 +29,8 @@ import * as THREE from 'three';
 import { ParticleBatch, MeshParticleBatch, modeCode } from './batches.js';
 import { FAMILY } from './compile.js';
 import { depthOrder } from './depth-sort.js';
+import { fallbackSegment, ribbonSegments, MAX_SEGMENTS, SEGMENT_STRIDE } from './ribbon.js';
+import { RIBBON_SAMPLES, type ParticlePool } from './pool.js';
 import { VfxSystem, type VfxHooks, type VfxSystemOptions } from './system.js';
 import { REGISTRY } from './registry.js';
 import { DecalField, type GoreLevel } from './decals.js';
@@ -64,6 +66,12 @@ export class VfxLayer {
   private readonly depth: Float32Array;
   /** Write cursor per batch, reset every sync. Preallocated. */
   private readonly cursors: Int32Array;
+  /** Instances each batch needs this frame, counted before anything is written. */
+  private readonly needed: Int32Array;
+  /** Each batch's family, so the count pass never has to reach for an emitter. */
+  private readonly families: Int32Array;
+  /** One particle's ribbon links, rewritten per particle. Preallocated (spec 139). */
+  private readonly segments = new Float32Array(MAX_SEGMENTS * SEGMENT_STRIDE);
   private readonly pointLights: THREE.PointLight[] = [];
   private drawCalls = 0;
   // The isometric default, so the sort is right before anybody sets one.
@@ -117,6 +125,8 @@ export class VfxLayer {
       this.root.add(made.mesh);
     }
     this.cursors = new Int32Array(this.batches.length);
+    this.needed = new Int32Array(this.batches.length);
+    this.families = new Int32Array(registry.batches.map((batch) => batch.family));
     this.order = new Int32Array(this.system.pool.capacity);
     this.depth = new Float32Array(this.system.pool.capacity);
 
@@ -161,12 +171,40 @@ export class VfxLayer {
     this.decalView.sync();
   }
 
+  /**
+   * How many instances each batch needs this frame.
+   *
+   * A pass of its own because a ribbon particle is not one instance: it is a
+   * link per trail sample, and sizing a batch to `pool.count` would overflow it.
+   * The alternative -- growing every ribbon batch to the worst case -- allocates
+   * a megabyte of buffers for a fight that never happens, and the count is a walk
+   * over three typed arrays with no lookups in it.
+   */
+  private countInstances(count: number): void {
+    const pool = this.system.pool;
+    this.needed.fill(0);
+    for (let i = 0; i < count; i++) {
+      const batchIndex = pool.batch[i] ?? 0;
+      if (batchIndex < 0 || batchIndex >= this.needed.length) continue;
+      let instances = 1;
+      if (this.families[batchIndex] === FAMILY.ribbon) {
+        const track = pool.ribbon[i] ?? -1;
+        const held = track >= 0 ? (pool.ribbonCount[track] ?? 0) : 0;
+        // One link per sample, plus the head; a trail-less particle draws the
+        // single fallback stub.
+        instances = held > 0 ? Math.min(held, MAX_SEGMENTS) : 1;
+      }
+      this.needed[batchIndex] = (this.needed[batchIndex] ?? 0) + instances;
+    }
+  }
+
   /** Copy the particle field into the instanced attributes. */
   private sync(): void {
     const pool = this.system.pool;
     this.cursors.fill(0);
 
-    for (const batch of this.batches) batch.begin(pool.count);
+    this.countInstances(pool.count);
+    for (let i = 0; i < this.batches.length; i++) this.batches[i]?.begin(this.needed[i] ?? 0);
 
     const walk = this.sortForDepth(pool.count);
     for (let n = 0; n < pool.count; n++) {
@@ -178,7 +216,10 @@ export class VfxLayer {
       if (!emitter) continue;
       const at = this.cursors[batchIndex] ?? 0;
       if (batch instanceof MeshParticleBatch) batch.write(at, pool, i);
-      else batch.write(at, pool, i, modeCode(emitter.render), emitter.stretch);
+      else if (this.families[batchIndex] === FAMILY.ribbon) {
+        this.cursors[batchIndex] = at + this.writeRibbon(batch, pool, i, at, emitter.ribbonTaper);
+        continue;
+      } else batch.write(at, pool, i, modeCode(emitter.render), emitter.stretch);
       this.cursors[batchIndex] = at + 1;
     }
 
@@ -190,6 +231,44 @@ export class VfxLayer {
     }
 
     this.syncLights();
+  }
+
+  /**
+   * Write one particle's streak, and say how many instances it took (spec 139).
+   *
+   * The arithmetic is `ribbon.ts` and is tested in Node; this hands it the
+   * track the sim has been filling and copies what comes back.
+   */
+  private writeRibbon(batch: ParticleBatch, pool: ParticlePool, i: number, at: number, taper: number): number {
+    const track = pool.ribbon[i] ?? -1;
+    const held = track >= 0 ? (pool.ribbonCount[track] ?? 0) : 0;
+    const width = pool.size[i] ?? 0;
+    const count =
+      held > 0
+        ? ribbonSegments(
+            pool.ribbonXyz,
+            track * RIBBON_SAMPLES * 3,
+            held,
+            pool.x[i] ?? 0,
+            pool.y[i] ?? 0,
+            pool.z[i] ?? 0,
+            width,
+            taper,
+            this.segments,
+          )
+        : fallbackSegment(
+            pool.x[i] ?? 0,
+            pool.y[i] ?? 0,
+            pool.z[i] ?? 0,
+            pool.vx[i] ?? 0,
+            pool.vy[i] ?? 0,
+            pool.vz[i] ?? 0,
+            width,
+            taper,
+            this.segments,
+          );
+    for (let s = 0; s < count; s++) batch.writeSegment(at + s, pool, i, this.segments, s * SEGMENT_STRIDE);
+    return count;
   }
 
   /**

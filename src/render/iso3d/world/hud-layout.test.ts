@@ -40,7 +40,7 @@ describe('the HUD layout', () => {
   });
 
   /**
-   * The seven tuning popovers are developer furniture (spec 139).
+   * The seven tuning popovers are developer furniture (spec 140).
    *
    * Kept as its own field rather than folded into `showsReadout`: they are two
    * different things that go together today and need not tomorrow.
@@ -73,8 +73,8 @@ describe('the HUD layout', () => {
    * The assertion that is supposed to fail on the ninth ability.
    *
    * The hotbar is centred, the weapon switch sits bottom left and the window
-   * buttons bottom right (spec 139), so what has to hold is that half the
-   * leftover width clears *both* rows. Since spec 139 the other corner is no
+   * buttons bottom right (spec 140), so what has to hold is that half the
+   * leftover width clears *both* rows. Since spec 140 the other corner is no
    * longer empty, which is exactly the assumption the old one-sided version of
    * this test was quietly making.
    */

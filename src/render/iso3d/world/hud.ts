@@ -79,7 +79,7 @@ export const WEAPON_SWITCH: readonly {
 })();
 
 /**
- * The windows a player can decide to open, as buttons (spec 139).
+ * The windows a player can decide to open, as buttons (spec 140).
  *
  * Three, and not the shop or the trade table: those two are opened by something
  * *happening* -- a vendor within reach, another player's invitation -- rather
@@ -153,7 +153,7 @@ export interface HudHandle {
     }[],
   ): void;
   /**
-   * Which windows are open, so the button that opens one can be lit (spec 139).
+   * Which windows are open, so the button that opens one can be lit (spec 140).
    *
    * Pushed in rather than read, for the same reason the weapon switch reads
    * `equipment.mainHand` back rather than remembering what was clicked: the
@@ -164,7 +164,7 @@ export interface HudHandle {
   /** What to call when a hotbar button is clicked. */
   onUse(handler: (abilityId: string) => void): void;
   /**
-   * What to call when a window button is pressed (spec 139). It hands back a
+   * What to call when a window button is pressed (spec 140). It hands back a
    * window id and nothing else -- the mount calls the same `ui.toggle` a key
    * binding calls, so nothing in this file decides what a button means.
    */
@@ -355,7 +355,7 @@ export function createHud(project: Projector): HudHandle {
     return { ...weapon, button };
   });
 
-  // The window buttons (spec 139), bottom right and mirroring the weapon switch.
+  // The window buttons (spec 140), bottom right and mirroring the weapon switch.
   // They exist because `I` and `C` are undiscoverable -- on a desktop as much as
   // on a phone, which is why the row is drawn on both and only its size changes.
   const systemRow = document.createElement('div');

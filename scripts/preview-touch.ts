@@ -160,7 +160,7 @@ async function bodiesOnScreen(page: Page): Promise<Bar[]> {
  */
 async function readZoom(page: Page): Promise<number> {
   // Off the published attribute rather than off the Zoom slider: a phone does
-  // not build the settings panel at all since spec 139, and the pinch has to be
+  // not build the settings panel at all since spec 140, and the pinch has to be
   // checkable on the device it is for. It is the same number the slider holds --
   // `view.ts` writes it from `ViewControls.viewHalfWidth()`.
   const text = await page.getAttribute('[data-camera-zoom]', 'data-camera-zoom');
@@ -246,7 +246,7 @@ async function main(): Promise<void> {
     console.log(`  hint line: ${tapHint || '(still the mouse one)'}`);
     if (!tapHint) problems.push('the HUD is still telling a phone to right-click');
 
-    // --- a phone is offered the game and nothing else (spec 139) -----------
+    // --- a phone is offered the game and nothing else (spec 140) -----------
     //
     // The fullscreen button is not a tab and is meant to be there: it is the one
     // control left in the bar, because a third of this frame is browser chrome.

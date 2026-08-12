@@ -59,7 +59,7 @@ describe('the weapon icons', () => {
 });
 
 /**
- * The window buttons' icons (spec 139).
+ * The window buttons' icons (spec 140).
  *
  * Same failure to guard against as above, one step earlier: a fourth window
  * button added to `SYSTEM_BUTTONS` with no icon beside it draws the fallback

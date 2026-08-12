@@ -1,5 +1,5 @@
 /**
- * Which tabs a device is offered (spec 139).
+ * Which tabs a device is offered (spec 140).
  *
  * `main.ts` is DOM from its first line and cannot be reached from Vitest, which
  * is exactly why this one decision was lifted out of it: a seventh workbench

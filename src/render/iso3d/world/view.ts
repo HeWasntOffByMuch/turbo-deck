@@ -291,7 +291,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // `Stats`. Nothing here decides what the right-click then does -- the next
   // frame simply reads the stat and asks for whatever it names.
   hud.onEquip((itemId) => client.equip('mainHand', itemId));
-  // The same call a key binding makes (spec 139). The button knows which window
+  // The same call a key binding makes (spec 140). The button knows which window
   // it names and nothing else about what opening one costs.
   hud.onOpen((id) => ui.toggle(id));
 
@@ -301,7 +301,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // each rather than one drawer for all of them -- and one group, so opening any
   // of them closes the rest instead of stacking six panels into one corner.
   //
-  // Not on a phone (spec 139). They are tuning panels twenty rows deep, and on
+  // Not on a phone (spec 140). They are tuning panels twenty rows deep, and on
   // an 844x390 frame the seven of them pile into the corner underneath the tab
   // bar. `scene.controls` is still *built* -- the camera reads its sliders, and
   // `orbitBy` writes them -- it simply has nowhere to be pressed, so a phone
@@ -404,7 +404,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * It exists at all because the camera keys have been dead since spec 125:
    * `orbitStep` asks for `BracketLeft`/`BracketRight` and `held` has stored
    * rebindable action ids ever since, so nothing was ever added for them and
-   * `[` and `]` turned nothing on any device (spec 139). The unit test passed
+   * `[` and `]` turned nothing on any device (spec 140). The unit test passed
    * throughout -- the arithmetic was never wrong, the wiring was -- which is why
    * `scripts/probe-orbit.ts` drives a real page.
    */
@@ -656,7 +656,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     }
 
     // Recorded before the map is consulted, because these are the keys the map
-    // does not know about (spec 139).
+    // does not know about (spec 140).
     heldKeys.add(event.code);
 
     const decision = decideKeyDown(inputMap, event.code, modifiersOf(event));
@@ -838,15 +838,15 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     client.cancelCast();
   }
 
-  // --- touch (specs 093, 139) --------------------------------------------
+  // --- touch (specs 093, 140) --------------------------------------------
   //
   // One gesture has to carry both mouse buttons, so a tap is answered by
   // whatever is being asked rather than meaning one fixed thing. Two fingers
-  // carry the zoom and the camera's swing at once (spec 139).
+  // carry the zoom and the camera's swing at once (spec 140).
   const gestures = new TouchGestures();
 
   /**
-   * The fingers the interface owns, decided on the way down (spec 139).
+   * The fingers the interface owns, decided on the way down (spec 140).
    *
    * Ownership is per pointer and settled once, at `pointerdown`, rather than
    * asked again on every move: a finger that started on a window must not become
@@ -895,7 +895,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // compatibility mouse events that would reach nothing anyway -- off a canvas
     // that has its own reading of the gesture.
     event.preventDefault();
-    // Offered to the interface first, exactly as a mouse press is (spec 139).
+    // Offered to the interface first, exactly as a mouse press is (spec 140).
     // Without this a window drawn over the world was scenery: the tap under it
     // ordered the player to walk to wherever the window was, and nothing in the
     // bag, the sheet or the options window could be pressed at all.
@@ -917,7 +917,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     }
     const gesture = gestures.move(sampleOf(event));
     if (gesture?.kind !== 'twoFinger') return;
-    // Both halves of what two fingers did, applied together (spec 139). A pure
+    // Both halves of what two fingers did, applied together (spec 140). A pure
     // spread arrives with `dragX` at zero and a pure swipe with `ratio` at one,
     // so neither call costs anything when it is not what the hand meant -- and
     // nothing here has to decide which gesture this "really" is.
@@ -1252,7 +1252,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     //
     // `heldKeys`, not `held`: this reads key *codes*, and `held` has carried
     // rebindable action ids since spec 125 -- which is what left these two keys
-    // dead for eleven specs (spec 139).
+    // dead for eleven specs (spec 140).
     const swing = orbitStep(heldKeys, elapsed / 1000);
     if (swing !== 0) scene.controls.orbitBy(swing);
 
@@ -1315,12 +1315,12 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       pending: pendingAim !== null,
     });
     // Read back off the interface rather than remembered from the press
-    // (spec 139), so a window opened by a key lights its button too.
+    // (spec 140), so a window opened by a key lights its button too.
     hud.showOpenWindows(ui.opened());
 
     // Where the view is looking from and how wide it frames, for the probes.
     // They used to read the Orbit and Zoom sliders, and on a phone the panel
-    // those live in is not in the document at all now (spec 139) -- so the two
+    // those live in is not in the document at all now (spec 140) -- so the two
     // gestures that write them would be checkable everywhere except on the
     // device they exist for. Invisible, like every other `data-` handle here;
     // it is not a readout.

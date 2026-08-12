@@ -43,7 +43,7 @@ export interface HudLayout {
   readonly showsReadout: boolean;
   /**
    * Whether the tuning popovers in the top-right corner are built at all
-   * (spec 139) -- the view cog, day and night, the player's lights, the retro
+   * (spec 140) -- the view cog, day and night, the player's lights, the retro
    * filter, the hike look, the weather and the effects.
    *
    * A separate field from {@link showsReadout} even though both are false on a
@@ -61,7 +61,7 @@ export interface HudLayout {
   /** Which way the switch stacks: a row along the bottom, or a column up the side. */
   readonly weaponDirection: 'row' | 'column';
   readonly weaponIconPx: number;
-  /** One window button: the bag, the sheet, the options window (spec 139). */
+  /** One window button: the bag, the sheet, the options window (spec 140). */
   readonly systemButton: BoxSize;
   readonly systemGap: number;
   /** Whether a window button is its icon alone, with the name only as a label. */

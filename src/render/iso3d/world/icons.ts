@@ -1,5 +1,5 @@
 /**
- * The weapon switch's icons (spec 094), and the window buttons' (spec 139).
+ * The weapon switch's icons (spec 094), and the window buttons' (spec 140).
  *
  * Keyed by the *attack* rather than the item, because the attack is what the
  * switch is choosing (spec 079): two swords that both slash are one entry, and
@@ -64,7 +64,7 @@ export const FALLBACK_ICON = '<path d="M12 3.5 L20.5 12 L12 20.5 L3.5 12 Z"/>';
 export type SystemIconId = 'inventory' | 'character' | 'options';
 
 /**
- * The window buttons' icons (spec 139), in the same 24x24 box.
+ * The window buttons' icons (spec 140), in the same 24x24 box.
  *
  * Three shapes that have to read at 24px on a phone and mean something without
  * a caption, which rules out anything with text in it. A bag, a figure and a

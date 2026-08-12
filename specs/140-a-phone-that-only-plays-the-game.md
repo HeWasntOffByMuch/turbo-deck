@@ -1,4 +1,4 @@
-# 139 — A phone that only plays the game
+# 140 — A phone that only plays the game
 
 ## Problem
 
@@ -48,7 +48,7 @@ than an `if` somewhere in the DOM:
 // src/render/iso3d/world/hud-layout.ts
 export interface HudLayout {
   // ...as before, plus:
-  /** Whether the seven tuning popovers are built at all (spec 139). */
+  /** Whether the seven tuning popovers are built at all (spec 140). */
   readonly showsTuningMenus: boolean;
   /** One of the window buttons: inventory, equipment, options. */
   readonly systemButton: BoxSize;
