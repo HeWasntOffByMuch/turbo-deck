@@ -1,5 +1,5 @@
 /**
- * The weapon switch's icons (spec 094).
+ * The weapon switch's icons (spec 094), and the window buttons' (spec 140).
  *
  * Keyed by the *attack* rather than the item, because the attack is what the
  * switch is choosing (spec 079): two swords that both slash are one entry, and
@@ -60,10 +60,48 @@ export const WEAPON_ICONS: Readonly<Record<string, string>> = {
  */
 export const FALLBACK_ICON = '<path d="M12 3.5 L20.5 12 L12 20.5 L3.5 12 Z"/>';
 
+/** Which window a HUD button opens, as far as the icon table is concerned. */
+export type SystemIconId = 'inventory' | 'character' | 'options';
+
+/**
+ * The window buttons' icons (spec 140), in the same 24x24 box.
+ *
+ * Three shapes that have to read at 24px on a phone and mean something without
+ * a caption, which rules out anything with text in it. A bag, a figure and a
+ * cog are the three every game already uses, and being unoriginal is the point:
+ * this row exists because `I` and `C` are undiscoverable.
+ */
+export const SYSTEM_ICONS: Readonly<Record<SystemIconId, string>> = {
+  // A bag: a body with a flap and a strap over the top.
+  inventory:
+    '<path d="M4.5 8.5 h15 v11 a1.5 1.5 0 0 1 -1.5 1.5 h-12 a1.5 1.5 0 0 1 -1.5 -1.5 Z"/>' +
+    '<path d="M8.5 8.5 V6.5 a3.5 3.5 0 0 1 7 0 v2"/>' +
+    '<path d="M4.5 12.5 h15" stroke-width="1.4"/>',
+  // A figure, head and shoulders, which is what a character sheet is about.
+  character:
+    '<circle cx="12" cy="7" r="3.5"/>' +
+    '<path d="M4.5 20.5 a7.5 7.5 0 0 1 15 0"/>',
+  // A cog. Eight teeth as a dashed ring rather than eight paths: at 24px the
+  // teeth are two pixels each and the difference is invisible, and the ring is
+  // one shape to get right instead of eight to keep in step.
+  options:
+    '<circle cx="12" cy="12" r="3.2"/>' +
+    '<circle cx="12" cy="12" r="7.6" stroke-width="3.4" stroke-dasharray="2.6 3.4"/>',
+};
+
 /** The icon for an attack, as markup ready to drop into a button. */
 export function weaponIconSvg(abilityId: string, options: IconOptions = {}): string {
+  return iconSvg(WEAPON_ICONS[abilityId] ?? FALLBACK_ICON, options);
+}
+
+/** The icon for a window button. */
+export function systemIconSvg(id: SystemIconId, options: IconOptions = {}): string {
+  return iconSvg(SYSTEM_ICONS[id] ?? FALLBACK_ICON, options);
+}
+
+/** The wrapper both tables' bodies are dropped into. */
+function iconSvg(body: string, options: IconOptions): string {
   const size = options.size ?? 20;
-  const body = WEAPON_ICONS[abilityId] ?? FALLBACK_ICON;
   // `color` is set as a style rather than an attribute because `currentColor`
   // inside the paths resolves against the CSS colour property, which is the
   // whole trick that lets one string serve a lit and an unlit button.

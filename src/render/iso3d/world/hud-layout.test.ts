@@ -14,7 +14,7 @@ import {
   PHONE_LANDSCAPE,
   stripWidth,
 } from './hud-layout.js';
-import { HOTBAR, WEAPON_SWITCH } from './hud.js';
+import { HOTBAR, SYSTEM_BUTTONS, WEAPON_SWITCH } from './hud.js';
 
 const compact = hudLayout(true);
 const desktop = hudLayout(false);
@@ -26,6 +26,8 @@ describe('the HUD layout', () => {
     expect(desktop.showsKeyNumber).toBe(true);
     expect(desktop.weaponIconOnly).toBe(false);
     expect(desktop.weaponDirection).toBe('column');
+    expect(desktop.showsTuningMenus).toBe(true);
+    expect(desktop.systemIconOnly).toBe(false);
   });
 
   it('drops the readout and the key numbers on a finger, and switches weapons to icons', () => {
@@ -34,6 +36,28 @@ describe('the HUD layout', () => {
     expect(compact.showsKeyNumber).toBe(false);
     expect(compact.weaponIconOnly).toBe(true);
     expect(compact.weaponDirection).toBe('row');
+    expect(compact.systemIconOnly).toBe(true);
+  });
+
+  /**
+   * The weapon switch is gone from a phone entirely (spec 141), which leaves the
+   * bottom-left corner to the world. The metrics stay in the table because the
+   * desktop switch still reads them and because "not drawn" is a decision worth
+   * having somewhere a test can see it.
+   */
+  it('draws no weapon switch on a finger, and keeps it on a desktop', () => {
+    expect(compact.showsWeaponSwitch).toBe(false);
+    expect(desktop.showsWeaponSwitch).toBe(true);
+  });
+
+  /**
+   * The seven tuning popovers are developer furniture (spec 140).
+   *
+   * Kept as its own field rather than folded into `showsReadout`: they are two
+   * different things that go together today and need not tomorrow.
+   */
+  it('builds no tuning popovers on a finger', () => {
+    expect(compact.showsTuningMenus).toBe(false);
   });
 
   /**
@@ -42,7 +66,7 @@ describe('the HUD layout', () => {
    * during a wind-up is the blow they meant to answer with.
    */
   it('gives every compact tap target a square at least MIN_TAP_PX on a side', () => {
-    for (const box of [compact.slot, compact.weapon]) {
+    for (const box of [compact.slot, compact.weapon, compact.systemButton]) {
       expect(box.width).toBe(box.height);
       expect(box.width).toBeGreaterThanOrEqual(MIN_TAP_PX);
     }
@@ -59,17 +83,20 @@ describe('the HUD layout', () => {
   /**
    * The assertion that is supposed to fail on the ninth ability.
    *
-   * The hotbar is centred and the weapon switch sits bottom left, so what has to
-   * hold is that half the leftover width clears the weapon row -- and the right
-   * side is checked by the same number, since a centred strip leaves the same
-   * gap on both sides and nothing says the other corner stays empty.
+   * The hotbar is centred and the window buttons sit bottom right (spec 140), so
+   * what has to hold is that half the leftover width clears that row. The weapon
+   * switch is no longer drawn on a phone (spec 141), but it is still checked
+   * against the *same* clearance: the day somebody puts it back, the sum should
+   * already say whether it fits rather than being discovered on a device.
    */
-  it('fits eight compact slots across a phone in landscape, clear of the weapon row', () => {
+  it('fits eight compact slots across a phone in landscape, clear of both corners', () => {
     const clearance = centredClearance(compact, HOTBAR.length, PHONE_LANDSCAPE.width);
     const weapons = stripWidth(compact.weapon, compact.weaponGap, WEAPON_SWITCH.length);
+    const windows = stripWidth(compact.systemButton, compact.systemGap, SYSTEM_BUTTONS.length);
     expect(stripWidth(compact.slot, compact.slotGap, HOTBAR.length)).toBeLessThan(
       PHONE_LANDSCAPE.width,
     );
+    expect(clearance).toBeGreaterThanOrEqual(compact.edge + windows + compact.slotGap);
     expect(clearance).toBeGreaterThanOrEqual(compact.edge + weapons + compact.slotGap);
   });
 
