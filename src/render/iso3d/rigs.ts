@@ -398,6 +398,10 @@ const FEMUR_LEN = 27;
 const TIBIA_LEN = 36;
 const BODY_Y = 40;
 const BODY_SIZE = 22;
+// The sphere body's radius (spec 152). A touch over the cube's half-extent,
+// because an icosahedron's flat faces sit *inside* its circumradius: matched
+// exactly to 11 it reads as a smaller body than the cube it replaced.
+const BODY_RADIUS = 13.2;
 
 // Fixed feel constants (not exposed as sliders).
 const COUPLE_SLACK = 8; // a leg pulls its diagonal partner along if within this of triggering
@@ -770,6 +774,16 @@ function partnerOf(legIndex: number, numLegs: number): number {
  * + yaw), never by reading or writing sim state. Body colour keys off the enemy
  * type unless an explicit colour is given (e.g. the movement sandbox's ally mech).
  */
+/**
+ * What the upper body is made of (spec 152).
+ *
+ * `'box'` is the chassis-plate-head-eye mech every unit on this rig has always
+ * been. `'sphere'` is one faceted body and nothing else -- three of the box's
+ * four parts exist to say which way a mech points, and on a round black body
+ * they say nothing that its legs and its heading do not already say.
+ */
+export type MechBodyShape = 'box' | 'sphere';
+
 export interface MechOptions {
   /**
    * When false, the lower body (leg platform) does NOT turn to the heading: the
@@ -780,6 +794,14 @@ export interface MechOptions {
   readonly lowerBodyTurns?: boolean;
   /** Share an external tuning object (so two units can be tuned together). */
   readonly tuning?: MechTuning;
+  /** The upper body's shape. Defaults to the mech chassis. */
+  readonly body?: MechBodyShape;
+  /**
+   * The legs' colour. Defaults to the body darkened, which is the contrast a
+   * mech wants and a difference nobody can see on a body that is already near
+   * black -- so a look that wants its legs the same colour says so here.
+   */
+  readonly legColor?: number;
 }
 
 const RAD2DEG = 180 / Math.PI;
@@ -894,7 +916,7 @@ export class MechRig {
 
   constructor(type: string, bodyColorOverride?: number, opts: MechOptions = {}) {
     this.bodyColor = bodyColorOverride ?? enemyColor(type);
-    this.legColor = darken(this.bodyColor, 0.55);
+    this.legColor = opts.legColor ?? darken(this.bodyColor, 0.55);
     this.tuning = opts.tuning ?? defaultMechTuning();
     this.lowerBodyTurns = opts.lowerBodyTurns ?? true;
     this.orientsWithGroupYaw = this.lowerBodyTurns;
@@ -902,6 +924,33 @@ export class MechRig {
     // group -> carriage (lower body, leg frame) -> turret (upper body, faces heading).
     this.group.add(this.carriage);
     this.carriage.add(this.turret);
+    for (const mesh of this.buildBody(opts.body ?? 'box')) {
+      this.turret.add(mesh);
+      this.bodyParts.push({ mesh, base: mesh.position.clone() });
+    }
+
+    this.legs = [];
+    this.plants = [];
+    this.recreateLegs();
+  }
+
+  /**
+   * The upper body's meshes, in the turret's frame (spec 152).
+   *
+   * Positioned at scale 1: `applyScale` multiplies each part's recorded base
+   * position and scales the mesh, so anything built here follows `sizeScale`
+   * without knowing it exists.
+   */
+  private buildBody(shape: MechBodyShape): readonly THREE.Mesh[] {
+    if (shape === 'sphere') {
+      // One part. A plate and a head on a sphere would be a mech wearing a ball,
+      // and the eye that says which way a chassis points is unreadable on a body
+      // this dark -- which is the case this shape was added for.
+      const body = faceted(BODY_RADIUS, this.bodyColor);
+      body.position.y = BODY_Y;
+      return [body];
+    }
+
     const body = box(BODY_SIZE, BODY_SIZE, BODY_SIZE, this.bodyColor);
     body.position.y = BODY_Y;
     const plate = box(BODY_SIZE - 6, 4, BODY_SIZE - 6, darken(this.bodyColor, 0.8));
@@ -910,14 +959,7 @@ export class MechRig {
     head.position.set(BODY_SIZE / 2 + 3, BODY_Y - 1, 0);
     const eye = box(3, 5, 10, PALETTE.enemyEye);
     eye.position.set(BODY_SIZE / 2 + 8, BODY_Y, 0);
-    for (const mesh of [body, plate, head, eye]) {
-      this.turret.add(mesh);
-      this.bodyParts.push({ mesh, base: mesh.position.clone() });
-    }
-
-    this.legs = [];
-    this.plants = [];
-    this.recreateLegs();
+    return [body, plate, head, eye];
   }
 
   /**
