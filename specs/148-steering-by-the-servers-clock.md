@@ -54,7 +54,7 @@ export interface RateMatchState {
 
 export const NOMINAL: RateMatchState;
 
-/** Fold one observation of the server's queue into the state. */
+/** Fold one reading of the server's queue floor into the state. */
 export function observeQueue(state: RateMatchState, depth: number): RateMatchState;
 ```
 
@@ -104,25 +104,27 @@ twentieth, which nothing in the deterministic core can observe.
 
 ## Invariants tested
 
-- **A mismatched clock stops costing inputs.** A client whose clock runs 1%
-  fast, over 60 simulated seconds: without rate matching the queue reaches
-  `MAX_BUFFERED_INPUTS` and the server drops inputs; with it, the depth settles
-  near the target and **nothing is dropped**. Both halves asserted in the same
-  test, because the second number means nothing without the first.
-- **And a slow clock stops starving it.** The mirror: 1% slow, and the count of
-  ticks the server advanced with an empty queue falls from hundreds to single
-  figures.
+- **A mismatched clock stops costing inputs.** A client whose clock runs 2%
+  fast, over a simulated minute: without rate matching the queue reaches
+  `MAX_BUFFERED_INPUTS` and the server drops inputs; with it, **nothing is
+  dropped**, the queue never reaches the cap, and the scale sits above 1. Both
+  halves asserted in the same test, because the second number means nothing
+  without the first.
+- **And a slow clock stops starving it.** The mirror: 2% slow, and the count of
+  ticks the server advanced with an empty queue falls, with the scale below 1.
+  This is the half the instantaneous reading could not see at all.
 - **It settles rather than hunts.** From a queue at zero and from a queue at
   the cap, the scale converges into the deadband and stays there; the scale
   never leaves `[1 - MAX_SCALE, 1 + MAX_SCALE]`; and no single observation moves
   it by more than `SCALE_STEP`.
-- **A perfect clock is left alone.** With the depth already at target the scale
+- **A perfect clock is left alone.** With the floor already at target the scale
   is exactly 1 and stays exactly 1, so a client that needs no correction pays no
   correction.
 - **The controller is pure.** Same state and same observation sequence, same
   output, every time — and it is a fold, so a test can drive it with a list.
-- **The wire carries it.** `Pong` round-trips through the codec with the depth,
-  and the server writes the true unconsumed count.
+- **The wire carries it.** `Pong` round-trips through the codec with the floor,
+  and the server samples it every tick at the same point rather than at whatever
+  instant a ping happened to arrive on.
 - **Determinism is untouched.** `presentation-only.test.ts` and the spec 147
   bad-wire replay still produce identical authoritative state: the scale is a
   fact about wall-clock pacing and the sim never reads it.
