@@ -61,21 +61,42 @@ function main(): void {
     return out;
   };
 
+  /** How far the blade turns between two instants, in degrees. */
+  const sweptBetween = (from: number, to: number): number => {
+    const a = bladeAt(from);
+    const b = bladeAt(to);
+    const alignment = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    return (Math.acos(Math.max(-1, Math.min(1, alignment))) * 180) / Math.PI;
+  };
+
   const labels = new Map<number, string>(
     Object.entries(STRIKE_KEY_MS).map(([label, ms]) => [ms as number, label]),
   );
-  const WIDTH = 44;
-  console.log('\n  blade elevation: -1 straight down, +1 straight up\n');
-  console.log(`  ${' '.repeat(6)}down${' '.repeat(WIDTH - 8)}up`);
-  for (let ms = 0; ms <= STRIKE_DURATION_MS; ms += 20) {
+  const STEP = 20;
+  const WIDTH = 40;
+
+  // The rate rather than the position, because "two phases of raising" is a
+  // claim about *speed*: one move that accelerates and settles is one phase, and
+  // a rate that peaks, falls back toward nothing and peaks again is two, however
+  // smooth the positions between them look.
+  const rates: number[] = [];
+  for (let ms = 0; ms + STEP <= STRIKE_DURATION_MS; ms += STEP) {
+    rates.push(sweptBetween(ms, ms + STEP));
+  }
+  const fastest = Math.max(...rates, 1);
+
+  console.log('\n  blade elevation (-1 down, +1 up), and how fast it is turning\n');
+  for (let ms = 0; ms <= STRIKE_DURATION_MS; ms += STEP) {
     const up = dot(bladeAt(ms), frame.up);
     const forward = dot(bladeAt(ms), frame.forward);
     const right = -dot(bladeAt(ms), frame.lateral);
     const column = Math.round(((up + 1) / 2) * (WIDTH - 1));
     const bar = `${'.'.repeat(column)}#${'.'.repeat(WIDTH - 1 - column)}`;
+    const rate = rates[ms / STEP] ?? 0;
+    const speed = '='.repeat(Math.round((rate / fastest) * 24));
     const key = labels.get(ms);
     console.log(
-      `  ${String(ms).padStart(4)}  ${bar}  up ${up.toFixed(2).padStart(5)}  fwd ${forward.toFixed(2).padStart(5)}  rt ${right.toFixed(2).padStart(5)}${key ? `  <- ${key}` : ''}`,
+      `  ${String(ms).padStart(4)}  ${bar}  up ${up.toFixed(2).padStart(5)} fwd ${forward.toFixed(2).padStart(5)} rt ${right.toFixed(2).padStart(5)} | ${String(Math.round(rate)).padStart(3)}deg ${speed.padEnd(24)}${key ? ` <- ${key}` : ''}`,
     );
   }
 }

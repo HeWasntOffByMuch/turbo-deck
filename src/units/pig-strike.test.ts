@@ -189,12 +189,20 @@ describe('the stance the swing is thrown from', () => {
 });
 
 describe('the shape of the swing', () => {
-  it('takes the hand over the head and behind the shoulder to load', () => {
+  it('takes the hand up beside the head and behind the shoulder to load', () => {
     const load = handAt(STRIKE_KEY_MS.load);
-    // Above the head is the whole silhouette argument: at forty pixels, a blade
-    // inside the outline is not a wind-up, it is a pig standing still.
-    expect(load.up).toBeGreaterThan(HEAD_UP);
-    expect(load.forward).toBeLessThan(-0.15 * HEIGHT);
+    // Beside the head, not above it, and that is a deliberate change rather
+    // than a weakened threshold. Getting a sword behind your head is done by
+    // *folding the elbow*, which puts the hand by your ear -- the first version
+    // raised it by abducting the shoulder 116 degrees with the elbow straight
+    // and twisting the torso 81 degrees to make up the difference, and a pig
+    // winding up to chop looked like a pig turning round to leave.
+    //
+    // What has to clear the head is the blade, and `items/grip.test.ts` is
+    // where that is asserted, on the tip, against this same clip.
+    expect(load.up).toBeGreaterThan(CHEST_UP);
+    expect(load.up).toBeLessThan(HEAD_UP);
+    expect(load.forward).toBeLessThan(-0.02 * HEIGHT);
   });
 
   it('brings it forward of the chest and below the shoulder to strike', () => {
@@ -214,12 +222,18 @@ describe('the shape of the swing', () => {
     }
   });
 
-  it('crosses the midline, so it is a swing and not a prod', () => {
-    expect(handAt(STRIKE_KEY_MS.load).right).toBeGreaterThan(0);
-    expect(handAt(STRIKE_CONTACT_MS).right).toBeLessThan(0);
+  it('carries the hand from the wielding side back to the middle', () => {
+    // The hand alone cannot cross: an arm reaching forward a third of a body
+    // and across to the far side wants more length than this one has, and the
+    // solve says so rather than being asked to believe it. What crosses is the
+    // *tip*, decisively -- see `items/grip.test.ts`. So what is left here is
+    // the half the hand can still answer for: it starts out on the sword side
+    // and finishes at the middle.
+    expect(handAt(STRIKE_KEY_MS.load).right).toBeGreaterThan(0.1 * HEIGHT);
+    expect(handAt(STRIKE_CONTACT_MS).right).toBeLessThan(0.07 * HEIGHT);
   });
 
-  it('travels most of a body height of arc getting there', () => {
+  it('travels a real fraction of a body height of arc getting there', () => {
     let arc = 0;
     let previous = handAt(STRIKE_KEY_MS.load);
     for (let ms = STRIKE_KEY_MS.load + 5; ms <= STRIKE_CONTACT_MS; ms += 5) {
@@ -227,7 +241,11 @@ describe('the shape of the swing', () => {
       arc += distance(previous, now);
       previous = now;
     }
-    expect(arc).toBeGreaterThan(0.8 * HEIGHT);
+    // 0.4 rather than the 0.8 this asked for before the wind-up was rebuilt
+    // around the elbow. The hand covers less ground when the elbow does the
+    // work; the blade covers three times as much, and `items/grip.test.ts`
+    // holds the tip to a whole body height over the same window.
+    expect(arc).toBeGreaterThan(0.4 * HEIGHT);
   });
 
   it('is fastest at the instant of contact', () => {

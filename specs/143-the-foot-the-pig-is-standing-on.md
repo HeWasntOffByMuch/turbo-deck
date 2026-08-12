@@ -99,12 +99,11 @@ measured what stuck out of it.
 That is the general shape of the bug and it will happen again, so the fix is not
 five corrected numbers. `scripts/aim-blade.ts` states the requirement in the
 frame it is actually about — **where the blade points, in the body's own axes** —
-and solves the wrist for it. Re-solve the socket and re-run it, and the swing
-survives.
+and solves for it. Re-solve the socket and re-run it, and the swing survives.
 
-Only the wrist moves. The hand is a leaf bone, so rotating it turns what the
-hand carries and moves nothing else at all, which is why spec 139's entire
-silhouette argument is untouched by it.
+It began as a wrist solve — a hand is a leaf bone, so rotating it turns what the
+hand carries and moves nothing else. §4 is why it grew to the shoulder and the
+elbow as well.
 
 `scripts/probe-blade.ts` is the diagnostic that found it: the blade's elevation
 sampled every frame, printed as a profile with the authored keys marked, so a
@@ -113,7 +112,71 @@ having separately from the solver because what a player reports is "it points at
 the ground for a moment", which is a statement about the frames *between* keys —
 and the keys are the only thing anybody reads.
 
-### 4. What planting the left foot revealed about the brace
+### 4. One raise, made by the elbow
+
+Two more things were wrong with the wind-up, and both were invisible to every
+measurement in the tree because every measurement was of a *position*.
+
+**It raised the sword in two phases.** The blade held perfectly still for 140ms,
+turned a hundred degrees in 80ms, and held still for another 160ms — a dead
+beat, a whip, a dead beat. The `dip` key was a counter-move the blade did not
+participate in, and it arrived eased `out` (zero velocity) with the next segment
+leaving eased `inOut` (zero again), so the sword stopped dead in the middle of
+being raised. A raise that stalls in the middle is two raises.
+
+It is now one movement: `rise` at 130ms is a pose the blade passes *through*,
+eased `in` to it and `out` of it, so velocity is continuous and largest exactly
+there. The anticipation is gone rather than reduced — at forty pixels a
+ten-degree dip is not resolvable and the stall it cost was.
+
+The measurement is the **spread**, not the shape: when the raise is a tenth done
+and when it is nine tenths done, and how much of the wind-up lies between. The
+old whip spans 70ms of its 300; this spans 120. Counting humps in the rate would
+not have caught it — there was only ever one hump, and the fault was the
+stillness on either side.
+
+**It raised the sword with the whole body.** The first version put the blade
+behind the head by abducting the shoulder 116°, with the elbow nearly *straight*
+(`flex: 8`), and twisting the torso 81° to make up the difference. A pig winding
+up to chop looked like a pig turning round to leave. Getting a sword behind your
+head is a thing you do with your elbow: 96° of elbow and 50° of torso now.
+
+That preference is written down as weights in `aim-blade.ts` rather than as
+angles in the clip — the elbow is cheap to bend, the wrist expensive to leave
+its resting grip, the shoulder in between, and free at the strike because that
+is where the power comes from.
+
+Two things the solver learned by being wrong first. The **hand needs a place to
+be**, not just the blade a direction: the same aim is reachable with the hand by
+the ear or at arm's length, and solved on aim alone it tucked the hand almost
+inside the pig and left the strike with no forward reach. And **one starting
+point is not enough**: an arm reaching a place has genuinely distinct answers,
+separated by ridges a descent will not cross, so it seeds from a grid.
+
+That grid is also what turned a suspicion into a measurement: the hand *cannot*
+both reach forward a third of a body and cross to the far side — the arm is not
+long enough, and every seed agrees. So the swing keeps the reach, and it is the
+**tip** that crosses the midline.
+
+### 5. The hand stopped being a proxy for the sword
+
+Spec 139 asserted the silhouette on the hand: over the head at the load, across
+the midline at contact, most of a body height of arc between them. There was no
+weapon then and the hand was the only proxy for one.
+
+A folded elbow puts the hand beside the ear and the *sword* above the head, so
+all three assertions failed on a swing that had got better. The honest move is
+to assert them on the thing that casts the silhouette, and `grip.test.ts` now
+does: the tip clears the head, the tip crosses the midline, the tip covers a
+whole body height between the load and the blow — three times what the hand
+covers, because a lever amplifies. What is left on the hand in
+`pig-strike.test.ts` is the part the hand can still answer for.
+
+This is the same lesson as §3 in a different place. Measurements of where the
+hand *is* cannot see what the hand *holds*, and once there is a weapon, what it
+holds is the thing being animated.
+
+### 6. What planting the left foot revealed about the brace
 
 Spec 140 asserted the brace as the **gap between the feet**: the right foot a
 sixth of a body further behind the left at the top of the wind-up. It cleared
@@ -139,6 +202,12 @@ about, rather than a gap in `grip.test.ts`.
   travel: back at the load, forward past where it started by contact, and
   exactly back to the guard at the settle so a second swing starts from the
   stance the first left.
+- **The raise is one movement**: the span between a tenth done and nine tenths
+  done is at least 35% of the wind-up. The version this replaced measures 70ms
+  of its 300 and fails it; this one measures 120.
+- **The tip clears the head, crosses the midline, and covers a body height of
+  arc** through the strike — the silhouette claims, moved onto the thing that
+  casts the silhouette.
 - **The blade points forward and 20° up at idle** — not only at the swing's
   guard key. The two are now within a degree of each other, which is the check
   that the fit worked rather than a coincidence at one pose.

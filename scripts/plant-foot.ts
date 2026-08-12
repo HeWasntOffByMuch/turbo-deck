@@ -73,9 +73,9 @@ function knobsFor(side: 'left' | 'right'): readonly { role: BoneRole; axis: Pose
  */
 const STEP: Record<KeyLabel, { left: number; right: number }> = {
   guard: { left: 0, right: 0 },
-  dip: { left: 0, right: -0.03 },
-  coil: { left: 0, right: -0.1 },
-  load: { left: 0, right: -0.11 },
+  rise: { left: 0, right: -0.06 },
+  coil: { left: 0, right: -0.13 },
+  load: { left: 0, right: -0.14 },
   contact: { left: 0, right: 0.16 },
   follow: { left: 0, right: 0.22 },
   settle: { left: 0, right: 0 },

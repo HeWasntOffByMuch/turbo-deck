@@ -34,6 +34,7 @@ import { poseWorldMatrices, type PoseRotations } from '../units/skin.js';
 import { clipPoseAt } from '../units/clip-sample.js';
 import { poseAt } from '../units/clip-author.js';
 import { PIG_STRIKE, STRIKE_CONTACT_MS, STRIKE_KEY_MS } from '../units/pig-strike.js';
+import { DEFAULT_CANONICAL_HEIGHT } from '../units/canonical-height.js';
 import type { NamingSpec } from '../units/naming.js';
 import type { Vec3 } from './types.js';
 
@@ -263,6 +264,16 @@ describe('how the pig holds a sword', () => {
 
   const FORWARD = frame.forward;
   const UP = frame.up;
+  const hipsBone = boneNode(nodes, naming, 'hips');
+  const handBone = boneNode(nodes, naming, 'rightHand');
+  const headBone = boneNode(nodes, naming, 'head');
+  if (!hipsBone || !handBone || !headBone) throw new Error('the pig rig is missing a bone this file measures from');
+  /** How tall the rig stands in its own units, so thresholds are scale-free. */
+  const RIG_HEIGHT = 0.998;
+  const swordDef = validateWeaponDef(
+    JSON.parse(readFileSync(join(ITEMS, 'sword_jian', 'sword_jian.weapondef.json'), 'utf8')),
+  ).value;
+  if (!swordDef) throw new Error('sword_jian.weapondef.json does not validate');
   /** `lateral` points to the pig's left, so the right is its negation. */
   const RIGHT: Vec3 = [-frame.lateral[0], -frame.lateral[1], -frame.lateral[2]];
 
@@ -296,6 +307,57 @@ describe('how the pig holds a sword', () => {
 
   const axesAt = (socketId: string, ms: number): { blade: Vec3; flat: Vec3 } =>
     axesIn(socketId, poseAt(PIG_STRIKE, { nodes, naming }, ms));
+
+  /**
+   * How far the jian's tip reaches from the grip, in the *rig's* own units.
+   *
+   * The document says 38 world units on a body drawn at 55.65, and the rig
+   * stands 0.998 in the units its bones are in -- so a length in one has to be
+   * carried into the other before it can be compared with where a bone is.
+   */
+  const REACH =
+    (gripTransform(swordDef, boundsOf(join(ITEMS, 'sword_jian', 'sword_jian.glb'))).tipDistance /
+      DEFAULT_CANONICAL_HEIGHT) *
+    RIG_HEIGHT;
+
+  /** Where a bone sits, in the body's axes and relative to the hips. */
+  const placeIn = (bone: number, pose: PoseRotations): { right: number; up: number; forward: number } => {
+    const world = poseWorldMatrices(nodes, pose);
+    const m = world[bone] ?? [];
+    const hipsAt = world[hipsBone.index] ?? [];
+    const from: Vec3 = [
+      (m[12] ?? 0) - (hipsAt[12] ?? 0),
+      (m[13] ?? 0) - (hipsAt[13] ?? 0),
+      (m[14] ?? 0) - (hipsAt[14] ?? 0),
+    ];
+    return {
+      right: dot(from, RIGHT),
+      up: dot(from, frame.up),
+      forward: dot(from, frame.forward),
+    };
+  };
+
+  /**
+   * Where the *tip* of the held blade is, which is what the player watches.
+   *
+   * Spec 139 asserted all of this on the hand, because before spec 140 there was
+   * no weapon and the hand was the only proxy for it. There is one now, and the
+   * two answers came apart the moment the wind-up was rebuilt around the elbow:
+   * a folded elbow puts the hand beside the ear rather than above the head, and
+   * the sword above the head. A lever amplifies -- the hand travels 0.43 between
+   * the load and the blow and the tip travels three times that -- so the hand
+   * had stopped being a proxy for anything.
+   */
+  const tipAt = (ms: number): { right: number; up: number; forward: number } => {
+    const pose = poseAt(PIG_STRIKE, { nodes, naming }, ms);
+    const hand = placeIn(handBone.index, pose);
+    const { blade } = axesIn('weapon.main', pose);
+    return {
+      right: hand.right + dot(blade, RIGHT) * REACH,
+      up: hand.up + dot(blade, frame.up) * REACH,
+      forward: hand.forward + dot(blade, frame.forward) * REACH,
+    };
+  };
 
   /**
    * The same, in the pig's idle -- which is where a sheathed sword is judged.
@@ -369,6 +431,72 @@ describe('how the pig holds a sword', () => {
     // The strike is a *reversal*, which is what makes it a chop rather than a
     // poke: the blade ends up on the far side of horizontal from where it was.
     expect(dot(load.blade, contact.blade)).toBeLessThan(0);
+  });
+
+  it('lifts the tip clear over the head and sweeps it across the body', () => {
+    // The silhouette argument, moved onto the thing that casts the silhouette.
+    // Spec 139 made all three of these claims about the *hand*, because there
+    // was no weapon then and the hand was the only proxy for one. Rebuilding the
+    // wind-up around the elbow broke the proxy and not the swing: a folded elbow
+    // puts the hand beside the ear and the sword above the head, which is what
+    // an arm does with a sword and what the hand alone can no longer see.
+    const head = placeIn(headBone.index, poseAt(PIG_STRIKE, { nodes, naming }, STRIKE_KEY_MS.load));
+    const load = tipAt(STRIKE_KEY_MS.load);
+    expect(load.up, 'tip over the head at the load').toBeGreaterThan(head.up);
+    expect(load.forward, 'tip behind the body at the load').toBeLessThan(-0.1 * RIG_HEIGHT);
+
+    // A swing and not a prod: the tip starts on the wielding side and finishes
+    // past the midline on the other.
+    expect(load.right).toBeGreaterThan(0);
+    expect(tipAt(STRIKE_CONTACT_MS).right).toBeLessThan(0);
+  });
+
+  it('carries the tip a body height of arc between the load and the blow', () => {
+    // A lever amplifies. The hand travels 0.43 of a body height through the
+    // strike and the tip travels three times that, which is the whole reason a
+    // sword reads at forty pixels when a fist does not.
+    let arc = 0;
+    let previous = tipAt(STRIKE_KEY_MS.load);
+    for (let ms = STRIKE_KEY_MS.load + 5; ms <= STRIKE_CONTACT_MS; ms += 5) {
+      const now = tipAt(ms);
+      arc += Math.hypot(now.right - previous.right, now.up - previous.up, now.forward - previous.forward);
+      previous = now;
+    }
+    expect(arc).toBeGreaterThan(1.0 * RIG_HEIGHT);
+  });
+
+  it('raises the blade over the whole wind-up rather than in one whip', () => {
+    // What was reported: "movement has 2 phases of raising a sword". It was not
+    // two poses. The blade held still for 140ms, turned a hundred degrees in
+    // 80ms, and held still for another 160ms -- a dead beat, a whip, a dead
+    // beat -- which reads as two movements with something happening between
+    // them. Neither the keys nor a position graph shows it; only the rate does.
+    //
+    // So: find when the raise is a tenth done and when it is nine tenths done,
+    // and require that span to be a real fraction of the wind-up. A whip
+    // between two stalls crosses both thresholds almost at once -- the version
+    // this replaced spans 70ms of its 300, and this one spans 120. Counting
+    // humps in the rate would *not* catch it: there was only ever one hump, and
+    // the problem was the stillness on either side of it.
+    const STEP = 10;
+    const times: number[] = [];
+    const travelled: number[] = [];
+    let sum = 0;
+    let previous = axesAt('weapon.main', 0).blade;
+    for (let ms = STEP; ms <= STRIKE_KEY_MS.coil; ms += STEP) {
+      const now = axesAt('weapon.main', ms).blade;
+      sum += Math.acos(Math.max(-1, Math.min(1, dot(previous, now))));
+      previous = now;
+      times.push(ms);
+      travelled.push(sum);
+    }
+    const total = travelled[travelled.length - 1] ?? 0;
+    expect(total).toBeGreaterThan(1);
+
+    const crosses = (fraction: number): number =>
+      times[travelled.findIndex((amount) => amount >= fraction * total)] ?? 0;
+    const spread = crosses(0.9) - crosses(0.1);
+    expect(spread, 'the raise is spread across the wind-up').toBeGreaterThan(0.35 * STRIKE_KEY_MS.coil);
   });
 
   it('keeps the blade above the horizon for the whole wind-up', () => {

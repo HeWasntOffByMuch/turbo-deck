@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "hash": "2c55cec8825d1e374769ec2d7042415b14702e52b150198e0acfee4362dee29b",
+  "hash": "d2bf4020d32d27c6028812cdb09d40652e2da90e3ac09715504f7ab1ed8baadb",
   "builtStages": [],
   "units": [
     {
@@ -85,7 +85,7 @@
         },
         {
           "path": "pig_a_pose_full/clips/slash.glb",
-          "sha256": "d7c49b2ce3d946537483ae568f833ad181c9af2ae706a1ce55d7e73861b76e06",
+          "sha256": "e823258bb5fc6d6af5c0f08feeb0d32a24045ae1c930caac510aac41bbb367d3",
           "bytes": 36000
         },
         {

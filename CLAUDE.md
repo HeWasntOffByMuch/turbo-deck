@@ -246,6 +246,29 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  for a moment" -- is a statement about the frames *between*
                  keys, and the keys are the only thing anybody reads while
                  authoring.
+                 Two rules the wind-up itself is subject to (spec 143). **A raise
+                 is one movement**: the `rise` key is a pose the blade passes
+                 through, eased `in` to it and `out` of it, because it used to be
+                 a `dip` that arrived at zero velocity with the next segment
+                 leaving from zero -- the blade held still 140ms, turned a
+                 hundred degrees in 80, and held still another 160, which is a
+                 dead beat, a whip and a dead beat, and reads as two raises. What
+                 measures it is the *spread* -- when the raise is a tenth done and
+                 when it is nine tenths done -- because counting humps in the rate
+                 finds one either way and the fault was the stillness around it.
+                 **The elbow raises the sword, not the torso**: the first version
+                 abducted the shoulder 116 degrees with the elbow straight and
+                 twisted the torso 81 to make up the difference, and a pig winding
+                 up to chop looked like a pig turning round to leave. That
+                 preference lives as weights in aim-blade.ts rather than as angles
+                 in the clip, and the solver needs a *place for the hand* beside
+                 the blade's direction (solved on aim alone it tucked the hand
+                 inside the pig and left the strike no reach) and a grid of
+                 starting points (an arm reaching a place has answers separated by
+                 ridges a descent will not cross). That grid is what made "the
+                 hand cannot both reach forward and cross the midline" a
+                 measurement rather than a suspicion -- so the swing keeps its
+                 reach and it is the *tip* that crosses.
                  naming.ts is the two bone vocabularies and the one way to look a
                  bone up across them (spec 120). There are two in the tree
                  permanently: the reference mannequin is authored and

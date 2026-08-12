@@ -23,9 +23,23 @@
  * or the animation is lying about when it was safe to stand there. Everything
  * else is arranged around that:
  *
+ *  - the raise is ONE movement, from the guard to the top, with the `rise` key
+ *    at 130ms a pose the blade passes through rather than arrives at. It used to
+ *    be a `dip` -- a counter-move, anticipation -- and it cost 140ms of a
+ *    perfectly still blade followed by an 80ms whip followed by another stall,
+ *    which reads as two separate raises. Anticipation is worth having and is not
+ *    worth that at forty pixels.
  *  - the blade is over the shoulder by 300ms and *stays* there to 400ms, because
  *    a wind-up that is still moving cannot be read as a decision, and a wind-up
  *    that is perfectly still reads as a dropped frame. It creeps a few degrees.
+ *  - **the elbow raises the sword, not the torso.** Getting a blade behind your
+ *    head is done by folding the elbow; the first version did it by abducting
+ *    the shoulder 116 degrees with the elbow straight and twisting the torso 81
+ *    degrees to make up the difference, and a pig winding up to chop looked like
+ *    a pig turning round to leave. It is 96 degrees of elbow and 50 of torso
+ *    now, and the arm angles are solved rather than authored -- see
+ *    `scripts/aim-blade.ts`, which states where the blade must point and where
+ *    the hand must be, and answers with the arm that does both.
  *  - the strike is 100ms, eased `in`, so the fastest instant of the whole clip is
  *    the instant of contact. Six frames at 60Hz: enough that two of them are
  *    readable mid-swing and the last two are the blur that sells it. An
@@ -66,7 +80,7 @@ export const STRIKE_CONTACT_MS = 500;
 /** Where the file's own beats are, so the preview and the tests can name them. */
 export const STRIKE_KEY_MS = {
   guard: 0,
-  dip: 130,
+  rise: 130,
   coil: 300,
   load: 400,
   contact: STRIKE_CONTACT_MS,
@@ -118,29 +132,29 @@ const STANCE = {
     rightLeg: { lateral: 30 },
     rightFoot: { lateral: -18, up: 0 },
   },
-  dip: {
-    leftUpLeg: { lateral: 4.1, forward: 5, up: -0.4 },
-    leftLeg: { lateral: 30.5 },
-    leftFoot: { lateral: -22.2, up: -0.1 },
-    rightUpLeg: { lateral: 22.1, forward: -2.3, up: -0.9 },
-    rightLeg: { lateral: 19.8 },
-    rightFoot: { lateral: -12.8, up: -0.2 },
+  rise: {
+    leftUpLeg: { lateral: 5.1, forward: 4.5, up: -0.2 },
+    leftLeg: { lateral: 30.2 },
+    leftFoot: { lateral: -22.1, up: 0 },
+    rightUpLeg: { lateral: 27.3, forward: -3.7, up: -0.9 },
+    rightLeg: { lateral: 15.3 },
+    rightFoot: { lateral: -8, up: -0.3 },
   },
   coil: {
-    leftUpLeg: { lateral: 12.7, forward: -0.9, up: 1.4 },
-    leftLeg: { lateral: 27.4 },
-    leftFoot: { lateral: -20.8, up: 0.3 },
-    rightUpLeg: { lateral: 24.8, forward: -15.2, up: 1.9 },
-    rightLeg: { lateral: 14.1 },
-    rightFoot: { lateral: -6.8, up: 0.3 },
+    leftUpLeg: { lateral: 9.5, forward: 1.7, up: 0.7 },
+    leftLeg: { lateral: 28.8 },
+    leftFoot: { lateral: -21.4, up: 0.1 },
+    rightUpLeg: { lateral: 33.5, forward: -10.9, up: 0.3 },
+    rightLeg: { lateral: 10.6 },
+    rightFoot: { lateral: 2.3, up: -1.2 },
   },
   load: {
-    leftUpLeg: { lateral: 14.1, forward: -2.3, up: 1.8 },
-    leftLeg: { lateral: 26.6 },
-    leftFoot: { lateral: -20.4, up: 0.3 },
-    rightUpLeg: { lateral: 23.9, forward: -17.9, up: 2.5 },
-    rightLeg: { lateral: 13.6 },
-    rightFoot: { lateral: -6.1, up: 0.4 },
+    leftUpLeg: { lateral: 10.7, forward: 0.8, up: 1 },
+    leftLeg: { lateral: 28.3 },
+    leftFoot: { lateral: -21.2, up: 0.2 },
+    rightUpLeg: { lateral: 33.4, forward: -13.2, up: 0.7 },
+    rightLeg: { lateral: 10.3 },
+    rightFoot: { lateral: 3.2, up: -1.3 },
   },
   contact: {
     leftUpLeg: { lateral: -6.6, forward: 8, up: -2 },
@@ -200,48 +214,62 @@ const KEYS: readonly PoseKey[] = [
     turns: GUARD,
   },
   {
-    // The counter-move. The blade drops and the shoulders square *before* the
-    // lift, which is the oldest trick there is and the reason a swing looks like
-    // it was decided on rather than teleported into.
-    label: 'dip',
-    atMs: STRIKE_KEY_MS.dip,
-    ease: 'out',
+    // Halfway up, and a key the blade passes *through* rather than arrives at.
+    //
+    // This used to be a `dip`: a counter-move, anticipation, the oldest trick
+    // there is. It cost 140ms in which the blade did not move at all, and it
+    // arrived eased `out` -- zero velocity -- with the next segment eased
+    // `inOut`, leaving from zero again. So the sword stopped dead in the middle
+    // of being raised, and a raise that stalls in the middle is two raises.
+    //
+    // Anticipation is worth having and is not worth that. At forty pixels the
+    // wind-up is read from the hold at the top, not from a ten-degree dip
+    // nobody can resolve. So the rise is one move now: `in` to here, `out` into
+    // the coil, which makes the velocity continuous and largest exactly here.
+    label: 'rise',
+    atMs: STRIKE_KEY_MS.rise,
+    ease: 'in',
     turns: {
-      hips: { up: -4 },
-      spine: { lateral: 7 },
-      chest: { up: -4 },
+      hips: { up: -6 },
+      spine: { lateral: 5, up: -2 },
+      chest: { up: -6 },
       neck: { up: 4, lateral: 6 },
       head: { lateral: 4 },
-      rightShoulder: { forward: 0 },
-      rightArm: { lateral: -44, forward: -10 },
-      rightForeArm: { flex: 86 },
-      rightHand: { lateral: 33.8, forward: 61.7, up: -55 },
+      rightShoulder: { forward: -4 },
+      rightArm: { lateral: 3.5, forward: 29.1, up: -2.1 },
+      rightForeArm: { flex: 74.9 },
+      rightHand: { lateral: 7.2, forward: 2.7, up: -36.3 },
       leftShoulder: { forward: 8 },
       leftArm: { lateral: -32, forward: 14 },
       leftForeArm: { flex: 58 },
       leftHand: { lateral: 6 },
-      ...STANCE.dip,
+      ...STANCE.rise,
     },
   },
   {
-    // Over the shoulder. Everything winds right: hips, chest and the blade all
-    // rotate the same way and the neck rotates back against them, so the pig
-    // keeps looking at what it is about to hit while its body is turned away
-    // from it. That opposition is what makes a coil look loaded rather than
-    // just turned.
+    // Over the shoulder -- and got there mostly by *folding the elbow*, which is
+    // how an arm puts a sword behind its own head. The first version raised it
+    // by abducting the shoulder 116 degrees with the elbow nearly straight and
+    // twisting the torso 81 degrees to make up the difference, so a pig winding
+    // up to chop looked like a pig turning round to leave.
+    //
+    // The torso still winds, and still opposes the neck so the pig keeps looking
+    // at what it is about to hit while its body turns away from it -- that
+    // opposition is what makes a coil look loaded rather than just turned. It is
+    // now 34 degrees of it rather than 81, which leaves somewhere to unwind *to*.
     label: 'coil',
     atMs: STRIKE_KEY_MS.coil,
-    ease: 'inOut',
+    ease: 'out',
     turns: {
-      hips: { up: -24 },
-      spine: { lateral: -8, up: -14 },
-      chest: { up: -32, lateral: -10 },
-      neck: { up: 30, lateral: 10 },
-      head: { up: 12, lateral: 4 },
-      rightShoulder: { forward: -26, up: -14 },
-      rightArm: { forward: -108, lateral: 48 },
-      rightForeArm: { flex: 16 },
-      rightHand: { lateral: 42.6, forward: 53.4, up: -45.2 },
+      hips: { up: -16 },
+      spine: { lateral: -6, up: -7 },
+      chest: { up: -21, lateral: -8 },
+      neck: { up: 21, lateral: 11 },
+      head: { up: 9, lateral: 5 },
+      rightShoulder: { forward: -19, up: -10 },
+      rightArm: { lateral: -5.3, forward: 63.5, up: -12 },
+      rightForeArm: { flex: 90.8 },
+      rightHand: { lateral: 5.4, forward: 2.2, up: -42 },
       leftShoulder: { forward: 10 },
       leftArm: { lateral: -48, forward: 6 },
       leftForeArm: { flex: 96 },
@@ -257,15 +285,15 @@ const KEYS: readonly PoseKey[] = [
     atMs: STRIKE_KEY_MS.load,
     ease: 'out',
     turns: {
-      hips: { up: -28 },
-      spine: { lateral: -10, up: -16 },
-      chest: { up: -37, lateral: -12 },
-      neck: { up: 34, lateral: 12 },
-      head: { up: 14, lateral: 6 },
-      rightShoulder: { forward: -30, up: -16 },
-      rightArm: { forward: -116, lateral: 56 },
-      rightForeArm: { flex: 8 },
-      rightHand: { lateral: 36.8, forward: 54, up: -46.4 },
+      hips: { up: -19 },
+      spine: { lateral: -7, up: -8 },
+      chest: { up: -25, lateral: -9 },
+      neck: { up: 24, lateral: 13 },
+      head: { up: 10, lateral: 6 },
+      rightShoulder: { forward: -22, up: -12 },
+      rightArm: { lateral: -6.5, forward: 70.9, up: -12.8 },
+      rightForeArm: { flex: 94.8 },
+      rightHand: { lateral: 9.2, forward: 5.3, up: -41.2 },
       leftShoulder: { forward: 12 },
       leftArm: { lateral: -52, forward: 4 },
       leftForeArm: { flex: 100 },
@@ -289,9 +317,9 @@ const KEYS: readonly PoseKey[] = [
       neck: { up: -16, lateral: 12 },
       head: { lateral: 8 },
       rightShoulder: { forward: 10, up: 20 },
-      rightArm: { forward: 22, lateral: -84 },
-      rightForeArm: { flex: 8 },
-      rightHand: { lateral: 78.8, forward: 53.4, up: -45 },
+      rightArm: { lateral: 21.7, forward: -11.7, up: 20 },
+      rightForeArm: { flex: 7.7 },
+      rightHand: { lateral: 13.5, forward: 6.8, up: -32.8 },
       leftShoulder: { forward: -10, up: -16 },
       leftArm: { lateral: 26, forward: -20 },
       leftForeArm: { flex: 48 },
@@ -313,9 +341,9 @@ const KEYS: readonly PoseKey[] = [
       neck: { up: -26, lateral: 16 },
       head: { lateral: 10 },
       rightShoulder: { forward: 18, up: 28 },
-      rightArm: { forward: 32, lateral: -78 },
-      rightForeArm: { flex: 10 },
-      rightHand: { lateral: 84.8, forward: 53.2, up: -45.2 },
+      rightArm: { lateral: 24.3, forward: -30.4, up: 35.5 },
+      rightForeArm: { flex: 10.1 },
+      rightHand: { lateral: 17.5, forward: 11.3, up: -36.9 },
       leftShoulder: { forward: -14, up: -22 },
       leftArm: { lateral: 36, forward: -28 },
       leftForeArm: { flex: 56 },
