@@ -36,6 +36,11 @@ export interface ReplicatedEntity {
    */
   readonly name: string;
   readonly turnRate: number;
+  /** Guard left, 0..1 (spec 147). 1 for anything with no poise pool. */
+  readonly poise: number;
+  /** Absorb left in health units, and the tick it falls off whole. */
+  readonly shield: number;
+  readonly shieldUntilTick: number;
 }
 
 export class ReplicatedWorld {
@@ -88,6 +93,9 @@ export class ReplicatedWorld {
           level: record.level ?? 1,
           name: record.name ?? '',
           turnRate: record.turnRate ?? 0,
+          poise: record.poise ?? 1,
+          shield: record.shield ?? 0,
+          shieldUntilTick: record.shieldUntilTick ?? 0,
         });
         continue;
       }

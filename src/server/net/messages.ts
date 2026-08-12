@@ -9,7 +9,10 @@
  */
 
 import {
+  BASE_STAT_KEYS,
   EQUIP_SLOTS,
+  TRAIT_WIRE_ORDER,
+  type BaseStats,
   type EffectiveStats,
   type Equipment,
   type EquipSlot,
@@ -17,6 +20,7 @@ import {
   type ItemStack,
   type SkillAllocation,
   type SlotAddress,
+  type TraitStats,
   type Vec3,
 } from '../state/types.js';
 import { BufferReader, BufferWriter, CodecError } from './codec.js';
@@ -209,6 +213,27 @@ export interface BuyBackMessage {
   readonly index: number;
 }
 
+/**
+ * Put one attribute point somewhere (spec 147).
+ *
+ * The whole payload is one ordinal into `BASE_STAT_KEYS`. There is no amount and
+ * no derived value -- the client says *which button was pressed*, and reads the
+ * consequences back off the `Stats` message that follows.
+ */
+export interface AllocateAttributeMessage {
+  readonly type: typeof ClientMessageType.AllocateAttribute;
+  readonly attribute: number;
+}
+
+export interface RespecAttributesMessage {
+  readonly type: typeof ClientMessageType.RespecAttributes;
+}
+
+export interface SpendStatSkillPointMessage {
+  readonly type: typeof ClientMessageType.SpendStatSkillPoint;
+  readonly skillId: string;
+}
+
 export interface SpendSkillPointMessage {
   readonly type: typeof ClientMessageType.SpendSkillPoint;
   readonly skillId: string;
@@ -288,6 +313,9 @@ export type ClientMessage =
   | TradeAcceptMessage
   | TradeCancelMessage
   | SpendSkillPointMessage
+  | AllocateAttributeMessage
+  | RespecAttributesMessage
+  | SpendStatSkillPointMessage
   | ChatMessage
   | UseAbilityMessage
   | CancelCastMessage
@@ -449,6 +477,14 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
     case ClientMessageType.SpendSkillPoint:
       writer.str(message.skillId);
       break;
+    case ClientMessageType.AllocateAttribute:
+      writer.u8(message.attribute);
+      break;
+    case ClientMessageType.RespecAttributes:
+      break;
+    case ClientMessageType.SpendStatSkillPoint:
+      writer.str(message.skillId);
+      break;
     case ClientMessageType.Chat:
       writer.str(message.text);
       break;
@@ -558,6 +594,12 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
       return { type: ClientMessageType.TradeCancel };
     case ClientMessageType.SpendSkillPoint:
       return { type: ClientMessageType.SpendSkillPoint, skillId: reader.str() };
+    case ClientMessageType.AllocateAttribute:
+      return { type: ClientMessageType.AllocateAttribute, attribute: reader.u8() };
+    case ClientMessageType.RespecAttributes:
+      return { type: ClientMessageType.RespecAttributes };
+    case ClientMessageType.SpendStatSkillPoint:
+      return { type: ClientMessageType.SpendStatSkillPoint, skillId: reader.str() };
     case ClientMessageType.Chat:
       return { type: ClientMessageType.Chat, text: reader.str() };
     case ClientMessageType.UseAbility:
@@ -636,6 +678,11 @@ export interface EntityDelta {
   /** Spec 145, players only. See {@link EntityField.Identity}. */
   readonly name?: string;
   readonly turnRate?: number;
+  /** Guard left, 0..1 (spec 147). Quantised to a byte on the wire. */
+  readonly poise?: number;
+  /** Absorb left in health units, and the tick the whole thing falls off. */
+  readonly shield?: number;
+  readonly shieldUntilTick?: number;
 }
 
 export interface DeltaMessage {
@@ -698,6 +745,19 @@ export interface StatsMessage {
    * equipment, and with the same answer.
    */
   readonly skills: readonly SkillAllocation[];
+  /**
+   * The six attributes as *allocated* (spec 147), plus what is left to place.
+   *
+   * Allocated rather than total, deliberately: the sheet's "+" button spends
+   * against this number and a respec returns it, so it has to be the thing the
+   * server's own validator reads. What items push it to is `attributes`, where
+   * nothing tries to spend it -- and both are sent because neither is derivable
+   * from the other once anything grants an attribute.
+   */
+  readonly baseStats: BaseStats;
+  readonly attributes: BaseStats;
+  readonly unspentAttributePoints: number;
+  readonly statSkills: readonly SkillAllocation[];
   readonly stats: EffectiveStats;
 }
 
@@ -953,9 +1013,14 @@ const FIELD_HEALTH = 1 << 3;
 const FIELD_ACTIVITY = 1 << 4;
 const FIELD_LEVEL = 1 << 5;
 const FIELD_IDENTITY = 1 << 6;
+const FIELD_POISE = 1 << 7;
+const FIELD_SHIELD = 1 << 8;
 
 function writeEntityDelta(writer: BufferWriter, entity: EntityDelta): void {
-  writer.varuint(entity.id).u8(entity.fields);
+  // A varuint rather than a byte since spec 147: `Identity` took the eighth bit
+  // and poise and shields need two more. The common delta -- position and
+  // facing, mask 6 -- is still one byte.
+  writer.varuint(entity.id).varuint(entity.fields);
   if (entity.fields & FIELD_SPAWN) {
     writer.u8(entity.kind ?? 0).str(entity.typeId ?? '');
   }
@@ -972,11 +1037,19 @@ function writeEntityDelta(writer: BufferWriter, entity: EntityDelta): void {
   if (entity.fields & FIELD_IDENTITY) {
     writer.str(entity.name ?? '').f32(entity.turnRate ?? 0);
   }
+  // A fraction in one byte (spec 147). 255 is a full guard; the rounding error
+  // is a fifth of a percent, invisible on a bar three pixels tall.
+  if (entity.fields & FIELD_POISE) {
+    writer.u8(Math.max(0, Math.min(255, Math.round((entity.poise ?? 1) * 255))));
+  }
+  if (entity.fields & FIELD_SHIELD) {
+    writer.f32(entity.shield ?? 0).u32(entity.shieldUntilTick ?? 0);
+  }
 }
 
 function readEntityDelta(reader: BufferReader): EntityDelta {
   const id = reader.varuint();
-  const fields = reader.u8();
+  const fields = reader.varuint();
   let kind: number | undefined;
   let typeId: string | undefined;
   let position: Vec3 | undefined;
@@ -988,6 +1061,9 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
   let level: number | undefined;
   let name: string | undefined;
   let turnRate: number | undefined;
+  let poise: number | undefined;
+  let shield: number | undefined;
+  let shieldUntilTick: number | undefined;
   if (fields & FIELD_SPAWN) {
     kind = reader.u8();
     typeId = reader.str();
@@ -1009,6 +1085,11 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
     name = reader.str();
     turnRate = reader.f32();
   }
+  if (fields & FIELD_POISE) poise = reader.u8() / 255;
+  if (fields & FIELD_SHIELD) {
+    shield = reader.f32();
+    shieldUntilTick = reader.u32();
+  }
   return {
     id,
     fields,
@@ -1023,7 +1104,32 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
     ...(level === undefined ? {} : { level }),
     ...(name === undefined ? {} : { name }),
     ...(turnRate === undefined ? {} : { turnRate }),
+    ...(poise === undefined ? {} : { poise }),
+    ...(shield === undefined ? {} : { shield, shieldUntilTick: shieldUntilTick ?? 0 }),
   };
+}
+
+function writeSkills(writer: BufferWriter, skills: readonly SkillAllocation[]): void {
+  writer.varuint(skills.length);
+  for (const allocation of skills) writer.str(allocation.skillId).varuint(allocation.level);
+}
+
+/**
+ * The six attributes, in {@link BASE_STAT_KEYS} order (spec 147).
+ *
+ * By position rather than by name, which is the same decision
+ * `ClientMessageType.AllocateAttribute` makes about its ordinal and for the same
+ * reason: the order is already canonical and already load-bearing, so spelling
+ * the names out would be six strings restating a constant both ends import.
+ */
+function writeAttributes(writer: BufferWriter, attributes: BaseStats): void {
+  for (const key of BASE_STAT_KEYS) writer.varuint(Math.max(0, Math.round(attributes[key])));
+}
+
+function readAttributes(reader: BufferReader): BaseStats {
+  const values: Record<string, number> = {};
+  for (const key of BASE_STAT_KEYS) values[key] = reader.varuint();
+  return values as unknown as BaseStats;
 }
 
 function readSkills(reader: BufferReader): readonly SkillAllocation[] {
@@ -1050,6 +1156,31 @@ function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
     .f32(stats.maxResource)
     .f32(stats.resourceRegen)
     .str(stats.basicAttackId);
+  writeTraits(writer, stats.traits);
+}
+
+/**
+ * The trait block (spec 147).
+ *
+ * Written by walking {@link TRAIT_WIRE_ORDER} rather than field by field, and
+ * that is the whole point: a trait added to the interface and forgotten in one
+ * of two hand-written functions is a field that reads as somebody else's value
+ * for the rest of the message. One list, walked twice, cannot desynchronise --
+ * and a test asserts the list covers the interface, so a trait added and
+ * forgotten *there* fails CI.
+ *
+ * All f32. Several are logically integers and a few are logically flags, but a
+ * uniform block is one loop rather than a schema, and the message is sent on
+ * login and on allocation rather than per tick, so the width is free.
+ */
+function writeTraits(writer: BufferWriter, traits: TraitStats): void {
+  for (const key of TRAIT_WIRE_ORDER) writer.f32(traits[key]);
+}
+
+function readTraits(reader: BufferReader): TraitStats {
+  const traits: Record<string, number> = {};
+  for (const key of TRAIT_WIRE_ORDER) traits[key] = reader.f32();
+  return traits as unknown as TraitStats;
 }
 
 function readStats(reader: BufferReader): EffectiveStats {
@@ -1069,6 +1200,7 @@ function readStats(reader: BufferReader): EffectiveStats {
     maxResource: reader.f32(),
     resourceRegen: reader.f32(),
     basicAttackId: reader.str(),
+    traits: readTraits(reader),
   };
 }
 
@@ -1149,10 +1281,11 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
         .varuint(message.level)
         .varuint(message.experience)
         .varuint(message.unspentSkillPoints);
-      writer.varuint(message.skills.length);
-      for (const allocation of message.skills) {
-        writer.str(allocation.skillId).varuint(allocation.level);
-      }
+      writeSkills(writer, message.skills);
+      writeSkills(writer, message.statSkills);
+      writeAttributes(writer, message.baseStats);
+      writeAttributes(writer, message.attributes);
+      writer.varuint(message.unspentAttributePoints);
       writeStats(writer, message.stats);
       break;
     case ServerMessageType.Inventory:
@@ -1304,6 +1437,10 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         experience: reader.varuint(),
         unspentSkillPoints: reader.varuint(),
         skills: readSkills(reader),
+        statSkills: readSkills(reader),
+        baseStats: readAttributes(reader),
+        attributes: readAttributes(reader),
+        unspentAttributePoints: reader.varuint(),
         stats: readStats(reader),
       };
     case ServerMessageType.Inventory:

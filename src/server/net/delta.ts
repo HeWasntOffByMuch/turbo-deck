@@ -29,6 +29,13 @@ const POSITION_EPSILON = 0.01;
 /** ~0.06 degrees; below this a facing change is invisible. */
 const FACING_EPSILON = 0.001;
 const HEALTH_EPSILON = 0.01;
+/**
+ * Poise is sent as a byte, so anything under a 255th is not expressible
+ * (spec 147). Matching the epsilon to the quantisation is what stops a body
+ * regenerating a hundredth of a point a tick from being marked dirty every
+ * single tick and turning the delta back into a snapshot.
+ */
+const POISE_EPSILON = 1 / 255;
 
 interface KnownEntity {
   x: number;
@@ -43,6 +50,10 @@ interface KnownEntity {
   /** Spec 145. `''` for anything that is not a player. */
   name: string;
   turnRate: number;
+  /** Spec 147. A fraction, because that is all a bar asks. */
+  poise: number;
+  shield: number;
+  shieldUntilTick: number;
 }
 
 function snapshotOf(entity: ServerEntity, name: string): KnownEntity {
@@ -58,7 +69,17 @@ function snapshotOf(entity: ServerEntity, name: string): KnownEntity {
     level: entity.level,
     name,
     turnRate: entity.stats.turnRate,
+    poise: poiseFractionOf(entity),
+    shield: entity.shield,
+    shieldUntilTick: entity.shieldUntilTick,
   };
+}
+
+/** Guard left, 0..1. A body with no poise pool reads as full rather than as 0. */
+function poiseFractionOf(entity: ServerEntity): number {
+  const max = entity.stats.traits.maxPoise;
+  if (!(max > 0)) return 1;
+  return Math.max(0, Math.min(1, entity.poise / max));
 }
 
 export class DeltaTracker {
@@ -97,6 +118,8 @@ export class DeltaTracker {
             EntityField.Health |
             EntityField.Activity |
             EntityField.Level |
+            EntityField.Poise |
+            EntityField.Shield |
             (named === null ? 0 : EntityField.Identity),
           kind: entity.kind,
           typeId: entity.typeId,
@@ -107,6 +130,9 @@ export class DeltaTracker {
           activity: entity.activity,
           activityUntilTick: entity.activityUntilTick,
           level: entity.level,
+          poise: next.poise,
+          shield: entity.shield,
+          shieldUntilTick: entity.shieldUntilTick,
           ...(named === null ? {} : { name: named, turnRate: entity.stats.turnRate }),
         });
         this.known.set(entity.id, next);
@@ -140,6 +166,13 @@ export class DeltaTracker {
       if (named !== null && (next.name !== previous.name || next.turnRate !== previous.turnRate)) {
         fields |= EntityField.Identity;
       }
+      if (Math.abs(next.poise - previous.poise) > POISE_EPSILON) fields |= EntityField.Poise;
+      if (
+        Math.abs(next.shield - previous.shield) > HEALTH_EPSILON ||
+        next.shieldUntilTick !== previous.shieldUntilTick
+      ) {
+        fields |= EntityField.Shield;
+      }
 
       if (fields === 0) continue;
 
@@ -157,6 +190,10 @@ export class DeltaTracker {
         ...(fields & EntityField.Level ? { level: entity.level } : {}),
         ...(fields & EntityField.Identity
           ? { name: named ?? '', turnRate: entity.stats.turnRate }
+          : {}),
+        ...(fields & EntityField.Poise ? { poise: next.poise } : {}),
+        ...(fields & EntityField.Shield
+          ? { shield: entity.shield, shieldUntilTick: entity.shieldUntilTick }
           : {}),
       });
       this.known.set(entity.id, next);

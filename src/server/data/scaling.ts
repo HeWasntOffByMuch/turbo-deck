@@ -1,0 +1,210 @@
+/**
+ * Every coefficient the six attributes scale by, in one object (spec 147).
+ *
+ * The reason this is a table rather than numbers inlined into `derived.ts` is
+ * the brief's last quality bar: *are the mechanics easy to tune through
+ * centralized data/config*. A balance pass on this system should be a diff of
+ * this file and nothing else, and a reviewer should be able to read what an
+ * attribute is worth without reading the arithmetic that applies it.
+ *
+ * Three curve shapes, and only three, so a number here can be understood from
+ * its shape alone:
+ *
+ *  - {@link linear} -- more of a thing, forever. For the stats where "twice the
+ *    investment is twice the value" is actually true: health, pools, poise.
+ *  - {@link softCap} -- linear to a knee, then a fraction of the rate. For the
+ *    stats where an unbounded specialist would stop the game being a game, but
+ *    where a cap would make the last twenty points worthless.
+ *  - {@link reciprocal} -- `1 / (1 + attr * per)`, floored. For every "less of a
+ *    thing" stat: cost, cooldown, animation length. It cannot reach zero, it has
+ *    no negative branch, and its output means what it says -- 0.5 is *half*,
+ *    where "-50%" invites the question of whether two of them is -100%.
+ *
+ * Pure, dependency-free, part of the deterministic core.
+ */
+
+import { SERVER_TICK_RATE } from '../config.js';
+
+/** Seconds as whole ticks, rounding to nearest -- the convention everywhere. */
+function seconds(value: number): number {
+  return Math.max(0, Math.round(value * SERVER_TICK_RATE));
+}
+
+/** `attr * per`. The honest one. */
+export function linear(attr: number, per: number): number {
+  if (!Number.isFinite(attr) || !Number.isFinite(per)) return 0;
+  return attr * per;
+}
+
+/**
+ * Linear to `knee`, then `falloff` of the rate.
+ *
+ * Piecewise-linear rather than a smooth asymptote on purpose: a player can work
+ * out what the next point is worth by reading two numbers, and a reviewer can
+ * work out the value at the hard cap in their head. A smooth curve is prettier
+ * and nobody can answer either question about it without a calculator.
+ */
+export function softCap(attr: number, per: number, knee: number, falloff: number): number {
+  if (!Number.isFinite(attr) || attr <= 0) return 0;
+  if (attr <= knee) return attr * per;
+  return (knee + (attr - knee) * falloff) * per;
+}
+
+/**
+ * `1 / (1 + attr * per)`, held at or above `floor`.
+ *
+ * The multiplier form of "reduces X". Two sources of 30% reduction compose to
+ * 0.7 * 0.7 rather than to zero, because each is a *factor* -- which is the
+ * whole reason the reductions in this system are written as scales and not as
+ * percentages to be subtracted.
+ */
+export function reciprocal(attr: number, per: number, floor: number): number {
+  if (!Number.isFinite(attr) || !Number.isFinite(per)) return 1;
+  const denominator = 1 + Math.max(0, attr) * per;
+  if (!(denominator > 0)) return floor;
+  return Math.max(floor, 1 / denominator);
+}
+
+/**
+ * The whole balance surface.
+ *
+ * Read it as: for each attribute, what one point of it buys. Anything that is
+ * *not* a per-point rate -- a threshold, a duration, a cap -- lives beside its
+ * rate rather than in a separate constants file, because a rate whose cap is
+ * three files away is a rate nobody can evaluate.
+ */
+export const SCALING = {
+  /** What every character starts each attribute at, and the ceiling on one. */
+  startingAttribute: 5,
+  attributeHardCap: 60,
+  /** Points granted per level, and what a fresh character has to place. */
+  pointsPerLevel: 3,
+  startingPoints: 5,
+  /** Coins a full respec costs. Cheap enough to experiment, not free. */
+  respecCost: 40,
+
+  strength: {
+    /** Attack damage per point. The existing coefficient, unchanged. */
+    damagePer: 0.6,
+    /** Health per point -- small; Constitution owns the pool. */
+    healthPer: 2,
+    /** Poise damage a blow carries: a base, plus a soft-capped rate. */
+    staggerBase: 8,
+    staggerPer: 0.9,
+    staggerKnee: 40,
+    staggerFalloff: 0.5,
+    /** Poise contributed to one's own pool. */
+    poisePer: 0.8,
+    /** How long a break roots the broken body: a floor plus a rate, capped. */
+    staggerTicksBase: seconds(0.5),
+    staggerTicksPer: 0.2,
+    staggerTicksCap: seconds(0.8),
+  },
+
+  agility: {
+    /** Wind-up, backswing and handling scales. All reciprocal, all floored. */
+    attackPointPer: 0.01,
+    attackPointFloor: 0.5,
+    backswingPer: 0.018,
+    backswingFloor: 0.25,
+    handlingPer: 0.012,
+    handlingFloor: 0.5,
+    movePer: 0.9,
+    turnPer: 1.6,
+    /** Armour per point -- half Constitution's, and the reason is footwork. */
+    armorPer: 0.002,
+    damagePer: 0.15,
+    /** How long one `flow` stack lives, and what a stack is worth. */
+    flowTicks: seconds(1.2),
+    flowMovePct: 0.05,
+    flowMaxStacks: 3,
+  },
+
+  intelligence: {
+    spellPowerPer: 0.02,
+    resourcePer: 2,
+    /** Geometry. Gated behind the INT 20 milestone; zero until then. */
+    radiusPer: 0.006,
+    rangePer: 0.004,
+    /** Extra damage against anything carrying a status. */
+    vsAfflictedPer: 0.006,
+    /** Health paid per point of missing resource by an overflow cast. */
+    overflowHealthPerResource: 2,
+    /** Fraction of *current* health an overflow cast may spend. */
+    overflowHealthFraction: 0.4,
+    prepareTicks: seconds(2),
+    preparedWindupScale: 0.5,
+  },
+
+  constitution: {
+    healthPer: 14,
+    poiseBase: 40,
+    poisePer: 2.2,
+    /** Poise per second, before the calm multiplier. */
+    poiseRegenBase: 4,
+    poiseRegenPer: 0.35,
+    armorPer: 0.004,
+    healingPer: 0.006,
+    /** Shield ceiling, as a fraction of max health. */
+    shieldFraction: 0.25,
+    shieldTicks: seconds(8),
+  },
+
+  perception: {
+    weakPointPer: 0.006,
+    weakPointCap: 0.6,
+    weakPointMultBase: 1.5,
+    weakPointMultPer: 0.012,
+    critPer: 0.004,
+    exposeTicksBase: seconds(1),
+    exposeTicksPer: 1.8,
+    /** What being `exposed` is worth to whoever exposed the target. */
+    exposedDamagePct: 0.15,
+    openingReadTicks: seconds(0.75),
+    vulnerableWeakPointFactor: 2,
+    steadyAimTicks: seconds(0.5),
+  },
+
+  wisdom: {
+    costPer: 0.01,
+    costFloor: 0.4,
+    cooldownPer: 0.006,
+    cooldownFloor: 0.5,
+    healingPer: 0.012,
+    resourcePer: 1,
+    regenPer: 0.12,
+    attunedTicks: seconds(6),
+    attunedMaxStacks: 3,
+    adaptationTicks: seconds(10),
+    adaptationCap: 0.3,
+    conversionCap: 15,
+    masteryRelief: 3,
+  },
+
+  /** Shared combat constants the attributes act through. */
+  combat: {
+    /**
+     * How long after a poise break a body cannot be broken again.
+     *
+     * The single most important anti-abuse number in this spec: without it, two
+     * Strength characters chain-stagger anything between them forever, which is
+     * not a build, it is a removal. Two seconds is long enough that a break is a
+     * window rather than a state.
+     */
+    staggerImmuneTicks: seconds(2),
+    /** Overkill fraction that counts as an overkill, for Strength's payoff. */
+    overkillFraction: 0.25,
+    /** Poise a body with no Constitution at all still has. */
+    minPoise: 20,
+    /** Poise a monster gets, as a fraction of its health. */
+    monsterPoiseFraction: 0.35,
+    /** Poise a monster regains per second. */
+    monsterPoiseRegen: 6,
+  },
+} as const;
+
+/** Thresholds the three milestone tiers sit on, and the stat-skill tiers too. */
+export const MILESTONE_THRESHOLDS: readonly number[] = [20, 35, 50];
+export const STAT_SKILL_THRESHOLDS: readonly number[] = [10, 25, 40];
+/** Both halves of a pair must reach this for its synergy to be active. */
+export const SYNERGY_THRESHOLD = 25;

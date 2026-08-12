@@ -17,23 +17,39 @@ export interface Vec3 {
 }
 
 /**
- * The four stats chosen at character creation. Persisted verbatim and never
- * recomputed -- these are the *inputs* to the stat pipeline, not its output.
+ * The six attributes a character is built out of (spec 147). Persisted verbatim
+ * and never recomputed -- these are the *inputs* to the stat pipeline, not its
+ * output.
+ *
+ * `dexterity` and `vitality` were renamed to `agility` and `constitution`
+ * rather than kept as aliases: a field the code calls one thing and the sheet
+ * calls another is the drift this repo does not tolerate, and
+ * {@link import('../player/attributes.js').normalizeBaseStats} maps an old save
+ * onto the new names on the way in so nobody loses a point for it.
  */
 export interface BaseStats {
   readonly strength: number;
-  readonly dexterity: number;
+  readonly agility: number;
   readonly intelligence: number;
-  readonly vitality: number;
+  readonly constitution: number;
+  readonly perception: number;
+  readonly wisdom: number;
 }
 
 export type BaseStatKey = keyof BaseStats;
 
+/**
+ * Canonical order. **Load-bearing**: it is the wire order of the six varuints on
+ * the `Stats` message and the ordinal an `AllocateAttribute` names, so reordering
+ * this array is a protocol change rather than a cosmetic one.
+ */
 export const BASE_STAT_KEYS: readonly BaseStatKey[] = [
   'strength',
-  'dexterity',
+  'agility',
   'intelligence',
-  'vitality',
+  'constitution',
+  'perception',
+  'wisdom',
 ];
 
 export type EquipSlot = 'mainHand' | 'offHand' | 'head' | 'chest' | 'legs' | 'trinket';
@@ -130,6 +146,17 @@ export interface PersistedPlayer {
   readonly displayName: string;
   readonly baseStats: BaseStats;
   readonly skills: readonly SkillAllocation[];
+  /**
+   * Points spent in the attribute-attuned tree (spec 147).
+   *
+   * A second list rather than more entries in `skills`, because the two trees
+   * have different rules -- one has branch locks and tier gates, the other has
+   * attribute thresholds and no locks at all -- and `sanitizeSkills` would drop
+   * every row of the new one as an unknown id. They share the *budget*
+   * (`unspentSkillPoints`) and nothing else, which is what makes "a branch skill
+   * or a stat skill" a decision instead of two disconnected currencies.
+   */
+  readonly statSkills: readonly SkillAllocation[];
   readonly equipment: Equipment;
   /**
    * What the player is carrying (spec 126). Exactly {@link INVENTORY_SLOTS}
@@ -145,6 +172,15 @@ export interface PersistedPlayer {
   readonly experience: number;
   /** Skill points earned by levelling and not yet spent. */
   readonly unspentSkillPoints: number;
+  /**
+   * Attribute points earned by levelling and not yet spent (spec 147).
+   *
+   * Its own budget, deliberately: a system where a point can be either a stat or
+   * a skill makes every skill compete with a stat, and the stat always wins
+   * early and never wins late. Two budgets means the two trees are tuned
+   * against themselves rather than against each other.
+   */
+  readonly unspentAttributePoints: number;
   /** Live resource, clamped to derived maxHealth whenever stats are recomputed. */
   readonly health: number;
   /** Ability resource, clamped the same way. Live, not derived. */
@@ -157,6 +193,274 @@ export interface PersistedPlayer {
    */
   readonly coins: number;
 }
+
+/**
+ * Everything the six attributes derive that the four never had (spec 147).
+ *
+ * A nested block on {@link EffectiveStats} rather than twenty more fields beside
+ * the existing ones, for two reasons. Every existing reader -- the sim, the
+ * prediction, the sheet, the codec -- keeps working untouched, so the diff that
+ * introduces a whole progression system does not also rewrite `applyArmor`. And
+ * the wire gets one fixed block to write rather than twenty appends that each
+ * have to be found in two functions.
+ *
+ * Every field is a *number*, including the ones that read as flags: a milestone
+ * grants `0.6` hyper-armour, not `true`, so two sources of the same effect sum
+ * the way every other modifier in this repo sums, and there is no boolean whose
+ * "on" means a different amount depending on who set it.
+ *
+ * All of it is derived. None of it is persisted, and none of it is ever read
+ * from a client.
+ */
+export interface TraitStats {
+  // --- Strength: force and commitment ------------------------------------
+  /** Poise damage one blow carries. See `sim/poise.ts`. */
+  readonly staggerPower: number;
+  /** How long a poise break roots the body it happened to, in ticks. */
+  readonly staggerTicks: number;
+  /**
+   * Fraction of incoming poise damage ignored *while committed to a cast*.
+   * 0 is none, 1 is unbreakable. Never applies to a body that is not casting --
+   * that is the whole difference between hyper-armour and CC immunity.
+   */
+  readonly windupPoiseArmor: number;
+  /** Hyper-armour extends past the attack point into the backswing when 1. */
+  readonly poiseArmorInBackswing: number;
+  /** Hyper-armour covers every cast rather than basic attacks alone, when 1. */
+  readonly poiseArmorAllCasts: number;
+  /** Health fraction below which `poiseArmorAllCasts` turns on. 0 disables it. */
+  readonly juggernautBelow: number;
+  /** Resource returned by a poise break this body caused. */
+  readonly breakResource: number;
+  /** Fraction of live cooldowns removed by a poise break this body caused. */
+  readonly breakCooldownRefund: number;
+  /** Multiplier on poise damage this body's *abilities* deal. 0 is none. */
+  readonly abilityPoiseFactor: number;
+  /** Damage multiplier against a staggered target under `executeBelow` health. */
+  readonly executeBonus: number;
+  readonly executeBelow: number;
+  /** Resource restored by a kill that overkilled by 25% or more. */
+  readonly overkillResource: number;
+  /** Ticks the window after a break lasts, and how far it cuts the next wind-up. */
+  readonly momentumTicks: number;
+  readonly momentumWindupScale: number;
+  /** Multiplier on the wind-up of a heavy ability. Strength's Heavy Handling. */
+  readonly heavyWindupScale: number;
+
+  // --- Agility: animation, not cadence -----------------------------------
+  /**
+   * Multiplier on a basic attack's wind-up. **Never touches `intervalTicks`** --
+   * that is the property the whole Agility design rests on and it is asserted
+   * directly in `attack-timing` tests.
+   */
+  readonly attackPointScale: number;
+  /** Multiplier on a basic attack's backswing. Same rule. */
+  readonly backswingScale: number;
+  /** Multiplier on the wind-up of an ability that launches a projectile. */
+  readonly handlingScale: number;
+  /** `handlingScale` also shortens projectile cooldowns, when 1. */
+  readonly handlingCooldowns: number;
+  /** Ticks a `flow` stack lives for. 0 means this body cannot gain flow. */
+  readonly flowTicks: number;
+  /** Move speed, backswing, cost, damage reduction and weak point, per stack. */
+  readonly flowMovePct: number;
+  readonly flowBackswingPct: number;
+  readonly flowCostPct: number;
+  readonly flowArmorPct: number;
+  readonly flowWeakPoint: number;
+  /** A backswing cancel makes the next non-basic cast use `handlingScale`. */
+  readonly spellbladeHandling: number;
+  /** Perfect Exit: resource returned, and how soon after a hit it must happen. */
+  readonly perfectExitResource: number;
+  readonly perfectExitWindowTicks: number;
+
+  // --- Intelligence: shaping and manipulation ----------------------------
+  readonly spellRadiusPct: number;
+  readonly spellRangePct: number;
+  /** Cost premium the shaping above costs, before Efficient Construction. */
+  readonly shapingCostPct: number;
+  /** Fraction of that premium removed. Clamped so it can only ever cancel it. */
+  readonly shapingCostRelief: number;
+  /** Ticks of stillness that grant `prepared`. 0 means this body never does. */
+  readonly prepareTicks: number;
+  /** Multiplier on a prepared cast's wind-up. */
+  readonly preparedWindupScale: number;
+  /** `prepared` also waives the shaping premium and refunds cooldown, when 1. */
+  readonly preparedMastery: number;
+  /** Extra damage against a target carrying any status. */
+  readonly vsAfflictedPct: number;
+  /** This body's blows apply `sundered` (armour down) when 1. */
+  readonly appliesSundered: number;
+  /** Health per point of missing resource an overflow cast may pay. 0 refuses. */
+  readonly overflowHealthPerResource: number;
+  /** Fraction of ability damage dealt that becomes shield. */
+  readonly damageToShield: number;
+
+  // --- Constitution: absorption ------------------------------------------
+  readonly maxPoise: number;
+  /** Poise regained per tick. */
+  readonly poiseRegen: number;
+  /** Multiplier on poise regen while not casting. */
+  readonly poiseRegenCalm: number;
+  /** Fraction of poise regen that still applies while staggered. */
+  readonly poiseRegenStaggered: number;
+  /** Poise regenerates while moving, when 1. */
+  readonly poiseRegenMoving: number;
+  /** Health fraction that triggers Second Wind, and what it restores. */
+  readonly secondWindBelow: number;
+  readonly secondWindHeal: number;
+  /** Health fraction below which `resolute` applies, and what it grants. */
+  readonly resoluteBelow: number;
+  readonly resoluteReduction: number;
+  /** Overheal becomes shield, up to `maxShield`, for this many ticks. 0 is off. */
+  readonly overhealShieldTicks: number;
+  readonly maxShield: number;
+
+  // --- Perception: information and precision ------------------------------
+  readonly weakPointChance: number;
+  readonly weakPointMultiplier: number;
+  /** Ticks `exposed` lasts on a body this one weak-pointed. */
+  readonly exposeTicks: number;
+  /** Extra damage an `exposed` body takes, contributed by whoever exposed it. */
+  readonly exposedDamagePct: number;
+  /** Ticks an enemy is `vulnerable` for after committing an attack. 0 is off. */
+  readonly openingReadTicks: number;
+  /** Weak-point chance multiplier against a `vulnerable` body. 1 is none. */
+  readonly vulnerableWeakPointFactor: number;
+  /** Extra weak-point payoff after standing still for `steadyAimTicks`. */
+  readonly steadyAimPct: number;
+  readonly steadyAimTicks: number;
+  /** Extra damage and poise a weak point does to an already-`exposed` body. */
+  readonly exploitDamagePct: number;
+  readonly exploitPoiseFactor: number;
+  /** Resource and health-fraction a weak point returns. */
+  readonly weakPointResource: number;
+  readonly weakPointKillHeal: number;
+  /** Abilities may score weak points too, when 1. */
+  readonly abilityWeakPoints: number;
+  /** Damage reduction taken from a `vulnerable` attacker. */
+  readonly vsVulnerableReduction: number;
+  /** Anyone hitting a body this one exposed gains this much resource. */
+  readonly exposedTeamResource: number;
+
+  // --- Wisdom: economy ----------------------------------------------------
+  /** Multiplier on ability cost, floored. */
+  readonly resourceCostScale: number;
+  /** Multiplier on non-basic cooldowns, floored. */
+  readonly cooldownScale: number;
+  /** Multiplier on healing received. */
+  readonly healingScale: number;
+  /** Extra healing multiplier below `healingSurgeBelow` health. */
+  readonly healingSurge: number;
+  readonly healingSurgeBelow: number;
+  /** `attuned`: stacks, life, and the cost each removes. */
+  readonly attunedMaxStacks: number;
+  readonly attunedTicks: number;
+  readonly attunedCostPct: number;
+  /** Weak points also grant `attuned`, when 1. */
+  readonly attunedFromWeakPoints: number;
+  /** `adaptation`: resistance per repeat, its cap, and how long a stack lives. */
+  readonly adaptationPerStack: number;
+  readonly adaptationCap: number;
+  readonly adaptationTicks: number;
+  /** Overheal becomes resource 1:1, up to this much per event. 0 is off. */
+  readonly conversionCap: number;
+  /** Tier-3 stat skills open this many attribute points early. */
+  readonly masteryRelief: number;
+}
+
+/**
+ * The order {@link TraitStats} rides the wire in (spec 147).
+ *
+ * Here rather than in `net/`, beside the interface it describes, so that adding
+ * a trait and adding its wire slot are one glance apart. Walked by both the
+ * writer and the reader, so the two cannot disagree about the layout; a test
+ * asserts it covers every key, so a trait added and forgotten fails CI rather
+ * than silently reading as its neighbour's value.
+ *
+ * **Order is protocol.** Reordering this array is a wire change.
+ */
+export const TRAIT_WIRE_ORDER: readonly (keyof TraitStats)[] = [
+  'staggerPower',
+  'staggerTicks',
+  'windupPoiseArmor',
+  'poiseArmorInBackswing',
+  'poiseArmorAllCasts',
+  'juggernautBelow',
+  'breakResource',
+  'breakCooldownRefund',
+  'abilityPoiseFactor',
+  'executeBonus',
+  'executeBelow',
+  'overkillResource',
+  'momentumTicks',
+  'momentumWindupScale',
+  'heavyWindupScale',
+  'attackPointScale',
+  'backswingScale',
+  'handlingScale',
+  'handlingCooldowns',
+  'flowTicks',
+  'flowMovePct',
+  'flowBackswingPct',
+  'flowCostPct',
+  'flowArmorPct',
+  'flowWeakPoint',
+  'spellbladeHandling',
+  'perfectExitResource',
+  'perfectExitWindowTicks',
+  'spellRadiusPct',
+  'spellRangePct',
+  'shapingCostPct',
+  'shapingCostRelief',
+  'prepareTicks',
+  'preparedWindupScale',
+  'preparedMastery',
+  'vsAfflictedPct',
+  'appliesSundered',
+  'overflowHealthPerResource',
+  'damageToShield',
+  'maxPoise',
+  'poiseRegen',
+  'poiseRegenCalm',
+  'poiseRegenStaggered',
+  'poiseRegenMoving',
+  'secondWindBelow',
+  'secondWindHeal',
+  'resoluteBelow',
+  'resoluteReduction',
+  'overhealShieldTicks',
+  'maxShield',
+  'weakPointChance',
+  'weakPointMultiplier',
+  'exposeTicks',
+  'exposedDamagePct',
+  'openingReadTicks',
+  'vulnerableWeakPointFactor',
+  'steadyAimPct',
+  'steadyAimTicks',
+  'exploitDamagePct',
+  'exploitPoiseFactor',
+  'weakPointResource',
+  'weakPointKillHeal',
+  'abilityWeakPoints',
+  'vsVulnerableReduction',
+  'exposedTeamResource',
+  'resourceCostScale',
+  'cooldownScale',
+  'healingScale',
+  'healingSurge',
+  'healingSurgeBelow',
+  'attunedMaxStacks',
+  'attunedTicks',
+  'attunedCostPct',
+  'attunedFromWeakPoints',
+  'adaptationPerStack',
+  'adaptationCap',
+  'adaptationTicks',
+  'conversionCap',
+  'masteryRelief',
+];
 
 /**
  * Stats as the sim and the client actually use them. Computed, broadcast, and
@@ -218,6 +522,15 @@ export interface EffectiveStats {
    * what its right-click reaches with and asks for.
    */
   readonly basicAttackId: string;
+  /**
+   * Everything the six attributes derive (spec 147). See {@link TraitStats}.
+   *
+   * Present on every body, monsters included -- a monster gets
+   * {@link import('../player/derived.js').DEFAULT_TRAITS} with its poise sized
+   * off its own health, so "can this be staggered" is answered the same way for
+   * everything in the world rather than by a null check.
+   */
+  readonly traits: TraitStats;
 }
 
 export interface Ban {

@@ -102,7 +102,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     name: 'Weighted Stars',
     slot: 'mainHand',
     levelRequirement: 1,
-    modifiers: { attackDamage: 2, attackSpeedPct: 0.2, dexterity: 1 },
+    modifiers: { attackDamage: 2, attackSpeedPct: 0.2, agility: 1 },
     basicAttackId: 'ranged.star',
   },
   // --- off hand ---
@@ -153,7 +153,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     name: 'Scalemail',
     slot: 'chest',
     levelRequirement: 7,
-    modifiers: { maxHealth: 45, armor: 0.07, moveSpeed: -8, vitality: 2 },
+    modifiers: { maxHealth: 45, armor: 0.07, moveSpeed: -8, constitution: 2 },
   },
   {
     id: 'legs.traveller',
@@ -170,7 +170,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     name: 'Swiftband',
     slot: 'trinket',
     levelRequirement: 3,
-    modifiers: { moveSpeedPct: 0.08, dexterity: 2 },
+    modifiers: { moveSpeedPct: 0.08, agility: 2 },
   },
   {
     id: 'trinket.bloodstone',

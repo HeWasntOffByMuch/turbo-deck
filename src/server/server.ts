@@ -71,6 +71,8 @@ import {
   ServerMessageType,
   SpawnerStateValue,
 } from './net/protocol.js';
+import { attributeByOrdinal } from './data/attributes.js';
+import { resolveProgression } from './player/progression.js';
 import { DEFAULT_SPAWN, PlayerManager } from './player/player-manager.js';
 import {
   inTradeRange,
@@ -670,6 +672,37 @@ export class GameServer implements AdminHost {
         break;
       }
 
+      // The three progression writes (spec 147). Each is the same three lines
+      // for the same reason: the client says which button was pressed, the
+      // manager decides, and `reportAction` sends the refusal or the fresh
+      // `Stats`. There is no path here that reads a number off the message.
+      case ClientMessageType.AllocateAttribute: {
+        if (connection.playerId === null) return;
+        const attribute = attributeByOrdinal(message.attribute);
+        const result = attribute
+          ? await this.players.allocateAttribute(connection.playerId, attribute.key)
+          : { ok: false as const, reason: `no such attribute: ${message.attribute}` };
+        this.reportAction(connection, result.ok ? null : result.reason);
+        break;
+      }
+
+      case ClientMessageType.RespecAttributes: {
+        if (connection.playerId === null) return;
+        const result = await this.players.respec(connection.playerId);
+        this.reportAction(connection, result.ok ? null : result.reason);
+        // The purse changed, so the bag view has to be resent -- coins ride on
+        // the inventory message (spec 129).
+        if (result.ok) this.sendInventory(connection, 0);
+        break;
+      }
+
+      case ClientMessageType.SpendStatSkillPoint: {
+        if (connection.playerId === null) return;
+        const result = await this.players.spendStatSkillPoint(connection.playerId, message.skillId);
+        this.reportAction(connection, result.ok ? null : result.reason);
+        break;
+      }
+
       case ClientMessageType.UseAbility:
         if (connection.playerId === null || connection.entityId < 0) return;
         connection.asks += 1;
@@ -1116,6 +1149,13 @@ export class GameServer implements AdminHost {
       // What has actually been spent (spec 128), not just what is left to
       // spend: a client told only the remainder cannot draw a tree.
       skills: session.record.skills,
+      statSkills: session.record.statSkills,
+      // Allocated and total, both (spec 147). The sheet spends against the
+      // first and reads thresholds off the second, and a client sent only one
+      // of them has to guess at the other.
+      baseStats: session.record.baseStats,
+      attributes: resolveProgression(session.record).attributes,
+      unspentAttributePoints: session.record.unspentAttributePoints,
       stats: session.stats,
     });
   }

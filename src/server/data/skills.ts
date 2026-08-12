@@ -113,7 +113,7 @@ const DEFINITIONS: readonly SkillDefinition[] = [
     tier: 1,
     maxLevel: 5,
     requires: [],
-    perLevel: { attackCooldownTicks: -0.4, dexterity: 1 },
+    perLevel: { attackCooldownTicks: -0.4, agility: 1 },
     description: 'A quicker recovery between swings.',
   },
   {

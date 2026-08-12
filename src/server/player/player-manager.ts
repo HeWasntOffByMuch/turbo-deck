@@ -40,17 +40,23 @@ import {
   type BuybackEntry,
   type ShopOutcome,
 } from './shop.js';
+import {
+  allocateAttributePoint,
+  ATTRIBUTE_POINTS_PER_LEVEL,
+  normalizeBaseStats,
+  reconcileAttributePoints,
+  respecAttributes,
+  startingBaseStats,
+  STARTING_ATTRIBUTE_POINTS,
+} from './attributes.js';
+import { resolveProgression } from './progression.js';
+import { sanitizeStatSkills, spendStatSkillPoint } from './stat-skills.js';
 import { spendSkillPoint, sanitizeSkills } from './skills.js';
 import type { Holdings } from './trade.js';
 import { clampHealthToStats, clampResourceToStats, computeEffectiveStats } from './stats.js';
 
-/** Stats a brand new character starts with, before any allocation. */
-export const DEFAULT_BASE_STATS: BaseStats = {
-  strength: 5,
-  dexterity: 5,
-  intelligence: 5,
-  vitality: 5,
-};
+/** Stats a brand new character starts with, before any allocation (spec 147). */
+export const DEFAULT_BASE_STATS: BaseStats = startingBaseStats();
 
 /** Where a character with no saved position wakes up: the safe hub. */
 export const DEFAULT_SPAWN: Vec3 = { x: 600, y: 450, z: 0 };
@@ -93,6 +99,30 @@ export const SKILL_POINTS_PER_LEVEL = 1;
 /** Experience needed to reach `level` from the one below it. */
 export function experienceForLevel(level: number): number {
   return Math.round(50 * Math.pow(Math.max(1, level - 1), 1.5));
+}
+
+/**
+ * A loaded record, brought up to spec 147.
+ *
+ * Three fields did not exist before it, and the rule for all three is the same:
+ * **an upgrade must never rob anybody.** `dexterity` and `vitality` carry over
+ * onto their new names, the two new attributes start where a fresh character
+ * starts, and the attribute budget is re-derived from the character's *level* --
+ * so an existing level-12 character logs in holding 38 points to place rather
+ * than having notionally spent them on stats that did not exist.
+ */
+function migrate(loaded: PersistedPlayer): PersistedPlayer {
+  const baseStats = normalizeBaseStats(loaded.baseStats);
+  return {
+    ...loaded,
+    baseStats,
+    statSkills: Array.isArray(loaded.statSkills) ? loaded.statSkills : [],
+    unspentAttributePoints: reconcileAttributePoints(
+      baseStats,
+      loaded.level,
+      loaded.unspentAttributePoints,
+    ),
+  };
 }
 
 export interface PlayerSession {
@@ -140,7 +170,7 @@ export class PlayerManager {
       ? // A save from before spec 126 has no `inventory` at all; it loads as an
         // empty bag and keeps whatever it was wearing. Nobody is stripped by an
         // upgrade, and nobody is handed a second starting kit for logging in.
-        {
+        migrate({
           ...loaded,
           skills: sanitizeSkills(loaded.skills),
           inventory: sanitizeInventory(loaded.inventory),
@@ -149,7 +179,7 @@ export class PlayerManager {
           // is no way to tell "spent it all" from "never had any" in a field
           // that was not there.
           coins: Number.isFinite(loaded.coins) ? Math.max(0, Math.floor(loaded.coins)) : STARTING_COINS,
-        }
+        })
       : this.createCharacter(playerId, displayName);
 
     const stats = computeEffectiveStats(record);
@@ -179,8 +209,9 @@ export class PlayerManager {
     return {
       id: playerId,
       displayName: displayName || playerId,
-      baseStats: DEFAULT_BASE_STATS,
+      baseStats: startingBaseStats(),
       skills: [],
+      statSkills: [],
       equipment: STARTER_EQUIPMENT,
       inventory: starterInventory(),
       position: DEFAULT_SPAWN,
@@ -189,6 +220,7 @@ export class PlayerManager {
       level: 1,
       experience: 0,
       unspentSkillPoints: 1,
+      unspentAttributePoints: STARTING_ATTRIBUTE_POINTS,
       health: 0,
       resource: 0,
       coins: STARTING_COINS,
@@ -238,14 +270,23 @@ export class PlayerManager {
   async recalculate(playerId: string): Promise<PlayerSession | null> {
     const session = this.sessions.get(playerId);
     if (!session) return null;
-    const stats = computeEffectiveStats(session.record);
+    // Stat skills are re-checked against the *allocated* attributes on every
+    // recalculation (spec 147): a respec, a table edit or a threshold that moved
+    // can all leave a character holding a skill they could not take now, and
+    // there is exactly one place that decides what happens then.
+    const allocated = resolveProgression(session.record).allocated;
+    const statSkills = sanitizeStatSkills(session.record.statSkills, allocated);
+    const record = statSkills.length === session.record.statSkills.length
+      ? session.record
+      : { ...session.record, statSkills };
+    const stats = computeEffectiveStats(record);
     const next: PlayerSession = {
       ...session,
       stats,
       record: {
-        ...session.record,
-        health: clampHealthToStats(session.record.health, stats),
-        resource: clampResourceToStats(session.record.resource, stats),
+        ...record,
+        health: clampHealthToStats(record.health, stats),
+        resource: clampResourceToStats(record.resource, stats),
       },
     };
     this.commit(next);
@@ -469,22 +510,79 @@ export class PlayerManager {
     return updated ? { ok: true, session: updated } : { ok: false, reason: 'not logged in' };
   }
 
+  /**
+   * Puts one attribute point somewhere (spec 147).
+   *
+   * Through `attributes.ts` for the rules and through {@link recalculate} for
+   * the consequences, which is the same two-step every other stat change in this
+   * class takes. A rejection returns the reason and leaves the record untouched.
+   */
+  async allocateAttribute(playerId: string, key: string): Promise<PlayerActionResult> {
+    const session = this.sessions.get(playerId);
+    if (!session) return { ok: false, reason: 'not logged in' };
+
+    const outcome = allocateAttributePoint(session.record, key);
+    if (!outcome.ok) return { ok: false, reason: outcome.detail };
+
+    this.commit({ ...session, record: outcome.player });
+    const updated = await this.recalculate(playerId);
+    return updated ? { ok: true, session: updated } : { ok: false, reason: 'not logged in' };
+  }
+
+  /**
+   * Hands every allocated point back, for coins.
+   *
+   * Stat skills are *not* refunded here. `recalculate` runs `sanitizeStatSkills`
+   * against the new allocation, so any skill whose attribute requirement is no
+   * longer met is dropped there -- one place that decides what a lost
+   * requirement costs, whether it was lost to a respec or to a table edit.
+   */
+  async respec(playerId: string): Promise<PlayerActionResult> {
+    const session = this.sessions.get(playerId);
+    if (!session) return { ok: false, reason: 'not logged in' };
+
+    const outcome = respecAttributes(session.record);
+    if (!outcome.ok) return { ok: false, reason: outcome.detail };
+
+    this.commit({ ...session, record: outcome.player });
+    const updated = await this.recalculate(playerId);
+    return updated ? { ok: true, session: updated } : { ok: false, reason: 'not logged in' };
+  }
+
+  /** Validated in `stat-skills.ts`, against the character's live attributes. */
+  async spendStatSkillPoint(playerId: string, skillId: string): Promise<PlayerActionResult> {
+    const session = this.sessions.get(playerId);
+    if (!session) return { ok: false, reason: 'not logged in' };
+
+    const { attributes } = resolveProgression(session.record);
+    const outcome = spendStatSkillPoint(session.record, attributes, skillId);
+    if (!outcome.ok) return { ok: false, reason: outcome.detail };
+
+    this.commit({ ...session, record: outcome.player });
+    const updated = await this.recalculate(playerId);
+    return updated ? { ok: true, session: updated } : { ok: false, reason: 'not logged in' };
+  }
+
   /** Awards experience and levels the character up as far as it carries them. */
   async grantExperience(playerId: string, amount: number): Promise<PlayerSession | null> {
     const session = this.sessions.get(playerId);
     if (!session || amount <= 0) return session ?? null;
 
-    let { level, experience, unspentSkillPoints } = session.record;
+    let { level, experience, unspentSkillPoints, unspentAttributePoints } = session.record;
     experience += Math.floor(amount);
     while (experience >= experienceForLevel(level + 1)) {
       experience -= experienceForLevel(level + 1);
       level += 1;
       unspentSkillPoints += SKILL_POINTS_PER_LEVEL;
+      // Two budgets, granted together (spec 147). Separate on purpose: a system
+      // where one point could be either makes every skill compete with a stat,
+      // and the stat wins early and loses late for reasons nobody chose.
+      unspentAttributePoints += ATTRIBUTE_POINTS_PER_LEVEL;
     }
 
     this.commit({
       ...session,
-      record: { ...session.record, level, experience, unspentSkillPoints },
+      record: { ...session.record, level, experience, unspentSkillPoints, unspentAttributePoints },
     });
     return this.recalculate(playerId);
   }
