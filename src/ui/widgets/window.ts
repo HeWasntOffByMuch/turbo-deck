@@ -19,6 +19,12 @@
  * keeps `MIN_VISIBLE` pixels on screen, which is what stops a window being
  * dragged -- or *restored from a saved layout* -- somewhere it can never be
  * reached from.
+ *
+ * ...and one more the game found by finally using the resize grip (spec 147).
+ * **A window is never narrower than its own name.** The title is the only thing
+ * that says which window this is, and two 64-pixel stubs with their titles
+ * clipped away are indistinguishable -- so `minTitleWidth` is a floor under the
+ * authored `minSize` rather than a number anybody has to remember to pass.
  */
 
 import type { DrawList } from '../core/draw-list.js';
@@ -145,12 +151,28 @@ export class UiWindow extends StyledWidget {
     this.invalidateArrange();
   }
 
+  /**
+   * The narrowest this window may be dragged, in UI pixels.
+   *
+   * The authored `minSize` OR the title plus its insets, whichever is larger.
+   * It needs the context because the insets are the theme's, which is why the
+   * floor is applied here rather than folded into `minSize` at construction --
+   * a window is built long before anybody has handed it a theme.
+   */
+  private minWidthFor(context: LayoutContext): number {
+    return Math.max(this.minSize.width, this.minTitleWidth() + context.theme.widget(this.styleKey).padding * 2);
+  }
+
   resize(size: Size, context: LayoutContext, viewport: Size): void {
     const unit = Math.max(1, context.theme.spacing.unit);
-    const width = Math.round(Math.max(this.minSize.width, size.width) / unit) * unit;
+    const minWidth = this.minWidthFor(context);
+    const width = Math.round(Math.max(minWidth, size.width) / unit) * unit;
     const height = Math.round(Math.max(this.minSize.height, size.height) / unit) * unit;
+    // The viewport wins over the title floor, and has to: on a narrow phone the
+    // floor can exceed the whole screen, and a window wider than the tab it is
+    // in would be worse than one whose name is clipped.
     this.box = {
-      width: Math.min(this.maxSize?.width ?? viewport.width, Math.max(this.minSize.width, width)),
+      width: Math.min(this.maxSize?.width ?? viewport.width, Math.max(minWidth, width)),
       height: Math.min(this.maxSize?.height ?? viewport.height, Math.max(this.minSize.height, height)),
     };
     // Re-clamp: a window that grew may now hang off the edge.
@@ -253,6 +275,27 @@ export class UiWindow extends StyledWidget {
   viewport: Size = { width: 0, height: 0 };
   /** Set by the manager so the window can snap without importing a theme. */
   layout: LayoutContext | null = null;
+
+  /**
+   * The grip answers before the content does (spec 147).
+   *
+   * `Widget.hitTest` walks children back to front and the deepest one wins, and
+   * the router then sends every `drag` to whichever widget took the press -- so
+   * a grip the content overlaps is a grip that never sees a drag. It overlaps by
+   * construction: the grip is `gripSize` (7) square in the corner and the content
+   * box is inset by `padding` (4), which leaves a 4-pixel band as the entire
+   * resize handle and hands the rest to the scroll view.
+   *
+   * Claiming the point here rather than widening the drawn grip keeps the two
+   * questions apart: how big the handle looks is the theme's business, and how
+   * big it *is* has to be all of it.
+   */
+  override hitTest(point: Point): Widget | null {
+    if (this.visible && this.resizable && this.layout && containsPointIn(this.gripRect(this.layout), point)) {
+      return this;
+    }
+    return super.hitTest(point);
+  }
 
   onEvent(context: EventContext): void {
     const event = context.event;

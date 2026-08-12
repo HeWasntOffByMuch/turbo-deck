@@ -80,6 +80,8 @@ interface RunResult {
   readonly requests: readonly string[];
   /** Draw commands on the last frame, so "it was actually drawing" is checkable. */
   readonly drawn: number;
+  /** Layout writes over the whole run. One, however much hovering happened. */
+  readonly layoutWrites: number;
 }
 
 /**
@@ -116,6 +118,7 @@ async function play(drive: boolean): Promise<RunResult> {
   await settle();
 
   const requests: string[] = [];
+  let layoutWrites = 0;
   const screens = new UiScreens(
     {
       map: new InputMap(),
@@ -131,6 +134,13 @@ async function play(drive: boolean): Promise<RunResult> {
       onTradeCancel: () => requests.push('tradeCancel'),
       onBindingsChanged: () => requests.push('bindings'),
       onScaleChosen: (choice) => requests.push(`scale:${String(choice)}`),
+      // Counted apart from `requests`, deliberately. Everything in that array is
+      // something asked of the *server*; a layout write is a local preference,
+      // and the three windows this test opens legitimately cause one. What is
+      // worth asserting about it is the debounce -- see below.
+      onLayoutChanged: () => {
+        layoutWrites += 1;
+      },
       nearestVendor: () => null,
     },
     VIEWPORT,
@@ -176,7 +186,7 @@ async function play(drive: boolean): Promise<RunResult> {
     drawn = screens.paint().length;
   }
 
-  return { states, requests, drawn };
+  return { states, requests, drawn, layoutWrites };
 }
 
 describe('mounting the interface is presentation only', () => {
@@ -193,11 +203,28 @@ describe('mounting the interface is presentation only', () => {
     expect(mounted.states.length).toBe(TICKS);
   }, 30_000);
 
-  it('emits no request from hovering and typing', async () => {
-    // The other half of the same rule, from the opposite side: a screen that
-    // asked the server for something nobody clicked would change the state
-    // *legitimately* and the comparison above would look like a broken sim.
+  /**
+   * What a session of hovering and typing emits, on both counts.
+   *
+   * Two assertions over one run rather than two runs, and that is deliberate:
+   * `play` stands up a server, a client, a full `UiScreens` and its atlas and
+   * drives 180 ticks, which makes it the heaviest fixture in the suite. Spending
+   * another whole one to read a second integer off the same experiment is a cost
+   * with nothing at the end of it -- and this file already runs `play` four
+   * times.
+   *
+   * **No request.** A screen that asked the server for something nobody clicked
+   * would change the state *legitimately*, and the comparison above would look
+   * like a broken sim.
+   *
+   * **One layout write** (spec 147). The run opens three windows on tick 2 and
+   * then hovers, types and moves focus on every frame after it. A save per
+   * change would be a `localStorage` write on most of them; the debounce makes
+   * it one.
+   */
+  it('emits no request from hovering and typing, and writes the layout once', async () => {
     const mounted = await play(true);
     expect(mounted.requests).toEqual([]);
+    expect(mounted.layoutWrites).toBe(1);
   }, 30_000);
 });

@@ -42,6 +42,15 @@ export interface UiLayerOptions extends UiScreensOptions {
   readonly scale?: ScaleChoice;
 }
 
+/**
+ * Whether the tab is on its way out, in a way worth flushing the layout for.
+ *
+ * Both events, because neither is enough on its own: `pagehide` is the one that
+ * fires for a bfcache freeze and a navigation, and a phone browser killed in the
+ * background may only ever report `visibilitychange`. Flushing twice costs one
+ * `setItem` of the same document.
+ */
+
 /** How many *drawn* frames the reported cost is taken over. Two seconds at 60fps. */
 const COST_WINDOW = 120;
 
@@ -60,6 +69,8 @@ export interface UiReadout {
   /** ...and a keybinding row's two buttons, by action id. */
   readonly bindRects: readonly { readonly id: string; readonly rect: Rect }[];
   readonly resetRects: readonly { readonly id: string; readonly rect: Rect }[];
+  /** Every window's placement, open or not, in UI pixels (spec 147). */
+  readonly windowRects: readonly { readonly id: string; readonly rect: Rect }[];
   /** Device pixels per UI pixel. Whole, always -- the rule the frame exists for. */
   readonly scale: number;
   readonly viewport: { readonly width: number; readonly height: number };
@@ -97,6 +108,14 @@ export class UiLayer {
     // A zoom or a move to another monitor changes `devicePixelRatio` without
     // changing the element's size, so the observer alone would miss it.
     this.frameDirty = true;
+  };
+  /** The tab going away, so a layout still inside its debounce is written. */
+  private readonly onPageHide = (): void => {
+    this.screens.flushLayout();
+  };
+  /** ...and the same on the way to the background. It fires on the way back too. */
+  private readonly onVisibilityChange = (): void => {
+    if (document.visibilityState === 'hidden') this.screens.flushLayout();
   };
 
   constructor(
@@ -136,6 +155,11 @@ export class UiLayer {
     // so the frame measured above is a 1x1 placeholder until the first frame.
     this.frameDirty = true;
     globalThis.addEventListener('resize', this.onWindowResize);
+    // Neither is enough alone: `pagehide` covers a navigation and a bfcache
+    // freeze, and a phone browser that kills a backgrounded tab may only ever
+    // report the visibility change (spec 147).
+    globalThis.addEventListener('pagehide', this.onPageHide);
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
   }
 
   private measureFrame(): UiFrame {
@@ -337,6 +361,11 @@ export class UiLayer {
   dispose(): void {
     this.observer?.disconnect();
     globalThis.removeEventListener('resize', this.onWindowResize);
+    globalThis.removeEventListener('pagehide', this.onPageHide);
+    document.removeEventListener('visibilitychange', this.onVisibilityChange);
+    // Leaving the tab is leaving: a layout inside its debounce is written on the
+    // way out rather than lost with the mount.
+    this.screens.flushLayout();
     this.element.remove();
   }
 }
