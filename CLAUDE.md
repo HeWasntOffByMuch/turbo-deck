@@ -463,6 +463,34 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  somebody who has not, and a preference that silently became a
                  different number would fail on exactly the screens somebody
                  would want to change it on.
+                 Since spec 147 a window is *resizable* and its placement
+                 outlives the tab: core/layout-store.ts is a third versioned
+                 document over the same injected `StorageLike`, holding where
+                 every window is, how big, whether it was open and in what
+                 order. Both halves had been finished since spec 124 and neither
+                 was ever plugged in -- every window was registered with a bare
+                 title, and nothing outside its own test imported the store, so
+                 a complete set of green tests sat beside a game that opened
+                 every window in its default place every session. Three rules
+                 came out of connecting them. **The grip has to beat its own
+                 content to the hit test**: it is 7px square in a corner whose
+                 content box is inset by 4, and the router sends every drag to
+                 whichever widget took the press, so what was left as the entire
+                 resize handle was a 4-pixel band and the scroll view owned the
+                 rest. **The restore waits for a viewport that is not the 1x1
+                 placeholder** -- `UiLayer` measures its frame before the tab is
+                 laid out, and `applyLayout` correctly re-clamps against
+                 whatever it is handed, so restoring against 1x1 stacks every
+                 window at the origin at its minimum size and writes that back:
+                 the saved arrangement destroyed by the act of restoring it.
+                 **A window the server opens never comes back open**, because
+                 the shop and the trade table are not choices the player made
+                 and a restored trade window has no trade in it. The write is a
+                 trailing debounce on a signature of the placements, so a drag
+                 costs one `setItem` when it stops rather than one per frame
+                 while it moves, and `saveLayout` cannot throw -- it is called
+                 from inside the frame, where a browser refusing the write would
+                 otherwise take the render loop rather than one preference.
                  render/ has three backends behind six methods. raster.ts is pure
                  software and is the golden-image oracle, which is what lets a
                  screen be compared byte for byte inside `npm test` with no GPU and
@@ -744,7 +772,17 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  sim gets the same assertion animation got, the same fight twice
                  with the screens driven and without, identical authoritative
                  state, and that is impossible if running it needs a canvas
-                 (`mount-presentation.test.ts`)
+                 (`mount-presentation.test.ts`). Since spec 147 it also owns the
+                 saved layout: held until there is a viewport worth applying it
+                 against, written back on a trailing debounce measured in the
+                 `nowMs` it was handed, and flushed by ui-layer.ts when the tab
+                 goes away. `npx tsx scripts/probe-window-layout.ts` is the half
+                 that only exists in a browser, and the half that was wrong for
+                 three specs -- it drags the real title bar and the real grip,
+                 reads the boxes back off `data-ui-frames`, reloads the tab and
+                 requires the same numbers. Everything the feature decides is
+                 asserted in Node; what it could not say is whether any of it
+                 was connected to anything)
                  are pure and tested headlessly; scene.ts, shot.ts, hud.ts,
                  ui-layer.ts (the second canvas, the scale and one coordinate
                  conversion -- the whole impure half of the mount) and
