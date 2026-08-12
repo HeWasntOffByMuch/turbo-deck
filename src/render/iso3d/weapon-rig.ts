@@ -149,6 +149,7 @@ export class WeaponRig {
 export function socketPivot(
   offset: readonly [number, number, number] | undefined,
   rotationDeg: readonly [number, number, number] | undefined,
+  hostScale = 1,
 ): THREE.Group {
   const pivot = new THREE.Group();
   if (offset) pivot.position.set(offset[0], offset[1], offset[2]);
@@ -156,5 +157,9 @@ export function socketPivot(
     const d = Math.PI / 180;
     pivot.rotation.set(rotationDeg[0] * d, rotationDeg[1] * d, rotationDeg[2] * d, 'XYZ');
   }
+  // Undoes whatever scale the bone chain carries, so children are in world
+  // units. `offset` is unaffected: three composes translation, rotation and
+  // scale in that order, and only the last of the three reaches the children.
+  if (hostScale > 0 && hostScale !== 1) pivot.scale.setScalar(1 / hostScale);
   return pivot;
 }

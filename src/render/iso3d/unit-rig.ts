@@ -198,6 +198,8 @@ export class UnitRig {
   private readonly sockets = new Map<string, SkeletonSocket>();
   /** What is currently hung off each socket, so a switch replaces rather than adds. */
   private readonly attached = new Map<string, THREE.Group>();
+  /** The host's import scale, which a socket pivot has to undo (spec 140). */
+  private importScale = 1;
 
   /** Why the load failed, or null. */
   get error(): string | null {
@@ -240,6 +242,7 @@ export class UnitRig {
       const gltf = await loader.loadAsync(assets.meshUrl);
       const model = gltf.scene;
       model.scale.setScalar(assets.importScale);
+      this.importScale = assets.importScale;
       model.traverse((object) => {
         if (!(object instanceof THREE.Mesh)) return;
         object.castShadow = true;
@@ -408,7 +411,14 @@ export class UnitRig {
     if (!socket || !bone) return false;
 
     this.detach(socketId);
-    const pivot = socketPivot(socket.offset, socket.rotationDeg);
+    // The pivot undoes the host's import scale, so what hangs off it is in
+    // **world** units. Everything under a bone inherits the ~56x the model root
+    // carries, and a weapon whose document says "38 world units long" would
+    // otherwise be drawn 56 times that. Compensating here rather than in the
+    // weapon means a sword is one size whatever holds it, and the socket's own
+    // `offset` stays in the rig units every other vec3 in a skeleton document
+    // is in -- three applies translation before scale, so the two do not fight.
+    const pivot = socketPivot(socket.offset, socket.rotationDeg, this.importScale);
     pivot.name = `socket:${socketId}`;
     pivot.add(object);
     bone.add(pivot);
