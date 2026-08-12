@@ -48,6 +48,7 @@ import {
 import { TickLoop } from './loop.js';
 import { regenerated } from './sim/resource.js';
 import { monsterById } from './data/monsters.js';
+import { compareManifest, mismatchMessage, refusesConnection } from '../units/manifest.js';
 import { decodeAdminRequest, encodeAdminReply, type AdminPlayerRow } from './net/admin-messages.js';
 import { CodecError } from './net/codec.js';
 import { DeltaTracker } from './net/delta.js';
@@ -69,6 +70,13 @@ import {
   SpawnerStateValue,
 } from './net/protocol.js';
 import { DEFAULT_SPAWN, PlayerManager } from './player/player-manager.js';
+import {
+  inTradeRange,
+  isSwappable,
+  partiesOf,
+  TradeRegistry,
+  type Trade,
+} from './player/trades.js';
 import { MemoryDataStore } from './state/memory-store.js';
 import type { DataStore } from './state/store.js';
 import type { Vec3 } from './state/types.js';
@@ -81,6 +89,7 @@ import {
   type ServerWorldState,
 } from './sim/types.js';
 import {
+  asksToMove,
   createWorldState,
   PLAYER_BODY_RADIUS,
   removeEntity,
@@ -96,6 +105,8 @@ import type { MapIndex } from './world/map-index.js';
 import { ChunkBudget, decideChunkRequest } from './world/map-request.js';
 import { FLAT_TERRAIN, type TerrainSampler } from './world/terrain.js';
 import { ZoneManager } from './world/zone-manager.js';
+import { buyPrice } from './data/vendors.js';
+import { TradeStageValue } from './net/protocol.js';
 
 export interface GameServerOptions {
   readonly seed?: number;
@@ -111,6 +122,14 @@ export interface GameServerOptions {
    */
   readonly adminVerifier?: AdminTokenVerifier;
   readonly store?: DataStore;
+  /**
+   * The asset manifest hash this server serves (spec 113).
+   *
+   * Omit and every client is let through, whatever it claims -- which is right
+   * for a server inside a player's own tab, for the bot harness, and for every
+   * test here. `src/server/index.ts` reads the real one off disk.
+   */
+  readonly assetManifestHash?: string;
   readonly zones?: ZoneManager;
   readonly terrain?: TerrainSampler;
   readonly world?: WorldColliders;
@@ -170,8 +189,12 @@ interface Connection {
    * made rather than something to overwrite the first with.
    */
   readonly pendingCasts: PendingCast[];
-  /** Cancels, stamped the same way; `-1` means none outstanding. */
-  readonly pendingCancels: number[];
+  /** Cancels, stamped the same way. */
+  readonly pendingCancels: PendingCancel[];
+  /** The shop this connection has open, or '' (spec 129). */
+  openVendorId: string;
+  /** Bumped by every cast or cancel, so the two queues can be put back in order. */
+  asks: number;
   /** The last input seq handed to the sim, so a gap in the stream is visible. */
   appliedSeq: number;
   /**
@@ -191,6 +214,20 @@ interface PendingCast {
   readonly targetEntityId: number;
   /** Commit on the tick this input seq is applied, not on the tick it arrived. */
   readonly afterInputSeq: number;
+  /**
+   * Where this sat in the connection's own stream of asks (spec 092). Casts and
+   * cancels queue separately, so the order *between* the two queues is lost
+   * unless it is written down -- and it is the whole question when both come
+   * due on the same tick: a cancel that arrived after a request means "not that
+   * one", and one that arrived before it means "not the last one, and now this".
+   */
+  readonly arrivedAt: number;
+}
+
+/** A withdrawal waiting for its place in the input stream, stamped like a cast. */
+interface PendingCancel {
+  readonly afterInputSeq: number;
+  readonly arrivedAt: number;
 }
 
 export class GameServer implements AdminHost {
@@ -200,9 +237,20 @@ export class GameServer implements AdminHost {
   /** Announced in the welcome so a client can build the same ground (spec 063). */
   private readonly worldSeed: number;
   private readonly store: DataStore;
+  /**
+   * The asset manifest hash this server is serving, or '' when it has none.
+   *
+   * Injected rather than read from disk here, because `server.ts` is the
+   * portable half and reading `assets/units/manifest.json` is a Node concern.
+   * An empty hash lets every client through, which is what keeps a repo with no
+   * manifest yet -- and every test in this suite -- runnable.
+   */
+  private readonly assetManifestHash: string;
   private readonly config = new LiveConfigStore();
   private readonly chunks: ChunkManager;
   private readonly players: PlayerManager;
+  /** Open trades, and the one-trade-per-player rule (spec 132). */
+  private readonly trades = new TradeRegistry();
   private readonly audit: AuditLog;
   private readonly admin: AdminRouter;
   private readonly loop: TickLoop;
@@ -231,6 +279,7 @@ export class GameServer implements AdminHost {
     this.mapIndex = built && 'index' in built ? (built as BuiltMapWorld).index : null;
     this.spawnPoints = built && 'spawnPoints' in built ? (built as BuiltMapWorld).spawnPoints : [];
     this.store = options.store ?? new MemoryDataStore();
+    this.assetManifestHash = options.assetManifestHash ?? '';
     this.chunks = new ChunkManager(CHUNK_SIZE, INTEREST_CHUNK_RADIUS);
     this.players = new PlayerManager(this.store, this.zones);
     this.audit = new AuditLog(this.store);
@@ -284,6 +333,8 @@ export class GameServer implements AdminHost {
       respawnAtTick: 0,
       pendingCasts: [],
       pendingCancels: [],
+      openVendorId: '',
+      asks: 0,
       appliedSeq: 0,
       lastDriftTick: 0,
       sentCooldowns: null,
@@ -345,7 +396,13 @@ export class GameServer implements AdminHost {
 
     switch (message.type) {
       case ClientMessageType.Hello:
-        await this.hello(connection, message.protocolVersion, message.playerId, message.displayName);
+        await this.hello(
+          connection,
+          message.protocolVersion,
+          message.playerId,
+          message.displayName,
+          message.assetManifest,
+        );
         break;
 
       case ClientMessageType.Input: {
@@ -387,6 +444,7 @@ export class GameServer implements AdminHost {
         if (connection.playerId === null) return;
         const result = await this.players.equip(connection.playerId, message.slot, message.itemId);
         this.reportAction(connection, result.ok ? null : result.reason);
+        this.sendInventory(connection, 0);
         break;
       }
 
@@ -394,6 +452,129 @@ export class GameServer implements AdminHost {
         if (connection.playerId === null) return;
         const result = await this.players.unequip(connection.playerId, message.slot);
         this.reportAction(connection, result.ok ? null : result.reason);
+        this.sendInventory(connection, 0);
+        break;
+      }
+
+      case ClientMessageType.MoveItem: {
+        if (connection.playerId === null) return;
+        const result = await this.players.moveItem(connection.playerId, {
+          from: message.from,
+          to: message.to,
+          // 0 on the wire means "the whole stack", which is `undefined` to the
+          // rules -- the wire has no way to say "absent" and the rules have no
+          // use for a zero.
+          ...(message.count === 0 ? {} : { count: message.count }),
+        });
+        this.reportAction(connection, result.ok ? null : result.reason);
+        // Answered either way, at the id that was asked. A refusal that said
+        // nothing but "no" would leave the client's guess standing.
+        this.sendInventory(connection, message.requestId);
+        break;
+      }
+
+      case ClientMessageType.OpenVendor:
+        if (connection.playerId === null) return;
+        this.sendVendorState(connection, message.vendorId);
+        break;
+
+      case ClientMessageType.BuyItem: {
+        if (connection.playerId === null) return;
+        const result = await this.players.buyItem(
+          connection.playerId,
+          message.vendorId,
+          message.defId,
+          message.count,
+        );
+        this.reportAction(connection, result.ok ? null : result.reason);
+        this.sendInventory(connection, message.requestId);
+        // The stock list itself never changes, but the buyback half of it does,
+        // and a shop that answered a sale with a stale undo list would offer to
+        // undo something twice.
+        this.sendVendorState(connection, connection.openVendorId);
+        break;
+      }
+
+      case ClientMessageType.SellItem: {
+        if (connection.playerId === null) return;
+        const result = await this.players.sellItem(
+          connection.playerId,
+          message.vendorId,
+          message.index,
+          message.count,
+        );
+        this.reportAction(connection, result.ok ? null : result.reason);
+        this.sendInventory(connection, message.requestId);
+        this.sendVendorState(connection, connection.openVendorId);
+        break;
+      }
+
+      case ClientMessageType.BuyBack: {
+        if (connection.playerId === null) return;
+        const result = await this.players.buyBackItem(
+          connection.playerId,
+          message.vendorId,
+          message.index,
+        );
+        this.reportAction(connection, result.ok ? null : result.reason);
+        this.sendInventory(connection, message.requestId);
+        this.sendVendorState(connection, connection.openVendorId);
+        break;
+      }
+
+      case ClientMessageType.TradeInvite: {
+        if (connection.playerId === null) return;
+        const them = this.players.byEntityId(message.entityId);
+        if (!them) {
+          this.reportAction(connection, 'there is nobody there to trade with');
+          break;
+        }
+        const result = this.trades.invite(connection.playerId, them.playerId);
+        if (!result.ok) this.reportAction(connection, result.reason);
+        else this.publishTrade(result.trade);
+        break;
+      }
+
+      case ClientMessageType.TradeRespond: {
+        if (connection.playerId === null) return;
+        const result = this.trades.respond(connection.playerId, message.accept);
+        if (!result.ok) this.reportAction(connection, result.reason);
+        else this.publishTrade(result.trade);
+        break;
+      }
+
+      case ClientMessageType.TradeOffer: {
+        if (connection.playerId === null) return;
+        const holdings = this.players.holdingsOf(connection.playerId);
+        if (!holdings) return;
+        const result = this.trades.setOffer(connection.playerId, message.slots, message.coins, holdings);
+        if (!result.ok) this.reportAction(connection, result.reason);
+        else this.publishTrade(result.trade);
+        break;
+      }
+
+      case ClientMessageType.TradeAccept: {
+        if (connection.playerId === null) return;
+        const result = this.trades.accept(connection.playerId, message.revision);
+        if (!result.ok) {
+          this.reportAction(connection, result.reason);
+          break;
+        }
+        // Published before the swap runs, so both clients see the acceptance
+        // even when the exchange is then refused -- and then see why.
+        this.publishTrade(result.trade);
+        // Only once *both* sides have agreed. Settling on every acceptance runs
+        // the swap against a table one side has not answered, which refuses --
+        // and a refused settle cancels the trade, so the first player to say yes
+        // was ending it.
+        if (isSwappable(result.trade)) await this.settleTrade(result.trade);
+        break;
+      }
+
+      case ClientMessageType.TradeCancel: {
+        if (connection.playerId === null) return;
+        const ended = this.trades.cancelFor(connection.playerId, 'cancelled');
+        if (ended) this.endTrade(ended);
         break;
       }
 
@@ -406,12 +587,14 @@ export class GameServer implements AdminHost {
 
       case ClientMessageType.UseAbility:
         if (connection.playerId === null || connection.entityId < 0) return;
+        connection.asks += 1;
         connection.pendingCasts.push({
           abilityId: message.abilityId,
           targetX: message.targetX,
           targetY: message.targetY,
           targetEntityId: message.targetEntityId,
           afterInputSeq: message.afterInputSeq,
+          arrivedAt: connection.asks,
         });
         break;
 
@@ -426,7 +609,11 @@ export class GameServer implements AdminHost {
         break;
       case ClientMessageType.CancelCast:
         if (connection.playerId === null || connection.entityId < 0) return;
-        connection.pendingCancels.push(message.afterInputSeq);
+        connection.asks += 1;
+        connection.pendingCancels.push({
+          afterInputSeq: message.afterInputSeq,
+          arrivedAt: connection.asks,
+        });
         break;
 
       case ClientMessageType.Chat: {
@@ -457,6 +644,7 @@ export class GameServer implements AdminHost {
     protocolVersion: number,
     playerId: string,
     displayName: string,
+    assetManifest = '',
   ): Promise<void> {
     if (protocolVersion !== PROTOCOL_VERSION) {
       this.send(connection, {
@@ -465,6 +653,20 @@ export class GameServer implements AdminHost {
         message: `server speaks protocol ${PROTOCOL_VERSION}`,
       });
       this.drop(connection, 'protocol mismatch');
+      return;
+    }
+
+    // Checked after the version and before anything else (spec 113). A client
+    // built against different assets is drawing a fight that is not the one
+    // being played -- different clip lengths, different action timings, a hit
+    // landing on a frame that is not the frame the server used. Nothing about
+    // that is visible until somebody notices, which is why it is a refused
+    // connection rather than a warning.
+    const verdict = compareManifest(assetManifest, this.assetManifestHash);
+    if (refusesConnection(verdict)) {
+      const message = mismatchMessage(assetManifest, this.assetManifestHash);
+      this.send(connection, { type: ServerMessageType.Error, code: ErrorCode.BadProtocolVersion, message });
+      this.drop(connection, 'asset manifest mismatch');
       return;
     }
     if (playerId.length === 0 || playerId.length > 64) {
@@ -521,6 +723,9 @@ export class GameServer implements AdminHost {
     });
     this.sendMapInfo(connection);
     this.sendStats(connection);
+    // Unprompted, because nothing asked: a client cannot draw a bag it was
+    // never told about, and login is the one moment it has no guess to settle.
+    this.sendInventory(connection, 0);
   }
 
   /**
@@ -544,6 +749,7 @@ export class GameServer implements AdminHost {
       layers: index.layers.map((layer) => ({
         id: layer.id,
         seed: layer.seed,
+        origin: layer.origin,
         bounds: layer.bounds,
         baseY: layer.baseY,
         waterLevel: layer.waterLevel,
@@ -603,6 +809,13 @@ export class GameServer implements AdminHost {
 
   private async disconnect(connection: Connection): Promise<void> {
     if (!this.connections.has(connection)) return;
+    // Before the connection leaves the set, so the *other* side is still told
+    // (spec 132). A trade that outlived a disconnect would be a trade nobody
+    // can cancel and an item nobody can get back.
+    if (connection.playerId !== null) {
+      const ended = this.trades.cancelFor(connection.playerId, 'they disconnected');
+      if (ended) this.endTrade(ended);
+    }
     this.connections.delete(connection);
     if (connection.entityId >= 0) {
       this.chunks.remove(connection.entityId);
@@ -717,8 +930,196 @@ export class GameServer implements AdminHost {
       level: session.record.level,
       experience: session.record.experience,
       unspentSkillPoints: session.record.unspentSkillPoints,
+      // What has actually been spent (spec 128), not just what is left to
+      // spend: a client told only the remainder cannot draw a tree.
+      skills: session.record.skills,
       stats: session.stats,
     });
+  }
+
+  /**
+   * The player's containers, whole (spec 126).
+   *
+   * `requestId` is the move this answers, or 0 for an unprompted resend. Sent
+   * after a refusal as well as after an acceptance, which is the whole rollback
+   * mechanism: the client replaces its guess with this, so a refused move undoes
+   * itself through the same code path an accepted one confirms itself through.
+   */
+  private sendInventory(connection: Connection, requestId: number): void {
+    if (connection.playerId === null) return;
+    const session = this.players.get(connection.playerId);
+    if (!session) return;
+    this.send(connection, {
+      type: ServerMessageType.Inventory,
+      requestId,
+      inventory: session.record.inventory,
+      equipment: session.record.equipment,
+      coins: session.record.coins,
+    });
+  }
+
+  /**
+   * What the vendor this player has open is offering (spec 129).
+   *
+   * An empty id closes the shop, and is also the answer to a request the server
+   * will not serve -- a client that walked out of range is *told*, rather than
+   * being left with a stale price list it can click.
+   */
+  private sendVendorState(connection: Connection, vendorId: string): void {
+    if (connection.playerId === null) return;
+    const vendor = vendorId === '' ? null : this.players.vendorFor(connection.playerId, vendorId);
+    if (!vendor) {
+      connection.openVendorId = '';
+      this.send(connection, { type: ServerMessageType.VendorState, vendorId: '', name: '', stock: [], buyback: [] });
+      return;
+    }
+    connection.openVendorId = vendor.id;
+    this.send(connection, {
+      type: ServerMessageType.VendorState,
+      vendorId: vendor.id,
+      name: vendor.name,
+      stock: vendor.stock.map((defId) => ({ defId, price: buyPrice(defId, vendor) })),
+      buyback: this.players.buybackFor(connection.playerId, vendor.id).map((entry) => ({
+        defId: entry.defId,
+        count: entry.count,
+        price: entry.price,
+      })),
+    });
+  }
+
+  // --- trade (spec 132) --------------------------------------------------
+
+  /** The stage byte the wire carries, from the stage the rules use. */
+  private static readonly TRADE_STAGES: Readonly<Record<Trade['stage'], number>> = {
+    offered: TradeStageValue.Offered,
+    open: TradeStageValue.Open,
+    confirmed: TradeStageValue.Confirmed,
+    done: TradeStageValue.Done,
+    cancelled: TradeStageValue.Cancelled,
+  };
+
+  /**
+   * Tell both sides where the trade now stands.
+   *
+   * Both, on every change, and each from their own point of view -- `you` is
+   * always the player being sent to. A client never derives what the other
+   * player is offering; it is told, and what it draws is what the server would
+   * swap.
+   */
+  private publishTrade(trade: Trade): void {
+    for (const playerId of partiesOf(trade)) {
+      const connection = this.connectionForPlayer(playerId);
+      if (!connection) continue;
+      const mine = trade.a.playerId === playerId;
+      this.send(connection, {
+        type: ServerMessageType.TradeState,
+        tradeId: trade.id,
+        stage: GameServer.TRADE_STAGES[trade.stage],
+        revision: trade.revision,
+        you: this.tradeSideView(mine ? trade.a : trade.b, trade.revision),
+        them: this.tradeSideView(mine ? trade.b : trade.a, trade.revision),
+        reason: trade.reason,
+      });
+    }
+  }
+
+  /**
+   * One side, resolved to items.
+   *
+   * Resolved here rather than sent as slot indices, because the other player
+   * cannot see into your bag and a bare index would mean nothing to them. A slot
+   * that has since emptied resolves to nothing, which is honest: it is exactly
+   * what the swap will refuse over.
+   */
+  private tradeSideView(
+    side: Trade['a'],
+    revision: number,
+  ): { playerId: string; displayName: string; offer: { defId: string; count: number }[]; coins: number; accepted: boolean } {
+    const session = this.players.get(side.playerId);
+    const bag = session?.record.inventory ?? [];
+    const offer: { defId: string; count: number }[] = [];
+    for (const entry of side.offer) {
+      const stack = bag[entry.index];
+      if (stack) offer.push({ defId: stack.defId, count: Math.min(entry.count, stack.count) });
+    }
+    return {
+      playerId: side.playerId,
+      displayName: session?.displayName ?? side.playerId,
+      offer,
+      coins: side.coins,
+      accepted: side.acceptedRevision === revision,
+    };
+  }
+
+  /**
+   * Run the exchange if both sides have agreed, and tell everyone either way.
+   *
+   * The order is the safety argument. The swap is computed from both players'
+   * current holdings; only if it succeeds are both written, in one call that
+   * assigns both before awaiting anything. A refusal cancels the trade with the
+   * reason attached, because a confirmed trade that silently did not happen is
+   * the worst of the three outcomes.
+   */
+  private async settleTrade(trade: Trade): Promise<void> {
+    const [aId, bId] = partiesOf(trade);
+    const a = this.players.holdingsOf(aId);
+    const b = this.players.holdingsOf(bId);
+    if (!a || !b) {
+      const ended = this.trades.cancelById(trade.id, 'one of you left');
+      if (ended) this.endTrade(ended);
+      return;
+    }
+
+    const result = this.trades.settle(trade, a, b);
+    if (!result.ok) {
+      const ended = this.trades.cancelById(trade.id, result.reason);
+      if (ended) this.endTrade(ended);
+      return;
+    }
+
+    const written = await this.players.applyTrade(aId, bId, result.a, result.b);
+    if (!written.ok) {
+      const ended = this.trades.cancelById(trade.id, written.reason);
+      if (ended) this.endTrade(ended);
+      return;
+    }
+
+    this.endTrade(this.trades.finish(trade));
+    for (const playerId of [aId, bId]) {
+      const connection = this.connectionForPlayer(playerId);
+      if (!connection) continue;
+      this.sendInventory(connection, 0);
+      this.sendStats(connection);
+    }
+  }
+
+  /** Tell both sides a trade is over, then stop holding it. */
+  private endTrade(trade: Trade): void {
+    this.publishTrade(trade);
+    this.trades.forget(trade.id);
+  }
+
+  /**
+   * The per-tick check: a trade ends when the players walk apart.
+   *
+   * On the tick rather than on a timer, because "how far apart are they" is a
+   * question about the simulation and the simulation is what advances in ticks.
+   * A player who has logged out has no session, which ends it too.
+   */
+  private sweepTrades(): void {
+    for (const trade of this.trades.live()) {
+      const [aId, bId] = partiesOf(trade);
+      const a = this.players.get(aId);
+      const b = this.players.get(bId);
+      if (!a || !b) {
+        const ended = this.trades.cancelById(trade.id, 'one of you left');
+        if (ended) this.endTrade(ended);
+        continue;
+      }
+      if (inTradeRange(a.record.position, b.record.position)) continue;
+      const ended = this.trades.cancelById(trade.id, 'you walked too far apart');
+      if (ended) this.endTrade(ended);
+    }
   }
 
   // --- the tick ----------------------------------------------------------
@@ -735,8 +1136,49 @@ export class GameServer implements AdminHost {
       const applied = next ? next.seq : connection.lastSeq;
       const starved = connection.inputs.length === 0;
       const due = (afterSeq: number): boolean => afterSeq <= applied || starved;
-      const cast = takeWhere(connection.pendingCasts, (pending) => due(pending.afterInputSeq));
-      const cancel = takeWhere(connection.pendingCancels, due) !== null;
+      // At most one of each per tick, and never both in the same input (spec
+      // 092). A cast request and a withdrawal riding one input is a question
+      // with no good answer -- the sim has to guess which the player meant
+      // first, and guessing wrong either throws a blow they called off or eats a
+      // press. They queue separately and `due` turns true for a whole backlog at
+      // once (any tick the input queue empties, `starved` makes everything due),
+      // so the collision is ordinary rather than exotic.
+      //
+      // So they go out in the order the player asked for them, a tick apart. The
+      // one held back is still first in its queue and comes due next tick,
+      // costing a tick of wind-up that is refunded either way.
+      const nextCast = connection.pendingCasts.find((pending) => due(pending.afterInputSeq));
+      const nextCancel = connection.pendingCancels.find((pending) => due(pending.afterInputSeq));
+      // A step is a withdrawal too (spec 079), so an input that asks to walk
+      // must not carry a commit either -- `step` reads the pair as "not that
+      // one" and refuses it (spec 094). Which is right when the step is the
+      // newer ask, and wrong when it is older: a request stamped *after* this
+      // frame was sent is a press made once the walking had stopped, and the
+      // stale vector on the frame it would ride is not the player changing
+      // their mind. That is exactly a chase arriving -- the last frame of the
+      // approach still carries a vector, and the swing is asked for on the one
+      // after it.
+      //
+      // So the same answer as above: the older ask goes out now and the commit
+      // waits a tick, by when the client's own next frame says whether it is
+      // still walking. A commit riding a frame *newer* than itself is left to
+      // `step` to refuse, because there the step really is the later word.
+      const stepsFirst =
+        nextCast !== undefined &&
+        next !== undefined &&
+        asksToMove(next) &&
+        next.seq <= nextCast.afterInputSeq;
+      const castFirst =
+        nextCast !== undefined &&
+        !stepsFirst &&
+        (nextCancel === undefined || nextCast.arrivedAt < nextCancel.arrivedAt);
+      const cast = castFirst
+        ? takeWhere(connection.pendingCasts, (pending) => pending === nextCast)
+        : null;
+      const cancel =
+        !castFirst &&
+        nextCancel !== undefined &&
+        takeWhere(connection.pendingCancels, (pending) => pending === nextCancel) !== null;
 
       if (next) {
         if (connection.playerId !== null) {
@@ -818,6 +1260,10 @@ export class GameServer implements AdminHost {
     }
 
     this.handleRespawns();
+    // Positions have just been mirrored back into the records, so this is the
+    // one moment in the tick where "how far apart are they" is answerable from
+    // the same numbers the sim used (spec 132).
+    this.sweepTrades();
 
     // Corrections and combat results go out the tick they happen -- they are
     // rare and latency is the whole point of them. Deltas are the bulk traffic
@@ -972,6 +1418,14 @@ export class GameServer implements AdminHost {
           break;
         }
         case 'died': {
+          // A dead player is not at the table (spec 132). Before the experience
+          // award below, and before the `killerId` guard, because a player who
+          // died to a fall or to something with no killer is just as dead.
+          const dying = this.players.byEntityId(event.entityId);
+          if (dying) {
+            const ended = this.trades.cancelFor(dying.playerId, 'they were killed');
+            if (ended) this.endTrade(ended);
+          }
           if (event.killerId === null) break;
           const killer = this.players.byEntityId(event.killerId);
           const victim = this.state.entities.get(event.entityId);

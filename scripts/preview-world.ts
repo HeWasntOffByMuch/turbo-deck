@@ -26,15 +26,41 @@ const outDir = join(root, '.claude', 'screenshots');
 const PORT = 4319;
 
 /**
- * How far beside a body the deliberately-sloppy click lands, in CSS pixels.
+ * How far beside a body the "this is bare ground" click lands, in CSS pixels.
  *
- * Outside the body at the default framing, and comfortably short of the ~110px
- * the seeded grazers stand apart -- so a hit is this body being forgiving
- * rather than the neighbour being picked instead. What the budget *is* belongs
- * to `hover.test.ts`, which pins it exactly; this asks only whether the
- * forgiveness is wired to the mouse at all.
+ * A body twenty world units across is about eighty pixels wide at the default
+ * framing, so this is comfortably past its edge -- and the click is only made
+ * when no other bar is within reach of it, so picking nothing means the ground
+ * is free rather than that the neighbour was missed too. What the pick's reach
+ * *is* belongs to `hover.test.ts`, which pins it exactly; this asks only whether
+ * the ground beside a body is still ground once a browser is delivering the
+ * clicks (spec 095).
  */
-const SLOPPY_OFFSET = 40;
+const GAP_OFFSET = 70;
+
+/**
+ * How far a candidate pixel must be from every *other* body's bar, in CSS
+ * pixels, for a pick there to mean anything.
+ *
+ * A body is about eighty pixels across at the default framing, so a neighbour
+ * whose bar is merely {@link GAP_OFFSET} away still has half its body over the
+ * pixel being tried. This is that width plus the offset, which is the distance
+ * at which "nothing was picked" is a statement about the ground rather than
+ * about which of two bodies got there first.
+ */
+const GAP_CLEARANCE = 110;
+
+/**
+ * How near a body's click point another body may be and still plausibly own it,
+ * in CSS pixels.
+ *
+ * A twenty-unit footprint is forty pixels across the middle at the default
+ * framing, so anything nearer than this could legitimately have been what the
+ * click picked. Used only to tell "the pick reached too far" apart from "a
+ * monster walked onto the pixel between the read and the click" -- the world
+ * does not hold still for a screenshot harness.
+ */
+const DRIFT_MARGIN = 50;
 
 /**
  * A Chromium to drive. Prefers a browser already on the box (an agent container
@@ -84,6 +110,8 @@ interface Bar {
   readonly id: string;
   readonly x: number;
   readonly y: number;
+  /** True for the local player's own bar, which no click may attack. */
+  readonly self: boolean;
 }
 
 /**
@@ -98,15 +126,122 @@ async function bodiesOnScreen(page: Page): Promise<Bar[]> {
   return page.$$eval('[data-entity]', (nodes) =>
     nodes.map((node) => {
       const element = node as HTMLElement;
-      return { id: element.dataset['entity'] ?? '', x: element.offsetLeft, y: element.offsetTop };
+      return {
+        id: element.dataset['entity'] ?? '',
+        x: element.offsetLeft,
+        y: element.offsetTop,
+        self: element.dataset['self'] !== undefined,
+      };
     }),
   );
 }
 
+/**
+ * Every overlay element carrying `attribute`, by the value of it.
+ *
+ * Read off `style.left` rather than `offsetLeft` because these are placed to
+ * fractions of a pixel and the drift being measured is a few of them; elements
+ * the HUD has hidden are dropped, since a hidden number's last position is not
+ * a position.
+ */
+async function overlayPoints(
+  page: Page,
+  attribute: string,
+): Promise<Map<string, { x: number; y: number }>> {
+  const found = await page.$$eval(
+    `[${attribute}]`,
+    (nodes, name) =>
+      nodes
+        .map((node) => node as HTMLElement)
+        .filter((element) => element.style.display !== 'none')
+        .map((element) => ({
+          key: element.getAttribute(name) ?? '',
+          x: parseFloat(element.style.left || '0'),
+          y: parseFloat(element.style.top || '0'),
+        })),
+    attribute,
+  );
+  return new Map(found.map((point) => [point.key, { x: point.x, y: point.y }]));
+}
+
 /** The pixel to point at for a body, given the bar floating over its head. */
 function bodyPoint(bar: Bar): { x: number; y: number } {
-  // The footprint fallback in the pick makes the exact offset forgiving.
+  // The bar hangs at the top of the head, so a drop of forty pixels is inside
+  // the column the body stands in whichever monster the field seeded.
   return { x: bar.x, y: bar.y + 40 };
+}
+
+/**
+ * Click a body at the pixel it is on *now*, and say whether it was still there.
+ *
+ * The bar is re-read immediately before the click rather than carried over from
+ * a screenshot or a readout poll. A body being chased and swung at moves tens of
+ * pixels while this harness is reading text off the page, and since spec 095 a
+ * pick is the body itself rather than a budget around it -- so a pixel that is a
+ * fifth of a second old is a miss, and a miss here is the harness's fault rather
+ * than the game's.
+ */
+async function clickBody(page: Page, id: string, button: 'left' | 'right'): Promise<boolean> {
+  const bar = (await bodiesOnScreen(page)).find((candidate) => candidate.id === id);
+  if (!bar) return false;
+  const point = bodyPoint(bar);
+  await page.mouse.click(point.x, point.y, { button });
+  return true;
+}
+
+/**
+ * A pixel {@link GAP_OFFSET} to one side of `bar`, clear of every body including
+ * `bar` itself, or null when this frame has no such pixel beside it.
+ *
+ * Both sides are offered because the monsters are placed by the map (spec 076)
+ * rather than seeded in a row, so which side is clear is not knowable in advance.
+ */
+function gapBeside(bar: Bar, others: readonly Bar[]): { x: number; y: number } | null {
+  const point = bodyPoint(bar);
+  for (const side of [1, -1]) {
+    const candidate = { x: point.x + side * GAP_OFFSET, y: point.y };
+    // The body this is beside is excluded: being GAP_OFFSET from it is the
+    // whole point, and it is the neighbours that would spoil the answer.
+    const neighbours = others.filter((other) => other.id !== bar.id);
+    if (nearestBody(candidate, neighbours).distance >= GAP_CLEARANCE) return candidate;
+  }
+  return null;
+}
+
+/**
+ * A monster the player's own body is not standing in front of, or null.
+ *
+ * The player stands in melee contact with whatever it is fighting, and its rig
+ * is between the camera and that body -- so the pixel over the monster is a
+ * pixel over the *player*, and a click there is a move order however forgiving
+ * the pick is. Picking the body furthest from the player's own bar is how this
+ * harness asks its question about a monster rather than about occlusion.
+ */
+function unoccludedBody(bars: readonly Bar[]): Bar | null {
+  const me = bars.find((bar) => bar.self);
+  let best: Bar | null = null;
+  let bestDistance = -1;
+  for (const bar of bars) {
+    if (bar.self) continue;
+    const point = bodyPoint(bar);
+    // On screen with room to spare: a bar at the edge is a body half off it.
+    if (point.x < 60 || point.x > 1220 || point.y < 60 || point.y > 740) continue;
+    const distance = me ? Math.hypot(me.x - bar.x, me.y - bar.y) : 0;
+    if (distance <= bestDistance) continue;
+    best = bar;
+    bestDistance = distance;
+  }
+  return best;
+}
+
+/** The body whose click point is nearest a pixel, and how far off it is. */
+function nearestBody(point: { x: number; y: number }, bars: readonly Bar[]): { who: string; distance: number } {
+  let best = { who: 'nobody', distance: Infinity };
+  for (const bar of bars) {
+    const distance = Math.hypot(bar.x - point.x, bar.y + 40 - point.y);
+    if (distance < best.distance) best = { who: bar.id, distance };
+  }
+  return best;
 }
 
 /**
@@ -153,6 +288,29 @@ async function settledBar(page: Page, id: string, timeoutMs = 4000): Promise<Bar
   return last;
 }
 
+/**
+ * The bottom line of the readout: what the next click does (spec 080).
+ *
+ * Polled rather than read once, because the line is written during a *frame*
+ * and this harness runs on software WebGL where a frame is not a formality. A
+ * single read a couple of hundred milliseconds after a click was reporting the
+ * state before it, which is a stopwatch failing rather than the game.
+ */
+async function waitForAim(page: Page, wanted: RegExp, timeoutMs = 4000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let seen = '';
+  while (Date.now() < deadline) {
+    const text = (await page.textContent('body')) ?? '';
+    seen =
+      /(aiming [^\n]*|[\w ]+: moving into range[^\n]*|right-click ground to move[^\n]*)/.exec(
+        text,
+      )?.[1] ?? '';
+    if (wanted.test(seen)) return seen;
+    await page.waitForTimeout(120);
+  }
+  return seen;
+}
+
 /** The tick the HUD is showing. */
 async function readTick(page: Page): Promise<number> {
   const text = (await page.textContent('body')) ?? '';
@@ -188,6 +346,35 @@ function differingPixels(a: PNG, b: PNG): number {
     if (Math.max(dr, dg, db) > 8) n++;
   }
   return n;
+}
+
+/** Mean channel value over a box of a decoded frame, 0-255. */
+function meanBrightness(png: PNG, left: number, top: number, width: number, height: number): number {
+  let total = 0;
+  let n = 0;
+  for (let y = Math.max(0, Math.round(top)); y < Math.min(png.height, Math.round(top + height)); y++) {
+    for (let x = Math.max(0, Math.round(left)); x < Math.min(png.width, Math.round(left + width)); x++) {
+      const i = (y * png.width + x) * 4;
+      total += ((png.data[i] ?? 0) + (png.data[i + 1] ?? 0) + (png.data[i + 2] ?? 0)) / 3;
+      n++;
+    }
+  }
+  return n > 0 ? total / n : 0;
+}
+
+/** A pixel with no body anywhere near it, for parking the cursor. */
+function emptyPixel(bars: readonly Bar[]): { x: number; y: number } {
+  let best = { x: 640, y: 400 };
+  let bestDistance = -1;
+  for (let y = 120; y <= 620; y += 40) {
+    for (let x = 120; x <= 1160; x += 40) {
+      const distance = nearestBody({ x, y }, bars).distance;
+      if (distance <= bestDistance) continue;
+      best = { x, y };
+      bestDistance = distance;
+    }
+  }
+  return best;
 }
 
 async function shoot(page: Page, name: string): Promise<void> {
@@ -241,6 +428,15 @@ async function main(): Promise<void> {
     await waitForTick(page, 150);
 
     await shoot(page, 'world-play');
+
+    // Every key that opens a window, before anything else happens (spec 131).
+    //
+    // Here rather than beside the rest of the interface checks at the bottom,
+    // because the shop is only served to somebody standing at a counter -- and
+    // by the end of this script the player has chased a Stalker halfway across
+    // the arena. At spawn they are inside both vendors' reach, which is where a
+    // player who has just pressed V will be.
+    await windowKeys(page, problems);
 
     // The spawner overlay (spec 076): open the cog, tick "Spawners", and
     // photograph what the map placed. Every enemy on screen came from one of
@@ -312,20 +508,68 @@ async function main(): Promise<void> {
     await page.waitForTimeout(120);
 
     // Right-click a point on the ground: the move order the game had before the
-    // server existed (spec 064). The marker should appear and the figure walk to it.
-    await page.mouse.click(420, 560, { button: 'right' });
-    await page.waitForTimeout(500);
+    // server existed (spec 064). A wave goes off where the click landed (spec
+    // 127) and the figure walks to it.
+    //
+    // Photographed a fifth of a second in, not half a second: the cue is a
+    // wavefront that lives about thirty ticks now rather than a marker that
+    // stands there, so the old delay caught the frame *after* it and would have
+    // reported the feature missing. Not at the click either -- the ring starts
+    // at a quarter of its size and this one is small, so the first few frames
+    // are a handful of lit pixels. Mid-life is where it is widest and still
+    // near full alpha.
+    // Open grass rather than the old point, which was on the wall slab: the cue
+    // lies *on the ground* now, so a click behind a waist-high wall is a cue
+    // behind a waist-high wall, and the frame showed a sliver of ring and a lot
+    // of stone.
+    await page.mouse.click(330, 620, { button: 'right' });
+    await page.waitForTimeout(220);
     await shoot(page, 'world-move-order');
-    await page.waitForTimeout(1400);
+    await page.waitForTimeout(1680);
     await shoot(page, 'world-walking');
 
-    // Commit to a heavy blow and catch the frame mid-wind-up: the bar, and the
-    // body turning into the blow at its own turn rate rather than snapping.
+    // A hotbar press is a question now (spec 080), not the commitment. The
+    // shape of the blow goes on the ground and nothing has been asked for
+    // until a click answers it.
     await page.mouse.move(820, 330);
     await page.waitForTimeout(200);
     await page.keyboard.press('Digit2');
-    await page.waitForTimeout(220);
+    const aimed = await waitForAim(page, /^aiming Heavy Blow/);
+    await shoot(page, 'world-aim-cone');
+    if (!/^aiming Heavy Blow/.test(aimed)) {
+      problems.push(`pressing 2 did not start an aim (readout: ${aimed})`);
+    }
+
+    // Right-click over an aim means *no*, and only that: it goes away, and
+    // nothing was spent, moved toward or attacked.
+    const tickAtCancel = await readTick(page);
+    await page.mouse.click(820, 330, { button: 'right' });
+    const cancelled = await waitForAim(page, /^right-click ground/);
+    if (/^aiming /.test(cancelled)) {
+      problems.push('right-click did not cancel the aim');
+    }
+    // ...and it really did move nothing: a cancel that fell through to a move
+    // order would have started a walk.
+    if (((await page.textContent('body')) ?? '').includes('Heavy Blow: moving into range')) {
+      problems.push('right-click turned the aim into an order instead of cancelling it');
+    }
+    await shoot(page, 'world-aim-cancelled');
+    console.log(`  ticks while cancelling an aim: ${(await readTick(page)) - tickAtCancel}`);
+
+    // ...and again, answered this time. Placed close to the body so the confirm
+    // is a commitment rather than a walk, which is what this frame is of: the
+    // bar, and the body turning into the blow at its own turn rate.
+    await page.keyboard.press('Digit2');
+    await waitForAim(page, /^aiming Heavy Blow/);
+    await page.mouse.click(700, 430);
+    // Confirming consumes the aim, so the question comes off the readout --
+    // either for an order that is still walking, or because the blow is already
+    // committed and the order is spent.
+    const confirmed = await waitForAim(page, /^(right-click ground|Heavy Blow: moving)/);
     await shoot(page, 'world-windup');
+    if (/^aiming /.test(confirmed)) {
+      problems.push('a left-click did not confirm the aim');
+    }
 
     // ...then call it off. Nothing should be spent: no cooldown, no resource.
     await page.keyboard.press('Escape');
@@ -359,8 +603,8 @@ async function main(): Promise<void> {
       // couple of body-lengths away; since the map places the monsters (spec
       // 076) that walk carried the body clean off screen. Stepping the other
       // way keeps the frame still *and* keeps the click off the body, which a
-      // step toward it would not -- the forgiving pick would simply take it
-      // again, and "let go" would never have happened.
+      // step toward it would not -- the pick would simply take it again, and
+      // "let go" would never have happened.
       const away = (() => {
         const from = bodyPoint(unit);
         const dx = 640 - from.x;
@@ -372,28 +616,87 @@ async function main(): Promise<void> {
       await page.waitForTimeout(400);
       const dropped = await readTarget(page);
 
+      // And the squeeze (spec 095): the ground beside a body belongs to nobody,
+      // so a click on it is a move order. This is the half of picking that a
+      // player feels as "I cannot walk there", and it only exists once a real
+      // browser is delivering the clicks -- the reach itself is pinned in
+      // `hover.test.ts`.
       let sloppy = 'the body left the screen before it could be tried';
-      const beside = await settledBar(page, unit.id);
-      if (beside) {
-        const point = bodyPoint(beside);
-        await page.mouse.click(point.x + SLOPPY_OFFSET, point.y, { button: 'right' });
-        await page.waitForTimeout(130);
-        sloppy = await readTarget(page);
-        if (!sloppy.startsWith('target ')) {
-          problems.push(`a right-click ${SLOPPY_OFFSET}px beside a body picked nothing`);
+      // Waited out first: a body still walking is a body whose pixel is stale
+      // before the click reaches it.
+      if (await settledBar(page, unit.id)) {
+        const bars = await bodiesOnScreen(page);
+        const now = bars.find((bar) => bar.id === unit.id);
+        const gap = now ? gapBeside(now, bars) : null;
+        if (!gap) {
+          sloppy = 'no body on screen had a clear side to try';
+        } else {
+          // Nothing is targeted at this point -- the click onto bare grass above
+          // let the last one go -- so "no target" here is the ground answering.
+          // The click *on* the body that follows is what says the aim was real.
+          await page.mouse.click(gap.x, gap.y, { button: 'right' });
+          await page.waitForTimeout(130);
+          sloppy = await readTarget(page);
+          // Re-read before judging: the monsters walk, and a body that stepped
+          // onto the pixel between the read and the click is this harness
+          // missing rather than the pick reaching.
+          const after = nearestBody(gap, await bodiesOnScreen(page));
+          console.log(`  the pixel tried was ${Math.round(gap.x)},${Math.round(gap.y)}; nearest body when it landed: ${after.who} at ${Math.round(after.distance)}px`);
+          if (sloppy.startsWith('target ')) {
+            if (after.distance < DRIFT_MARGIN) {
+              sloppy = `${sloppy} -- but ${after.who} had walked to within ${Math.round(after.distance)}px of the pixel`;
+            } else {
+              problems.push(`a right-click ${GAP_OFFSET}px clear of every body picked ${sloppy}`);
+            }
+          }
+
+          // And the other direction: a click *on* a body still takes it, so the
+          // "no target" above is the ground answering rather than the mouse
+          // having stopped working.
+          // The click above was a move order, so the player is walking and the
+          // camera is following it: every bar on the page is a pixel that is
+          // already out of date. Let it come to rest before aiming at one.
+          const me = (await bodiesOnScreen(page)).find((bar) => bar.self);
+          if (me) await settledBar(page, me.id);
+          const onBody = unoccludedBody(await bodiesOnScreen(page));
+          if (onBody && (await clickBody(page, onBody.id, 'right'))) {
+            await page.waitForTimeout(130);
+            const line = await readTarget(page);
+            console.log(`  a click on body ${onBody.id} at ${Math.round(onBody.x)},${Math.round(onBody.y + 40)}: ${line}`);
+            if (!line.startsWith('target ')) {
+              problems.push('a right-click on a body picked nothing');
+            }
+          }
         }
       }
       await shoot(page, 'world-target');
 
-      // The cursor sitting on a body outlines it -- the thing that says what a
-      // click would pick before it is made. Aimed at where the body is *now*:
-      // the player is already walking toward it, so the pixel that was over it
-      // a screenshot ago is over the grass behind it.
-      const moved = (await bodiesOnScreen(page)).find((bar) => bar.id === unit.id);
-      if (moved) {
-        const point = bodyPoint(moved);
+      // The cursor sitting on a body brightens it (spec 095) -- the thing that
+      // says what a click would pick before it is made. Photographed twice, with
+      // the cursor off the body and then on it, and the two frames measured:
+      // "it looks brighter" is exactly the claim a screenshot alone cannot check,
+      // and a highlight nobody can see is the same as no highlight at all. A body
+      // the player is not standing in front of, for the same reason the clicks
+      // above use one.
+      const bars = await bodiesOnScreen(page);
+      const lit = unoccludedBody(bars);
+      if (lit) {
+        const point = bodyPoint(lit);
+        const away = emptyPixel(bars);
+        await page.mouse.move(away.x, away.y);
+        await page.waitForTimeout(200);
+        const cold = await pixelsOf(page);
         await page.mouse.move(point.x, point.y);
-        await page.waitForTimeout(120);
+        await page.waitForTimeout(200);
+        const warm = await pixelsOf(page);
+        // The body's own pixels: a box the width of its footprint, from over its
+        // head down to its feet.
+        const before = meanBrightness(cold, point.x - 40, point.y - 40, 80, 90);
+        const after = meanBrightness(warm, point.x - 40, point.y - 40, 80, 90);
+        console.log(`  body brightness with the cursor off it: ${before.toFixed(1)}, on it: ${after.toFixed(1)}`);
+        if (after <= before) {
+          problems.push(`hovering a body did not brighten it (${before.toFixed(1)} -> ${after.toFixed(1)})`);
+        }
         await shoot(page, 'world-hover');
       }
 
@@ -405,7 +708,7 @@ async function main(): Promise<void> {
 
       console.log(`  target on the click:            ${opened}`);
       console.log(`  after letting go on bare grass: ${dropped}`);
-      console.log(`  after a click ${SLOPPY_OFFSET}px beside it:   ${sloppy}`);
+      console.log(`  after a click ${GAP_OFFSET}px beside it:   ${sloppy}`);
       console.log(`  ...four seconds later:          ${later}`);
       // The order runs itself: no press was made between the last two lines.
       // "no target" means the body it named is dead and the client dropped it,
@@ -419,8 +722,12 @@ async function main(): Promise<void> {
     const bow = page.locator('button', { hasText: 'Hunting Bow' }).first();
     if ((await bow.count()) > 0) {
       await bow.click();
-      await page.waitForTimeout(400);
-      const lit = await litWeapon(page);
+      // Polled, not slept on. A fixed 400ms was reading the switch *before* the
+      // answer landed: on a loaded page the round trip is comfortably longer
+      // than that, and this check spent a long time reporting "clicked Hunting
+      // Bow and lit Worn Sword" about a game that was equipping the bow
+      // correctly a second later. Same lesson as `waitForAim` above.
+      const lit = await waitForLitWeapon(page, 'Hunting Bow');
       console.log(`  weapon after clicking Hunting Bow: ${lit}`);
       if (lit !== 'Hunting Bow') {
         problems.push(`the weapon switch clicked Hunting Bow and lit ${lit}`);
@@ -448,15 +755,85 @@ async function main(): Promise<void> {
       problems.push('the weapon switch is not on the page');
     }
 
-    // A ground-targeted blast, for the telegraph ring on the terrain.
-    await page.keyboard.press('Digit5');
-    await page.waitForTimeout(320);
+    // A skill that names a body (spec 080): the aim rings what a click would
+    // pick, the click orders it, and the player then walks into range and
+    // casts without a second press.
+    const seekAt = await findUnit(page);
+    // Aimed at where the body is *now*, not where the click that found it
+    // landed: finding one targets it, so the player is already walking and both
+    // pixels have moved on. The same lesson the hover frame above learned.
+    const settled = seekAt ? await settledBar(page, seekAt.id) : null;
+    if (settled) {
+      await page.mouse.move(bodyPoint(settled).x, bodyPoint(settled).y);
+      await page.keyboard.press('Digit5');
+      const asking = await waitForAim(page, /^aiming Seeking Bolt/);
+      if (!/^aiming Seeking Bolt/.test(asking)) {
+        problems.push(`pressing 5 did not start a unit aim (readout: ${asking})`);
+      }
+
+      // Aimed at where the body is *now*. Starting an aim deliberately does not
+      // call off the attack order underneath it -- deciding is not committing --
+      // so the player has gone on chasing and swinging for as long as this
+      // harness spent waiting for the readout, and the pixel has moved.
+      const nowAt = (await bodiesOnScreen(page)).find((bar) => bar.id === settled.id);
+      if (!nowAt) {
+        console.log('  the body being aimed at died before it could be clicked');
+      } else {
+        const point = bodyPoint(nowAt);
+        await page.mouse.move(point.x, point.y);
+        await page.waitForTimeout(160);
+        await shoot(page, 'world-aim-unit');
+        // Re-read for the click itself: the screenshot above cost a sixth of a
+        // second, and the body has been walking through all of it. And aimed at
+        // a body the player is not standing in front of -- confirming a
+        // unit-named aim needs a unit under the cursor, and the cursor over a
+        // body in melee contact is over the player's own rig.
+        const clear = unoccludedBody(await bodiesOnScreen(page)) ?? nowAt;
+        await page.mouse.move(bodyPoint(clear).x, bodyPoint(clear).y);
+        await page.waitForTimeout(120);
+        await clickBody(page, clear.id, 'left');
+        const taken = await waitForAim(page, /^(right-click ground|Seeking Bolt: moving)/);
+        if (/^aiming /.test(taken)) {
+          problems.push('a left-click on a body did not confirm the unit aim');
+        }
+        await page.waitForTimeout(900);
+        await shoot(page, 'world-seeking-bolt');
+      }
+    } else {
+      problems.push('no body to aim a unit-targeted skill at');
+    }
+
+    // A ground-targeted blast: the aim circle first, then the telegraph ring
+    // the cast puts on the terrain.
+    await page.mouse.move(760, 340);
+    await page.keyboard.press('Digit6');
+    await waitForAim(page, /^aiming Quake/);
+    await shoot(page, 'world-aim-circle');
+    await page.mouse.click(760, 340);
+    await page.waitForTimeout(420);
     await shoot(page, 'world-telegraph');
+
+    // ...and now that Quake is on its eight-second cooldown, pressing it again
+    // must start nothing. An aim that cannot be thrown is a place to park a
+    // press until the timer comes back, which is the queue this refuses.
+    await page.mouse.move(700, 500);
+    await page.keyboard.press('Digit6');
+    const refused = await waitForAim(page, /^aiming Quake/, 900);
+    if (/^aiming Quake/.test(refused)) {
+      problems.push('a skill on cooldown could still be aimed');
+    }
+    const said = (await page.textContent('body')) ?? '';
+    if (!said.includes('Quake: onCooldown')) {
+      problems.push('a press refused on cooldown said nothing about it');
+    }
+    await shoot(page, 'world-aim-refused');
 
     // Let the fight run a little, then photograph the hotbar: cooldown sweeps
     // (spec 065) and the pixel damage numbers over the bodies.
     await page.waitForTimeout(900);
     await shoot(page, 'world-cooldowns');
+
+    await damageNumbersHoldTheirGround(page, problems);
 
     // The player must still be able to walk after all that. Attacking used to
     // root them permanently: being hit cleared the cast server-side without
@@ -466,6 +843,8 @@ async function main(): Promise<void> {
     await page.waitForTimeout(1600);
     await shoot(page, 'world-after-combat');
     console.log(`  ticks advanced during the walk: ${(await readTick(page)) - before}`);
+
+    await theInterface(page, problems);
 
     const status = await page.textContent('body');
     console.log('\nHUD read back:', status?.slice(0, 200).replace(/\s+/g, ' '));
@@ -482,22 +861,976 @@ async function main(): Promise<void> {
 }
 
 /**
+ * Every key that opens a window, one at a time, opened and shut again.
+ *
+ * All five rather than the two this used to press. A binding that reaches
+ * nothing is exactly the state spec 131 was written to end -- `KeyI` did nothing
+ * for three phases while the keybinding screen cheerfully offered to rebind it
+ * -- and four of these five had never been pressed by anything but a unit test.
+ * The fifth, `KeyV`, turned out not to work at all.
+ */
+async function windowKeys(page: Page, problems: string[]): Promise<void> {
+  for (const [code, id] of [
+    ['KeyI', 'inventory'],
+    ['KeyB', 'inventory'],
+    ['KeyC', 'character'],
+    ['KeyK', 'options'],
+    ['KeyV', 'shop'],
+  ] as const) {
+    const got = await pressAndWait(page, code, id);
+    if (got !== id) {
+      problems.push(`${code} opened "${got}" rather than the ${id}`);
+      continue;
+    }
+    const painted = (await paintedBox(page))?.painted ?? 0;
+    if (painted === 0) problems.push(`the ${id} opened on ${code} and drew nothing`);
+    console.log(`  ${code} opens the ${id} (${painted} pixels)`);
+    if (id === 'shop') await shoot(page, 'world-shop');
+    // Shut again, so the next key is measured on its own.
+    const shut = await pressAndWait(page, code, '');
+    if (shut !== '') problems.push(`${code} would not close the ${id}, leaving "${shut}"`);
+  }
+
+  // Escape with nothing to back out of is the menu (spec 135).
+  const opened = await pressAndWait(page, 'Escape', 'options');
+  if (opened !== 'options') {
+    problems.push(`Escape with nothing committed opened "${opened}" rather than the options`);
+  } else {
+    const painted = (await paintedBox(page))?.painted ?? 0;
+    console.log(`  Escape opens the options (${painted} pixels)`);
+    await shoot(page, 'world-options');
+    // ...with the keys tab actually populated. It was not, the first time: a
+    // widget has one parent and the keybindings screen was in two windows, so
+    // whichever tab was built last emptied the other window.
+    const bindings = await page.evaluate(() => {
+      const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-ui-canvas]');
+      const context = canvas?.getContext('2d');
+      if (!canvas || !context) return 0;
+      const { data } = context.getImageData(0, 0, canvas.width, Math.floor(canvas.height));
+      let lit = 0;
+      // Text is drawn in the theme's `text` colour; counting *those* pixels is
+      // the difference between "a panel appeared" and "it has rows in it".
+      for (let i = 0; i < data.length; i += 4) {
+        if ((data[i] ?? 0) > 180 && (data[i + 1] ?? 0) > 180 && (data[i + 2] ?? 0) > 180) lit += 1;
+      }
+      return lit;
+    });
+    console.log(`  ...with ${bindings} pixels of text on its keys tab`);
+    if (bindings < 500) problems.push(`the options window opened with an empty keys tab (${bindings})`);
+    await bindingAKey(page, problems);
+    await theDisplayTab(page, problems);
+  }
+  // ...and shuts it again, because closing the topmost window comes first.
+  const shut = await pressAndWait(page, 'Escape', '');
+  if (shut !== '') problems.push(`Escape would not close the options, leaving "${shut}"`);
+}
+
+/**
+ * Rebinding a key, in the game (spec 138).
+ *
+ * A press on a row's button and then a key -- two events with nothing focused in
+ * between, which is exactly the path that broke. Binding used to work only
+ * because the pressed button held the keyboard, so when a press stopped taking
+ * focus (spec 137) the capture never heard a thing: pressing a key did nothing,
+ * and the capture that stayed armed held `textEntry` and swallowed every key in
+ * the game from then on. Both halves are checked here, in a browser, because
+ * both halves are about *delivery*.
+ *
+ * Whatever it binds, it puts back with the row's own Reset -- the rest of this
+ * script walks with W, and a harness that rebinds the movement keys under
+ * itself would fail somewhere else entirely.
+ */
+async function bindingAKey(page: Page, problems: string[]): Promise<void> {
+  const before = await uiReadout(page);
+  const first = before.binds.split(';')[0]?.split(':')[0] ?? '';
+  const button = first === '' ? null : boxNamed(before.binds, first);
+  if (!button) {
+    problems.push(`the keys tab published no rows to click: "${before.binds.slice(0, 60)}"`);
+    return;
+  }
+
+  await clickUiBox(page, button);
+  await page.keyboard.press('KeyT');
+  const stored = await waitFor(page, async () => {
+    const text = await page.evaluate(() => globalThis.localStorage?.getItem('turbo-deck.ui.bindings') ?? '');
+    return text.includes('"KeyT"') ? text : null;
+  }, 4000);
+  if (!stored) {
+    problems.push(`pressing a key after the bind button bound nothing (${first})`);
+  } else {
+    console.log(`  binding ${first} to T takes, and saves`);
+  }
+
+  // The other half of the complaint -- that the keyboard still works afterwards --
+  // is asserted in `ui-screens.test.ts` rather than here. It wants the spawner
+  // overlay as a ruler and the overlay is not up yet at this point in the script,
+  // so a check here would quietly measure nothing and report a pass.
+
+  const reset = boxNamed((await uiReadout(page)).resets, first);
+  if (reset) await clickUiBox(page, reset);
+  const restored = await waitFor(page, async () => {
+    const text = await page.evaluate(() => globalThis.localStorage?.getItem('turbo-deck.ui.bindings') ?? '');
+    return text.includes('"KeyT"') ? null : text;
+  }, 4000);
+  if (!restored) problems.push(`the row's Reset did not put ${first} back`);
+}
+
+/**
+ * The options window's second tab, and the setting on it (spec 136).
+ *
+ * Clicked rather than asserted on in Node, because every part of this that can
+ * be wrong is on the far side of a canvas: whether the tab was added to the
+ * strip at all, whether a click on it reaches a widget through the mount's
+ * coordinate conversion, and whether the choice reaches the *frame* -- which is
+ * the one thing no headless test can see, since `autoUiScale` lives on the DOM
+ * side of the split.
+ *
+ * Both boxes it clicks are found from the readout rather than from an offset
+ * measured off a screenshot. A guessed coordinate passes for the wrong reason
+ * the first time the layout moves, and this window has two tabs today precisely
+ * because things get added to it.
+ */
+async function theDisplayTab(page: Page, problems: string[]): Promise<void> {
+  const start = await uiReadout(page);
+  const tab = boxNamed(start.tabs, 'display');
+  if (!tab) {
+    problems.push(`the options window has no display tab: "${start.tabs}"`);
+    return;
+  }
+  await clickUiBox(page, tab);
+  const onTab = await waitFor(page, async () => {
+    const read = await uiReadout(page);
+    return read.tab === 'display' ? read : null;
+  }, 4000);
+  if (!onTab) {
+    problems.push('clicking the Display tab did not select it');
+    return;
+  }
+  console.log(`  the options window's Display tab selects, showing ${onTab.scaleChoice}`);
+  await shoot(page, 'world-display');
+
+  // ...and the setting on it reaches the frame. `2x` rather than whatever auto
+  // chose, so the assertion is "the number the player picked" and not "some
+  // number changed".
+  const wanted = start.scale === '2' ? '3' : '2';
+  const box = boxNamed(onTab.scales, wanted);
+  if (!box) {
+    problems.push(`the Display tab offers no ${wanted}x: "${onTab.scales}"`);
+    return;
+  }
+  await clickUiBox(page, box);
+  const scaled = await waitFor(page, async () => {
+    const read = await uiReadout(page);
+    return read.scale === wanted ? read : null;
+  }, 4000);
+  if (!scaled) {
+    const now = await uiReadout(page);
+    problems.push(`choosing ${wanted}x left the interface at scale ${now.scale} (choice "${now.scaleChoice}")`);
+  } else {
+    console.log(`  choosing ${wanted}x re-framed the interface: ${scaled.viewport} UI px at scale ${scaled.scale}`);
+    // Saved, because a setting that does not survive a refresh is one the
+    // player has to make every time.
+    const stored = await page.evaluate(() => globalThis.localStorage?.getItem('turbo-deck.ui.display') ?? '');
+    if (!stored.includes(`"scale":${wanted}`)) {
+      problems.push(`choosing ${wanted}x stored "${stored}"`);
+    } else {
+      console.log(`  ...and saved it: ${stored}`);
+    }
+  }
+
+  // Back to Auto, so the rest of the script measures the interface it expects.
+  const back = boxNamed((await uiReadout(page)).scales, 'auto');
+  if (back) await clickUiBox(page, back);
+  await waitFor(page, async () => ((await uiReadout(page)).scaleChoice === 'auto' ? true : null), 4000);
+}
+
+/** One `id:x,y,w,h` out of a readout's box list, in UI pixels. */
+function boxNamed(list: string, id: string): { x: number; y: number; width: number; height: number } | null {
+  for (const entry of list.split(';')) {
+    const [name, rect] = entry.split(':');
+    if (name !== id || !rect) continue;
+    const [x, y, width, height] = rect.split(',').map(Number);
+    if (x === undefined || y === undefined || width === undefined || height === undefined) return null;
+    return { x, y, width, height };
+  }
+  return null;
+}
+
+/**
+ * Click the middle of a UI-pixel rect, converted the way the mount converts.
+ *
+ * The inverse of `UiLayer.toUi`. Derived from the canvas's own CSS box over the
+ * viewport it is reporting -- `cssWidth / uiWidth` is exactly `scale / dpr`, and
+ * asking the page for it means the harness never has to know either number.
+ */
+async function clickUiBox(
+  page: Page,
+  box: { x: number; y: number; width: number; height: number },
+): Promise<void> {
+  const read = await uiReadout(page);
+  const uiWidth = Number(read.viewport.split('x')[0]);
+  if (!Number.isFinite(uiWidth) || uiWidth <= 0) return;
+  const at = await page.evaluate(
+    ([bx, by, bw, bh, width]) => {
+      const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-ui-canvas]');
+      if (!canvas) return null;
+      const rect = canvas.getBoundingClientRect();
+      const perUiPixel = rect.width / (width ?? 1);
+      return {
+        x: rect.left + ((bx ?? 0) + (bw ?? 0) / 2) * perUiPixel,
+        y: rect.top + ((by ?? 0) + (bh ?? 0) / 2) * perUiPixel,
+      };
+    },
+    [box.x, box.y, box.width, box.height, uiWidth] as const,
+  );
+  if (!at) return;
+  await page.mouse.click(at.x, at.y);
+  await page.waitForTimeout(120);
+}
+
+/**
+ * Moving an item, in the game (spec 137).
+ *
+ * A click takes it and a click puts it down, and *both* halves are only real
+ * once a browser has delivered two presses and a server has answered: the bag
+ * the harness reads back is the one the server replicated, not the one this
+ * screen hoped for. The cells' rects come off the readout, because a guessed
+ * coordinate that lands in a four-pixel gutter is a test that passes for the
+ * wrong reason.
+ *
+ * It also asks the question the whole focus change was about: with the bag open
+ * and a cell just clicked, does W still walk?
+ */
+async function carryingAnItem(page: Page, problems: string[]): Promise<void> {
+  const before = await uiReadout(page);
+  // The first occupied cell, and the last cell to put it in -- both by index
+  // into the *unfiltered* list, so a name and a rect mean the same cell.
+  const names = before.cellNames.split(',');
+  const filled = names.findIndex((name) => name !== '');
+  const empty = names.length - 1;
+  if (filled < 0 || names[empty] !== '') {
+    console.log(`  no measurement: no full cell and empty last cell to move between ("${before.bag}")`);
+    return;
+  }
+  const source = boxNamed(before.cells, String(filled));
+  const target = boxNamed(before.cells, String(empty));
+  if (!source || !target) {
+    problems.push(`the bag published no cells to click: "${before.cells.slice(0, 60)}"`);
+    return;
+  }
+
+  await clickUiBox(page, source);
+  const carrying = await waitFor(page, async () => {
+    const read = await uiReadout(page);
+    // The cell it came out of is empty while it is in hand, which is the half of
+    // spec 137 a player sees.
+    return read.cellNames.split(',')[filled] === '' ? read : null;
+  }, 4000);
+  if (!carrying) {
+    const now = await uiReadout(page);
+    problems.push(`clicking a bag cell did not take the item out of it: "${now.cellNames}"`);
+    return;
+  }
+  console.log(`  a click takes "${names[filled]}" out of cell ${filled}`);
+
+  // ...and the keys still belong to the game, which is the complaint that
+  // started spec 137. Pressed with the bag open and a cell just clicked.
+  const walked = await walksWhileHolding(page, 'KeyW', 700);
+  if (walked === null) console.log('  no measurement: the spawner ruler is off screen');
+  else if (!walked) problems.push('W did not walk with the bag open and a cell just clicked');
+  else console.log('  ...and W still walks while the bag is open and holding it');
+
+  await clickUiBox(page, target);
+  const moved = await waitFor(page, async () => {
+    const read = await uiReadout(page);
+    return read.cellNames.split(',')[empty] === names[filled] ? read : null;
+  }, 4000);
+  if (!moved) {
+    const now = await uiReadout(page);
+    problems.push(`putting "${names[filled]}" down in cell ${empty} did not take: "${now.cellNames}"`);
+  } else {
+    console.log(`  ...and a second click puts it down in cell ${empty}`);
+  }
+  await shoot(page, 'world-carry');
+}
+
+/**
+ * Hold a key and say whether the world moved under the camera.
+ *
+ * The spawner overlay again -- fixed world points with a DOM element each, so a
+ * camera that followed the player moved them and one that did not left them
+ * alone. Same instrument as `cameraMovedBy`, minus the click.
+ */
+async function walksWhileHolding(page: Page, code: string, ms: number): Promise<boolean | null> {
+  await waitForStillCamera(page);
+  const before = await overlayPoints(page, 'data-spawner');
+  if (before.size === 0) return null;
+  await page.keyboard.down(code);
+  await page.waitForTimeout(ms);
+  await page.keyboard.up(code);
+
+  const after = await overlayPoints(page, 'data-spawner');
+  let worst = 0;
+  for (const [key, start] of before) {
+    const end = after.get(key);
+    if (!end) continue;
+    worst = Math.max(worst, Math.hypot(end.x - start.x, end.y - start.y));
+  }
+  return worst > 8;
+}
+
+/** The brief's budget: a full UI update and draw, under this. */
+const UI_BUDGET_MS = 1.5;
+
+/** What the interface has published about itself this frame (spec 131). */
+interface UiReadout {
+  readonly windows: string;
+  readonly bag: string;
+  readonly scale: string;
+  /** The options window's active tab, and every tab as `id:x,y,w,h` (spec 136). */
+  readonly tab: string;
+  readonly tabs: string;
+  /** The scale preference, and the Display tab's boxes in the same shape. */
+  readonly scaleChoice: string;
+  readonly scales: string;
+  /** The bag's cells, in the same shape again, and what is in each (spec 137). */
+  readonly cells: string;
+  readonly cellNames: string;
+  /** A keybinding row's two buttons, by action id (spec 138). */
+  readonly binds: string;
+  readonly resets: string;
+  readonly viewport: string;
+  readonly frameMs: string;
+  readonly worstMs: string;
+}
+
+async function uiReadout(page: Page): Promise<UiReadout> {
+  return page.evaluate(() => {
+    const host = document.querySelector<HTMLElement>('[data-ui-windows]');
+    return {
+      windows: host?.dataset['uiWindows'] ?? '',
+      bag: host?.dataset['uiBag'] ?? '',
+      scale: host?.dataset['uiScale'] ?? '',
+      tab: host?.dataset['uiTab'] ?? '',
+      tabs: host?.dataset['uiTabs'] ?? '',
+      scaleChoice: host?.dataset['uiScaleChoice'] ?? '',
+      scales: host?.dataset['uiScales'] ?? '',
+      cells: host?.dataset['uiCells'] ?? '',
+      cellNames: host?.dataset['uiCellNames'] ?? '',
+      binds: host?.dataset['uiBinds'] ?? '',
+      resets: host?.dataset['uiResets'] ?? '',
+      viewport: host?.dataset['uiViewport'] ?? '',
+      frameMs: host?.dataset['uiFrameMs'] ?? '',
+      worstMs: host?.dataset['uiWorstMs'] ?? '',
+    };
+  });
+}
+
+/** Polls `read` until it returns something, or gives up and returns null. */
+async function waitFor<T>(page: Page, read: () => Promise<T | null>, timeoutMs = 8000): Promise<T | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = await read();
+    if (value !== null) return value;
+    await page.waitForTimeout(150);
+  }
+  return null;
+}
+
+/** Polls until the open windows read `wanted`, and reports what it settled on. */
+async function waitForWindows(page: Page, wanted: string, timeoutMs = 4000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let seen = '';
+  while (Date.now() < deadline) {
+    seen = (await uiReadout(page)).windows;
+    if (seen === wanted) return seen;
+    await page.waitForTimeout(100);
+  }
+  return seen;
+}
+
+/**
+ * What the UI canvas actually has on it, in CSS pixels.
+ *
+ * Read back off the canvas rather than inferred from the readout, because those
+ * are two different claims: the readout says a window is *open*, and this says
+ * pixels were *drawn*. Spec 101 shipped a correct mask over a pass that cleared
+ * the canvas before blending it, and every offscreen measurement was right while
+ * the screen was black -- so "the model says so" is not evidence about a picture.
+ *
+ * Returns the painted bounding box, converted to page coordinates so a click can
+ * be aimed at it, and the count of pixels that are not transparent.
+ */
+async function paintedBox(
+  page: Page,
+): Promise<{ painted: number; x: number; y: number; width: number; height: number } | null> {
+  return page.evaluate(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-ui-canvas]');
+    if (!canvas) return null;
+    const context = canvas.getContext('2d');
+    if (!context) return null;
+    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+    let painted = 0;
+    let minX = canvas.width;
+    let minY = canvas.height;
+    let maxX = -1;
+    let maxY = -1;
+    for (let i = 3, pixel = 0; i < data.length; i += 4, pixel += 1) {
+      if (data[i] === 0) continue;
+      painted += 1;
+      const x = pixel % canvas.width;
+      const y = (pixel - x) / canvas.width;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+    const box = canvas.getBoundingClientRect();
+    if (maxX < 0) return { painted: 0, x: 0, y: 0, width: 0, height: 0 };
+    // Device pixels back to page ones. The canvas is pinned to the tab's corner,
+    // so its own rect is the whole conversion.
+    const sx = box.width / canvas.width;
+    const sy = box.height / canvas.height;
+    return {
+      painted,
+      x: box.left + minX * sx,
+      y: box.top + minY * sy,
+      width: (maxX - minX + 1) * sx,
+      height: (maxY - minY + 1) * sy,
+    };
+  });
+}
+
+/**
+ * The interface, in the game (spec 131).
+ *
+ * Five phases of `src/ui/` existed with nothing in the Play tab calling any of
+ * it, so what this checks is the mount rather than the widgets: that a key opens
+ * a window, that the bag it draws is the bag the *server* sent, that a click on
+ * a window is not also a move order and a click beside one still is, and that
+ * Escape shuts the window before gameplay hears it.
+ *
+ * The window ruler is the spawner overlay -- fixed world points with a DOM
+ * element each, so a camera that panned moved them and a camera that did not
+ * left them exactly where they were. Same instrument the damage-number check
+ * uses, for the same reason: it measures the world rather than this file's guess
+ * about the world.
+ */
+async function theInterface(page: Page, problems: string[]): Promise<void> {
+  await closeAllWindows(page);
+  const before = await uiReadout(page);
+  if (before.windows !== '') {
+    problems.push(`the interface came up with ${before.windows} already open`);
+  }
+  if ((await paintedBox(page))?.painted !== 0) {
+    problems.push('the UI canvas had pixels on it with nothing open');
+  }
+
+  // The spawner overlay on, as the ruler. Set rather than toggled: the damage
+  // number check before this one turns it on and returns early when it has
+  // nothing to measure, leaving it on -- and a blind toggle then turns the ruler
+  // off and every measurement below reports "no marks on screen".
+  await setSpawners(page, true);
+
+  const opened = await pressAndWait(page, 'KeyI', 'inventory');
+  if (opened !== 'inventory') {
+    problems.push(`pressing the inventory key opened "${opened}"`);
+    return;
+  }
+  await shoot(page, 'world-inventory');
+
+  const box = await paintedBox(page);
+  if (!box || box.painted === 0) {
+    problems.push('the inventory opened and the UI canvas stayed blank');
+    return;
+  }
+  console.log(`  UI canvas: ${box.painted} pixels painted over ${Math.round(box.width)}x${Math.round(box.height)}`);
+
+  // The bag it draws is the bag the server sent, and not the gallery's demo bag
+  // -- which is a real risk, because the two hold overlapping items on purpose.
+  //
+  // Asserted on the *unworn* half of the starting kit, deliberately. A weapon is
+  // not stable: this script clicks the HUD's weapon switch earlier, which is an
+  // ordinary equip, so by now whichever weapon it chose is on the character and
+  // the one it replaced is back in the bag. The greaves and the salve are never
+  // touched by anything above.
+  const bag = (await uiReadout(page)).bag;
+  console.log(`  bag on screen: ${bag}`);
+  for (const name of ["Traveller's Greaves", 'Minor Salve']) {
+    if (!bag.includes(name)) {
+      problems.push(`the bag on screen is missing ${name} from the server's starting kit: "${bag}"`);
+    }
+  }
+
+  // How far the camera wanders on its own over the same window of time, with no
+  // click at all.
+  //
+  // Measured rather than assumed, and it is the difference between a check and a
+  // coin toss. The player is not necessarily at rest when this block begins --
+  // a standing attack order chases in fits, still for a moment and moving again
+  // -- so an absolute threshold reads that wandering as motion the click caused.
+  // Every number below is judged against this one.
+  const drift = await cameraMovedBy(page, null);
+  const margin = 4;
+  console.log(`  camera drifts ${drift === null ? '?' : drift.toFixed(1)}px on its own`);
+
+  // A click on the window is not also a move order. Aimed at the middle of what
+  // was actually painted, so it cannot miss the window by a layout change.
+  const still = await cameraMovedBy(page, { x: box.x + box.width / 2, y: box.y + box.height / 2 });
+  if (still === null || drift === null) {
+    console.log('  no measurement: the spawner ruler is off screen');
+  } else if (still > drift + margin) {
+    problems.push(
+      `a right-click on an open window moved the camera ${still.toFixed(1)}px, against ${drift.toFixed(1)}px of drift`,
+    );
+  } else {
+    console.log(`  click on the window: camera moved ${still.toFixed(1)}px`);
+  }
+
+  // ...and a click beside it still moves, so mounting the interface has not
+  // eaten the game. The pixel has to be clear of every body and outside the
+  // window: a click on a monster is an attack order, and one already in range
+  // does not walk anywhere at all.
+  const ground = await clearGroundPixel(page, box);
+  const walked = ground === null ? null : await cameraMovedBy(page, ground);
+  if (ground === null) {
+    console.log('  no measurement: no clear ground beside the window this frame');
+  } else if (walked === null || drift === null) {
+    console.log('  no measurement: the spawner ruler is off screen');
+  } else if (walked <= drift + margin) {
+    problems.push(
+      `a right-click beside the window moved the camera only ${walked.toFixed(1)}px, against ${drift.toFixed(1)}px of drift`,
+    );
+  } else {
+    console.log(`  click beside the window: camera moved ${walked.toFixed(1)}px`);
+  }
+
+  await carryingAnItem(page, problems);
+  await escapeGoesToTheWindowFirst(page, problems);
+
+  // The interface follows the tab, at a whole-number scale. A resize is the one
+  // thing that can put a UI pixel on a fraction of a device pixel, which is the
+  // rule the whole `frame.ts` exists to keep.
+  const tab = page.viewportSize() ?? { width: 1280, height: 800 };
+  const beforeResize = (await uiReadout(page)).viewport;
+  await page.setViewportSize({ width: 1024, height: 700 });
+  // Polled rather than slept on. The interface follows the tab from its own
+  // frame, and this page renders a software-WebGL world: under load a frame here
+  // can take most of a second, so a fixed wait is sometimes a frame and sometimes
+  // none -- which showed up as a resize check that passed four runs out of five.
+  const resized = await waitFor(page, async () => {
+    const read = await uiReadout(page);
+    return read.viewport !== beforeResize ? read : null;
+  });
+  if (!resized) {
+    problems.push(`the interface never followed the tab down from ${beforeResize}`);
+    await page.setViewportSize({ width: tab.width, height: tab.height });
+    return;
+  }
+  const scale = Number(resized.scale);
+  if (!Number.isInteger(scale) || scale < 1) {
+    problems.push(`the UI scale is not a whole number after a resize: "${resized.scale}"`);
+  } else {
+    console.log(`  after resize: scale ${scale}, viewport ${resized.viewport}`);
+  }
+  const canvasFits = await page.evaluate(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-ui-canvas]');
+    if (!canvas) return null;
+    const host = canvas.parentElement;
+    if (!host) return null;
+    return { css: canvas.getBoundingClientRect().width, host: host.clientWidth };
+  });
+  // Never wider than the tab, and never short by a whole UI pixel: the remainder
+  // is dropped rather than half a UI pixel being drawn (`uiFrame`).
+  if (canvasFits && (canvasFits.css > canvasFits.host || canvasFits.css <= canvasFits.host - scale)) {
+    problems.push(`the UI canvas is ${canvasFits.css}px in a ${canvasFits.host}px tab at scale ${scale}`);
+  }
+  const backTo = resized.viewport;
+  await page.setViewportSize({ width: tab.width, height: tab.height });
+  await waitFor(page, async () => ((await uiReadout(page)).viewport !== backTo ? true : null));
+
+  // The budget, measured where it is real: the interface's own update and draw,
+  // with two windows open over a live fight.
+  //
+  // The pointer is walked across them throughout, and that is required rather
+  // than realism for its own sake. A still interface is not redrawn at all, so a
+  // measurement taken over a window nobody is touching times a few hundred
+  // frames of doing nothing and reports 0.00ms however slow the drawing is.
+  // Moving the cursor changes what is hovered, which is what makes each of these
+  // frames a full update *and* draw.
+  await pressAndWait(page, 'KeyI', 'inventory');
+  await pressAndWait(page, 'KeyC', 'inventory,character');
+  const over = await paintedBox(page);
+  for (let step = 0; step < 40 && over; step += 1) {
+    await page.mouse.move(
+      over.x + (over.width * ((step * 7) % 20)) / 20,
+      over.y + (over.height * ((step * 11) % 20)) / 20,
+    );
+    await page.waitForTimeout(60);
+  }
+  const read = await uiReadout(page);
+  const cost = Number(read.frameMs);
+
+  // Reported, and deliberately not asserted on. The brief's budget is asserted
+  // in `preview-ui-gallery.ts`, which is where it can be measured soundly: that
+  // page has nothing on the thread but the interface. Here a software-WebGL
+  // world is rendering into the same frame on a container with no GPU, and the
+  // same code has read 1.4ms and 2.2ms on consecutive runs with a worst frame of
+  // four and a half seconds -- a number that says what the machine was doing
+  // rather than what the interface costs. A red harness that means "the box was
+  // busy" is a harness people learn to ignore.
+  //
+  // What *is* asserted is that a number came back at all, because a zero here
+  // would mean the interface never drew a frame while two windows were open.
+  console.log(
+    `  UI frame with two windows open: ${cost.toFixed(2)}ms median, ${read.worstMs}ms worst` +
+      ` (asserted at ${UI_BUDGET_MS}ms by preview-ui-gallery.ts, on a quieter thread)`,
+  );
+  if (!Number.isFinite(cost) || Number(read.worstMs) <= 0) {
+    problems.push('the interface never reported a frame cost');
+  }
+  await shoot(page, 'world-ui-windows');
+
+  // Put the world back the way the rest of the script expects it.
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await setSpawners(page, false);
+}
+
+/** Put the spawner overlay in a known state, whatever it was in before. */
+async function setSpawners(page: Page, on: boolean): Promise<void> {
+  await page.click('button[aria-label="View settings"]');
+  await page.waitForTimeout(120);
+  const box = page.locator('label:has-text("Spawners") input[type=checkbox]');
+  if ((await box.isChecked()) !== on) await box.click();
+  await page.click('button[aria-label="View settings"]');
+  await page.waitForTimeout(300);
+}
+
+/**
+ * Press Escape until nothing is open, and no further.
+ *
+ * One more press would *open* the options window (spec 135): Escape closes the
+ * topmost window, and when there is none and nothing is committed to, it is the
+ * menu. So the loop has to stop at empty rather than pressing a fixed number of
+ * times -- which is how this harness left the options window open behind every
+ * assertion that followed.
+ */
+async function closeAllWindows(page: Page, tries = 8): Promise<void> {
+  for (let attempt = 0; attempt < tries; attempt += 1) {
+    const before = (await uiReadout(page)).windows;
+    if (before === '') return;
+    await page.keyboard.press('Escape');
+    // Waited *for the frame*, not for a fixed moment. This page renders a
+    // software-WebGL world and a frame can take most of a second under load, so
+    // a fixed wait sometimes read the state from before the press -- and pressed
+    // Escape again, which closed the window and then opened the menu back up.
+    await waitFor(page, async () => ((await uiReadout(page)).windows !== before ? true : null), 3000);
+  }
+}
+
+/** Press a key and wait for the interface to report the windows it opened. */
+async function pressAndWait(page: Page, code: string, wanted: string): Promise<string> {
+  await page.keyboard.press(code);
+  return waitForWindows(page, wanted);
+}
+
+/**
+ * How far the camera moved after a right-click at this pixel, in CSS pixels.
+ *
+ * Null when the ruler is not on screen. Sampled until it settles rather than
+ * after a fixed wait: how far a step gets in half a second depends on the
+ * machine, and this one is running the world on software WebGL.
+ */
+async function cameraMovedBy(page: Page, click: { x: number; y: number } | null): Promise<number | null> {
+  await waitForStillCamera(page);
+  const before = await overlayPoints(page, 'data-spawner');
+  if (before.size === 0) return null;
+  if (click) await page.mouse.click(click.x, click.y, { button: 'right' });
+
+  let moved = 0;
+  for (let waited = 0; waited < 1600; waited += 200) {
+    await page.waitForTimeout(200);
+    const after = await overlayPoints(page, 'data-spawner');
+    let worst = 0;
+    for (const [key, start] of before) {
+      const end = after.get(key);
+      if (!end) continue;
+      worst = Math.max(worst, Math.hypot(end.x - start.x, end.y - start.y));
+    }
+    moved = Math.max(moved, worst);
+    if (moved > 4) break;
+  }
+  return moved;
+}
+
+/**
+ * Wait until the camera has stopped, so the next measurement starts from rest.
+ *
+ * A move order given earlier is still being walked when this block begins, and
+ * the travel left in it reads as motion the click under test caused -- which is
+ * exactly the difference between "a click on a window is not a move order" and
+ * "a click on a window moved the camera four pixels".
+ */
+async function waitForStillCamera(page: Page, timeoutMs = 4000): Promise<void> {
+  let last = await overlayPoints(page, 'data-spawner');
+  for (let waited = 0; waited < timeoutMs; waited += 150) {
+    await page.waitForTimeout(150);
+    const now = await overlayPoints(page, 'data-spawner');
+    let moved = 0;
+    for (const [key, start] of last) {
+      const end = now.get(key);
+      if (end) moved = Math.max(moved, Math.hypot(end.x - start.x, end.y - start.y));
+    }
+    last = now;
+    if (moved < 1) return;
+  }
+}
+
+/**
+ * A pixel that is bare ground, outside `avoid`, or null.
+ *
+ * Both halves matter. A click on a body is an *attack* order, and a body already
+ * within reach is attacked without walking a step -- so a "did the game still
+ * hear that" measurement aimed at a monster reports a camera that never moved
+ * and looks exactly like a mounted interface having eaten the game.
+ */
+async function clearGroundPixel(
+  page: Page,
+  avoid: { x: number; y: number; width: number; height: number },
+): Promise<{ x: number; y: number } | null> {
+  const viewport = page.viewportSize() ?? { width: 1280, height: 800 };
+  const bodies = await bodiesOnScreen(page);
+  // Across the middle band: above it is sky at this camera pitch and below it is
+  // the HUD, and neither is ground a right-click can be given to.
+  for (const fx of [0.8, 0.7, 0.6, 0.9, 0.5]) {
+    for (const fy of [0.35, 0.45, 0.25, 0.55]) {
+      const point = { x: viewport.width * fx, y: viewport.height * fy };
+      if (
+        point.x >= avoid.x - GAP_OFFSET &&
+        point.x <= avoid.x + avoid.width + GAP_OFFSET &&
+        point.y >= avoid.y - GAP_OFFSET &&
+        point.y <= avoid.y + avoid.height + GAP_OFFSET
+      ) {
+        continue;
+      }
+      const clear = bodies.every((bar) => {
+        const at = bodyPoint(bar);
+        return Math.hypot(at.x - point.x, at.y - point.y) > GAP_CLEARANCE;
+      });
+      if (clear) return point;
+    }
+  }
+  return null;
+}
+
+/**
+ * Escape shuts the window before gameplay hears it (spec 131).
+ *
+ * Measured against a *pending aim*, which is the only observable that can tell
+ * the two apart: if the first Escape reached gameplay it would throw the aim
+ * away, and if the second one did not, the aim would still be up. Soft when the
+ * aim never starts -- a skill on cooldown is a fact about the fight, not a
+ * failure of the ordering.
+ */
+async function escapeGoesToTheWindowFirst(page: Page, problems: string[]): Promise<void> {
+  const open = await pressAndWait(page, 'KeyI', 'inventory');
+  if (open !== 'inventory') {
+    console.log('  no measurement: the inventory would not reopen');
+    return;
+  }
+  await page.mouse.move(760, 340);
+  await page.keyboard.press('Digit6');
+  if (!/^aiming/.test(await waitForAim(page, /^aiming/, 1200))) {
+    console.log('  no measurement: nothing was off cooldown to aim');
+    await page.keyboard.press('Escape');
+    return;
+  }
+
+  await page.keyboard.press('Escape');
+  const closed = await waitForWindows(page, '');
+  if (closed !== '') {
+    problems.push(`Escape left "${closed}" open`);
+    return;
+  }
+  if (!/^aiming/.test(await waitForAim(page, /^aiming/, 600))) {
+    problems.push('Escape closed the window and threw the aim away as well');
+    return;
+  }
+  console.log('  Escape closed the window and left the aim alone');
+
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+  if (/^aiming/.test((await page.textContent('body')) ?? '')) {
+    problems.push('a second Escape with no window open never reached gameplay');
+  } else {
+    console.log('  ...and the second one reached gameplay');
+  }
+}
+
+/**
  * Which weapon the switch is showing as held.
  *
  * Read off the lit border rather than off a class, because that border is the
- * whole claim being checked: it is set from `stats.basicAttackId`, so a button
- * that lights is the server having answered.
+ * whole claim being checked: it is set from the *equipment* the server
+ * replicates (spec 126), so a button that lights is the server having answered.
  */
 async function litWeapon(page: Page): Promise<string> {
   return page.evaluate(() => {
-    const buttons = Array.from(document.querySelectorAll('button'));
-    const lit = buttons.find(
-      (button) =>
-        button.style.borderColor === 'rgb(255, 207, 107)' &&
-        button.style.textAlign === 'left',
-    );
-    return lit?.textContent ?? 'nothing';
+    // Found by `data-weapon` rather than by a style the switch happens to use
+    // (spec 094): the compact switch centres its icons and has no text at all,
+    // so "the button whose text-align is left" named nothing and the button's
+    // own text is not always its name. The lit *border* is still what is being
+    // read, because that border is the claim -- it is written from
+    // `stats.basicAttackId`, so a button that lights is the server having
+    // answered.
+    const buttons = Array.from(document.querySelectorAll<HTMLElement>('[data-weapon]'));
+    const lit = buttons.find((button) => button.style.borderColor === 'rgb(255, 207, 107)');
+    return lit?.getAttribute('aria-label') ?? 'nothing';
   });
+}
+
+/**
+ * Waits for the switch to light `wanted`, and reports what it settled on.
+ *
+ * Returns the last thing it saw when the wait runs out, so a genuine failure
+ * still names the weapon that is lit rather than saying "timed out".
+ */
+async function waitForLitWeapon(page: Page, wanted: string, timeoutMs = 5000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let seen = '';
+  while (Date.now() < deadline) {
+    seen = await litWeapon(page);
+    if (seen === wanted) return seen;
+    await page.waitForTimeout(120);
+  }
+  return seen;
+}
+
+/**
+ * A damage number belongs to the ground it landed on, not to the glass
+ * (spec 096).
+ *
+ * The one fact only a real browser can settle, because it needs a real camera
+ * that really moves. The spawner marks are the ruler: fixed world points with a
+ * DOM element each, so whatever the pan did to them it must have done to every
+ * number too. Horizontally only -- a number is also rising up the screen over
+ * its own life, and that motion is deliberate.
+ *
+ * The old bug is a `drift` equal to the pan: numbers that stayed exactly where
+ * they were on the glass while the world slid out from under them.
+ *
+ * Measured on a **killing** blow specifically, because that is the only case
+ * the old anchor could not answer at all. A number over a body that is still
+ * alive and standing still panned correctly even then -- it was riding the
+ * body's own anchor -- so a fight in progress is not a test of anything. The
+ * moment the victim despawns there is no anchor left, and the number the player
+ * most wants to read is the one that starts sliding across the map.
+ */
+async function damageNumbersHoldTheirGround(page: Page, problems: string[]): Promise<void> {
+  // The overlay off means no ruler, so switch it back on for the measurement.
+  await page.click('button[aria-label="View settings"]');
+  await page.waitForTimeout(120);
+  await page.click('label:has-text("Spawners") input[type=checkbox]');
+  await page.click('button[aria-label="View settings"]');
+  await page.waitForTimeout(300);
+
+  const unit = await findUnit(page);
+  if (!unit) {
+    console.log('  no body left to land a damage number on');
+    return;
+  }
+
+  // The fight has to start before it can end. Without this, a `findUnit` that
+  // picked nothing leaves the readout already saying "no target", and the wait
+  // below would take that for a kill and measure an empty screen.
+  let engaged = false;
+  for (let waited = 0; waited < 3000 && !engaged; waited += 60) {
+    await page.waitForTimeout(60);
+    engaged = (await readTarget(page)).startsWith('target ');
+  }
+  if (!engaged) {
+    console.log('  no measurement: the attack order never took');
+    return;
+  }
+
+  // Now wait for the order to finish the body off. The client drops a target
+  // the moment it dies, so "no target" is the kill -- and polled this closely,
+  // the blow that did it is a number a few frames old and good for half a
+  // second yet, which is the window the pan has to happen in.
+  let before = new Map<string, { x: number; y: number }>();
+  for (let waited = 0; waited < 20_000; waited += 60) {
+    await page.waitForTimeout(60);
+    if (!(await readTarget(page)).startsWith('no target')) continue;
+    before = await overlayPoints(page, 'data-damage-id');
+    break;
+  }
+  const marksBefore = await overlayPoints(page, 'data-spawner');
+  if (before.size === 0 || marksBefore.size === 0) {
+    console.log(
+      `  no measurement: ${before.size} numbers over the kill, ${marksBefore.size} spawner marks`,
+    );
+    return;
+  }
+
+  const moved = (
+    from: Map<string, { x: number; y: number }>,
+    to: Map<string, { x: number; y: number }>,
+  ): number[] => {
+    const deltas: number[] = [];
+    for (const [key, start] of from) {
+      const end = to.get(key);
+      if (end) deltas.push(end.x - start.x);
+    }
+    return deltas;
+  };
+
+  // Walk, which is what pans the camera. Held keys rather than a move order: a
+  // right-click has to find a pixel that is neither a HUD button nor ground the
+  // route planner refuses, and either one reads here as a camera that did not
+  // move. Escape first, because the blow that did the killing is a wind-up the
+  // body is still standing in, and since spec 094 those are long.
+  await page.keyboard.press('Escape');
+  await page.keyboard.down('KeyW');
+  await page.keyboard.down('KeyD');
+
+  // Sampled until the camera has actually moved rather than after a fixed wait:
+  // how far a step gets in 400ms depends on the machine, and this one is running
+  // the world on software WebGL.
+  let pan: number[] = [];
+  let numbers: number[] = [];
+  let camera = 0;
+  for (let waited = 0; waited < 1500 && Math.abs(camera) < 12; waited += 150) {
+    await page.waitForTimeout(150);
+    pan = moved(marksBefore, await overlayPoints(page, 'data-spawner'));
+    numbers = moved(before, await overlayPoints(page, 'data-damage-id'));
+    if (pan.length === 0 || numbers.length === 0) break;
+    camera = pan.reduce((sum, delta) => sum + delta, 0) / pan.length;
+  }
+  await page.keyboard.up('KeyW');
+  await page.keyboard.up('KeyD');
+
+  if (pan.length === 0 || numbers.length === 0) {
+    console.log('  no measurement: nothing survived the pan to compare');
+    return;
+  }
+  console.log(`  camera panned ${camera.toFixed(1)}px, over ${numbers.length} damage numbers`);
+  if (Math.abs(camera) < 12) {
+    console.log('  no measurement: the camera barely moved');
+    return;
+  }
+  const drift = Math.max(...numbers.map((delta) => Math.abs(delta - camera)));
+  console.log(`  worst number drift against the ground: ${drift.toFixed(1)}px`);
+  if (drift > 6) {
+    problems.push(
+      `a damage number drifted ${drift.toFixed(1)}px against the ground during a ${camera.toFixed(0)}px pan`,
+    );
+  }
+
+  await page.click('button[aria-label="View settings"]');
+  await page.waitForTimeout(120);
+  await page.click('label:has-text("Spawners") input[type=checkbox]');
+  await page.click('button[aria-label="View settings"]');
 }
 
 await main();

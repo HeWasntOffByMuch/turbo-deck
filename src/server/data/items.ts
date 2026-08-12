@@ -12,7 +12,12 @@ import type { StatModifier } from './modifiers.js';
 export interface ItemDefinition {
   readonly id: string;
   readonly name: string;
-  readonly slot: EquipSlot;
+  /**
+   * Where it goes when worn, or `null` for something that is only ever carried
+   * (spec 126). A null slot is what makes "this cannot be equipped" a fact about
+   * the row rather than a list of exceptions somewhere else.
+   */
+  readonly slot: EquipSlot | null;
   /** Character level required to equip; below it the equip is rejected. */
   readonly levelRequirement: number;
   readonly modifiers: StatModifier;
@@ -25,12 +30,28 @@ export interface ItemDefinition {
    * every bow at a different shot is one edit in `data/abilities.ts`.
    */
   readonly basicAttackId?: string;
+  /**
+   * Base worth in coins (spec 129).
+   *
+   * `0` means it cannot be sold -- and therefore cannot be bought either, since
+   * both prices are derived from this one number. Not the same as free.
+   */
+  readonly value: number;
+  /**
+   * How many of this fit in one inventory slot (spec 126). Absent means 1.
+   *
+   * A weapon does not stack and a potion does, and that is the whole of it --
+   * `maxStackOf` below is the only thing that reads it, so "absent means one"
+   * is stated once rather than at every call site.
+   */
+  readonly maxStack?: number;
 }
 
 const DEFINITIONS: readonly ItemDefinition[] = [
   // --- weapons ---
   {
     id: 'sword.worn',
+    value: 12,
     name: 'Worn Sword',
     slot: 'mainHand',
     levelRequirement: 1,
@@ -38,6 +59,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'sword.keen',
+    value: 90,
     name: 'Keen Longsword',
     slot: 'mainHand',
     levelRequirement: 5,
@@ -47,6 +69,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'maul.iron',
+    value: 110,
     name: 'Iron Maul',
     slot: 'mainHand',
     levelRequirement: 5,
@@ -54,6 +77,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'staff.emberwood',
+    value: 95,
     name: 'Emberwood Staff',
     slot: 'mainHand',
     levelRequirement: 4,
@@ -61,6 +85,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'bow.hunting',
+    value: 30,
     name: 'Hunting Bow',
     slot: 'mainHand',
     // Level 1 like the worn sword: these are the starting alternatives, and a
@@ -73,6 +98,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'stars.weighted',
+    value: 26,
     name: 'Weighted Stars',
     slot: 'mainHand',
     levelRequirement: 1,
@@ -82,6 +108,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   // --- off hand ---
   {
     id: 'shield.oak',
+    value: 40,
     name: 'Oak Shield',
     slot: 'offHand',
     levelRequirement: 2,
@@ -89,6 +116,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'focus.quartz',
+    value: 55,
     name: 'Quartz Focus',
     slot: 'offHand',
     levelRequirement: 3,
@@ -97,6 +125,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   // --- armour ---
   {
     id: 'helm.leather',
+    value: 15,
     name: 'Leather Cap',
     slot: 'head',
     levelRequirement: 1,
@@ -104,6 +133,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'helm.plated',
+    value: 120,
     name: 'Plated Helm',
     slot: 'head',
     levelRequirement: 6,
@@ -111,6 +141,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'chest.leather',
+    value: 22,
     name: 'Leather Jerkin',
     slot: 'chest',
     levelRequirement: 1,
@@ -118,6 +149,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'chest.scale',
+    value: 160,
     name: 'Scalemail',
     slot: 'chest',
     levelRequirement: 7,
@@ -125,6 +157,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'legs.traveller',
+    value: 18,
     name: "Traveller's Greaves",
     slot: 'legs',
     levelRequirement: 1,
@@ -133,6 +166,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   // --- trinkets ---
   {
     id: 'trinket.swiftband',
+    value: 70,
     name: 'Swiftband',
     slot: 'trinket',
     levelRequirement: 3,
@@ -140,10 +174,24 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'trinket.bloodstone',
+    value: 210,
     name: 'Bloodstone',
     slot: 'trinket',
     levelRequirement: 8,
     modifiers: { maxHealthPct: 0.12, attackDamagePct: 0.05 },
+  },
+  // --- carried ---
+  // Nothing drinks this yet: consuming an item is its own spec, and it is here
+  // because stacking has to be a rule about real rows to be worth testing. A
+  // table with no stackable item in it makes `maxStack` a hypothesis.
+  {
+    id: 'potion.minor',
+    value: 6,
+    name: 'Minor Salve',
+    slot: null,
+    levelRequirement: 1,
+    modifiers: {},
+    maxStack: 10,
   },
 ];
 
@@ -156,3 +204,30 @@ export const ALL_ITEMS: readonly ItemDefinition[] = DEFINITIONS;
 export function itemById(id: string): ItemDefinition | null {
   return ITEMS.get(id) ?? null;
 }
+
+/** How many of `id` fit in one slot. Unknown ids answer 1, never 0 (spec 126). */
+export function maxStackOf(id: string): number {
+  return Math.max(1, Math.floor(ITEMS.get(id)?.maxStack ?? 1));
+}
+
+/**
+ * What a brand new character is given (spec 126).
+ *
+ * Once ownership is enforced, a new character with an empty bag can equip
+ * nothing at all -- so this table is not a nicety, it is the thing that keeps
+ * the change from being a regression for everyone who has not looted anything.
+ *
+ * Every main hand the HUD's weapon switch offers is in here, because the switch
+ * equips by id and a button the server refuses is a button that does nothing.
+ * `weapon-switch.test.ts` asserts exactly that, so adding a fourth weapon to the
+ * switch fails the suite rather than failing quietly in a player's hands.
+ */
+export const STARTING_KIT: readonly { readonly defId: string; readonly count: number }[] = [
+  { defId: 'sword.worn', count: 1 },
+  { defId: 'bow.hunting', count: 1 },
+  { defId: 'stars.weighted', count: 1 },
+  { defId: 'chest.leather', count: 1 },
+  { defId: 'helm.leather', count: 1 },
+  { defId: 'legs.traveller', count: 1 },
+  { defId: 'potion.minor', count: 3 },
+];

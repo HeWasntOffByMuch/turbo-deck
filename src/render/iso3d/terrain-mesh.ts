@@ -17,6 +17,9 @@ import { shoreField } from './shore-sdf.js';
 import { WATER } from './wind.js';
 import { buildWaterQuad, disposeWaterQuad } from './water-material.js';
 import { patchTerrainStreak } from './terrain-streak.js';
+import { patchTerrainCurvature } from './terrain-curvature.js';
+import { patchTerrainDetail } from './terrain-detail.js';
+import { cellCavity, type CornerSample } from './curvature.js';
 
 /**
  * The only thing that turns terrain data into geometry (spec 043). Everything
@@ -58,6 +61,16 @@ const wallMaterial = new THREE.MeshLambertMaterial({
 });
 patchTerrainStreak(surfaceMaterial);
 patchTerrainStreak(wallMaterial);
+// Only the surface. The walls are flat vertical skirts with no curvature to
+// measure, and a material that reads a `cavity` attribute the geometry does not
+// carry is a GL error rather than a zero (spec 104).
+patchTerrainCurvature(surfaceMaterial);
+// Both ground materials (spec 106). The cliff wall is the surface that most
+// needs it -- a tall vertical face in a single tone reads as a cut-out -- and it
+// is also the one a ground-plane UV would smear, which is why the projection is
+// triplanar.
+patchTerrainDetail(surfaceMaterial);
+patchTerrainDetail(wallMaterial);
 
 /** The material index water cells carry, resolved once. */
 const WATER_MATERIAL = materialIndex('water');
@@ -76,6 +89,29 @@ export interface TerrainMeshHandle {
    * under it, not all 56.
    */
   rebuild(chunk: TerrainChunk): void;
+  /**
+   * Drop one chunk's geometry, for ground that has stopped existing (spec 085).
+   *
+   * The counterpart to `rebuild`: removing a map part deletes chunks, and
+   * without this the only way to stop drawing them was to rebuild every mesh in
+   * the world. Returns false if nothing was drawn there.
+   */
+  remove(layerId: string, cx: number, cz: number): boolean;
+  /**
+   * Teach the mesh a layer that was not there when it was built (spec 123).
+   *
+   * The layer set used to be fixed at construction, which was true for as long
+   * as a map's layers were. Drawing a tier adds one to the store mid-session,
+   * and `rebuild` silently draws nothing for a chunk whose layer it has never
+   * heard of -- so the formation would be walked on and collided with and
+   * simply not be visible. Replacing an id already known re-points it, which is
+   * what an undo that puts a layer back needs.
+   */
+  addLayer(layer: MeshLayer): void;
+  /** Forget a layer and drop everything drawn for it. Returns false if unknown. */
+  removeLayer(layerId: string): boolean;
+  /** Which layers are currently drawable, so a caller can reconcile against a store. */
+  layerIds(): string[];
   dispose(): void;
 }
 
@@ -101,31 +137,42 @@ class MeshBuffer {
   readonly positions: number[] = [];
   readonly colors: number[] = [];
   readonly normals: number[] = [];
+  /**
+   * How much the ground folds at this vertex, 0..1 (spec 104).
+   *
+   * Constant across a quad, like the colour: it is a property of the cell, and
+   * the ground's whole look is flat bands one cell wide. Emitted only for the
+   * surface -- `build` writes the attribute only when asked, so the walls carry
+   * no column of zeroes for a material that never reads them.
+   */
+  readonly cavities: number[] = [];
 
-  private vertex(v: Corner, c: THREE.Color): void {
+  private vertex(v: Corner, c: THREE.Color, cavity: number): void {
     this.positions.push(v[0], v[1], v[2]);
     this.colors.push(c.r, c.g, c.b);
     this.normals.push(v[3] ?? 0, v[4] ?? 0, v[5] ?? 0);
+    this.cavities.push(cavity);
   }
 
   /** A quad as two triangles, wound a-b-c / a-c-d. */
-  quad(a: Corner, b: Corner, c: Corner, d: Corner, color: THREE.Color): void {
-    this.vertex(a, color);
-    this.vertex(b, color);
-    this.vertex(c, color);
-    this.vertex(a, color);
-    this.vertex(c, color);
-    this.vertex(d, color);
+  quad(a: Corner, b: Corner, c: Corner, d: Corner, color: THREE.Color, cavity = 0): void {
+    this.vertex(a, color, cavity);
+    this.vertex(b, color, cavity);
+    this.vertex(c, color, cavity);
+    this.vertex(a, color, cavity);
+    this.vertex(c, color, cavity);
+    this.vertex(d, color, cavity);
   }
 
   /** `smooth` geometries carry the normals they were given; the rest derive flat ones. */
-  build(smooth: boolean): THREE.BufferGeometry | null {
+  build(smooth: boolean, cavity = false): THREE.BufferGeometry | null {
     if (this.positions.length === 0) return null;
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(this.positions, 3));
     geo.setAttribute('color', new THREE.Float32BufferAttribute(this.colors, 3));
     if (smooth) geo.setAttribute('normal', new THREE.Float32BufferAttribute(this.normals, 3));
     else geo.computeVertexNormals();
+    if (cavity) geo.setAttribute('cavity', new THREE.Float32BufferAttribute(this.cavities, 1));
     return geo;
   }
 }
@@ -158,6 +205,26 @@ function buildChunk(
     ];
   };
 
+  /**
+   * The same corner as a sample the cavity measure can read (spec 104).
+   *
+   * Everything it needs is already here: the corner's jittered world position and
+   * the smooth normal the field has there, both stored by every chunk that shares
+   * the corner. Which is why this needs no apron and no neighbour lookup -- a
+   * cell's four corners are always inside its own chunk.
+   */
+  const sample = (i: number, j: number): CornerSample => {
+    const k = j * stride + i;
+    return {
+      x: cornerX[k] ?? 0,
+      y: heights[k] ?? 0,
+      z: cornerZ[k] ?? 0,
+      nx: normals[k * 3] ?? 0,
+      ny: normals[k * 3 + 1] ?? 1,
+      nz: normals[k * 3 + 2] ?? 0,
+    };
+  };
+
   /** True, false, or `null` for a cell across a seam that has not streamed in. */
   const solidAt = (i: number, j: number): boolean | null =>
     i >= 0 && j >= 0 && i < cols && j < rows
@@ -179,11 +246,22 @@ function buildChunk(
       const c01 = corner(i, j + 1);
       const c11 = corner(i + 1, j + 1);
 
+      const cavity = cellCavity(
+        sample(i, j),
+        sample(i + 1, j),
+        sample(i, j + 1),
+        sample(i + 1, j + 1),
+        chunk.cellSize,
+      );
+
       // Wound so the face normal points +Y (up) for the flat case.
-      surface.quad(c00, c01, c11, c10, color);
+      surface.quad(c00, c01, c11, c10, color, cavity);
 
       // Skirt every edge that faces open air, dropped to the layer's underside.
-      const cliff = linearColor(TERRAIN_CLIFF_COLORS[tone] ?? TERRAIN_CLIFF_COLORS[0]);
+      // The wall takes the material of the ground it hangs from (spec 123), so
+      // a coastline cuts as sand and a rock tier cuts as grey slate.
+      const cliffPair = TERRAIN_CLIFF_COLORS[material];
+      const cliff = linearColor(cliffPair[tone] ?? cliffPair[0]);
       const wall = (a: Corner, b: Corner): void => {
         walls.quad(a, b, [b[0], baseY, b[2]], [a[0], baseY, a[2]], cliff);
       };
@@ -198,7 +276,7 @@ function buildChunk(
     }
   }
 
-  return { surface: surface.build(true), walls: walls.build(false) };
+  return { surface: surface.build(true, true), walls: walls.build(false) };
 }
 
 /**
@@ -354,12 +432,63 @@ export function buildTerrainMeshFromChunks(
     }
   }
 
+  /** Free one chunk's meshes and forget it, the inverse of `draw` (spec 085). */
+  const erase = (layerId: string, cx: number, cz: number): boolean => {
+    const key = keyOf(layerId, cx, cz);
+    const slot = drawn.get(key);
+    if (!slot) return false;
+    for (const mesh of [slot.surface, slot.walls]) {
+      if (!mesh) continue;
+      group.remove(mesh);
+      mesh.geometry.dispose();
+    }
+    if (slot.water) {
+      group.remove(slot.water);
+      disposeWaterQuad(slot.water);
+    }
+    const stale = slot.surface ? pickTargets.indexOf(slot.surface) : -1;
+    if (stale >= 0) pickTargets.splice(stale, 1);
+    drawn.delete(key);
+
+    // The neighbours' shore fields were baked against ground that has just
+    // gone, exactly as `draw` re-bakes them against ground that has just
+    // arrived. Same eight distance transforms, opposite direction.
+    const layer = byId.get(layerId);
+    if (layer) {
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dz === 0) continue;
+          const neighbour = drawn.get(keyOf(layerId, cx + dx, cz + dz));
+          if (neighbour) drawWater(layer, neighbour);
+        }
+      }
+    }
+    return true;
+  };
+
   return {
     group,
     pickTargets,
     rebuild(chunk: TerrainChunk): void {
       const layer = byId.get(chunk.layerId);
       if (layer) draw(layer, chunk);
+    },
+    remove: erase,
+    addLayer(layer: MeshLayer): void {
+      byId.set(layer.id, layer);
+    },
+    removeLayer(layerId: string): boolean {
+      if (!byId.delete(layerId)) return false;
+      // Everything drawn for it goes with it, or a tier that was carved away
+      // keeps its geometry in the scene with nothing behind it.
+      for (const key of [...drawn.keys()]) {
+        const slot = drawn.get(key);
+        if (slot?.chunk.layerId === layerId) erase(layerId, slot.chunk.coord.cx, slot.chunk.coord.cz);
+      }
+      return true;
+    },
+    layerIds(): string[] {
+      return [...byId.keys()];
     },
     dispose(): void {
       // Water owns a material and a shore texture of its own, so it is freed

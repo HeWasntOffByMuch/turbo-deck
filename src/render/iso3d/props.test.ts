@@ -4,6 +4,8 @@ import {
   bareTrunkHeight,
   buildPropField,
   crownRadius,
+  PROP_REGION_SIZE,
+  propRegionKey,
   speciesHeight,
   speciesTierCounts,
   treeVariant,
@@ -109,10 +111,10 @@ describe('the trunk ends inside the canopy, not through it', () => {
 
   it('buries the trunk top in a frond for every shape a tree can take', () => {
     // The trunk is a solid column that stops in mid-air: wherever it ends, the
-    // cap and its corners are either inside a cone or hanging out through the
-    // cone's sloped side. The fir used to stand its trunk up to 86, where the
-    // frond around it has narrowed to a ~3-unit radius -- 5 units of bare
-    // column stuck out into open air, on every fir in the world.
+    // cap is either inside a cone or hanging out through the cone's sloped
+    // side. The fir used to stand its trunk up to 86, where the frond around it
+    // has narrowed to a ~3-unit radius -- 5 units of bare column stuck out into
+    // open air, on every fir in the world.
     for (const s of species) {
       for (const tierCount of speciesTierCounts(s)) {
         // The lean and the drift are what pull the frond off the trunk's axis,
@@ -144,17 +146,354 @@ describe('the trunk ends inside the canopy, not through it', () => {
     }
   });
 
-  it('still runs the trunk up through the canopy rather than stopping under it', () => {
-    // The cover is bought by ending the trunk lower, so the obvious wrong fix
-    // is to end it below the foliage entirely -- which hides the trunk's top by
-    // leaving the crown floating over a stump.
+  it('ends every tree in the last frond it grew, not one the species might have', () => {
+    // Spec 122. The cover is bought by ending the trunk lower, so the obvious
+    // wrong fix is to end it below the foliage entirely -- which hides the
+    // trunk's top by leaving the crown floating over a stump. The one it
+    // *replaces* is subtler and was live: one height per species meant a
+    // four-tier fir quit inside its second frond with two more above it.
     for (const s of species) {
-      expect(trunkHeight(s)).toBeGreaterThan(bareTrunkHeight(s));
-      // Well up into the crown, not just past the lowest frond's base.
-      expect(trunkHeight(s)).toBeGreaterThan(0.5 * speciesHeight(s));
+      for (const tierCount of speciesTierCounts(s)) {
+        const variant = { species: s, tierCount, asymmetry: 0, leanAngle: 0 };
+        const top = tierBase(s, Math.min(tierCount, tierCount)) as [number, number];
+        expect(trunkHeight(variant)).toBeGreaterThan(bareTrunkHeight(s));
+        // Inside the topmost frond this tree grew: above its base plane, and
+        // below its tip -- which is the definition, read off the built geometry
+        // rather than off the same table the code derived it from.
+        expect(trunkHeight(variant)).toBeGreaterThan(top[0]);
+        expect(trunkHeight(variant)).toBeLessThan(top[1]);
+      }
+      // A taller tree of a species always carries the longer trunk.
+      const counts = [...new Set(speciesTierCounts(s))].sort((a, b) => a - b);
+      const heights = counts.map((tierCount) => trunkHeight({ species: s, tierCount, asymmetry: 0, leanAngle: 0 }));
+      for (let i = 1; i < heights.length; i++) {
+        expect(heights[i] as number).toBeGreaterThan(heights[i - 1] as number);
+      }
     }
-    // ...and the pine's is still the longer of the two, as its silhouette wants.
-    expect(trunkHeight('pine')).toBeGreaterThan(trunkHeight('fir'));
+  });
+});
+
+/** A conifer of a given species and tier count, found by walking the position hash. */
+function coniferProp(species: TreeSpecies, tierCount: number): Prop {
+  for (let i = 0; i < 40000; i++) {
+    const prop: Prop = { kind: 'tree', x: i * 37, y: i * 53, scale: 1, rotation: 0, tint: 0 };
+    const variant = treeVariant(prop);
+    if (variant.species === species && variant.tierCount === tierCount) return prop;
+  }
+  throw new Error(`no ${species} with ${tierCount} tiers in the hash`);
+}
+
+/** Every instanced batch of a built field. */
+function batchesOf(props: readonly Prop[]): THREE.InstancedMesh[] {
+  const out: THREE.InstancedMesh[] = [];
+  buildPropField(props, () => 0).group.traverse((object) => {
+    if (object instanceof THREE.InstancedMesh) out.push(object);
+  });
+  return out;
+}
+
+/** The trunk is the one part drawn in bark rather than in leaf. */
+function isFoliage(mesh: THREE.InstancedMesh): boolean {
+  const color = new THREE.Color();
+  mesh.getColorAt(0, color);
+  return color.getHex() !== new THREE.Color(PALETTE.trunk).getHex();
+}
+
+/** Every vertex of a batch's geometry as (radius from its axis, bearing, height). */
+function vertices(mesh: THREE.InstancedMesh): { r: number; a: number; y: number }[] {
+  const position = mesh.geometry.getAttribute('position');
+  const out: { r: number; a: number; y: number }[] = [];
+  for (let i = 0; i < position.count; i++) {
+    out.push({
+      r: Math.hypot(position.getX(i), position.getZ(i)),
+      a: Math.atan2(position.getZ(i), position.getX(i)),
+      y: position.getY(i),
+    });
+  }
+  return out;
+}
+
+/** Where a batch's first instance sits, in world Y. */
+function instanceY(mesh: THREE.InstancedMesh): number {
+  const matrix = new THREE.Matrix4();
+  mesh.getMatrixAt(0, matrix);
+  return new THREE.Vector3().setFromMatrixPosition(matrix).y;
+}
+
+/**
+ * The base plane and the tip of the topmost frond a tree of `tierCount` grew,
+ * read off the geometry `buildPropField` actually built rather than off the
+ * tier table -- which is the table the trunk's height is derived from, so a test
+ * that read it too would be checking the code against itself.
+ */
+function tierBase(species: TreeSpecies, tierCount: number): [number, number] {
+  let base = -Infinity;
+  let tip = -Infinity;
+  for (const frond of batchesOf([coniferProp(species, tierCount)]).filter(isFoliage)) {
+    const at = instanceY(frond);
+    const points = vertices(frond).map((p) => at + p.y);
+    // The topmost frond is the one whose base plane is highest.
+    const low = Math.min(...points);
+    if (low > base) [base, tip] = [low, Math.max(...points)];
+  }
+  return [base, tip];
+}
+
+/**
+ * The conifer's frond, as `buildPropField` actually builds it (spec 121).
+ *
+ * `frond.test.ts` covers the hem's arithmetic -- where the tips and the clefts
+ * sit. What is left is everything between that and a frame, and it is all one
+ * claim: the bite is cut out of the cone the fir and the pine have always been,
+ * and costs nothing that was not already being paid. Every vertex on that cone's
+ * surface is what makes the trunk's derived height survive a cutout; the
+ * triangle budget and the batch count are what make "no burden on performance"
+ * a thing a test can fail rather than a sentence in a commit message.
+ */
+const conifers = ['fir', 'pine'] as const satisfies readonly TreeSpecies[];
+
+describe('the conifer frond, as built', () => {
+  const fronds = (species: TreeSpecies, tierCount: number): THREE.InstancedMesh[] =>
+    batchesOf([coniferProp(species, tierCount)]).filter(isFoliage);
+
+  it('puts every vertex of a frond on the cone it is cut from', () => {
+    // The property the whole thing rests on. A vertex *off* that surface --
+    // pulled in at its own height rather than lifted up the slope -- would take
+    // cover the trunk's derived height is counting on, and nothing in the frame
+    // would say so.
+    for (const species of conifers) {
+      for (const tierCount of new Set(speciesTierCounts(species))) {
+        for (const frond of fronds(species, tierCount)) {
+          const points = vertices(frond);
+          const apex = Math.max(...points.map((p) => p.y));
+          const foot = Math.min(...points.map((p) => p.y));
+          const height = apex - foot;
+          const radius = Math.max(...points.map((p) => p.r));
+          for (const { r, y } of points) {
+            // The axis carries the apex and the underside's centre; every other
+            // vertex is on the slope, exactly.
+            if (r < 1e-9) continue;
+            // Loosely, because the buffer is float32 and a 44-unit radius has
+            // about six digits in it -- the claim is "on the surface", not "to
+            // the last bit of a float".
+            expect(r).toBeCloseTo((radius * (apex - y)) / height, 4);
+          }
+        }
+      }
+    }
+  });
+
+  it('keeps a crown as wide as its species table says, and its base plane where it was', () => {
+    for (const species of conifers) {
+      const widest = Math.max(
+        ...fronds(species, Math.max(...speciesTierCounts(species))).flatMap((frond) =>
+          vertices(frond).map((p) => p.r),
+        ),
+      );
+      expect(widest).toBeCloseTo(crownRadius(species), 6);
+    }
+    // ...and the lowest foliage still hangs exactly where `bareTrunkHeight`
+    // promises, since the hem is cut *upward* out of the cone and never below it.
+    for (const species of conifers) {
+      const field = batchesOf([coniferProp(species, 2)]).filter(isFoliage);
+      const lowest = Math.min(
+        ...field.flatMap((frond) => {
+          const matrix = new THREE.Matrix4();
+          frond.getMatrixAt(0, matrix);
+          const at = new THREE.Vector3().setFromMatrixPosition(matrix).y;
+          return vertices(frond).map((p) => at + p.y);
+        }),
+      );
+      expect(lowest).toBeCloseTo(bareTrunkHeight(species), 6);
+    }
+  });
+
+  it('actually bites: a hem that is not the cone\'s own flat rim', () => {
+    for (const species of conifers) {
+      for (const frond of fronds(species, Math.max(...speciesTierCounts(species)))) {
+        const points = vertices(frond);
+        const foot = Math.min(...points.map((p) => p.y));
+        const height = Math.max(...points.map((p) => p.y)) - foot;
+        const rim = points.filter((p) => p.r > 1e-9);
+        // One tip left at full reach, and a cut well up into the frond.
+        expect(Math.min(...rim.map((p) => p.y - foot))).toBeCloseTo(0, 6);
+        expect(Math.max(...rim.map((p) => p.y - foot))).toBeGreaterThan(0.15 * height);
+      }
+    }
+  });
+
+  it('costs a handful of triangles and not one extra batch', () => {
+    for (const species of conifers) {
+      for (const tierCount of new Set(speciesTierCounts(species))) {
+        const batches = batchesOf([coniferProp(species, tierCount)]);
+        // One trunk, one frond per tier it grew. The variety between two trees
+        // is the instance matrix, so a bitten frond adds no draw call.
+        expect(batches).toHaveLength(1 + tierCount);
+        for (const frond of batches.filter(isFoliage)) {
+          const triangles = frond.geometry.getAttribute('position').count / 3;
+          // The cone was 7 sides and a cap; the clefts add at most three tips'
+          // worth on top of that. A budget rather than an exact count, because
+          // how many bites a frond takes is hashed.
+          expect(triangles).toBeGreaterThanOrEqual(14);
+          expect(triangles).toBeLessThanOrEqual(24);
+        }
+      }
+    }
+  });
+
+  it('turns every frond differently while leaving the trunks alone', () => {
+    // The variety is in the instance matrix, which is why one shared geometry
+    // does not read as one shape stamped across a forest. A stand of firs that
+    // all stand *unturned* -- one region, one batch, `rotation: 0` on every one
+    // of them -- so the only thing that can separate their fronds is the spin.
+    const stand: Prop[] = [];
+    for (let i = 0; stand.length < 16 && i < 400; i++) {
+      const prop = tree(40 + (i % 20) * 52, 40 + Math.floor(i / 20) * 52);
+      const variant = treeVariant(prop);
+      if (variant.species === 'fir' && variant.tierCount === 4) stand.push(prop);
+    }
+    expect(stand).toHaveLength(16);
+    const yaws = (mesh: THREE.InstancedMesh): number[] => {
+      const matrix = new THREE.Matrix4();
+      const quaternion = new THREE.Quaternion();
+      return Array.from({ length: mesh.count }, (_, i) => {
+        mesh.getMatrixAt(i, matrix);
+        quaternion.setFromRotationMatrix(matrix);
+        const axis = new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion);
+        return Math.atan2(axis.z, axis.x);
+      });
+    };
+    const batches = batchesOf(stand);
+    const foliage = batches.filter(isFoliage);
+    expect(foliage).toHaveLength(4);
+    for (const frond of foliage) {
+      const spread = yaws(frond);
+      expect(spread).toHaveLength(stand.length);
+      // Turned across the whole compass rather than nudged: two neighbours
+      // share a frond and must not share its bearing.
+      expect(new Set(spread.map((y) => y.toFixed(3))).size).toBe(spread.length);
+      expect(Math.max(...spread) - Math.min(...spread)).toBeGreaterThan(Math.PI);
+    }
+    // ...and no two tiers of one tree line up either, or a bite would run
+    // straight down the side of the tree.
+    const first = foliage.map((frond) => yaws(frond)[0] as number);
+    for (let i = 1; i < first.length; i++) {
+      expect(Math.abs((first[i] as number) - (first[0] as number))).toBeGreaterThan(0.05);
+    }
+    // The trunk is a square column and gets none of this: whatever the world
+    // turned the tree by is what it is drawn at.
+    for (const trunk of batches.filter((mesh) => !isFoliage(mesh))) {
+      for (const yaw of yaws(trunk)) expect(yaw).toBeCloseTo(0, 9);
+    }
+  });
+
+  it('spins a frond under the lean rather than turning the lean with it', () => {
+    // The order that matters. Folded into the base yaw instead, the spin would
+    // carry the lean's axis round with it, and one tree's tiers would tip in
+    // four different compass directions while all drifting the same way -- the
+    // canopy coming off the trunk, which is what the lean and the drift are
+    // shaped to avoid.
+    for (const species of conifers) {
+      const prop = coniferProp(species, Math.max(...speciesTierCounts(species)));
+      const variant = treeVariant(prop);
+      expect(Math.abs(variant.asymmetry)).toBeGreaterThan(0.05);
+      const matrix = new THREE.Matrix4();
+      const quaternion = new THREE.Quaternion();
+      const bearings = fronds(species, variant.tierCount).map((frond) => {
+        frond.getMatrixAt(0, matrix);
+        quaternion.setFromRotationMatrix(matrix);
+        const tipped = new THREE.Vector3(0, 1, 0).applyQuaternion(quaternion);
+        return { bearing: Math.atan2(tipped.z, tipped.x), tilt: Math.hypot(tipped.x, tipped.z) };
+      });
+      for (const { tilt } of bearings) expect(tilt).toBeGreaterThan(1e-3);
+      for (const { bearing } of bearings) expect(bearing).toBeCloseTo(bearings[0]?.bearing as number, 6);
+    }
+  });
+});
+
+/**
+ * The conifer's trunk, as `buildPropField` actually builds it (spec 122).
+ *
+ * The height's own invariant -- that a tree ends its trunk in the frond it grew
+ * -- is up with the burial sweep it belongs to. What is left here is the column
+ * itself: round, thinning, and one geometry per tier count without a tree ever
+ * drawing two of them.
+ */
+describe('the conifer trunk, as built', () => {
+  const trunkOf = (species: TreeSpecies, tierCount: number): THREE.InstancedMesh => {
+    const trunks = batchesOf([coniferProp(species, tierCount)]).filter((mesh) => !isFoliage(mesh));
+    // The claim that costs money if it is wrong: the counts *partition* the
+    // trees between the trunk batches, so a tree draws one and the field draws
+    // no more trunks than it did when there was one geometry for the species.
+    expect(trunks).toHaveLength(1);
+    return trunks[0] as THREE.InstancedMesh;
+  };
+
+  it('stands round, on the ground, on every size of tree', () => {
+    for (const species of conifers) {
+      for (const tierCount of new Set(speciesTierCounts(species))) {
+        const trunk = trunkOf(species, tierCount);
+        const points = vertices(trunk);
+        // Built standing on its own origin, so the instance sits at the ground
+        // and the geometry runs up from zero.
+        expect(Math.min(...points.map((p) => p.y))).toBeCloseTo(0, 6);
+        expect(instanceY(trunk)).toBeCloseTo(0, 6);
+        // Round: the foot is a ring of one radius at many bearings. A square
+        // column has four bearings and two radii, its side and its corner.
+        const foot = points.filter((p) => p.y < 1e-6 && p.r > 1e-9);
+        expect(Math.max(...foot.map((p) => p.r)) - Math.min(...foot.map((p) => p.r))).toBeLessThan(1e-3);
+        expect(new Set(foot.map((p) => p.a.toFixed(4))).size).toBeGreaterThanOrEqual(6);
+      }
+    }
+  });
+
+  it('thins as it climbs, and ends in a cap rather than a point', () => {
+    for (const species of conifers) {
+      for (const tierCount of new Set(speciesTierCounts(species))) {
+        const points = vertices(trunkOf(species, tierCount));
+        const top = Math.max(...points.map((p) => p.y));
+        const widest = new Map<string, number>();
+        for (const { r, y } of points) widest.set(y.toFixed(4), Math.max(widest.get(y.toFixed(4)) ?? 0, r));
+        const rings = [...widest.entries()].map(([y, r]) => ({ y: Number(y), r })).sort((a, b) => a.y - b.y);
+        expect(rings.length).toBeGreaterThan(3);
+        for (let i = 1; i < rings.length; i++) {
+          expect((rings[i] as { r: number }).r).toBeLessThan((rings[i - 1] as { r: number }).r);
+        }
+        // Thinner at the top but still a column: a trunk that tapered to a
+        // vertex would have no cap to bury, and the burial sweep would be
+        // vacuously true rather than true.
+        const tip = rings[rings.length - 1] as { r: number };
+        expect(tip.r).toBeGreaterThan(0.5);
+        expect(tip.r).toBeLessThan(0.8 * (rings[0] as { r: number }).r);
+        const crown = points.filter((p) => p.y > top - 1e-6);
+        expect(crown.some((p) => p.r < 1e-9)).toBe(true);
+        for (const p of crown) expect(p.r === 0 || Math.abs(p.r - tip.r) < 1e-3).toBe(true);
+      }
+    }
+  });
+
+  it('slices every size of one species out of a single profile', () => {
+    // Two neighbours of different sizes are the same thickness at the same
+    // height. Tapering each variant over its *own* length instead would leave a
+    // sapling visibly thinner than the tree beside it at knee height.
+    for (const species of conifers) {
+      const counts = [...new Set(speciesTierCounts(species))];
+      const profiles = counts.map((tierCount) => vertices(trunkOf(species, tierCount)));
+      const shortest = Math.min(...profiles.map((points) => Math.max(...points.map((p) => p.y))));
+      for (const points of profiles) {
+        const first = profiles[0] as { r: number; y: number }[];
+        for (const { r, y } of points) {
+          if (y > shortest || r < 1e-9) continue;
+          // The radius the other variants have at this height, interpolated
+          // between their own rings.
+          const below = Math.max(...first.filter((p) => p.y <= y + 1e-6).map((p) => p.y));
+          const above = Math.min(...first.filter((p) => p.y >= y - 1e-6).map((p) => p.y));
+          const at = (h: number): number => Math.max(...first.filter((p) => Math.abs(p.y - h) < 1e-6).map((p) => p.r));
+          const want = above - below < 1e-6 ? at(below) : at(below) + ((at(above) - at(below)) * (y - below)) / (above - below);
+          expect(r).toBeCloseTo(want, 3);
+        }
+      }
+    }
   });
 });
 
@@ -768,5 +1107,98 @@ describe('the lobed canopy tree, as built', () => {
     expect((slab.mesh.material as THREE.Material).customProgramCacheKey?.()).toBe(
       (conifer.mesh.material as THREE.Material).customProgramCacheKey?.(),
     );
+  });
+});
+
+/**
+ * Rebuilding one batching region (spec 086).
+ *
+ * The field has always been grouped into regions so the camera can cull them.
+ * This makes that grouping the unit of *invalidation* too: an edit rebuilds the
+ * regions it touched instead of every batch in the world, which is what stops a
+ * map part costing the whole map to draw.
+ */
+describe('rebuildWithin', () => {
+  const R = PROP_REGION_SIZE;
+  /** A tree in region 0,0 and one two regions east, so they never share a batch. */
+  const near = tree(R * 0.5, R * 0.5);
+  const far = tree(R * 2.5, R * 0.5);
+
+  const meshCount = (o: THREE.Object3D): number => {
+    let n = 0;
+    o.traverse((child) => {
+      if ((child as THREE.InstancedMesh).isInstancedMesh) n++;
+    });
+    return n;
+  };
+
+  it('names the region a point falls in', () => {
+    expect(propRegionKey(R * 0.5, R * 0.5)).toBe('0,0');
+    expect(propRegionKey(R * 2.5, R * 0.5)).toBe('2,0');
+    // Negative coordinates floor away from zero, so a grown map's west side
+    // does not fold onto its east.
+    expect(propRegionKey(-R * 0.5, -R * 1.5)).toBe('-1,-2');
+  });
+
+  it('leaves the batches of regions it did not touch alone, object for object', () => {
+    const field = buildPropField([near, far], () => 0);
+    const before: THREE.Object3D[] = [];
+    field.group.traverse((c) => {
+      if ((c as THREE.InstancedMesh).isInstancedMesh) before.push(c);
+    });
+    expect(before.length).toBeGreaterThan(1);
+
+    // Rebuild only region 0,0.
+    field.rebuildWithin([near, far], { minX: R * 0.1, minZ: R * 0.1, maxX: R * 0.9, maxZ: R * 0.9 });
+
+    const after: THREE.Object3D[] = [];
+    field.group.traverse((c) => {
+      if ((c as THREE.InstancedMesh).isInstancedMesh) after.push(c);
+    });
+    // The far region's meshes are the *same objects*: untouched, not rebuilt.
+    expect(after.length).toBe(before.length);
+    const shared = after.filter((m) => before.includes(m));
+    expect(shared.length).toBeGreaterThan(0);
+    field.dispose();
+  });
+
+  it('draws a prop added to a region it rebuilds', () => {
+    const field = buildPropField([far], () => 0);
+    const before = meshCount(field.group);
+
+    field.rebuildWithin([far, near], { minX: 0, minZ: 0, maxX: R * 0.9, maxZ: R * 0.9 });
+    expect(meshCount(field.group)).toBeGreaterThan(before);
+    field.dispose();
+  });
+
+  it('drops a region emptied by an erase rather than leaving an empty group', () => {
+    const field = buildPropField([near, far], () => 0);
+    const before = meshCount(field.group);
+
+    field.rebuildWithin([far], { minX: 0, minZ: 0, maxX: R * 0.9, maxZ: R * 0.9 });
+    expect(meshCount(field.group)).toBeLessThan(before);
+    // The far tree is still drawn: only the named region was rebuilt.
+    expect(meshCount(field.group)).toBeGreaterThan(0);
+    field.dispose();
+  });
+
+  it('recounts what it could not draw', () => {
+    const unknown = { kind: 'fence-wattle' as Prop['kind'], x: R * 0.5, y: R * 0.5, scale: 1, rotation: 0, tint: 0 };
+    const field = buildPropField([near], () => 0);
+    expect(field.undrawn).toBe(0);
+
+    field.rebuildWithin([near, unknown], { minX: 0, minZ: 0, maxX: R * 0.9, maxZ: R * 0.9 });
+    expect(field.undrawn).toBe(1);
+    field.dispose();
+  });
+
+  it('rebuilds every region a wide rectangle covers', () => {
+    const field = buildPropField([near, far], () => 0);
+    const all = meshCount(field.group);
+    // A rectangle spanning both regions, with both props removed: nothing left.
+    field.rebuildWithin([], { minX: 0, minZ: 0, maxX: R * 2.9, maxZ: R * 0.9 });
+    expect(all).toBeGreaterThan(0);
+    expect(meshCount(field.group)).toBe(0);
+    field.dispose();
   });
 });

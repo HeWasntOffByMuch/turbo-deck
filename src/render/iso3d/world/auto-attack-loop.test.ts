@@ -19,13 +19,14 @@ import { DEFAULT_LIVE_CONFIG } from '../../../server/config.js';
 import { abilityById } from '../../../server/data/abilities.js';
 import { monsterById } from '../../../server/data/monsters.js';
 import { computeEffectiveStats } from '../../../server/player/stats.js';
-import { EMPTY_EQUIPMENT, type PersistedPlayer } from '../../../server/state/types.js';
+import { EMPTY_EQUIPMENT, emptyInventory, type PersistedPlayer } from '../../../server/state/types.js';
 import { chunkKeyOf } from '../../../server/world/chunks.js';
 import { FLAT_TERRAIN } from '../../../server/world/terrain.js';
 import { ZoneManager } from '../../../server/world/zone-manager.js';
 import { EntityKindValue, type ServerWorldState } from '../../../server/sim/types.js';
 import { createWorldState, spawnEntity, step, type StepContext } from '../../../server/sim/world.js';
 import { autoAttack } from './target.js';
+import { facesAim } from '../../../server/sim/abilities.js';
 import { moveIntent } from './intent.js';
 
 const RECORD: PersistedPlayer = {
@@ -34,6 +35,8 @@ const RECORD: PersistedPlayer = {
   baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
   skills: [],
   equipment: EMPTY_EQUIPMENT,
+  inventory: emptyInventory(),
+  coins: 0,
   position: { x: 0, y: 0, z: 0 },
   facing: 0,
   currentZone: 'greenmarch',
@@ -134,7 +137,15 @@ function fight(mainHand: string | null, monsterId: string, startX: number, ticks
     finalDistance = Math.hypot(target.position.x - me.position.x, target.position.y - me.position.y);
 
     const decision = autoAttack({
+      // Driven against the server's own entity here, so its heading *is* the
+      // authoritative one (spec 090).
+      aligned: facesAim(
+        { x: me.position.x, y: me.position.y },
+        me.facing,
+        { x: target.position.x, y: target.position.y },
+      ),
       self: { x: me.position.x, y: me.position.y },
+      selfHealth: me.health,
       target: {
         id: target.id,
         x: target.position.x,
@@ -144,6 +155,9 @@ function fight(mainHand: string | null, monsterId: string, startX: number, ticks
       },
       range: swing.range,
       rooted: me.cast !== null,
+      // No wire here, so a request is answered on the tick it is made and
+      // nothing is ever outstanding.
+      pending: false,
       readyAtTick: me.cooldowns[swing.id] ?? 0,
       tick: state.tick,
     });

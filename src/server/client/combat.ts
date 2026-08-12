@@ -111,6 +111,12 @@ export type CastDecision =
  * and `stampAt` sets the cast's own clock -- though since spec 070 the caller
  * passes the same tick for both, and the reason is worth keeping.
  *
+ * `targetRadius` is the named body's, and it is not optional in practice
+ * (spec 080): reach to a body is measured to its edge on the server, so a client
+ * that left it at zero was asking a *stricter* question than the one that will
+ * be asked of the server -- and every attack in the band between the two was one
+ * it refused to predict and the server took.
+ *
  * 069 leaned `decideAt` forward by a round trip, on the argument that failing to
  * predict a commit costs a whole wind-up of discarded walking while predicting
  * one that is refused only shows a bar that vanishes. That is true, and it was
@@ -131,13 +137,14 @@ export function mayCast(
   decideAt: number,
   stampAt: number,
   targetEntityId = 0,
+  targetRadius = 0,
 ): CastDecision {
   const ability = abilityById(abilityId);
   if (!ability) return { ok: false, reason: 'unknownAbility' };
   const entity = asEntity(mirror);
   const result = startCast(
     entity,
-    { abilityId, targetX: aim.x, targetY: aim.y, targetEntityId },
+    { abilityId, targetX: aim.x, targetY: aim.y, targetEntityId, targetRadius },
     decideAt,
   );
   if (!result.ok) return { ok: false, reason: result.reason };
@@ -155,10 +162,11 @@ export function mayCast(
       endTick: cast.endTick + shift,
     },
     cost: ability.cost,
-    // The same rule the sim stamps with, asked of the same stats (spec 070) --
-    // a basic attack's cooldown is the caster's own cadence, so a client that
-    // read the table would grey the button out for the wrong length of time.
-    readyAtTick: stampAt + cooldownTicksFor(ability, entity),
+    // From the *release*, not the commit (spec 091): the cooldown starts when
+    // the blow goes off, so a wind-up that is withdrawn from costs none of it.
+    // Predicting it from the commit would grey the button out for a swing that
+    // may never happen, and then have to hand it back.
+    readyAtTick: stampAt + ability.windupTicks + cooldownTicksFor(ability, entity),
   };
 }
 

@@ -3,11 +3,16 @@
  * numbers, the hotbar and a status line.
  *
  * DOM rather than geometry, and positioned by projecting each body to a canvas
- * pixel (`WorldScene.screenAnchors`). The scene renders into a low-resolution
- * buffer and puts the result through the dither pass (spec 038), which is
- * exactly right for the world and exactly wrong for a number you are supposed to
- * read -- text through that filter comes out as chewed pixels. Floating it over
- * the canvas keeps the world chunky and the readout crisp.
+ * pixel (`WorldScene.screenAnchors`) -- except the damage numbers, which are
+ * projected from a world point of their own (spec 096), because they belong to
+ * the ground a blow landed on rather than to a body that may be walking away
+ * from it or gone.
+ *
+ * The scene renders into a low-resolution buffer and puts the result through
+ * the dither pass (spec 038), which is exactly right for the world and exactly
+ * wrong for a number you are supposed to read -- text through that filter comes
+ * out as chewed pixels. Floating it over the canvas keeps the world chunky and
+ * the readout crisp.
  *
  * Everything here is a function of what the server said. The bars are drawn from
  * replicated health and from `CastState`; the hotbar's lit/unlit is whether a
@@ -25,30 +30,18 @@ import {
 import { ALL_ITEMS } from '../../../server/data/items.js';
 import { EntityKind } from '../../../server/net/protocol.js';
 import { SERVER_TICK_RATE } from '../../../server/config.js';
-import { attackIntervalTicks } from '../../../server/player/stats.js';
 import { castBar } from './cast.js';
+import { aimGesture } from './aim.js';
 import { appearanceOf, displayName } from './appearance.js';
 import { pixelTextSvg } from './pixel-font.js';
+import { isHandheldDevice } from '../device.js';
+import { DamagePopups, type Projector, type WorldAnchor } from './damage-popup.js';
+import { hudLayout } from './hud-layout.js';
+import { systemIconSvg, weaponIconSvg, type SystemIconId } from './icons.js';
+import type { WindowId } from './key-actions.js';
 
-/** How long a damage number floats, in frames. */
-const NUMBER_LIFE = 48;
-/** How far one rises over its life, in CSS pixels. */
-const NUMBER_RISE = 46;
-/**
- * Sideways lanes for numbers landing on the same body in quick succession.
- *
- * Without this they stack on one anchor, and once each carries a hard outline
- * the pile reads as a solid dark block with a couple of legible digits at the
- * bottom -- which is exactly what it looked like. Cycling lanes fans them out so
- * three hits in half a second are three numbers.
- */
-const NUMBER_LANES: readonly { readonly x: number; readonly y: number }[] = [
-  { x: 0, y: 0 },
-  { x: -46, y: -12 },
-  { x: 46, y: -12 },
-  { x: -24, y: -26 },
-  { x: 24, y: -26 },
-];
+/** The slot being aimed (spec 080). The aim indicator's colour, in the DOM. */
+const AIM_HIGHLIGHT = '#7fd4ff';
 
 /** Which abilities the hotbar offers, in order. Keys 1..n. */
 export const HOTBAR: readonly string[] = [
@@ -56,6 +49,7 @@ export const HOTBAR: readonly string[] = [
   'melee.heavy',
   'bolt.arcane',
   'bolt.lob',
+  'bolt.seek',
   'ground.quake',
   'self.mend',
   'channel.drain',
@@ -84,21 +78,27 @@ export const WEAPON_SWITCH: readonly {
   return [...byAttack.values()];
 })();
 
-interface FloatingNumber {
-  readonly entityId: number;
-  readonly text: string;
-  readonly crit: boolean;
-  readonly heal: boolean;
-  age: number;
-  /**
-   * Offset from the body's anchor. Wider than a number is, so two in the same
-   * lane cycle never touch, and stepped upward so a burst separates on the frame
-   * it lands rather than after it has drifted.
-   */
-  readonly offsetX: number;
-  readonly offsetY: number;
-  readonly element: HTMLElement;
-}
+/**
+ * The windows a player can decide to open, as buttons (spec 140).
+ *
+ * Three, and not the shop or the trade table: those two are opened by something
+ * *happening* -- a vendor within reach, another player's invitation -- rather
+ * than by a player deciding to go and look, so a permanent button for either
+ * would be a button that is usually a refusal.
+ *
+ * The keyboard opens the same windows through the same `ui.toggle`; a button
+ * here carries an id and nothing else, so a button and a key cannot come to
+ * mean different things.
+ */
+export const SYSTEM_BUTTONS: readonly {
+  readonly id: WindowId;
+  readonly name: string;
+  readonly icon: SystemIconId;
+}[] = [
+  { id: 'inventory', name: 'Bag', icon: 'inventory' },
+  { id: 'character', name: 'Gear', icon: 'character' },
+  { id: 'options', name: 'Options', icon: 'options' },
+];
 
 interface Bar {
   readonly root: HTMLElement;
@@ -117,9 +117,22 @@ export interface HudHandle {
     corrections: number,
     /** The body being attacked, or null (spec 070). Shown as a one-line readout. */
     targetId: number | null,
+    /**
+     * The skill being aimed and whether it is still a question (spec 080).
+     * Lights the slot it came from and says what the next click will do.
+     */
+    aiming: { readonly abilityId: string | null; readonly pending: boolean },
   ): void;
-  /** A hit landed on `entityId`. Presentation of something already resolved. */
-  addDamage(entityId: number, damage: number, crit: boolean): void;
+  /**
+   * A hit landed on `entityId`, at the world point `at` (spec 096).
+   * Presentation of something already resolved.
+   *
+   * The point is taken once and kept: the number marks the ground the blow
+   * landed on, so it neither walks off with a victim that survived nor follows
+   * the camera once one that did not has despawned. `entityId` is only there to
+   * fan a burst out into lanes.
+   */
+  addDamage(entityId: number, at: WorldAnchor, damage: number, crit: boolean): void;
   /** The server refused a cast, and said why. */
   notice(text: string): void;
   /**
@@ -139,8 +152,23 @@ export interface HudHandle {
       readonly onScreen: boolean;
     }[],
   ): void;
+  /**
+   * Which windows are open, so the button that opens one can be lit (spec 140).
+   *
+   * Pushed in rather than read, for the same reason the weapon switch reads
+   * `equipment.mainHand` back rather than remembering what was clicked: the
+   * window is the state, and a button that lit itself would be a second opinion
+   * about whether it is open.
+   */
+  showOpenWindows(open: readonly WindowId[]): void;
   /** What to call when a hotbar button is clicked. */
   onUse(handler: (abilityId: string) => void): void;
+  /**
+   * What to call when a window button is pressed (spec 140). It hands back a
+   * window id and nothing else -- the mount calls the same `ui.toggle` a key
+   * binding calls, so nothing in this file decides what a button means.
+   */
+  onOpen(handler: (id: WindowId) => void): void;
   /**
    * What to call when a weapon is picked out of the switch (spec 079). It hands
    * back an item id and nothing else: the server equips it, recomputes the stat
@@ -150,7 +178,18 @@ export interface HudHandle {
   onEquip(handler: (itemId: string) => void): void;
 }
 
-export function createHud(): HudHandle {
+/**
+ * @param project How to turn a world point into a canvas pixel --
+ * `WorldScene.projectPoint`. Taken once at construction rather than per frame,
+ * because it is the same function every frame; it reads the camera as it stands
+ * when it is called, which is why `update` must run after the scene has drawn.
+ */
+export function createHud(project: Projector): HudHandle {
+  // The one device question, asked once (spec 094). Everything below reads sizes
+  // out of the table rather than deciding them, so what "compact" means is
+  // asserted in Node instead of measured on a phone.
+  const layout = hudLayout(isHandheldDevice());
+
   const root = document.createElement('div');
   root.style.cssText = 'position:absolute;inset:0;pointer-events:none;overflow:hidden;';
 
@@ -158,12 +197,23 @@ export function createHud(): HudHandle {
   status.style.cssText =
     'position:absolute;left:12px;top:52px;font:12px ui-monospace,Menlo,monospace;color:#cfd6e0;' +
     'background:rgba(10,14,20,.72);padding:8px 10px;border-radius:6px;line-height:1.6;white-space:pre;';
+  if (!layout.showsReadout) {
+    // Hidden, not removed, and still written every frame. It is developer
+    // instrumentation and has no business on a 390px frame -- but it is also the
+    // only clock `scripts/preview-touch.ts` has: it reads the tick and the target
+    // line out of `document.body.textContent`, which includes a `display:none`
+    // subtree. Deleting it would leave the touch harness unable to tell "the tap
+    // did nothing" from "the frame had not run yet", which is the confusion
+    // spec 093 was debugged out of.
+    status.style.display = 'none';
+    status.setAttribute('aria-hidden', 'true');
+  }
   root.append(status);
 
   const notices = document.createElement('div');
   notices.style.cssText =
-    'position:absolute;left:50%;top:86px;transform:translateX(-50%);font:13px ui-monospace,Menlo,monospace;' +
-    'color:#ffa07a;text-shadow:0 1px 2px #000;';
+    'position:absolute;left:50%;transform:translateX(-50%);font:13px ui-monospace,Menlo,monospace;' +
+    `color:#ffa07a;text-shadow:0 1px 2px #000;top:${layout.showsReadout ? 86 : 12}px;`;
   root.append(notices);
 
   // The spawner overlay lives in its own layer so clearing it is one truncation
@@ -173,11 +223,35 @@ export function createHud(): HudHandle {
   root.append(spawnerLayer);
   const spawnerMarks = new Map<string, HTMLElement>();
 
+  // Bottom edge insets are `env()` rather than a number: in landscape the home
+  // indicator runs along the bottom and the notch along a side, which is exactly
+  // where the hotbar and the weapon switch sit (spec 093).
+  const bottom = `calc(${layout.edge}px + env(safe-area-inset-bottom))`;
+
   const bar = document.createElement('div');
   bar.style.cssText =
-    'position:absolute;left:50%;bottom:16px;transform:translateX(-50%);display:flex;gap:6px;' +
-    'font:11px ui-monospace,Menlo,monospace;pointer-events:auto;';
+    `position:absolute;left:50%;bottom:${bottom};transform:translateX(-50%);display:flex;` +
+    `gap:${layout.slotGap}px;font:${layout.slotFontPx}px ui-monospace,Menlo,monospace;pointer-events:auto;`;
   root.append(bar);
+
+  /**
+   * What the next tap does, while a skill is aimed (spec 080).
+   *
+   * Only built on the compact HUD, and only ever shows the aim: that line used
+   * to ride along at the bottom of the readout, and the readout is the one thing
+   * spec 094 takes away. It is not debug output -- it is the question on screen
+   * -- so it gets its own place above the hotbar rather than going with the
+   * panel. Idle, it says nothing; the world is the hint.
+   */
+  const aimHint = document.createElement('div');
+  if (layout.compact) {
+    aimHint.style.cssText =
+      `position:absolute;left:50%;transform:translateX(-50%);white-space:nowrap;` +
+      `bottom:calc(${layout.edge + layout.slot.height + 6}px + env(safe-area-inset-bottom));` +
+      'font:11px ui-monospace,Menlo,monospace;color:#dbe3ee;background:rgba(10,14,20,.72);' +
+      'padding:3px 8px;border-radius:5px;pointer-events:none;';
+    root.append(aimHint);
+  }
 
   let useHandler: (abilityId: string) => void = () => undefined;
 
@@ -185,11 +259,21 @@ export function createHud(): HudHandle {
     const ability = abilityById(abilityId);
     const button = document.createElement('button');
     button.style.cssText =
-      'width:92px;padding:6px 4px;border-radius:6px;border:1px solid #33405a;background:#182130;' +
-      'color:#cfd6e0;cursor:pointer;font:inherit;text-align:center;line-height:1.5;';
+      `width:${layout.slot.width}px;border-radius:6px;border:1px solid #33405a;background:#182130;` +
+      'color:#cfd6e0;cursor:pointer;font:inherit;text-align:center;' +
+      // Square and centred on a finger: the label is whatever fits inside the
+      // target rather than the target being whatever the label needs.
+      (layout.compact
+        ? `height:${layout.slot.height}px;padding:2px;line-height:1.15;display:flex;` +
+          'align-items:center;justify-content:center;'
+        : 'padding:6px 4px;line-height:1.5;');
     button.style.position = 'relative';
     button.style.overflow = 'hidden';
-    button.innerHTML = `<b>${index + 1}</b><br>${ability?.name ?? abilityId}`;
+    // The number is the key that casts it, so it goes where there are keys. A
+    // phone has none, and the digit was taking a third of the button to say so.
+    button.innerHTML = layout.showsKeyNumber
+      ? `<b>${index + 1}</b><br>${ability?.name ?? abilityId}`
+      : (ability?.name ?? abilityId);
     button.title = ability?.description ?? '';
     button.addEventListener('click', () => useHandler(abilityId));
 
@@ -205,8 +289,8 @@ export function createHud(): HudHandle {
     const remaining = document.createElement('span');
     remaining.style.cssText =
       'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;' +
-      'font:700 15px ui-monospace,Menlo,monospace;color:#e8eef6;text-shadow:0 1px 2px #000;' +
-      'pointer-events:none;';
+      `font:700 ${layout.slotCountdownPx}px ui-monospace,Menlo,monospace;color:#e8eef6;` +
+      'text-shadow:0 1px 2px #000;pointer-events:none;';
     button.append(remaining);
 
     bar.append(button);
@@ -216,20 +300,30 @@ export function createHud(): HudHandle {
   // The weapon switch (spec 079), bottom left and out of the hotbar's way.
   // Which one is lit is read back off `stats.basicAttackId` -- the server's
   // answer -- so a refused equip simply leaves the old one lit.
+  //
+  // Not built at all on a phone (spec 141): three permanent buttons is a lot of
+  // corner for a choice made rarely, and the bag and the sheet both make it and
+  // are both one tap away. Built or not, the element is created and simply never
+  // appended when the layout says no -- the update loop below styles these
+  // buttons every frame and a conditional `weaponSlots` would put a branch in it.
   const weapons = document.createElement('div');
   weapons.style.cssText =
-    'position:absolute;left:12px;bottom:16px;display:flex;flex-direction:column;gap:4px;' +
+    `position:absolute;left:calc(${layout.edge}px + env(safe-area-inset-left));bottom:${bottom};` +
+    `display:flex;flex-direction:${layout.weaponDirection};gap:${layout.weaponGap}px;` +
     'font:11px ui-monospace,Menlo,monospace;pointer-events:auto;' +
     // Backed like the status readout: the caption is small grey text and the
     // world behind it is a bright green field, so unbacked it disappears over
-    // half the map.
-    'background:rgba(10,14,20,.72);padding:8px;border-radius:6px;';
-  root.append(weapons);
+    // half the map. Icons carry their own backing, so the compact row drops the
+    // panel and the padding with the caption.
+    (layout.weaponIconOnly ? '' : 'background:rgba(10,14,20,.72);padding:8px;border-radius:6px;');
+  if (layout.showsWeaponSwitch) root.append(weapons);
 
-  const weaponCaption = document.createElement('div');
-  weaponCaption.style.cssText = 'color:#8b97a8;letter-spacing:.08em;padding-left:2px;';
-  weaponCaption.textContent = 'WEAPON';
-  weapons.append(weaponCaption);
+  if (!layout.weaponIconOnly) {
+    const weaponCaption = document.createElement('div');
+    weaponCaption.style.cssText = 'color:#8b97a8;letter-spacing:.08em;padding-left:2px;';
+    weaponCaption.textContent = 'WEAPON';
+    weapons.append(weaponCaption);
+  }
 
   let equipHandler: (itemId: string) => void = () => undefined;
 
@@ -237,19 +331,75 @@ export function createHud(): HudHandle {
     const ability = abilityById(weapon.abilityId);
     const button = document.createElement('button');
     button.style.cssText =
-      'width:132px;padding:5px 8px;border-radius:6px;border:1px solid #33405a;background:#182130;' +
-      'color:#cfd6e0;cursor:pointer;font:inherit;text-align:left;line-height:1.4;';
-    button.textContent = weapon.name;
+      // Fixed height on a finger, because the target is the point; a floor on
+      // desktop, because a long name that wraps should push the button open
+      // rather than spill out of it.
+      `width:${layout.weapon.width}px;border-radius:6px;` +
+      `${layout.weaponIconOnly ? 'height' : 'min-height'}:${layout.weapon.height}px;` +
+      'border:1px solid #33405a;background:#182130;color:#cfd6e0;cursor:pointer;font:inherit;' +
+      `display:flex;align-items:center;gap:6px;line-height:1.4;` +
+      (layout.weaponIconOnly ? 'justify-content:center;padding:0;' : 'padding:5px 8px;');
+    // The icon is the whole button on a phone, so the name has to survive as a
+    // label rather than as text: it is what a screen reader reads out, and what
+    // the harness reports when it says which weapon is lit.
+    button.innerHTML = weaponIconSvg(weapon.abilityId, { size: layout.weaponIconPx });
+    button.setAttribute('aria-label', weapon.name);
+    // Says which weapon this button is, for the same reason a health bar says
+    // which body it belongs to: `scripts/preview-world.ts` has to find the lit
+    // one, and it used to find it by `text-align:left` -- a style, which stopped
+    // being true the moment the compact switch centred its icons. A named handle
+    // is the honest version of that, and it survives the button having no text.
+    button.dataset['weapon'] = weapon.itemId;
+    if (!layout.weaponIconOnly) {
+      const name = document.createElement('span');
+      name.textContent = weapon.name;
+      button.append(name);
+    }
     button.title = ability ? `${ability.name} -- ${ability.description}` : weapon.itemId;
     button.addEventListener('click', () => equipHandler(weapon.itemId));
     weapons.append(button);
     return { ...weapon, button };
   });
 
+  // The window buttons (spec 140), bottom right and mirroring the weapon switch.
+  // They exist because `I` and `C` are undiscoverable -- on a desktop as much as
+  // on a phone, which is why the row is drawn on both and only its size changes.
+  const systemRow = document.createElement('div');
+  systemRow.style.cssText =
+    `position:absolute;right:calc(${layout.edge}px + env(safe-area-inset-right));bottom:${bottom};` +
+    `display:flex;flex-direction:${layout.systemIconOnly ? 'row' : 'column'};` +
+    `gap:${layout.systemGap}px;font:11px ui-monospace,Menlo,monospace;pointer-events:auto;`;
+  root.append(systemRow);
+
+  let openHandler: (id: WindowId) => void = () => undefined;
+
+  const systemSlots = SYSTEM_BUTTONS.map((entry) => {
+    const button = document.createElement('button');
+    button.style.cssText =
+      `width:${layout.systemButton.width}px;height:${layout.systemButton.height}px;border-radius:6px;` +
+      'border:1px solid #33405a;background:#182130;color:#cfd6e0;cursor:pointer;font:inherit;' +
+      'display:flex;align-items:center;gap:6px;line-height:1.4;' +
+      (layout.systemIconOnly ? 'justify-content:center;padding:0;' : 'padding:5px 8px;');
+    button.innerHTML = systemIconSvg(entry.icon, { size: layout.systemIconPx });
+    // The name survives the button having no text: it is what a screen reader
+    // reads out, and what `scripts/preview-touch.ts` finds the button by.
+    button.setAttribute('aria-label', entry.name);
+    button.title = entry.name;
+    button.dataset['window'] = entry.id;
+    if (!layout.systemIconOnly) {
+      const name = document.createElement('span');
+      name.textContent = entry.name;
+      button.append(name);
+    }
+    button.addEventListener('click', () => openHandler(entry.id));
+    systemRow.append(button);
+    return { ...entry, button };
+  });
+
   const bars = new Map<number, Bar>();
-  const numbers: FloatingNumber[] = [];
-  /** How many numbers each body has been given, for lane assignment. */
-  const numberCount = new Map<number, number>();
+  /** The numbers' whole life lives in the pure field; this holds their elements. */
+  const popups = new DamagePopups();
+  const popupElements = new Map<number, HTMLElement>();
   let notice = '';
   let noticeAge = 999;
 
@@ -284,16 +434,21 @@ export function createHud(): HudHandle {
     return made;
   }
 
+  function dropPopup(id: number): void {
+    popupElements.get(id)?.remove();
+    popupElements.delete(id);
+  }
+
   function update(
     view: ClientView,
     anchors: readonly ScreenAnchor[],
     tick: number,
     corrections: number,
     targetId: number | null,
+    aiming: { readonly abilityId: string | null; readonly pending: boolean },
   ): void {
     const byId = new Map(view.entities.map((entity) => [entity.id, entity]));
     const casts = new Map(view.casts.map((cast) => [cast.entityId, cast]));
-    const anchorById = new Map(anchors.map((anchor) => [anchor.id, anchor]));
     const live = new Set<number>();
 
     for (const anchor of anchors) {
@@ -306,6 +461,12 @@ export function createHud(): HudHandle {
 
       live.add(anchor.id);
       const element = barFor(anchor.id);
+      // Says whether this bar is the local player's. Nothing in the game reads
+      // it either; it is how `scripts/preview-world.ts` avoids aiming a click at
+      // a monster its own body is standing in front of, which since spec 095 is
+      // a miss rather than a forgiven near-miss.
+      if (anchor.id === view.selfEntityId) element.root.dataset['self'] = '';
+      else delete element.root.dataset['self'];
       element.root.style.left = `${anchor.x}px`;
       element.root.style.top = `${anchor.y}px`;
 
@@ -337,35 +498,33 @@ export function createHud(): HudHandle {
       bars.delete(id);
     }
 
-    // Damage numbers ride the body they belong to until it despawns, then hold
-    // where they were rather than snapping to the origin.
-    for (let i = numbers.length - 1; i >= 0; i--) {
-      const number = numbers[i];
-      if (!number) continue;
-      number.age += 1;
-      const life = 1 - number.age / NUMBER_LIFE;
-      if (life <= 0) {
-        number.element.remove();
-        numbers.splice(i, 1);
-        continue;
-      }
-      const anchor = anchorById.get(number.entityId);
-      if (anchor) {
-        number.element.style.left = `${anchor.x + number.offsetX}px`;
-        number.element.style.top = `${anchor.y + number.offsetY - (1 - life) * NUMBER_RISE}px`;
-      }
-      number.element.style.opacity = life.toFixed(3);
+    // Damage numbers stay on the ground the blow landed on (spec 096): the
+    // field holds a world point each and re-projects it, so nothing here needs
+    // the body -- or needs it to still exist.
+    const step = popups.step(project);
+    for (const id of step.expired) dropPopup(id);
+    for (const placement of step.live) {
+      const element = popupElements.get(placement.id);
+      if (!element) continue;
+      element.style.display = placement.onScreen ? 'block' : 'none';
+      element.style.left = `${placement.left}px`;
+      element.style.top = `${placement.top}px`;
+      element.style.opacity = placement.opacity.toFixed(3);
     }
 
     noticeAge += 1;
     notices.textContent = noticeAge < 120 ? notice : '';
 
-    // Lit from the stat block, never from the last click: the server decides
-    // what is in this character's hand, and a refused equip leaves the old one
-    // lit rather than a button that lies.
-    const held = view.stats?.basicAttackId ?? BASIC_ATTACK_ID;
+    // Lit from what the server says is *worn*, never from the last click and no
+    // longer from the stat block (spec 126). Inferring the weapon from
+    // `basicAttackId` was a guess with a wrong answer in it -- every melee item
+    // in the table names the same swing, so the switch lit whichever one it
+    // happened to list first and reported "clicked Hunting Bow, lit Worn Sword".
+    // A refused equip still leaves the old one lit, because the equipment that
+    // arrives is the server's and not this client's hope.
+    const held = view.equipment.mainHand;
     for (const weapon of weaponSlots) {
-      const current = weapon.abilityId === held;
+      const current = weapon.itemId === held;
       weapon.button.style.borderColor = current ? '#ffcf6b' : '#33405a';
       weapon.button.style.background = current ? '#243044' : '#182130';
       weapon.button.style.color = current ? '#f2f6fb' : '#98a4b4';
@@ -379,6 +538,12 @@ export function createHud(): HudHandle {
       slot.button.style.borderColor = casting ? '#ffcf6b' : requested ? '#5c7ba6' : '#33405a';
       slot.button.style.opacity = affordable(view, slot.ability) ? '1' : '0.45';
 
+      // The slot being aimed, lit in the aim's own colour (spec 080), so the
+      // question on the ground and the button it came from are one thing.
+      const aimed = slot.abilityId === aiming.abilityId;
+      slot.button.style.borderColor = aimed ? AIM_HIGHLIGHT : '#33405a';
+      slot.button.style.background = aimed ? '#1d2c3d' : '#182130';
+
       // The sweep is the server's cooldown, played back (spec 065). Its *length*
       // comes from the ability table so the shade shrinks proportionally; the
       // client never decides when something is ready.
@@ -390,7 +555,7 @@ export function createHud(): HudHandle {
       const total = Math.max(
         1,
         slot.ability?.basicAttack && view.stats
-          ? attackIntervalTicks(view.stats)
+          ? view.stats.attackDelayTicks
           : (slot.ability?.cooldownTicks ?? 1),
       );
       if (left > 0) {
@@ -417,7 +582,16 @@ export function createHud(): HudHandle {
       `monsters ${monsters}   corrections ${corrections}` +
       (view.connected ? '' : '   (disconnected)') +
       `\n${targetLine(view, targetId)}` +
-      '\nright-click ground to move, a unit to attack · WASD · 1-7 abilities · Esc cancel';
+      `\n${aimLine(aiming)}`;
+
+    // The compact HUD shows the aim line and nothing else from that block, and
+    // only while there is an aim to answer -- an empty box floating over the
+    // grass would be the panel back by another name.
+    if (layout.compact) {
+      const hint = aiming.abilityId === null ? '' : aimLine(aiming);
+      aimHint.textContent = hint;
+      aimHint.style.display = hint === '' ? 'none' : 'block';
+    }
   }
 
   return {
@@ -435,6 +609,11 @@ export function createHud(): HudHandle {
             'position:absolute;transform:translate(-50%,-100%);white-space:nowrap;' +
             'font:11px ui-monospace,Menlo,monospace;padding:2px 6px;border-radius:5px;' +
             'background:rgba(10,14,20,.72);border:1px solid rgba(224,96,92,.7);';
+          // Which spawner this is, for the same reason a bar says which body it
+          // belongs to: `scripts/preview-world.ts` needs a handful of *fixed*
+          // world points on screen to measure a damage number against, and a
+          // spawner is the only thing in the overlay that never moves.
+          element.dataset['spawner'] = mark.id;
           spawnerLayer.append(element);
           spawnerMarks.set(mark.id, element);
         }
@@ -451,11 +630,14 @@ export function createHud(): HudHandle {
         spawnerMarks.delete(id);
       }
     },
-    addDamage(entityId, damage, crit) {
+    addDamage(entityId, at, damage, crit) {
       const heal = damage < 0;
       const text = (heal ? '+' : '') + Math.round(Math.abs(damage)).toString();
       const element = document.createElement('div');
-      element.style.cssText = 'position:absolute;transform:translate(-50%,-100%);';
+      // Hidden until the first `update` places it: a number is spawned from a
+      // message, which is not a frame, so until one has been drawn there is no
+      // camera to ask and the only honest position is nowhere.
+      element.style.cssText = 'position:absolute;transform:translate(-50%,-100%);display:none;';
       // The pixel font (spec 065) rather than the browser's UI face: these float
       // over a posterized, low-resolution world, and system text over it read
       // like a debug overlay that had been left switched on.
@@ -465,28 +647,37 @@ export function createHud(): HudHandle {
         outline: '#0a0d14',
       });
       root.append(element);
-      const index = numberCount.get(entityId) ?? 0;
-      numberCount.set(entityId, index + 1);
-      const lane = NUMBER_LANES[index % NUMBER_LANES.length] ?? { x: 0, y: 0 };
-      numbers.push({
-        entityId,
-        text,
-        crit,
-        heal,
-        age: 0,
-        offsetX: lane.x,
-        offsetY: lane.y,
-        element,
-      });
-      // A long fight should not grow the DOM without bound.
-      while (numbers.length > 40) numbers.shift()?.element.remove();
+      const added = popups.add(entityId, at);
+      // Stamped so one number can be followed across frames from outside, the
+      // way `data-entity` lets a bar be. `preview-world.ts` reads it to check
+      // that a number pans with the ground rather than with the camera, which
+      // is a fact only a real browser with a real camera can settle.
+      element.dataset['damageId'] = String(added.id);
+      popupElements.set(added.id, element);
+      // The field caps how many float at once; whatever it dropped to make room
+      // is an element nobody will place again.
+      for (const id of added.expired) dropPopup(id);
     },
     notice(text) {
       notice = text;
       noticeAge = 0;
     },
+    showOpenWindows(open) {
+      for (const slot of systemSlots) {
+        const on = open.includes(slot.id);
+        slot.button.style.borderColor = on ? '#ffcf6b' : '#33405a';
+        slot.button.style.background = on ? '#243044' : '#182130';
+        slot.button.style.color = on ? '#f2f6fb' : '#98a4b4';
+        // Says so out loud as well as in colour: the button is a toggle, and a
+        // screen reader has no border to look at.
+        slot.button.setAttribute('aria-pressed', String(on));
+      }
+    },
     onUse(handler) {
       useHandler = handler;
+    },
+    onOpen(handler) {
+      openHandler = handler;
     },
     onEquip(handler) {
       equipHandler = handler;
@@ -505,6 +696,52 @@ function targetLine(view: ClientView, targetId: number | null): string {
     : view.entities.find((entity) => entity.id === targetId);
   if (!target) return 'no target';
   return `target ${displayName(target)} ${Math.round(target.health)}/${Math.round(target.maxHealth)}`;
+}
+
+/**
+ * The bottom line: what the next click does (spec 080).
+ *
+ * It replaces the fixed key list, which said the same six things whatever the
+ * player was in the middle of. While a skill is aimed there is exactly one
+ * question on screen, and this is it.
+ */
+/**
+ * Whether the hint line should name gestures rather than mouse buttons.
+ *
+ * Answered once and remembered: `aimLine` runs every frame, and this is a media
+ * query about the hardware rather than about the window.
+ */
+let touchHintsCache: boolean | null = null;
+function touchHints(): boolean {
+  touchHintsCache ??= isHandheldDevice();
+  return touchHintsCache;
+}
+
+function aimLine(aiming: { readonly abilityId: string | null; readonly pending: boolean }): string {
+  const ability = aiming.abilityId === null ? null : abilityById(aiming.abilityId);
+  // A phone has no right button and no Escape key, so naming them would be
+  // instructions for a machine the player is not holding (spec 093).
+  const touch = touchHints();
+  if (!ability) {
+    return touch
+      // No key numbers to name on a phone since spec 094 -- the bar is tapped.
+      ? 'tap ground to move, a unit to attack · pinch to zoom · tap a skill to cast it'
+      : 'right-click ground to move, a unit to attack · WASD · 1-8 abilities · Esc cancel';
+  }
+  if (!aiming.pending) {
+    return touch
+      ? `${ability.name}: moving into range`
+      : `${ability.name}: moving into range · right-click to call it off`;
+  }
+  if (touch) {
+    // The unit case is the one place the two disagree, and it is worth saying
+    // out loud: on touch, tapping anywhere but a body is how you back out.
+    return aimGesture(ability) === 'unit'
+      ? `aiming ${ability.name} — tap a unit, tap the ground to cancel`
+      : `aiming ${ability.name} — tap to place`;
+  }
+  const pick = aimGesture(ability) === 'unit' ? 'left-click a unit' : 'left-click to place';
+  return `aiming ${ability.name} — ${pick}, right-click to cancel`;
 }
 
 /** A cooldown countdown: whole seconds while there are several, tenths at the end. */

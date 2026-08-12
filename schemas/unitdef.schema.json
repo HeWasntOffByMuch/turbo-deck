@@ -1,0 +1,239 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://turbo-deck.local/schemas/unitdef.schema.json",
+  "title": "<unit>.unitdef.json",
+  "description": "One unit type (spec 107): what it is made of, what it cost to generate, and the state machine that animates it. The Studio tab and the game read this same file through the same parser -- there is no separate authoring format.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "formatVersion",
+    "id",
+    "meshRef",
+    "skeletonRef",
+    "clipLibRef",
+    "provenance",
+    "import",
+    "maxTimeScale",
+    "stateMachine"
+  ],
+  "properties": {
+    "$comment": {
+      "description": "A note for whoever opens the file next. JSON has no comments and additionalProperties is false.",
+      "type": "string"
+    },
+    "formatVersion": { "type": "integer", "const": 1 },
+    "id": { "$ref": "#/definitions/identifier" },
+    "meshRef": { "$ref": "#/definitions/glbPath" },
+    "skeletonRef": { "type": "string", "minLength": 1 },
+    "clipLibRef": { "type": "string", "minLength": 1 },
+
+    "provenance": {
+      "description": "What produced this asset and what it cost. Required in full: an asset that has lost the record of what it was generated from cannot be cache-matched, cannot be reproduced, and its spend cannot be accounted for.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tripoTaskIds",
+        "modelVersion",
+        "faceLimit",
+        "referenceImageSha256",
+        "creditsSpent",
+        "generatedAt"
+      ],
+      "properties": {
+        "tripoTaskIds": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["imageToModel", "rigCheck", "rig", "retarget"],
+          "properties": {
+            "imageToModel": { "type": "string", "minLength": 1 },
+            "rigCheck": { "type": "string", "minLength": 1 },
+            "rig": {
+              "description": "Null for a unit that reused the canonical rig instead of being rigged itself.",
+              "type": ["string", "null"],
+              "minLength": 1
+            },
+            "retarget": {
+              "description": "Empty for every unit after the first: the clip library is retargeted onto the canonical skeleton once and shared. A non-empty array on a second unit of the same family is the bug this field exists to make visible.",
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "modelVersion": { "type": "string", "minLength": 1 },
+        "faceLimit": { "type": "integer", "exclusiveMinimum": 0 },
+        "referenceImageSha256": {
+          "description": "Hash of the reference image, so an identical request is a cache hit rather than another charge.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "creditsSpent": { "type": "number", "minimum": 0 },
+        "generatedAt": {
+          "description": "ISO 8601. Data recorded by the service layer, not a clock any reader consults.",
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+
+    "import": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["normals", "targetTris", "scale", "upAxis"],
+      "properties": {
+        "normals": { "type": "string", "enum": ["flat", "smooth", "asAuthored"] },
+        "targetTris": { "type": "integer", "exclusiveMinimum": 0 },
+        "scale": {
+          "description": "Applied to bring the mesh to the skeleton's canonicalHeight. Large here by design -- a generated rig arrives around 1-2 units tall and this world's bodies are ~56.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "upAxis": { "$ref": "#/definitions/axis" }
+      }
+    },
+
+    "maxTimeScale": {
+      "description": "How far a clip may be rescaled to fit a gameplay timing, in either direction. Past this it looks wrong and needs a different clip, not more stretching.",
+      "type": "number",
+      "exclusiveMinimum": 1
+    },
+
+    "stateMachine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["parameters", "states", "blendTrees", "transitions", "actionTimings"],
+      "properties": {
+        "parameters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "type"],
+            "properties": {
+              "name": { "$ref": "#/definitions/identifier" },
+              "type": { "type": "string", "enum": ["float", "int", "bool", "trigger"] }
+            }
+          }
+        },
+
+        "states": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "clipRef", "loop", "timeScale", "blendInMs", "category"],
+            "properties": {
+              "id": { "$ref": "#/definitions/identifier" },
+              "clipRef": {
+                "description": "A clip id, or a blend tree id for a state whose pose is blended from a parameter.",
+                "$ref": "#/definitions/identifier"
+              },
+              "loop": { "type": "boolean" },
+              "timeScale": {
+                "description": "Authored playback rate. Bounded by maxTimeScale in both directions, same as an action timing's derived scale.",
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "blendInMs": { "type": "number", "minimum": 0 },
+              "category": {
+                "description": "loop crossfades freely; oneshot overrides and returns; locking refuses transitions until recovery ends; terminal has no exit.",
+                "type": "string",
+                "enum": ["loop", "oneshot", "locking", "terminal"]
+              }
+            }
+          }
+        },
+
+        "blendTrees": {
+          "description": "1D only: one parameter, ascending thresholds. 2D directional blending would add a field and is not needed by a roster that walks and swings.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "parameter", "thresholds"],
+            "properties": {
+              "id": { "$ref": "#/definitions/identifier" },
+              "parameter": { "$ref": "#/definitions/identifier" },
+              "thresholds": {
+                "type": "array",
+                "minItems": 2,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["value", "clipRef"],
+                  "properties": {
+                    "value": { "type": "number" },
+                    "clipRef": { "$ref": "#/definitions/identifier" }
+                  }
+                }
+              }
+            }
+          }
+        },
+
+        "transitions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["from", "to", "condition", "durationMs", "interruptible"],
+            "properties": {
+              "from": {
+                "description": "A state or blend tree id, or '*' for any state.",
+                "type": "string",
+                "minLength": 1
+              },
+              "to": { "$ref": "#/definitions/identifier" },
+              "condition": {
+                "description": "'<parameter> <op> <value>' for float/int, a bare parameter name for bool/trigger, or 'exit' when the source state finishes.",
+                "type": "string",
+                "minLength": 1
+              },
+              "durationMs": { "type": "number", "minimum": 0 },
+              "interruptible": { "type": "boolean" }
+            }
+          }
+        },
+
+        "actionTimings": {
+          "description": "THE SOURCE OF TRUTH FOR TIMING. The clip is rescaled to fit these; these are never derived from the clip.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["actionId", "windupMs", "activeMs", "recoveryMs", "clipRef", "eventMap"],
+            "properties": {
+              "actionId": { "$ref": "#/definitions/identifier" },
+              "windupMs": { "type": "number", "minimum": 0 },
+              "activeMs": { "type": "number", "minimum": 0 },
+              "recoveryMs": { "type": "number", "minimum": 0 },
+              "clipRef": { "$ref": "#/definitions/identifier" },
+              "eventMap": {
+                "description": "Phase name -> the clip event that marks it. Values must be events the clip actually has.",
+                "type": "object",
+                "additionalProperties": { "$ref": "#/definitions/identifier" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "definitions": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-zA-Z][a-zA-Z0-9_.-]*$"
+    },
+    "glbPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\.glb$"
+    },
+    "axis": {
+      "type": "string",
+      "enum": ["+X", "-X", "+Y", "-Y", "+Z", "-Z"]
+    }
+  }
+}

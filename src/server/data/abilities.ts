@@ -15,20 +15,57 @@ import { SERVER_TICK_RATE } from '../config.js';
 
 export type AbilityKind = 'melee' | 'projectile' | 'ground' | 'self' | 'channel';
 
-/** How the client is expected to supply a target when it asks to cast. */
-export type AbilityTargeting = 'direction' | 'point' | 'self';
+/**
+ * How the client is expected to supply a target when it asks to cast.
+ *
+ * One field, and it names both halves of the question (spec 080): what the
+ * player has to supply before the ability may be asked for, and what the blow
+ * resolves against once it is. They are the same thing, so they are one field.
+ *
+ * - `direction` -- a point on the ground; the cone or the lane runs from the
+ *   caster toward it, and reaches as far as it reaches.
+ * - `point` -- a point on the ground, and the cast is refused past its range.
+ * - `unit` -- a *body*, named by id. Single-target, gated at that body's edge,
+ *   and refused outright when nothing was named.
+ * - `self` -- nothing; it lands on the caster whatever came with the request.
+ */
+export type AbilityTargeting = 'direction' | 'point' | 'unit' | 'self';
+
+/**
+ * What a shot draws as (spec 087).
+ *
+ * A picture and nothing more, exactly as the arc became one in spec 079:
+ * nothing under `src/server/sim/` reads this, and two shots with the same
+ * numbers and different looks behave identically. It rides no wire either -- a
+ * projectile entity's `typeId` is already its ability id, and this table is
+ * shared code the client imports, so the look is a lookup rather than a field.
+ */
+export type ProjectileLook = 'orb' | 'arrow' | 'shuriken';
 
 export interface ProjectileSpec {
-  /** World units per second. */
+  /** World units per second, before `PROJECTILE_SPEED_SCALE` (spec 088). */
   readonly speed: number;
   /**
-   * Peak height above the straight line, in world units. 0 is a flat bolt; a
-   * positive value lobs, which is what makes an arcing shot readable as one.
+   * How much of the optimal arc this weapon throws, 0..1 (spec 089).
+   *
+   * `1` leaves at the range-maximising 45 degrees when thrown its full
+   * {@link AbilityDefinition.range}, and proportionally shallower at anything
+   * nearer -- near enough flat at point-blank. `0` is a flat bolt.
+   *
+   * A fraction rather than a height, because a height means nothing without a
+   * distance beside it: the 110-unit arc this replaced was a 45-degree shot at
+   * maximum range and an 84-degree mortar at four paces, from one number.
    */
-  readonly arcHeight: number;
+  readonly arc: number;
   readonly radius: number;
-  /** Ticks before it expires in flight, so a missed shot cannot live forever. */
+  /**
+   * The distance a shot may cover before it expires, written as ticks at the
+   * speed above. Slowing every shot by a global scale lengthens this to match,
+   * so a row's *reach* is what it says whatever the scale is (spec 087).
+   */
   readonly lifetimeTicks: number;
+  /** What it draws as. Absent is an orb -- the look every shot had before. */
+  readonly look?: ProjectileLook;
 }
 
 export interface AbilityDefinition {
@@ -40,6 +77,13 @@ export interface AbilityDefinition {
    * Ticks between committing and the effect landing. The caster is rooted and
    * the cast can be cancelled at any point inside it -- this window *is* the
    * commitment the old parry system used to read.
+   *
+   * Deliberately long since spec 094. Every number here used to be a fifth of a
+   * second or so, which is a delay before a blow rather than a decision anybody
+   * can act inside: a player has to *see* the wind-up, decide, and step out of
+   * it, and on a real connection most of 200ms is the round trip. Every basic
+   * attack still sits under `BASE_ATTACK_DELAY_TICKS`, so how often a body can
+   * swing stays the stat's answer (spec 088) rather than this column's.
    */
   readonly windupTicks: number;
   readonly cooldownTicks: number;
@@ -58,7 +102,7 @@ export interface AbilityDefinition {
   readonly healing?: number;
   /**
    * The weapon swing (spec 070). Its cooldown is stamped from the caster's own
-   * `attackSpeed` rather than from {@link cooldownTicks}, which is what makes
+   * `attackDelayTicks` rather than from {@link cooldownTicks}, which is what makes
    * that stat mean anything; the table's number is the fallback for a caster
    * whose stats say nothing. Exactly one ability per unit should carry it.
    */
@@ -76,7 +120,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     name: 'Slash',
     kind: 'melee',
     targeting: 'direction',
-    windupTicks: seconds(0.2),
+    windupTicks: seconds(0.5),
     cooldownTicks: seconds(0.6),
     cost: 0,
     range: 70,
@@ -90,7 +134,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     name: 'Heavy Blow',
     kind: 'melee',
     targeting: 'direction',
-    windupTicks: seconds(0.65),
+    windupTicks: seconds(1.1),
     cooldownTicks: seconds(3),
     cost: 2,
     range: 90,
@@ -105,14 +149,16 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // Point-targeted, so `startCast` refuses a shot at something out of range
     // rather than launching an arrow that was never going to reach.
     targeting: 'point',
-    windupTicks: seconds(0.35),
+    windupTicks: seconds(0.8),
     cooldownTicks: seconds(1),
     cost: 0,
     range: 420,
     damage: 12,
     // Lobbed, which is what makes it unblockable: an arcing shot flies over
-    // whatever is between the archer and the body it named (spec 079).
-    projectile: { speed: 900, arcHeight: 55, radius: 7, lifetimeTicks: seconds(2) },
+    // whatever is between the archer and the body it named (spec 079). A full
+    // arc, so a shot at the edge of its range leaves at 45 degrees and one at a
+    // body's length leaves almost flat (spec 089).
+    projectile: { speed: 900, arc: 1, radius: 7, lifetimeTicks: seconds(2), look: 'arrow' },
     basicAttack: true,
     description: 'An arrow, lobbed over whatever is in the way. Lands where the target is, not where it was.',
   },
@@ -121,13 +167,13 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     name: 'Throwing Star',
     kind: 'projectile',
     targeting: 'point',
-    windupTicks: seconds(0.2),
+    windupTicks: seconds(0.45),
     cooldownTicks: seconds(0.7),
     cost: 0,
     range: 300,
     damage: 8,
     // Flat, and therefore stoppable by anything that steps into the line.
-    projectile: { speed: 1150, arcHeight: 0, radius: 6, lifetimeTicks: seconds(1.5) },
+    projectile: { speed: 1150, arc: 0, radius: 6, lifetimeTicks: seconds(1.5), look: 'shuriken' },
     basicAttack: true,
     description: 'A fast flat star. Whatever wanders into the line takes it instead.',
   },
@@ -136,12 +182,12 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     name: 'Arcane Bolt',
     kind: 'projectile',
     targeting: 'direction',
-    windupTicks: seconds(0.3),
+    windupTicks: seconds(0.6),
     cooldownTicks: seconds(0.8),
     cost: 3,
     range: 700,
     damage: 18,
-    projectile: { speed: 620, arcHeight: 0, radius: 8, lifetimeTicks: seconds(2) },
+    projectile: { speed: 620, arc: 0, radius: 8, lifetimeTicks: seconds(2) },
     description: 'A flat, fast bolt that travels until it hits something.',
   },
   {
@@ -149,21 +195,42 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     name: 'Firepot',
     kind: 'projectile',
     targeting: 'point',
-    windupTicks: seconds(0.5),
+    windupTicks: seconds(1.0),
     cooldownTicks: seconds(4),
     cost: 5,
     range: 520,
     damage: 30,
     radius: 90,
-    projectile: { speed: 300, arcHeight: 130, radius: 12, lifetimeTicks: seconds(4) },
+    // A full arc: at its 520-unit range that peaks at 130, which is exactly the
+    // constant it replaces -- the tell that the constant was always a 45-degree
+    // shot with the distance filed off (spec 089).
+    projectile: { speed: 300, arc: 1, radius: 12, lifetimeTicks: seconds(4) },
     description: 'A slow lobbed pot that bursts where it lands.',
+  },
+  {
+    id: 'bolt.seek',
+    name: 'Seeking Bolt',
+    kind: 'projectile',
+    // The one row that exists to exercise a named cast at a range worth walking
+    // (spec 080). Everything under it was already built: a projectile carrying
+    // a target id tracks its mark and is disjointed by its death (spec 079).
+    targeting: 'unit',
+    windupTicks: seconds(0.9),
+    cooldownTicks: seconds(2.5),
+    cost: 4,
+    range: 480,
+    damage: 26,
+    // A third of the optimal arc: it skims rather than lobs, peaking at 42 over
+    // its full 480 rather than the 120 a full arc would give it.
+    projectile: { speed: 700, arc: 0.35, radius: 9, lifetimeTicks: seconds(3) },
+    description: 'A bolt that follows the body it was aimed at, until it arrives or burns out.',
   },
   {
     id: 'ground.quake',
     name: 'Quake',
     kind: 'ground',
     targeting: 'point',
-    windupTicks: seconds(0.9),
+    windupTicks: seconds(1.4),
     cooldownTicks: seconds(8),
     cost: 7,
     range: 420,
@@ -176,7 +243,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     name: 'Mend',
     kind: 'self',
     targeting: 'self',
-    windupTicks: seconds(0.8),
+    windupTicks: seconds(1.2),
     cooldownTicks: seconds(10),
     cost: 6,
     range: 0,
@@ -189,7 +256,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     name: 'Drain',
     kind: 'channel',
     targeting: 'direction',
-    windupTicks: seconds(0.25),
+    windupTicks: seconds(0.5),
     cooldownTicks: seconds(6),
     cost: 4,
     range: 220,
@@ -224,6 +291,7 @@ export const STARTING_ABILITIES: readonly string[] = [
   'melee.heavy',
   'bolt.arcane',
   'bolt.lob',
+  'bolt.seek',
   'ground.quake',
   'self.mend',
   'channel.drain',

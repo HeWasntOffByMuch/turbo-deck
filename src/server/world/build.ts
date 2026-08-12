@@ -20,7 +20,10 @@
 
 import { createWorldColliders } from '../../sim/collision.js';
 import { ARENA_OBSTACLES, WORLD_BOUNDS } from '../../sim/constants.js';
-import type { WorldColliders } from '../../sim/types.js';
+import { warmNavGrids } from '../../sim/pathfinding.js';
+import type { Rect, WorldColliders } from '../../sim/types.js';
+import { SERVER_PLAYER_RADIUS } from '../config.js';
+import { ALL_MONSTERS } from '../data/monsters.js';
 import { createArenaWorld } from '../../terrain/world.js';
 import { vegetationColliders, worldVegetation, type Prop } from '../../terrain/vegetation.js';
 import type { TerrainWorld } from '../../terrain/types.js';
@@ -28,6 +31,35 @@ import { loadMap, type MapDocument } from '../../terrain/index.js';
 import { terrainSamplerFrom, type TerrainSampler } from './terrain.js';
 import { buildMapIndex, mapIdOf, type MapIndex } from './map-index.js';
 import { spawnPointsFrom, type SpawnPoint } from './spawners.js';
+
+/**
+ * Every body radius that will ask for a route: the player, and one per monster
+ * in the table. Deduplicated, because three of the four monsters are within a
+ * couple of units of each other and a grid is per radius.
+ */
+const ROUTING_RADII: readonly number[] = Array.from(
+  new Set<number>([SERVER_PLAYER_RADIUS, ...ALL_MONSTERS.map((m) => m.radius)]),
+);
+
+/**
+ * Build the nav grids this world is going to need (spec 130).
+ *
+ * Called by whoever is *starting a game* -- `src/server/index.ts` and the Play
+ * tab -- and not by the builds below, which is the part worth explaining.
+ * Sampling the ground for a grid is around a second on a real map, and left to
+ * the first caller that wants a route it lands inside a tick, the first time a
+ * monster's line to a player is blocked. So it wants doing at boot. But it must
+ * not be folded into `buildWorld`: a world gets built by tests, by the bake
+ * scripts and by the balance harness, none of which route anything, and folding
+ * it in took a generated build from ~390ms to ~860ms to warm caches none of
+ * them were going to read.
+ *
+ * The radii live here rather than at the call sites so the two cannot warm
+ * different sets.
+ */
+export function warmRouting(world: BuiltWorld): void {
+  warmNavGrids(world.colliders, world.sampler, ROUTING_RADII);
+}
 
 export interface BuiltWorld {
   /** The number this was built from, and the number the welcome announces. */
@@ -119,6 +151,40 @@ export function buildWorldFromDocument(doc: MapDocument): BuiltWorld {
     terrain: loaded.world,
     props,
     sampler: terrainSamplerFrom(loaded.world),
-    colliders: createWorldColliders(ARENA_OBSTACLES, vegetationColliders(props), WORLD_BOUNDS),
+    colliders: createWorldColliders(ARENA_OBSTACLES, vegetationColliders(props), worldBoundsOf(doc)),
   };
+}
+
+/**
+ * The rectangle the sim will not let a unit leave: the union of the layers'
+ * declared bounds (spec 083).
+ *
+ * It used to be `WORLD_BOUNDS`, a constant compiled in from `PLAY_WIDTH +
+ * WORLD_BLEED`. That was true only for as long as every map was the same size
+ * as the generated one -- bake a wider map and players stopped dead at the old
+ * constant, on ground they could see continuing past their feet. The wall
+ * belongs to the world, so it is read from the world.
+ *
+ * Deliberately the *declared* bounds rather than the chunks in hand: this runs
+ * on a streaming client too, where the chunks in hand are whatever has arrived,
+ * and a wall derived from those would move as the map loaded. A layer declares
+ * its extent in `MapInfo` before any chunk does, so both ends agree from the
+ * first frame.
+ *
+ * Falls back to `WORLD_BOUNDS` for a document with no layers, which only a
+ * fixture ever is.
+ */
+export function worldBoundsOf(doc: MapDocument): Rect {
+  let minX = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxZ = -Infinity;
+  for (const layer of doc.layers) {
+    minX = Math.min(minX, layer.bounds.minX);
+    minZ = Math.min(minZ, layer.bounds.minZ);
+    maxX = Math.max(maxX, layer.bounds.maxX);
+    maxZ = Math.max(maxZ, layer.bounds.maxZ);
+  }
+  if (minX === Infinity) return WORLD_BOUNDS;
+  return { x: minX, y: minZ, w: maxX - minX, h: maxZ - minZ };
 }

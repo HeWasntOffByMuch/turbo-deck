@@ -64,8 +64,8 @@ function unit(rng: Rng): [number, Rng] {
  */
 export function slopeAt(store: MapChunkStore, layer: LayerInfo, x: number, z: number): number {
   const cell = store.cellSize;
-  const col = Math.floor((x - layer.bounds.minX) / cell);
-  const row = Math.floor((z - layer.bounds.minZ) / cell);
+  const col = Math.floor((x - layer.origin.x) / cell);
+  const row = Math.floor((z - layer.origin.z) / cell);
   const h00 = store.cornerHeight(layer.id, col, row);
   const h10 = store.cornerHeight(layer.id, col + 1, row);
   const h01 = store.cornerHeight(layer.id, col, row + 1);
@@ -81,8 +81,8 @@ export function terrainNormalAt(
   z: number,
 ): readonly [number, number, number] {
   const cell = store.cellSize;
-  const col = Math.floor((x - layer.bounds.minX) / cell);
-  const row = Math.floor((z - layer.bounds.minZ) / cell);
+  const col = Math.floor((x - layer.origin.x) / cell);
+  const row = Math.floor((z - layer.origin.z) / cell);
   const h00 = store.cornerHeight(layer.id, col, row);
   const h10 = store.cornerHeight(layer.id, col + 1, row);
   const h01 = store.cornerHeight(layer.id, col, row + 1);
@@ -181,8 +181,8 @@ export function scatterStroke(
       const x = step.x + Math.cos(angle) * distance;
       const z = step.z + Math.sin(angle) * distance;
 
-      const col = Math.floor((x - layer.bounds.minX) / store.cellSize);
-      const row = Math.floor((z - layer.bounds.minZ) / store.cellSize);
+      const col = Math.floor((x - layer.origin.x) / store.cellSize);
+      const row = Math.floor((z - layer.origin.z) / store.cellSize);
       if (!store.cellSolid(layerId, col, row)) continue;
       if (slopeAt(store, layer, x, z) > settings.maxSlope) continue;
 

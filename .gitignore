@@ -6,3 +6,8 @@ dist/
 # Disposable agent working files. Agent definitions (.claude/agents/) and
 # cached architecture summaries (.claude/notes/) are tracked on purpose.
 .claude/scratch/
+
+# The unit authoring service's working state (spec 108): the job queue, the
+# credit ledger and downloaded .glb files, none of which belong in git. What
+# does get committed is what Export writes into assets/units/.
+.studio/

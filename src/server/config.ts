@@ -99,7 +99,7 @@ export const INTEREST_CHUNK_RADIUS = 8;
  * 9: the stat block names the body's auto-attack, so a client knows what its
  * right-click reaches with rather than assuming a sword (spec 079).
  */
-export const PROTOCOL_VERSION = 9;
+export const PROTOCOL_VERSION = 11;
 
 /**
  * How far from a map chunk a player may be and still be sent it (spec 072).

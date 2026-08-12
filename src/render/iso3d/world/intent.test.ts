@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MOVE_EAST, MOVE_NORTH, MOVE_SOUTH, MOVE_WEST } from '../../../ui/input/actions.js';
 import { ARRIVE_EPS, moveIntent, RoutePlanner, steerTo, type IntentInput } from './intent.js';
 import { createWorldColliders } from '../../../sim/collision.js';
 import { PATH_RETRY_TICKS, WORLD_BOUNDS } from '../../../sim/constants.js';
@@ -25,39 +26,37 @@ describe('moveIntent', () => {
   });
 
   it('walks the cardinals at unit speed', () => {
-    expect(intent({ held: new Set(['KeyW']) }).moveY).toBe(-1);
-    expect(intent({ held: new Set(['KeyS']) }).moveY).toBe(1);
-    expect(intent({ held: new Set(['KeyA']) }).moveX).toBe(-1);
-    expect(intent({ held: new Set(['KeyD']) }).moveX).toBe(1);
+    expect(intent({ held: new Set([MOVE_NORTH]) }).moveY).toBe(-1);
+    expect(intent({ held: new Set([MOVE_SOUTH]) }).moveY).toBe(1);
+    expect(intent({ held: new Set([MOVE_WEST]) }).moveX).toBe(-1);
+    expect(intent({ held: new Set([MOVE_EAST]) }).moveX).toBe(1);
   });
 
   it('normalises the diagonal, so W+D is not a sprint', () => {
-    const result = intent({ held: new Set(['KeyW', 'KeyD']) });
+    const result = intent({ held: new Set([MOVE_NORTH, MOVE_EAST]) });
     expect(Math.hypot(result.moveX, result.moveY)).toBeCloseTo(1, 9);
     expect(result.moveX).toBeCloseTo(Math.SQRT1_2, 9);
     expect(result.moveY).toBeCloseTo(-Math.SQRT1_2, 9);
   });
 
   it('cancels opposed keys', () => {
-    const result = intent({ held: new Set(['KeyW', 'KeyS', 'KeyA', 'KeyD']) });
+    const result = intent({ held: new Set([MOVE_NORTH, MOVE_SOUTH, MOVE_WEST, MOVE_EAST]) });
     expect(result.moveX).toBe(0);
     expect(result.moveY).toBe(0);
   });
 
-  it('treats the arrows as the same keys', () => {
-    expect(intent({ held: new Set(['ArrowUp', 'ArrowRight']) })).toEqual(
-      intent({ held: new Set(['KeyW', 'KeyD']) }),
-    );
-  });
+  // "The arrows walk too" used to be a second set of entries in this module's
+  // table. It is now the secondary binding of these four actions, asserted in
+  // `src/ui/input/input-map.test.ts` where a player can actually change it.
 
-  it('ignores keys that are not movement', () => {
-    const result = intent({ held: new Set(['ShiftLeft', 'Digit1', 'KeyD']) });
+  it('ignores held actions that are not movement', () => {
+    const result = intent({ held: new Set(['skillbar.1', 'ui.character', MOVE_EAST]) });
     expect(result.moveX).toBe(1);
   });
 
   it('faces where it is going', () => {
-    expect(intent({ held: new Set(['KeyA']) }).facing).toBeCloseTo(Math.PI, 9);
-    expect(intent({ held: new Set(['KeyS']) }).facing).toBeCloseTo(Math.PI / 2, 9);
+    expect(intent({ held: new Set([MOVE_WEST]) }).facing).toBeCloseTo(Math.PI, 9);
+    expect(intent({ held: new Set([MOVE_SOUTH]) }).facing).toBeCloseTo(Math.PI / 2, 9);
   });
 
   it('keeps its heading when it is standing still', () => {
@@ -90,14 +89,14 @@ describe('a standing move order', () => {
    * standing order first reads exactly like a stuck key.
    */
   it('lets held keys override the order', () => {
-    const result = intent({ held: new Set(['KeyW']), destination: { x: 0, y: 900 } });
+    const result = intent({ held: new Set([MOVE_NORTH]), destination: { x: 0, y: 900 } });
     expect(result.moveY).toBe(-1);
     expect(result.arrived).toBe(false);
   });
 
   it('does not report arrival while keys are steering', () => {
     const result = intent({
-      held: new Set(['KeyW']),
+      held: new Set([MOVE_NORTH]),
       self: ORIGIN,
       destination: { x: 0, y: 0 },
     });
@@ -123,7 +122,7 @@ describe('while casting', () => {
    * of what the very same input frame is about to cause.
    */
   it('walks anyway when a key is held, because that withdraws from the cast', () => {
-    const result = intent({ held: new Set(['KeyS']), castAim: { x: 100, y: 0 } });
+    const result = intent({ held: new Set([MOVE_SOUTH]), castAim: { x: 100, y: 0 } });
     expect(result.moveY).toBeCloseTo(1, 6);
     expect(result.facing).toBeCloseTo(Math.PI / 2, 6);
   });
@@ -196,6 +195,37 @@ describe('RoutePlanner', () => {
     expect(planner.searches).toBe(1);
     // It aims off the straight line, which is the only way past.
     expect(next?.y).not.toBeCloseTo(450, 0);
+  });
+
+  /**
+   * Spec 130. The same wall made of rock rather than of collider -- which is
+   * what a tier drawn in the map editor is. Nothing is in the way, so the
+   * planner used to hand back null and let the player march at the cliff.
+   */
+  it('routes around a ridge, which is not a collider at all', () => {
+    const ridge = {
+      colliders: createWorldColliders([], [], WORLD_BOUNDS),
+      radius: 16,
+      ground: { heightAt: (x: number, y: number) => (x >= 740 && x <= 780 && y >= 250 && y <= 650 ? 200 : 0) },
+    };
+    const planner = new RoutePlanner();
+    const next = planner.next({ x: 600, y: 450 }, { x: 900, y: 450 }, ridge, 0);
+
+    expect(next).not.toBeNull();
+    expect(planner.searches).toBe(1);
+    expect(next?.y).not.toBeCloseTo(450, 0);
+  });
+
+  it('still plans nothing when the ground between is walkable', () => {
+    const rolling = {
+      colliders: createWorldColliders([], [], WORLD_BOUNDS),
+      radius: 16,
+      // A gentle rise: 20 units over 300, nothing a body notices.
+      ground: { heightAt: (x: number) => x / 15 },
+    };
+    const planner = new RoutePlanner();
+    expect(planner.next({ x: 600, y: 450 }, { x: 900, y: 450 }, rolling, 0)).toBeNull();
+    expect(planner.searches).toBe(0);
   });
 
   /** The point of the cache: one search, then many ticks of following it. */
@@ -328,5 +358,116 @@ describe('following a route', () => {
     expect(result.arrived).toBe(true);
     expect(result.moveX).toBe(0);
     expect(result.moveY).toBe(0);
+  });
+});
+
+/**
+ * A click that produces no movement vector withdraws from nothing (spec 090).
+ *
+ * The reported bug, and the player's own diagnosis of it: click to the side
+ * mid-wind-up, watch the body turn, and the blow lands anyway. Spec 079's rule
+ * is that *asking to move* withdraws -- and `asksToMove` on the server is
+ * `hypot(moveX, moveY) > 1e-6`, so a turn is not asking. `steerTo` returns null
+ * inside `ARRIVE_EPS`, so a click close to the body produces no vector at all,
+ * and what the player sees turning is the body coming round into its own aim
+ * (the `castAim` branch below), not a response to the click.
+ *
+ * The order was unmistakable; whether it happened to yield a vector this tick is
+ * an implementation detail no player can see.
+ */
+describe('a move order that yields no vector (spec 090)', () => {
+  const self = { x: 600, y: 450 };
+  const castAim = { x: 900, y: 450 };
+
+  it('asks for nothing when the click lands inside the arrival radius', () => {
+    const near = moveIntent({
+      held: new Set(),
+      self,
+      destination: { x: self.x + ARRIVE_EPS * 0.5, y: self.y },
+      route: null,
+      facing: 0,
+      castAim,
+    });
+    // Nothing to withdraw with: the server's `asksToMove` reads exactly this.
+    expect(Math.hypot(near.moveX, near.moveY)).toBe(0);
+    // And the heading asked for is the *aim*, not the click -- which is the turn
+    // the player sees and reads as the click being obeyed.
+    expect(near.facing).toBeCloseTo(Math.atan2(castAim.y - self.y, castAim.x - self.x), 9);
+  });
+
+  it('does ask to move when the click is far enough to steer to', () => {
+    const far = moveIntent({
+      held: new Set(),
+      self,
+      destination: { x: self.x, y: self.y + ARRIVE_EPS * 8 },
+      route: null,
+      facing: 0,
+      castAim,
+    });
+    expect(Math.hypot(far.moveX, far.moveY)).toBeGreaterThan(1e-6);
+    // Which is what makes the walk, and the withdrawal, happen at all.
+    expect(far.facing).toBeCloseTo(Math.PI / 2, 9);
+  });
+});
+
+/**
+ * Facing the mark while waiting to swing at it (spec 090).
+ *
+ * `autoAttack` asks for nothing while the swing is on cooldown and the target is
+ * in reach -- no cast, no chase -- so without this the body kept whatever
+ * heading it had until the blow committed, and paid for the turn *after* the
+ * wait instead of during it. At spec 088's 1.2s delay that was most of two
+ * seconds from the click to the shot, nearly all of it dead.
+ */
+describe('a body faces what it was told to attack (spec 090)', () => {
+  const self = { x: 600, y: 450 };
+  /** Directly behind: the worst case, and the one that was reported. */
+  const behind = { x: self.x - 300, y: self.y };
+
+  function intentWith(over: Partial<IntentInput>): ReturnType<typeof moveIntent> {
+    return moveIntent({
+      held: new Set(),
+      self,
+      destination: null,
+      route: null,
+      facing: 0,
+      castAim: null,
+      targetAim: null,
+      ...over,
+    });
+  }
+
+  it('turns toward a mark it is waiting to hit, rather than holding its heading', () => {
+    const waiting = intentWith({ targetAim: behind });
+    // Still asking for nothing -- a wait is not a walk, and asking to move here
+    // would withdraw from the very blow being queued up (spec 079).
+    expect(Math.hypot(waiting.moveX, waiting.moveY)).toBe(0);
+    // But pointing at the mark, so the wind-up starts already aligned.
+    expect(waiting.facing).toBeCloseTo(Math.PI, 9);
+    // Which is the whole change: without a mark it keeps facing where it was.
+    expect(intentWith({}).facing).toBe(0);
+  });
+
+  it('lets a committed blow outrank the mark', () => {
+    // A cast's aim was captured at the commit and is the authority on where the
+    // body points -- a mark that has since walked must not drag the blow round.
+    const aim = { x: self.x, y: self.y + 300 };
+    const casting = intentWith({ castAim: aim, targetAim: behind });
+    expect(casting.facing).toBeCloseTo(Math.PI / 2, 9);
+  });
+
+  it('lets a walk outrank the mark, so withdrawing still works', () => {
+    const walking = intentWith({
+      held: new Set([MOVE_EAST]),
+      targetAim: behind,
+    });
+    // Asking to move is how a blow is withdrawn from; a mark cannot veto it.
+    expect(walking.moveX).toBeCloseTo(1, 9);
+    expect(walking.facing).toBeCloseTo(0, 9);
+  });
+
+  it('keeps its heading when it is standing on top of the mark', () => {
+    const onTop = intentWith({ facing: 1.25, targetAim: { x: self.x, y: self.y } });
+    expect(onTop.facing).toBe(1.25);
   });
 });

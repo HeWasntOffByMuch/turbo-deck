@@ -15,8 +15,24 @@ export interface Character {
 
 // Speeds are half the original HoN-tuned values (spec 028): the faster pace read
 // as too twitchy for the isometric view, so both walk and turn rates were halved.
+//
+// The first entry is not just "archetype zero": `src/server/player/stats.ts`
+// reads it as the base every character's effective move speed and turn rate is
+// derived from, so it is the player's movement, and the play view now draws it
+// as a cow (spec 081). A short animal on four-beat legs reads as sluggish at the
+// Warden's 180 deg/s -- it looks like it is deciding rather than turning -- so the
+// pivot is quick and the walk a touch faster to match the longer stride.
+//
+// `turnRate` here is a *base*, and that is the whole of why it moved (spec 139).
+// `stats.ts` adds `TURN_RATE_PER_AGILITY` per point of dexterity and a fresh
+// character has five, so the rate the sim has actually been turning players at
+// was 690 deg/s -- a reversal in 261ms -- and 540 was a number nobody played at.
+// 390 is the base that makes a fresh character turn at the 540 this table has
+// claimed since spec 081. The per-dexterity term is untouched on purpose: it is
+// how an agile character is expressed, so what moves is where the ladder starts
+// and not its slope.
 export const CHARACTERS: readonly Character[] = [
-  { name: 'Warden', moveSpeed: 147.5, turnRate: 180 },
+  { name: 'Cow', moveSpeed: 155, turnRate: 390 },
   { name: 'Zephyr', moveSpeed: 137.5, turnRate: 450 },
 ];
 

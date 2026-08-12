@@ -1,0 +1,283 @@
+/**
+ * A trade over the wire (spec 132): two real clients, one real server.
+ *
+ * The rules are hammered by a property test in `player/trade.test.ts`. What is
+ * only true end to end is everything *around* the swap -- that both sides are
+ * told the same thing, that a disconnect and a walk cancel it, that a player
+ * cannot be in two at once, and that the swap really does write both bags.
+ *
+ * The dupe checks are the ones worth reading. Each of them is a way to get an
+ * item into two places, and each is checked by counting what exists afterwards
+ * rather than by trusting a refusal message.
+ */
+
+import { describe, expect, it } from 'vitest';
+import { LoopbackTransport } from '../net/transport-loop.js';
+import { GameServer } from '../server.js';
+import { GameClient } from './game-client.js';
+import { TradeStageValue } from '../net/protocol.js';
+import { TRADE_RANGE } from '../player/trades.js';
+import type { Inventory } from '../state/types.js';
+
+const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+interface Harness {
+  readonly server: GameServer;
+  readonly ana: GameClient;
+  readonly ben: GameClient;
+  /** Walk Ana east until the two of them are further apart than `apart`. */
+  readonly walkApart: (apart: number) => Promise<number>;
+}
+
+async function harness(): Promise<Harness> {
+  const transport = new LoopbackTransport();
+  const server = new GameServer({ seed: 5, transport });
+  // No wandering monsters: this test is about two players and a table.
+  server.liveConfig.set('spawnRateMultiplier', 0);
+  transport.onConnection((channel) => server.accept(channel));
+
+  const ana = new GameClient(transport.connect(), { playerId: 'ana', displayName: 'Ana' });
+  const ben = new GameClient(transport.connect(), { playerId: 'ben', displayName: 'Ben' });
+  const welcomes = Promise.all([ana.connect(), ben.connect()]);
+  await settle();
+  await welcomes;
+  await settle();
+
+  /**
+   * Walked rather than teleported, and that is not fussiness.
+   *
+   * A tick mirrors every entity's authoritative position back into its record,
+   * so writing a record by hand and then ticking puts both players straight back
+   * where the sim has them -- which made the range check look broken when it was
+   * the test that was. Sending real input is also the only version of this that
+   * exercises the thing a player actually does.
+   */
+  const walkApart = async (apart: number): Promise<number> => {
+    for (let tick = 0; tick < 240; tick += 1) {
+      ana.sendInput({ moveX: 1, moveY: 0, facing: 0, buttons: 0 });
+      server.tick();
+      await settle();
+      const here = server.playerManager.get('ana')?.record.position;
+      const there = server.playerManager.get('ben')?.record.position;
+      if (!here || !there) break;
+      const gap = Math.hypot(here.x - there.x, here.y - there.y);
+      if (gap > apart) return gap;
+    }
+    return 0;
+  };
+  return { server, ana, ben, walkApart };
+}
+
+function entityOf(server: GameServer, playerId: string): number {
+  const session = server.playerManager.get(playerId);
+  if (!session) throw new Error(`no session for ${playerId}`);
+  return session.entityId;
+}
+
+function bagOf(server: GameServer, playerId: string): Inventory {
+  return server.playerManager.get(playerId)?.record.inventory ?? [];
+}
+
+function countOf(inventory: Inventory, defId: string): number {
+  return inventory.reduce((total, stack) => total + (stack?.defId === defId ? stack.count : 0), 0);
+}
+
+/** Everything both players hold, so a duplicate has nowhere to hide. */
+function totalOf(server: GameServer, defId: string): number {
+  return countOf(bagOf(server, 'ana'), defId) + countOf(bagOf(server, 'ben'), defId);
+}
+
+/**
+ * How many of `defId` each side holds.
+ *
+ * Both characters start from the same kit, so every count here is a *delta*
+ * rather than an absolute -- Ben owns a bow before Ana gives him one, and an
+ * assertion that he ends with exactly one would be asserting that the trade did
+ * nothing.
+ */
+function heldBy(server: GameServer, defId: string): { ana: number; ben: number } {
+  return { ana: countOf(bagOf(server, 'ana'), defId), ben: countOf(bagOf(server, 'ben'), defId) };
+}
+
+function slotOf(inventory: Inventory, defId: string): number {
+  return inventory.findIndex((stack) => stack?.defId === defId);
+}
+
+/** Invite and accept, so both sides are looking at an open table. */
+async function open(h: Harness): Promise<void> {
+  h.ana.inviteToTrade(entityOf(h.server, 'ben'));
+  await settle();
+  h.ben.respondToTrade(true);
+  await settle();
+}
+
+describe('a trade over the wire', () => {
+  it('tells both sides about an invitation, each from their own side', async () => {
+    const h = await harness();
+    h.ana.inviteToTrade(entityOf(h.server, 'ben'));
+    await settle();
+
+    expect(h.ana.view().trade?.stage).toBe(TradeStageValue.Offered);
+    expect(h.ana.view().trade?.you.playerId).toBe('ana');
+    expect(h.ana.view().trade?.them.displayName).toBe('Ben');
+    // The same trade, seen from the other chair.
+    expect(h.ben.view().trade?.id).toBe(h.ana.view().trade?.id);
+    expect(h.ben.view().trade?.you.playerId).toBe('ben');
+    expect(h.ben.view().trade?.them.displayName).toBe('Ana');
+  });
+
+  it('resolves an offer to items, so the other side can read it', async () => {
+    const h = await harness();
+    await open(h);
+    const index = slotOf(bagOf(h.server, 'ana'), 'bow.hunting');
+    h.ana.offerInTrade([{ index, count: 1 }], 5);
+    await settle();
+
+    // Ben cannot see into Ana's bag, so a slot index would mean nothing to him.
+    expect(h.ben.view().trade?.them.offer).toEqual([{ defId: 'bow.hunting', count: 1 }]);
+    expect(h.ben.view().trade?.them.coins).toBe(5);
+    expect(h.ana.view().trade?.you.offer).toEqual([{ defId: 'bow.hunting', count: 1 }]);
+  });
+
+  it('swaps the goods and the coins when both sides accept', async () => {
+    const h = await harness();
+    await open(h);
+    const bows = heldBy(h.server, 'bow.hunting');
+    const stars = heldBy(h.server, 'stars.weighted');
+    const anaCoins = h.server.playerManager.get('ana')?.record.coins ?? 0;
+    const benCoins = h.server.playerManager.get('ben')?.record.coins ?? 0;
+
+    h.ana.offerInTrade([{ index: slotOf(bagOf(h.server, 'ana'), 'bow.hunting'), count: 1 }], 10);
+    await settle();
+    h.ben.offerInTrade([{ index: slotOf(bagOf(h.server, 'ben'), 'stars.weighted'), count: 1 }], 0);
+    await settle();
+
+    const revision = h.ana.view().trade?.revision ?? -1;
+    h.ana.acceptTrade(revision);
+    await settle();
+    h.ben.acceptTrade(revision);
+    await settle();
+
+    expect(heldBy(h.server, 'bow.hunting')).toEqual({ ana: bows.ana - 1, ben: bows.ben + 1 });
+    expect(heldBy(h.server, 'stars.weighted')).toEqual({ ana: stars.ana + 1, ben: stars.ben - 1 });
+    expect(h.server.playerManager.get('ana')?.record.coins).toBe(anaCoins - 10);
+    expect(h.server.playerManager.get('ben')?.record.coins).toBe(benCoins + 10);
+    // Nothing was created. The whole point.
+    expect(totalOf(h.server, 'bow.hunting')).toBe(bows.ana + bows.ben);
+    expect(totalOf(h.server, 'stars.weighted')).toBe(stars.ana + stars.ben);
+
+    // Both were told, and both were told the bag they now have.
+    expect(h.ana.endedTrade?.stage).toBe(TradeStageValue.Done);
+    expect(h.ben.endedTrade?.stage).toBe(TradeStageValue.Done);
+    expect(h.ana.view().trade).toBeNull();
+    expect(countOf(h.ana.view().inventory, 'stars.weighted')).toBe(stars.ana + 1);
+    expect(countOf(h.ben.view().inventory, 'bow.hunting')).toBe(bows.ben + 1);
+  });
+
+  /**
+   * The scam, end to end: Ben accepts a bow, Ana takes it off the table, and
+   * the exchange must not run on the acceptance Ben gave to a different offer.
+   */
+  it('throws both acceptances away when an offer changes', async () => {
+    const h = await harness();
+    await open(h);
+    const index = slotOf(bagOf(h.server, 'ana'), 'bow.hunting');
+    const bows = heldBy(h.server, 'bow.hunting');
+    h.ana.offerInTrade([{ index, count: 1 }], 0);
+    await settle();
+
+    const revision = h.ana.view().trade?.revision ?? -1;
+    h.ben.acceptTrade(revision);
+    await settle();
+    expect(h.ben.view().trade?.you.accepted).toBe(true);
+
+    h.ana.offerInTrade([], 0);
+    await settle();
+    expect(h.ben.view().trade?.you.accepted).toBe(false);
+
+    // Ana accepting at the *stale* revision is refused outright.
+    h.ana.acceptTrade(revision);
+    await settle();
+    expect(h.ana.view().trade?.stage).toBe(TradeStageValue.Open);
+    expect(heldBy(h.server, 'bow.hunting')).toEqual(bows);
+  });
+
+  it('lets nobody be in two trades at once', async () => {
+    const h = await harness();
+    await open(h);
+    const id = h.ana.view().trade?.id;
+    // Asking again while one is open changes nothing about the one that is open.
+    h.ana.inviteToTrade(entityOf(h.server, 'ben'));
+    await settle();
+    expect(h.ana.view().trade?.id).toBe(id);
+    expect(h.ana.view().trade?.stage).toBe(TradeStageValue.Open);
+  });
+
+  it('cancels when either side says so, and moves nothing', async () => {
+    const h = await harness();
+    await open(h);
+    const before = totalOf(h.server, 'bow.hunting');
+    h.ana.offerInTrade([{ index: slotOf(bagOf(h.server, 'ana'), 'bow.hunting'), count: 1 }], 0);
+    await settle();
+
+    h.ben.cancelTrade();
+    await settle();
+    expect(h.ana.view().trade).toBeNull();
+    expect(h.ana.endedTrade?.stage).toBe(TradeStageValue.Cancelled);
+    expect(totalOf(h.server, 'bow.hunting')).toBe(before);
+  });
+
+  it('cancels when they walk apart, and says so', async () => {
+    const h = await harness();
+    await open(h);
+    const gap = await h.walkApart(TRADE_RANGE);
+    expect(gap).toBeGreaterThan(TRADE_RANGE);
+
+    expect(h.ana.view().trade).toBeNull();
+    expect(h.ana.endedTrade?.reason).toContain('too far apart');
+    expect(h.ben.endedTrade?.reason).toContain('too far apart');
+  });
+
+  it('is still open while they are still close', async () => {
+    const h = await harness();
+    await open(h);
+    // The other half of the same rule: a sweep that cancelled everything would
+    // pass the test above and be useless.
+    for (let tick = 0; tick < 20; tick += 1) {
+      h.server.tick();
+      await settle();
+    }
+    expect(h.ana.view().trade?.stage).toBe(TradeStageValue.Open);
+  });
+
+  /**
+   * The two-window dupe: offer something, then sell it to a vendor, then have
+   * the trade go through. The offer is resolved against the bag at *swap* time,
+   * so the sale wins and the trade is refused whole.
+   */
+  it('refuses a trade whose goods were sold out from under it', async () => {
+    const h = await harness();
+    await open(h);
+    const index = slotOf(bagOf(h.server, 'ana'), 'bow.hunting');
+    const bows = heldBy(h.server, 'bow.hunting');
+
+    h.ana.offerInTrade([{ index, count: 1 }], 0);
+    await settle();
+    const revision = h.ana.view().trade?.revision ?? -1;
+    h.ben.acceptTrade(revision);
+    await settle();
+
+    // Sold between the two acceptances. The trade is still "confirmed" as far
+    // as the table is concerned; the bag disagrees.
+    await h.server.playerManager.sellItem('ana', 'vendor.quartermaster', index, 1);
+    h.ana.acceptTrade(revision);
+    await settle();
+
+    expect(h.ana.view().trade).toBeNull();
+    expect(h.ana.endedTrade?.stage).toBe(TradeStageValue.Cancelled);
+    // Ben got nothing: the bow was Ana's to sell and she sold it.
+    expect(heldBy(h.server, 'bow.hunting')).toEqual({ ana: bows.ana - 1, ben: bows.ben });
+    // One left the world through the shop; none were made.
+    expect(totalOf(h.server, 'bow.hunting')).toBe(bows.ana + bows.ben - 1);
+  });
+});

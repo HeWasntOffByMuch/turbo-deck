@@ -1,0 +1,370 @@
+/**
+ * Talking to the studio service from the browser (spec 109).
+ *
+ * This is the first thing in the client that speaks HTTP to the game server at
+ * all -- the Play tab runs a server *in the tab* over a loopback transport, and
+ * `npm run dev` and `npm run server` have never needed each other before. So the
+ * failure modes deserve more care than a `catch` that says "failed to fetch":
+ *
+ *  - the server is not running,
+ *  - it is running and no token has been pasted,
+ *  - a token has been pasted and it is wrong or expired,
+ *
+ * are three different problems with three different fixes, and one message for
+ * all three tells you none of them. {@link StudioApiError} carries the kind so
+ * the panel can say which.
+ *
+ * The token is the admin JWT the server prints at boot, kept in `localStorage`
+ * exactly as the admin console already does it. It is never put in a URL: a
+ * token in a query string ends up in access logs and in `Referer` headers, and
+ * this one authorises spending money.
+ */
+
+import type { CostProjection } from '../../../server/studio/pricing.js';
+import type { Ceilings, CreditSummary } from '../../../server/studio/ledger.js';
+import type { JobArtifacts, JobStatus, Stage, StepRecord } from '../../../server/studio/types.js';
+import type { Clip, FacingReport, Issue, StateMachine } from '../../../units/index.js';
+
+const TOKEN_KEY = 'turbo-deck.studio.token';
+
+export type ApiErrorKind = 'offline' | 'unauthorized' | 'refused' | 'server';
+
+export class StudioApiError extends Error {
+  constructor(
+    message: string,
+    readonly kind: ApiErrorKind,
+    readonly status: number | null = null,
+  ) {
+    super(message);
+    this.name = 'StudioApiError';
+  }
+
+  /** What to actually do about it, for the banner. */
+  get remedy(): string {
+    switch (this.kind) {
+      case 'offline':
+        return 'The authoring server is not answering. Run `npm run server` in another terminal and reload.';
+      case 'unauthorized':
+        return 'Paste the admin token the server printed at boot into the field above.';
+      case 'refused':
+        return this.message;
+      case 'server':
+        return `The server returned an error: ${this.message}`;
+    }
+  }
+}
+
+export interface JobView {
+  readonly id: string;
+  readonly unitId: string;
+  readonly skeletonId: string;
+  readonly establishesRigFamily: boolean;
+  readonly status: JobStatus;
+  readonly stage: Stage | null;
+  readonly steps: readonly StepRecord[];
+  readonly creditsSpent: number;
+  readonly createdAtMs: number;
+  readonly updatedAtMs: number;
+  readonly message: string | null;
+  readonly cacheKey: string;
+  readonly referenceImageSha256: string;
+  readonly params: {
+    readonly modelVersion: string;
+    readonly faceLimit: number;
+    readonly clipIntents: readonly string[];
+  };
+  readonly artifacts: JobArtifacts;
+}
+
+export interface StudioConfigView {
+  readonly keyConfigured: boolean;
+  readonly modelVersion: string;
+  readonly defaultFaceLimit: number;
+  /** How generated meshes are oriented; see the server's `GenerationParams`. */
+  readonly orientation: 'default' | 'align_image';
+  /** Which auto-rig model, which decides both the skeleton and the clip list. */
+  readonly rigModelVersion: string;
+  readonly rigSpec: string;
+  /**
+   * Every animation preset the configured rig model can retarget.
+   *
+   * Asked for rather than compiled in. The two rig models have different
+   * libraries -- eleven presets against a hundred and one -- so a list baked
+   * into this tab is a list that silently describes whichever model was
+   * configured on the day it was written. Empty means the server has not
+   * enumerated this model, and the picker has to say so rather than imply the
+   * roster is short.
+   */
+  readonly clipPresets: readonly string[];
+  readonly ceilings: Ceilings;
+  readonly prices: Record<string, number>;
+  readonly maxTimeScale: number;
+  readonly webhook: boolean;
+}
+
+export interface EstimateResult {
+  readonly cached: boolean;
+  readonly job?: JobView;
+  readonly projection: CostProjection;
+  readonly confirmationToken?: string;
+  readonly expiresAtMs?: number;
+  readonly credits?: CreditSummary;
+}
+
+export interface ExportResultView {
+  readonly unitDir: string;
+  readonly written: readonly string[];
+  readonly pending: readonly string[];
+  readonly issues: readonly Issue[];
+  readonly ok: boolean;
+}
+
+export interface GenerationRequest {
+  readonly unitId: string;
+  readonly skeletonId: string;
+  readonly referenceImageSha256: string;
+  readonly faceLimit: number;
+  readonly clipIntents: readonly string[];
+  readonly establishesRigFamily: boolean;
+}
+
+export function loadToken(): string {
+  try {
+    return localStorage.getItem(TOKEN_KEY) ?? '';
+  } catch {
+    // Private browsing, or storage disabled. The field still works for the
+    // session; it just will not survive a reload.
+    return '';
+  }
+}
+
+export function saveToken(token: string): void {
+  try {
+    if (token === '') localStorage.removeItem(TOKEN_KEY);
+    else localStorage.setItem(TOKEN_KEY, token);
+  } catch {
+    /* nothing to do; the in-memory token still works */
+  }
+}
+
+export class StudioApi {
+  private token: string;
+
+  constructor(private readonly base = '/api/studio') {
+    this.token = loadToken();
+  }
+
+  setToken(token: string): void {
+    this.token = token.trim();
+    saveToken(this.token);
+  }
+
+  get hasToken(): boolean {
+    return this.token !== '';
+  }
+
+  private async call(path: string, init: RequestInit = {}): Promise<unknown> {
+    if (!this.hasToken) {
+      throw new StudioApiError('no admin token', 'unauthorized');
+    }
+    let response: Response;
+    try {
+      response = await fetch(`${this.base}${path}`, {
+        ...init,
+        headers: { Authorization: `Bearer ${this.token}`, ...(init.headers ?? {}) },
+      });
+    } catch {
+      // A rejected fetch here means the socket never opened: either nothing is
+      // listening, or the dev proxy has nowhere to forward to. Both are "start
+      // the server", and neither is anything the user typed wrong.
+      throw new StudioApiError('the authoring server did not answer', 'offline');
+    }
+
+    const text = await response.text();
+    let body: unknown = null;
+    let parsed = true;
+    try {
+      body = text === '' ? null : (JSON.parse(text) as unknown);
+    } catch {
+      parsed = false;
+    }
+
+    if (response.ok) return body ?? {};
+
+    /**
+     * Every failure the studio API produces carries a JSON `error` string --
+     * `sendJson` is the only way anything in `routes.ts` answers, and the
+     * router's own catch-all wraps a thrown error the same way. So a failure
+     * *without* one did not come from the studio API at all: it is a dev
+     * server's SPA fallback, a proxy error page, or `vite preview` answering an
+     * unknown path with an empty 500.
+     *
+     * That distinction is worth making because the two have completely
+     * different fixes. "The server returned an error" sends a reader looking for
+     * a bug in code that never ran; "start `npm run server`" is the actual
+     * remedy, and it is what this case gets.
+     */
+    const message = parsed && body !== null ? (body as { error?: string }).error : undefined;
+    if (message === undefined) {
+      throw new StudioApiError(
+        `HTTP ${response.status} with no studio error in it, so the request did not reach the authoring server`,
+        'offline',
+        response.status,
+      );
+    }
+
+    if (response.status === 401) throw new StudioApiError(message, 'unauthorized', 401);
+    // 4xx that is not an auth problem is the server declining on purpose -- a
+    // spent token, a ceiling, a job in the wrong state. Its own words are the
+    // best message there is, so they are passed through untouched.
+    if (response.status < 500) throw new StudioApiError(message, 'refused', response.status);
+    throw new StudioApiError(message, 'server', response.status);
+  }
+
+  private json(path: string, body: unknown): Promise<unknown> {
+    return this.call(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  config(): Promise<StudioConfigView> {
+    return this.call('/config') as Promise<StudioConfigView>;
+  }
+
+  credits(): Promise<CreditSummary> {
+    return this.call('/credits') as Promise<CreditSummary>;
+  }
+
+  async jobs(): Promise<readonly JobView[]> {
+    const body = (await this.call('/jobs')) as { jobs?: JobView[] };
+    return body.jobs ?? [];
+  }
+
+  uploadImage(bytes: ArrayBuffer, filename: string, contentType: string): Promise<{ sha256: string; bytes: number }> {
+    return this.call(`/images?filename=${encodeURIComponent(filename)}`, {
+      method: 'POST',
+      headers: { 'content-type': contentType },
+      body: bytes,
+    }) as Promise<{ sha256: string; bytes: number }>;
+  }
+
+  estimate(request: GenerationRequest): Promise<EstimateResult> {
+    return this.json('/estimate', request) as Promise<EstimateResult>;
+  }
+
+  /** The second half of the two-call spend path; the token comes from `estimate`. */
+  createJob(request: GenerationRequest, confirmationToken: string): Promise<{ cached: boolean; job: JobView }> {
+    return this.json('/jobs', { ...request, confirmationToken }) as Promise<{ cached: boolean; job: JobView }>;
+  }
+
+  /** Carries a blocked job on. Refused for anything that is not blocked. */
+  resume(jobId: string): Promise<JobView> {
+    return this.call(`/jobs/${encodeURIComponent(jobId)}/resume`, { method: 'POST' }) as Promise<JobView>;
+  }
+
+  /**
+   * Prices what is left of a failed job. Refused for anything not failed.
+   *
+   * The projection is of the *remainder*, not of the job: a retarget that died
+   * on its third clip is not going to re-buy the mesh and the rig.
+   */
+  retryEstimate(jobId: string): Promise<EstimateResult> {
+    return this.call(`/jobs/${encodeURIComponent(jobId)}/retry/estimate`, { method: 'POST' }) as Promise<EstimateResult>;
+  }
+
+  /** The second half of the retry path; the token comes from `retryEstimate`. */
+  retry(jobId: string, confirmationToken: string): Promise<JobView> {
+    return this.json(`/jobs/${encodeURIComponent(jobId)}/retry`, { confirmationToken }) as Promise<JobView>;
+  }
+
+  /**
+   * Hands a rig family's clip library back, so the next unit re-establishes it
+   * (spec 114).
+   *
+   * Free — and therefore no confirmation token. What it changes is the price of
+   * the *next* generation, which `estimate` quotes when it is asked.
+   */
+  async releaseFamily(skeletonId: string): Promise<readonly JobView[]> {
+    const body = (await this.call(`/families/${encodeURIComponent(skeletonId)}/release`, {
+      method: 'POST',
+    })) as { released?: JobView[] };
+    return body.released ?? [];
+  }
+
+  cancel(jobId: string): Promise<JobView> {
+    return this.call(`/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }) as Promise<JobView>;
+  }
+
+  /**
+   * What the unit's own bytes say about which way it faces (spec 116).
+   *
+   * Free and read-only: the server opens files it already has. Measured there
+   * rather than here even though `facing.ts` is pure and would run in the tab,
+   * because the artifacts are on the server's disk and pulling four `.glb`s
+   * across to answer a yes/no question is a lot of megabytes for a sentence.
+   */
+  async facing(jobId: string): Promise<FacingReport> {
+    const body = (await this.call(`/jobs/${encodeURIComponent(jobId)}/facing`)) as { report: FacingReport };
+    return body.report;
+  }
+
+  /**
+   * A job's `.glb`, as an object URL the loader can be handed.
+   *
+   * Fetched here rather than pointed at, because three's `GLTFLoader` issues a
+   * plain request with no headers of its own -- and the artifact route is behind
+   * the admin token like everything else that reads from a paid job. So the
+   * bytes come through the authenticated client and become a blob the loader can
+   * treat as an ordinary URL.
+   *
+   * The caller owns the URL and must revoke it. An object URL lives as long as
+   * the document unless somebody says otherwise, so a preview panel that swapped
+   * units all afternoon would hold every mesh it had ever shown.
+   */
+  async artifactUrl(jobId: string, filename: string): Promise<string> {
+    if (!this.hasToken) throw new StudioApiError('no admin token', 'unauthorized');
+    const path = `/jobs/${encodeURIComponent(jobId)}/artifacts/${encodeURIComponent(filename)}`;
+    let response: Response;
+    try {
+      response = await fetch(`${this.base}${path}`, { headers: { Authorization: `Bearer ${this.token}` } });
+    } catch {
+      throw new StudioApiError('the authoring server did not answer', 'offline');
+    }
+    if (!response.ok) {
+      throw new StudioApiError(`could not read ${filename} (HTTP ${response.status})`, 'refused', response.status);
+    }
+    return URL.createObjectURL(await response.blob());
+  }
+
+  /** Writes an authored document back to disk, validated server-side first. */
+  async saveDocument(path: string, doc: unknown): Promise<ExportResultView & { path: string }> {
+    const body = (await this.call(`/documents?path=${encodeURIComponent(path)}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ doc }),
+    })) as { ok: boolean; path: string; issues: readonly Issue[] };
+    return { ...body, written: [], pending: [], unitDir: '' };
+  }
+
+  /**
+   * Stages a job into `assets/units/`.
+   *
+   * `clips` and `stateMachine` come from the preview panel when the job is the
+   * one on screen. Without them the server writes the `.glb` files and no
+   * unitdef -- deliberately, since it will not invent a clip duration or a state
+   * machine, and a document built on either would validate and then be wrong.
+   */
+  exportJob(
+    jobId: string,
+    options: {
+      skeletonRef?: string;
+      clipLibId?: string;
+      clips?: readonly Clip[];
+      stateMachine?: StateMachine;
+    } = {},
+  ): Promise<ExportResultView> {
+    return this.json('/export', { jobId, ...options }) as Promise<ExportResultView>;
+  }
+}

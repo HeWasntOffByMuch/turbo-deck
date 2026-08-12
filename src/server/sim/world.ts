@@ -23,8 +23,7 @@
  */
 
 import { Rng } from '../../shared/prng.js';
-import { segmentClear } from '../../sim/collision.js';
-import { findPath, navGridFor } from '../../sim/pathfinding.js';
+import { findPath, navGridFor, pathClear } from '../../sim/pathfinding.js';
 import { PATH_REPLAN_TICKS, PATH_RETRY_TICKS, PATH_WAYPOINT_EPS } from '../../sim/constants.js';
 import type { Vec2, WorldColliders } from '../../sim/types.js';
 import type { LiveConfig } from '../config.js';
@@ -38,7 +37,6 @@ import type { ZoneManager } from '../world/zone-manager.js';
 import { abilityById } from '../data/abilities.js';
 import {
   advanceCast,
-  arcHeightAt,
   applyDamage,
   cancelCast,
   projectileHits,
@@ -46,6 +44,7 @@ import {
   type CastAttempt,
   type ProjectileSpawn,
 } from './abilities.js';
+import { shotHeightAt, SHOT_IMPACT_HEIGHT } from './ballistics.js';
 import { resolveMovement, type MovementContext } from './movement.js';
 import { regenerated } from './resource.js';
 import {
@@ -93,8 +92,7 @@ function blankEntity(id: number): ServerEntity {
       turnRate: 0,
       attackDamage: 0,
       attackRange: 0,
-      attackCooldownTicks: 1,
-      attackSpeed: 1,
+      attackDelayTicks: 1,
       armor: 0,
       spellPower: 1,
       critChance: 0,
@@ -261,7 +259,10 @@ export function step(
   let rng = state.rng;
 
   const inputByEntity = new Map<number, ServerInput>();
-  for (const input of inputs) inputByEntity.set(input.entityId, input);
+  for (const input of inputs) {
+    const held = inputByEntity.get(input.entityId);
+    inputByEntity.set(input.entityId, held ? mergeInputs(held, input) : input);
+  }
 
   const movement: MovementContext = {
     world: context.world,
@@ -282,6 +283,10 @@ export function step(
     const current = working.get(entity.id) ?? entity;
     if (current.health <= 0) {
       working.set(current.id, expireActivity(current, tick, ActivityValue.Dead));
+      // A corpse neither walks nor swings, but a request one made still has to
+      // be answered (spec 080), so it goes to the cast pass to be refused there
+      // rather than being dropped here without a word.
+      if (inputByEntity.get(current.id)?.castAbilityId) casters.push(current.id);
       continue;
     }
     if (!isSimulated(current)) continue;
@@ -396,18 +401,63 @@ export function step(
 
   for (const casterId of casters) {
     const caster = working.get(casterId);
-    if (!caster || caster.health <= 0) continue;
     const intent = inputByEntity.get(casterId) ?? monsterIntentCache.get(casterId) ?? null;
+    if (!caster || caster.health <= 0) {
+      // A corpse does not swing -- but it still answers (spec 080). The client
+      // pairs the n-th reply with the n-th request, so a request dropped here
+      // without a word skews that pairing for every answer after it. This is the
+      // rejection `startCast` would have given, from the one place that knows
+      // the request was thrown away.
+      if (intent?.castAbilityId) {
+        events.push({
+          kind: 'castRejected',
+          entityId: casterId,
+          abilityId: intent.castAbilityId,
+          reason: 'dead',
+        });
+      }
+      continue;
+    }
 
     // A cancel is honoured before anything else this tick, so releasing the key
     // on the last tick of a wind-up still calls the cast off.
-    if (intent?.cancelCast) {
+    //
+    // And it outranks a commit asked for on the same tick (spec 092). One input
+    // can carry both -- `mergeInputs` folds a whole batch of client frames into
+    // one, and `cancelCast` is or-ed across it -- and the two readings are not
+    // symmetric: swallowing the cancel lands a blow the player asked not to
+    // throw, while swallowing the commit costs a press. So the withdrawal wins,
+    // and the request is *answered* rather than dropped, because the client
+    // pairs the n-th reply with the n-th request (spec 080) and a request thrown
+    // away in silence skews every answer after it.
+    //
+    // `server.ts` never builds such an input -- it delivers the two in arrival
+    // order, a tick apart, which is the only place that knows which the player
+    // asked for first. This is the rule for everyone who calls `step` directly.
+    //
+    // Asking to *walk* is the same withdrawal (spec 079) and gets the same
+    // answer (spec 094). The movement pass above has already taken any cast off
+    // this body, which is exactly what hid the gap: by the time the cast pass
+    // runs there is nothing left to withdraw from, so a commit riding that input
+    // sailed through and put a fresh wind-up on a body that had asked, on that
+    // very tick, to be somewhere else. It survived only until the next input
+    // carrying a vector called it off -- and when none followed, the blow landed.
+    const withdrawing = intent?.cancelCast === true || asksToMove(intent);
+    if (intent && withdrawing) {
       const cancelled = cancelCast(caster, tick, CastEndReason.Cancelled);
       if (cancelled.cancelled) {
         working.set(casterId, cancelled.entity);
         events.push(...cancelled.events);
-        continue;
       }
+      if (intent.castAbilityId) {
+        events.push({
+          kind: 'castRejected',
+          entityId: casterId,
+          abilityId: intent.castAbilityId,
+          reason: 'withdrawn',
+        });
+      }
+      if (cancelled.cancelled || intent.castAbilityId) continue;
     }
 
     // A new commit, if one was asked for and nothing is in progress.
@@ -504,9 +554,17 @@ export function step(
     const dirY = toGo > 1e-6 ? (aimY - entity.position.y) / toGo : Math.sin(entity.facing);
     const x = entity.position.x + dirX * stride;
     const y = entity.position.y + dirY * stride;
+    // The chord from where it was loosed to where it is aimed, plus the arc it
+    // left with (spec 089). Terrain is read at the *aim* and nowhere along the
+    // way: sampling it under the shot made the ground steer something that had
+    // already left the bow, so an arrow crossing a dip dived into the dip.
+    // A tracked mark running uphill still moves this end, which is why it is
+    // re-read each tick rather than stamped beside `originZ`.
+    const targetZ = context.terrain.heightAt(aimX, aimY) + SHOT_IMPACT_HEIGHT;
+    const z = shotHeightAt(progress, flight.originZ, targetZ, flight.arcHeight);
     const moved: ServerEntity = {
       ...entity,
-      position: { x, y, z: context.terrain.heightAt(x, y) + arcHeightAt(progress, flight.arcHeight) },
+      position: { x, y, z },
       facing: toGo > 1e-6 ? Math.atan2(dirY, dirX) : entity.facing,
       projectile: { ...flight, targetX: aimX, targetY: aimY, totalDistance, travelled },
     };
@@ -623,7 +681,43 @@ export function step(
  * -- `moveIntent`, `monsterIntent`, the bots -- emits either a unit vector or an
  * exact zero, so anything with length at all is somebody asking to go somewhere.
  */
-function asksToMove(intent: ServerInput | null): boolean {
+/**
+ * Two inputs for one body in one tick, as one input (spec 090).
+ *
+ * `step` takes a *list*, and it used to keep only the last input per entity.
+ * That is right for the continuous fields -- where a body is heading, where it
+ * claims to be -- and silently wrong for the rest, because some of them are
+ * **edges**: `cancelCast` is true on exactly the frame the key went down. A
+ * withdrawal that shared a tick with any later input disappeared, and the blow
+ * the player had called off landed anyway.
+ *
+ * Today's `server.ts` dequeues one input per connection per tick, so this cannot
+ * fire from a live session -- but that invariant lives in the caller and was
+ * never in this function's contract, and the bots and the tests both call `step`
+ * directly. An edge that can go missing on a rule about who called us is worth
+ * closing rather than documenting.
+ */
+export function mergeInputs(older: ServerInput, newer: ServerInput): ServerInput {
+  return {
+    // The newer frame wins everything continuous: heading, aim, claim, seq.
+    ...newer,
+    // Edges survive. Asking to call a blow off is not undone by the next frame
+    // failing to ask again.
+    cancelCast: older.cancelCast || newer.cancelCast,
+    // Only one cast may begin in a tick, so the later request stands -- but a
+    // frame that asks for nothing must not erase one that asked for something.
+    ...(newer.castAbilityId
+      ? {}
+      : {
+          castAbilityId: older.castAbilityId,
+          castTargetX: older.castTargetX,
+          castTargetY: older.castTargetY,
+          castTargetEntityId: older.castTargetEntityId,
+        }),
+  };
+}
+
+export function asksToMove(intent: Pick<ServerInput, 'moveX' | 'moveY'> | null): boolean {
   if (!intent) return false;
   return Math.hypot(intent.moveX, intent.moveY) > 1e-6;
 }
@@ -829,7 +923,11 @@ function routeToward(
   const from: Vec2 = { x: monster.position.x, y: monster.position.y };
   const to: Vec2 = { x: goal.x, y: goal.y };
 
-  if (segmentClear(from, to, monster.radius, context.world)) {
+  // The ground is part of "nothing is between us" (spec 130): a cliff face is
+  // not a collider, so the collider test alone sent a monster striding at a
+  // seventy-unit wall without ever asking for a route.
+  const grid = navGridFor(monster.radius, context.world, context.terrain);
+  if (pathClear(grid, from, to)) {
     return { direction: unit(to.x - from.x, to.y - from.y), entity: forgetPath(monster) };
   }
 
@@ -851,7 +949,6 @@ function routeToward(
 
   let entity = monster;
   if (exhausted || goalMoved || tick >= monster.repathAtTick) {
-    const grid = navGridFor(monster.radius, context.world);
     const path = findPath(grid, from, to);
     entity = {
       ...monster,

@@ -1,0 +1,12 @@
+{
+  "features": [
+    { "kind": "rolling", "amplitude": 46 },
+    { "kind": "plateau", "x": 3900, "z": 400, "radius": 620, "edge": 280, "height": 180, "terraceStep": 26, "terraceStrength": 0.85, "rockyAbove": 0.6 },
+    { "kind": "basin", "x": 3500, "z": 1600, "radius": 700, "edge": 320, "depth": 130 },
+    { "kind": "ridge", "from": [4200, -1200], "to": [4400, 900], "width": 460, "height": 240, "terraceStep": 26, "terraceStrength": 0.7 },
+    { "kind": "path", "points": [[2800, 700], [3300, 620], [3850, 900], [4200, 1500]], "width": 60, "depth": 8 }
+  ],
+  "elevation": 0,
+  "terrace": { "step": 26, "strength": 0.8 },
+  "vegetation": { "density": 1 }
+}

@@ -18,9 +18,37 @@ import { DEFAULT_SCATTER } from './scatter.js';
  */
 
 /** What left-drag does. */
-export type EditorMode = 'terrain' | 'scatter' | 'fence' | 'marker' | 'erase';
+export type EditorMode = 'terrain' | 'scatter' | 'fence' | 'marker' | 'erase' | 'part' | 'rock';
 
-export const EDITOR_MODES: readonly EditorMode[] = ['terrain', 'scatter', 'fence', 'marker', 'erase'];
+export const EDITOR_MODES: readonly EditorMode[] = [
+  'terrain',
+  'scatter',
+  'fence',
+  'marker',
+  'erase',
+  'part',
+  'rock',
+];
+
+/** What the part mode's drag does (spec 084). */
+export type PartTool = 'add' | 'remove';
+
+export const PART_TOOLS: readonly PartTool[] = ['add', 'remove'];
+
+/** What the rock mode's drag does (spec 123). */
+export type RockTool = 'add' | 'remove' | 'stair' | 'detail';
+
+export const ROCK_TOOLS: readonly RockTool[] = ['add', 'remove', 'stair', 'detail'];
+
+/**
+ * The `rockLayer` value meaning "start a new tier".
+ *
+ * A formation is a stack of tiers and each tier is its own layer, so the choice
+ * a drag needs is "extend the one I am working on" or "begin the next one up".
+ * Empty rather than a sentinel id, so the panel's dropdown can show it as the
+ * first entry without inventing a layer that does not exist.
+ */
+export const NEW_ROCK_TIER = '';
 
 /** Ring colour per mode and tool, so the cursor says what is about to happen. */
 export const MODE_COLORS: Record<EditorMode, number> = {
@@ -29,6 +57,22 @@ export const MODE_COLORS: Record<EditorMode, number> = {
   fence: 0xd8a878,
   marker: 0xd0d0e8,
   erase: 0xe08f8f,
+  part: 0x9fb8e8,
+  rock: 0x9aa4b0,
+};
+export const PART_TOOL_COLORS: Record<PartTool, number> = {
+  add: 0x9fb8e8,
+  remove: 0xe08f8f,
+};
+/** Grey for building a tier, red for taking one back -- the eraser's own red. */
+export const ROCK_TOOL_COLORS: Record<RockTool, number> = {
+  add: 0x9aa4b0,
+  remove: 0xe08f8f,
+  // The tread band's own warm dirt, so the cursor says which of the two the
+  // drag is about to leave behind.
+  stair: 0xc8a06a,
+  // Moss green: the pass that puts grass and bushes on a tier.
+  detail: 0x8fc07a,
 };
 export const TOOL_COLORS: Record<TerrainTool, number> = {
   raise: 0x8fe08f,
@@ -72,6 +116,43 @@ export interface EditorSettings {
   // Nav
   showNav: boolean;
   walkSlope: number;
+  // Parts (spec 084)
+  partTool: PartTool;
+  /** Which of `maps/recipes/` the add tool bakes. */
+  recipe: string;
+  partSeed: number;
+  /** Left blank to be named after the recipe, as `grow-map.ts` does. */
+  partId: string;
+  /** Which existing part the "remove named" button deletes. */
+  removePartId: string;
+  // Rock (spec 123)
+  rockTool: RockTool;
+  /**
+   * How far this tier stands above whatever is already under it.
+   *
+   * Relative rather than an absolute world Y, because that is what makes a
+   * stack build itself: the top is taken from the *highest* ground the
+   * footprint covers, and `heightAt` already counts tiers already drawn. So
+   * dragging a smaller rectangle on top of a tier raises the next one by this
+   * much again, without anybody doing arithmetic.
+   */
+  rockHeight: number;
+  /** Which tier a drag extends. `NEW_ROCK_TIER` starts the next one up. */
+  rockLayer: string;
+  /**
+   * How hard the detail pass chews a formation's outline (spec 125).
+   *
+   * 0 leaves the rectangle exactly as it was drawn.
+   */
+  rockErosion: number;
+  /**
+   * The seed the detail pass runs from.
+   *
+   * A spinner rather than a button that re-rolls internally, so what a
+   * formation looks like is a fact about `(formation, seed)` rather than about
+   * how many times somebody has clicked.
+   */
+  rockDetailSeed: number;
 }
 
 export function createEditorSettings(): EditorSettings {
@@ -96,12 +177,28 @@ export function createEditorSettings(): EditorSettings {
     showArena: true,
     showNav: false,
     walkSlope: DEFAULT_WALK_SLOPE,
+    partTool: 'add',
+    recipe: '',
+    partSeed: 1,
+    partId: '',
+    removePartId: '',
+    rockTool: 'add',
+    // Comfortably past MAX_STEP_HEIGHT (24), so a tier drawn at the default is
+    // a cliff rather than a slope somebody strolls up, and a little over one
+    // body height so it reads as a storey.
+    rockHeight: 70,
+    rockLayer: NEW_ROCK_TIER,
+    rockErosion: 0.5,
+    rockDetailSeed: 1,
   };
 }
 
 /** The colour the cursor takes for the armed tool. */
 export function cursorColor(settings: EditorSettings): number {
-  return settings.mode === 'terrain' ? TOOL_COLORS[settings.tool] : MODE_COLORS[settings.mode];
+  if (settings.mode === 'terrain') return TOOL_COLORS[settings.tool];
+  if (settings.mode === 'part') return PART_TOOL_COLORS[settings.partTool];
+  if (settings.mode === 'rock') return ROCK_TOOL_COLORS[settings.rockTool];
+  return MODE_COLORS[settings.mode];
 }
 
 /** The ring a marker drops under, since it has no radius of its own to show. */
@@ -118,6 +215,10 @@ export const MARKER_CURSOR_RADIUS = 30;
 export function cursorRadius(settings: EditorSettings): number {
   if (settings.mode === 'fence') return fenceStep(settings) / 2;
   if (settings.mode === 'marker') return MARKER_CURSOR_RADIUS;
+  // A part is a rectangle drawn by its own outline, so the ring says only
+  // "here", not how big the thing about to land is. A tier is dragged out the
+  // same way.
+  if (settings.mode === 'part' || settings.mode === 'rock') return MARKER_CURSOR_RADIUS;
   return settings.radius;
 }
 
@@ -135,6 +236,8 @@ export interface ToolVisibility {
   readonly scatter: boolean;
   readonly fence: boolean;
   readonly marker: boolean;
+  readonly part: boolean;
+  readonly rock: boolean;
 }
 
 export function visibleGroups(mode: EditorMode): ToolVisibility {
@@ -146,6 +249,8 @@ export function visibleGroups(mode: EditorMode): ToolVisibility {
     scatter: mode === 'scatter',
     fence: mode === 'fence',
     marker: mode === 'marker',
+    part: mode === 'part',
+    rock: mode === 'rock',
   };
 }
 
@@ -161,6 +266,8 @@ const choices = <T extends string>(
 ): readonly ToolChoice<T>[] => values.map((value) => ({ value, label: labels[value] ?? value.replace(/-/g, ' ') }));
 
 export const MODE_CHOICES = choices(EDITOR_MODES);
+export const PART_TOOL_CHOICES = choices(PART_TOOLS);
+export const ROCK_TOOL_CHOICES = choices(ROCK_TOOLS);
 export const TERRAIN_TOOL_CHOICES = choices(TERRAIN_TOOLS);
 export const MARKER_CHOICES = choices(MARKER_KINDS);
 /**

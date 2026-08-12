@@ -16,9 +16,9 @@
  * decides, and if these drift the only symptom is a rubber-band.
  */
 
-import { segmentClear } from '../../../sim/collision.js';
+import { MOVE_EAST, MOVE_NORTH, MOVE_SOUTH, MOVE_WEST } from '../../../ui/input/actions.js';
 import { PATH_RETRY_TICKS } from '../../../sim/constants.js';
-import { findPath, navGridFor } from '../../../sim/pathfinding.js';
+import { findPath, navGridFor, pathClear, type NavGround } from '../../../sim/pathfinding.js';
 import type { WorldColliders } from '../../../sim/types.js';
 
 export interface Point {
@@ -30,6 +30,11 @@ export interface Point {
 export interface PathWorld {
   readonly colliders: WorldColliders;
   readonly radius: number;
+  /**
+   * The ground a route is planned over (spec 130). Omitted is flat, which is
+   * what a sandbox has and what a test that only cares about trees wants.
+   */
+  readonly ground?: NavGround;
 }
 
 export interface MoveIntent {
@@ -47,18 +52,20 @@ export interface MoveIntent {
 }
 
 /**
- * Which key codes drive which way, in the sim's axes: +y is "down the screen"
+ * Which *actions* drive which way, in the sim's axes: +y is "down the screen"
  * (south), matching the terrain module's `z`.
+ *
+ * Four entries, not eight (spec 125). This used to be keyed by `KeyboardEvent.code`
+ * and list WASD and the arrows separately -- which is two bindings of one action
+ * spelled as two actions, and put "the arrows walk too" in a table no player
+ * could reach. The arrows are now the secondary binding of these four, in
+ * `src/ui/input/bindings.json`, where they can be changed.
  */
-export const MOVE_KEYS: Readonly<Record<string, readonly [number, number]>> = {
-  KeyW: [0, -1],
-  ArrowUp: [0, -1],
-  KeyS: [0, 1],
-  ArrowDown: [0, 1],
-  KeyA: [-1, 0],
-  ArrowLeft: [-1, 0],
-  KeyD: [1, 0],
-  ArrowRight: [1, 0],
+export const MOVE_ACTIONS: Readonly<Record<string, readonly [number, number]>> = {
+  [MOVE_NORTH]: [0, -1],
+  [MOVE_SOUTH]: [0, 1],
+  [MOVE_WEST]: [-1, 0],
+  [MOVE_EAST]: [1, 0],
 };
 
 /**
@@ -69,7 +76,7 @@ export const MOVE_KEYS: Readonly<Record<string, readonly [number, number]>> = {
 export const ARRIVE_EPS = 6;
 
 export interface IntentInput {
-  /** Key codes currently down. */
+  /** Action ids currently held. See {@link MOVE_ACTIONS}. */
   readonly held: ReadonlySet<string>;
   /** Where the body is now -- the predicted position, not the replica. */
   readonly self: Point;
@@ -100,6 +107,22 @@ export interface IntentInput {
    * withdraws from the cast on the server, so it has to steer here too.
    */
   readonly castAim: Point | null;
+  /**
+   * The mark of a standing attack order, or null (spec 090).
+   *
+   * Faced while *waiting* to swing at it. With a target in reach and the attack
+   * still on cooldown, `autoAttack` asks for nothing at all -- no cast, no chase
+   * -- and without this the body keeps whatever heading it had until the blow
+   * finally commits. The turn then happens *after* the wait rather than during
+   * it: click, stand facing the wrong way for up to a whole attack delay, turn,
+   * and only then wind up. At spec 088's 1.2s that is most of two seconds, and
+   * nearly all of it dead.
+   *
+   * Outranked by {@link castAim}, because a committed blow's aim was captured at
+   * the commit and is the authority on where the body is pointing, and by any
+   * direction, because walking decides its own heading.
+   */
+  readonly targetAim?: Point | null;
 }
 
 export function moveIntent(input: IntentInput): MoveIntent {
@@ -130,6 +153,18 @@ export function moveIntent(input: IntentInput): MoveIntent {
     return { moveX: 0, moveY: 0, facing, arrived };
   }
 
+  // Standing over a mark, waiting for the swing to come off cooldown. Turning
+  // now is free -- the wait is dead time -- and it means the wind-up starts
+  // already aligned rather than paying for the turn once the clock has run
+  // (spec 090). The server turns the body from this at its own rate, so it is
+  // the same turn every other player sees.
+  if (!direction && input.targetAim) {
+    const dx = input.targetAim.x - input.self.x;
+    const dy = input.targetAim.y - input.self.y;
+    const facing = Math.hypot(dx, dy) < 1e-6 ? input.facing : Math.atan2(dy, dx);
+    return { moveX: 0, moveY: 0, facing, arrived };
+  }
+
   if (!direction) {
     return { moveX: 0, moveY: 0, facing: input.facing, arrived };
   }
@@ -155,7 +190,7 @@ function keyDirection(held: ReadonlySet<string>): Point | null {
   let x = 0;
   let y = 0;
   for (const code of held) {
-    const axis = MOVE_KEYS[code];
+    const axis = MOVE_ACTIONS[code];
     if (!axis) continue;
     x += axis[0];
     y += axis[1];
@@ -247,7 +282,10 @@ export class RoutePlanner {
       this.clear();
       return null;
     }
-    if (segmentClear(self, destination, world.radius, world.colliders)) {
+    const grid = navGridFor(world.radius, world.colliders, world.ground);
+    // The ground is part of "nothing is between us" (spec 130): a cliff is not a
+    // collider, so this used to send a move order straight into one.
+    if (pathClear(grid, self, destination)) {
       this.clear();
       return null;
     }
@@ -266,7 +304,7 @@ export class RoutePlanner {
     const exhausted = !failed && this.index >= this.path.length;
 
     if (goalMoved || exhausted || tick >= this.replanAtTick) {
-      this.path = findPath(navGridFor(world.radius, world.colliders), self, destination);
+      this.path = findPath(grid, self, destination);
       this.index = 0;
       this.goal = destination;
       this.searched = true;

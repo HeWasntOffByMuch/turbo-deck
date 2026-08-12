@@ -58,6 +58,9 @@ change a game outcome.
 | `npm run test:watch` | Vitest in watch mode |
 | `npm run typecheck` | `tsc --noEmit` against the strict tsconfig |
 | `npm run lint` | ESLint over the whole repo |
+| `npm run validate:units` | Validate every authored unit document in `assets/units/` |
+| `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
+| `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
 | `npm run server` | The authoritative server, plus the admin console |
@@ -104,20 +107,275 @@ merge time.
 
 ```
 specs/           spec markdown, one file per system, written before its code
+schemas/         JSON Schema (draft-07) for the three unit documents, committed
+                 and validated against in CI. additionalProperties is false
+                 throughout, so a typo'd key in a hand-edited file is an error with
+                 a pointer at it rather than a field that silently does nothing.
 maps/            the world, as a map document (spec 072). arena.json is what the
                  server loads at boot and streams to clients; regenerate it with
                  `npx tsx scripts/bake-map.ts`, or edit it in the Map editor tab
                  and save over it. Checked in so the world reviews as a diff.
+                 recipes/ are the feature lists parts are grown from (spec 083) --
+                 `npx tsx scripts/grow-map.ts --recipe maps/recipes/<n>.json
+                 --rect minCx,minCz,maxCx,maxCz --seed N` adds one to the map
+                 rather than regenerating it. A recipe is the only place natural
+                 language enters: an agent writes one, it is reviewed as JSON,
+                 and nothing at runtime reads a model.
 src/shared/      PRNG, spatial hash, world extent — dependency-free helpers
                  shared by the server, the geometry helpers and terrain
 src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  and where the vegetation stands. No three.js, no DOM. Also the
                  map document (spec 048): map.ts bakes a world to JSON,
-                 map-world.ts loads one back as array-backed terrain.
+                 map-world.ts loads one back as array-backed terrain, and part.ts
+                 grows an existing one by a chunk-snapped rectangle (spec 083),
+                 stitching the join by copying shared corners exactly and easing
+                 the recipe's field in over a short skirt.
 src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
                  collision and pathfinding helpers the server collides against
+src/units/       the unit authoring format and its validator (spec 107): the three
+                 JSON documents a unit is made of -- skeleton.json (one rig family,
+                 its bone vocabulary, canonical height), cliplib.json (clips for a
+                 skeleton, events in normalized time) and <unit>.unitdef.json (mesh,
+                 provenance, import overrides and the state machine). Structure is
+                 checked against the committed schemas in schemas/ with ajv; what a
+                 JSON Schema cannot say -- reference resolution, bone ordering, the
+                 time-scale bound -- is hand written beside it in validate.ts. Pure
+                 and part of the deterministic core, because the Studio tab, the
+                 export path, CI and the game's runtime all read these documents
+                 through this one parser. The rule the format exists to enforce is
+                 that gameplay timing is authoritative and the clip is rescaled to
+                 fit, bounded in both directions. `npm run validate:units`.
+                 naming.ts is the two bone vocabularies and the one way to look a
+                 bone up across them (spec 120). There are two in the tree
+                 permanently: the reference mannequin is authored and
+                 mixamo-named, and every *generated* rig is on the `tripo` spec,
+                 because a rig built to the mixamo naming spec is refused by the
+                 retarget -- the two specs are a choice between Tripo's animation
+                 library and Mixamo's, and a game needs the clips. So `naming` is
+                 a field that is detected off the bones and checked against them
+                 by the validator, never assumed. The rule that makes it a table
+                 rather than a heuristic: every consumer wants a bone's *role* --
+                 the right hand, the left hip, the arm chain -- and none of them
+                 want a string, so roles are named once and each vocabulary says
+                 what it calls them. This existed as an assumption for a long
+                 time and cost three silent failures on every unit we ship: the
+                 pig derived no weapon sockets at all, its facing fell back to
+                 the shape search with handedness unverifiable, and its bind pose
+                 came back `unmeasured`. Each had been noticed separately and
+                 written down as a shrug in a comment beside the code that gave
+                 up. Adding a third vocabulary is a column in this file.
+                 manifest.ts is what both ends agree on (spec 113): a sha256
+                 over every asset, exchanged at connect, and a mismatch is a
+                 refused connection -- a client on stale assets draws a fight
+                 that is not the one being played and nothing looks wrong until
+                 somebody notices. An *absent* client hash is allowed, because
+                 the in-tab server and the bot harness share a process with what
+                 they connect to. `npm run bake:units` writes it; decimation,
+                 meshopt and KTX2 are deferred rather than faked, and
+                 `builtStages` records what actually ran.
+                 glb-read.ts, skin.ts and mesh-check.ts are the half that reads
+                 the *vertices* (spec 115), because every other check here reads
+                 a document and none of the ways a generated rig actually fails
+                 are in a schema. The reader takes the binary chunk and refuses
+                 what it cannot honestly decode; skin.ts is linear blend skinning
+                 on the CPU and deliberately does not renormalize weights, since
+                 a mesh that shrinks as it poses is the thing being looked for;
+                 mesh-check.ts is weight sums, a second influence set the runtime
+                 silently drops, joint indices, vertices bound to nothing or drawn
+                 by nothing, degenerate triangles, whether the bind pose is a T/A
+                 or somebody's idle, and what four extreme poses do to the body.
+                 Two rules learned the hard way: pose axes are the *body's*,
+                 measured off the hips, because "rotate the shoulder about Z"
+                 assumes the mixamo arm axis and on a rig whose arms run along Z
+                 it rolls each arm about its own length and scores a flawless zero
+                 on a pose it never applied; and deformation is measured by area,
+                 never by normal direction, because a triangle carried rigidly by
+                 a bone that turns 100 degrees has a normal that turned 100
+                 degrees and nothing about it inverted. Errors fail
+                 `npm run bake:units`, deformation findings warn, and
+                 `npx tsx scripts/preview-deform.ts` is the picture a person
+                 decides from. skeleton-from-rig.ts turns a rigged .glb into a
+                 family's skeleton document, which is what lets a new rig family
+                 be exported at all and what finally fills in a provisional one;
+                 compareToFamily is the shared-skeleton rule as a check, since the
+                 family's one clip library animates every unit in it.
+                 canonical-height.ts is the height a body is drawn at, in one
+                 place rather than inside one hand-written asset.
+                 scaffold.ts derives a first unitdef for a unit that has just
+                 been generated (spec 112) -- a clip library over what was
+                 actually retargeted, and a machine reaching only the states the
+                 runtime can drive, with the action split out of the clip's own
+                 length so the rate is 1.0 before anybody tunes it.
+                 bundle.ts is the one way a unit is read (spec 111): the Studio
+                 tab and the game both call loadUnitBundle rather than casting
+                 their imports, so a broken document is refused at both ends
+                 instead of at neither. root-motion.ts names translation on the
+                 root bone, in a clip's glTF JSON for CI and in three.js track
+                 names for the importer -- one rule, so the gate and the loader
+                 cannot disagree about what counts.
+                 facing.ts measures which way a unit actually points, off the
+                 `.glb` bytes and with no GL context: the mesh's front (from
+                 geometry alone), the rig's (ankle to toe), and the clip's (the
+                 stance foot slides backwards under a body going forwards). It
+                 exists because `forwardAxis` in a skeleton document is an
+                 assertion and nothing measured it, so "faces the camera, walks
+                 backwards" had four possible causes with four different fixes
+                 and no way to tell them apart short of generating another unit.
+                 `npx tsx scripts/probe-facing.ts --job <id>` runs it over a real
+                 generation; the reference unit is the control, and the test
+                 beside it introduces each of the four faults on purpose.
+                 machine.ts is the state machine BOTH the Studio tab and the game
+                 drive (specs 110-111) -- one machine, two callers, which is what
+                 makes "the tool and the game read the same files" a fact about
+                 the module graph rather than a promise. It advances in whole
+                 60Hz ticks and fires events on integer frame crossing, walking
+                 one tick at a time, so an overshooting step cannot skip an event
+                 or fire one twice. glb.ts writes a .glb (glTF is JSON plus a
+                 binary chunk; a writer for the subset we emit is smaller than
+                 the argument for a dependency) and reference-unit.ts is the
+                 mannequin it writes: a real skinned biped on the mixamo
+                 contract, authored at ~1.7 units like a real rig so the ~32x
+                 import scale is measured rather than invented. It exists so the
+                 preview, the deformation checks and the screenshot baselines
+                 have a subject before a credit is spent.
+src/server/studio/  the unit authoring service (spec 108). Node-only, wired in from
+                 src/server/index.ts and imported by nothing in the server's
+                 portable half, because this is where the Tripo API key lives.
+                 tripo.ts is the ONLY file that knows the API's paths and field
+                 names, so the first real call corrects one file; everything
+                 above it speaks TaskHandle/TaskResult. The half that decides
+                 whether to spend -- cache.ts, confirm.ts, jobs.ts, ledger.ts,
+                 pacing.ts, pricing.ts -- is pure, clock-injected and linted as
+                 part of the deterministic core, and is driven end to end in
+                 tests through a fake fetch. The interlocks: confirmation is a
+                 server-issued one-shot token rather than a browser boolean,
+                 ceilings are checked against spend-so-far plus the projection
+                 before anything is sent, the job record is written BEFORE the
+                 submit, a model URL is downloaded in the same handler that saw
+                 it succeed (they expire in ~5 minutes) and never stored, and a
+                 failed paid call is never retried *by the machine* -- nothing on
+                 a timer picks one back up, but a person can retry it from the
+                 stage that failed, priced at what is left rather than at the
+                 job's original cost, because a retarget that dies on its third
+                 clip must not cost a fresh mesh and rig to recover from.
+                 A family's clip library can be handed back (spec 114): the first
+                 job to succeed owned it forever, including when its clips were
+                 the ones you would not ship, and the only escape was inventing a
+                 second family name. Releasing is free and never touches what was
+                 paid for; it changes the price of the *next* generation, which is
+                 what the button says rather than saying "this is free".
+                 family.ts is where a skeleton document comes from at export time
+                 (spec 115) -- measured off the rig when there is none, filled in
+                 when the one there is provisional, and never overwritten once it
+                 has a bind pose, because from then on it is the contract the next
+                 rig of the family is checked against.
+                 jobs.json is rewritten
+                 atomically; ledger.jsonl is append-only. State lives in
+                 .studio/ and is gitignored.
+src/ui/          the GUI framework (spec 123), and a top-level peer rather than a
+                 subdirectory of src/render/ because layer 1 belongs to no engine.
+                 core/ is layout, hit-testing, focus, event routing, the widget
+                 tree, and since spec 133 motion and sound: a tween is a pure
+                 function of the time it is handed rather than an animator with a
+                 clock (an animator would make every golden a question about when
+                 the test ran), and a sound is a *name* emitted into a sink, so
+                 this layer never learns what a sound is. Reduce-motion rides on
+                 the paint context beside the time and is checked inside
+                 `animate` rather than at each call site, which is what lets it be
+                 a property over the whole easing table instead of a claim each
+                 widget has to remember. text/ is the two bitmap faces; theme/ is theme.json plus the
+                 atlas authored as text; widgets/ is the nine; screens/ is the
+                 eight (the HUD, the bag, the sheet, the shop, the keybindings,
+                 the trade table, the options window and its display page);
+                 input/ is the actions, the key map and the two preferences that
+                 outlive a session -- the bindings and the interface scale, each
+                 a versioned document over an injected `StorageLike` that never
+                 throws, because a corrupt preference must cost defaults rather
+                 than a black screen;
+                 render/ is the only impure part. Everything else runs in Node.
+                 Since spec 131 all but the HUD are in the Play tab, over
+                 the world -- mounted by src/render/iso3d/world/ui-screens.ts,
+                 which is where a screen meets a `GameClient` and the only place
+                 that is allowed to. The HUD stays in the gallery: the DOM one
+                 ships, and swapping it is a redesign rather than a mount.
+                 Three rules the code rests on, all of them enforced rather than
+                 honoured. **Time is an argument** -- `UiRoot.update(nowMs)`, and
+                 nothing under src/ui/ may read `Date` or `performance`, which is
+                 what makes an input-replay test exact rather than approximately
+                 reproducible. **A widget cannot reach the sim** -- it may read the
+                 content tables, as the HUD already does, but lint refuses it
+                 `server/sim`, `world`, `player` and `state`, so the CLAUDE.md rule
+                 that no `if` in the renderer changes an outcome is finally a fact
+                 about the module graph. **No colour is spelled out** in a widget;
+                 a hex literal there fails the build.
+                 Since spec 137 the bag is a *pointer* surface: one press and
+                 one release on a cell is the whole gesture vocabulary (left
+                 takes a stack, right takes half, shift+right takes one,
+                 shift+left wears it), a carry empties the cell it came from so
+                 it can be put back, and dragging an item is gone. The rule that
+                 came out of it and applies to every screen: **a press hands the
+                 keyboard only to something that types**. Focus used to follow
+                 every press, so an open window silently held the arrow keys,
+                 Space and Enter -- four movement bindings and a cast -- and the
+                 blue focus ring on a cell read as "active" when nothing was.
+                 `focusOnPress` is false on `Widget` and true on `TextField`
+                 alone; Tab still reaches everything focusable, because Tab is
+                 not a key anybody plays with.
+                 The UI has a *scale*, not a resolution: one UI pixel is always a
+                 whole number of device pixels and the viewport is whatever the
+                 window leaves, so it never reads the world's `lowRes` setting --
+                 which is off by default and may go. A camera needs a fixed aspect
+                 because it has to frame consistently; an interface does not.
+                 Since spec 136 that scale is a *setting* on the options window's
+                 Display tab, and `auto` -- the default -- is `autoUiScale`
+                 unchanged. A chosen number is honoured outright rather than
+                 clamped back against the auto rules: those exist to choose for
+                 somebody who has not, and a preference that silently became a
+                 different number would fail on exactly the screens somebody
+                 would want to change it on.
+                 render/ has three backends behind six methods. raster.ts is pure
+                 software and is the golden-image oracle, which is what lets a
+                 screen be compared byte for byte inside `npm test` with no GPU and
+                 no browser -- every other visual check in this repo photographs a
+                 browser and none of them run in CI. canvas2d.ts is what ships. A
+                 WebGL one is deferred until the frame budget asks for it; the
+                 measurement so far is 0.9ms against a 1.5ms budget.
+                 Having two unrelated backends is not redundancy, it is the check:
+                 `npx tsx scripts/preview-ui-gallery.ts` renders the same tree
+                 through both and compares them pixel for pixel. It immediately
+                 caught the thing offscreen testing never could -- a 2D canvas clip
+                 only ever narrows, so recomputing the clip after each pop (which is
+                 what raster.ts correctly does) left everything after the first
+                 `popClip` quietly cropped in the browser and perfect in Node.
+                 `npm run bake:ui-goldens` accepts a visual change; CI re-bakes and
+                 requires no diff, like the unit manifest.
 src/render/      the client: a tab shell over the play view, the two tuning
-                 sandboxes and the map editor
+                 sandboxes and the map editor. iso3d/shell-tabs.ts is the one
+                 decision in the shell worth failing a test over (spec 140): a
+                 handheld is offered the tabs marked `game` and nothing
+                 else, because five of the six are workbenches a finger cannot
+                 drive, and with one tab left there are no tab buttons to draw.
+                 The bar stays -- ui-layer measures it to know where the app's
+                 chrome ends, and the fullscreen button lives in it.
+                 iso3d/device.ts is what "handheld" means, and it is one file
+                 because it used to be one media query in another (spec 141).
+                 `(pointer: coarse)` describes the *primary* pointer and a
+                 browser may answer "fine" about a touchscreen -- Chrome's
+                 desktop-site mode does exactly that, deliberately, while
+                 inflating the viewport to ~980px -- so a real phone loaded the
+                 shipped build and got six tab buttons, seven tuning popovers and
+                 the developer readout over the grass. The rule now reads four
+                 facts and is pure, so every device is a row in a test rather
+                 than something somebody has to be holding: no touch anywhere is
+                 never handheld, a coarse primary pointer always is, and
+                 otherwise touch plus a short side under 620 CSS px is. The
+                 *short* side, so turning the phone over cannot change the
+                 layout -- which is what still lets it be decided once at mount
+                 with no resize listener. The browser half of that check has to
+                 fake `maxTouchPoints`, because Chromium forces `pointer: coarse`
+                 the moment touch emulation exists and will not reproduce the
+                 device at all; what it is worth is the *wiring* -- point the
+                 layout back at a media query and preview-touch says so.
 src/render/cloth/ pure cloth simulation for the robed character (spec 046) --
                  solver, wind, patterns, colliders and figure metrics. No
                  three.js and no DOM, so it runs and is tested headlessly.
@@ -128,11 +386,56 @@ src/render/critters/ playable animal characters as pure data (spec 055): one
                  `src/render/iso3d/critter.ts` already knows how to build it.
                  `npx tsx scripts/preview-critters.ts` renders the real rig to
                  .claude/screenshots/critters.png to check it reads at 64px.
-src/render/iso3d/editor/  the map editor tab (specs 049-052). Renders only from
-                 a loaded map document, never from the world generator. camera.ts,
-                 brush.ts, scatter.ts, markers.ts and history.ts are pure and
-                 tested headlessly; view.ts, cursor.ts and marker-view.ts are the
-                 three.js scene; panel.ts is the lil-gui surface.
+src/render/iso3d/studio/  the Studio tab (spec 109), the fifth entry in the tab
+                 shell: ingest, generate, library, preview and export over the
+                 spec 108 service. image-check.ts and plan.ts are pure and
+                 tested headlessly -- the first measures what pixels can
+                 actually answer about a reference image and leaves the rest as
+                 a checklist, because a green tick that means nothing is how a
+                 bad reference gets generated twice; the second derives whether
+                 a generation establishes a rig family from the library rather
+                 than from a checkbox, since that decision is money. api.ts
+                 tells "no server", "no token" and "wrong token" apart, because
+                 they have three different fixes. view.ts renders the projected
+                 cost before the button that spends it exists.
+                 preview.ts is the viewport (spec 110): the game's own RetroPass
+                 and its cog, an isometric preset, a turntable and free orbit, and
+                 a ground plane with a silhouette at the height a player is really
+                 drawn -- a unit that is subtly the wrong size looks fine alone and
+                 wrong beside something. The mixer is driven with update(0) after
+                 each action's time is written from the machine's integer tick, so
+                 the pose is a pure function of a tick count. Caveat worth knowing:
+                 this is the same control-panel TYPE as Play's, not a shared
+                 instance, so a switch has to be thrown in both places.
+                 timeline.ts, timing-bar.ts and graph-layout.ts are the panels'
+                 arithmetic, pure and tested; preview-panel.ts is the DOM over
+                 them and writes every edit back through the server.
+                 `npx tsx scripts/preview-library.ts` stands up a real
+                 authoring server over a seeded job and clicks Preview on the
+                 library card (spec 112) -- the clip lengths and the import scale
+                 only exist once three has decoded a .glb, so the flow cannot be
+                 checked anywhere else. It caught the object URLs being revoked a
+                 moment before the loader asked for them.
+                 `npx tsx scripts/preview-studio.ts` clicks all five tabs in a
+                 real browser, since a fifth array entry cannot fail a typecheck
+                 and cannot fail a headless test -- and it is the only thing that
+                 can tell whether three's GLTFLoader accepts the .glb we write.
+src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
+                 from a loaded map document, never from the world generator.
+                 camera.ts, brush.ts, scatter.ts, markers.ts, parts.ts and
+                 history.ts are pure and tested headlessly; view.ts, cursor.ts and
+                 marker-view.ts are the three.js scene; panel.ts is the lil-gui
+                 surface. parts.ts adds and removes map parts (spec 084) through
+                 the same bakePart the grow script uses, and history.ts records
+                 created and deleted chunks, the layer's bounds and the parts list
+                 so growth undoes like any other stroke, naming which chunks
+                 went away so a commit costs the part and its ring rather than
+                 the whole map (spec 085). The prop field invalidates by region
+                 for the same reason (spec 086): props.ts groups props into
+                 square batches for culling, and an edit rebuilds only the
+                 batches over the ground it touched.
+                 `npx tsx scripts/preview-parts.ts` drives the tools in a real
+                 browser, since the drag and the commit live in view.ts.
 src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim runs on
                  the same fixed 60Hz timestep as src/sim/ and broadcasts deltas
                  every third tick (20Hz) -- one rate for the game, another for the
@@ -148,18 +451,259 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  deterministic tick, world/ is chunking and zones, player/ derives
                  stats from ids and levels, state/ is the swappable DataStore,
                  admin/ is the token-gated admin namespace, client/ is the
-                 transport-agnostic session the renderer draws from. data/ holds
+                 transport-agnostic session the renderer draws from.
+                 player/trade.ts and trades.ts are the first exchange with two
+                 owners (spec 132), and the difference from the shop is not size:
+                 its failure mode is *duplication* rather than a wrong number, so
+                 the swap is one pure function returning four whole containers --
+                 both sides computed and checked before either is written, so
+                 there is no state in which one bag has been debited and the other
+                 has not. An acceptance names a revision and every edit bumps it,
+                 which turns the swap-it-at-the-last-instant scam into a
+                 mechanical impossibility rather than a race worth timing; and an
+                 offer names *slots*, resolved against the bag at swap time, so a
+                 bag that changed underneath refuses the whole trade instead of
+                 trading whatever is in that slot now. The property test counts
+                 both players together, because a swap that duplicated a sword
+                 leaves each bag individually plausible. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
                  `npm run server`, and `npm run server:bots` for load.
 src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometric
                  world drawn from GameClient.view() and nothing else. interpolate.ts
                  (20Hz deltas to a pose per frame), intent.ts, target.ts (the
-                 right-click attack order, spec 072), cast.ts, appearance.ts
-                 and pixel-font.ts (a 5x7 glyph table, since nothing may be fetched)
-                 are pure and tested headlessly; scene.ts, hud.ts and
+                 right-click attack order, spec 072), cast.ts, appearance.ts,
+                 projectile-shape.ts and trail.ts (an arrow's and a shuriken's
+                 silhouettes, and the streak a thrown star leaves, spec 087)
+                 unit-catalog.ts, unit-driver.ts and unit-lod.ts (spec 111: which
+                 monsters are drawn from an authored unit, the pure function from
+                 replicated facts to machine commands -- handed a snapshot and not
+                 the GameClient, so animation has nothing it *could* call -- and
+                 how often a body's pose is applied; the machine itself is
+                 never throttled, because its events are authored on frame indices.
+                 The LOD measures how big a body is *drawn*, in pixels of the
+                 virtual raster, and never how far the camera is from it (spec
+                 118): this camera is orthographic and parks 6000 units back for
+                 near/far clearance, so a distance threshold put every unit in
+                 the game -- the player included -- on a quarter-rate pose, and
+                 the Studio preview looked perfect throughout because it never
+                 consults the LOD at all. The driver also slews the blend
+                 parameter rather than assigning it (spec 119), because a blend
+                 tree is a pure function of its parameter and the sim has no
+                 acceleration: a step from run to nothing swapped the pose in one
+                 tick under a cross-fade that never saw it, which is why setting
+                 off blended and stopping cut)
+                 pixel-font.ts (a 5x7 glyph table, since nothing may be fetched)
+                 and touch.ts (taps and two-finger gestures, specs 093/140 --
+                 bounded by distance and never by time, because an event's stamp
+                 measures the renderer's load rather than the finger; and two
+                 fingers report what they did to their separation AND to their
+                 midpoint in one breath, because a real gesture is a spread and a
+                 slide at once and reporting one of them makes the other
+                 unreachable -- a pure spread arrives with `dragX` at zero, a
+                 pure swipe with `ratio` at one, and the swipe turns the camera),
+                 hud-layout.ts and
+                 icons.ts (how big the HUD is on a finger and what the weapon
+                 switch and the window buttons draw, specs 094/140 -- the sizes
+                 are a sum, so "eight buttons still fit across a phone, clear of
+                 both corner rows" fails in Node rather than in a screenshot),
+                 inventory-model.ts, character-model.ts and shop-model.ts (what
+                 the bag, the sheet and the shop are handed -- `src/ui/` may not
+                 reach the sim, so the replicated facts and the content tables
+                 are turned into plain rows out here, and whether a button is
+                 live is answered by running the *server's own* rule against the
+                 client's copy so a greyed-out button and a refusal cannot
+                 disagree), and ui-routing.ts and ui-screens.ts (the interface's
+                 mount, spec 131: who hears an input, and the four screens, their
+                 windows and what each is handed per frame). ui-screens.ts is
+                 pure for one specific reason -- mounting an interface over the
+                 sim gets the same assertion animation got, the same fight twice
+                 with the screens driven and without, identical authoritative
+                 state, and that is impossible if running it needs a canvas
+                 (`mount-presentation.test.ts`)
+                 are pure and tested headlessly; scene.ts, shot.ts, hud.ts,
+                 ui-layer.ts (the second canvas, the scale and one coordinate
+                 conversion -- the whole impure half of the mount) and
                  view.ts are the three.js/DOM half. `npx tsx scripts/preview-world.ts`
-                 photographs the real page into .claude/screenshots/world-*.png.
+                 photographs the real page into .claude/screenshots/world-*.png,
+                 and `npx tsx scripts/preview-shots.ts` flies the real ShotRig
+                 through a real arc into .claude/screenshots/shots.png.
+                 `npx tsx scripts/preview-units.ts` puts authored units in the
+                 real arena (`?units=grazer:mannequin`) and asserts a skinned
+                 body with 25 bones is being posed -- the half of spec 111 that
+                 only exists once a browser has fetched a .glb and skinned it.
+                 `presentation-only.test.ts` beside them is the brief's
+                 assertion: the same seed and inputs twice, once with the
+                 animation layer driven and once without, and the authoritative
+                 state must be identical.
+                 `npx tsx scripts/preview-arcs.ts` plots what a shot's path
+                 actually is, flown through the real step: one weapon at a
+                 spread of distances, and the same shot over flat and broken
+                 ground overlaid (spec 089).
+                 `npx tsx scripts/preview-touch.ts` drives the built page in a
+                 phone-shaped landscape viewport with real touch events over CDP
+                 (spec 093), since the tap and the pinch only exist once a
+                 browser is delivering pointer events. `fullscreen.ts` beside it
+                 is the tab bar's fullscreen button -- DOM only, and absent on
+                 anything that cannot go fullscreen or is not a coarse pointer.
+src/render/iso3d/unit-rig.ts  a loaded authored unit, posed by a machine (spec
+                 111). The three.js half of "the tool and the game read the same
+                 files": load the .glb, strip root motion and say so, write a
+                 pose. The root bone is found in the *loaded rig*, never taken
+                 from a document -- three sanitises `mixamorig:Hips` to
+                 `mixamorigHips` in its track names, so a name read from the
+                 skeleton JSON matches nothing, strips nothing, and looks exactly
+                 like a clean import. The reference unit could never catch that:
+                 glb.ts writes rotation channels only, so its clips have no
+                 translation to strip. `mixer.update(0)` always -- every action's time comes from
+                 an integer tick, so the pose is a pure function of a tick count
+                 and an event lands on the same frame at 30fps as at 144.
+                 Since spec 118 there is a second rule beside the first: the
+                 strip asks which *node* a track sits on, and a generated rig
+                 has no reason to obey that convention -- the pig's auto-rig
+                 baked the whole stride onto `Hip`, one node below the root,
+                 where nothing was looking. So travel is also *measured*, on any
+                 bone, and only the component along it is taken out; the bob and
+                 the crouch are perpendicular to it and survive. The threshold is
+                 a tenth of the rig's reach, the same rule
+                 `npm run validate:units` applies offline to the same files.
+                 `npx tsx scripts/probe-travel.ts` is the check that matters --
+                 the real unit through the real loader, asking where the hips go
+                 in world units. It fails a looping clip that ends somewhere else
+                 AND one whose hips never move, since a correction that ate the
+                 pose scores a perfect zero on the first test alone. No GL
+                 context: nothing in it rasterises.
+src/render/iso3d/turn-swing.ts  what a pivot does to a body's extremities (spec
+                 139). The scene turns a body by yawing it about the point the
+                 server put it on, so anything the pose holds away from that
+                 origin travels on a circle -- and how violent a turn looks is a
+                 product of two numbers that live nowhere near each other, the
+                 turn rate in `CHARACTERS` and how far a pose reaches. Nothing
+                 could see both at once, which is how a rate tuned for the cow
+                 rig survived onto a pig whose run clip leans 36 degrees and puts
+                 the snout 28 units in front of a 16-unit collider: every number
+                 was individually defensible and their product was written down
+                 nowhere. This module is that arithmetic, pure and tested; the
+                 budget is a *ratio* against the body's own move speed, because a
+                 snout that crosses the screen faster than the animal can run
+                 does not read as a turn. `npx tsx scripts/probe-turn-swing.ts`
+                 measures a real unit against it -- CPU-skinned vertex by vertex,
+                 since a snout is geometry and no bone sits in it, and since
+                 `Box3.setFromObject` on a `SkinnedMesh` reports this pig as 17.9
+                 units tall when it is really 55.6. `npx tsx
+                 scripts/preview-turnaround.ts` is the picture: the reversal
+                 *stepped* through the real `turnToward` and rasterised in
+                 software, because this environment paints the real page at about
+                 a frame a second and a screencast of a 333ms turn returns one
+                 frame captioned "the turn is over". The window is fixed in world
+                 space and the collider ring is drawn, both for the same reason --
+                 auto-framing each cell would hide the only thing being shown.
+                 Since spec 142 it draws two rows, the rule and what is actually
+                 drawn, and writes turnaround-rate.png beside them -- angular rate
+                 against time, where the raw rule is a rectangle and the ease is a
+                 trapezoid. Everything else here draws a heading, and a heading was
+                 never what was wrong.
+src/render/iso3d/turn-ease.ts  the drawn turn's beginning and end (spec 142).
+                 `turnToward` is a step function on angular velocity: nothing, then
+                 the full rate for every tick, then nothing. Spec 139 gated the
+                 *peak* of the sweep that produces and this is the other half --
+                 the onset, which is what reads as a whip-crack. The sim's rule does
+                 not move, because it is also the client's prediction and easing it
+                 would change when a cast commits; the ease goes on the drawn yaw at
+                 the one line in `scene.ts` that computes it, with the standing
+                 `interpolate.ts` has ("presentation, not state") and nothing but a
+                 transform reading it. A trapezoidal profile with a braking curve --
+                 never carry more speed than the remaining angle can absorb -- so
+                 the ease-out is automatic, the landing exact, and there is no
+                 easing curve to pick. The thing worth knowing: **the acceleration
+                 is not a tuning constant.** It is fixed by how far the drawn
+                 heading may trail the authoritative one, and the sim already
+                 answered that -- `COMMIT_ALIGN_TICKS`, where three ticks of a
+                 body's own turn "still counts as already facing it". Bounding the
+                 visual lag by the sim's own tolerance gives `a = 10R` at 60Hz, and
+                 makes the ramp `2 * COMMIT_ALIGN_TICKS / tickRate` = 100ms for
+                 every body however fast it turns; nobody typed 100ms. It also
+                 means a turn under twice the bound never reaches the full rate at
+                 all, so the *small* turns -- a 10-degree correction peaks at 45% of
+                 the rate, a 20-degree one at 64% -- are the ones it changes most,
+                 which is right, because they were the ones spending every one of
+                 their three ticks at a rate nothing about a body's mass justified.
+                 What it does not do is lower the peak on a large turn: a reversal
+                 still passes through the full rate, 139's gate and its 1.72x stand,
+                 and this bounds the jerk rather than the peak. One rule was learned
+                 by writing the wrong one first and having a test catch it: a jump is
+                 told from a fast turn by how far the *authoritative heading itself*
+                 moved, never by how far behind the drawn one is. The cap is only an
+                 estimate -- a monster's rate can be raised by a modifier and a
+                 remote player's is not replicated -- so a body turning faster than
+                 believed builds an error no believed turn could produce, and the
+                 error-based rule snapped mid-turn every single time it turned.
+                 Judged per *tick* rather than per frame, too, or at 240fps the two
+                 frames in three where the heading holds still make the third look
+                 like a teleport. `world/turn-limits.ts` is where a body's rate comes
+                 from: the wire for our own, the monster table for a monster, the
+                 fastest base in `CHARACTERS` for a remote player, and nothing at all
+                 for a projectile, whose facing is its path.
+src/render/iso3d/retro.ts, retro-pass.ts  the retro filter (specs 038/102/138):
+                 the scene drawn into a low-resolution buffer, then painted over
+                 the canvas through a shader that grades it, quantizes every
+                 channel to a handful of steps -- or onto a named palette -- and
+                 dithers the band edges with a Bayer matrix. retro.ts is the
+                 arithmetic, pure and tested headlessly, and the shader beside it
+                 computes the same expression per channel.
+                 Since spec 138 the pass takes a set of *objects* whose pixels
+                 skip the quantize, and `WorldScene` names every player: the
+                 pixel grid, the grade and the distance ink say where a body is
+                 and an exempt body keeps all three, while the dither and the
+                 quantize say what it is made of, so it keeps its colours. The
+                 mask is rendered at the scene buffer's own resolution into a
+                 target *sharing its depth attachment*, which is what makes it
+                 one small draw rather than a second frame. Two rules follow:
+                 only the owner may dispose that texture, and the mask pass
+                 clears colour ONLY, since the depth it would clear is what
+                 keeps the mask to pixels the body actually won. That depth test
+                 is insurance rather than something the game exercises -- at the
+                 default 27-degree camera nothing in the arena was ever observed
+                 drawing in front of the player, and there is no fade-the-
+                 occluder system here -- but "nothing occludes the player" is a
+                 fact about today's map and props, not a rule anything enforces,
+                 and a maskless-depth version would paint an unquantized
+                 player-shaped hole through whatever stood in front.
+                 The pass has no idea what a player is and must not learn --
+                 `setExempt` takes objects because `WorldScene` is the only thing
+                 that knows, which is also why every other caller (the probes,
+                 the Studio preview, the wind rig) pays nothing.
+                 `npx tsx scripts/probe-exempt.ts` drives the real Play tab with
+                 a palette set, so "which pixels escaped the quantize" is an
+                 equality test rather than a threshold, and reports the largest
+                 *connected* run of them -- a mask has to be a body, so a count
+                 is not enough. It measures each frame against the palette rather
+                 than differencing two, because the world is live. It cannot
+                 check the depth test, and deliberately does not try: nothing in
+                 this arena draws in front of the player, so a broken depth test
+                 renders the identical silhouette, and across 96 frames of
+                 walking the blob never split and never lost a third of its area
+                 -- that is the gait, not an occluder. `runExempt` in
+                 shading-probe.ts settles it by building a wall instead of hoping
+                 to walk behind one, and measures the *wall*, because a leaking
+                 mask marks a pixel and the colour under it belongs to whatever
+                 the scene drew there.
+src/render/iso3d/view-controls.ts, menu-group.ts, settings-menu.ts  the Play
+                 tab's settings (specs 033/034/107): six buttons in the top-right
+                 corner -- view, day and night, player lights, retro filter, hike
+                 look and the weather -- each with a popover of its own and its
+                 own Reset. menu-group.ts is the rule that only one is open at a
+                 time, and is pure and tested headlessly because it is a state
+                 machine rather than a document; settings-menu.ts is the button,
+                 the popover and the heading the panels share. The widgets
+                 themselves are the state: nothing is persisted and every session
+                 opens at defaults. None of them is built on a phone (spec 140):
+                 they are tuning panels twenty rows deep, and the seven of them
+                 pile into the corner of an 844x390 frame. ViewControls is still
+                 *constructed* there -- the camera reads its sliders and `orbitBy`
+                 writes them -- so the angle and the zoom span are also published
+                 as `data-camera-orbit` and `data-camera-zoom`, because both
+                 probes used to read them off inputs that a phone has not got.
 src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
                  read by the tree sway, the water and the streak layer over the
                  ground, plus the shore distance transform the water's bands step
@@ -169,12 +713,42 @@ src/render/iso3d/wind.ts, shore-sdf.ts  the weather (spec 074): one wind vector
                  sway.ts, water-material.ts, terrain-streak.ts and
                  wind-uniforms.ts are the three.js half -- the last of those owns
                  the uniform objects every weather material shares by reference,
-                 and weather-controls.ts (spec 075, the second button beside the
-                 view cog) writes straight into them rather than being polled.
+                 and weather-controls.ts (spec 075, one of the six buttons in the
+                 Play tab's corner) writes straight into them rather than being
+                 polled.
                  `wind-probe.ts` plus
                  `src/render/wind-probe.html` are a dev-server-only measuring rig
                  (never in a build) driven by `npx tsx scripts/preview-wind.ts`,
                  which photographs the frame and reports the acceptance numbers.
+src/render/iso3d/hike.ts, shading.ts, hike-buffers.ts  the stylized look (specs
+                 097-106): hike.ts is the one settings object every step of the arc
+                 is switched from -- HIKE_OFF is the frame before the arc started
+                 and HIKE_DEFAULTS is what the tab opens at, which of the ten
+                 steps is smooth normals and the distance ink -- plus the sRGB
+                 transfer the passes mirror; shading.ts welds vertex normals across a crease
+                 angle, rotates one to follow the wind's bend, and packs one
+                 octahedrally into two bytes. Both pure and tested headlessly.
+                 edges.ts finds outlines in those buffers: the depth term measures
+                 deviation from the plane each neighbour lies in rather than a raw
+                 difference, because a hillside at a glancing angle changes depth
+                 fast with no edge present, and no single threshold survives that.
+                 hike-buffers.ts and hike-edges.ts are the three.js halves: a second
+                 geometry pass writing depth and view-space normals at the virtual
+                 resolution, the blit that draws one of them on its own -- the only
+                 way to see a depth texture at all, since a depth attachment cannot
+                 be read back -- and the Roberts cross over both.
+                 `npx tsx scripts/probe-shading.ts` checks all of it offscreen;
+                 `npx tsx scripts/preview-outlines.ts` throws the switch in the
+                 real page, because the outline pass once shipped with a correct
+                 mask and a pass that cleared the canvas before blending it, and
+                 every offscreen measurement was right while the screen was black.
+                 `shading-probe.ts` plus `src/render/shading-probe.html` are a
+                 dev-server-only rig (never in a build) driven by `npx tsx
+                 scripts/probe-shading.ts`, which is the only thing here that can
+                 tell whether a shader actually compiled -- it asserts on pixels
+                 read out of the drawing buffer, because three.js logs a failed
+                 compile and carries on, and because preview-trees.ts rasterises
+                 in software and never makes a GL context at all.
 src/render/iso3d/lobe.ts  the lobed canopy tree's shape (spec 077): the union of
                  circles a canopy slab's outline is, where the slabs sit, and the
                  trunk's taper to a single vertex. Pure and tested headlessly --

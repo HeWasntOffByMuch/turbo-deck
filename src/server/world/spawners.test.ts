@@ -33,6 +33,7 @@ function doc(markers: Record<string, readonly MapMarker[]>): MapDocument {
       {
         id: 'ground',
         seed: 1,
+        origin: { x: -100, z: -100 },
         bounds: { minX: -100, minZ: -100, maxX: 100, maxZ: 0 },
         baseY: 0,
         waterLevel: null,

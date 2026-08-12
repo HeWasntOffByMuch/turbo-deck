@@ -1,5 +1,17 @@
 import { RETRO_DEFAULTS, type BayerSize, type RetroSettings } from './retro.js';
 import {
+  DEFAULT_PALETTE_ID,
+  DEFAULT_VIRTUAL_SIZE,
+  HIKE_DEBUG_VIEWS,
+  HIKE_DEFAULTS,
+  HIKE_PALETTES,
+  paletteById,
+  VIRTUAL_SIZES,
+  virtualSizeById,
+  type HikeDebugView,
+  type HikeSettings,
+} from './hike.js';
+import {
   DEFAULT_DAY_LENGTH_MINUTES,
   DEFAULT_TIME_OF_DAY,
   MAX_DAY_LENGTH_MINUTES,
@@ -23,6 +35,8 @@ import {
   MIN_LIGHT_RANGE,
   TORCH_DEFAULTS,
 } from './player-lights.js';
+import { createMenuGroup, type MenuGroup } from './menu-group.js';
+import { createSettingsMenu, resetButton, section, type Resettable } from './settings-menu.js';
 import {
   CAMERA_ELEVATION_MAX_DEG,
   CAMERA_ELEVATION_MIN_DEG,
@@ -34,6 +48,7 @@ import {
   MIN_VIEW_HALF_WIDTH,
   offsetToOrbit,
   orbitToOffset,
+  pinchViewHalfWidth,
   zoomViewHalfWidth,
   type Vec3,
 } from './view-settings.js';
@@ -41,26 +56,64 @@ import {
 /**
  * The camera/light control panel (spec 033/034): the viewer orbits the follow
  * camera, zooms, swings the sun, toggles the unwalkable-terrain overlay, and
- * dials in the retro post filter (spec 038). The sliders live in a popover
- * tucked behind a cog button (spec 034) so they stay out of the way until
- * opened. It owns only the mutable widget state and derives the values the scene
- * asks for each frame; it holds no three.js and decides no game rules -- the
- * scene reads these and moves its camera/light to match.
+ * dials in the retro post filter (spec 038). The sliders live in popovers
+ * tucked behind buttons (spec 034) so they stay out of the way until opened. It
+ * owns only the mutable widget state and derives the values the scene asks for
+ * each frame; it holds no three.js and decides no game rules -- the scene reads
+ * these and moves its camera/light to match.
+ *
+ * Since spec 107 that is five buttons rather than one: the view, the day/night
+ * clock, the player's lights, the retro filter and the hike look each have a
+ * popover of their own, and a shared `MenuGroup` keeps at most one open --
+ * including the weather panel next door, which joins the same group.
  */
 
 const DEG = Math.PI / 180;
 
 export interface ViewControls {
-  /** The cog button + its collapsible settings popover, to mount beside the canvas. */
+  /** The row of settings buttons and their popovers, to mount beside the canvas. */
   readonly element: HTMLElement;
+  /**
+   * The group holding these buttons to one open popover at a time (spec 107).
+   * Exposed so a panel built elsewhere -- the weather's, next door -- can join
+   * it rather than have one handed down through the scene.
+   */
+  readonly menus: MenuGroup;
   /** Camera offset from the followed target, world units. */
   cameraOffset(): Vec3;
   /** Orthographic half-width (zoom); smaller frames a tighter region. */
   viewHalfWidth(): number;
   /** Let the wheel over `target` zoom the view span, as well as the slider (spec 042). */
   attachWheelZoom(target: HTMLElement): void;
+  /**
+   * Zoom by a pinch's spread ratio (spec 093). Writes the same slider the wheel
+   * writes, because the slider *is* the zoom -- a pinch that kept its own number
+   * would be silently overwritten the next time the panel was touched.
+   *
+   * The gesture itself is recognised in `world/touch.ts` and bound in
+   * `world/view.ts`; this is only the way in.
+   */
+  pinchZoom(ratio: number): void;
   /** How long the camera takes to catch up to the unit it follows, ms (spec 039). */
   followLagMs(): number;
+  /**
+   * Swing the follow camera around the unit by this many degrees (spec 129).
+   *
+   * Writes the Orbit slider rather than holding a second angle beside it, the
+   * way `pinchZoom` writes the zoom: the panel stays the one place the camera's
+   * azimuth lives, and a player who turns with the keys then opens the menu
+   * finds the slider where they left the view.
+   */
+  orbitBy(degrees: number): void;
+  /**
+   * Where the view is looking from, in degrees on the slider's 0..360 track.
+   *
+   * The same number `orbitBy` writes, read back. It exists because on a phone
+   * the panel is not built at all (spec 140), so the slider a probe used to read
+   * the angle off is not in the document -- and a two-finger swipe has to be
+   * checkable on exactly the device it is for.
+   */
+  orbitDegrees(): number;
   /** Directional-light position/direction, world units. */
   lightOffset(): Vec3;
   /** Whether the unwalkable-terrain footprint overlay is shown. */
@@ -69,6 +122,16 @@ export interface ViewControls {
   showSpawners(): boolean;
   /** The retro dither/quantization filter's current settings (spec 038). */
   retro(): RetroSettings;
+  /**
+   * The hike look's settings (spec 097). Opens at `HIKE_DEFAULTS` -- smooth
+   * normals and the distance treatment on, the other eight switches off. Throw
+   * those two back off and the frame is `HIKE_OFF`, which is the one that
+   * shipped before the arc started.
+   *
+   * Fields belonging to steps that have not landed sit at their `HIKE_DEFAULTS`
+   * values; the panel only carries widgets for the ones that are wired.
+   */
+  hike(): HikeSettings;
   /**
    * Whether the day/night cycle owns the sun (spec 047). When false the
    * `Direction`/`Elevation` sliders above drive it, exactly as in spec 033.
@@ -96,6 +159,16 @@ export interface PlayerLightSettings {
   readonly torchFlicker: number;
   /** Whether the torch casts shadows. Off is much cheaper -- it is a cube map. */
   readonly torchShadows: boolean;
+  /**
+   * Whether the player is drawn into the torch's shadow map (spec 118).
+   *
+   * Off by default. The player is the nearest thing to a flame they are
+   * carrying, so with this on the cube map is mostly their own silhouette
+   * thrown across the ground they are standing on, swinging as the flame
+   * gutters. Everything *else* still casts either way -- this is about the one
+   * caster the light is attached to.
+   */
+  readonly torchPlayerShadow: boolean;
   readonly magicOn: boolean;
   readonly magicRange: number;
   readonly magicBrightness: number;
@@ -280,16 +353,26 @@ function makeTextChoice(
   };
 }
 
-function section(text: string): HTMLElement {
-  const el = document.createElement('div');
-  el.textContent = text;
-  el.style.cssText = 'font-weight:600;color:#e8e8f2;letter-spacing:.04em;text-transform:uppercase;font-size:11px;';
-  return el;
-}
+/**
+ * What a popover is built from: a section heading, or a widget -- whose row is
+ * appended and whose `reset` that popover's Reset button drives (spec 107).
+ */
+type PanelRow = HTMLElement | ({ readonly row: HTMLElement } & Resettable);
 
 /** Bring an angle in radians into whole degrees within [0, 360). */
 function wrapDeg(radians: number): number {
   return ((Math.round(radians / DEG) % 360) + 360) % 360;
+}
+
+/**
+ * Bring an angle that is *already* in degrees into [0, 360), fraction intact.
+ *
+ * Distinct from {@link wrapDeg} above, which converts as well as wraps, and the
+ * two are one typo apart: handing degrees to that one multiplies them by 57.3
+ * and the camera jumps somewhere unrelated on every frame.
+ */
+function wrapTurn(degrees: number): number {
+  return ((degrees % 360) + 360) % 360;
 }
 
 export interface ViewControlOptions {
@@ -302,6 +385,12 @@ export interface ViewControlOptions {
    * post pass, so those rows would be controls that visibly do nothing.
    */
   readonly lighting?: boolean;
+  /**
+   * The group these buttons belong to (spec 107). Defaults to one of their own,
+   * which is what the sandboxes want -- there is no other popover in the corner
+   * for them to be exclusive with.
+   */
+  readonly group?: MenuGroup;
 }
 
 /** Build the slider panel; the returned getters reflect the live slider state. */
@@ -309,20 +398,17 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   const camOrbit = offsetToOrbit(DEFAULT_CAMERA_OFFSET);
   const lightOrbit = offsetToOrbit(DEFAULT_LIGHT_OFFSET);
   const lighting = opts.lighting ?? true;
+  const menus = opts.group ?? createMenuGroup();
 
-  const panel = document.createElement('div');
-  panel.style.cssText =
-    "font-family:'Segoe UI',system-ui,sans-serif;color:#c9c9d8;font-size:12px;" +
-    'display:none;flex-direction:column;gap:10px;width:210px;padding:14px;box-sizing:border-box;' +
-    // Anchored to the cog's right edge so it opens *inward*: the cog sits in the
-    // game window's top-right corner, and a left-anchored panel would open off
-    // the viewport. Capped in height (and scrollable) so a short window can't
-    // push its lower sliders off the bottom either.
-    'position:absolute;top:38px;right:0;z-index:10;max-height:calc(100vh - 90px);overflow-y:auto;' +
-    'background:#1c1c26;border:1px solid #2a2a3a;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.45);';
-
-  const camAz = makeSlider('Orbit', 0, 360, 1, wrapDeg(camOrbit.azimuth), '°',
-    'Rotate the follow camera around the unit (compass azimuth, in degrees).');
+  // Continuous ('any') for the same reason the zoom below is (spec 042): a range
+  // input snaps whatever is written to it to its step, and the keyboard swing
+  // (spec 129) writes a fraction of a degree per frame. On a step of 1 that
+  // rounding *is* the rotation -- the view turns 60°/s at 60fps and not at all
+  // above ~180fps, where a frame's share is under half a degree and lands back
+  // on the integer it started from. The readout still shows whole degrees.
+  const camAz = makeSlider('Orbit', 0, 360, 'any', wrapDeg(camOrbit.azimuth), '°',
+    'Rotate the follow camera around the unit (compass azimuth, in degrees). ' +
+    'The [ and ] keys turn it too.');
   const camEl = makeSlider('Height', CAMERA_ELEVATION_MIN_DEG, CAMERA_ELEVATION_MAX_DEG, 1, Math.round(camOrbit.elevation / DEG), '°',
     'Camera elevation angle above the ground, in degrees — higher looks more top-down.');
   // Continuous ('any'), so the wheel's fractional spans survive the round trip
@@ -336,7 +422,12 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   // The day/night cycle (spec 047). While it is on it owns the sun and the two
   // manual light sliders below are inert; unticking it hands them the sun back,
   // which is what spec 033 built them for.
-  const dayNight = makeCheckbox('Day/night cycle', lighting,
+  // Off by default. The cycle is still the interesting thing to look at, but it
+  // owns the sun, and a sun that moves is a shadow frame that keeps going stale
+  // -- so the tab now opens on the fixed daylight `applyManualSun` gives it, and
+  // the clock is something you switch on. `lighting` still decides whether the
+  // row exists at all; it stopped deciding whether it starts ticked.
+  const dayNight = makeCheckbox('Day/night cycle', false,
     'Drive the sun, sky and ambient light from a clock. Unticked, the Direction and ' +
     'Elevation sliders below place the sun by hand instead.');
   const timeOfDay = makeSlider('Time', 0, 24, 'any', DEFAULT_TIME_OF_DAY, '',
@@ -357,7 +448,13 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     'Only used when the day/night cycle is switched off.');
 
   // The player's own two lights (spec 047), which is what makes a night walkable.
-  const torchOn = makeCheckbox('Torch', true,
+  // Off by default, and this one is a frame budget rather than a preference.
+  // The torch is a point light with a shadow *cube*: six faces of scene
+  // geometry, measured at 691 of the frame's 1634 draw calls -- 42% of
+  // everything the renderer asks for, spent on a light that only matters after
+  // dark, and the tab no longer opens after dark. Ticking it puts it straight
+  // back.
+  const torchOn = makeCheckbox('Torch', false,
     'A flickering flame carried by the player. It casts shadows, so everything near ' +
     'the player throws one that swings as the flame gutters.');
   const torchRange = makeSlider('Torch range', MIN_LIGHT_RANGE, MAX_LIGHT_RANGE, 10, TORCH_DEFAULTS.range, '',
@@ -371,6 +468,12 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   const torchShadows = makeCheckbox('Torch shadows', true,
     'Let the torch cast shadows. This is a cube shadow map — six extra passes a ' +
     'frame — so it is the first thing to switch off if the view stutters.');
+  // Off by default (spec 118): the player is the closest thing to their own
+  // flame, so what this adds is mostly their silhouette across their own feet.
+  const torchPlayerShadow = makeCheckbox('Player casts torch shadow', false,
+    'Let the player themself be drawn into the torch’s shadow map. Everything else ' +
+    'casts either way; this is the one caster the flame is attached to, and it throws ' +
+    'a silhouette across the ground under your own feet that swings as the flame gutters.');
 
   const magicOn = makeCheckbox('Magic light', false,
     'A conjured orb floating over the player that brightens everything within range ' +
@@ -401,6 +504,9 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     'How many pixels wide one dither cell is — bigger makes the pattern itself chunky.');
   const pixelSize = makeSlider('Pixel size', 1, 4, 1, RETRO_DEFAULTS.pixelSize, '×',
     'Divides the internal render resolution: bigger pixels, fewer of them.');
+  const excludePlayer = makeCheckbox('Spare the player', RETRO_DEFAULTS.excludePlayer,
+    'Let players keep their own colours: same pixels, same grade, same distance, ' +
+    'but not counted onto the palette.');
 
   // The colour grade over the finished frame (spec 047). Independent of the
   // retro filter above: a grade applies whether or not the image is dithered.
@@ -411,79 +517,216 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   const gradeStrength = makeSlider('Filter strength', 0, 100, 5, DEFAULT_GRADE_STRENGTH * 100, '%',
     'How strongly the colour filter is applied. 0 is off whichever preset is chosen.');
 
-  const reset = document.createElement('button');
-  reset.textContent = 'Reset';
-  reset.title = 'Restore the camera, light, and terrain overlay to their defaults.';
-  reset.style.cssText =
-    "font-family:inherit;font-size:12px;margin-top:2px;padding:6px 10px;border-radius:6px;cursor:pointer;" +
-    'border:1px solid #2a2a3a;background:#252533;color:#e8e8f2;';
-  reset.addEventListener('click', () => {
-    const widgets = [camAz, camEl, zoom, followLag, lightAz, lightEl, unwalkable,
-      dayNight, timeOfDay, clockRunning, dayLength,
-      torchOn, torchRange, torchBright, torchFlickerDepth, torchShadows,
-      magicOn, magicRange, magicBright, spawners,
-      retroOn, levels, dither, weave, weaveScale, pixelSize, gradeChoice, gradeStrength];
-    for (const w of widgets) w.reset();
-  });
+  // The hike look (spec 097). One switch per step, so each can be turned on and
+  // off alone; `HIKE_DEFAULTS` says which two open on -- these two are step 2's.
+  const smoothNormals = makeCheckbox('Smooth normals', HIKE_DEFAULTS.smoothNormals,
+    'Average vertex normals across surfaces gentler than the crease angle instead of shading every ' +
+    'face flat. How much it reaches is the crease angle\'s doing: low, only the canopy slabs are ' +
+    'modelled finer than it and everything else keeps its facets.');
+  const creaseAngle = makeSlider('Crease angle', 5, 80, 5, Math.round((HIKE_DEFAULTS.creaseAngle * 180) / Math.PI), '°',
+    'Faces meeting sharper than this stay split. Above ~52° a 7-sided trunk welds its whole tip into ' +
+    'one normal and the taper reads as a dome — which the default is past on purpose, trading the ' +
+    'crisp taper for a surface that carries a gradient at all.');
+  // Step 3: the fixed virtual buffer, upscaled by whole device pixels.
+  const lowRes = makeCheckbox('Low-res buffer', HIKE_DEFAULTS.lowRes,
+    'Draw at a fixed virtual resolution and blow it up by a whole number of device pixels, ' +
+    'letterboxing the remainder. Off, the buffer is a fixed 300px tall at the window aspect and ' +
+    'CSS stretches it by whatever fraction happens to fit.');
+  const virtualSize = makeTextChoice('Virtual size',
+    VIRTUAL_SIZES.map((v) => [v.id, v.id] as const), DEFAULT_VIRTUAL_SIZE,
+    'The buffer the world is drawn into. Fixed: it never changes with the window, which is what ' +
+    'letterboxing is for.');
+  const snapCamera = makeCheckbox('Snap camera to pixels', HIKE_DEFAULTS.snapCamera,
+    'Move the camera onto whole virtual pixels each frame, so edges stop shimmering between two ' +
+    'rows as the view follows. Applied only to the drawn frame -- clicks are still resolved against ' +
+    'the unsnapped camera, so a cell under a stationary cursor cannot change identity as you walk.');
 
-  panel.append(section('Camera'), camAz.row, camEl.row, zoom.row, followLag.row);
-  if (lighting) {
-    panel.append(section('Sky'), dayNight.row, timeOfDay.row, clockRunning.row, dayLength.row);
-  }
-  panel.append(section('Light'), lightAz.row, lightEl.row);
-  if (lighting) {
-    panel.append(
-      section('Player light'),
-      torchOn.row,
-      torchRange.row,
-      torchBright.row,
-      torchFlickerDepth.row,
-      torchShadows.row,
-      magicOn.row,
-      magicRange.row,
-      magicBright.row,
-    );
-  }
-  panel.append(
-    section('Terrain'),
-    unwalkable.row,
-    spawners.row,
-    section('Retro'),
-    retroOn.row,
-    levels.row,
-    dither.row,
-    weave.row,
-    weaveScale.row,
-    pixelSize.row,
-  );
-  if (lighting) panel.append(gradeChoice.row, gradeStrength.row);
-  panel.append(reset);
+  // Step 4: the depth and normal buffers, and the only way to look at them.
+  const buffers = makeCheckbox('Depth + normal buffers', HIKE_DEFAULTS.buffers,
+    'Render depth and view-space normals at the virtual resolution, for the outline pass to read. ' +
+    'Costs a second geometry pass; draws nothing on its own.');
+  const debugView = makeTextChoice('Debug view',
+    HIKE_DEBUG_VIEWS.map((v) => [v, v] as const), HIKE_DEFAULTS.debug,
+    'Draw one intermediate buffer on its own instead of the finished frame. Needs the buffers above.');
 
-  // The cog button toggles the popover; a highlighted state marks it open.
-  const cog = document.createElement('button');
-  cog.type = 'button';
-  cog.textContent = '⚙';
-  cog.title = 'View settings';
-  cog.setAttribute('aria-label', 'View settings');
-  const styleCog = (open: boolean): void => {
-    cog.style.cssText =
-      'font-size:18px;line-height:1;width:32px;height:32px;border-radius:8px;cursor:pointer;' +
-      `border:1px solid #2a2a3a;color:#e8e8f2;` +
-      (open ? 'background:#2a2a3a;' : 'background:#1c1c26;');
+  // Step 7: what distance does to a fill. The outlines are deliberately not part
+  // of it -- they stay at a constant dark value, which is the whole effect.
+  const ink = makeCheckbox('Distance ink', HIKE_DEFAULTS.ink,
+    'Flatten, drain and fog the fills as they recede, while the outlines over them stay exactly as ' +
+    'dark. Distant geometry loses its gradient and becomes flat shapes bounded by line.');
+  const inkStart = makeSlider('Ink start', 0, 800, 20, HIKE_DEFAULTS.inkStart, 'u',
+    'How far past the player the treatment begins, in world units. Measured from what the camera ' +
+    'is looking at, not from the camera -- an orthographic camera sits a fixed distance back, so ' +
+    'depth from it is mostly that constant.');
+  const inkEnd = makeSlider('Ink full', 40, 2000, 20, HIKE_DEFAULTS.inkEnd, 'u',
+    'How far past the player it reaches full strength. The view reaches about 350u past the ' +
+    'player at the default zoom.');
+  const inkFlatten = makeSlider('Flatten', 0, 100, 5, Math.round(HIKE_DEFAULTS.inkFlatten * 100), '%',
+    'How far the shading gradient is removed at full strength. 100% gives a surface one tone.');
+  const inkDesat = makeSlider('Drain', 0, 100, 5, Math.round(HIKE_DEFAULTS.inkDesaturate * 100), '%',
+    'How far the colour drains toward grey at full strength.');
+  const inkFog = makeSlider('Haze', 0, 100, 5, Math.round(HIKE_DEFAULTS.inkFog * 100), '%',
+    'How far the fill drifts toward the sky at full strength. The sky colour is the live one.');
+  const inkEdgeGain = makeSlider('Far line gain', 100, 400, 10, Math.round(HIKE_DEFAULTS.inkEdgeGain * 100), '%',
+    'How much more sensitive the normal edge gets at full distance. A far shape has lost its ' +
+    'shading, so its line is the only thing left describing it.');
+  const minNeighbours = makeSlider('Line coherence', 0, 6, 1, HIKE_DEFAULTS.outlineMinNeighbours, '',
+    'Edge neighbours a pixel needs before its line draws at full strength. Fades the one- and ' +
+    'two-pixel specks that blink as geometry crosses a sample boundary. 0 disables it.');
+
+  // Step 10: the renderer's first texture, generated rather than fetched
+  // (spec 106), and the boundary the ground's materials meet along.
+  const triplanar = makeCheckbox('Surface detail', HIKE_DEFAULTS.triplanar,
+    'Modulate the ground and cliff colours with a generated noise tile, projected on all three ' +
+    'world axes so a vertical face is not smeared. Off by default: it is the only step here that ' +
+    'changes what a surface is made of rather than how it is lit.');
+  const detailStrength = makeSlider('Detail', 0, 60, 2, Math.round(HIKE_DEFAULTS.detailStrength * 100), '%',
+    'How far the tile darkens and lightens the colour underneath it.');
+  const detailScale = makeSlider('Detail size', 20, 300, 10, HIKE_DEFAULTS.detailScale, 'u',
+    'World units per repeat of the tile.');
+  const detailSharpness = makeSlider('Projection blend', 1, 12, 1, HIKE_DEFAULTS.detailSharpness, '',
+    'How hard a surface commits to one projection axis. Low is a soft blend that loses contrast ' +
+    'where two projections average each other out; high is a narrow seam.');
+
+  const materialBlend = makeCheckbox('Rock by slope', HIKE_DEFAULTS.materialBlend,
+    'Blend the ground toward bare rock where it is steep or high, with the boundary displaced by ' +
+    'noise. Colour only -- the cell still knows what it is made of.');
+  const blendStrength = makeSlider('Rock amount', 0, 100, 5, Math.round(HIKE_DEFAULTS.blendStrength * 100), '%',
+    'How far the colour moves toward stone where the blend is full.');
+  // Stops at 40%, which is not a round number but the point past which the
+  // displacement reaches ground with no slope at all -- see maxNoiseForFlatGround.
+  const blendNoise = makeSlider('Ragged edge', 0, 40, 5, Math.round(HIKE_DEFAULTS.blendNoise * 100), '%',
+    'How far the noise displaces the boundary. At zero it is a contour line, which is as regular ' +
+    'as the lattice underneath it.');
+
+  // Step 9: a softer shadow edge, which the look deliberately does not want
+  // (spec 105) -- the switch exists so the choice can be seen.
+  const softShadows = makeCheckbox('Soft shadows', HIKE_DEFAULTS.softShadows,
+    'Filter the shadow map with a Poisson disc instead of taking one unfiltered comparison. Off by ' +
+    'choice rather than by caution: hard shadow edges land on texel boundaries and match a ' +
+    'posterized frame, and a penumbra is the one smooth gradient in the picture.');
+  const shadowRadius = makeSlider('Penumbra', 0.5, 6, 0.5, HIKE_DEFAULTS.shadowPcfRadius, ' texels',
+    'How wide the filter reaches, in shadow-map texels.');
+
+  // Step 8: the fold that is already in the data (spec 104).
+  const curvature = makeCheckbox('Creases', HIKE_DEFAULTS.curvature,
+    'Darken the ground where it folds. Measured once at mesh time from the corner normals each ' +
+    'chunk already carries, so it costs a uniform to switch and nothing per frame.');
+  const curvatureStrength = makeSlider('Crease depth', 0, 100, 5, Math.round(HIKE_DEFAULTS.curvatureStrength * 100), '%',
+    'How dark the deepest fold goes. Full strength is a cell that turns through about 20 degrees ' +
+    'across its own width; open ground is nowhere near that and stays put.');
+
+  // Step 6: quantize onto a named palette instead of onto even steps. The steps,
+  // the dither and its strength are the retro filter's own sliders above -- this
+  // is only the choice between the two.
+  const paletteChoice = makeTextChoice('Palette',
+    HIKE_PALETTES.map((p) => [p.id, p.id] as const), DEFAULT_PALETTE_ID,
+    'Snap every pixel to the nearest colour of a fixed set, instead of to the nearest even step ' +
+    'per channel. The dither above still applies, measured in palette spacing rather than in bands.');
+
+  // Step 5: the outlines the buffers exist for.
+  const edges = makeCheckbox('Outlines', HIKE_DEFAULTS.edges,
+    'Find edges in the depth and normal buffers and draw them over the frame. Needs the buffers above.');
+  const depthThreshold = makeSlider('Depth edge', 1, 60, 1, HIKE_DEFAULTS.depthEdgeThreshold, 'u',
+    'How far a pixel must sit off its neighbour\'s surface to count as an edge, in world units. ' +
+    'Measured against the plane the neighbour lies in, so a hillside at a glancing angle reads as ' +
+    'flat -- and the camera being orthographic is what lets one number serve the whole frame.');
+  const normalThreshold = makeSlider('Normal edge', 5, 100, 5, Math.round(HIKE_DEFAULTS.normalEdgeThreshold * 100), '%',
+    'How far two neighbouring normals must diverge to count as an edge. 200% is a full reversal.');
+  const skyOutline = makeCheckbox('Outline against sky', HIKE_DEFAULTS.outlineAgainstSky,
+    'Let the far plane take part. Off, nothing is traced against the background -- on, every ' +
+    'silhouette against the sky gets a line, at full strength, because the far plane is thousands ' +
+    'of units from anything.');
+
+  const swayNormals = makeCheckbox('Sway rotates normals', HIKE_DEFAULTS.swayNormals,
+    'Turn the vertex normal with the wind bend. Does nothing while normals are flat-shaded; with ' +
+    'smooth normals on, leaving it off is what makes a leaning canopy light as though it were upright.');
+
+  // One popover per subject (spec 107). `fill` takes headings and widgets in the
+  // order they should read and wires the panel's own Reset from the widgets it
+  // was given, so what a menu holds and what its Reset restores cannot drift
+  // apart -- which is exactly what the one flat list at the bottom of this file
+  // used to invite.
+  const fill = (panel: HTMLElement, tip: string, rows: readonly PanelRow[]): void => {
+    const widgets: Resettable[] = [];
+    for (const row of rows) {
+      if ('row' in row) {
+        panel.append(row.row);
+        widgets.push(row);
+      } else {
+        panel.append(row);
+      }
+    }
+    panel.append(resetButton(tip, widgets));
   };
-  styleCog(false);
-  cog.addEventListener('click', () => {
-    const open = panel.style.display === 'none';
-    panel.style.display = open ? 'flex' : 'none';
-    styleCog(open);
-  });
 
+  const view = createSettingsMenu({ glyph: '⚙', label: 'View settings', group: menus });
+  fill(view.panel, 'Restore the camera and the terrain overlays to their defaults.', [
+    section('Camera'), camAz, camEl, zoom, followLag,
+    section('Terrain'), unwalkable, spawners,
+  ]);
+
+  // The sun. The manual sliders live with the cycle rather than with the camera
+  // because they *are* the sun -- they drive it whenever the cycle is off, which
+  // in the sandboxes is always, and this menu is then only those two rows.
+  const sun = createSettingsMenu({
+    glyph: '☀',
+    label: lighting ? 'Day and night' : 'Light',
+    group: menus,
+    fontSize: 17,
+  });
+  fill(sun.panel, 'Restore the clock and the sun to their defaults.', [
+    ...(lighting ? [section('Sky'), dayNight, timeOfDay, clockRunning, dayLength] : []),
+    section('Sun'), lightAz, lightEl,
+  ]);
+
+  // The player's own two lights, and only where they exist.
+  const lights = lighting
+    ? createSettingsMenu({ glyph: '✦', label: 'Player lights', group: menus, fontSize: 16 })
+    : null;
+  if (lights) {
+    fill(lights.panel, 'Restore the torch and the magic light to their defaults.', [
+      section('Torch'), torchOn, torchRange, torchBright, torchFlickerDepth, torchShadows,
+      torchPlayerShadow,
+      section('Magic light'), magicOn, magicRange, magicBright,
+    ]);
+  }
+
+  // The two post passes, together: the grade applies whether or not the image is
+  // dithered, but both are things done to the finished frame rather than to the
+  // world. The grade is a lighting row and the retro filter is not, which is why
+  // only one of them is conditional.
+  const filter = createSettingsMenu({ glyph: '▦', label: 'Retro filter', group: menus, fontSize: 16 });
+  fill(filter.panel, 'Restore the retro filter and the colour grade to their defaults.', [
+    section('Retro'), retroOn, levels, dither, weave, weaveScale, pixelSize, excludePlayer,
+    ...(lighting ? [section('Colour'), gradeChoice, gradeStrength] : []),
+  ]);
+
+  const hikeMenu = createSettingsMenu({ glyph: '❖', label: 'Hike look', group: menus, fontSize: 16 });
+  fill(hikeMenu.panel, 'Restore the hike look to its defaults: smooth normals and distance ink on, ' +
+    'the other eight steps off (spec 097).', [
+    section('Buffer'), lowRes, virtualSize, snapCamera,
+    section('Normals'), smoothNormals, creaseAngle, swayNormals,
+    section('Outlines'), buffers, edges, depthThreshold, normalThreshold, skyOutline, minNeighbours,
+    section('Palette'), paletteChoice,
+    section('Distance'), ink, inkStart, inkEnd, inkFlatten, inkDesat, inkFog, inkEdgeGain,
+    section('Surfaces'), curvature, curvatureStrength, softShadows, shadowRadius,
+    triplanar, detailStrength, detailScale, detailSharpness,
+    materialBlend, blendStrength, blendNoise,
+    section('Debug'), debugView,
+  ]);
+
+  // One row of buttons; every popover hangs off its own, anchored to that
+  // button's right edge, so the set grows leftwards from the corner.
   const element = document.createElement('div');
-  element.style.cssText = 'position:relative;';
-  element.append(cog, panel);
+  element.style.cssText = 'display:flex;gap:6px;';
+  element.append(view.element, sun.element);
+  if (lights) element.append(lights.element);
+  element.append(filter.element, hikeMenu.element);
 
   return {
     element,
+    menus,
     // Non-passive: the wheel is the zoom here, so it must not also scroll the page.
     attachWheelZoom: (target: HTMLElement) => {
       target.addEventListener(
@@ -495,6 +738,9 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
         { passive: false },
       );
     },
+    pinchZoom: (ratio: number) => zoom.setValue(pinchViewHalfWidth(zoom.value(), ratio)),
+    orbitBy: (degrees: number) => camAz.setValue(wrapTurn(camAz.value() + degrees)),
+    orbitDegrees: () => camAz.value(),
     cameraOffset: () =>
       orbitToOffset({ azimuth: camAz.value() * DEG, elevation: camEl.value() * DEG, distance: camOrbit.distance }),
     viewHalfWidth: () => zoom.value(),
@@ -510,7 +756,47 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
       matrixSize: weave.value() as BayerSize,
       ditherScale: weaveScale.value(),
       pixelSize: pixelSize.value(),
+      excludePlayer: excludePlayer.checked(),
     }),
+    hike: () => {
+      const size = virtualSizeById(virtualSize.value());
+      return {
+        ...HIKE_DEFAULTS,
+        lowRes: lowRes.checked(),
+        virtualWidth: size.width,
+        virtualHeight: size.height,
+        snapCamera: snapCamera.checked(),
+        smoothNormals: smoothNormals.checked(),
+        creaseAngle: (creaseAngle.value() * Math.PI) / 180,
+        swayNormals: swayNormals.checked(),
+        buffers: buffers.checked(),
+        edges: edges.checked(),
+        depthEdgeThreshold: depthThreshold.value(),
+        normalEdgeThreshold: normalThreshold.value() / 100,
+        outlineAgainstSky: skyOutline.checked(),
+        palette: paletteById(paletteChoice.value()),
+        ink: ink.checked(),
+        inkStart: inkStart.value(),
+        inkEnd: inkEnd.value(),
+        inkFlatten: inkFlatten.value() / 100,
+        inkDesaturate: inkDesat.value() / 100,
+        inkFog: inkFog.value() / 100,
+        inkEdgeGain: inkEdgeGain.value() / 100,
+        outlineMinNeighbours: minNeighbours.value(),
+        curvature: curvature.checked(),
+        curvatureStrength: curvatureStrength.value() / 100,
+        softShadows: softShadows.checked(),
+        shadowPcfRadius: shadowRadius.value(),
+        triplanar: triplanar.checked(),
+        detailStrength: detailStrength.value() / 100,
+        detailScale: detailScale.value(),
+        detailSharpness: detailSharpness.value(),
+        materialBlend: materialBlend.checked(),
+        blendStrength: blendStrength.value() / 100,
+        blendNoise: blendNoise.value() / 100,
+        debug: debugView.value() as HikeDebugView,
+      };
+    },
     dayNightEnabled: () => dayNight.checked(),
     sky: () => (dayNight.checked() ? skyAt(timeOfDay.value()) : null),
     // The slider *is* the clock: writing the advanced hour back to it keeps one
@@ -526,6 +812,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
       torchBrightness: torchBright.value() / 100,
       torchFlicker: torchFlickerDepth.value() / 100,
       torchShadows: torchShadows.checked(),
+      torchPlayerShadow: torchPlayerShadow.checked(),
       magicOn: magicOn.checked(),
       magicRange: magicRange.value(),
       magicBrightness: magicBright.value() / 100,

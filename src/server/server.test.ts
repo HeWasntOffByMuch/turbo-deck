@@ -6,6 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { createHmacAdminVerifier, signToken } from './admin/auth.js';
+import { abilityById } from './data/abilities.js';
 import { BROADCAST_EVERY_N_TICKS, PROTOCOL_VERSION, SERVER_TICK_RATE } from './config.js';
 import { encodeAdminRequest, decodeAdminReply, type AdminReply } from './net/admin-messages.js';
 import { decodeServerMessage, encodeClientMessage, type ServerMessage } from './net/messages.js';
@@ -37,7 +38,7 @@ class Client {
     });
   }
 
-  async hello(playerId: string): Promise<void> {
+  async hello(playerId: string, assetManifest = ''): Promise<void> {
     await this.server.receive(
       this.connection,
       encodeClientMessage({
@@ -46,6 +47,7 @@ class Client {
         playerId,
         displayName: playerId,
         token: '',
+        assetManifest,
       }),
     );
   }
@@ -129,6 +131,7 @@ describe('login', () => {
         playerId: 'alice',
         displayName: 'Alice',
         token: '',
+        assetManifest: '',
       }),
     );
     expect(client.of(ServerMessageType.Error)[0]?.code).toBe(ErrorCode.BadProtocolVersion);
@@ -370,8 +373,11 @@ describe('combat over the wire', () => {
         afterInputSeq: 0,
       }),
     );
-    // Run out the wind-up: nothing lands on the tick the button is pressed.
-    for (let i = 0; i < 30; i++) game.tick();
+    // Run out the wind-up: nothing lands on the tick the button is pressed. Its
+    // length is the table's to say and got longer in spec 094, so it is asked
+    // for rather than assumed.
+    const swing = abilityById('melee.slash');
+    for (let i = 0; i < (swing?.windupTicks ?? 0) + 30; i++) game.tick();
 
     const result = client.of(ServerMessageType.CombatResult)[0];
     expect(result).toBeDefined();
@@ -395,7 +401,7 @@ describe('a cast commits on the input it was asked for', () => {
     const entityId = client.of(ServerMessageType.Welcome)[0]?.entityId ?? -1;
 
     // Five inputs queued, so the stream is well behind what has arrived.
-    for (let seq = 1; seq <= 5; seq++) await client.input(seq, { moveX: 1 });
+    for (let seq = 1; seq <= 5; seq++) await client.input(seq);
     // ...and a request made after the fifth of them.
     await game.receive(
       client.connection,
@@ -417,6 +423,48 @@ describe('a cast commits on the input it was asked for', () => {
     // The fifth applies input 5, which is what the request was stamped to.
     game.tick();
     expect(game.world.entities.get(entityId)?.cast?.abilityId).toBe('melee.slash');
+  });
+
+  /**
+   * The same, with the stamped frame asking to walk (spec 094).
+   *
+   * A step and a commit may not ride one input -- `step` reads that pair as a
+   * withdrawal and refuses the commit -- so the frame goes out on its own and
+   * the request follows a tick behind it, the same way a commit yields to a
+   * cancel it arrived after (spec 092). It must *not* be refused: this walking
+   * frame was sent before the press, which is what the end of every chase looks
+   * like, and the player has stopped by the time they ask.
+   */
+  it('lets the walking frame it was stamped after go out alone, and commits behind it', async () => {
+    const game = server();
+    const client = new Client(game);
+    await client.hello('alice');
+    const entityId = client.of(ServerMessageType.Welcome)[0]?.entityId ?? -1;
+
+    for (let seq = 1; seq <= 5; seq++) await client.input(seq, { moveX: 1 });
+    await game.receive(
+      client.connection,
+      encodeClientMessage({
+        type: ClientMessageType.UseAbility,
+        abilityId: 'melee.slash',
+        targetEntityId: 0,
+        targetX: 900,
+        targetY: 500,
+        afterInputSeq: 5,
+      }),
+    );
+
+    // Inputs 1-5 apply, the fifth of them carrying the walk and nothing else.
+    for (let i = 0; i < 5; i++) {
+      game.tick();
+      expect(game.world.entities.get(entityId)?.cast).toBeNull();
+    }
+    // And the commit lands on the tick after it, unrefused.
+    game.tick();
+    expect(game.world.entities.get(entityId)?.cast?.abilityId).toBe('melee.slash');
+    expect(
+      client.of(ServerMessageType.CastRejected).map((message) => message.reason),
+    ).toEqual([]);
   });
 
   it('still fires for a client that sends no movement at all', async () => {
@@ -623,5 +671,52 @@ describe('the admin namespace on the same connection', () => {
     if (reply?.type !== AdminReplyType.Audit) throw new Error('expected an audit reply');
     expect(reply.entries.map((entry) => entry.action)).toContain('admin:broadcast');
     for (const entry of reply.entries) expect(entry.actor).toBe('root');
+  });
+});
+
+describe('the asset manifest gate (spec 113)', () => {
+  /** A server that is serving a known set of assets. */
+  const serving = (hash: string): GameServer =>
+    new GameServer({ seed: 5, adminVerifier: createHmacAdminVerifier(SECRET), assetManifestHash: hash });
+
+  it('refuses a client built against different assets', async () => {
+    // The failure this exists for is silent: a client on stale assets draws a
+    // fight that is not the one being played -- different clip lengths,
+    // different action timings, a hit landing on a frame the server never used
+    // -- and nothing looks wrong until somebody notices.
+    const client = new Client(serving('server-hash'));
+    await client.hello('you', 'client-hash');
+
+    const error = client.received.find((message) => message.type === ServerMessageType.Error);
+    expect(error).toBeDefined();
+    if (error?.type !== ServerMessageType.Error) throw new Error('expected an error');
+    expect(error.code).toBe(ErrorCode.BadProtocolVersion);
+    // Both hashes, because which side moved decides the remedy.
+    expect(error.message).toContain('server-hash'.slice(0, 12));
+    expect(error.message).toContain('client-hash'.slice(0, 12));
+    expect(client.received.some((message) => message.type === ServerMessageType.Welcome)).toBe(false);
+  });
+
+  it('welcomes a client built against the same assets', async () => {
+    const client = new Client(serving('same-hash'));
+    await client.hello('you', 'same-hash');
+    expect(client.received.some((message) => message.type === ServerMessageType.Welcome)).toBe(true);
+  });
+
+  it('welcomes a client that has no manifest at all', async () => {
+    // The in-tab server and the bot harness share a process with the thing they
+    // connect to and cannot be stale with respect to it. A gate that failed
+    // closed on absence could never have been introduced in the first place.
+    const client = new Client(serving('server-hash'));
+    await client.hello('you', '');
+    expect(client.received.some((message) => message.type === ServerMessageType.Welcome)).toBe(true);
+  });
+
+  it('welcomes everybody when the server itself has no manifest', async () => {
+    // A checkout where `npm run bake:units` has never run is still one somebody
+    // can play.
+    const client = new Client(server());
+    await client.hello('you', 'whatever-the-client-thinks');
+    expect(client.received.some((message) => message.type === ServerMessageType.Welcome)).toBe(true);
   });
 });

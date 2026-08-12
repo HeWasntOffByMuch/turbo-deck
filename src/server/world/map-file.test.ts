@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { serializeMap } from '../../terrain/map.js';
+import { MAP_VERSION, serializeMap } from '../../terrain/map.js';
 import { loadMap } from '../../terrain/map-world.js';
 import { bakeMap, DEFAULT_BAKE_SEED } from '../../../scripts/bake-map.js';
 import { buildWorldFromMap } from './build.js';
@@ -29,7 +29,7 @@ describe('the shipped map', () => {
   const file = loadMapFile(DEFAULT_MAP_PATH);
 
   it('reads and parses', () => {
-    expect(file.doc.version).toBe(1);
+    expect(file.doc.version).toBe(MAP_VERSION);
     expect(file.doc.seed).toBe(DEFAULT_BAKE_SEED);
     expect(file.text.length).toBeGreaterThan(0);
   });

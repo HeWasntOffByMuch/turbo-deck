@@ -101,6 +101,10 @@ export function makeHeadingArrow(): THREE.Mesh {
   const geo = new THREE.ShapeGeometry(shape);
   geo.rotateX(-Math.PI / 2); // lay flat in the ground plane, tip toward +x
   const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: PALETTE.heading }));
+  // Opaque and depth-writing, but a readout rather than a surface: the depth and
+  // normal buffers skip it so the outline pass traces the unit and not the arrow
+  // pointing out of it (spec 100).
+  m.userData['isOverlay'] = true;
   m.position.y = 3;
   return m;
 }

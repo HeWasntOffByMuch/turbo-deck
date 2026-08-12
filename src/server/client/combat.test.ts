@@ -16,7 +16,6 @@
 import { describe, expect, it } from 'vitest';
 import { BROADCAST_EVERY_N_TICKS, SERVER_TICK_RATE } from '../config.js';
 import { abilityById } from '../data/abilities.js';
-import { attackIntervalTicks } from '../player/stats.js';
 import { LoopbackTransport } from '../net/transport-loop.js';
 import { GameServer } from '../server.js';
 import { CastPhase, type CastState } from '../sim/types.js';
@@ -32,8 +31,7 @@ const STATS: EffectiveStats = {
   turnRate: 540,
   attackDamage: 10,
   attackRange: 60,
-  attackCooldownTicks: 30,
-  attackSpeed: 1.25,
+  attackDelayTicks: 24,
   armor: 0,
   spellPower: 1,
   critChance: 0,
@@ -116,11 +114,16 @@ describe('the gate, asked of a mirror', () => {
     expect(decision.cast.releaseTick).toBe(100 + (abilityById('melee.slash')?.windupTicks ?? 0));
     // And the cooldown it expects to have spent runs from the stamp, not the
     // lookahead, or every press would push the next one further out. Its
-    // *length* is the caster's own swing cadence rather than the ability
+    // *length* is the caster's own attack delay rather than the ability
     // table's number, because slash is the basic attack (spec 070) -- a client
-    // that read the table would grey the button for the wrong span.
-    expect(decision.readyAtTick).toBe(100 + attackIntervalTicks(STATS));
-    expect(attackIntervalTicks(STATS)).not.toBe(abilityById('melee.slash')?.cooldownTicks);
+    // that read the table would grey the button for the wrong span. It runs
+    // from the *release* rather than the stamp (spec 091): the cooldown is the
+    // price of a blow that went off, and a wind-up withdrawn from pays none of
+    // it, so the prediction must not grey the button out during one.
+    expect(decision.readyAtTick).toBe(
+      100 + (abilityById('melee.slash')?.windupTicks ?? 0) + STATS.attackDelayTicks,
+    );
+    expect(STATS.attackDelayTicks).not.toBe(abilityById('melee.slash')?.cooldownTicks);
   });
 
   it('starts a cast turning when the body is not yet facing the aim', () => {
@@ -128,6 +131,34 @@ describe('the gate, asked of a mirror', () => {
     expect(decision.ok).toBe(true);
     if (!decision.ok) return;
     expect(decision.cast.phase).toBe(CastPhase.Turning);
+  });
+
+  /**
+   * Spec 080. Reach to a *body* is measured to its edge on the server, and this
+   * is the same `startCast` -- but it was never handed the radius, so it asked a
+   * stricter question than the one the server would ask, and refused to predict
+   * every attack in the band between the two. Silent on today's content and
+   * wrong in principle: the whole reason this calls the sim's own gate is so
+   * that a disagreement can only ever come from an input, never from a rule.
+   */
+  it('measures reach to a named body’s edge, exactly as the server does', () => {
+    const star = abilityById('ranged.star');
+    if (!star) throw new Error('no ranged.star');
+    const radius = 40;
+    // Past the range from the centre, inside it from the edge.
+    const aim = { x: star.range + radius / 2, y: 0 };
+
+    expect(mayCast(mirror(), 'ranged.star', aim, 100, 100, 7, radius).ok).toBe(true);
+    // Named, but with no edge to reach for: the centre check, refused.
+    expect(mayCast(mirror(), 'ranged.star', aim, 100, 100, 7, 0)).toEqual({
+      ok: false,
+      reason: 'outOfRange',
+    });
+    // A patch of ground has no edge at all, and a radius cannot buy it one.
+    expect(mayCast(mirror(), 'ranged.star', aim, 100, 100, 0, radius)).toEqual({
+      ok: false,
+      reason: 'outOfRange',
+    });
   });
 });
 
@@ -240,12 +271,35 @@ describe('what the player sees, the moment they press', () => {
     expect(selfCast(client)).toBeDefined();
   });
 
-  it('starts the cooldown sweep on the press too', async () => {
-    const { client } = await wire();
+  /**
+   * Spec 069 started the sweep on the press, because the server stamped the
+   * cooldown on the press. Spec 091 moved the stamp to the release, and this
+   * moves with it: a sweep drawn during the wind-up is a promise the withdrawal
+   * is about to break, and the button greying out for a swing that never
+   * happened is the report this came from.
+   */
+  it('starts the cooldown sweep at the release, not at the press', async () => {
+    const { server, client } = await wire();
+    const slash = abilityById('melee.slash');
+    expect(slash).toBeDefined();
+    if (!slash) return;
+
     const before = client.view();
     expect(before.cooldowns['melee.slash'] ?? 0).toBeLessThanOrEqual(before.estimatedTick);
 
     client.useAbility('melee.slash', 1000, 0);
+
+    // The bar is up -- the press is predicted -- but nothing is sweeping yet.
+    expect(selfCast(client)).toBeDefined();
+    const pressed = client.view();
+    expect(pressed.cooldowns['melee.slash'] ?? 0).toBeLessThanOrEqual(pressed.estimatedTick);
+
+    for (let i = 0; i < slash.windupTicks + BROADCAST_EVERY_N_TICKS * 2; i++) {
+      server.tick();
+      client.advanceTick();
+      client.sendInput({ moveX: 0, moveY: 0, facing: 0, buttons: 0 });
+      await settle();
+    }
 
     const after = client.view();
     expect(after.cooldowns['melee.slash'] ?? 0).toBeGreaterThan(after.estimatedTick);
@@ -291,7 +345,7 @@ describe('what the player sees, the moment they press', () => {
     });
   });
 
-  it('takes the bar back down when the server refuses, and gives the cooldown back', async () => {
+  it('takes the bar back down when the server refuses, and stamps no cooldown', async () => {
     const { server, client } = await wire();
 
     // Put the ability on cooldown *behind the client's back*, which is the only
@@ -309,11 +363,14 @@ describe('what the player sees, the moment they press', () => {
     });
 
     client.useAbility('melee.slash', 1000, 0);
-    // The client does not know, so it guesses yes: a bar, a sweep and a root.
+    // The client does not know, so it guesses yes: a bar and a root. Not a
+    // sweep -- since spec 091 that waits for the release, which this cast is
+    // never going to reach.
     expect(selfCast(client)).toBeDefined();
     expect(client.view().selfRoot).not.toBeNull();
-    const guessedSweep = client.view().cooldowns['melee.slash'] ?? 0;
-    expect(guessedSweep).toBeGreaterThan(client.view().estimatedTick);
+    expect(client.view().cooldowns['melee.slash'] ?? 0).toBeLessThanOrEqual(
+      client.view().estimatedTick,
+    );
 
     for (let i = 0; i < BROADCAST_EVERY_N_TICKS * 6; i++) {
       server.tick();

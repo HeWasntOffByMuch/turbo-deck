@@ -225,10 +225,12 @@ describe('loopback session', () => {
       (entity) => entity.kind === EntityKindValue.Monster,
     )?.id;
 
-    // Commit to the basic melee, then run out its wind-up.
+    // Commit to the basic melee, then run out its wind-up -- the table's own
+    // number, since it moves (spec 094), plus room for the turn in front of it.
+    const swing = abilityById('melee.slash');
     client.useAbility('melee.slash', (self?.position.x ?? 0) + 40, self?.position.y ?? 0);
     await settle();
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < (swing?.windupTicks ?? 0) + 30; i++) {
       test.server.tick();
       await settle();
     }
@@ -403,7 +405,9 @@ describe('calling off a cast', () => {
     const casting = test.server.world.entities.get(entityId);
     expect(casting?.cast?.abilityId).toBe('melee.heavy');
     expect(casting?.resource ?? 0).toBeCloseTo(before - heavy.cost, 6);
-    expect(casting?.cooldowns['melee.heavy']).toBeGreaterThan(0);
+    // The cost is spent at the commit; the cooldown is not, and since spec 091
+    // there is nothing to refund because nothing was taken.
+    expect(casting?.cooldowns['melee.heavy']).toBeUndefined();
 
     // Call it off partway through the wind-up, deliberately on a tick with no
     // movement input behind it.
@@ -639,10 +643,19 @@ describe('cooldowns', () => {
     await advance(test, 1);
     expect(client.view().cooldowns).toEqual({});
 
+    const heavy = abilityById('melee.heavy');
+    expect(heavy).toBeDefined();
+    if (!heavy) return;
+
     client.useAbility('melee.heavy', 900, 500);
     await settle();
     test.server.tick();
     await settle();
+    // Not while the blow is still being wound up (spec 091) -- it is spent by
+    // the swing, not by the decision to start one.
+    expect(client.view().cooldowns['melee.heavy']).toBeUndefined();
+
+    await advance(test, heavy.windupTicks + 1);
 
     const readyAt = client.view().cooldowns['melee.heavy'];
     expect(readyAt).toBeGreaterThan(0);
@@ -651,7 +664,14 @@ describe('cooldowns', () => {
     expect(readyAt).toBe(test.server.world.entities.get(entityId)?.cooldowns['melee.heavy']);
   });
 
-  it('are withdrawn again when a cancel refunds them', async () => {
+  /**
+   * Spec 062 stamped the cooldown at the commit and handed it back on a cancel,
+   * so that a last-moment withdrawal was not free. Spec 091 takes the earlier
+   * half away instead: a wind-up that is withdrawn from never stamps one, so
+   * there is no refund to announce and the button never greys for a swing that
+   * did not happen. Pinned because "no cooldown, ever" is the whole claim.
+   */
+  it('are never announced for a cast that is withdrawn from', async () => {
     const test = harness();
     const client = await connect(test, 'alice');
     await advance(test, 1);
@@ -660,7 +680,7 @@ describe('cooldowns', () => {
     await settle();
     test.server.tick();
     await settle();
-    expect(client.view().cooldowns['melee.heavy']).toBeGreaterThan(0);
+    expect(client.view().cooldowns['melee.heavy']).toBeUndefined();
 
     client.cancelCast();
     await settle();
@@ -685,7 +705,11 @@ describe('cooldowns', () => {
 
     client.useAbility('melee.slash', 900, 500);
     await settle();
-    for (let i = 0; i < slash.cooldownTicks + slash.windupTicks + 10; i++) {
+    // The basic attack's cooldown is the caster's own delay, not the table's
+    // number (spec 070, and since spec 088 the delay *is* the stat), so the
+    // wait is asked for rather than assumed.
+    const cadence = client.view().stats?.attackDelayTicks ?? slash.cooldownTicks;
+    for (let i = 0; i < cadence + slash.windupTicks + 10; i++) {
       test.server.tick();
       await settle();
     }
@@ -694,11 +718,15 @@ describe('cooldowns', () => {
     const readyAt = client.view().cooldowns['melee.slash'] ?? 0;
     expect(readyAt).toBeLessThan(test.server.world.tick);
 
-    // Casting something else re-sends the map, and the dead entry is not in it.
+    // Landing something else re-sends the map, and the dead entry is not in it.
+    // It has to *land*: since spec 091 the stamp -- and so the frame -- waits
+    // for the release rather than the commit.
+    const heavy = abilityById('melee.heavy');
+    expect(heavy).toBeDefined();
+    if (!heavy) return;
     client.useAbility('melee.heavy', 900, 500);
     await settle();
-    test.server.tick();
-    await settle();
+    await advance(test, heavy.windupTicks + 2);
     expect(client.view().cooldowns['melee.slash']).toBeUndefined();
     expect(client.view().cooldowns['melee.heavy']).toBeGreaterThan(0);
   });
@@ -742,7 +770,11 @@ describe('committing before the server has answered', () => {
     expect(slash).toBeDefined();
     if (!slash) return;
     // Run past the end of the cast and its cooldown; nothing may still root us.
-    for (let i = 0; i < slash.cooldownTicks + slash.windupTicks + 10; i++) {
+    // The basic attack's cooldown is the caster's own delay, not the table's
+    // number (spec 070, and since spec 088 the delay *is* the stat), so the
+    // wait is asked for rather than assumed.
+    const cadence = client.view().stats?.attackDelayTicks ?? slash.cooldownTicks;
+    for (let i = 0; i < cadence + slash.windupTicks + 10; i++) {
       test.server.tick();
       await settle();
     }

@@ -1,17 +1,33 @@
 import { describe, expect, it } from 'vitest';
 import { MemoryDataStore } from '../state/memory-store.js';
-import { abilityById } from '../data/abilities.js';
-import { EMPTY_EQUIPMENT, type PersistedPlayer } from '../state/types.js';
+import { SERVER_TICK_RATE } from '../config.js';
+import { abilityById, ALL_ABILITIES } from '../data/abilities.js';
+import { EMPTY_EQUIPMENT, emptyInventory, type PersistedPlayer } from '../state/types.js';
 import { ZoneManager } from '../world/zone-manager.js';
-import { PlayerManager } from './player-manager.js';
+import { CHARACTERS, type Character } from '../../sim/characters.js';
 import {
-  attackIntervalTicks,
+  MOVE_SPEED_HARD_MAX,
+  MOVE_SPEED_HARD_MIN,
+  TURN_RATE_PER_AGILITY,
+} from '../../sim/constants.js';
+import { PlayerManager, STARTER_EQUIPMENT } from './player-manager.js';
+import {
+  attackDelayTicksFrom,
+  BASE_ATTACK_DELAY_TICKS,
   clampHealthToStats,
   computeEffectiveStats,
-  MAX_ATTACK_SPEED,
-  MIN_ATTACK_SPEED,
+  MAX_ATTACK_DELAY_TICKS,
+  MIN_ATTACK_DELAY_TICKS,
+  PROJECTILE_SPEED_SCALE,
+  projectileLifetimeTicks,
+  projectileSpeedFor,
   simTicksToServerTicks,
 } from './stats.js';
+
+/** The delay produced by a bare body carrying `pct` worth of "percent faster". */
+function computeDelayWith(pct: number): number {
+  return attackDelayTicksFrom(0, 1 + pct);
+}
 
 function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
   return {
@@ -20,6 +36,8 @@ function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
     baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
     skills: [],
     equipment: EMPTY_EQUIPMENT,
+    inventory: emptyInventory(),
+    coins: 0,
     position: { x: 600, y: 450, z: 0 },
     facing: 0,
     currentZone: 'hearth',
@@ -85,6 +103,50 @@ describe('effective stats', () => {
     expect(stats).toEqual(computeEffectiveStats(player()));
   });
 
+  /**
+   * The player's movement is `CHARACTERS[0]` and nothing else (spec 081): the
+   * cow's speed is what a character walks at before a single point of dexterity
+   * or an item is counted. Asserted against the table rather than against
+   * literals, so the day someone reorders the archetypes this fails here instead
+   * of silently handing every player a different body's speed.
+   *
+   * The turn rate is asserted the other way round -- the *derived* 540 rather
+   * than the base it comes from -- because the base is not what anything reads
+   * and asserting it is how this went wrong (spec 139). The table said 540, the
+   * test agreed with the table, and the sim turned players at 690 for eight
+   * specs with nothing anywhere disagreeing.
+   */
+  it('derives a fresh character from the cow, plus dexterity (spec 081)', () => {
+    const cow = CHARACTERS[0] as Character;
+    expect(cow.moveSpeed).toBe(155);
+    expect(cow.moveSpeed).toBeGreaterThanOrEqual(MOVE_SPEED_HARD_MIN);
+    expect(cow.moveSpeed).toBeLessThanOrEqual(MOVE_SPEED_HARD_MAX);
+
+    // The starter kit is a worn sword and a leather jerkin, neither of which
+    // touches movement, so the base survives to the wire unmodified.
+    const fresh = computeEffectiveStats(player({ equipment: STARTER_EQUIPMENT }));
+    expect(fresh.moveSpeed).toBe(cow.moveSpeed);
+    expect(fresh.turnRate).toBe(cow.turnRate + TURN_RATE_PER_AGILITY * 5);
+    // The number a fresh character actually pivots at, and the reversal it buys.
+    expect(fresh.turnRate).toBe(540);
+    expect(180 / fresh.turnRate).toBeCloseTo(1 / 3, 6);
+  });
+
+  /**
+   * Dexterity is how an agile character is expressed, so spec 139 moved where
+   * the ladder starts and deliberately left its slope alone. A change that
+   * flattened the per-point term would pass every other assertion here.
+   */
+  it('still lets dexterity buy a faster pivot (spec 139)', () => {
+    expect(TURN_RATE_PER_AGILITY).toBe(30);
+    const fresh = computeEffectiveStats(player());
+    const agile = computeEffectiveStats(
+      player({ baseStats: { strength: 5, dexterity: 25, intelligence: 5, vitality: 5 } }),
+    );
+    expect(agile.turnRate).toBe(fresh.turnRate + TURN_RATE_PER_AGILITY * 20);
+    expect(agile.turnRate).toBeGreaterThan(690);
+  });
+
   it('keeps armour under the sim-wide damage-reduction ceiling', () => {
     const tank = computeEffectiveStats(
       player({
@@ -95,51 +157,119 @@ describe('effective stats', () => {
     expect(tank.armor).toBeLessThanOrEqual(0.85);
     expect(tank.moveSpeed).toBeLessThanOrEqual(550);
     expect(tank.moveSpeed).toBeGreaterThanOrEqual(100);
-    expect(tank.attackCooldownTicks).toBeGreaterThanOrEqual(1);
+    expect(tank.attackDelayTicks).toBeGreaterThanOrEqual(1);
   });
 
-  it('turns dexterity into attack speed, not into a shorter base swing', () => {
+  it('waits 1.2 seconds between attacks with nothing on (spec 088)', () => {
+    const bare = computeEffectiveStats(player());
+    expect(bare.attackDelayTicks).toBe(BASE_ATTACK_DELAY_TICKS);
+    expect(bare.attackDelayTicks).toBe(Math.round(SERVER_TICK_RATE * 1.2));
+  });
+
+  it('does not let dexterity shorten the delay any more (spec 088)', () => {
     const slow = computeEffectiveStats(player());
     const quick = computeEffectiveStats(
-      player({ baseStats: { strength: 5, dexterity: 40, intelligence: 5, vitality: 5 } }),
+      player({ baseStats: { strength: 5, dexterity: 500, intelligence: 5, vitality: 5 } }),
     );
-    expect(quick.attackSpeed).toBeGreaterThan(slow.attackSpeed);
-    // The base cadence is untouched by it: one lever, in one place (spec 070).
-    expect(quick.attackCooldownTicks).toBe(slow.attackCooldownTicks);
-    expect(attackIntervalTicks(quick)).toBeLessThan(attackIntervalTicks(slow));
+    expect(quick.attackDelayTicks).toBe(slow.attackDelayTicks);
+    // Unhooked from cadence rather than deleted: it still does everything else
+    // it did, which is what makes this a change of meaning and not a nerf.
+    expect(quick.armor).toBeGreaterThan(slow.armor);
+    expect(quick.critChance).toBeGreaterThan(slow.critChance);
+    expect(quick.turnRate).toBeGreaterThan(slow.turnRate);
   });
 
-  it('takes attack speed from equipment, in both directions', () => {
+  it('does not let the weapon change the attack cadence (spec 091)', () => {
     const bare = computeEffectiveStats(player());
-    const keen = computeEffectiveStats(
-      player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'sword.keen' } }),
-    );
-    const maul = computeEffectiveStats(
-      player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'maul.iron' } }),
-    );
-    expect(keen.attackSpeed).toBeGreaterThan(bare.attackSpeed);
-    expect(maul.attackSpeed).toBeLessThan(bare.attackSpeed);
-    expect(attackIntervalTicks(keen)).toBeLessThan(attackIntervalTicks(maul));
+    const delayWith = (mainHand: string): number =>
+      computeEffectiveStats(player({ equipment: { ...EMPTY_EQUIPMENT, mainHand } })).attackDelayTicks;
+
+    // The cadence is a property of attacking, not of what is held: a bow, a
+    // maul and a bare hand are all on the same clock. `attackSpeedPct` still
+    // exists and still means percent faster -- nothing reads it for *this*.
+    for (const weapon of ['sword.keen', 'stars.weighted', 'maul.iron', 'bow.hunting']) {
+      expect(delayWith(weapon), weapon).toBe(bare.attackDelayTicks);
+    }
+    expect(bare.attackDelayTicks).toBe(BASE_ATTACK_DELAY_TICKS);
   });
 
-  it('holds attack speed between its floor and its ceiling', () => {
-    const wild = computeEffectiveStats(
-      player({ baseStats: { strength: 5, dexterity: 100000, intelligence: 5, vitality: 5 } }),
+  it('does not let a skill change it either (spec 091)', () => {
+    const bare = computeEffectiveStats(player());
+    // Precision is `attackCooldownTicks: -0.4` a level. It still modifies the
+    // stat it names; the cadence simply stopped being derived from it, which is
+    // a real loss for two Finesse skills and is recorded rather than hidden.
+    const trained = computeEffectiveStats(
+      player({ skills: [{ skillId: 'finesse.precision', level: 5 }] }),
     );
-    expect(wild.attackSpeed).toBeLessThanOrEqual(MAX_ATTACK_SPEED);
-    expect(wild.attackSpeed).toBeGreaterThanOrEqual(MIN_ATTACK_SPEED);
-    expect(attackIntervalTicks(wild)).toBeGreaterThanOrEqual(1);
+    expect(trained.attackDelayTicks).toBe(bare.attackDelayTicks);
   });
 
-  it('halves the swing interval when attack speed doubles', () => {
-    const base = computeEffectiveStats(player());
-    const once = { ...base, attackCooldownTicks: 40, attackSpeed: 1 };
-    const twice = { ...once, attackSpeed: 2 };
-    expect(attackIntervalTicks(once)).toBe(40);
-    expect(attackIntervalTicks(twice)).toBe(20);
-    // Never zero, whatever a modifier says: the interval divides by this.
-    expect(attackIntervalTicks({ ...once, attackSpeed: 0 })).toBeGreaterThanOrEqual(1);
-    expect(attackIntervalTicks({ ...once, attackSpeed: Number.NaN })).toBe(40);
+  it('holds the delay between its floor and its ceiling', () => {
+    // Poked in directly, because no item in the table is this broken -- and the
+    // point of a clamp is the item somebody adds tomorrow.
+    for (const pct of [-1, -5, 0, 50, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const delay = computeDelayWith(pct);
+      expect(Number.isFinite(delay), String(pct)).toBe(true);
+      expect(delay, String(pct)).toBeGreaterThanOrEqual(MIN_ATTACK_DELAY_TICKS);
+      expect(delay, String(pct)).toBeLessThanOrEqual(MAX_ATTACK_DELAY_TICKS);
+    }
+    // Slowed to a standstill is the ceiling, not a negative wait.
+    expect(computeDelayWith(-1)).toBe(MAX_ATTACK_DELAY_TICKS);
+    // And an absurd amount of haste is the floor, not a swing every tick.
+    expect(computeDelayWith(Number.POSITIVE_INFINITY)).toBe(MIN_ATTACK_DELAY_TICKS);
+    // A flat modifier cannot drive it under the floor either.
+    expect(attackDelayTicksFrom(-100000, 1)).toBe(MIN_ATTACK_DELAY_TICKS);
+    expect(attackDelayTicksFrom(Number.NaN, 1)).toBe(BASE_ATTACK_DELAY_TICKS);
+  });
+
+  it('halves the delay when the haste doubles the rate', () => {
+    expect(computeDelayWith(0)).toBe(BASE_ATTACK_DELAY_TICKS);
+    expect(computeDelayWith(1)).toBe(Math.round(BASE_ATTACK_DELAY_TICKS / 2));
+    expect(computeDelayWith(-0.5)).toBe(Math.round(BASE_ATTACK_DELAY_TICKS / 0.5));
+  });
+
+  it('flies a shot at a fraction of its table speed (spec 087)', () => {
+    expect(projectileSpeedFor(1000)).toBeCloseTo(1000 * PROJECTILE_SPEED_SCALE, 9);
+    expect(projectileSpeedFor(500)).toBeCloseTo(projectileSpeedFor(1000) / 2, 9);
+  });
+
+  it('does not ask the shooter how fast its shot flies (spec 088)', () => {
+    // Since spec 091 the cadence is the same whatever is held, so this can no
+    // longer be shown by contrasting two weapons -- it is shown by the
+    // signatures, which have nowhere to put a body.
+    const spec = { speed: 900, lifetimeTicks: 120 };
+    expect(projectileSpeedFor(spec.speed)).toBe(projectileSpeedFor(spec.speed));
+    expect(projectileLifetimeTicks(spec)).toBe(projectileLifetimeTicks(spec));
+    // The signatures are the assertion: neither function can be handed a body.
+    expect(projectileSpeedFor.length).toBe(1);
+    expect(projectileLifetimeTicks.length).toBe(1);
+  });
+
+  it('never lets a nonsensical row freeze a shot or teleport it', () => {
+    for (const speed of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const ticks = projectileLifetimeTicks({ speed, lifetimeTicks: 120 });
+      expect(Number.isFinite(ticks), String(speed)).toBe(true);
+      expect(ticks, String(speed)).toBeGreaterThanOrEqual(1);
+    }
+    expect(projectileSpeedFor(Number.NaN)).toBe(0);
+    expect(projectileLifetimeTicks({ speed: 900, lifetimeTicks: Number.NaN })).toBeGreaterThanOrEqual(1);
+  });
+
+  it("keeps a shot's reach where the table put it", () => {
+    for (const ability of ALL_ABILITIES) {
+      const spec = ability.projectile;
+      if (!spec) continue;
+      // The distance the row describes: its own speed for its own lifetime.
+      const tabled = (spec.speed / SERVER_TICK_RATE) * spec.lifetimeTicks;
+      // A shot has to be able to reach what `startCast` will let you aim at.
+      expect(tabled, ability.id).toBeGreaterThanOrEqual(ability.range);
+
+      const perTick = projectileSpeedFor(spec.speed) / SERVER_TICK_RATE;
+      const flown = perTick * projectileLifetimeTicks(spec);
+      expect(flown, ability.id).toBeGreaterThan(ability.range);
+      // Within a tick of travel, which is all the lifetime's rounding can cost.
+      expect(Math.abs(flown - tabled), ability.id).toBeLessThan(perTick + 1e-6);
+    }
   });
 
   it('clamps health to the ceiling but never heals on recalculation', () => {
@@ -203,6 +333,8 @@ describe('persistence never carries a derived stat', () => {
     expect(Object.keys(saved ?? {}).sort()).toEqual(
       [
         'baseStats',
+        // A live resource, like health -- not a derived stat (spec 129).
+        'coins',
         'currentZone',
         'displayName',
         'equipment',
@@ -210,6 +342,9 @@ describe('persistence never carries a derived stat', () => {
         'facing',
         'health',
         'id',
+        // Ids and counts, like `equipment` -- an item's numbers stay in the
+        // table (spec 126).
+        'inventory',
         'level',
         'position',
         'resource',

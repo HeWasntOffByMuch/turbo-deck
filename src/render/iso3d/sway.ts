@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { glslWindChunk, maxTipDisplacement, WIND, WIND_LIMITS, WIND_MAX } from './wind.js';
 import { WIND_UNIFORMS } from './wind-uniforms.js';
+import { glslBendNormalChunk } from './shading.js';
+import { makeNormalMaterial, setNormalMaterial } from './hike-buffers.js';
 
 /**
  * Tree sway, as a patch on the materials the prop field already uses (spec 074).
@@ -53,6 +55,13 @@ import { WIND_UNIFORMS } from './wind-uniforms.js';
 
 const INSTANCE_LINE_VIEW = 'mvPosition = instanceMatrix * mvPosition;';
 const INSTANCE_LINE_WORLD = 'worldPosition = instanceMatrix * worldPosition;';
+/**
+ * Where the normal is still in world space: after the instance rotation has been
+ * applied to it and before `normalMatrix` takes it into view space -- the exact
+ * counterpart of the two position lines above, and the only point at which a
+ * rotation expressed in world-space wind direction means anything.
+ */
+const INSTANCE_LINE_NORMAL = 'transformedNormal = im * transformedNormal;';
 
 /** Declarations and the bend itself, injected at the top of the vertex shader. */
 const SWAY_PROLOGUE = /* glsl */ `
@@ -64,6 +73,7 @@ uniform float uSwayLag;
 uniform float uSwayTilt;
 
 ${glslWindChunk()}
+${glslBendNormalChunk()}
 
 // Swing a point about a base, by an angle, downwind. An arc, not a slide: the
 // point keeps its height above the base exactly, so a leaning trunk is the same
@@ -83,13 +93,19 @@ vec3 swingAbout(vec3 p, vec3 base, float angle) {
 // neighbours out of step, and this stops two trees the wave happens to reach
 // together from beating in exact unison for the rest of the session.
 //
+// This vertex's bend angle. Split out of windBend so the normal rotation can be
+// driven by exactly the same number rather than by a second copy of it.
+float windBendAngle() {
+  float w = clamp(aBend, 0.0, 1.0);
+  float gust = windAt(aWindBase.xz, uWindTime + aWindTune.y - uSwayLag);
+  return uWindStrength * gust * aWindTune.x * w * w;
+}
+
 // uSwayLag and uSwayTilt are this *batch's* -- one part of one species -- and
 // are both zero for every batch that existed before spec 077, so the conifers
 // take exactly the path they always did.
 vec3 windBend(vec3 worldPos) {
-  float w = clamp(aBend, 0.0, 1.0);
-  float gust = windAt(aWindBase.xz, uWindTime + aWindTune.y - uSwayLag);
-  float angle = uWindStrength * gust * aWindTune.x * w * w;
+  float angle = windBendAngle();
   vec3 bent = swingAbout(worldPos, aWindBase, angle);
   if (uSwayTilt == 0.0) return bent;
 
@@ -105,17 +121,24 @@ vec3 windBend(vec3 worldPos) {
   // to be swung by the trunk first, or the slab would hinge about the point the
   // branch used to be at rather than where it now is.
   vec3 hinge = swingAbout((instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz, aWindBase, angle);
-  vec3 d = bent - hinge;
-  float along = dot(d.xz, uWindDir);
-  float t = angle * uSwayTilt;
-  float ca = cos(t);
-  float sa = sin(t);
   // A true rotation in the (downwind, up) plane, unlike the swing above: the
   // downwind edge of the slab drops and the upwind edge lifts, which is how a
   // plate on a bending stem reads. Whatever is across the wind is untouched.
-  d.xz += uWindDir * (along * ca + d.y * sa - along);
-  d.y = d.y * ca - along * sa;
-  return hinge + d;
+  return hinge + rotateAboutWind(bent - hinge, angle * uSwayTilt);
+}
+
+// The normal that goes with the bend above (spec 097).
+//
+// Both the swing and the slab's tilt are rotations in the same (downwind, up)
+// plane, so the two compose by adding their angles -- which is why one rotation
+// by angle * (1 + uSwayTilt) carries the normal through both of them.
+//
+// Inert unless normals are interpolated: under flatShading three.js re-derives
+// the face normal per fragment from the displaced position and never reads
+// vNormal at all. See bendNormal in shading.ts for the approximation this makes
+// on a trunk, where the bend is not rigid.
+vec3 windBendNormal(vec3 n) {
+  return rotateAboutWind(n, windBendAngle() * (1.0 + uSwayTilt));
 }
 `;
 
@@ -196,6 +219,12 @@ export function applySway(
   instances: readonly SwayInstance[],
   height: number,
   trail: SwayLag = {},
+  /**
+   * Rotate the vertex normal along with the vertex (spec 097). Off by default,
+   * because it does nothing at all while the batch is flat-shaded and three.js
+   * is deriving face normals from the displaced position anyway.
+   */
+  bendNormals = false,
 ): void {
   if (!mesh.geometry.getAttribute('aBend')) return;
 
@@ -213,18 +242,33 @@ export function applySway(
 
   const lag = trail.lag ?? 0;
   const tilt = trail.tilt ?? 0;
-  patchMaterial(mesh.material as THREE.Material, lag, tilt);
+  patchMaterial(mesh.material as THREE.Material, lag, tilt, bendNormals);
 
   // The shadow passes use their own materials, so they need their own copies of
   // the same patch or the shade under a grove stays rigid while the grove moves.
+  // They are handed `false`: a depth pass has no use for a normal, and splicing
+  // one in would only cost them a second compiled program.
   const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
-  patchMaterial(depth, lag, tilt);
+  patchMaterial(depth, lag, tilt, false);
   mesh.customDepthMaterial = depth;
   // The player's torch is a point light that casts (spec 047), and a point
   // light's shadow is a distance cube rendered with a third material again.
   const distance = new THREE.MeshDistanceMaterial();
-  patchMaterial(distance, lag, tilt);
+  patchMaterial(distance, lag, tilt, false);
   mesh.customDistanceMaterial = distance;
+
+  // And a fourth copy for the depth/normal buffers (spec 100). Same reasoning as
+  // the shadow materials one line up: that pass renders with a material of its
+  // own, and a batch whose visible geometry leans while its normal buffer stands
+  // upright would have its outline drawn where the tree used to be.
+  //
+  // This one *does* want the normal splice, whatever the caller asked for the
+  // visible material: the buffer's whole content is normals, so a bent position
+  // with an unbent normal is the one combination that is never right here.
+  const visible = mesh.material as THREE.MeshLambertMaterial;
+  const buffers = makeNormalMaterial(visible.flatShading === true, visible.side);
+  patchMaterial(buffers, lag, tilt, true);
+  setNormalMaterial(mesh, buffers);
 
   // A crown that leans out of its batch's bounding sphere would take the whole
   // batch off screen with it the moment the sphere left the frustum -- trees
@@ -273,7 +317,24 @@ export const SPLICES: readonly { readonly include: string; readonly source: stri
   },
 ];
 
-for (const splice of SPLICES) {
+/**
+ * The normal's splice, kept apart from the three above because it is applied
+ * only when asked for (spec 097, step 2).
+ *
+ * Separate rather than always-on so the difference can be seen: with normals
+ * interpolated and this left off, a leaning canopy is lit as though it were
+ * still standing up, which is the artefact worth being able to look at rather
+ * than take on trust.
+ */
+export const NORMAL_SPLICE: { readonly include: string; readonly source: string } = {
+  include: '#include <defaultnormal_vertex>',
+  source: (THREE.ShaderChunk['defaultnormal_vertex'] ?? '').replace(
+    INSTANCE_LINE_NORMAL,
+    `${INSTANCE_LINE_NORMAL}\n\t\ttransformedNormal = windBendNormal( transformedNormal );`,
+  ),
+};
+
+for (const splice of [...SPLICES, NORMAL_SPLICE]) {
   if (!splice.source.includes('windBend')) {
     // Loud, because the alternative is silence: a splice that matched nothing
     // still compiles, still links, and draws a forest that does not move.
@@ -291,20 +352,24 @@ for (const splice of SPLICES) {
  * so the program cache key stays one key and a lobed slab and a fir's trunk
  * still share a compiled program.
  */
-function patchMaterial(material: THREE.Material, lag: number, tilt: number): void {
+function patchMaterial(material: THREE.Material, lag: number, tilt: number, normals: boolean): void {
   material.onBeforeCompile = (shader): void => {
     Object.assign(shader.uniforms, WIND_UNIFORMS, {
       uSwayLag: { value: lag },
       uSwayTilt: { value: tilt },
     });
     let vertex = shader.vertexShader.replace('#include <common>', `#include <common>\n${SWAY_PROLOGUE}`);
-    for (const splice of SPLICES) vertex = vertex.replace(splice.include, splice.source);
+    const splices = normals ? [...SPLICES, NORMAL_SPLICE] : SPLICES;
+    for (const splice of splices) vertex = vertex.replace(splice.include, splice.source);
     shader.vertexShader = vertex;
   };
   // Materials are keyed by this when three.js decides whether two of them can
   // share a compiled program. Without it a patched and an unpatched Lambert
-  // look identical to the cache and one of them gets the other's shader.
-  material.customProgramCacheKey = (): string => 'wind-sway';
+  // look identical to the cache and one of them gets the other's shader -- and
+  // for the same reason the key has to name *which* patch, or a batch built with
+  // the normal splice and one built without would share whichever program was
+  // compiled first.
+  material.customProgramCacheKey = (): string => (normals ? 'wind-sway-normals' : 'wind-sway');
   material.needsUpdate = true;
 }
 
@@ -316,4 +381,5 @@ function patchMaterial(material: THREE.Material, lag: number, tilt: number): voi
 export function disposeSway(mesh: THREE.InstancedMesh): void {
   mesh.customDepthMaterial?.dispose();
   mesh.customDistanceMaterial?.dispose();
+  (mesh.userData['hikeNormalMaterial'] as THREE.Material | undefined)?.dispose();
 }

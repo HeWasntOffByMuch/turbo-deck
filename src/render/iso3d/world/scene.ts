@@ -29,14 +29,22 @@ import type { ClientView } from '../../../server/client/game-client.js';
 import { EntityKind } from '../../../server/net/protocol.js';
 import { abilityById } from '../../../server/data/abilities.js';
 import { PALETTE } from '../palette.js';
-import { castsShadows, makeMoveMarker, makeUnwalkableField, makeWall } from '../meshes.js';
+import { castsShadows, makeUnwalkableField, makeWall } from '../meshes.js';
 import { ARENA_OBSTACLES } from '../../../sim/constants.js';
 import { vegetationColliders } from '../../../terrain/vegetation.js';
 import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-mesh.js';
-import { buildPropField, type PropFieldHandle } from '../props.js';
-import { MechRig, PlayerRig, Poofs } from '../rigs.js';
-import { attachOutline, type OutlineHandle } from '../outline.js';
-import { pickHoveredUnit, type HoverTarget, type ScreenBox } from '../hover.js';
+import { TurnEase } from '../turn-ease.js';
+import { turnLimitsFor } from './turn-limits.js';
+import { buildPropField, FLAT_SHADING, type PropFieldHandle, type PropShading } from '../props.js';
+import { type HikeSettings } from '../hike.js';
+import { CURVATURE_UNIFORMS } from '../terrain-curvature.js';
+import { installPoissonShadows, shadowRadiusFor } from '../shadow-pcf.js';
+import { DETAIL_UNIFORMS, buildDetailTexture } from '../terrain-detail.js';
+import { MechRig } from '../rigs.js';
+import { CritterRig, defaultCritterTuning } from '../critter.js';
+import { CRITTERS } from '../../critters/index.js';
+import { attachHighlight, type HighlightHandle } from '../highlight.js';
+import { pickHoveredUnit, type HoverTarget } from '../hover.js';
 import { createViewControls, type ViewControls } from '../view-controls.js';
 import {
   CAMERA_FAR,
@@ -47,7 +55,15 @@ import {
   offsetToOrbit,
   orbitToOffset,
 } from '../view-settings.js';
-import { cameraFrustum, cursorToNdc, internalRenderSize } from '../view-frame.js';
+import {
+  cameraFrustum,
+  cursorToNdc,
+  internalRenderSize,
+  pixelFrame,
+  snapToPixelGrid,
+  worldPerPixel,
+  type PixelFrame,
+} from '../view-frame.js';
 import {
   horizonShadow,
   shadowFillBoost,
@@ -57,6 +73,11 @@ import {
   type HorizonShadow,
 } from '../shadow.js';
 import { RetroPass } from '../retro-pass.js';
+import { HikeBuffers } from '../hike-buffers.js';
+import { VfxLayer } from '../vfx/layer.js';
+import type { GoreLevel } from '../vfx/decals.js';
+import type { PlayRequest } from './vfx-wire.js';
+import { HikeEdges } from '../hike-edges.js';
 import { advanceWind } from '../wind-uniforms.js';
 import { FIXED_DAYLIGHT } from '../daynight.js';
 import {
@@ -69,9 +90,33 @@ import {
   pointIntensity,
   torchFlicker,
 } from '../player-lights.js';
-import { appearanceOf } from './appearance.js';
+import { PlayerLighting } from '../player-lighting.js';
+import { appearanceOf, PLAYER_CRITTER, PLAYER_FIGURE, type Appearance } from './appearance.js';
+import { UnitRig } from '../unit-rig.js';
+import { UnitMachine } from '../../../units/machine.js';
+import type { UnitDef } from '../../../units/types.js';
+import { authoredUnitFor } from './unit-catalog.js';
+import { authoredUnitAssets } from './unit-assets.js';
+import {
+  advanceSpeed,
+  driveUnit,
+  hasDeathAnimation,
+  slewSpeed,
+  STOPPED,
+  type SpeedClock,
+  type UnitFacts,
+} from './unit-driver.js';
+import { SERVER_TICK_RATE } from '../../../server/config.js';
+import { drawnPixels, mixerCadence, shouldApply } from './unit-lod.js';
+import { DEFAULT_CANONICAL_HEIGHT } from '../../../units/canonical-height.js';
+import { ShotRig } from './shot.js';
+import type { AimShape } from './aim.js';
 import { castBar } from './cast.js';
 import { EntityMotion } from './interpolate.js';
+import type { WorldAnchor } from './damage-popup.js';
+
+/** One sim tick, in seconds -- the clock an authored unit's speed is on. */
+const TICK_SECONDS = 1 / SERVER_TICK_RATE;
 
 /** Fraction of the gap to the target framing closed each frame (spec 034). */
 const CAMERA_SMOOTH = 0.15;
@@ -83,6 +128,17 @@ const TORCH_SHADOW_NORMAL_BIAS = 2.5;
 const TELEGRAPH_COLOR = 0xff785a;
 /** The ring under the body being attacked (spec 070). */
 const TARGET_RING_COLOR = 0xff6a5a;
+/**
+ * The skill being aimed (spec 080). Deliberately not either red above: what a
+ * click *would* do and what is already being hit must never be the same mark.
+ */
+const AIM_COLOR = 0x7fd4ff;
+
+/**
+ * Where the middle of a body is, as a fraction of the height its health bar
+ * hangs at (spec 118). A little under half, because the bar clears the head.
+ */
+const BODY_MIDDLE = 0.45;
 
 const FLAME_RADIUS = 5;
 const ORB_RADIUS = 7;
@@ -91,6 +147,19 @@ const ORB_RADIUS = 7;
 export interface FrameInfo {
   /** Real seconds since the last frame, for animation. */
   readonly dt: number;
+  /**
+   * Whole 60Hz sim steps the frame's accumulator drained (spec 111).
+   *
+   * What an authored unit's state machine advances by, and the reason `dt` is
+   * not: a machine stepped by a frame delta fires its events at whatever rate
+   * the browser happens to be painting, so a hit lands on a different frame of
+   * the swing at 30fps than at 144. Usually 1, zero on a frame that arrived
+   * early, and up to the catch-up cap after a pause.
+   *
+   * The procedural rigs keep reading `dt`. They are frame-rate toys with no
+   * events in them and always were.
+   */
+  readonly ticks: number;
   /** How far through the current delta interval this frame is, in [0, 1]. */
   readonly alpha: number;
   /**
@@ -104,28 +173,122 @@ export interface FrameInfo {
    * and a turn the player is making themselves must not lag by an interval.
    */
   readonly selfFacing: number;
-  /** The standing move order to mark on the ground, or null (spec 064). */
-  readonly destination: { readonly x: number; readonly y: number } | null;
   /**
    * Where the mouse is inside the canvas, in CSS pixels, or null when it has
-   * left. Drives the hover outline (spec 070) and nothing else -- the pick is
+   * left. Drives the hover highlight (spec 070) and nothing else -- the pick is
    * redone per frame because bodies move under a cursor that is standing still.
    */
   readonly cursor: { readonly x: number; readonly y: number } | null;
   /** The entity being attacked, so it can be ringed. */
   readonly targetEntityId: number | null;
+  /**
+   * The skill being aimed, or the one whose order is still walking into range
+   * (spec 080), or null. Everything about it was decided in `aim.ts`; this is
+   * the picture of that decision and nothing else.
+   */
+  readonly aim: AimIndicator | null;
+}
+
+/** What to draw for a pending or standing aim (spec 080). */
+export interface AimIndicator {
+  readonly shape: AimShape;
+  /** The caster, which a cone and a lane both run from. */
+  readonly origin: Vec2;
+  /** The aimed ground point: the cursor while aiming, the placement once ordered. */
+  readonly point: Vec2;
+  /** The body under the cursor, or the ordered mark, for an aim that names one. */
+  readonly unitId: number | null;
+  readonly range: number;
+  /** False when the placement is out of range, so the picture says "you will walk". */
+  readonly inRange: boolean;
+}
+
+/**
+ * An authored unit standing in the world (spec 111).
+ *
+ * The machine and the rig are one per body rather than one per unit type: two
+ * grunts mid-swing are at different points in the same clip, and a shared
+ * machine would put them in lockstep.
+ */
+interface DrivenUnit {
+  readonly rig: UnitRig;
+  readonly machine: UnitMachine;
+  /** The document behind the machine, for questions about what it authored. */
+  readonly def: UnitDef;
+  /** Last tick's facts, so a cast's first tick can be told from its fifth. */
+  previous: UnitFacts | null;
+  /** Last drawn position, for the speed the blend tree reads. */
+  previousPosition: { x: number; y: number } | null;
+  /** That speed, kept on the sim's clock rather than the browser's (spec 118). */
+  speed: SpeedClock;
+  /**
+   * The same speed, slewed, which is what the blend tree is actually handed
+   * (spec 119).
+   *
+   * The measured one steps -- the sim has no acceleration -- and a blend tree
+   * is a pure function of its parameter, so a step in it is a cut no transition
+   * duration can soften.
+   */
+  blendSpeed: number;
+  /**
+   * Bone count, read once when the mesh lands.
+   *
+   * Cached rather than measured on demand: `stats()` walks the whole model, and
+   * the only caller is a per-frame debug readout. A number that cannot change
+   * after load has no business being recomputed sixty times a second.
+   */
+  bones: number;
 }
 
 /** A body on screen, pooled by entity id. */
 interface Body {
   readonly group: THREE.Group;
   readonly kind: 'player' | 'monster' | 'projectile';
-  readonly player?: PlayerRig;
+  readonly player?: CritterRig;
   readonly mech?: MechRig;
-  readonly outline?: OutlineHandle;
-  /** Last drawn ground position, for the gait's distance-moved input. */
-  previous: Vec2 | null;
+  readonly unit?: DrivenUnit;
+  readonly shot?: ShotRig;
+  readonly highlight?: HighlightHandle;
+  /**
+   * World units above the feet to hang the health bar.
+   *
+   * Not readonly, because an authored unit's height is not known until its mesh
+   * has been fetched and skinned -- and until it is measured the bar hangs at a
+   * shared default that cut straight through the pig's head.
+   */
+  headroom: number;
 }
+
+/**
+ * Where a health bar floats, for a body whose height nothing else knows.
+ *
+ * Tuned against the mech rigs, which is every monster and the projectiles that
+ * never show one anyway. The player is taller than this and asks for its own
+ * (spec 081) -- a shared constant was fine while the player was a knee-high
+ * bird, and put the bar straight across the cow's face the moment it was not.
+ */
+export const DEFAULT_HEADROOM = 46;
+
+/** Clearance between the top of a critter's head and the bar hanging over it. */
+const HEADROOM_GAP = 12;
+
+/**
+ * The sphere a body is culled by for the skinning skip (spec 111).
+ *
+ * Generous rather than tight. Getting this wrong in the small direction pops a
+ * pose at the edge of the screen, which is exactly where the eye is; getting it
+ * wrong in the large direction costs one mixer update for a body that turned out
+ * not to be visible, which costs nothing anybody can perceive.
+ */
+const FRUSTUM_BODY_RADIUS = 90;
+
+// Reused across every body every frame. Allocating a Frustum and three vectors
+// per unit per frame is forty throwaway objects a frame in a fight, which is a
+// garbage collector pause with a schedule.
+const SCRATCH_FRUSTUM = new THREE.Frustum();
+const SCRATCH_MATRIX = new THREE.Matrix4();
+const SCRATCH_SPHERE = new THREE.Sphere();
+const SCRATCH_WORLD = new THREE.Vector3();
 
 /** A blast that has landed and is fading out. Presentation only. */
 interface LiveEffect {
@@ -149,6 +312,13 @@ export class WorldScene {
 
   private readonly renderer: THREE.WebGLRenderer;
   private readonly retro = new RetroPass(1, 1);
+  /**
+   * Depth and view-space normals at the virtual resolution (spec 100). Built lazily,
+   * because until the switch is thrown it would be a render target nothing reads.
+   */
+  private buffers: HikeBuffers | null = null;
+  /** The outline pass (spec 101). Built with the buffers it reads. */
+  private edges: HikeEdges | null = null;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
   private readonly sun = new THREE.DirectionalLight(
@@ -166,6 +336,17 @@ export class WorldScene {
   private readonly orbMesh: THREE.Mesh;
   /** The rig currently carrying the torch, so re-parenting happens once. */
   private torchHost: THREE.Object3D | null = null;
+  /**
+   * The local player, lit by the lights they carry from farther off than they
+   * really are (spec 118).
+   *
+   * Attached to the same rig the torch is hung off, and for the same reason it
+   * is re-checked every frame: a respawn is a new entity and therefore a new
+   * body.
+   */
+  private readonly playerLighting = new PlayerLighting();
+  /** Scratch for the body anchor, so a frame of lit walking allocates nothing. */
+  private readonly lightAnchor = new THREE.Vector3();
   private readonly unwalkable = new THREE.Group();
 
   /**
@@ -177,18 +358,67 @@ export class WorldScene {
   private map: StreamedMap | null = null;
   private terrainMesh: TerrainMeshHandle | null = null;
   private propField: PropFieldHandle | null = null;
-  private readonly poofs: Poofs;
-  /** Marks the standing move order on the ground (spec 064). */
-  private readonly moveMarker = makeMoveMarker();
+  /**
+   * The particle field (spec 118).
+   *
+   * A plain `Object3D` in this scene, which is the whole integration: `RetroPass`
+   * draws `this.scene` into the low-resolution target, so every particle is
+   * inside the pixel buffer by construction rather than by a pass anyone had to
+   * remember to order correctly.
+   *
+   * It replaced `Poofs`, which this scene built and ticked every frame and never
+   * once called `spawn` on -- dead in the Play tab and unreferenced everywhere
+   * else in the repo.
+   */
+  private readonly vfx: VfxLayer;
 
   private readonly motion = new EntityMotion();
+  /**
+   * The drawn yaw, eased (spec 142). A second presentation-only track beside
+   * `motion`: the sim owns the heading, this owns how a body gets to it.
+   */
+  private readonly turnEase = new TurnEase();
   private readonly bodies = new Map<number, Body>();
+  /**
+   * The groups `RetroPass` leaves out of the quantize (spec 138).
+   *
+   * Every player, not just the local one: a second person on screen is the same
+   * kind of thing to look at, and one of the two coming out banded while the
+   * other did not would read as a bug about *whose* character it is. Rebuilt
+   * per frame rather than maintained, because a respawn is a new entity and
+   * therefore a new group, and a stale reference here would exempt a body that
+   * has left the scene.
+   */
+  private readonly exemptBodies: THREE.Object3D[] = [];
   private readonly telegraphs = new Map<number, THREE.Mesh>();
   /** Units the cursor may pick this frame, rebuilt as bodies are placed. */
-  private readonly hoverTargets: (HoverTarget & { screen: ScreenBox | null })[] = [];
+  private readonly hoverTargets: HoverTarget[] = [];
+  /**
+   * Cast phase by entity id, refreshed each frame (spec 111).
+   *
+   * An authored unit starts its swing on the tick the wire says a cast began,
+   * and the phase is how "began" is told from "is still going" -- see
+   * `startedCasting`. Rebuilt rather than accumulated so a cast that ended
+   * leaves no entry behind to be read as a swing that never finished.
+   */
+  private readonly castPhases = new Map<number, number>();
   private hovered: number | null = null;
   /** The ring under the body being attacked (spec 070). */
   private readonly targetRing: THREE.Mesh;
+  /**
+   * The aim indicator (spec 080): the shape of the blow, the range ring that
+   * says the confirm will be a walk, and the ring under a named body.
+   *
+   * Four meshes built once and re-pointed, rather than geometry rebuilt per
+   * frame -- the cursor moves every frame, and a `CircleGeometry` allocated at
+   * 60Hz for as long as somebody is deciding is a garbage-collection pause
+   * during the one moment the player is looking closely.
+   */
+  private readonly aimShapeMesh: THREE.Mesh;
+  private readonly aimRangeRing: THREE.Mesh;
+  private readonly aimUnitRing: THREE.Mesh;
+  /** The shape currently baked into `aimShapeMesh`, so it is rebuilt only on a change. */
+  private aimShapeKey = '';
   private readonly effects: LiveEffect[] = [];
   private readonly anchors: ScreenAnchor[] = [];
 
@@ -209,6 +439,16 @@ export class WorldScene {
   private renderH = 0;
   private aspect = 1;
   private elapsed = 0;
+  /**
+   * How the fixed virtual buffer is being shown, or null while the view is drawn
+   * the pre-spec-099 way (spec 099).
+   */
+  private frame: PixelFrame | null = null;
+  /** Scratch for the pixel snap, so a per-frame snap allocates nothing. */
+  private readonly snapRight = new THREE.Vector3();
+  private readonly snapUp = new THREE.Vector3();
+  private readonly snapForward = new THREE.Vector3();
+  private readonly snapBefore = new THREE.Vector3();
 
   private readonly raycaster = new THREE.Raycaster();
   private readonly ndc = new THREE.Vector2();
@@ -216,8 +456,6 @@ export class WorldScene {
   private readonly hit = new THREE.Vector3();
   private readonly terrainHits: THREE.Intersection[] = [];
   private readonly projected = new THREE.Vector3();
-  private readonly hoverBox = new THREE.Box3();
-  private readonly boxCorner = new THREE.Vector3();
 
   constructor(readonly canvas: HTMLCanvasElement) {
     canvas.style.width = '100%';
@@ -232,6 +470,21 @@ export class WorldScene {
     // posterized frame.
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.BasicShadowMap;
+    // Shadow maps are built once a frame, by us, rather than once per
+    // `renderer.render` call.
+    //
+    // three rebuilds every shadow map at the top of *each* `render`, and this
+    // frame calls `render` over the whole scene more than once: the hike buffers
+    // capture depth and normals, then the retro pass draws the picture. Left on
+    // three's default, that is the sun's 1024x1024 map and the torch's six
+    // 512x512 cube faces rendered twice from an identical camera over identical
+    // geometry -- measured at 1040 of the frame's 2673 draw calls, thrown away.
+    //
+    // `needsUpdate` is set in `render` below, immediately before the pass that
+    // actually samples the maps. The capture pass writes view-space normals and
+    // depth through an override material and never reads a shadow, so it is
+    // content with whatever is already there.
+    this.renderer.shadowMap.autoUpdate = false;
     this.scene.background = this.background;
 
     const frustum = cameraFrustum(DEFAULT_VIEW_HALF_WIDTH, 1);
@@ -243,10 +496,27 @@ export class WorldScene {
       CAMERA_NEAR,
       CAMERA_FAR,
     );
+
+    // Before the first resize, and it has to stay there: since spec 099 `resize`
+    // asks the panel whether the frame is drawn at a fixed virtual resolution, so
+    // a panel built afterwards is a panel that does not exist the first time it
+    // is read. Nothing here depends on the scene, so this is only an ordering
+    // requirement, not a design one -- but it is a real one, and it took a
+    // browser to notice: no unit test constructs a WorldScene, because it needs
+    // a canvas.
+    this.controls = createViewControls();
+    this.controls.attachWheelZoom(canvas);
+    canvas.addEventListener('webglcontextlost', this.onContextLost);
+    canvas.addEventListener('webglcontextrestored', this.onContextRestored);
+
     this.resize();
 
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+    // Before any material compiles: the filter lives in three's own shadow chunk,
+    // and a chunk edited after a program is built does not reach that program.
+    installPoissonShadows();
+    this.sun.shadow.radius = 0;
     this.scene.add(this.sun, this.sun.target, this.ambient);
 
     // No terrain yet. The ground and the trees are the ones the server *sent*
@@ -257,9 +527,27 @@ export class WorldScene {
 
     this.torchFlame = this.buildTorch();
     this.orbMesh = this.buildOrb();
-    this.poofs = new Poofs(this.scene);
-    this.moveMarker.visible = false;
-    this.scene.add(this.moveMarker);
+    this.vfx = new VfxLayer({
+      hooks: {
+        // Injected rather than imported, so the sim stays free of terrain.
+        ground: (x, z) => this.ground(x, z),
+        attach: (entityId, _socket, out, at) => {
+          const body = this.bodies.get(entityId);
+          if (!body) return false;
+          // Entity-level for now. Socket resolution has to find the bone in the
+          // *loaded rig* rather than by a name out of a skeleton document --
+          // three sanitises `mixamorig:Hips` to `mixamorigHips`, so a documented
+          // name matches nothing and looks exactly like a clean import
+          // (`unit-rig.ts`). The effects that need a socket -- a burning unit, a
+          // weapon trail -- arrive with the fire and slash work.
+          out[at] = body.group.position.x;
+          out[at + 1] = body.group.position.y;
+          out[at + 2] = body.group.position.z;
+          return true;
+        },
+      },
+    });
+    this.scene.add(this.vfx.root);
 
     this.targetRing = new THREE.Mesh(
       new THREE.RingGeometry(22, 27, 24),
@@ -275,8 +563,49 @@ export class WorldScene {
     this.targetRing.visible = false;
     this.scene.add(this.targetRing);
 
-    this.controls = createViewControls();
-    this.controls.attachWheelZoom(canvas);
+    // The aim (spec 080). Flat, unlit and never depth-writing, exactly like the
+    // ground telegraph and the blast effects it sits among.
+    this.aimShapeMesh = new THREE.Mesh(
+      new THREE.CircleGeometry(1, 28),
+      new THREE.MeshBasicMaterial({
+        color: AIM_COLOR,
+        transparent: true,
+        opacity: 0.28,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    this.aimShapeMesh.rotation.x = -Math.PI / 2;
+    this.aimShapeMesh.visible = false;
+    this.scene.add(this.aimShapeMesh);
+
+    this.aimRangeRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.985, 1, 48),
+      new THREE.MeshBasicMaterial({
+        color: AIM_COLOR,
+        transparent: true,
+        opacity: 0.35,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    this.aimRangeRing.rotation.x = -Math.PI / 2;
+    this.aimRangeRing.visible = false;
+    this.scene.add(this.aimRangeRing);
+
+    this.aimUnitRing = new THREE.Mesh(
+      new THREE.RingGeometry(22, 27, 24),
+      new THREE.MeshBasicMaterial({
+        color: AIM_COLOR,
+        transparent: true,
+        opacity: 0.9,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    this.aimUnitRing.rotation.x = -Math.PI / 2;
+    this.aimUnitRing.visible = false;
+    this.scene.add(this.aimUnitRing);
   }
 
   /**
@@ -290,8 +619,86 @@ export class WorldScene {
     this.map = map;
     this.terrainMesh = buildTerrainMeshFromChunks(map.meshLayers, []);
     this.scene.add(this.terrainMesh.group);
-    this.propField = buildPropField([], (x, z) => this.ground(x, z));
+    this.propField = buildPropField([], (x, z) => this.ground(x, z), undefined, this.propShading);
     this.scene.add(this.propField.group);
+  }
+
+  /**
+   * How the prop field is shaded (spec 097, step 2), as the panel last asked
+   * for it.
+   *
+   * Held rather than read at build time because it is baked into the geometry's
+   * normals and into each batch's material: changing it means rebuilding the
+   * field, so the frame has to notice the change rather than pick it up on the
+   * next rebuild that happens for some other reason.
+   */
+  private propShading: PropShading = FLAT_SHADING;
+
+  /**
+   * Adopt the panel's shading settings, rebuilding the prop field if they moved
+   * (spec 097, step 2).
+   *
+   * Compared rather than applied every frame, because applying means rebuilding
+   * every batch in the world -- a few hundred milliseconds. So this costs three
+   * comparisons per frame and does the work only on the frame a switch is
+   * actually thrown.
+   */
+  private applyPropShading(hike: HikeSettings): void {
+    const wanted: PropShading = {
+      smooth: hike.smoothNormals,
+      creaseAngle: hike.creaseAngle,
+      swayNormals: hike.swayNormals,
+    };
+    const current = this.propShading;
+    if (
+      wanted.smooth === current.smooth &&
+      wanted.creaseAngle === current.creaseAngle &&
+      wanted.swayNormals === current.swayNormals
+    ) {
+      return;
+    }
+    this.propShading = wanted;
+    this.refreshProps();
+  }
+
+  /**
+   * Hand the ground materials the crease settings (spec 104).
+   *
+   * A uniform write, every frame, costing nothing: the measure itself was baked
+   * into a vertex attribute when the chunk was meshed. That is the whole reason
+   * it is carried in its own channel rather than folded into the vertex colours
+   * -- toggling it would otherwise mean re-meshing every chunk in the world.
+   */
+  private applyCurvature(hike: HikeSettings): void {
+    CURVATURE_UNIFORMS.uCavityStrength.value = hike.curvature ? hike.curvatureStrength : 0;
+    // The debug view draws what was baked at full scale, which is a different
+    // question from what is currently applied -- and it stands on its own rather
+    // than needing the feature switched on to be looked at.
+    CURVATURE_UNIFORMS.uCavityOnly.value = hike.debug === 'curvature' ? 1 : 0;
+  }
+
+  /**
+   * Hand the ground materials the surface-detail settings (spec 106).
+   *
+   * Uniform writes, like the creases: the tile is generated once at startup and
+   * nothing here rebuilds geometry or recompiles a shader. The texture is built
+   * lazily, so a session that never throws the switch never spends the 64KB or
+   * the mipmap chain on it.
+   */
+  private applyDetail(hike: HikeSettings): void {
+    const wanted = hike.triplanar || hike.materialBlend;
+    if (wanted && !DETAIL_UNIFORMS.uDetailMap.value) {
+      // The driver's maximum, which is what makes the ground readable at the
+      // 27-degree grazing angle this camera looks along.
+      DETAIL_UNIFORMS.uDetailMap.value = buildDetailTexture(
+        this.renderer.capabilities.getMaxAnisotropy(),
+      );
+    }
+    DETAIL_UNIFORMS.uDetailStrength.value = hike.triplanar ? hike.detailStrength : 0;
+    DETAIL_UNIFORMS.uDetailScale.value = 1 / Math.max(1, hike.detailScale);
+    DETAIL_UNIFORMS.uDetailSharpness.value = Math.max(1, hike.detailSharpness);
+    DETAIL_UNIFORMS.uBlendStrength.value = hike.materialBlend ? hike.blendStrength : 0;
+    DETAIL_UNIFORMS.uBlendNoise.value = hike.blendNoise;
   }
 
   /** Ground height, or 0 before there is any ground to ask about. */
@@ -327,7 +734,7 @@ export class WorldScene {
 
     this.scene.remove(this.propField.group);
     this.propField.dispose();
-    this.propField = buildPropField(props, heightAt);
+    this.propField = buildPropField(props, heightAt, undefined, this.propShading);
     this.scene.add(this.propField.group);
 
     this.unwalkable.clear();
@@ -354,6 +761,7 @@ export class WorldScene {
     return hit ? { x: hit.x, y: hit.z } : { x: this.target.x, y: this.target.z };
   }
 
+
   /**
    * The unit at a canvas pixel, or null for empty ground (spec 070).
    *
@@ -369,23 +777,31 @@ export class WorldScene {
     const rect = this.canvas.getBoundingClientRect();
     const point = cursorToNdc(cssX, cssY, rect.width || 1, rect.height || 1);
     this.raycaster.setFromCamera(this.ndc.set(point.x, point.y), this.camera);
-    // Where each body is *drawn*, which is what the forgiving half of the pick
-    // measures against (spec 071). Projected here rather than during the frame
-    // so that a click never depends on a hover having happened first: the very
-    // first click after the pointer enters the canvas arrives in the same task
-    // as the `mousemove`, with no frame in between to have prepared anything.
-    for (const target of this.hoverTargets) target.screen = this.screenBoxOf(target.object);
-    return pickHoveredUnit(
-      this.raycaster,
-      this.hoverTargets,
-      this.screenToWorld(cssX, cssY),
-      { x: cssX, y: cssY },
-    );
+    return pickHoveredUnit(this.raycaster, this.hoverTargets, this.screenToWorld(cssX, cssY));
   }
 
   /** Where the bodies drawn last frame are on screen, for the DOM overlay. */
   screenAnchors(): readonly ScreenAnchor[] {
     return this.anchors;
+  }
+
+  /**
+   * Where a body is standing and how far over its head a number hangs, in the
+   * world (spec 096).
+   *
+   * The point a damage number is nailed to, read once when the blow lands. Two
+   * details make it the right one to read. It is the *drawn* position -- the
+   * interpolated pose the player is actually looking at, not the replica's
+   * three-ticks-ago one -- so the number lands on the body rather than behind
+   * it. And a `CombatResult` is delivered while the frame that killed the
+   * victim is still the last frame drawn, so the body is still pooled here: a
+   * killing blow gets the ground the victim fell on, which is the case the old
+   * entity-id anchor could not answer at all.
+   */
+  bodyAnchor(id: number): WorldAnchor | null {
+    const body = this.bodies.get(id);
+    if (!body) return null;
+    return { x: body.group.position.x, y: body.group.position.z, lift: body.headroom };
   }
 
   /**
@@ -410,8 +826,82 @@ export class WorldScene {
     };
   }
 
-  /** A blast landed. Purely something to look at; the damage already happened. */
-  addEffect(x: number, y: number, radius: number, durationTicks: number): void {
+  /**
+   * Play what a blow asked for (spec 120).
+   *
+   * Handed a request `vfx-wire.ts` already decided on, so this end makes no
+   * judgement at all -- it turns a ground position into a world one and plays the
+   * id it was given. Every `if` about what a blow looks like lives in that pure
+   * module, where a test can reach it.
+   */
+  playEffect(request: PlayRequest): void {
+    this.vfx.play(request.id, {
+      x: request.x,
+      y: this.ground(request.x, request.z) + request.y,
+      z: request.z,
+      rotation: request.rotation,
+      scale: request.scale,
+      seed: request.seed,
+    });
+  }
+
+  /**
+   * A walk order was given here (spec 127).
+   *
+   * The whole picture of a move order: a wave on the ground where the click
+   * landed, half a second, gone. Nothing is left behind and nothing draws the
+   * standing order afterwards -- the answer a player wants is *did that land*,
+   * and it is answered while they are still looking at the cursor.
+   */
+  playMoveOrder(x: number, z: number): void {
+    this.vfx.play('order_move', {
+      x,
+      y: this.ground(x, z) + 2,
+      z,
+      // Derived from where it landed, like a blast's, so nothing about this
+      // reaches for a clock or a random number.
+      seed: (Math.round(x) * 73856093) ^ (Math.round(z) * 19349663),
+    });
+  }
+
+  /** 0 off, 1 reduced, 2 full. Off removes the decal work, not just the pixels. */
+  setGore(level: GoreLevel): void {
+    this.vfx.setGore(level);
+  }
+
+  /** 0 off, 1 low, 2 medium, 3 full. Off skips the simulation rather than hiding it. */
+  setVfxIntensity(intensity: number): void {
+    this.vfx.setIntensity(intensity);
+  }
+
+  /** What the VFX debug readout shows. */
+  vfxReadout(): ReturnType<VfxLayer['readout']> {
+    return this.vfx.readout();
+  }
+
+  /**
+   * A blast landed. Purely something to look at; the damage already happened.
+   *
+   * `effectId` is the one the server already sends on `EffectMessage` -- it has
+   * carried `${ability.id}.impact` since spec 062 and this renderer threw it away
+   * and drew one hardcoded ring for every ability in the game. When the registry
+   * knows the id it plays the authored effect; when it does not, the ring is
+   * still what happens, so abilities keep their cue until the effect library
+   * gives each of them a real one.
+   */
+  addEffect(effectId: string, x: number, y: number, radius: number, durationTicks: number): void {
+    if (this.vfx.system.has(effectId)) {
+      this.vfx.play(effectId, {
+        x,
+        y: this.ground(x, y) + 2,
+        z: y,
+        scale: Math.max(0.25, radius / 40),
+        // Derived from where it landed, so the same blast in the same place looks
+        // the same on every client watching it.
+        seed: (Math.round(x) * 73856093) ^ (Math.round(y) * 19349663),
+      });
+      return;
+    }
     const mesh = new THREE.Mesh(
       new THREE.CircleGeometry(Math.max(4, radius), 24),
       new THREE.MeshBasicMaterial({
@@ -441,16 +931,24 @@ export class WorldScene {
     this.syncBodies(view, frame, dt);
     this.carryTorch(view.selfEntityId);
 
-    // Where the last right-click landed. A move order you cannot see is an
-    // order you cannot tell from a missed click.
-    this.moveMarker.visible = frame.destination !== null;
-    if (frame.destination) {
-      const { x, y } = frame.destination;
-      this.moveMarker.position.set(x, this.ground(x, y) + 6, y);
-    }
     this.syncTelegraphs(view, frame);
     this.ageEffects();
-    this.poofs.update(dt);
+    // Advanced on whole 60Hz steps, never on `dt`: an effect stepped by elapsed
+    // time is a different effect at 30fps and at 144, and "the same seed draws
+    // the same thing" stops being assertable. Same reason the unit machines take
+    // `frame.ticks`.
+    this.vfx.setViewpoint(this.target.x, this.target.y, this.target.z);
+    // The direction the camera looks along, for the transparency sort (spec
+    // 123). Taken from *last* frame's camera, since this one is not aimed until
+    // `lookAt` below -- which costs nothing, because the only thing that turns
+    // this camera is a view control, and a sort order one frame stale is not a
+    // sort order anybody can see.
+    this.vfx.setViewDirection(
+      this.target.x - this.camera.position.x,
+      this.target.y - this.camera.position.y,
+      this.target.z - this.camera.position.z,
+    );
+    this.vfx.update(frame.ticks);
 
     // The camera follows the *predicted* self, not an interpolated replica: the
     // one body that must never lag its own input is this one.
@@ -463,18 +961,99 @@ export class WorldScene {
 
     this.camera.updateMatrixWorld();
     this.scene.updateMatrixWorld();
-    this.collectAnchors();
-    // After the matrices are fresh: a pick made against last frame's camera
-    // lags the outline behind a moving view by a frame.
+    // Needs both of the above: it reads the rig's world position and pushes it
+    // through the camera's inverse (spec 118).
+    this.anchorPlayerLighting(view.selfEntityId);
+    // Before the snap, because this is a pick: which body is under the cursor is
+    // answered against the same unsnapped camera every other pick uses. After
+    // the matrices are fresh, though -- a pick made against last frame's camera
+    // lags the highlight behind a moving view by a frame.
+    //
+    // `collectAnchors` used to sit here beside it and has moved below the snap:
+    // an anchor has to agree with the *drawn* image, and a pick must not (spec
+    // 095). They want opposite cameras, so they no longer travel together.
     this.syncHover(frame);
 
-    this.retro.set(this.controls.retro());
-    this.retro.setGrade(this.controls.grade());
-    this.retro.render(this.renderer, this.scene, this.camera);
+    const hike = this.controls.hike();
+    this.applyPropShading(hike);
+    this.applyCurvature(hike);
+    // Written every frame, and written even when the feature is off: three's own
+    // default for `radius` is 1, so leaving it alone would soften every shadow in
+    // the world without anything having been switched on (spec 105).
+    this.sun.shadow.radius = shadowRadiusFor(hike.softShadows, hike.shadowPcfRadius);
+    this.applyDetail(hike);
+
+    // Snapped for everything that has to agree with the drawn image: the frame
+    // itself, and the screen anchors the DOM overlay hangs bars from. An anchor
+    // computed off the unsnapped camera would jitter against the body it labels
+    // by up to half a virtual pixel -- which at a 4x upscale is two CSS pixels
+    // of health bar wobble, exactly the shimmer the snap exists to remove.
+    const unsnap = this.applyPixelSnap(hike);
+    this.collectAnchors();
+
+    // Captured with the snapped camera, so the buffers line up with the frame
+    // they will be composited over rather than being half a pixel out from it.
+    const debugging = hike.debug === 'depth' || hike.debug === 'normals';
+    // Outlines need the buffers they are found in, so asking for outlines asks
+    // for the buffers. Two switches where one implies the other is a switch that
+    // silently does nothing, which is worse than no switch at all.
+    const wantsBuffers = hike.buffers || hike.edges || hike.ink;
+    if (wantsBuffers) {
+      const buffers = this.ensureBuffers();
+      buffers.capture(this.renderer, this.scene, this.camera);
+    }
+
+    if (wantsBuffers && debugging) {
+      // One buffer on its own, instead of the frame. The only way to look at a
+      // depth texture at all: a depth attachment cannot be read back, so it has
+      // to be sampled in a shader and written somewhere visible.
+      this.ensureBuffers().blit(this.renderer, hike.debug === 'depth' ? 'depth' : 'normals');
+    } else if (hike.edges && hike.debug === 'edges') {
+      this.drawEdges(hike, true);
+    } else {
+      this.retro.set(this.controls.retro());
+      this.retro.setGrade(this.controls.grade());
+      this.retro.setPalette(hike.palette);
+      // Who the filter lets keep their colours (spec 138). The pass has no idea
+      // what a player is and should not; this is the only place that does.
+      this.exemptBodies.length = 0;
+      for (const body of this.bodies.values()) {
+        if (body.kind === 'player') this.exemptBodies.push(body.group);
+      }
+      this.retro.setExempt(this.exemptBodies);
+      // The distance treatment reads the same depth buffer the outlines do, so
+      // it needs the buffers whether or not the outlines are on (spec 103). The
+      // fog colour is the live sky rather than a setting: the day/night cycle
+      // moves it, and a fixed haze under a sunset is a grey band on the horizon.
+      this.retro.setInk(
+        hike.ink ? this.ensureBuffers().depthTexture : null,
+        this.camera.near,
+        this.camera.far,
+        this.inkOrigin(),
+        this.background,
+        hike.ink ? hike : null,
+      );
+      // The one pass in the frame that samples a shadow map, so the one pass
+      // that pays for building them (see `autoUpdate` in the constructor).
+      // three clears the flag itself once the maps are drawn, which is what
+      // keeps the mask pass inside `retro.render` from rebuilding them again.
+      this.renderer.shadowMap.needsUpdate = true;
+      this.retro.render(this.renderer, this.scene, this.camera);
+      // Over the finished frame, which is where a line belongs: the fills are
+      // settled, so the outline is a constant dark value rather than something
+      // the quantizer gets to round.
+      if (hike.edges) this.drawEdges(hike, false);
+    }
+    unsnap?.();
   }
 
   dispose(): void {
-    for (const body of this.bodies.values()) this.scene.remove(body.group);
+    this.vfx.dispose();
+    for (const body of this.bodies.values()) {
+      this.scene.remove(body.group);
+      if (body.shot?.trace) this.scene.remove(body.shot.trace);
+      body.shot?.dispose();
+    }
     this.bodies.clear();
     for (const effect of this.effects) this.scene.remove(effect.mesh);
     this.effects.length = 0;
@@ -482,8 +1061,37 @@ export class WorldScene {
     this.telegraphs.clear();
     this.terrainMesh?.dispose();
     this.propField?.dispose();
+    this.buffers?.dispose();
+    this.edges?.dispose();
+    this.canvas.removeEventListener('webglcontextlost', this.onContextLost);
+    this.canvas.removeEventListener('webglcontextrestored', this.onContextRestored);
     this.renderer.dispose();
   }
+
+  /**
+   * A lost context takes every GPU-side object with it, including the render
+   * targets and the depth texture, and leaves three.js holding handles to things
+   * that no longer exist (spec 100).
+   *
+   * Unhandled since spec 038 put the first render target on screen, and survivable
+   * until now only because nothing read one back. Preventing the default is what
+   * makes `webglcontextrestored` fire at all -- without it the browser never
+   * offers a new context and the canvas stays blank for good.
+   */
+  private readonly onContextLost = (event: Event): void => {
+    event.preventDefault();
+  };
+
+  private readonly onContextRestored = (): void => {
+    this.buffers?.recreate();
+    // Re-measured from scratch: the swap chain is new, so the sizes three.js
+    // thinks it set are not the sizes it has.
+    this.renderW = 0;
+    this.renderH = 0;
+    this.frame = null;
+    this.lastHalfWidth = -1;
+    this.resize();
+  };
 
   // --- world ------------------------------------------------------------
 
@@ -551,17 +1159,23 @@ export class WorldScene {
     for (const entity of view.entities) {
       this.motion.observe(entity.id, entity.x, entity.y, entity.z, entity.facing, view.tick);
     }
-    this.motion.retain(new Set(view.entities.map((entity) => entity.id)));
+    const live = new Set(view.entities.map((entity) => entity.id));
+    this.motion.retain(live);
+    // The drawn yaw keeps per-body state for the same reason the drawn position
+    // does, and is dropped on the same pass (spec 142).
+    this.turnEase.retain(live);
   }
 
   private syncBodies(view: ClientView, frame: FrameInfo, dt: number): void {
     const live = new Set<number>();
     this.hoverTargets.length = 0;
+    this.castPhases.clear();
+    for (const cast of view.casts) this.castPhases.set(cast.entityId, cast.phase);
 
     for (const entity of view.entities) {
       live.add(entity.id);
       const look = appearanceOf(entity);
-      const body = this.bodyFor(entity.id, look.rig, look.typeId, look.radius);
+      const body = this.bodyFor(entity.id, look);
       const isSelf = entity.id === view.selfEntityId;
 
       // The local player is drawn at its prediction; everything else at its
@@ -570,7 +1184,15 @@ export class WorldScene {
       const pose = this.motion.sample(entity.id, frame.alpha);
       const x = isSelf && view.self ? view.self.x : (pose?.x ?? entity.x);
       const y = isSelf && view.self ? view.self.y : (pose?.y ?? entity.y);
-      const facing = isSelf ? frame.selfFacing : (pose?.facing ?? entity.facing);
+      // What the sim says this body's heading is -- the prediction for our own
+      // body, the smoothed replica for everything else.
+      const heading = isSelf ? frame.selfFacing : (pose?.facing ?? entity.facing);
+      // What to actually yaw it by (spec 142). `turnToward` steps angular
+      // velocity from nothing to the full rate in one tick and back in one tick;
+      // this gives that a beginning and an end. Presentation only: `heading` is
+      // what every decision is still made against, and nothing reads this back.
+      const limits = turnLimitsFor(entity, isSelf, view.stats?.turnRate ?? null, SERVER_TICK_RATE);
+      const facing = limits === null ? heading : this.turnEase.step(entity.id, heading, limits, dt);
 
       const ground =
         entity.kind === EntityKind.Projectile
@@ -581,30 +1203,41 @@ export class WorldScene {
       // A mesh built facing +x sits at world heading `theta` when yawed -theta.
       body.group.rotation.y = -facing;
 
-      const moved = body.previous ? Math.hypot(x - body.previous.x, y - body.previous.y) : 0;
-      body.previous = { x, y };
-
-      body.player?.update(dt, moved);
+      // Both rigs read their own gait out of the positions they are handed, so
+      // neither needs the scene to remember where it drew them last frame.
+      body.player?.update(dt, { x, y }, -facing);
       body.mech?.update(dt, { x, y }, -facing);
+      if (body.unit) this.driveAuthoredUnit(body.unit, entity, { x, y }, frame);
+      // Fed the *drawn* pose, so an arrow's nose follows the curve the eye is
+      // following rather than the one the deltas describe (spec 087).
+      body.shot?.update(dt, x, y, ground);
 
-      // A corpse lies where it fell and stops animating, so a kill reads.
+      // A corpse lies where it fell and stops animating, so a kill reads. The
+      // squash is how that reads for the procedural rigs, which have no death
+      // clip -- a body with an authored `terminal` state is already lying down
+      // by its own animation, and squashing that as well drew the pig at half
+      // size for the whole of its collapse.
       const dead = entity.maxHealth > 0 && entity.health <= 0;
-      body.group.scale.setScalar(dead ? 0.6 : 1);
+      const fallen = body.unit !== undefined && hasDeathAnimation(body.unit.def);
+      body.group.scale.setScalar(dead && !fallen ? 0.6 : 1);
       // Cleared here and turned back on by `syncHover`, so exactly one body is
-      // ever outlined however many frames ago the cursor last moved.
-      body.outline?.setVisible(false);
+      // ever lit however many frames ago the cursor last moved.
+      body.highlight?.setHighlighted(false);
 
       // Only living units are pickable. A corpse is scenery, and a projectile
-      // is a few pixels of geometry crossing the frame -- outlining either is a
-      // cursor that catches on things nothing can be done about.
-      if (body.outline && !dead) {
+      // is a few pixels of geometry crossing the frame -- lighting either up is
+      // a cursor that catches on things nothing can be done about.
+      if (body.highlight && !dead) {
         this.hoverTargets.push({
           id: entity.id,
           object: body.group,
           position: { x, y },
           radius: look.radius,
-          // Filled in once the camera matrices are current; see `syncHover`.
-          screen: null,
+          // The volume the cursor may pick the unit by (spec 095): its footprint
+          // swept from the ground it is standing on to the top of its head. The
+          // headroom was measured for the health bar and is the same number.
+          base: ground,
+          height: body.headroom,
         });
       }
     }
@@ -612,25 +1245,120 @@ export class WorldScene {
     for (const [id, body] of this.bodies) {
       if (live.has(id)) continue;
       this.scene.remove(body.group);
+      if (body.shot?.trace) this.scene.remove(body.shot.trace);
+      // A shot builds its own geometry and is gone within a second or two, so
+      // this is a leak that would run at the rate of the fighting.
+      body.shot?.dispose();
       this.bodies.delete(id);
     }
   }
 
   /**
-   * Outline the unit under the cursor, and ring the one being attacked
+   * Advances one authored unit's machine and, if it is worth it, its pose.
+   *
+   * The two halves are separate on purpose, and the separation is the LOD (spec
+   * 111). The **machine** always steps: its events are authored on frame
+   * indices, and one that skipped ticks would fire a footstep late, twice or
+   * not at all. The **pose** is what costs -- sampling every track, writing
+   * every bone, walking the skeleton's world matrices -- and a body four
+   * screens away does not need one every tick, nor any at all when it is behind
+   * the camera.
+   *
+   * Everything read here is either straight off the wire or something already
+   * computed for drawing. Nothing an animation produced is read back, which is
+   * the rule `unit-driver.ts` exists to make structural rather than careful.
+   */
+  private driveAuthoredUnit(
+    unit: DrivenUnit,
+    entity: ClientView['entities'][number],
+    at: { readonly x: number; readonly y: number },
+    frame: FrameInfo,
+  ): void {
+    const dead = entity.maxHealth > 0 && entity.health <= 0;
+    // Distance on the frame clock, the quotient on the tick clock (spec 118).
+    // A drawn position only moves when a tick drained, so dividing by the frame
+    // delta reported a standing body on every frame that drained none -- which
+    // above 60fps is most of them, and which the blend tree reads on all of them.
+    unit.speed = advanceSpeed(
+      unit.speed,
+      unit.previousPosition === null ? 0 : Math.hypot(at.x - unit.previousPosition.x, at.y - unit.previousPosition.y),
+      frame.ticks,
+      TICK_SECONDS,
+    );
+    // Slewed, not assigned: a blend tree reads its parameter live, so a step in
+    // it swaps the pose in one tick under a cross-fade that never sees it (spec
+    // 119). This is the only input to the machine allowed to jump, so it is the
+    // one that is bounded.
+    unit.blendSpeed = slewSpeed(unit.blendSpeed, unit.speed.speed, frame.ticks, TICK_SECONDS);
+    const facts: UnitFacts = {
+      speed: unit.blendSpeed,
+      activity: entity.activity,
+      castPhase: this.castPhases.get(entity.id) ?? null,
+      dead,
+    };
+    driveUnit(unit.machine, facts, unit.previous, frame.ticks);
+    unit.previous = facts;
+    unit.previousPosition = { x: at.x, y: at.y };
+
+    // How big the body is *drawn*, never how far the camera is from it (spec
+    // 118). This camera is orthographic and parks 6000 units back for near/far
+    // clearance, so every unit in the game read as maximally distant and posed
+    // at 15Hz -- the player in the centre of the screen included.
+    const cadence = mixerCadence(
+      drawnPixels(DEFAULT_CANONICAL_HEIGHT, this.camera.right - this.camera.left, this.renderW),
+      this.inFrustum(unit.rig.object),
+    );
+    if (shouldApply(cadence, unit.machine.tick, entity.id)) unit.rig.applyPoses(unit.machine.poses());
+  }
+
+  /**
+   * What the authored units are doing, for `preview-units.ts`.
+   *
+   * Everything else about spec 111 is checked in Node. What cannot be is the
+   * half that only exists once a browser has fetched a `.glb`, decoded it,
+   * built a skeleton and posed it -- and a mesh this repo writes by hand is
+   * exactly the thing not to take on trust. This is the smallest readout that
+   * distinguishes "loaded", "has the right skeleton" and "is being driven";
+   * `view.ts` puts it on a data attribute and nothing in the game reads it.
+   */
+  authoredUnitReadout(): { readonly loaded: number; readonly bones: number; readonly states: string } {
+    let loaded = 0;
+    let bones = 0;
+    const states: string[] = [];
+    for (const body of this.bodies.values()) {
+      if (!body.unit?.rig.loaded) continue;
+      loaded += 1;
+      bones = Math.max(bones, body.unit.bones);
+      states.push(`${body.unit.machine.stateId}@${body.unit.machine.tick}`);
+    }
+    return { loaded, bones, states: states.sort().join(',') };
+  }
+
+  /** Whether a body is anywhere the camera can see, for the skinning skip. */
+  private inFrustum(object: THREE.Object3D): boolean {
+    SCRATCH_MATRIX.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+    SCRATCH_FRUSTUM.setFromProjectionMatrix(SCRATCH_MATRIX);
+    // A sphere rather than a point: a body whose feet are off the bottom of the
+    // screen is still half on it, and popping its pose would be visible.
+    SCRATCH_SPHERE.center.copy(object.getWorldPosition(SCRATCH_WORLD));
+    SCRATCH_SPHERE.radius = FRUSTUM_BODY_RADIUS;
+    return SCRATCH_FRUSTUM.intersectsSphere(SCRATCH_SPHERE);
+  }
+
+  /**
+   * Brighten the unit under the cursor, and ring the one being attacked
    * (spec 070).
    *
-   * `pickHoveredUnit` is spec 041's, unchanged: the model's meshes first, its
-   * ground footprint as a fallback, so a body is pickable both by pointing at
-   * it and by pointing at where it stands. Cosmetic in the strict sense -- what
-   * it returns decides which mesh is white, and the *view* decides whether a
-   * click acts on it.
+   * `pickHoveredUnit` answers with the unit whose body the cursor is on or
+   * whose ground it is standing on, and nothing looser (spec 095). Cosmetic in
+   * the strict sense -- what it returns decides which rig is lit, and the *view*
+   * decides whether a click acts on it.
    */
   private syncHover(frame: FrameInfo): void {
     const cursor = frame.cursor;
     this.hovered = cursor ? this.pickUnitAt(cursor.x, cursor.y) : null;
 
-    if (this.hovered !== null) this.bodies.get(this.hovered)?.outline?.setVisible(true);
+    if (this.hovered !== null) this.bodies.get(this.hovered)?.highlight?.setHighlighted(true);
 
     const target =
       frame.targetEntityId === null
@@ -646,55 +1374,100 @@ export class WorldScene {
       // Sized to the body it is under, so a ravager's ring is not a grazer's.
       this.targetRing.scale.setScalar(Math.max(0.6, (target.radius + 8) / 27));
     }
+
+    this.syncAim(frame);
   }
 
   /**
-   * A body's drawn extent, in CSS pixels, or null for one with no geometry.
+   * The aim indicator (spec 080): the shape of the blow the player is deciding
+   * about, drawn before they are committed to it.
    *
-   * The world-space box projected corner by corner rather than a projected
-   * centre with an assumed size: a rig is taller than it is wide and the
-   * isometric camera leans, so a circle around the feet is not the shape the
-   * player sees. Eight projections of a cached-geometry box, per body, per
-   * frame the cursor is on the canvas -- next to a cloth solve it is nothing.
-   *
-   * The outline shells are inside the box, which inflates it by up to their own
-   * scale. Left alone deliberately: this box is a target area, and an area that
-   * matches the *outlined* silhouette is if anything the more honest one, since
-   * the outline is what the player is being shown.
+   * Every number here came out of `aim.ts`, which read them off the ability
+   * table. Nothing in this method decides anything -- if it did, it would be an
+   * `if` in `src/render/` changing a game outcome, which is the one thing this
+   * layer may not do.
    */
-  private screenBoxOf(object: THREE.Object3D): ScreenBox | null {
-    this.hoverBox.setFromObject(object);
-    if (this.hoverBox.isEmpty()) return null;
-
-    const width = this.canvas.clientWidth || 1;
-    const height = this.canvas.clientHeight || 1;
-    const { min, max } = this.hoverBox;
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-
-    for (let corner = 0; corner < 8; corner++) {
-      this.boxCorner.set(
-        (corner & 1) === 0 ? min.x : max.x,
-        (corner & 2) === 0 ? min.y : max.y,
-        (corner & 4) === 0 ? min.z : max.z,
-      );
-      this.boxCorner.project(this.camera);
-      const x = (this.boxCorner.x * 0.5 + 0.5) * width;
-      const y = (-this.boxCorner.y * 0.5 + 0.5) * height;
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
+  private syncAim(frame: FrameInfo): void {
+    const aim = frame.aim;
+    if (!aim) {
+      this.aimShapeMesh.visible = false;
+      this.aimRangeRing.visible = false;
+      this.aimUnitRing.visible = false;
+      return;
     }
 
-    return { minX, minY, maxX, maxY };
+    // The ring under the body a click would pick, or the one already picked.
+    const named =
+      aim.unitId === null
+        ? undefined
+        : this.hoverTargets.find((candidate) => candidate.id === aim.unitId);
+    this.aimUnitRing.visible = named !== undefined;
+    if (named) {
+      this.aimUnitRing.position.set(
+        named.position.x,
+        this.ground(named.position.x, named.position.y) + 1.7,
+        named.position.y,
+      );
+      this.aimUnitRing.scale.setScalar(Math.max(0.6, (named.radius + 10) / 27));
+    }
+
+    // Out of range is the one thing the picture has to say that the shape
+    // cannot: the confirm will be a walk before it is a blow.
+    this.aimRangeRing.visible = !aim.inRange && aim.range > 0;
+    if (this.aimRangeRing.visible) {
+      this.aimRangeRing.position.set(aim.origin.x, this.ground(aim.origin.x, aim.origin.y) + 1.1, aim.origin.y);
+      this.aimRangeRing.scale.setScalar(aim.range);
+    }
+
+    const shape = aim.shape;
+    if (shape.kind === 'none') {
+      this.aimShapeMesh.visible = false;
+      return;
+    }
+
+    const dx = aim.point.x - aim.origin.x;
+    const dy = aim.point.y - aim.origin.y;
+    const heading = Math.hypot(dx, dy) > 1e-6 ? Math.atan2(dy, dx) : 0;
+    this.setAimShape(shape);
+    this.aimShapeMesh.visible = true;
+    // Dimmer out of range: the same shape, said less certainly.
+    (this.aimShapeMesh.material as THREE.MeshBasicMaterial).opacity = aim.inRange ? 0.3 : 0.15;
+
+    if (shape.kind === 'circle') {
+      // A burst lands where it was placed; nothing about it points anywhere.
+      this.aimShapeMesh.position.set(aim.point.x, this.ground(aim.point.x, aim.point.y) + 1.3, aim.point.y);
+      this.aimShapeMesh.rotation.set(-Math.PI / 2, 0, 0);
+      return;
+    }
+
+    // A cone and a lane both run from the caster toward the cursor. The mesh is
+    // built pointing down +X in its own plane, so the third Euler term -- which
+    // is the world Y spin once the mesh is laid flat -- is the heading, negated
+    // because the flat rotation mirrors the sweep.
+    this.aimShapeMesh.position.set(
+      aim.origin.x,
+      this.ground(aim.origin.x, aim.origin.y) + 1.3,
+      aim.origin.y,
+    );
+    this.aimShapeMesh.rotation.set(-Math.PI / 2, 0, -heading);
+  }
+
+  /** Rebuild the aim geometry, but only when the shape it is drawing changed. */
+  private setAimShape(shape: AimShape): void {
+    const key = JSON.stringify(shape);
+    if (key === this.aimShapeKey) return;
+    this.aimShapeKey = key;
+    this.aimShapeMesh.geometry.dispose();
+    this.aimShapeMesh.geometry = buildAimGeometry(shape);
   }
 
   /** Hang the torch off the local player's rig; see {@link applyPlayerLights}. */
   private carryTorch(selfEntityId: number): void {
     const host = this.bodies.get(selfEntityId)?.group ?? null;
+    // Every frame, not only on a change: the patch has to find meshes that were
+    // not there when the body was made, since an authored unit's `.glb` lands
+    // some frames after the group it goes in (spec 118).
+    this.playerLighting.attach(host);
     if (host === this.torchHost) return;
     this.torchHost = host;
     // Before the first delta places us there is no rig to carry it; parking the
@@ -704,28 +1477,103 @@ export class WorldScene {
     parent.add(this.torch, this.torchFlame);
   }
 
-  private bodyFor(id: number, rig: string, typeId: string, radius: number): Body {
+  private bodyFor(id: number, appearance: Appearance): Body {
     const existing = this.bodies.get(id);
     if (existing) return existing;
 
+    const { rig, typeId, radius, look } = appearance;
     let body: Body;
-    if (rig === 'player') {
-      const player = new PlayerRig();
-      body = { group: player.group, kind: 'player', player, outline: attachOutline(player.group), previous: null };
-    } else if (rig === 'projectile') {
+
+    // Tried before anything else, and for the player as well as a monster
+    // (spec 111). The player is the body somebody looks at for hours, so it is
+    // the one that has to prove the format -- and an entity with no row in the
+    // table still falls through to exactly the rig it drew before.
+    const authoredId = authoredUnitFor(appearance);
+    const authoredUnit = authoredId === null ? null : authoredUnitAssets(authoredId);
+    if (authoredUnit) {
       const group = new THREE.Group();
-      const mesh = new THREE.Mesh(
-        new THREE.IcosahedronGeometry(Math.max(3, radius), 0),
-        new THREE.MeshBasicMaterial({ color: PALETTE.magicCore }),
-      );
-      group.add(mesh);
-      body = { group, kind: 'projectile', previous: null };
+      const unitRig = new UnitRig();
+      group.add(unitRig.object);
+      const driven: DrivenUnit = {
+        rig: unitRig,
+        machine: new UnitMachine({ unit: authoredUnit.unit, clipLib: authoredUnit.clipLib }),
+        def: authoredUnit.unit,
+        previous: null,
+        previousPosition: null,
+        speed: STOPPED,
+        blendSpeed: 0,
+        bones: 0,
+      };
+      // Fire and forget: the group is in the scene from this frame and the mesh
+      // appears in it whenever the fetch lands. Awaiting here would mean
+      // `bodyFor` could not answer a frame that is already drawing.
+      void unitRig.load(authoredUnit.assets, authoredUnit.unit.id).then(() => {
+        castsShadows(group);
+        driven.bones = unitRig.stats().bones;
+        // Measured off the body that actually loaded rather than left at the
+        // shared default. A generated unit stands at whatever its import scale
+        // brings it to, and the default is a number picked for the procedural
+        // mech rig -- on a taller body the health bar hangs inside the head.
+        const height = unitRig.drawnHeight();
+        if (height > 0) authoredBody.headroom = height + HEADROOM_GAP;
+      });
+      const authoredBody: Body = {
+        group,
+        kind: rig === 'player' ? 'player' : 'monster',
+        unit: driven,
+        highlight: attachHighlight(group),
+        headroom: DEFAULT_HEADROOM,
+      };
+      this.scene.add(authoredBody.group);
+      // `castsShadows` runs again once the mesh has actually loaded, above --
+      // the group is empty at this point and there is nothing yet to cast one.
+      this.bodies.set(id, authoredBody);
+      return authoredBody;
+    }
+
+    if (rig === 'player') {
+      // Every player gets its own tuning object rather than sharing one: the
+      // panel that edits a figure lives in the sandbox, and a shared record here
+      // would be one player's coat-picker session resizing the whole server.
+      const species = CRITTERS[PLAYER_CRITTER];
+      const player = new CritterRig(species, {
+        tuning: { ...defaultCritterTuning(), ...PLAYER_FIGURE },
+      });
+      body = {
+        group: player.group,
+        kind: 'player',
+        player,
+        highlight: attachHighlight(player.group),
+        // Read off the species rather than measured: the metrics are what the
+        // skeleton is built from, so a taller animal moves its own bar.
+        headroom:
+          (species.metrics.headY + species.metrics.headRadius) * PLAYER_FIGURE.bodyScale +
+          HEADROOM_GAP,
+      };
+    } else if (rig === 'projectile') {
+      // The silhouette comes from the ability that threw it (spec 087), so a
+      // thrown weapon reads as one in the air rather than as a bead of light.
+      const shot = new ShotRig(look ?? 'orb', radius);
+      // A shot never shows a bar, so its headroom is the shared default rather
+      // than anything measured off the mesh.
+      body = { group: shot.group, kind: 'projectile', shot, headroom: DEFAULT_HEADROOM };
     } else {
+      // No authored unit for this type, so the procedural rig it has always
+      // had. Additive on purpose: the roster moves over when there is a roster.
       const mech = new MechRig(typeId);
-      body = { group: mech.group, kind: 'monster', mech, outline: attachOutline(mech.group), previous: null };
+      body = {
+        group: mech.group,
+        kind: 'monster',
+        mech,
+        highlight: attachHighlight(mech.group),
+        headroom: DEFAULT_HEADROOM,
+      };
     }
 
     this.scene.add(body.group);
+    // The streak is a record of where the shot has been, so it belongs to the
+    // world rather than to the body that is laying it down (spec 087).
+    if (body.shot?.trace) this.scene.add(body.shot.trace);
     // A projectile is unlit and moving; giving it a shadow caster costs a pass
     // over the scene for something a few pixels across.
     if (body.kind !== 'projectile') castsShadows(body.group);
@@ -806,6 +1654,13 @@ export class WorldScene {
   // --- camera, sun and lights -------------------------------------------
 
   private resize(): void {
+    const hike = this.controls.hike();
+    if (hike.lowRes) {
+      this.resizeToVirtual(hike);
+      return;
+    }
+    if (this.frame) this.releaseVirtual();
+
     const cssWidth = this.canvas.clientWidth || this.canvas.width || 1;
     const cssHeight = this.canvas.clientHeight || this.canvas.height || 1;
     const size = internalRenderSize(cssWidth, cssHeight);
@@ -816,6 +1671,175 @@ export class WorldScene {
     this.renderer.setSize(size.width, size.height, false);
     this.retro.setSize(size.width, size.height);
     this.lastHalfWidth = -1;
+  }
+
+  /**
+   * Draw at a fixed virtual resolution and let CSS blow it up by a whole number
+   * of device pixels, letterboxing what is left over (spec 099).
+   *
+   * There is no blit shader here on purpose. Sizing the canvas's backing store to
+   * exactly the virtual buffer and giving it a CSS size of `scale` device pixels
+   * per virtual pixel makes the browser's own upscale the integer one --
+   * `image-rendering: pixelated` is defined as nearest-neighbour, and there is
+   * nothing a quad of our own would do differently.
+   *
+   * It also buys the thing that would otherwise be the risky part of this change:
+   * because the letterbox is the *canvas element's own box* rather than an inset
+   * inside a full-bleed canvas, every cursor-to-world conversion in the renderer
+   * keeps working untouched. They all derive NDC from `canvas.getBoundingClientRect()`,
+   * which is now the letterboxed rect, so the offsets cancel without anybody
+   * having to know they exist.
+   *
+   * The available box has to come from the *parent*, since the canvas is about to
+   * stop filling it -- measuring the canvas would feed its own new size back in
+   * and ratchet the scale down a step per frame.
+   */
+  private resizeToVirtual(hike: HikeSettings): void {
+    const host = this.canvas.parentElement;
+    const availWidth = (host?.clientWidth ?? this.canvas.clientWidth) || 1;
+    const availHeight = (host?.clientHeight ?? this.canvas.clientHeight) || 1;
+    const dpr = globalThis.devicePixelRatio || 1;
+    const next = pixelFrame(availWidth, availHeight, dpr, hike.virtualWidth, hike.virtualHeight);
+    const width = Math.max(1, Math.round(hike.virtualWidth));
+    const height = Math.max(1, Math.round(hike.virtualHeight));
+
+    const unchanged =
+      this.frame !== null &&
+      this.frame.scale === next.scale &&
+      this.frame.cssWidth === next.cssWidth &&
+      this.frame.cssHeight === next.cssHeight &&
+      this.frame.offsetX === next.offsetX &&
+      this.frame.offsetY === next.offsetY &&
+      this.renderW === width &&
+      this.renderH === height;
+    if (unchanged) return;
+
+    this.frame = next;
+    this.renderW = width;
+    this.renderH = height;
+    // Fixed, and deliberately not the window's: a virtual resolution that took
+    // the window's aspect would not be a fixed virtual resolution.
+    this.aspect = width / height;
+    this.renderer.setSize(width, height, false);
+    this.retro.setSize(width, height);
+    this.lastHalfWidth = -1;
+
+    const style = this.canvas.style;
+    style.inset = '';
+    style.left = `${next.offsetX}px`;
+    style.top = `${next.offsetY}px`;
+    style.width = `${next.cssWidth}px`;
+    style.height = `${next.cssHeight}px`;
+  }
+
+  /** Draw the outlines over the frame, or the edge mask on its own. */
+  private drawEdges(hike: HikeSettings, maskOnly: boolean): void {
+    const buffers = this.ensureBuffers();
+    this.edges ??= new HikeEdges();
+    this.edges.render(
+      this.renderer,
+      buffers.normalTexture,
+      buffers.depthTexture,
+      this.camera,
+      this.renderW,
+      this.renderH,
+      hike,
+      maskOnly,
+      this.inkOrigin(),
+    );
+  }
+
+  /**
+   * The depth the distance treatment counts from: the camera's own distance to
+   * what it is looking at.
+   *
+   * An orthographic camera parked 6,000 units back makes every pixel in the frame
+   * about 6,000 units away, so a ramp measured from the camera is a ramp measured
+   * from a constant. Measured from the focus, 0 is the ground under the player and
+   * the settings are distances into the scene -- which is what they are named for,
+   * and what survives the Distance slider moving the camera without moving the
+   * world.
+   */
+  private inkOrigin(): number {
+    return this.camOffsetCurrent.length();
+  }
+
+  /**
+   * The depth/normal buffers, built on first use and kept at the render size.
+   *
+   * Lazily, so a session that never throws the switch never allocates a render
+   * target and a depth texture it will not read.
+   */
+  private ensureBuffers(): HikeBuffers {
+    const width = Math.max(1, this.renderW);
+    const height = Math.max(1, this.renderH);
+    if (!this.buffers) {
+      this.buffers = new HikeBuffers(width, height);
+    } else {
+      this.buffers.setSize(width, height);
+    }
+    return this.buffers;
+  }
+
+  /** Give the canvas the whole box back, for a frame drawn the old way. */
+  private releaseVirtual(): void {
+    this.frame = null;
+    const style = this.canvas.style;
+    style.left = '';
+    style.top = '';
+    style.inset = '0';
+    style.width = '100%';
+    style.height = '100%';
+    this.renderW = 0;
+    this.renderH = 0;
+  }
+
+  /**
+   * Where the drawn image sits inside the view, in CSS pixels.
+   *
+   * The DOM overlay has to be laid over *this* and not over the whole view, or
+   * every health bar is displaced by the letterbox -- the anchors it positions
+   * from are in canvas space.
+   */
+  viewport(): { x: number; y: number; width: number; height: number } {
+    if (!this.frame) {
+      return { x: 0, y: 0, width: this.canvas.clientWidth, height: this.canvas.clientHeight };
+    }
+    return {
+      x: this.frame.offsetX,
+      y: this.frame.offsetY,
+      width: this.frame.cssWidth,
+      height: this.frame.cssHeight,
+    };
+  }
+
+  /**
+   * Put the camera on the virtual pixel lattice for the draw, and hand back the
+   * undo.
+   *
+   * Restored immediately afterwards because picking must not see it: a snapped
+   * matrix answers "which cell is under the cursor" with up to a pixel of error,
+   * and flips that error from one side to the other as the camera crosses a snap
+   * boundary -- so a cell under a stationary cursor would change identity while
+   * the player walks past. Everything the sim is told comes through those
+   * conversions, which makes this the one place in the renderer where a rounding
+   * choice could change an outcome.
+   */
+  private applyPixelSnap(hike: HikeSettings): (() => void) | null {
+    if (!hike.snapCamera || this.renderW <= 0) return null;
+
+    const step = worldPerPixel(this.camera.right - this.camera.left, this.renderW);
+    this.camera.matrixWorld.extractBasis(this.snapRight, this.snapUp, this.snapForward);
+    const snapped = snapToPixelGrid(this.camera.position, this.snapRight, this.snapUp, step);
+    const before = this.snapBefore.copy(this.camera.position);
+    if (snapped === this.camera.position) return null;
+
+    this.camera.position.set(snapped.x, snapped.y, snapped.z);
+    this.camera.updateMatrixWorld(true);
+    return () => {
+      this.camera.position.copy(before);
+      this.camera.updateMatrixWorld(true);
+    };
   }
 
   /**
@@ -957,6 +1981,37 @@ export class WorldScene {
       );
       this.orbMesh.position.copy(this.orb.position);
     }
+
+    // No cube-map silhouette of the player across their own feet unless asked
+    // for (spec 118). The anchor the lights are measured from is written after
+    // the matrices are fresh, in `anchorPlayerLighting`.
+    this.playerLighting.setCastsPointShadow(settings.torchPlayerShadow);
+  }
+
+  /**
+   * Hand the player's own materials the point they measure the carried lights
+   * from: the middle of the body, in view space (spec 118).
+   *
+   * View space because that is where `pointLight.position` already is by the
+   * time a fragment shader sees it -- three transforms every light through the
+   * view matrix in `WebGLLights`, so an anchor in world units would put the
+   * apparent light somewhere behind the camera.
+   *
+   * Called after the camera and the scene have had their matrices updated, and
+   * before the pixel snap: the snap moves the camera by a fraction of a virtual
+   * pixel, which is nothing next to the tens of units this is measuring.
+   */
+  private anchorPlayerLighting(selfEntityId: number): void {
+    const host = this.bodies.get(selfEntityId);
+    if (!host) return;
+    host.group.getWorldPosition(this.lightAnchor);
+    // The rig's origin is at its feet, and lighting a standing figure from its
+    // feet points every ray straight up. Half the height the health bar hangs at
+    // is the middle of the body for a mech, a critter and an authored unit
+    // alike, since that is the one measurement all three publish.
+    this.lightAnchor.y += host.headroom * BODY_MIDDLE;
+    this.lightAnchor.applyMatrix4(this.camera.matrixWorldInverse);
+    this.playerLighting.setAnchor(this.lightAnchor.x, this.lightAnchor.y, this.lightAnchor.z);
   }
 
   /**
@@ -972,7 +2027,7 @@ export class WorldScene {
 
     for (const [id, body] of this.bodies) {
       this.projected.copy(body.group.position);
-      this.projected.y += 46;
+      this.projected.y += body.headroom;
       this.projected.project(this.camera);
       const x = (this.projected.x * 0.5 + 0.5) * width;
       const y = (-this.projected.y * 0.5 + 0.5) * height;
@@ -984,5 +2039,39 @@ export class WorldScene {
           this.projected.z < 1 && x >= -80 && x <= width + 80 && y >= -80 && y <= height + 80,
       });
     }
+  }
+}
+
+/**
+ * The flat geometry for an aim shape (spec 080), built pointing down local +X.
+ *
+ * The mesh is laid flat by `rotation.x = -PI/2` and then spun by the heading,
+ * under which local +X becomes the world direction from the caster to the
+ * cursor -- so every shape is authored once, along one axis, and aimed by one
+ * number.
+ */
+function buildAimGeometry(shape: AimShape): THREE.BufferGeometry {
+  switch (shape.kind) {
+    case 'circle':
+      return new THREE.CircleGeometry(Math.max(1, shape.radius), 32);
+    case 'cone':
+      // A wedge symmetric about +X, with the half-angle the sim will actually
+      // test -- `isInCone` measures from the captured aim, and so does this.
+      return new THREE.CircleGeometry(
+        Math.max(1, shape.length),
+        32,
+        -shape.halfAngle,
+        shape.halfAngle * 2,
+      );
+    case 'line': {
+      // The lane a shot flies down: as long as the ability reaches, as wide as
+      // the projectile is, and starting at the caster rather than centred on
+      // them -- a plane is built about its own middle.
+      const plane = new THREE.PlaneGeometry(Math.max(1, shape.length), Math.max(1, shape.width));
+      plane.translate(shape.length / 2, 0, 0);
+      return plane;
+    }
+    case 'none':
+      return new THREE.BufferGeometry();
   }
 }

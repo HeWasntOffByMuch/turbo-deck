@@ -13,12 +13,10 @@
 
 import {
   ARMOR_PER_AGILITY,
-  ATTACK_SPEED_PER_AGILITY,
   HP_PER_STRENGTH,
   MAX_DAMAGE_REDUCTION,
   MOVE_SPEED_HARD_MAX,
   MOVE_SPEED_HARD_MIN,
-  PLAYER_ATTACK_COOLDOWN_TICKS,
   PLAYER_ATTACK_DAMAGE,
   PLAYER_ATTACK_RANGE,
   PLAYER_MAX_HEALTH,
@@ -50,15 +48,44 @@ export const HP_PER_LEVEL = 8;
 /** Attack damage per point of strength. */
 export const DAMAGE_PER_STRENGTH = 0.6;
 /**
- * Bounds on attacks per second (spec 070).
+ * What a body with nothing on it waits between basic attacks (spec 088).
  *
- * A floor as well as a ceiling, because `attackSpeed` divides: an item that
- * managed to drive it to zero would not make a unit slow, it would make its
- * swing interval infinite, and a stat that can produce a division by zero is a
- * stat that will.
+ * Slow on purpose. Spec 065 built this game around a commitment being long
+ * enough to be read, and the old cadence -- about a third of a second, against
+ * a 0.2s wind-up -- left nothing between one blow and the next to read anything
+ * in.
  */
-export const MIN_ATTACK_SPEED = 0.25;
-export const MAX_ATTACK_SPEED = 3;
+export const BASE_ATTACK_DELAY_TICKS = Math.round(SERVER_TICK_RATE * 1.2);
+
+/**
+ * Bounds on that delay.
+ *
+ * A floor as well as a ceiling, for the reason the old attacks-per-second
+ * bounds existed: haste is still a divisor, and a modifier that managed to
+ * drive it to zero would not make a unit fast, it would make its delay
+ * infinite or negative.
+ */
+export const MIN_ATTACK_DELAY_TICKS = Math.round(SERVER_TICK_RATE * 0.2);
+export const MAX_ATTACK_DELAY_TICKS = Math.round(SERVER_TICK_RATE * 5);
+
+/**
+ * The delay a set of modifiers produces (spec 088) -- the one place it is
+ * worked out, and the whole of what `attackDelayTicks` means.
+ *
+ * `flatTicks` are added to the base; `haste` divides it, because a modifier
+ * that says *percent faster* is talking about a rate and this is a duration.
+ * Exported so the bounds can be tested against numbers no item in the table is
+ * broken enough to produce -- the point of a clamp is the item added tomorrow.
+ */
+export function attackDelayTicksFrom(flatTicks: number, haste: number): number {
+  const base = BASE_ATTACK_DELAY_TICKS + (Number.isFinite(flatTicks) ? flatTicks : 0);
+  // A stat that says nothing is a stat that changes nothing.
+  const scale = Number.isNaN(haste) ? 1 : haste;
+  // Zero or negative haste is not "instantly", it is "never", so it lands on
+  // the ceiling rather than dividing into a negative or an infinite delay.
+  if (scale <= 0) return MAX_ATTACK_DELAY_TICKS;
+  return clamp(Math.round(base / scale), MIN_ATTACK_DELAY_TICKS, MAX_ATTACK_DELAY_TICKS);
+}
 /** Critical-hit chance per point of dexterity, and its ceiling. */
 export const CRIT_PER_DEXTERITY = 0.008;
 export const MAX_CRIT_CHANCE = 0.5;
@@ -142,18 +169,19 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
 
   const attackRange = Math.max(1, PLAYER_ATTACK_RANGE + bonus.attackRange);
 
-  // The base cadence carries only flat modifiers (spec 070). Dexterity used to
-  // shorten it directly; it now feeds `attackSpeed` instead, so a point of
-  // dexterity and a +10% haste item are added in one place rather than two that
-  // silently multiply.
-  const baseCooldown = simTicksToServerTicks(PLAYER_ATTACK_COOLDOWN_TICKS);
-  const attackCooldownTicks = Math.max(1, Math.round(baseCooldown + bonus.attackCooldownTicks));
-
-  const attackSpeed = clamp(
-    (1 + ATTACK_SPEED_PER_AGILITY * dexterity + bonus.attackSpeed) * (1 + bonus.attackSpeedPct),
-    MIN_ATTACK_SPEED,
-    MAX_ATTACK_SPEED,
-  );
+  // How soon the next blow may begin, resolved here and nowhere else (spec 088).
+  // Flat modifiers add ticks; the proportional ones are still *percent faster*,
+  // so they divide. Dexterity is deliberately absent: it is a base stat rather
+  // than a modifier, and its old haste link was the last of the indirection this
+  // replaced -- a weapon that wants to be quick says `attackSpeedPct`, as the
+  // Keen Longsword already does.
+  // Flat, and independent of what the body is holding (spec 091). The attack
+  // cadence is a property of *attacking*, not of the weapon: a bow and a sword
+  // put you on the same clock, and picking one up cannot buy a faster one.
+  // `attackSpeedPct` and the flat `attackCooldownTicks` still exist as
+  // modifiers and still mean what they say -- nothing reads them for this any
+  // more, which is why the two Finesse skills no longer shorten the cadence.
+  const attackDelayTicks = attackDelayTicksFrom(0, 1);
 
   const armor = clamp(ARMOR_PER_AGILITY * dexterity + bonus.armor, 0, MAX_DAMAGE_REDUCTION);
 
@@ -179,8 +207,7 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
     turnRate,
     attackDamage,
     attackRange,
-    attackCooldownTicks,
-    attackSpeed,
+    attackDelayTicks,
     armor,
     spellPower,
     critChance,
@@ -206,18 +233,55 @@ export function basicAttackFor(player: PersistedPlayer): string {
 }
 
 /**
- * Ticks between one basic attack and the next, for these stats (spec 070).
+ * Every shot flies at this fraction of the speed its ability row states
+ * (spec 087).
  *
- * The one place the swing cadence is worked out, called by the sim when it
- * stamps a basic attack's cooldown and by the client's mirror of the same gate.
- * Floored at a tick, because a cadence faster than the sim runs is not a
- * cadence -- it is a swing every tick with the remainder thrown away.
+ * A deliberate global knob rather than a per-row retune: shots were crossing
+ * their whole range in a handful of frames, which makes a travelling attack
+ * indistinguishable from a scheduled one. One line to move when the flight has
+ * been watched for long enough to know what the number should be.
+ *
+ * Watched, and moved once: 0.3 was a third again too slow to read as a *shot*
+ * rather than as a thrown pebble, so this is that number a third faster. The
+ * reach does not move with it -- {@link projectileLifetimeTicks} divides the
+ * lifetime by the same scale, so a row still covers exactly the ground it says
+ * and only the time it takes changes.
  */
-export function attackIntervalTicks(stats: EffectiveStats): number {
-  const speed = Number.isFinite(stats.attackSpeed)
-    ? clamp(stats.attackSpeed, MIN_ATTACK_SPEED, MAX_ATTACK_SPEED)
-    : 1;
-  return Math.max(1, Math.round(stats.attackCooldownTicks / speed));
+export const PROJECTILE_SPEED_SCALE = 0.39;
+
+/**
+ * World units per second for a shot of this row (spec 088).
+ *
+ * The shooter is deliberately not asked. Spec 087 scaled this by the weapon's
+ * speed stat, which read correctly while that stat was a multiplier and stopped
+ * reading at all once it became a delay -- a *longer* wait between shots would
+ * have meant a *faster* one. How soon the next arrow may be loosed and how fast
+ * the last one flies are two questions, and only the first is the weapon's.
+ */
+export function projectileSpeedFor(baseSpeed: number): number {
+  const base = Number.isFinite(baseSpeed) && baseSpeed > 0 ? baseSpeed : 0;
+  return base * PROJECTILE_SPEED_SCALE;
+}
+
+/**
+ * Ticks before that shot expires, so its *reach* is what the table says.
+ *
+ * `lifetimeTicks` is read as the distance it describes at the row's own speed,
+ * not as a duration. Scaling the speed and leaving the ticks alone would have
+ * expired `bolt.arcane` at 372 units of its 700-unit range and `bolt.lob` at
+ * 360 of 520 -- two abilities that can no longer reach what `startCast` will
+ * happily let you aim at. That is not a speed change, it is a silent range
+ * nerf. So the only thing the scale moves is how long the flight takes.
+ */
+export function projectileLifetimeTicks(spec: {
+  readonly speed: number;
+  readonly lifetimeTicks: number;
+}): number {
+  const speed = projectileSpeedFor(spec.speed);
+  if (speed <= 0 || !Number.isFinite(spec.lifetimeTicks)) {
+    return Math.max(1, Math.round(spec.lifetimeTicks) || 1);
+  }
+  return Math.max(1, Math.round((spec.lifetimeTicks * spec.speed) / speed));
 }
 
 /** Ability resource after a recalculation, held under the fresh ceiling. */

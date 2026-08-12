@@ -33,6 +33,7 @@ function info(mapId = 'aaaa0000'): MapInfoMessage {
       {
         id: 'ground',
         seed: 1,
+        origin: { x: 0, z: 0 },
         bounds: { minX: 0, minZ: 0, maxX: 5 * EXTENT, maxZ: 5 * EXTENT },
         baseY: 0,
         waterLevel: null,

@@ -117,7 +117,25 @@ the time it lands (spec 067).
 
 Equip, unequip and skill spends each trigger a full server-side stat
 recalculation and are answered with a fresh `Stats` message, or with `Error`
-(`RejectedAction`) and no state change.
+(`RejectedAction`) and no state change. Since spec 126 equip and unequip are
+`MoveItem` underneath -- they name an item id rather than a slot index, and they
+are refused unless the player is carrying the item. Both also answer with an
+unprompted `Inventory`, and both should go away once nothing sends them.
+
+### `0x0c MoveItem`
+`varuint requestId` · `u8 fromContainer` · `varint fromIndex` ·
+`u8 toContainer` · `varint toIndex` · `varuint count`
+
+Move one item from one slot to another (spec 126). `container` is `0` inventory
+and `1` equipment; `index` is a bag slot or the ordinal of an `EquipSlot`, and it
+is **signed** because an out-of-range index is a rule refusal with a reason
+attached, not a malformed frame. `count` of `0` means the whole stack; any other
+value splits.
+
+The only container write there is: equip, unequip, swap, merge and split are all
+this message with different addresses, which is what keeps the conservation rule
+in one place. Answered with an `Inventory` at the same `requestId` whether it was
+taken or refused, plus an `Error(RejectedAction)` when it was refused.
 
 ### `0x0b WatchSpawners`
 `bool on`
@@ -293,7 +311,8 @@ Why the server would not start an ability. Sent only to the client that asked:
 ### `0x4e MapInfo`
 `str mapId` · `u32 seed` · `varint cellSize` · `varuint chunkCells` · `rect arena` ·
 `varuint speciesCount` · `str × speciesCount` ·
-`varuint layerCount`, then per layer: `str id` · `u32 seed` · `rect bounds` ·
+`varuint layerCount`, then per layer: `str id` · `u32 seed` ·
+`varint originX` · `varint originZ` · `rect bounds` ·
 `varint baseY` · `bool hasWater` · `varint waterLevel` ·
 `varuint coordCount` · (`varint cx` · `varint cz`) × coordCount
 
@@ -303,7 +322,18 @@ never asks for one that does not exist. The species list is advisory — for
 building one instanced mesh per species up front — since each chunk carries its
 own table.
 
-A `rect` is four `varint`s: `minX` · `minZ` · `maxX` · `maxZ`.
+`origin` is the world point of the layer's chunk `(0, 0)`, and every `cx`/`cz`
+below is measured from it (spec 083). It is sent rather than inferred from
+`bounds.min` because a map that has grown west or north has chunks at negative
+coordinates and an origin that no longer sits at its corner — a client that
+assumed the two were the same would place every streamed chunk at an offset.
+
+`bounds` is what the layer *declares*, which on a partially streamed map is
+wider than the chunks in hand. The client's world edge comes from it, so the
+wall does not move as chunks arrive.
+
+A `rect` is four `varint`s: `minX` · `minZ` · `maxX` · `maxZ`. `cx` and `cz` are
+zigzag varints throughout, so a negative chunk coordinate still costs one byte.
 
 ### `0x4f MapChunk`
 `str mapId` · `varuint layer` · `varint cx` · `varint cz` · `varuint cols` · `varuint rows` ·
@@ -357,6 +387,102 @@ Sent on the broadcast cadence, and **only to a connection that sent
 interest set: these are markers a level designer placed, so there are tens of
 them, and an overlay that faded out at the interest radius would be worst at
 exactly the question it exists to answer.
+
+### `0x0d OpenVendor` — `str vendorId`
+### `0x0e BuyItem` — `varuint requestId` · `str vendorId` · `str defId` · `varint count`
+### `0x0f SellItem` — `varuint requestId` · `str vendorId` · `varint index` · `varint count`
+### `0x10 BuyBack` — `varuint requestId` · `str vendorId` · `varint index`
+
+Trading with a vendor (spec 129). `OpenVendor` with an empty id closes whatever
+is open. Counts and indices are **signed** for the same reason a slot address is:
+a nonsensical value is a rule refusal carrying a reason, not a corrupt frame and
+a dropped connection.
+
+All three transactions are answered with an `Inventory` at the request id — which
+now carries the purse as well as the bag, because a purchase changes both at the
+same instant — plus a fresh `VendorState`, since a sale changes what can be
+bought back. A refusal also gets `Error(RejectedAction)`.
+
+Nothing here is predicted by the client. A purchase is not a drag: there is no
+ghost to draw and no gesture to keep up with, and the money is the one number
+nobody wants to watch flicker and settle.
+
+### `0x11 TradeInvite` — `varuint entityId`
+### `0x12 TradeRespond` — `u8 accept`
+### `0x13 TradeOffer` — `varuint slotCount` · per slot: `varint index` · `varint count` · `varint coins`
+### `0x14 TradeAccept` — `varint revision`
+### `0x15 TradeCancel` — no payload
+
+Trading with another player (spec 132). **None of them carries a trade id**: a
+player is in at most one trade, so an id would be a field a client could get
+wrong for no benefit, and the server resolves it from who is asking -- the one
+answer that cannot be spoofed.
+
+`TradeOffer` sets a side's offer **whole**, replacing what was there, for the
+reason `MoveItem` is one message: a protocol with `add` and `remove` has two
+handlers that can disagree about what is on the table, and the thing on the table
+is exactly what must not be ambiguous. Indices and counts are signed, like every
+other slot on this wire.
+
+`TradeAccept` names the revision it is accepting, and a stale one is refused
+rather than upgraded. Every edit to either offer bumps the revision and clears
+**both** acceptances, which is what makes the swap-it-at-the-last-instant scam a
+mechanical impossibility rather than a race worth timing.
+
+Each of the five is answered with a `TradeState` to *both* sides. A refusal also
+gets `Error(RejectedAction)`, to the side that asked.
+
+### `0x54 TradeState`
+`varuint tradeId` · `u8 stage` · `varuint revision` · `you` · `them` · `str reason`,
+where each side is `str playerId` · `str displayName` · `varuint offerCount` ·
+per entry: `str defId` · `varuint count` · `varuint coins` · `u8 accepted`
+
+The whole trade, to both sides, on every change (spec 132). `you` is always the
+player being sent to. `stage` is one of `TradeStageValue`; `done` and `cancelled`
+are the last message a trade sends, and `reason` says why it ended badly.
+
+An offer is **resolved to items** rather than sent as slot indices: the other
+player cannot see into your bag, and a bare index would mean nothing to them. The
+offering side gets the same view, so both players are looking at the same
+description of the same table.
+
+A trade ends on a cancel from either side, a disconnect, either player dying,
+the two of them walking further apart than `TRADE_RANGE`, or the swap being
+refused -- and the reason is carried in all five cases. There is no timeout.
+
+### `0x53 VendorState`
+`str vendorId` · `str name` · `varuint stockCount` · per entry: `str defId` ·
+`varuint price` · `varuint buybackCount` · per entry: `str defId` ·
+`varuint count` · `varuint price`
+
+What a vendor offers and what can be undone (spec 129). **An empty `vendorId`
+means the shop is closed** — the answer to walking away, to a vendor that does
+not exist, and to standing too far off. A client is told rather than left holding
+a stale price list it can keep clicking.
+
+Prices are the server's, computed from `value` in `data/items.ts` times the
+vendor's rate at the moment of the answer. Buying rounds up and selling rounds
+down, so a round trip never profits.
+
+### `0x52 Inventory`
+`varuint requestId` · `varuint slots` · per slot: `str defId` (empty = the slot
+is empty) · `varuint count` (absent for an empty slot) · then one `str` per
+`EquipSlot`, in `EQUIP_SLOTS` order (empty = nothing worn) · `varuint coins`
+
+What the player is carrying and wearing (spec 126). `requestId` is the `MoveItem`
+this answers, or `0` for an unprompted resend — login, and the equip/unequip
+messages that predate this one.
+
+**The whole container, never a delta.** Twenty-four slots of an id and a count is
+a few hundred bytes, where a delta would be a second description of the same
+state that can drift from it. The client's optimistic guess is *replaced* by what
+arrives, so rollback is not a code path — it is what happens when the resend
+disagrees, and it therefore cannot rot from disuse. That is also why a **refused**
+move is answered with this message too: the refusal is exactly when the client's
+guess needs taking away.
+
+Equipment slot order is the wire contract: a new slot is appended to
+`EQUIP_SLOTS` and never reordered, because there are no names on the wire.
 
 ## `admin:*` — client → server
 

@@ -55,6 +55,13 @@ const COAST = { x: -60, z: 1788 };
 const SEAM = { x: 2096, z: 2305 };
 /** Bare ground with room for two planted trees, away from the map's own forest. */
 const TREES = { x: 400, z: 300 };
+/**
+ * Somewhere no camera in this script points. `trees=` replaces the map's props
+ * wholesale, so aiming it off the edge of the world is how a framing gets a
+ * scene with nothing in it but ground -- the only way to measure the streak
+ * layer without the trees drowning it out.
+ */
+const OFF_SCREEN = { x: 99_999, z: 99_999 };
 
 /**
  * The two instants the wind at {@link TREES} reaches its extremes, found by
@@ -408,19 +415,41 @@ async function main(): Promise<void> {
     await seam.close();
 
     // --- part 3: the streak layer over the ground ---------------------------
-    // The piece that makes this one weather system rather than two effects. Its
-    // whole design is to be nearly invisible, so it is measured against the same
-    // scene with the patch stripped out rather than by a threshold picked to
-    // suit it: the ground either moves with the wind or it does not.
-    console.log('\npart 3. the shared streak layer, over bare ground');
-    for (const [label, extra] of [['patched', ''], ['stripped', '&baseline=1']] as const) {
-      const land = await open(browser, `at=${TREES.x},${TREES.z}&span=300&retro=0&shadows=0&t=0${extra}`);
+    // The piece that makes this one weather system rather than two effects, and
+    // the one this script used to report a passing number for while it was
+    // invisible in the game. Two things were wrong with the old measurement and
+    // both flattered it:
+    //
+    // - it ran at `retro=0`. The retro pass is the thing that decides whether
+    //   this layer reaches a player's eye at all -- it quantizes away anything
+    //   worth less than a twelfth of the range -- so measuring with it off
+    //   measured the one configuration nobody plays in.
+    // - it framed the map's own props, so "ground pixels moving" counted the
+    //   trees swaying. With the trees pushed out of shot the same measurement
+    //   fell from 10,856 pixels to 60, at a peak of 3/255.
+    //
+    // So: props off, retro on, and the streak's own two questions asked apart.
+    // Spatially it is measured against the same scene with the patch stripped
+    // rather than against a threshold picked to suit it, and temporally against
+    // itself a second later -- because a layer that is visible but frozen is
+    // ground texture, not weather.
+    console.log('\npart 3. the shared streak layer, over bare ground (props out of shot)');
+    const bare = `at=${TREES.x},${TREES.z}&span=300&shadows=0&t=0&trees=${OFF_SCREEN.x},${OFF_SCREEN.z}`;
+    for (const retro of ['1', '0'] as const) {
+      const label = retro === '1' ? 'through the retro pass (what ships)' : 'raw shader output';
+      const land = await open(browser, `${bare}&retro=${retro}`);
+      const stripped = await open(browser, `${bare}&retro=${retro}&baseline=1`);
       await setTime(land, 0);
-      const early = await pixels(land);
-      await setTime(land, 3);
-      const late = await pixels(land);
-      if (label === 'patched') await shoot(land, 'wind-streak-ground');
-      console.log(`  ground pixels moving over 3s (${label}): ${changed(early, late, 2)}`);
+      await setTime(stripped, 0);
+      const withStreak = await pixels(land);
+      const withoutStreak = await pixels(stripped);
+      await stripped.close();
+      console.log(`  ${label}`);
+      console.log(`    pixels the streak changes at all:   ${changed(withStreak, withoutStreak, 2)}`);
+      await setTime(land, 1);
+      const second = await pixels(land);
+      console.log(`    ...and that move in one second:     ${changed(withStreak, second, 2)}`);
+      if (retro === '1') await shoot(land, 'wind-streak-ground');
       await land.close();
     }
 

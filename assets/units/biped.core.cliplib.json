@@ -1,0 +1,43 @@
+{
+  "$comment": "The biped family's clip library (spec 139). Lives beside the skeleton rather than inside a member's folder, because it belongs to the family and not to whichever body happened to be generated first -- while it sat in pig_a_pose_full/ the second member reached sideways for it, and unit-assets.ts resolved those paths against the wrong directory for as long as the two were the same one.",
+  "formatVersion": 1,
+  "id": "biped.core",
+  "skeletonRef": "biped.skeleton.json",
+  "clips": [
+    {
+      "id": "defeat_02",
+      "source": "clips/defeat_02.glb",
+      "durationMs": 8500,
+      "loop": false,
+      "events": []
+    },
+    {
+      "id": "hurt",
+      "source": "clips/hurt.glb",
+      "durationMs": 13875,
+      "loop": false,
+      "events": []
+    },
+    {
+      "id": "idle",
+      "source": "clips/idle.glb",
+      "durationMs": 15375,
+      "loop": true,
+      "events": []
+    },
+    {
+      "id": "run",
+      "source": "clips/run.glb",
+      "durationMs": 1292,
+      "loop": true,
+      "events": []
+    },
+    {
+      "id": "walk",
+      "source": "clips/walk.glb",
+      "durationMs": 2375,
+      "loop": true,
+      "events": []
+    }
+  ]
+}

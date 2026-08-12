@@ -27,7 +27,7 @@ import { GameClient } from '../../../server/client/game-client.js';
 import { createWorldPredictor } from '../../../server/client/prediction.js';
 import { LoopbackTransport } from '../../../server/net/transport-loop.js';
 import { GameServer } from '../../../server/server.js';
-import { buildWorldFromMap } from '../../../server/world/build.js';
+import { buildWorldFromMap, warmRouting } from '../../../server/world/build.js';
 import {
   BROADCAST_EVERY_N_TICKS,
   SERVER_PLAYER_RADIUS,
@@ -36,18 +36,36 @@ import {
 import { abilityById, BASIC_ATTACK_ID } from '../../../server/data/abilities.js';
 import { EntityKind } from '../../../server/net/protocol.js';
 import { viewSeed } from '../seed.js';
+import { DEFAULT_AUTHORED_UNITS, setAuthoredUnits, unitsFromQuery } from './unit-catalog.js';
+import { ASSET_MANIFEST_HASH } from './unit-assets.js';
 import mapText from '../../../../maps/arena.json?raw';
 import { parseMap } from '../../../terrain/map.js';
 import { StreamedMap } from '../../../server/client/streamed-map.js';
 import type { ViewHandle } from '../view-handle.js';
 import { createWeatherControls } from '../weather-controls.js';
+import { createVfxControls } from '../vfx-controls.js';
+import { orbitDrag, orbitStep } from './orbit-keys.js';
 import { turnToward } from '../../../server/sim/movement.js';
+import { facesAim } from '../../../server/sim/abilities.js';
 import { createHud, HOTBAR } from './hud.js';
+import { hudLayout } from './hud-layout.js';
+import { isHandheldDevice } from '../device.js';
 import { appearanceOf } from './appearance.js';
-import { moveIntent, MOVE_KEYS, RoutePlanner } from './intent.js';
+import { effectsForBlow } from './vfx-wire.js';
+import { moveIntent, RoutePlanner } from './intent.js';
+import { decideKeyDown, decideKeyUp } from './key-actions.js';
+import { UiLayer } from './ui-layer.js';
+import { nearestVendorTo } from './shop-model.js';
+import { InputMap, type Modifiers } from '../../../ui/input/input-map.js';
+import { loadBindings, saveBindings } from '../../../ui/input/binding-store.js';
+import { loadScale, saveScale } from '../../../ui/input/display-store.js';
+import type { Rect } from '../../../ui/core/geom.js';
 import { autoAttack } from './target.js';
-import { WorldScene } from './scene.js';
+import { aimShape, castOrder, startAim, type AimGesture, type AimOrder } from './aim.js';
+import { TouchGestures, type TouchSample } from './touch.js';
+import { DEFAULT_HEADROOM, WorldScene, type AimIndicator } from './scene.js';
 import { spawnerLabels } from './spawner-overlay.js';
+import type { WorldAnchor } from './damage-popup.js';
 
 const TICK_MS = 1000 / SERVER_TICK_RATE;
 
@@ -79,7 +97,18 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // The seed still picks the fight's randomness; it stopped describing the
   // ground the moment the ground became a file somebody could edit by hand.
   const seed = viewSeed();
+  // Which monsters are drawn from an authored unit (spec 111). Empty unless
+  // `?units=` says otherwise, so the arena looks exactly as it did.
+  // The defaults first, then whatever `?units=` overrides. `setAuthoredUnits`
+  // replaces the whole table by design, so passing the query alone wiped the
+  // default roster on every mount -- which is exactly how the player went on
+  // being drawn by the critter rig after being pointed at an authored unit.
+  setAuthoredUnits({ ...DEFAULT_AUTHORED_UNITS, ...unitsFromQuery() });
   const world = buildWorldFromMap(parseMap(mapText), mapText);
+  // Same reason as the server (spec 130): sampling the ground into a nav grid is
+  // around a second on a real map, and it belongs beside the rest of the page's
+  // start-up rather than in the frame where the first move order is given.
+  warmRouting(world);
 
   const transport = new LoopbackTransport();
   const server = new GameServer({ seed, built: world, transport });
@@ -90,6 +119,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   const client = new GameClient(transport.connect(), {
     playerId: 'you',
     displayName: 'You',
+    // What this build's assets hash to (spec 113). The in-tab server has no
+    // manifest of its own, so today this always passes -- it is sent anyway
+    // because this is the one client construction site, and a real socket is a
+    // transport swap away.
+    assetManifest: ASSET_MANIFEST_HASH,
     // Predict against the world the server is colliding against (spec 063), so
     // a tree stops the local guess where it stops the authoritative one.
     predictor: (stats, tickRate) =>
@@ -103,7 +137,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   });
 
   /** The world a move order routes through -- the one the server is colliding against. */
-  const pathWorld = { colliders: world.colliders, radius: SERVER_PLAYER_RADIUS };
+  const pathWorld = { colliders: world.colliders, radius: SERVER_PLAYER_RADIUS, ground: world.sampler };
   const planner = new RoutePlanner();
 
   // The scene draws the map the *client* was sent, not the document the in-tab
@@ -169,37 +203,267 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     }
   }
 
-  const hud = createHud();
-  hud.onUse((abilityId) => useAbility(abilityId));
+  /**
+   * Mirrors the authored units' state onto the root element (spec 111).
+   *
+   * Written only when it changes, because a per-frame attribute write is a
+   * per-frame style invalidation. Read by `preview-units.ts` and by nothing in
+   * the game -- this is a window into the renderer, not an input to it.
+   */
+  let lastUnitReadout = '';
+  function publishUnitReadout(): void {
+    const readout = scene.authoredUnitReadout();
+    const text = `${readout.loaded}:${readout.bones}:${readout.states}`;
+    if (text === lastUnitReadout) return;
+    lastUnitReadout = text;
+    root.dataset['authoredUnits'] = String(readout.loaded);
+    root.dataset['authoredBones'] = String(readout.bones);
+    root.dataset['authoredStates'] = readout.states;
+  }
+
+  /**
+   * Mirrors what the interface is showing onto the root element (spec 131).
+   *
+   * The same window `publishUnitReadout` opens, and needed for the same reason
+   * turned up a level: the interface draws to a canvas, so a browser harness has
+   * no DOM to ask whether the bag on screen is the bag the server sent. Written
+   * only when it changes; read by `preview-world.ts` and by nothing in the game.
+   */
+  let lastUiReadout = '';
+  let lastUiCost = '';
+  /** The last camera pair published, so a still view invalidates no styles. */
+  let lastCamera = '';
+  function publishUiReadout(): void {
+    const readout = ui.readout();
+    // Its own comparison, because this one moves on its own: it is the worst of
+    // a sliding window and would otherwise force a style invalidation on every
+    // frame the interface got slightly slower.
+    const cost = `${readout.frameMs.toFixed(2)}/${readout.worstFrameMs.toFixed(2)}`;
+    if (cost !== lastUiCost) {
+      lastUiCost = cost;
+      root.dataset['uiFrameMs'] = readout.frameMs.toFixed(2);
+      root.dataset['uiWorstMs'] = readout.worstFrameMs.toFixed(2);
+    }
+    const windows = readout.windows.join(',');
+    const bag = readout.bag.filter((name) => name !== '').join(',');
+    // The same list with its gaps kept, so a harness can say *which cell* holds
+    // what (spec 137). Both, rather than one: the filtered one is what a person
+    // reads in a log, and the raw one is what an index means something in.
+    const cellNames = readout.bag.join(',');
+    // The scale and the viewport are in the key as well as in the attributes: a
+    // resize changes neither the windows nor the bag, and a readout that only
+    // watched those would report the old frame forever.
+    // The options window's tab strip, in UI pixels: `id:x,y,w,h` apiece (spec
+    // 136). The harness clicks a tab with it, because the alternative is a
+    // guessed offset that passes for the wrong reason the day the layout moves.
+    const boxes = (rects: readonly { readonly id: string; readonly rect: Rect }[]): string =>
+      rects.map((box) => `${box.id}:${box.rect.x},${box.rect.y},${box.rect.width},${box.rect.height}`).join(';');
+    const tabs = boxes(readout.tabRects);
+    const scales = boxes(readout.scaleRects);
+    const cells = boxes(readout.bagRects);
+    const binds = boxes(readout.bindRects);
+    const resets = boxes(readout.resetRects);
+    const text =
+      `${windows}|${bag}|${readout.scale}|${readout.viewport.width}x${readout.viewport.height}` +
+      `|${readout.tab}|${tabs}|${readout.scaleChoice}|${scales}|${cells}|${cellNames}`;
+    if (text === lastUiReadout) return;
+    lastUiReadout = text;
+    root.dataset['uiWindows'] = windows;
+    root.dataset['uiBag'] = bag;
+    root.dataset['uiScale'] = String(readout.scale);
+    root.dataset['uiViewport'] = `${readout.viewport.width}x${readout.viewport.height}`;
+    root.dataset['uiTab'] = readout.tab;
+    root.dataset['uiTabs'] = tabs;
+    root.dataset['uiScaleChoice'] = readout.scaleChoice;
+    root.dataset['uiScales'] = scales;
+    root.dataset['uiCells'] = cells;
+    root.dataset['uiCellNames'] = cellNames;
+    root.dataset['uiBinds'] = binds;
+    root.dataset['uiResets'] = resets;
+  }
+
+  const hud = createHud((x, y, lift) => scene.projectPoint(x, y, lift));
+  /** The overlay's current box, so it is only rewritten when the letterbox moves. */
+  let hudBox = { x: -1, y: -1, width: -1, height: -1 };
+  hud.onUse((abilityId) => pressAbility(abilityId));
   // Picking a weapon is an ordinary equip (spec 079): the server puts it in the
   // hand, recomputes the stat block, and the new `basicAttackId` comes back on
   // `Stats`. Nothing here decides what the right-click then does -- the next
   // frame simply reads the stat and asks for whatever it names.
   hud.onEquip((itemId) => client.equip('mainHand', itemId));
+  // The same call a key binding makes (spec 140). The button knows which window
+  // it names and nothing else about what opening one costs.
+  hud.onOpen((id) => ui.toggle(id));
 
-  // The two settings buttons float over the top-right corner of the game
-  // window: the camera/light cog (spec 034) and the weather beside it
-  // (spec 075). Separate popovers rather than one -- the cog's is already
-  // twenty rows deep and scrolls on a short window, and what the world is doing
-  // is a different question from how it is being looked at.
-  const weather = createWeatherControls();
-  const buttons = document.createElement('div');
-  buttons.style.cssText = 'position:absolute;top:8px;right:10px;z-index:30;display:flex;gap:6px;';
-  buttons.append(weather.element, scene.controls.element);
-  root.append(hud.element, buttons);
+  // The settings buttons float over the top-right corner of the game window: the
+  // view cog (spec 034), the day/night clock, the player's lights, the retro
+  // filter and the hike look (spec 107), then the weather (spec 075). A popover
+  // each rather than one drawer for all of them -- and one group, so opening any
+  // of them closes the rest instead of stacking six panels into one corner.
+  //
+  // Not on a phone (spec 140). They are tuning panels twenty rows deep, and on
+  // an 844x390 frame the seven of them pile into the corner underneath the tab
+  // bar. `scene.controls` is still *built* -- the camera reads its sliders, and
+  // `orbitBy` writes them -- it simply has nowhere to be pressed, so a phone
+  // gets the defaults and the options window (spec 135) instead.
+  const showsTuningMenus = hudLayout(isHandheldDevice()).showsTuningMenus;
+  if (showsTuningMenus) {
+    const weather = createWeatherControls({ group: scene.controls.menus });
+    // The seventh button (spec 121). Both settings are pushed straight into the
+    // layer rather than polled: the intensity is a budget the sim reads, and gore
+    // is a switch the decal field acts on rather than a flag anything draws past.
+    const vfxControls = createVfxControls({
+      group: scene.controls.menus,
+      onChange: (settings) => {
+        scene.setVfxIntensity(settings.intensity);
+        scene.setGore(settings.gore);
+      },
+    });
+    const buttons = document.createElement('div');
+    // Inset against the notch and the home indicator (spec 093): in landscape the
+    // cutout is on a side edge, which is exactly where these sit.
+    buttons.style.cssText =
+      'position:absolute;top:calc(8px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));' +
+      'z-index:30;display:flex;gap:6px;';
+    buttons.append(scene.controls.element, weather.element, vfxControls.element);
+    root.append(buttons);
+  }
+  root.append(hud.element);
+
+  /** Where a blow lands on a body, in world units above its feet. */
+  const BLOOD_HEIGHT = 26;
 
   client.onCombatResult((result) => {
-    hud.addDamage(result.targetId, result.damage, (result.flags & 2) !== 0);
+    // What a blow looks like, decided in one pure place (spec 120). Nothing
+    // about this changes a game outcome -- the server already resolved the blow
+    // and this is reading the answer.
+    const target = client.view().entities.find((entity) => entity.id === result.targetId);
+    const attacker = client.view().entities.find((entity) => entity.id === result.attackerId);
+    if (target) {
+      for (const request of effectsForBlow(
+        {
+          attackerId: result.attackerId,
+          targetId: result.targetId,
+          damage: result.damage,
+          killed: (result.flags & 1) !== 0,
+          critical: (result.flags & 2) !== 0,
+          blocked: (result.flags & 4) !== 0,
+          damageType: 'physical',
+          x: target.x,
+          y: BLOOD_HEIGHT,
+          z: target.y,
+          fromX: attacker?.x ?? target.x,
+          fromZ: attacker?.y ?? target.y,
+          bleeds: true,
+        },
+        client.view().estimatedTick,
+      )) {
+        scene.playEffect(request);
+      }
+    }
+    // Where it landed, asked for now and never again (spec 096). The scene is
+    // the better answer -- it knows the pose actually on screen, and it still
+    // holds the body of something this very blow killed -- and the replica is
+    // the fallback for a hit on a body no frame has drawn yet.
+    const at = scene.bodyAnchor(result.targetId) ?? replicaAnchor(result.targetId);
+    if (!at) return;
+    hud.addDamage(result.targetId, at, result.damage, (result.flags & 2) !== 0);
   });
   client.onEffect((effect) => {
-    scene.addEffect(effect.x, effect.y, effect.radius, effect.durationTicks);
+    // The id the server has always sent and this view has always dropped.
+    scene.addEffect(effect.effectId, effect.x, effect.y, effect.radius, effect.durationTicks);
   });
   client.onCastRejected((abilityId, reason) => {
     hud.notice(`${abilityById(abilityId)?.name ?? abilityId}: ${reason}`);
   });
 
+  /** The world point of a body the scene has not drawn, out of the last delta. */
+  function replicaAnchor(entityId: number): WorldAnchor | null {
+    const entity = client.view().entities.find((candidate) => candidate.id === entityId);
+    return entity ? { x: entity.x, y: entity.y, lift: DEFAULT_HEADROOM } : null;
+  }
+
   // --- input -------------------------------------------------------------
+  /**
+   * Held *actions*, not key codes (spec 125).
+   *
+   * The map is per-view and loaded from the player's profile at mount; the
+   * storage is reached for here, at the DOM edge, exactly as the editor's
+   * autosave does it -- everything under src/ui/ takes a `StorageLike`.
+   */
   const held = new Set<string>();
+  /**
+   * Held raw key *codes*, for the input that is deliberately not rebindable.
+   *
+   * Today that is the two camera keys and nothing else (spec 129 chose two
+   * hard-coded codes on purpose, since there was no binding surface when it was
+   * written). It is a second set rather than an entry in `bindings.json` because
+   * the profile is a versioned document with golden images over the actions it
+   * lists, and a camera section in it is a larger change than this.
+   *
+   * It exists at all because the camera keys have been dead since spec 125:
+   * `orbitStep` asks for `BracketLeft`/`BracketRight` and `held` has stored
+   * rebindable action ids ever since, so nothing was ever added for them and
+   * `[` and `]` turned nothing on any device (spec 140). The unit test passed
+   * throughout -- the arithmetic was never wrong, the wiring was -- which is why
+   * `scripts/probe-orbit.ts` drives a real page.
+   */
+  const heldKeys = new Set<string>();
+  const inputMap = new InputMap();
+  /**
+   * Where the key profile lives. Reached for here, at the DOM edge, exactly as
+   * the editor's autosave does it -- everything under src/ui/ takes a
+   * `StorageLike` and never a `Window`.
+   */
+  const bindingStorage = globalThis.localStorage ?? {
+    getItem: () => null,
+    setItem: () => undefined,
+    removeItem: () => undefined,
+  };
+  loadBindings(bindingStorage, inputMap);
+
+  /**
+   * The framework's interface, over the world (spec 131).
+   *
+   * Built after the map so it sits above the world canvas in the DOM, and given
+   * the same `inputMap` the keys are read through -- so rebinding a key in the
+   * keybinding window rebinds it in the game, because there is one map.
+   *
+   * Every callback below is a *request*: the screens emit intents and the server
+   * decides. Nothing here writes to a container, a purse or a skill tree.
+   */
+  const ui = new UiLayer(root, {
+    map: inputMap,
+    onMove: (from, to, count) => client.moveItem(from, to, count),
+    onSpend: (skillId) => client.spendSkillPoint(skillId),
+    onBuy: (vendorId, defId) => client.buyItem(vendorId, defId),
+    onSell: (vendorId, index) => client.sellItem(vendorId, index),
+    onBuyBack: (vendorId, index) => client.buyBack(vendorId, index),
+    onVendor: (vendorId) => client.openVendor(vendorId),
+    onTradeOffer: (slots, coins) => client.offerInTrade(slots, coins),
+    onTradeAccept: (revision) => client.acceptTrade(revision),
+    onTradeRespond: (accept) => client.respondToTrade(accept),
+    onTradeCancel: () => client.cancelTrade(),
+    // Written straight through, because a key the player just changed and then
+    // lost to a refresh is worse than one that never saved at all.
+    onBindingsChanged: () => saveBindings(bindingStorage, inputMap),
+    // Honoured and saved in the same breath, for the same reason (spec 136):
+    // the interface re-frames on the next update, so a preference that failed
+    // to save would be one the player watched work and then lose.
+    onScaleChosen: (choice) => {
+      ui.setScaleChoice(choice);
+      saveScale(bindingStorage, choice);
+    },
+    // The one place the platform is asked, beside the media queries.
+    scale: loadScale(bindingStorage),
+    // Where the *player* is, not where the camera is looking: the server checks
+    // the same distance from the same position, and asking about a shop the
+    // server will refuse is how a window opens empty.
+    nearestVendor: () => {
+      const me = client.view().self;
+      return me ? nearestVendorTo(me.x, me.y) : null;
+    },
+  });
   let cursor: { x: number; y: number } | null = null;
   let aim = { x: 0, y: 0 };
   /** The standing move order from the last right-click, in world units. */
@@ -211,6 +475,20 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * -- belongs to the server.
    */
   let targetId: number | null = null;
+  /**
+   * The skill being aimed but not yet thrown (spec 080).
+   *
+   * A hotbar press stops being the commitment and becomes this: the shape of
+   * the blow is on the ground, and nothing has been asked for. A left-click
+   * turns it into an {@link order}; a right-click throws it away, at no cost,
+   * because there was nothing to refund.
+   */
+  let pendingAim: { readonly abilityId: string; readonly gesture: AimGesture } | null = null;
+  /**
+   * A confirmed aim, walking into range (spec 080). One cast, not a cadence:
+   * the tick it is asked for is the tick it is forgotten.
+   */
+  let order: AimOrder | null = null;
   /**
    * The heading we believe we have, turned at the server's own rate.
    *
@@ -232,8 +510,42 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     return aim;
   }
 
-  function useAbility(abilityId: string): void {
-    const target = worldAim();
+  /**
+   * A hotbar slot was reached for (spec 080).
+   *
+   * What that means now depends on what the ability asks for. A self cast has
+   * nothing to supply, so it is still the commitment it always was. Everything
+   * else becomes an aim: a picture on the ground and a question, until a click
+   * answers it.
+   */
+  function pressAbility(abilityId: string): void {
+    const ability = abilityById(abilityId);
+    if (!ability) return;
+
+    const view = client.view();
+    const start = startAim(ability, {
+      readyAtTick: view.cooldowns[abilityId] ?? 0,
+      tick: view.estimatedTick,
+    });
+
+    if (start.kind === 'refused') {
+      // Said out loud in the same line the server's refusals use, so a dead
+      // press is never silent. Nothing else moves: a key that does nothing does
+      // nothing, so a standing aim is left exactly as it was.
+      hud.notice(`${ability.name}: ${start.reason}`);
+      return;
+    }
+    if (start.kind === 'cast') {
+      castNow(abilityId, worldAim(), 0);
+      return;
+    }
+    // A second press replaces the first rather than queueing behind it. There
+    // is one aim, and it is whichever one you reached for last.
+    pendingAim = { abilityId, gesture: start.gesture };
+  }
+
+  /** Commit: send the request, and give up everything that would fight it. */
+  function castNow(abilityId: string, at: { x: number; y: number }, targetEntityId: number): void {
     // Committing to a blow cancels where you were going. The server roots a
     // caster anyway, so a standing order would simply resume the moment the cast
     // ended -- walking off mid-fight, seconds after the click that ordered it,
@@ -243,7 +555,45 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // ...and it calls off the auto-attack, for the same reason held keys
     // outrank a move order: reaching for a hotbar slot is taking control back.
     targetId = null;
-    client.useAbility(abilityId, target.x, target.y);
+    client.useAbility(abilityId, at.x, at.y, targetEntityId);
+  }
+
+  /**
+   * The left-click that answers the aim's question.
+   *
+   * A ground aim takes the point under the cursor. A unit aim takes the body
+   * under it -- and a click on empty grass is *ignored* rather than treated as
+   * a cancel: it asked for a body, so a click that found none has not answered
+   * anything, and throwing the aim away would punish a near miss.
+   */
+  function confirmAim(): void {
+    const pending = pendingAim;
+    if (!pending) return;
+    const ability = abilityById(pending.abilityId);
+    if (!ability) return;
+
+    let targetEntityId = 0;
+    let at = worldAim();
+    if (pending.gesture === 'unit') {
+      const hovered = cursor ? scene.pickUnitAt(cursor.x, cursor.y) : null;
+      const picked = hovered === null ? null : client.view().entities.find((e) => e.id === hovered);
+      if (!picked || !attackable(picked, client.view().selfEntityId)) return;
+      targetEntityId = picked.id;
+      at = { x: picked.x, y: picked.y };
+    }
+
+    pendingAim = null;
+    // The order owns the walking from here, so nothing else may be steering.
+    destination = null;
+    planner.clear();
+    targetId = null;
+    order = { abilityId: ability.id, targetEntityId, x: at.x, y: at.y, range: ability.range };
+  }
+
+  /** Throw the aim away. Nothing was asked for, so there is nothing to refund. */
+  function clearAim(): void {
+    pendingAim = null;
+    order = null;
   }
 
   /**
@@ -260,49 +610,202 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     return entity.kind === EntityKind.Monster || entity.kind === EntityKind.Player;
   }
 
+  /**
+   * The only place in the game that turns a `KeyboardEvent` into a decision
+   * (spec 125).
+   *
+   * It asks the map what actions the key fires and acts on those; it never
+   * branches on a code or a letter. That is what makes every key here
+   * rebindable, and it is why `held` now holds action ids rather than key codes.
+   */
+  const modifiersOf = (event: KeyboardEvent): Modifiers => ({
+    shift: event.shiftKey,
+    ctrl: event.ctrlKey,
+    alt: event.altKey,
+    meta: event.metaKey,
+  });
+
+  /**
+   * The printable character a key produced, or undefined.
+   *
+   * A text field takes characters from a `text` event and control keys from a
+   * `key` one, and a browser delivers both on one `keydown` -- so the character
+   * has to be pulled out here, at the DOM edge. Anything with a modifier that
+   * makes it a command rather than a letter is not text.
+   */
+  const textOf = (event: KeyboardEvent): string | undefined =>
+    event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey ? event.key : undefined;
+
   const onKeyDown = (event: KeyboardEvent): void => {
-    held.add(event.code);
-    const slot = HOTBAR[Number(event.key) - 1];
-    if (slot) {
-      useAbility(slot);
+    // Offered to the interface first, and gameplay hears it only if the
+    // interface did not take it (spec 131). Tab is the one key the router never
+    // routes: it moves focus, and it must not also reach the browser's own.
+    if (event.code === 'Tab' && ui.anyOpen) {
+      event.preventDefault();
+      ui.moveFocus(event.shiftKey ? -1 : 1);
+      return;
+    }
+    if (ui.handleKey(event.code, 'down', modifiersOf(event), textOf(event))) {
+      // Held actions are cleared for the same reason `blur` clears them: keys
+      // pressed while the interface has the keyboard get no release the game
+      // will see, and a stranded `move.north` walks into a wall. A stranded
+      // camera key is the same bug with the view spinning instead.
+      held.clear();
+      heldKeys.clear();
+      return;
+    }
+
+    // Recorded before the map is consulted, because these are the keys the map
+    // does not know about (spec 140).
+    heldKeys.add(event.code);
+
+    const decision = decideKeyDown(inputMap, event.code, modifiersOf(event));
+
+    for (const id of decision.windows) {
+      ui.toggle(id);
       event.preventDefault();
     }
-    // Escape calls off a wind-up. Cancelling refunds the cost and the cooldown,
-    // so what a called-off cast spends is exactly the time it took -- which is
-    // why the key is worth having somewhere that is not also the move button.
-    if (event.code === 'Escape') {
+
+    for (const action of decision.move) {
+      held.add(action);
+      // Any manual step also drops a standing order, for the same reason held
+      // keys outrank one in `moveIntent`: taking the keys is taking control.
+      //
+      // A *pending* aim survives it. Walking while you decide where to put a
+      // blast is the point of being allowed to decide; a confirmed order does
+      // not survive, because from then on it is steering and a held key already
+      // outranks a destination in `moveIntent`.
+      destination = null;
+      planner.clear();
+      targetId = null;
+      order = null;
+    }
+
+    for (const slot of decision.skillbar) {
+      const ability = HOTBAR[slot];
+      if (!ability) continue;
+      pressAbility(ability);
+      event.preventDefault();
+    }
+
+    // Cancelling calls off a wind-up. It refunds the cost and the cooldown, so
+    // what a called-off cast spends is exactly the time it took -- which is why
+    // the action is worth having somewhere that is not also the move button.
+    if (decision.cancel) {
+      // What Escape means when there is nothing to back out of (spec 135).
+      //
+      // The interface has already had it and did not want it -- no drag, no
+      // dialog, no window. So the question left is whether *gameplay* wants it,
+      // and it does exactly when there is something committed to: a wind-up, an
+      // aim, a standing order. When there is not, Escape is the menu, which is
+      // what it means in every game that has one.
+      //
+      // Asked here rather than in `ui-screens.ts` because this is the only place
+      // both facts are visible -- that half may not see a cast, on purpose.
+      const committed =
+        pendingAim !== null || order !== null || targetId !== null || client.view().selfRoot !== null;
       client.cancelCast();
       // Withdrawing from a blow that the auto-attack would re-commit to on the
       // next tick is not withdrawing from anything.
       targetId = null;
-    }
-    // Any manual step also drops a standing order, for the same reason held
-    // keys outrank one in `moveIntent`: taking the keys is taking control.
-    if (MOVE_KEYS[event.code]) {
-      destination = null;
-      planner.clear();
-      targetId = null;
+      clearAim();
+      if (!committed) ui.toggle('options');
     }
   };
+
   const onKeyUp = (event: KeyboardEvent): void => {
-    held.delete(event.code);
+    ui.handleKey(event.code, 'up', modifiersOf(event));
+    // Dropped whatever the interface said, for the reason below: a release the
+    // UI swallowed is a key held forever, and here that is a view that spins.
+    heldKeys.delete(event.code);
+    // Released whatever the interface said, always. A release that the UI
+    // swallowed is a held action with no way out, and the symptom is walking
+    // into a wall until the same key is pressed and released again.
+    for (const action of decideKeyUp(inputMap, event.code)) held.delete(action);
   };
-  const onMove = (event: MouseEvent): void => {
+
+  const mouseModifiers = (event: MouseEvent): Modifiers => ({
+    shift: event.shiftKey,
+    ctrl: event.ctrlKey,
+    alt: event.altKey,
+    meta: event.metaKey,
+  });
+  /** A mouse event in the coordinates the canvas and the UI layer share. */
+  const pointIn = (event: MouseEvent): { x: number; y: number } => {
     const rect = canvas.getBoundingClientRect();
-    cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  };
+
+  const onMove = (event: MouseEvent): void => {
+    const at = pointIn(event);
+    // A cursor over a window is not a cursor over the world: leaving it set
+    // would go on highlighting a body under the panel and aiming at it.
+    cursor = ui.handlePointer('move', at, -1, mouseModifiers(event)) ? null : at;
   };
   const onLeave = (): void => {
     cursor = null;
   };
+  const onMouseUp = (event: MouseEvent): void => {
+    // The world has nothing to do with a mouse release -- an order is given on
+    // the press -- but a drag ends on one, so the interface has to hear it.
+    ui.handlePointer('up', pointIn(event), event.button, mouseModifiers(event));
+  };
   const onMouseDown = (event: MouseEvent): void => {
+    if (ui.handlePointer('down', pointIn(event), event.button, mouseModifiers(event))) return;
     const rect = canvas.getBoundingClientRect();
     cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
 
+    // Left-click confirms an aim, and does nothing at all without one
+    // (spec 080). It used to fire the first hotbar slot at the cursor, which is
+    // a click race rather than a decision.
+    if (event.button === 0) {
+      confirmAim();
+      return;
+    }
+
     // One button does both, and which one it does is decided by what is under
-    // it (spec 070). Left-click is bound to nothing: it used to fire the first
-    // hotbar slot at the cursor, which is a click race rather than a decision,
-    // and it could not tell you what you were fighting.
+    // it (spec 070).
     if (event.button !== 2) return;
+
+    // ...and shift makes it a third thing (spec 134): an offer to trade with the
+    // player under the cursor. On the button that already means "act on that
+    // body" rather than a key of its own, because a trade is aimed at somebody
+    // and a key is not. Anything that is not another player is left alone --
+    // and the server checks again.
+    if (event.shiftKey) {
+      const under = cursor ? scene.pickUnitAt(cursor.x, cursor.y) : null;
+      const picked = under === null ? null : client.view().entities.find((e) => e.id === under);
+      if (picked && picked.kind === EntityKind.Player && picked.id !== client.view().selfEntityId) {
+        client.inviteToTrade(picked.id);
+      }
+      return;
+    }
+
+    // Right-click over a pending aim means *no*, and only that: no move order,
+    // no attack order, nothing under the cursor acted on. The button that calls
+    // a blow off cannot also mean "and go there instead" -- and it is the only
+    // reading under which changing your mind is genuinely free.
+    if (pendingAim) {
+      pendingAim = null;
+      return;
+    }
+    issueOrder();
+  };
+
+  /**
+   * The order itself: attack the body under the cursor, or walk to the ground
+   * under it (spec 070).
+   *
+   * Its own function because a tap reaches it too (spec 093), and a second copy
+   * of "which of these two things did you mean" is exactly the copy that drifts.
+   * The caller has already placed `cursor` and dealt with any pending aim.
+   */
+  function issueOrder(): void {
+    if (!cursor) return;
+    // A confirmed order is already walking, so a new order is an ordinary
+    // change of orders and replaces it, the way a new move order replaces an
+    // attack target.
+    order = null;
 
     const hovered = scene.pickUnitAt(cursor.x, cursor.y);
     const picked = hovered === null ? null : client.view().entities.find((e) => e.id === hovered);
@@ -320,9 +823,162 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // same button.
     targetId = null;
     destination = scene.screenToWorld(cursor.x, cursor.y);
+    // And the only thing that says so on screen (spec 127): a wave where the
+    // click landed, which is over long before the walk is. Presentation only --
+    // the order above is what the sim hears, and it hears it either way.
+    scene.playMoveOrder(destination.x, destination.y);
+    // And it withdraws from a blow, explicitly, rather than by implication
+    // (spec 090). Spec 079's rule is that *asking to move* withdraws, and the
+    // server reads that off the input's move vector -- but `moveIntent` yields
+    // no vector at all for a destination inside `ARRIVE_EPS`, and while rooted
+    // it asks for the heading of the *aim* rather than of the click. So an order
+    // to step aside could turn the body into its own swing and then land it.
+    // Whether an order happens to produce a vector this tick is not something a
+    // player can see; the order is the thing they gave.
+    client.cancelCast();
+  }
+
+  // --- touch (specs 093, 140) --------------------------------------------
+  //
+  // One gesture has to carry both mouse buttons, so a tap is answered by
+  // whatever is being asked rather than meaning one fixed thing. Two fingers
+  // carry the zoom and the camera's swing at once (spec 140).
+  const gestures = new TouchGestures();
+
+  /**
+   * The fingers the interface owns, decided on the way down (spec 140).
+   *
+   * Ownership is per pointer and settled once, at `pointerdown`, rather than
+   * asked again on every move: a finger that started on a window must not become
+   * half of a pinch when it slides off the edge of it, and a finger that started
+   * on the world must not be swallowed by a window that opened underneath it
+   * mid-gesture. It is also what keeps `TouchGestures` seeing a consistent set --
+   * a `down` it never got must not be followed by an `up` it does.
+   */
+  const interfaceFingers = new Set<number>();
+
+  /**
+   * A touch has no modifier keys. Shared rather than built per event, because it
+   * is the same four falses every time.
+   */
+  const touchModifiers: Modifiers = { shift: false, ctrl: false, alt: false, meta: false };
+
+  /**
+   * A tap: the order, or the answer to an aim, depending on what is pending.
+   *
+   * The one place touch and mouse deliberately disagree is the last branch. A
+   * mouse *ignores* a unit-aim click that missed, because the other button is
+   * right there to back out with and throwing the aim away would punish a near
+   * miss (spec 080). On touch there is no other button, so ignoring it would
+   * leave a unit-gesture aim with no way out. Tapping the thing the aim asked
+   * for confirms; tapping anywhere else means no.
+   */
+  function onTap(x: number, y: number): void {
+    cursor = { x, y };
+    if (pendingAim) {
+      const gesture = pendingAim.gesture;
+      // Answers it, or -- for a unit aim that found only grass -- leaves it
+      // pending, which is how we can tell the tap answered nothing.
+      confirmAim();
+      if (gesture === 'unit' && pendingAim) pendingAim = null;
+      return;
+    }
+    issueOrder();
+  }
+
+  const onPointerDown = (event: PointerEvent): void => {
+    if (event.pointerType !== 'touch') {
+      onMouseDown(event);
+      return;
+    }
+    // Keeps the browser's own tap behaviours -- double-tap zoom, selection, the
+    // compatibility mouse events that would reach nothing anyway -- off a canvas
+    // that has its own reading of the gesture.
+    event.preventDefault();
+    // Offered to the interface first, exactly as a mouse press is (spec 140).
+    // Without this a window drawn over the world was scenery: the tap under it
+    // ordered the player to walk to wherever the window was, and nothing in the
+    // bag, the sheet or the options window could be pressed at all.
+    if (ui.handlePointer('down', pointIn(event), 0, touchModifiers)) {
+      interfaceFingers.add(event.pointerId);
+      return;
+    }
+    gestures.down(sampleOf(event));
   };
+
+  const onPointerMove = (event: PointerEvent): void => {
+    if (event.pointerType !== 'touch') {
+      onMove(event);
+      return;
+    }
+    if (interfaceFingers.has(event.pointerId)) {
+      ui.handlePointer('move', pointIn(event), 0, touchModifiers);
+      return;
+    }
+    const gesture = gestures.move(sampleOf(event));
+    if (gesture?.kind !== 'twoFinger') return;
+    // Both halves of what two fingers did, applied together (spec 140). A pure
+    // spread arrives with `dragX` at zero and a pure swipe with `ratio` at one,
+    // so neither call costs anything when it is not what the hand meant -- and
+    // nothing here has to decide which gesture this "really" is.
+    scene.controls.pinchZoom(gesture.ratio);
+    // Turning, not panning. The camera still follows the player (spec 039);
+    // what a swipe moves is which side of them it watches from, which is the
+    // one thing a rock standing in the way needs (spec 129).
+    const swing = orbitDrag(gesture.dragX);
+    if (swing !== 0) scene.controls.orbitBy(swing);
+  };
+
+  const onPointerUp = (event: PointerEvent): void => {
+    if (event.pointerType !== 'touch') {
+      onMouseUp(event);
+      return;
+    }
+    if (interfaceFingers.delete(event.pointerId)) {
+      ui.handlePointer('up', pointIn(event), 0, touchModifiers);
+      return;
+    }
+    const gesture = gestures.up(sampleOf(event));
+    if (gesture?.kind === 'tap') onTap(gesture.x, gesture.y);
+  };
+
+  /**
+   * The wheel, offered to the interface before the camera zoom takes it.
+   *
+   * On `root` and in the capture phase because the zoom listener is on the
+   * canvas (`scene.controls.attachWheelZoom`), and stopping propagation here is
+   * the only way to reach it first without that function learning about this
+   * one. Scrolling a shop's stock must not also pull the camera in.
+   */
+  const onWheel = (event: WheelEvent): void => {
+    if (!ui.handleWheel(pointIn(event), event.deltaY, mouseModifiers(event))) return;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const onPointerCancel = (event: PointerEvent): void => {
+    if (event.pointerType !== 'touch') return;
+    // A finger the interface owns is dropped rather than lifted: a cancel is the
+    // browser taking the gesture away, which is not a press being completed.
+    if (interfaceFingers.delete(event.pointerId)) return;
+    gestures.cancel(event.pointerId);
+  };
+
+  /** A pointer event as the recogniser's plain, canvas-relative sample. */
+  function sampleOf(event: PointerEvent): TouchSample {
+    const rect = canvas.getBoundingClientRect();
+    return { id: event.pointerId, x: event.clientX - rect.left, y: event.clientY - rect.top };
+  }
+
   const onContextMenu = (event: Event): void => event.preventDefault();
-  const onBlur = (): void => held.clear();
+  const onBlur = (): void => {
+    held.clear();
+    heldKeys.clear();
+    // A gesture interrupted by losing focus never sends its pointerup, and the
+    // next finger down would otherwise land mid-pinch.
+    gestures.clear();
+    interfaceFingers.clear();
+  };
 
   // --- the loop ----------------------------------------------------------
   let raf = 0;
@@ -359,6 +1015,20 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * order, a cancel -- because those are all the player saying they would like
    * to be doing something else.
    */
+  /**
+   * Where the standing attack order's mark is, or null (spec 090).
+   *
+   * The body faces this while waiting for the swing to come off cooldown, so the
+   * turn happens during the wait rather than after it. Read off the replica each
+   * tick rather than remembered, because a mark that walks takes its bearing
+   * with it.
+   */
+  function aimedMark(view: ReturnType<typeof client.view>): { x: number; y: number } | null {
+    if (targetId === null) return null;
+    const entity = view.entities.find((candidate) => candidate.id === targetId);
+    return entity ? { x: entity.x, y: entity.y } : null;
+  }
+
   function driveAutoAttack(view: ReturnType<typeof client.view>, me: { x: number; y: number }): void {
     if (targetId === null) return;
     const entity = view.entities.find((candidate) => candidate.id === targetId);
@@ -368,22 +1038,35 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // without a line here knowing which is being held.
     const swingId = view.stats?.basicAttackId || BASIC_ATTACK_ID;
     const swing = abilityById(swingId);
+    // The reach the chase stops at and the reach the *server* will judge the
+    // commit against are one number, so it is read once here and handed to both
+    // (spec 080). It used to be read here and left out of the request, which
+    // made the client's own gate stricter than the server's by exactly a body.
+    const targetRadius = entity ? appearanceOf(entity).radius : 0;
+    const replica = view.entities.find((e) => e.id === view.selfEntityId);
     const decision = autoAttack({
       self: me,
+      selfHealth: replica?.health ?? 1,
       target: entity
-        ? {
-            id: entity.id,
-            x: entity.x,
-            y: entity.y,
-            radius: appearanceOf(entity).radius,
-            health: entity.health,
-          }
+        ? { id: entity.id, x: entity.x, y: entity.y, radius: targetRadius, health: entity.health }
         : null,
       range: swing?.range ?? 0,
       // Both halves of "am I committed": the server's cast and the one this
       // client has only asked for. `selfRoot` is already the union of the two.
       rooted: view.selfRoot !== null,
+      // ...and the third: a request that has been sent and not yet ruled on,
+      // which has no cast behind it and so shows up in neither of those.
+      pending: view.awaitingCast,
       readyAtTick: view.cooldowns[swingId] ?? 0,
+      // Judged on the heading the *player is looking at* -- the local one, the
+      // one the body is drawn with -- so that "off cooldown and fully turned"
+      // means the wind-up starts now (spec 090). Judging it off the replica
+      // instead was correct about the server and a fifth of a second late,
+      // which reads as the wind-up being delayed after the turn has visibly
+      // finished. What makes asking here safe is the other end of the same fix:
+      // `startCast` counts a body within a few ticks of turning as facing its
+      // aim, so the server -- which is those few ticks behind -- agrees.
+      aligned: !entity ? true : facesAim(me, facing, { x: entity.x, y: entity.y }),
       tick: view.estimatedTick,
     });
 
@@ -401,12 +1084,117 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     // tree is routed by the same A* a right-click on the ground is.
     destination = decision.chaseTo;
     if (!decision.chaseTo) planner.clear();
-    if (decision.attack) client.useAbility(swingId, entity.x, entity.y, entity.id);
+    if (decision.attack) client.useAbility(swingId, entity.x, entity.y, entity.id, targetRadius);
+  }
+
+  /**
+   * One tick of a confirmed aim (spec 080): close the gap, then throw it.
+   *
+   * The same shape as `driveAutoAttack` above and deliberately so -- both feed
+   * `moveIntent` an ordinary destination and ask the server for an ability, and
+   * the server validates them identically. The one difference is the ending: an
+   * attack order stands until the body is down, and this is a single blow.
+   */
+  function driveCastOrder(view: ReturnType<typeof client.view>, me: { x: number; y: number }): void {
+    const standing = order;
+    if (!standing) return;
+
+    const mark =
+      standing.targetEntityId === 0
+        ? undefined
+        : view.entities.find((entity) => entity.id === standing.targetEntityId);
+    const decision = castOrder({
+      self: me,
+      order: standing,
+      target: mark
+        ? {
+            id: mark.id,
+            x: mark.x,
+            y: mark.y,
+            radius: appearanceOf(mark).radius,
+            health: mark.health,
+          }
+        : null,
+      // Both halves of "am I committed": the server's cast and the one this
+      // client has only asked for.
+      rooted: view.selfRoot !== null,
+      readyAtTick: view.cooldowns[standing.abilityId] ?? 0,
+      tick: view.estimatedTick,
+    });
+
+    // Re-pointed every tick, because a named mark moves. The planner treats it
+    // as any other destination, so an approach round a tree is routed by the
+    // same A* a right-click on the ground is.
+    destination = decision.chaseTo;
+    if (!decision.chaseTo) planner.clear();
+    if (decision.cast) {
+      client.useAbility(
+        decision.cast.abilityId,
+        decision.cast.x,
+        decision.cast.y,
+        decision.cast.targetEntityId,
+      );
+    }
+    if (decision.drop) {
+      order = null;
+      destination = null;
+      planner.clear();
+    }
+  }
+
+  /**
+   * What the aim looks like this frame, or null. Presentation assembled from
+   * the decision `aim.ts` already made -- no branch here changes an outcome.
+   */
+  function aimIndicator(
+    view: ReturnType<typeof client.view>,
+    me: { x: number; y: number },
+  ): AimIndicator | null {
+    const abilityId = pendingAim?.abilityId ?? order?.abilityId ?? null;
+    if (abilityId === null) return null;
+    const ability = abilityById(abilityId);
+    if (!ability) return null;
+
+    // Where it is pointed: the cursor while the aim is still a question, the
+    // placement once it has been answered.
+    let point = worldAim();
+    let unitId: number | null = null;
+    let markRadius = 0;
+
+    if (order) {
+      const mark =
+        order.targetEntityId === 0
+          ? undefined
+          : view.entities.find((entity) => entity.id === order?.targetEntityId);
+      point = mark ? { x: mark.x, y: mark.y } : { x: order.x, y: order.y };
+      unitId = mark ? mark.id : null;
+      markRadius = mark ? appearanceOf(mark).radius : 0;
+    } else if (pendingAim?.gesture === 'unit') {
+      const hovered = cursor ? scene.pickUnitAt(cursor.x, cursor.y) : null;
+      const picked = hovered === null ? null : view.entities.find((entity) => entity.id === hovered);
+      if (picked && attackable(picked, view.selfEntityId)) {
+        unitId = picked.id;
+        point = { x: picked.x, y: picked.y };
+        markRadius = appearanceOf(picked).radius;
+      }
+    }
+
+    return {
+      shape: aimShape(ability),
+      origin: me,
+      point,
+      unitId,
+      range: ability.range,
+      // Measured to the body's edge when there is one, the same as the gate the
+      // server will apply to the cast this becomes.
+      inRange: Math.hypot(point.x - me.x, point.y - me.y) <= ability.range + markRadius,
+    };
   }
 
   function sendInput(): void {
     const view = client.view();
     const me = selfPosition();
+    driveCastOrder(view, me);
     driveAutoAttack(view, me);
     const intent = moveIntent({
       held,
@@ -421,6 +1209,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // server has confirmed and one we have only asked for (spec 067) -- and it
       // can end without us asking, because being hit interrupts one.
       castAim: view.selfRoot,
+      // Face the mark while the swing is still on cooldown (spec 090). Without
+      // it the body stood facing wherever it happened to be looking for up to a
+      // whole attack delay, and only turned once the blow committed -- so the
+      // turn was paid for *after* the wait instead of during it.
+      targetAim: aimedMark(view),
     });
     if (intent.arrived) {
       destination = null;
@@ -439,8 +1232,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     accumulator = Math.min(accumulator + elapsed, TICK_MS * MAX_CATCH_UP_TICKS);
     sinceDelta += elapsed;
 
+    let ticks = 0;
     while (accumulator >= TICK_MS) {
       accumulator -= TICK_MS;
+      ticks += 1;
       // The in-tab server advances on the same fixed step it would over a wire;
       // this view just happens to be the thing driving its clock.
       server.tick();
@@ -449,6 +1244,17 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       client.advanceTick();
       sendInput();
     }
+
+    // Turning the view is the player's job now (spec 129), which is why nothing
+    // carves a hole in the rock any more. Driven off the held set rather than
+    // off key events, so holding a bracket is a continuous swing rather than a
+    // stutter at the OS repeat rate.
+    //
+    // `heldKeys`, not `held`: this reads key *codes*, and `held` has carried
+    // rebindable action ids since spec 125 -- which is what left these two keys
+    // dead for eleven specs (spec 140).
+    const swing = orbitStep(heldKeys, elapsed / 1000);
+    if (swing !== 0) scene.controls.orbitBy(swing);
 
     const view = client.view();
     ingestChunks(view);
@@ -475,17 +1281,56 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
     scene.render(view, {
       dt: elapsed / 1000,
+      // What an authored unit's state machine advances by (spec 111). The whole
+      // steps this frame actually drained, so an event lands on the same machine
+      // tick whether the browser painted at 30fps or at 144 -- `dt` above cannot
+      // say that and never could.
+      ticks,
       alpha,
       tick: drawnTick,
       selfFacing: facing,
-      // A chase re-points its destination every tick as the target moves, so
-      // marking it would strobe a diamond along the ground for the whole run.
-      // The ring under the target is the marker while one is being attacked.
-      destination: targetId === null ? destination : null,
       cursor,
       targetEntityId: targetId,
+      aim: aimIndicator(view, view.self ?? { x: 0, y: 0 }),
     });
-    hud.update(view, scene.screenAnchors(), drawnTick, client.correctionCount, targetId);
+    // The overlay is laid over the *drawn image*, not over the window (spec 099).
+    // Every anchor it positions from is in canvas space, so under a letterbox an
+    // overlay spanning the whole view would sit the health bars off their bodies
+    // by the size of the bars -- and the hotbar would hang in the letterbox
+    // rather than over the picture. Written only when it moves; a per-frame style
+    // write is a per-frame layout.
+    const box = scene.viewport();
+    if (box.x !== hudBox.x || box.y !== hudBox.y || box.width !== hudBox.width || box.height !== hudBox.height) {
+      hudBox = box;
+      const style = hud.element.style;
+      style.inset = '';
+      style.left = `${box.x}px`;
+      style.top = `${box.y}px`;
+      style.width = `${box.width}px`;
+      style.height = `${box.height}px`;
+    }
+
+    hud.update(view, scene.screenAnchors(), drawnTick, client.correctionCount, targetId, {
+      abilityId: pendingAim?.abilityId ?? order?.abilityId ?? null,
+      pending: pendingAim !== null,
+    });
+    // Read back off the interface rather than remembered from the press
+    // (spec 140), so a window opened by a key lights its button too.
+    hud.showOpenWindows(ui.opened());
+
+    // Where the view is looking from and how wide it frames, for the probes.
+    // They used to read the Orbit and Zoom sliders, and on a phone the panel
+    // those live in is not in the document at all now (spec 140) -- so the two
+    // gestures that write them would be checkable everywhere except on the
+    // device they exist for. Invisible, like every other `data-` handle here;
+    // it is not a readout.
+    const camera = `${scene.controls.orbitDegrees().toFixed(2)}|${scene.controls.viewHalfWidth().toFixed(2)}`;
+    if (camera !== lastCamera) {
+      lastCamera = camera;
+      const [orbit, zoom] = camera.split('|');
+      root.dataset['cameraOrbit'] = orbit;
+      root.dataset['cameraZoom'] = zoom;
+    }
 
     // The setting is the subscription (spec 076): turning it on is what asks
     // the server for the timers, and turning it off is what stops them coming.
@@ -505,6 +1350,14 @@ export function mountWorld(container: HTMLElement): ViewHandle {
         : [],
     );
 
+    publishUnitReadout();
+
+    // Last, over everything (spec 131). It is handed `now` rather than reading
+    // one: nothing under `src/ui/` may touch a clock, which is what makes an
+    // input replay of this interface exact rather than approximate.
+    ui.update(view, now);
+    publishUiReadout();
+
     raf = requestAnimationFrame(frame);
   }
 
@@ -516,9 +1369,15 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       window.addEventListener('keydown', onKeyDown);
       window.addEventListener('keyup', onKeyUp);
       window.addEventListener('blur', onBlur);
-      canvas.addEventListener('mousemove', onMove);
+      // Pointer events rather than mouse events, so a tap is read once: the
+      // compatibility `mousedown` a touch also fires would arrive as button 0
+      // and confirm an aim nobody asked about (spec 093).
+      canvas.addEventListener('pointermove', onPointerMove);
+      canvas.addEventListener('pointerdown', onPointerDown);
+      canvas.addEventListener('pointerup', onPointerUp);
+      canvas.addEventListener('pointercancel', onPointerCancel);
       canvas.addEventListener('mouseleave', onLeave);
-      canvas.addEventListener('mousedown', onMouseDown);
+      root.addEventListener('wheel', onWheel, { capture: true, passive: false });
       document.documentElement.addEventListener('contextmenu', onContextMenu);
 
       void client.connect();
@@ -532,11 +1391,18 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
-      canvas.removeEventListener('mousemove', onMove);
+      canvas.removeEventListener('pointermove', onPointerMove);
+      canvas.removeEventListener('pointerdown', onPointerDown);
+      canvas.removeEventListener('pointerup', onPointerUp);
+      canvas.removeEventListener('pointercancel', onPointerCancel);
       canvas.removeEventListener('mouseleave', onLeave);
-      canvas.removeEventListener('mousedown', onMouseDown);
+      root.removeEventListener('wheel', onWheel, { capture: true });
       document.documentElement.removeEventListener('contextmenu', onContextMenu);
       held.clear();
+      heldKeys.clear();
+      // A tab switched away mid-pinch must not leave fingers down.
+      gestures.clear();
+      interfaceFingers.clear();
     },
   };
 }
