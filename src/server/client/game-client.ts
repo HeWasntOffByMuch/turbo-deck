@@ -617,6 +617,10 @@ export class GameClient {
         ...input,
         predictedX: predicted.x,
         predictedY: predicted.y,
+        // How far behind the server's clock the world being *drawn* is
+        // (spec 149): one-way latency plus up to a broadcast interval. The
+        // server clamps it; see `MAX_REWIND_TICKS`.
+        renderLagTicks: this.renderLagTicks(),
       }),
     );
     return predicted;
@@ -1207,6 +1211,19 @@ export class GameClient {
     // the smallest sample is the closest to the connection's real latency, and
     // an average would track congestion instead of distance.
     return Math.min(...this.roundTrips);
+  }
+
+  /**
+   * How far behind the server's clock the drawn world is, in ticks (spec 149).
+   *
+   * `estimated` is this client's read of where the server is now; `world.tick`
+   * is the last delta it has applied, which is the newest thing it can be
+   * drawing. The difference is what the attacker is looking into the past by,
+   * and it is the number a blow should be resolved against.
+   */
+  private renderLagTicks(): number {
+    if (this.world.tick <= 0) return 0;
+    return Math.max(0, Math.round(this.estimated - this.world.tick));
   }
 
   view(): ClientView {

@@ -99,6 +99,7 @@ import {
 } from './sim/world.js';
 import { NullTransport, type Channel, type ServerTransport } from './net/transport.js';
 import { ChunkManager } from './world/chunk-manager.js';
+import { PositionHistory } from './world/position-history.js';
 import { spawnAround } from './world/spawn-around.js';
 import { circleBlocked } from '../sim/collision.js';
 import { WALKABLE_MIN_HEIGHT } from '../sim/constants.js';
@@ -240,6 +241,8 @@ interface PendingCancel {
 
 export class GameServer implements AdminHost {
   private readonly zones: ZoneManager;
+  /** Where bodies were, for lag compensation (spec 149). Bounded by the cap. */
+  private readonly history = new PositionHistory();
   private readonly terrain: TerrainSampler;
   private readonly colliders: WorldColliders;
   /** Announced in the welcome so a client can build the same ground (spec 063). */
@@ -434,6 +437,9 @@ export class GameServer implements AdminHost {
         // the client's own, and only ever moving forward is the contract.
         if (message.seq <= connection.lastSeq) return;
         connection.lastSeq = message.seq;
+        // How far behind the server's clock this client is drawing (spec 149).
+        // Clamped inside `noteLag`, because it is a number a client chose.
+        this.history.noteLag(connection.entityId, message.renderLagTicks);
         if (connection.inputs.length >= MAX_BUFFERED_INPUTS) connection.inputs.shift();
         connection.inputs.push({
           entityId: connection.entityId,
@@ -865,6 +871,7 @@ export class GameServer implements AdminHost {
     this.connections.delete(connection);
     if (connection.entityId >= 0) {
       this.chunks.remove(connection.entityId);
+      this.history.forget(connection.entityId);
       this.state = removeEntity(this.state, connection.entityId);
     }
     if (connection.playerId !== null) await this.players.logout(connection.playerId);
@@ -1279,8 +1286,13 @@ export class GameServer implements AdminHost {
       activeChunks: new Set(this.chunks.activeChunks()),
       chunkSize: CHUNK_SIZE,
       spawnPoints: this.spawnPoints,
+      // Where bodies were, so a blow lands on what its attacker saw (spec 149).
+      rewind: this.history,
     });
     this.state = result.state;
+    // Recorded after the step, so the newest frame is the world this tick ended
+    // on -- the same instant the next tick's landings will count back from.
+    this.history.record(this.state.tick, this.state.entities.values());
 
     // Occupancy first, then activation: a chunk becomes active because a player
     // is already recorded in it, never in the same breath as the move.

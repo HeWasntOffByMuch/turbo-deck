@@ -117,6 +117,7 @@ describe('game message round-trip', () => {
       buttons: 5,
       predictedX: -1234.5,
       predictedY: 987.25,
+      renderLagTicks: 9,
     },
     { type: ClientMessageType.Ping, nonce: 123456 },
     { type: ClientMessageType.Equip, slot: 'mainHand', itemId: 'sword.keen' },

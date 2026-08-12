@@ -77,6 +77,16 @@ export interface InputMessage {
   readonly buttons: number;
   readonly predictedX: number;
   readonly predictedY: number;
+  /**
+   * How far behind the server's clock the world this input was made against is
+   * being drawn, in ticks (spec 149).
+   *
+   * Client-reported, and clamped to `MAX_REWIND_TICKS` the moment it lands.
+   * That clamp is the whole security argument: the most a client achieves by
+   * lying is the compensation an honest player on a 200ms connection already
+   * gets.
+   */
+  readonly renderLagTicks: number;
 }
 
 export interface PingMessage {
@@ -370,7 +380,8 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
         .f32(message.facing)
         .u8(message.buttons)
         .f32(message.predictedX)
-        .f32(message.predictedY);
+        .f32(message.predictedY)
+        .varuint(message.renderLagTicks);
       break;
     case ClientMessageType.Ping:
       writer.u32(message.nonce);
@@ -467,6 +478,7 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
         buttons: reader.u8(),
         predictedX: reader.f32(),
         predictedY: reader.f32(),
+        renderLagTicks: reader.varuint(),
       };
     case ClientMessageType.Ping:
       return { type: ClientMessageType.Ping, nonce: reader.u32() };

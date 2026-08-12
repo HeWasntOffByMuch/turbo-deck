@@ -64,6 +64,7 @@ class Client {
         buttons: 0,
         predictedX: 0,
         predictedY: 0,
+        renderLagTicks: 0,
         ...fields,
       } as Parameters<typeof encodeClientMessage>[0]),
     );

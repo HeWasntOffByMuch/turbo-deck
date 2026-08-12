@@ -107,8 +107,11 @@ export const INTEREST_CHUNK_RADIUS = 8;
  * 13: the pong says how deep this connection's input queue is, so the client
  * can steer its own clock by it rather than drifting until the queue caps and
  * the server drops the oldest thing in it (spec 148).
+ * 14: an input says how far behind the server's clock the world it was made
+ * against is being drawn, so a blow can be resolved against what the attacker
+ * was actually looking at (spec 149).
  */
-export const PROTOCOL_VERSION = 13;
+export const PROTOCOL_VERSION = 14;
 
 /**
  * How far from a map chunk a player may be and still be sent it (spec 072).
@@ -148,6 +151,20 @@ export const MAP_CHUNK_REQUEST_RADIUS = 6;
  * hole forever is a bug report.
  */
 export const CHUNK_RETRY_TICKS = 180;
+
+/**
+ * How far a blow may be resolved into the past (spec 149). 200ms at 60Hz.
+ *
+ * Three readings agree on twelve. It is under half the shortest wind-up in the
+ * table (27 ticks), so a dodge begun in the first half of any wind-up still
+ * works whatever the attacker's connection -- which is the rule `landOnTarget`
+ * says the whole design rests on. It is exactly the worst connection
+ * `latency.test.ts` characterises, so compensation covers everything prediction
+ * was measured against and nothing beyond. And at 155 units/s it is about two
+ * body-widths of cover, which is the price paid by whoever thought they had got
+ * behind the rock.
+ */
+export const MAX_REWIND_TICKS = 12;
 
 /**
  * Token bucket on chunk sends, per connection (spec 072).
