@@ -1085,6 +1085,13 @@ export class GameServer implements AdminHost {
           ...entity,
           stats: session.stats,
           health: Math.min(entity.health, session.stats.maxHealth),
+          // Poise is a live resource like health (spec 147), so it is held
+          // under the *fresh* ceiling for the same reason: a respec that
+          // shrinks the pool must not leave a body carrying a guard bigger than
+          // it now has. The sim's own reads clamp too, so this is belt and
+          // braces -- but a body that is briefly over its own maximum is the
+          // sort of thing that shows up as a bar past the end of its track.
+          poise: Math.min(entity.poise, session.stats.traits.maxPoise),
           level: session.record.level,
         });
       }

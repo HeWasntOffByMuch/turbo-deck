@@ -336,9 +336,10 @@ synergy grants are resolved *after*, so they cannot cascade into another
 milestone. That is a deliberate one-hop rule -- it makes the graph acyclic by
 construction rather than by hoping no one writes a loop.
 
-Two curve helpers, both pure, both in `data/scaling.ts` with every coefficient:
+Three curve helpers, all pure, all in `data/scaling.ts` with every coefficient:
 
 ```ts
+above(attr)                        = max(0, attr - startingAttribute)
 linear(attr, per)                  = attr * per
 softCap(attr, per, knee, falloff)  = attr <= knee ? attr * per
                                      : (knee + (attr - knee) * falloff) * per
@@ -348,6 +349,19 @@ reciprocal(attr, per, floor)       = max(floor, 1 / (1 + attr * per))
 `reciprocal` is how every "less of a thing" stat is written -- cost, cooldown,
 animation length. It cannot reach zero, it has no negative branch, and 0.5 means
 "half" rather than "-50% which is not the same as two -25%s".
+
+**The baseline rule**, learned in implementation and worth stating first because
+it changes every row below. Every attribute *starts* at 5, so a coefficient on
+the raw value means a brand-new character already carries five points of every
+scale: their wind-ups shorter than the ability table says, their costs lower,
+their cooldowns shorter. Every authored number in `data/abilities.ts` would
+describe a character who does not exist. So the **scales** -- every `reciprocal`,
+and movement -- are measured through `above()`, and a fresh character is exactly
+1.0x on all of them. The **quantities** that predate this spec (health, the pool,
+armour, turn rate, spell power) stay measured from zero, because their baselines
+are load-bearing elsewhere and re-basing them would move numbers this spec has no
+business moving. The evidence that this is right: the whole of
+`abilities.test.ts` and `attack-cancel.test.ts` passes untouched.
 
 The table (all coefficients live in `SCALING` in one file):
 
@@ -364,6 +378,7 @@ The table (all coefficients live in `SCALING` in one file):
 | `moveSpeed` | `base + 0.9·AGI`, clamped to the world bounds | |
 | `turnRate` | `base + 1.6·AGI` | existing coefficient |
 | `attackDamage` | `base + 0.6·STR + 0.15·AGI + flat` then `×(1+pct)` | |
+| `weaponPower` | `attackDamage / PLAYER_ATTACK_DAMAGE` | **new, and load-bearing** |
 | `spellPower` | `1 + 0.02·INT` | |
 | `spellRadiusPct` | `0.006·INT` (gated on the INT 20 milestone) | geometry |
 | `spellRangePct` | `0.004·INT` (same gate) | geometry |
@@ -384,6 +399,33 @@ field, `traits: TraitStats`, holding everything new. Existing readers do not
 change; the wire gains one fixed block.
 
 ### Snapshot vs dynamic
+
+### The hole `attackDamage` was sitting in
+
+Found while implementing, and it changes what Strength needed: **`applyDamage`
+multiplied every blow by `spellPower` and read `attackDamage` nowhere at all.**
+It has been that way since spec 062 -- the stat is derived, replicated, printed
+on the character sheet, and reaches nothing. Strength's damage coefficient was
+decorative, so "a pure Strength build must be viable" was not achievable by
+tuning: there was no path from the attribute to a damage number.
+
+`traits.weaponPower` closes it, as a multiplier on a **basic attack** the way
+`spellPower` is one on an ability. Derived *from* `attackDamage` against the
+unarmed reference rather than added beside it, so there is still exactly one
+number meaning "how hard do I hit" and the sheet's Damage row is that number.
+Monsters keep `weaponPower: 1` through `monsterTraits`, so nothing in the
+existing content is re-tuned by this.
+
+### What Flow does not do
+
+The Agility 20 milestone was specified as "+5% movement per stack" and does not
+grant it. Flow is a **status**, statuses are not replicated, and a body moving
+15% faster than its replicated `moveSpeed` would diverge from its own client's
+prediction on every tick it held a stack -- a correction per tick, for the build
+most likely to notice. Agility's raw speed lives on `moveSpeed`, which is
+replicated and predicted; Flow keeps the follow-through, the cost, the damage
+reduction and the weak-point chance, all of which are resolved server-side and
+need no prediction. The field was deleted rather than left unwired.
 
 - **Snapshotted at commit** (already the rule, spec 144): attack timing. Extended
   to cost, cooldown scale and hyper-armour — a buff landing mid-wind-up belongs to
@@ -502,6 +544,30 @@ skills, so a greyed-out button and a refusal cannot disagree.
 - All 15 synergies are reachable, and each names two attributes that both have a
   milestone below the synergy threshold (so a pair is always *additive* to two
   identities rather than a replacement for them).
+
+## What implementation changed, in one list
+
+Kept honest because a spec that disagrees with its code is worse than no spec.
+
+1. **The baseline rule** above: scales measured from the starting attribute.
+2. **`weaponPower`**, because `attackDamage` reached nothing.
+3. **Flow grants no movement**, for the prediction reason above.
+4. **`Vulnerable` is a constant window**, not the reader's `openingReadTicks`.
+   Whether an enemy has just committed is a fact about the world rather than
+   about who is looking at it; what Perception buys is the ability to *use* the
+   window (`vulnerableWeakPointFactor`), which is the difference between an
+   information mechanic and a hidden damage buff.
+5. **Second Wind re-arms on recovery**, not on a timer alone -- otherwise a
+   character parked at 29% health gets a heartbeat every twenty seconds.
+6. **`Prepared` and `Momentum` are consumed at the attack point**, not at the
+   commit, so "the attack did not happen" is true of the charges as well as of
+   the cost and there is no state for a withdrawal to put back.
+7. **A pure build at level 20 cannot spend its whole budget** -- 62 points, 55
+   places -- so `spreadOf` reports what it could not place instead of silently
+   comparing builds with different budgets.
+8. **No admin path applies a preset.** `npm run balance -- --preset=<id>` builds
+   and fights any of the twelve; a wire message that made a character level 20
+   is not a thing to ship, and a manager method nothing calls is dead code.
 
 ## Out of scope
 
