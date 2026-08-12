@@ -422,7 +422,12 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   // The day/night cycle (spec 047). While it is on it owns the sun and the two
   // manual light sliders below are inert; unticking it hands them the sun back,
   // which is what spec 033 built them for.
-  const dayNight = makeCheckbox('Day/night cycle', lighting,
+  // Off by default. The cycle is still the interesting thing to look at, but it
+  // owns the sun, and a sun that moves is a shadow frame that keeps going stale
+  // -- so the tab now opens on the fixed daylight `applyManualSun` gives it, and
+  // the clock is something you switch on. `lighting` still decides whether the
+  // row exists at all; it stopped deciding whether it starts ticked.
+  const dayNight = makeCheckbox('Day/night cycle', false,
     'Drive the sun, sky and ambient light from a clock. Unticked, the Direction and ' +
     'Elevation sliders below place the sun by hand instead.');
   const timeOfDay = makeSlider('Time', 0, 24, 'any', DEFAULT_TIME_OF_DAY, '',
@@ -443,7 +448,13 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     'Only used when the day/night cycle is switched off.');
 
   // The player's own two lights (spec 047), which is what makes a night walkable.
-  const torchOn = makeCheckbox('Torch', true,
+  // Off by default, and this one is a frame budget rather than a preference.
+  // The torch is a point light with a shadow *cube*: six faces of scene
+  // geometry, measured at 691 of the frame's 1634 draw calls -- 42% of
+  // everything the renderer asks for, spent on a light that only matters after
+  // dark, and the tab no longer opens after dark. Ticking it puts it straight
+  // back.
+  const torchOn = makeCheckbox('Torch', false,
     'A flickering flame carried by the player. It casts shadows, so everything near ' +
     'the player throws one that swings as the flame gutters.');
   const torchRange = makeSlider('Torch range', MIN_LIGHT_RANGE, MAX_LIGHT_RANGE, 10, TORCH_DEFAULTS.range, '',
