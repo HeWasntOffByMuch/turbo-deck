@@ -29,6 +29,7 @@ import {
 } from '../../../server/data/abilities.js';
 import { ALL_ITEMS } from '../../../server/data/items.js';
 import { EntityKind } from '../../../server/net/protocol.js';
+import { attackTimingFor } from '../../../server/sim/abilities.js';
 import { SERVER_TICK_RATE } from '../../../server/config.js';
 import { castBar } from './cast.js';
 import { aimGesture } from './aim.js';
@@ -518,7 +519,7 @@ export function createHud(project: Projector): HudHandle {
       element.root.style.display = look.showsHealth ? 'block' : 'none';
 
       if (cast) {
-        const progress = castBar(cast, tick, abilityById(cast.abilityId));
+        const progress = castBar(cast, tick);
         element.cast.style.display = 'block';
         element.castFill.style.width = `${progress.progress * 100}%`;
         // Amber while it can still be called off, blue once it cannot -- the
@@ -612,12 +613,14 @@ export function createHud(project: Projector): HudHandle {
       const readyAt = view.cooldowns[slot.abilityId] ?? 0;
       const left = readyAt - tick;
       // The sweep's length is the cadence the cooldown was stamped with, which
-      // for the basic attack is the player's own (spec 070) -- against the
-      // table's number the shade would start part-drained and finish early.
+      // for the basic attack is the player's own attack interval (specs 070,
+      // 144) -- against the table's number the shade would start part-drained
+      // and finish early. Through `attackTimingFor`, so the sweep and the sim
+      // cannot come to different answers about how long a swing takes.
       const total = Math.max(
         1,
-        slot.ability?.basicAttack && view.stats
-          ? view.stats.attackDelayTicks
+        slot.ability && view.stats
+          ? attackTimingFor(slot.ability, { stats: view.stats }).intervalTicks
           : (slot.ability?.cooldownTicks ?? 1),
       );
       if (left > 0) {

@@ -99,6 +99,7 @@ import { authoredUnitFor } from './unit-catalog.js';
 import { authoredUnitAssets } from './unit-assets.js';
 import {
   advanceSpeed,
+  attackRateFrom,
   driveUnit,
   hasDeathAnimation,
   slewSpeed,
@@ -402,6 +403,8 @@ export class WorldScene {
    * leaves no entry behind to be read as a swing that never finished.
    */
   private readonly castPhases = new Map<number, number>();
+  /** Attack-speed factor per casting entity, for the swing's playback rate. */
+  private readonly attackRates = new Map<number, number>();
   private hovered: number | null = null;
   /** The ring under the body being attacked (spec 070). */
   private readonly targetRing: THREE.Mesh;
@@ -1170,7 +1173,22 @@ export class WorldScene {
     const live = new Set<number>();
     this.hoverTargets.length = 0;
     this.castPhases.clear();
-    for (const cast of view.casts) this.castPhases.set(cast.entityId, cast.phase);
+    this.attackRates.clear();
+    for (const cast of view.casts) {
+      this.castPhases.set(cast.entityId, cast.phase);
+      // Measured off the ticks the server sent rather than off anyone's stats
+      // (spec 144): the ratio of the authored wind-up to the one actually being
+      // run is the attack-speed factor, so a hasted body's swing animation
+      // shortens with its wind-up instead of trailing behind it.
+      this.attackRates.set(
+        cast.entityId,
+        attackRateFrom(
+          abilityById(cast.abilityId)?.windupTicks ?? 0,
+          cast.startTick,
+          cast.releaseTick,
+        ),
+      );
+    }
 
     for (const entity of view.entities) {
       live.add(entity.id);
@@ -1294,6 +1312,7 @@ export class WorldScene {
       speed: unit.blendSpeed,
       activity: entity.activity,
       castPhase: this.castPhases.get(entity.id) ?? null,
+      attackRate: this.attackRates.get(entity.id) ?? 1,
       dead,
     };
     driveUnit(unit.machine, facts, unit.previous, frame.ticks);
@@ -1615,7 +1634,7 @@ export class WorldScene {
         this.telegraphs.set(cast.entityId, mesh);
       }
 
-      const bar = castBar(cast, frame.tick, ability);
+      const bar = castBar(cast, frame.tick);
       mesh.position.set(
         cast.targetX,
         this.ground(cast.targetX, cast.targetY) + 1.2,

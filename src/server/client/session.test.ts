@@ -708,7 +708,7 @@ describe('cooldowns', () => {
     // The basic attack's cooldown is the caster's own delay, not the table's
     // number (spec 070, and since spec 088 the delay *is* the stat), so the
     // wait is asked for rather than assumed.
-    const cadence = client.view().stats?.attackDelayTicks ?? slash.cooldownTicks;
+    const cadence = client.view().stats?.baseAttackTimeTicks ?? slash.cooldownTicks;
     for (let i = 0; i < cadence + slash.windupTicks + 10; i++) {
       test.server.tick();
       await settle();
@@ -773,7 +773,7 @@ describe('committing before the server has answered', () => {
     // The basic attack's cooldown is the caster's own delay, not the table's
     // number (spec 070, and since spec 088 the delay *is* the stat), so the
     // wait is asked for rather than assumed.
-    const cadence = client.view().stats?.attackDelayTicks ?? slash.cooldownTicks;
+    const cadence = client.view().stats?.baseAttackTimeTicks ?? slash.cooldownTicks;
     for (let i = 0; i < cadence + slash.windupTicks + 10; i++) {
       test.server.tick();
       await settle();

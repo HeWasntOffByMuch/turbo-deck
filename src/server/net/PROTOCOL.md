@@ -280,18 +280,35 @@ nothing.
 ### `0x48 Disconnect` — `str reason`
 
 ### `0x49 CastState`
-`varuint entityId` · `str abilityId` · `u8 phase` · `u32 releaseTick` ·
-`u32 endTick` · `f32 targetX` · `f32 targetY` · `varuint targetEntityId`
+`varuint entityId` · `str abilityId` · `u8 phase` · `u32 startTick` ·
+`u32 releaseTick` · `u32 endTick` · `f32 targetX` · `f32 targetY` ·
+`varuint targetEntityId`
 
-Someone committed to an ability. `phase`: `0` wind-up, `1` channel, `2` recovery.
-`releaseTick` is when the effect lands, which is all a client needs to draw a
-wind-up bar that finishes at the right moment. Sent to everyone whose interest
-set contains the caster, so other players see a telegraph too.
+Someone committed to an ability, or moved between its phases. `phase`: `0`
+wind-up, `1` channel, `2` backswing, `3` turning.
+
+`releaseTick` is the **attack point** — when the effect lands, and the boundary
+past which the cast can no longer be withdrawn from. `startTick` is when the
+wind-up began, and it is on the wire rather than derived because attack speed
+scales the wind-up (spec 144): a bar drawn against the ability table's
+`windupTicks` runs at the wrong rate for exactly the bodies attacking fastest.
+`endTick` is when the caster is free — the release for most abilities, the end
+of the backswing for a basic attack, the end of the pulses for a channel.
+
+Sent to everyone whose interest set contains the caster, so other players see a
+telegraph too, and re-sent on every phase change: a `phase: 2` message is the
+"this attack has committed" notice.
 
 ### `0x4A CastEnded`
 `varuint entityId` · `str abilityId` · `u8 reason`
 
-`reason`: `0` released, `1` cancelled, `2` interrupted.
+`reason`: `0` released, `1` cancelled, `2` interrupted, `3` backswing cancelled.
+
+`1` means the attack **did not happen** — withdrawn from before the attack
+point, cost refunded, no interval started. `3` means it **already happened** and
+only the remaining animation was skipped: nothing is refunded and the attack
+interval runs on untouched (spec 144). A client that treats the two alike hands
+back a cooldown the server is still holding.
 
 ### `0x4B Effect`
 `str effectId` · `f32 x` · `f32 y` · `f32 z` · `f32 radius` · `u16 durationTicks`

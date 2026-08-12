@@ -74,18 +74,38 @@ export interface AbilityDefinition {
   readonly kind: AbilityKind;
   readonly targeting: AbilityTargeting;
   /**
-   * Ticks between committing and the effect landing. The caster is rooted and
-   * the cast can be cancelled at any point inside it -- this window *is* the
-   * commitment the old parry system used to read.
+   * Ticks between committing and the effect landing -- HoN's **attack point**
+   * (spec 144). The caster is rooted and the cast can be cancelled at any point
+   * inside it, with nothing spent but the time: this window *is* the commitment
+   * the old parry system used to read.
    *
    * Deliberately long since spec 094. Every number here used to be a fifth of a
    * second or so, which is a delay before a blow rather than a decision anybody
    * can act inside: a player has to *see* the wind-up, decide, and step out of
    * it, and on a real connection most of 200ms is the round trip. Every basic
-   * attack still sits under `BASE_ATTACK_DELAY_TICKS`, so how often a body can
+   * attack still sits under `BASE_ATTACK_TIME_TICKS`, so how often a body can
    * swing stays the stat's answer (spec 088) rather than this column's.
+   *
+   * For a {@link basicAttack} this is the *base* attack point: attack speed
+   * divides it, by the same factor it divides the interval and the backswing by
+   * (spec 144). For everything else it is the number, flat -- a Heavy Blow's
+   * wind-up is the ability's statement about itself, and the attack-speed stat
+   * is about attacking.
    */
   readonly windupTicks: number;
+  /**
+   * Ticks of follow-through after the blow has landed (spec 144).
+   *
+   * The caster is rooted through it and may walk out of it, and walking out
+   * costs nothing: the attack has already happened, the cooldown is already
+   * running, and the next one is due when the interval says. That is the whole
+   * of animation cancelling -- it buys movement, never attacks per second.
+   *
+   * Absent means none, which is what spec 068 made every cast: it freed the
+   * caster on the tick the blow landed, and this column reintroduces a recovery
+   * for basic attacks *only*. Every other row leaves it at 0 on purpose.
+   */
+  readonly backswingTicks?: number;
   readonly cooldownTicks: number;
   readonly cost: number;
   readonly range: number;
@@ -101,10 +121,12 @@ export interface AbilityDefinition {
   /** Negative damage heals; kept explicit so the sign is never a surprise. */
   readonly healing?: number;
   /**
-   * The weapon swing (spec 070). Its cooldown is stamped from the caster's own
-   * `attackDelayTicks` rather than from {@link cooldownTicks}, which is what makes
-   * that stat mean anything; the table's number is the fallback for a caster
-   * whose stats say nothing. Exactly one ability per unit should carry it.
+   * The weapon swing (spec 070). Three things follow from this flag and nothing
+   * else in the table does any of them (spec 144): its interval comes from the
+   * caster's own Base Attack Time rather than from {@link cooldownTicks}, that
+   * interval is measured from when the swing *started* rather than from when it
+   * landed, and attack speed scales its wind-up and backswing. Exactly one
+   * ability per unit should carry it.
    */
   readonly basicAttack?: boolean;
   readonly description: string;
@@ -121,6 +143,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     kind: 'melee',
     targeting: 'direction',
     windupTicks: seconds(0.5),
+    backswingTicks: seconds(0.4),
     cooldownTicks: seconds(0.6),
     cost: 0,
     range: 70,
@@ -150,6 +173,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // rather than launching an arrow that was never going to reach.
     targeting: 'point',
     windupTicks: seconds(0.8),
+    backswingTicks: seconds(0.35),
     cooldownTicks: seconds(1),
     cost: 0,
     range: 420,
@@ -168,6 +192,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     kind: 'projectile',
     targeting: 'point',
     windupTicks: seconds(0.45),
+    backswingTicks: seconds(0.3),
     cooldownTicks: seconds(0.7),
     cost: 0,
     range: 300,
@@ -298,11 +323,19 @@ export const STARTING_ABILITIES: readonly string[] = [
 ];
 
 /**
- * Total ticks a cast occupies the caster, from commit to free. The release frees
- * the caster, so there is nothing past the wind-up but a channel's pulses (spec
- * 068).
+ * Total ticks a cast occupies the caster, from the wind-up starting to free,
+ * with everything at its authored length.
+ *
+ * Spec 068 made the release the end of a cast, so this used to be the wind-up
+ * plus a channel's pulses and nothing else. Spec 144 puts a backswing after the
+ * release of a basic attack, so it is the wind-up, plus the pulses, plus the
+ * follow-through.
+ *
+ * The *resolved* lengths are `resolveAttackTiming`'s and are what the sim runs
+ * on -- attack speed shortens all three for a basic attack. This is the base
+ * shape, for a caller with no stats in hand.
  */
 export function totalCastTicks(ability: AbilityDefinition): number {
   const channel = ability.kind === 'channel' ? (ability.channelTicks ?? 0) : 0;
-  return ability.windupTicks + channel;
+  return ability.windupTicks + channel + (ability.backswingTicks ?? 0);
 }

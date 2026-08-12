@@ -39,6 +39,23 @@ export interface UnitFacts {
   readonly activity: number;
   /** `CastPhaseValue` while a cast is running, else null. */
   readonly castPhase: number | null;
+  /**
+   * How fast the attack animation should play, 1 being the authored speed
+   * (spec 144).
+   *
+   * The attack-speed factor, and it is a *fact* rather than a stat lookup
+   * because it can be measured off the wire: the server sends the tick the
+   * wind-up began and the tick it releases, and the ratio of the ability
+   * table's authored wind-up to that span is exactly the factor the sim
+   * divided by. So a monster, a remote player and the local one all get the
+   * right rate from the same two numbers, and none of them needs stats this
+   * client may not have.
+   *
+   * That direction is the point. Gameplay timing is authoritative and the clip
+   * is rescaled to fit it -- the same rule `machine.startAction` already
+   * follows -- rather than the animation deciding when anything happens.
+   */
+  readonly attackRate: number;
   readonly dead: boolean;
 }
 
@@ -77,8 +94,32 @@ export function driveUnit(
 ): readonly FiredEvent[] {
   machine.setParameter(DRIVEN_PARAMETERS.speed, facts.speed);
   machine.setParameter(DRIVEN_PARAMETERS.dead, facts.dead);
+  // Written before the trigger, so the swing that is about to start is entered
+  // at the right rate rather than a tick of it playing at the old one.
+  machine.setActionRate(facts.attackRate);
   if (startedCasting(facts, previous)) machine.trigger(DRIVEN_PARAMETERS.attack);
   return machine.step(ticks);
+}
+
+/**
+ * The rate an attack animation should play at, from the ticks the server sent.
+ *
+ * `authoredWindupTicks / (releaseTick - startTick)`, which is the attack-speed
+ * factor the sim divided the base attack point by -- recovered rather than
+ * replicated, because both ends already have the ability table and the ticks.
+ *
+ * 1 for anything without a live wind-up to measure, and for a span that has not
+ * arrived yet: an animation at the authored speed is always a defensible frame,
+ * and a division by zero is not.
+ */
+export function attackRateFrom(
+  authoredWindupTicks: number,
+  startTick: number,
+  releaseTick: number,
+): number {
+  const span = releaseTick - startTick;
+  if (!(span > 0) || !(authoredWindupTicks > 0)) return 1;
+  return authoredWindupTicks / span;
 }
 
 /**

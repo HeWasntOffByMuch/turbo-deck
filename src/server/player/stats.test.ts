@@ -11,9 +11,10 @@ import {
   TURN_RATE_PER_AGILITY,
 } from '../../sim/constants.js';
 import { PlayerManager, STARTER_EQUIPMENT } from './player-manager.js';
+import { resolveAttackTiming, NO_ATTACK_SPEED } from '../sim/attack-timing.js';
 import {
-  attackDelayTicksFrom,
-  BASE_ATTACK_DELAY_TICKS,
+  baseAttackTimeTicksFrom,
+  BASE_ATTACK_TIME_TICKS,
   clampHealthToStats,
   computeEffectiveStats,
   MAX_ATTACK_DELAY_TICKS,
@@ -24,9 +25,37 @@ import {
   simTicksToServerTicks,
 } from './stats.js';
 
-/** The delay produced by a bare body carrying `pct` worth of "percent faster". */
+/**
+ * The interval produced by a bare body carrying `pct` worth of "percent faster".
+ *
+ * Through the whole spec 144 pipeline -- a base attack time, then the factor
+ * dividing it -- rather than through the one function spec 088 had, because the
+ * division moved: the same factor now has to reach the wind-up and the backswing
+ * too, so a base that had already been divided could not tell them what to do.
+ */
 function computeDelayWith(pct: number): number {
-  return attackDelayTicksFrom(0, 1 + pct);
+  return resolveAttackTiming(
+    {
+      baseAttackTimeTicks: baseAttackTimeTicksFrom(0),
+      baseAttackPointTicks: 1,
+      baseAttackBackswingTicks: 0,
+    },
+    { ...NO_ATTACK_SPEED, attackSpeedMultiplier: 1 + pct },
+    SERVER_TICK_RATE,
+  ).intervalTicks;
+}
+
+/** The attack interval a set of effective stats resolves to, at base. */
+function intervalOf(stats: { readonly baseAttackTimeTicks: number }): number {
+  return resolveAttackTiming(
+    {
+      baseAttackTimeTicks: stats.baseAttackTimeTicks,
+      baseAttackPointTicks: 1,
+      baseAttackBackswingTicks: 0,
+    },
+    NO_ATTACK_SPEED,
+    SERVER_TICK_RATE,
+  ).intervalTicks;
 }
 
 function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
@@ -157,13 +186,18 @@ describe('effective stats', () => {
     expect(tank.armor).toBeLessThanOrEqual(0.85);
     expect(tank.moveSpeed).toBeLessThanOrEqual(550);
     expect(tank.moveSpeed).toBeGreaterThanOrEqual(100);
-    expect(tank.attackDelayTicks).toBeGreaterThanOrEqual(1);
+    expect(intervalOf(tank)).toBeGreaterThanOrEqual(1);
   });
 
-  it('waits 1.2 seconds between attacks with nothing on (spec 088)', () => {
+  it('waits 1.2 seconds between attacks with nothing on (specs 088, 144)', () => {
     const bare = computeEffectiveStats(player());
-    expect(bare.attackDelayTicks).toBe(BASE_ATTACK_DELAY_TICKS);
-    expect(bare.attackDelayTicks).toBe(Math.round(SERVER_TICK_RATE * 1.2));
+    expect(bare.baseAttackTimeTicks).toBe(BASE_ATTACK_TIME_TICKS);
+    expect(bare.baseAttackTimeTicks).toBe(Math.round(SERVER_TICK_RATE * 1.2));
+    // And nothing is modifying it, so the interval is the base (spec 144).
+    expect(bare.attackSpeed).toBe(0);
+    expect(bare.attackSpeedMultiplier).toBe(1);
+    expect(bare.attackSpeedSlowMultiplier).toBe(1);
+    expect(intervalOf(bare)).toBe(BASE_ATTACK_TIME_TICKS);
   });
 
   it('does not let dexterity shorten the delay any more (spec 088)', () => {
@@ -171,7 +205,8 @@ describe('effective stats', () => {
     const quick = computeEffectiveStats(
       player({ baseStats: { strength: 5, dexterity: 500, intelligence: 5, vitality: 5 } }),
     );
-    expect(quick.attackDelayTicks).toBe(slow.attackDelayTicks);
+    expect(quick.baseAttackTimeTicks).toBe(slow.baseAttackTimeTicks);
+    expect(quick.attackSpeed).toBe(slow.attackSpeed);
     // Unhooked from cadence rather than deleted: it still does everything else
     // it did, which is what makes this a change of meaning and not a nerf.
     expect(quick.armor).toBeGreaterThan(slow.armor);
@@ -182,15 +217,15 @@ describe('effective stats', () => {
   it('does not let the weapon change the attack cadence (spec 091)', () => {
     const bare = computeEffectiveStats(player());
     const delayWith = (mainHand: string): number =>
-      computeEffectiveStats(player({ equipment: { ...EMPTY_EQUIPMENT, mainHand } })).attackDelayTicks;
+      intervalOf(computeEffectiveStats(player({ equipment: { ...EMPTY_EQUIPMENT, mainHand } })));
 
     // The cadence is a property of attacking, not of what is held: a bow, a
     // maul and a bare hand are all on the same clock. `attackSpeedPct` still
     // exists and still means percent faster -- nothing reads it for *this*.
     for (const weapon of ['sword.keen', 'stars.weighted', 'maul.iron', 'bow.hunting']) {
-      expect(delayWith(weapon), weapon).toBe(bare.attackDelayTicks);
+      expect(delayWith(weapon), weapon).toBe(intervalOf(bare));
     }
-    expect(bare.attackDelayTicks).toBe(BASE_ATTACK_DELAY_TICKS);
+    expect(bare.baseAttackTimeTicks).toBe(BASE_ATTACK_TIME_TICKS);
   });
 
   it('does not let a skill change it either (spec 091)', () => {
@@ -201,7 +236,7 @@ describe('effective stats', () => {
     const trained = computeEffectiveStats(
       player({ skills: [{ skillId: 'finesse.precision', level: 5 }] }),
     );
-    expect(trained.attackDelayTicks).toBe(bare.attackDelayTicks);
+    expect(intervalOf(trained)).toBe(intervalOf(bare));
   });
 
   it('holds the delay between its floor and its ceiling', () => {
@@ -217,15 +252,15 @@ describe('effective stats', () => {
     expect(computeDelayWith(-1)).toBe(MAX_ATTACK_DELAY_TICKS);
     // And an absurd amount of haste is the floor, not a swing every tick.
     expect(computeDelayWith(Number.POSITIVE_INFINITY)).toBe(MIN_ATTACK_DELAY_TICKS);
-    // A flat modifier cannot drive it under the floor either.
-    expect(attackDelayTicksFrom(-100000, 1)).toBe(MIN_ATTACK_DELAY_TICKS);
-    expect(attackDelayTicksFrom(Number.NaN, 1)).toBe(BASE_ATTACK_DELAY_TICKS);
+    // A flat modifier cannot drive the base under the floor either.
+    expect(baseAttackTimeTicksFrom(-100000)).toBe(MIN_ATTACK_DELAY_TICKS);
+    expect(baseAttackTimeTicksFrom(Number.NaN)).toBe(BASE_ATTACK_TIME_TICKS);
   });
 
   it('halves the delay when the haste doubles the rate', () => {
-    expect(computeDelayWith(0)).toBe(BASE_ATTACK_DELAY_TICKS);
-    expect(computeDelayWith(1)).toBe(Math.round(BASE_ATTACK_DELAY_TICKS / 2));
-    expect(computeDelayWith(-0.5)).toBe(Math.round(BASE_ATTACK_DELAY_TICKS / 0.5));
+    expect(computeDelayWith(0)).toBe(BASE_ATTACK_TIME_TICKS);
+    expect(computeDelayWith(1)).toBe(Math.round(BASE_ATTACK_TIME_TICKS / 2));
+    expect(computeDelayWith(-0.5)).toBe(Math.round(BASE_ATTACK_TIME_TICKS / 0.5));
   });
 
   it('flies a shot at a fraction of its table speed (spec 087)', () => {

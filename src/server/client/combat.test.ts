@@ -22,6 +22,7 @@ import { CastPhase, type CastState } from '../sim/types.js';
 import type { EffectiveStats } from '../state/types.js';
 import { advanceCast, mayCast, modelledResource, steerFacing, type Mirror } from './combat.js';
 import { GameClient } from './game-client.js';
+import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -31,7 +32,8 @@ const STATS: EffectiveStats = {
   turnRate: 540,
   attackDamage: 10,
   attackRange: 60,
-  attackDelayTicks: 24,
+  baseAttackTimeTicks: 24,
+  ...NO_ATTACK_SPEED,
   armor: 0,
   spellPower: 1,
   critChance: 0,
@@ -114,16 +116,18 @@ describe('the gate, asked of a mirror', () => {
     expect(decision.cast.releaseTick).toBe(100 + (abilityById('melee.slash')?.windupTicks ?? 0));
     // And the cooldown it expects to have spent runs from the stamp, not the
     // lookahead, or every press would push the next one further out. Its
-    // *length* is the caster's own attack delay rather than the ability
+    // *length* is the caster's own Base Attack Time rather than the ability
     // table's number, because slash is the basic attack (spec 070) -- a client
-    // that read the table would grey the button for the wrong span. It runs
-    // from the *release* rather than the stamp (spec 091): the cooldown is the
-    // price of a blow that went off, and a wind-up withdrawn from pays none of
-    // it, so the prediction must not grey the button out during one.
-    expect(decision.readyAtTick).toBe(
-      100 + (abilityById('melee.slash')?.windupTicks ?? 0) + STATS.attackDelayTicks,
-    );
-    expect(STATS.attackDelayTicks).not.toBe(abilityById('melee.slash')?.cooldownTicks);
+    // that read the table would grey the button for the wrong span.
+    //
+    // It runs from the *wind-up's start* rather than from the release
+    // (spec 144), which is the one place 144 overrules 091: the interval covers
+    // the swing rather than beginning after it. What 091 was protecting is
+    // still here in `withdrawLocally`, which takes this guess back when a
+    // wind-up is withdrawn from, so the button never greys out for a swing that
+    // never happened.
+    expect(decision.readyAtTick).toBe(100 + STATS.baseAttackTimeTicks);
+    expect(STATS.baseAttackTimeTicks).not.toBe(abilityById('melee.slash')?.cooldownTicks);
   });
 
   it('starts a cast turning when the body is not yet facing the aim', () => {

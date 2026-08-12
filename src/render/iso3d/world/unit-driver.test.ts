@@ -19,7 +19,14 @@ import {
 } from './unit-driver.js';
 
 function facts(patch: Partial<UnitFacts> = {}): UnitFacts {
-  return { speed: 0, activity: EntityActivity.Idle, castPhase: null, dead: false, ...patch };
+  return {
+    speed: 0,
+    activity: EntityActivity.Idle,
+    castPhase: null,
+    attackRate: 1,
+    dead: false,
+    ...patch,
+  };
 }
 
 function machine(): UnitMachine {

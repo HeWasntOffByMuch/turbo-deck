@@ -5,8 +5,8 @@
  * wind-up bar start going really fast". A bar is a number per frame, so this
  * plays the real session (loopback transport, real wire format, real server
  * tick) with the same gate `target.ts` uses for an auto-attack, and prints the
- * number the renderer would draw on every tick: `castBar(cast, drawnTick,
- * ability).progress`, against the same `estimatedTick` the play view passes.
+ * number the renderer would draw on every tick: `castBar(cast,
+ * drawnTick).progress`, against the same `estimatedTick` the play view passes.
  *
  * Nothing here is part of the game. It exists to be run, read and argued with:
  *
@@ -23,6 +23,7 @@
 import { castBar } from '../src/render/iso3d/world/cast.js';
 import { abilityById } from '../src/server/data/abilities.js';
 import { GameClient } from '../src/server/client/game-client.js';
+import { attackTimingFor } from '../src/server/sim/abilities.js';
 import { createWorldPredictor } from '../src/server/client/prediction.js';
 import { SERVER_PLAYER_RADIUS } from '../src/server/config.js';
 import { LoopbackTransport } from '../src/server/net/transport-loop.js';
@@ -180,18 +181,20 @@ async function main(): Promise<void> {
   void client.connect();
 
   // A basic attack's cadence comes from the caster's stats, never from the
-  // ability's own `cooldownTicks` -- `cooldownTicksFor` says so. So this, not
-  // the table, is the number that decides whether two casts touch.
-  const interval = ability.basicAttack ? stats.attackDelayTicks : ability.cooldownTicks;
+  // ability's own `cooldownTicks` -- `attackTimingFor` says so. So this, not the
+  // table, is the number that decides whether two casts touch. Since spec 144 it
+  // also covers the wind-up rather than starting after it.
+  const timing = attackTimingFor(ability, { stats });
   console.log(
-    `# ${ability.name} (${ability.id}): windup ${ability.windupTicks}t, ` +
-      `interval ${interval}t (attack delay ${stats.attackDelayTicks}t), ` +
-      `delay ${delayTicks}t`,
+    `# ${ability.name} (${ability.id}): attack point ${timing.attackPointTicks}t, ` +
+      `backswing ${timing.backswingTicks}t, interval ${timing.intervalTicks}t ` +
+      `(BAT ${stats.baseAttackTimeTicks}t, factor ${timing.factor.toFixed(2)}x, ` +
+      `${timing.attacksPerSecond.toFixed(2)}/s), delay ${delayTicks}t`,
   );
-  if (interval <= ability.windupTicks) {
+  if (timing.intervalTicks <= timing.attackPointTicks + timing.backswingTicks) {
     console.log(
-      `# the interval is not longer than the wind-up: casts are back to back, ` +
-        `with no gap between one release and the next commit`,
+      `# the interval is no longer than the animation: casts are back to back, ` +
+        `with no gap between one attack finishing and the next starting`,
     );
   }
   if (!quiet) console.log('# tick  est  phase    release  progress  bar');
@@ -257,7 +260,7 @@ async function main(): Promise<void> {
     // first thing worth ruling out.
     const drawn = abilityById(cast.abilityId);
     if (!drawn) console.log(`# !! no ability for cast id ${JSON.stringify(cast.abilityId)}`);
-    const bar = castBar(cast, after.estimatedTick, drawn);
+    const bar = castBar(cast, after.estimatedTick);
     if (segment && cast.phase === CastPhaseValue.Windup) segment.samples.push(bar.progress);
     const filled = Math.round(bar.progress * 20);
     const row =
@@ -335,20 +338,21 @@ async function main(): Promise<void> {
   const worst = rates.length > 0 ? Math.max(...rates) : 0;
   const mean = rates.length > 0 ? rates.reduce((a, b) => a + b, 0) / rates.length : 0;
 
-  // How often a blow actually goes off, against how often it could. The floor is
-  // the wind-up when the interval is shorter than it: a cast is over at its
-  // release, so the next one may commit on the very next tick.
+  // How often a blow actually goes off, against how often it could. Since spec
+  // 144 the interval covers the wind-up, so it *is* the floor on its own -- the
+  // old `max(interval, windup)` was guarding against a cadence that started
+  // counting only after the swing had landed.
   const spacings: number[] = [];
   for (let i = 1; i < segments.length; i++) {
     spacings.push((segments[i]?.pressedAt ?? 0) - (segments[i - 1]?.pressedAt ?? 0));
   }
-  const floor = Math.max(interval, ability.windupTicks);
+  const floor = timing.intervalTicks;
   if (spacings.length > 0) {
     const sorted = [...spacings].sort((a, b) => a - b);
     const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
     console.log(
       `\n# cadence: ${median}t between commits, against a floor of ${floor}t ` +
-        `(interval ${interval}t, wind-up ${ability.windupTicks}t)` +
+        `(attack point ${timing.attackPointTicks}t, backswing ${timing.backswingTicks}t)` +
         (median > floor ? ` -- ${median - floor}t slower than the stats allow` : ''),
     );
   }
