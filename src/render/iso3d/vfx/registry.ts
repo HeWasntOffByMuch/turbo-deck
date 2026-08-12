@@ -127,6 +127,13 @@ const HIT_METAL_SPARK: EffectDefinition = {
  *
  * `chance` below 1 on purpose. Every drop leaving a mark fills a chunk's budget
  * in one fight and reads as a stencil rather than as a spatter.
+ *
+ * The drops draw as **ribbons** (spec 139), which is the one thing that makes a
+ * spray read as fluid rather than as hardware. A `stretched` quad is aligned to
+ * the velocity a particle has *this tick* and is that long from the tick it is
+ * born, so a drop leaves the body as a rigid bar and stays one; a ribbon is the
+ * path the drop actually flew, so it starts short, draws out as it travels, and
+ * bends as gravity turns it over.
  */
 const HIT_BLOOD: EffectDefinition = {
   id: 'hit_blood',
@@ -145,10 +152,14 @@ const HIT_BLOOD: EffectDefinition = {
       size: { keys: [[0, 3.4], [1, 2.2]] },
       alpha: { keys: [[0, 1], [1, 1]] },
       color: { stops: [[0, 'bloodFresh'], [1, 'bloodDeep']] },
-      render: 'stretched',
+      render: 'ribbon',
       // Alpha rather than additive: blood is a fluid and does not glow.
       blend: 'alpha',
-      stretch: 0.05,
+      // Close samples, because the whole streak is only a few of them: a drop
+      // this size wants a tail about a body wide, not the 66 units twelve
+      // samples at the default spacing would give it.
+      ribbonSpacing: 3,
+      ribbonTaper: 0.4,
       collision: {
         restitution: 0,
         friction: 0.8,
@@ -199,9 +210,12 @@ const DEATH_BLOOD: EffectDefinition = {
       size: { keys: [[0, 4], [1, 2.4]] },
       alpha: { keys: [[0, 1], [1, 1]] },
       color: { stops: [[0, 'bloodFresh'], [1, 'bloodDeep']] },
-      render: 'stretched',
+      render: 'ribbon',
       blend: 'alpha',
-      stretch: 0.05,
+      // A touch further apart than `hit_blood`: this is the loud one, thrown
+      // harder, and its arcs want the room to actually curve.
+      ribbonSpacing: 3.5,
+      ribbonTaper: 0.35,
       collision: {
         restitution: 0,
         friction: 0.8,
