@@ -33,6 +33,8 @@ import { castsShadows, makeUnwalkableField, makeWall } from '../meshes.js';
 import { ARENA_OBSTACLES } from '../../../sim/constants.js';
 import { vegetationColliders } from '../../../terrain/vegetation.js';
 import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-mesh.js';
+import { TurnEase } from '../turn-ease.js';
+import { turnLimitsFor } from './turn-limits.js';
 import { buildPropField, FLAT_SHADING, type PropFieldHandle, type PropShading } from '../props.js';
 import { type HikeSettings } from '../hike.js';
 import { CURVATURE_UNIFORMS } from '../terrain-curvature.js';
@@ -371,6 +373,11 @@ export class WorldScene {
   private readonly vfx: VfxLayer;
 
   private readonly motion = new EntityMotion();
+  /**
+   * The drawn yaw, eased (spec 140). A second presentation-only track beside
+   * `motion`: the sim owns the heading, this owns how a body gets to it.
+   */
+  private readonly turnEase = new TurnEase();
   private readonly bodies = new Map<number, Body>();
   /**
    * The groups `RetroPass` leaves out of the quantize (spec 138).
@@ -1132,7 +1139,11 @@ export class WorldScene {
     for (const entity of view.entities) {
       this.motion.observe(entity.id, entity.x, entity.y, entity.z, entity.facing, view.tick);
     }
-    this.motion.retain(new Set(view.entities.map((entity) => entity.id)));
+    const live = new Set(view.entities.map((entity) => entity.id));
+    this.motion.retain(live);
+    // The drawn yaw keeps per-body state for the same reason the drawn position
+    // does, and is dropped on the same pass (spec 140).
+    this.turnEase.retain(live);
   }
 
   private syncBodies(view: ClientView, frame: FrameInfo, dt: number): void {
@@ -1153,7 +1164,15 @@ export class WorldScene {
       const pose = this.motion.sample(entity.id, frame.alpha);
       const x = isSelf && view.self ? view.self.x : (pose?.x ?? entity.x);
       const y = isSelf && view.self ? view.self.y : (pose?.y ?? entity.y);
-      const facing = isSelf ? frame.selfFacing : (pose?.facing ?? entity.facing);
+      // What the sim says this body's heading is -- the prediction for our own
+      // body, the smoothed replica for everything else.
+      const heading = isSelf ? frame.selfFacing : (pose?.facing ?? entity.facing);
+      // What to actually yaw it by (spec 140). `turnToward` steps angular
+      // velocity from nothing to the full rate in one tick and back in one tick;
+      // this gives that a beginning and an end. Presentation only: `heading` is
+      // what every decision is still made against, and nothing reads this back.
+      const limits = turnLimitsFor(entity, isSelf, view.stats?.turnRate ?? null, SERVER_TICK_RATE);
+      const facing = limits === null ? heading : this.turnEase.step(entity.id, heading, limits, dt);
 
       const ground =
         entity.kind === EntityKind.Projectile

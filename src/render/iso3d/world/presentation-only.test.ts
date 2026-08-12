@@ -19,11 +19,16 @@
  * It is also the test that would catch the subtler version: an animation layer
  * that consumes shared mutable state -- an RNG, a scratch vector, a cache -- and
  * perturbs the sim without ever meaning to.
+ *
+ * Spec 140 added a second presentation-only track to the same run: the eased
+ * drawn yaw. It is the same claim -- the sim owns the heading, the ease owns only
+ * how a body is drawn getting to it -- so it is driven here beside the machines
+ * and held to the same assertion.
  */
 
 import { describe, expect, it } from 'vitest';
 import { createWorldColliders } from '../../../sim/collision.js';
-import { SERVER_PLAYER_RADIUS } from '../../../server/config.js';
+import { BROADCAST_EVERY_N_TICKS, SERVER_PLAYER_RADIUS } from '../../../server/config.js';
 import { LoopbackTransport } from '../../../server/net/transport-loop.js';
 import { GameServer } from '../../../server/server.js';
 import { FLAT_TERRAIN } from '../../../server/world/terrain.js';
@@ -35,6 +40,8 @@ import { fileURLToPath } from 'node:url';
 import { loadUnitBundle } from '../../../units/bundle.js';
 import { UnitMachine, type FiredEvent } from '../../../units/machine.js';
 import { driveUnit, speedBetween, type UnitFacts } from './unit-driver.js';
+import { TurnEase, lagBound, shortestTurn, type TurnLimits } from '../turn-ease.js';
+import { turnLimitsFor } from './turn-limits.js';
 import type { ClientView } from '../../../server/client/game-client.js';
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -82,6 +89,11 @@ function stateOf(view: ClientView): string {
 interface RunResult {
   readonly states: readonly string[];
   readonly events: readonly FiredEvent[];
+  /**
+   * The eased drawn yaw beside the heading it was eased toward (spec 140), so a
+   * run that silently stopped easing cannot pass the assertion above.
+   */
+  readonly yaws: readonly { drawn: number; heading: number; limits: TurnLimits }[];
 }
 
 /**
@@ -122,6 +134,8 @@ async function play(animate: boolean): Promise<RunResult> {
   const positions = new Map<number, { x: number; y: number; tick: number }>();
   const events: FiredEvent[] = [];
   const states: string[] = [];
+  const turnEase = new TurnEase();
+  const yaws: { drawn: number; heading: number; limits: TurnLimits }[] = [];
 
   for (let tick = 0; tick < TICKS; tick += 1) {
     server.tick();
@@ -143,6 +157,13 @@ async function play(animate: boolean): Promise<RunResult> {
 
     // The animation layer, driven exactly as the scene drives it.
     for (const entity of view.entities) {
+      // The eased yaw (spec 140), driven the same way -- one step per entity per
+      // frame, off the replicated heading, exactly as `syncBodies` does it.
+      const limits = turnLimitsFor(entity, entity.id === view.selfEntityId, view.stats?.turnRate ?? null, 60);
+      if (limits !== null) {
+        const drawn = turnEase.step(entity.id, entity.facing, limits, 1 / 60);
+        yaws.push({ drawn, heading: entity.facing, limits });
+      }
       let machine = machines.get(entity.id);
       if (!machine) {
         machine = new UnitMachine({ unit: DEV_UNIT, clipLib: DEV_CLIPS });
@@ -170,7 +191,7 @@ async function play(animate: boolean): Promise<RunResult> {
     }
   }
 
-  return { states, events };
+  return { states, events, yaws };
 }
 
 describe('animation is presentation only', () => {
@@ -185,6 +206,36 @@ describe('animation is presentation only', () => {
     const animated = await play(true);
     expect(animated.events.length).toBeGreaterThan(0);
     expect(animated.states.length).toBe(TICKS);
+  }, 30_000);
+
+  it('was actually easing a yaw, and easing it away from the heading', async () => {
+    // The same guard for spec 140's half: a run whose ease returned the
+    // authoritative heading unchanged would pass the assertion above while
+    // testing nothing. The player is turning continuously here, so the drawn yaw
+    // must differ from the replicated one somewhere -- and by no more than the
+    // sim's own alignment tolerance.
+    const animated = await play(true);
+    expect(animated.yaws.length).toBeGreaterThan(0);
+
+    let worst = 0;
+    for (const { drawn, heading, limits } of animated.yaws) {
+      const behind = Math.abs(shortestTurn(drawn, heading));
+      worst = Math.max(worst, behind);
+      // The bound here carries a whole delta interval that the scene's does not,
+      // and the difference is worth understanding rather than widening away: this
+      // test drives the ease off `entity.facing`, the *raw* 20Hz replica, which
+      // is a staircase that stands still for two ticks and then moves three
+      // ticks' worth at once. The scene feeds it a ramp -- the prediction for our
+      // own body, the interpolated pose for everything else -- and the tight
+      // bound is asserted against exactly that, with the real `turnToward`
+      // driving it, in `turn-ease.test.ts`. What is worth having here is that a
+      // full fight's worth of bodies stays inside a bound at all.
+      const staircase = (limits.degreesPerSecond * Math.PI * BROADCAST_EVERY_N_TICKS) / 180 / 60;
+      expect(behind).toBeLessThanOrEqual(lagBound(limits) + staircase + 1e-9);
+    }
+    // And it really did trail: an ease that returned the heading unchanged would
+    // satisfy the loop above and prove nothing.
+    expect(worst).toBeGreaterThan(0);
   }, 30_000);
 
   it('drives a machine that has nothing it could call', () => {
