@@ -73,6 +73,7 @@ export interface CompiledEmitter {
   readonly velocityScaleCurve: Float32Array | null;
   readonly stretch: number;
   readonly ribbonSpacing: number;
+  readonly ribbonTaper: number;
 
   readonly render: number;
   readonly blend: number;
@@ -232,6 +233,7 @@ function compileEmitter(
     velocityScaleCurve: emitter.velocityScale ? compileCurve(emitter.velocityScale, 1) : null,
     stretch: emitter.stretch ?? 0.02,
     ribbonSpacing: Math.max(0.5, emitter.ribbonSpacing ?? 6),
+    ribbonTaper: Math.max(0, Math.min(1, emitter.ribbonTaper ?? 0.15)),
 
     render,
     blend,
