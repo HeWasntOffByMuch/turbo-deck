@@ -382,6 +382,78 @@ describe('the options window (spec 135)', () => {
     expect(keys).toBeDefined();
     expect(requests).not.toContain('bindings');
   });
+
+  /**
+   * Binding a key, the way a player does it (spec 138).
+   *
+   * Every step through the mount's own doors: a press on the row's button, then
+   * a key. It went through *focus* before spec 137 -- the pressed button held
+   * the keyboard and the event bubbled up to the screen -- so when a press
+   * stopped taking focus, binding a key stopped working entirely and there was
+   * no test between the two facts.
+   */
+  function pressBindButton(screens: UiScreens, actionId: string): void {
+    const button = [...screens.root.content.walk()].find(
+      (widget) => widget.name === `bind:${actionId}:primary`,
+    );
+    if (!button) throw new Error(`no bind button for ${actionId}`);
+    const at = { x: button.rect.x + 2, y: button.rect.y + 2 };
+    screens.handlePointer('down', at, 0, NONE);
+    screens.handlePointer('up', at, 0, NONE);
+  }
+
+  it('binds the next key pressed after the button', () => {
+    const map = new InputMap();
+    const { screens, requests } = harness({ map });
+    screens.toggle('options');
+    screens.update(viewFixture(), 0);
+
+    pressBindButton(screens, 'move.north');
+    expect(screens.handleKey('KeyT', 'down', NONE)).toBe(true);
+
+    expect(map.bindingsFor('move.north').primary?.code).toBe('KeyT');
+    expect(requests).toContain('bindings');
+  });
+
+  it('gives every key back afterwards', () => {
+    // The second half of the complaint: after trying to bind, nothing worked.
+    // The capture holds `textEntry` while it waits, so a capture that never ends
+    // is an interface that swallows the whole keyboard for the rest of the
+    // session.
+    const { screens } = harness();
+    screens.toggle('options');
+    screens.update(viewFixture(), 0);
+
+    pressBindButton(screens, 'move.north');
+    screens.handleKey('KeyT', 'down', NONE);
+    expect(screens.root.contexts.ids()).not.toContain('textEntry');
+    expect(screens.handleKey('KeyW', 'down', NONE)).toBe(false);
+  });
+
+  it('cancels the capture on Escape rather than closing the window', () => {
+    const { screens } = harness();
+    screens.toggle('options');
+    screens.update(viewFixture(), 0);
+
+    pressBindButton(screens, 'move.north');
+    expect(screens.handleKey('Escape', 'down', NONE)).toBe(true);
+    // The window it was armed in is still open, and nothing was bound.
+    expect(screens.isOpen('options')).toBe(true);
+    expect(screens.root.contexts.ids()).not.toContain('textEntry');
+    expect(screens.handleKey('KeyW', 'down', NONE)).toBe(false);
+  });
+
+  it('cancels a capture the window closed out from under', () => {
+    const { screens } = harness();
+    screens.toggle('options');
+    screens.update(viewFixture(), 0);
+
+    pressBindButton(screens, 'move.north');
+    screens.close('options');
+    screens.update(viewFixture(), 16);
+    expect(screens.root.contexts.ids()).not.toContain('textEntry');
+    expect(screens.handleKey('KeyW', 'down', NONE)).toBe(false);
+  });
 });
 
 describe('the tooltip, over the world (spec 136)', () => {
