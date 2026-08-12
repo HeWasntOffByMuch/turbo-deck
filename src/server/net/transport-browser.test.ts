@@ -179,15 +179,34 @@ describe('a real client over a real socket', () => {
     }
   });
 
+  /**
+   * Never reused, even across tests.
+   *
+   * This was `18787 + running.length`, and `running` is emptied by `afterEach`
+   * -- so every test bound the same port. `wss.close()` is asynchronous, so the
+   * next test raced the last one's socket into `EADDRINUSE`, which used to take
+   * the whole worker process down. It cost a red CI whose only symptom was
+   * `ERR_IPC_CHANNEL_CLOSED` from vitest's pool, nowhere near the cause.
+   */
+  let nextPort = 18787;
+
   async function standUpServer(): Promise<number> {
-    const port = 18787 + running.length;
+    const port = nextPort++;
     const built = buildWorldFromMap(parseMap(mapText), mapText);
-    const transport = new WebSocketTransport({ port });
+    const failures: Error[] = [];
+    const transport = new WebSocketTransport({
+      port,
+      onError: (error) => void failures.push(error),
+    });
     const server = new GameServer({ seed: 7, built, transport });
     transport.onConnection((channel) => server.accept(channel));
     running.push({ server, transport });
     // The server's own clock, since no view is driving it here.
     server.start();
+    // Let a bind failure surface here, where it names itself, rather than as a
+    // connect timeout thirty seconds later.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    if (failures.length > 0) throw failures[0];
     return port;
   }
 

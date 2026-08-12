@@ -51,19 +51,21 @@ export class PositionHistory implements RewindLookup {
    */
   record(tick: number, entities: Iterable<ServerEntity>): void {
     this.latest = tick;
+    // Written *into* the recycled frame rather than into a fresh map that is
+    // then copied and thrown away. This runs on every server on every tick for
+    // as long as the process lives, so a throwaway allocation here is a
+    // throwaway allocation sixty times a second forever -- which is exactly the
+    // shape of garbage that turns a long-running test worker into an OOM.
+    const frame = this.frames.length > MAX_REWIND_TICKS ? this.frames.shift() : undefined;
+    if (frame) {
+      frame.tick = tick;
+      frame.positions.clear();
+      for (const entity of entities) frame.positions.set(entity.id, entity.position);
+      this.frames.push(frame);
+      return;
+    }
     const positions = new Map<number, Vec3>();
     for (const entity of entities) positions.set(entity.id, entity.position);
-    if (this.frames.length > MAX_REWIND_TICKS) {
-      // Reuse the oldest rather than allocating: this runs every tick forever.
-      const oldest = this.frames.shift();
-      if (oldest) {
-        oldest.tick = tick;
-        oldest.positions.clear();
-        for (const [id, at] of positions) oldest.positions.set(id, at);
-        this.frames.push(oldest);
-        return;
-      }
-    }
     this.frames.push({ tick, positions });
   }
 
