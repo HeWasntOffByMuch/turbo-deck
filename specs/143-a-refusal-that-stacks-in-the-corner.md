@@ -93,9 +93,17 @@ letters: spec 065 authored the digits, `+`, `-` and `!` and nothing else, so
 one — `ErrorLog.add` uppercases, rather than the table growing a second case
 that would double it for one screen's benefit.
 
-`hud-layout.ts` gains `errorScale` and `errorGap`, for the same reason
-everything else in it is there: whether the longest refusal this game can
-produce still fits across a phone is a sum, and it should fail in Node.
+`hud-layout.ts` gains `errorScale`, `errorGap`, `errorLineWidth` and
+`errorStackBottom`, for the same reason everything else in it is there: whether
+the longest refusal this game can produce still fits across a phone is a sum,
+and it should fail in Node.
+
+`errorStackBottom` takes the *number* of window buttons, which is worth a
+sentence because the first version did not and the first screenshot showed why:
+the buttons are a captioned **column** of three on a desktop and an icon row of
+three on a phone -- the same condition `hud.ts` sets `flex-direction` from --
+so clearing one button's height drew the stack straight across the Bag and Gear
+buttons on every desktop.
 
 ## Invariants tested
 
@@ -126,10 +134,24 @@ produce still fits across a phone is a sum, and it should fail in Node.
   on.
 - **The longest of those messages fits** across `PHONE_LANDSCAPE` at the compact
   scale, clear of both edges.
+- **The stack clears the whole window-button group**, on the layout where they
+  are a column of three and on the one where they are a row of one's height.
 - **The font's new glyphs are distinct.** No two glyphs in the table draw the
   same pixels, which is the check that catches `O`/`0`, `I`/`1`, `S`/`5` and
   `Z`/`2` — and the numeric UI face derives from this table, so it inherits the
   letters without a second copy to keep in step.
+
+## What only a browser can check
+
+`scripts/preview-refusals.ts` spends a real cast in the real page: six presses
+inside Mend's wind-up, then one more after it, which is one coalesced line and
+one of a different kind beneath it. It reads the lines back off `data-text` --
+the string the HUD actually drew -- measures them against the window buttons and
+the right edge, photographs the corner, and then waits four seconds and requires
+the stack to have cleared itself. Two things it caught that nothing headless
+could: the column height above, and that the close-up and the wide shot were two
+separate captures a second apart, so the older line expired between them and the
+crop came back with one line in it.
 
 ## Out of scope
 

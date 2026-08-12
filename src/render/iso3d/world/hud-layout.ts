@@ -12,6 +12,8 @@
  * desktop and a desktop with a narrow window is still driven by a mouse.
  */
 
+import { textWidth } from './pixel-font.js';
+
 /** A phone held sideways -- the frame `scripts/preview-touch.ts` drives. */
 export const PHONE_LANDSCAPE = { width: 844, height: 390 } as const;
 
@@ -76,6 +78,17 @@ export interface HudLayout {
   /** Whether a window button is its icon alone, with the name only as a label. */
   readonly systemIconOnly: boolean;
   readonly systemIconPx: number;
+  /**
+   * Screen pixels per font pixel in the refusal stack (spec 143), and the gap
+   * between two of its lines.
+   *
+   * The stack draws words in the 5x7 pixel font, so its width is a sum like
+   * everything else here -- `errorLineWidth` below -- and whether the longest
+   * refusal this game can produce still fits across a phone fails in Node
+   * rather than in a screenshot.
+   */
+  readonly errorScale: number;
+  readonly errorGap: number;
   /** The gap between the HUD and the edge of the frame, before any safe-area inset. */
   readonly edge: number;
 }
@@ -105,6 +118,10 @@ const DESKTOP: HudLayout = {
   systemGap: 4,
   systemIconOnly: false,
   systemIconPx: 16,
+  // 3 is the damage numbers' scale, which puts a refusal in the same register
+  // as the numbers floating over the fight it came out of.
+  errorScale: 3,
+  errorGap: 4,
   edge: 16,
 };
 
@@ -138,6 +155,10 @@ const COMPACT: HudLayout = {
   systemGap: 5,
   systemIconOnly: true,
   systemIconPx: 24,
+  // Two thirds of the desktop's, because the frame is a third of the width and
+  // the longest message has to cross it whole -- see `errorLineWidth`.
+  errorScale: 2,
+  errorGap: 3,
   edge: 12,
 };
 
@@ -151,6 +172,12 @@ export function stripWidth(box: BoxSize, gap: number, count: number): number {
   return count * box.width + (count - 1) * gap;
 }
 
+/** The height of `count` boxes stacked up, gaps included. */
+export function stripHeight(box: BoxSize, gap: number, count: number): number {
+  if (count <= 0) return 0;
+  return count * box.height + (count - 1) * gap;
+}
+
 /**
  * The gap between the left edge of a centred hotbar and the frame's edge.
  *
@@ -160,4 +187,32 @@ export function stripWidth(box: BoxSize, gap: number, count: number): number {
  */
 export function centredClearance(layout: HudLayout, slots: number, frameWidth: number): number {
   return (frameWidth - stripWidth(layout.slot, layout.slotGap, slots)) / 2;
+}
+
+/**
+ * How wide one line of the refusal stack is drawn, in CSS px (spec 143).
+ *
+ * The `+ 2` is the font pixel of margin `pixelTextSvg` leaves on each side for
+ * the outline to live in, which is part of the box the browser lays out.
+ */
+export function errorLineWidth(layout: HudLayout, text: string): number {
+  return (textWidth(text) + 2) * layout.errorScale;
+}
+
+/**
+ * How far above the bottom of the frame the refusal stack sits, before any
+ * safe-area inset: clear of the window buttons, which are the one thing already
+ * in that corner.
+ *
+ * The whole group, not one button. The window buttons are a *column* wherever
+ * they are captioned and a row where they are icons -- the same condition
+ * `hud.ts` sets `flex-direction` from -- so clearing one button's height put
+ * three lines of red across the top two of them on every desktop, which is
+ * exactly what the first screenshot of this stack showed.
+ */
+export function errorStackBottom(layout: HudLayout, systemButtons: number): number {
+  const group = layout.systemIconOnly
+    ? layout.systemButton.height
+    : stripHeight(layout.systemButton, layout.systemGap, systemButtons);
+  return layout.edge + group + 6;
 }
