@@ -29,6 +29,7 @@ import {
 } from '../../../server/data/abilities.js';
 import { ALL_ITEMS } from '../../../server/data/items.js';
 import { EntityKind } from '../../../server/net/protocol.js';
+import { attackTimingFor } from '../../../server/sim/abilities.js';
 import { SERVER_TICK_RATE } from '../../../server/config.js';
 import { castBar } from './cast.js';
 import { aimGesture } from './aim.js';
@@ -37,6 +38,7 @@ import { pixelTextSvg } from './pixel-font.js';
 import { isHandheldDevice } from '../device.js';
 import { DamagePopups, type Projector, type WorldAnchor } from './damage-popup.js';
 import { ErrorLog } from './error-log.js';
+import { HealthFlashes } from './health-bar.js';
 import { errorStackBottom, hudLayout } from './hud-layout.js';
 import { systemIconSvg, weaponIconSvg, type SystemIconId } from './icons.js';
 import type { WindowId } from './key-actions.js';
@@ -45,13 +47,25 @@ import type { WindowId } from './key-actions.js';
 const AIM_HIGHLIGHT = '#7fd4ff';
 
 /**
- * The refusal stack's ink (spec 143).
+ * The refusal stack's ink (spec 143, the wind-up warnings).
  *
  * Bright rather than blood-coloured: it is drawn over a world that already has
  * dark reds in it -- the health bars, the blood -- and a warning has to be the
  * most saturated thing in its corner or it reads as scenery.
  */
 const ERROR_RED = '#ff3b3b';
+
+/**
+ * The drawn tick as milliseconds, for the effects on a floating bar (specs
+ * 145/146).
+ *
+ * `update` is handed a frame timestamp too, and this is deliberately not it: a
+ * refusal decays in real seconds because a player is reading it, while the white
+ * chunk and the flinch belong to the *bodies*, and are timed by the same drawn
+ * tick those bodies are interpolated by. One clock each, for two different
+ * things.
+ */
+const TICK_MS = 1000 / SERVER_TICK_RATE;
 
 /** Which abilities the hotbar offers, in order. Keys 1..n. */
 export const HOTBAR: readonly string[] = [
@@ -115,9 +129,24 @@ interface Bar {
   /** Another player's name, over their body (spec 145). Empty for everything else. */
   readonly name: HTMLElement;
   readonly health: HTMLElement;
+  /** The white band behind the fill: the ground a blow just took (spec 145). */
+  readonly ghost: HTMLElement;
   readonly cast: HTMLElement;
   readonly castFill: HTMLElement;
 }
+
+/**
+ * The three flat colours of a floating bar (spec 145): what a body still has,
+ * what it lost a moment ago, and empty.
+ *
+ * Empty is black rather than the old translucent wash, because the white chunk
+ * is only legible against something that is not the world showing through it --
+ * and "black is gone" is one less thing to learn than "darker is gone".
+ */
+const BAR_EMPTY = '#08090b';
+const BAR_ENEMY = '#e0362a';
+const BAR_SELF = '#7fd08a';
+const BAR_LOST = '#f4f2ee';
 
 export interface HudHandle {
   readonly element: HTMLElement;
@@ -434,6 +463,8 @@ export function createHud(project: Projector): HudHandle {
   });
 
   const bars = new Map<number, Bar>();
+  /** Same division as the numbers: the judgement is pure, this holds elements. */
+  const flashes = new HealthFlashes();
   /** The numbers' whole life lives in the pure field; this holds their elements. */
   const popups = new DamagePopups();
   const popupElements = new Map<number, HTMLElement>();
@@ -469,21 +500,39 @@ export function createHud(project: Projector): HudHandle {
     ].join(';');
 
     const healthTrack = document.createElement('div');
-    healthTrack.style.cssText = 'height:4px;background:rgba(0,0,0,.65);border-radius:2px;overflow:hidden;';
+    healthTrack.style.cssText =
+      `position:relative;height:5px;background:${BAR_EMPTY};border-radius:2px;overflow:hidden;` +
+      'box-shadow:0 0 0 1px rgba(0,0,0,.55);';
+    // Two bands in one track, the white underneath (spec 145). Stacked rather
+    // than laid end to end, so the fill's width is still just health -- the
+    // chunk is whatever the white is left showing past it, and the two can
+    // never disagree about where the fill ends.
+    const ghost = document.createElement('div');
+    ghost.style.cssText = `position:absolute;left:0;top:0;height:100%;width:100%;background:${BAR_LOST};`;
     const health = document.createElement('div');
-    health.style.cssText = 'height:100%;width:100%;background:#d0796f;';
-    healthTrack.append(health);
+    health.style.cssText = `position:absolute;left:0;top:0;height:100%;width:100%;background:${BAR_ENEMY};`;
+    healthTrack.append(ghost, health);
 
+    // Hung off the health track rather than stacked under it in flow.
+    //
+    // The holder is anchored by its *bottom* -- `translate(-50%,-100%)` puts its
+    // last row over the head -- so a cast bar that took part in layout made the
+    // holder taller the instant a wind-up began, and the health bar above it
+    // jumped up by its height and dropped back when the swing landed. Every
+    // wind-up in the game twitched the thing a player is reading. Out of flow it
+    // cannot change the holder's height, so the health bar holds still and the
+    // cast bar hangs below it.
     const cast = document.createElement('div');
     cast.style.cssText =
-      'height:4px;margin-top:2px;background:rgba(0,0,0,.65);border-radius:2px;overflow:hidden;display:none;';
+      'position:absolute;left:0;right:0;top:calc(100% + 2px);height:4px;' +
+      'background:rgba(0,0,0,.65);border-radius:2px;overflow:hidden;display:none;';
     const castFill = document.createElement('div');
     castFill.style.cssText = 'height:100%;width:0;background:#ffcf6b;';
     cast.append(castFill);
 
     holder.append(name, healthTrack, cast);
     root.append(holder);
-    const made: Bar = { root: holder, name, health, cast, castFill };
+    const made: Bar = { root: holder, name, health, ghost, cast, castFill };
     bars.set(id, made);
     return made;
   }
@@ -527,12 +576,10 @@ export function createHud(project: Projector): HudHandle {
       // a miss rather than a forgiven near-miss.
       if (anchor.id === view.selfEntityId) element.root.dataset['self'] = '';
       else delete element.root.dataset['self'];
-      element.root.style.left = `${anchor.x}px`;
-      element.root.style.top = `${anchor.y}px`;
 
-      // Another player's name over their body (spec 145). Not our own -- you
-      // know who you are, and a label on your own head is one more thing
-      // between you and the fight.
+      // Another player's name over their body (spec 145, the multiplayer one).
+      // Not our own -- you know who you are, and a label on your own head is
+      // one more thing between you and the fight.
       const label =
         entity.kind === EntityKind.Player && entity.id !== view.selfEntityId
           ? displayName(entity)
@@ -550,13 +597,23 @@ export function createHud(project: Projector): HudHandle {
         element.name.dataset['name'] = label;
       }
 
-      const fraction = entity.maxHealth > 0 ? Math.max(0, Math.min(1, entity.health / entity.maxHealth)) : 0;
-      element.health.style.width = `${fraction * 100}%`;
-      element.health.style.background = entity.id === view.selfEntityId ? '#7fd08a' : '#d0796f';
+      // The fill is replicated health and nothing here delays it; the white
+      // band behind it is the chunk the last blow took, decided in the pure
+      // field off the same presentation clock the bars are placed by.
+      const fill = flashes.read(anchor.id, entity.health, entity.maxHealth, tick * TICK_MS);
+      // The flinch moves the *bar*, not the body: it is added to the anchor
+      // here rather than being a transform of its own, because the holder's
+      // transform is what centres it over the head and a second one would have
+      // to know about the first.
+      element.root.style.left = `${anchor.x + fill.shakeX}px`;
+      element.root.style.top = `${anchor.y + fill.shakeY}px`;
+      element.health.style.width = `${fill.health * 100}%`;
+      element.ghost.style.width = `${fill.ghost * 100}%`;
+      element.health.style.background = entity.id === view.selfEntityId ? BAR_SELF : BAR_ENEMY;
       element.root.style.display = look.showsHealth ? 'block' : 'none';
 
       if (cast) {
-        const progress = castBar(cast, tick, abilityById(cast.abilityId));
+        const progress = castBar(cast, tick);
         element.cast.style.display = 'block';
         element.castFill.style.width = `${progress.progress * 100}%`;
         // Amber while it can still be called off, blue once it cannot -- the
@@ -577,6 +634,8 @@ export function createHud(project: Projector): HudHandle {
       element.root.remove();
       bars.delete(id);
     }
+    // The flashes go with the bars, by the same set on the same frame.
+    flashes.retain(live);
 
     // Damage numbers stay on the ground the blow landed on (spec 096): the
     // field holds a world point each and re-projects it, so nothing here needs
@@ -650,12 +709,14 @@ export function createHud(project: Projector): HudHandle {
       const readyAt = view.cooldowns[slot.abilityId] ?? 0;
       const left = readyAt - tick;
       // The sweep's length is the cadence the cooldown was stamped with, which
-      // for the basic attack is the player's own (spec 070) -- against the
-      // table's number the shade would start part-drained and finish early.
+      // for the basic attack is the player's own attack interval (specs 070,
+      // 144) -- against the table's number the shade would start part-drained
+      // and finish early. Through `attackTimingFor`, so the sweep and the sim
+      // cannot come to different answers about how long a swing takes.
       const total = Math.max(
         1,
-        slot.ability?.basicAttack && view.stats
-          ? view.stats.attackDelayTicks
+        slot.ability && view.stats
+          ? attackTimingFor(slot.ability, { stats: view.stats }).intervalTicks
           : (slot.ability?.cooldownTicks ?? 1),
       );
       if (left > 0) {

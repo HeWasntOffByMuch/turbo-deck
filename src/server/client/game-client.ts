@@ -88,6 +88,8 @@ import {
   steerFacing,
   type Mirror,
 } from './combat.js';
+import { attackTimingFor } from '../sim/abilities.js';
+import { NO_ATTACK_SPEED, resolveAttackTiming } from '../sim/attack-timing.js';
 import type { CastState } from '../sim/types.js';
 
 export interface WelcomeInfo {
@@ -399,11 +401,27 @@ const PING_EVERY_TICKS = 30;
 /** How many round-trip samples to keep. The minimum of these is the estimate. */
 const ROUND_TRIP_SAMPLES = 8;
 
+/**
+ * The timing a confirmed cast is dressed with before this client knows its own
+ * stats -- one tick of everything, and nothing draws from it.
+ *
+ * Reachable only in the window between the first `CastState` and the first
+ * `Stats`, which the server sends inside the welcome, so it exists to keep the
+ * type honest rather than because anything reads it.
+ */
+const DEAD_RECKONED_TIMING = resolveAttackTiming(
+  { baseAttackTimeTicks: 1, baseAttackPointTicks: 1, baseAttackBackswingTicks: 0 },
+  NO_ATTACK_SPEED,
+  60,
+);
+
 /** A cast the client knows about, as it is drawn. */
 export interface KnownCast {
   readonly entityId: number;
   readonly abilityId: string;
   readonly phase: number;
+  /** The tick the wind-up began, so a scaled bar has an origin (spec 144). */
+  readonly startTick: number;
   readonly releaseTick: number;
   readonly endTick: number;
   readonly targetX: number;
@@ -1026,12 +1044,26 @@ export class GameClient {
   private selfCast(): CastState | null {
     const confirmed = this.welcome ? this.casts.get(this.welcome.entityId) : undefined;
     if (confirmed) {
+      const ability = abilityById(confirmed.abilityId);
       return {
         abilityId: confirmed.abilityId,
-        startedTick: 0,
+        startedTick: confirmed.startTick,
+        windupStartTick: confirmed.startTick,
         releaseTick: confirmed.releaseTick,
         endTick: confirmed.endTick,
         phase: confirmed.phase,
+        // Past the attack point, and so past the point of taking anything back
+        // (spec 144). Read off the phase rather than off the clock because the
+        // server is the one that decides, and the phase is what it sent.
+        committed:
+          confirmed.phase === CastPhaseValue.Backswing ||
+          confirmed.phase === CastPhaseValue.Channel,
+        // Rebuilt rather than replicated: the timing is a pure function of the
+        // ability and this client's own stats, and both ends have both.
+        timing:
+          ability && this.stats
+            ? attackTimingFor(ability, { stats: this.stats })
+            : DEAD_RECKONED_TIMING,
         targetX: confirmed.targetX,
         targetY: confirmed.targetY,
         targetEntityId: confirmed.targetEntityId,
@@ -1339,6 +1371,7 @@ export class GameClient {
         entityId: selfId,
         abilityId: this.predictedCast.abilityId,
         phase: this.predictedCast.phase,
+        startTick: this.predictedCast.windupStartTick,
         releaseTick: this.predictedCast.releaseTick,
         endTick: this.predictedCast.endTick,
         targetX: this.predictedCast.targetX,
@@ -1589,6 +1622,7 @@ export class GameClient {
           entityId: message.entityId,
           abilityId: message.abilityId,
           phase: message.phase,
+          startTick: message.startTick,
           releaseTick: message.releaseTick,
           endTick: message.endTick,
           targetX: message.targetX,

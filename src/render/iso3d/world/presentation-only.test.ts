@@ -183,6 +183,7 @@ async function play(animate: boolean): Promise<RunResult> {
         speed: moved ? speedBetween(was, at, Math.max(1, tick - was.tick) / 60) : (previous.get(entity.id)?.speed ?? 0),
         activity: entity.activity,
         castPhase: view.casts.find((cast) => cast.entityId === entity.id)?.phase ?? null,
+        attackRate: 1,
         dead: entity.maxHealth > 0 && entity.health <= 0,
       };
       events.push(...driveUnit(machine, facts, previous.get(entity.id) ?? null, 1));
@@ -242,8 +243,20 @@ describe('animation is presentation only', () => {
     // The structural half, stated as a test so it is not only a comment: what
     // `driveUnit` is handed is a plain record of replicated facts. There is no
     // client in scope, no entity, and no route to one.
-    const facts: UnitFacts = { speed: 0, activity: 0, castPhase: null, dead: false };
-    expect(Object.keys(facts).sort()).toEqual(['activity', 'castPhase', 'dead', 'speed']);
+    const facts: UnitFacts = {
+      speed: 0,
+      activity: 0,
+      castPhase: null,
+      attackRate: 1,
+      dead: false,
+    };
+    expect(Object.keys(facts).sort()).toEqual([
+      'activity',
+      'attackRate',
+      'castPhase',
+      'dead',
+      'speed',
+    ]);
     for (const value of Object.values(facts)) {
       expect(typeof value === 'number' || typeof value === 'boolean' || value === null).toBe(true);
     }

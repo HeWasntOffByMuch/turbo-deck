@@ -32,9 +32,15 @@
  * Pure: no transport, no DOM, no clock of its own. Tested headlessly.
  */
 
-import { abilityById, totalCastTicks, type AbilityDefinition } from '../data/abilities.js';
+import { abilityById, type AbilityDefinition } from '../data/abilities.js';
+import type { AttackTiming } from '../sim/attack-timing.js';
 import { turnToward } from '../sim/movement.js';
-import { cooldownTicksFor, startCast, type CastRejection } from '../sim/abilities.js';
+import {
+  attackTimingFor,
+  nextReadyTick,
+  startCast,
+  type CastRejection,
+} from '../sim/abilities.js';
 import { regenerated } from '../sim/resource.js';
 import { CastPhase, EntityKindValue, type CastState, type ServerEntity } from '../sim/types.js';
 import type { EffectiveStats } from '../state/types.js';
@@ -79,7 +85,6 @@ export function asEntity(mirror: Mirror): ServerEntity {
     stats: mirror.stats,
     activity: 0,
     activityUntilTick: 0,
-    attackReadyTick: 0,
     radius: 0,
     targetId: null,
     path: null,
@@ -153,21 +158,46 @@ export function mayCast(
   // than a case that happens.
   if (!cast) return { ok: false, reason: 'unknownAbility' };
   const shift = stampAt - decideAt;
+  const shifted: CastState = {
+    ...cast,
+    startedTick: cast.startedTick + shift,
+    windupStartTick: cast.windupStartTick + shift,
+    releaseTick: cast.releaseTick + shift,
+    endTick: cast.endTick + shift,
+  };
   return {
     ok: true,
-    cast: {
-      ...cast,
-      startedTick: cast.startedTick + shift,
-      releaseTick: cast.releaseTick + shift,
-      endTick: cast.endTick + shift,
-    },
+    cast: shifted,
     cost: ability.cost,
-    // From the *release*, not the commit (spec 091): the cooldown starts when
-    // the blow goes off, so a wind-up that is withdrawn from costs none of it.
-    // Predicting it from the commit would grey the button out for a swing that
-    // may never happen, and then have to hand it back.
-    readyAtTick: stampAt + ability.windupTicks + cooldownTicksFor(ability, entity),
+    // Through the sim's own rule rather than a second copy of it (spec 144), so
+    // "when may I swing again" cannot drift between the two ends: a basic attack
+    // is ready an interval after the *wind-up started*, and everything else an
+    // ability cooldown after the release, which is spec 091 kept whole.
+    //
+    // Either way the client only stamps this because it expects the server to
+    // commit. A cast that is withdrawn from before the attack point never
+    // stamps one on the server, and `withdrawLocally` takes this guess back to
+    // match -- the button must not grey out for a swing that never happened.
+    readyAtTick: nextReadyTick(
+      ability,
+      shifted,
+      shifted.releaseTick,
+    ),
   };
+}
+
+/**
+ * The attack timing this client believes it is on, for anything that has to draw
+ * it: the HUD's cooldown sweep, the character sheet's attacks-per-second, and
+ * the auto-attack gate.
+ *
+ * A re-export in function form rather than a second implementation, for the
+ * reason the rest of this file exists: one rulebook.
+ */
+export function timingFor(mirror: Mirror, abilityId: string): AttackTiming | null {
+  const ability = abilityById(abilityId);
+  if (!ability) return null;
+  return attackTimingFor(ability, { stats: mirror.stats });
 }
 
 /**
@@ -190,20 +220,38 @@ export function advanceCast(
 
   if (cast.phase === CastPhase.Turning) {
     if (!facingAim(position, facing, cast)) return cast;
+    // Off the cast's own snapshot rather than off the ability table, because
+    // attack speed has already scaled these (spec 144) and the table has not
+    // heard about it.
+    const releaseTick = tick + cast.timing.attackPointTicks;
     return {
       ...cast,
       phase: CastPhase.Windup,
-      releaseTick: tick + ability.windupTicks,
-      endTick: tick + totalCastTicks(ability),
+      windupStartTick: tick,
+      releaseTick,
+      endTick:
+        ability.kind === 'channel'
+          ? releaseTick + (ability.channelTicks ?? 0)
+          : releaseTick + cast.timing.backswingTicks,
     };
   }
 
-  // The release. A blow that is not a channel is *over* on the tick it lands:
-  // there is no recovery to sit through since spec 069, so the body is free the
-  // moment the swing goes off.
+  // The attack point. A channel opens into its pulses; a basic attack with a
+  // follow-through stays rooted through it and is *committed* -- walking out of
+  // this phase refunds nothing (spec 144). Anything else is over on the tick it
+  // lands, which is spec 069's rule unchanged.
   if (cast.phase === CastPhase.Windup && tick >= cast.releaseTick) {
-    if (ability.kind !== 'channel') return null;
-    return { ...cast, phase: CastPhase.Channel, nextPulseTick: tick };
+    if (ability.kind === 'channel') {
+      return { ...cast, phase: CastPhase.Channel, committed: true, nextPulseTick: tick };
+    }
+    if (cast.timing.backswingTicks > 0) {
+      return { ...cast, phase: CastPhase.Backswing, committed: true };
+    }
+    return null;
+  }
+
+  if (cast.phase === CastPhase.Backswing) {
+    return tick >= cast.endTick ? null : cast;
   }
 
   // A channel runs from its release for `channelTicks`, and ends when its pulses

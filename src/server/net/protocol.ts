@@ -290,14 +290,25 @@ export const EntityActivity = {
 export const CastPhaseValue = {
   Windup: 0,
   Channel: 1,
+  /**
+   * The follow-through after the attack point (spec 144). Committed: the blow
+   * has landed and walking out of this refunds nothing.
+   */
+  Backswing: 2,
   /** Turning to face the aim before the wind-up starts (spec 065). */
   Turning: 3,
 } as const;
 
 export const CastEndReasonValue = {
   Released: 0,
+  /** Withdrawn before the attack point. **The attack did not happen.** */
   Cancelled: 1,
   Interrupted: 2,
+  /**
+   * Walked out of the follow-through (spec 144). **The attack already
+   * happened**: nothing is refunded and the attack interval runs on.
+   */
+  BackswingCancelled: 3,
 } as const;
 
 /** Why the server overrode a client's predicted position. */

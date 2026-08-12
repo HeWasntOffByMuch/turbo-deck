@@ -46,9 +46,11 @@ export type BoneRole =
   | 'rightLeg'
   | 'rightFoot'
   | 'rightToe'
+  | 'leftShoulder'
   | 'leftArm'
   | 'leftForeArm'
   | 'leftHand'
+  | 'rightShoulder'
   | 'rightArm'
   | 'rightForeArm'
   | 'rightHand';
@@ -78,9 +80,11 @@ const VOCABULARY: Record<NamingSpec, Readonly<Record<BoneRole, readonly string[]
     rightLeg: ['rightleg'],
     rightFoot: ['rightfoot'],
     rightToe: ['righttoeend', 'righttoebase'],
+    leftShoulder: ['leftshoulder'],
     leftArm: ['leftarm'],
     leftForeArm: ['leftforearm'],
     leftHand: ['lefthand'],
+    rightShoulder: ['rightshoulder'],
     rightArm: ['rightarm'],
     rightForeArm: ['rightforearm'],
     rightHand: ['righthand'],
@@ -104,9 +108,11 @@ const VOCABULARY: Record<NamingSpec, Readonly<Record<BoneRole, readonly string[]
     rightLeg: ['rcalf'],
     rightFoot: ['rfoot'],
     rightToe: ['rtoeend', 'rtoebase', 'rtoe'],
+    leftShoulder: ['lclavicle'],
     leftArm: ['lupperarm'],
     leftForeArm: ['lforearm'],
     leftHand: ['lhand'],
+    rightShoulder: ['rclavicle'],
     rightArm: ['rupperarm'],
     rightForeArm: ['rforearm'],
     rightHand: ['rhand'],

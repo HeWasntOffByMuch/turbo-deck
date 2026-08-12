@@ -140,6 +140,20 @@ export class UnitMachine {
   private activeAction: ActionTiming | null = null;
   private actionStartTick = 0;
   private tickCount = 0;
+  /**
+   * A multiplier on the playback rate of one-shot states (spec 144).
+   *
+   * Attack speed shortens the gameplay wind-up, so the clip that draws it has to
+   * shorten by the same factor or the two come apart -- a body that commits in
+   * 0.2s while its swing animation takes 0.4s is drawn still winding up after
+   * the arrow has left. `startAction` already rescales a clip to fit gameplay
+   * timing; this is the same rule reaching the trigger-driven path, which enters
+   * a state directly and never consults an action's timing at all.
+   *
+   * One-shots only, and deliberately: the same factor applied to a locomotion
+   * loop would make a hasted body's legs run faster than it travels.
+   */
+  private actionRateScale = 1;
 
   constructor(options: MachineOptions) {
     this.unit = options.unit;
@@ -223,14 +237,33 @@ export class UnitMachine {
   }
 
   /**
+   * How fast one-shot states play, 1 being the clip's authored speed.
+   *
+   * Applied when a state is *entered*, not continuously, so a rate change
+   * halfway through a swing does not jerk the pose -- which is the same
+   * snapshot rule the sim applies to the timing this is derived from.
+   */
+  setActionRate(scale: number): void {
+    this.actionRateScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  }
+
+  /**
    * Fires an action from the timing table.
    *
    * The clip is rescaled to the action, never the other way round: the rate
    * comes from {@link timeScaleFor}, so the wind-up is exactly as long as the
    * timing says and the animation is what bends.
+   *
+   * `override` replaces the table's timing for this one firing, for a *tool*
+   * that is tuning the timing -- the movement sandbox's attack sliders, and the
+   * Studio timing panel when it grows a play button. It changes no document and
+   * survives nothing: the next firing without one is the shipped timing again.
+   * The clip it names still has to be the action's, because a state is found by
+   * `clipRef` and an override that renamed it would enter a different state.
    */
-  startAction(actionId: string): boolean {
-    const action = this.actions.get(actionId);
+  startAction(actionId: string, override?: ActionTiming): boolean {
+    const table = this.actions.get(actionId);
+    const action = override === undefined ? table : { ...override, clipRef: table?.clipRef ?? override.clipRef };
     if (!action) return false;
     const state = [...this.states.values()].find((candidate) => candidate.clipRef === action.clipRef);
     if (!state) return false;
@@ -518,7 +551,7 @@ export class UnitMachine {
     this.current = {
       stateId,
       clipTick: -1,
-      rate: rate ?? next.timeScale,
+      rate: (rate ?? next.timeScale) * (next.category === 'oneshot' ? this.actionRateScale : 1),
       finished: false,
     };
     if (next.clipRef !== this.activeAction?.clipRef) this.activeAction = null;

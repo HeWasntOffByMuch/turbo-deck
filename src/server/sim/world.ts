@@ -29,6 +29,7 @@ import type { Vec2, WorldColliders } from '../../sim/types.js';
 import type { LiveConfig } from '../config.js';
 import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../config.js';
 import { monsterById } from '../data/monsters.js';
+import { NO_ATTACK_SPEED } from './attack-timing.js';
 import type { EffectiveStats, Vec3 } from '../state/types.js';
 import { chunkKeyOf, type ChunkKey } from '../world/chunks.js';
 import type { SpawnPoint } from '../world/spawners.js';
@@ -93,7 +94,8 @@ function blankEntity(id: number): ServerEntity {
       turnRate: 0,
       attackDamage: 0,
       attackRange: 0,
-      attackDelayTicks: 1,
+      baseAttackTimeTicks: 1,
+      ...NO_ATTACK_SPEED,
       armor: 0,
       spellPower: 1,
       critChance: 0,
@@ -103,7 +105,6 @@ function blankEntity(id: number): ServerEntity {
     },
     activity: ActivityValue.Idle,
     activityUntilTick: 0,
-    attackReadyTick: 0,
     radius: 4,
     targetId: null,
     path: null,
@@ -199,7 +200,6 @@ export function spawnEntity(
     stats: spec.stats,
     activity: ActivityValue.Idle,
     activityUntilTick: 0,
-    attackReadyTick: 0,
     radius: spec.radius,
     targetId: spec.targetId ?? null,
     path: null,
@@ -354,10 +354,19 @@ export function step(
       steered = decided.entity;
     }
     // Asking to move is how a body withdraws from a blow it has committed to
-    // (spec 079). The refund is the one `Esc` gives -- cost back, cooldown
-    // cleared -- so the feint costs exactly the time it took to show, and it is
-    // settled *here* rather than deferred to the cast pass, because withdrawing
-    // and stepping away have to be the same tick or the step reads as a stutter.
+    // (spec 079), and it is settled *here* rather than deferred to the cast
+    // pass, because withdrawing and stepping away have to be the same tick or
+    // the step reads as a stutter.
+    //
+    // What that buys depends entirely on which side of the attack point the
+    // body is (spec 144), and `cancelCast` reports which happened:
+    //
+    //  - before it, `windup` -- the refund `Esc` gives, cost back and no
+    //    interval started, so the feint costs exactly the time it took to show;
+    //  - after it, `backswing` -- nothing back at all. The blow landed, the
+    //    arrow is in the air, the interval is running, and all that is returned
+    //    is the legs. Which is the whole feature: cancelling the follow-through
+    //    buys movement, and can never buy a faster next attack.
     if (steered.cast !== null && asksToMove(rawIntent)) {
       const withdrawn = cancelCast(steered, tick, CastEndReason.Cancelled);
       if (withdrawn.cancelled) {

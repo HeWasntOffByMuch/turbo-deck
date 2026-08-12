@@ -817,6 +817,15 @@ export interface CastStateMessage {
   readonly entityId: number;
   readonly abilityId: string;
   readonly phase: number;
+  /**
+   * The tick the wind-up began (spec 144).
+   *
+   * On the wire because the client can no longer derive it: the wind-up's
+   * length used to be `ability.windupTicks`, read off the shared table, and
+   * attack speed now scales that. A bar drawn against the table's number would
+   * run at the wrong rate for exactly the bodies attacking fastest.
+   */
+  readonly startTick: number;
   readonly releaseTick: number;
   readonly endTick: number;
   readonly targetX: number;
@@ -1031,7 +1040,10 @@ function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
     .f32(stats.turnRate)
     .f32(stats.attackDamage)
     .f32(stats.attackRange)
-    .u16(stats.attackDelayTicks)
+    .u16(stats.baseAttackTimeTicks)
+    .f32(stats.attackSpeed)
+    .f32(stats.attackSpeedMultiplier)
+    .f32(stats.attackSpeedSlowMultiplier)
     .f32(stats.armor)
     .f32(stats.spellPower)
     .f32(stats.critChance)
@@ -1047,7 +1059,10 @@ function readStats(reader: BufferReader): EffectiveStats {
     turnRate: reader.f32(),
     attackDamage: reader.f32(),
     attackRange: reader.f32(),
-    attackDelayTicks: reader.u16(),
+    baseAttackTimeTicks: reader.u16(),
+    attackSpeed: reader.f32(),
+    attackSpeedMultiplier: reader.f32(),
+    attackSpeedSlowMultiplier: reader.f32(),
     armor: reader.f32(),
     spellPower: reader.f32(),
     critChance: reader.f32(),
@@ -1177,6 +1192,7 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
         .varuint(message.entityId)
         .str(message.abilityId)
         .u8(message.phase)
+        .u32(message.startTick)
         .u32(message.releaseTick)
         .u32(message.endTick)
         .f32(message.targetX)
@@ -1343,6 +1359,7 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         entityId: reader.varuint(),
         abilityId: reader.str(),
         phase: reader.u8(),
+        startTick: reader.u32(),
         releaseTick: reader.u32(),
         endTick: reader.u32(),
         targetX: reader.f32(),

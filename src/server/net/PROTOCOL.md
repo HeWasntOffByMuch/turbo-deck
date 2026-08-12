@@ -1,4 +1,4 @@
-# turbo-deck wire protocol v11
+# turbo-deck wire protocol v15
 
 Binary, not JSON. Every frame is a WebSocket **binary** message whose first byte
 is the message type; the rest is a type-specific payload. All multi-byte numbers
@@ -55,14 +55,30 @@ cannot address an admin handler at all.
 ## Client → server
 
 ### `0x01 Hello`
-`u16 protocolVersion` · `str playerId` · `str displayName` · `str token`
+`u16 protocolVersion` · `str playerId` · `str displayName` · `str token` ·
+`str assetManifest` · `str resumeToken`
 
-First message on a connection. A version mismatch is refused with `Error` and a
-disconnect. `token` is empty for a plain player.
+First message on a connection, and **only** the first: a second one on the same
+socket is refused, because obeying it used to spawn a second body and orphan the
+first (spec 145). A version mismatch is refused with `Error` and a disconnect.
+`token` is empty for a plain player; `displayName` is bounded to 64 characters,
+because since spec 145 it is broadcast to every client in interest.
+
+`resumeToken` is empty for a fresh login. One that matches a lingering session
+for this `playerId` re-attaches to that body instead of spawning a new one
+(spec 150); one that does not match is simply a new login rather than an error,
+because a token that has aged out is the ordinary case.
 
 ### `0x02 Input`
 `varuint seq` · `f32 moveX` · `f32 moveY` · `f32 facing` · `u8 buttons` ·
-`f32 predictedX` · `f32 predictedY`
+`f32 predictedX` · `f32 predictedY` · `varuint renderLagTicks`
+
+`renderLagTicks` is how far behind the server's clock the world this input was
+made against is being drawn (spec 149) — one-way latency plus up to a broadcast
+interval. It is what a blow is resolved against, so that a swing lands on what
+its attacker was looking at. Client-reported and clamped to `MAX_REWIND_TICKS`
+(12) the moment it arrives: the most a liar achieves is the compensation an
+honest player on a 200ms connection already gets.
 
 The only message that drives the sim. Note what a client may say: a **direction**
 (clamped server-side to at most unit length), where it is aiming, which buttons
@@ -125,6 +141,12 @@ Note the grid: map chunks are the document's own `cellSize * chunkCells` buckets
 (616 units today), *not* the `chunkSize` the welcome announces, which is the
 400-unit entity-interest grid. Three grids, deliberately independent.
 
+### `0x16 Goodbye` — no payload
+Says the disconnection was meant (spec 150). A dropped socket leaves the body
+standing for `RESUME_GRACE_TICKS` so the session can be resumed onto it; this
+reaps it at once. Pulling the plug and choosing to leave should not look the
+same to the world.
+
 ### `0x03 Ping` — `u32 nonce`
 Answered with `Pong` carrying the same nonce and the server's tick. The client
 sends one every half second and counts its own ticks until the answer: that is
@@ -170,10 +192,15 @@ while it is switched off. Needs no player and no entity.
 ### `0x40 Welcome`
 `u16 protocolVersion` · `str playerId` · `varuint entityId` · `u32 tick` ·
 `u8 tickRate` · `u16 chunkSize` · `u8 interestRadius` · `f32 correctionThreshold` ·
-`u32 worldSeed`
+`u32 worldSeed` · `str sessionToken`
 
 Chunk size and interest radius are announced rather than compiled into the
 client, so retuning them needs no client release.
+
+`sessionToken` is presented in a later `Hello` to come back to this same body
+after a dropped socket, or after a page reload (spec 150). It comes from
+`crypto.randomUUID`, never from the world's seeded `Rng`: that generator is
+reproducible on purpose, which is precisely what a resume token must not be.
 
 `worldSeed` used to be the client's whole terrain source (spec 063). Since
 spec 072 it is provenance and the fight's randomness only — the ground arrives
@@ -199,6 +226,13 @@ as `MapInfo` and `MapChunk`.
 | `0x08` | Health | `f32 health` · `f32 maxHealth` |
 | `0x10` | Activity | `u8 activity` · `u32 activityUntilTick` |
 | `0x20` | Level | `varuint level` |
+| `0x40` | Identity | `str name` · `f32 turnRate` |
+
+`Identity` is sent for **players only** (spec 145), alongside `Spawn` on first
+sight and again whenever the turn rate changes. A monster's name and turn rate
+are in `MONSTERS`, which the client already has, and putting a content table on
+the wire is what "an entity only ever stores an id" exists to prevent. A
+player's name is the one field on an entity that a human typed.
 
 The bitmask *is* the delta: an entity that did not move contributes no position
 bytes, and an entity that did not change at all is not in the frame. A frame
@@ -292,7 +326,16 @@ nothing.
 ### `0x45 Chat` — `u8 channel` · `str from` · `str text`
 `channel`: `0` say, `1` system, `2` admin broadcast.
 
-### `0x46 Pong` — `u32 nonce` · `u32 serverTick`
+### `0x46 Pong` — `u32 nonce` · `u32 serverTick` · `varuint inputQueueFloor`
+
+`inputQueueFloor` is the **smallest** this connection's input queue got since
+the last pong, sampled every tick and reset when reported. A floor rather than
+an instantaneous reading because pongs arrive at 2Hz and the queue oscillates at
+60Hz: sampled at an instant, a starving connection reads 1 about as often as 0
+and the client's rate controller cannot see the starvation at all (spec 148).
+It rides here rather than on `Delta` because a delta is suppressed when nothing
+moved, which would blind the controller in exactly the quiet moments drift
+accumulates through.
 ### `0x47 Error` — `u16 code` · `str message`
 `code`: `1` bad protocol version, `2` malformed frame, `3` not authenticated,
 `4` not authorized, `5` banned, `6` muted, `7` rejected action, `8` unknown message.
@@ -300,18 +343,35 @@ nothing.
 ### `0x48 Disconnect` — `str reason`
 
 ### `0x49 CastState`
-`varuint entityId` · `str abilityId` · `u8 phase` · `u32 releaseTick` ·
-`u32 endTick` · `f32 targetX` · `f32 targetY` · `varuint targetEntityId`
+`varuint entityId` · `str abilityId` · `u8 phase` · `u32 startTick` ·
+`u32 releaseTick` · `u32 endTick` · `f32 targetX` · `f32 targetY` ·
+`varuint targetEntityId`
 
-Someone committed to an ability. `phase`: `0` wind-up, `1` channel, `2` recovery.
-`releaseTick` is when the effect lands, which is all a client needs to draw a
-wind-up bar that finishes at the right moment. Sent to everyone whose interest
-set contains the caster, so other players see a telegraph too.
+Someone committed to an ability, or moved between its phases. `phase`: `0`
+wind-up, `1` channel, `2` backswing, `3` turning.
+
+`releaseTick` is the **attack point** — when the effect lands, and the boundary
+past which the cast can no longer be withdrawn from. `startTick` is when the
+wind-up began, and it is on the wire rather than derived because attack speed
+scales the wind-up (spec 144): a bar drawn against the ability table's
+`windupTicks` runs at the wrong rate for exactly the bodies attacking fastest.
+`endTick` is when the caster is free — the release for most abilities, the end
+of the backswing for a basic attack, the end of the pulses for a channel.
+
+Sent to everyone whose interest set contains the caster, so other players see a
+telegraph too, and re-sent on every phase change: a `phase: 2` message is the
+"this attack has committed" notice.
 
 ### `0x4A CastEnded`
 `varuint entityId` · `str abilityId` · `u8 reason`
 
-`reason`: `0` released, `1` cancelled, `2` interrupted.
+`reason`: `0` released, `1` cancelled, `2` interrupted, `3` backswing cancelled.
+
+`1` means the attack **did not happen** — withdrawn from before the attack
+point, cost refunded, no interval started. `3` means it **already happened** and
+only the remaining animation was skipped: nothing is refunded and the attack
+interval runs on untouched (spec 144). A client that treats the two alike hands
+back a cooldown the server is still holding.
 
 ### `0x4B Effect`
 `str effectId` · `f32 x` · `f32 y` · `f32 z` · `f32 radius` · `u16 durationTicks`

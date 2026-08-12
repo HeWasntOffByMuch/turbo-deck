@@ -17,6 +17,7 @@ import { FLAT_TERRAIN } from './terrain.js';
 import { EntityKindValue, type ServerEntity, type ServerInput, type ServerWorldState } from '../sim/types.js';
 import { DEFAULT_LIVE_CONFIG } from '../config.js';
 import { abilityById } from '../data/abilities.js';
+import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
 import type { Vec3 } from '../state/types.js';
 
 function body(id: number, x: number, y: number): ServerEntity {
@@ -90,6 +91,8 @@ const STATS = {
   attackDamage: 10,
   attackRange: 60,
   attackDelayTicks: 8,
+  baseAttackTimeTicks: 8,
+  ...NO_ATTACK_SPEED,
   armor: 0,
   spellPower: 1,
   critChance: 0,

@@ -17,6 +17,8 @@
 import { abilityById } from '../../../server/data/abilities.js';
 import { SKILL_BRANCHES, skillById, ALL_SKILLS } from '../../../server/data/skills.js';
 import { experienceForLevel } from '../../../server/player/player-manager.js';
+import { attackTimingFor } from '../../../server/sim/abilities.js';
+import { resolveAttackTiming, type AttackTiming } from '../../../server/sim/attack-timing.js';
 import { lockedBranches, pointsInBranch, levelOf, validateSkillSpend } from '../../../server/player/skills.js';
 import type { EffectiveStats, PersistedPlayer, SkillAllocation } from '../../../server/state/types.js';
 import type { AbilityView, HudView } from '../../../ui/screens/hud.js';
@@ -109,6 +111,27 @@ export function hudViewOf(source: HudSource): HudView {
   };
 }
 
+/**
+ * This body's basic attack, resolved -- or a bare BAT with nothing swinging it,
+ * for a unit whose `basicAttackId` names nothing (the training dummy).
+ *
+ * Through the sim's own resolver, so the sheet cannot quote a rate the sim does
+ * not run at.
+ */
+function basicAttackTiming(stats: EffectiveStats): AttackTiming {
+  const ability = abilityById(stats.basicAttackId);
+  if (ability) return attackTimingFor(ability, { stats });
+  return resolveAttackTiming(
+    {
+      baseAttackTimeTicks: stats.baseAttackTimeTicks,
+      baseAttackPointTicks: 1,
+      baseAttackBackswingTicks: 0,
+    },
+    stats,
+    TICK_RATE,
+  );
+}
+
 /** How a stat is named and formatted on the sheet. */
 const STAT_ROWS: readonly {
   readonly label: string;
@@ -117,8 +140,22 @@ const STAT_ROWS: readonly {
   { label: 'Health', of: (s) => String(Math.round(s.maxHealth)) },
   { label: 'Damage', of: (s) => String(Math.round(s.attackDamage)) },
   { label: 'Range', of: (s) => String(Math.round(s.attackRange)) },
-  // Ticks are a server unit; a player reads swings per second (spec 088).
-  { label: 'Speed', of: (s) => `${(TICK_RATE / Math.max(1, s.attackDelayTicks)).toFixed(1)}/s` },
+  // Ticks are a server unit; a player reads swings per second (specs 088, 144).
+  // Through the *basic attack's* resolved timing rather than off BAT directly,
+  // because attack speed divides one into the other and this row is the number
+  // the player is actually attacking at.
+  { label: 'Speed', of: (s) => `${basicAttackTiming(s).attacksPerSecond.toFixed(2)}/s` },
+  // What that rate is before attack speed, and what attack speed is doing to it
+  // (spec 144). Two rows rather than one, because a player who cannot see both
+  // cannot tell a slow weapon from a slowed body.
+  { label: 'Base attack time', of: (s) => `${(s.baseAttackTimeTicks / TICK_RATE).toFixed(2)}s` },
+  {
+    label: 'Attack speed',
+    of: (s) => {
+      const factor = basicAttackTiming(s).factor;
+      return `${s.attackSpeed >= 0 ? '+' : ''}${Math.round(s.attackSpeed)} (${factor.toFixed(2)}x)`;
+    },
+  },
   { label: 'Armour', of: (s) => `${Math.round(s.armor * 100)}%` },
   { label: 'Crit', of: (s) => `${Math.round(s.critChance * 100)}%` },
   { label: 'Power', of: (s) => s.spellPower.toFixed(2) },

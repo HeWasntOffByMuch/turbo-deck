@@ -4,11 +4,14 @@
  *
  * Stats are expressed as a full {@link EffectiveStats} because the resolver does
  * not care whether an attacker is a player or not -- one shape, one code path.
- * That includes `attackDelayTicks` (spec 088), which is where a darting stalker
- * and a lumbering ravager stop feeling like the same fight at different damage
- * numbers: they swing at visibly different rates off the same swing. It is the
- * delay itself, in ticks -- a row says how long this body waits, rather than a
- * base cadence and a multiplier over it that had to be divided to mean anything.
+ * That includes `baseAttackTimeTicks` (specs 088, 144), which is where a darting
+ * stalker and a lumbering ravager stop feeling like the same fight at different
+ * damage numbers: they swing at visibly different rates off the same swing. It
+ * is Base Attack Time, in ticks -- a row says how long this body waits between
+ * blows before attack speed, and `...NO_ATTACK_SPEED` beside it is a row saying
+ * it has none. A monster that should be hasted says so there rather than by
+ * having its BAT quietly pre-divided, because the same factor also has to reach
+ * the wind-up and the backswing.
  *
  * Since spec 079 it also includes `basicAttackId`, which is where the monster's
  * `ability` field went. Two places naming what a body swings with was one too
@@ -17,6 +20,7 @@
  */
 
 import { SERVER_TICK_RATE } from '../config.js';
+import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
 import type { EffectiveStats } from '../state/types.js';
 
 export interface MonsterDefinition {
@@ -50,7 +54,8 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
       turnRate: 120,
       attackDamage: 6,
       attackRange: 60,
-      attackDelayTicks: seconds(1.6),
+      baseAttackTimeTicks: seconds(1.6),
+      ...NO_ATTACK_SPEED,
       armor: 0,
       spellPower: 1,
       critChance: 0,
@@ -72,7 +77,8 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
       turnRate: 240,
       attackDamage: 11,
       attackRange: 70,
-      attackDelayTicks: seconds(0.9),
+      baseAttackTimeTicks: seconds(0.9),
+      ...NO_ATTACK_SPEED,
       armor: 0.05,
       spellPower: 1,
       critChance: 0.05,
@@ -94,7 +100,8 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
       turnRate: 150,
       attackDamage: 24,
       attackRange: 95,
-      attackDelayTicks: seconds(2.25),
+      baseAttackTimeTicks: seconds(2.25),
+      ...NO_ATTACK_SPEED,
       armor: 0.18,
       spellPower: 1,
       critChance: 0.1,
@@ -120,7 +127,8 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
       // `monsterIntent` stands off at the *ability's* range, so this number only
       // matters to a body that has lost its throwing arm. The star reaches 300.
       attackRange: 300,
-      attackDelayTicks: seconds(1.4),
+      baseAttackTimeTicks: seconds(1.4),
+      ...NO_ATTACK_SPEED,
       armor: 0,
       spellPower: 1,
       critChance: 0.05,
@@ -144,7 +152,8 @@ const DUMMY: MonsterDefinition = {
     turnRate: 0,
     attackDamage: 0,
     attackRange: 0,
-    attackDelayTicks: 1,
+    baseAttackTimeTicks: 1,
+    ...NO_ATTACK_SPEED,
     armor: 0,
     spellPower: 1,
     critChance: 0,

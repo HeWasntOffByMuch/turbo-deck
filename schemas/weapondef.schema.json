@@ -1,0 +1,88 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://turbo-deck.local/schemas/weapondef.schema.json",
+  "title": "<weapon>.weapondef.json",
+  "description": "One held object (spec 140). A weapon is a RIGID body: it does not deform, so it has no skeleton, no bind pose, no clip library and no rig family -- every one of which src/units/ exists to manage for a thing that does. What it needs instead is a grip: which point of the mesh sits in the palm, which way the business end points, and how big it should be drawn.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["formatVersion", "id", "name", "meshRef", "socket", "grip", "lengthWorld"],
+  "properties": {
+    "$comment": {
+      "description": "A note for whoever opens the file next. JSON has no comments and additionalProperties is false.",
+      "type": "string"
+    },
+    "formatVersion": { "type": "integer", "const": 1 },
+    "id": { "$ref": "#/definitions/identifier" },
+    "name": {
+      "description": "What a player would call it. Not the item id: an item row picks a model, and two items may pick the same one.",
+      "type": "string",
+      "minLength": 1
+    },
+    "meshRef": {
+      "description": "The .glb, relative to this document. Must carry no skin and no animation -- a weapon that arrived rigged was rigged by mistake, and skinning it would cost per-vertex work for a body that moves as one piece.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\.glb$"
+    },
+    "socket": {
+      "description": "The socket it is held in when drawn, e.g. `weapon.main`. Named rather than assumed so an off-hand item is a field rather than a special case.",
+      "$ref": "#/definitions/identifier"
+    },
+    "stowSocket": {
+      "description": "Where it rides when sheathed. Absent means it simply is not drawn when put away, which is the honest answer for a thing with nowhere to hang.",
+      "$ref": "#/definitions/identifier"
+    },
+    "grip": {
+      "description": "How the mesh meets the hand. Every field is a measurement of THIS file rather than a convention it was asked to follow -- the next weapon will come from somewhere else.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "point", "flat"],
+      "properties": {
+        "at": {
+          "description": "The point in mesh coordinates that sits in the palm, before any scaling. Usually the middle of the grip.",
+          "$ref": "#/definitions/vec3"
+        },
+        "point": {
+          "description": "The mesh axis running toward the business end -- the tip of a blade, the head of a hammer.",
+          "$ref": "#/definitions/axis"
+        },
+        "flat": {
+          "description": "The mesh axis normal to the flat of the blade. Fixes the roll, which `point` alone leaves free: a sword held edge-up instead of flat-up is wrong in a way nobody can describe and everybody can see. Must be perpendicular to `point`.",
+          "$ref": "#/definitions/axis"
+        }
+      }
+    },
+    "lengthWorld": {
+      "description": "How long it is drawn, tip to butt, in world units. A length rather than a scale factor, for the reason a unit's import scale is measured rather than typed: nobody can check a scale, and anybody can hold a length up against the body beside it.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "provenance": {
+      "description": "Where the mesh came from, when that is worth recording. Free-form on purpose -- these are not paid generations with task ids to keep.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": { "type": "string" },
+        "generator": { "type": "string" },
+        "note": { "type": "string" }
+      }
+    }
+  },
+  "definitions": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-zA-Z][a-zA-Z0-9_.-]*$"
+    },
+    "axis": {
+      "type": "string",
+      "enum": ["+X", "-X", "+Y", "-Y", "+Z", "-Z"]
+    },
+    "vec3": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": { "type": "number" }
+    }
+  }
+}

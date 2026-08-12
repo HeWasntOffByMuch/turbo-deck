@@ -25,6 +25,11 @@ import {
   TURN_RATE_PER_AGILITY,
 } from '../../sim/constants.js';
 import { CHARACTERS } from '../../sim/characters.js';
+import {
+  MAX_ATTACK_INTERVAL_SECONDS,
+  MIN_ATTACK_INTERVAL_SECONDS,
+  NO_ATTACK_SPEED,
+} from '../sim/attack-timing.js';
 import { SERVER_TICK_RATE } from '../config.js';
 import { BASIC_ATTACK_ID } from '../data/abilities.js';
 import { itemById } from '../data/items.js';
@@ -54,37 +59,46 @@ export const DAMAGE_PER_STRENGTH = 0.6;
  * enough to be read, and the old cadence -- about a third of a second, against
  * a 0.2s wind-up -- left nothing between one blow and the next to read anything
  * in.
+ *
+ * Since spec 144 this is Base Attack Time, and the *base* is now load-bearing:
+ * attack speed divides it to get the interval, and divides the wind-up and the
+ * backswing by the same factor.
  */
-export const BASE_ATTACK_DELAY_TICKS = Math.round(SERVER_TICK_RATE * 1.2);
+export const BASE_ATTACK_TIME_TICKS = Math.round(SERVER_TICK_RATE * 1.2);
 
 /**
- * Bounds on that delay.
+ * Bounds on the resolved interval.
  *
  * A floor as well as a ceiling, for the reason the old attacks-per-second
- * bounds existed: haste is still a divisor, and a modifier that managed to
- * drive it to zero would not make a unit fast, it would make its delay
- * infinite or negative.
+ * bounds existed: attack speed is still a divisor, and a modifier that managed
+ * to drive it to zero would not make a unit fast, it would make its interval
+ * infinite or negative. The clamp itself lives in `sim/attack-timing.ts`, beside
+ * the division; these are the same two numbers in the unit `stats.test.ts` reads
+ * them in.
  */
-export const MIN_ATTACK_DELAY_TICKS = Math.round(SERVER_TICK_RATE * 0.2);
-export const MAX_ATTACK_DELAY_TICKS = Math.round(SERVER_TICK_RATE * 5);
+export const MIN_ATTACK_DELAY_TICKS = Math.round(
+  SERVER_TICK_RATE * MIN_ATTACK_INTERVAL_SECONDS,
+);
+export const MAX_ATTACK_DELAY_TICKS = Math.round(
+  SERVER_TICK_RATE * MAX_ATTACK_INTERVAL_SECONDS,
+);
 
 /**
- * The delay a set of modifiers produces (spec 088) -- the one place it is
- * worked out, and the whole of what `attackDelayTicks` means.
+ * The Base Attack Time a set of modifiers produces (spec 144).
  *
- * `flatTicks` are added to the base; `haste` divides it, because a modifier
- * that says *percent faster* is talking about a rate and this is a duration.
- * Exported so the bounds can be tested against numbers no item in the table is
- * broken enough to produce -- the point of a clamp is the item added tomorrow.
+ * `flatTicks` are added to the base -- that is what `attackCooldownTicks` has
+ * always meant -- and the result is held inside the interval bounds so a base
+ * that is already absurd cannot be rescued or ruined by the factor later.
+ *
+ * Note what is *not* here any more: the haste divisor. Spec 088 divided at this
+ * point and called the result the delay; 144 keeps the division for
+ * {@link resolveAttackTiming}, because the same factor also has to reach the
+ * wind-up and the backswing, and a base that had already been divided could not
+ * tell it what to divide.
  */
-export function attackDelayTicksFrom(flatTicks: number, haste: number): number {
-  const base = BASE_ATTACK_DELAY_TICKS + (Number.isFinite(flatTicks) ? flatTicks : 0);
-  // A stat that says nothing is a stat that changes nothing.
-  const scale = Number.isNaN(haste) ? 1 : haste;
-  // Zero or negative haste is not "instantly", it is "never", so it lands on
-  // the ceiling rather than dividing into a negative or an infinite delay.
-  if (scale <= 0) return MAX_ATTACK_DELAY_TICKS;
-  return clamp(Math.round(base / scale), MIN_ATTACK_DELAY_TICKS, MAX_ATTACK_DELAY_TICKS);
+export function baseAttackTimeTicksFrom(flatTicks: number): number {
+  const base = BASE_ATTACK_TIME_TICKS + (Number.isFinite(flatTicks) ? flatTicks : 0);
+  return clamp(Math.round(base), MIN_ATTACK_DELAY_TICKS, MAX_ATTACK_DELAY_TICKS);
 }
 /** Critical-hit chance per point of dexterity, and its ceiling. */
 export const CRIT_PER_DEXTERITY = 0.008;
@@ -169,19 +183,23 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
 
   const attackRange = Math.max(1, PLAYER_ATTACK_RANGE + bonus.attackRange);
 
-  // How soon the next blow may begin, resolved here and nowhere else (spec 088).
-  // Flat modifiers add ticks; the proportional ones are still *percent faster*,
-  // so they divide. Dexterity is deliberately absent: it is a base stat rather
-  // than a modifier, and its old haste link was the last of the indirection this
-  // replaced -- a weapon that wants to be quick says `attackSpeedPct`, as the
-  // Keen Longsword already does.
-  // Flat, and independent of what the body is holding (spec 091). The attack
-  // cadence is a property of *attacking*, not of the weapon: a bow and a sword
-  // put you on the same clock, and picking one up cannot buy a faster one.
-  // `attackSpeedPct` and the flat `attackCooldownTicks` still exist as
-  // modifiers and still mean what they say -- nothing reads them for this any
-  // more, which is why the two Finesse skills no longer shorten the cadence.
-  const attackDelayTicks = attackDelayTicksFrom(0, 1);
+  // Base Attack Time, and the three attack-speed inputs beside it (spec 144).
+  //
+  // All four are deliberately unmodified. Spec 091 took the attack cadence off
+  // the weapon on purpose -- a bow and a sword put you on the same clock, and
+  // picking one up cannot buy a faster one -- and spec 144 builds the HoN model
+  // over that decision rather than reversing it. `attackSpeedPct` and the flat
+  // `attackCooldownTicks` still exist as modifiers and still mean what they say;
+  // nothing reads them here, which is why the two Finesse skills still do not
+  // shorten the cadence and `stats.test.ts` still asserts that they do not.
+  //
+  // What changed is that there is now somewhere for an attack-speed source to
+  // plug in when a spec decides there should be one: `attackSpeed` is additive
+  // flat in the HoN convention, and the two multipliers stack apart from it.
+  // Converting the existing modifiers onto those three is one call to
+  // `attackSpeedFromHaste` and a sign test, and it is a content decision rather
+  // than a refactor, so it is left undone rather than done quietly.
+  const baseAttackTimeTicks = baseAttackTimeTicksFrom(0);
 
   const armor = clamp(ARMOR_PER_AGILITY * dexterity + bonus.armor, 0, MAX_DAMAGE_REDUCTION);
 
@@ -207,7 +225,8 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
     turnRate,
     attackDamage,
     attackRange,
-    attackDelayTicks,
+    baseAttackTimeTicks,
+    ...NO_ATTACK_SPEED,
     armor,
     spellPower,
     critChance,

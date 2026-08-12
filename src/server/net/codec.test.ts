@@ -26,6 +26,7 @@ import {
 } from './protocol.js';
 import { EMPTY_EQUIPMENT, emptyInventory, type EffectiveStats } from '../state/types.js';
 import { maxStackOf } from '../data/items.js';
+import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
 
 const STATS: EffectiveStats = {
   maxHealth: 137.5,
@@ -33,7 +34,8 @@ const STATS: EffectiveStats = {
   turnRate: 210,
   attackDamage: 11.5,
   attackRange: 56,
-  attackDelayTicks: 7,
+  baseAttackTimeTicks: 7,
+  ...NO_ATTACK_SPEED,
   armor: 0.125,
   spellPower: 1.5,
   critChance: 0.0625,
@@ -244,6 +246,7 @@ describe('game message round-trip', () => {
       entityId: 12,
       abilityId: 'melee.slash',
       phase: 0,
+      startTick: 470,
       releaseTick: 4210,
       endTick: 4222,
       targetX: 612.5,

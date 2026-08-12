@@ -4,6 +4,7 @@ import type { EffectiveStats } from '../state/types.js';
 import { DeltaTracker } from './delta.js';
 import { decodeServerMessage, encodeServerMessage } from './messages.js';
 import { EntityField } from './protocol.js';
+import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
 
 const STATS: EffectiveStats = {
   maxHealth: 100,
@@ -11,7 +12,8 @@ const STATS: EffectiveStats = {
   turnRate: 180,
   attackDamage: 10,
   attackRange: 50,
-  attackDelayTicks: 8,
+  baseAttackTimeTicks: 8,
+  ...NO_ATTACK_SPEED,
   armor: 0,
   spellPower: 1,
   critChance: 0,
@@ -34,7 +36,6 @@ function entity(id: number, overrides: Partial<ServerEntity> = {}): ServerEntity
     stats: STATS,
     activity: ActivityValue.Idle,
     activityUntilTick: 0,
-    attackReadyTick: 0,
     radius: 22,
     targetId: null,
     path: null,

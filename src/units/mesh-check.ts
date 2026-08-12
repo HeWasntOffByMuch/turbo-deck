@@ -26,8 +26,8 @@
 import { error, pointer, warning, type Issue } from './issues.js';
 import { nodePosition, type GlbReadNode, type SkinnedMeshData } from './glb-read.js';
 import { detectNaming, findRole, type BoneRole, type NamingSpec } from './naming.js';
+import { bodyFrame, turnQuat, type PoseTurn } from './pose.js';
 import {
-  axisQuat,
   meshVolume,
   poseWorldMatrices,
   skinPositions,
@@ -445,56 +445,6 @@ export interface ExtremePose {
 }
 
 /**
- * Which way a bone is being turned, in the *body's* axes rather than the file's.
- *
- * Turning about `lateral` moves a bone forward and back in the sagittal plane --
- * a knee bending, a hip swinging through a stride. About `forward` it rises and
- * falls sideways -- an arm lifting from an A to a T and on over the head. About
- * `up` it sweeps horizontally -- a spine twisting, an arm coming across the
- * chest.
- */
-type PoseAxis = 'lateral' | 'forward' | 'up';
-
-interface PoseTurn {
-  /** The bone by role, resolved through the rig's own vocabulary (spec 120). */
-  readonly bone: BoneRole;
-  readonly axis: PoseAxis;
-  readonly degrees: number;
-}
-
-/** Every rig in this project is +Y up, and the skeleton documents say so. */
-const UP: readonly [number, number, number] = [0, 1, 0];
-
-/**
- * The body's three axes, measured off the rig.
- *
- * `lateral` comes from the hips, which are two bones a biped is guaranteed to
- * have and which cannot be confused for anything else; the shoulders are the
- * fallback. `forward` follows from it. Nothing here reads the skeleton document,
- * so this works on a `.glb` that arrived without one.
- */
-interface BodyFrame {
-  readonly lateral: readonly [number, number, number];
-  readonly forward: readonly [number, number, number];
-  readonly up: readonly [number, number, number];
-}
-
-function bodyFrame(nodes: readonly GlbReadNode[], naming: NamingSpec): BodyFrame | null {
-  const across = (left: BoneRole, right: BoneRole): [number, number, number] | null => {
-    const a = boneAt(nodes, naming, left);
-    const b = boneAt(nodes, naming, right);
-    if (!a || !b) return null;
-    const out: [number, number, number] = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-    return magnitude(out) < 1e-9 ? null : out;
-  };
-  const lateral = across('leftUpLeg', 'rightUpLeg') ?? across('leftArm', 'rightArm');
-  if (!lateral) return null;
-  const forward = cross(lateral, UP);
-  if (magnitude(forward) < 1e-9) return null;
-  return { lateral, forward, up: UP };
-}
-
-/**
  * The poses a unit is checked at, resolved against the rig's own geometry.
  *
  * Not arbitrary extremes. Each is the end of a range the retarget presets
@@ -560,51 +510,12 @@ export function extremePoses(nodes: readonly GlbReadNode[]): readonly ExtremePos
   for (const pose of poses) {
     const rotations = new Map<string, readonly [number, number, number, number]>();
     for (const turn of pose.turns) {
-      const resolved = resolveTurn(turn, frame, nodes, naming);
+      const resolved = turnQuat(turn, frame, nodes, naming);
       if (resolved) rotations.set(resolved.bone, resolved.rotation);
     }
     if (rotations.size > 0) built.push({ id: pose.id, why: pose.why, rotations });
   }
   return built;
-}
-
-/**
- * One turn, as a quaternion in the bone's own local frame.
- *
- * The axis is chosen in world space -- where "lateral" and "up" mean something
- * about the body -- and then carried back into the bone's frame, because
- * `poseWorldMatrices` composes the extra rotation after the bone's own. Skipping
- * that step is the subtle version of the axis-letter mistake: it works on a rig
- * whose bind rotations are all identity and quietly does something else on every
- * rig that is not, which is every rig that came out of a generator.
- */
-function resolveTurn(
-  turn: PoseTurn,
-  frame: BodyFrame,
-  nodes: readonly GlbReadNode[],
-  naming: NamingSpec,
-): { bone: string; rotation: [number, number, number, number] } | null {
-  const name = findRole(nodes.map((entry) => entry.name), naming, turn.bone);
-  const node = name === null ? undefined : nodes.find((entry) => entry.name === name);
-  if (!node) return null;
-  const local = intoLocalFrame(frame[turn.axis], node.world);
-  if (magnitude(local) < 1e-6) return null;
-  return { bone: node.name, rotation: axisQuat(local, (turn.degrees * Math.PI) / 180) };
-}
-
-/** A world-space direction expressed in the frame the node's own matrix sets up. */
-function intoLocalFrame(axis: readonly [number, number, number], world: readonly number[]): [number, number, number] {
-  // The transpose of the basis, which inverts a rotation. Scale falls out in the
-  // normalisation `axisQuat` does anyway.
-  return [
-    (world[0] ?? 0) * axis[0] + (world[1] ?? 0) * axis[1] + (world[2] ?? 0) * axis[2],
-    (world[4] ?? 0) * axis[0] + (world[5] ?? 0) * axis[1] + (world[6] ?? 0) * axis[2],
-    (world[8] ?? 0) * axis[0] + (world[9] ?? 0) * axis[1] + (world[10] ?? 0) * axis[2],
-  ];
-}
-
-function cross(a: readonly [number, number, number], b: readonly [number, number, number]): [number, number, number] {
-  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 }
 
 /** Below this fraction of its bind volume, the mesh has collapsed. */
