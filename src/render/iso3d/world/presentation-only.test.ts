@@ -59,7 +59,7 @@ const TICKS = 240;
  */
 const unitsDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', 'assets', 'units', 'dev');
 const read = (name: string): unknown => JSON.parse(readFileSync(join(unitsDir, name), 'utf8')) as unknown;
-const bundle = loadUnitBundle(read('mannequin.unitdef.json'), read('biped-dev.core.cliplib.json'));
+const bundle = loadUnitBundle(read('mannequin.unitdef.json'), read('mannequin-dev.core.cliplib.json'));
 if (!bundle.value) throw new Error('the committed reference unit does not validate');
 const { unit: DEV_UNIT, clipLib: DEV_CLIPS } = bundle.value;
 

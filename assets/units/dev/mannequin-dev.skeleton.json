@@ -1,7 +1,7 @@
 {
-  "$comment": "The development reference rig (spec 110). Same bone contract as biped.skeleton.json, but with a MEASURED bind pose, because this rig was drawn here rather than generated. The canonical skeleton stays provisional until a real Tripo rig is measured against it -- filling it in from this one would defeat the check it exists to make.",
+  "$comment": "The development reference rig (spec 110). Same bone contract as biped.skeleton.json, but with a MEASURED bind pose, because this rig was drawn here rather than generated. The canonical skeleton stays provisional until a real Tripo rig is measured against it -- filling it in from this one would defeat the check it exists to make. Renamed from `biped-dev` in spec 139: `biped` now names the one family real bodies animate on, and two near-identical names on two different naming specs was the confusion. This is the dev reference mannequin's family and nothing ships against it.",
   "formatVersion": 1,
-  "id": "biped-dev",
+  "id": "mannequin-dev",
   "naming": "mixamo",
   "upAxis": "+Y",
   "forwardAxis": "+X",

@@ -25,7 +25,7 @@
 
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readGlbJson } from '../src/units/glb.js';
 import {
@@ -237,7 +237,12 @@ function main(): void {
       for (const clip of clipLib.clips) push(add(resolve(dirname(clipLibPath), clip.source), label));
     }
 
-    units.push({ id: unit.id, family: unit.skeletonRef.replace(/\.skeleton\.json$/, ''), entries: own });
+    // The family is what the skeleton is *called*, not the route taken to it.
+    // Since the family's documents moved up out of a member's folder (spec 139)
+    // every member refers to them as `../biped.skeleton.json`, and stripping
+    // only the suffix left the family recorded as `../biped` -- a path fragment
+    // in a field that is compared against skeleton ids.
+    units.push({ id: unit.id, family: basename(unit.skeletonRef).replace(/\.skeleton\.json$/, ''), entries: own });
   }
 
   for (const note of notes) console.warn(`warn  ${note}`);

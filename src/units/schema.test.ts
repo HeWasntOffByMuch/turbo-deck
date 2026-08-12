@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import skeletonDoc from '../../assets/units/biped.skeleton.json' with { type: 'json' };
+import mannequinSkeletonDoc from '../../assets/units/dev/mannequin-dev.skeleton.json' with { type: 'json' };
 import { clipLibFixture, skeletonFixture, unitDefFixture } from './fixtures.js';
 import { compileAllSchemas, SCHEMAS, validateAgainstSchema, type DocumentKind } from './schema.js';
 import { validateSkeleton } from './validate.js';
@@ -28,20 +29,36 @@ describe('the committed schemas', () => {
   });
 });
 
-describe('the shipped biped skeleton', () => {
-  it('validates, with provisional as its only complaint', () => {
+describe('the shipped biped family', () => {
+  it('validates clean, with a bind pose measured off a real rig', () => {
     const result = validateSkeleton(skeletonDoc);
     expect(result.issues.filter((issue) => issue.severity === 'error')).toEqual([]);
-    expect(result.issues.map((issue) => issue.code)).toEqual(['skeleton.provisional']);
-    expect(result.value).not.toBeNull();
+    // Not provisional any more (spec 139): the family this game ships bodies on
+    // was measured off the first rig of it, and from then on it is the contract
+    // every later rig is held against rather than a written-down intention.
+    expect(result.issues.map((issue) => issue.code)).not.toContain('skeleton.provisional');
+    expect(result.value?.bindPose).not.toBeNull();
   });
 
-  it('is a mixamo biped with no finger joints', () => {
+  it('is a tripo rig, which is the only naming this project generates', () => {
     const result = validateSkeleton(skeletonDoc);
+    expect(result.value?.naming).toBe('tripo');
+    expect(result.value?.bones).toHaveLength(41);
+    // No finger warning -- the warning is tested against a rig that has them,
+    // in validate.test.ts.
+    expect(result.issues.some((issue) => issue.code === 'skeleton.fingers')).toBe(false);
+  });
+});
+
+describe('the dev mannequin family', () => {
+  it('is the mixamo contract, and is the only thing left on it', () => {
+    // The reference mannequin is authored by hand and mixamo-named; everything
+    // generated comes back tripo. Both vocabularies are in the tree on purpose
+    // (spec 120) and this is the document that keeps the mixamo half honest.
+    const result = validateSkeleton(mannequinSkeletonDoc);
+    expect(result.issues.filter((issue) => issue.severity === 'error')).toEqual([]);
     expect(result.value?.naming).toBe('mixamo');
     expect(result.value?.bones).toHaveLength(25);
-    // Inside the 15..30 budget the checklist asks for, and no finger warning --
-    // the warning is tested against a rig that has them, in validate.test.ts.
     expect(result.issues.some((issue) => issue.code === 'skeleton.fingers')).toBe(false);
   });
 });

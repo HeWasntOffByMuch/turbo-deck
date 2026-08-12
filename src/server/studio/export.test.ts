@@ -77,12 +77,25 @@ const MACHINE: StateMachine = {
   actionTimings: [],
 };
 
-function run(options: { clips?: readonly Clip[]; stateMachine?: StateMachine; job?: Job } = {}) {
+/**
+ * The family's skeleton with its bind pose taken back out.
+ *
+ * The provisional case used to be tested by handing the export the real
+ * `biped.skeleton.json`, which had no measured bind pose at the time. It has one
+ * now (spec 139), and a test whose fixture is "whatever state a shipped document
+ * happens to be in" stops testing what it was written for the moment that state
+ * changes. So the condition is constructed instead of borrowed.
+ */
+const provisionalSkeletonDoc = { ...skeletonDoc, bindPose: null };
+
+function run(
+  options: { clips?: readonly Clip[]; stateMachine?: StateMachine; job?: Job; skeletonDoc?: unknown } = {},
+) {
   return exportJob({
     job: options.job ?? finishedJob(),
     unitsDir: join(dir, 'units'),
     skeletonRef: 'biped.skeleton.json',
-    skeletonDoc,
+    skeletonDoc: options.skeletonDoc ?? skeletonDoc,
     clipLibId: 'biped.core',
     clips: options.clips,
     stateMachine: options.stateMachine,
@@ -189,12 +202,20 @@ describe('the documents it does write', () => {
 });
 
 describe('validation', () => {
-  it('reports the provisional skeleton rather than claiming a clean export', () => {
-    // The shipped biped skeleton has no measured bind pose yet, and a unit may
-    // not ship against one. Export says so instead of writing a green tick.
-    const result = run({ clips: CLIPS, stateMachine: MACHINE });
+  it('reports a provisional skeleton rather than claiming a clean export', () => {
+    // A unit may not ship against a skeleton with no measured bind pose. Export
+    // says so instead of writing a green tick.
+    const result = run({ clips: CLIPS, stateMachine: MACHINE, skeletonDoc: provisionalSkeletonDoc });
     expect(result.ok).toBe(false);
     expect(result.issues.map((issue) => issue.code)).toContain('bundle.skeleton.provisional');
+  });
+
+  it('does not report one against the family, which has a measured bind pose', () => {
+    // The other half of the pair, and the reason the fixture above is built
+    // rather than borrowed: the shipped family is no longer provisional, and
+    // nothing should be telling somebody it is.
+    const result = run({ clips: CLIPS, stateMachine: MACHINE });
+    expect(result.issues.map((issue) => issue.code)).not.toContain('bundle.skeleton.provisional');
   });
 
   it('surfaces a broken state machine as errors rather than writing it', () => {

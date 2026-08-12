@@ -36,8 +36,9 @@ import walkUrl from '../../../../assets/units/dev/clips/walk.glb?url';
 import runUrl from '../../../../assets/units/dev/clips/run.glb?url';
 import slashUrl from '../../../../assets/units/dev/clips/slash.glb?url';
 import devUnitDef from '../../../../assets/units/dev/mannequin.unitdef.json' with { type: 'json' };
-import devClipLib from '../../../../assets/units/dev/biped-dev.core.cliplib.json' with { type: 'json' };
-import devSkeleton from '../../../../assets/units/dev/biped-dev.skeleton.json' with { type: 'json' };
+import devClipLib from '../../../../assets/units/dev/mannequin-dev.core.cliplib.json' with { type: 'json' };
+import devSkeleton from '../../../../assets/units/dev/mannequin-dev.skeleton.json' with { type: 'json' };
+import { familyAssets } from '../world/unit-assets.js';
 import { bundleErrorText, loadUnitBundle } from '../../../units/bundle.js';
 import { scaffoldClipLib, scaffoldStateMachine, type MeasuredClip } from '../../../units/scaffold.js';
 import { validateSkeleton } from '../../../units/validate.js';
@@ -320,7 +321,7 @@ export function mountStudio(container: HTMLElement): ViewHandle {
     mountSource(
       {
         unitPath: 'dev/mannequin.unitdef.json',
-        clipLibPath: 'dev/biped-dev.core.cliplib.json',
+        clipLibPath: 'dev/mannequin-dev.core.cliplib.json',
         unit: bundle.value.unit,
         clipLib: bundle.value.clipLib,
         assets: {
@@ -369,6 +370,25 @@ export function mountStudio(container: HTMLElement): ViewHandle {
       urls.push(url);
       clipUrls[intent] = url;
       intents.push(intent);
+    }
+
+    // Nothing retargeted for this job, so borrow the family's (spec 139).
+    //
+    // A job that establishes a rig and buys no clips is not an edge case -- it
+    // is the normal way to add a body to a family that already has a clip
+    // library, and it is exactly what the fox was. The preview used to mount
+    // whatever `clipGlbs` held, which for such a job is nothing, and showed a
+    // motionless model with no indication that it had no clips rather than bad
+    // ones. The family's are on disk and already correct for this rig, because
+    // sharing them is what membership means.
+    const family = intents.length === 0 ? familyAssets(job.skeletonId) : null;
+    if (family) {
+      for (const clip of family.clipLib.clips) {
+        const url = family.clipUrls[clip.id];
+        if (url === undefined) continue;
+        clipUrls[clip.id] = url;
+        intents.push(clip.id);
+      }
     }
 
     const clipLibId = `${job.skeletonId}.core`;

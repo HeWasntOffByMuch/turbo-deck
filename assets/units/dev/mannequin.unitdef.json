@@ -3,8 +3,8 @@
   "formatVersion": 1,
   "id": "mannequin",
   "meshRef": "mannequin.glb",
-  "skeletonRef": "biped-dev.skeleton.json",
-  "clipLibRef": "biped-dev.core.cliplib.json",
+  "skeletonRef": "mannequin-dev.skeleton.json",
+  "clipLibRef": "mannequin-dev.core.cliplib.json",
   "provenance": {
     "tripoTaskIds": {
       "imageToModel": "local-reference",
