@@ -14,6 +14,7 @@ import { InputMap } from '../../../ui/input/input-map.js';
 import type { Rect } from '../../../ui/core/geom.js';
 import { ScrollView } from '../../../ui/widgets/scroll-view.js';
 import { UiScreens, type UiScreensOptions } from './ui-screens.js';
+import { captureLayout, LAYOUT_VERSION, type StoredLayout } from '../../../ui/core/layout-store.js';
 import type { WindowId } from './key-actions.js';
 import type { ClientView } from '../../../server/client/game-client.js';
 
@@ -50,10 +51,13 @@ function viewFixture(overrides: Partial<ClientView> = {}): ClientView {
 interface Harness {
   readonly screens: UiScreens;
   readonly requests: string[];
+  /** Every layout the mount asked to have written, in order. */
+  readonly saved: StoredLayout[];
 }
 
-function harness(options: Partial<UiScreensOptions> = {}): Harness {
+function harness(options: Partial<UiScreensOptions> = {}, viewport = VIEWPORT): Harness {
   const requests: string[] = [];
+  const saved: StoredLayout[] = [];
   const screens = new UiScreens(
     {
       map: new InputMap(),
@@ -69,12 +73,16 @@ function harness(options: Partial<UiScreensOptions> = {}): Harness {
       onTradeCancel: () => requests.push('tradeCancel'),
       onBindingsChanged: () => requests.push('bindings'),
       onScaleChosen: (choice) => requests.push(`scale:${String(choice)}`),
+      onLayoutChanged: (layout) => {
+        saved.push(layout);
+        requests.push('layout');
+      },
       nearestVendor: () => 'vendor.quartermaster',
       ...options,
     },
-    VIEWPORT,
+    viewport,
   );
-  return { screens, requests };
+  return { screens, requests, saved };
 }
 
 /** Where a window ended up. Read through the root's manager, as the paint does. */
@@ -539,5 +547,227 @@ describe('drawing', () => {
     screens.show('options');
     screens.update(viewFixture(), 0);
     expect(screens.paint().length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Where the windows were, across a reload (spec 147).
+ *
+ * The half that had never been written. `layout-store.ts` has been complete
+ * since spec 124 and nothing outside its own test imported it, so every one of
+ * its invariants held perfectly while the shipped game opened every window in
+ * its default place every session. These are assertions about the *mount* --
+ * that the document reaches it, that it is applied at a moment when applying it
+ * means something, and that a change to it is written back.
+ */
+describe('the saved layout', () => {
+  /** A document naming one window, at a place the defaults would never pick. */
+  function documentFor(id: string, at = { x: 120, y: 96 }, size = { width: 160, height: 128 }): StoredLayout {
+    return {
+      version: LAYOUT_VERSION,
+      order: [id],
+      windows: [
+        { id, x: at.x, y: at.y, width: size.width, height: size.height, open: false, pinned: false },
+      ],
+    };
+  }
+
+  it('puts a window back where the document says', () => {
+    const { screens } = harness({ layout: documentFor('inventory') });
+    screens.update(viewFixture(), 0);
+    screens.show('inventory');
+    screens.update(viewFixture(), 16);
+    expect(windowSize(screens, 'inventory')).toEqual({ x: 120, y: 96, width: 160, height: 128 });
+  });
+
+  it('does not let the default placement run over a restored window', () => {
+    // `placeWindow` measures the screen and picks a corner, once, the first time
+    // a window is opened. A restore that did not claim the window would be
+    // overwritten by it the moment the player pressed I.
+    const { screens } = harness({ layout: documentFor('character', { x: 40, y: 40 }) });
+    screens.update(viewFixture(), 0);
+    screens.show('character');
+    screens.update(viewFixture(), 16);
+    expect(windowSize(screens, 'character').x).toBe(40);
+    expect(windowSize(screens, 'character').y).toBe(40);
+  });
+
+  it('still places a window the document has never heard of', () => {
+    // A build that adds a window must not invalidate everybody's saved layout,
+    // and the new one still has to be given somewhere to go.
+    const { screens } = harness({ layout: documentFor('inventory') });
+    screens.update(viewFixture(), 0);
+    screens.show('character');
+    screens.update(viewFixture(), 16);
+    const placement = windowSize(screens, 'character');
+    expect(placement.width).toBeGreaterThan(0);
+    expect(placement.x + placement.width).toBeLessThanOrEqual(VIEWPORT.width);
+  });
+
+  /**
+   * The decision the whole feature turns on.
+   *
+   * `UiLayer` measures its frame before the tab is laid out and gets a 1x1
+   * placeholder. `applyLayout` re-clamps against whatever viewport it is handed
+   * -- correctly -- so applying against 1x1 stacks every window at the origin at
+   * its minimum size, and then writes *that* back as the layout. The saved
+   * arrangement would be destroyed by the act of restoring it.
+   */
+  it('waits for a real viewport rather than restoring against the placeholder', () => {
+    const { screens, saved } = harness({ layout: documentFor('inventory') }, { width: 1, height: 1 });
+    screens.update(viewFixture(), 0);
+    screens.show('inventory');
+    screens.update(viewFixture(), 16);
+    // Nothing applied, and -- just as important -- nothing written either.
+    expect(windowSize(screens, 'inventory')).not.toEqual({ x: 120, y: 96, width: 160, height: 128 });
+    expect(saved).toEqual([]);
+
+    screens.resize(VIEWPORT);
+    screens.update(viewFixture(), 32);
+    expect(windowSize(screens, 'inventory')).toEqual({ x: 120, y: 96, width: 160, height: 128 });
+  });
+
+  it('never brings the shop or the trade table back open', () => {
+    // Both are opened by the server. A trade window restored open has no trade
+    // in it and no way to get one.
+    const layout: StoredLayout = {
+      version: LAYOUT_VERSION,
+      order: ['shop', 'trade', 'inventory'],
+      windows: (['shop', 'trade', 'inventory'] as const).map((id) => ({
+        id,
+        x: 16,
+        y: 16,
+        width: 120,
+        height: 96,
+        open: true,
+        pinned: false,
+      })),
+    };
+    const { screens } = harness({ layout });
+    screens.update(viewFixture(), 0);
+    expect(screens.isOpen('shop')).toBe(false);
+    expect(screens.isOpen('trade')).toBe(false);
+    // ...while a window the player drives does come back.
+    expect(screens.isOpen('inventory')).toBe(true);
+  });
+
+  it('pulls a layout saved on a big screen back onto a small one', () => {
+    const { screens } = harness(
+      { layout: documentFor('inventory', { x: 900, y: 700 }, { width: 600, height: 400 }) },
+      { width: 320, height: 240 },
+    );
+    screens.update(viewFixture(), 0);
+    const placement = windowSize(screens, 'inventory');
+    expect(placement.x).toBeGreaterThanOrEqual(0);
+    expect(placement.y).toBeGreaterThanOrEqual(0);
+    expect(placement.x + placement.width).toBeLessThanOrEqual(320);
+    expect(placement.y + placement.height).toBeLessThanOrEqual(240);
+  });
+
+  it('writes nothing while nothing moves', () => {
+    const { screens, saved } = harness();
+    for (let frame = 0; frame < 8; frame += 1) screens.update(viewFixture(), frame * 1000);
+    expect(saved).toEqual([]);
+  });
+
+  it('writes once for a burst of changes, carrying the last of them', () => {
+    // A trailing debounce: a drag changes the layout on every frame it moves,
+    // and the value worth keeping is the one it stops on.
+    const { screens, saved } = harness();
+    screens.update(viewFixture(), 0);
+    screens.show('inventory');
+
+    for (let frame = 1; frame <= 5; frame += 1) {
+      screens.root.windows?.get('inventory')?.place({ x: frame * 8, y: 8 }, screens.root.layoutContext(), VIEWPORT);
+      screens.update(viewFixture(), frame * 50);
+    }
+    expect(saved).toEqual([]);
+
+    // ...and 400ms after the last of them, exactly one write.
+    screens.update(viewFixture(), 250 + 400);
+    expect(saved.length).toBe(1);
+    const stored = saved[0]?.windows.find((entry) => entry.id === 'inventory');
+    expect(stored?.x).toBe(40);
+  });
+
+  it('flushes a pending write on the way out', () => {
+    const { screens, saved } = harness();
+    screens.update(viewFixture(), 0);
+    screens.show('inventory');
+    screens.update(viewFixture(), 16);
+    expect(saved).toEqual([]);
+
+    screens.flushLayout();
+    expect(saved.length).toBe(1);
+    // ...and a second flush with nothing pending writes nothing.
+    screens.flushLayout();
+    expect(saved.length).toBe(1);
+  });
+
+  it('round-trips: what is written restores to the same placements', () => {
+    const first = harness();
+    first.screens.update(viewFixture(), 0);
+    first.screens.show('inventory');
+    first.screens.show('character');
+    first.screens.update(viewFixture(), 16);
+    const context = first.screens.root.layoutContext();
+    first.screens.root.windows?.get('inventory')?.resize({ width: 200, height: 150 }, context, VIEWPORT);
+    first.screens.root.windows?.get('character')?.place({ x: 32, y: 64 }, context, VIEWPORT);
+    first.screens.update(viewFixture(), 32);
+    first.screens.flushLayout();
+
+    const document = first.saved.at(-1);
+    expect(document).toBeDefined();
+    if (!document) return;
+
+    const second = harness({ layout: document });
+    second.screens.update(viewFixture(), 0);
+    for (const id of ['inventory', 'character'] as const) {
+      expect(windowSize(second.screens, id), id).toEqual(windowSize(first.screens, id));
+    }
+  });
+
+  it('captures every window, not only the open ones', () => {
+    const { screens } = harness();
+    screens.update(viewFixture(), 0);
+    const manager = screens.root.windows;
+    expect(manager).toBeDefined();
+    if (!manager) return;
+    const captured = captureLayout(manager);
+    expect(captured.windows.map((entry) => entry.id).sort()).toEqual([
+      'character',
+      'inventory',
+      'options',
+      'shop',
+      'trade',
+    ]);
+  });
+});
+
+describe('resizing a game window', () => {
+  it('makes every one of them resizable', () => {
+    const { screens } = harness();
+    for (const id of ['inventory', 'character', 'shop', 'trade', 'options'] as const) {
+      expect(screens.root.windows?.get(id)?.resizable, id).toBe(true);
+    }
+  });
+
+  it('keeps a resized window at its new size when it is closed and reopened', () => {
+    // The size is chosen once, on the first open, from what the screen happened
+    // to want. Re-opening must not throw away what the player did about it.
+    const { screens } = harness();
+    screens.update(viewFixture(), 0);
+    screens.show('inventory');
+    screens.update(viewFixture(), 16);
+    screens.root.windows
+      ?.get('inventory')
+      ?.resize({ width: 220, height: 180 }, screens.root.layoutContext(), VIEWPORT);
+    const resized = windowSize(screens, 'inventory');
+
+    screens.toggle('inventory');
+    screens.update(viewFixture(), 32);
+    screens.toggle('inventory');
+    screens.update(viewFixture(), 48);
+    expect(windowSize(screens, 'inventory')).toEqual(resized);
   });
 });

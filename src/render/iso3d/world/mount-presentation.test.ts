@@ -80,6 +80,8 @@ interface RunResult {
   readonly requests: readonly string[];
   /** Draw commands on the last frame, so "it was actually drawing" is checkable. */
   readonly drawn: number;
+  /** Layout writes over the whole run. One, however much hovering happened. */
+  readonly layoutWrites: number;
 }
 
 /**
@@ -116,6 +118,7 @@ async function play(drive: boolean): Promise<RunResult> {
   await settle();
 
   const requests: string[] = [];
+  let layoutWrites = 0;
   const screens = new UiScreens(
     {
       map: new InputMap(),
@@ -131,6 +134,13 @@ async function play(drive: boolean): Promise<RunResult> {
       onTradeCancel: () => requests.push('tradeCancel'),
       onBindingsChanged: () => requests.push('bindings'),
       onScaleChosen: (choice) => requests.push(`scale:${String(choice)}`),
+      // Counted apart from `requests`, deliberately. Everything in that array is
+      // something asked of the *server*; a layout write is a local preference,
+      // and the three windows this test opens legitimately cause one. What is
+      // worth asserting about it is the debounce -- see below.
+      onLayoutChanged: () => {
+        layoutWrites += 1;
+      },
       nearestVendor: () => null,
     },
     VIEWPORT,
@@ -176,7 +186,7 @@ async function play(drive: boolean): Promise<RunResult> {
     drawn = screens.paint().length;
   }
 
-  return { states, requests, drawn };
+  return { states, requests, drawn, layoutWrites };
 }
 
 describe('mounting the interface is presentation only', () => {
@@ -199,5 +209,17 @@ describe('mounting the interface is presentation only', () => {
     // *legitimately* and the comparison above would look like a broken sim.
     const mounted = await play(true);
     expect(mounted.requests).toEqual([]);
+  }, 30_000);
+
+  /**
+   * The layout is written when it settles, not while it moves (spec 147).
+   *
+   * This run opens three windows on tick 2 and then hovers, types and moves
+   * focus for every one of the remaining frames. A save per change would be a
+   * `localStorage` write on most of them; the debounce makes it one.
+   */
+  it('writes the layout once for a session of hovering and typing', async () => {
+    const mounted = await play(true);
+    expect(mounted.layoutWrites).toBe(1);
   }, 30_000);
 });

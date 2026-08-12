@@ -59,6 +59,7 @@ import { nearestVendorTo } from './shop-model.js';
 import { InputMap, type Modifiers } from '../../../ui/input/input-map.js';
 import { loadBindings, saveBindings } from '../../../ui/input/binding-store.js';
 import { loadScale, saveScale } from '../../../ui/input/display-store.js';
+import { loadLayout, saveLayout } from '../../../ui/core/layout-store.js';
 import type { Rect } from '../../../ui/core/geom.js';
 import { autoAttack } from './target.js';
 import { aimShape, castOrder, startAim, type AimGesture, type AimOrder } from './aim.js';
@@ -264,9 +265,14 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     const cells = boxes(readout.bagRects);
     const binds = boxes(readout.bindRects);
     const resets = boxes(readout.resetRects);
+    // Every window's placement, open or not (spec 147). In the key as well,
+    // because a window dragged or resized changes nothing else on this line --
+    // and a readout that did not watch it would report the old box forever,
+    // which is exactly the state the whole feature is a claim about.
+    const frames = boxes(readout.windowRects);
     const text =
       `${windows}|${bag}|${readout.scale}|${readout.viewport.width}x${readout.viewport.height}` +
-      `|${readout.tab}|${tabs}|${readout.scaleChoice}|${scales}|${cells}|${cellNames}`;
+      `|${readout.tab}|${tabs}|${readout.scaleChoice}|${scales}|${cells}|${cellNames}|${frames}`;
     if (text === lastUiReadout) return;
     lastUiReadout = text;
     root.dataset['uiWindows'] = windows;
@@ -281,6 +287,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     root.dataset['uiCellNames'] = cellNames;
     root.dataset['uiBinds'] = binds;
     root.dataset['uiResets'] = resets;
+    root.dataset['uiFrames'] = frames;
   }
 
   const hud = createHud((x, y, lift) => scene.projectPoint(x, y, lift));
@@ -457,6 +464,14 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     },
     // The one place the platform is asked, beside the media queries.
     scale: loadScale(bindingStorage),
+    // Where the windows were (spec 147). Read here and written back here, for
+    // the third time and the third reason: the mount is pure, so the document
+    // arrives as a value and leaves as a callback. `saveLayout` cannot throw --
+    // this one is called from inside the frame.
+    layout: loadLayout(bindingStorage),
+    onLayoutChanged: (layout) => {
+      saveLayout(bindingStorage, layout);
+    },
     // Where the *player* is, not where the camera is looking: the server checks
     // the same distance from the same position, and asking about a shop the
     // server will refuse is how a window opens empty.
