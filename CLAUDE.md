@@ -398,11 +398,30 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
 src/render/      the client: a tab shell over the play view, the two tuning
                  sandboxes and the map editor. iso3d/shell-tabs.ts is the one
                  decision in the shell worth failing a test over (spec 140): a
-                 coarse pointer is offered the tabs marked `game` and nothing
+                 handheld is offered the tabs marked `game` and nothing
                  else, because five of the six are workbenches a finger cannot
                  drive, and with one tab left there are no tab buttons to draw.
                  The bar stays -- ui-layer measures it to know where the app's
                  chrome ends, and the fullscreen button lives in it.
+                 iso3d/device.ts is what "handheld" means, and it is one file
+                 because it used to be one media query in another (spec 141).
+                 `(pointer: coarse)` describes the *primary* pointer and a
+                 browser may answer "fine" about a touchscreen -- Chrome's
+                 desktop-site mode does exactly that, deliberately, while
+                 inflating the viewport to ~980px -- so a real phone loaded the
+                 shipped build and got six tab buttons, seven tuning popovers and
+                 the developer readout over the grass. The rule now reads four
+                 facts and is pure, so every device is a row in a test rather
+                 than something somebody has to be holding: no touch anywhere is
+                 never handheld, a coarse primary pointer always is, and
+                 otherwise touch plus a short side under 620 CSS px is. The
+                 *short* side, so turning the phone over cannot change the
+                 layout -- which is what still lets it be decided once at mount
+                 with no resize listener. The browser half of that check has to
+                 fake `maxTouchPoints`, because Chromium forces `pointer: coarse`
+                 the moment touch emulation exists and will not reproduce the
+                 device at all; what it is worth is the *wiring* -- point the
+                 layout back at a media query and preview-touch says so.
 src/render/cloth/ pure cloth simulation for the robed character (spec 046) --
                  solver, wind, patterns, colliders and figure metrics. No
                  three.js and no DOM, so it runs and is tested headlessly.
@@ -600,6 +619,77 @@ src/render/iso3d/unit-rig.ts  a loaded authored unit, posed by a machine (spec
                  AND one whose hips never move, since a correction that ate the
                  pose scores a perfect zero on the first test alone. No GL
                  context: nothing in it rasterises.
+src/render/iso3d/turn-swing.ts  what a pivot does to a body's extremities (spec
+                 139). The scene turns a body by yawing it about the point the
+                 server put it on, so anything the pose holds away from that
+                 origin travels on a circle -- and how violent a turn looks is a
+                 product of two numbers that live nowhere near each other, the
+                 turn rate in `CHARACTERS` and how far a pose reaches. Nothing
+                 could see both at once, which is how a rate tuned for the cow
+                 rig survived onto a pig whose run clip leans 36 degrees and puts
+                 the snout 28 units in front of a 16-unit collider: every number
+                 was individually defensible and their product was written down
+                 nowhere. This module is that arithmetic, pure and tested; the
+                 budget is a *ratio* against the body's own move speed, because a
+                 snout that crosses the screen faster than the animal can run
+                 does not read as a turn. `npx tsx scripts/probe-turn-swing.ts`
+                 measures a real unit against it -- CPU-skinned vertex by vertex,
+                 since a snout is geometry and no bone sits in it, and since
+                 `Box3.setFromObject` on a `SkinnedMesh` reports this pig as 17.9
+                 units tall when it is really 55.6. `npx tsx
+                 scripts/preview-turnaround.ts` is the picture: the reversal
+                 *stepped* through the real `turnToward` and rasterised in
+                 software, because this environment paints the real page at about
+                 a frame a second and a screencast of a 333ms turn returns one
+                 frame captioned "the turn is over". The window is fixed in world
+                 space and the collider ring is drawn, both for the same reason --
+                 auto-framing each cell would hide the only thing being shown.
+                 Since spec 142 it draws two rows, the rule and what is actually
+                 drawn, and writes turnaround-rate.png beside them -- angular rate
+                 against time, where the raw rule is a rectangle and the ease is a
+                 trapezoid. Everything else here draws a heading, and a heading was
+                 never what was wrong.
+src/render/iso3d/turn-ease.ts  the drawn turn's beginning and end (spec 142).
+                 `turnToward` is a step function on angular velocity: nothing, then
+                 the full rate for every tick, then nothing. Spec 139 gated the
+                 *peak* of the sweep that produces and this is the other half --
+                 the onset, which is what reads as a whip-crack. The sim's rule does
+                 not move, because it is also the client's prediction and easing it
+                 would change when a cast commits; the ease goes on the drawn yaw at
+                 the one line in `scene.ts` that computes it, with the standing
+                 `interpolate.ts` has ("presentation, not state") and nothing but a
+                 transform reading it. A trapezoidal profile with a braking curve --
+                 never carry more speed than the remaining angle can absorb -- so
+                 the ease-out is automatic, the landing exact, and there is no
+                 easing curve to pick. The thing worth knowing: **the acceleration
+                 is not a tuning constant.** It is fixed by how far the drawn
+                 heading may trail the authoritative one, and the sim already
+                 answered that -- `COMMIT_ALIGN_TICKS`, where three ticks of a
+                 body's own turn "still counts as already facing it". Bounding the
+                 visual lag by the sim's own tolerance gives `a = 10R` at 60Hz, and
+                 makes the ramp `2 * COMMIT_ALIGN_TICKS / tickRate` = 100ms for
+                 every body however fast it turns; nobody typed 100ms. It also
+                 means a turn under twice the bound never reaches the full rate at
+                 all, so the *small* turns -- a 10-degree correction peaks at 45% of
+                 the rate, a 20-degree one at 64% -- are the ones it changes most,
+                 which is right, because they were the ones spending every one of
+                 their three ticks at a rate nothing about a body's mass justified.
+                 What it does not do is lower the peak on a large turn: a reversal
+                 still passes through the full rate, 139's gate and its 1.72x stand,
+                 and this bounds the jerk rather than the peak. One rule was learned
+                 by writing the wrong one first and having a test catch it: a jump is
+                 told from a fast turn by how far the *authoritative heading itself*
+                 moved, never by how far behind the drawn one is. The cap is only an
+                 estimate -- a monster's rate can be raised by a modifier and a
+                 remote player's is not replicated -- so a body turning faster than
+                 believed builds an error no believed turn could produce, and the
+                 error-based rule snapped mid-turn every single time it turned.
+                 Judged per *tick* rather than per frame, too, or at 240fps the two
+                 frames in three where the heading holds still make the third look
+                 like a teleport. `world/turn-limits.ts` is where a body's rate comes
+                 from: the wire for our own, the monster table for a monster, the
+                 fastest base in `CHARACTERS` for a remote player, and nothing at all
+                 for a projectile, whose facing is its path.
 src/render/iso3d/retro.ts, retro-pass.ts  the retro filter (specs 038/102/138):
                  the scene drawn into a low-resolution buffer, then painted over
                  the canvas through a shader that grades it, quantizes every

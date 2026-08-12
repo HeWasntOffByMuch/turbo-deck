@@ -11,6 +11,8 @@
  * should exist at all -- is one feature check, kept here beside its use.
  */
 
+import { isHandheldDevice } from './device.js';
+
 /** Safari's spelling, which iPadOS shipped for years before the standard one. */
 interface WebkitFullscreen {
   webkitRequestFullscreen?: () => Promise<void> | void;
@@ -58,15 +60,10 @@ export function canGoFullscreen(): boolean {
   return typeof element.requestFullscreen === 'function' || typeof element.webkitRequestFullscreen === 'function';
 }
 
-/**
- * Whether the pointer driving this page is a finger.
- *
- * The button is only worth its place in the bar on a device whose browser chrome
- * is eating a third of the screen. A desktop can press F11.
- */
-export function isCoarsePointer(): boolean {
-  return typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
-}
+// Whether the device is a phone is `device.ts`'s question now (spec 141). It
+// used to be `(pointer: coarse)` and it lived here, because this button was the
+// only thing that asked -- and then spec 140 put six decisions on it and a real
+// phone answered false to all of them. One question, one file, one test table.
 
 export interface FullscreenButtonOptions {
   /** Style hook, so the button matches whatever bar it is mounted in. */
@@ -83,7 +80,7 @@ export function createFullscreenButton(
   target: HTMLElement,
   options: FullscreenButtonOptions,
 ): HTMLButtonElement | null {
-  if (!canGoFullscreen() || !isCoarsePointer()) return null;
+  if (!canGoFullscreen() || !isHandheldDevice()) return null;
 
   const button = document.createElement('button');
   options.style(button);

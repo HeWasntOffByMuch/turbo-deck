@@ -24,7 +24,8 @@ import { mountWorld } from './world/view.js';
 import { mountMovement } from './movement.js';
 import { mountDebug } from './debug-view.js';
 import type { ViewHandle } from './view-handle.js';
-import { createFullscreenButton, isCoarsePointer } from './fullscreen.js';
+import { createFullscreenButton } from './fullscreen.js';
+import { isHandheldDevice } from './device.js';
 import { showsTabButtons, visibleTabs } from './shell-tabs.js';
 
 interface Tab {
@@ -66,7 +67,7 @@ function main(): void {
   ];
 
   // A phone gets the game and nothing else (spec 140).
-  const tabs = visibleTabs(all, isCoarsePointer());
+  const tabs = visibleTabs(all, isHandheldDevice());
 
   // The bar floats over the game window rather than pushing it down (spec 041);
   // the container beneath it is the full viewport, and the sandbox tabs scroll

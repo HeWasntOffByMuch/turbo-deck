@@ -8,6 +8,8 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { CHARACTERS, type Character } from '../../sim/characters.js';
+import { TURN_RATE_PER_AGILITY } from '../../sim/constants.js';
 import { turnToward } from './movement.js';
 
 const DEG = Math.PI / 180;
@@ -70,5 +72,29 @@ describe('turnToward', () => {
 
   it('stays put when it is already looking there', () => {
     expect(turnToward(1.25, 1.25, 180, RATE)).toBe(1.25);
+  });
+
+  /**
+   * The reversal spec 139 is about, measured through the rule that performs it
+   * rather than through the stat that parameterises it.
+   *
+   * Asserted at the rate a fresh character *effectively* turns at, derived here
+   * the same way `computeEffectiveStats` derives it, because the number in
+   * `CHARACTERS` is a base and reading it as the answer is the mistake this is
+   * guarding. The old 690 is asserted too: without it a change that put the base
+   * back would pass, since 20 ticks is still "arrives in the ticks the rate
+   * implies" for whatever rate is passed in.
+   */
+  it('turns a fresh character around in a third of a second (spec 139)', () => {
+    const effective = (CHARACTERS[0] as Character).turnRate + TURN_RATE_PER_AGILITY * 5;
+    expect(effective).toBe(540);
+
+    // 180 degrees at 540 deg/s is a third of a second: 20 ticks, and not 19.
+    expect(turned(0, 180 * DEG, effective, 19)).not.toBeCloseTo(180 * DEG, 6);
+    expect(turned(0, 180 * DEG, effective, 20)).toBeCloseTo(180 * DEG, 9);
+
+    // What it used to be: 690 deg/s came round in 16, which is 261ms.
+    expect(turned(0, 180 * DEG, 690, 16)).toBeCloseTo(180 * DEG, 9);
+    expect(turned(0, 180 * DEG, effective, 16)).toBeLessThan(180 * DEG);
   });
 });
