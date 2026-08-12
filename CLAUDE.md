@@ -567,6 +567,52 @@ src/render/iso3d/turn-swing.ts  what a pivot does to a body's extremities (spec
                  frame captioned "the turn is over". The window is fixed in world
                  space and the collider ring is drawn, both for the same reason --
                  auto-framing each cell would hide the only thing being shown.
+                 Since spec 140 it draws two rows, the rule and what is actually
+                 drawn, and writes turnaround-rate.png beside them -- angular rate
+                 against time, where the raw rule is a rectangle and the ease is a
+                 trapezoid. Everything else here draws a heading, and a heading was
+                 never what was wrong.
+src/render/iso3d/turn-ease.ts  the drawn turn's beginning and end (spec 140).
+                 `turnToward` is a step function on angular velocity: nothing, then
+                 the full rate for every tick, then nothing. Spec 139 gated the
+                 *peak* of the sweep that produces and this is the other half --
+                 the onset, which is what reads as a whip-crack. The sim's rule does
+                 not move, because it is also the client's prediction and easing it
+                 would change when a cast commits; the ease goes on the drawn yaw at
+                 the one line in `scene.ts` that computes it, with the standing
+                 `interpolate.ts` has ("presentation, not state") and nothing but a
+                 transform reading it. A trapezoidal profile with a braking curve --
+                 never carry more speed than the remaining angle can absorb -- so
+                 the ease-out is automatic, the landing exact, and there is no
+                 easing curve to pick. The thing worth knowing: **the acceleration
+                 is not a tuning constant.** It is fixed by how far the drawn
+                 heading may trail the authoritative one, and the sim already
+                 answered that -- `COMMIT_ALIGN_TICKS`, where three ticks of a
+                 body's own turn "still counts as already facing it". Bounding the
+                 visual lag by the sim's own tolerance gives `a = 10R` at 60Hz, and
+                 makes the ramp `2 * COMMIT_ALIGN_TICKS / tickRate` = 100ms for
+                 every body however fast it turns; nobody typed 100ms. It also
+                 means a turn under twice the bound never reaches the full rate at
+                 all, so the *small* turns -- a 10-degree correction peaks at 45% of
+                 the rate, a 20-degree one at 64% -- are the ones it changes most,
+                 which is right, because they were the ones spending every one of
+                 their three ticks at a rate nothing about a body's mass justified.
+                 What it does not do is lower the peak on a large turn: a reversal
+                 still passes through the full rate, 139's gate and its 1.72x stand,
+                 and this bounds the jerk rather than the peak. One rule was learned
+                 by writing the wrong one first and having a test catch it: a jump is
+                 told from a fast turn by how far the *authoritative heading itself*
+                 moved, never by how far behind the drawn one is. The cap is only an
+                 estimate -- a monster's rate can be raised by a modifier and a
+                 remote player's is not replicated -- so a body turning faster than
+                 believed builds an error no believed turn could produce, and the
+                 error-based rule snapped mid-turn every single time it turned.
+                 Judged per *tick* rather than per frame, too, or at 240fps the two
+                 frames in three where the heading holds still make the third look
+                 like a teleport. `world/turn-limits.ts` is where a body's rate comes
+                 from: the wire for our own, the monster table for a monster, the
+                 fastest base in `CHARACTERS` for a remote player, and nothing at all
+                 for a projectile, whose facing is its path.
 src/render/iso3d/retro.ts, retro-pass.ts  the retro filter (specs 038/102/138):
                  the scene drawn into a low-resolution buffer, then painted over
                  the canvas through a shader that grades it, quantizes every

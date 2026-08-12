@@ -22,6 +22,13 @@
  * origin is where the server put it. Nothing here is a model of the game's turn;
  * it is the game's turn, drawn.
  *
+ * Since spec 140 it draws two turns rather than one: the raw rule and the eased
+ * drawn yaw, at the same timestamps. The strip is what the ease *is* -- the same
+ * headings, reached on a different schedule -- and `turnaround-rate.png` beside it
+ * is the point of the spec, because the complaint was never about a heading. It is
+ * a plot of angular rate against time, where the raw rule is a rectangle and the
+ * eased one is a trapezoid, and the whip-crack is the rectangle's left edge.
+ *
  * Two rules make the pictures worth looking at:
  *
  *  - **The window is fixed in world space**, not framed to the subject. Framing
@@ -56,6 +63,9 @@ globals['createImageBitmap'] ??= async () => ({ width: 1, height: 1, close: () =
 const THREE = await import('three');
 const { UnitRig } = await import('../src/render/iso3d/unit-rig.js');
 const { turnToward } = await import('../src/server/sim/movement.js');
+const { easeTurn, restingAt, turnAcceleration, lagBound } = await import(
+  '../src/render/iso3d/turn-ease.js'
+);
 const { CHARACTERS } = await import('../src/sim/characters.js');
 const { TURN_RATE_PER_AGILITY } = await import('../src/sim/constants.js');
 const { REVERSAL_DEGREES, turnSeconds } = await import('../src/render/iso3d/turn-swing.js');
@@ -192,9 +202,40 @@ async function main(): Promise<void> {
         `drawn every ${Math.max(1, Math.round(reversalTicks / (CELLS - 1)))} ticks`,
     );
 
-    // Every tick of the real turn, stepped by the rule the sim steps it with.
-    // Collected first so the strip and the overlay draw the same headings.
-    const poses: { readonly tick: number; readonly facing: number; readonly tris: Tri[] }[] = [];
+    // Every tick of the real turn, stepped by the rule the sim steps it with,
+    // and the eased drawn yaw stepped beside it off exactly that heading -- which
+    // is what `scene.ts` hands the follower. Collected first so the strip, the
+    // overlay and the rate plot all draw the same turn.
+    const limits = { degreesPerSecond: turnRate, tickRate: TICK_RATE };
+    const series: { tick: number; raw: number; eased: number; rawRate: number; easedRate: number }[] = [];
+    {
+      let raw = 0;
+      let state = restingAt(0);
+      // Past the reversal, because the whole subject is how the drawn body
+      // *leaves* the turn: the raw rule is done at `reversalTicks` and the ease
+      // is still arriving for a ramp after it.
+      const rampTicks = Math.ceil(((turnRate * Math.PI) / 180 / turnAcceleration(limits)) * TICK_RATE);
+      for (let tick = 0; tick <= reversalTicks + rampTicks + 2; tick += 1) {
+        const before = raw;
+        if (tick > 0) raw = turnToward(raw, Math.PI, turnRate, TICK_RATE);
+        if (tick > 0) state = easeTurn(state, raw, limits, 1 / TICK_RATE);
+        series.push({
+          tick,
+          raw,
+          eased: state.facing,
+          rawRate: Math.abs(raw - before) * TICK_RATE,
+          easedRate: Math.abs(state.rate),
+        });
+      }
+    }
+
+    const poses: {
+      readonly tick: number;
+      readonly facing: number;
+      readonly eased: number;
+      readonly tris: Tri[];
+      readonly easedTris: Tri[];
+    }[] = [];
     let facing = 0;
     const wanted = Math.PI;
     for (let tick = 0; tick <= reversalTicks; tick += 1) {
@@ -210,19 +251,29 @@ async function main(): Promise<void> {
       ]);
       body.rotation.y = -facing;
       body.updateMatrixWorld(true);
-      poses.push({ tick, facing, tris: collectTriangles(body) });
+      const tris = collectTriangles(body);
+
+      // The same pose and the same instant, yawed by what would actually have
+      // been drawn.
+      const eased = series[tick]?.eased ?? facing;
+      body.rotation.y = -eased;
+      body.updateMatrixWorld(true);
+      poses.push({ tick, facing, eased, tris, easedTris: collectTriangles(body) });
     }
 
     // --- the strip ---------------------------------------------------------
     const cells = poses.slice(0, CELLS);
     const stripWidth = cells.length * CELL + (cells.length + 1) * GAP;
     const labelHeight = GLYPH_HEIGHT * LABEL_SCALE + GAP;
-    const stripHeight = CELL + labelHeight + 2 * GAP;
+    // Two rows at the same timestamps: the rule above, what is drawn below. The
+    // milliseconds are captioned once, between them, because they are shared --
+    // that is the whole comparison.
+    const stripHeight = 2 * CELL + labelHeight + 3 * GAP;
     const strip = sheet(stripWidth, stripHeight);
     cells.forEach((pose, index) => {
-      const cell = render(pose.tris, 1);
       const atX = GAP + index * (CELL + GAP);
-      blit(strip, stripWidth, cell, atX, GAP);
+      blit(strip, stripWidth, render(pose.tris, 1), atX, GAP);
+      blit(strip, stripWidth, render(pose.easedTris, 1), atX, CELL + labelHeight + 2 * GAP);
       const caption = String(Math.round((pose.tick / TICK_RATE) * 1000));
       label(
         strip,
@@ -234,10 +285,49 @@ async function main(): Promise<void> {
       console.log(
         `  cell ${index}: tick ${String(pose.tick).padStart(2)} ` +
           `(${((pose.tick / TICK_RATE) * 1000).toFixed(0).padStart(3)}ms), ` +
-          `${((pose.facing * 180) / Math.PI).toFixed(0).padStart(3)} degrees round`,
+          `${((pose.facing * 180) / Math.PI).toFixed(0).padStart(3)} degrees round, ` +
+          `drawn at ${((pose.eased * 180) / Math.PI).toFixed(0).padStart(3)}`,
       );
     });
     write('turnaround-strip.png', strip, stripWidth, stripHeight);
+
+    // --- the rate plot -----------------------------------------------------
+    //
+    // The picture of spec 140. Everything else here draws a heading, and a
+    // heading is not what was wrong.
+    const peakRaw = Math.max(...series.map((point) => point.rawRate));
+    const peakEased = Math.max(...series.map((point) => point.easedRate));
+    write(
+      'turnaround-rate.png',
+      ...plotRates(series, (turnRate * Math.PI) / 180),
+    );
+    console.log(
+      `  peak rate: ${((peakRaw * 180) / Math.PI).toFixed(0)} deg/s raw, ` +
+        `${((peakEased * 180) / Math.PI).toFixed(0)} eased ` +
+        `(cap ${turnRate}); trails by at most ` +
+        `${(
+          (Math.max(...series.map((p) => Math.abs(p.raw - p.eased))) * 180) /
+          Math.PI
+        ).toFixed(1)} deg, bound ${((lagBound(limits) * 180) / Math.PI).toFixed(1)}`,
+    );
+    for (const degrees of [10, 20, 45, 90, 180]) {
+      // What the ease does to a turn of each size, which is the claim that the
+      // small turns are the ones it changes most.
+      let raw = 0;
+      let state = restingAt(0);
+      let peak = 0;
+      const to = (degrees * Math.PI) / 180;
+      for (let tick = 0; tick < 400; tick += 1) {
+        raw = turnToward(raw, to, turnRate, TICK_RATE);
+        state = easeTurn(state, raw, limits, 1 / TICK_RATE);
+        peak = Math.max(peak, Math.abs(state.rate));
+      }
+      console.log(
+        `  a ${String(degrees).padStart(3)}-degree turn peaks at ` +
+          `${((peak * 180) / Math.PI).toFixed(0).padStart(3)} deg/s ` +
+          `(${((peak / ((turnRate * Math.PI) / 180)) * 100).toFixed(0)}% of the rate)`,
+      );
+    }
 
     // --- the envelope ------------------------------------------------------
     //
@@ -267,6 +357,81 @@ async function main(): Promise<void> {
  * geometry and no bone sits in it -- and because the whole point of the picture
  * is where the *surface* goes.
  */
+/** The raw rule's colour in the rate plot, and the eased one's. */
+const RAW_LINE: readonly [number, number, number] = [214, 96, 92];
+const EASED_LINE: readonly [number, number, number] = [122, 196, 148];
+const AXIS: readonly [number, number, number] = [96, 99, 110];
+
+const PLOT_HEIGHT = 260;
+const PLOT_PAD = 28;
+
+/**
+ * Angular rate against time, for both turns.
+ *
+ * Drawn as filled columns rather than as a line, because a line one pixel wide
+ * through a step function is mostly vertical and reads as two disconnected
+ * horizontals. Filled from the axis, the raw rule is a rectangle and the ease is
+ * a trapezoid, which is exactly the difference the spec is about.
+ *
+ * The eased curve is drawn second and over the top: where they coincide -- the
+ * flat middle of a long turn, which the ease deliberately does not touch -- the
+ * green is what shows, and the red visible on either side of it is the whole
+ * change.
+ */
+function plotRates(
+  series: readonly { rawRate: number; easedRate: number }[],
+  cap: number,
+): [Uint8ClampedArray, number, number] {
+  const width = series.length * 8 + 2 * PLOT_PAD;
+  const height = PLOT_HEIGHT;
+  const out = sheet(width, height);
+  const floor = height - PLOT_PAD;
+  const ceiling = PLOT_PAD;
+  const top = cap * 1.12;
+
+  const put = (x: number, y: number, colour: readonly [number, number, number]): void => {
+    if (x < 0 || y < 0 || x >= width || y >= height) return;
+    const at = (y * width + x) * 4;
+    out[at] = colour[0];
+    out[at + 1] = colour[1];
+    out[at + 2] = colour[2];
+    out[at + 3] = 255;
+  };
+
+  // The axis, and the cap the sim itself imposes -- the line the ease may
+  // approach and never cross.
+  for (let x = PLOT_PAD - 4; x < width - PLOT_PAD + 4; x += 1) {
+    put(x, floor, AXIS);
+    if (x % 6 < 3) put(x, Math.round(floor - (cap / top) * (floor - ceiling)), AXIS);
+  }
+
+  const column = (index: number, rate: number, colour: readonly [number, number, number]): void => {
+    const x0 = PLOT_PAD + index * 8;
+    const y = Math.round(floor - (rate / top) * (floor - ceiling));
+    for (let x = x0; x < x0 + 7; x += 1) {
+      for (let py = Math.min(y, floor - 1); py < floor; py += 1) put(x, py, colour);
+    }
+  };
+
+  series.forEach((point, index) => column(index, point.rawRate, RAW_LINE));
+  series.forEach((point, index) => column(index, point.easedRate, EASED_LINE));
+
+  // Milliseconds along the bottom, every 100, in the only glyphs there are.
+  for (let tick = 0; tick < series.length; tick += 6) {
+    const caption = String(Math.round((tick / TICK_RATE) * 1000));
+    label(
+      out,
+      width,
+      caption,
+      PLOT_PAD + tick * 8 - Math.round((textWidth(caption) * LABEL_SCALE) / 2),
+      floor + 6,
+    );
+  }
+  // And the cap, at the line it belongs to.
+  label(out, width, String(Math.round((cap * 180) / Math.PI)), 2, Math.round(floor - (cap / top) * (floor - ceiling)) - 4);
+  return [out, width, height];
+}
+
 function collectTriangles(root: InstanceType<typeof THREE.Object3D>): Tri[] {
   const tris: Tri[] = [];
   root.traverse((node) => {
