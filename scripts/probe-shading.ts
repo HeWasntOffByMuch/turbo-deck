@@ -41,6 +41,13 @@ interface EdgeProbeCase {
   readonly compositeLines: number;
 }
 
+interface ExemptProbeCase {
+  readonly exposedOff: number;
+  readonly occludedOff: number;
+  readonly wallOff: number;
+  readonly baselineOff: number;
+}
+
 interface PaletteProbeCase {
   readonly distinct: number;
   readonly paletteSize: number;
@@ -179,6 +186,7 @@ try {
   const edges = (await page.evaluate(() => window.edgeProbe)) as EdgeProbeCase | undefined;
   const palette = (await page.evaluate(() => window.paletteProbe)) as PaletteProbeCase | undefined;
   const ink = (await page.evaluate(() => window.inkProbe)) as InkProbeCase | undefined;
+  const exempt = (await page.evaluate(() => window.exemptProbe)) as ExemptProbeCase | undefined;
   const curvature = (await page.evaluate(() => window.curvatureProbe)) as CurvatureProbeCase | undefined;
   const shadows = (await page.evaluate(() => window.shadowProbe)) as ShadowProbeCase | undefined;
   const detail = (await page.evaluate(() => window.detailProbe)) as DetailProbeCase | undefined;
@@ -322,6 +330,42 @@ try {
         `        ${palette.distinct} of ${palette.paletteSize} colours used, ` +
         `${(palette.onPalette * 100).toFixed(2)}% on palette ` +
         `(even steps gave ${palette.distinctStepped})`,
+    );
+    for (const problem of problems) console.log(`        ${problem}`);
+  }
+
+  // The exemption, and whether the world still stands in front of it (spec 138).
+  if (exempt) {
+    const problems: string[] = [];
+    if (exempt.baselineOff > 0.001) {
+      problems.push(
+        `${(exempt.baselineOff * 100).toFixed(2)}% of the frame is off palette with nothing exempt -- ` +
+          'the baseline is dirty, so nothing below can be attributed to the mask',
+      );
+    }
+    if (exempt.exposedOff < 0.99) {
+      problems.push(
+        `only ${(exempt.exposedOff * 100).toFixed(1)}% of the exposed body escaped the palette -- ` +
+          'the mask is not covering what was named exempt',
+      );
+    }
+    // The one this case exists for.
+    if (exempt.occludedOff > 0.01) {
+      problems.push(
+        `${(exempt.occludedOff * 100).toFixed(1)}% of the wall in front of the body is off palette -- ` +
+          'the mask is not depth-testing, so a body marks pixels through whatever is in front of it',
+      );
+    }
+    if (exempt.wallOff > 0.01) {
+      problems.push(`${(exempt.wallOff * 100).toFixed(1)}% of the bare wall is off palette -- the mask is leaking`);
+    }
+    if (problems.length > 0) failed = true;
+    console.log(
+      `${problems.length === 0 ? 'ok  ' : 'FAIL'}  exemption (spec 138)\n` +
+        `        exposed body ${(exempt.exposedOff * 100).toFixed(1)}% off palette, ` +
+        `behind the wall ${(exempt.occludedOff * 100).toFixed(1)}%, ` +
+        `bare wall ${(exempt.wallOff * 100).toFixed(1)}%, ` +
+        `baseline ${(exempt.baselineOff * 100).toFixed(2)}%`,
     );
     for (const problem of problems) console.log(`        ${problem}`);
   }

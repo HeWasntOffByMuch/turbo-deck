@@ -19,7 +19,7 @@ import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium, type CDPSession, type Page } from 'playwright';
+import { chromium, type Browser, type CDPSession, type Page } from 'playwright';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = join(root, '.claude', 'screenshots');
@@ -159,11 +159,32 @@ async function bodiesOnScreen(page: Page): Promise<Bar[]> {
  * so.
  */
 async function readZoom(page: Page): Promise<number> {
-  return page.evaluate(() => {
-    const inputs = Array.from(document.querySelectorAll('input[type=range]'));
-    const zoom = inputs.find((input) => (input as HTMLInputElement).max === '1400');
-    return zoom ? Number((zoom as HTMLInputElement).value) : NaN;
-  });
+  // Off the published attribute rather than off the Zoom slider: a phone does
+  // not build the settings panel at all since spec 140, and the pinch has to be
+  // checkable on the device it is for. It is the same number the slider holds --
+  // `view.ts` writes it from `ViewControls.viewHalfWidth()`.
+  const text = await page.getAttribute('[data-camera-zoom]', 'data-camera-zoom');
+  return text === null ? Number.NaN : Number(text);
+}
+
+/**
+ * Wait for a window to be open (or shut), and report the list either way.
+ *
+ * Polled rather than slept against, because the *first* window opened in a
+ * session is slow: laying a screen out, baking its atlas and painting it lands
+ * in one frame, on top of a world that is already using most of the budget. A
+ * fixed 250ms saw the state from before the tap and reported the button broken
+ * -- which is the same class of mistake the tap budget was in spec 093.
+ */
+async function waitForWindow(page: Page, id: string, open: boolean, timeoutMs = 6000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let windows = '';
+  while (Date.now() < deadline) {
+    windows = (await page.getAttribute('[data-ui-windows]', 'data-ui-windows')) ?? '';
+    if (windows.split(',').includes(id) === open) return windows;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return windows;
 }
 
 async function waitForTick(page: Page, ticks: number, timeoutMs = 90_000): Promise<void> {
@@ -181,6 +202,137 @@ async function waitForTick(page: Page, ticks: number, timeoutMs = 90_000): Promi
 async function shoot(page: Page, name: string): Promise<void> {
   await page.screenshot({ path: join(outDir, `${name}.png`) });
   console.log(`  wrote ${name}.png`);
+}
+
+/**
+ * The frame a phone gets when it says it is a desktop (spec 141).
+ *
+ * This is the photograph spec 141 came from, as a check. Chrome's "Desktop
+ * site" reports `(pointer: coarse)` as false about a real touchscreen and
+ * inflates the layout viewport to ~980 CSS px, and every decision spec 140 made
+ * hung on that one query -- so a phone got six tab buttons, seven tuning
+ * popovers, the developer readout over the grass and no fullscreen button.
+ *
+ * **The device is faked at two APIs, and that is deliberate.** Chromium will not
+ * emulate it: `hasTouch`, `Emulation.setTouchEmulationEnabled` and
+ * `Emulation.setEmulatedMedia` were all measured, and every one of them forces
+ * `pointer: coarse` the moment touch exists -- which is the opposite of the
+ * device being reproduced. So an init script pins `navigator.maxTouchPoints` and
+ * the two pointer queries to what desktop-site mode answers, before the app
+ * boots.
+ *
+ * What that is worth is precise, and worth stating so nobody mistakes it for
+ * more. It does **not** check the rule -- `device.test.ts` has the desktop-site
+ * device as a row, and a pure table is the right home for it. It checks the
+ * *wiring*: `readDeviceFacts` reads exactly these two APIs, so if the layout is
+ * ever pointed back at a media query, or stops reading the touch count, this
+ * page comes up with the desktop frame and this probe says so.
+ *
+ * Its own context, and the earlier page is closed first: two worlds at once on a
+ * software rasteriser is a 60-second cold start rather than a 4-second one.
+ */
+async function probeDesktopSiteMode(
+  browser: Browser,
+  earlier: Page,
+  problems: string[],
+): Promise<void> {
+  await earlier.close();
+  const context = await browser.newContext({
+    // Wide like desktop-site mode, but still only ~450 CSS px on the short side,
+    // which is the fact the rule actually reads. No `hasTouch`, on purpose: this
+    // context is a *desktop* as far as Chromium is concerned, so both pointer
+    // queries answer "fine" for real rather than being talked out of it.
+    viewport: { width: 980, height: 453 },
+  });
+  // ...and exactly one thing is faked: the touch count. That is the single fact
+  // desktop-site mode does not lie about, and the one this frame now hangs on.
+  //
+  // Passed as source rather than as a function, because tsx compiles this file
+  // with esbuild's `keepNames` and every function it sends into the page comes
+  // out wrapped in a `__name` helper that does not exist there -- the same trap
+  // the ground-pixel search above documents.
+  await context.addInitScript({
+    content: "Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 5, configurable: true });",
+  });
+  try {
+    const page = await context.newPage();
+    page.on('pageerror', (error) => problems.push(String(error)));
+    await page.goto(`http://localhost:${PORT}/?seed=20260806`, { waitUntil: 'load' });
+    await page.waitForSelector('[data-world-ready="true"]', { timeout: 120_000 });
+    await page.waitForTimeout(1500);
+
+    // The fake has to have taken, or this probe is quietly checking the ordinary
+    // coarse-pointer path a second time and passing for the wrong reason.
+    const coarse = await page.evaluate(() => window.matchMedia('(pointer: coarse)').matches);
+    const anyCoarse = await page.evaluate(() => window.matchMedia('(any-pointer: coarse)').matches);
+    const touch = await page.evaluate(() => navigator.maxTouchPoints);
+    console.log(`  desktop-site mode: coarse=${coarse}, any-coarse=${anyCoarse}, maxTouchPoints=${touch}`);
+    if (coarse || anyCoarse) {
+      problems.push('the desktop-site probe still reports a coarse pointer, so it tests nothing');
+    }
+    if (touch === 0) problems.push('the desktop-site probe has no touch points, so it is a desktop');
+    // Belt and braces on the one fake: if `addInitScript` silently stopped
+    // applying, `maxTouchPoints` would be 0 and the line above would catch it --
+    // but a partial application is worth naming too.
+    if (touch !== 5) problems.push(`expected the faked touch count of 5, page reports ${touch}`);
+
+    const frame = await readMobileFrame(page);
+    console.log(
+      `  desktop-site frame: ${frame.tabButtons} tab button(s), ${frame.cogs} popover(s), ` +
+        `${frame.weaponButtons} weapon button(s), ${frame.windowButtons} window button(s), ` +
+        `readout ${frame.readout}, ${frame.fullscreenButtons} fullscreen button(s)`,
+    );
+    if (frame.tabButtons > 0) problems.push(`desktop-site mode still offers ${frame.tabButtons} tab button(s)`);
+    if (frame.cogs > 0) problems.push(`desktop-site mode still builds ${frame.cogs} tuning popover(s)`);
+    if (frame.weaponButtons > 0) problems.push('desktop-site mode still draws the weapon switch');
+    if (frame.windowButtons !== 3) problems.push(`expected three window buttons, found ${frame.windowButtons}`);
+    if (frame.readout === 'drawn') problems.push('desktop-site mode draws the developer readout');
+    if (frame.readout === 'absent') problems.push('the developer readout is gone entirely, and it is the harness clock');
+    if (frame.fullscreenButtons !== 1) {
+      problems.push(`expected one fullscreen button, found ${frame.fullscreenButtons}`);
+    }
+
+    await page.screenshot({ path: join(outDir, 'touch-desktop-site.png') });
+    console.log('  wrote touch-desktop-site.png');
+  } finally {
+    await context.close();
+  }
+}
+
+/** What the phone frame is made of, counted off the live page. */
+async function readMobileFrame(page: Page): Promise<{
+  tabButtons: number;
+  cogs: number;
+  weaponButtons: number;
+  windowButtons: number;
+  fullscreenButtons: number;
+  readout: string;
+}> {
+  return {
+    tabButtons: await page.$$eval('[data-tab-bar] button', (nodes) =>
+      nodes.filter((node) => !/Fullscreen|Leave fullscreen/.test(node.getAttribute('aria-label') ?? '')).length,
+    ),
+    cogs: await page.$$eval('button', (nodes) =>
+      nodes.filter((node) =>
+        /View settings|Day and night|Player lights|Retro filter|Hike look|Weather|Effects/.test(
+          node.getAttribute('aria-label') ?? node.getAttribute('title') ?? '',
+        ),
+      ).length,
+    ),
+    weaponButtons: (await page.$$('[data-weapon]')).length,
+    windowButtons: (await page.$$('[data-window]')).length,
+    fullscreenButtons: await page.$$eval('button', (nodes) =>
+      nodes.filter((node) => /Fullscreen|Leave fullscreen/.test(node.getAttribute('aria-label') ?? '')).length,
+    ),
+    readout: await page.evaluate(() => {
+      const panels = Array.from(document.querySelectorAll('div')).filter(
+        (node) => /^tick \d+\s+delta/.test(node.textContent ?? '') && node.children.length === 0,
+      );
+      const readout = panels[panels.length - 1];
+      if (!readout) return 'absent';
+      return readout.getBoundingClientRect().height > 0 ? 'drawn' : 'hidden';
+    }),
+  };
 }
 
 async function main(): Promise<void> {
@@ -224,6 +376,116 @@ async function main(): Promise<void> {
     const tapHint = /tap ground to move[^\n]*/.exec(hint)?.[0] ?? '';
     console.log(`  hint line: ${tapHint || '(still the mouse one)'}`);
     if (!tapHint) problems.push('the HUD is still telling a phone to right-click');
+
+    // --- a phone is offered the game and nothing else (spec 140) -----------
+    //
+    // The fullscreen button is not a tab and is meant to be there: it is the one
+    // control left in the bar, because a third of this frame is browser chrome.
+    const workbenches = await page.$$eval('[data-tab-bar] button', (nodes) =>
+      nodes
+        .filter((node) => !/Fullscreen|Leave fullscreen/.test(node.getAttribute('aria-label') ?? ''))
+        .map((node) => node.textContent ?? ''),
+    );
+    console.log(`  tab buttons in the bar: ${workbenches.length === 0 ? 'none' : workbenches.join(', ')}`);
+    if (workbenches.length > 0) problems.push(`a phone is still offered ${workbenches.join(', ')}`);
+
+    // The seven tuning popovers are not built at all, so the corner is world.
+    const cogs = await page.$$eval('button', (nodes) =>
+      nodes.filter((node) =>
+        /View settings|Day and night|Player lights|Retro filter|Hike look|Weather|Effects/.test(
+          node.getAttribute('aria-label') ?? node.getAttribute('title') ?? '',
+        ),
+      ).length,
+    );
+    console.log(`  tuning popovers on screen: ${cogs}`);
+    if (cogs > 0) problems.push(`${cogs} tuning popover(s) are still built on a phone`);
+
+    // The weapon switch is gone from a phone too (spec 141) -- the bag and the
+    // sheet both equip, and they are one tap away.
+    const weaponButtons = (await page.$$('[data-weapon]')).length;
+    console.log(`  weapon-switch buttons: ${weaponButtons}`);
+    if (weaponButtons > 0) problems.push(`the weapon switch still draws ${weaponButtons} button(s)`);
+
+    // ...and the developer readout is written but not drawn, which is what the
+    // tick-reading above depends on. Asserted on the painted box, not on text.
+    const readoutDrawn = await page.evaluate(() => {
+      // The *innermost* match. Every ancestor of the readout contains its text
+      // too -- the HUD root's `textContent` starts with "tick 3 delta 0" -- so a
+      // `find` over every div reports the HUD's own box and calls it drawn.
+      const panels = Array.from(document.querySelectorAll('div')).filter(
+        (node) => /^tick \d+\s+delta/.test(node.textContent ?? '') && node.children.length === 0,
+      );
+      const readout = panels[panels.length - 1];
+      if (!readout) return 'absent';
+      return readout.getBoundingClientRect().height > 0 ? 'drawn' : 'hidden';
+    });
+    console.log(`  developer readout: ${readoutDrawn}`);
+    if (readoutDrawn === 'drawn') problems.push('the developer readout is drawn on a phone');
+    if (readoutDrawn === 'absent') {
+      problems.push('the developer readout is gone entirely, and it is this harness’s clock');
+    }
+
+    // --- the three window buttons open their windows ------------------------
+    //
+    // The reason they exist: I, C and Escape are the only other way in, and a
+    // phone has none of the three.
+    for (const [id, name] of [
+      ['inventory', 'Bag'],
+      ['character', 'Gear'],
+      ['options', 'Options'],
+    ] as const) {
+      const button = await page.$(`[data-window="${id}"]`);
+      if (!button) {
+        problems.push(`no ${name} button on the HUD`);
+        continue;
+      }
+      const box = await button.boundingBox();
+      if (!box) {
+        problems.push(`the ${name} button is not laid out`);
+        continue;
+      }
+      // A real finger on the button, not `.click()`: the whole question is
+      // whether a touch reaches it rather than being eaten by the world.
+      const centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+      await tap(cdp, centre);
+      const opened = await waitForWindow(page, id, true);
+      console.log(`  tapped ${name}: windows now "${opened || 'none'}"`);
+      if (!opened.split(',').includes(id)) problems.push(`tapping ${name} did not open ${id}`);
+      // ...and it closes again, so the button is a toggle rather than a one-way
+      // door on a device with no Escape key.
+      await tap(cdp, centre);
+      const closed = await waitForWindow(page, id, false);
+      if (closed.split(',').includes(id)) problems.push(`tapping ${name} again did not close ${id}`);
+    }
+    await shoot(page, 'touch-windows');
+
+    // --- a tap inside an open window is not also a move order ---------------
+    const bagButton = await page.$('[data-window="inventory"]');
+    const bagBox = await bagButton?.boundingBox();
+    if (bagBox) {
+      await tap(cdp, { x: bagBox.x + bagBox.width / 2, y: bagBox.y + bagBox.height / 2 });
+      await waitForWindow(page, 'inventory', true);
+      const cells = (await page.getAttribute('[data-ui-cells]', 'data-ui-cells')) ?? '';
+      const first = /(-?\d+),(-?\d+),(\d+),(\d+)/.exec(cells.split(';')[0] ?? '');
+      const scale = Number((await page.getAttribute('[data-ui-scale]', 'data-ui-scale')) ?? '1');
+      if (first) {
+        // UI pixels back to CSS pixels: the layer scales by `scale` over dpr.
+        const dpr = await page.evaluate(() => window.devicePixelRatio);
+        const cx = ((Number(first[1]) + Number(first[3]) / 2) * scale) / dpr;
+        const cy = ((Number(first[2]) + Number(first[4]) / 2) * scale) / dpr;
+        const before = await readTarget(page);
+        await tap(cdp, { x: cx, y: cy });
+        await page.waitForTimeout(300);
+        const after = await readTarget(page);
+        console.log(`  tap inside the open bag at ${Math.round(cx)},${Math.round(cy)}: "${before}" -> "${after}"`);
+        if (after !== before) {
+          problems.push(`a tap inside the bag reached the world ("${before}" -> "${after}")`);
+        }
+      }
+      // Leave it closed, so the rest of the run sees the world.
+      await tap(cdp, { x: bagBox.x + bagBox.width / 2, y: bagBox.y + bagBox.height / 2 });
+      await waitForWindow(page, 'inventory', false);
+    }
 
     // --- the fullscreen button exists on a coarse pointer -------------------
     const fullscreen = await page.$$eval('button', (nodes) =>
@@ -387,24 +649,24 @@ async function main(): Promise<void> {
       problems.push(`a pinch acquired "${afterPinch}", so a finger was read as a tap`);
     }
 
+    // Read before the probe below closes this page: it is the diagnostic for the
+    // *first* context, and reporting it after the page has gone is a crash that
+    // hides whatever actually failed.
+    const tally = JSON.stringify(
+      await page.evaluate(() => (window as unknown as { __touchTally: Record<string, number> }).__touchTally),
+    );
+    const trace = await page.evaluate(() => (window as unknown as { __touchTrace: string[] }).__touchTrace);
+
+    await probeDesktopSiteMode(browser, page, problems);
+
     if (problems.length > 0) {
       // The raw event log, printed only when something failed. It is what told
       // "the tap never arrived" apart from "the tap arrived and did nothing" --
       // and, from the gap between a down and its up, that the tap budget was
       // measuring the renderer's load rather than the finger.
       console.error('\npointer events the canvas saw:');
-      console.error(
-        `  ${JSON.stringify(
-          await page.evaluate(
-            () => (window as unknown as { __touchTally: Record<string, number> }).__touchTally,
-          ),
-        )}`,
-      );
-      for (const line of await page.evaluate(
-        () => (window as unknown as { __touchTrace: string[] }).__touchTrace,
-      )) {
-        console.error(`  ${line}`);
-      }
+      console.error(`  ${tally}`);
+      for (const line of trace) console.error(`  ${line}`);
       console.error('\nproblems:');
       for (const problem of problems) console.error(`  ${problem}`);
       process.exitCode = 1;

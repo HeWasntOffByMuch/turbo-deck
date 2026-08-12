@@ -20,6 +20,23 @@
  * bloodstain is a mark on a surface, not a form with a silhouette, and the
  * outline pass would draw a hard line around every one of them.
  *
+ * ## Why it is lit (spec 139)
+ *
+ * The material is a patched `MeshLambertMaterial` and not the raw
+ * `ShaderMaterial` it began as, because that one ended `gl_FragColor =
+ * vec4(vTint, 1.0)` -- a constant. The ground beneath it takes the sun, the
+ * ambient, the day/night ramp and the shadow map, so a stain in the shadow of a
+ * cliff was drawn at full daylight on top of ground that was not, and it read as
+ * a sticker laid over the world rather than as a mark on it. Being lit by the
+ * same material three.js lights the terrain with is the only way that agreement
+ * is *structural* rather than two shaders that were tuned to match once.
+ *
+ * The patch follows `patchTerrainCurvature`'s shape exactly: coverage and the
+ * ordered fade become discards spliced in ahead of the lighting -- so a pixel
+ * that is not part of the splat costs nothing to light -- and the per-vertex
+ * tint replaces `diffuseColor` before it, so the sun multiplies the blood rather
+ * than being pasted over it.
+ *
  * ## One atlas, generated
  *
  * Splats are baked into a single atlas texture at startup rather than one
@@ -29,7 +46,7 @@
  */
 
 import * as THREE from 'three';
-import { decalGrid, decalGridIndices, decalGridUvs, type ChunkKey, type DecalField } from './decals.js';
+import { decalGrid, decalGridIndices, decalGridNormals, decalGridUvs, type ChunkKey, type DecalField } from './decals.js';
 import { FLUIDS, generateSplat, type FluidKind } from './splat.js';
 import { VFX_PALETTE, unpackInto } from './palette.js';
 
@@ -43,6 +60,7 @@ const CELL = 32;
 const LIFT = 1.2;
 
 const scratchPositions = new Float32Array(GRID * GRID * 3);
+const scratchNormals = new Float32Array(GRID * GRID * 3);
 const scratchUvs = new Float32Array(GRID * GRID * 2);
 
 /**
@@ -99,39 +117,54 @@ const FLUID_COLOR: Record<FluidKind, number> = {
   slime: VFX_PALETTE.slimeGreen,
 };
 
-const VERTEX_SHADER = /* glsl */ `
+/**
+ * The decal's own attributes, carried through three's Lambert shader.
+ *
+ * `decalUv` rather than `uv`: three declares `uv` itself under `USE_UV`, which
+ * is on only when the material has a map, so declaring one here is a duplicate
+ * definition on one code path and a missing attribute on the other.
+ */
+const VERTEX_PARS = /* glsl */ `
+attribute vec2 decalUv;
 attribute vec3 tint;
 attribute float fade;
-varying vec2 vUv;
-varying vec3 vTint;
-varying float vFade;
-void main() {
-  vUv = uv;
-  vTint = tint;
-  vFade = fade;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
+varying vec2 vDecalUv;
+varying vec3 vDecalTint;
+varying float vDecalFade;
 `;
 
-const FRAGMENT_SHADER = /* glsl */ `
-precision mediump float;
+const VERTEX_WRITE = /* glsl */ `
+vDecalUv = decalUv;
+vDecalTint = tint;
+vDecalFade = fade;
+`;
+
+const FRAGMENT_PARS = /* glsl */ `
 uniform sampler2D uAtlas;
-varying vec2 vUv;
-varying vec3 vTint;
-varying float vFade;
-void main() {
-  float coverage = texture2D(uAtlas, vUv).a;
-  // A decal is a silhouette, so its edge is a cut and not a ramp -- the same
-  // decision splat.ts makes when it thresholds the mask. (No backticks in here:
-  // this is a template literal, and one closes it.) The fade is ordered against
-  // the screen so a dying stain thins out rather than going translucent, which
-  // is what the frame's quantizer would band anyway.
-  if (coverage < 0.5) discard;
-  vec2 cell = mod(floor(gl_FragCoord.xy), 4.0);
-  float threshold = (cell.x * 4.0 + cell.y) / 16.0;
-  if (vFade <= threshold) discard;
-  gl_FragColor = vec4(vTint, 1.0);
-}
+varying vec2 vDecalUv;
+varying vec3 vDecalTint;
+varying float vDecalFade;
+`;
+
+/**
+ * Both cuts, spliced in before anything is lit.
+ *
+ * A decal is a silhouette, so its edge is a cut and not a ramp -- the same
+ * decision `splat.ts` makes when it thresholds the mask. The fade is ordered
+ * against the screen so a dying stain thins out rather than going translucent,
+ * which is what the frame's quantizer would band anyway.
+ */
+const FRAGMENT_CUT = /* glsl */ `
+float decalCoverage = texture2D(uAtlas, vDecalUv).a;
+if (decalCoverage < 0.5) discard;
+vec2 decalCell = mod(floor(gl_FragCoord.xy), 4.0);
+float decalThreshold = (decalCell.x * 4.0 + decalCell.y) / 16.0;
+if (vDecalFade <= decalThreshold) discard;
+`;
+
+/** The blood itself, as *material* -- so the sun and the shadows multiply it. */
+const FRAGMENT_TINT = /* glsl */ `
+diffuseColor.rgb = vDecalTint;
 `;
 
 /** One chunk's worth of decals, as a single mesh. */
@@ -143,7 +176,7 @@ interface Bucket {
 export class DecalView {
   readonly root = new THREE.Object3D();
   private readonly buckets = new Map<string, Bucket>();
-  private readonly material: THREE.ShaderMaterial;
+  private readonly material: THREE.MeshLambertMaterial;
   private readonly atlas: THREE.DataTexture;
   private readonly rgb = new Float32Array(3);
 
@@ -152,17 +185,31 @@ export class DecalView {
     private readonly ground: (x: number, z: number) => number,
   ) {
     this.atlas = buildAtlas();
-    this.material = new THREE.ShaderMaterial({
-      vertexShader: VERTEX_SHADER,
-      fragmentShader: FRAGMENT_SHADER,
-      uniforms: { uAtlas: { value: this.atlas } },
+    const atlas = { value: this.atlas };
+    this.material = new THREE.MeshLambertMaterial({
+      // White, because the colour arrives per vertex and replaces this outright.
+      color: 0xffffff,
       transparent: true,
       // Both jobs at once, as with the particle batches: the right blend state,
       // and the condition that keeps these out of the outline buffers.
       depthWrite: false,
       depthTest: true,
+      // One-sided would be enough for the ground, and is not worth the one bug
+      // it would cost the day a decal lands on something overhanging.
       side: THREE.DoubleSide,
     });
+    this.material.onBeforeCompile = (shader): void => {
+      shader.uniforms['uAtlas'] = atlas;
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', `#include <common>\n${VERTEX_PARS}`)
+        .replace('#include <begin_vertex>', `#include <begin_vertex>\n${VERTEX_WRITE}`);
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', `#include <common>\n${FRAGMENT_PARS}`)
+        // Before the lighting rather than after it: a pixel outside the splat is
+        // gone before a shadow lookup is ever done for it.
+        .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>\n${FRAGMENT_CUT}`)
+        .replace('#include <color_fragment>', `#include <color_fragment>\n${FRAGMENT_TINT}`);
+    };
     this.root.name = 'vfx-decals';
     this.root.frustumCulled = false;
   }
@@ -186,6 +233,7 @@ export class DecalView {
 
     const vertexCount = decals.length * GRID * GRID;
     const positions = new Float32Array(vertexCount * 3);
+    const normals = new Float32Array(vertexCount * 3);
     const uvs = new Float32Array(vertexCount * 2);
     const tints = new Float32Array(vertexCount * 3);
     const fades = new Float32Array(vertexCount);
@@ -197,6 +245,10 @@ export class DecalView {
       const base = index * GRID * GRID;
       decalGrid(decal, GRID, this.ground, LIFT, scratchPositions);
       positions.set(scratchPositions, base * 3);
+      // From the patch's own vertices, so a stain on a hillside is lit as the
+      // hillside is (spec 139).
+      decalGridNormals(scratchPositions, GRID, scratchNormals);
+      normals.set(scratchNormals, base * 3);
 
       // Which atlas cell, from the decal's own seed -- so its look follows from
       // the particle that made it, like everything else here.
@@ -221,13 +273,18 @@ export class DecalView {
 
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    geometry.setAttribute('decalUv', new THREE.BufferAttribute(uvs, 2));
     geometry.setAttribute('tint', new THREE.BufferAttribute(tints, 3));
     geometry.setAttribute('fade', new THREE.BufferAttribute(fades, 1));
     geometry.setIndex(indices);
     geometry.computeBoundingSphere();
 
     const mesh = new THREE.Mesh(geometry, this.material);
+    // Takes the sun's shadow and never casts one: a stain is a mark on a
+    // surface, and a mark with a shadow of its own is a decal floating over it.
+    mesh.receiveShadow = true;
+    mesh.castShadow = false;
     mesh.renderOrder = 5;
     this.root.add(mesh);
     this.buckets.set(name, { mesh, geometry });

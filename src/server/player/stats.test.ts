@@ -105,15 +105,20 @@ describe('effective stats', () => {
 
   /**
    * The player's movement is `CHARACTERS[0]` and nothing else (spec 081): the
-   * cow's 155/540 is what a character walks and pivots at before a single point
-   * of dexterity or an item is counted. Asserted against the table rather than
-   * against literals, so the day someone reorders the archetypes this fails here
-   * instead of silently handing every player a different body's speed.
+   * cow's speed is what a character walks at before a single point of dexterity
+   * or an item is counted. Asserted against the table rather than against
+   * literals, so the day someone reorders the archetypes this fails here instead
+   * of silently handing every player a different body's speed.
+   *
+   * The turn rate is asserted the other way round -- the *derived* 540 rather
+   * than the base it comes from -- because the base is not what anything reads
+   * and asserting it is how this went wrong (spec 139). The table said 540, the
+   * test agreed with the table, and the sim turned players at 690 for eight
+   * specs with nothing anywhere disagreeing.
    */
   it('derives a fresh character from the cow, plus dexterity (spec 081)', () => {
     const cow = CHARACTERS[0] as Character;
     expect(cow.moveSpeed).toBe(155);
-    expect(cow.turnRate).toBe(540);
     expect(cow.moveSpeed).toBeGreaterThanOrEqual(MOVE_SPEED_HARD_MIN);
     expect(cow.moveSpeed).toBeLessThanOrEqual(MOVE_SPEED_HARD_MAX);
 
@@ -122,6 +127,24 @@ describe('effective stats', () => {
     const fresh = computeEffectiveStats(player({ equipment: STARTER_EQUIPMENT }));
     expect(fresh.moveSpeed).toBe(cow.moveSpeed);
     expect(fresh.turnRate).toBe(cow.turnRate + TURN_RATE_PER_AGILITY * 5);
+    // The number a fresh character actually pivots at, and the reversal it buys.
+    expect(fresh.turnRate).toBe(540);
+    expect(180 / fresh.turnRate).toBeCloseTo(1 / 3, 6);
+  });
+
+  /**
+   * Dexterity is how an agile character is expressed, so spec 139 moved where
+   * the ladder starts and deliberately left its slope alone. A change that
+   * flattened the per-point term would pass every other assertion here.
+   */
+  it('still lets dexterity buy a faster pivot (spec 139)', () => {
+    expect(TURN_RATE_PER_AGILITY).toBe(30);
+    const fresh = computeEffectiveStats(player());
+    const agile = computeEffectiveStats(
+      player({ baseStats: { strength: 5, dexterity: 25, intelligence: 5, vitality: 5 } }),
+    );
+    expect(agile.turnRate).toBe(fresh.turnRate + TURN_RATE_PER_AGILITY * 20);
+    expect(agile.turnRate).toBeGreaterThan(690);
   });
 
   it('keeps armour under the sim-wide damage-reduction ceiling', () => {

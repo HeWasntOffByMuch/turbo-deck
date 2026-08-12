@@ -105,6 +105,15 @@ export interface ViewControls {
    * finds the slider where they left the view.
    */
   orbitBy(degrees: number): void;
+  /**
+   * Where the view is looking from, in degrees on the slider's 0..360 track.
+   *
+   * The same number `orbitBy` writes, read back. It exists because on a phone
+   * the panel is not built at all (spec 140), so the slider a probe used to read
+   * the angle off is not in the document -- and a two-finger swipe has to be
+   * checkable on exactly the device it is for.
+   */
+  orbitDegrees(): number;
   /** Directional-light position/direction, world units. */
   lightOffset(): Vec3;
   /** Whether the unwalkable-terrain footprint overlay is shown. */
@@ -484,6 +493,9 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     'How many pixels wide one dither cell is — bigger makes the pattern itself chunky.');
   const pixelSize = makeSlider('Pixel size', 1, 4, 1, RETRO_DEFAULTS.pixelSize, '×',
     'Divides the internal render resolution: bigger pixels, fewer of them.');
+  const excludePlayer = makeCheckbox('Spare the player', RETRO_DEFAULTS.excludePlayer,
+    'Let players keep their own colours: same pixels, same grade, same distance, ' +
+    'but not counted onto the palette.');
 
   // The colour grade over the finished frame (spec 047). Independent of the
   // retro filter above: a grade applies whether or not the image is dithered.
@@ -675,7 +687,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   // only one of them is conditional.
   const filter = createSettingsMenu({ glyph: '▦', label: 'Retro filter', group: menus, fontSize: 16 });
   fill(filter.panel, 'Restore the retro filter and the colour grade to their defaults.', [
-    section('Retro'), retroOn, levels, dither, weave, weaveScale, pixelSize,
+    section('Retro'), retroOn, levels, dither, weave, weaveScale, pixelSize, excludePlayer,
     ...(lighting ? [section('Colour'), gradeChoice, gradeStrength] : []),
   ]);
 
@@ -717,6 +729,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     },
     pinchZoom: (ratio: number) => zoom.setValue(pinchViewHalfWidth(zoom.value(), ratio)),
     orbitBy: (degrees: number) => camAz.setValue(wrapTurn(camAz.value() + degrees)),
+    orbitDegrees: () => camAz.value(),
     cameraOffset: () =>
       orbitToOffset({ azimuth: camAz.value() * DEG, elevation: camEl.value() * DEG, distance: camOrbit.distance }),
     viewHalfWidth: () => zoom.value(),
@@ -732,6 +745,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
       matrixSize: weave.value() as BayerSize,
       ditherScale: weaveScale.value(),
       pixelSize: pixelSize.value(),
+      excludePlayer: excludePlayer.checked(),
     }),
     hike: () => {
       const size = virtualSizeById(virtualSize.value());

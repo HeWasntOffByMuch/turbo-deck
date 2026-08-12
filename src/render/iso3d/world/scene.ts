@@ -33,6 +33,8 @@ import { castsShadows, makeUnwalkableField, makeWall } from '../meshes.js';
 import { ARENA_OBSTACLES } from '../../../sim/constants.js';
 import { vegetationColliders } from '../../../terrain/vegetation.js';
 import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-mesh.js';
+import { TurnEase } from '../turn-ease.js';
+import { turnLimitsFor } from './turn-limits.js';
 import { buildPropField, FLAT_SHADING, type PropFieldHandle, type PropShading } from '../props.js';
 import { type HikeSettings } from '../hike.js';
 import { CURVATURE_UNIFORMS } from '../terrain-curvature.js';
@@ -371,7 +373,23 @@ export class WorldScene {
   private readonly vfx: VfxLayer;
 
   private readonly motion = new EntityMotion();
+  /**
+   * The drawn yaw, eased (spec 142). A second presentation-only track beside
+   * `motion`: the sim owns the heading, this owns how a body gets to it.
+   */
+  private readonly turnEase = new TurnEase();
   private readonly bodies = new Map<number, Body>();
+  /**
+   * The groups `RetroPass` leaves out of the quantize (spec 138).
+   *
+   * Every player, not just the local one: a second person on screen is the same
+   * kind of thing to look at, and one of the two coming out banded while the
+   * other did not would read as a bug about *whose* character it is. Rebuilt
+   * per frame rather than maintained, because a respawn is a new entity and
+   * therefore a new group, and a stale reference here would exempt a body that
+   * has left the scene.
+   */
+  private readonly exemptBodies: THREE.Object3D[] = [];
   private readonly telegraphs = new Map<number, THREE.Mesh>();
   /** Units the cursor may pick this frame, rebuilt as bodies are placed. */
   private readonly hoverTargets: HoverTarget[] = [];
@@ -981,6 +999,13 @@ export class WorldScene {
       this.retro.set(this.controls.retro());
       this.retro.setGrade(this.controls.grade());
       this.retro.setPalette(hike.palette);
+      // Who the filter lets keep their colours (spec 138). The pass has no idea
+      // what a player is and should not; this is the only place that does.
+      this.exemptBodies.length = 0;
+      for (const body of this.bodies.values()) {
+        if (body.kind === 'player') this.exemptBodies.push(body.group);
+      }
+      this.retro.setExempt(this.exemptBodies);
       // The distance treatment reads the same depth buffer the outlines do, so
       // it needs the buffers whether or not the outlines are on (spec 103). The
       // fog colour is the live sky rather than a setting: the day/night cycle
@@ -1114,7 +1139,11 @@ export class WorldScene {
     for (const entity of view.entities) {
       this.motion.observe(entity.id, entity.x, entity.y, entity.z, entity.facing, view.tick);
     }
-    this.motion.retain(new Set(view.entities.map((entity) => entity.id)));
+    const live = new Set(view.entities.map((entity) => entity.id));
+    this.motion.retain(live);
+    // The drawn yaw keeps per-body state for the same reason the drawn position
+    // does, and is dropped on the same pass (spec 142).
+    this.turnEase.retain(live);
   }
 
   private syncBodies(view: ClientView, frame: FrameInfo, dt: number): void {
@@ -1135,7 +1164,15 @@ export class WorldScene {
       const pose = this.motion.sample(entity.id, frame.alpha);
       const x = isSelf && view.self ? view.self.x : (pose?.x ?? entity.x);
       const y = isSelf && view.self ? view.self.y : (pose?.y ?? entity.y);
-      const facing = isSelf ? frame.selfFacing : (pose?.facing ?? entity.facing);
+      // What the sim says this body's heading is -- the prediction for our own
+      // body, the smoothed replica for everything else.
+      const heading = isSelf ? frame.selfFacing : (pose?.facing ?? entity.facing);
+      // What to actually yaw it by (spec 142). `turnToward` steps angular
+      // velocity from nothing to the full rate in one tick and back in one tick;
+      // this gives that a beginning and an end. Presentation only: `heading` is
+      // what every decision is still made against, and nothing reads this back.
+      const limits = turnLimitsFor(entity, isSelf, view.stats?.turnRate ?? null, SERVER_TICK_RATE);
+      const facing = limits === null ? heading : this.turnEase.step(entity.id, heading, limits, dt);
 
       const ground =
         entity.kind === EntityKind.Projectile

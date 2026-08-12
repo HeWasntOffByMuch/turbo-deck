@@ -16,7 +16,8 @@ combined and the counts made tunable (spec 126) — the last at its review gate.
 | art direction: fire and smoke as solids (spec 123) | done |
 | art direction: auras as drawn sigils (spec 124) | done |
 | art direction: impacts as crystals (spec 125) | done |
-| the shockwave, and tunable counts (spec 126) | **at the review gate** |
+| the shockwave, and tunable counts (spec 126) | done |
+| blood: lit stains, and streaks that bend (spec 139) | **at the review gate** |
 
 This is the living document for the VFX arc. It is updated as decisions land, and
 it is where the damage-type colour/shape language is written down so future
@@ -1311,6 +1312,106 @@ read as a flash at a position rather than as a shape, and a *legible ring* at
 the destination is most of what was wrong with the marker it replaced. Worth
 knowing before anyone reaches for this scale on an effect that is meant to be
 looked at.
+
+---
+
+## 5l. Blood takes the light, and a streak bends (spec 139)
+
+Two complaints from watching a fight, and `death_blood` showed both worst
+because it is the loud one. **The stains ignore every shadow they lie in**, and
+**the blood in the air is straight pipes**.
+
+### The stain was never in the lit pipeline at all
+
+Not a bias problem, not a z-fight: `DecalView`'s fragment shader ended
+`gl_FragColor = vec4(vTint, 1.0)`. A constant. The ground beneath it is a
+`MeshLambertMaterial` that takes the sun, the ambient, the day/night ramp and the
+shadow map, so a stain in the shade of a cliff was drawn at full daylight over
+ground that was not -- and the deeper the shadow, the more it read as a sticker
+laid over the world.
+
+It is a patched `MeshLambertMaterial` now, spliced the way
+`patchTerrainCurvature` splices: the atlas coverage and the ordered fade become
+discards *before* the lighting, and the per-vertex tint replaces `diffuseColor`,
+so the sun multiplies the blood rather than being pasted over it. Being lit by
+the same material three.js lights the terrain with is what makes the agreement
+structural rather than two shaders that were tuned to match once.
+`transparent: true` and `depthWrite: false` are untouched, which is what keeps
+decals out of `HikeBuffers` and therefore un-inked.
+
+One thing that had to come with it: **normals**, from the decal's own grid by
+central difference. A lit surface with no normals is a black one, and lighting
+the whole patch by the `Decal`'s single stored normal -- the one the drop landed
+on -- would light fifty world units of bending terrain as though it were flat,
+which is the same "sticker" read one step further in.
+
+### The ribbon mode had never drawn anything
+
+`RENDER.ribbon` compiles, `familyOf` gives it a batch of its own, and the sim has
+been claiming a trail track per particle and pushing distance-gated samples into
+it every tick since spec 118. Then `modeCode` fell through its `default` and
+returned `0`, the billboard. **This is exactly the stub spec 123 found in
+`RenderMode.mesh`**, with the same symptom: the value is accepted, stored,
+compiled and ignored one layer below, and the whole round trip is green. Two of
+these in one system is a pattern rather than an accident -- a `default:` arm in a
+mode switch is where a feature goes to be quietly not implemented.
+
+A blood drop is now a chain of quads through its own recorded flight, tapering
+from the head to the tail. The arithmetic is `vfx/ribbon.ts`, pure and tested in
+Node; the shader gets one new `iMode` branch and **no new attribute** -- a segment
+re-uses the row the batch already uploads, with `iVelocity` carrying the segment
+vector and `iSize`/`iStretch` the widths at its two ends.
+
+Why that beats a longer or thinner `stretched` quad: a quad is straight by
+construction. `death_blood/spray` was `4 * (1 + 340 * 0.05)` = 72 world units of
+rigid bar -- longer than a player is tall, hard-ended at both ends, and at full
+length on the tick it was born. Over the fifth of a second it is airborne, a drop
+falls about twenty units clear of the line it left on. That curve *is* the shape.
+
+### Three things only the browser could say
+
+`npx tsx scripts/preview-blood.ts` -> `.claude/screenshots/blood.png`. A lit
+scene, a wall throwing a real shadow across it, and stains **twinned** across the
+shadow's edge: same seed, same size, one in and one out, so the comparison is one
+splat against itself rather than two splats against each other.
+
+1. **The shadow is real and survives the frame's quantizer.** A stain in shade
+   measures 0.69 of its twin in sun, on identical pixel counts (544/544,
+   704/704, 1268/1268 -- the equal counts are the check that the two really are
+   the same splat). Reverting `decal-view.ts` to the flat material makes every
+   pair 1.00 and the script fails.
+2. **The first taper was sub-pixel, and beaded.** Tapering to `0.1` of a
+   four-unit head is 0.4 world units, against about 0.84 world units per virtual
+   pixel at the Play tab's default zoom. The rasteriser caught it in some places
+   and missed it in others: the streaks came out as dashed lines -- which would
+   also have crawled frame to frame. There is a floor of one world unit on the
+   tail now, and the authored tapers are 0.35-0.4. This is invisible to every
+   headless test, and it is the whole reason the picture is taken.
+3. **The head link is a zero-length quad** on the tick the distance gate fires,
+   because the newest sample *is* the particle then. Dropped -- it saves an
+   instance per drop per frame and the streak still reaches the drop.
+
+### Two things fixed on the way past
+
+- `window.vfxProbe.shot` took `(id, ticks)` and forwarded them to a method taking
+  `(id, ticks, halfHeight)`. So `preview-bursts.ts` measured a frame for every
+  burst and every tile was photographed in the default box anyway.
+- `fieldGroups()` split `EMITTER_FIELDS` at literal row numbers that had drifted
+  as the table grew: "Motion" began at `emission.delayTicks` and ended in the
+  middle of the accelerations. The coverage test could not see it, because four
+  wrong-but-contiguous cuts partition the table perfectly. It splits at the name
+  each section starts with now.
+
+### Still open
+
+- Blood on *units* is still the hybrid recommendation of section 5d and still
+  unbuilt: it needs a change to the unit shader.
+- Every other `stretched` emitter is untouched. A spark is a chip of light going
+  in a straight line over a short life, and it reads correctly.
+- The trail is bounded by `RIBBON_SAMPLES` (12) rather than by an authored
+  length, so a fast drop's streak is as long as twelve ticks of its own flight --
+  about 68 units at the top speed `death_blood` throws. If that ever wants
+  bounding per emitter, the cap belongs beside `ribbonSpacing`.
 
 ---
 
