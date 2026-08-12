@@ -354,6 +354,68 @@ export function decalGrid(
   }
 }
 
+/**
+ * Normals for a grid {@link decalGrid} has filled in (spec 139).
+ *
+ * A decal is lit, since spec 139, by the same sun and the same shadow map as the
+ * ground -- and a lit surface with no normals is a black one. They are taken
+ * from the grid's own vertices by central difference rather than from the
+ * `Decal`'s single stored normal, because the stored one is where the drop
+ * *landed* and the grid spans up to fifty world units of terrain that bends
+ * underneath it. Lighting the patch by one flat normal is exactly the "a sticker
+ * over the world" read this was meant to remove, one step further in.
+ *
+ * Written into `out` as `resolution * resolution` unit triples, in the same
+ * order `decalGrid` writes positions.
+ */
+export function decalGridNormals(positions: Float32Array, resolution: number, out: Float32Array): void {
+  const steps = Math.max(2, Math.floor(resolution));
+  for (let row = 0; row < steps; row++) {
+    for (let column = 0; column < steps; column++) {
+      // One-sided at the edges, central in the middle. The edge rows of a decal
+      // are its faintest pixels, so the cheaper difference there costs nothing
+      // anybody can see.
+      const left = Math.max(0, column - 1);
+      const right = Math.min(steps - 1, column + 1);
+      const down = Math.max(0, row - 1);
+      const up = Math.min(steps - 1, row + 1);
+
+      const a = (row * steps + left) * 3;
+      const b = (row * steps + right) * 3;
+      const c = (down * steps + column) * 3;
+      const d = (up * steps + column) * 3;
+
+      const ux = (positions[b] ?? 0) - (positions[a] ?? 0);
+      const uy = (positions[b + 1] ?? 0) - (positions[a + 1] ?? 0);
+      const uz = (positions[b + 2] ?? 0) - (positions[a + 2] ?? 0);
+      const vx = (positions[d] ?? 0) - (positions[c] ?? 0);
+      const vy = (positions[d + 1] ?? 0) - (positions[c + 1] ?? 0);
+      const vz = (positions[d + 2] ?? 0) - (positions[c + 2] ?? 0);
+
+      // v x u rather than u x v: the grid's rows run along +Z and its columns
+      // along +X, so the other order points the normal into the ground.
+      let nx = vy * uz - vz * uy;
+      let ny = vz * ux - vx * uz;
+      let nz = vx * uy - vy * ux;
+      const length = Math.sqrt(nx * nx + ny * ny + nz * nz);
+      if (length < 1e-6) {
+        nx = 0;
+        ny = 1;
+        nz = 0;
+      } else {
+        nx /= length;
+        ny /= length;
+        nz /= length;
+      }
+
+      const at = (row * steps + column) * 3;
+      out[at] = nx;
+      out[at + 1] = ny;
+      out[at + 2] = nz;
+    }
+  }
+}
+
 /** UVs for {@link decalGrid}, which are a fixed function of the resolution. */
 export function decalGridUvs(resolution: number, out: Float32Array): void {
   const steps = Math.max(2, Math.floor(resolution));
