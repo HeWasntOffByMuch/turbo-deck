@@ -12,6 +12,7 @@ import { ChunkDeniedReason, ServerMessageType } from '../net/protocol.js';
 import type { MapChunkMessage, MapInfoMessage } from '../net/map-messages.js';
 import type { MapChunk } from '../../terrain/map.js';
 import { MapChunkCache } from './map-cache.js';
+import { CHUNK_RETRY_TICKS } from '../config.js';
 
 const CELL = 22;
 const CELLS = 28;
@@ -174,5 +175,45 @@ describe('a map that changed underneath', () => {
     expect(cache.accept(chunkMessage('aaaa0000', 1, 1))).toBe(true);
     expect(cache.size).toBe(1);
     expect(cache.revision).toBe(1);
+  });
+});
+
+describe('a request that goes unanswered (spec 147)', () => {
+  it('is asked again once past the retry window, and not before', () => {
+    const cache = new MapChunkCache(info());
+    const here = at(2, 2);
+    // A budget past the whole radius, so everything in reach is asked for and
+    // there is nothing left that was simply never requested.
+    const first = cache.wanted(here.x, here.z, 1, 99, 0);
+    expect(first.length).toBeGreaterThan(0);
+    for (const req of first) cache.markRequested(req, 0);
+
+    // Inside the window they are still believed to be in flight.
+    expect(cache.wanted(here.x, here.z, 1, 99, CHUNK_RETRY_TICKS - 1)).toEqual([]);
+    // Past it, the answers never came -- so ask again. Before spec 147 this was
+    // `[]` forever, and the ground stayed missing for the whole session.
+    expect(cache.wanted(here.x, here.z, 1, 99, CHUNK_RETRY_TICKS)).toEqual(first);
+  });
+
+  it('stops asking once the chunk actually lands', () => {
+    const cache = new MapChunkCache(info());
+    const here = at(2, 2);
+    const req = cache.wanted(here.x, here.z, 1, 1, 0)[0];
+    if (!req) throw new Error('expected a request');
+    cache.markRequested(req, 0);
+    cache.accept(chunkMessage(info().mapId, req.cx, req.cz));
+    const later = cache.wanted(here.x, here.z, 1, 9, CHUNK_RETRY_TICKS * 10);
+    expect(later.some((r) => r.cx === req.cx && r.cz === req.cz)).toBe(false);
+  });
+
+  it('never re-asks for a chunk the server said does not exist', () => {
+    const cache = new MapChunkCache(info());
+    const here = at(2, 2);
+    const req = cache.wanted(here.x, here.z, 1, 1, 0)[0];
+    if (!req) throw new Error('expected a request');
+    cache.markRequested(req, 0);
+    cache.deny(req.layer, req.cx, req.cz, ChunkDeniedReason.Unknown);
+    const later = cache.wanted(here.x, here.z, 1, 9, CHUNK_RETRY_TICKS * 10);
+    expect(later.some((r) => r.cx === req.cx && r.cz === req.cz)).toBe(false);
   });
 });

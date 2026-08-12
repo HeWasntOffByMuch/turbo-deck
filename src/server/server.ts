@@ -19,7 +19,7 @@
  */
 
 import { DEFAULT_WORLD } from '../sim/collision.js';
-import type { WorldColliders } from '../sim/types.js';
+import type { Vec2, WorldColliders } from '../sim/types.js';
 import { AuditLog } from './admin/audit.js';
 import {
   AdminRouter,
@@ -39,6 +39,8 @@ import {
   LIVE_CONFIG_KEYS,
   LiveConfigStore,
   MAX_BUFFERED_INPUTS,
+  RESUME_GRACE_TICKS,
+  CONNECTION_TIMEOUT_TICKS,
   PROTOCOL_VERSION,
   RESOURCE_EPSILON,
   RESPAWN_DELAY_TICKS,
@@ -99,10 +101,15 @@ import {
 } from './sim/world.js';
 import { NullTransport, type Channel, type ServerTransport } from './net/transport.js';
 import { ChunkManager } from './world/chunk-manager.js';
+import { PositionHistory } from './world/position-history.js';
+import { spawnAround } from './world/spawn-around.js';
+import { circleBlocked } from '../sim/collision.js';
+import { WALKABLE_MIN_HEIGHT } from '../sim/constants.js';
 import type { BuiltMapWorld, BuiltWorld } from './world/build.js';
 import type { SpawnPoint } from './world/spawners.js';
 import type { MapIndex } from './world/map-index.js';
 import { ChunkBudget, decideChunkRequest } from './world/map-request.js';
+import { MAX_FRAME_BYTES, MAX_NAME_LENGTH, RateLimiter } from './net/rate-limit.js';
 import { FLAT_TERRAIN, type TerrainSampler } from './world/terrain.js';
 import { ZoneManager } from './world/zone-manager.js';
 import { buyPrice } from './data/vendors.js';
@@ -159,6 +166,23 @@ interface Connection {
   /** Tick this player is put back on their feet; 0 when they are alive. */
   respawnAtTick: number;
   /**
+   * The smallest this connection's input queue has been since the last pong
+   * (spec 148). Reset when reported; see the field on `PongMessage`.
+   */
+  queueFloor: number;
+  /** The token this session may be resumed with (spec 150). */
+  sessionToken: string;
+  /** The last tick anything was heard from this connection (spec 150). */
+  lastSeenTick: number;
+  /**
+   * Set before the socket is closed on purpose (spec 150).
+   *
+   * A flag rather than only an argument to `disconnect`, because closing the
+   * channel fires its own close handler -- which reaches `disconnect` first and
+   * would linger a body the server had just decided to remove.
+   */
+  leaving: boolean;
+  /**
    * The cooldown map last sent to this client. Compared by *identity*: entities
    * are immutable and the map is only rebuilt when it actually changes, so this
    * is a pointer compare per connection per tick rather than a walk.
@@ -176,6 +200,8 @@ interface Connection {
   sentResourceTick: number;
   /** Token bucket on map chunk sends (spec 072). */
   readonly chunkBudget: ChunkBudget;
+  /** How often this connection may say a thing (spec 151). */
+  readonly limiter: RateLimiter;
   /** Whether this client asked for the spawner readout (spec 076). */
   watchingSpawners: boolean;
   /**
@@ -232,6 +258,16 @@ interface PendingCancel {
 
 export class GameServer implements AdminHost {
   private readonly zones: ZoneManager;
+  /** Where bodies were, for lag compensation (spec 149). Bounded by the cap. */
+  private readonly history = new PositionHistory();
+  /**
+   * Sessions whose socket has gone but whose body is still standing (spec 150).
+   * Keyed by playerId, because that is what a returning `Hello` names.
+   */
+  private readonly lingering = new Map<
+    string,
+    { readonly token: string; readonly entityId: number; readonly expiresAtTick: number }
+  >();
   private readonly terrain: TerrainSampler;
   private readonly colliders: WorldColliders;
   /** Announced in the welcome so a client can build the same ground (spec 063). */
@@ -302,6 +338,20 @@ export class GameServer implements AdminHost {
     return this.config;
   }
 
+  /**
+   * How many of a player's inputs are sitting unconsumed (spec 148).
+   *
+   * The number the pong carries, readable from this end too -- a rate-matching
+   * test wants the truth every tick rather than the 2Hz sample the client sees,
+   * and the admin console has an obvious use for it.
+   */
+  inputQueueDepth(playerId: string): number {
+    for (const connection of this.connections) {
+      if (connection.playerId === playerId) return connection.inputs.length;
+    }
+    return 0;
+  }
+
   get playerManager(): PlayerManager {
     return this.players;
   }
@@ -346,7 +396,12 @@ export class GameServer implements AdminHost {
         SERVER_TICK_RATE,
         this.state.tick,
       ),
+      limiter: new RateLimiter(this.state.tick),
       watchingSpawners: false,
+      queueFloor: Number.POSITIVE_INFINITY,
+      sessionToken: '',
+      lastSeenTick: this.state.tick,
+      leaving: false,
     };
     this.connections.add(connection);
     channel.onMessage((bytes) => {
@@ -361,6 +416,18 @@ export class GameServer implements AdminHost {
   /** Exposed for tests: feed a frame in without a socket. */
   async receive(connection: Connection, frame: Uint8Array): Promise<void> {
     if (frame.length === 0) return;
+    // Bounded before it is decoded (spec 151): the size is checked rather than
+    // discovered. The largest legitimate frame is under a hundred bytes.
+    if (frame.length > MAX_FRAME_BYTES) return;
+    // Anything at all counts as a heartbeat (spec 150). The client pings twice
+    // a second on its own, so silence really is silence.
+    connection.lastSeenTick = this.state.tick;
+
+    // Silently, because answering a flood is participating in it (spec 151).
+    if (!connection.limiter.allow(frame[0] ?? 0, this.state.tick)) {
+      if (connection.limiter.flooding) this.drop(connection, 'flooding');
+      return;
+    }
     const type = frame[0] ?? 0;
 
     if (isAdminRequest(type)) {
@@ -400,8 +467,12 @@ export class GameServer implements AdminHost {
           connection,
           message.protocolVersion,
           message.playerId,
-          message.displayName,
+          // Bounded because it is now broadcast to every client in interest
+          // (spec 145): an unbounded name went from a string nobody read to a
+          // way to make the server send everybody a megabyte.
+          message.displayName.slice(0, MAX_NAME_LENGTH),
           message.assetManifest,
+          message.resumeToken,
         );
         break;
 
@@ -411,6 +482,9 @@ export class GameServer implements AdminHost {
         // the client's own, and only ever moving forward is the contract.
         if (message.seq <= connection.lastSeq) return;
         connection.lastSeq = message.seq;
+        // How far behind the server's clock this client is drawing (spec 149).
+        // Clamped inside `noteLag`, because it is a number a client chose.
+        this.history.noteLag(connection.entityId, message.renderLagTicks);
         if (connection.inputs.length >= MAX_BUFFERED_INPUTS) connection.inputs.shift();
         connection.inputs.push({
           entityId: connection.entityId,
@@ -432,12 +506,23 @@ export class GameServer implements AdminHost {
         break;
       }
 
+      case ClientMessageType.Goodbye:
+        // Meant it. No lingering body (spec 150).
+        connection.leaving = true;
+        await this.disconnect(connection, { intentional: true });
+        break;
+
       case ClientMessageType.Ping:
         this.send(connection, {
           type: ServerMessageType.Pong,
           nonce: message.nonce,
           serverTick: this.state.tick,
+          // The floor since the last pong, not the depth right now (spec 148).
+          // Only this end knows it, and the instant would not be the quantity
+          // that matters even if the client could infer it.
+          inputQueueFloor: Math.min(connection.queueFloor, connection.inputs.length),
         });
+        connection.queueFloor = Number.POSITIVE_INFINITY;
         break;
 
       case ClientMessageType.Equip: {
@@ -645,6 +730,7 @@ export class GameServer implements AdminHost {
     playerId: string,
     displayName: string,
     assetManifest = '',
+    resumeToken = '',
   ): Promise<void> {
     if (protocolVersion !== PROTOCOL_VERSION) {
       this.send(connection, {
@@ -669,6 +755,19 @@ export class GameServer implements AdminHost {
       this.drop(connection, 'asset manifest mismatch');
       return;
     }
+    // One Hello per connection (spec 145). A second one used to log in again on
+    // the same socket, spawn a second body, and overwrite `connection.entityId`
+    // with it -- so the first entity belonged to nobody, was reaped by nothing,
+    // and stood in the world until the server restarted. A client that says
+    // hello twice is broken or lying, and either way the answer is the same.
+    if (connection.playerId !== null) {
+      this.send(connection, {
+        type: ServerMessageType.Error,
+        code: ErrorCode.RejectedAction,
+        message: 'already connected',
+      });
+      return;
+    }
     if (playerId.length === 0 || playerId.length > 64) {
       this.send(connection, {
         type: ServerMessageType.Error,
@@ -689,12 +788,38 @@ export class GameServer implements AdminHost {
       return;
     }
 
+    // Coming back to the body that is still standing there (spec 150).
+    //
+    // A token that does not match is simply a new login rather than an error:
+    // one that has aged out is the ordinary case, not an attack, and refusing
+    // the connection would turn a slow reconnect into a lockout.
+    const waiting = this.lingering.get(playerId);
+    if (waiting && resumeToken !== '' && resumeToken === waiting.token) {
+      const body = this.state.entities.get(waiting.entityId);
+      if (body) {
+        this.lingering.delete(playerId);
+        connection.playerId = playerId;
+        connection.entityId = waiting.entityId;
+        connection.sessionToken = this.mintSessionToken();
+        this.players.attachEntity(playerId, waiting.entityId);
+        this.chunks.place(waiting.entityId, body.position.x, body.position.y, true);
+        this.welcome(connection, playerId, waiting.entityId);
+        return;
+      }
+      this.lingering.delete(playerId);
+    }
+
     const session = await this.players.login(playerId, displayName);
+    // Not on top of whoever is already standing there (spec 145). A saved
+    // position that is clear comes back unchanged, so this only ever moves
+    // somebody who would have logged in inside another body.
+    const at = this.clearSpawnNear(session.record.position);
+    const position: Vec3 = { x: at.x, y: at.y, z: this.terrain.heightAt(at.x, at.y) };
     const spawned = spawnEntity(this.state, {
       kind: EntityKindValue.Player,
       typeId: 'player',
       ownerPlayerId: playerId,
-      position: session.record.position,
+      position,
       facing: session.record.facing,
       stats: session.stats,
       radius: PLAYER_BODY_RADIUS,
@@ -707,20 +832,10 @@ export class GameServer implements AdminHost {
 
     connection.playerId = playerId;
     connection.entityId = spawned.entity.id;
-    this.chunks.place(spawned.entity.id, session.record.position.x, session.record.position.y, true);
+    connection.sessionToken = this.mintSessionToken();
+    this.chunks.place(spawned.entity.id, position.x, position.y, true);
 
-    this.send(connection, {
-      type: ServerMessageType.Welcome,
-      protocolVersion: PROTOCOL_VERSION,
-      playerId,
-      entityId: spawned.entity.id,
-      tick: this.state.tick,
-      tickRate: SERVER_TICK_RATE,
-      chunkSize: CHUNK_SIZE,
-      interestRadius: INTEREST_CHUNK_RADIUS,
-      correctionThreshold: this.config.get().correctionThreshold,
-      worldSeed: this.worldSeed,
-    });
+    this.welcome(connection, playerId, spawned.entity.id);
     this.sendMapInfo(connection);
     this.sendStats(connection);
     // Unprompted, because nothing asked: a client cannot draw a bag it was
@@ -807,7 +922,22 @@ export class GameServer implements AdminHost {
     });
   }
 
-  private async disconnect(connection: Connection): Promise<void> {
+  /**
+   * A connection has gone (spec 150).
+   *
+   * Unless it said goodbye, the *body stays* for `RESUME_GRACE_TICKS` so the
+   * session can be resumed onto it -- which is what stops pulling the plug
+   * being an escape from a fight, and what a reconnecting client comes back to.
+   *
+   * The trade does not get that grace and neither does the vendor. "Your body
+   * is still standing there" and "your half of a trade is still live" are very
+   * different promises, and the second one strands somebody who is still at
+   * their keyboard on somebody who may never come back.
+   */
+  private async disconnect(
+    connection: Connection,
+    options: { readonly intentional?: boolean } = {},
+  ): Promise<void> {
     if (!this.connections.has(connection)) return;
     // Before the connection leaves the set, so the *other* side is still told
     // (spec 132). A trade that outlived a disconnect would be a trade nobody
@@ -816,18 +946,71 @@ export class GameServer implements AdminHost {
       const ended = this.trades.cancelFor(connection.playerId, 'they disconnected');
       if (ended) this.endTrade(ended);
     }
+    connection.openVendorId = '';
     this.connections.delete(connection);
-    if (connection.entityId >= 0) {
-      this.chunks.remove(connection.entityId);
-      this.state = removeEntity(this.state, connection.entityId);
+
+    const resumable =
+      options.intentional !== true &&
+      !connection.leaving &&
+      connection.playerId !== null &&
+      connection.entityId >= 0 &&
+      connection.sessionToken !== '';
+    if (resumable && connection.playerId !== null) {
+      this.lingering.set(connection.playerId, {
+        token: connection.sessionToken,
+        entityId: connection.entityId,
+        expiresAtTick: this.state.tick + RESUME_GRACE_TICKS,
+      });
+      return;
     }
-    if (connection.playerId !== null) await this.players.logout(connection.playerId);
+
+    await this.reap(connection.playerId, connection.entityId);
+  }
+
+  /** Take the body out of the world and save the record. The end of a session. */
+  private async reap(playerId: string | null, entityId: number): Promise<void> {
+    if (entityId >= 0) {
+      this.chunks.remove(entityId);
+      this.history.forget(entityId);
+      this.state = removeEntity(this.state, entityId);
+    }
+    if (playerId !== null) {
+      this.lingering.delete(playerId);
+      await this.players.logout(playerId);
+    }
+  }
+
+  /**
+   * Reap the bodies whose grace has run out, and cut off connections that have
+   * gone quiet (spec 150).
+   *
+   * The timeout is the half a `close` event cannot cover: a socket killed by a
+   * dead router or a suspended phone never delivers one, and before this its
+   * entity stayed in the world forever.
+   */
+  private sweepConnections(): void {
+    for (const [playerId, session] of [...this.lingering]) {
+      if (this.state.tick < session.expiresAtTick) continue;
+      void this.reap(playerId, session.entityId);
+    }
+    for (const connection of [...this.connections]) {
+      if (connection.playerId === null) continue;
+      if (this.state.tick - connection.lastSeenTick < CONNECTION_TIMEOUT_TICKS) continue;
+      connection.channel.close();
+      void this.disconnect(connection);
+    }
   }
 
   private drop(connection: Connection, reason: string): void {
     this.send(connection, { type: ServerMessageType.Disconnect, reason });
+    // Before the close, which fires a handler that reaches `disconnect` first.
+    connection.leaving = true;
     connection.channel.close();
-    void this.disconnect(connection);
+    // Intentional, so no body is left standing (spec 150). A kick, a refused
+    // protocol version and a banned login are all decisions rather than
+    // accidents, and a kicked player who stayed in the world for thirty
+    // seconds would be a kick that did not work.
+    void this.disconnect(connection, { intentional: true });
   }
 
   private send(connection: Connection, message: ServerMessage): void {
@@ -1128,6 +1311,10 @@ export class GameServer implements AdminHost {
   tick(): void {
     const inputs: ServerInput[] = [];
     for (const connection of this.connections) {
+      // Sampled every tick at the same point -- before this tick's input is
+      // taken -- so the floor the pong reports is measured against a consistent
+      // instant rather than against wherever a 2Hz sample happened to land.
+      connection.queueFloor = Math.min(connection.queueFloor, connection.inputs.length);
       const next = connection.inputs.shift();
       // The stream has reached `applied`, so anything asked for at or before it
       // is due now. A request stamped ahead of the queue waits for its input --
@@ -1229,8 +1416,15 @@ export class GameServer implements AdminHost {
       activeChunks: new Set(this.chunks.activeChunks()),
       chunkSize: CHUNK_SIZE,
       spawnPoints: this.spawnPoints,
+      // Where bodies were, so a blow lands on what its attacker saw (spec 149).
+      rewind: this.history,
     });
     this.state = result.state;
+    // Recorded after the step, so the newest frame is the world this tick ended
+    // on -- the same instant the next tick's landings will count back from.
+    this.history.record(this.state.tick, this.state.entities.values());
+    // Bodies whose grace has run out, and sockets that have gone quiet.
+    this.sweepConnections();
 
     // Occupancy first, then activation: a chunk becomes active because a player
     // is already recorded in it, never in the same breath as the move.
@@ -1282,6 +1476,67 @@ export class GameServer implements AdminHost {
   }
 
   /**
+   * The one number in this server that must not come from the seeded `Rng`
+   * (spec 150).
+   *
+   * That generator is reproducible on purpose -- it is what makes a replay a
+   * replay -- which is exactly what a resume token must not be: anybody who
+   * knew the seed and the tick could mint somebody else's. `crypto` rather than
+   * `node:crypto`, because this file is bundled into the browser tab for
+   * single-player and may not import Node.
+   */
+  private mintSessionToken(): string {
+    return crypto.randomUUID();
+  }
+
+  private welcome(connection: Connection, playerId: string, entityId: number): void {
+    this.send(connection, {
+      type: ServerMessageType.Welcome,
+      protocolVersion: PROTOCOL_VERSION,
+      playerId,
+      entityId,
+      tick: this.state.tick,
+      tickRate: SERVER_TICK_RATE,
+      chunkSize: CHUNK_SIZE,
+      interestRadius: INTEREST_CHUNK_RADIUS,
+      correctionThreshold: this.config.get().correctionThreshold,
+      worldSeed: this.worldSeed,
+      sessionToken: connection.sessionToken,
+    });
+  }
+
+  /**
+   * What a body is called, for the `Identity` field (spec 145). Null for
+   * anything a content table already answers for -- every monster, prop and
+   * projectile -- so only players cost the bytes.
+   */
+  private nameOf(entity: ServerEntity): string | null {
+    if (entity.kind !== EntityKindValue.Player) return null;
+    if (entity.ownerPlayerId === null) return null;
+    return this.players.get(entity.ownerPlayerId)?.record.displayName ?? null;
+  }
+
+  /**
+   * `base`, or the nearest ring point clear of every other player (spec 145).
+   *
+   * `except` is the entity being respawned, which is standing where it fell and
+   * must not be asked to dodge itself.
+   */
+  private clearSpawnNear(base: Vec3, except = -1): Vec2 {
+    const occupied: Vec2[] = [];
+    for (const entity of this.state.entities.values()) {
+      if (entity.kind !== EntityKindValue.Player) continue;
+      if (entity.id === except) continue;
+      if (entity.health <= 0) continue;
+      occupied.push({ x: entity.position.x, y: entity.position.y });
+    }
+    return spawnAround(base, occupied, PLAYER_BODY_RADIUS * 2.5, (x, y) => {
+      if (this.terrain.heightAt(x, y) <= WALKABLE_MIN_HEIGHT) return false;
+      return !circleBlocked({ x, y }, PLAYER_BODY_RADIUS, this.colliders);
+    });
+  }
+
+  /**
    * What every spawner is doing, for a client drawing the overlay (spec 076).
    *
    * Built from the map's spawn points rather than from the state map, so a
@@ -1290,7 +1545,15 @@ export class GameServer implements AdminHost {
    */
   private sendSpawnerStates(connection: Connection): void {
     const tick = this.state.tick;
-    const spawners: SpawnerStatus[] = this.spawnPoints.map((point) => {
+    // Bounded by interest (spec 076's out-of-scope, closed in spec 145). The
+    // whole map's markers went to every watcher, which was fine for one client
+    // on a map with tens of them and is the wrong shape for either number
+    // growing. Same interest window the entity deltas use, one method away.
+    const near = new Set(this.chunks.interestChunks(connection.entityId));
+    const visible = this.spawnPoints.filter((point) =>
+      near.has(this.chunks.keyAt(point.x, point.y)),
+    );
+    const spawners: SpawnerStatus[] = visible.map((point) => {
       const live = this.state.spawners.get(point.id);
       const occupied = live?.entityId != null && this.state.entities.has(live.entityId);
       return {
@@ -1337,7 +1600,7 @@ export class GameServer implements AdminHost {
 
       const session = this.players.get(connection.playerId);
       if (!session) continue;
-      const at = DEFAULT_SPAWN;
+      const at = this.clearSpawnNear(DEFAULT_SPAWN, entity.id);
       const position: Vec3 = { x: at.x, y: at.y, z: this.terrain.heightAt(at.x, at.y) };
       this.state = replaceEntity(this.state, {
         ...entity,
@@ -1532,6 +1795,7 @@ export class GameServer implements AdminHost {
         this.state.tick,
         session?.lastAppliedInputSeq ?? 0,
         visible,
+        (entity) => this.nameOf(entity),
       );
       // Silence is meaningful: a client whose world did not change gets nothing.
       if (DeltaTracker.isEmpty(delta)) continue;

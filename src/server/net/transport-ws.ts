@@ -44,6 +44,11 @@ class SocketChannel implements Channel {
 }
 
 export interface WebSocketTransportOptions {
+  /**
+   * Told about a socket-level failure -- a port in use, most often. Without
+   * one the error is logged; either way it does not take the process with it.
+   */
+  readonly onError?: (error: Error) => void;
   readonly port?: number;
   /** Attach to an existing HTTP server so the admin page shares an origin. */
   readonly httpServer?: HttpServer;
@@ -56,6 +61,15 @@ export class WebSocketTransport implements ServerTransport {
     this.wss = options.httpServer
       ? new WebSocketServer({ server: options.httpServer })
       : new WebSocketServer({ port: options.port ?? 8787 });
+    // An `error` event with no listener is an *uncaught exception* on an
+    // EventEmitter, so a port that is still in TIME_WAIT took the whole process
+    // down -- which in CI meant a vitest worker vanishing and the run failing
+    // with `ERR_IPC_CHANNEL_CLOSED`, nowhere near the cause. A server that
+    // cannot bind has to say so and let its owner decide.
+    this.wss.on('error', (error: Error) => {
+      if (options.onError) options.onError(error);
+      else console.error(`[server] socket error: ${error.message}`);
+    });
   }
 
   onConnection(handler: (channel: Channel) => void): void {

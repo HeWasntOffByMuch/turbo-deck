@@ -29,6 +29,13 @@ export interface ReplicatedEntity {
   readonly activity: number;
   readonly activityUntilTick: number;
   readonly level: number;
+  /**
+   * Spec 145. `''` and `0` mean "not told" -- true for every monster, prop and
+   * projectile by design, and true for a player only in the frames before their
+   * first delta lands. Both consumers have a fallback for it.
+   */
+  readonly name: string;
+  readonly turnRate: number;
 }
 
 export class ReplicatedWorld {
@@ -79,6 +86,8 @@ export class ReplicatedWorld {
           activity: record.activity ?? 0,
           activityUntilTick: record.activityUntilTick ?? 0,
           level: record.level ?? 1,
+          name: record.name ?? '',
+          turnRate: record.turnRate ?? 0,
         });
         continue;
       }
@@ -102,6 +111,9 @@ export class ReplicatedWorld {
           : {}),
         ...(record.fields & EntityField.Level && record.level !== undefined
           ? { level: record.level }
+          : {}),
+        ...(record.fields & EntityField.Identity
+          ? { name: record.name ?? existing.name, turnRate: record.turnRate ?? existing.turnRate }
           : {}),
       });
     }

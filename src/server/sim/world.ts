@@ -35,6 +35,7 @@ import { chunkKeyOf, type ChunkKey } from '../world/chunks.js';
 import type { SpawnPoint } from '../world/spawners.js';
 import type { TerrainSampler } from '../world/terrain.js';
 import type { ZoneManager } from '../world/zone-manager.js';
+import type { RewindLookup } from '../world/position-history.js';
 import { abilityById } from '../data/abilities.js';
 import {
   advanceCast,
@@ -127,6 +128,14 @@ export interface StepContext {
   readonly terrain: TerrainSampler;
   readonly zones: ZoneManager;
   readonly config: LiveConfig;
+  /**
+   * Where bodies were, so a blow can land on what its attacker saw (spec 149).
+   *
+   * Absent means no compensation, which is what every sandbox, every headless
+   * test and the loopback tab mean -- and is bit-for-bit the behaviour before
+   * spec 149, so their assertions still describe them.
+   */
+  readonly rewind?: RewindLookup;
   /**
    * Chunks near a player. Entities elsewhere keep their state but are not
    * simulated -- the load/unload rule, expressed as one set lookup per entity.
@@ -226,6 +235,34 @@ export function replaceEntity(state: ServerWorldState, entity: ServerEntity): Se
 }
 
 /**
+ * The candidates as the attacker saw them (spec 149).
+ *
+ * Returns the same array when nothing is being compensated, so the common case
+ * -- every sandbox, every headless test, the loopback tab -- allocates nothing
+ * and behaves identically.
+ */
+function rewindTargets(
+  candidates: readonly ServerEntity[],
+  attackerId: number,
+  rewind: RewindLookup | undefined,
+): readonly ServerEntity[] {
+  if (!rewind) return candidates;
+  const ticksAgo = rewind.ticksFor(attackerId);
+  if (ticksAgo <= 0) return candidates;
+  let moved = false;
+  const seen = candidates.map((candidate) => {
+    if (candidate.id === attackerId) return candidate;
+    const was = rewind.positionAt(candidate.id, ticksAgo);
+    // Null is a body that was not being recorded then -- one that has only just
+    // spawned. It cannot have been dodged, so it is taken where it stands.
+    if (!was) return candidate;
+    moved = true;
+    return { ...candidate, position: was };
+  });
+  return moved ? seen : candidates;
+}
+
+/**
  * Whether `attacker` may damage `target`. Monsters and players are hostile to
  * each other everywhere; players are hostile to each other only where the zone
  * says so, which is the only thing zones currently change about the rules.
@@ -243,7 +280,17 @@ export function isHostile(
   if (target.kind === EntityKindValue.Projectile) return false;
   if (attacker.kind === target.kind) {
     if (attacker.kind !== EntityKindValue.Player) return false;
-    return zones.zoneAt(attacker.position.x, attacker.position.y).pvp;
+    // Both ends, not just the attacker's (spec 145). Reading the attacker's
+    // zone alone let somebody stand in the wilds and reach into Hearthstead,
+    // which is not what a safe zone means to the person standing in one; the
+    // mirror version -- the target's zone alone -- lets a target retreat into
+    // safety mid-swing. The cost of requiring both is that you cannot strike
+    // *out* of a safe zone either, which is the same exploit wearing the other
+    // hat, so it is a cost worth paying.
+    return (
+      zones.zoneAt(attacker.position.x, attacker.position.y).pvp &&
+      zones.zoneAt(target.position.x, target.position.y).pvp
+    );
   }
   return attacker.kind !== EntityKindValue.Prop && target.kind !== EntityKindValue.Prop;
 }
@@ -504,9 +551,21 @@ export function step(
     const candidates = [...working.values()].filter((candidate) =>
       isHostile(casting, candidate, context.zones),
     );
-    const advanced = advanceCast(casting, candidates, tick, rng);
+    // Resolved against what the attacker was looking at (spec 149). The
+    // *targets* move back; the caster never does, because their own position is
+    // the one prediction and reconciliation already agree on and it is the
+    // origin every range in here is measured from.
+    const seen = rewindTargets(candidates, casting.id, context.rewind);
+    const advanced = advanceCast(casting, seen, tick, rng);
     rng = advanced.rng;
-    for (const [id, entity] of advanced.updated) working.set(id, entity);
+    for (const [id, entity] of advanced.updated) {
+      // The landing hands back the body it hit, and that body is carrying a
+      // position from up to 200ms ago. Written back unmodified it would
+      // teleport the target into its own past: health is the result of a blow,
+      // position is not.
+      const live = working.get(id);
+      working.set(id, live && entity.position !== live.position ? { ...entity, position: live.position } : entity);
+    }
     events.push(...advanced.events);
     for (const spawn of advanced.spawns) spawnQueue.push({ owner: casting, spawn });
   }
