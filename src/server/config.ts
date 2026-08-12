@@ -131,6 +131,22 @@ export const PROTOCOL_VERSION = 12;
 export const MAP_CHUNK_REQUEST_RADIUS = 6;
 
 /**
+ * How long a chunk request goes unanswered before the client asks again
+ * (spec 147). Three seconds at 60Hz.
+ *
+ * Nothing retransmits: a lost `RequestChunk` is a question the server never
+ * heard, and a lost `MapChunk` is an answer that never came. Either way the
+ * client used to wait forever, and the ground stayed missing for the session --
+ * which is what a browser on a 5% wire actually looked like.
+ *
+ * Three seconds rather than something snappier because a chunk is large and the
+ * server throttles: re-asking early costs bandwidth on exactly the connection
+ * that has none. A hole for three seconds is a hole somebody might notice; a
+ * hole forever is a bug report.
+ */
+export const CHUNK_RETRY_TICKS = 180;
+
+/**
  * Token bucket on chunk sends, per connection (spec 072).
  *
  * The radius check bounds *where* a client may read; this bounds how fast. They

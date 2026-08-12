@@ -45,7 +45,12 @@ async function openTab(browser: Browser, name: string): Promise<Page> {
     if (message.type() === 'error') console.error(`[${name}] ${message.text()}`);
   });
   page.on('pageerror', (error) => console.error(`[${name}] ${error.message}`));
-  await page.goto(`${DEV}/?server&name=${encodeURIComponent(name)}`, { waitUntil: 'domcontentloaded' });
+  // `WIRE=delay:12,jitter:6,loss:0.05` drives the same conditions the headless
+  // wire tests use, through a real socket and a real browser (spec 147).
+  const wire = process.env['WIRE'] ? `&wire=${encodeURIComponent(process.env['WIRE'])}` : '';
+  await page.goto(`${DEV}/?server&name=${encodeURIComponent(name)}${wire}`, {
+    waitUntil: 'domcontentloaded',
+  });
   return page;
 }
 
@@ -133,6 +138,11 @@ async function main(): Promise<void> {
     if (before < 0 || after < 0) {
       console.error('FAIL: could not read the correction count');
       failed = true;
+    } else if (process.env['WIRE']) {
+      // A bad wire is *expected* to cost corrections -- that is the whole point
+      // of being able to switch one on. All this asserts is that the tab
+      // survived it and kept playing.
+      console.log(`[Ana] (wire ${process.env['WIRE']}: corrections are expected here)`);
     } else if (after - before > 10) {
       console.error(`FAIL: ${after - before} corrections while walking -- prediction is not agreeing with the server`);
       failed = true;

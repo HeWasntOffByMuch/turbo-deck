@@ -128,6 +128,35 @@ the one piece of the API that exists for them.
 - **`?wire=` parses or is ignored.** Each field, missing fields, junk fields,
   out-of-range values clamped, and an empty string meaning a perfect wire.
 
+## What the wire found, on its first run
+
+Pointed at a real browser at 5% loss, the world came up **with permanent holes
+in the ground** — bodies and props standing over open water where whole chunks
+had never arrived.
+
+`MapChunkCache` held its outstanding requests in a `Set`, cleared only by the
+chunk arriving or by an explicit denial. Nothing retransmits: a lost
+`RequestChunk` is a question the server never heard, and a lost `MapChunk` is an
+answer that never came. Either way the key stayed in flight forever and
+`wanted()` skipped it forever, so the hole lasted the session. It is one of
+those bugs that cannot exist on a perfect wire and is certain on a real one,
+which is the whole argument for this spec.
+
+The fix belongs here rather than in a spec of its own, because it is only
+*testable* because of the wire. The set becomes a map from key to the tick the
+request went out, and `wanted()` re-offers anything unanswered for longer than
+`CHUNK_RETRY_TICKS` (180, three seconds at 60Hz). Three seconds rather than
+something snappier because a chunk is large and the server throttles:
+re-asking early spends bandwidth on exactly the connection that has none.
+
+Its invariants, tested in `map-cache.test.ts`:
+
+- A request unanswered past the window is asked again; inside it, it is not.
+- A chunk that lands is never asked for again — the original "asked once"
+  property, which the retry must not break.
+- A chunk the server said does not exist is never asked for again, however long
+  it has been. `Unknown` is still permanent.
+
 ## Out of scope
 
 - **Bandwidth, MTU and congestion.** A frame is delivered or it is not; there

@@ -52,6 +52,10 @@ import { StreamedMap } from '../../../server/client/streamed-map.js';
 import type { ViewHandle } from '../view-handle.js';
 import { createWeatherControls } from '../weather-controls.js';
 import { createVfxControls } from '../vfx-controls.js';
+import { createWireControls } from '../wire-controls.js';
+import { UnreliableChannel, type WireConditions } from '../../../server/net/unreliable.js';
+import { parseWire } from '../../../server/net/wire-query.js';
+import { Rng } from '../../../shared/prng.js';
 import { orbitDrag, orbitStep } from './orbit-keys.js';
 import { turnToward } from '../../../server/sim/movement.js';
 import { facesAim } from '../../../server/sim/abilities.js';
@@ -169,7 +173,23 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     channel = transport.connect();
   }
 
-  const client = new GameClient(channel, {
+  /**
+   * A wire you can make bad on purpose (spec 147).
+   *
+   * Worn by both paths, because the loopback is the one you can debug against a
+   * server you also control -- and because a decorator only the socket wore
+   * would be a decorator nobody exercised until something was already wrong.
+   * At `PERFECT_WIRE` it delays nothing and drops nothing, so a tab that has not
+   * asked for anything is the tab that shipped.
+   *
+   * Seeded from the URL rather than a clock: two tabs given the same `?wire=`
+   * and the same seed get the same bad connection, which is what makes a
+   * screenshot of one reproducible on the other.
+   */
+  let wireConditions: WireConditions = parseWire(new URLSearchParams(location.search).get('wire'));
+  const wire = new UnreliableChannel(channel, () => wireConditions, Rng.fromSeed(seed));
+
+  const client = new GameClient(wire, {
     playerId: plan.mode === 'remote' ? plan.playerId : 'you',
     displayName: plan.mode === 'remote' ? plan.displayName : 'You',
     // What this build's assets hash to (spec 113). The in-tab server has no
@@ -406,13 +426,29 @@ export function mountWorld(container: HTMLElement): ViewHandle {
         scene.setGore(settings.gore);
       },
     });
+    // The eighth button (spec 147). Writes into the conditions the channel
+    // reads once a tick, the same "the widgets are the state" split the weather
+    // panel uses -- there is nothing to copy and nothing to poll.
+    const wireControls = createWireControls({
+      group: scene.controls.menus,
+      initial: wireConditions,
+    });
+
     const buttons = document.createElement('div');
     // Inset against the notch and the home indicator (spec 093): in landscape the
     // cutout is on a side edge, which is exactly where these sit.
     buttons.style.cssText =
       'position:absolute;top:calc(8px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));' +
       'z-index:30;display:flex;gap:6px;';
-    buttons.append(scene.controls.element, weather.element, vfxControls.element);
+    buttons.append(scene.controls.element, weather.element, vfxControls.element, wireControls.element);
+    // Polled once here rather than pushed per input: the channel asks for the
+    // conditions itself, every tick.
+    wireConditions = wireControls.conditions();
+    for (const el of [wireControls.element]) {
+      el.addEventListener('input', () => {
+        wireConditions = wireControls.conditions();
+      });
+    }
     root.append(buttons);
   }
   root.append(hud.element);
@@ -1313,6 +1349,9 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     client.sendInput({ moveX: intent.moveX, moveY: intent.moveY, facing: intent.facing, buttons: 0 });
   }
 
+  /** The wire's own clock: whole sim ticks, same as everything else here. */
+  let wireTick = 0;
+
   function frame(now: number): void {
     const elapsed = last === 0 ? TICK_MS : now - last;
     last = now;
@@ -1323,6 +1362,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     while (accumulator >= TICK_MS) {
       accumulator -= TICK_MS;
       ticks += 1;
+      wireTick += 1;
+      // Released before the tick that will read them, so a frame due on this
+      // tick is one this tick sees (spec 147).
+      wire.deliver(wireTick);
       // The in-tab server advances on the same fixed step it would over a wire;
       // this view just happens to be the thing driving its clock. Over a real
       // socket there is no server here to drive -- the client's own clock below

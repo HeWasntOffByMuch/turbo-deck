@@ -1254,8 +1254,14 @@ export class GameClient {
     const cache = this.mapCache;
     const at = this.prediction?.drawn ?? this.selfAuthoritative();
     if (!cache || !at || this.chunkBackoffTicks > 0) return;
-    for (const req of cache.wanted(at.x, at.y, MAP_CHUNK_REQUEST_RADIUS, CHUNK_REQUESTS_PER_PASS)) {
-      cache.markRequested(req);
+    for (const req of cache.wanted(
+      at.x,
+      at.y,
+      MAP_CHUNK_REQUEST_RADIUS,
+      CHUNK_REQUESTS_PER_PASS,
+      this.localTick,
+    )) {
+      cache.markRequested(req, this.localTick);
       this.channel.send(
         encodeClientMessage({
           type: ClientMessageType.RequestChunk,
