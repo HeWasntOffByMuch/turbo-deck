@@ -116,6 +116,11 @@ export interface GameClientOptions {
    */
   readonly assetManifest?: string;
   /**
+   * A session token from an earlier connection, to come back to the same body
+   * (spec 150). Empty or absent is a fresh login.
+   */
+  readonly resumeToken?: string;
+  /**
    * Local movement used for prediction. Defaults to the open-ground walk, which
    * matches the server exactly away from walls, water and cliffs. Stage 3 can
    * pass the server's own movement instead for a closer match.
@@ -411,6 +416,8 @@ export class GameClient {
   private readonly world = new ReplicatedWorld();
   private prediction: PredictionBuffer | null = null;
   private welcome: WelcomeInfo | null = null;
+  /** Present this to come back to the same body (spec 150). */
+  private token: string;
   /** How this client's clock is being steered against the server's (spec 148). */
   private rateMatch: RateMatchState = NOMINAL;
   /** The map and the chunks of it that have arrived (spec 072). */
@@ -559,6 +566,7 @@ export class GameClient {
     private readonly channel: Channel,
     private readonly options: GameClientOptions,
   ) {
+    this.token = options.resumeToken ?? '';
     channel.onMessage((bytes) => this.receive(bytes));
     channel.onClose(() => {
       this.connected = false;
@@ -582,6 +590,9 @@ export class GameClient {
         // manifest -- the in-tab server and the bot harness share a process
         // with the thing they are connecting to (spec 113).
         assetManifest: this.options.assetManifest ?? '',
+        // Empty on a first connection; set once a `Welcome` has issued one
+        // and we are coming back to the same body (spec 150).
+        resumeToken: this.token,
       }),
     );
     return pending;
@@ -1373,8 +1384,41 @@ export class GameClient {
   }
 
   disconnect(): void {
+    // Say so, so the server reaps the body at once rather than leaving it
+    // standing for the grace period (spec 150). Choosing to leave and having
+    // the plug pulled should not look the same to the world.
+    if (this.connected) {
+      this.channel.send(encodeClientMessage({ type: ClientMessageType.Goodbye }));
+    }
+    this.token = '';
     this.channel.close();
     this.connected = false;
+  }
+
+  /**
+   * The socket came back; say hello again and come back to the same body
+   * (spec 150).
+   *
+   * The replica is cleared first. A resumed connection gets a fresh
+   * `DeltaTracker` on the server, so every visible entity arrives as a spawn
+   * again -- and anything left in the old replica would be a body nothing will
+   * ever send a removal for.
+   */
+  /**
+   * Present this in a later `Hello` to come back to the same body (spec 150).
+   *
+   * Public because it outlives this object: a tab that reloads builds a new
+   * `GameClient`, and handing the token back through `resumeToken` is what
+   * turns a refresh into a resume rather than a fresh spawn.
+   */
+  get sessionToken(): string {
+    return this.token;
+  }
+
+  resume(): void {
+    this.world.clear();
+    this.connected = false;
+    void this.connect().catch(() => undefined);
   }
 
   private receive(bytes: Uint8Array): void {
@@ -1390,6 +1434,8 @@ export class GameClient {
           correctionThreshold: message.correctionThreshold,
           worldSeed: message.worldSeed,
         };
+        // Kept so a dropped socket can come back to this same body (spec 150).
+        this.token = message.sessionToken;
         this.estimated = message.tick;
         this.connected = true;
         // Measure at once: everything timed on this client -- a cast bar, a

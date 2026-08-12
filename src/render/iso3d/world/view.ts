@@ -27,7 +27,8 @@ import { GameClient } from '../../../server/client/game-client.js';
 import { LoopbackTransport } from '../../../server/net/transport-loop.js';
 import { connectChannel } from '../../../server/net/transport-browser.js';
 import { GameServer } from '../../../server/server.js';
-import { planConnection } from './connection.js';
+import { planConnection, rememberSession } from './connection.js';
+import { ReconnectingChannel } from '../../../server/net/reconnecting.js';
 import { createConnectionBanner } from './connection-banner.js';
 import { createGroundPredictor, emptyGround, fillGround } from './prediction-ground.js';
 import { mapIdOf } from '../../../server/world/map-index.js';
@@ -158,8 +159,16 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   let transport: LoopbackTransport | null = null;
   let server: GameServer | null = null;
   let channel: Channel;
+  let reconnecting: ReconnectingChannel | null = null;
   if (plan.mode === 'remote') {
-    channel = connectChannel(plan.url, { onPhase: (phase) => banner.set(phase, plan.url) });
+    // Wrapped, so a dropped socket comes back to the same body rather than
+    // ending the session (spec 150). The wrapper is above `Channel` and not a
+    // change to it -- see reconnecting.ts, and transport.ts for why.
+    reconnecting = new ReconnectingChannel({
+      open: () => connectChannel(plan.url, { onPhase: (phase) => banner.set(phase, plan.url) }),
+      onReopen: () => client.resume(),
+    });
+    channel = reconnecting;
   } else {
     transport = new LoopbackTransport();
     // `local` is non-null on this branch by construction; the server is the
@@ -192,6 +201,9 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   const client = new GameClient(wire, {
     playerId: plan.mode === 'remote' ? plan.playerId : 'you',
     displayName: plan.mode === 'remote' ? plan.displayName : 'You',
+    // A token from this tab's last load, so a reload comes back to the same
+    // body rather than spawning a second one beside it (spec 150).
+    ...(plan.mode === 'remote' ? { resumeToken: plan.resumeToken } : {}),
     // What this build's assets hash to (spec 113). The in-tab server has no
     // manifest of its own, so it always passes there; a real server compares it
     // and refuses a mismatch, which is why the banner has to be able to say a
@@ -1369,6 +1381,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       accumulator -= tickMs;
       ticks += 1;
       wireTick += 1;
+      // The backoff runs on the sim clock, like the wire's queues.
+      reconnecting?.deliver(wireTick);
       // Released before the tick that will read them, so a frame due on this
       // tick is one this tick sees (spec 147).
       wire.deliver(wireTick);
@@ -1530,9 +1544,16 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // the shell calls when this tab becomes visible, and a Hello sent twice
       // on one socket used to spawn a second body and orphan the first.
       if (plan.mode === 'remote') {
-        void client.connect().catch((error: unknown) => {
-          banner.refuse(error instanceof Error ? error.message : String(error));
-        });
+        void client
+          .connect()
+          .then(() => {
+            // Kept for the next load of this tab, so a refresh is a resume
+            // rather than a second body beside the first (spec 150).
+            rememberSession(sessionStorage, client.sessionToken);
+          })
+          .catch((error: unknown) => {
+            banner.refuse(error instanceof Error ? error.message : String(error));
+          });
       } else {
         void client.connect();
       }

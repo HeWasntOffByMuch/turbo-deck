@@ -17,6 +17,8 @@ import type { StorageLike } from '../../../ui/core/layout-store.js';
 
 export const PLAYER_ID_KEY = 'turbo-deck.net.playerId';
 export const PLAYER_NAME_KEY = 'turbo-deck.net.name';
+/** The resume token from this tab's last session (spec 150). */
+export const SESSION_TOKEN_KEY = 'turbo-deck.net.session';
 
 /**
  * The path a browser client dials. The server accepts the upgrade on any path
@@ -37,6 +39,12 @@ export type ConnectionPlan =
       readonly url: string;
       readonly playerId: string;
       readonly displayName: string;
+      /**
+       * The token this tab last held, so a *reload* comes back to the same body
+       * rather than spawning a second one beside it (spec 150). Empty when
+       * there is none, which is every first load.
+       */
+      readonly resumeToken: string;
     };
 
 /** Just the two fields of `location` this needs, so a test can pass a literal. */
@@ -77,6 +85,11 @@ function explicitUrl(value: string): string | null {
   if (value.startsWith('http://')) return `ws://${value.slice('http://'.length)}`;
   if (value.startsWith('https://')) return `wss://${value.slice('https://'.length)}`;
   return null;
+}
+
+/** Keep the token this session was issued, for the next load of this tab. */
+export function rememberSession(storage: StorageLike, token: string): void {
+  write(storage, SESSION_TOKEN_KEY, token);
 }
 
 function sameOrigin(origin: OriginLike): string {
@@ -132,5 +145,6 @@ export function planConnection(
   const asked = params.get('server') ?? '';
   const url = explicitUrl(asked) ?? sameOrigin(origin);
   const { playerId, displayName } = identify(params, storage, newId);
-  return { mode: 'remote', url, playerId, displayName };
+  const resumeToken = read(storage, SESSION_TOKEN_KEY) ?? '';
+  return { mode: 'remote', url, playerId, displayName, resumeToken };
 }

@@ -107,6 +107,7 @@ describe('game message round-trip', () => {
       displayName: 'Alice',
       token: '',
       assetManifest: '',
+      resumeToken: 'resume-1',
     },
     {
       type: ClientMessageType.Input,
@@ -192,6 +193,7 @@ describe('game message round-trip', () => {
       interestRadius: 3,
       correctionThreshold: 48,
       worldSeed: 4242,
+      sessionToken: 'sess-1',
     },
     {
       type: ServerMessageType.Delta,

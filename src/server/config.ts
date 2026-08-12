@@ -110,8 +110,11 @@ export const INTEREST_CHUNK_RADIUS = 8;
  * 14: an input says how far behind the server's clock the world it was made
  * against is being drawn, so a blow can be resolved against what the attacker
  * was actually looking at (spec 149).
+ * 15: the welcome issues a session token and a hello may present one, so a
+ * dropped socket can come back to the same body instead of spawning a new one;
+ * and a goodbye says a disconnection was meant (spec 150).
  */
-export const PROTOCOL_VERSION = 14;
+export const PROTOCOL_VERSION = 15;
 
 /**
  * How far from a map chunk a player may be and still be sent it (spec 072).
@@ -165,6 +168,28 @@ export const CHUNK_RETRY_TICKS = 180;
  * behind the rock.
  */
 export const MAX_REWIND_TICKS = 12;
+
+/**
+ * How long a dropped player's body stands in the world before it is reaped
+ * (spec 150). Thirty seconds at 60Hz.
+ *
+ * Comfortably past the reconnecting channel's whole backoff ladder (~15s), so a
+ * client that is going to come back has come back. The body standing there is
+ * deliberate: it is what stops pulling the plug being an escape from a fight.
+ * The trade is *not* held for it -- see `disconnect`.
+ */
+export const RESUME_GRACE_TICKS = 1800;
+
+/**
+ * How long a connection may say nothing before it is treated as lost
+ * (spec 150). Ten seconds at 60Hz.
+ *
+ * The half a `close` event cannot cover: a socket killed by a dead router or a
+ * suspended phone never delivers one, and before this its entity stayed
+ * forever. The client pings every 30 ticks, so this is twenty missed
+ * heartbeats -- long enough that a stall is not a disconnection.
+ */
+export const CONNECTION_TIMEOUT_TICKS = 600;
 
 /**
  * Token bucket on chunk sends, per connection (spec 072).

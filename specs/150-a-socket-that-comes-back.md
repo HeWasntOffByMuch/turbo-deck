@@ -133,6 +133,28 @@ to the world, and this is the one bit that tells them apart.
   exactly once, after the last backoff.
 - **`Channel` did not change.** `LoopbackChannel` and the browser channel are
   untouched, and their tests are unmodified.
+- **A frame written before the first socket opens still arrives.** The wrapper
+  drops only while it is *waiting to retry*, never merely because the inner
+  channel is not open yet — `BrowserSocketChannel` is legitimately closed
+  between construction and its `open` event and queues across that gap on
+  purpose, because `GameClient` sends its `Hello` from its constructor. The
+  first version of this guarded on `isOpen` and silently ate the handshake:
+  the tab said "connected" and no world ever arrived.
+
+Two things this spec changed about itself while being built, both worth having
+in the record:
+
+- **An intentional close is recorded on the connection, not passed as an
+  argument.** `drop()` closes the channel, which fires the channel's own close
+  handler, which reaches `disconnect` *first* — so a kicked player lingered for
+  thirty seconds, which is a kick that did not work. The intent is now a flag
+  set before the close.
+- **A session that is resumable across a page reload, not only across a dropped
+  socket.** The token is returned by `GameClient.sessionToken` and accepted as
+  `GameClientOptions.resumeToken`, and the Play tab keeps it in the same
+  per-tab `sessionStorage` its identity lives in (spec 144). Refreshing a tab
+  was the most obvious way to lose a body and the wrapper alone did not cover
+  it, because a reload is a new `GameClient`.
 
 ## Out of scope
 

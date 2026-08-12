@@ -59,6 +59,15 @@ export interface HelloMessage {
    * respect to it. A hash that is present and *different* is refused.
    */
   readonly assetManifest: string;
+  /**
+   * A session token from an earlier `Welcome`, to come back to the same body
+   * (spec 150). Empty for a fresh login, which is every first connection.
+   *
+   * Matched against the lingering sessions for this `playerId`; anything that
+   * does not match is simply a new login rather than an error, because a token
+   * that has aged out is the ordinary case rather than an attack.
+   */
+  readonly resumeToken: string;
 }
 
 /**
@@ -92,6 +101,11 @@ export interface InputMessage {
 export interface PingMessage {
   readonly type: typeof ClientMessageType.Ping;
   readonly nonce: number;
+}
+
+/** "I meant to leave" (spec 150). See {@link ClientMessageType.Goodbye}. */
+export interface GoodbyeMessage {
+  readonly type: typeof ClientMessageType.Goodbye;
 }
 
 export interface EquipMessage {
@@ -260,6 +274,7 @@ export type ClientMessage =
   | HelloMessage
   | InputMessage
   | PingMessage
+  | GoodbyeMessage
   | EquipMessage
   | UnequipMessage
   | MoveItemMessage
@@ -370,7 +385,8 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
         .str(message.playerId)
         .str(message.displayName)
         .str(message.token)
-        .str(message.assetManifest);
+        .str(message.assetManifest)
+        .str(message.resumeToken);
       break;
     case ClientMessageType.Input:
       writer
@@ -385,6 +401,8 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
       break;
     case ClientMessageType.Ping:
       writer.u32(message.nonce);
+      break;
+    case ClientMessageType.Goodbye:
       break;
     case ClientMessageType.Equip:
       writer.str(message.slot).str(message.itemId);
@@ -467,6 +485,7 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
         displayName: reader.str(),
         token: reader.str(),
         assetManifest: reader.str(),
+        resumeToken: reader.str(),
       };
     case ClientMessageType.Input:
       return {
@@ -482,6 +501,8 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
       };
     case ClientMessageType.Ping:
       return { type: ClientMessageType.Ping, nonce: reader.u32() };
+    case ClientMessageType.Goodbye:
+      return { type: ClientMessageType.Goodbye };
     case ClientMessageType.Equip:
       return { type: ClientMessageType.Equip, slot: reader.str(), itemId: reader.str() };
     case ClientMessageType.Unequip:
@@ -578,6 +599,13 @@ export interface WelcomeMessage {
   readonly interestRadius: number;
   /** Divergence past which the client should expect a hard correction. */
   readonly correctionThreshold: number;
+  /**
+   * Present this in a later `Hello` to resume this session (spec 150).
+   *
+   * From `crypto.randomUUID`, never from the world's seeded `Rng`: that one is
+   * reproducible on purpose, which is exactly what a resume token must not be.
+   */
+  readonly sessionToken: string;
   /**
    * The seed the server's world was built from (spec 063).
    *
@@ -1055,7 +1083,8 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
         .u16(message.chunkSize)
         .u8(message.interestRadius)
         .f32(message.correctionThreshold)
-        .u32(message.worldSeed);
+        .u32(message.worldSeed)
+        .str(message.sessionToken);
       break;
     case ServerMessageType.SpawnerStates:
       writer.u32(message.tick).varuint(message.spawners.length);
@@ -1195,6 +1224,7 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         interestRadius: reader.u8(),
         correctionThreshold: reader.f32(),
         worldSeed: reader.u32(),
+        sessionToken: reader.str(),
       };
     case ServerMessageType.SpawnerStates: {
       const tick = reader.u32();

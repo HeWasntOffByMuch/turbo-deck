@@ -67,6 +67,15 @@ export const ClientMessageType = {
   TradeOffer: 0x13,
   TradeAccept: 0x14,
   TradeCancel: 0x15,
+  /**
+   * "I meant to leave" (spec 150). No payload.
+   *
+   * A dropped socket leaves a body standing for the grace period; this says the
+   * disconnection was chosen, so the body goes at once. Pulling the plug and
+   * logging out should not look the same to the world, and this is the one bit
+   * that tells them apart.
+   */
+  Goodbye: 0x16,
 } as const;
 
 export const ServerMessageType = {
