@@ -40,6 +40,17 @@ describe('the HUD layout', () => {
   });
 
   /**
+   * The weapon switch is gone from a phone entirely (spec 141), which leaves the
+   * bottom-left corner to the world. The metrics stay in the table because the
+   * desktop switch still reads them and because "not drawn" is a decision worth
+   * having somewhere a test can see it.
+   */
+  it('draws no weapon switch on a finger, and keeps it on a desktop', () => {
+    expect(compact.showsWeaponSwitch).toBe(false);
+    expect(desktop.showsWeaponSwitch).toBe(true);
+  });
+
+  /**
    * The seven tuning popovers are developer furniture (spec 140).
    *
    * Kept as its own field rather than folded into `showsReadout`: they are two
@@ -72,21 +83,21 @@ describe('the HUD layout', () => {
   /**
    * The assertion that is supposed to fail on the ninth ability.
    *
-   * The hotbar is centred, the weapon switch sits bottom left and the window
-   * buttons bottom right (spec 140), so what has to hold is that half the
-   * leftover width clears *both* rows. Since spec 140 the other corner is no
-   * longer empty, which is exactly the assumption the old one-sided version of
-   * this test was quietly making.
+   * The hotbar is centred and the window buttons sit bottom right (spec 140), so
+   * what has to hold is that half the leftover width clears that row. The weapon
+   * switch is no longer drawn on a phone (spec 141), but it is still checked
+   * against the *same* clearance: the day somebody puts it back, the sum should
+   * already say whether it fits rather than being discovered on a device.
    */
-  it('fits eight compact slots across a phone in landscape, clear of both corner rows', () => {
+  it('fits eight compact slots across a phone in landscape, clear of both corners', () => {
     const clearance = centredClearance(compact, HOTBAR.length, PHONE_LANDSCAPE.width);
     const weapons = stripWidth(compact.weapon, compact.weaponGap, WEAPON_SWITCH.length);
     const windows = stripWidth(compact.systemButton, compact.systemGap, SYSTEM_BUTTONS.length);
     expect(stripWidth(compact.slot, compact.slotGap, HOTBAR.length)).toBeLessThan(
       PHONE_LANDSCAPE.width,
     );
-    expect(clearance).toBeGreaterThanOrEqual(compact.edge + weapons + compact.slotGap);
     expect(clearance).toBeGreaterThanOrEqual(compact.edge + windows + compact.slotGap);
+    expect(clearance).toBeGreaterThanOrEqual(compact.edge + weapons + compact.slotGap);
   });
 
   it('leaves the desktop hotbar too wide for that frame, which is why compact exists', () => {

@@ -49,7 +49,7 @@ import { turnToward } from '../../../server/sim/movement.js';
 import { facesAim } from '../../../server/sim/abilities.js';
 import { createHud, HOTBAR } from './hud.js';
 import { hudLayout } from './hud-layout.js';
-import { isCoarsePointer } from '../fullscreen.js';
+import { isHandheldDevice } from '../device.js';
 import { appearanceOf } from './appearance.js';
 import { effectsForBlow } from './vfx-wire.js';
 import { moveIntent, RoutePlanner } from './intent.js';
@@ -306,7 +306,7 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // bar. `scene.controls` is still *built* -- the camera reads its sliders, and
   // `orbitBy` writes them -- it simply has nowhere to be pressed, so a phone
   // gets the defaults and the options window (spec 135) instead.
-  const showsTuningMenus = hudLayout(isCoarsePointer()).showsTuningMenus;
+  const showsTuningMenus = hudLayout(isHandheldDevice()).showsTuningMenus;
   if (showsTuningMenus) {
     const weather = createWeatherControls({ group: scene.controls.menus });
     // The seventh button (spec 121). Both settings are pushed straight into the
