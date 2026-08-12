@@ -22,9 +22,12 @@ import {
   characterViewOf,
   hudViewOf,
   UNKNOWN_ABILITY_ICON,
+  type CharacterSource,
 } from './character-model.js';
 import { HOTBAR } from './hud.js';
 import { NO_ATTACK_SPEED } from '../../../server/sim/attack-timing.js';
+import { NEUTRAL_TRAITS } from '../../../server/player/derived.js';
+import { startingBaseStats } from '../../../server/player/attributes.js';
 
 const STATS: EffectiveStats = {
   maxHealth: 138,
@@ -40,10 +43,29 @@ const STATS: EffectiveStats = {
   maxResource: 40,
   resourceRegen: 0.5,
   basicAttackId: 'melee.slash',
+  traits: NEUTRAL_TRAITS,
 };
 
-function source(skills: readonly SkillAllocation[], unspent = 3, level = 6) {
-  return { name: 'Kestrel', level, experience: 40, unspentSkillPoints: unspent, skills, stats: STATS };
+function source(
+  skills: readonly SkillAllocation[],
+  unspent = 3,
+  level = 6,
+  overrides: Partial<CharacterSource> = {},
+): CharacterSource {
+  return {
+    name: 'Kestrel',
+    level,
+    experience: 40,
+    unspentSkillPoints: unspent,
+    skills,
+    stats: STATS,
+    baseStats: startingBaseStats(),
+    attributes: startingBaseStats(),
+    unspentAttributePoints: 4,
+    statSkills: [],
+    coins: 100,
+    ...overrides,
+  };
 }
 
 describe('the HUD view', () => {

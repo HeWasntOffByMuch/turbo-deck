@@ -238,7 +238,7 @@ function ticksFor(weapon: string | null): number {
   const stats = computeEffectiveStats({
     id: 'p',
     displayName: 'P',
-    baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
+    baseStats: { strength: 5, agility: 5, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
     skills: [],
     equipment: { ...EMPTY_EQUIPMENT, ...(weapon ? { mainHand: weapon } : {}) },
     inventory: emptyInventory(),
@@ -249,6 +249,8 @@ function ticksFor(weapon: string | null): number {
     level: 1,
     experience: 0,
     unspentSkillPoints: 0,
+    unspentAttributePoints: 0,
+    statSkills: [],
     health: 100,
     resource: 20,
   });

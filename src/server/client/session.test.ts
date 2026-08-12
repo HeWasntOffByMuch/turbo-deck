@@ -215,7 +215,12 @@ describe('loopback session', () => {
     const client = await connect(test, 'alice');
     await advance(test, 1);
     const self = test.server.world.entities.get(client.view().selfEntityId);
-    test.server.spawnEntities('grazer', (self?.position.x ?? 0) + 40, self?.position.y ?? 0, 1);
+    // A training dummy rather than a grazer (spec 147). This test is about
+    // *displacement*, and a grazer has 24 health -- once Strength's damage
+    // actually reaches a blow and a weak-point roll can double it, whether the
+    // target is still there to measure is a coin flip on the seed. A body that
+    // cannot die makes the assertion about the thing it is about.
+    test.server.spawnEntities('dummy', (self?.position.x ?? 0) + 40, self?.position.y ?? 0, 1);
 
     const results: number[] = [];
     client.onCombatResult((result) => results.push(result.damage));

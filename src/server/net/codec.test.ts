@@ -27,6 +27,8 @@ import {
 import { EMPTY_EQUIPMENT, emptyInventory, type EffectiveStats } from '../state/types.js';
 import { maxStackOf } from '../data/items.js';
 import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
+import { NEUTRAL_TRAITS } from '../player/derived.js';
+import { startingBaseStats } from '../player/attributes.js';
 
 const STATS: EffectiveStats = {
   maxHealth: 137.5,
@@ -43,6 +45,7 @@ const STATS: EffectiveStats = {
   // f32-exact, so the round-trip is testing the codec and not float precision.
   resourceRegen: 0.0625,
   basicAttackId: 'ranged.shot',
+  traits: NEUTRAL_TRAITS,
 };
 
 describe('codec primitives', () => {
@@ -229,6 +232,10 @@ describe('game message round-trip', () => {
         { skillId: 'might.toughness', level: 3 },
         { skillId: 'finesse.footwork', level: 1 },
       ],
+      statSkills: [],
+      baseStats: startingBaseStats(),
+      attributes: startingBaseStats(),
+      unspentAttributePoints: 2,
       stats: STATS,
     },
     {
@@ -239,6 +246,10 @@ describe('game message round-trip', () => {
       experience: 0,
       unspentSkillPoints: 1,
       skills: [],
+      statSkills: [],
+      baseStats: startingBaseStats(),
+      attributes: startingBaseStats(),
+      unspentAttributePoints: 2,
       stats: STATS,
     },
     {

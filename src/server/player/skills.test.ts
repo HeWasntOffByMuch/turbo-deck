@@ -13,7 +13,7 @@ function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
   return {
     id: 'p1',
     displayName: 'P1',
-    baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
+    baseStats: { strength: 5, agility: 5, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
     skills: [],
     equipment: EMPTY_EQUIPMENT,
     inventory: emptyInventory(),
@@ -24,6 +24,8 @@ function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
     level: 20,
     experience: 0,
     unspentSkillPoints: 20,
+    unspentAttributePoints: 0,
+    statSkills: [],
     health: 100,
     resource: 20,
     ...overrides,

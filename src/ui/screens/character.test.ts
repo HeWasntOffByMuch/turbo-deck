@@ -11,7 +11,14 @@ import { describe, expect, it } from 'vitest';
 import { UiRoot } from '../core/root.js';
 import { bakeAtlas } from '../render/atlas.js';
 import { THEME } from '../theme/theme.js';
-import { CharacterScreen, type BranchView, type CharacterView, type SkillView } from './character.js';
+import {
+  CharacterScreen,
+  nextChangeLine,
+  type AttributeRowView,
+  type BranchView,
+  type CharacterView,
+  type SkillView,
+} from './character.js';
 
 function skill(id: string, overrides: Partial<SkillView> = {}): SkillView {
   return {
@@ -27,6 +34,25 @@ function skill(id: string, overrides: Partial<SkillView> = {}): SkillView {
   };
 }
 
+function attributeRow(
+  key: string,
+  overrides: Partial<AttributeRowView> = {},
+): AttributeRowView {
+  return {
+    key,
+    name: key,
+    abbrev: key.slice(0, 3).toUpperCase(),
+    allocated: 12,
+    total: 12,
+    canAllocate: true,
+    blockedBecause: '',
+    nextEffect: '',
+    toNext: 0,
+    active: [],
+    ...overrides,
+  };
+}
+
 function branch(id: string, skills: readonly SkillView[], locked = false): BranchView {
   return { id, name: id, locked, pointsSpent: 0, skills };
 }
@@ -37,6 +63,11 @@ function viewOf(overrides: Partial<CharacterView> = {}): CharacterView {
     level: 4,
     experience: { current: 120, toNext: 260 },
     unspentPoints: 2,
+    unspentAttributePoints: 3,
+    attributes: [],
+    synergies: [],
+    statSkills: [],
+    respec: { cost: 40, enabled: true },
     stats: [
       { label: 'Health', value: '138' },
       { label: 'Damage', value: '12' },
@@ -115,18 +146,65 @@ describe('the character sheet', () => {
     expect(screen.rowFor('might.toughness')?.skill?.level).toBe(3);
     // The tab the player was looking at is not rebuilt out from under them.
     expect(root.layoutPasses).toBeGreaterThan(passes);
-    expect(screen.tabs.tabIds).toEqual(['stats', 'might', 'arcane']);
+    expect(screen.tabs.tabIds).toEqual(['attributes', 'stats', 'might', 'arcane']);
   });
 
-  it('keeps the stats tab first, so a sheet opens on numbers rather than a tree', () => {
+  it('opens on the attributes, which is where a point is actually spent', () => {
+    // Spec 147 moved the front tab. The old rule was "numbers rather than a
+    // tree" and it still holds -- six rows with a "+" on each is the most
+    // numeric thing on the sheet, and it is now the first decision a levelling
+    // character has to make.
     const { screen } = harness();
-    expect(screen.tabs.tabIds[0]).toBe('stats');
+    expect(screen.tabs.tabIds[0]).toBe('attributes');
+    expect(screen.tabs.tabIds[1]).toBe('stats');
   });
 
-  it('hides the points line when there is nothing to spend', () => {
+  it('hides the points line only when *both* budgets are empty', () => {
     // Rather than showing "0 points to spend", which is a sentence about
-    // nothing taking up a line in a panel that is short of them.
-    expect(harness(viewOf({ unspentPoints: 0 })).screen.pointsLabel.visible).toBe(false);
-    expect(harness(viewOf({ unspentPoints: 3 })).screen.pointsLabel.visible).toBe(true);
+    // nothing taking up a line in a panel that is short of them. Two budgets
+    // since spec 147, so either one being non-empty is something to say.
+    const none = viewOf({ unspentPoints: 0, unspentAttributePoints: 0 });
+    expect(harness(none).screen.pointsLabel.visible).toBe(false);
+    expect(harness(viewOf({ unspentPoints: 3, unspentAttributePoints: 0 })).screen.pointsLabel.visible).toBe(true);
+    expect(harness(viewOf({ unspentPoints: 0, unspentAttributePoints: 2 })).screen.pointsLabel.visible).toBe(true);
+  });
+
+  it('offers a "+" per attribute, and only where the rules allow one', () => {
+    const { screen } = harness(
+      viewOf({
+        attributes: [
+          attributeRow('strength', { canAllocate: true }),
+          attributeRow('wisdom', { canAllocate: false, blockedBecause: 'no unspent attribute points' }),
+        ],
+      }),
+    );
+    expect(screen.attributeRowFor('strength')?.spendButton.enabled).toBe(true);
+    expect(screen.attributeRowFor('wisdom')?.spendButton.enabled).toBe(false);
+    // The refusal is what the tooltip says, not a second sentence written here.
+    expect(screen.attributeRowFor('wisdom')?.tooltip()).toBe('no unspent attribute points');
+  });
+
+  it('presses through to the caller with the attribute that was pressed', () => {
+    const { screen, root } = harness(
+      viewOf({ attributes: [attributeRow('perception', { canAllocate: true })] }),
+    );
+    const pressed: string[] = [];
+    screen.onAllocate = (key) => pressed.push(key);
+    screen.attributeRowFor('perception')?.spendButton.onPress?.(0);
+    void root;
+    expect(pressed).toEqual(['perception']);
+  });
+
+  it('names the nearest change rather than listing all six', () => {
+    // The brief's "surface what mechanically changes next", taken literally:
+    // one sentence, about whichever attribute is closest to doing something.
+    expect(
+      nextChangeLine([
+        attributeRow('strength', { toNext: 9, nextEffect: 'Committed Swing' }),
+        attributeRow('perception', { toNext: 2, nextEffect: 'Opening Read' }),
+        attributeRow('wisdom', { toNext: 0, nextEffect: '' }),
+      ]),
+    ).toBe('2 more PER: Opening Read');
+    expect(nextChangeLine([attributeRow('wisdom', { toNext: 0, nextEffect: '' })])).toBe('');
   });
 });

@@ -15,14 +15,31 @@
  */
 
 import { abilityById } from '../../../server/data/abilities.js';
+import { ATTRIBUTES, attributeByKey, type AttributeKey } from '../../../server/data/attributes.js';
 import { SKILL_BRANCHES, skillById, ALL_SKILLS } from '../../../server/data/skills.js';
+import { statSkillById, statSkillsFor } from '../../../server/data/stat-skills.js';
+import { ALL_SYNERGIES, metSynergies } from '../../../server/data/synergies.js';
 import { experienceForLevel } from '../../../server/player/player-manager.js';
+import { RESPEC_COST, pointsSpent, validateAttributeSpend } from '../../../server/player/attributes.js';
+import { milestoneProgress } from '../../../server/player/progression.js';
+import { levelOfStatSkill, validateStatSkillSpend } from '../../../server/player/stat-skills.js';
 import { attackTimingFor } from '../../../server/sim/abilities.js';
 import { resolveAttackTiming, type AttackTiming } from '../../../server/sim/attack-timing.js';
 import { lockedBranches, pointsInBranch, levelOf, validateSkillSpend } from '../../../server/player/skills.js';
-import type { EffectiveStats, PersistedPlayer, SkillAllocation } from '../../../server/state/types.js';
+import type {
+  BaseStats,
+  EffectiveStats,
+  PersistedPlayer,
+  SkillAllocation,
+} from '../../../server/state/types.js';
 import type { AbilityView, HudView } from '../../../ui/screens/hud.js';
-import type { BranchView, CharacterView, SkillView } from '../../../ui/screens/character.js';
+import type {
+  AttributeRowView,
+  BranchView,
+  CharacterView,
+  SkillView,
+  SynergyRowView,
+} from '../../../ui/screens/character.js';
 
 /** Ticks per second, for turning a cooldown into the seconds a player reads. */
 const TICK_RATE = 60;
@@ -161,6 +178,23 @@ const STAT_ROWS: readonly {
   { label: 'Power', of: (s) => s.spellPower.toFixed(2) },
   { label: 'Move', of: (s) => String(Math.round(s.moveSpeed)) },
   { label: 'Pool', of: (s) => String(Math.round(s.maxResource)) },
+  // The progression numbers (spec 147). Chosen so that every one of the six
+  // attributes has at least one row that visibly moves when a point goes into
+  // it -- a sheet where an attribute changes nothing you can see is a sheet that
+  // cannot be used to make a decision.
+  { label: 'Guard', of: (s) => String(Math.round(s.traits.maxPoise)) },
+  { label: 'Stagger', of: (s) => String(Math.round(s.traits.staggerPower)) },
+  // As percentages of the authored animation, because "0.72x" is a ratio nobody
+  // has the other half of. 28% shorter is a sentence.
+  {
+    label: 'Recovery',
+    of: (s) => `-${Math.round((1 - s.traits.backswingScale) * 100)}%`,
+  },
+  { label: 'Wind-up', of: (s) => `-${Math.round((1 - s.traits.attackPointScale) * 100)}%` },
+  { label: 'Weak point', of: (s) => `${Math.round(s.traits.weakPointChance * 100)}%` },
+  { label: 'Ability cost', of: (s) => `-${Math.round((1 - s.traits.resourceCostScale) * 100)}%` },
+  { label: 'Cooldowns', of: (s) => `-${Math.round((1 - s.traits.cooldownScale) * 100)}%` },
+  { label: 'Healing', of: (s) => `${Math.round(s.traits.healingScale * 100)}%` },
 ];
 
 export interface CharacterSource {
@@ -170,6 +204,102 @@ export interface CharacterSource {
   readonly unspentSkillPoints: number;
   readonly skills: readonly SkillAllocation[];
   readonly stats: EffectiveStats;
+  /** The progression half (spec 147), replicated on the `Stats` message. */
+  readonly baseStats: BaseStats;
+  readonly attributes: BaseStats;
+  readonly unspentAttributePoints: number;
+  readonly statSkills: readonly SkillAllocation[];
+  readonly coins: number;
+}
+
+/**
+ * The six attribute rows.
+ *
+ * `canAllocate` goes through `validateAttributeSpend` -- the server's own
+ * function -- for the reason `canSpend` goes through `validateSkillSpend`: a
+ * greyed-out "+" and a refused request must not be able to disagree, and the
+ * tooltip that says why should say what the server would have said.
+ *
+ * `nextEffect` is the milestone's own `effect` string, so the sentence a player
+ * reads is the sentence the designer wrote beside the grant rather than a second
+ * description of it kept in the UI.
+ */
+export function attributeRowsOf(source: CharacterSource): readonly AttributeRowView[] {
+  const stand = {
+    baseStats: source.baseStats,
+    unspentAttributePoints: source.unspentAttributePoints,
+  };
+  const progress = milestoneProgress(source.attributes as unknown as Record<AttributeKey, number>);
+  return ATTRIBUTES.map((definition) => {
+    const check = validateAttributeSpend(stand, definition.key);
+    const mine = progress.find((entry) => entry.attribute === definition.key);
+    return {
+      key: definition.key,
+      name: `${definition.abbrev}  ${definition.name}`,
+      abbrev: definition.abbrev,
+      allocated: source.baseStats[definition.key],
+      total: source.attributes[definition.key],
+      canAllocate: check.ok,
+      blockedBecause: check.ok ? '' : check.detail,
+      nextEffect: mine?.next ? `${mine.next.name} — ${mine.next.effect}` : '',
+      toNext: mine?.remaining ?? 0,
+      active: (mine?.met ?? []).map((milestone) => milestone.name),
+    };
+  });
+}
+
+/**
+ * All fifteen pairs, active or not.
+ *
+ * Every one of them, always. A list that showed only what a character already
+ * has cannot answer the question a player actually has in front of the sheet --
+ * *what is one point away* -- and the fifteen rows are the design's own claim
+ * that no pair is a dead end, so hiding fourteen of them hides the claim.
+ */
+export function synergyRowsOf(attributes: BaseStats): readonly SynergyRowView[] {
+  const totals = attributes as unknown as Record<AttributeKey, number>;
+  const active = new Set(metSynergies(totals).map((synergy) => synergy.id));
+  return ALL_SYNERGIES.map((synergy) => ({
+    id: synergy.id,
+    name: synergy.name,
+    effect: synergy.effect,
+    active: active.has(synergy.id),
+    requirement: `${abbrev(synergy.a)} ${synergy.threshold} / ${abbrev(synergy.b)} ${synergy.threshold}`,
+  }));
+}
+
+function abbrev(key: AttributeKey): string {
+  return attributeByKey(key)?.abbrev ?? key.slice(0, 3).toUpperCase();
+}
+
+/** The attuned tree, as one `BranchView` per attribute (spec 147). */
+export function statSkillBranchesOf(source: CharacterSource): readonly BranchView[] {
+  const totals = source.attributes as unknown as Record<AttributeKey, number>;
+  const stand = { statSkills: source.statSkills, unspentSkillPoints: source.unspentSkillPoints };
+  return ATTRIBUTES.map((definition) => ({
+    id: `attr:${definition.key}`,
+    name: definition.abbrev,
+    // Nothing in this tree locks anything. The field exists because the branch
+    // tree has it, and it is false here forever -- which is the design decision,
+    // stated where a reader will see it.
+    locked: false,
+    pointsSpent: source.statSkills
+      .filter((allocation) => statSkillById(allocation.skillId)?.attribute === definition.key)
+      .reduce((sum, allocation) => sum + allocation.level, 0),
+    skills: statSkillsFor(definition.key).map((skill) => {
+      const check = validateStatSkillSpend(stand, totals, skill.id);
+      return {
+        id: skill.id,
+        name: skill.name,
+        tier: skill.tier,
+        level: levelOfStatSkill(source.statSkills, skill.id),
+        maxLevel: skill.maxLevel,
+        description: `${skill.description} (${skill.trigger})`,
+        canSpend: check.ok,
+        blockedBecause: check.ok ? '' : check.detail,
+      };
+    }),
+  }));
 }
 
 /**
@@ -220,8 +350,18 @@ export function characterViewOf(source: CharacterSource): CharacterView {
     level: source.level,
     experience: { current: source.experience, toNext: experienceForLevel(source.level + 1) },
     unspentPoints: source.unspentSkillPoints,
+    unspentAttributePoints: source.unspentAttributePoints,
     stats: STAT_ROWS.map((row) => ({ label: row.label, value: row.of(source.stats) })),
+    attributes: attributeRowsOf(source),
+    synergies: synergyRowsOf(source.attributes),
     branches,
+    statSkills: statSkillBranchesOf(source),
+    respec: {
+      cost: RESPEC_COST,
+      // Both halves of the server's own rule, run against the client's copy:
+      // there has to be something to hand back, and the purse has to cover it.
+      enabled: pointsSpent(source.baseStats) > 0 && source.coins >= RESPEC_COST,
+    },
   };
 }
 

@@ -5,6 +5,8 @@ import { DeltaTracker } from './delta.js';
 import { decodeServerMessage, encodeServerMessage } from './messages.js';
 import { EntityField } from './protocol.js';
 import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
+import { NEUTRAL_TRAITS } from '../player/derived.js';
+import { blankProgression } from '../sim/world.js';
 
 const STATS: EffectiveStats = {
   maxHealth: 100,
@@ -20,6 +22,7 @@ const STATS: EffectiveStats = {
   maxResource: 30,
   resourceRegen: 0.05,
   basicAttackId: 'melee.slash',
+  traits: NEUTRAL_TRAITS,
 };
 
 function entity(id: number, overrides: Partial<ServerEntity> = {}): ServerEntity {
@@ -51,6 +54,7 @@ function entity(id: number, overrides: Partial<ServerEntity> = {}): ServerEntity
     cast: null,
     cooldowns: {},
     projectile: null,
+    ...blankProgression(),
     ...overrides,
   };
 }
@@ -68,6 +72,8 @@ describe('delta tracking', () => {
     const record = delta.upserts[0];
     expect(record?.fields).toBe(
       EntityField.Spawn |
+        EntityField.Poise |
+        EntityField.Shield |
         EntityField.Position |
         EntityField.Facing |
         EntityField.Health |
@@ -135,6 +141,8 @@ describe('delta tracking', () => {
     const returning = tracker.build(3, 0, [entity(7)]);
     expect(returning.upserts[0]?.fields).toBe(
       EntityField.Spawn |
+        EntityField.Poise |
+        EntityField.Shield |
         EntityField.Position |
         EntityField.Facing |
         EntityField.Health |

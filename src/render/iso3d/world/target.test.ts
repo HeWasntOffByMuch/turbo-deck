@@ -50,7 +50,7 @@ function gate(abilityId: string, from: Point, targetRadius: number): CastDecisio
   const stats = computeEffectiveStats({
     id: 'p1',
     displayName: 'P1',
-    baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
+    baseStats: { strength: 5, agility: 5, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
     skills: [],
     equipment: EMPTY_EQUIPMENT,
     inventory: emptyInventory(),
@@ -61,6 +61,8 @@ function gate(abilityId: string, from: Point, targetRadius: number): CastDecisio
     level: 1,
     experience: 0,
     unspentSkillPoints: 0,
+    unspentAttributePoints: 0,
+    statSkills: [],
     health: 200,
     resource: 100,
   });
@@ -74,6 +76,8 @@ function gate(abilityId: string, from: Point, targetRadius: number): CastDecisio
       cooldowns: {},
       cast: null,
       stats,
+      poise: stats.traits.maxPoise,
+      shield: 0,
     },
     abilityId,
     { x: 0, y: 0 },

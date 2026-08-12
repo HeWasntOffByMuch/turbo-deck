@@ -27,7 +27,12 @@ import { InputMap } from '../input/input-map.js';
 import { KeybindingsScreen } from '../screens/keybindings.js';
 import { InventoryScreen, type ContainerView, type ItemView, type SlotRef } from '../screens/inventory.js';
 import { HudScreen, type HudView } from '../screens/hud.js';
-import { CharacterScreen, type CharacterView, type SkillView } from '../screens/character.js';
+import {
+  CharacterScreen,
+  type AttributeRowView,
+  type CharacterView,
+  type SkillView,
+} from '../screens/character.js';
 import { ShopScreen, type ShopRow, type ShopView } from '../screens/shop.js';
 import { Tooltip } from '../widgets/tooltip.js';
 import { UiWindow } from '../widgets/window.js';
@@ -398,6 +403,29 @@ export function demoHud(options: PlayRenderOptions = {}): HudView {
  * table would move every time somebody retuned a branch. The *adapter* is tested
  * against the real rules in `character-model.test.ts`; this is a picture.
  */
+function attribute(
+  key: string,
+  name: string,
+  abbrev: string,
+  allocated: number,
+  total: number,
+  nextEffect: string,
+  toNext: number,
+): AttributeRowView {
+  return {
+    key,
+    name,
+    abbrev,
+    allocated,
+    total,
+    canAllocate: true,
+    blockedBecause: '',
+    nextEffect,
+    toNext,
+    active: [],
+  };
+}
+
 export function demoCharacter(spend: readonly string[] = []): CharacterView {
   const taken = new Set(spend);
   const points = Math.max(0, 3 - spend.length);
@@ -418,6 +446,7 @@ export function demoCharacter(spend: readonly string[] = []): CharacterView {
     level: 6,
     experience: { current: 180, toNext: 400 },
     unspentPoints: points,
+    unspentAttributePoints: 4,
     stats: [
       { label: 'Health', value: '138' },
       { label: 'Damage', value: '12' },
@@ -425,7 +454,25 @@ export function demoCharacter(spend: readonly string[] = []): CharacterView {
       { label: 'Speed', value: '2.0/s' },
       { label: 'Armour', value: '12%' },
       { label: 'Crit', value: '5%' },
+      { label: 'Guard', value: '84' },
+      { label: 'Stagger', value: '22' },
     ],
+    // The gallery is a picture, not a fixture (spec 147): a plausible spread
+    // with one pair on and one a point away, so the golden shows both states.
+    attributes: [
+      attribute('strength', 'STR  Strength', 'STR', 21, 21, 'Committed Swing — while winding up an attack you ignore 60% of incoming poise damage.', 14),
+      attribute('agility', 'AGI  Agility', 'AGI', 26, 28, 'Mobile Offense — each Flow stack also cuts 6% off your follow-through.', 9),
+      attribute('intelligence', 'INT  Intelligence', 'INT', 8, 8, 'Spell Shaping — your abilities gain radius and range with Intelligence.', 12),
+      attribute('constitution', 'CON  Constitution', 'CON', 25, 25, 'Hard to Kill — below 30% health you cannot be staggered and take 20% less damage.', 10),
+      attribute('perception', 'PER  Perception', 'PER', 24, 24, 'Opening Read — an enemy that has just committed an attack is Vulnerable for 0.75s.', 11),
+      attribute('wisdom', 'WIS  Wisdom', 'WIS', 5, 5, 'Resource Discipline — an ability that connects grants Attuned.', 15),
+    ],
+    synergies: [
+      { id: 'pair.duelist', name: 'Duelist', effect: 'Each Flow stack grants 4% damage reduction.', active: true, requirement: 'AGI 25 / CON 25' },
+      { id: 'pair.ranger', name: 'Ranger', effect: 'Handling shortens projectile cooldowns.', active: false, requirement: 'AGI 25 / PER 25' },
+    ],
+    statSkills: [],
+    respec: { cost: 40, enabled: true },
     branches: [
       {
         id: 'might',

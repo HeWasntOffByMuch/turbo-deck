@@ -128,7 +128,14 @@ export function resolveBlow(
   }
 
   // --- 3: amplify ---------------------------------------------------------
-  let damage = ability.damage * attacker.stats.spellPower * (critical ? 1.75 : 1);
+  // Two multipliers, and which one applies is the ability's own `basicAttack`
+  // flag (spec 147). A swing scales with what you are swinging -- Strength, and
+  // whatever the weapon adds -- and a spell scales with Intelligence. Before
+  // this, every blow in the game scaled with `spellPower` and nothing scaled
+  // with `attackDamage` at all, so a Strength build's damage stat was a number
+  // on a sheet that reached nothing.
+  const power = isBasicAttack ? A.weaponPower : attacker.stats.spellPower;
+  let damage = ability.damage * power * (critical ? 1.75 : 1);
 
   if (weakPoint) {
     const still = tick - attacker.stillSinceTick >= A.steadyAimTicks ? A.steadyAimPct : 0;

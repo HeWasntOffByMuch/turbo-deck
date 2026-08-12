@@ -58,11 +58,11 @@ function flag(name: string, fallback: string): string {
  * feeds `attackSpeed`, the finesse skills shorten the interval flatly, and the
  * weighted stars carry both a haste modifier and the star as its basic attack.
  */
-function fastCharacter(dexterity: number, skilled: boolean): PersistedPlayer {
+function fastCharacter(agility: number, skilled: boolean): PersistedPlayer {
   return {
     id: 'probe',
     displayName: 'probe',
-    baseStats: { strength: 5, dexterity, intelligence: 5, vitality: 5 },
+    baseStats: { strength: 5, agility: agility, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
     skills: skilled
       ? [
           { skillId: 'finesse.precision', level: 5 },
@@ -80,6 +80,8 @@ function fastCharacter(dexterity: number, skilled: boolean): PersistedPlayer {
     level: 20,
     experience: 0,
     unspentSkillPoints: 0,
+    unspentAttributePoints: 0,
+    statSkills: [],
     health: 100,
     resource: 10,
   };

@@ -23,8 +23,8 @@
  * Pure. No clock, no randomness, no entity.
  */
 
-import { MAX_DAMAGE_REDUCTION } from '../../sim/constants.js';
-import { linear, reciprocal, SCALING, softCap } from '../data/scaling.js';
+import { MAX_DAMAGE_REDUCTION, PLAYER_ATTACK_DAMAGE } from '../../sim/constants.js';
+import { above, linear, reciprocal, SCALING, softCap } from '../data/scaling.js';
 import { emptyTraitTotals, type ModifierTotals } from '../data/modifiers.js';
 import type { TraitStats } from '../state/types.js';
 import type { AttributeTotals } from './progression.js';
@@ -66,6 +66,7 @@ export const NEUTRAL_TRAITS: TraitStats = {
   executeBonus: 0,
   executeBelow: 0,
   overkillResource: 0,
+  weaponPower: 1,
   momentumTicks: 0,
   momentumWindupScale: 0,
   heavyWindupScale: 1,
@@ -162,6 +163,12 @@ export interface DeriveContext {
   readonly tickRate: number;
   /** The body's max health, for the fraction-of-health traits. */
   readonly maxHealth: number;
+  /**
+   * The body's derived `attackDamage`, which {@link TraitStats.weaponPower} is
+   * this against the unarmed reference. Passed in rather than recomputed,
+   * because it is derived one function up and there must not be two of it.
+   */
+  readonly attackDamage: number;
 }
 
 /**
@@ -207,17 +214,17 @@ export function deriveTraits(
 
   // --- Agility: animation only. Nothing here touches intervalTicks ---------
   const attackPointScale = clamp(
-    reciprocal(AGI, S.agility.attackPointPer, S.agility.attackPointFloor) * reduction(t.attackPointReduction),
+    reciprocal(above(AGI), S.agility.attackPointPer, S.agility.attackPointFloor) * reduction(t.attackPointReduction),
     0.25,
     1,
   );
   const backswingScale = clamp(
-    reciprocal(AGI, S.agility.backswingPer, S.agility.backswingFloor) * reduction(t.backswingReduction),
+    reciprocal(above(AGI), S.agility.backswingPer, S.agility.backswingFloor) * reduction(t.backswingReduction),
     0.1,
     1,
   );
   const handlingScale = clamp(
-    reciprocal(AGI, S.agility.handlingPer, S.agility.handlingFloor) * reduction(t.handlingReduction),
+    reciprocal(above(AGI), S.agility.handlingPer, S.agility.handlingFloor) * reduction(t.handlingReduction),
     0.25,
     1,
   );
@@ -250,12 +257,12 @@ export function deriveTraits(
 
   // --- Wisdom -------------------------------------------------------------
   const resourceCostScale = clamp(
-    reciprocal(WIS, S.wisdom.costPer, S.wisdom.costFloor) * reduction(t.costReduction),
+    reciprocal(above(WIS), S.wisdom.costPer, S.wisdom.costFloor) * reduction(t.costReduction),
     0.2,
     1,
   );
   const cooldownScale = clamp(
-    reciprocal(WIS, S.wisdom.cooldownPer, S.wisdom.cooldownFloor) * reduction(t.cooldownReduction),
+    reciprocal(above(WIS), S.wisdom.cooldownPer, S.wisdom.cooldownFloor) * reduction(t.cooldownReduction),
     0.25,
     1,
   );
@@ -285,6 +292,9 @@ export function deriveTraits(
     executeBonus: Math.max(0, t.executeBonus),
     executeBelow: clamp(t.executeBelow, 0, 1),
     overkillResource: Math.max(0, t.overkillResource),
+    // The Damage row, expressed as a multiplier a blow can be multiplied by.
+    // A body with the reference damage hits for exactly what the ability says.
+    weaponPower: Math.max(0, context.attackDamage / PLAYER_ATTACK_DAMAGE),
     momentumTicks: Math.max(0, Math.round(t.momentumTicks)),
     momentumWindupScale: clamp(t.momentumWindupScale, 0, 0.9),
     heavyWindupScale: reduction(t.heavyWindupReduction),

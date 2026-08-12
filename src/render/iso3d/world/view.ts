@@ -44,6 +44,7 @@ import {
 } from '../../../server/config.js';
 import { abilityById, BASIC_ATTACK_ID } from '../../../server/data/abilities.js';
 import { EntityKind } from '../../../server/net/protocol.js';
+import type { BaseStatKey } from '../../../server/state/types.js';
 import { viewSeed } from '../seed.js';
 import { DEFAULT_AUTHORED_UNITS, setAuthoredUnits, unitsFromQuery } from './unit-catalog.js';
 import { ASSET_MANIFEST_HASH } from './unit-assets.js';
@@ -579,6 +580,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     map: inputMap,
     onMove: (from, to, count) => client.moveItem(from, to, count),
     onSpend: (skillId) => client.spendSkillPoint(skillId),
+    onAllocate: (key) => client.allocateAttribute(key as BaseStatKey),
+    onRespec: () => client.respecAttributes(),
     onBuy: (vendorId, defId) => client.buyItem(vendorId, defId),
     onSell: (vendorId, index) => client.sellItem(vendorId, index),
     onBuyBack: (vendorId, index) => client.buyBack(vendorId, index),

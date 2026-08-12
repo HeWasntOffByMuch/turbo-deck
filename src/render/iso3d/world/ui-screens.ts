@@ -71,6 +71,9 @@ export interface UiScreensOptions {
   /** A drag that landed: where from, where to, and 0 for the whole stack. */
   readonly onMove: (from: SlotRef, to: SlotRef, count: number) => void;
   readonly onSpend: (skillId: string) => void;
+  /** Put one attribute point somewhere, and hand every one of them back (147). */
+  readonly onAllocate: (key: string) => void;
+  readonly onRespec: () => void;
   readonly onBuy: (vendorId: string, defId: string) => void;
   readonly onSell: (vendorId: string, index: number) => void;
   readonly onBuyBack: (vendorId: string, index: number) => void;
@@ -239,6 +242,9 @@ export class UiScreens {
   private lastSheetLevel = -1;
   private lastExperience = -1;
   private lastPoints = -1;
+  private lastBaseStats: unknown = null;
+  private lastStatSkills: unknown = null;
+  private lastSheetCoins = -1;
 
   constructor(
     private readonly options: UiScreensOptions,
@@ -274,6 +280,16 @@ export class UiScreens {
     this.character = new CharacterScreen({ theme: THEME });
     this.character.onSpend = (skillId) => {
       options.onSpend(skillId);
+    };
+    // Three more asks, and every one of them is only an ask (spec 147): the
+    // screen sends a request and redraws when the server's answer arrives.
+    // Nothing here updates a number optimistically, because an attribute that
+    // ticked up and then back down is worse than one that ticks up late.
+    this.character.onAllocate = (key) => {
+      options.onAllocate(key);
+    };
+    this.character.onRespec = () => {
+      options.onRespec();
     };
 
     this.shop = new ShopScreen({ theme: THEME, contexts: this.root.contexts, focus: this.root.focus });
@@ -478,6 +494,11 @@ export class UiScreens {
           unspentSkillPoints: view.unspentSkillPoints,
           skills: view.skills,
           stats: view.stats,
+          baseStats: view.baseStats,
+          attributes: view.attributes,
+          unspentAttributePoints: view.unspentAttributePoints,
+          statSkills: view.statSkills,
+          coins: view.coins,
         }),
       );
     }
@@ -588,7 +609,10 @@ export class UiScreens {
       view.stats === this.lastStats &&
       view.level === this.lastSheetLevel &&
       view.experience === this.lastExperience &&
-      view.unspentSkillPoints === this.lastPoints
+      view.unspentSkillPoints === this.lastPoints &&
+      view.baseStats === this.lastBaseStats &&
+      view.statSkills === this.lastStatSkills &&
+      view.coins === this.lastSheetCoins
     ) {
       return false;
     }
@@ -597,6 +621,9 @@ export class UiScreens {
     this.lastSheetLevel = view.level;
     this.lastExperience = view.experience;
     this.lastPoints = view.unspentSkillPoints;
+    this.lastBaseStats = view.baseStats;
+    this.lastStatSkills = view.statSkills;
+    this.lastSheetCoins = view.coins;
     return true;
   }
 

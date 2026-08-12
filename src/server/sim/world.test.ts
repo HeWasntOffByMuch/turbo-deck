@@ -34,7 +34,7 @@ import {
 const RECORD: PersistedPlayer = {
   id: 'p1',
   displayName: 'P1',
-  baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
+  baseStats: { strength: 5, agility: 5, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
   skills: [],
   equipment: EMPTY_EQUIPMENT,
   inventory: emptyInventory(),
@@ -45,6 +45,8 @@ const RECORD: PersistedPlayer = {
   level: 1,
   experience: 0,
   unspentSkillPoints: 0,
+  unspentAttributePoints: 0,
+  statSkills: [],
   health: 100,
   resource: 20,
 };

@@ -28,7 +28,7 @@ import {
 import { SERVER_TICK_RATE } from '../config.js';
 import { BASIC_ATTACK_ID } from '../data/abilities.js';
 import { itemById } from '../data/items.js';
-import { SCALING } from '../data/scaling.js';
+import { above, SCALING } from '../data/scaling.js';
 import type { StatModifier } from '../data/modifiers.js';
 import { armorFromAttributes, deriveTraits } from './derived.js';
 import { heldModifiers, resolveProgression } from './progression.js';
@@ -177,7 +177,7 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
   const maxHealth = Math.max(1, flatHealth * (1 + bonus.maxHealthPct));
 
   const moveSpeed = clamp(
-    (BASE_MOVE_SPEED + SCALING.agility.movePer * agility + bonus.moveSpeed) * (1 + bonus.moveSpeedPct),
+    (BASE_MOVE_SPEED + SCALING.agility.movePer * above(agility) + bonus.moveSpeed) * (1 + bonus.moveSpeedPct),
     MOVE_SPEED_HARD_MIN,
     MOVE_SPEED_HARD_MAX,
   );
@@ -251,7 +251,11 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
     // Derived last, because two of its fields are fractions of maxHealth and
     // one is a duration in ticks -- it needs the pool it is a fraction of, and
     // the tick rate the sim actually runs at.
-    traits: deriveTraits(attributes, bonus, { tickRate: SERVER_TICK_RATE, maxHealth }),
+    traits: deriveTraits(attributes, bonus, {
+      tickRate: SERVER_TICK_RATE,
+      maxHealth,
+      attackDamage,
+    }),
   };
 }
 

@@ -234,6 +234,21 @@ export interface TraitStats {
   readonly breakResource: number;
   /** Fraction of live cooldowns removed by a poise break this body caused. */
   readonly breakCooldownRefund: number;
+  /**
+   * Multiplier on a **basic attack's** damage, the way `spellPower` is one on an
+   * ability's (spec 147).
+   *
+   * This is the fix for a hole spec 062 left and nobody noticed for eighty-five
+   * specs: `applyDamage` multiplied every blow by `spellPower` and read
+   * `attackDamage` nowhere at all, so Strength's damage coefficient was
+   * decorative -- derived, replicated, shown on the sheet, and never reaching a
+   * blow. A "pure Strength" build could not deal damage with Strength.
+   *
+   * Derived *from* `attackDamage` rather than beside it, so there is still one
+   * number that means "how hard do I hit" and the sheet's Damage row is that
+   * number rather than a second one nobody can reconcile with it.
+   */
+  readonly weaponPower: number;
   /** Multiplier on poise damage this body's *abilities* deal. 0 is none. */
   readonly abilityPoiseFactor: number;
   /** Damage multiplier against a staggered target under `executeBelow` health. */
@@ -393,6 +408,7 @@ export const TRAIT_WIRE_ORDER: readonly (keyof TraitStats)[] = [
   'executeBonus',
   'executeBelow',
   'overkillResource',
+  'weaponPower',
   'momentumTicks',
   'momentumWindupScale',
   'heavyWindupScale',

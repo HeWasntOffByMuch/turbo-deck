@@ -51,6 +51,30 @@ export function softCap(attr: number, per: number, knee: number, falloff: number
 }
 
 /**
+ * How far past the starting value an attribute is.
+ *
+ * **The baseline rule** (spec 147). Every attribute starts at
+ * {@link SCALING.startingAttribute}, so a coefficient applied to the raw value
+ * would mean a brand-new character already had five points of every scale --
+ * their wind-ups shorter than the ability table says, their costs lower than the
+ * ability table says, their cooldowns shorter than the ability table says. Every
+ * authored number in `data/abilities.ts` would describe a character that does
+ * not exist.
+ *
+ * So the *scales* -- the reciprocal ones, and movement -- are measured from the
+ * start, and a fresh character is exactly 1.0x on all of them: the content
+ * tables say what actually happens to somebody who has spent nothing. The
+ * *quantities* that predate this spec (health, the pool, armour, turn rate) stay
+ * measured from zero, because their baselines are already load-bearing
+ * elsewhere and re-basing them would move numbers this spec has no business
+ * moving.
+ */
+export function above(attr: number): number {
+  if (!Number.isFinite(attr)) return 0;
+  return Math.max(0, attr - SCALING.startingAttribute);
+}
+
+/**
  * `1 / (1 + attr * per)`, held at or above `floor`.
  *
  * The multiplier form of "reduces X". Two sources of 30% reduction compose to
@@ -86,8 +110,16 @@ export const SCALING = {
   strength: {
     /** Attack damage per point. The existing coefficient, unchanged. */
     damagePer: 0.6,
-    /** Health per point -- small; Constitution owns the pool. */
-    healthPer: 2,
+    /**
+     * Health per point.
+     *
+     * Half Constitution's rather than a tenth of it. A pure-Strength character
+     * has to be able to reach what it is hitting, and the brief's rule is that
+     * it must not be *forced* into Constitution -- so Strength buys enough
+     * durability to close the distance and none of the tools to survive being
+     * there.
+     */
+    healthPer: 6,
     /** Poise damage a blow carries: a base, plus a soft-capped rate. */
     staggerBase: 8,
     staggerPer: 0.9,
@@ -109,10 +141,19 @@ export const SCALING = {
     backswingFloor: 0.25,
     handlingPer: 0.012,
     handlingFloor: 0.5,
-    movePer: 0.9,
-    turnPer: 1.6,
+    movePer: 0.6,
+    /**
+     * Turn rate per point.
+     *
+     * `TURN_RATE_PER_AGILITY` unchanged, and it must stay unchanged: spec 142's
+     * turn ease derives its acceleration from `COMMIT_ALIGN_TICKS` against this
+     * rate, and `world/turn-limits.ts` estimates a remote player's rate from the
+     * same number. Retuning it here would silently re-time every drawn turn in
+     * the game.
+     */
+    turnPer: 30,
     /** Armour per point -- half Constitution's, and the reason is footwork. */
-    armorPer: 0.002,
+    armorPer: 0.004,
     damagePer: 0.15,
     /** How long one `flow` stack lives, and what a stack is worth. */
     flowTicks: seconds(1.2),
@@ -121,7 +162,7 @@ export const SCALING = {
   },
 
   intelligence: {
-    spellPowerPer: 0.02,
+    spellPowerPer: 0.04,
     resourcePer: 2,
     /** Geometry. Gated behind the INT 20 milestone; zero until then. */
     radiusPer: 0.006,
@@ -143,7 +184,7 @@ export const SCALING = {
     /** Poise per second, before the calm multiplier. */
     poiseRegenBase: 4,
     poiseRegenPer: 0.35,
-    armorPer: 0.004,
+    armorPer: 0.008,
     healingPer: 0.006,
     /** Shield ceiling, as a fraction of max health. */
     shieldFraction: 0.25,

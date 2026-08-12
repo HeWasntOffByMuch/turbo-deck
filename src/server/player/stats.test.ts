@@ -62,7 +62,7 @@ function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
   return {
     id: 'p1',
     displayName: 'P1',
-    baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
+    baseStats: { strength: 5, agility: 5, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
     skills: [],
     equipment: EMPTY_EQUIPMENT,
     inventory: emptyInventory(),
@@ -73,6 +73,8 @@ function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
     level: 1,
     experience: 0,
     unspentSkillPoints: 0,
+    unspentAttributePoints: 0,
+    statSkills: [],
     health: 100,
     resource: 20,
     ...overrides,
@@ -170,7 +172,7 @@ describe('effective stats', () => {
     expect(TURN_RATE_PER_AGILITY).toBe(30);
     const fresh = computeEffectiveStats(player());
     const agile = computeEffectiveStats(
-      player({ baseStats: { strength: 5, dexterity: 25, intelligence: 5, vitality: 5 } }),
+      player({ baseStats: { strength: 5, agility: 25, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 } }),
     );
     expect(agile.turnRate).toBe(fresh.turnRate + TURN_RATE_PER_AGILITY * 20);
     expect(agile.turnRate).toBeGreaterThan(690);
@@ -179,7 +181,7 @@ describe('effective stats', () => {
   it('keeps armour under the sim-wide damage-reduction ceiling', () => {
     const tank = computeEffectiveStats(
       player({
-        baseStats: { strength: 5, dexterity: 999, intelligence: 5, vitality: 5 },
+        baseStats: { strength: 5, agility: 999, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
         equipment: { ...EMPTY_EQUIPMENT, offHand: 'shield.oak' },
       }),
     );
@@ -203,15 +205,28 @@ describe('effective stats', () => {
   it('does not let dexterity shorten the delay any more (spec 088)', () => {
     const slow = computeEffectiveStats(player());
     const quick = computeEffectiveStats(
-      player({ baseStats: { strength: 5, dexterity: 500, intelligence: 5, vitality: 5 } }),
+      player({ baseStats: { strength: 5, agility: 500, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 } }),
     );
     expect(quick.baseAttackTimeTicks).toBe(slow.baseAttackTimeTicks);
     expect(quick.attackSpeed).toBe(slow.attackSpeed);
     // Unhooked from cadence rather than deleted: it still does everything else
     // it did, which is what makes this a change of meaning and not a nerf.
     expect(quick.armor).toBeGreaterThan(slow.armor);
-    expect(quick.critChance).toBeGreaterThan(slow.critChance);
     expect(quick.turnRate).toBeGreaterThan(slow.turnRate);
+    // Except crit, which spec 147 took off it deliberately and gave to
+    // Perception. Knowing where to hit is not the same skill as hitting fast,
+    // and leaving the payoff on the fast stat is what made Agility the
+    // universal damage stat in the four-stat system.
+    expect(quick.critChance).toBe(slow.critChance);
+    expect(
+      computeEffectiveStats(
+        player({
+          baseStats: { strength: 5, agility: 5, intelligence: 5, constitution: 5, perception: 50, wisdom: 5 },
+        }),
+      ).critChance,
+    ).toBeGreaterThan(slow.critChance);
+    // And Agility's own payoff, which is the animation and never the interval.
+    expect(quick.traits.backswingScale).toBeLessThan(slow.traits.backswingScale);
   });
 
   it('does not let the weapon change the attack cadence (spec 091)', () => {
@@ -384,6 +399,11 @@ describe('persistence never carries a derived stat', () => {
         'position',
         'resource',
         'skills',
+        // The attuned tree and the attribute budget (spec 147). Ids, levels and
+        // a count -- still nothing derived, which is the property this test
+        // exists to hold rather than the exact length of the list.
+        'statSkills',
+        'unspentAttributePoints',
         'unspentSkillPoints',
       ].sort(),
     );
