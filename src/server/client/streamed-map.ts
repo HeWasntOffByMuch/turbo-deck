@@ -25,10 +25,15 @@
 import { loadMap, type LoadedMap, type MeshLayer } from '../../terrain/map-world.js';
 import type { TerrainChunk } from '../../terrain/chunk.js';
 import type { TerrainWorld } from '../../terrain/types.js';
-import type { Prop } from '../../terrain/vegetation.js';
+import { vegetationColliders, type Prop } from '../../terrain/vegetation.js';
 import type { MapInfoMessage } from '../net/map-messages.js';
 import type { HeldChunk } from './map-cache.js';
 import { chunksToDocument } from './map-rebuild.js';
+import { createWorldColliders } from '../../sim/collision.js';
+import { ARENA_OBSTACLES } from '../../sim/constants.js';
+import type { Rect, WorldColliders } from '../../sim/types.js';
+import { worldBoundsOf } from '../world/build.js';
+import type { CoverageSampler } from '../world/terrain.js';
 
 /** The four a chunk's own mesh reads across. See `add`. */
 const EDGE_NEIGHBOURS: readonly (readonly [number, number])[] = [
@@ -43,17 +48,94 @@ export class StreamedMap {
   private readonly info: MapInfoMessage;
   /** Chunks already inserted, so a re-offered one is not re-meshed. */
   private readonly held = new Set<string>();
+  /** Every chunk the map says exists, from `MapInfo`. See {@link knows}. */
+  private readonly declared = new Set<string>();
+  /** A chunk's edge in world units. */
+  private readonly chunkExtent: number;
+  /** The declared extent of the whole map, fixed before the first chunk. */
+  private readonly bounds: Rect;
 
   constructor(info: MapInfoMessage) {
     this.info = info;
     // The grid, the bounds and the layer scalars, and deliberately no chunks:
     // this is the empty world every arrival is written into.
-    this.loaded = loadMap(chunksToDocument(info, []));
+    const empty = chunksToDocument(info, []);
+    this.loaded = loadMap(empty);
+    this.chunkExtent = info.cellSize * info.chunkCells;
+    this.bounds = worldBoundsOf(empty);
+    for (let layer = 0; layer < info.layers.length; layer++) {
+      for (const at of info.layers[layer]?.coords ?? []) {
+        this.declared.add(`${layer}:${at.cx},${at.cz}`);
+      }
+    }
   }
 
   /** Samples the ground. One instance for the session; it sees every insert. */
   get world(): TerrainWorld {
     return this.loaded.world;
+  }
+
+  /**
+   * One circle per prop held, plus the arena rects and the *declared* bounds
+   * (spec 146).
+   *
+   * Freshly minted and immutable on every call, and that is the point rather
+   * than an inefficiency. `navGridFor` memoizes on the colliders' object
+   * identity (`pathfinding.ts:440`), so a growing object handed to it caches a
+   * grid of the world as it was and never notices the trees that arrived. There
+   * is exactly one kind of colliders object in this system, it never changes
+   * after it is made, and handing it anywhere is therefore always correct.
+   *
+   * The cost is one pass over the props held -- microseconds against the
+   * second a nav grid costs. What has to be controlled is *when a caller asks*,
+   * not how this is built; `view.ts` asks on the settle it already computes.
+   *
+   * The bounds are the declared ones, from `MapInfo`, for the same reason
+   * `worldBoundsOf` gives: a wall derived from the chunks in hand would move as
+   * the map loaded.
+   */
+  snapshotColliders(): WorldColliders {
+    return createWorldColliders(ARENA_OBSTACLES, vegetationColliders(this.props()), this.bounds);
+  }
+
+  /**
+   * Whether every declared layer covering this point has delivered its chunk.
+   *
+   * This is the question nothing could answer before spec 146, and without it a
+   * streaming client does not fail to predict -- it predicts *confidently
+   * wrongly*. `bakedLayer.sample` clamps the cell index to the held extent and
+   * evaluates that outermost cell's triangle plane extrapolated out to the
+   * query point, so unarrived ground comes back as a plausible number marked
+   * solid. Measured over the arena: 182 of 384 points on genuinely solid ground
+   * in chunks that had not arrived would be refused by `isWalkable` as a cliff.
+   *
+   * A layer whose declared bounds do not contain the point does not cover it
+   * and does not get a say. A point no layer covers is *known* -- it is off the
+   * map, `heightAt` answers with its fallback, and the bounds stop the body
+   * before the height ever matters.
+   */
+  knows(x: number, z: number): boolean {
+    for (let layer = 0; layer < this.info.layers.length; layer++) {
+      const info = this.info.layers[layer];
+      if (!info) continue;
+      const { minX, minZ, maxX, maxZ } = info.bounds;
+      if (x < minX || x > maxX || z < minZ || z > maxZ) continue;
+      const cx = Math.floor((x - info.origin.x) / this.chunkExtent);
+      const cz = Math.floor((z - info.origin.z) / this.chunkExtent);
+      // Not declared means the map has no chunk there to send, so waiting for
+      // one would be waiting forever.
+      if (!this.declared.has(`${layer}:${cx},${cz}`)) continue;
+      if (!this.has(layer, cx, cz)) return false;
+    }
+    return true;
+  }
+
+  /** `heightAt` through the live world, plus the coverage query above. */
+  sampler(): CoverageSampler {
+    return {
+      heightAt: (x, y) => this.loaded.world.heightAt(x, y),
+      knows: (x, y) => this.knows(x, y),
+    };
   }
 
   /** What the mesher needs to know about each layer. Also live. */

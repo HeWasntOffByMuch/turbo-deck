@@ -18,6 +18,19 @@ export default defineConfig({
         target: process.env['STUDIO_SERVER'] ?? 'http://localhost:8787',
         changeOrigin: false,
       },
+      /**
+       * The game socket (spec 144), here for the same reason: two ports become
+       * one origin, so `?server` alone is enough and nobody has to type a port.
+       *
+       * `ws: true` is what makes this an upgrade proxy rather than an HTTP one,
+       * and the studio entry above does not need it. The prefix must not be `/`
+       * -- vite's own HMR socket lives on the dev-server root and would collide.
+       */
+      '/ws': {
+        target: process.env['GAME_SERVER'] ?? 'ws://localhost:8787',
+        ws: true,
+        changeOrigin: false,
+      },
     },
   },
   publicDir: '../../public',

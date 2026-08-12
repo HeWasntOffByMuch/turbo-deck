@@ -78,6 +78,7 @@ import {
   type SlotAddress,
 } from '../state/types.js';
 import { applyMove, type MoveRequest } from '../player/inventory.js';
+import { NOMINAL, observeQueue, type RateMatchState } from './rate-match.js';
 import { createFlatPredictor, PredictionBuffer, type PredictedInput, type PredictStep } from './prediction.js';
 import { ReplicatedWorld } from './replica.js';
 import {
@@ -116,6 +117,11 @@ export interface GameClientOptions {
    * wrong frame.
    */
   readonly assetManifest?: string;
+  /**
+   * A session token from an earlier connection, to come back to the same body
+   * (spec 150). Empty or absent is a fresh login.
+   */
+  readonly resumeToken?: string;
   /**
    * Local movement used for prediction. Defaults to the open-ground walk, which
    * matches the server exactly away from walls, water and cliffs. Stage 3 can
@@ -190,6 +196,11 @@ export interface ClientView {
    * decision on this client is made from.
    */
   readonly roundTripTicks: number;
+  /**
+   * Multiplier on the client's tick duration, steering its clock towards the
+   * server's (spec 148). 1 is nominal; above 1 the client ticks slower.
+   */
+  readonly tickScale: number;
   /**
    * Ticks until the server acts on the input being sent now: the depth of its
    * input queue (spec 069). Diagnostics, and what a predicted cast is stamped
@@ -423,6 +434,10 @@ export class GameClient {
   private readonly world = new ReplicatedWorld();
   private prediction: PredictionBuffer | null = null;
   private welcome: WelcomeInfo | null = null;
+  /** Present this to come back to the same body (spec 150). */
+  private token: string;
+  /** How this client's clock is being steered against the server's (spec 148). */
+  private rateMatch: RateMatchState = NOMINAL;
   /** The map and the chunks of it that have arrived (spec 072). */
   private mapCache: MapChunkCache | null = null;
   /** Ticks to wait before asking for chunks again, after being throttled. */
@@ -569,6 +584,7 @@ export class GameClient {
     private readonly channel: Channel,
     private readonly options: GameClientOptions,
   ) {
+    this.token = options.resumeToken ?? '';
     channel.onMessage((bytes) => this.receive(bytes));
     channel.onClose(() => {
       this.connected = false;
@@ -592,6 +608,9 @@ export class GameClient {
         // manifest -- the in-tab server and the bot harness share a process
         // with the thing they are connecting to (spec 113).
         assetManifest: this.options.assetManifest ?? '',
+        // Empty on a first connection; set once a `Welcome` has issued one
+        // and we are coming back to the same body (spec 150).
+        resumeToken: this.token,
       }),
     );
     return pending;
@@ -627,6 +646,10 @@ export class GameClient {
         ...input,
         predictedX: predicted.x,
         predictedY: predicted.y,
+        // How far behind the server's clock the world being *drawn* is
+        // (spec 149): one-way latency plus up to a broadcast interval. The
+        // server clamps it; see `MAX_REWIND_TICKS`.
+        renderLagTicks: this.renderLagTicks(),
       }),
     );
     return predicted;
@@ -1233,11 +1256,28 @@ export class GameClient {
     return Math.min(...this.roundTrips);
   }
 
+  /**
+   * How far behind the server's clock the drawn world is, in ticks (spec 149).
+   *
+   * `estimated` is this client's read of where the server is now; `world.tick`
+   * is the last delta it has applied, which is the newest thing it can be
+   * drawing. The difference is what the attacker is looking into the past by,
+   * and it is the number a blow should be resolved against.
+   */
+  private renderLagTicks(): number {
+    if (this.world.tick <= 0) return 0;
+    return Math.max(0, Math.round(this.estimated - this.world.tick));
+  }
+
   view(): ClientView {
     return {
       tick: this.world.tick,
       estimatedTick: this.estimated,
       roundTripTicks: this.roundTrips.length === 0 ? 0 : Math.min(...this.roundTrips),
+      // What the frame loop should multiply its tick duration by (spec 148).
+      // Presentation pacing, not state: the sim never reads it, and a replay
+      // that ignored it would produce the identical authoritative world.
+      tickScale: this.rateMatch.tickScale,
       commitDelayTicks: this.commitDelayTicks(),
       entities: this.world.all(),
       self: this.prediction?.drawn ?? null,
@@ -1286,8 +1326,14 @@ export class GameClient {
     const cache = this.mapCache;
     const at = this.prediction?.drawn ?? this.selfAuthoritative();
     if (!cache || !at || this.chunkBackoffTicks > 0) return;
-    for (const req of cache.wanted(at.x, at.y, MAP_CHUNK_REQUEST_RADIUS, CHUNK_REQUESTS_PER_PASS)) {
-      cache.markRequested(req);
+    for (const req of cache.wanted(
+      at.x,
+      at.y,
+      MAP_CHUNK_REQUEST_RADIUS,
+      CHUNK_REQUESTS_PER_PASS,
+      this.localTick,
+    )) {
+      cache.markRequested(req, this.localTick);
       this.channel.send(
         encodeClientMessage({
           type: ClientMessageType.RequestChunk,
@@ -1371,8 +1417,41 @@ export class GameClient {
   }
 
   disconnect(): void {
+    // Say so, so the server reaps the body at once rather than leaving it
+    // standing for the grace period (spec 150). Choosing to leave and having
+    // the plug pulled should not look the same to the world.
+    if (this.connected) {
+      this.channel.send(encodeClientMessage({ type: ClientMessageType.Goodbye }));
+    }
+    this.token = '';
     this.channel.close();
     this.connected = false;
+  }
+
+  /**
+   * The socket came back; say hello again and come back to the same body
+   * (spec 150).
+   *
+   * The replica is cleared first. A resumed connection gets a fresh
+   * `DeltaTracker` on the server, so every visible entity arrives as a spawn
+   * again -- and anything left in the old replica would be a body nothing will
+   * ever send a removal for.
+   */
+  /**
+   * Present this in a later `Hello` to come back to the same body (spec 150).
+   *
+   * Public because it outlives this object: a tab that reloads builds a new
+   * `GameClient`, and handing the token back through `resumeToken` is what
+   * turns a refresh into a resume rather than a fresh spawn.
+   */
+  get sessionToken(): string {
+    return this.token;
+  }
+
+  resume(): void {
+    this.world.clear();
+    this.connected = false;
+    void this.connect().catch(() => undefined);
   }
 
   private receive(bytes: Uint8Array): void {
@@ -1388,6 +1467,8 @@ export class GameClient {
           correctionThreshold: message.correctionThreshold,
           worldSeed: message.worldSeed,
         };
+        // Kept so a dropped socket can come back to this same body (spec 150).
+        this.token = message.sessionToken;
         this.estimated = message.tick;
         this.connected = true;
         // Measure at once: everything timed on this client -- a cast bar, a
@@ -1642,6 +1723,11 @@ export class GameClient {
         // The pong says which tick the server was on when it answered, so this
         // is a direct reading of the clock rather than an extrapolation.
         this.estimated = Math.max(this.estimated, message.serverTick + this.oneWayTicks());
+        // And steer by it (spec 148). The depth is the server's own count of
+        // what it has not consumed yet; the controller turns it into a scale on
+        // this client's tick duration, which is the only thing this end can
+        // change about the rate the two clocks disagree at.
+        this.rateMatch = observeQueue(this.rateMatch, message.inputQueueFloor);
         break;
       }
     }

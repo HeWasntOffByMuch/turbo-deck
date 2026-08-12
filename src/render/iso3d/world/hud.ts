@@ -126,6 +126,8 @@ export const SYSTEM_BUTTONS: readonly {
 
 interface Bar {
   readonly root: HTMLElement;
+  /** Another player's name, over their body (spec 145). Empty for everything else. */
+  readonly name: HTMLElement;
   readonly health: HTMLElement;
   /** The white band behind the fill: the ground a blow just took (spec 145). */
   readonly ghost: HTMLElement;
@@ -481,6 +483,22 @@ export function createHud(project: Projector): HudHandle {
     // instead of re-deriving the camera projection and testing its own copy.
     holder.dataset['entity'] = String(id);
 
+    // Above the health track, so the holder's translate(-50%,-100%) puts the
+    // name over the body rather than through it. Hidden unless there is a name
+    // to draw, which is another player and nobody else.
+    const name = document.createElement('div');
+    name.style.cssText = [
+      'display:none',
+      'margin-bottom:2px',
+      'text-align:center',
+      'font:10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace',
+      'color:#e8e8ea',
+      'text-shadow:0 1px 2px rgba(0,0,0,.9)',
+      'white-space:nowrap',
+      'overflow:hidden',
+      'text-overflow:ellipsis',
+    ].join(';');
+
     const healthTrack = document.createElement('div');
     healthTrack.style.cssText =
       `position:relative;height:5px;background:${BAR_EMPTY};border-radius:2px;overflow:hidden;` +
@@ -512,9 +530,9 @@ export function createHud(project: Projector): HudHandle {
     castFill.style.cssText = 'height:100%;width:0;background:#ffcf6b;';
     cast.append(castFill);
 
-    holder.append(healthTrack, cast);
+    holder.append(name, healthTrack, cast);
     root.append(holder);
-    const made: Bar = { root: holder, health, ghost, cast, castFill };
+    const made: Bar = { root: holder, name, health, ghost, cast, castFill };
     bars.set(id, made);
     return made;
   }
@@ -559,14 +577,34 @@ export function createHud(project: Projector): HudHandle {
       if (anchor.id === view.selfEntityId) element.root.dataset['self'] = '';
       else delete element.root.dataset['self'];
 
+      // Another player's name over their body (spec 145, the multiplayer one).
+      // Not our own -- you know who you are, and a label on your own head is
+      // one more thing between you and the fight.
+      const label =
+        entity.kind === EntityKind.Player && entity.id !== view.selfEntityId
+          ? displayName(entity)
+          : '';
+      if (label === '') {
+        element.name.style.display = 'none';
+        element.name.textContent = '';
+        delete element.name.dataset['name'];
+      } else {
+        element.name.style.display = 'block';
+        element.name.textContent = label;
+        // Read by `scripts/preview-multiplayer.ts`, for the same reason the
+        // health bar carries `data-entity`: so a probe can assert on the name
+        // without re-deriving the camera projection.
+        element.name.dataset['name'] = label;
+      }
+
       // The fill is replicated health and nothing here delays it; the white
-      // band behind it is the chunk the last blow took (spec 145), decided in
-      // the pure field off the same presentation clock the bars are placed by.
+      // band behind it is the chunk the last blow took, decided in the pure
+      // field off the same presentation clock the bars are placed by.
       const fill = flashes.read(anchor.id, entity.health, entity.maxHealth, tick * TICK_MS);
-      // The flinch (spec 146) moves the *bar*, not the body: it is added to the
-      // anchor here rather than being a transform of its own, because the
-      // holder's transform is what centres it over the head and a second one
-      // would have to know about the first.
+      // The flinch moves the *bar*, not the body: it is added to the anchor
+      // here rather than being a transform of its own, because the holder's
+      // transform is what centres it over the head and a second one would have
+      // to know about the first.
       element.root.style.left = `${anchor.x + fill.shakeX}px`;
       element.root.style.top = `${anchor.y + fill.shakeY}px`;
       element.health.style.width = `${fill.health * 100}%`;

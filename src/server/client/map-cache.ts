@@ -13,6 +13,7 @@
 
 import type { MapChunk } from '../../terrain/map.js';
 import { ChunkDeniedReason } from '../net/protocol.js';
+import { CHUNK_RETRY_TICKS } from '../config.js';
 import type { MapChunkMessage, MapInfoMessage } from '../net/map-messages.js';
 
 export interface ChunkRequest {
@@ -35,7 +36,19 @@ export class MapChunkCache {
   readonly chunkExtent: number;
 
   private readonly chunks = new Map<string, HeldChunk>();
-  private readonly inFlight = new Set<string>();
+  /**
+   * Chunks asked for, and the tick they were asked on (spec 147).
+   *
+   * A tick rather than a bare set, because a request can go unanswered: either
+   * the `RequestChunk` or the `MapChunk` answering it can be lost, and nothing
+   * on either end resends. Held as a set, that key stayed in flight forever and
+   * `wanted` skipped it forever -- a permanent hole in the ground, on any
+   * connection that drops a frame.
+   *
+   * Found by pointing spec 147's wire at a real browser with 5% loss, which is
+   * the first thing that had ever dropped one.
+   */
+  private readonly inFlight = new Map<string, number>();
   /** Chunks the server says do not exist. Asked once, never again. */
   private readonly absent = new Set<string>();
   /** Which (layer, cx, cz) the info said exist, so nothing else is ever asked. */
@@ -89,7 +102,7 @@ export class MapChunkCache {
    * own feet before the ground at the edge of the frame, and with a budget per
    * broadcast the difference is several seconds of standing on nothing.
    */
-  wanted(x: number, z: number, radius: number, budget: number): ChunkRequest[] {
+  wanted(x: number, z: number, radius: number, budget: number, tick = 0): ChunkRequest[] {
     const out: { req: ChunkRequest; distance: number }[] = [];
     for (let layer = 0; layer < this.info.layers.length; layer++) {
       const at = this.coordsAt(layer, x, z);
@@ -98,7 +111,10 @@ export class MapChunkCache {
         for (let cx = at.cx - radius; cx <= at.cx + radius; cx++) {
           const k = key(layer, cx, cz);
           if (!this.known.has(k)) continue;
-          if (this.chunks.has(k) || this.inFlight.has(k) || this.absent.has(k)) continue;
+          if (this.chunks.has(k) || this.absent.has(k)) continue;
+          // Still in flight, unless it has been in flight too long to believe.
+          const asked = this.inFlight.get(k);
+          if (asked !== undefined && tick - asked < CHUNK_RETRY_TICKS) continue;
           out.push({
             req: { layer, cx, cz },
             distance: Math.max(Math.abs(cx - at.cx), Math.abs(cz - at.cz)),
@@ -118,8 +134,13 @@ export class MapChunkCache {
     return out.slice(0, Math.max(0, budget)).map((entry) => entry.req);
   }
 
-  markRequested(req: ChunkRequest): void {
-    this.inFlight.add(key(req.layer, req.cx, req.cz));
+  markRequested(req: ChunkRequest, tick = 0): void {
+    this.inFlight.set(key(req.layer, req.cx, req.cz), tick);
+  }
+
+  /** Requests still outstanding. For a test that wants to see one expire. */
+  get outstanding(): number {
+    return this.inFlight.size;
   }
 
   /**

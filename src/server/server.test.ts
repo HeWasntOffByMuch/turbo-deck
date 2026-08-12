@@ -38,7 +38,7 @@ class Client {
     });
   }
 
-  async hello(playerId: string, assetManifest = ''): Promise<void> {
+  async hello(playerId: string, assetManifest = '', resumeToken = ''): Promise<void> {
     await this.server.receive(
       this.connection,
       encodeClientMessage({
@@ -47,6 +47,7 @@ class Client {
         playerId,
         displayName: playerId,
         token: '',
+        resumeToken,
         assetManifest,
       }),
     );
@@ -64,6 +65,7 @@ class Client {
         buttons: 0,
         predictedX: 0,
         predictedY: 0,
+        renderLagTicks: 0,
         ...fields,
       } as Parameters<typeof encodeClientMessage>[0]),
     );
@@ -132,6 +134,7 @@ describe('login', () => {
         displayName: 'Alice',
         token: '',
         assetManifest: '',
+        resumeToken: '',
       }),
     );
     expect(client.of(ServerMessageType.Error)[0]?.code).toBe(ErrorCode.BadProtocolVersion);

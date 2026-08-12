@@ -98,8 +98,23 @@ export const INTEREST_CHUNK_RADIUS = 8;
  * overlay behind the "show spawners" setting (spec 076).
  * 9: the stat block names the body's auto-attack, so a client knows what its
  * right-click reaches with rather than assuming a sword (spec 079).
+ * 10, 11: two bumps that were never written down here. Recovered in spec 145
+ * rather than left as a gap, since this list is the only account of what a
+ * version number means and a hole in it makes every entry below it suspect.
+ * 12: an entity delta can carry who a player is -- their name and their turn
+ * rate -- so another player is somebody rather than an anonymous shape, and
+ * `turn-limits.ts` stops guessing a rate it was never sent (spec 145).
+ * 13: the pong says how deep this connection's input queue is, so the client
+ * can steer its own clock by it rather than drifting until the queue caps and
+ * the server drops the oldest thing in it (spec 148).
+ * 14: an input says how far behind the server's clock the world it was made
+ * against is being drawn, so a blow can be resolved against what the attacker
+ * was actually looking at (spec 149).
+ * 15: the welcome issues a session token and a hello may present one, so a
+ * dropped socket can come back to the same body instead of spawning a new one;
+ * and a goodbye says a disconnection was meant (spec 150).
  */
-export const PROTOCOL_VERSION = 11;
+export const PROTOCOL_VERSION = 15;
 
 /**
  * How far from a map chunk a player may be and still be sent it (spec 072).
@@ -123,6 +138,58 @@ export const PROTOCOL_VERSION = 11;
  * than the literal 6 -- it is the test that caught the 4.
  */
 export const MAP_CHUNK_REQUEST_RADIUS = 6;
+
+/**
+ * How long a chunk request goes unanswered before the client asks again
+ * (spec 147). Three seconds at 60Hz.
+ *
+ * Nothing retransmits: a lost `RequestChunk` is a question the server never
+ * heard, and a lost `MapChunk` is an answer that never came. Either way the
+ * client used to wait forever, and the ground stayed missing for the session --
+ * which is what a browser on a 5% wire actually looked like.
+ *
+ * Three seconds rather than something snappier because a chunk is large and the
+ * server throttles: re-asking early costs bandwidth on exactly the connection
+ * that has none. A hole for three seconds is a hole somebody might notice; a
+ * hole forever is a bug report.
+ */
+export const CHUNK_RETRY_TICKS = 180;
+
+/**
+ * How far a blow may be resolved into the past (spec 149). 200ms at 60Hz.
+ *
+ * Three readings agree on twelve. It is under half the shortest wind-up in the
+ * table (27 ticks), so a dodge begun in the first half of any wind-up still
+ * works whatever the attacker's connection -- which is the rule `landOnTarget`
+ * says the whole design rests on. It is exactly the worst connection
+ * `latency.test.ts` characterises, so compensation covers everything prediction
+ * was measured against and nothing beyond. And at 155 units/s it is about two
+ * body-widths of cover, which is the price paid by whoever thought they had got
+ * behind the rock.
+ */
+export const MAX_REWIND_TICKS = 12;
+
+/**
+ * How long a dropped player's body stands in the world before it is reaped
+ * (spec 150). Thirty seconds at 60Hz.
+ *
+ * Comfortably past the reconnecting channel's whole backoff ladder (~15s), so a
+ * client that is going to come back has come back. The body standing there is
+ * deliberate: it is what stops pulling the plug being an escape from a fight.
+ * The trade is *not* held for it -- see `disconnect`.
+ */
+export const RESUME_GRACE_TICKS = 1800;
+
+/**
+ * How long a connection may say nothing before it is treated as lost
+ * (spec 150). Ten seconds at 60Hz.
+ *
+ * The half a `close` event cannot cover: a socket killed by a dead router or a
+ * suspended phone never delivers one, and before this its entity stayed
+ * forever. The client pings every 30 ticks, so this is twenty missed
+ * heartbeats -- long enough that a stall is not a disconnection.
+ */
+export const CONNECTION_TIMEOUT_TICKS = 600;
 
 /**
  * Token bucket on chunk sends, per connection (spec 072).

@@ -59,6 +59,15 @@ export interface HelloMessage {
    * respect to it. A hash that is present and *different* is refused.
    */
   readonly assetManifest: string;
+  /**
+   * A session token from an earlier `Welcome`, to come back to the same body
+   * (spec 150). Empty for a fresh login, which is every first connection.
+   *
+   * Matched against the lingering sessions for this `playerId`; anything that
+   * does not match is simply a new login rather than an error, because a token
+   * that has aged out is the ordinary case rather than an attack.
+   */
+  readonly resumeToken: string;
 }
 
 /**
@@ -77,11 +86,26 @@ export interface InputMessage {
   readonly buttons: number;
   readonly predictedX: number;
   readonly predictedY: number;
+  /**
+   * How far behind the server's clock the world this input was made against is
+   * being drawn, in ticks (spec 149).
+   *
+   * Client-reported, and clamped to `MAX_REWIND_TICKS` the moment it lands.
+   * That clamp is the whole security argument: the most a client achieves by
+   * lying is the compensation an honest player on a 200ms connection already
+   * gets.
+   */
+  readonly renderLagTicks: number;
 }
 
 export interface PingMessage {
   readonly type: typeof ClientMessageType.Ping;
   readonly nonce: number;
+}
+
+/** "I meant to leave" (spec 150). See {@link ClientMessageType.Goodbye}. */
+export interface GoodbyeMessage {
+  readonly type: typeof ClientMessageType.Goodbye;
 }
 
 export interface EquipMessage {
@@ -250,6 +274,7 @@ export type ClientMessage =
   | HelloMessage
   | InputMessage
   | PingMessage
+  | GoodbyeMessage
   | EquipMessage
   | UnequipMessage
   | MoveItemMessage
@@ -360,7 +385,8 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
         .str(message.playerId)
         .str(message.displayName)
         .str(message.token)
-        .str(message.assetManifest);
+        .str(message.assetManifest)
+        .str(message.resumeToken);
       break;
     case ClientMessageType.Input:
       writer
@@ -370,10 +396,13 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
         .f32(message.facing)
         .u8(message.buttons)
         .f32(message.predictedX)
-        .f32(message.predictedY);
+        .f32(message.predictedY)
+        .varuint(message.renderLagTicks);
       break;
     case ClientMessageType.Ping:
       writer.u32(message.nonce);
+      break;
+    case ClientMessageType.Goodbye:
       break;
     case ClientMessageType.Equip:
       writer.str(message.slot).str(message.itemId);
@@ -456,6 +485,7 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
         displayName: reader.str(),
         token: reader.str(),
         assetManifest: reader.str(),
+        resumeToken: reader.str(),
       };
     case ClientMessageType.Input:
       return {
@@ -467,9 +497,12 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
         buttons: reader.u8(),
         predictedX: reader.f32(),
         predictedY: reader.f32(),
+        renderLagTicks: reader.varuint(),
       };
     case ClientMessageType.Ping:
       return { type: ClientMessageType.Ping, nonce: reader.u32() };
+    case ClientMessageType.Goodbye:
+      return { type: ClientMessageType.Goodbye };
     case ClientMessageType.Equip:
       return { type: ClientMessageType.Equip, slot: reader.str(), itemId: reader.str() };
     case ClientMessageType.Unequip:
@@ -567,6 +600,13 @@ export interface WelcomeMessage {
   /** Divergence past which the client should expect a hard correction. */
   readonly correctionThreshold: number;
   /**
+   * Present this in a later `Hello` to resume this session (spec 150).
+   *
+   * From `crypto.randomUUID`, never from the world's seeded `Rng`: that one is
+   * reproducible on purpose, which is exactly what a resume token must not be.
+   */
+  readonly sessionToken: string;
+  /**
    * The seed the server's world was built from (spec 063).
    *
    * The client needs it to build the same ground and the same trees, and being
@@ -593,6 +633,9 @@ export interface EntityDelta {
   readonly activity?: number;
   readonly activityUntilTick?: number;
   readonly level?: number;
+  /** Spec 145, players only. See {@link EntityField.Identity}. */
+  readonly name?: string;
+  readonly turnRate?: number;
 }
 
 export interface DeltaMessage {
@@ -737,6 +780,24 @@ export interface PongMessage {
   readonly type: typeof ServerMessageType.Pong;
   readonly nonce: number;
   readonly serverTick: number;
+  /**
+   * The **smallest** this connection's input queue got since the last pong
+   * (spec 148).
+   *
+   * A floor rather than an instantaneous reading, because the instant is not
+   * the quantity that matters and cannot even see the failure. Pongs arrive at
+   * 2Hz; the queue oscillates at 60Hz between "the input that just arrived" and
+   * "nothing". Sampled, a starving connection reads 1 about as often as 0 and
+   * the controller sits in its deadband while the server ticks on empty. The
+   * floor over the interval says exactly what is wanted: if it ever reached
+   * zero the server starved, and if it never dropped below forty the queue is
+   * forty deep.
+   *
+   * On `Pong` rather than `Delta` because a delta is suppressed when the world
+   * did not change, and the controller must not go blind in exactly the quiet
+   * moments drift accumulates through.
+   */
+  readonly inputQueueFloor: number;
 }
 
 export interface ErrorMessage {
@@ -891,6 +952,7 @@ const FIELD_FACING = 1 << 2;
 const FIELD_HEALTH = 1 << 3;
 const FIELD_ACTIVITY = 1 << 4;
 const FIELD_LEVEL = 1 << 5;
+const FIELD_IDENTITY = 1 << 6;
 
 function writeEntityDelta(writer: BufferWriter, entity: EntityDelta): void {
   writer.varuint(entity.id).u8(entity.fields);
@@ -907,6 +969,9 @@ function writeEntityDelta(writer: BufferWriter, entity: EntityDelta): void {
     writer.u8(entity.activity ?? 0).u32(entity.activityUntilTick ?? 0);
   }
   if (entity.fields & FIELD_LEVEL) writer.varuint(entity.level ?? 1);
+  if (entity.fields & FIELD_IDENTITY) {
+    writer.str(entity.name ?? '').f32(entity.turnRate ?? 0);
+  }
 }
 
 function readEntityDelta(reader: BufferReader): EntityDelta {
@@ -921,6 +986,8 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
   let activity: number | undefined;
   let activityUntilTick: number | undefined;
   let level: number | undefined;
+  let name: string | undefined;
+  let turnRate: number | undefined;
   if (fields & FIELD_SPAWN) {
     kind = reader.u8();
     typeId = reader.str();
@@ -938,6 +1005,10 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
     activityUntilTick = reader.u32();
   }
   if (fields & FIELD_LEVEL) level = reader.varuint();
+  if (fields & FIELD_IDENTITY) {
+    name = reader.str();
+    turnRate = reader.f32();
+  }
   return {
     id,
     fields,
@@ -950,6 +1021,8 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
     ...(activity === undefined ? {} : { activity }),
     ...(activityUntilTick === undefined ? {} : { activityUntilTick }),
     ...(level === undefined ? {} : { level }),
+    ...(name === undefined ? {} : { name }),
+    ...(turnRate === undefined ? {} : { turnRate }),
   };
 }
 
@@ -1025,7 +1098,8 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
         .u16(message.chunkSize)
         .u8(message.interestRadius)
         .f32(message.correctionThreshold)
-        .u32(message.worldSeed);
+        .u32(message.worldSeed)
+        .str(message.sessionToken);
       break;
     case ServerMessageType.SpawnerStates:
       writer.u32(message.tick).varuint(message.spawners.length);
@@ -1105,7 +1179,7 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
       writer.u8(message.channel).str(message.from).str(message.text);
       break;
     case ServerMessageType.Pong:
-      writer.u32(message.nonce).u32(message.serverTick);
+      writer.u32(message.nonce).u32(message.serverTick).varuint(message.inputQueueFloor);
       break;
     case ServerMessageType.Error:
       writer.u16(message.code).str(message.message);
@@ -1166,6 +1240,7 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         interestRadius: reader.u8(),
         correctionThreshold: reader.f32(),
         worldSeed: reader.u32(),
+        sessionToken: reader.str(),
       };
     case ServerMessageType.SpawnerStates: {
       const tick = reader.u32();
@@ -1268,7 +1343,12 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         text: reader.str(),
       };
     case ServerMessageType.Pong:
-      return { type: ServerMessageType.Pong, nonce: reader.u32(), serverTick: reader.u32() };
+      return {
+        type: ServerMessageType.Pong,
+        nonce: reader.u32(),
+        serverTick: reader.u32(),
+        inputQueueFloor: reader.varuint(),
+      };
     case ServerMessageType.Error:
       return { type: ServerMessageType.Error, code: reader.u16(), message: reader.str() };
     case ServerMessageType.Disconnect:
