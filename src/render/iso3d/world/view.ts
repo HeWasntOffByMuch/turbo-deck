@@ -48,6 +48,8 @@ import { orbitDrag, orbitStep } from './orbit-keys.js';
 import { turnToward } from '../../../server/sim/movement.js';
 import { facesAim } from '../../../server/sim/abilities.js';
 import { createHud, HOTBAR } from './hud.js';
+import { hudLayout } from './hud-layout.js';
+import { isCoarsePointer } from '../fullscreen.js';
 import { appearanceOf } from './appearance.js';
 import { effectsForBlow } from './vfx-wire.js';
 import { moveIntent, RoutePlanner } from './intent.js';
@@ -287,31 +289,44 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // `Stats`. Nothing here decides what the right-click then does -- the next
   // frame simply reads the stat and asks for whatever it names.
   hud.onEquip((itemId) => client.equip('mainHand', itemId));
+  // The same call a key binding makes (spec 139). The button knows which window
+  // it names and nothing else about what opening one costs.
+  hud.onOpen((id) => ui.toggle(id));
 
   // The settings buttons float over the top-right corner of the game window: the
   // view cog (spec 034), the day/night clock, the player's lights, the retro
   // filter and the hike look (spec 107), then the weather (spec 075). A popover
   // each rather than one drawer for all of them -- and one group, so opening any
   // of them closes the rest instead of stacking six panels into one corner.
-  const weather = createWeatherControls({ group: scene.controls.menus });
-  // The seventh button (spec 121). Both settings are pushed straight into the
-  // layer rather than polled: the intensity is a budget the sim reads, and gore
-  // is a switch the decal field acts on rather than a flag anything draws past.
-  const vfxControls = createVfxControls({
-    group: scene.controls.menus,
-    onChange: (settings) => {
-      scene.setVfxIntensity(settings.intensity);
-      scene.setGore(settings.gore);
-    },
-  });
-  const buttons = document.createElement('div');
-  // Inset against the notch and the home indicator (spec 093): in landscape the
-  // cutout is on a side edge, which is exactly where these sit.
-  buttons.style.cssText =
-    'position:absolute;top:calc(8px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));' +
-    'z-index:30;display:flex;gap:6px;';
-  buttons.append(scene.controls.element, weather.element, vfxControls.element);
-  root.append(hud.element, buttons);
+  //
+  // Not on a phone (spec 139). They are tuning panels twenty rows deep, and on
+  // an 844x390 frame the seven of them pile into the corner underneath the tab
+  // bar. `scene.controls` is still *built* -- the camera reads its sliders, and
+  // `orbitBy` writes them -- it simply has nowhere to be pressed, so a phone
+  // gets the defaults and the options window (spec 135) instead.
+  const showsTuningMenus = hudLayout(isCoarsePointer()).showsTuningMenus;
+  if (showsTuningMenus) {
+    const weather = createWeatherControls({ group: scene.controls.menus });
+    // The seventh button (spec 121). Both settings are pushed straight into the
+    // layer rather than polled: the intensity is a budget the sim reads, and gore
+    // is a switch the decal field acts on rather than a flag anything draws past.
+    const vfxControls = createVfxControls({
+      group: scene.controls.menus,
+      onChange: (settings) => {
+        scene.setVfxIntensity(settings.intensity);
+        scene.setGore(settings.gore);
+      },
+    });
+    const buttons = document.createElement('div');
+    // Inset against the notch and the home indicator (spec 093): in landscape the
+    // cutout is on a side edge, which is exactly where these sit.
+    buttons.style.cssText =
+      'position:absolute;top:calc(8px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));' +
+      'z-index:30;display:flex;gap:6px;';
+    buttons.append(scene.controls.element, weather.element, vfxControls.element);
+    root.append(buttons);
+  }
+  root.append(hud.element);
 
   /** Where a blow lands on a body, in world units above its feet. */
   const BLOOD_HEIGHT = 26;
@@ -1297,6 +1312,9 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       abilityId: pendingAim?.abilityId ?? order?.abilityId ?? null,
       pending: pendingAim !== null,
     });
+    // Read back off the interface rather than remembered from the press
+    // (spec 139), so a window opened by a key lights its button too.
+    hud.showOpenWindows(ui.opened());
 
     // The setting is the subscription (spec 076): turning it on is what asks
     // the server for the timers, and turning it off is what stops them coming.

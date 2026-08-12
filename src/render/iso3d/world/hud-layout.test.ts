@@ -14,7 +14,7 @@ import {
   PHONE_LANDSCAPE,
   stripWidth,
 } from './hud-layout.js';
-import { HOTBAR, WEAPON_SWITCH } from './hud.js';
+import { HOTBAR, SYSTEM_BUTTONS, WEAPON_SWITCH } from './hud.js';
 
 const compact = hudLayout(true);
 const desktop = hudLayout(false);
@@ -26,6 +26,8 @@ describe('the HUD layout', () => {
     expect(desktop.showsKeyNumber).toBe(true);
     expect(desktop.weaponIconOnly).toBe(false);
     expect(desktop.weaponDirection).toBe('column');
+    expect(desktop.showsTuningMenus).toBe(true);
+    expect(desktop.systemIconOnly).toBe(false);
   });
 
   it('drops the readout and the key numbers on a finger, and switches weapons to icons', () => {
@@ -34,6 +36,17 @@ describe('the HUD layout', () => {
     expect(compact.showsKeyNumber).toBe(false);
     expect(compact.weaponIconOnly).toBe(true);
     expect(compact.weaponDirection).toBe('row');
+    expect(compact.systemIconOnly).toBe(true);
+  });
+
+  /**
+   * The seven tuning popovers are developer furniture (spec 139).
+   *
+   * Kept as its own field rather than folded into `showsReadout`: they are two
+   * different things that go together today and need not tomorrow.
+   */
+  it('builds no tuning popovers on a finger', () => {
+    expect(compact.showsTuningMenus).toBe(false);
   });
 
   /**
@@ -42,7 +55,7 @@ describe('the HUD layout', () => {
    * during a wind-up is the blow they meant to answer with.
    */
   it('gives every compact tap target a square at least MIN_TAP_PX on a side', () => {
-    for (const box of [compact.slot, compact.weapon]) {
+    for (const box of [compact.slot, compact.weapon, compact.systemButton]) {
       expect(box.width).toBe(box.height);
       expect(box.width).toBeGreaterThanOrEqual(MIN_TAP_PX);
     }
@@ -59,18 +72,21 @@ describe('the HUD layout', () => {
   /**
    * The assertion that is supposed to fail on the ninth ability.
    *
-   * The hotbar is centred and the weapon switch sits bottom left, so what has to
-   * hold is that half the leftover width clears the weapon row -- and the right
-   * side is checked by the same number, since a centred strip leaves the same
-   * gap on both sides and nothing says the other corner stays empty.
+   * The hotbar is centred, the weapon switch sits bottom left and the window
+   * buttons bottom right (spec 139), so what has to hold is that half the
+   * leftover width clears *both* rows. Since spec 139 the other corner is no
+   * longer empty, which is exactly the assumption the old one-sided version of
+   * this test was quietly making.
    */
-  it('fits eight compact slots across a phone in landscape, clear of the weapon row', () => {
+  it('fits eight compact slots across a phone in landscape, clear of both corner rows', () => {
     const clearance = centredClearance(compact, HOTBAR.length, PHONE_LANDSCAPE.width);
     const weapons = stripWidth(compact.weapon, compact.weaponGap, WEAPON_SWITCH.length);
+    const windows = stripWidth(compact.systemButton, compact.systemGap, SYSTEM_BUTTONS.length);
     expect(stripWidth(compact.slot, compact.slotGap, HOTBAR.length)).toBeLessThan(
       PHONE_LANDSCAPE.width,
     );
     expect(clearance).toBeGreaterThanOrEqual(compact.edge + weapons + compact.slotGap);
+    expect(clearance).toBeGreaterThanOrEqual(compact.edge + windows + compact.slotGap);
   });
 
   it('leaves the desktop hotbar too wide for that frame, which is why compact exists', () => {

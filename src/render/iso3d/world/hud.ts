@@ -37,7 +37,8 @@ import { pixelTextSvg } from './pixel-font.js';
 import { isCoarsePointer } from '../fullscreen.js';
 import { DamagePopups, type Projector, type WorldAnchor } from './damage-popup.js';
 import { hudLayout } from './hud-layout.js';
-import { weaponIconSvg } from './icons.js';
+import { systemIconSvg, weaponIconSvg, type SystemIconId } from './icons.js';
+import type { WindowId } from './key-actions.js';
 
 /** The slot being aimed (spec 080). The aim indicator's colour, in the DOM. */
 const AIM_HIGHLIGHT = '#7fd4ff';
@@ -76,6 +77,28 @@ export const WEAPON_SWITCH: readonly {
   }
   return [...byAttack.values()];
 })();
+
+/**
+ * The windows a player can decide to open, as buttons (spec 139).
+ *
+ * Three, and not the shop or the trade table: those two are opened by something
+ * *happening* -- a vendor within reach, another player's invitation -- rather
+ * than by a player deciding to go and look, so a permanent button for either
+ * would be a button that is usually a refusal.
+ *
+ * The keyboard opens the same windows through the same `ui.toggle`; a button
+ * here carries an id and nothing else, so a button and a key cannot come to
+ * mean different things.
+ */
+export const SYSTEM_BUTTONS: readonly {
+  readonly id: WindowId;
+  readonly name: string;
+  readonly icon: SystemIconId;
+}[] = [
+  { id: 'inventory', name: 'Bag', icon: 'inventory' },
+  { id: 'character', name: 'Gear', icon: 'character' },
+  { id: 'options', name: 'Options', icon: 'options' },
+];
 
 interface Bar {
   readonly root: HTMLElement;
@@ -129,8 +152,23 @@ export interface HudHandle {
       readonly onScreen: boolean;
     }[],
   ): void;
+  /**
+   * Which windows are open, so the button that opens one can be lit (spec 139).
+   *
+   * Pushed in rather than read, for the same reason the weapon switch reads
+   * `equipment.mainHand` back rather than remembering what was clicked: the
+   * window is the state, and a button that lit itself would be a second opinion
+   * about whether it is open.
+   */
+  showOpenWindows(open: readonly WindowId[]): void;
   /** What to call when a hotbar button is clicked. */
   onUse(handler: (abilityId: string) => void): void;
+  /**
+   * What to call when a window button is pressed (spec 139). It hands back a
+   * window id and nothing else -- the mount calls the same `ui.toggle` a key
+   * binding calls, so nothing in this file decides what a button means.
+   */
+  onOpen(handler: (id: WindowId) => void): void;
   /**
    * What to call when a weapon is picked out of the switch (spec 079). It hands
    * back an item id and nothing else: the server equips it, recomputes the stat
@@ -315,6 +353,41 @@ export function createHud(project: Projector): HudHandle {
     button.addEventListener('click', () => equipHandler(weapon.itemId));
     weapons.append(button);
     return { ...weapon, button };
+  });
+
+  // The window buttons (spec 139), bottom right and mirroring the weapon switch.
+  // They exist because `I` and `C` are undiscoverable -- on a desktop as much as
+  // on a phone, which is why the row is drawn on both and only its size changes.
+  const systemRow = document.createElement('div');
+  systemRow.style.cssText =
+    `position:absolute;right:calc(${layout.edge}px + env(safe-area-inset-right));bottom:${bottom};` +
+    `display:flex;flex-direction:${layout.systemIconOnly ? 'row' : 'column'};` +
+    `gap:${layout.systemGap}px;font:11px ui-monospace,Menlo,monospace;pointer-events:auto;`;
+  root.append(systemRow);
+
+  let openHandler: (id: WindowId) => void = () => undefined;
+
+  const systemSlots = SYSTEM_BUTTONS.map((entry) => {
+    const button = document.createElement('button');
+    button.style.cssText =
+      `width:${layout.systemButton.width}px;height:${layout.systemButton.height}px;border-radius:6px;` +
+      'border:1px solid #33405a;background:#182130;color:#cfd6e0;cursor:pointer;font:inherit;' +
+      'display:flex;align-items:center;gap:6px;line-height:1.4;' +
+      (layout.systemIconOnly ? 'justify-content:center;padding:0;' : 'padding:5px 8px;');
+    button.innerHTML = systemIconSvg(entry.icon, { size: layout.systemIconPx });
+    // The name survives the button having no text: it is what a screen reader
+    // reads out, and what `scripts/preview-touch.ts` finds the button by.
+    button.setAttribute('aria-label', entry.name);
+    button.title = entry.name;
+    button.dataset['window'] = entry.id;
+    if (!layout.systemIconOnly) {
+      const name = document.createElement('span');
+      name.textContent = entry.name;
+      button.append(name);
+    }
+    button.addEventListener('click', () => openHandler(entry.id));
+    systemRow.append(button);
+    return { ...entry, button };
   });
 
   const bars = new Map<number, Bar>();
@@ -583,8 +656,22 @@ export function createHud(project: Projector): HudHandle {
       notice = text;
       noticeAge = 0;
     },
+    showOpenWindows(open) {
+      for (const slot of systemSlots) {
+        const on = open.includes(slot.id);
+        slot.button.style.borderColor = on ? '#ffcf6b' : '#33405a';
+        slot.button.style.background = on ? '#243044' : '#182130';
+        slot.button.style.color = on ? '#f2f6fb' : '#98a4b4';
+        // Says so out loud as well as in colour: the button is a toggle, and a
+        // screen reader has no border to look at.
+        slot.button.setAttribute('aria-pressed', String(on));
+      }
+    },
     onUse(handler) {
       useHandler = handler;
+    },
+    onOpen(handler) {
+      openHandler = handler;
     },
     onEquip(handler) {
       equipHandler = handler;
