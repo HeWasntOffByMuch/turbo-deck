@@ -93,7 +93,8 @@ export const EMITTER_FIELDS: readonly FieldSpec[] = [
   { path: 'blend', label: 'Blend', kind: 'enum', options: BLEND_MODES },
   { path: 'mesh.shape', label: 'Solid', kind: 'enum', options: MESH_SHAPES, tip: 'Which solid, when rendering as a mesh. Ignored otherwise.' },
   { path: 'stretch', label: 'Stretch', kind: 'number', min: 0, max: 0.4, step: 0.005, tip: 'Length per unit of screen speed, for stretched billboards.' },
-  { path: 'ribbonSpacing', label: 'Ribbon spacing', kind: 'number', min: 0.5, max: 60, step: 0.5 },
+  { path: 'ribbonSpacing', label: 'Ribbon spacing', kind: 'number', min: 0.5, max: 60, step: 0.5, tip: 'World units between trail samples. Distance, never time.' },
+  { path: 'ribbonTaper', label: 'Ribbon taper', kind: 'number', min: 0, max: 1, step: 0.01, tip: "The tail's width as a fraction of the head's." },
 
   // --- placement ---
   { path: 'offset.x', label: 'Offset X', kind: 'number', min: -200, max: 200, step: 1 },
@@ -186,14 +187,29 @@ export function clampToSpec(spec: FieldSpec, value: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-/** The specs, grouped for the panel, in table order. */
+/**
+ * The specs, grouped for the panel, in table order.
+ *
+ * Split at the field each section *starts* with rather than at a row number.
+ * The numbers were literals and had drifted -- the table has grown by rows since
+ * they were written, so "Motion" began at `emission.delayTicks` and ended in the
+ * middle of the accelerations. Nothing could see it: the coverage test asserts
+ * that the groups partition the table, which four wrong-but-contiguous cuts do
+ * perfectly. A name cannot drift when a row is inserted above it, and a name
+ * that is renamed away fails that same partition test.
+ */
 export function fieldGroups(): readonly { readonly title: string; readonly fields: readonly FieldSpec[] }[] {
+  const startOf = (path: string): number => EMITTER_FIELDS.findIndex((field) => field.path === path);
   const at = (from: number, to: number): readonly FieldSpec[] => EMITTER_FIELDS.slice(from, to);
+  const motion = startOf('gravity');
+  const look = startOf('size');
+  const placement = startOf('offset.x');
+  const landing = startOf('collision.restitution');
   return [
-    { title: 'Emission', fields: at(0, 4) },
-    { title: 'Motion', fields: at(4, 12) },
-    { title: 'Look', fields: at(12, 21) },
-    { title: 'Placement', fields: at(21, 25) },
-    { title: 'Landing', fields: at(25, EMITTER_FIELDS.length) },
+    { title: 'Emission', fields: at(0, motion) },
+    { title: 'Motion', fields: at(motion, look) },
+    { title: 'Look', fields: at(look, placement) },
+    { title: 'Placement', fields: at(placement, landing) },
+    { title: 'Landing', fields: at(landing, EMITTER_FIELDS.length) },
   ];
 }

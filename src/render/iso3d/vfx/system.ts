@@ -124,8 +124,22 @@ export interface VfxSystemOptions {
   readonly registry: CompiledRegistry;
   readonly hooks: VfxHooks;
   readonly limits?: VfxLimits;
+  /**
+   * Trail tracks available to ribbon particles. Default {@link DEFAULT_RIBBONS}.
+   */
   readonly ribbonCapacity?: number;
 }
+
+/**
+ * Trail tracks the system keeps by default.
+ *
+ * It was 128 while nothing in the library rendered as a ribbon. Blood does since
+ * spec 139, and one killing blow alone asks for 24 -- so at 128 a fight with six
+ * deaths in it would hand the rest -1 and quietly draw them as the short stub
+ * instead of as streaks. A track is 12 samples of three floats: 512 of them is
+ * 73KB, allocated once, which is the cheaper side of that trade by a distance.
+ */
+const DEFAULT_RIBBONS = 512;
 
 const ATTACH = { world: 0, entity: 1, socket: 2, detach: 3 } as const;
 
@@ -235,7 +249,7 @@ export class VfxSystem {
     this.emitters = flat;
     this.stride = maxEmitters;
 
-    this.pool = new ParticlePool(this.limits.maxParticles, options.ribbonCapacity ?? 128);
+    this.pool = new ParticlePool(this.limits.maxParticles, options.ribbonCapacity ?? DEFAULT_RIBBONS);
 
     const n = Math.max(1, Math.min(MAX_ADDRESSABLE_INSTANCES, this.limits.maxInstances));
     this.maxInstances = n;
