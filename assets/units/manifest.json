@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "hash": "6766e12dcf73ca7cc662e259acfb8c518b93c38b5fbcc8d9857dd2503d8fc914",
+  "hash": "def2c3c27a86cc6b09eb68d95015f91b7f5fc83dc504b038b606e0206911f134",
   "builtStages": [],
   "units": [
     {
@@ -50,8 +50,8 @@
       "entries": [
         {
           "path": "pig_a_pose_full/pig_a_pose_full.unitdef.json",
-          "sha256": "4220c88fafbdc6bc03dc63acfeb8c2af1398e8ee0ca999fdf503f7c33135c747",
-          "bytes": 2633
+          "sha256": "409053e540e58637313796dd7683e3f6629da9c64127cca9b91d0cbe492284bc",
+          "bytes": 3905
         },
         {
           "path": "pig_a_pose_full/pig_a_pose_full.glb",
@@ -60,8 +60,8 @@
         },
         {
           "path": "pig_a_pose_full/pig.core.cliplib.json",
-          "sha256": "cd1c29d2bdcfbde5504528be3965354f9c987c34da23c18d4d7ca11d8f3255cc",
-          "bytes": 866
+          "sha256": "0bf2d01ee722d41b2519186ed58c7bc5e054e1c24bf70afa1b6c6c1ce44c8857",
+          "bytes": 1538
         },
         {
           "path": "pig_a_pose_full/clips/defeat_02.glb",
@@ -82,6 +82,11 @@
           "path": "pig_a_pose_full/clips/run.glb",
           "sha256": "532f61a7c93d6ec9e32e2f3e0783c3327798824cb1105c91f3c4beb8f2cf580f",
           "bytes": 365836
+        },
+        {
+          "path": "pig_a_pose_full/clips/slash.glb",
+          "sha256": "bffd9dc93ca379e813f6b34ab56b1c7e94563da84b17d8d2bf911c0d00a11419",
+          "bytes": 36000
         },
         {
           "path": "pig_a_pose_full/clips/walk.glb",

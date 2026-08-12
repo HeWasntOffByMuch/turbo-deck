@@ -68,6 +68,17 @@ forward. Bones with no child fall back to `lateral`. This is the same lesson as
 the axis-letters one, one level down: an elbow axis written as a letter is right
 on one rig and silently rolls the forearm on every other.
 
+And it has a trap of its own, which this spec walked into and is written down
+here because the next person will. "Its own child" has to mean **the child
+furthest away**, not the first one in the array. On a hand-built rig those are
+the same bone. On the pig they are not: `R_Forearm` has three children and the
+array puts `R_ForearmTwist01` first, a twist bone that shares its parent's
+origin by construction and sits 0.00006 units away. The hinge came out of
+floating-point noise, every elbow in the table folded backwards, and the
+symptom was not an obviously broken pose — it was a swing that looked slightly
+stiff until a blade was drawn from the hand and turned out to be pointing
+behind the pig.
+
 ### `src/units/clip-author.ts` — key poses to rotation channels
 
 ```ts
@@ -173,15 +184,28 @@ the hand's position taken through `poseWorldMatrices` in the body's frame:
   spine at every sampled frame.
 - **It starts and ends at the same pose**, within a degree, so a chained swing
   does not pop.
-- **Every bone the other clips animate is animated here**, because a bone this
-  clip omits is a bone three's mixer returns to *bind* for the whole swing while
-  the idle it cross-faded from had it somewhere else.
-- **No translation channel exists**, on any bone.
+- **Every bone the pig's other clips move is animated here.** Not all 42 — the
+  cast is the *measured* set. Comparing every clip's keys against the bind pose
+  says 16 bones ever leave it by more than six degrees, and the rest are twists,
+  toes and a `Root` that sit at bind in everything. Those 16 have to be in the
+  swing, because a bone this clip omits is one three's mixer returns to bind for
+  the whole swing while the idle it cross-faded from had it somewhere else.
+- **No translation channel exists**, on any bone, so both halves of spec 118's
+  root-motion handling — the name-based strip and the value-based travel
+  correction — find nothing to take.
 - **The bytes are deterministic**: authoring twice produces identical output, and
-  the committed `.glb` matches what the generator writes now (the same shape as
-  the unit manifest's re-bake check).
-- The three documents still validate, and the machine reaches `swing` from a
-  raised `attack` trigger and returns to the loop state it came from.
+  the committed `.glb`'s channels are the ones the table generates now. The
+  stronger form of that check is already free — the file is in the unit manifest,
+  and `npm run bake:units` re-hashes it.
+- **three's own `GLTFLoader` accepts the file**, and every track it derives binds
+  to a bone the pig mesh actually has. `parseAsync` needs no WebGL and no DOM for
+  a file with no textures, so the one check that used to need a browser runs in
+  `npm test`.
+- The three documents still validate, and — driven through `driveUnit`, from the
+  renderer's side of the fence, because `src/units/` may not import it — the
+  machine reaches `swing` from a raised `attack` trigger, fires `swing.impact`
+  exactly once within a tick of 500ms, returns to the loop state it came from
+  rather than always to idle, and lets death interrupt it.
 
 ## Out of scope
 

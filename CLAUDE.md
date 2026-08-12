@@ -145,6 +145,28 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  through this one parser. The rule the format exists to enforce is
                  that gameplay timing is authoritative and the clip is rescaled to
                  fit, bounded in both directions. `npm run validate:units`.
+                 pose.ts, clip-author.ts and pig-strike.ts are how a clip gets
+                 *authored* rather than bought (spec 139). pose.ts is the body's
+                 own axes, measured off the rig -- promoted out of mesh-check.ts,
+                 because the extreme pose that predicts what a slash does to a
+                 mesh and the real slash have to be in the same frame or the
+                 prediction predicts nothing. Its fourth axis, `flex`, is the
+                 hinge a bone actually has, taken from its *furthest* child: the
+                 first child of a generated forearm is a twist bone sharing its
+                 parent's origin, so "the child" measured from noise and every
+                 elbow folded backwards. clip-author.ts samples key poses into
+                 rotation channels, and the rule that shapes it is that glTF's
+                 LINEAR is the only interpolation glb.ts writes -- so the easing
+                 that makes a strike read has to be baked into 60Hz samples,
+                 because nothing downstream can add it back. pig-strike.ts is the
+                 pig's swing itself: seven full-body poses over 800ms, contact at
+                 500ms because that is `melee.slash`'s wind-up and the frame the
+                 picture lands and the frame the damage lands are the same frame.
+                 `npx tsx scripts/make-pig-strike.ts` writes the committed .glb;
+                 `npx tsx scripts/preview-strike.ts` photographs it frame by
+                 frame with a blade proxy in the hand, because a swing judged on
+                 the arm alone is judged on the half of the silhouette that is
+                 not the point.
                  naming.ts is the two bone vocabularies and the one way to look a
                  bone up across them (spec 120). There are two in the tree
                  permanently: the reference mannequin is authored and
