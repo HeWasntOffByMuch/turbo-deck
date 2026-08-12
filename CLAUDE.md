@@ -226,6 +226,26 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  about the arm and not about the grip.
                  `npx tsx scripts/preview-weapon.ts` is the one that puts the real
                  mesh through the real chain.
+                 The rule the swing's wrist angles are subject to: **a hand pose
+                 is not a portable number** (spec 143). What a blade does is the
+                 hand's orientation composed with the socket's calibration, so
+                 re-solving the socket silently re-aimed the blade at every pose
+                 in the clip whose wrist was authored against the old one -- a
+                 constant 105 degrees, which put the blade at the floor at the
+                 top of the wind-up and swung it *up* through the strike. Every
+                 test passed, because they all measure where the hand IS and the
+                 arm still went over the shoulder; none measured what stuck out
+                 of it. So `npx tsx scripts/aim-blade.ts` states the requirement
+                 in the frame it is actually about -- where the blade points, in
+                 the body's axes -- and solves the wrist for it, and only the
+                 wrist, since a hand is a leaf bone and rotating it turns what
+                 the hand carries and moves nothing else. Re-solve the socket
+                 and re-run it. `npx tsx scripts/probe-blade.ts` is the
+                 diagnostic beside it and samples every frame rather than the
+                 keys, because what a player reports -- "it points at the ground
+                 for a moment" -- is a statement about the frames *between*
+                 keys, and the keys are the only thing anybody reads while
+                 authoring.
                  naming.ts is the two bone vocabularies and the one way to look a
                  bone up across them (spec 120). There are two in the tree
                  permanently: the reference mannequin is authored and

@@ -85,7 +85,35 @@ side, so it steps back to brace and drives through as the blow lands. Its
 targets are stated in world terms — where the foot should be, along the body's
 forward axis — rather than dialled in as joint angles.
 
-### 3. What planting the left foot revealed about the brace
+### 3. A hand pose is not a portable number
+
+Re-solving the socket silently re-aimed the blade at every *other* pose in the
+clip. The wrist angles at the dip, the coil, the load, the contact and the
+follow-through were authored against the socket rotation it replaced, so
+changing the grip left them all a constant 105° out: at the top of the wind-up
+the blade pointed at the floor, and it swung *up* through the strike instead of
+down. Every assertion in the tree still passed, because they all measure where
+the hand **is** — the arm still went over the shoulder — and none of them
+measured what stuck out of it.
+
+That is the general shape of the bug and it will happen again, so the fix is not
+five corrected numbers. `scripts/aim-blade.ts` states the requirement in the
+frame it is actually about — **where the blade points, in the body's own axes** —
+and solves the wrist for it. Re-solve the socket and re-run it, and the swing
+survives.
+
+Only the wrist moves. The hand is a leaf bone, so rotating it turns what the
+hand carries and moves nothing else at all, which is why spec 139's entire
+silhouette argument is untouched by it.
+
+`scripts/probe-blade.ts` is the diagnostic that found it: the blade's elevation
+sampled every frame, printed as a profile with the authored keys marked, so a
+beat nobody authored shows up as a trough between two of them. It is worth
+having separately from the solver because what a player reports is "it points at
+the ground for a moment", which is a statement about the frames *between* keys —
+and the keys are the only thing anybody reads.
+
+### 4. What planting the left foot revealed about the brace
 
 Spec 140 asserted the brace as the **gap between the feet**: the right foot a
 sixth of a body further behind the left at the top of the wind-up. It cleared

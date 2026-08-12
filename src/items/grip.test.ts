@@ -33,7 +33,7 @@ import { bodyFrame, boneNode, namingOf, worldPosition } from '../units/pose.js';
 import { poseWorldMatrices, type PoseRotations } from '../units/skin.js';
 import { clipPoseAt } from '../units/clip-sample.js';
 import { poseAt } from '../units/clip-author.js';
-import { PIG_STRIKE, STRIKE_KEY_MS } from '../units/pig-strike.js';
+import { PIG_STRIKE, STRIKE_CONTACT_MS, STRIKE_KEY_MS } from '../units/pig-strike.js';
 import type { NamingSpec } from '../units/naming.js';
 import type { Vec3 } from './types.js';
 
@@ -348,6 +348,39 @@ describe('how the pig holds a sword', () => {
     for (const ms of [0, 130, 300, 400, 500, 600, 800]) {
       const { blade } = axesAt('weapon.main', ms);
       expect(dot(blade, UP), `blade points down at ${ms}ms`).toBeGreaterThan(-0.95);
+    }
+  });
+
+  it('carries the blade up and back to load, then down and across to strike', () => {
+    // The chop, stated as a direction rather than as a hand position -- and the
+    // distinction is the whole point of this test existing. Every assertion
+    // beside it measures where the hand *is*, and the hand kept going over the
+    // shoulder perfectly while the blade coming out of it pointed at the floor:
+    // re-solving `weapon.main` left five wrist poses a constant 105 degrees out,
+    // because they were authored against the grip it replaced, and nothing in
+    // the tree was looking at what the hand carried.
+    const load = axesAt('weapon.main', STRIKE_KEY_MS.load);
+    expect(dot(load.blade, UP), 'blade up at the load').toBeGreaterThan(0.4);
+    expect(dot(load.blade, FORWARD), 'blade back at the load').toBeLessThan(-0.3);
+
+    const contact = axesAt('weapon.main', STRIKE_CONTACT_MS);
+    expect(dot(contact.blade, UP), 'blade down at contact').toBeLessThan(-0.35);
+
+    // The strike is a *reversal*, which is what makes it a chop rather than a
+    // poke: the blade ends up on the far side of horizontal from where it was.
+    expect(dot(load.blade, contact.blade)).toBeLessThan(0);
+  });
+
+  it('keeps the blade above the horizon for the whole wind-up', () => {
+    // What a player actually reports is "it points at the ground for a moment
+    // before it swings", and that is a statement about the frames *between*
+    // keys -- an arm on its way from one pose to another passes through
+    // everything in between, and a blade is a long lever on the end of it. So
+    // this samples rather than checking the keys, which are the only thing
+    // anybody reads while authoring.
+    for (let ms = 0; ms <= STRIKE_KEY_MS.load; ms += 10) {
+      const { blade } = axesAt('weapon.main', ms);
+      expect(dot(blade, UP), `blade dips below the horizon at ${ms}ms`).toBeGreaterThan(-0.1);
     }
   });
 
