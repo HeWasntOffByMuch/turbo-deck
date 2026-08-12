@@ -35,7 +35,6 @@ import { itemById } from '../data/items.js';
 import { ALL_MILESTONES, metMilestones, type MilestoneDefinition } from '../data/milestones.js';
 import { scaleModifier, sumModifiers, type ModifierTotals, type StatModifier } from '../data/modifiers.js';
 import { skillById } from '../data/skills.js';
-import { statSkillById } from '../data/stat-skills.js';
 import { metSynergies, type SynergyDefinition } from '../data/synergies.js';
 import { BASE_STAT_KEYS, EQUIP_SLOTS, type BaseStats, type PersistedPlayer } from '../state/types.js';
 
@@ -57,8 +56,7 @@ function clampLevel(level: number, max: number): number {
 }
 
 /**
- * Every modifier from things the character *holds*: branch skills, stat skills
- * and equipment. Hop 1.
+ * Every modifier from things the character *holds*: skills and equipment. Hop 1.
  *
  * Unknown ids are skipped rather than throwing -- an item removed from the table
  * should orphan the slot, not brick the login. That was already true of skills
@@ -66,15 +64,8 @@ function clampLevel(level: number, max: number): number {
  */
 export function heldModifiers(player: PersistedPlayer): StatModifier[] {
   const modifiers: StatModifier[] = [];
-  for (const allocation of player.skills) {
+  for (const allocation of player.skills ?? []) {
     const definition = skillById(allocation.skillId);
-    if (!definition) continue;
-    const level = clampLevel(allocation.level, definition.maxLevel);
-    if (level <= 0) continue;
-    modifiers.push(scaleModifier(definition.perLevel, level));
-  }
-  for (const allocation of player.statSkills ?? []) {
-    const definition = statSkillById(allocation.skillId);
     if (!definition) continue;
     const level = clampLevel(allocation.level, definition.maxLevel);
     if (level <= 0) continue;

@@ -434,13 +434,12 @@ export function demoCharacter(spend: readonly string[] = []): CharacterView {
     name,
     tier,
     level: taken.has(id) ? 1 : 0,
-    maxLevel: 5,
+    maxLevel: 3,
     description: `${name}: what it does, in a sentence long enough to wrap.`,
     canSpend: points > 0 && blocked === '',
     blockedBecause: blocked,
   });
 
-  const mightTaken = spend.some((id) => id.startsWith('might.'));
   return {
     name: 'Kestrel',
     level: 6,
@@ -448,66 +447,52 @@ export function demoCharacter(spend: readonly string[] = []): CharacterView {
     unspentPoints: points,
     unspentAttributePoints: 4,
     stats: [
-      { label: 'Health', value: '138' },
-      { label: 'Damage', value: '12' },
-      { label: 'Range', value: '56' },
-      { label: 'Speed', value: '2.0/s' },
-      { label: 'Armour', value: '12%' },
-      { label: 'Crit', value: '5%' },
-      { label: 'Guard', value: '84' },
-      { label: 'Stagger', value: '22' },
+      { label: 'Health', value: '138', hint: 'what Health does, in one line' },
+      { label: 'Damage', value: '12', hint: 'what Damage does, in one line' },
+      { label: 'Range', value: '56', hint: 'what Range does, in one line' },
+      { label: 'Speed', value: '2.0/s', hint: 'what Speed does, in one line' },
+      { label: 'Armour', value: '12%', hint: 'what Armour does, in one line' },
+      { label: 'Crit', value: '5%', hint: 'what Crit does, in one line' },
+      { label: 'Guard', value: '84', hint: 'what Guard does, in one line' },
+      { label: 'Stagger', value: '22', hint: 'what Stagger does, in one line' },
     ],
-    // The gallery is a picture, not a fixture (spec 147): a plausible spread
-    // with one pair on and one a point away, so the golden shows both states.
+    // The gallery is a picture, not a fixture (spec 147): a plausible spread,
+    // and no pair list, because the sheet does not have one.
     attributes: [
-      attribute('strength', 'STR  Strength', 'STR', 21, 21, 'Committed Swing — while winding up an attack you ignore 60% of incoming poise damage.', 14),
-      attribute('agility', 'AGI  Agility', 'AGI', 26, 28, 'Mobile Offense — each Flow stack also cuts 6% off your follow-through.', 9),
-      attribute('intelligence', 'INT  Intelligence', 'INT', 8, 8, 'Spell Shaping — your abilities gain radius and range with Intelligence.', 12),
-      attribute('constitution', 'CON  Constitution', 'CON', 25, 25, 'Hard to Kill — below 30% health you cannot be staggered and take 20% less damage.', 10),
-      attribute('perception', 'PER  Perception', 'PER', 24, 24, 'Opening Read — an enemy that has just committed an attack is Vulnerable for 0.75s.', 11),
-      attribute('wisdom', 'WIS  Wisdom', 'WIS', 5, 5, 'Resource Discipline — an ability that connects grants Attuned.', 15),
+      attribute('strength', 'Strength', 'STR', 21, 21, 'Committed Swing — while winding up an attack you ignore 60% of incoming poise damage.', 14),
+      attribute('agility', 'Agility', 'AGI', 26, 28, 'Mobile Offense — each Flow stack also cuts 6% off your follow-through.', 9),
+      attribute('intelligence', 'Intelligence', 'INT', 8, 8, 'Spell Shaping — your abilities gain radius and range with Intelligence.', 12),
+      attribute('constitution', 'Constitution', 'CON', 25, 25, 'Hard to Kill — below 30% health you cannot be staggered and take 20% less damage.', 10),
+      attribute('perception', 'Perception', 'PER', 24, 24, 'Opening Read — an enemy that has just committed an attack is Vulnerable for 0.75s.', 11),
+      attribute('wisdom', 'Wisdom', 'WIS', 5, 5, 'Resource Discipline — an ability that connects grants Attuned.', 15),
     ],
-    synergies: [
-      { id: 'pair.duelist', name: 'Duelist', effect: 'Each Flow stack grants 4% damage reduction.', active: true, requirement: 'AGI 25 / CON 25' },
-      { id: 'pair.ranger', name: 'Ranger', effect: 'Handling shortens projectile cooldowns.', active: false, requirement: 'AGI 25 / PER 25' },
-    ],
-    statSkills: [],
     respec: { cost: 40, enabled: true },
     branches: [
       {
-        id: 'might',
-        name: 'Might',
-        locked: false,
-        pointsSpent: spend.filter((id) => id.startsWith('might.')).length,
+        id: 'attr:strength',
+        name: 'STR',
+        pointsSpent: spend.filter((id) => id.startsWith('str.')).length,
         skills: [
-          skill('might.toughness', 'Toughness', 1, ''),
-          skill('might.cleave', 'Cleave', 2, 'tier 2 needs 3 points in might, has 1'),
+          skill('str.crushingBlows', 'Crushing Blows', 1, ''),
+          skill('str.unstoppable', 'Unstoppable', 3, 'Unstoppable needs 40 Strength, you have 21'),
         ],
       },
       {
-        id: 'finesse',
-        name: 'Finesse',
-        locked: false,
+        id: 'attr:agility',
+        name: 'AGI',
         pointsSpent: 0,
-        skills: [skill('finesse.footwork', 'Footwork', 1, '')],
+        skills: [skill('agi.quickRecovery', 'Quick Recovery', 1, '')],
       },
       {
-        id: 'arcane',
-        name: 'Arcane',
-        locked: mightTaken,
+        id: 'attr:wisdom',
+        name: 'WIS',
         pointsSpent: 0,
-        skills: [
-          skill(
-            'arcane.focus',
-            'Focus',
-            1,
-            mightTaken ? 'the arcane branch is locked out by an earlier commitment' : '',
-          ),
-        ],
+        skills: [skill('wis.discipline', 'Resource Discipline', 1, 'Resource Discipline needs 10 Wisdom, you have 5')],
       },
     ],
   };
 }
+
 
 /**
  * The HUD over a window with the character sheet in it (spec 128).

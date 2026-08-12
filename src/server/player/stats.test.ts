@@ -74,7 +74,6 @@ function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
     experience: 0,
     unspentSkillPoints: 0,
     unspentAttributePoints: 0,
-    statSkills: [],
     health: 100,
     resource: 20,
     ...overrides,
@@ -115,13 +114,19 @@ describe('effective stats', () => {
   });
 
   it('counts a skill once per level held', () => {
-    const one = computeEffectiveStats(player({ skills: [{ skillId: 'might.toughness', level: 1 }] }));
-    const three = computeEffectiveStats(
-      player({ skills: [{ skillId: 'might.toughness', level: 3 }] }),
+    // Deep Reserves is +25 health a level, and its gate is 10 Constitution --
+    // which the record has to actually meet, because `sanitizeSkills` drops a
+    // skill whose attribute is not there and the levels would silently vanish.
+    const held = { strength: 5, agility: 5, intelligence: 5, constitution: 10, perception: 5, wisdom: 5 };
+    const one = computeEffectiveStats(
+      player({ baseStats: held, skills: [{ skillId: 'con.deepReserves', level: 1 }] }),
     );
-    const bare = computeEffectiveStats(player());
-    expect(one.maxHealth - bare.maxHealth).toBeCloseTo(12, 6);
-    expect(three.maxHealth - bare.maxHealth).toBeCloseTo(36, 6);
+    const three = computeEffectiveStats(
+      player({ baseStats: held, skills: [{ skillId: 'con.deepReserves', level: 3 }] }),
+    );
+    const bare = computeEffectiveStats(player({ baseStats: held }));
+    expect(one.maxHealth - bare.maxHealth).toBeCloseTo(25, 6);
+    expect(three.maxHealth - bare.maxHealth).toBeCloseTo(75, 6);
   });
 
   it('ignores an item or skill that has left the tables rather than failing to log in', () => {
@@ -243,15 +248,20 @@ describe('effective stats', () => {
     expect(bare.baseAttackTimeTicks).toBe(BASE_ATTACK_TIME_TICKS);
   });
 
-  it('does not let a skill change it either (spec 091)', () => {
+  it('does not let a skill change it either (specs 091, 147)', () => {
     const bare = computeEffectiveStats(player());
-    // Precision is `attackCooldownTicks: -0.4` a level. It still modifies the
-    // stat it names; the cadence simply stopped being derived from it, which is
-    // a real loss for two Finesse skills and is recorded rather than hidden.
+    // Quick Recovery is the closest thing the tree has to a speed skill, and it
+    // is the *animation* it shortens. Nothing a player can spend a point on
+    // touches the cadence, which is what makes the interval a property of the
+    // body rather than of the build.
     const trained = computeEffectiveStats(
-      player({ skills: [{ skillId: 'finesse.precision', level: 5 }] }),
+      player({
+        baseStats: { strength: 5, agility: 10, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
+        skills: [{ skillId: 'agi.quickRecovery', level: 3 }],
+      }),
     );
     expect(intervalOf(trained)).toBe(intervalOf(bare));
+    expect(trained.traits.backswingScale).toBeLessThan(bare.traits.backswingScale);
   });
 
   it('holds the delay between its floor and its ceiling', () => {
@@ -399,10 +409,8 @@ describe('persistence never carries a derived stat', () => {
         'position',
         'resource',
         'skills',
-        // The attuned tree and the attribute budget (spec 147). Ids, levels and
-        // a count -- still nothing derived, which is the property this test
-        // exists to hold rather than the exact length of the list.
-        'statSkills',
+        // The attribute budget (spec 147). Still nothing derived, which is the
+        // property this test exists to hold rather than the length of the list.
         'unspentAttributePoints',
         'unspentSkillPoints',
       ].sort(),

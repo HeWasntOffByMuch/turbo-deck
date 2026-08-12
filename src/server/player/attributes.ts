@@ -177,7 +177,7 @@ export type RespecResult =
  *
  * Only `baseStats` is touched. Stat skills are *not* refunded here: their gate
  * is an attribute threshold, so a respec can leave a character holding a skill
- * they could no longer take. That is deliberate -- `sanitizeStatSkills` drops
+ * they could no longer take. That is deliberate -- `sanitizeSkills` drops
  * exactly those on the next recalculation, and doing it in one place means a
  * table edit and a respec cannot disagree about what happens.
  */

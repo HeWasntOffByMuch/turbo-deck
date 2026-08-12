@@ -8,7 +8,11 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { ALL_SYNERGIES } from '../../server/data/synergies.js';
 import { UiRoot } from '../core/root.js';
+
+/** The fifteen names the sheet must never print. */
+const PAIR_NAMES = ALL_SYNERGIES.map((synergy) => synergy.name);
 import { bakeAtlas } from '../render/atlas.js';
 import { THEME } from '../theme/theme.js';
 import {
@@ -53,8 +57,8 @@ function attributeRow(
   };
 }
 
-function branch(id: string, skills: readonly SkillView[], locked = false): BranchView {
-  return { id, name: id, locked, pointsSpent: 0, skills };
+function branch(id: string, skills: readonly SkillView[]): BranchView {
+  return { id, name: id, pointsSpent: 0, skills };
 }
 
 function viewOf(overrides: Partial<CharacterView> = {}): CharacterView {
@@ -65,16 +69,14 @@ function viewOf(overrides: Partial<CharacterView> = {}): CharacterView {
     unspentPoints: 2,
     unspentAttributePoints: 3,
     attributes: [],
-    synergies: [],
-    statSkills: [],
     respec: { cost: 40, enabled: true },
     stats: [
-      { label: 'Health', value: '138' },
-      { label: 'Damage', value: '12' },
+      { label: 'Health', value: '138', hint: 'damage you can take before dying' },
+      { label: 'Damage', value: '12', hint: 'how hard your weapon hits' },
     ],
     branches: [
-      branch('might', [skill('might.toughness', { level: 2 }), skill('might.cleave', { tier: 2 })]),
-      branch('arcane', [skill('arcane.focus', { canSpend: false, blockedBecause: 'the arcane branch is locked' })], true),
+      branch('attr:strength', [skill('str.crushingBlows', { level: 2 }), skill('str.unstoppable', { tier: 3 })]),
+      branch('attr:wisdom', [skill('wis.discipline', { canSpend: false, blockedBecause: 'needs 10 Wisdom' })]),
     ],
     ...overrides,
   };
@@ -104,31 +106,31 @@ describe('the character sheet', () => {
 
   it('enables a spend button exactly when it was told it may', () => {
     const { screen } = harness();
-    expect(screen.rowFor('might.toughness')?.spendButton.enabled).toBe(true);
-    expect(screen.rowFor('arcane.focus')?.spendButton.enabled).toBe(false);
+    expect(screen.rowFor('str.crushingBlows')?.spendButton.enabled).toBe(true);
+    expect(screen.rowFor('wis.discipline')?.spendButton.enabled).toBe(false);
   });
 
   it('says why a skill cannot be taken, in the words the refusal would use', () => {
     const { screen } = harness();
-    expect(screen.rowFor('arcane.focus')?.tooltip()).toContain('the arcane branch is locked');
+    expect(screen.rowFor('wis.discipline')?.tooltip()).toContain('needs 10 Wisdom');
     // A skill that *can* be taken says what it does, not why it cannot.
-    expect(screen.rowFor('might.toughness')?.tooltip()).toBe('what might.toughness does');
+    expect(screen.rowFor('str.crushingBlows')?.tooltip()).toBe('what str.crushingBlows does');
   });
 
   it('emits the skill id when a spend button is pressed', () => {
     const { screen } = harness();
     const spent: string[] = [];
     screen.onSpend = (id) => spent.push(id);
-    screen.rowFor('might.toughness')?.spendButton.onPress?.(0);
-    expect(spent).toEqual(['might.toughness']);
+    screen.rowFor('str.crushingBlows')?.spendButton.onPress?.(0);
+    expect(spent).toEqual(['str.crushingBlows']);
   });
 
   /** The screen emits an intent and waits, exactly as the inventory does. */
   it('does not raise a level itself when the button is pressed', () => {
     const { screen } = harness();
     screen.onSpend = () => undefined;
-    screen.rowFor('might.toughness')?.spendButton.onPress?.(0);
-    expect(screen.rowFor('might.toughness')?.skill?.level).toBe(2);
+    screen.rowFor('str.crushingBlows')?.spendButton.onPress?.(0);
+    expect(screen.rowFor('str.crushingBlows')?.skill?.level).toBe(2);
   });
 
   it('updates a row in place when the answer comes back', () => {
@@ -137,16 +139,16 @@ describe('the character sheet', () => {
     const next = viewOf({
       unspentPoints: 1,
       branches: [
-        branch('might', [skill('might.toughness', { level: 3 }), skill('might.cleave', { tier: 2 })]),
-        branch('arcane', [skill('arcane.focus', { canSpend: false, blockedBecause: 'locked' })], true),
+        branch('attr:strength', [skill('str.crushingBlows', { level: 3 }), skill('str.unstoppable', { tier: 3 })]),
+        branch('attr:wisdom', [skill('wis.discipline', { canSpend: false, blockedBecause: 'needs 10 Wisdom' })]),
       ],
     });
     screen.setCharacter(next);
     root.update(16);
-    expect(screen.rowFor('might.toughness')?.skill?.level).toBe(3);
+    expect(screen.rowFor('str.crushingBlows')?.skill?.level).toBe(3);
     // The tab the player was looking at is not rebuilt out from under them.
     expect(root.layoutPasses).toBeGreaterThan(passes);
-    expect(screen.tabs.tabIds).toEqual(['attributes', 'stats', 'might', 'arcane']);
+    expect(screen.tabs.tabIds).toEqual(['attributes', 'stats', 'skills']);
   });
 
   it('opens on the attributes, which is where a point is actually spent', () => {
@@ -157,6 +159,9 @@ describe('the character sheet', () => {
     const { screen } = harness();
     expect(screen.tabs.tabIds[0]).toBe('attributes');
     expect(screen.tabs.tabIds[1]).toBe('stats');
+    // Three tabs, not eight: six attribute columns as six tabs overflowed the
+    // strip, and they are one tree rather than six.
+    expect(screen.tabs.tabIds).toHaveLength(3);
   });
 
   it('hides the points line only when *both* budgets are empty', () => {
@@ -193,6 +198,56 @@ describe('the character sheet', () => {
     screen.attributeRowFor('perception')?.spendButton.onPress?.(0);
     void root;
     expect(pressed).toEqual(['perception']);
+  });
+
+  it('never names a two-attribute pair anywhere on the sheet', () => {
+    // The design rule, as a test rather than a promise (spec 147). Every string
+    // this screen would draw is swept for the fifteen pair names: a future
+    // "helpful" addition that listed them would fail here rather than shipping.
+    // The interactions are live in the sim; naming them turns a discovery into
+    // a menu, which is the opposite of what the sheet is for.
+    const { screen } = harness();
+    const drawn = [
+      ...screen.attributeRowList.map((row) => row.tooltip()),
+      ...screen.skillRows.map((row) => row.tooltip()),
+      nextChangeLine(screen.shown?.attributes ?? []),
+      JSON.stringify(screen.shown ?? {}),
+    ].join(' ');
+    for (const name of PAIR_NAMES) {
+      expect(drawn.includes(name), `the sheet names the pair "${name}"`).toBe(false);
+    }
+    // And the view has no field to put one in.
+    expect('synergies' in (screen.shown ?? {})).toBe(false);
+  });
+
+  it('answers a hover with the row under it, and nothing where there is no row', () => {
+    // The rows have carried a `tooltip()` since spec 128 and nothing ever asked
+    // them; this is the wiring, so it is worth a test that it is wired.
+    const { screen, root } = harness(
+      viewOf({ attributes: [attributeRow('strength', { nextEffect: 'Crushing Blows' })] }),
+    );
+    // The rect a hit test reads only exists once the tab holding it is the one
+    // laid out, which is a property of the panel rather than of this screen.
+    screen.tabs.select('attributes');
+    root.update(0);
+    const row = screen.attributeRowFor('strength');
+    expect(row).not.toBeNull();
+    if (!row) return;
+    const middle = { x: row.rect.x + row.rect.width / 2, y: row.rect.y + row.rect.height / 2 };
+    expect(screen.hintAt(middle)).toBe('Crushing Blows');
+    expect(screen.hintAt({ x: -50, y: -50 })).toBe('');
+  });
+
+  it('says so when a stat is not implemented, rather than describing it', () => {
+    const { screen } = harness(
+      viewOf({
+        stats: [{ label: 'Attack speed', value: '+0 (1.00x)', hint: 'Not implemented: nothing grants it yet.' }],
+      }),
+    );
+    screen.tabs.select('stats');
+    // The hint is whatever the content table said. A screen that wrote its own
+    // would be a second description to keep in step with the code.
+    expect(screen.shown?.stats[0]?.hint).toContain('Not implemented');
   });
 
   it('names the nearest change rather than listing all six', () => {

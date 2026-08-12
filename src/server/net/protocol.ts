@@ -88,8 +88,6 @@ export const ClientMessageType = {
   AllocateAttribute: 0x17,
   /** Hand every allocated point back, for coins. Priced and checked server-side. */
   RespecAttributes: 0x18,
-  /** Rank up one attribute-attuned skill (spec 147). */
-  SpendStatSkillPoint: 0x19,
 } as const;
 
 export const ServerMessageType = {

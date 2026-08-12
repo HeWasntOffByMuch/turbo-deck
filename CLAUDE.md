@@ -669,9 +669,16 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  leaves each bag individually plausible. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
-                 Since spec 147 it also holds the progression tables -- six
-                 attributes, eighteen milestones, fifteen pairs, thirty-six
-                 attuned skills -- and `scaling.ts`, which is every coefficient
+                 Since spec 147 `skills.ts` is the *attuned* tree -- six columns
+                 of six, gated on the attribute you actually built -- and spec
+                 056's branch-locked Might/Finesse/Arcane tree is gone: a system
+                 whose premise is that unusual combinations should be
+                 discoverable cannot also have three columns that permanently
+                 foreclose each other, and keeping both meant two skill systems
+                 where one would do. A save holding the old rows loads with them
+                 dropped and the points handed back. Beside it are the rest of
+                 the progression tables -- six attributes, eighteen milestones,
+                 fifteen pairs -- and `scaling.ts`, which is every coefficient
                  the six scale by in one object, so a balance pass is a diff of
                  one file. Three curve shapes and only three, because a number
                  should be understandable from its shape: `linear` for the
@@ -693,6 +700,16 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  attribute viable when heavily invested in, and every one of the
                  fifteen pairs producing an interaction that is not "both numbers
                  are big". A pair with no row fails CI.
+                 The pairs are also **never named on the character sheet**, and
+                 that is a rule with a test behind it in two places: naming them
+                 would turn fifteen things to discover into fifteen things to
+                 build toward, and the question the sheet exists to ask is "how
+                 do I want to solve problems" rather than "which of the fifteen
+                 am I". They are live in the sim; a player finds out by having
+                 one. What the sheet *does* say is what each attribute changes
+                 next, and one short line per stat row -- and where something is
+                 a socket with nothing plugged into it yet, that line says so in
+                 as many words rather than describing a number that never moves.
                  The structural commitment is one line in `attackTimingFor`:
                  **Agility scales the attack point and the backswing and nothing
                  it writes reaches `baseAttackTimeTicks`.** A high-Agility

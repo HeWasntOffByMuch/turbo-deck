@@ -145,18 +145,15 @@ export interface PersistedPlayer {
   readonly id: string;
   readonly displayName: string;
   readonly baseStats: BaseStats;
-  readonly skills: readonly SkillAllocation[];
   /**
    * Points spent in the attribute-attuned tree (spec 147).
    *
-   * A second list rather than more entries in `skills`, because the two trees
-   * have different rules -- one has branch locks and tier gates, the other has
-   * attribute thresholds and no locks at all -- and `sanitizeSkills` would drop
-   * every row of the new one as an unknown id. They share the *budget*
-   * (`unspentSkillPoints`) and nothing else, which is what makes "a branch skill
-   * or a stat skill" a decision instead of two disconnected currencies.
+   * The only tree there is. Spec 056's branch-locked Might/Finesse/Arcane tree
+   * is gone: a system whose whole premise is that unusual combinations should be
+   * discoverable cannot also have three columns that permanently foreclose each
+   * other, and keeping both meant two skill systems where one would do.
    */
-  readonly statSkills: readonly SkillAllocation[];
+  readonly skills: readonly SkillAllocation[];
   readonly equipment: Equipment;
   /**
    * What the player is carrying (spec 126). Exactly {@link INVENTORY_SLOTS}

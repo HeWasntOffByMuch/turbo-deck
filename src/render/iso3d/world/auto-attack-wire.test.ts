@@ -250,7 +250,6 @@ function ticksFor(weapon: string | null): number {
     experience: 0,
     unspentSkillPoints: 0,
     unspentAttributePoints: 0,
-    statSkills: [],
     health: 100,
     resource: 20,
   });

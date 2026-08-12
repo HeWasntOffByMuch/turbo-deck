@@ -34,7 +34,6 @@ function player(baseStats: Partial<BaseStats> = {}, overrides: Partial<Persisted
     displayName: 'P1',
     baseStats: { ...startingBaseStats(), ...baseStats },
     skills: [],
-    statSkills: [],
     equipment: EMPTY_EQUIPMENT,
     inventory: emptyInventory(),
     position: { x: 0, y: 0, z: 0 },
@@ -111,7 +110,7 @@ describe('a fresh character', () => {
 
 describe('determinism', () => {
   it('is a pure function of the record', () => {
-    const record = player({ strength: 33, wisdom: 21 }, { skills: [{ skillId: 'might.toughness', level: 3 }] });
+    const record = player({ strength: 33, wisdom: 21 }, { skills: [{ skillId: 'str.crushingBlows', level: 3 }] });
     expect(computeEffectiveStats(record)).toEqual(computeEffectiveStats(record));
     // And of a *copy* of the record, so nothing is memoised on identity.
     expect(computeEffectiveStats(record)).toEqual(
@@ -120,11 +119,11 @@ describe('determinism', () => {
   });
 
   it('never depends on the order allocations appear in', () => {
-    const forwards = player({}, { statSkills: [
+    const forwards = player({}, { skills: [
       { skillId: 'str.crushingBlows', level: 2 },
       { skillId: 'agi.quickRecovery', level: 1 },
     ] });
-    const backwards = player({}, { statSkills: [
+    const backwards = player({}, { skills: [
       { skillId: 'agi.quickRecovery', level: 1 },
       { skillId: 'str.crushingBlows', level: 2 },
     ] });
@@ -155,7 +154,7 @@ describe('bounds', () => {
     // readable commitment this game is built on unanswerable.
     const maxed = computeEffectiveStats(
       player(ALL_AT(SCALING.attributeHardCap), {
-        statSkills: [
+        skills: [
           { skillId: 'str.committedSwing', level: 3 },
           { skillId: 'str.unstoppable', level: 1 },
         ],
@@ -168,7 +167,7 @@ describe('bounds', () => {
   it('never lets a cost or a cooldown scale reach zero', () => {
     const maxed = computeEffectiveStats(
       player(ALL_AT(SCALING.attributeHardCap), {
-        statSkills: [{ skillId: 'wis.discipline', level: 3 }],
+        skills: [{ skillId: 'wis.discipline', level: 3 }],
       }),
     );
     expect(maxed.traits.resourceCostScale).toBeGreaterThan(0);
@@ -190,20 +189,18 @@ describe('ordering', () => {
   it('applies flat additions before percentages', () => {
     // A percentage that landed before the flat addition would multiply a
     // smaller number, so the two orders give different answers and this
-    // distinguishes them.
-    const flatOnly = computeEffectiveStats(player({}, { skills: [{ skillId: 'might.toughness', level: 5 }] }));
+    // distinguishes them. Deep Reserves is the flat half (+25 health a level)
+    // and the bloodstone is the percentage half (+12%).
+    const built = { constitution: 10 };
+    const skills = [{ skillId: 'con.deepReserves', level: 3 }];
+    const flatOnly = computeEffectiveStats(player(built, { skills }));
     const both = computeEffectiveStats(
-      player({}, {
-        skills: [
-          { skillId: 'might.toughness', level: 5 },
-          { skillId: 'arcane.focus', level: 1 },
-          { skillId: 'arcane.channeling', level: 3 },
-          { skillId: 'arcane.overload', level: 1 },
-        ],
+      player(built, {
+        skills,
+        equipment: { ...EMPTY_EQUIPMENT, trinket: 'trinket.bloodstone' },
       }),
     );
-    // Overload is -10% max health, applied to the flat total including Toughness.
-    expect(both.maxHealth).toBeCloseTo(flatOnly.maxHealth * 0.9, 6);
+    expect(both.maxHealth).toBeCloseTo(flatOnly.maxHealth * 1.12, 6);
   });
 
   it('settles the attributes before any milestone grant exists', () => {
@@ -221,12 +218,11 @@ describe('ordering', () => {
     // the assertion is about *any* item that grants an attribute.
     const bare = player({ strength: 19 });
     expect(resolveProgression(bare).milestones.map((m) => m.id)).not.toContain('str.crushing');
-    const withGrant = player({ strength: 19 }, {
-      statSkills: [],
-      skills: [{ skillId: 'finesse.precision', level: 1 }],
+    // Lightfoot grants move speed and armour, not strength -- so this stays off,
+    // which is the control for the case below.
+    const withGrant = player({ strength: 19, agility: 25 }, {
+      skills: [{ skillId: 'agi.lightfoot', level: 1 }],
     });
-    // Precision grants agility, not strength -- so this stays off, which is the
-    // control for the case below.
     expect(resolveProgression(withGrant).milestones.map((m) => m.id)).not.toContain('str.crushing');
     const pushed = { ...bare, baseStats: { ...bare.baseStats, strength: 20 } };
     expect(resolveProgression(pushed).milestones.map((m) => m.id)).toContain('str.crushing');

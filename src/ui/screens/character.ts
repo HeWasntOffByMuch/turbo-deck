@@ -14,12 +14,13 @@
  */
 
 import { Column, Row } from '../core/containers.js';
-import { uniformInsets } from '../core/geom.js';
+import { uniformInsets, type Point, type Rect } from '../core/geom.js';
 import type { Theme } from '../theme/theme.js';
 import { Button, Separator } from '../widgets/button.js';
 import { Label } from '../widgets/label.js';
 import { Meter } from '../widgets/meter.js';
 import { TabPanel } from '../widgets/tabs.js';
+import { Tooltip } from '../widgets/tooltip.js';
 
 export interface SkillView {
   readonly id: string;
@@ -34,11 +35,18 @@ export interface SkillView {
   readonly blockedBecause: string;
 }
 
+/**
+ * One attribute's column of the attuned tree (spec 147).
+ *
+ * No `locked` field, and its absence is the design: spec 056's tree had three
+ * branches that permanently foreclosed each other, and a system whose whole
+ * premise is that unusual combinations should be discoverable cannot also tell
+ * you which two thirds of it you may never have. What gates a skill here is the
+ * attribute you actually built.
+ */
 export interface BranchView {
   readonly id: string;
   readonly name: string;
-  /** Locked out by an earlier commitment: every skill in it is unreachable. */
-  readonly locked: boolean;
   readonly pointsSpent: number;
   readonly skills: readonly SkillView[];
 }
@@ -74,16 +82,6 @@ export interface AttributeRowView {
   readonly active: readonly string[];
 }
 
-/** A pair whose two halves are both high enough to have done something. */
-export interface SynergyRowView {
-  readonly id: string;
-  readonly name: string;
-  readonly effect: string;
-  readonly active: boolean;
-  /** "STR 25 / CON 25" -- what it wants, for one that is not active yet. */
-  readonly requirement: string;
-}
-
 export interface CharacterView {
   readonly name: string;
   readonly level: number;
@@ -91,13 +89,19 @@ export interface CharacterView {
   readonly unspentPoints: number;
   /** Attribute points, which are a separate budget from skill points. */
   readonly unspentAttributePoints: number;
-  /** Label/value pairs, already formatted: the screen does no arithmetic. */
-  readonly stats: readonly { readonly label: string; readonly value: string }[];
+  /**
+   * Label, value and one short sentence, already formatted: the screen does no
+   * arithmetic and writes no prose. A `hint` that says something is not
+   * implemented is the content table's statement, not this file's.
+   */
+  readonly stats: readonly {
+    readonly label: string;
+    readonly value: string;
+    readonly hint: string;
+  }[];
   readonly attributes: readonly AttributeRowView[];
-  readonly synergies: readonly SynergyRowView[];
-  readonly branches: readonly BranchView[];
   /** The attuned tree, one tab per attribute. */
-  readonly statSkills: readonly BranchView[];
+  readonly branches: readonly BranchView[];
   /** What a respec costs, and whether this character can have one right now. */
   readonly respec: { readonly cost: number; readonly enabled: boolean };
 }
@@ -204,6 +208,16 @@ export class AttributeRow extends Row {
 
 export class CharacterScreen extends Column {
   readonly tabs = new TabPanel('characterTabs');
+  /**
+   * What the thing under the cursor does (spec 147).
+   *
+   * The rows have carried a `tooltip()` since spec 128 and nothing ever asked
+   * them: every explanation the sheet had was written and then never shown. This
+   * is that wiring, and it uses the same `Tooltip` widget the bag does -- same
+   * delay, same edge flip, same replayable timestamps -- rather than a second
+   * kind of hover for a player to learn.
+   */
+  readonly tooltip = new Tooltip('characterTooltip');
   readonly experience = new Meter('character:xp');
   onSpend: ((skillId: string) => void) | null = null;
   /** Ask the server for one more point in this attribute (spec 147). */
@@ -217,7 +231,8 @@ export class CharacterScreen extends Column {
   private readonly statColumn: Column;
   private readonly rows = new Map<string, SkillRow>();
   private readonly attributeRows = new Map<string, AttributeRow>();
-  private readonly synergyRows: Label[] = [];
+  /** One hint per stat row, parallel to `statRows`. What a hover says. */
+  private readonly statHints: string[] = [];
   private readonly attributeColumn: Column;
   private readonly nextLabel = new Label('', 'body');
   private readonly respecButton = new Button('', 'character:respec');
@@ -284,7 +299,7 @@ export class CharacterScreen extends Column {
     const tabIds = [
       ...view.attributes.map((attribute) => attribute.key),
       ...view.branches.map((branch) => branch.id),
-      ...view.statSkills.map((branch) => branch.id),
+      ...view.branches.flatMap((branch) => branch.skills.map((skill) => skill.id)),
     ];
     if (tabIds.join('|') !== this.branchOrder.join('|')) this.rebuildTabs(view);
     this.branchOrder = tabIds;
@@ -292,12 +307,11 @@ export class CharacterScreen extends Column {
     for (const attribute of view.attributes) {
       this.attributeRows.get(attribute.key)?.setAttribute(attribute);
     }
-    this.syncSynergies(view.synergies);
     this.nextLabel.setText(nextChangeLine(view.attributes));
     this.respecButton.setLabel(`Respec (${view.respec.cost}c)`);
     this.respecButton.enabled = view.respec.enabled;
 
-    for (const branch of [...view.branches, ...view.statSkills]) {
+    for (const branch of view.branches) {
       for (const skill of branch.skills) this.rows.get(skill.id)?.setSkill(skill);
     }
   }
@@ -310,35 +324,55 @@ export class CharacterScreen extends Column {
     return this.attributeRows.get(key) ?? null;
   }
 
-  private syncSynergies(synergies: readonly SynergyRowView[]): void {
-    while (this.synergyRows.length < synergies.length) {
-      const row = new Label('', 'body');
-      row.wrap = true;
-      this.synergyRows.push(row);
-      this.attributeColumn.add(row);
+  /**
+   * What a hover at `at` should say, or empty.
+   *
+   * Walks the three kinds of row this screen has -- an attribute, a skill, a
+   * stat line -- and asks whichever one the cursor is inside. Pure: the hit test
+   * is against laid-out rectangles and nothing here reads a clock.
+   */
+  hintAt(at: Point): string {
+    for (const row of this.attributeRows.values()) {
+      if (row.visible && contains(row.rect, at)) return row.tooltip();
     }
-    for (const [index, row] of this.synergyRows.entries()) {
-      const entry = synergies[index];
-      // Inactive pairs are drawn dim rather than hidden. A player deciding where
-      // the next point goes needs to see what is one point away, and a list that
-      // only shows what you already have cannot tell them.
-      row.visible = entry !== undefined;
-      if (!entry) continue;
-      row.setText(entry.active ? `${entry.name}: ${entry.effect}` : `${entry.name} — ${entry.requirement}`);
-      row.colorToken = entry.active ? 'success' : 'textDim';
+    for (const row of this.rows.values()) {
+      if (row.visible && contains(row.rect, at)) return row.tooltip();
     }
+    for (const [index, row] of this.statRows.entries()) {
+      if (row.visible && contains(row.rect, at)) return this.statHints[index] ?? '';
+    }
+    return '';
   }
 
-  private syncStats(stats: readonly { readonly label: string; readonly value: string }[]): void {
+  /** Point the tooltip at whatever is under the cursor. Driven by the mount. */
+  pointerMoved(at: Point, nowMs: number): void {
+    const hint = this.hintAt(at);
+    this.tooltip.point(hint.length > 0 ? hint : null, at, nowMs);
+  }
+
+  /** Advance the tooltip's delay. Called once a frame by the mount. */
+  updateTooltip(nowMs: number, delayMs: number): void {
+    this.tooltip.update(nowMs, delayMs);
+  }
+
+  /** Say nothing, whatever the cursor is over -- what closing the sheet does. */
+  clearTooltip(): void {
+    this.tooltip.point(null, { x: 0, y: 0 }, 0);
+  }
+
+  private syncStats(stats: CharacterView['stats']): void {
     while (this.statRows.length < stats.length) {
       const row = new Label('', 'body');
       this.statRows.push(row);
       this.statColumn.add(row);
     }
+    this.statHints.length = 0;
     for (const [index, row] of this.statRows.entries()) {
       const entry = stats[index];
       row.visible = entry !== undefined;
-      if (entry) row.setText(`${entry.label}  ${entry.value}`);
+      if (!entry) continue;
+      row.setText(`${entry.label}  ${entry.value}`);
+      this.statHints.push(entry.hint);
     }
   }
 
@@ -347,16 +381,17 @@ export class CharacterScreen extends Column {
     this.attributeRows.clear();
     const theme = this.options.theme;
 
+    // Three tabs, not eight. Six attribute columns as six tabs overflowed the
+    // strip on a window this narrow and pushed the last two off the edge, and
+    // the six are one tree rather than six trees anyway -- so they are one tab
+    // with a heading per attribute.
     this.tabs.addTab('attributes', 'Attributes', () => this.buildAttributes(view, theme));
     this.tabs.addTab('stats', 'Stats', () => this.statColumn);
-    for (const branch of [...view.statSkills, ...view.branches]) {
-      this.tabs.addTab(branch.id, branch.name, () => this.buildBranch(branch, theme));
-    }
+    this.tabs.addTab('skills', 'Skills', () => this.buildSkills(view, theme));
   }
 
   private buildAttributes(view: CharacterView, theme: Theme): Column {
     this.attributeColumn.clearChildren();
-    this.synergyRows.length = 0;
     for (const attribute of view.attributes) {
       const row = new AttributeRow(attribute.key, theme, (key) => this.onAllocate?.(key));
       row.setAttribute(attribute);
@@ -366,40 +401,34 @@ export class CharacterScreen extends Column {
     this.attributeColumn.add(new Separator('row'));
     this.attributeColumn.add(this.nextLabel);
     this.attributeColumn.add(this.respecButton);
-    this.attributeColumn.add(new Separator('row'));
-    const heading = new Label('PAIRS', 'body');
-    heading.colorToken = 'textDim';
-    this.attributeColumn.add(heading);
-    this.syncSynergies(view.synergies);
+    // Nothing below this line. There is deliberately no list of two-attribute
+    // pairs (spec 147): naming them would turn fifteen things to *discover* into
+    // fifteen things to build toward, and the question this screen is supposed
+    // to ask is "how do I want to solve problems", not "which of the fifteen".
     return this.attributeColumn;
   }
 
-  private buildBranch(branch: BranchView, theme: Theme): Column {
-    const column = new Column(`branch:${branch.id}`);
+  /**
+   * The whole tree, one headed section per attribute.
+   *
+   * No tier headings inside a section. The old tree gated a tier on points
+   * already spent in the same column, so "TIER 2" was information; here the gate
+   * is the attribute, and each row's own tooltip says which number it wants --
+   * so a tier label would be a heading that repeats what is under it.
+   */
+  private buildSkills(view: CharacterView, theme: Theme): Column {
+    const column = new Column('character:skills');
     column.gap = theme.spacing.xs;
-
-    if (branch.locked) {
-      // Said in words rather than by greying every button: "locked" and "you
-      // cannot afford it yet" look identical when the only signal is a dim
-      // button, and only one of them is permanent.
-      const notice = new Label('Locked by an earlier commitment', 'body');
-      notice.colorToken = 'danger';
-      notice.wrap = true;
-      column.add(notice);
-    }
-
-    let tier = 0;
-    for (const skill of branch.skills) {
-      if (skill.tier !== tier) {
-        tier = skill.tier;
-        const heading = new Label(`TIER ${tier}`, 'body');
-        heading.colorToken = 'textDim';
-        column.add(heading);
+    for (const branch of view.branches) {
+      const heading = new Label(branch.name, 'body');
+      heading.colorToken = 'accent';
+      column.add(heading);
+      for (const skill of branch.skills) {
+        const row = new SkillRow(skill.id, theme, (id) => this.onSpend?.(id));
+        row.setSkill(skill);
+        this.rows.set(skill.id, row);
+        column.add(row);
       }
-      const row = new SkillRow(skill.id, theme, (id) => this.onSpend?.(id));
-      row.setSkill(skill);
-      this.rows.set(skill.id, row);
-      column.add(row);
     }
     return column;
   }
@@ -408,6 +437,13 @@ export class CharacterScreen extends Column {
   get shown(): CharacterView | null {
     return this.current;
   }
+}
+
+/** Whether a laid-out rectangle contains a point. */
+function contains(rect: Rect, at: Point): boolean {
+  return (
+    at.x >= rect.x && at.y >= rect.y && at.x < rect.x + rect.width && at.y < rect.y + rect.height
+  );
 }
 
 /**

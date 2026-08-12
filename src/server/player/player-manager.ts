@@ -50,8 +50,7 @@ import {
   STARTING_ATTRIBUTE_POINTS,
 } from './attributes.js';
 import { resolveProgression } from './progression.js';
-import { sanitizeStatSkills, spendStatSkillPoint } from './stat-skills.js';
-import { spendSkillPoint, sanitizeSkills } from './skills.js';
+import { sanitizeSkills, spendSkillPoint, type AttributeTotals } from './skills.js';
 import type { Holdings } from './trade.js';
 import { clampHealthToStats, clampResourceToStats, computeEffectiveStats } from './stats.js';
 
@@ -116,7 +115,15 @@ function migrate(loaded: PersistedPlayer): PersistedPlayer {
   return {
     ...loaded,
     baseStats,
-    statSkills: Array.isArray(loaded.statSkills) ? loaded.statSkills : [],
+    // A save from before spec 147 holds `might.*`/`finesse.*`/`arcane.*` rows
+    // from the branch-locked tree, which no longer exists. `sanitizeSkills`
+    // drops an id the table does not have, so those go and the points they cost
+    // come back as `unspentSkillPoints` -- nobody is robbed, and nobody is left
+    // holding a skill nothing reads.
+    skills: sanitizeSkills(
+      Array.isArray(loaded.skills) ? loaded.skills : [],
+      baseStats as unknown as AttributeTotals,
+    ),
     unspentAttributePoints: reconcileAttributePoints(
       baseStats,
       loaded.level,
@@ -172,7 +179,9 @@ export class PlayerManager {
         // upgrade, and nobody is handed a second starting kit for logging in.
         migrate({
           ...loaded,
-          skills: sanitizeSkills(loaded.skills),
+          // Sanitised in `migrate`, which is where the attribute allocation is
+          // settled -- a skill's gate is an attribute, so the two cannot be
+          // checked in either order.
           inventory: sanitizeInventory(loaded.inventory),
           // A save from before spec 129 has no purse. It loads as the starting
           // one rather than as zero: an upgrade must not rob anybody, and there
@@ -211,7 +220,6 @@ export class PlayerManager {
       displayName: displayName || playerId,
       baseStats: startingBaseStats(),
       skills: [],
-      statSkills: [],
       equipment: STARTER_EQUIPMENT,
       inventory: starterInventory(),
       position: DEFAULT_SPAWN,
@@ -275,10 +283,10 @@ export class PlayerManager {
     // can all leave a character holding a skill they could not take now, and
     // there is exactly one place that decides what happens then.
     const allocated = resolveProgression(session.record).allocated;
-    const statSkills = sanitizeStatSkills(session.record.statSkills, allocated);
-    const record = statSkills.length === session.record.statSkills.length
+    const skills = sanitizeSkills(session.record.skills, allocated);
+    const record = skills.length === session.record.skills.length
       ? session.record
-      : { ...session.record, statSkills };
+      : { ...session.record, skills };
     const stats = computeEffectiveStats(record);
     const next: PlayerSession = {
       ...session,
@@ -497,19 +505,6 @@ export class PlayerManager {
     return { ok: true, reason: '' };
   }
 
-  /** Validated in `skills.ts`; a rejection leaves the record untouched. */
-  async spendSkillPoint(playerId: string, skillId: string): Promise<PlayerActionResult> {
-    const session = this.sessions.get(playerId);
-    if (!session) return { ok: false, reason: 'not logged in' };
-
-    const outcome = spendSkillPoint(session.record, skillId);
-    if (!outcome.ok) return { ok: false, reason: outcome.detail };
-
-    this.commit({ ...session, record: outcome.player });
-    const updated = await this.recalculate(playerId);
-    return updated ? { ok: true, session: updated } : { ok: false, reason: 'not logged in' };
-  }
-
   /**
    * Puts one attribute point somewhere (spec 147).
    *
@@ -532,7 +527,7 @@ export class PlayerManager {
   /**
    * Hands every allocated point back, for coins.
    *
-   * Stat skills are *not* refunded here. `recalculate` runs `sanitizeStatSkills`
+   * Skills are *not* refunded here. `recalculate` runs `sanitizeSkills`
    * against the new allocation, so any skill whose attribute requirement is no
    * longer met is dropped there -- one place that decides what a lost
    * requirement costs, whether it was lost to a respec or to a table edit.
@@ -549,13 +544,13 @@ export class PlayerManager {
     return updated ? { ok: true, session: updated } : { ok: false, reason: 'not logged in' };
   }
 
-  /** Validated in `stat-skills.ts`, against the character's live attributes. */
-  async spendStatSkillPoint(playerId: string, skillId: string): Promise<PlayerActionResult> {
+  /** Validated in `skills.ts`, against the character's live attributes. */
+  async spendSkillPoint(playerId: string, skillId: string): Promise<PlayerActionResult> {
     const session = this.sessions.get(playerId);
     if (!session) return { ok: false, reason: 'not logged in' };
 
     const { attributes } = resolveProgression(session.record);
-    const outcome = spendStatSkillPoint(session.record, attributes, skillId);
+    const outcome = spendSkillPoint(session.record, attributes, skillId);
     if (!outcome.ok) return { ok: false, reason: outcome.detail };
 
     this.commit({ ...session, record: outcome.player });

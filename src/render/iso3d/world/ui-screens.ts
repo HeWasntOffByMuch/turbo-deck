@@ -278,6 +278,11 @@ export class UiScreens {
     this.layers.place('tooltip', this.inventory.tooltip);
 
     this.character = new CharacterScreen({ theme: THEME });
+    // The sheet's tooltip goes in the same layer as the bag's, for the reason
+    // the bag's is there: a hint about a row in one window must not be clipped
+    // by the window next to it. Two widgets rather than one shared, because they
+    // are pointed at from two different hit tests.
+    this.layers.place('tooltip', this.character.tooltip);
     this.character.onSpend = (skillId) => {
       options.onSpend(skillId);
     };
@@ -497,7 +502,6 @@ export class UiScreens {
           baseStats: view.baseStats,
           attributes: view.attributes,
           unspentAttributePoints: view.unspentAttributePoints,
-          statSkills: view.statSkills,
           coins: view.coins,
         }),
       );
@@ -568,6 +572,10 @@ export class UiScreens {
       this.inventory.cancelDrag();
     }
     this.inventory.updateTooltip(nowMs);
+    // The sheet's, on the same terms (spec 147).
+    this.character.tooltip.viewport = this.root.viewport;
+    if (!this.isOpen('character')) this.character.clearTooltip();
+    this.character.updateTooltip(nowMs, THEME.input.tooltipDelayMs);
     // ...and a capture does not outlive the window it was armed in either. It
     // holds `textEntry` while it waits, so a capture stranded by a window closing
     // any other way -- the title bar's cross, a second press of K -- is an
@@ -611,7 +619,7 @@ export class UiScreens {
       view.experience === this.lastExperience &&
       view.unspentSkillPoints === this.lastPoints &&
       view.baseStats === this.lastBaseStats &&
-      view.statSkills === this.lastStatSkills &&
+      view.skills === this.lastStatSkills &&
       view.coins === this.lastSheetCoins
     ) {
       return false;
@@ -622,7 +630,7 @@ export class UiScreens {
     this.lastExperience = view.experience;
     this.lastPoints = view.unspentSkillPoints;
     this.lastBaseStats = view.baseStats;
-    this.lastStatSkills = view.statSkills;
+    this.lastStatSkills = view.skills;
     this.lastSheetCoins = view.coins;
     return true;
   }
@@ -895,6 +903,7 @@ export class UiScreens {
     // carry follows the cursor with nothing held, and a tooltip is by definition
     // about hovering (spec 136). This is the one place that sees every move.
     if (phase === 'move' && this.isOpen('inventory')) this.inventory.pointerMoved(pos, this.now);
+    if (phase === 'move' && this.isOpen('character')) this.character.pointerMoved(pos, this.now);
     return !reachesGameplay(this.routingOf(consumed, 'pointer'));
   }
 

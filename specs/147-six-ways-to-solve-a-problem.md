@@ -54,15 +54,16 @@ Two repository rules constrain everything below. `player/`, `data/`, `sim/`,
 `Rng`, lint-enforced. And `src/ui/` may not import the sim at all, so anything a
 screen needs has to be turned into plain rows by `world/character-model.ts`.
 
-### What is deliberately *not* replaced
+### What replaces the branch tree
 
-The existing `SKILLS` tree with its three branches and its branch locking stays
-exactly as it is. It is shipped, tested, and reachable; a build that wants it can
-have it. The 36 new skills are a **second, additive tree** spending the **same**
-`unspentSkillPoints` budget, with no branch locking at all -- because the brief's
-"avoid hard class locks" governs the system being designed here, and one point
-budget across two trees makes "a branch skill or a stat skill" a real choice
-rather than two disconnected currencies.
+Spec 056's `SKILLS` tree -- Might, Finesse, Arcane, where investing in one of the
+outer two permanently forecloses the other -- **is deleted**, and the 36 attuned
+skills are the only tree. Keeping both was considered and is wrong twice over: a
+system whose whole premise is that unusual combinations should be discoverable
+cannot also tell a player which third of it they may never have, and two skill
+systems sharing one budget is two sets of rules to keep honest for no benefit a
+player can name. A save holding `might.*` rows loads with them dropped by
+`sanitizeSkills` and the points returned as `unspentSkillPoints`.
 
 ---
 
@@ -565,7 +566,18 @@ Kept honest because a spec that disagrees with its code is worse than no spec.
 7. **A pure build at level 20 cannot spend its whole budget** -- 62 points, 55
    places -- so `spreadOf` reports what it could not place instead of silently
    comparing builds with different budgets.
-8. **No admin path applies a preset.** `npm run balance -- --preset=<id>` builds
+8. **The branch tree is deleted, not kept beside.** See above. `statSkills`
+   merged back into `skills`, `SpendStatSkillPoint` merged back into
+   `SpendSkillPoint`, and `data/skills.ts` is now the attuned table.
+9. **The sheet never names a pair.** The design doc names all fifteen; the
+   *screen* names none of them, and two tests sweep the rendered strings to keep
+   it that way. Naming them makes them a menu.
+10. **Every stat row carries a one-line hint, including "not implemented".**
+   `Attack speed` is a socket nothing plugs into (specs 091, 144) and the sheet
+   says exactly that rather than describing a number that never moves. The rows
+   have carried a `tooltip()` since spec 128 and nothing ever asked them; the
+   sheet now has a live `Tooltip` in the same layer as the bag's.
+11. **No admin path applies a preset.** `npm run balance -- --preset=<id>` builds
    and fights any of the twelve; a wire message that made a character level 20
    is not a thing to ship, and a manager method nothing calls is dead code.
 

@@ -40,8 +40,7 @@ function built(): PersistedPlayer {
     id: 'p1',
     displayName: 'P1',
     baseStats: { strength: 31, agility: 12, intelligence: 5, constitution: 27, perception: 18, wisdom: 9 },
-    skills: [{ skillId: 'might.toughness', level: 3 }],
-    statSkills: [
+    skills: [
       { skillId: 'str.crushingBlows', level: 2 },
       { skillId: 'con.deepReserves', level: 1 },
     ],
@@ -68,7 +67,6 @@ function statsMessage(stats: EffectiveStats, record: PersistedPlayer): StatsMess
     experience: record.experience,
     unspentSkillPoints: record.unspentSkillPoints,
     skills: record.skills,
-    statSkills: record.statSkills,
     baseStats: record.baseStats,
     attributes: record.baseStats,
     unspentAttributePoints: record.unspentAttributePoints,
@@ -86,7 +84,7 @@ describe('the Stats message', () => {
 
     expect(decoded.baseStats).toEqual(record.baseStats);
     expect(decoded.unspentAttributePoints).toBe(record.unspentAttributePoints);
-    expect(decoded.statSkills).toEqual(record.statSkills);
+    expect(decoded.skills).toEqual(record.skills);
     // Traits are f32 on the wire, so exact equality would be a lie about
     // floats. Every field survives to single precision, which is what a client
     // draws with.
@@ -127,10 +125,10 @@ describe('the Stats message', () => {
       basicAttackId: '',
       traits: NEUTRAL_TRAITS,
     };
-    const record = { ...built(), skills: [], statSkills: [], baseStats: startingBaseStats() };
+    const record = { ...built(), skills: [], baseStats: startingBaseStats() };
     const decoded = decodeServerMessage(encodeServerMessage(statsMessage(bare, record)));
     if (decoded.type !== ServerMessageType.Stats) throw new Error('wrong type');
-    expect(decoded.statSkills).toEqual([]);
+    expect(decoded.skills).toEqual([]);
     expect(decoded.stats.traits.backswingScale).toBeCloseTo(1, 6);
   });
 });
@@ -156,7 +154,7 @@ describe('the three progression requests', () => {
 
   it('round-trips a stat-skill request', () => {
     const message: ClientMessage = {
-      type: ClientMessageType.SpendStatSkillPoint,
+      type: ClientMessageType.SpendSkillPoint,
       skillId: 'per.weakPointStudy',
     };
     expect(decodeClientMessage(encodeClientMessage(message))).toEqual(message);
@@ -206,10 +204,10 @@ describe('nothing a client sends carries a stat', () => {
       { type: ClientMessageType.Ping, nonce: 1 },
       { type: ClientMessageType.Equip, slot: 'head', itemId: 'helm.leather' },
       { type: ClientMessageType.Unequip, slot: 'head' },
-      { type: ClientMessageType.SpendSkillPoint, skillId: 'might.toughness' },
+      { type: ClientMessageType.SpendSkillPoint, skillId: 'str.crushingBlows' },
       { type: ClientMessageType.AllocateAttribute, attribute: 0 },
       { type: ClientMessageType.RespecAttributes },
-      { type: ClientMessageType.SpendStatSkillPoint, skillId: 'str.crushingBlows' },
+      { type: ClientMessageType.SpendSkillPoint, skillId: 'str.crushingBlows' },
       { type: ClientMessageType.Chat, text: 'hi' },
       { type: ClientMessageType.CancelCast, afterInputSeq: 3 },
     ];

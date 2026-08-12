@@ -665,12 +665,6 @@ export class GameServer implements AdminHost {
         break;
       }
 
-      case ClientMessageType.SpendSkillPoint: {
-        if (connection.playerId === null) return;
-        const result = await this.players.spendSkillPoint(connection.playerId, message.skillId);
-        this.reportAction(connection, result.ok ? null : result.reason);
-        break;
-      }
 
       // The three progression writes (spec 147). Each is the same three lines
       // for the same reason: the client says which button was pressed, the
@@ -696,9 +690,9 @@ export class GameServer implements AdminHost {
         break;
       }
 
-      case ClientMessageType.SpendStatSkillPoint: {
+      case ClientMessageType.SpendSkillPoint: {
         if (connection.playerId === null) return;
-        const result = await this.players.spendStatSkillPoint(connection.playerId, message.skillId);
+        const result = await this.players.spendSkillPoint(connection.playerId, message.skillId);
         this.reportAction(connection, result.ok ? null : result.reason);
         break;
       }
@@ -1153,10 +1147,9 @@ export class GameServer implements AdminHost {
       level: session.record.level,
       experience: session.record.experience,
       unspentSkillPoints: session.record.unspentSkillPoints,
-      // What has actually been spent (spec 128), not just what is left to
+      // What has actually been spent (specs 128, 147), not just what is left to
       // spend: a client told only the remainder cannot draw a tree.
       skills: session.record.skills,
-      statSkills: session.record.statSkills,
       // Allocated and total, both (spec 147). The sheet spends against the
       // first and reads thresholds off the second, and a client sent only one
       // of them has to guess at the other.

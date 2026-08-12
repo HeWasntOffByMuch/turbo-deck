@@ -44,7 +44,6 @@ const RECORD: PersistedPlayer = {
   experience: 0,
   unspentSkillPoints: 0,
   unspentAttributePoints: 0,
-  statSkills: [],
   health: 200,
   resource: 100,
 };

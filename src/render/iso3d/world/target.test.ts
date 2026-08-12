@@ -62,7 +62,6 @@ function gate(abilityId: string, from: Point, targetRadius: number): CastDecisio
     experience: 0,
     unspentSkillPoints: 0,
     unspentAttributePoints: 0,
-    statSkills: [],
     health: 200,
     resource: 100,
   });

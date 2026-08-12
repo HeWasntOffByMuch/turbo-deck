@@ -36,7 +36,6 @@ function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
     displayName: 'P1',
     baseStats: startingBaseStats(),
     skills: [],
-    statSkills: [],
     equipment: EMPTY_EQUIPMENT,
     inventory: emptyInventory(),
     position: { x: 0, y: 0, z: 0 },
@@ -243,15 +242,22 @@ describe('a save from before the six attributes', () => {
     const legacy = {
       ...player({ level: 12, unspentSkillPoints: 3 }),
       baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
+      // What a pre-147 save actually holds: rows from the branch-locked tree
+      // that no longer exists.
+      skills: [
+        { skillId: 'might.toughness', level: 3 },
+        { skillId: 'arcane.focus', level: 1 },
+      ],
     } as unknown as PersistedPlayer;
-    delete (legacy as unknown as Record<string, unknown>).statSkills;
     delete (legacy as unknown as Record<string, unknown>).unspentAttributePoints;
     await store.savePlayer(legacy);
 
     const session = await new PlayerManager(store, zones).login('p1', 'P1');
     expect(session.record.unspentAttributePoints).toBe(pointsEarned(12));
-    expect(session.record.statSkills).toEqual([]);
     expect(session.record.baseStats).toEqual(startingBaseStats());
+    // The branch skills are gone, because the table no longer has them. Nobody
+    // is left holding a skill that reaches nothing.
+    expect(session.record.skills).toEqual([]);
   });
 });
 
@@ -302,14 +308,14 @@ describe('the manager', () => {
     // Enough Strength for a tier-1 stat skill, then take the skill, then respec.
     for (let i = 0; i < 6; i++) await manager.allocateAttribute('p1', 'strength');
     await manager.grantExperience('p1', 400);
-    const took = await manager.spendStatSkillPoint('p1', 'str.crushingBlows');
+    const took = await manager.spendSkillPoint('p1', 'str.crushingBlows');
     expect(took.ok).toBe(true);
-    expect(manager.get('p1')?.record.statSkills).toHaveLength(1);
+    expect(manager.get('p1')?.record.skills).toHaveLength(1);
 
     const back = await manager.respec('p1');
     expect(back.ok).toBe(true);
     // The requirement is no longer met, so the allocation goes -- in one place,
     // the same place a table edit would be handled.
-    expect(manager.get('p1')?.record.statSkills).toHaveLength(0);
+    expect(manager.get('p1')?.record.skills).toHaveLength(0);
   });
 });

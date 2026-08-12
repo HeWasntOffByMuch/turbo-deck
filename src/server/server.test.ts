@@ -329,10 +329,10 @@ describe('inventory and skills are server-side only', () => {
     await client.hello('alice');
     client.clear();
 
-    // A tier-2 skill with nothing invested in the branch.
+    // A skill whose attribute gate a fresh character does not meet (spec 147).
     await game.receive(
       client.connection,
-      encodeClientMessage({ type: ClientMessageType.SpendSkillPoint, skillId: 'might.bulwark' }),
+      encodeClientMessage({ type: ClientMessageType.SpendSkillPoint, skillId: 'str.unstoppable' }),
     );
     expect(client.of(ServerMessageType.Error)[0]?.code).toBe(ErrorCode.RejectedAction);
     expect(game.playerManager.get('alice')?.record.skills).toEqual([]);
@@ -344,12 +344,19 @@ describe('inventory and skills are server-side only', () => {
     await client.hello('alice');
     const before = game.playerManager.get('alice')?.record.unspentSkillPoints ?? 0;
 
+    // Enough Strength for the tier-1 row, placed the way a player would.
+    for (let i = 0; i < 5; i++) {
+      await game.receive(
+        client.connection,
+        encodeClientMessage({ type: ClientMessageType.AllocateAttribute, attribute: 0 }),
+      );
+    }
     await game.receive(
       client.connection,
-      encodeClientMessage({ type: ClientMessageType.SpendSkillPoint, skillId: 'might.toughness' }),
+      encodeClientMessage({ type: ClientMessageType.SpendSkillPoint, skillId: 'str.crushingBlows' }),
     );
     const record = game.playerManager.get('alice')?.record;
-    expect(record?.skills).toEqual([{ skillId: 'might.toughness', level: 1 }]);
+    expect(record?.skills).toEqual([{ skillId: 'str.crushingBlows', level: 1 }]);
     expect(record?.unspentSkillPoints).toBe(before - 1);
   });
 });

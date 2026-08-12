@@ -204,7 +204,8 @@ describe('loopback session', () => {
     const errors: string[] = [];
     client.onError((_code, message) => errors.push(message));
 
-    client.spendSkillPoint('might.bulwark');
+    // A skill whose attribute gate a fresh character does not meet (spec 147).
+    client.spendSkillPoint('str.unstoppable');
     await settle();
     expect(errors).toHaveLength(1);
     expect(test.server.playerManager.get('alice')?.record.skills).toEqual([]);

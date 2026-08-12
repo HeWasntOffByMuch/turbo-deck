@@ -15,21 +15,17 @@
  */
 
 import { abilityById } from '../../../server/data/abilities.js';
-import { ATTRIBUTES, attributeByKey, type AttributeKey } from '../../../server/data/attributes.js';
-import { SKILL_BRANCHES, skillById, ALL_SKILLS } from '../../../server/data/skills.js';
-import { statSkillById, statSkillsFor } from '../../../server/data/stat-skills.js';
-import { ALL_SYNERGIES, metSynergies } from '../../../server/data/synergies.js';
+import { ATTRIBUTES, type AttributeKey } from '../../../server/data/attributes.js';
+import { skillById, skillsFor } from '../../../server/data/skills.js';
 import { experienceForLevel } from '../../../server/player/player-manager.js';
 import { RESPEC_COST, pointsSpent, validateAttributeSpend } from '../../../server/player/attributes.js';
 import { milestoneProgress } from '../../../server/player/progression.js';
-import { levelOfStatSkill, validateStatSkillSpend } from '../../../server/player/stat-skills.js';
+import { levelOf, validateSkillSpend } from '../../../server/player/skills.js';
 import { attackTimingFor } from '../../../server/sim/abilities.js';
 import { resolveAttackTiming, type AttackTiming } from '../../../server/sim/attack-timing.js';
-import { lockedBranches, pointsInBranch, levelOf, validateSkillSpend } from '../../../server/player/skills.js';
 import type {
   BaseStats,
   EffectiveStats,
-  PersistedPlayer,
   SkillAllocation,
 } from '../../../server/state/types.js';
 import type { AbilityView, HudView } from '../../../ui/screens/hud.js';
@@ -37,8 +33,6 @@ import type {
   AttributeRowView,
   BranchView,
   CharacterView,
-  SkillView,
-  SynergyRowView,
 } from '../../../ui/screens/character.js';
 
 /** Ticks per second, for turning a cooldown into the seconds a player reads. */
@@ -149,52 +143,111 @@ function basicAttackTiming(stats: EffectiveStats): AttackTiming {
   );
 }
 
-/** How a stat is named and formatted on the sheet. */
+/**
+ * How a stat is named, formatted, and explained on the sheet.
+ *
+ * `hint` is one short sentence, and the rule for writing one is the rule the
+ * whole sheet is built on: **say what it does, or say that it does nothing.**
+ * A stat with no hint is a number a player has to guess about; a stat with a
+ * confident hint that is not actually wired to anything is worse, because they
+ * will build toward it. Where something is a socket with no source plugged into
+ * it yet, the hint says so in as many words.
+ */
 const STAT_ROWS: readonly {
   readonly label: string;
   readonly of: (stats: EffectiveStats) => string;
+  readonly hint: string;
 }[] = [
-  { label: 'Health', of: (s) => String(Math.round(s.maxHealth)) },
-  { label: 'Damage', of: (s) => String(Math.round(s.attackDamage)) },
-  { label: 'Range', of: (s) => String(Math.round(s.attackRange)) },
+  { label: 'Health', of: (s) => String(Math.round(s.maxHealth)), hint: 'Damage you can take before dying. Mostly Constitution.' },
+  {
+    label: 'Damage',
+    of: (s) => String(Math.round(s.attackDamage)),
+    hint: 'How hard your weapon hits. Multiplies every basic attack. Mostly Strength.',
+  },
+  { label: 'Range', of: (s) => String(Math.round(s.attackRange)), hint: 'How far your weapon reaches, in world units.' },
   // Ticks are a server unit; a player reads swings per second (specs 088, 144).
   // Through the *basic attack's* resolved timing rather than off BAT directly,
   // because attack speed divides one into the other and this row is the number
   // the player is actually attacking at.
-  { label: 'Speed', of: (s) => `${basicAttackTiming(s).attacksPerSecond.toFixed(2)}/s` },
+  {
+    label: 'Speed',
+    of: (s) => `${basicAttackTiming(s).attacksPerSecond.toFixed(2)}/s`,
+    hint: 'Attacks per second. Nothing raises this yet -- Agility shortens the swing, not the cadence.',
+  },
   // What that rate is before attack speed, and what attack speed is doing to it
   // (spec 144). Two rows rather than one, because a player who cannot see both
   // cannot tell a slow weapon from a slowed body.
-  { label: 'Base attack time', of: (s) => `${(s.baseAttackTimeTicks / TICK_RATE).toFixed(2)}s` },
+  {
+    label: 'Base attack time',
+    of: (s) => `${(s.baseAttackTimeTicks / TICK_RATE).toFixed(2)}s`,
+    hint: 'Seconds between one attack starting and the next. The same for every weapon.',
+  },
   {
     label: 'Attack speed',
     of: (s) => {
       const factor = basicAttackTiming(s).factor;
       return `${s.attackSpeed >= 0 ? '+' : ''}${Math.round(s.attackSpeed)} (${factor.toFixed(2)}x)`;
     },
+    // Honest rather than encouraging. Spec 091 took the cadence off the weapon
+    // on purpose and 144 built the socket without plugging anything into it, so
+    // this reads +0 for everybody and will until a spec says otherwise.
+    hint: 'Not implemented: no item, buff or attribute grants attack speed yet. Always +0.',
   },
-  { label: 'Armour', of: (s) => `${Math.round(s.armor * 100)}%` },
-  { label: 'Crit', of: (s) => `${Math.round(s.critChance * 100)}%` },
-  { label: 'Power', of: (s) => s.spellPower.toFixed(2) },
-  { label: 'Move', of: (s) => String(Math.round(s.moveSpeed)) },
-  { label: 'Pool', of: (s) => String(Math.round(s.maxResource)) },
+  { label: 'Armour', of: (s) => `${Math.round(s.armor * 100)}%`, hint: 'Fraction of incoming damage removed. Constitution, and a little Agility.' },
+  {
+    label: 'Crit',
+    of: (s) => `${Math.round(s.critChance * 100)}%`,
+    hint: 'Chance a blow deals 75% extra. Perception.',
+  },
+  { label: 'Power', of: (s) => s.spellPower.toFixed(2), hint: 'Multiplies ability damage, not weapon damage. Intelligence.' },
+  { label: 'Move', of: (s) => String(Math.round(s.moveSpeed)), hint: 'World units per second on foot. Agility.' },
+  { label: 'Pool', of: (s) => String(Math.round(s.maxResource)), hint: 'What abilities are paid out of. Intelligence, and a little Wisdom.' },
   // The progression numbers (spec 147). Chosen so that every one of the six
   // attributes has at least one row that visibly moves when a point goes into
   // it -- a sheet where an attribute changes nothing you can see is a sheet that
   // cannot be used to make a decision.
-  { label: 'Guard', of: (s) => String(Math.round(s.traits.maxPoise)) },
-  { label: 'Stagger', of: (s) => String(Math.round(s.traits.staggerPower)) },
+  {
+    label: 'Guard',
+    of: (s) => String(Math.round(s.traits.maxPoise)),
+    hint: 'Poise. Spent by blows landing on you; when it empties you are staggered. Constitution.',
+  },
+  {
+    label: 'Stagger',
+    of: (s) => String(Math.round(s.traits.staggerPower)),
+    hint: 'Guard your blows take off. Break someone and they are rooted and lose what they were casting. Strength.',
+  },
   // As percentages of the authored animation, because "0.72x" is a ratio nobody
   // has the other half of. 28% shorter is a sentence.
   {
     label: 'Recovery',
     of: (s) => `-${Math.round((1 - s.traits.backswingScale) * 100)}%`,
+    hint: 'How much shorter your follow-through is. You are free to move sooner; you do not attack more often. Agility.',
   },
-  { label: 'Wind-up', of: (s) => `-${Math.round((1 - s.traits.attackPointScale) * 100)}%` },
-  { label: 'Weak point', of: (s) => `${Math.round(s.traits.weakPointChance * 100)}%` },
-  { label: 'Ability cost', of: (s) => `-${Math.round((1 - s.traits.resourceCostScale) * 100)}%` },
-  { label: 'Cooldowns', of: (s) => `-${Math.round((1 - s.traits.cooldownScale) * 100)}%` },
-  { label: 'Healing', of: (s) => `${Math.round(s.traits.healingScale * 100)}%` },
+  {
+    label: 'Wind-up',
+    of: (s) => `-${Math.round((1 - s.traits.attackPointScale) * 100)}%`,
+    hint: 'How much sooner your blows land. Agility.',
+  },
+  {
+    label: 'Weak point',
+    of: (s) => `${Math.round(s.traits.weakPointChance * 100)}%`,
+    hint: 'Chance a blow finds a seam: extra damage, and it leaves the target exposed for everyone. Perception.',
+  },
+  {
+    label: 'Ability cost',
+    of: (s) => `-${Math.round((1 - s.traits.resourceCostScale) * 100)}%`,
+    hint: 'How much less abilities cost. Wisdom.',
+  },
+  {
+    label: 'Cooldowns',
+    of: (s) => `-${Math.round((1 - s.traits.cooldownScale) * 100)}%`,
+    hint: 'How much sooner abilities come back. Wisdom.',
+  },
+  {
+    label: 'Healing',
+    of: (s) => `${Math.round(s.traits.healingScale * 100)}%`,
+    hint: 'What a heal is worth on you. Wisdom, and a little Constitution.',
+  },
 ];
 
 export interface CharacterSource {
@@ -208,7 +261,6 @@ export interface CharacterSource {
   readonly baseStats: BaseStats;
   readonly attributes: BaseStats;
   readonly unspentAttributePoints: number;
-  readonly statSkills: readonly SkillAllocation[];
   readonly coins: number;
 }
 
@@ -235,7 +287,9 @@ export function attributeRowsOf(source: CharacterSource): readonly AttributeRowV
     const mine = progress.find((entry) => entry.attribute === definition.key);
     return {
       key: definition.key,
-      name: `${definition.abbrev}  ${definition.name}`,
+      // The name alone. It used to read "STR  Strength", and on a window this
+      // narrow the redundant three letters pushed the value column into it.
+      name: definition.name,
       abbrev: definition.abbrev,
       allocated: source.baseStats[definition.key],
       total: source.attributes[definition.key],
@@ -248,51 +302,23 @@ export function attributeRowsOf(source: CharacterSource): readonly AttributeRowV
   });
 }
 
-/**
- * All fifteen pairs, active or not.
- *
- * Every one of them, always. A list that showed only what a character already
- * has cannot answer the question a player actually has in front of the sheet --
- * *what is one point away* -- and the fifteen rows are the design's own claim
- * that no pair is a dead end, so hiding fourteen of them hides the claim.
- */
-export function synergyRowsOf(attributes: BaseStats): readonly SynergyRowView[] {
-  const totals = attributes as unknown as Record<AttributeKey, number>;
-  const active = new Set(metSynergies(totals).map((synergy) => synergy.id));
-  return ALL_SYNERGIES.map((synergy) => ({
-    id: synergy.id,
-    name: synergy.name,
-    effect: synergy.effect,
-    active: active.has(synergy.id),
-    requirement: `${abbrev(synergy.a)} ${synergy.threshold} / ${abbrev(synergy.b)} ${synergy.threshold}`,
-  }));
-}
-
-function abbrev(key: AttributeKey): string {
-  return attributeByKey(key)?.abbrev ?? key.slice(0, 3).toUpperCase();
-}
-
 /** The attuned tree, as one `BranchView` per attribute (spec 147). */
-export function statSkillBranchesOf(source: CharacterSource): readonly BranchView[] {
+export function skillBranchesOf(source: CharacterSource): readonly BranchView[] {
   const totals = source.attributes as unknown as Record<AttributeKey, number>;
-  const stand = { statSkills: source.statSkills, unspentSkillPoints: source.unspentSkillPoints };
+  const stand = { skills: source.skills, unspentSkillPoints: source.unspentSkillPoints };
   return ATTRIBUTES.map((definition) => ({
     id: `attr:${definition.key}`,
     name: definition.abbrev,
-    // Nothing in this tree locks anything. The field exists because the branch
-    // tree has it, and it is false here forever -- which is the design decision,
-    // stated where a reader will see it.
-    locked: false,
-    pointsSpent: source.statSkills
-      .filter((allocation) => statSkillById(allocation.skillId)?.attribute === definition.key)
+    pointsSpent: source.skills
+      .filter((allocation) => skillById(allocation.skillId)?.attribute === definition.key)
       .reduce((sum, allocation) => sum + allocation.level, 0),
-    skills: statSkillsFor(definition.key).map((skill) => {
-      const check = validateStatSkillSpend(stand, totals, skill.id);
+    skills: skillsFor(definition.key).map((skill) => {
+      const check = validateSkillSpend(stand, totals, skill.id);
       return {
         id: skill.id,
         name: skill.name,
         tier: skill.tier,
-        level: levelOfStatSkill(source.statSkills, skill.id),
+        level: levelOf(source.skills, skill.id),
         maxLevel: skill.maxLevel,
         description: `${skill.description} (${skill.trigger})`,
         canSpend: check.ok,
@@ -312,50 +338,27 @@ export function statSkillBranchesOf(source: CharacterSource): readonly BranchVie
  * bending it to suit a caller is how a rule stops being one.
  */
 export function characterViewOf(source: CharacterSource): CharacterView {
-  const stand = {
-    skills: source.skills,
-    level: source.level,
-    unspentSkillPoints: source.unspentSkillPoints,
-  } as unknown as PersistedPlayer;
-
-  const locked = lockedBranches(source.skills);
-  const branches: BranchView[] = SKILL_BRANCHES.map((branch) => {
-    const skills: SkillView[] = ALL_SKILLS.filter((skill) => skill.branch === branch.id)
-      .slice()
-      .sort((a, b) => a.tier - b.tier || (a.id < b.id ? -1 : 1))
-      .map((skill) => {
-        const check = validateSkillSpend(stand, skill.id);
-        return {
-          id: skill.id,
-          name: skill.name,
-          tier: skill.tier,
-          level: levelOf(source.skills, skill.id),
-          maxLevel: skill.maxLevel,
-          description: skill.description,
-          canSpend: check.ok,
-          blockedBecause: check.ok ? '' : check.detail,
-        };
-      });
-    return {
-      id: branch.id,
-      name: branch.name,
-      locked: locked.has(branch.id),
-      pointsSpent: pointsInBranch(source.skills, branch.id),
-      skills,
-    };
-  });
-
   return {
     name: source.name,
     level: source.level,
     experience: { current: source.experience, toNext: experienceForLevel(source.level + 1) },
     unspentPoints: source.unspentSkillPoints,
     unspentAttributePoints: source.unspentAttributePoints,
-    stats: STAT_ROWS.map((row) => ({ label: row.label, value: row.of(source.stats) })),
+    stats: STAT_ROWS.map((row) => ({
+      label: row.label,
+      value: row.of(source.stats),
+      hint: row.hint,
+    })),
     attributes: attributeRowsOf(source),
-    synergies: synergyRowsOf(source.attributes),
-    branches,
-    statSkills: statSkillBranchesOf(source),
+    // No pair list, and deliberately none (spec 147). The fifteen two-attribute
+    // interactions are *live* -- they are in the sim and they are in the derived
+    // traits -- and they are not named on this screen. Printing "Duelist: each
+    // Flow stack grants 4% damage reduction" turns a discovery into a menu, and
+    // the whole premise of the design is that a player asks "how do I want to
+    // solve problems" rather than "which of the fifteen am I building toward".
+    // What a player is told is what their own attributes do next; what a pair
+    // does, they find out by having one.
+    branches: skillBranchesOf(source),
     respec: {
       cost: RESPEC_COST,
       // Both halves of the server's own rule, run against the client's copy:
@@ -363,11 +366,6 @@ export function characterViewOf(source: CharacterSource): CharacterView {
       enabled: pointsSpent(source.baseStats) > 0 && source.coins >= RESPEC_COST,
     },
   };
-}
-
-/** Every skill the table defines, sorted by branch then tier. For the sheet. */
-export function skillIdsOf(branchId: string): readonly string[] {
-  return ALL_SKILLS.filter((skill) => skill.branch === branchId).map((skill) => skill.id);
 }
 
 /** A skill's definition, for a caller that wants a name without the whole view. */

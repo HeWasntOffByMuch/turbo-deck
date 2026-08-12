@@ -63,12 +63,15 @@ function fastCharacter(agility: number, skilled: boolean): PersistedPlayer {
     id: 'probe',
     displayName: 'probe',
     baseStats: { strength: 5, agility: agility, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
+    // The attuned tree's Agility column (spec 147). `finesse.*` is gone with
+    // the branch tree; these are the rows that actually shorten an animation,
+    // and none of them touches the interval -- which is the point the probe
+    // exists to show.
     skills: skilled
       ? [
-          { skillId: 'finesse.precision', level: 5 },
-          { skillId: 'finesse.footwork', level: 1 },
-          { skillId: 'finesse.slipstream', level: 1 },
-          { skillId: 'finesse.flurry', level: 1 },
+          { skillId: 'agi.quickRecovery', level: 3 },
+          { skillId: 'agi.rapidHandling', level: 3 },
+          { skillId: 'agi.lightfoot', level: 3 },
         ]
       : [],
     equipment: { ...EMPTY_EQUIPMENT, mainHand: 'stars.weighted' },
@@ -81,7 +84,6 @@ function fastCharacter(agility: number, skilled: boolean): PersistedPlayer {
     experience: 0,
     unspentSkillPoints: 0,
     unspentAttributePoints: 0,
-    statSkills: [],
     health: 100,
     resource: 10,
   };

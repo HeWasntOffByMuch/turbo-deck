@@ -245,6 +245,6 @@ export const SCALING = {
 
 /** Thresholds the three milestone tiers sit on, and the stat-skill tiers too. */
 export const MILESTONE_THRESHOLDS: readonly number[] = [20, 35, 50];
-export const STAT_SKILL_THRESHOLDS: readonly number[] = [10, 25, 40];
+export const SKILL_THRESHOLDS: readonly number[] = [10, 25, 40];
 /** Both halves of a pair must reach this for its synergy to be active. */
 export const SYNERGY_THRESHOLD = 25;

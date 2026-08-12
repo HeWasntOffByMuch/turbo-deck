@@ -56,7 +56,6 @@ function record(baseStats: Partial<BaseStats> = {}, overrides: Partial<Persisted
     displayName: 'p',
     baseStats: { ...startingBaseStats(), ...baseStats },
     skills: [],
-    statSkills: [],
     equipment: EMPTY_EQUIPMENT,
     inventory: emptyInventory(),
     position: { x: 0, y: 0, z: 0 },
@@ -193,7 +192,7 @@ describe('Agility shortens the animation and never the interval', () => {
   });
 
   it('lets Flow shorten the follow-through further, and nothing else', () => {
-    const stats = statsFor({ agility: 30 }, { statSkills: [{ skillId: 'agi.flow', level: 3 }] });
+    const stats = statsFor({ agility: 30 }, { skills: [{ skillId: 'agi.flow', level: 3 }] });
     const still = backswingScaleFor({ stats, statuses: NO_STATUSES }, 0);
     const flowing = backswingScaleFor(
       { stats, statuses: applyStatus(NO_STATUSES, StatusId.Flow, 0, 100, { maxStacks: 3 }) },
@@ -321,7 +320,7 @@ describe('a blow', () => {
     // Perception's payoff is a two-step play: the hit that finds the seam is the
     // one that marks it, and the mark is what the *next* hit cashes in.
     const sniper = statsFor({ perception: SCALING.attributeHardCap }, {
-      statSkills: [
+      skills: [
         { skillId: 'per.weakPointStudy', level: 3 },
         { skillId: 'per.exploit', level: 3 },
       ],
@@ -449,9 +448,9 @@ describe('the resource economy', () => {
   });
 
   it('charges the shaping premium, and lets Efficient Construction pay it off', () => {
-    const shaper = statsFor({ intelligence: 25 }, { statSkills: [{ skillId: 'int.shaping', level: 3 }] });
+    const shaper = statsFor({ intelligence: 25 }, { skills: [{ skillId: 'int.shaping', level: 3 }] });
     const efficient = statsFor({ intelligence: 25 }, {
-      statSkills: [
+      skills: [
         { skillId: 'int.shaping', level: 3 },
         { skillId: 'int.efficientConstruction', level: 3 },
       ],
@@ -524,7 +523,7 @@ describe('Second Wind', () => {
   // The one thing in this system that restores health without a heal. It is
   // driven from the timers pass rather than from a blow, so it is tested there.
   const conStats = (): EffectiveStats =>
-    statsFor({ constitution: 25 }, { statSkills: [{ skillId: 'con.secondWind', level: 3 }] });
+    statsFor({ constitution: 25 }, { skills: [{ skillId: 'con.secondWind', level: 3 }] });
 
   it('does nothing while the body is healthy', () => {
     const stats = conStats();

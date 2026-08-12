@@ -276,12 +276,12 @@ export interface ClientView {
   readonly experience: number;
   readonly unspentSkillPoints: number;
   /**
-   * Every point this character has spent (spec 128).
+   * Every point this character has spent in the attuned tree (specs 128, 147).
    *
-   * Where a skill tree's "you have three of five in this" comes from. Not
-   * derivable from {@link stats}: two different builds can add up to the same
-   * numbers, which is the same reason equipment had to be replicated rather
-   * than inferred.
+   * Where a tree's "you have three of five in this" comes from. Not derivable
+   * from {@link stats}: two different builds can add up to the same numbers,
+   * which is the same reason equipment had to be replicated rather than
+   * inferred.
    */
   readonly skills: readonly SkillAllocation[];
   /**
@@ -297,7 +297,6 @@ export interface ClientView {
   readonly baseStats: BaseStats;
   readonly attributes: BaseStats;
   readonly unspentAttributePoints: number;
-  readonly statSkills: readonly SkillAllocation[];
   readonly connected: boolean;
   /** Casts in progress, keyed by caster -- what to draw a wind-up bar over. */
   readonly casts: readonly KnownCast[];
@@ -500,7 +499,6 @@ export class GameClient {
   private baseStats: BaseStats = startingBaseStats();
   private attributes: BaseStats = startingBaseStats();
   private unspentAttributePoints = 0;
-  private statSkills: readonly SkillAllocation[] = [];
   private seq = 0;
   private connected = false;
   private resolveWelcome: ((info: WelcomeInfo) => void) | null = null;
@@ -851,11 +849,7 @@ export class GameClient {
     this.channel.send(encodeClientMessage({ type: ClientMessageType.RespecAttributes }));
   }
 
-  spendStatSkillPoint(skillId: string): void {
-    this.channel.send(
-      encodeClientMessage({ type: ClientMessageType.SpendStatSkillPoint, skillId }),
-    );
-  }
+
 
   /**
    * Asks to commit to an ability. The *effect* is still not predicted -- the
@@ -1359,7 +1353,6 @@ export class GameClient {
       baseStats: this.baseStats,
       attributes: this.attributes,
       unspentAttributePoints: this.unspentAttributePoints,
-      statSkills: this.statSkills,
       connected: this.connected,
       casts: this.visibleCasts(),
       requestedAbilityId: this.requestedAbilityId,
@@ -1634,7 +1627,6 @@ export class GameClient {
         this.baseStats = message.baseStats;
         this.attributes = message.attributes;
         this.unspentAttributePoints = message.unspentAttributePoints;
-        this.statSkills = message.statSkills;
         break;
 
       case ServerMessageType.Delta: {

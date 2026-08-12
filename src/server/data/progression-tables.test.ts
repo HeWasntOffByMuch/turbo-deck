@@ -36,8 +36,8 @@ import {
   sumModifiers,
   type TraitModifier,
 } from './modifiers.js';
-import { MILESTONE_THRESHOLDS, SCALING, STAT_SKILL_THRESHOLDS, SYNERGY_THRESHOLD } from './scaling.js';
-import { ALL_STAT_SKILLS, statSkillsFor } from './stat-skills.js';
+import { MILESTONE_THRESHOLDS, SCALING, SKILL_THRESHOLDS, SYNERGY_THRESHOLD } from './scaling.js';
+import { ALL_SKILLS, skillsFor } from './skills.js';
 import { ALL_SYNERGIES, allAttributePairs, metSynergies, synergyForPair } from './synergies.js';
 import { BASE_STAT_KEYS, TRAIT_WIRE_ORDER } from '../state/types.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
@@ -199,32 +199,32 @@ describe('the fifteen pairs', () => {
 
 describe('the thirty-six skills', () => {
   it('is six per attribute, at the three thresholds', () => {
-    expect(ALL_STAT_SKILLS).toHaveLength(36);
+    expect(ALL_SKILLS).toHaveLength(36);
     for (const key of ATTRIBUTE_KEYS) {
-      const mine = statSkillsFor(key);
+      const mine = skillsFor(key);
       expect(mine, key).toHaveLength(6);
       expect(mine.map((s) => s.requires)).toEqual([
-        STAT_SKILL_THRESHOLDS[0],
-        STAT_SKILL_THRESHOLDS[0],
-        STAT_SKILL_THRESHOLDS[1],
-        STAT_SKILL_THRESHOLDS[1],
-        STAT_SKILL_THRESHOLDS[1],
-        STAT_SKILL_THRESHOLDS[2],
+        SKILL_THRESHOLDS[0],
+        SKILL_THRESHOLDS[0],
+        SKILL_THRESHOLDS[1],
+        SKILL_THRESHOLDS[1],
+        SKILL_THRESHOLDS[1],
+        SKILL_THRESHOLDS[2],
       ]);
     }
   });
 
   it('is reachable: every threshold is inside the hard cap', () => {
-    for (const skill of ALL_STAT_SKILLS) {
+    for (const skill of ALL_SKILLS) {
       expect(skill.requires, skill.id).toBeLessThanOrEqual(SCALING.attributeHardCap);
       expect(skill.maxLevel, skill.id).toBeGreaterThan(0);
     }
   });
 
   it('has unique ids, namespaced by their attribute', () => {
-    const ids = ALL_STAT_SKILLS.map((s) => s.id);
+    const ids = ALL_SKILLS.map((s) => s.id);
     expect(new Set(ids).size).toBe(ids.length);
-    for (const skill of ALL_STAT_SKILLS) {
+    for (const skill of ALL_SKILLS) {
       expect(skill.id.startsWith(`${skill.attribute.slice(0, 3)}.`), skill.id).toBe(true);
     }
   });
@@ -232,16 +232,16 @@ describe('the thirty-six skills', () => {
   it('names a trigger on every row, and is mostly not "passive"', () => {
     // The review criterion, as an assertion. A tree of passives is a tree of
     // coefficients, which is the thing this whole spec exists to replace.
-    const passive = ALL_STAT_SKILLS.filter((s) => s.trigger === 'passive');
+    const passive = ALL_SKILLS.filter((s) => s.trigger === 'passive');
     expect(passive.length).toBeLessThanOrEqual(9);
-    for (const skill of ALL_STAT_SKILLS) {
+    for (const skill of ALL_SKILLS) {
       expect(skill.trigger.length, skill.id).toBeGreaterThan(4);
       expect(skill.description.length, skill.id).toBeGreaterThan(20);
     }
   });
 
   it('scales linearly with level, through the shared scaler', () => {
-    for (const skill of ALL_STAT_SKILLS) {
+    for (const skill of ALL_SKILLS) {
       const one = sumModifiers([scaleModifier(skill.perLevel, 1)]);
       const three = sumModifiers([scaleModifier(skill.perLevel, 3)]);
       for (const key of Object.keys(one.traits) as (keyof typeof one.traits)[]) {
@@ -296,7 +296,7 @@ describe('every trait actually reaches the sim', () => {
       // Read by `derived.ts` to decide whether the geometry is switched on at
       // all, and never by the sim -- the geometry is what the sim reads.
       'shapingCostRelief',
-      // The sheet's number. `stat-skills.ts` reads Mastery off the held levels
+      // The sheet's number. `skills.ts` reads Mastery off the held levels
       // rather than off the bundle, because the bundle is derived from them and
       // asking it here would be the one cycle this design does not have.
       'masteryRelief',

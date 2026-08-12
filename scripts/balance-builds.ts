@@ -111,11 +111,10 @@ function recordFor(preset: BuildPreset): PersistedPlayer {
     id: preset.id,
     displayName: preset.name,
     baseStats: fullSpreadOf(preset).attributes as unknown as BaseStats,
+    // Deliberately no skills. The comparison is between *attribute spreads*;
+    // adding a hand-picked tree to each build would make the table a comparison
+    // between whoever picked the trees.
     skills: [],
-    // Deliberately no stat skills. The comparison is between *attribute
-    // spreads*; adding a hand-picked tree to each build would make the table a
-    // comparison between whoever picked the trees.
-    statSkills: [],
     equipment: EMPTY_EQUIPMENT,
     inventory: emptyInventory(),
     position: { x: ORIGIN.x, y: ORIGIN.y, z: 0 },

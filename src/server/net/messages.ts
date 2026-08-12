@@ -229,11 +229,7 @@ export interface RespecAttributesMessage {
   readonly type: typeof ClientMessageType.RespecAttributes;
 }
 
-export interface SpendStatSkillPointMessage {
-  readonly type: typeof ClientMessageType.SpendStatSkillPoint;
-  readonly skillId: string;
-}
-
+/** Rank up one attribute-attuned skill (spec 147). */
 export interface SpendSkillPointMessage {
   readonly type: typeof ClientMessageType.SpendSkillPoint;
   readonly skillId: string;
@@ -315,7 +311,6 @@ export type ClientMessage =
   | SpendSkillPointMessage
   | AllocateAttributeMessage
   | RespecAttributesMessage
-  | SpendStatSkillPointMessage
   | ChatMessage
   | UseAbilityMessage
   | CancelCastMessage
@@ -482,9 +477,6 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
       break;
     case ClientMessageType.RespecAttributes:
       break;
-    case ClientMessageType.SpendStatSkillPoint:
-      writer.str(message.skillId);
-      break;
     case ClientMessageType.Chat:
       writer.str(message.text);
       break;
@@ -598,8 +590,6 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
       return { type: ClientMessageType.AllocateAttribute, attribute: reader.u8() };
     case ClientMessageType.RespecAttributes:
       return { type: ClientMessageType.RespecAttributes };
-    case ClientMessageType.SpendStatSkillPoint:
-      return { type: ClientMessageType.SpendStatSkillPoint, skillId: reader.str() };
     case ClientMessageType.Chat:
       return { type: ClientMessageType.Chat, text: reader.str() };
     case ClientMessageType.UseAbility:
@@ -744,6 +734,7 @@ export interface StatsMessage {
    * skill tree cannot be drawn at all; the same hole spec 126 closed for
    * equipment, and with the same answer.
    */
+  /** Every point spent in the attuned tree (spec 147). Whole, never a delta. */
   readonly skills: readonly SkillAllocation[];
   /**
    * The six attributes as *allocated* (spec 147), plus what is left to place.
@@ -757,7 +748,6 @@ export interface StatsMessage {
   readonly baseStats: BaseStats;
   readonly attributes: BaseStats;
   readonly unspentAttributePoints: number;
-  readonly statSkills: readonly SkillAllocation[];
   readonly stats: EffectiveStats;
 }
 
@@ -1282,7 +1272,6 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
         .varuint(message.experience)
         .varuint(message.unspentSkillPoints);
       writeSkills(writer, message.skills);
-      writeSkills(writer, message.statSkills);
       writeAttributes(writer, message.baseStats);
       writeAttributes(writer, message.attributes);
       writer.varuint(message.unspentAttributePoints);
@@ -1437,7 +1426,6 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         experience: reader.varuint(),
         unspentSkillPoints: reader.varuint(),
         skills: readSkills(reader),
-        statSkills: readSkills(reader),
         baseStats: readAttributes(reader),
         attributes: readAttributes(reader),
         unspentAttributePoints: reader.varuint(),
