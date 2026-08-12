@@ -182,6 +182,13 @@ class Probe {
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(1600, 1600), new THREE.MeshBasicMaterial({ color: PROBE_GROUND }));
     ground.rotation.x = -Math.PI / 2;
     scene.add(ground);
+    // The ground is unlit on purpose -- it is a backdrop, not a subject -- but
+    // since spec 139 a decal *is* lit, and any effect that stains the floor
+    // would come out as a black mark on a sheet with no lights in it at all.
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const key = new THREE.DirectionalLight(0xfff4e0, 1.8);
+    key.position.set(220, 260, 140);
+    scene.add(key, key.target);
 
     const layer = new VfxLayer({
       hooks: { ground: () => 0, attach: (_e, _s, out, at) => { out[at] = 0; out[at + 1] = 20; out[at + 2] = 0; return true; } },
