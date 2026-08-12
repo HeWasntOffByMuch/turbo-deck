@@ -542,6 +542,31 @@ src/render/iso3d/unit-rig.ts  a loaded authored unit, posed by a machine (spec
                  AND one whose hips never move, since a correction that ate the
                  pose scores a perfect zero on the first test alone. No GL
                  context: nothing in it rasterises.
+src/render/iso3d/turn-swing.ts  what a pivot does to a body's extremities (spec
+                 139). The scene turns a body by yawing it about the point the
+                 server put it on, so anything the pose holds away from that
+                 origin travels on a circle -- and how violent a turn looks is a
+                 product of two numbers that live nowhere near each other, the
+                 turn rate in `CHARACTERS` and how far a pose reaches. Nothing
+                 could see both at once, which is how a rate tuned for the cow
+                 rig survived onto a pig whose run clip leans 36 degrees and puts
+                 the snout 28 units in front of a 16-unit collider: every number
+                 was individually defensible and their product was written down
+                 nowhere. This module is that arithmetic, pure and tested; the
+                 budget is a *ratio* against the body's own move speed, because a
+                 snout that crosses the screen faster than the animal can run
+                 does not read as a turn. `npx tsx scripts/probe-turn-swing.ts`
+                 measures a real unit against it -- CPU-skinned vertex by vertex,
+                 since a snout is geometry and no bone sits in it, and since
+                 `Box3.setFromObject` on a `SkinnedMesh` reports this pig as 17.9
+                 units tall when it is really 55.6. `npx tsx
+                 scripts/preview-turnaround.ts` is the picture: the reversal
+                 *stepped* through the real `turnToward` and rasterised in
+                 software, because this environment paints the real page at about
+                 a frame a second and a screencast of a 333ms turn returns one
+                 frame captioned "the turn is over". The window is fixed in world
+                 space and the collider ring is drawn, both for the same reason --
+                 auto-framing each cell would hide the only thing being shown.
 src/render/iso3d/view-controls.ts, menu-group.ts, settings-menu.ts  the Play
                  tab's settings (specs 033/034/107): six buttons in the top-right
                  corner -- view, day and night, player lights, retro filter, hike

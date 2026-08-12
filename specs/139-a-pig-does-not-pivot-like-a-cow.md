@@ -17,25 +17,27 @@ actually turns at has never been 540 — it is **690 degrees per second**, a
 **The run pose is a lever arm.** Since spec 111 the player is drawn as
 `pig_a_pose_full`, and its run clip pitches the torso 36 degrees forward against
 the idle's 3. Measured off the real unit through the real `UnitRig`, vertex by
-vertex on the skinned mesh:
+vertex on the skinned mesh, over the whole cycle — which is what
+`scripts/probe-turn-swing.ts` below prints:
 
-| pose | snout ahead of the pivot | furthest vertex from the pivot | drawn height |
+| pose | furthest vertex from the pivot | body centre off the pivot | drawn height |
 |---|---|---|---|
-| bind | 13.6 | 19.2 | 55.7 |
-| walk | 14.5 | 19.6 | 54.9 |
-| run  | **27.9** | **31.2** | 45.4 |
+| bind | 21.0 | 0.0 | 55.7 |
+| walk | 17.5 | 1.1 | 54.6 |
+| run  | **28.3** | **6.3** | 45.9 |
 
-Running doubles the body's forward reach, so at 690 deg/s the snout's tangential
-speed is **336 world units per second — 2.2x the pig's own run speed of 155**.
-A reversal displaces it 55.8 units, one whole body height, in 261ms.
+Running reaches 60% further than walking, so at 690 deg/s the furthest point
+travels at **341 world units per second — 2.20x the pig's own run speed of 155**.
+A reversal displaces it 57 units, more than the running body's own height, in
+261ms. At 540 the same pose sweeps 266 units/s, or 1.72x.
 
 **The pivot sits behind the body while running.** The bind pose is centred
 exactly: XZ centre (0.0, 0.0), height 55.7 against a `canonicalHeight` of 55.65.
 Nothing is wrong with the mesh or the import scale. What is wrong is that
 `correctTravel` pins the **hips'** mean along the travel axis to their bind value
 (spec 118), which is right for an upright pose and wrong for a leaning one:
-pinning the hips throws everything above them forward. The body's visible XZ
-centre is (7.9, 0.0) in run against (0.8, -0.9) in walk. The offset exists only
+pinning the hips throws everything above them forward. The body's own centre
+sits 6.3 units off the pivot in run against 1.1 in walk. The offset exists only
 in the pose you turn fastest in.
 
 Two further multipliers, recorded here because they are part of the same
@@ -73,15 +75,54 @@ npx tsx scripts/probe-turn-swing.ts [unitDir]
 It loads a unit through the real `UnitRig`, applies each clip's poses, skins the
 mesh on the CPU at each of them, and reports per clip the body's XZ centre, its
 furthest vertex from the pivot, and what that lever arm does at the player's
-effective turn rate. It fails when a pose's peak tangential speed passes
+effective turn rate. It exits non-zero when a pose's peak tangential speed passes
 `MAX_SWEEP_RATIO` times the body's own move speed — a body whose extremities
 outrun it is the definition of the fault, and it is a ratio rather than a
 constant so it survives a re-tune of either number.
 
-The threshold admits today's tree at 540 and refuses it at 690, which is the
-only useful place for a gate to sit: it is the regression test for this change
-and it is also what makes the two fixes this spec leaves alone measurable when
-somebody comes to do them.
+`MAX_SWEEP_RATIO` is 2, which admits the tree at 540 (the run pose reaches 1.72)
+and refuses it at 690 (2.20). That is the only useful place for a gate to sit: it
+is the regression test for this change, and it is what makes the two fixes this
+spec leaves alone measurable when somebody comes to do them.
+
+The arithmetic on top of the measurement is separated out into
+`src/render/iso3d/turn-swing.ts` — lever arm to tangential speed, the chord a
+reversal displaces a point by, and the ratio against the body's own speed — so
+that relationship is asserted by `npm test` in CI even though the measurement
+itself is not. It is not, and this spec does not pretend otherwise: reaching a
+pose needs a loader and a skinned mesh, so this sits exactly where
+`probe-travel.ts` sits, a script somebody runs. Making it a CI gate would mean a
+pure glTF animation sampler beside `skin.ts`, which does not exist yet.
+
+`scripts/preview-turnaround.ts` — and the picture, because a number cannot say
+whether a turn reads as a manoeuvre:
+
+```
+npx tsx scripts/preview-turnaround.ts [unitDir]
+```
+
+It steps `turnToward` through a reversal at the effective rate, poses the real
+skinned pig on each sampled tick, yaws it the way `scene.ts` does, and rasterises
+the frames in software — the same z-buffered renderer approach
+`preview-critters.ts` uses, so it needs no browser and no GL context. Out come a
+labelled strip (one cell per sampled tick, captioned in milliseconds with the
+HUD's own glyph table) and an envelope: every heading of the turn in one cell, so
+what the body sweeps is a single shape.
+
+Rendered rather than photographed, and that is a measurement rather than a
+preference. This environment's software renderer paints the real page at about a
+frame a second, so a screencast of a 333ms turn returns *one* frame — the first
+version of this script drove the real Play tab, held W, reversed, captured the
+whole turn between two paints, and captioned every frame "the turn is over".
+Stepping the turn also makes the strip exact rather than lucky: each cell is a
+known tick rather than whatever the compositor happened to deliver.
+
+Two rules the pictures depend on. **The window is fixed in world space** rather
+than framed to the subject, because auto-framing each cell would hide the one
+thing being shown — that the body moves while turning. And **the collider is
+drawn**, a 16-unit ring on the ground with the pivot at its centre: "the snout
+is 28 units out" is a sentence, and a snout well outside its own footprint is a
+picture.
 
 ## Invariants tested
 
@@ -90,15 +131,20 @@ somebody comes to do them.
   rather than as the base, because the base is not what anything reads.
 - Dexterity still buys a faster pivot, and the per-point value is unchanged, so
   an agile character is still expressible.
-- The floor in `computeEffectiveStats` still holds: no combination of modifiers
-  puts a player's turn rate below 30.
-- A 180-degree reversal takes strictly longer than it did, and takes
-  `180 / turnRate` seconds at the sim's tick rate — `turnToward` is unchanged,
-  so the turn is still one rule in one place.
+- A 180-degree reversal takes 20 ticks and not 19, measured through `turnToward`
+  itself at the effective rate rather than through the stat that parameterises
+  it — and the old 690 is asserted alongside it, because "arrives in the ticks
+  the rate implies" is true of any rate and would not notice the base going back.
 - `probe-turn-swing` reports the pig's run pose as its widest, and holds every
   pose's peak sweep under `MAX_SWEEP_RATIO` of the body's move speed.
-- The probe's arithmetic is exercised headlessly: lever arm, tangential speed
-  and the reversal's displacement from a known arm and rate.
+- The arithmetic is exercised headlessly against the pig's measured reach: the
+  run pose is inside the budget at the rate this spec sets and outside it at the
+  rate it replaced, so the gate is asserted at both ends rather than only at the
+  one that passes.
+- A reversal is the worst turn there is: the chord peaks at 180 degrees and
+  shortens on either side, which is why that is the number reported.
+- Tangential speed is linear in both the arm and the rate, and a body that
+  cannot move is never a finding however far it reaches.
 
 ## Out of scope
 
