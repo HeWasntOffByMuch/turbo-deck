@@ -36,12 +36,21 @@ import { appearanceOf, displayName } from './appearance.js';
 import { pixelTextSvg } from './pixel-font.js';
 import { isHandheldDevice } from '../device.js';
 import { DamagePopups, type Projector, type WorldAnchor } from './damage-popup.js';
+import { HealthFlashes } from './health-bar.js';
 import { hudLayout } from './hud-layout.js';
 import { systemIconSvg, weaponIconSvg, type SystemIconId } from './icons.js';
 import type { WindowId } from './key-actions.js';
 
 /** The slot being aimed (spec 080). The aim indicator's colour, in the DOM. */
 const AIM_HIGHLIGHT = '#7fd4ff';
+
+/**
+ * The drawn tick as milliseconds, for the one effect here with a duration
+ * (spec 143). `update` is handed the *drawn* tick -- the estimate plus the
+ * frame's part-tick -- so a flash is timed by the same clock the bodies under it
+ * are interpolated by, rather than by a second one read off `performance`.
+ */
+const TICK_MS = 1000 / SERVER_TICK_RATE;
 
 /** Which abilities the hotbar offers, in order. Keys 1..n. */
 export const HOTBAR: readonly string[] = [
@@ -103,9 +112,24 @@ export const SYSTEM_BUTTONS: readonly {
 interface Bar {
   readonly root: HTMLElement;
   readonly health: HTMLElement;
+  /** The white band behind the fill: the ground a blow just took (spec 143). */
+  readonly ghost: HTMLElement;
   readonly cast: HTMLElement;
   readonly castFill: HTMLElement;
 }
+
+/**
+ * The three flat colours of a floating bar (spec 143): what a body still has,
+ * what it lost a moment ago, and empty.
+ *
+ * Empty is black rather than the old translucent wash, because the white chunk
+ * is only legible against something that is not the world showing through it --
+ * and "black is gone" is one less thing to learn than "darker is gone".
+ */
+const BAR_EMPTY = '#08090b';
+const BAR_ENEMY = '#e0362a';
+const BAR_SELF = '#7fd08a';
+const BAR_LOST = '#f4f2ee';
 
 export interface HudHandle {
   readonly element: HTMLElement;
@@ -397,6 +421,8 @@ export function createHud(project: Projector): HudHandle {
   });
 
   const bars = new Map<number, Bar>();
+  /** Same division as the numbers: the judgement is pure, this holds elements. */
+  const flashes = new HealthFlashes();
   /** The numbers' whole life lives in the pure field; this holds their elements. */
   const popups = new DamagePopups();
   const popupElements = new Map<number, HTMLElement>();
@@ -415,10 +441,18 @@ export function createHud(project: Projector): HudHandle {
     holder.dataset['entity'] = String(id);
 
     const healthTrack = document.createElement('div');
-    healthTrack.style.cssText = 'height:4px;background:rgba(0,0,0,.65);border-radius:2px;overflow:hidden;';
+    healthTrack.style.cssText =
+      `position:relative;height:5px;background:${BAR_EMPTY};border-radius:2px;overflow:hidden;` +
+      'box-shadow:0 0 0 1px rgba(0,0,0,.55);';
+    // Two bands in one track, the white underneath (spec 143). Stacked rather
+    // than laid end to end, so the fill's width is still just health -- the
+    // chunk is whatever the white is left showing past it, and the two can
+    // never disagree about where the fill ends.
+    const ghost = document.createElement('div');
+    ghost.style.cssText = `position:absolute;left:0;top:0;height:100%;width:100%;background:${BAR_LOST};`;
     const health = document.createElement('div');
-    health.style.cssText = 'height:100%;width:100%;background:#d0796f;';
-    healthTrack.append(health);
+    health.style.cssText = `position:absolute;left:0;top:0;height:100%;width:100%;background:${BAR_ENEMY};`;
+    healthTrack.append(ghost, health);
 
     const cast = document.createElement('div');
     cast.style.cssText =
@@ -429,7 +463,7 @@ export function createHud(project: Projector): HudHandle {
 
     holder.append(healthTrack, cast);
     root.append(holder);
-    const made: Bar = { root: holder, health, cast, castFill };
+    const made: Bar = { root: holder, health, ghost, cast, castFill };
     bars.set(id, made);
     return made;
   }
@@ -470,9 +504,13 @@ export function createHud(project: Projector): HudHandle {
       element.root.style.left = `${anchor.x}px`;
       element.root.style.top = `${anchor.y}px`;
 
-      const fraction = entity.maxHealth > 0 ? Math.max(0, Math.min(1, entity.health / entity.maxHealth)) : 0;
-      element.health.style.width = `${fraction * 100}%`;
-      element.health.style.background = entity.id === view.selfEntityId ? '#7fd08a' : '#d0796f';
+      // The fill is replicated health and nothing here delays it; the white
+      // band behind it is the chunk the last blow took (spec 143), decided in
+      // the pure field off the same presentation clock the bars are placed by.
+      const fill = flashes.read(anchor.id, entity.health, entity.maxHealth, tick * TICK_MS);
+      element.health.style.width = `${fill.health * 100}%`;
+      element.ghost.style.width = `${fill.ghost * 100}%`;
+      element.health.style.background = entity.id === view.selfEntityId ? BAR_SELF : BAR_ENEMY;
       element.root.style.display = look.showsHealth ? 'block' : 'none';
 
       if (cast) {
@@ -497,6 +535,8 @@ export function createHud(project: Projector): HudHandle {
       element.root.remove();
       bars.delete(id);
     }
+    // The flashes go with the bars, by the same set on the same frame.
+    flashes.retain(live);
 
     // Damage numbers stay on the ground the blow landed on (spec 096): the
     // field holds a world point each and re-projects it, so nothing here needs
