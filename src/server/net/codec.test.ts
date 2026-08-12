@@ -109,6 +109,7 @@ describe('game message round-trip', () => {
       displayName: 'Alice',
       token: '',
       assetManifest: '',
+      resumeToken: 'resume-1',
     },
     {
       type: ClientMessageType.Input,
@@ -119,6 +120,7 @@ describe('game message round-trip', () => {
       buttons: 5,
       predictedX: -1234.5,
       predictedY: 987.25,
+      renderLagTicks: 9,
     },
     { type: ClientMessageType.Ping, nonce: 123456 },
     { type: ClientMessageType.Equip, slot: 'mainHand', itemId: 'sword.keen' },
@@ -193,6 +195,7 @@ describe('game message round-trip', () => {
       interestRadius: 3,
       correctionThreshold: 48,
       worldSeed: 4242,
+      sessionToken: 'sess-1',
     },
     {
       type: ServerMessageType.Delta,
@@ -301,7 +304,7 @@ describe('game message round-trip', () => {
     },
     // A shop with nothing in it, and the empty id that means "closed".
     { type: ServerMessageType.VendorState, vendorId: '', name: '', stock: [], buyback: [] },
-    { type: ServerMessageType.Pong, nonce: 88, serverTick: 1000 },
+    { type: ServerMessageType.Pong, nonce: 88, serverTick: 1000, inputQueueFloor: 4 },
     { type: ServerMessageType.Error, code: 7, message: 'rejected' },
     { type: ServerMessageType.Disconnect, reason: 'kicked' },
   ];

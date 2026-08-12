@@ -24,10 +24,19 @@
  */
 
 import { GameClient } from '../../../server/client/game-client.js';
-import { createWorldPredictor } from '../../../server/client/prediction.js';
 import { LoopbackTransport } from '../../../server/net/transport-loop.js';
+import { connectChannel } from '../../../server/net/transport-browser.js';
 import { GameServer } from '../../../server/server.js';
+import { planConnection, rememberSession } from './connection.js';
+import { ReconnectingChannel } from '../../../server/net/reconnecting.js';
+import { createConnectionBanner } from './connection-banner.js';
+import { createGroundPredictor, emptyGround, fillGround } from './prediction-ground.js';
+import { mapIdOf } from '../../../server/world/map-index.js';
+import type { Channel } from '../../../server/net/transport.js';
+import type { WorldColliders } from '../../../sim/types.js';
+import type { TerrainSampler } from '../../../server/world/terrain.js';
 import { buildWorldFromMap, warmRouting } from '../../../server/world/build.js';
+import { warmNavGrids } from '../../../sim/pathfinding.js';
 import {
   BROADCAST_EVERY_N_TICKS,
   SERVER_PLAYER_RADIUS,
@@ -44,6 +53,10 @@ import { StreamedMap } from '../../../server/client/streamed-map.js';
 import type { ViewHandle } from '../view-handle.js';
 import { createWeatherControls } from '../weather-controls.js';
 import { createVfxControls } from '../vfx-controls.js';
+import { createWireControls } from '../wire-controls.js';
+import { UnreliableChannel, type WireConditions } from '../../../server/net/unreliable.js';
+import { parseWire } from '../../../server/net/wire-query.js';
+import { Rng } from '../../../shared/prng.js';
 import { orbitDrag, orbitStep } from './orbit-keys.js';
 import { turnToward } from '../../../server/sim/movement.js';
 import { facesAim } from '../../../server/sim/abilities.js';
@@ -61,6 +74,7 @@ import { loadBindings, saveBindings } from '../../../ui/input/binding-store.js';
 import { loadScale, saveScale } from '../../../ui/input/display-store.js';
 import { loadLayout, saveLayout } from '../../../ui/core/layout-store.js';
 import type { Rect } from '../../../ui/core/geom.js';
+import { wheelNotches } from '../../../ui/core/events.js';
 import { autoAttack } from './target.js';
 import { aimShape, castOrder, startAim, type AimGesture, type AimOrder } from './aim.js';
 import { TouchGestures, type TouchSample } from './touch.js';
@@ -106,40 +120,127 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   // default roster on every mount -- which is exactly how the player went on
   // being drawn by the critter rig after being pointed at an authored unit.
   setAuthoredUnits({ ...DEFAULT_AUTHORED_UNITS, ...unitsFromQuery() });
-  const world = buildWorldFromMap(parseMap(mapText), mapText);
+
+  // The one branch in this file that decides what kind of game this is
+  // (spec 144). No `?server` is single-player over a loopback, exactly as
+  // before; `?server` connects out and constructs no server at all.
+  const plan = planConnection(location.search, location, sessionStorage, () =>
+    crypto.randomUUID(),
+  );
+
+  /**
+   * The bundled map -- built for single-player, and for nothing else (spec 146).
+   *
+   * A remote client does not read this file at all now. Its ground arrives as
+   * `MapInfo` plus chunks and its colliders grow with them, which is both the
+   * only correct answer for a server on a map nobody bundled and the only way
+   * that path is ever exercised: used whenever the two happened to agree, it
+   * would be a path that only runs in the case it is broken in.
+   */
+  const local = plan.mode === 'loopback' ? buildWorldFromMap(parseMap(mapText), mapText) : null;
   // Same reason as the server (spec 130): sampling the ground into a nav grid is
   // around a second on a real map, and it belongs beside the rest of the page's
-  // start-up rather than in the frame where the first move order is given.
-  warmRouting(world);
+  // start-up rather than in the frame where the first move order is given. The
+  // streaming client's equivalent is on the settle in `ingestChunks`, which is
+  // the earliest moment it could possibly be done.
+  if (local) warmRouting(local);
 
-  const transport = new LoopbackTransport();
-  const server = new GameServer({ seed, built: world, transport });
-  // Wired by hand rather than through `server.start()`: that would spin up the
-  // server's own wall-clock loop, and this view already drives the tick from its
-  // animation frame. Registering the handler is the half we want.
-  transport.onConnection((channel) => server.accept(channel));
-  const client = new GameClient(transport.connect(), {
-    playerId: 'you',
-    displayName: 'You',
+  /**
+   * What the predictor is allowed to collide against.
+   *
+   * Filled synchronously here on the loopback path, because the map this tab
+   * built *is* the map its in-tab server is colliding against -- the same
+   * objects the predictor has always closed over. On a socket it stays empty
+   * until `MapInfo` proves the server is on this same document, and the client
+   * predicts flat until then. See prediction-ground.ts.
+   */
+  const ground = emptyGround();
+  if (local) fillGround(ground, local.colliders, local.sampler);
+
+  const banner = createConnectionBanner(root);
+  let transport: LoopbackTransport | null = null;
+  let server: GameServer | null = null;
+  let channel: Channel;
+  let reconnecting: ReconnectingChannel | null = null;
+  if (plan.mode === 'remote') {
+    // Wrapped, so a dropped socket comes back to the same body rather than
+    // ending the session (spec 150). The wrapper is above `Channel` and not a
+    // change to it -- see reconnecting.ts, and transport.ts for why.
+    reconnecting = new ReconnectingChannel({
+      open: () => connectChannel(plan.url, { onPhase: (phase) => banner.set(phase, plan.url) }),
+      onReopen: () => client.resume(),
+    });
+    channel = reconnecting;
+  } else {
+    transport = new LoopbackTransport();
+    // `local` is non-null on this branch by construction; the server is the
+    // only thing that needs it as a value rather than as a possibility.
+    server = new GameServer({ seed, ...(local ? { built: local } : {}), transport });
+    // Wired by hand rather than through `server.start()`: that would spin up the
+    // server's own wall-clock loop, and this view already drives the tick from its
+    // animation frame. Registering the handler is the half we want.
+    const listening = server;
+    transport.onConnection((c) => listening.accept(c));
+    channel = transport.connect();
+  }
+
+  /**
+   * A wire you can make bad on purpose (spec 147).
+   *
+   * Worn by both paths, because the loopback is the one you can debug against a
+   * server you also control -- and because a decorator only the socket wore
+   * would be a decorator nobody exercised until something was already wrong.
+   * At `PERFECT_WIRE` it delays nothing and drops nothing, so a tab that has not
+   * asked for anything is the tab that shipped.
+   *
+   * Seeded from the URL rather than a clock: two tabs given the same `?wire=`
+   * and the same seed get the same bad connection, which is what makes a
+   * screenshot of one reproducible on the other.
+   */
+  let wireConditions: WireConditions = parseWire(new URLSearchParams(location.search).get('wire'));
+  const wire = new UnreliableChannel(channel, () => wireConditions, Rng.fromSeed(seed));
+
+  const client = new GameClient(wire, {
+    playerId: plan.mode === 'remote' ? plan.playerId : 'you',
+    displayName: plan.mode === 'remote' ? plan.displayName : 'You',
+    // A token from this tab's last load, so a reload comes back to the same
+    // body rather than spawning a second one beside it (spec 150).
+    ...(plan.mode === 'remote' ? { resumeToken: plan.resumeToken } : {}),
     // What this build's assets hash to (spec 113). The in-tab server has no
-    // manifest of its own, so today this always passes -- it is sent anyway
-    // because this is the one client construction site, and a real socket is a
-    // transport swap away.
+    // manifest of its own, so it always passes there; a real server compares it
+    // and refuses a mismatch, which is why the banner has to be able to say a
+    // connection was refused rather than merely lost.
     assetManifest: ASSET_MANIFEST_HASH,
     // Predict against the world the server is colliding against (spec 063), so
-    // a tree stops the local guess where it stops the authoritative one.
+    // a tree stops the local guess where it stops the authoritative one -- but
+    // only once it is known to *be* that world (spec 144).
     predictor: (stats, tickRate) =>
-      createWorldPredictor({
-        world: world.colliders,
-        terrain: world.sampler,
+      createGroundPredictor({
+        ground,
         radius: SERVER_PLAYER_RADIUS,
         speed: stats.moveSpeed,
         tickRate,
       }),
   });
-
-  /** The world a move order routes through -- the one the server is colliding against. */
-  const pathWorld = { colliders: world.colliders, radius: SERVER_PLAYER_RADIUS, ground: world.sampler };
+  /**
+   * The world a move order routes through -- the one the server is colliding
+   * against, or null while that is not known. `RoutePlanner` treats a null
+   * world as "walk straight at it", which is the same fail-safe the flat
+   * predictor is: wrong in the direction the server quietly corrects.
+   *
+   * Rebuilt rather than mutated when the ground arrives, because `navGridFor`
+   * memoizes on the colliders' object identity -- handing it a mutated object
+   * would cache a grid of the world as it was and never notice.
+   */
+  let pathWorld: { colliders: WorldColliders; radius: number; ground: TerrainSampler } | null = null;
+  function syncPathWorld(): void {
+    const { colliders, terrain } = ground;
+    pathWorld =
+      colliders && terrain
+        ? { colliders, radius: SERVER_PLAYER_RADIUS, ground: terrain }
+        : null;
+  }
+  syncPathWorld();
   const planner = new RoutePlanner();
 
   // The scene draws the map the *client* was sent, not the document the in-tab
@@ -171,6 +272,13 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     if (!streamed) {
       streamed = new StreamedMap(map.info);
       scene.setMap(streamed);
+      // Reported, not acted on (spec 146). Under 144 a mismatch turned
+      // prediction off, because the alternative was colliding against a forest
+      // the server did not have; now the colliders come from the stream either
+      // way and this is just a useful thing to see in a screenshot.
+      if (plan.mode === 'remote' && map.info.mapId !== mapIdOf(mapText)) {
+        banner.note(`server map ${map.info.mapId.slice(0, 8)}`);
+      }
     }
 
     let arrived = 0;
@@ -193,6 +301,17 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     } else if (propsDirty && ++settledFrames >= PROP_SETTLE_FRAMES) {
       propsDirty = false;
       scene.refreshProps();
+      // And the ground the *predictor* stands on, on the same settle and for
+      // the same reason (spec 146). A fresh colliders object costs a nav grid,
+      // because `navGridFor` memoizes on its identity -- so this must happen
+      // once per burst of arrivals rather than once per arrival. Warmed here
+      // too, since the alternative is paying for it inside the frame that gives
+      // the first move order.
+      if (plan.mode === 'remote' && streamed) {
+        fillGround(ground, streamed.snapshotColliders(), streamed.sampler());
+        syncPathWorld();
+        if (pathWorld) warmNavGrids(pathWorld.colliders, pathWorld.ground, [SERVER_PLAYER_RADIUS]);
+      }
       // The world is now drawn: terrain meshed and props standing on it.
       //
       // Announced because streaming took that fact away from anyone watching
@@ -327,13 +446,29 @@ export function mountWorld(container: HTMLElement): ViewHandle {
         scene.setGore(settings.gore);
       },
     });
+    // The eighth button (spec 147). Writes into the conditions the channel
+    // reads once a tick, the same "the widgets are the state" split the weather
+    // panel uses -- there is nothing to copy and nothing to poll.
+    const wireControls = createWireControls({
+      group: scene.controls.menus,
+      initial: wireConditions,
+    });
+
     const buttons = document.createElement('div');
     // Inset against the notch and the home indicator (spec 093): in landscape the
     // cutout is on a side edge, which is exactly where these sit.
     buttons.style.cssText =
       'position:absolute;top:calc(8px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));' +
       'z-index:30;display:flex;gap:6px;';
-    buttons.append(scene.controls.element, weather.element, vfxControls.element);
+    buttons.append(scene.controls.element, weather.element, vfxControls.element, wireControls.element);
+    // Polled once here rather than pushed per input: the channel asks for the
+    // conditions itself, every tick.
+    wireConditions = wireControls.conditions();
+    for (const el of [wireControls.element]) {
+      el.addEventListener('input', () => {
+        wireConditions = wireControls.conditions();
+      });
+    }
     root.append(buttons);
   }
   root.append(hud.element);
@@ -965,9 +1100,13 @@ export function mountWorld(container: HTMLElement): ViewHandle {
    * canvas (`scene.controls.attachWheelZoom`), and stopping propagation here is
    * the only way to reach it first without that function learning about this
    * one. Scrolling a shop's stock must not also pull the camera in.
+   *
+   * `deltaY` is converted rather than forwarded: the interface counts notches
+   * and points the other way (`wheelNotches`). Handed the raw number, every
+   * window in the game scrolled backwards and a notch of it went end to end.
    */
   const onWheel = (event: WheelEvent): void => {
-    if (!ui.handleWheel(pointIn(event), event.deltaY, mouseModifiers(event))) return;
+    if (!ui.handleWheel(pointIn(event), wheelNotches(event.deltaY), mouseModifiers(event))) return;
     event.preventDefault();
     event.stopPropagation();
   };
@@ -1242,19 +1381,36 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     client.sendInput({ moveX: intent.moveX, moveY: intent.moveY, facing: intent.facing, buttons: 0 });
   }
 
+  /** The wire's own clock: whole sim ticks, same as everything else here. */
+  let wireTick = 0;
+
   function frame(now: number): void {
     const elapsed = last === 0 ? TICK_MS : now - last;
     last = now;
-    accumulator = Math.min(accumulator + elapsed, TICK_MS * MAX_CATCH_UP_TICKS);
+    // Steered by the server's own count of what it has not consumed yet
+    // (spec 148). This is the render loop doing the job CLAUDE.md gives it --
+    // turning real time into a number of fixed ticks -- and not an `if` that
+    // changes an outcome: the timestep the sim runs on is still 1/60, and what
+    // moves is how often wall-clock time produces one.
+    const tickMs = TICK_MS * (client.view().tickScale || 1);
+    accumulator = Math.min(accumulator + elapsed, tickMs * MAX_CATCH_UP_TICKS);
     sinceDelta += elapsed;
 
     let ticks = 0;
-    while (accumulator >= TICK_MS) {
-      accumulator -= TICK_MS;
+    while (accumulator >= tickMs) {
+      accumulator -= tickMs;
       ticks += 1;
+      wireTick += 1;
+      // The backoff runs on the sim clock, like the wire's queues.
+      reconnecting?.deliver(wireTick);
+      // Released before the tick that will read them, so a frame due on this
+      // tick is one this tick sees (spec 147).
+      wire.deliver(wireTick);
       // The in-tab server advances on the same fixed step it would over a wire;
-      // this view just happens to be the thing driving its clock.
-      server.tick();
+      // this view just happens to be the thing driving its clock. Over a real
+      // socket there is no server here to drive -- the client's own clock below
+      // is the only one this tab owns (spec 144).
+      server?.tick();
       // The client keeps its own clock (spec 065's follow-up): deltas are
       // suppressed when nothing changed, so `view.tick` is not one.
       client.advanceTick();
@@ -1404,7 +1560,23 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       root.addEventListener('wheel', onWheel, { capture: true, passive: false });
       document.documentElement.addEventListener('contextmenu', onContextMenu);
 
-      void client.connect();
+      // Exactly once, and here rather than at construction: `start()` is what
+      // the shell calls when this tab becomes visible, and a Hello sent twice
+      // on one socket used to spawn a second body and orphan the first.
+      if (plan.mode === 'remote') {
+        void client
+          .connect()
+          .then(() => {
+            // Kept for the next load of this tab, so a refresh is a resume
+            // rather than a second body beside the first (spec 150).
+            rememberSession(sessionStorage, client.sessionToken);
+          })
+          .catch((error: unknown) => {
+            banner.refuse(error instanceof Error ? error.message : String(error));
+          });
+      } else {
+        void client.connect();
+      }
 
       last = 0;
       accumulator = 0;

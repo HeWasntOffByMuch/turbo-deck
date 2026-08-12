@@ -75,6 +75,8 @@ export const PLAYER_FIGURE: Pick<FigureTuning, 'bodyScale' | 'strideScale'> = {
 export interface AppearanceInput {
   readonly kind: number;
   readonly typeId: string;
+  /** A player's replicated name (spec 145). `''` until their Identity lands. */
+  readonly name?: string;
 }
 
 export function appearanceOf(entity: AppearanceInput): Appearance {
@@ -111,9 +113,15 @@ export function appearanceOf(entity: AppearanceInput): Appearance {
   }
 }
 
-/** The name to show over a body, or in a target readout. */
+/**
+ * The name to show over a body, or in a target readout.
+ *
+ * A player's is replicated (spec 145); everything else's comes from a content
+ * table, which is why only the player branch reads a wire field. `'Player'`
+ * remains the answer for the frames before a body's `Identity` has landed.
+ */
 export function displayName(entity: AppearanceInput): string {
-  if (entity.kind === EntityKind.Player) return 'Player';
+  if (entity.kind === EntityKind.Player) return entity.name ? entity.name : 'Player';
   if (entity.kind === EntityKind.Projectile) return abilityById(entity.typeId)?.name ?? entity.typeId;
   return monsterById(entity.typeId)?.name ?? entity.typeId;
 }

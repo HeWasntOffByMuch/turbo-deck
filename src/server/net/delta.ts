@@ -40,9 +40,12 @@ interface KnownEntity {
   activity: number;
   activityUntilTick: number;
   level: number;
+  /** Spec 145. `''` for anything that is not a player. */
+  name: string;
+  turnRate: number;
 }
 
-function snapshotOf(entity: ServerEntity): KnownEntity {
+function snapshotOf(entity: ServerEntity, name: string): KnownEntity {
   return {
     x: entity.position.x,
     y: entity.position.y,
@@ -53,6 +56,8 @@ function snapshotOf(entity: ServerEntity): KnownEntity {
     activity: entity.activity,
     activityUntilTick: entity.activityUntilTick,
     level: entity.level,
+    name,
+    turnRate: entity.stats.turnRate,
   };
 }
 
@@ -64,14 +69,22 @@ export class DeltaTracker {
    * already filtered by the chunk manager -- interest is not this class's job,
    * it only reports change within whatever it is shown.
    */
-  build(tick: number, ackInputSeq: number, visible: readonly ServerEntity[]): DeltaMessage {
+  build(
+    tick: number,
+    ackInputSeq: number,
+    visible: readonly ServerEntity[],
+    nameOf: (entity: ServerEntity) => string | null = () => null,
+  ): DeltaMessage {
     const upserts: EntityDelta[] = [];
     const seen = new Set<number>();
 
     for (const entity of visible) {
       seen.add(entity.id);
       const previous = this.known.get(entity.id);
-      const next = snapshotOf(entity);
+      // Null means "nothing a table cannot answer" -- every monster, prop and
+      // projectile. Only a player costs an `Identity` field (spec 145).
+      const named = nameOf(entity);
+      const next = snapshotOf(entity, named ?? '');
 
       if (!previous) {
         // First sight: everything, including identity.
@@ -83,7 +96,8 @@ export class DeltaTracker {
             EntityField.Facing |
             EntityField.Health |
             EntityField.Activity |
-            EntityField.Level,
+            EntityField.Level |
+            (named === null ? 0 : EntityField.Identity),
           kind: entity.kind,
           typeId: entity.typeId,
           position: entity.position,
@@ -93,6 +107,7 @@ export class DeltaTracker {
           activity: entity.activity,
           activityUntilTick: entity.activityUntilTick,
           level: entity.level,
+          ...(named === null ? {} : { name: named, turnRate: entity.stats.turnRate }),
         });
         this.known.set(entity.id, next);
         continue;
@@ -120,6 +135,11 @@ export class DeltaTracker {
         fields |= EntityField.Activity;
       }
       if (next.level !== previous.level) fields |= EntityField.Level;
+      // A name never changes mid-session, but a turn rate does -- it is derived
+      // from dexterity, so a level-up or an equip moves it.
+      if (named !== null && (next.name !== previous.name || next.turnRate !== previous.turnRate)) {
+        fields |= EntityField.Identity;
+      }
 
       if (fields === 0) continue;
 
@@ -135,6 +155,9 @@ export class DeltaTracker {
           ? { activity: entity.activity, activityUntilTick: entity.activityUntilTick }
           : {}),
         ...(fields & EntityField.Level ? { level: entity.level } : {}),
+        ...(fields & EntityField.Identity
+          ? { name: named ?? '', turnRate: entity.stats.turnRate }
+          : {}),
       });
       this.known.set(entity.id, next);
     }

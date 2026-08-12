@@ -1,4 +1,4 @@
-# turbo-deck wire protocol v9
+# turbo-deck wire protocol v15
 
 Binary, not JSON. Every frame is a WebSocket **binary** message whose first byte
 is the message type; the rest is a type-specific payload. All multi-byte numbers
@@ -6,6 +6,26 @@ are **little-endian**.
 
 Implemented by `protocol.ts` (type bytes), `codec.ts` (primitives),
 `messages.ts` (game messages) and `admin-messages.ts` (the `admin:*` namespace).
+
+## Where the socket is
+
+The server shares one port with the admin console (`PORT`, default 8787) and
+accepts the upgrade on **any path** — `WebSocketTransport` passes no `path` to
+`WebSocketServer`. Clients nevertheless agree on `/ws` (spec 144,
+`connection.ts`'s `WS_PATH`), because the dev proxy has to route on something
+and it cannot be `/`, where vite's own HMR socket lives. So:
+
+| Client | Dials |
+|---|---|
+| Browser, `npm run dev` | `ws://localhost:5173/ws`, proxied to `:8787` by vite |
+| Browser, direct | `ws://<host>:8787/ws` |
+| Node bots (`server:bots`) | `ws://localhost:8787` — the bare origin, still accepted |
+
+Three transports implement `Channel`: `transport-loop.ts` (in-tab
+single-player), `transport-ws.ts` (the server's accept side and a Node client),
+and `transport-browser.ts` (the DOM `WebSocket`). A browser client must set
+`binaryType = 'arraybuffer'`; the frames are binary in both directions and a
+text frame is dropped rather than parsed.
 
 ## Primitives
 
@@ -35,14 +55,30 @@ cannot address an admin handler at all.
 ## Client → server
 
 ### `0x01 Hello`
-`u16 protocolVersion` · `str playerId` · `str displayName` · `str token`
+`u16 protocolVersion` · `str playerId` · `str displayName` · `str token` ·
+`str assetManifest` · `str resumeToken`
 
-First message on a connection. A version mismatch is refused with `Error` and a
-disconnect. `token` is empty for a plain player.
+First message on a connection, and **only** the first: a second one on the same
+socket is refused, because obeying it used to spawn a second body and orphan the
+first (spec 145). A version mismatch is refused with `Error` and a disconnect.
+`token` is empty for a plain player; `displayName` is bounded to 64 characters,
+because since spec 145 it is broadcast to every client in interest.
+
+`resumeToken` is empty for a fresh login. One that matches a lingering session
+for this `playerId` re-attaches to that body instead of spawning a new one
+(spec 150); one that does not match is simply a new login rather than an error,
+because a token that has aged out is the ordinary case.
 
 ### `0x02 Input`
 `varuint seq` · `f32 moveX` · `f32 moveY` · `f32 facing` · `u8 buttons` ·
-`f32 predictedX` · `f32 predictedY`
+`f32 predictedX` · `f32 predictedY` · `varuint renderLagTicks`
+
+`renderLagTicks` is how far behind the server's clock the world this input was
+made against is being drawn (spec 149) — one-way latency plus up to a broadcast
+interval. It is what a blow is resolved against, so that a swing lands on what
+its attacker was looking at. Client-reported and clamped to `MAX_REWIND_TICKS`
+(12) the moment it arrives: the most a liar achieves is the compensation an
+honest player on a 200ms connection already gets.
 
 The only message that drives the sim. Note what a client may say: a **direction**
 (clamped server-side to at most unit length), where it is aiming, which buttons
@@ -105,6 +141,12 @@ Note the grid: map chunks are the document's own `cellSize * chunkCells` buckets
 (616 units today), *not* the `chunkSize` the welcome announces, which is the
 400-unit entity-interest grid. Three grids, deliberately independent.
 
+### `0x16 Goodbye` — no payload
+Says the disconnection was meant (spec 150). A dropped socket leaves the body
+standing for `RESUME_GRACE_TICKS` so the session can be resumed onto it; this
+reaps it at once. Pulling the plug and choosing to leave should not look the
+same to the world.
+
 ### `0x03 Ping` — `u32 nonce`
 Answered with `Pong` carrying the same nonce and the server's tick. The client
 sends one every half second and counts its own ticks until the answer: that is
@@ -150,10 +192,15 @@ while it is switched off. Needs no player and no entity.
 ### `0x40 Welcome`
 `u16 protocolVersion` · `str playerId` · `varuint entityId` · `u32 tick` ·
 `u8 tickRate` · `u16 chunkSize` · `u8 interestRadius` · `f32 correctionThreshold` ·
-`u32 worldSeed`
+`u32 worldSeed` · `str sessionToken`
 
 Chunk size and interest radius are announced rather than compiled into the
 client, so retuning them needs no client release.
+
+`sessionToken` is presented in a later `Hello` to come back to this same body
+after a dropped socket, or after a page reload (spec 150). It comes from
+`crypto.randomUUID`, never from the world's seeded `Rng`: that generator is
+reproducible on purpose, which is precisely what a resume token must not be.
 
 `worldSeed` used to be the client's whole terrain source (spec 063). Since
 spec 072 it is provenance and the fight's randomness only — the ground arrives
@@ -179,6 +226,13 @@ as `MapInfo` and `MapChunk`.
 | `0x08` | Health | `f32 health` · `f32 maxHealth` |
 | `0x10` | Activity | `u8 activity` · `u32 activityUntilTick` |
 | `0x20` | Level | `varuint level` |
+| `0x40` | Identity | `str name` · `f32 turnRate` |
+
+`Identity` is sent for **players only** (spec 145), alongside `Spawn` on first
+sight and again whenever the turn rate changes. A monster's name and turn rate
+are in `MONSTERS`, which the client already has, and putting a content table on
+the wire is what "an entity only ever stores an id" exists to prevent. A
+player's name is the one field on an entity that a human typed.
 
 The bitmask *is* the delta: an entity that did not move contributes no position
 bytes, and an entity that did not change at all is not in the frame. A frame
@@ -272,7 +326,16 @@ nothing.
 ### `0x45 Chat` — `u8 channel` · `str from` · `str text`
 `channel`: `0` say, `1` system, `2` admin broadcast.
 
-### `0x46 Pong` — `u32 nonce` · `u32 serverTick`
+### `0x46 Pong` — `u32 nonce` · `u32 serverTick` · `varuint inputQueueFloor`
+
+`inputQueueFloor` is the **smallest** this connection's input queue got since
+the last pong, sampled every tick and reset when reported. A floor rather than
+an instantaneous reading because pongs arrive at 2Hz and the queue oscillates at
+60Hz: sampled at an instant, a starving connection reads 1 about as often as 0
+and the client's rate controller cannot see the starvation at all (spec 148).
+It rides here rather than on `Delta` because a delta is suppressed when nothing
+moved, which would blind the controller in exactly the quiet moments drift
+accumulates through.
 ### `0x47 Error` — `u16 code` · `str message`
 `code`: `1` bad protocol version, `2` malformed frame, `3` not authenticated,
 `4` not authorized, `5` banned, `6` muted, `7` rejected action, `8` unknown message.

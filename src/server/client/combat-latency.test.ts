@@ -31,7 +31,8 @@ import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../config.js';
 import { decodeServerMessage } from '../net/messages.js';
 import { CorrectionReason, ServerMessageType } from '../net/protocol.js';
 import { LoopbackTransport } from '../net/transport-loop.js';
-import type { Channel } from '../net/transport.js';
+import { UnreliableChannel, PERFECT_WIRE } from '../net/unreliable.js';
+import { Rng } from '../../shared/prng.js';
 import { GameServer } from '../server.js';
 import { FLAT_TERRAIN } from '../world/terrain.js';
 import { GameClient } from './game-client.js';
@@ -39,57 +40,6 @@ import { createWorldPredictor } from './prediction.js';
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
-/** Holds every frame, in both directions, for a fixed number of ticks. */
-class DelayLine implements Channel {
-  private readonly outbound: { at: number; bytes: Uint8Array }[] = [];
-  private readonly inbound: { at: number; bytes: Uint8Array }[] = [];
-  private handler: ((bytes: Uint8Array) => void) | null = null;
-  private tick = 0;
-
-  constructor(
-    private readonly inner: Channel,
-    private readonly delayTicks: number,
-    private readonly watch: (bytes: Uint8Array) => void,
-  ) {
-    inner.onMessage((bytes) => {
-      this.inbound.push({ at: this.tick + this.delayTicks, bytes });
-    });
-  }
-
-  get isOpen(): boolean {
-    return this.inner.isOpen;
-  }
-
-  send(bytes: Uint8Array): void {
-    this.outbound.push({ at: this.tick + this.delayTicks, bytes: new Uint8Array(bytes) });
-  }
-
-  onMessage(handler: (bytes: Uint8Array) => void): void {
-    this.handler = handler;
-  }
-
-  onClose(handler: () => void): void {
-    this.inner.onClose(handler);
-  }
-
-  close(): void {
-    this.inner.close();
-  }
-
-  deliver(tick: number): void {
-    this.tick = tick;
-    while (this.outbound.length > 0 && (this.outbound[0]?.at ?? Infinity) <= tick) {
-      const frame = this.outbound.shift();
-      if (frame) this.inner.send(frame.bytes);
-    }
-    while (this.inbound.length > 0 && (this.inbound[0]?.at ?? Infinity) <= tick) {
-      const frame = this.inbound.shift();
-      if (!frame) break;
-      this.watch(frame.bytes);
-      this.handler?.(frame.bytes);
-    }
-  }
-}
 
 interface Played {
   readonly sampled: number;
@@ -127,7 +77,10 @@ async function play(options: {
   transport.onConnection((channel) => server.accept(channel));
 
   let hardCorrections = 0;
-  const line = new DelayLine(transport.connect(), options.delayTicks, (bytes) => {
+  const line = new UnreliableChannel(transport.connect(), () => ({ ...PERFECT_WIRE, delayTicks: options.delayTicks }), Rng.fromSeed(1), (bytes, direction) => {
+    // Inbound only: the tap sees both directions now, and these all decode a
+    // *server* message.
+    if (direction !== 'in') return;
     const message = decodeServerMessage(bytes);
     if (message.type !== ServerMessageType.Correction) return;
     if (message.reason !== CorrectionReason.Drift) hardCorrections += 1;

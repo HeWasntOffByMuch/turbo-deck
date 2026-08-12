@@ -106,8 +106,22 @@ export function createWorldPredictor(options: {
 
     // The heightfield half, mirroring the server: try each axis alone before
     // refusing, so running along a shoreline slides instead of sticking.
+    //
+    // Skipped entirely across ground this sampler admits it does not have
+    // (spec 146). A streaming client's unarrived ground does not sample as
+    // missing -- it extrapolates the held extent's outermost cell and answers
+    // with a confident number, which reads as a cliff about half the time. So
+    // unknown ground imposes no constraint at all: we keep the collider slide,
+    // we do not invent a cliff or a lake, and the server corrects us if the
+    // guess was wrong. Being wrong in the direction of "kept walking" is what
+    // corrections are for; being wrong in the direction of "refused" sticks the
+    // player on a chunk boundary with no way to know why.
+    const knows = options.terrain.knows;
+    const covered =
+      knows === undefined ||
+      (knows.call(options.terrain, from.x, from.y) && knows.call(options.terrain, landed.x, landed.y));
     const standingOn = { x: from.x, y: from.y, z: options.terrain.heightAt(from.x, from.y) };
-    if ((landed.x !== from.x || landed.y !== from.y) && !isWalkable(standingOn, landed.x, landed.y, options.terrain)) {
+    if (covered && (landed.x !== from.x || landed.y !== from.y) && !isWalkable(standingOn, landed.x, landed.y, options.terrain)) {
       const alongX = { x: landed.x, y: from.y };
       const alongY = { x: from.x, y: landed.y };
       if (alongX.x !== from.x && isWalkable(standingOn, alongX.x, alongX.y, options.terrain)) {
