@@ -352,11 +352,30 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
 src/render/      the client: a tab shell over the play view, the two tuning
                  sandboxes and the map editor. iso3d/shell-tabs.ts is the one
                  decision in the shell worth failing a test over (spec 140): a
-                 coarse pointer is offered the tabs marked `game` and nothing
+                 handheld is offered the tabs marked `game` and nothing
                  else, because five of the six are workbenches a finger cannot
                  drive, and with one tab left there are no tab buttons to draw.
                  The bar stays -- ui-layer measures it to know where the app's
                  chrome ends, and the fullscreen button lives in it.
+                 iso3d/device.ts is what "handheld" means, and it is one file
+                 because it used to be one media query in another (spec 141).
+                 `(pointer: coarse)` describes the *primary* pointer and a
+                 browser may answer "fine" about a touchscreen -- Chrome's
+                 desktop-site mode does exactly that, deliberately, while
+                 inflating the viewport to ~980px -- so a real phone loaded the
+                 shipped build and got six tab buttons, seven tuning popovers and
+                 the developer readout over the grass. The rule now reads four
+                 facts and is pure, so every device is a row in a test rather
+                 than something somebody has to be holding: no touch anywhere is
+                 never handheld, a coarse primary pointer always is, and
+                 otherwise touch plus a short side under 620 CSS px is. The
+                 *short* side, so turning the phone over cannot change the
+                 layout -- which is what still lets it be decided once at mount
+                 with no resize listener. The browser half of that check has to
+                 fake `maxTouchPoints`, because Chromium forces `pointer: coarse`
+                 the moment touch emulation exists and will not reproduce the
+                 device at all; what it is worth is the *wiring* -- point the
+                 layout back at a media query and preview-touch says so.
 src/render/cloth/ pure cloth simulation for the robed character (spec 046) --
                  solver, wind, patterns, colliders and figure metrics. No
                  three.js and no DOM, so it runs and is tested headlessly.
