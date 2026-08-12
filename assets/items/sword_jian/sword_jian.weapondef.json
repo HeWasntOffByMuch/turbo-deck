@@ -1,0 +1,20 @@
+{
+  "$comment": "Measured off the mesh rather than assumed (spec 140). The parts run along Z with the handle toward +Z: Blade -1.485..0.695, Guard 0.695..0.815, Collar 0.815..0.860, Grip 0.860..1.250, Pommel 1.250..1.485. So `at` is the middle of the grip cylinder and `point` is -Z. The blade is +/-0.127 wide in X and +/-0.030 thick in Y, which is what makes the flat's normal Y and the edges X -- that is read off the accessor bounds, not chosen.",
+  "formatVersion": 1,
+  "id": "sword_jian",
+  "name": "Jian",
+  "meshRef": "sword_jian.glb",
+  "socket": "weapon.main",
+  "stowSocket": "weapon.stow",
+  "grip": {
+    "at": [0, 0, 1.055],
+    "point": "-Z",
+    "flat": "+Y"
+  },
+  "lengthWorld": 38,
+  "provenance": {
+    "source": "supplied by hand, 2026-08-12",
+    "generator": "trimesh",
+    "note": "362 triangles, three materials, no skin and no animation -- a rigid body, which is the whole reason this is not a unitdef."
+  }
+}
