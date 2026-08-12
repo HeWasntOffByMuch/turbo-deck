@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import {
   RETRO_DEFAULTS,
   bayerTextureData,
+  exemptionIsLive,
   paletteSpacing,
   paletteChannels,
   paletteTextureData,
@@ -79,6 +80,9 @@ uniform float uInkFlatten;
 uniform float uInkDesaturate;
 uniform float uInkFog;
 uniform float uInkTarget;
+/** The exemption (spec 138). uMaskOn is 0 when no mask was rendered. */
+uniform sampler2D uMask;
+uniform float uMaskOn;
 varying vec2 vUv;
 
 ${glslInkChunk()}
@@ -158,6 +162,7 @@ void main() {
   vec2 cell = mod(floor(vUv * uSceneSize / uDitherScale), uDitherSize);
   float threshold = texture2D(uDither, (cell + 0.5) / uDitherSize).r;
 
+  vec3 crushed;
   if (uPaletteSize > 0.5) {
     // Dither first, then snap -- the same order as the banded path. The nudge is
     // measured in palette spacing rather than in band widths, because a palette
@@ -165,13 +170,23 @@ void main() {
     // equivalent of half a band, and without it one strength setting is a
     // snowstorm on a tight palette and invisible on a wide one.
     vec3 nudged = clamp(color + (threshold - 0.5) * uStrength * uPaletteSpacing, 0.0, 1.0);
-    gl_FragColor = vec4(nearestPaletteColor(nudged), 1.0);
+    crushed = nearestPaletteColor(nudged);
   } else {
     // Nudge by up to half a band, then snap to the nearest even step.
     float steps = max(uLevels - 1.0, 1.0);
     vec3 nudged = clamp(color + (threshold - 0.5) * uStrength / steps, 0.0, 1.0);
-    gl_FragColor = vec4(floor(nudged * steps + 0.5) / steps, 1.0);
+    crushed = floor(nudged * steps + 0.5) / steps;
   }
+
+  // The exemption (spec 138), mirroring exemptChannel in retro.ts: an exempt
+  // pixel keeps the graded colour, which has been through the ink and the grade
+  // and the sRGB transfer and nothing else. So it stays on this pixel grid, under
+  // this sky, at this distance -- it just does not get counted onto the palette.
+  //
+  // A mix rather than a branch: the mask is 0 or 1 today, and this is the whole
+  // cost of it not being, if a partial exemption is ever asked for.
+  float exempt = uMaskOn > 0.5 ? clamp(texture2D(uMask, vUv).r, 0.0, 1.0) : 0.0;
+  gl_FragColor = vec4(mix(crushed, color, exempt), 1.0);
 }
 `;
 
@@ -207,10 +222,55 @@ function makeDitherTexture(size: BayerSize): THREE.DataTexture {
   return tex;
 }
 
+/**
+ * What an exempt body is painted with while the mask is drawn (spec 138).
+ *
+ * Unlit and unfogged, because the mask is asking "is this pixel the player",
+ * not "what colour is the player" -- the colour is already in the scene buffer.
+ * `depthWrite` off and `depthTest` on is the whole occlusion story: the depth
+ * of the finished world is in the attachment this target shares with the scene
+ * buffer, so a body behind a tree fails the test and marks nothing.
+ */
+/**
+ * Let a render target go of its depth texture.
+ *
+ * Its own disposal path checks `renderTarget.depthTexture` before freeing it,
+ * so detaching one is how three says "this target does not own its depth" --
+ * but the typings declare the field non-nullable, so saying it has to happen
+ * here rather than at the assignment.
+ */
+function detachDepth(target: THREE.WebGLRenderTarget): void {
+  (target as { depthTexture: THREE.DepthTexture | null }).depthTexture = null;
+}
+
+function makeMaskMaterial(): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    fog: false,
+    depthTest: true,
+    depthWrite: false,
+  });
+}
+
 export class RetroPass {
   private settings: RetroSettings;
   private grade: GradeSettings = GRADE_NONE;
   private readonly target: THREE.WebGLRenderTarget;
+  /**
+   * Where the exemption mask is drawn (spec 138): white inside an exempt body,
+   * black everywhere else, at the scene buffer's own resolution so an exempt
+   * pixel lands on the same grid as the neighbour it is being told apart from.
+   *
+   * Shares `target.depthTexture`. Only `target` may dispose it.
+   */
+  private readonly maskTarget: THREE.WebGLRenderTarget;
+  private readonly maskMaterial = makeMaskMaterial();
+  /** Roots the caller has named exempt. Empty for every caller but the Play tab. */
+  private exempt: readonly THREE.Object3D[] = [];
+  /** Scratch for the mask pass, so a frame of it allocates nothing. */
+  private readonly hidden: THREE.Object3D[] = [];
+  private readonly maskClear = new THREE.Color(0x000000);
+  private readonly prevClear = new THREE.Color();
   private readonly quadScene = new THREE.Scene();
   // A fixed clip-space quad: the vertex shader ignores the camera entirely.
   private readonly quadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -242,6 +302,8 @@ export class RetroPass {
     uInkDesaturate: { value: number };
     uInkFog: { value: number };
     uInkTarget: { value: number };
+    uMask: { value: THREE.Texture };
+    uMaskOn: { value: number };
   };
 
   /** The palette currently uploaded, so an unchanged one is not re-uploaded. */
@@ -260,6 +322,17 @@ export class RetroPass {
       magFilter: THREE.NearestFilter,
       depthBuffer: true,
     });
+    // A depth *texture* rather than the renderbuffer this had, so the mask pass
+    // can attach the same one and depth-test an exempt body against the world
+    // that was just drawn (spec 138). Never sampled -- the ink's depth comes
+    // from HikeBuffers at the full resolution, not from here.
+    this.target.depthTexture = new THREE.DepthTexture(1, 1);
+    this.maskTarget = new THREE.WebGLRenderTarget(1, 1, {
+      minFilter: THREE.NearestFilter,
+      magFilter: THREE.NearestFilter,
+      depthBuffer: true,
+    });
+    this.maskTarget.depthTexture = this.target.depthTexture;
 
     this.uniforms = {
       uScene: { value: this.target.texture },
@@ -289,6 +362,8 @@ export class RetroPass {
       uInkFog: { value: 0 },
       // Mid-grey in display space: the luminance a flattened surface settles on.
       uInkTarget: { value: 0.45 },
+      uMask: { value: this.maskTarget.texture },
+      uMaskOn: { value: 0 },
     };
 
     this.material = new THREE.ShaderMaterial({
@@ -381,6 +456,25 @@ export class RetroPass {
     this.uniforms.uInkFog.value = settings.inkFog;
   }
 
+  /**
+   * Name the roots whose pixels skip the dither and the quantize (spec 138).
+   *
+   * Deliberately objects rather than a predicate or a flag on the settings:
+   * this pass has no idea what a player is, and the one caller that does --
+   * `WorldScene` -- already holds the groups. Pass an empty array to exempt
+   * nothing, which is what every other caller does by never calling this.
+   *
+   * Each root must be a **direct child of the scene** handed to `render`. The
+   * mask is drawn by hiding the scene's other top-level children, so a root
+   * nested deeper is hidden along with its ancestor and simply is not exempt.
+   * That is the safe direction to fail: an unexempt body is the frame that
+   * shipped before this spec, where the alternative -- unhiding a whole
+   * subtree to reach one node in it -- would mask its siblings too.
+   */
+  setExempt(roots: readonly THREE.Object3D[]): void {
+    this.exempt = roots;
+  }
+
   /** Apply a colour grade (spec 047). The identity grade costs nothing. */
   setGrade(grade: GradeSettings): void {
     this.grade = grade;
@@ -422,12 +516,69 @@ export class RetroPass {
 
     renderer.setRenderTarget(this.target);
     renderer.render(scene, camera);
+
+    // After the scene, because the mask depth-tests against what the scene just
+    // wrote; before the quad, because the quad reads the mask.
+    const masking = exemptionIsLive(this.settings, palettized, this.exempt.length);
+    this.uniforms.uMaskOn.value = masking ? 1 : 0;
+    if (masking) this.renderMask(renderer, scene, camera);
+
     renderer.setRenderTarget(null);
     renderer.render(this.quadScene, this.quadCamera);
   }
 
+  /**
+   * Draw the exempt roots white on black into the mask buffer (spec 138).
+   *
+   * Three things are borrowed from the caller and put back: the scene's
+   * background (drawing the sky here would mask the whole frame), its override
+   * material, and the visibility of its top-level children. The renderer's
+   * clear colour and `autoClear` are saved too -- this clears **colour only**,
+   * because the depth in this attachment is the scene's and is the entire
+   * reason the mask is occluded correctly.
+   */
+  private renderMask(
+    renderer: THREE.WebGLRenderer,
+    scene: THREE.Scene,
+    camera: THREE.Camera,
+  ): void {
+    const exempt = this.exempt;
+    for (const child of scene.children) {
+      if (!child.visible || exempt.includes(child)) continue;
+      child.visible = false;
+      this.hidden.push(child);
+    }
+
+    const previousBackground = scene.background;
+    const previousOverride = scene.overrideMaterial;
+    const previousAutoClear = renderer.autoClear;
+    const previousAlpha = renderer.getClearAlpha();
+    renderer.getClearColor(this.prevClear);
+
+    scene.background = null;
+    scene.overrideMaterial = this.maskMaterial;
+    renderer.autoClear = false;
+    renderer.setRenderTarget(this.maskTarget);
+    renderer.setClearColor(this.maskClear, 1);
+    renderer.clearColor();
+    renderer.render(scene, camera);
+
+    renderer.setClearColor(this.prevClear, previousAlpha);
+    renderer.autoClear = previousAutoClear;
+    scene.overrideMaterial = previousOverride;
+    scene.background = previousBackground;
+    for (const child of this.hidden) child.visible = true;
+    this.hidden.length = 0;
+  }
+
   dispose(): void {
+    // The mask target shares `target.depthTexture`, and three disposes a render
+    // target's depth texture with it -- so drop the reference before disposing
+    // the borrower, and let the owner be the one that frees it.
+    detachDepth(this.maskTarget);
+    this.maskTarget.dispose();
     this.target.dispose();
+    this.maskMaterial.dispose();
     this.uniforms.uPalette.value.dispose();
     this.uniforms.uDither.value.dispose();
     this.material.dispose();
@@ -444,6 +595,10 @@ export class RetroPass {
     const w = Math.max(1, Math.ceil(this.width / divisor));
     const h = Math.max(1, Math.ceil(this.height / divisor));
     this.target.setSize(w, h);
+    // The same size, always: the mask is sampled with the scene buffer's own uv
+    // and shares its depth attachment, both of which stop being true the moment
+    // the two disagree.
+    this.maskTarget.setSize(w, h);
     this.uniforms.uSceneSize.value.set(w, h);
   }
 }

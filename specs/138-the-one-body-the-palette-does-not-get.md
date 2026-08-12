@@ -136,9 +136,26 @@ never call `setExempt`, so they render exactly as they do today.
   off, false with the filter off and no palette, and true with the filter off
   when a palette is set.
 - `RETRO_DEFAULTS.excludePlayer` is on, and a `RetroPass` that is never handed
-  an exempt root renders the same draw sequence as before this spec.
-- `WorldScene` names every body with `kind === 'player'` exempt and no other
-  kind, across a spawn and a despawn.
+  an exempt root draws exactly twice — the scene and the quad, the sequence
+  that shipped before this spec.
+- The mask draw happens after the scene and before the quad, into a third
+  target that is neither the scene buffer nor the canvas, with only the exempt
+  roots visible.
+- The mask buffer is cleared to black, **colour only**, and nothing else is
+  cleared. Clearing depth would discard the world depth the mask tests against.
+- The pass gives back everything it borrows: the scene's background, its
+  override material, the visibility of every top-level child (including one
+  that was *already* hidden, which must stay hidden), and the renderer's
+  `autoClear` and clear colour.
+- A root that is not a direct child of the scene is not exempt, and does not
+  drag its siblings into the mask.
+- The mask buffer is the scene buffer's size across resizes and pixel sizes,
+  and the two share one `DepthTexture` that only the scene buffer disposes.
+
+`WorldScene`'s half — that the exempt list is every body with `kind ===
+'player'` and nothing else — is **not** covered. It is three lines inside the
+three.js half of the renderer, which has no headless test anywhere in the tree;
+`scripts/preview-world.ts` is what looks at it.
 
 ## Out of scope
 

@@ -372,6 +372,17 @@ export class WorldScene {
 
   private readonly motion = new EntityMotion();
   private readonly bodies = new Map<number, Body>();
+  /**
+   * The groups `RetroPass` leaves out of the quantize (spec 138).
+   *
+   * Every player, not just the local one: a second person on screen is the same
+   * kind of thing to look at, and one of the two coming out banded while the
+   * other did not would read as a bug about *whose* character it is. Rebuilt
+   * per frame rather than maintained, because a respawn is a new entity and
+   * therefore a new group, and a stale reference here would exempt a body that
+   * has left the scene.
+   */
+  private readonly exemptBodies: THREE.Object3D[] = [];
   private readonly telegraphs = new Map<number, THREE.Mesh>();
   /** Units the cursor may pick this frame, rebuilt as bodies are placed. */
   private readonly hoverTargets: HoverTarget[] = [];
@@ -981,6 +992,13 @@ export class WorldScene {
       this.retro.set(this.controls.retro());
       this.retro.setGrade(this.controls.grade());
       this.retro.setPalette(hike.palette);
+      // Who the filter lets keep their colours (spec 138). The pass has no idea
+      // what a player is and should not; this is the only place that does.
+      this.exemptBodies.length = 0;
+      for (const body of this.bodies.values()) {
+        if (body.kind === 'player') this.exemptBodies.push(body.group);
+      }
+      this.retro.setExempt(this.exemptBodies);
       // The distance treatment reads the same depth buffer the outlines do, so
       // it needs the buffers whether or not the outlines are on (spec 103). The
       // fog colour is the live sky rather than a setting: the day/night cycle
