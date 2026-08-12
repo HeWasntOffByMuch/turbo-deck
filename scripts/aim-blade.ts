@@ -75,17 +75,20 @@ const ELBOW_RANGE = { min: 0, max: 125 } as const;
  *    puts a sword behind its own head, and it costs the silhouette nothing.
  *  - the **wrist** is expensive and wants to stay where it rests. A grip angle
  *    that changes wildly through a swing is a hand that has let go.
- *  - the **shoulder** is in between: free enough to help, not so free that it
- *    swings the whole arm where the elbow should have done the work.
+ *  - the **shoulder** is nearly free, but only because `AIM` pins both ends of
+ *    the arm. It used to carry a heavy chain-to-the-previous-key weight, which
+ *    was the right answer when the blade's direction was the only target and the
+ *    wrong one once the hand and the elbow each have a place: the weight then
+ *    stops the arm reaching them and every mismatch is paid for in aim error.
  */
 const KNOBS: readonly { role: 'rightArm' | 'rightForeArm' | 'rightHand'; axis: PoseAxis; per: number }[] = [
-  { role: 'rightArm', axis: 'lateral', per: 0.18 },
-  { role: 'rightArm', axis: 'forward', per: 0.18 },
-  { role: 'rightArm', axis: 'up', per: 0.18 },
+  { role: 'rightArm', axis: 'lateral', per: 0.05 },
+  { role: 'rightArm', axis: 'forward', per: 0.05 },
+  { role: 'rightArm', axis: 'up', per: 0.05 },
   { role: 'rightForeArm', axis: 'flex', per: 0.8 },
-  { role: 'rightHand', axis: 'lateral', per: 0.5 },
-  { role: 'rightHand', axis: 'forward', per: 0.5 },
-  { role: 'rightHand', axis: 'up', per: 0.5 },
+  { role: 'rightHand', axis: 'lateral', per: 0.18 },
+  { role: 'rightHand', axis: 'forward', per: 0.18 },
+  { role: 'rightHand', axis: 'up', per: 0.18 },
 ];
 
 /**
@@ -106,10 +109,16 @@ const KNOBS: readonly { role: 'rightArm' | 'rightForeArm' | 'rightHand'; axis: P
  *    load, which is what makes the strike a chop rather than a poke.
  *  - **follow** — still down, wrapped past and behind the left hip.
  */
-const AIM: Partial<Record<KeyLabel, { blade: Vec3; elbow: number; hold: number; hand?: Vec3 }>> = {
-  rise: { blade: [0.5, 0.58, 0.64], elbow: 78, hold: 1, hand: [0.3, 0.14, 0.12] },
-  coil: { blade: [0.66, 0.55, -0.4], elbow: 95, hold: 1, hand: [0.32, 0.24, -0.04] },
-  load: { blade: [0.63, 0.57, -0.52], elbow: 100, hold: 1.5, hand: [0.32, 0.26, -0.08] },
+const AIM: Partial<Record<KeyLabel, { blade: Vec3; elbow: number; hold: number; hand?: Vec3; elbowAt?: Vec3 }>> = {
+  // The hand and elbow targets are a *linkage*, not two wishes: the shoulder
+  // sits at (0.10, 0.36, -0.02), the upper arm is 0.178 long and the forearm
+  // 0.114, so an elbow has to be that far from the shoulder and a hand that far
+  // from the elbow. Asked for a pair only 0.071 apart, the solve split the
+  // difference and left the elbow in the ribs rather than reporting that it
+  // could not have both.
+  rise: { blade: [0.5, 0.58, 0.64], elbow: 55, hold: 1, hand: [0.25, 0.32, 0.13], elbowAt: [0.26, 0.24, 0.05] },
+  coil: { blade: [0.66, 0.55, -0.4], elbow: 65, hold: 1, hand: [0.2, 0.38, -0.1], elbowAt: [0.26, 0.29, -0.05] },
+  load: { blade: [0.63, 0.57, -0.52], elbow: 68, hold: 1.2, hand: [0.19, 0.4, -0.12], elbowAt: [0.27, 0.3, -0.06] },
   // The strike *extends*, and the shoulder is let off its leash for it. The
   // reach is the frame that has to read at forty pixels; an elbow that stayed
   // folded through the blow is a punch, and a shoulder pinned where the wind-up
@@ -117,6 +126,23 @@ const AIM: Partial<Record<KeyLabel, { blade: Vec3; elbow: number; hold: number; 
   contact: { blade: [-0.8, -0.55, 0.26], elbow: 10, hold: 0.1, hand: [-0.05, 0.07, 0.26] },
   follow: { blade: [-0.77, -0.47, -0.44], elbow: 14, hold: 0.2, hand: [-0.26, 0.02, 0.12] },
 };
+
+/**
+ * Where the elbow goes, and why it needs saying at all.
+ *
+ * `hand` and `blade` together still leave the elbow free to swing around the
+ * line between them like a door on its hinges, and the solve took it *inboard*:
+ * at the top of the wind-up the elbow sat at 0.02 to the right of the spine,
+ * with the shoulder joint at 0.115, so the upper arm was driven across the chest
+ * and the elbow into the ribs. Every other measurement was happy -- the blade
+ * pointed correctly and the hand was where it was asked to be.
+ *
+ * That is the same shape of gap as §3's: a chain has more freedom than the
+ * constraints on it, and what is left unstated is not left alone, it is decided
+ * by whatever the strain term happens to prefer. So the elbow gets a place too,
+ * out past the shoulder line and up, which is where an arm holds a sword behind
+ * its own head.
+ */
 
 /**
  * What a rig unit of hand displacement is worth, against a degree of aim error.
@@ -133,7 +159,7 @@ const AIM: Partial<Record<KeyLabel, { blade: Vec3; elbow: number; hold: number; 
  * decide between two arms that aim the blade equally well and not enough to
  * bend the aim to reach a number typed here.
  */
-const PER_UNIT = 80;
+const PER_UNIT = 130;
 
 /** How tall the rig stands in its own units, so the targets are scale-free. */
 const RIG_HEIGHT = 0.998;
@@ -155,7 +181,8 @@ function main(): void {
   if (!socket || !bone) throw new Error('no weapon.main socket');
   const pivot = quatFromEulerXyz((socket.rotationDeg ?? [0, 0, 0]) as Vec3);
   const hips = boneNode(nodes, naming, 'hips');
-  if (!hips) throw new Error('the pig rig has no hips to measure the hand against');
+  const elbow = boneNode(nodes, naming, 'rightForeArm');
+  if (!hips || !elbow) throw new Error('the pig rig has no hips or elbow to measure against');
 
   const key = (label: KeyLabel): PoseTable => {
     const found = PIG_STRIKE.keys.find((entry) => entry.label === label);
@@ -179,10 +206,10 @@ function main(): void {
     return out;
   };
 
-  /** Where the right hand sits, in body axes relative to the hips. */
-  const handPlaceOf = (turns: PoseTable): Vec3 => {
+  /** Where a bone sits, in body axes relative to the hips, as fractions of height. */
+  const placeOf = (turns: PoseTable, which: number): Vec3 => {
     const world = poseWorldMatrices(nodes, keyRotations(rig, turns));
-    const m = world[bone.index] ?? [];
+    const m = world[which] ?? [];
     const hipsAt = world[hips.index] ?? [];
     const from: Vec3 = [
       (m[12] ?? 0) - (hipsAt[12] ?? 0),
@@ -192,6 +219,9 @@ function main(): void {
     const into = intoBodyFrame(frame, from);
     return [into.right / RIG_HEIGHT, into.up / RIG_HEIGHT, into.forward / RIG_HEIGHT];
   };
+
+  const handPlaceOf = (turns: PoseTable): Vec3 => placeOf(turns, bone.index);
+  const elbowPlaceOf = (turns: PoseTable): Vec3 => placeOf(turns, elbow.index);
 
   /** A body-axis triple as a world direction. */
   const worldOf = (aim: Vec3): Vec3 => {
@@ -237,11 +267,24 @@ function main(): void {
     return previous[index] ?? 0;
   };
 
+  const shoulderBone = boneNode(nodes, naming, 'rightArm');
+  if (shoulderBone) {
+    const at = placeOf(key('guard'), shoulderBone.index);
+    const upper = Math.hypot(
+      ...(placeOf(key('guard'), elbow.index).map((v, i) => v - (at[i] ?? 0)) as number[]),
+    );
+    const fore = Math.hypot(
+      ...(handPlaceOf(key('guard')).map((v, i) => v - (placeOf(key('guard'), elbow.index)[i] ?? 0)) as number[]),
+    );
+    console.log(
+      `\n  reach: shoulder at ${at.map((v) => v.toFixed(2)).join(',')}  upper arm ${upper.toFixed(3)}  forearm ${fore.toFixed(3)}`,
+    );
+  }
   console.log('\n  the arm, solved against the socket calibration in pig.skeleton.json\n');
   // The guard is the chain's first link: it is already correct, and every key
   // after it is pulled toward the one before.
   let previous = KNOBS.map((knob) => (key('guard')[knob.role] as BoneTurns | undefined)?.[knob.axis] ?? 0);
-  for (const [label, target] of Object.entries(AIM) as [KeyLabel, { blade: Vec3; elbow: number; hold: number; hand?: Vec3 }][]) {
+  for (const [label, target] of Object.entries(AIM) as [KeyLabel, { blade: Vec3; elbow: number; hold: number; hand?: Vec3; elbowAt?: Vec3 }][]) {
     const turns = key(label);
     const want = worldOf(target.blade);
     const start = KNOBS.map((knob) => (turns[knob.role] as BoneTurns | undefined)?.[knob.axis] ?? 0);
@@ -261,13 +304,13 @@ function main(): void {
         strain += (per * ((values[index] ?? 0) - (rest[index] ?? 0))) ** 2;
       });
       let reach = 0;
-      if (target.hand) {
-        const at = handPlaceOf(withKnobs(turns, values));
-        reach =
-          (PER_UNIT * (at[0] - target.hand[0])) ** 2 +
-          (PER_UNIT * (at[1] - target.hand[1])) ** 2 +
-          (PER_UNIT * (at[2] - target.hand[2])) ** 2;
-      }
+      const posed = withKnobs(turns, values);
+      const gap = (at: Vec3, want: Vec3): number =>
+        (PER_UNIT * (at[0] - want[0])) ** 2 +
+        (PER_UNIT * (at[1] - want[1])) ** 2 +
+        (PER_UNIT * (at[2] - want[2])) ** 2;
+      if (target.hand) reach += gap(handPlaceOf(posed), target.hand);
+      if (target.elbowAt) reach += gap(elbowPlaceOf(posed), target.elbowAt);
       return missBy(values) ** 2 + strain + reach;
     };
 
@@ -329,7 +372,9 @@ function main(): void {
     };
     previous = [...values];
     console.log(
-      `  ${label.padEnd(8)} aim ${missBy(values).toFixed(1).padStart(4)}deg  hand ${handPlaceOf(withKnobs(turns, values)).map((v) => v.toFixed(2).padStart(5)).join(',')}   ` +
+      `  ${label.padEnd(8)} aim ${missBy(values).toFixed(1).padStart(4)}deg` +
+        `  hand ${handPlaceOf(withKnobs(turns, values)).map((v) => v.toFixed(2).padStart(5)).join(',')}` +
+        `  elbow ${elbowPlaceOf(withKnobs(turns, values)).map((v) => v.toFixed(2).padStart(5)).join(',')}   ` +
         `${show('rightArm')}, ${show('rightForeArm')}, ${show('rightHand')}`,
     );
   }

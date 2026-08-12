@@ -265,10 +265,16 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  the blade's direction (solved on aim alone it tucked the hand
                  inside the pig and left the strike no reach) and a grid of
                  starting points (an arm reaching a place has answers separated by
-                 ridges a descent will not cross). That grid is what made "the
-                 hand cannot both reach forward and cross the midline" a
-                 measurement rather than a suspicion -- so the swing keeps its
-                 reach and it is the *tip* that crosses.
+                 ridges a descent will not cross), and a place for the *elbow*, because a
+                 blade direction and a hand position still leave the elbow free
+                 to swing around the line between them like a door -- it went
+                 inboard, 0.02 from the spine on a pig whose ribs reach 0.179,
+                 and every other measurement was happy. The rule under all three:
+                 **a chain has more freedom than the constraints on it, and what
+                 is left unstated is not left alone**, it is decided by whatever
+                 the strain term happens to prefer. Hand and elbow targets are a
+                 linkage rather than two wishes -- upper arm 0.178, forearm 0.114
+                 -- and a pair 0.071 apart is not a pose.
                  naming.ts is the two bone vocabularies and the one way to look a
                  bone up across them (spec 120). There are two in the tree
                  permanently: the reference mannequin is authored and

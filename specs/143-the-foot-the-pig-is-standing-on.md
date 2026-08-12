@@ -139,7 +139,30 @@ stillness on either side.
 behind the head by abducting the shoulder 116°, with the elbow nearly *straight*
 (`flex: 8`), and twisting the torso 81° to make up the difference. A pig winding
 up to chop looked like a pig turning round to leave. Getting a sword behind your
-head is a thing you do with your elbow: 96° of elbow and 50° of torso now.
+head is a thing you do with your elbow: 68° of elbow and 50° of torso now.
+
+**And then it put the elbow in the ribs.** `blade` and `hand` together still
+leave the elbow free to swing around the line between them like a door on its
+hinges, and the solve took it *inboard*: at the top of the wind-up the elbow sat
+0.02 to the right of the spine, with the shoulder joint at 0.10 and the pig's
+ribs reaching out to 0.179. Every measurement was satisfied — the blade pointed
+where it should and the hand was where it was asked to be — and the upper arm
+was driven across the chest.
+
+Same shape of gap again: **a chain has more freedom than the constraints on it,
+and what is left unstated is not left alone** — it is decided by whatever the
+strain term happens to prefer. So the elbow gets a place too, out past the ribs
+and up.
+
+Two things that took getting wrong to see. The hand and elbow targets are a
+**linkage, not two wishes**: the upper arm is 0.178 and the forearm 0.114, so a
+pair of targets 0.071 apart is not a pose, and the solve split the difference
+and left the elbow in the ribs rather than reporting that it could not have
+both. And the shoulder's chain-to-the-previous-key weight, which was right when
+the blade's direction was the only target, became the thing *stopping* the arm
+reaching its targets once both ends had one — every mismatch was then paid for
+in aim error, 6° of it. Freed, the aim lands within 1.7° and the hand crosses
+the midline again on its own.
 
 That preference is written down as weights in `aim-blade.ts` rather than as
 angles in the clip — the elbow is cheap to bend, the wrist expensive to leave
@@ -153,10 +176,12 @@ inside the pig and left the strike with no forward reach. And **one starting
 point is not enough**: an arm reaching a place has genuinely distinct answers,
 separated by ridges a descent will not cross, so it seeds from a grid.
 
-That grid is also what turned a suspicion into a measurement: the hand *cannot*
-both reach forward a third of a body and cross to the far side — the arm is not
-long enough, and every seed agrees. So the swing keeps the reach, and it is the
-**tip** that crosses the midline.
+The grid was also what looked, at the time, like proof that the hand *cannot*
+both reach forward a third of a body and cross to the far side. It was not: the
+arm was over-constrained by the shoulder weight above, not short of length, and
+freeing it recovered the crossing. Worth recording as a caution — every seed
+agreeing means the objective has one answer, not that the requirement is
+impossible.
 
 ### 5. The hand stopped being a proxy for the sword
 
@@ -206,8 +231,12 @@ about, rather than a gap in `grip.test.ts`.
   done is at least 35% of the wind-up. The version this replaced measures 70ms
   of its 300 and fails it; this one measures 120.
 - **The tip clears the head, crosses the midline, and covers a body height of
-  arc** through the strike — the silhouette claims, moved onto the thing that
-  casts the silhouette.
+  arc** through the strike — the silhouette claims, on the thing that casts the
+  silhouette. The hand's own versions survive too, except its arc: it covers
+  0.70 of a body height where it used to cover 0.85, because part of the swing
+  is now the elbow extending rather than the whole arm travelling.
+- **The elbow stays outside the ribs** through the wind-up, which is a fact
+  about the pig's own width (0.179) and not a number chosen here.
 - **The blade points forward and 20° up at idle** — not only at the swing's
   guard key. The two are now within a degree of each other, which is the check
   that the fit worked rather than a coincidence at one pose.
