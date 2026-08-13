@@ -452,6 +452,16 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  `focusOnPress` is false on `Widget` and true on `TextField`
                  alone; Tab still reaches everything focusable, because Tab is
                  not a key anybody plays with.
+                 One more rule of the same kind, from spec 147's sheet: **a
+                 hidden tab still has rectangles in it**. A tab switched away is
+                 hidden and never destroyed -- that is what makes a tab keep what
+                 you left in it -- so its rows keep `visible` true and keep the
+                 rect they were last arranged into, and any hover that hit-tests
+                 a *list of rows* gets three tabs stacked at the same
+                 coordinates. Only the ancestor chain says which tab a row is in.
+                 The framework's own `hitTest` is the obvious answer and is the
+                 wrong one for text: `Label` is deliberately pointer transparent,
+                 so a screen whose rows are bare labels goes silent under it.
                  The UI has a *scale*, not a resolution: one UI pixel is always a
                  whole number of device pixels and the viewport is whatever the
                  window leaves, so it never reads the world's `lowRes` setting --

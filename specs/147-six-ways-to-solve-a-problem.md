@@ -577,7 +577,17 @@ Kept honest because a spec that disagrees with its code is worse than no spec.
    says exactly that rather than describing a number that never moves. The rows
    have carried a `tooltip()` since spec 128 and nothing ever asked them; the
    sheet now has a live `Tooltip` in the same layer as the bag's.
-11. **No admin path applies a preset.** `npm run balance -- --preset=<id>` builds
+11. **A tooltip belongs to one tab, and always describes.** Two rules the sheet
+   was shipped without. A tab switched away is *hidden*, never destroyed (spec
+   124), so its rows keep `visible` true and keep the rectangle they were last
+   arranged into -- three tabs of rows therefore stacked at the same coordinates
+   and a hover was answered by whichever list was walked first; the hit test
+   walks the ancestor chain now. And the attribute tooltip returned the
+   *refusal* in place of the description, so a character with nothing to spend
+   -- which is every character between two level-ups -- read "no unspent
+   attribute points" on all six rows. The description is unconditional and comes
+   off `ATTRIBUTES.owns`; the refusal is appended, exactly as a skill row's is.
+12. **No admin path applies a preset.** `npm run balance -- --preset=<id>` builds
    and fights any of the twelve; a wire message that made a character level 20
    is not a thing to ship, and a manager method nothing calls is dead code.
 
