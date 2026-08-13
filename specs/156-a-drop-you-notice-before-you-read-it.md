@@ -171,10 +171,23 @@ This is the difference between a rarity reveal and a rarity *brightness* reveal.
 A drop coloured by its tier from the first frame has already answered the
 question the reveal exists to ask.
 
-The rule that falls out of it: **nothing categorical about a tier is legible
-before its reveal.** The flare is an intensity and differs by tier on purpose —
-that is "something is unusual". A colour and a pulse are kinds, not amounts, and
-both wait.
+The rule that falls out of it: **nothing about a tier is legible before its
+reveal, in any channel.** That means the aura too — the flare was `restFlare`
+from the landing tick, so a rare drop's halo was fourteen times a common one's
+and an exceptional's thirty-four before anything had revealed. Every unrevealed
+drop now rests at exactly what ordinary loot rests at and runs up to one shared
+peak, and only the flash at the reveal is tier-scaled.
+
+And the cue names: `spawn` and `anticipation` both fire before the identity is
+known, so neither may name a tier — they are one name each for every tier, and
+`reveal` is the only one that says what it was. A tier in an early cue name is
+the rarity leaking through the audio channel the instant anything is authored
+for it.
+
+What survives is binary: it swells, or it does not. That is the "notice", and it
+has to survive or nothing would draw the eye and the reveal would resolve
+something nobody looked at. **An amount may say "something is unusual"; only a
+kind may say which, and every kind waits.**
 
 ### Asking for it accounts for the lead
 
@@ -260,6 +273,10 @@ the delay is tunable on a running server from the admin console.
   every direction, and reproduces from a seed.
 - **`tierMixAt` is 0 at every tick before the reveal**, for every tier that has
   one, and every rig is built in the same neutral colour whatever its tier.
+- **On the landing tick every tier's flare is identical**, and equal to what
+  ordinary loot rests at. The tiers separate only once each has revealed.
+- No cue that fires before the reveal names a tier, and there is exactly one
+  landing sound for all three.
 - The heartbeat is two beats a cycle with the second smaller, rests for most of
   the cycle, never shrinks the object, and is phased off `spawnTick`.
 - A revealed drop names itself on hover; an unrevealed one shows nothing at all

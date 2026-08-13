@@ -50,29 +50,71 @@ function view(rarity: RarityId, spawnTick = 0, revealed = false): DropView {
 }
 
 describe('the flare', () => {
-  it('stays inside its tier’s own band, at every tick', () => {
-    for (const rarity of RARITY_IDS) {
-      const row = rarityRow(rarity);
-      const drop = view(rarity);
-      for (let tick = 0; tick <= drop.revealTick + REVEAL_SETTLE_TICKS * 3; tick++) {
-        const flare = flareAt(drop, tick);
-        expect(flare, `${rarity} @ ${tick}`).toBeGreaterThanOrEqual(row.restFlare - 1e-9);
-        expect(flare, `${rarity} @ ${tick}`).toBeLessThanOrEqual(row.peakFlare + 1e-9);
+  /**
+   * The bug this replaced a test for.
+   *
+   * The old assertion was that common is *dimmer* than every other tier at
+   * every tick -- which is true, and was the leak: on the landing tick a rare
+   * drop's halo was fourteen times a common one's and an exceptional's
+   * thirty-four, so the tier was readable off the aura instantly. A test can
+   * enforce a bug as easily as it can catch one.
+   */
+  it('is identical across every tier until each one reveals', () => {
+    const common = view('common');
+    for (const rarity of RARITY_IDS.filter((id) => id !== 'common')) {
+      const hidden = view(rarity);
+      for (let tick = hidden.spawnTick; tick < hidden.revealTick; tick++) {
+        // ...and identical to what ordinary loot looks like at rest, at the
+        // moment it lands, so a drop that is about to be something gives
+        // nothing away by lying there.
+        if (tick === hidden.spawnTick) {
+          expect(flareAt(hidden, tick), `${rarity} @ landing`).toBeCloseTo(flareAt(common, tick), 9);
+        }
+        // Rare and exceptional run up to the same place, so neither says which
+        // it is on the way.
+        const other = RARITY_IDS.filter((id) => id !== 'common' && id !== rarity)[0];
+        if (!other) continue;
+        const peer = view(other);
+        if (tick < peer.revealTick) {
+          const throughA = (tick - hidden.anticipationTick) / (hidden.revealTick - hidden.anticipationTick);
+          const throughB = (tick - peer.anticipationTick) / (peer.revealTick - peer.anticipationTick);
+          // Compared at the same point *through* each run-up rather than at the
+          // same tick: the run-ups are different lengths on purpose -- a longer
+          // build is the anticipation doing its job -- but they travel between
+          // the same two values.
+          if (throughA > 0 && throughA < 1 && Math.abs(throughA - throughB) < 0.02) {
+            expect(flareAt(hidden, tick)).toBeCloseTo(
+              flareAt(peer, peer.anticipationTick + throughA * (peer.revealTick - peer.anticipationTick)),
+              6,
+            );
+          }
+        }
       }
     }
   });
 
-  /**
-   * The contrast rule, measured: ordinary loot never competes with the drop
-   * that is worth looking at. See `docs/reward-philosophy.md` §3.
-   */
-  it('keeps common loot dimmer than every other tier at every tick', () => {
+  /** ...and only *after* the reveal does the tier show in the resting glow. */
+  it('separates the tiers only once each has revealed', () => {
     const common = view('common');
     for (const rarity of RARITY_IDS.filter((id) => id !== 'common')) {
       const loud = view(rarity);
-      for (let tick = 0; tick <= loud.revealTick + REVEAL_SETTLE_TICKS * 2; tick++) {
-        expect(flareAt(common, tick), `${rarity} @ ${tick}`).toBeLessThan(flareAt(loud, tick));
-      }
+      const settled = loud.revealTick + REVEAL_SETTLE_TICKS;
+      expect(flareAt(common, settled)).toBeLessThan(flareAt(loud, settled));
+    }
+  });
+
+  /**
+   * The contrast rule, measured where it applies: once everything has resolved,
+   * ordinary loot does not compete with the drop worth looking at. See
+   * `docs/reward-philosophy.md` §3.
+   */
+  it('leaves ordinary loot the quietest thing in the world, once resolved', () => {
+    const resting = RARITY_IDS.map((rarity) => {
+      const drop = view(rarity);
+      return flareAt(drop, drop.revealTick + REVEAL_SETTLE_TICKS * 2);
+    });
+    for (let i = 1; i < resting.length; i++) {
+      expect(resting[i]).toBeGreaterThan(resting[i - 1] ?? 0);
     }
   });
 
@@ -85,10 +127,15 @@ describe('the flare', () => {
   it('rises through the anticipation and settles after the reveal', () => {
     const drop = view('exceptional');
     const row = rarityRow('exceptional');
-    expect(flareAt(drop, drop.spawnTick)).toBeCloseTo(row.restFlare, 9);
-    expect(flareAt(drop, drop.revealTick - 1)).toBeGreaterThan(row.restFlare);
+    const hidden = flareAt(view('common'), 0);
+    // Starts where ordinary loot sits...
+    expect(flareAt(drop, drop.spawnTick)).toBeCloseTo(hidden, 9);
+    // ...builds...
+    expect(flareAt(drop, drop.revealTick - 1)).toBeGreaterThan(hidden);
+    // ...flashes at the reveal, which is the first moment a tier may show...
     expect(flareAt(drop, drop.revealTick)).toBeCloseTo(row.peakFlare, 9);
-    // ...and comes all the way back down, rather than leaving a lit object.
+    // ...and comes all the way back down to its own rest, rather than leaving a
+    // lit object.
     expect(flareAt(drop, drop.revealTick + REVEAL_SETTLE_TICKS)).toBeCloseTo(row.restFlare, 9);
     expect(flareAt(drop, drop.revealTick + 10_000)).toBeCloseTo(row.restFlare, 9);
   });
@@ -228,13 +275,39 @@ describe('the heartbeat', () => {
    * tier and is meant to -- an intensity is "something is unusual", where a
    * colour and a pulse are "it is this kind of unusual".
    */
-  it('leaves colour and pulse both silent before the reveal', () => {
+  it('leaves colour, pulse and aura all silent about the tier before the reveal', () => {
+    const common = view('common');
     for (const rarity of RARITY_IDS) {
       const drop = view(rarity);
       for (let tick = drop.spawnTick; tick < drop.revealTick; tick++) {
         expect(tierMixAt(drop, tick), `${rarity} mix @ ${tick}`).toBe(0);
         expect(heartbeatAt(drop, tick), `${rarity} beat @ ${tick}`).toBe(1);
       }
+      // And on the tick it lands, it is the ordinary object in every channel.
+      expect(flareAt(drop, drop.spawnTick), `${rarity} flare @ landing`).toBeCloseTo(
+        flareAt(common, common.spawnTick),
+        9,
+      );
+    }
+  });
+
+  /**
+   * The audio channel is a channel too. `spawn` and `anticipation` both fire
+   * before the identity is known, so a tier in either name would leak it the
+   * moment anything is authored for them.
+   */
+  it('names no tier in any cue that fires before the reveal', () => {
+    const spawns = new Set(RARITY_IDS.map((id) => rarityRow(id).cues.spawn));
+    expect(spawns.size, 'one landing sound for every tier').toBe(1);
+    for (const rarity of RARITY_IDS) {
+      const row = rarityRow(rarity);
+      for (const cue of [row.cues.spawn, row.cues.anticipation]) {
+        for (const tier of RARITY_IDS) {
+          expect(cue, `${rarity} early cue`).not.toContain(tier);
+        }
+      }
+      // ...and the reveal cue is exactly where the tier is allowed to be said.
+      if (row.revealTicks > 0) expect(row.cues.reveal).toContain(rarity);
     }
   });
 });
@@ -299,8 +372,10 @@ describe('the cues', () => {
       for (const cue of presenter.read(drop, LANDING, tick).cues) fired.push({ tick, cue });
     }
     expect(fired.map((entry) => entry.cue)).toEqual([
-      'loot.spawn.rare',
-      'loot.anticipation.rare',
+      // Neither of the first two names a tier: they fire before the identity is
+      // known. Only the last one may say what it was.
+      'loot.spawn',
+      'loot.anticipation',
       'loot.reveal.rare',
     ]);
     expect(fired[1]?.tick).toBe(drop.anticipationTick);
@@ -312,17 +387,17 @@ describe('the cues', () => {
     const drop = view('common');
     const fired: string[] = [];
     for (let tick = 0; tick < 200; tick++) fired.push(...presenter.read(drop, LANDING, tick).cues);
-    expect(fired).toEqual(['loot.spawn.common']);
+    expect(fired).toEqual(['loot.spawn']);
   });
 
   /** A frame drawn twice on one tick must not double every cue. */
   it('is silent on a re-read of the same tick', () => {
     const presenter = new DropPresenter();
     const drop = view('rare');
-    expect(presenter.read(drop, LANDING, 0).cues).toEqual(['loot.spawn.rare']);
+    expect(presenter.read(drop, LANDING, 0).cues).toEqual(['loot.spawn']);
     expect(presenter.read(drop, LANDING, 0).cues).toEqual([]);
     expect(presenter.read(drop, LANDING, drop.revealTick).cues).toEqual([
-      'loot.anticipation.rare',
+      'loot.anticipation',
       'loot.reveal.rare',
     ]);
   });
@@ -335,7 +410,7 @@ describe('the cues', () => {
     const presenter = new DropPresenter();
     const drop = view('exceptional', 0, true);
     const first = presenter.read(drop, LANDING, drop.revealTick + 500);
-    expect(first.cues).toEqual(['loot.spawn.exceptional']);
+    expect(first.cues).toEqual(['loot.spawn']);
     expect(first.label).toBe('Keen Longsword');
     expect(presenter.read(drop, LANDING, drop.revealTick + 501).cues).toEqual([]);
   });

@@ -44,6 +44,14 @@ export interface RarityRow {
    * ticks, and the client looks the rest up here. An empty name is "no cue",
    * which is how a common drop says nothing rather than saying something
    * quiet.
+   *
+   * **Only `reveal` names a tier.** The other two fire before the identity is
+   * known, so a tier in either of their names would be the rarity leaking out
+   * through the audio channel the moment anything is authored for them -- the
+   * same leak the aura had. `spawn` is one name for every tier because a drop
+   * landing sounds like a drop landing, and `anticipation` is one name for
+   * every tier that has one because "something is happening here" is all it is
+   * allowed to say.
    */
   readonly cues: {
     readonly spawn: string;
@@ -60,13 +68,17 @@ export interface RarityRow {
    */
   readonly restFlare: number;
   /**
-   * How bright it gets at the top of its run-up, 0..1.
+   * How bright it flashes **at the reveal**, 0..1, before settling back to
+   * {@link restFlare}.
    *
-   * Equal to {@link restFlare} for a tier with nothing to build up to, which is
-   * what makes common loot a flat dim object rather than one with a small
-   * ceremony -- and what lets "a common drop is dimmer than every other tier at
-   * every tick" be a property with a test behind it rather than a hope about
-   * two curves.
+   * Not the top of the run-up -- that is one shared number in `loot-drop.ts`,
+   * because a tier-scaled run-up answers the question the reveal exists to ask.
+   * This is the flash at the instant the identity lands, by which point there
+   * is nothing left to withhold, so it may be as tier-scaled as it likes.
+   *
+   * Equal to {@link restFlare} for a tier with nothing to announce, which is
+   * what keeps common loot a flat dim object rather than one with a small
+   * ceremony on landing.
    */
   readonly peakFlare: number;
   /**
@@ -96,7 +108,7 @@ const RARITY_ROWS: readonly RarityRow[] = [
     name: 'Common',
     revealTicks: 0,
     anticipationTicks: 0,
-    cues: { spawn: 'loot.spawn.common', anticipation: '', reveal: '' },
+    cues: { spawn: 'loot.spawn', anticipation: '', reveal: '' },
     restFlare: 0.12,
     peakFlare: 0.12,
     heartbeat: false,
@@ -107,8 +119,8 @@ const RARITY_ROWS: readonly RarityRow[] = [
     revealTicks: 45,
     anticipationTicks: 9,
     cues: {
-      spawn: 'loot.spawn.rare',
-      anticipation: 'loot.anticipation.rare',
+      spawn: 'loot.spawn',
+      anticipation: 'loot.anticipation',
       reveal: 'loot.reveal.rare',
     },
     restFlare: 0.45,
@@ -121,8 +133,8 @@ const RARITY_ROWS: readonly RarityRow[] = [
     revealTicks: 96,
     anticipationTicks: 12,
     cues: {
-      spawn: 'loot.spawn.exceptional',
-      anticipation: 'loot.anticipation.exceptional',
+      spawn: 'loot.spawn',
+      anticipation: 'loot.anticipation',
       reveal: 'loot.reveal.exceptional',
     },
     restFlare: 0.7,

@@ -1067,8 +1067,18 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  drop by its tier from the first frame -- which is what the first
                  cut did -- answers the exact question the reveal exists to ask,
                  and leaves a feature that only delays a *brightness*. What is
-                 legible early is that something is unusual (the pulse, the
-                 swell); never how unusual, and never what.
+                 legible early is that something is unusual (the swell);
+                 never how unusual, and never what. The same correction was
+                 needed in all three channels: the flare used to start at the
+                 tier's own `restFlare`, so a rare drop's halo was fourteen
+                 times a common one's on the landing tick and an exceptional's
+                 thirty-four -- an unrevealed drop now rests at exactly what
+                 ordinary loot rests at and runs up to one shared peak, with
+                 only the flash *at* the reveal tier-scaled. The pulse is
+                 withheld and phased off the reveal. And no cue that fires
+                 before the reveal names a tier, because a tier in `cues.spawn`
+                 is the rarity leaking out through the audio the moment anybody
+                 authors one.
                  `npx tsx scripts/preview-loot.ts` is the picture, and the
                  reason it exists is that the first cut of this feature passed
                  every test it had and did almost nothing on screen -- the

@@ -67,6 +67,29 @@ const HEARTBEAT_SCALE = 0.13;
  */
 export const TIER_BLEND_TICKS = 12;
 
+/**
+ * What an unrevealed drop glows at, at rest and at the top of its run-up
+ * (spec 156).
+ *
+ * **One pair for every tier**, which is the whole correction: the flare used to
+ * be `row.restFlare` from the landing tick, so a rare drop was fourteen times
+ * brighter than a common one before anything had been revealed and an
+ * exceptional one thirty-four. The tier was readable off the aura instantly,
+ * which is the same leak the colour and the pulse had.
+ *
+ * The rest is common's own value, so an unrevealed drop is indistinguishable
+ * from ordinary loot lying in the grass -- the same argument `NEUTRAL_COLOR`
+ * makes in `drop-rig.ts`.
+ *
+ * What is left legible is binary: it swells, or it does not. That is the
+ * "notice" the whole feature is built on and it has to survive, or nothing
+ * would ever draw the eye and the reveal would resolve something nobody looked
+ * at. **An amount may say "something is unusual"; only a kind may say which,
+ * and every kind waits for the reveal.**
+ */
+const HIDDEN_REST_FLARE = rarityRow('common').restFlare;
+const HIDDEN_PEAK_FLARE = 0.85;
+
 export interface DropPresentation {
   readonly phase: RevealPhaseValue;
   /**
@@ -134,14 +157,21 @@ export function flareAt(drop: DropView, tick: number): number {
   const row = rarityRow(drop.rarity);
   const phase = revealPhaseAt(drop, tick);
 
-  if (phase === RevealPhase.Spawned) return row.restFlare;
+  // --- withheld: the same two numbers whatever the tier ---
+  if (phase === RevealPhase.Spawned) return HIDDEN_REST_FLARE;
   if (phase === RevealPhase.Anticipation) {
     const span = drop.revealTick - drop.anticipationTick;
     const through = span <= 0 ? 1 : (tick - drop.anticipationTick) / span;
-    return row.restFlare + (row.peakFlare - row.restFlare) * smooth(through);
+    return HIDDEN_REST_FLARE + (HIDDEN_PEAK_FLARE - HIDDEN_REST_FLARE) * smooth(through);
   }
+
+  // --- revealed: the tier's own flash, settling to the tier's own rest ---
+  //
+  // A drop that never had a run-up settles from where it already was, so a
+  // common one is flat at its rest forever rather than flashing on landing.
+  const from = drop.revealTick > drop.spawnTick ? row.peakFlare : row.restFlare;
   const settled = smooth((tick - drop.revealTick) / REVEAL_SETTLE_TICKS);
-  return row.peakFlare + (row.restFlare - row.peakFlare) * settled;
+  return from + (row.restFlare - from) * settled;
 }
 
 /**
