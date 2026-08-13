@@ -12,6 +12,7 @@ import fc from 'fast-check';
 import {
   CHAT_BURST,
   FLOOD_STRIKES,
+  STRIKE_DECAY_TICKS,
   HEARTBEAT_BURST,
   MAX_FRAME_BYTES,
   RateLimiter,
@@ -157,5 +158,35 @@ describe('arbitrary bytes into the codec', () => {
     // Not a codec property -- a server one -- but the number lives here.
     expect(MAX_FRAME_BYTES).toBeGreaterThan(1024);
     expect(MAX_FRAME_BYTES).toBeLessThan(1 << 20);
+  });
+});
+
+describe('a flood is a rate, not a lifetime total', () => {
+  // Spec 157: `strikes` was incremented and never reset, so a long,
+  // well-behaved session that tripped a bucket sixty times over an hour was
+  // eventually dropped as a flooder -- and dropped *intentionally*, which under
+  // spec 150 means no body is held and the session simply ends.
+  it('retires strikes after a quiet spell', () => {
+    const limiter = new RateLimiter(0);
+    let tick = 0;
+    // Everything past the burst is a strike, and nothing refills at tick 0.
+    const overspend = (strikes: number): void => {
+      for (let i = 0; i < VERB_BURST + strikes; i++) {
+        limiter.allow(ClientMessageType.Equip, tick);
+      }
+    };
+
+    overspend(FLOOD_STRIKES - 1);
+    expect(limiter.flooding).toBe(false);
+
+    // A quiet spell, which also refills the bucket.
+    tick += STRIKE_DECAY_TICKS + 1;
+    overspend(FLOOD_STRIKES - 1);
+    expect(limiter.strikeCount).toBe(FLOOD_STRIKES - 1);
+    expect(limiter.flooding).toBe(false);
+
+    // Straight on with no gap to retire anything: still a flood.
+    for (let i = 0; i < FLOOD_STRIKES + 1; i++) limiter.allow(ClientMessageType.Equip, tick);
+    expect(limiter.flooding).toBe(true);
   });
 });

@@ -46,6 +46,17 @@ export const HEARTBEAT_REFILL_PER_SECOND = 4;
 export const FLOOD_STRIKES = 60;
 
 /**
+ * A quiet spell this long starts the count again (spec 157). Ten seconds.
+ *
+ * Without it `strikes` was a *lifetime* total that nothing ever reset, so a
+ * well-behaved session that tripped a bucket sixty times over an hour was
+ * eventually dropped as a flooder -- and dropped *intentionally*, so no body
+ * was held and the session ended outright. A flood is a rate, and this is what
+ * makes the counter measure one.
+ */
+export const STRIKE_DECAY_TICKS = 600;
+
+/**
  * The largest frame worth parsing.
  *
  * The biggest thing a client legitimately sends is a trade offer naming 24
@@ -86,6 +97,8 @@ export class RateLimiter {
   private readonly chat: ChunkBudget;
   private readonly heartbeat: ChunkBudget;
   private strikes = 0;
+  /** When the last strike landed, so a gap can retire the ones before it. */
+  private lastStrikeTick = 0;
 
   constructor(startTick = 0, tickRate: number = SERVER_TICK_RATE) {
     this.verbs = new ChunkBudget(VERB_BURST, VERB_REFILL_PER_SECOND, tickRate, startTick);
@@ -108,6 +121,10 @@ export class RateLimiter {
     const budget =
       bucket === 'chat' ? this.chat : bucket === 'heartbeat' ? this.heartbeat : this.verbs;
     if (budget.take(tick)) return true;
+    // A gap of good behaviour retires what came before it, so this counts
+    // strikes in a window rather than over a lifetime (spec 157).
+    if (tick - this.lastStrikeTick > STRIKE_DECAY_TICKS) this.strikes = 0;
+    this.lastStrikeTick = tick;
     this.strikes += 1;
     return false;
   }
