@@ -65,7 +65,7 @@ import { createHud, HOTBAR } from './hud.js';
 import { hudLayout } from './hud-layout.js';
 import { isHandheldDevice } from '../device.js';
 import { appearanceOf } from './appearance.js';
-import { effectsForBlow } from './vfx-wire.js';
+import { effectsForBlow, REDUNDANT_SERVER_EFFECTS } from './vfx-wire.js';
 import { moveIntent, RoutePlanner } from './intent.js';
 import { decideKeyDown, decideKeyUp } from './key-actions.js';
 import { UiLayer } from './ui-layer.js';
@@ -515,6 +515,11 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     hud.addDamage(result.targetId, at, result.damage, (result.flags & 2) !== 0);
   });
   client.onEffect((effect) => {
+    // A self-heal reports itself twice: once as this message and once as the
+    // negative-damage blow that draws the heal (spec 157). The registry holds
+    // no entry under an ability's own id, so drawing this one too would put
+    // `addEffect`'s orange debug disc under the green heal for half a second.
+    if (REDUNDANT_SERVER_EFFECTS.has(effect.effectId)) return;
     // The id the server has always sent and this view has always dropped.
     scene.addEffect(effect.effectId, effect.x, effect.y, effect.radius, effect.durationTicks);
   });

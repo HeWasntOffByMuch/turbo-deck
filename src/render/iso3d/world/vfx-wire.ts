@@ -92,6 +92,36 @@ export const DAMAGE_DEBRIS: Record<DamageType, string | null> = {
 };
 
 /**
+ * What restoring health looks like (spec 157).
+ *
+ * Healing travels on the blow message: every heal in the game is reported as a
+ * hit against yourself with negative damage, which `world.ts` and `abilities.ts`
+ * both say in as many words, so that a client has one code path for "a number
+ * floated off somebody". This is the other half of honouring that -- the number
+ * has read the sign since spec 096, and until now the *effect* did not, so a
+ * mote picked up threw a red spatter off your own chest.
+ */
+export const HEAL_EFFECT = 'heal_restore';
+
+/**
+ * Server effect ids the blow already draws, so nothing draws them twice.
+ *
+ * Both self-heal abilities send an `Effect` message *and* the negative-damage
+ * hit above. The registry has no entry under an ability's own id, so the effect
+ * message fell through to `scene.addEffect`'s debug disc -- a flat orange circle
+ * at the caster's feet, underneath the green heal, for half a second.
+ *
+ * A set rather than a branch at the call site, and named for the *reason* rather
+ * than for the abilities: an ability whose picture is already drawn by the blow
+ * it reports belongs here, and one that needs a picture of its own belongs in
+ * the registry under its own id, which is the seam `addEffect` already checks.
+ */
+export const REDUNDANT_SERVER_EFFECTS: ReadonlySet<string> = new Set([
+  'self.mend.self',
+  'self.hearthdraught.self',
+]);
+
+/**
  * How far back along the blow a hit is drawn, in world units.
  *
  * About the radius of a body. The capsule the player is drawn as is ten units of
@@ -127,6 +157,20 @@ export function blowSeed(facts: CombatFacts, tick: number): number {
 export function effectsForBlow(facts: CombatFacts, tick: number): readonly PlayRequest[] {
   const out: PlayRequest[] = [];
   const seed = blowSeed(facts, tick);
+
+  // A heal, which arrives on this message with the sign flipped (spec 157).
+  //
+  // Answered *before* the contact point, and that is the substance of it rather
+  // than an optimisation: everything below aims a picture along the blow, and a
+  // heal has no blow to aim along. So it is drawn on the body itself and at
+  // ground level -- `playEffect` adds the terrain height, so a lift of zero is
+  // the feet -- and none of the blow's vocabulary reaches it. A heal is not a
+  // hit read quietly; it is a different event travelling on the hit's message,
+  // and a killed/critical/blocked flag on one means nothing.
+  if (facts.damage < 0) {
+    out.push({ id: HEAL_EFFECT, x: facts.x, y: 0, z: facts.z, rotation: 0, scale: 1, seed });
+    return out;
+  }
 
   // Away from the attacker: a hit from the left throws to the right. Falls back
   // to a fixed bearing when the two are stacked, which happens at point-blank.
