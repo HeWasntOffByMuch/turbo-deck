@@ -59,6 +59,16 @@ export interface RarityRow {
    * not.
    */
   readonly restFlare: number;
+  /**
+   * How bright it gets at the top of its run-up, 0..1.
+   *
+   * Equal to {@link restFlare} for a tier with nothing to build up to, which is
+   * what makes common loot a flat dim object rather than one with a small
+   * ceremony -- and what lets "a common drop is dimmer than every other tier at
+   * every tick" be a property with a test behind it rather than a hope about
+   * two curves.
+   */
+  readonly peakFlare: number;
 }
 
 /**
@@ -77,6 +87,7 @@ const RARITY_ROWS: readonly RarityRow[] = [
     anticipationTicks: 0,
     cues: { spawn: 'loot.spawn.common', anticipation: '', reveal: '' },
     restFlare: 0.12,
+    peakFlare: 0.12,
   },
   {
     id: 'rare',
@@ -89,6 +100,7 @@ const RARITY_ROWS: readonly RarityRow[] = [
       reveal: 'loot.reveal.rare',
     },
     restFlare: 0.45,
+    peakFlare: 0.9,
   },
   {
     id: 'exceptional',
@@ -101,6 +113,7 @@ const RARITY_ROWS: readonly RarityRow[] = [
       reveal: 'loot.reveal.exceptional',
     },
     restFlare: 0.7,
+    peakFlare: 1,
   },
 ];
 

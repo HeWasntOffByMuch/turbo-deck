@@ -42,6 +42,8 @@ import { installPoissonShadows, shadowRadiusFor } from '../shadow-pcf.js';
 import { DETAIL_UNIFORMS, buildDetailTexture } from '../terrain-detail.js';
 import { MechRig, defaultMechTuning } from '../rigs.js';
 import { monsterLookFor } from './monster-look.js';
+import { DropRig } from './drop-rig.js';
+import { DropPresenter } from './loot-drop.js';
 import { CritterRig, defaultCritterTuning } from '../critter.js';
 import { CRITTERS } from '../../critters/index.js';
 import { attachHighlight, type HighlightHandle } from '../highlight.js';
@@ -272,6 +274,17 @@ interface DrivenUnit {
   bones: number;
 }
 
+/**
+ * The volume the cursor picks a drop by (spec 154).
+ *
+ * Wider than the object is drawn and taller than it floats, because a drop is a
+ * seven-unit shape at the far end of an isometric camera and a hitbox that
+ * matched the mesh would be a thing the player has to aim at. The *pickup* is
+ * still ranged by the server; this is only what the cursor catches.
+ */
+const DROP_PICK_RADIUS = 16;
+const DROP_PICK_HEIGHT = 26;
+
 /** A body on screen, pooled by entity id. */
 interface Body {
   readonly group: THREE.Group;
@@ -403,6 +416,10 @@ export class WorldScene {
    * else in the repo.
    */
   private readonly vfx: VfxLayer;
+  /** One rig per drop on screen (spec 154), pooled by entity id like a body. */
+  private readonly dropRigs = new Map<number, DropRig>();
+  /** Which of each drop's cues have already been heard. Pure; see `loot-drop.ts`. */
+  private readonly dropPresenter = new DropPresenter();
 
   private readonly motion = new EntityMotion();
   /**
@@ -955,6 +972,7 @@ export class WorldScene {
 
     this.observe(view);
     this.syncBodies(view, frame, dt);
+    this.syncDrops(view, frame, dt);
     this.carryTorch(view.selfEntityId);
 
     this.syncTelegraphs(view, frame);
@@ -1219,6 +1237,11 @@ export class WorldScene {
     }
 
     for (const entity of view.entities) {
+      // Drops are drawn by `syncDrops` instead (spec 154): what a drop is lit
+      // by comes from `view.drops` rather than from the entity record, and
+      // threading a rarity through `bodyFor` would put the one field this
+      // feature exists to withhold into the pooled-rig key.
+      if (entity.kind === EntityKind.Drop) continue;
       live.add(entity.id);
       const look = appearanceOf(entity);
       const body = this.bodyFor(entity.id, look);
@@ -1297,6 +1320,90 @@ export class WorldScene {
       body.shot?.dispose();
       this.bodies.delete(id);
     }
+  }
+
+  /**
+   * The items lying in the world (spec 154).
+   *
+   * Its own pass rather than a branch in `syncBodies`, because a drop is joined
+   * from two halves that arrive on different messages: the *position* comes off
+   * the entity delta like everything else, and everything else -- the tier, the
+   * clock, and the identity once the server allows it -- comes off `LootDrop`.
+   * Folding it into the body pass would mean `bodyFor` taking a rarity, and the
+   * pooled-rig key is the last place the withheld half should end up.
+   *
+   * Nothing here decides *when*: `DropPresenter` is pure, takes the drawn tick
+   * as an argument, and hands back a flare, a label and the cues that crossed
+   * into this frame.
+   */
+  private syncDrops(view: ClientView, frame: FrameInfo, dt: number): void {
+    const live = new Set<number>();
+    const positions = new Map<number, { x: number; y: number }>();
+    for (const entity of view.entities) {
+      if (entity.kind === EntityKind.Drop) positions.set(entity.id, { x: entity.x, y: entity.y });
+    }
+
+    for (const drop of view.drops) {
+      const at = positions.get(drop.entityId);
+      // Described but not replicated: the `LootDrop` outran its delta, or the
+      // entity has gone. Either way there is nowhere to draw it.
+      if (!at) continue;
+      live.add(drop.entityId);
+
+      let rig = this.dropRigs.get(drop.entityId);
+      if (!rig) {
+        rig = new DropRig(drop.rarity);
+        this.dropRigs.set(drop.entityId, rig);
+        this.scene.add(rig.group);
+      }
+
+      const shown = this.dropPresenter.read(drop, frame.tick);
+      const ground = this.ground(at.x, at.y);
+      rig.group.position.set(at.x, ground, at.y);
+      rig.update(dt, shown.flare);
+      for (const cue of shown.cues) this.playCue(cue, at.x, at.y);
+
+      // Pickable while it is there, at the same footprint the server measures
+      // its reach against, so what the cursor catches and what the pickup
+      // accepts are the same object.
+      this.hoverTargets.push({
+        id: drop.entityId,
+        object: rig.group,
+        position: at,
+        radius: DROP_PICK_RADIUS,
+        base: ground,
+        height: DROP_PICK_HEIGHT,
+      });
+    }
+
+    for (const [id, rig] of this.dropRigs) {
+      if (live.has(id)) continue;
+      this.scene.remove(rig.group);
+      rig.dispose();
+      this.dropRigs.delete(id);
+    }
+    this.dropPresenter.retain(live);
+  }
+
+  /**
+   * A loot cue, if anything has been authored for it (spec 154).
+   *
+   * A cue is a *name*, and this is the whole of the hook: when the effect
+   * library knows the id it plays it, and when it does not this is silent.
+   * Deliberately not `addEffect`, whose fallback draws a ring for any id it does
+   * not recognise -- a ring under every potion that ever drops is exactly the
+   * noise the restrained-presentation rule exists to prevent, and silence is the
+   * right placeholder for an effect nobody has made yet.
+   */
+  private playCue(cue: string, x: number, y: number): void {
+    if (!this.vfx.system.has(cue)) return;
+    this.vfx.play(cue, {
+      x,
+      y: this.ground(x, y) + 2,
+      z: y,
+      scale: 1,
+      seed: (Math.round(x) * 73856093) ^ (Math.round(y) * 19349663),
+    });
   }
 
   /**
