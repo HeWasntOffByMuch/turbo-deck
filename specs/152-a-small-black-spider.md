@@ -29,22 +29,56 @@ with:
 export type MechRigTuning = Partial<Omit<MechTuning, 'moveSpeed' | 'turnRate'>>;
 
 export interface MonsterLook {
-  readonly body: MechBodyShape;   // 'box' (what every monster draws today) | 'sphere'
-  readonly bodyColor: number;
-  /** Defaults to the rig's own `darken(bodyColor, 0.55)`. */
-  readonly legColor?: number;
+  readonly appearance: MechAppearance;   // shape + the two colours
   readonly tuning: MechRigTuning;
 }
 
 export function monsterLookFor(typeId: string): MonsterLook | null;
 ```
 
+`MechAppearance` is the rig's own live record rather than a shape this file
+invents, and that is what makes the movement sandbox's chip honest: the panel's
+colour wells write into the same type, so what somebody tunes over there is what
+gets pasted back in here. It is separate from `MechTuning` rather than three more
+fields on it because the tuning is a record of *numbers* — clamped to safe
+ranges, bound to sliders — and a shape is not a number while a colour is one only
+by accident of encoding. Sanitizing a colour against a min and a max is nonsense.
+
+Both records are read by the rig every frame, so an edit lands on the next one.
+Changing a colour rebuilds the body and swaps the legs' materials; it must not
+rebuild the *legs*, because that re-plants every foot and picking a colour would
+make the unit hop where it stands. Mutating the material in place is not an
+option either — `flatMaterial` caches one per colour across the whole scene.
+
 There is deliberately no `mechTuningFor` here merging the overrides onto
 `defaultMechTuning()`, which was the first shape and is the obvious one. That
 function lives in the rig module, and importing it would pull three.js into the
 world view's pure half — where nothing outside `scene.ts` and `shot.ts` has ever
-reached for it. So `MechTuning` comes in as a type and is erased, and the merge
+reached for it. So the rig types come in as types and are erased, and the merge
 is a spread at the one place a rig is actually constructed.
+
+## The sandbox
+
+A third mech chip, loaded from this same table, so the body being tuned is the
+one in the game rather than a lookalike rebuilt from memory. The controls it
+exists for are `bodySize` and the two colour wells, which need a third row type
+in `tuning-panel.ts`: a swatch over a hex int, a union member rather than a flag
+on the slider, because `min`/`max`/`step` are meaningless on a colour and absent
+says that better than ignored does.
+
+The mechs have always shared one tuning object — that is what makes the panel's
+mech section one set of sliders rather than one per unit — so a third mech with
+different numbers has to *load* them, exactly as `C` already loads an archetype
+preset. A preset's tuning and its appearance carry separate ids, because they
+change on different picks: spider and walker have always differed in colour and
+never in tuning, so moving between those two must still leave a dragged slider
+alone. Reset follows the active chip rather than the bare defaults, or the button
+quietly turns the small spider into a mech.
+
+The rig debugger mounts this same panel over two mechs whose colours are fixed at
+construction, so it passes no appearance and the colour rows are never shown —
+the rule this tab already applies to the attack section, and to controls that
+would visibly do nothing.
 
 The `Omit` is the point, not a detail. Move speed and turn rate exist on
 `MechTuning` because the movement sandbox needs somewhere to hang its two sim
@@ -53,18 +87,30 @@ are the *server's*, so a renderer table that could name them would be a second
 place to write down how fast a body moves — and the two would disagree the first
 time one was edited. The type makes that unwriteable rather than discouraged.
 
-`MechRig` grows the two options the look needs and nothing more:
+`MechRig` takes the record the same way it already takes a tuning — shared, so a
+panel can edit one object and every mech built against it follows:
 
 ```ts
 export type MechBodyShape = 'box' | 'sphere';
 
+export interface MechAppearance {
+  shape: MechBodyShape;
+  bodyColor: number;
+  legColor: number;     // always concrete; defaultMechAppearance applies the darken once
+}
+
 export interface MechOptions {
   readonly lowerBodyTurns?: boolean;
   readonly tuning?: MechTuning;
-  readonly body?: MechBodyShape;   // default 'box'
-  readonly legColor?: number;      // default darken(bodyColor, 0.55)
+  readonly appearance?: MechAppearance;
 }
 ```
+
+`MechTuning` gains one field, `bodySize`: how big the body is against its own
+legs. It belongs with the other proportions rather than on the appearance,
+because it is a number somebody finds by dragging, and because `sizeScale` — the
+knob next to it — moves the body and the legs together and so cannot express a
+proportion between them.
 
 `'sphere'` is one faceted body and no other part. The box variant is a chassis, a
 plate, a head and an eye, and three of those exist to say which way a mech is
@@ -126,6 +172,16 @@ nothing forces them to agree.
   new id and the new markers agree.
 - `appearanceOf` still gives the new monster a rig, a health bar and its own
   radius, like every other row.
+- A live edit reaches the meshes: changing the shape swaps the body and leaves
+  the legs alone, changing either colour repaints, and changing `bodySize`
+  resizes the body without moving a leg. The last two are asserted against a
+  *control* rig walked in lockstep rather than against a tolerance, because a
+  foot mid-swing travels several units in a frame by itself — so "did the edit
+  move it" cannot be asked of one rig's before and after.
+- A colour change does not re-plant the feet.
+- In a real browser (`preview-sandbox.ts`): the chip loads the shipped 0.60 and
+  `#141418` into the controls, a tuned body colour paints that many pixels of
+  the canvas, and switching back restores the plain spider's numbers.
 
 ## Out of scope
 
@@ -137,5 +193,8 @@ nothing forces them to agree.
   switch stays dead until something asks it a question it can answer.
 - A web, a poison, a leap, or any AI that is not "walk in and swing". It fights
   with `melee.slash` like everything else in the table.
-- A movement-sandbox chip for it. The sandbox tunes a rig; this ships the numbers
-  that came out of one.
+- A shape control in the sandbox. The chip picks the shape; there is no box/sphere
+  switch, because nobody asked to compare them and a control nobody wants is
+  still a control somebody has to understand.
+- Persisting what gets tuned. The sandbox opens at defaults like every other
+  panel in it, and a look that is worth keeping is a line in `monster-look.ts`.

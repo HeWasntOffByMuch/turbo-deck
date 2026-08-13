@@ -798,7 +798,11 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  look that could name them would be a second place to write down
                  how fast a monster moves. Pure, which is also why the merge onto
                  `defaultMechTuning()` happens in scene.ts rather than here:
-                 nothing in this directory's pure half imports the rig module)
+                 nothing in this directory's pure half imports the rig module.
+                 The shape and colours are the rig's own `MechAppearance` rather
+                 than a shape this file invents, which is what makes the movement
+                 sandbox's chip honest -- the panel's colour wells write into the
+                 same type, so what is tuned there is what gets pasted back here)
                  are pure and tested headlessly; scene.ts, shot.ts, hud.ts,
                  ui-layer.ts (the second canvas, the scale and one coordinate
                  conversion -- the whole impure half of the mount) and
@@ -1063,6 +1067,19 @@ src/render/iso3d/weapon-rig.ts, unit-rig.ts's attach()  a weapon in a hand (spec
 src/render/iso3d/movement.ts, debug-view.ts  the two tuning sandboxes (specs
                  032/033/035/046, back since 066): one unit, no game, so a gait,
                  a cloth solve or a turn rate can be watched in isolation.
+                 Since spec 152 it also drives the *shipped* small spider, loaded
+                 from the same look table the arena draws it from, so what gets
+                 tuned is the enemy in the game rather than a lookalike rebuilt
+                 from memory. The mechs share one tuning object -- that is what
+                 makes the panel's mech section one set of sliders rather than
+                 one per unit -- so a third mech with different numbers has to
+                 *load* them, the same thing C already does with the archetype
+                 presets. A preset's tuning and its appearance carry separate ids
+                 because they change on different picks: spider and walker have
+                 always differed in colour and never in tuning, so moving between
+                 those two must still leave a dragged slider alone. Reset follows
+                 the active chip rather than the bare defaults, or the button
+                 quietly turns the small spider into a mech.
                  Since spec 140 the movement sandbox also drives an *authored*
                  unit -- one chip per entry in the manifest, so `authored:pig_a_pose_full`
                  is the generated body posed by its state machine and `pig` is
