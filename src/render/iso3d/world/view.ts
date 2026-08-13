@@ -98,6 +98,23 @@ const TICK_MS = 1000 / SERVER_TICK_RATE;
 const PROP_SETTLE_FRAMES = 2;
 /** Never advance more than this many ticks in one frame, after a long pause. */
 const MAX_CATCH_UP_TICKS = 10;
+/**
+ * Wall-clock period for the two things that must outlive the frame loop
+ * (spec 157): the heartbeat, and the reconnect backoff.
+ *
+ * Both used to ride `requestAnimationFrame`, which a browser throttles to
+ * nothing in a hidden tab -- so switching tabs for a minute stopped the pings,
+ * the server's ten-second timeout dropped the connection, and the backoff that
+ * would have brought it back was frozen by the same stall. A `setInterval` is
+ * clamped to about a second when hidden but never stops, which is the whole
+ * difference between "slower" and "never".
+ *
+ * 500ms is the rate the frame loop drove them at, so nothing about a visible
+ * tab changes.
+ */
+const KEEPALIVE_MS = 500;
+/** Ticks of backoff clock per keep-alive, so `ReconnectingChannel` stays tick-driven. */
+const KEEPALIVE_TICKS = Math.round(KEEPALIVE_MS / TICK_MS);
 /** Ms between deltas -- the interval the renderer interpolates across. */
 const DELTA_MS = TICK_MS * BROADCAST_EVERY_N_TICKS;
 
@@ -1435,6 +1452,14 @@ export function mountWorld(container: HTMLElement): ViewHandle {
 
   /** The wire's own clock: whole sim ticks, same as everything else here. */
   let wireTick = 0;
+  /**
+   * The reconnect backoff's clock, in the same ticks but off the wall (spec
+   * 157). Separate from `wireTick` because that one stops with the frame loop,
+   * and this one must not.
+   */
+  let backoffTick = 0;
+  /** The wall-clock timer driving the heartbeat and the backoff. 0 when stopped. */
+  let keepAlive = 0;
 
   function frame(now: number): void {
     const elapsed = last === 0 ? TICK_MS : now - last;
@@ -1453,8 +1478,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       accumulator -= tickMs;
       ticks += 1;
       wireTick += 1;
-      // The backoff runs on the sim clock, like the wire's queues.
-      reconnecting?.deliver(wireTick);
+      // The backoff used to be driven from here, on the sim clock. It is on the
+      // wall clock now (spec 157): a hidden tab stops this loop, and a
+      // reconnect that can only be attempted while somebody is looking at the
+      // tab is not a reconnect.
       // Released before the tick that will read them, so a frame due on this
       // tick is one this tick sees (spec 147).
       wire.deliver(wireTick);
@@ -1616,16 +1643,24 @@ export function mountWorld(container: HTMLElement): ViewHandle {
       // the shell calls when this tab becomes visible, and a Hello sent twice
       // on one socket used to spawn a second body and orphan the first.
       if (plan.mode === 'remote') {
-        void client
-          .connect()
-          .then(() => {
-            // Kept for the next load of this tab, so a refresh is a resume
-            // rather than a second body beside the first (spec 150).
-            rememberSession(sessionStorage, client.sessionToken);
-          })
-          .catch((error: unknown) => {
-            banner.refuse(error instanceof Error ? error.message : String(error));
-          });
+        // On *every* welcome rather than in the `.then()` of this first one
+        // (spec 157). The server mints a fresh token per welcome, so writing it
+        // once left storage holding a stale one after any reconnect -- and the
+        // next reload of the tab was then a fresh login rather than a resume.
+        client.onWelcome(() => {
+          // Kept for the next load of this tab, so a refresh is a resume
+          // rather than a second body beside the first (spec 150).
+          rememberSession(sessionStorage, client.sessionToken);
+        });
+        // The heartbeat and the backoff, on a clock a hidden tab cannot stop.
+        keepAlive = window.setInterval(() => {
+          client.keepAlive();
+          backoffTick += KEEPALIVE_TICKS;
+          reconnecting?.deliver(backoffTick);
+        }, KEEPALIVE_MS);
+        void client.connect().catch((error: unknown) => {
+          banner.refuse(error instanceof Error ? error.message : String(error));
+        });
       } else {
         void client.connect();
       }
@@ -1636,6 +1671,10 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     },
     stop(): void {
       cancelAnimationFrame(raf);
+      if (keepAlive !== 0) {
+        window.clearInterval(keepAlive);
+        keepAlive = 0;
+      }
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
