@@ -36,6 +36,12 @@ import { LayerStack } from '../../../ui/core/layers.js';
 import { UiRoot } from '../../../ui/core/root.js';
 import type { MotionPreference } from '../../../ui/core/motion.js';
 import { WindowManager } from '../../../ui/core/window-manager.js';
+import {
+  applyLayout,
+  captureLayout,
+  layoutSignature,
+  type StoredLayout,
+} from '../../../ui/core/layout-store.js';
 import { bakeAtlas, type Atlas } from '../../../ui/render/atlas.js';
 import { BODY_FONT } from '../../../ui/text/font.js';
 import { THEME } from '../../../ui/theme/theme.js';
@@ -96,6 +102,42 @@ export interface UiScreensOptions {
    * saves it, and hands the result back through {@link UiScreens.setScale}.
    */
   readonly onScaleChosen: (choice: ScaleChoice) => void;
+  /**
+   * The layout to restore, read at the DOM edge. Null when there is none.
+   *
+   * Held rather than applied, because it cannot be applied yet: see
+   * {@link UiScreens.restoreLayout}.
+   */
+  readonly layout?: StoredLayout | null;
+  /**
+   * Where the windows are now, worth writing down (spec 147).
+   *
+   * Debounced by the mount, so this fires once when a drag ends rather than on
+   * every frame of it -- and, like `onBindingsChanged`, it is a callback because
+   * `src/ui/` may not touch storage and a save no test can observe is a save
+   * nothing checks.
+   */
+  readonly onLayoutChanged: (layout: StoredLayout) => void;
+}
+
+/**
+ * How long the layout has to hold still before it is written, in ms.
+ *
+ * A trailing debounce rather than a leading one: a drag changes the layout on
+ * every frame it moves, and the interesting value is the one it stops on. Short
+ * enough that an ordinary quit keeps the arrangement without a flush; the flush
+ * exists for the rest ({@link UiScreens.flushLayout}).
+ */
+const SAVE_DELAY_MS = 400;
+
+/**
+ * Which windows may be restored open.
+ *
+ * See `ApplyOptions.restoreOpen`. The shop and the trade table are the server's
+ * to open, so their openness was never the player's choice to remember.
+ */
+function playerDriven(id: string): boolean {
+  return id !== 'shop' && id !== 'trade';
 }
 
 const WINDOW_TITLES: Readonly<Record<WindowId, string>> = {
@@ -140,6 +182,13 @@ export class UiScreens {
   private readonly placed = new Set<WindowId>();
   /** ...and ones opened but not yet placed, because their screen is still empty. */
   private readonly awaitingPlacement = new Set<WindowId>();
+  /** The saved layout, until there is a viewport worth applying it against. */
+  private pendingLayout: StoredLayout | null;
+  private layoutRestored = false;
+  /** What the layout looked like when it was last written, as a signature. */
+  private savedSignature = '';
+  /** When the pending write is due, on the mount's own clock. Null when clean. */
+  private saveDueAt: number | null = null;
   /**
    * How much of the top of the viewport the app's own chrome is sitting on, in
    * UI pixels.
@@ -195,6 +244,7 @@ export class UiScreens {
     private readonly options: UiScreensOptions,
     viewport: Size,
   ) {
+    this.pendingLayout = options.layout ?? null;
     this.layers.place('windows', this.windows);
     this.root = new UiRoot(this.layers, {
       theme: THEME,
@@ -299,13 +349,95 @@ export class UiScreens {
    * Closed rather than open, and registered up front rather than on demand, so
    * the z-order is the same every session: a window built the first time it is
    * opened would stack in whatever order the player happened to press keys.
+   *
+   * `resizable` since spec 147, and every one of them: the size a window is
+   * given here is measured from what its screen wanted on the frame it first
+   * opened, which is a reasonable guess and nothing more. A bag that is one row
+   * short is a bag you scroll for the rest of the install.
    */
   private registerWindow(id: WindowId, screen: Widget, scrolled = true): void {
     const content = scrolled ? new ScrollView(screen, `${id}Scroll`) : screen;
-    const window = new UiWindow(content, { title: WINDOW_TITLES[id] });
+    const window = new UiWindow(content, { title: WINDOW_TITLES[id], resizable: true });
     this.contents.set(id, content);
     this.windows.register(window, id);
     window.visible = false;
+  }
+
+  // --- the saved layout ------------------------------------------------------
+
+  /**
+   * Put the windows back where they were, once there is somewhere to put them.
+   *
+   * The wait is the whole of it. `UiLayer` measures its frame in its constructor,
+   * before the tab has been laid out, and `Math.max(1, clientWidth)` makes that a
+   * 1x1 placeholder which the first update corrects. `applyLayout` re-clamps
+   * against the viewport it is handed -- correctly, since a layout saved on a
+   * monitor must not put a window off the edge of a phone -- so applying it
+   * against 1x1 stacks every window at the origin at its minimum size and writes
+   * that back as the new layout. The saved arrangement would be destroyed by the
+   * act of restoring it.
+   *
+   * So it is held until the viewport is real, and `layoutRestored` is only set
+   * then -- which also means nothing is *written* before it, because a save that
+   * beat the restore would save the defaults over the document.
+   */
+  private restoreLayout(): void {
+    if (this.layoutRestored) return;
+    const viewport = this.root.viewport;
+    if (viewport.width <= 1 || viewport.height <= 1) return;
+    this.layoutRestored = true;
+
+    const layout = this.pendingLayout;
+    this.pendingLayout = null;
+    if (layout) {
+      applyLayout(this.windows, layout, viewport, { restoreOpen: playerDriven });
+      // A window the document placed does not want the default placement run
+      // over it on the next open -- but one the document has never heard of, from
+      // a build that did not have it, still does.
+      for (const stored of layout.windows) {
+        if (this.windows.get(stored.id)) this.placed.add(stored.id as WindowId);
+      }
+      // `applyLayout` sets `visible` directly, so the context stack has not heard
+      // about the windows it just opened.
+      this.syncContext();
+    }
+    // Seeded rather than left empty, so the frame after a restore does not see a
+    // change and write the document straight back out.
+    this.savedSignature = layoutSignature(this.windows);
+  }
+
+  /**
+   * Notice a moved, resized, opened or restacked window and schedule the write.
+   *
+   * Trailing debounce: every change slides the due time, so a drag writes once
+   * when it stops rather than on each of the frames it moved. The clock is the
+   * `nowMs` the mount was handed -- there isn't another one, which is the rule
+   * that keeps this file replayable.
+   */
+  private trackLayout(nowMs: number): void {
+    if (!this.layoutRestored) return;
+    const signature = layoutSignature(this.windows);
+    if (signature !== this.savedSignature) {
+      this.savedSignature = signature;
+      this.saveDueAt = nowMs + SAVE_DELAY_MS;
+      return;
+    }
+    if (this.saveDueAt === null || nowMs < this.saveDueAt) return;
+    this.saveDueAt = null;
+    this.options.onLayoutChanged(captureLayout(this.windows));
+  }
+
+  /**
+   * Write the pending layout now, if there is one.
+   *
+   * For the tab going away: `ui-layer.ts` calls it on `pagehide` and on the
+   * document going hidden, because the debounce above is 400ms of real time and
+   * a window dragged immediately before a quit would otherwise be forgotten.
+   */
+  flushLayout(): void {
+    if (this.saveDueAt === null) return;
+    this.saveDueAt = null;
+    this.options.onLayoutChanged(captureLayout(this.windows));
   }
 
   // --- the frame ------------------------------------------------------------
@@ -327,6 +459,10 @@ export class UiScreens {
    */
   update(view: ClientView, nowMs: number): void {
     this.now = nowMs;
+    // Before anything is placed, and before anything is saved. The saved layout
+    // is the answer to "where does this window go"; the defaults are only what
+    // happens when there isn't one.
+    this.restoreLayout();
 
     if (this.isOpen('inventory') && this.containersChanged(view)) {
       this.inventory.setContainers(
@@ -419,6 +555,9 @@ export class UiScreens {
 
     this.syncContext();
     this.root.update(nowMs);
+    // After the layout pass, so a drag that landed this frame is measured at the
+    // position it landed at rather than the one it left.
+    this.trackLayout(nowMs);
   }
 
   /**
@@ -486,6 +625,7 @@ export class UiScreens {
     readonly bagRects: readonly { readonly id: string; readonly rect: Rect }[];
     readonly bindRects: readonly { readonly id: string; readonly rect: Rect }[];
     readonly resetRects: readonly { readonly id: string; readonly rect: Rect }[];
+    readonly windowRects: readonly { readonly id: string; readonly rect: Rect }[];
   } {
     const tabs = this.optionsScreen.tabs;
     return {
@@ -513,6 +653,14 @@ export class UiScreens {
       // broke, and the resets are here so a harness can put back what it bound.
       bindRects: this.rowButtons('bind:', ':primary'),
       resetRects: this.rowButtons('reset:', ''),
+      // Where each window is and how big it is, in UI pixels (spec 147). The
+      // whole feature is a claim about numbers that survive a reload, and this
+      // is the only way a browser can read one back: the interface is a canvas,
+      // so "the bag came back where I left it" has no element to ask.
+      windowRects: this.windows.ids().flatMap((id) => {
+        const window = this.windows.get(id);
+        return window ? [{ id, rect: window.placement() }] : [];
+      }),
     };
   }
 
