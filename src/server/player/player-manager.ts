@@ -43,6 +43,9 @@ import {
 import { spendSkillPoint, sanitizeSkills } from './skills.js';
 import type { Holdings } from './trade.js';
 import { clampHealthToStats, clampResourceToStats, computeEffectiveStats } from './stats.js';
+import { applyProgress, experienceForLevel, SKILL_POINTS_PER_LEVEL } from './progress.js';
+import { itemById, maxStackOf } from '../data/items.js';
+import { AdminProgressMode, type AdminProgressModeValue } from '../net/protocol.js';
 
 /** Stats a brand new character starts with, before any allocation. */
 export const DEFAULT_BASE_STATS: BaseStats = {
@@ -87,13 +90,12 @@ export function starterInventory(): Inventory {
  */
 export const STARTING_COINS = 60;
 
-/** Skill points granted per level gained. */
-export const SKILL_POINTS_PER_LEVEL = 1;
-
-/** Experience needed to reach `level` from the one below it. */
-export function experienceForLevel(level: number): number {
-  return Math.round(50 * Math.pow(Math.max(1, level - 1), 1.5));
-}
+/**
+ * The level arithmetic lives in `progress.ts` (spec 153) and is re-exported here
+ * because this is where every caller already looks for it. The dependency points
+ * that way and not back: `progress.ts` imports nothing from this file.
+ */
+export { experienceForLevel, SKILL_POINTS_PER_LEVEL };
 
 export interface PlayerSession {
   readonly playerId: string;
@@ -118,6 +120,15 @@ export interface PlayerSession {
 
 export type PlayerActionResult =
   | { readonly ok: true; readonly session: PlayerSession }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * A progression edit's result (spec 153). Carries a description of what changed,
+ * because "level 4 -> 9, 6 skill point(s)" is the only way the operator who
+ * asked for it can see that it did what they meant.
+ */
+export type ProgressResult =
+  | { readonly ok: true; readonly session: PlayerSession; readonly detail: string }
   | { readonly ok: false; readonly reason: string };
 
 export class PlayerManager {
@@ -469,24 +480,72 @@ export class PlayerManager {
     return updated ? { ok: true, session: updated } : { ok: false, reason: 'not logged in' };
   }
 
-  /** Awards experience and levels the character up as far as it carries them. */
+  /**
+   * Awards experience and levels the character up as far as it carries them.
+   *
+   * Since spec 153 this is {@link setProgress} with one mode fixed, rather than
+   * its own copy of the level-up loop. One place decides how experience becomes
+   * levels, so a monster's award and an admin's grant cannot come to different
+   * answers -- including about the level cap, which a second loop would have
+   * quietly ignored.
+   */
   async grantExperience(playerId: string, amount: number): Promise<PlayerSession | null> {
     const session = this.sessions.get(playerId);
     if (!session || amount <= 0) return session ?? null;
+    const result = await this.setProgress(playerId, AdminProgressMode.AddExperience, amount);
+    return result.ok ? result.session : null;
+  }
 
-    let { level, experience, unspentSkillPoints } = session.record;
-    experience += Math.floor(amount);
-    while (experience >= experienceForLevel(level + 1)) {
-      experience -= experienceForLevel(level + 1);
-      level += 1;
-      unspentSkillPoints += SKILL_POINTS_PER_LEVEL;
+  /**
+   * Edits a level or an experience total (spec 153).
+   *
+   * The arithmetic is `applyProgress`, which is pure; this is the part that needs
+   * a session -- committing the record and re-deriving stats through the one
+   * funnel every other stat change already passes through.
+   */
+  async setProgress(
+    playerId: string,
+    mode: AdminProgressModeValue,
+    amount: number,
+  ): Promise<ProgressResult> {
+    const session = this.sessions.get(playerId);
+    if (!session) return { ok: false, reason: 'not logged in' };
+
+    const outcome = applyProgress(session.record, mode, amount);
+    this.commit({ ...session, record: outcome.player });
+    const updated = await this.recalculate(playerId);
+    return updated
+      ? { ok: true, session: updated, detail: outcome.detail }
+      : { ok: false, reason: 'not logged in' };
+  }
+
+  /**
+   * Puts a stack in the bag, or refuses and changes nothing (spec 153).
+   *
+   * `addToInventory` is all-or-nothing, and that is deliberate here: a bag that
+   * can hold four of six takes none of them, so an operator is told the bag is
+   * full rather than left guessing how many landed.
+   */
+  async giveItem(playerId: string, defId: string, count: number): Promise<PlayerActionResult> {
+    const session = this.sessions.get(playerId);
+    if (!session) return { ok: false, reason: 'not logged in' };
+    if (!itemById(defId)) return { ok: false, reason: `no such item: ${defId}` };
+
+    const wanted = Math.floor(count);
+    if (!Number.isFinite(wanted) || wanted < 1) return { ok: false, reason: 'count must be at least 1' };
+
+    const bag = addToInventory(session.record.inventory, { defId, count: wanted });
+    if (bag === null) {
+      const cap = maxStackOf(defId);
+      return {
+        ok: false,
+        reason: `their bag cannot hold ${wanted} x ${defId} (stacks of ${cap})`,
+      };
     }
 
-    this.commit({
-      ...session,
-      record: { ...session.record, level, experience, unspentSkillPoints },
-    });
-    return this.recalculate(playerId);
+    this.commit({ ...session, record: { ...session.record, inventory: bag } });
+    const updated = await this.recalculate(playerId);
+    return updated ? { ok: true, session: updated } : { ok: false, reason: 'not logged in' };
   }
 
   /**

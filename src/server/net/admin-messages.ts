@@ -6,7 +6,12 @@
 
 import type { AuditEntry } from '../state/types.js';
 import { BufferReader, BufferWriter, CodecError } from './codec.js';
-import { AdminMessageType, AdminReplyType } from './protocol.js';
+import {
+  AdminMessageType,
+  AdminReplyType,
+  isAdminProgressMode,
+  type AdminProgressModeValue,
+} from './protocol.js';
 
 export interface AdminAuthRequest {
   readonly type: typeof AdminMessageType.Auth;
@@ -86,6 +91,37 @@ export interface AdminGetAuditRequest {
   readonly limit: number;
 }
 
+/**
+ * An edit to one character's level or experience (spec 153). See
+ * {@link AdminProgressMode} for why the four operator asks are one message.
+ */
+export interface AdminSetProgressRequest {
+  readonly type: typeof AdminMessageType.SetProgress;
+  readonly playerId: string;
+  readonly mode: AdminProgressModeValue;
+  /**
+   * On the wire as a u32, so an `Add` cannot be negative by construction: a
+   * decrease is a `Set`, which is also the only shape a reset has.
+   */
+  readonly amount: number;
+}
+
+export interface AdminGiveItemRequest {
+  readonly type: typeof AdminMessageType.GiveItem;
+  readonly playerId: string;
+  readonly defId: string;
+  readonly count: number;
+}
+
+export interface AdminGetItemsRequest {
+  readonly type: typeof AdminMessageType.GetItems;
+}
+
+export interface AdminKillRequest {
+  readonly type: typeof AdminMessageType.Kill;
+  readonly playerId: string;
+}
+
 export type AdminRequest =
   | AdminAuthRequest
   | AdminListPlayersRequest
@@ -99,7 +135,11 @@ export type AdminRequest =
   | AdminBroadcastRequest
   | AdminSetConfigRequest
   | AdminGetConfigRequest
-  | AdminGetAuditRequest;
+  | AdminGetAuditRequest
+  | AdminSetProgressRequest
+  | AdminGiveItemRequest
+  | AdminGetItemsRequest
+  | AdminKillRequest;
 
 export function encodeAdminRequest(request: AdminRequest): Uint8Array {
   const writer = new BufferWriter(64);
@@ -110,6 +150,7 @@ export function encodeAdminRequest(request: AdminRequest): Uint8Array {
       break;
     case AdminMessageType.ListPlayers:
     case AdminMessageType.GetConfig:
+    case AdminMessageType.GetItems:
       break;
     case AdminMessageType.Kick:
       writer.str(request.playerId).str(request.reason);
@@ -140,6 +181,15 @@ export function encodeAdminRequest(request: AdminRequest): Uint8Array {
       break;
     case AdminMessageType.GetAudit:
       writer.u16(request.limit);
+      break;
+    case AdminMessageType.SetProgress:
+      writer.str(request.playerId).u8(request.mode).u32(request.amount);
+      break;
+    case AdminMessageType.GiveItem:
+      writer.str(request.playerId).str(request.defId).u16(request.count);
+      break;
+    case AdminMessageType.Kill:
+      writer.str(request.playerId);
       break;
   }
   return writer.toBytes();
@@ -197,6 +247,28 @@ export function decodeAdminRequest(frame: Uint8Array): AdminRequest {
       return { type: AdminMessageType.SetConfig, key: reader.str(), value: reader.f64() };
     case AdminMessageType.GetAudit:
       return { type: AdminMessageType.GetAudit, limit: reader.u16() };
+    case AdminMessageType.SetProgress: {
+      const playerId = reader.str();
+      const mode = reader.u8();
+      // Checked here rather than trusted: the mode selects arithmetic, and an
+      // unknown one would otherwise fall through whatever the switch on it does
+      // last. A hand-crafted frame is refused as a frame, not as a no-op.
+      if (!isAdminProgressMode(mode)) {
+        throw new CodecError(`unknown admin progress mode ${mode}`);
+      }
+      return { type: AdminMessageType.SetProgress, playerId, mode, amount: reader.u32() };
+    }
+    case AdminMessageType.GiveItem:
+      return {
+        type: AdminMessageType.GiveItem,
+        playerId: reader.str(),
+        defId: reader.str(),
+        count: reader.u16(),
+      };
+    case AdminMessageType.GetItems:
+      return { type: AdminMessageType.GetItems };
+    case AdminMessageType.Kill:
+      return { type: AdminMessageType.Kill, playerId: reader.str() };
     default:
       throw new CodecError(`unknown admin request type 0x${type.toString(16)}`);
   }
@@ -220,6 +292,24 @@ export interface AdminPlayerRow {
   readonly attackDamage: number;
   readonly moveSpeed: number;
   readonly muted: boolean;
+  /** Progress within the current level (spec 153). */
+  readonly experience: number;
+  /**
+   * What the next level costs from here. Sent beside the experience because the
+   * formula is the server's, so the console renders `340 / 670` rather than a
+   * bare number nobody can read a fraction off.
+   */
+  readonly experienceToNextLevel: number;
+  readonly unspentSkillPoints: number;
+}
+
+/** One row of the item table, so the console offers a list rather than ids. */
+export interface AdminItemRow {
+  readonly id: string;
+  readonly name: string;
+  readonly slot: string;
+  readonly levelRequirement: number;
+  readonly maxStack: number;
 }
 
 export interface AdminOkReply {
@@ -249,12 +339,18 @@ export interface AdminAuditReply {
   readonly entries: readonly AuditEntry[];
 }
 
+export interface AdminItemListReply {
+  readonly type: typeof AdminReplyType.ItemList;
+  readonly items: readonly AdminItemRow[];
+}
+
 export type AdminReply =
   | AdminOkReply
   | AdminErrorReply
   | AdminPlayerListReply
   | AdminConfigReply
-  | AdminAuditReply;
+  | AdminAuditReply
+  | AdminItemListReply;
 
 export function encodeAdminReply(reply: AdminReply): Uint8Array {
   const writer = new BufferWriter(256);
@@ -281,7 +377,10 @@ export function encodeAdminReply(reply: AdminReply): Uint8Array {
           .varuint(row.level)
           .f32(row.attackDamage)
           .f32(row.moveSpeed)
-          .bool(row.muted);
+          .bool(row.muted)
+          .varuint(row.experience)
+          .varuint(row.experienceToNextLevel)
+          .varuint(row.unspentSkillPoints);
       }
       break;
     case AdminReplyType.Config:
@@ -298,6 +397,17 @@ export function encodeAdminReply(reply: AdminReply): Uint8Array {
           .str(entry.target)
           .str(entry.detail)
           .bool(entry.accepted);
+      }
+      break;
+    case AdminReplyType.ItemList:
+      writer.varuint(reply.items.length);
+      for (const item of reply.items) {
+        writer
+          .str(item.id)
+          .str(item.name)
+          .str(item.slot)
+          .varuint(item.levelRequirement)
+          .varuint(item.maxStack);
       }
       break;
   }
@@ -331,6 +441,9 @@ export function decodeAdminReply(frame: Uint8Array): AdminReply {
           attackDamage: reader.f32(),
           moveSpeed: reader.f32(),
           muted: reader.bool(),
+          experience: reader.varuint(),
+          experienceToNextLevel: reader.varuint(),
+          unspentSkillPoints: reader.varuint(),
         });
       }
       return { type: AdminReplyType.PlayerList, players };
@@ -355,6 +468,23 @@ export function decodeAdminReply(frame: Uint8Array): AdminReply {
         });
       }
       return { type: AdminReplyType.Audit, entries };
+    }
+    case AdminReplyType.ItemList: {
+      // `count` rather than `varuint` (spec 152): a wire-supplied length that is
+      // about to size a collection is checked against what the frame can hold.
+      // The three replies above predate the primitive.
+      const count = reader.count();
+      const items: AdminItemRow[] = [];
+      for (let i = 0; i < count; i++) {
+        items.push({
+          id: reader.str(),
+          name: reader.str(),
+          slot: reader.str(),
+          levelRequirement: reader.varuint(),
+          maxStack: reader.varuint(),
+        });
+      }
+      return { type: AdminReplyType.ItemList, items };
     }
     default:
       throw new CodecError(`unknown admin reply type 0x${type.toString(16)}`);

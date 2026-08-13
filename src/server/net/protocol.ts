@@ -205,7 +205,37 @@ export const AdminMessageType = {
   SetConfig: 0x8a,
   GetConfig: 0x8b,
   GetAudit: 0x8c,
+  /** Edit a character's level or experience (spec 153). */
+  SetProgress: 0x8d,
+  GiveItem: 0x8e,
+  /** The item table, so the console has a list rather than remembered ids. */
+  GetItems: 0x8f,
+  Kill: 0x90,
 } as const;
+
+/**
+ * Which field of a character's progression an `admin:setProgress` edits, and
+ * whether it adds to it or replaces it (spec 153).
+ *
+ * Four operator asks -- give levels, give experience, reset levels, reset
+ * experience -- are two verbs over two fields, so they are a mode on one message
+ * rather than four type bytes. A reset is `SetLevel 1` or `SetExperience 0`,
+ * which is what keeps it from being a third code path with its own idea of what
+ * a consistent record looks like.
+ */
+export const AdminProgressMode = {
+  AddLevels: 0,
+  SetLevel: 1,
+  AddExperience: 2,
+  SetExperience: 3,
+} as const;
+
+export type AdminProgressModeValue =
+  (typeof AdminProgressMode)[keyof typeof AdminProgressMode];
+
+export function isAdminProgressMode(value: number): value is AdminProgressModeValue {
+  return (Object.values(AdminProgressMode) as readonly number[]).includes(value);
+}
 
 export const AdminReplyType = {
   Ok: 0xa0,
@@ -213,6 +243,8 @@ export const AdminReplyType = {
   PlayerList: 0xa2,
   Config: 0xa3,
   Audit: 0xa4,
+  /** The item table (spec 153). */
+  ItemList: 0xa5,
 } as const;
 
 export const ADMIN_REQUEST_MIN = 0x80;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { LiveConfigStore } from '../config.js';
-import type { AdminPlayerRow } from '../net/admin-messages.js';
-import { AdminMessageType, AdminReplyType } from '../net/protocol.js';
+import type { AdminItemRow, AdminPlayerRow } from '../net/admin-messages.js';
+import { AdminMessageType, AdminProgressMode, AdminReplyType } from '../net/protocol.js';
 import { MemoryDataStore } from '../state/memory-store.js';
 import { AuditLog } from './audit.js';
 import {
@@ -17,6 +17,7 @@ import {
   DENY_ALL_ADMIN,
   type AdminHost,
   type AdminConnectionState,
+  type AdminOutcome,
 } from './router.js';
 
 const SECRET = 'test-secret-not-a-real-key';
@@ -45,7 +46,15 @@ class FakeHost implements AdminHost {
       attackDamage: 10,
       moveSpeed: 147.5,
       muted: false,
+      experience: 0,
+      experienceToNextLevel: 50,
+      unspentSkillPoints: 1,
     }));
+  }
+
+  listItems(): readonly AdminItemRow[] {
+    this.calls.push('listItems');
+    return [{ id: 'potion.minor', name: 'Minor Potion', slot: '-', levelRequirement: 1, maxStack: 10 }];
   }
 
   kick(playerId: string): boolean {
@@ -95,6 +104,33 @@ class FakeHost implements AdminHost {
 
   getConfig(): readonly (readonly [string, number])[] {
     return [['spawnRateMultiplier', this.config.get().spawnRateMultiplier] as const];
+  }
+
+  // --- spec 153 -------------------------------------------------------------
+
+  setProgress(playerId: string, mode: number, amount: number): Promise<AdminOutcome> {
+    this.calls.push(`setProgress:${playerId}:${mode}:${amount}`);
+    return Promise.resolve(
+      this.connectedPlayers.has(playerId)
+        ? { ok: true, detail: `mode ${mode} by ${amount}` }
+        : { ok: false, detail: 'not logged in' },
+    );
+  }
+
+  giveItem(playerId: string, defId: string, count: number): Promise<AdminOutcome> {
+    this.calls.push(`giveItem:${playerId}:${defId}:${count}`);
+    return Promise.resolve(
+      defId === 'potion.minor'
+        ? { ok: true, detail: `gave ${playerId} ${count} x ${defId}` }
+        : { ok: false, detail: `no such item: ${defId}` },
+    );
+  }
+
+  kill(playerId: string): AdminOutcome {
+    this.calls.push(`kill:${playerId}`);
+    return this.connectedPlayers.has(playerId)
+      ? { ok: true, detail: `killed ${playerId}` }
+      : { ok: false, detail: `${playerId} is not in the world` };
   }
 }
 
@@ -350,8 +386,144 @@ describe('admin routing', () => {
       type: AdminMessageType.Auth,
       token: signToken({ sub: 'alice-the-gm', role: 'admin' }, SECRET, T0),
     });
-    await test.router.handle(test.connection, { type: AdminMessageType.ListPlayers });
+    await test.router.handle(test.connection, {
+      type: AdminMessageType.Kick,
+      playerId: 'bob',
+      reason: 'afk',
+    });
     const log = await test.audit.recent(1);
     expect(log[0]?.actor).toBe('alice-the-gm');
+  });
+
+  it('does not audit a read (spec 153)', async () => {
+    // A live player count polls the list once a second. The log holds decisions,
+    // and one entry per poll would bury every one of them.
+    const test = harness();
+    await test.router.handle(test.connection, { type: AdminMessageType.Auth, token: adminToken() });
+    const before = (await test.audit.recent(50)).length;
+
+    for (let i = 0; i < 5; i++) {
+      await test.router.handle(test.connection, { type: AdminMessageType.ListPlayers });
+      await test.router.handle(test.connection, { type: AdminMessageType.GetItems });
+      await test.router.handle(test.connection, { type: AdminMessageType.GetConfig });
+    }
+
+    expect((await test.audit.recent(50)).length).toBe(before);
+    // Still authenticated, and a decision still lands.
+    await test.router.handle(test.connection, {
+      type: AdminMessageType.Kick,
+      playerId: 'bob',
+      reason: 'afk',
+    });
+    expect((await test.audit.recent(50)).length).toBe(before + 1);
+  });
+});
+
+describe('character edits (spec 153)', () => {
+  async function authed(): Promise<Harness> {
+    const test = harness();
+    await test.router.handle(test.connection, { type: AdminMessageType.Auth, token: adminToken() });
+    return test;
+  }
+
+  const modes = [
+    ['give levels', AdminProgressMode.AddLevels, 5],
+    ['reset levels', AdminProgressMode.SetLevel, 1],
+    ['give experience', AdminProgressMode.AddExperience, 1200],
+    ['reset experience', AdminProgressMode.SetExperience, 0],
+  ] as const;
+
+  it.each(modes)('%s reaches the host with its own mode and amount', async (_label, mode, amount) => {
+    const test = await authed();
+    const reply = await test.router.handle(test.connection, {
+      type: AdminMessageType.SetProgress,
+      playerId: 'bob',
+      mode,
+      amount,
+    });
+    expect(reply.type).toBe(AdminReplyType.Ok);
+    expect(test.host.calls).toContain(`setProgress:bob:${mode}:${amount}`);
+  });
+
+  it('names the mode in the audit entry rather than its byte', async () => {
+    const test = await authed();
+    await test.router.handle(test.connection, {
+      type: AdminMessageType.SetProgress,
+      playerId: 'bob',
+      mode: AdminProgressMode.SetLevel,
+      amount: 1,
+    });
+    const log = await test.audit.recent(1);
+    expect(log[0]).toMatchObject({ actor: 'root', action: 'admin:setProgress', target: 'bob' });
+    expect(log[0]?.detail).toContain('setLevel 1');
+  });
+
+  it('carries a refusal reason back rather than flattening it', async () => {
+    const test = await authed();
+    const reply = await test.router.handle(test.connection, {
+      type: AdminMessageType.GiveItem,
+      playerId: 'bob',
+      defId: 'sord.worn',
+      count: 1,
+    });
+    expect(reply.type).toBe(AdminReplyType.Error);
+    if (reply.type === AdminReplyType.Error) expect(reply.message).toContain('sord.worn');
+    expect((await test.audit.recent(1))[0]).toMatchObject({
+      action: 'admin:giveItem',
+      accepted: false,
+    });
+  });
+
+  it('gives an item and audits what was given', async () => {
+    const test = await authed();
+    const reply = await test.router.handle(test.connection, {
+      type: AdminMessageType.GiveItem,
+      playerId: 'bob',
+      defId: 'potion.minor',
+      count: 3,
+    });
+    expect(reply.type).toBe(AdminReplyType.Ok);
+    expect(test.host.calls).toContain('giveItem:bob:potion.minor:3');
+    expect((await test.audit.recent(1))[0]?.detail).toBe('3 x potion.minor');
+  });
+
+  it('kills a connected player and refuses one who is not there', async () => {
+    const test = await authed();
+    const killed = await test.router.handle(test.connection, {
+      type: AdminMessageType.Kill,
+      playerId: 'bob',
+    });
+    expect(killed.type).toBe(AdminReplyType.Ok);
+
+    const missing = await test.router.handle(test.connection, {
+      type: AdminMessageType.Kill,
+      playerId: 'nobody',
+    });
+    expect(missing.type).toBe(AdminReplyType.Error);
+  });
+
+  it('answers the item catalog so the console need not know any ids', async () => {
+    const test = await authed();
+    const reply = await test.router.handle(test.connection, { type: AdminMessageType.GetItems });
+    expect(reply.type).toBe(AdminReplyType.ItemList);
+    if (reply.type === AdminReplyType.ItemList) {
+      expect(reply.items[0]?.id).toBe('potion.minor');
+    }
+  });
+
+  it('does none of it unauthenticated', async () => {
+    const test = harness();
+    const requests = [
+      { type: AdminMessageType.SetProgress, playerId: 'bob', mode: AdminProgressMode.AddLevels, amount: 9 },
+      { type: AdminMessageType.GiveItem, playerId: 'bob', defId: 'potion.minor', count: 1 },
+      { type: AdminMessageType.GetItems },
+      { type: AdminMessageType.Kill, playerId: 'bob' },
+    ] as const;
+
+    for (const request of requests) {
+      const reply = await test.router.handle(test.connection, request);
+      expect(reply.type).toBe(AdminReplyType.Error);
+    }
+    expect(test.host.calls).toEqual([]);
   });
 });
