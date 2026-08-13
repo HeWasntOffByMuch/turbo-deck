@@ -76,20 +76,33 @@ async function walk(page: Page, dx: number, dy: number): Promise<void> {
 }
 
 /**
- * Every visible control in the panel, by its label (spec 152).
+ * Every visible control in the panel, by its lil-gui name (spec 152).
  *
  * Scoped to what is actually on screen, because the tab shell keeps the hidden
- * tabs' panels mounted and the rig debugger's rows carry the same labels -- so
- * an unscoped query answers with the wrong tab's numbers and looks right.
+ * tabs' panels mounted and the rig debugger's controllers carry some of the same
+ * names -- so an unscoped query answers with the wrong tab's numbers and looks
+ * right. A lil-gui controller is a `.lil-controller` div holding a `.lil-name`
+ * and its widget -- classes prefixed in this build, the same `.lil-children`
+ * lookup `editor/panel.ts` already makes. The widget is read by *kind* rather
+ * than by input type, because lil-gui's number control is an `input[type=text]`
+ * beside a `div` slider: asking for `type=number` or `type=range` finds neither
+ * and quietly reports a panel with three controls in it.
  */
 async function panelControls(page: Page): Promise<Record<string, string>> {
   return page.evaluate(() => {
     const out: Record<string, string> = {};
-    for (const label of Array.from(document.querySelectorAll('label'))) {
-      const input = label.parentElement?.querySelector('input');
-      if (!input || (input.type !== 'range' && input.type !== 'color')) continue;
-      if (input.offsetParent === null) continue; // a hidden tab, or a closed group
-      out[(label.textContent ?? '').trim()] = input.value;
+    for (const row of Array.from(document.querySelectorAll('.lil-controller'))) {
+      if ((row as HTMLElement).offsetParent === null) continue; // hidden tab or closed folder
+      const name = row.querySelector('.lil-name')?.textContent?.trim() ?? '';
+      if (name === '') continue;
+      const select = row.querySelector<HTMLSelectElement>('select');
+      if (select) {
+        out[name] = select.value;
+        continue;
+      }
+      const input = row.querySelector<HTMLInputElement>('input');
+      if (!input) continue;
+      out[name] = input.type === 'checkbox' ? String(input.checked) : input.value;
     }
     return out;
   });
@@ -119,22 +132,41 @@ async function countNear(
   return count;
 }
 
-/** Type a value into a labelled control the way the panel's own handler hears it. */
-async function setControl(page: Page, label: string, value: string): Promise<void> {
+/**
+ * Drive a named control the way lil-gui's own listeners hear it.
+ *
+ * Both events on purpose: lil-gui's number and colour controllers update on
+ * `input` and its dropdowns on `change`, and firing one of the two silently does
+ * nothing for half the controls in the panel.
+ */
+async function setControl(page: Page, name: string, value: string): Promise<void> {
   await page.evaluate(
-    ({ label, value }) => {
-      for (const el of Array.from(document.querySelectorAll('label'))) {
-        if ((el.textContent ?? '').trim() !== label) continue;
-        const input = el.parentElement?.querySelector('input');
-        if (!input || input.offsetParent === null) continue;
-        input.value = value;
-        input.dispatchEvent(new Event('input', { bubbles: true }));
+    ({ name, value }) => {
+      for (const row of Array.from(document.querySelectorAll('.lil-controller'))) {
+        if ((row as HTMLElement).offsetParent === null) continue;
+        if ((row.querySelector('.lil-name')?.textContent ?? '').trim() !== name) continue;
+        const field =
+          row.querySelector<HTMLSelectElement>('select') ??
+          row.querySelector<HTMLInputElement>('input');
+        if (!field) continue;
+        if (field instanceof HTMLInputElement && field.type === 'checkbox') {
+          field.checked = value === 'true';
+        } else {
+          field.value = value;
+        }
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+        field.dispatchEvent(new Event('change', { bubbles: true }));
         return;
       }
-      throw new Error(`no visible control labelled ${label}`);
+      throw new Error(`no visible control named ${name}`);
     },
-    { label, value },
+    { name, value },
   );
+}
+
+/** Pick a unit from the panel's Unit dropdown, which used to be a row of chips. */
+async function pickUnit(page: Page, label: string): Promise<void> {
+  await setControl(page, 'Unit', label);
 }
 
 async function main(): Promise<void> {
@@ -176,6 +208,17 @@ async function main(): Promise<void> {
     await shoot(page, 'sandbox-walking');
     console.log(`  ${await statusLine(page)}`);
 
+    // The critter's coat is a free colour now (spec 152), not a grid of twelve.
+    await pickUnit(page, 'Pig');
+    await page.waitForTimeout(900);
+    await setControl(page, 'Colour', '#3f7a33');
+    await page.waitForTimeout(500);
+    const coated = await countNear(page, [0x3f, 0x7a, 0x33], 34);
+    console.log(`  a green pig: ${coated} px of a colour no preset offers`);
+    if (coated < 50) problems.push(`the free coat colour painted ${coated} px, expected an animal`);
+    await pickUnit(page, 'Spider');
+    await page.waitForTimeout(600);
+
     // C cycles the movement archetype (and loads its preset into the sliders).
     await page.keyboard.press('KeyC');
     await page.waitForTimeout(200);
@@ -185,21 +228,27 @@ async function main(): Promise<void> {
     // The chip has to LOAD the shipped look, or somebody tunes a body that is
     // not the one in the game. Read back off the real controls, because that is
     // the half no headless test can see.
-    await page.getByRole('button', { name: 'Small spider' }).click();
+    await pickUnit(page, 'Small spider');
     await page.waitForTimeout(900);
     const spider = await panelControls(page);
     console.log(
       `  small spider: size ${spider['Size']}, body size ${spider['Body size']}, ` +
         `body ${spider['Body']}, legs ${spider['Legs']}`,
     );
+    // Numbers compared as numbers: lil-gui formats a control's text to the
+    // decimals it was given, so `0.6` reads back as `0.60` and a string test
+    // would fail on the formatting rather than on the value.
     for (const [label, want] of [
-      ['Size', '0.6'],
-      ['Body size', '1.25'],
-      ['Body', '#241f31'],
-      ['Legs', '#241f31'],
+      ['Size', 0.6],
+      ['Body size', 1.25],
     ] as const) {
-      if (spider[label] !== want) {
+      if (Number(spider[label]) !== want) {
         problems.push(`the Small spider chip left ${label} at ${spider[label]}, wanted ${want}`);
+      }
+    }
+    for (const label of ['Body', 'Legs'] as const) {
+      if (spider[label] !== '#241f31') {
+        problems.push(`the Small spider chip left ${label} at ${spider[label]}, wanted #241f31`);
       }
     }
     // Photographed standing rather than mid-walk: this shot is about how big the
@@ -222,14 +271,14 @@ async function main(): Promise<void> {
     if (painted < 50) problems.push(`the body colour well painted ${painted} px, expected a body`);
 
     // And back: the plain spider must not have kept the small one's numbers.
-    await page.getByRole('button', { name: 'Spider', exact: true }).click();
+    await pickUnit(page, 'Spider');
     await page.waitForTimeout(600);
     const back = await panelControls(page);
     console.log(`  back on Spider: size ${back['Size']}, body ${back['Body']}`);
-    if (back['Size'] !== '1') problems.push(`switching back left Size at ${back['Size']}, wanted 1`);
+    if (Number(back['Size']) !== 1) problems.push(`switching back left Size at ${back['Size']}, wanted 1`);
 
     // The hooded robe, and J to hop it: the cloth is the reason this tab exists.
-    await page.getByRole('button', { name: 'Hooded robe' }).click();
+    await pickUnit(page, 'Hooded robe');
     await page.waitForTimeout(1200);
     await walk(page, 150, -40);
     await page.waitForTimeout(500);
@@ -251,7 +300,7 @@ async function main(): Promise<void> {
     await shoot(page, 'sandbox-rig-walking');
 
     // Slow-mo is what the viewport is for: the same gait, one tenth the speed.
-    await page.getByRole('button', { name: '0.1×' }).click();
+    await setControl(page, 'Speed', '0.1×');
     await page.waitForTimeout(600);
     await shoot(page, 'sandbox-rig-slowmo');
     console.log(`  ${await statusLine(page)}`);

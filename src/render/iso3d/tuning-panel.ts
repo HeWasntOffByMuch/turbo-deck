@@ -1,14 +1,24 @@
+import GUI from 'lil-gui';
+
 /**
- * The sandbox's live tuning panel (specs 032/037), generic over whatever
+ * The sandbox's live tuning panel (specs 032/037/152), generic over whatever
  * all-numeric tuning record it is pointed at.
  *
- * It started as the mech's slider column; the robe needs the same thing for a
- * completely different set of knobs, and a second copy would have meant every
- * later fix landing in one of them. So it is parameterised over the record type
- * instead: describe the rows, hand it the object, and it binds sliders (and 0/1
- * toggles) straight onto the live tuning. Mutations take effect on the next
+ * It started as the mech's hand-rolled slider column; the robe needs the same
+ * thing for a completely different set of knobs, and a second copy would have
+ * meant every later fix landing in one of them. So it is parameterised over the
+ * record type instead: describe the rows, hand it the object, and it binds
+ * controls straight onto the live tuning. Mutations take effect on the next
  * frame -- no apply button, no copy, no event plumbing -- which is the whole
  * point of a tuning sandbox.
+ *
+ * Since spec 152 the controls are `lil-gui`, which is what the map editor has
+ * always used and what the brief asks for: no second UI framework in the tree,
+ * and none of the sliders, number fields, colour pickers and folder chevrons
+ * hand-written again here. What did NOT move is the row *data* -- a
+ * {@link TuningGroup} is a plain description with no lil-gui in it, which is the
+ * same split `editor/tools.ts` keeps from `editor/panel.ts` and the reason the
+ * mech, robe and critter tables are readable on their own.
  *
  * Sections can be shown and hidden as a unit, so the panel can swap its contents
  * when the sandbox's unit picker changes without rebuilding anything.
@@ -40,19 +50,14 @@ export interface TuningSlider<T> extends TuningRowBase<T> {
  *
  * A colour is still a number, so it binds through the same `NumericKeys` as
  * every other row -- but a range with a min and a max is the wrong control for
- * one, and three sliders labelled R, G and B is a worse tool than the picker
- * every browser already has. `min`/`max`/`step` are absent rather than ignored,
- * which is why this is a union member and not a flag on the slider.
+ * one. `min`/`max`/`step` are absent rather than ignored, which is why this is a
+ * union member and not a flag on the slider.
  */
 export interface TuningSwatch<T> extends TuningRowBase<T> {
   readonly swatch: true;
 }
 
 export type TuningRow<T> = TuningSlider<T> | TuningSwatch<T>;
-
-function isSwatch<T>(row: TuningRow<T>): row is TuningSwatch<T> {
-  return 'swatch' in row;
-}
 
 export interface TuningGroup<T> {
   readonly title: string;
@@ -63,83 +68,42 @@ export interface TuningGroup<T> {
 
 /** A mounted group of rows bound to a live tuning object. */
 export interface TuningSection {
-  readonly element: HTMLElement;
   /** Push the tuning's current values back into the controls (after a reset). */
   sync(): void;
   setVisible(visible: boolean): void;
 }
 
+function isSwatch<T>(row: TuningRow<T>): row is TuningSwatch<T> {
+  return 'swatch' in row;
+}
+
 const PANEL_TEXT = '#c9c9d8';
 export const LABEL_CSS = `font-family:'Segoe UI',system-ui,sans-serif;color:${PANEL_TEXT};`;
 
-/** A small heading, matching the panel's existing look. */
-export function panelHeading(text: string): HTMLElement {
-  const h = document.createElement('div');
-  h.textContent = text;
-  h.style.cssText = 'color:#f0f0f8;font-weight:600;margin:12px 0 4px;letter-spacing:.03em;';
-  return h;
-}
-
-/** A full-width panel button (reset, jump, gust, ...). */
-export function panelButton(label: string, tip: string, onClick: () => void): HTMLButtonElement {
-  const btn = document.createElement('button');
-  btn.textContent = label;
-  btn.title = tip;
-  btn.style.cssText =
-    `${LABEL_CSS}flex:1;min-width:0;padding:7px 4px;border-radius:6px;cursor:pointer;` +
-    'border:1px solid #2a2a3a;background:#2a2a3a;color:#f0f0f8;font-size:12px;';
-  btn.addEventListener('click', onClick);
-  return btn;
-}
-
-/** A row of buttons that share the width. */
-export function panelButtonRow(...buttons: readonly HTMLElement[]): HTMLElement {
-  const row = document.createElement('div');
-  row.style.cssText = 'display:flex;gap:6px;margin:6px 0 0;';
-  row.append(...buttons);
-  return row;
+/**
+ * Mount a panel into the page flow rather than lil-gui's fixed corner.
+ *
+ * Every GUI here lives in a tab's own column beside a canvas; left at its
+ * default the panel floats over whichever tab happens to be on screen, which is
+ * the same correction `editor/panel.ts` makes.
+ */
+export function embedGui(gui: GUI): GUI {
+  gui.domElement.style.position = 'static';
+  gui.domElement.style.maxWidth = '100%';
+  return gui;
 }
 
 /**
- * Build a set of collapsible groups bound to `target`. Every control writes
- * straight into the object, so the running simulation picks changes up on its
- * next frame.
+ * Where lil-gui puts a GUI's or a folder's contents.
+ *
+ * By class rather than by index: `domElement` holds a title and this, and
+ * appending to `domElement` itself drops the addition *under* the controllers
+ * instead of among them. The same lookup `editor/panel.ts` makes, and for the
+ * same reason -- lil-gui has no widget for a block of monospaced readout, so it
+ * is raw DOM mounted inside the panel rather than floating beside it.
  */
-export function buildTuningSection<T>(groups: readonly TuningGroup<T>[], target: T): TuningSection {
-  const element = document.createElement('div');
-  const refreshers: (() => void)[] = [];
-
-  for (const group of groups) {
-    const details = document.createElement('details');
-    details.open = !group.collapsed;
-    details.style.cssText = 'margin:0;';
-    const summary = document.createElement('summary');
-    summary.textContent = group.title;
-    summary.style.cssText =
-      'color:#f0f0f8;font-weight:600;margin:12px 0 4px;letter-spacing:.03em;cursor:pointer;list-style:revert;';
-    details.appendChild(summary);
-
-    for (const spec of group.rows) {
-      details.appendChild(
-        isSwatch(spec)
-          ? buildSwatch(spec, target, refreshers)
-          : spec.toggle
-            ? buildToggle(spec, target, refreshers)
-            : buildSlider(spec, target, refreshers),
-      );
-    }
-    element.appendChild(details);
-  }
-
-  return {
-    element,
-    sync: () => {
-      for (const r of refreshers) r();
-    },
-    setVisible: (visible: boolean) => {
-      element.style.display = visible ? 'block' : 'none';
-    },
-  };
+export function guiContents(gui: GUI): HTMLElement {
+  return (gui.domElement.querySelector('.lil-children') as HTMLElement | null) ?? gui.domElement;
 }
 
 /** Read a numeric field off the tuning without losing the key's type. */
@@ -152,97 +116,69 @@ function write<T>(target: T, key: NumericKeys<T>, value: number): void {
   target[key] = value as T[NumericKeys<T>];
 }
 
-/** `0x1a2b3c` <-> `#1a2b3c`, which is the only format `input[type=color]` speaks. */
-function toCss(hex: number): string {
-  const clamped = Math.max(0, Math.min(0xffffff, Math.round(hex)));
-  return `#${clamped.toString(16).padStart(6, '0')}`;
+/**
+ * Bind a set of groups onto `parent` as folders. Every control writes straight
+ * into `target`, so the running simulation picks changes up on its next frame.
+ */
+export function addTuningGroups<T>(
+  parent: GUI,
+  groups: readonly TuningGroup<T>[],
+  target: T,
+): TuningSection {
+  const folders: GUI[] = [];
+  const refreshers: (() => void)[] = [];
+
+  for (const group of groups) {
+    const folder = parent.addFolder(group.title);
+    if (group.collapsed) folder.close();
+    folders.push(folder);
+
+    for (const row of group.rows) {
+      // lil-gui's `add` is typed over `keyof T`, and a `NumericKeys<T>` narrowed
+      // out of a generic does not satisfy it. The record view is the same object
+      // -- every key a row can name holds a number, which is what `NumericKeys`
+      // already guaranteed on the way in.
+      const bag = target as unknown as Record<string, number>;
+      const key = row.key as string;
+      const controller = isSwatch(row)
+        ? folder.addColor(bag, key)
+        : row.toggle
+          ? folder.add(booleanProxy(target, row.key), 'on')
+          : folder.add(bag, key, row.min, row.max, row.step).decimals(row.digits ?? 0);
+      controller.name(row.label);
+      // lil-gui has no tooltip, and the tips are half of what this panel is
+      // for: on the row's whole element, so hovering the label, the slider or
+      // the readout all explain the same knob.
+      controller.domElement.title = row.tip;
+      refreshers.push(() => controller.updateDisplay());
+    }
+  }
+
+  return {
+    sync: () => {
+      for (const refresh of refreshers) refresh();
+    },
+    setVisible: (visible: boolean) => {
+      for (const folder of folders) folder.show(visible);
+    },
+  };
 }
 
-function buildSwatch<T>(spec: TuningSwatch<T>, target: T, refreshers: (() => void)[]): HTMLElement {
-  const row = document.createElement('div');
-  row.style.cssText = 'display:flex;align-items:center;gap:8px;margin:5px 0;';
-  row.title = spec.tip;
-
-  const label = document.createElement('label');
-  label.textContent = spec.label;
-  label.style.cssText = 'flex:0 0 44%;';
-  const input = document.createElement('input');
-  input.type = 'color';
-  input.style.cssText =
-    'flex:1;min-width:0;height:22px;padding:0;background:none;border:1px solid #2a2a3a;border-radius:4px;cursor:pointer;';
-  const value = document.createElement('span');
-  value.style.cssText = 'flex:0 0 60px;text-align:right;font-variant-numeric:tabular-nums;color:#e0e0ee;';
-
-  const refresh = (): void => {
-    const css = toCss(read(target, spec.key));
-    input.value = css;
-    // The hex is the readout on purpose: it is the thing somebody copies out of
-    // this panel and pastes into a palette entry.
-    value.textContent = css;
+/**
+ * A boolean view of a 0/1 field, so lil-gui draws a checkbox for it.
+ *
+ * lil-gui picks its control from the value's *type*, and a toggle row binds a
+ * number -- which would come out as a number field reading 0 and 1. The accessor
+ * pair is read on every `updateDisplay`, so the checkbox still follows a reset
+ * that wrote the underlying field directly.
+ */
+function booleanProxy<T>(target: T, key: NumericKeys<T>): { on: boolean } {
+  return {
+    get on(): boolean {
+      return read(target, key) >= 0.5;
+    },
+    set on(value: boolean) {
+      write(target, key, value ? 1 : 0);
+    },
   };
-  input.addEventListener('input', () => {
-    write(target, spec.key, parseInt(input.value.slice(1), 16));
-    value.textContent = input.value;
-  });
-  refresh();
-  refreshers.push(refresh);
-  row.append(label, input, value);
-  return row;
-}
-
-function buildSlider<T>(spec: TuningSlider<T>, target: T, refreshers: (() => void)[]): HTMLElement {
-  const row = document.createElement('div');
-  row.style.cssText = 'display:flex;align-items:center;gap:8px;margin:5px 0;';
-  // Native hover tooltip on the whole row (label, slider and readout), so
-  // hovering anywhere on a setting explains what it does.
-  row.title = spec.tip;
-
-  const label = document.createElement('label');
-  label.textContent = spec.label;
-  label.style.cssText = 'flex:0 0 44%;';
-  const input = document.createElement('input');
-  input.type = 'range';
-  input.min = String(spec.min);
-  input.max = String(spec.max);
-  input.step = String(spec.step);
-  input.style.cssText = 'flex:1;min-width:0;accent-color:#4a7fb0;';
-  const value = document.createElement('span');
-  value.style.cssText = 'flex:0 0 44px;text-align:right;font-variant-numeric:tabular-nums;color:#e0e0ee;';
-
-  const fmt = (v: number): string => (spec.digits ? v.toFixed(spec.digits) : String(Math.round(v)));
-  const refresh = (): void => {
-    const v = read(target, spec.key);
-    input.value = String(v);
-    value.textContent = fmt(v);
-  };
-  input.addEventListener('input', () => {
-    const v = Number(input.value);
-    write(target, spec.key, v);
-    value.textContent = fmt(v);
-  });
-  refresh();
-  refreshers.push(refresh);
-  row.append(label, input, value);
-  return row;
-}
-
-function buildToggle<T>(spec: TuningSlider<T>, target: T, refreshers: (() => void)[]): HTMLElement {
-  const row = document.createElement('label');
-  row.style.cssText = 'display:flex;align-items:center;gap:8px;margin:6px 0;cursor:pointer;';
-  row.title = spec.tip;
-
-  const cb = document.createElement('input');
-  cb.type = 'checkbox';
-  cb.style.accentColor = '#4a7fb0';
-  const span = document.createElement('span');
-  span.textContent = spec.label;
-
-  const refresh = (): void => {
-    cb.checked = read(target, spec.key) >= 0.5;
-  };
-  cb.addEventListener('change', () => write(target, spec.key, cb.checked ? 1 : 0));
-  refresh();
-  refreshers.push(refresh);
-  row.append(cb, span);
-  return row;
 }

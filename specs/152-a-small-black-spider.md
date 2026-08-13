@@ -132,10 +132,32 @@ nothing forces them to agree.
 
 A third mech chip, loaded from this same table, so the body being tuned is the
 one in the game rather than a lookalike rebuilt from memory. The controls it
-exists for are `bodySize` and the two colour wells, which need a third row type
-in `tuning-panel.ts`: a swatch over a hex int, a union member rather than a flag
-on the slider, because `min`/`max`/`step` are meaningless on a colour and absent
+exists for are `bodySize` and the two colours, which need a third row type in
+`tuning-panel.ts`: a swatch over a hex int, a union member rather than a flag on
+the slider, because `min`/`max`/`step` are meaningless on a colour and absent
 says that better than ignored does.
+
+The panel itself moves to **lil-gui**, which the map editor has always used. The
+brief's rule is no second UI framework in the tree, and the sandbox had drifted
+into one: hand-written sliders, checkboxes, button rows, chip strips and a
+swatch grid, all of them re-implementing a widget lil-gui ships. What does *not*
+move is the row data -- a `TuningGroup` is a plain description with no lil-gui in
+it, the split `editor/tools.ts` keeps from `editor/panel.ts`.
+
+Two controls change shape rather than being translated:
+
+- **The unit picker becomes a dropdown.** The chips were one flex row across a
+  300px panel, and the roster had already outgrown it -- with two critters and
+  three authored units the last chip was being clipped mid-word. A list is as
+  long as the roster and cannot overflow.
+- **The critter's coat becomes a free colour**, with the twelve as presets. The
+  swatch grid was deliberate: the derivation that keeps a critter legible is
+  only *guaranteed* inside the mid-value band those twelve occupy, and a free
+  picker lets somebody build a black pig whose eyes and hooves vanish into it.
+  That argument is about the surface a **player** customises through, which is
+  not this one -- this is the tuning sandbox, whose whole job is trying the thing
+  to see what it does. So the guarantee becomes a note in the tip rather than a
+  fence.
 
 The mechs have always shared one tuning object — that is what makes the panel's
 mech section one set of sliders rather than one per unit — so a third mech with
@@ -182,6 +204,9 @@ would visibly do nothing.
 - In a real browser (`preview-sandbox.ts`): the chip loads the shipped 0.60 and
   `#241f31` into the controls, a tuned body colour paints that many pixels of
   the canvas, and switching back restores the plain spider's numbers.
+- Also in a browser: a coat colour no preset offers paints an animal, which is
+  what "any colour" means once it has been through the derivation rather than
+  just into a record.
 
 ## Out of scope
 
@@ -196,5 +221,8 @@ would visibly do nothing.
 - A shape control in the sandbox. The chip picks the shape; there is no box/sphere
   switch, because nobody asked to compare them and a control nobody wants is
   still a control somebody has to understand.
+- Widening the *player's* coat picker. What moved is the sandbox's; the player
+  still picks one of the twelve, and the legibility guarantee that set is for
+  still holds there.
 - Persisting what gets tuned. The sandbox opens at defaults like every other
   panel in it, and a look that is worth keeping is a line in `monster-look.ts`.

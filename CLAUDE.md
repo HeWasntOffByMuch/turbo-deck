@@ -1097,6 +1097,24 @@ src/render/iso3d/movement.ts, debug-view.ts  the two tuning sandboxes (specs
                  joint and cloth overlays. Both drive sandbox-mover.ts -- a pure,
                  headlessly tested position/heading/move-order driver, NOT a
                  second sim -- through sandbox-input.ts, and share buildPanel().
+                 Since spec 152 that panel is **lil-gui**, which the map editor
+                 has always used: no second UI framework in the tree, and no
+                 hand-written sliders, number fields, colour wells or folder
+                 chevrons. What did not move is the row *data* -- a `TuningGroup`
+                 is a plain description with no lil-gui in it, the same split
+                 `editor/tools.ts` keeps from `editor/panel.ts`, which is what
+                 makes the mech, robe and critter tables readable on their own.
+                 Two things changed shape rather than being translated. The unit
+                 picker is a dropdown, because the chips were one flex row across
+                 a 300px panel and the roster had already grown past what that
+                 could hold -- the last chip was being clipped mid-word. And the
+                 critter's coat is a free colour with the twelve kept as presets:
+                 the swatch grid existed because the derivation that keeps a
+                 critter legible is only *guaranteed* in the mid-value band those
+                 twelve occupy, but that argument is about the surface a player
+                 customises through, and this is the tab whose whole job is
+                 trying the thing to see what it does. The guarantee is a note in
+                 the tip now rather than a fence.
 scripts/         standalone scripts (e.g. the balance harness), run via tsx
 .claude/         harness config: agents/ (the delegation policy, see below),
                  hooks/session-start.sh (branch-base check + dependency install),
