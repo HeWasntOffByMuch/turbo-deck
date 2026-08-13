@@ -66,6 +66,19 @@ function clamp01(value: number): number {
 }
 
 /**
+ * True past the attack point (spec 144): the blow has already happened.
+ *
+ * Exported because it is the boundary two different questions turn on -- how to
+ * draw the bar, and whether a blow can still be called off (spec 155) -- and two
+ * copies of "which phases are past the attack point" is the pair that drifts.
+ * Read off the phase rather than off the clock, because the server is the one
+ * that decides and the phase is what it sent.
+ */
+export function committedPhase(phase: number): boolean {
+  return phase === CastPhaseValue.Backswing || phase === CastPhaseValue.Channel;
+}
+
+/**
  * `tick` may be fractional: the renderer paints between sim ticks, and passing
  * the interpolated tick is what stops the bar advancing in 20Hz steps while the
  * body under it moves smoothly.
@@ -82,7 +95,13 @@ export function castBar(cast: CastLike, tick: number): CastBar {
   // against it would run the bar up and then reset it when the real wind-up
   // starts. Empty, and cancellable, which is exactly the state it describes.
   if (phase === CastPhaseValue.Turning) {
-    return { progress: 0, cancellable: true, phase, turning: true, committed: false };
+    return {
+      progress: 0,
+      cancellable: true,
+      phase,
+      turning: true,
+      committed: committedPhase(phase),
+    };
   }
 
   if (phase === CastPhaseValue.Windup) {
@@ -95,7 +114,7 @@ export function castBar(cast: CastLike, tick: number): CastBar {
       cancellable: true,
       phase,
       turning: false,
-      committed: false,
+      committed: committedPhase(phase),
     };
   }
 
@@ -109,7 +128,7 @@ export function castBar(cast: CastLike, tick: number): CastBar {
       cancellable: false,
       phase,
       turning: false,
-      committed: true,
+      committed: committedPhase(phase),
     };
   }
 
@@ -120,6 +139,6 @@ export function castBar(cast: CastLike, tick: number): CastBar {
     cancellable: true,
     phase,
     turning: false,
-    committed: true,
+    committed: committedPhase(phase),
   };
 }
