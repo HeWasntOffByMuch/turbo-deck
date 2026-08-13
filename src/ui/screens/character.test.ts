@@ -46,6 +46,7 @@ function attributeRow(
     key,
     name: key,
     abbrev: key.slice(0, 3).toUpperCase(),
+    description: `what ${key} does`,
     allocated: 12,
     total: 12,
     canAllocate: true,
@@ -185,8 +186,11 @@ describe('the character sheet', () => {
     );
     expect(screen.attributeRowFor('strength')?.spendButton.enabled).toBe(true);
     expect(screen.attributeRowFor('wisdom')?.spendButton.enabled).toBe(false);
-    // The refusal is what the tooltip says, not a second sentence written here.
-    expect(screen.attributeRowFor('wisdom')?.tooltip()).toBe('no unspent attribute points');
+    // The refusal is the server's own words, not a second sentence written here
+    // -- appended to the description rather than standing in for it.
+    expect(screen.attributeRowFor('wisdom')?.tooltip()).toBe(
+      'what wisdom does -- no unspent attribute points',
+    );
   });
 
   it('presses through to the caller with the attribute that was pressed', () => {
@@ -224,7 +228,11 @@ describe('the character sheet', () => {
     // The rows have carried a `tooltip()` since spec 128 and nothing ever asked
     // them; this is the wiring, so it is worth a test that it is wired.
     const { screen, root } = harness(
-      viewOf({ attributes: [attributeRow('strength', { nextEffect: 'Crushing Blows' })] }),
+      viewOf({
+        attributes: [
+          attributeRow('strength', { nextEffect: 'Crushing Blows', toNext: 2 }),
+        ],
+      }),
     );
     // The rect a hit test reads only exists once the tab holding it is the one
     // laid out, which is a property of the panel rather than of this screen.
@@ -234,8 +242,72 @@ describe('the character sheet', () => {
     expect(row).not.toBeNull();
     if (!row) return;
     const middle = { x: row.rect.x + row.rect.width / 2, y: row.rect.y + row.rect.height / 2 };
-    expect(screen.hintAt(middle)).toBe('Crushing Blows');
+    expect(screen.hintAt(middle)).toBe('what strength does -- 2 more: Crushing Blows');
     expect(screen.hintAt({ x: -50, y: -50 })).toBe('');
+  });
+
+  it('answers only from the tab you are looking at', () => {
+    // A tab that is switched away is *hidden*, never destroyed (spec 124), so
+    // every row in it keeps `visible` true and keeps the rectangle it was last
+    // arranged into. Asking the rows directly therefore answered a hover over
+    // the Attributes tab with whichever skill happened to be laid out at the
+    // same coordinates -- which is the whole of the report this test is for.
+    const { screen, root } = harness(
+      viewOf({ attributes: [attributeRow('strength', { description: 'Overpower.' })] }),
+    );
+    screen.tabs.select('attributes');
+    root.update(0);
+    const row = screen.attributeRowFor('strength');
+    expect(row).not.toBeNull();
+    if (!row) return;
+    const middle = { x: row.rect.x + row.rect.width / 2, y: row.rect.y + row.rect.height / 2 };
+    expect(screen.hintAt(middle)).toContain('Overpower.');
+
+    // Same coordinates, a different tab. The row is still there and still has
+    // that rectangle; it is just not what the player is looking at.
+    screen.tabs.select('skills');
+    root.update(0);
+    expect(screen.hintAt(middle)).not.toContain('Overpower.');
+  });
+
+  it('answers a hover over a stat line with that line\'s own hint', () => {
+    // The stat rows are bare labels rather than a row class, so they are found
+    // by position in the list rather than by type -- worth its own case, since
+    // an off-by-one there would hand every stat its neighbour's sentence.
+    const { screen, root } = harness();
+    screen.tabs.select('stats');
+    root.update(0);
+    const rows = screen.statRowList;
+    expect(rows.length).toBeGreaterThan(1);
+    for (const [index, row] of rows.entries()) {
+      const at = { x: row.rect.x + 2, y: row.rect.y + row.rect.height / 2 };
+      expect(screen.hintAt(at)).toBe(screen.shown?.stats[index]?.hint);
+    }
+  });
+
+  it('still says what an attribute does when there is nothing to spend', () => {
+    // The refusal used to *replace* the description, so a character between two
+    // level-ups -- which is nearly always -- got "no unspent attribute points"
+    // on all six rows and no way to find out what any of them were for.
+    const { screen } = harness(
+      viewOf({
+        unspentAttributePoints: 0,
+        attributes: [
+          attributeRow('strength', {
+            description: 'Overpower. Poise damage, stagger duration.',
+            canAllocate: false,
+            blockedBecause: 'no unspent attribute points',
+            nextEffect: 'Committed Swing — hyper-armour while winding up',
+            toNext: 3,
+          }),
+        ],
+      }),
+    );
+    const hint = screen.attributeRowFor('strength')?.tooltip() ?? '';
+    expect(hint).toContain('Overpower. Poise damage, stagger duration.');
+    // ...and the other two clauses are appended, not substituted for it.
+    expect(hint).toContain('Committed Swing');
+    expect(hint).toContain('no unspent attribute points');
   });
 
   it('says so when a stat is not implemented, rather than describing it', () => {

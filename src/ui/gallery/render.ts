@@ -416,6 +416,7 @@ function attribute(
     key,
     name,
     abbrev,
+    description: `What ${name} is for.`,
     allocated,
     total,
     canAllocate: true,

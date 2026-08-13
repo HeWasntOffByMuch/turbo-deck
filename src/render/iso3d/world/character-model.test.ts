@@ -232,6 +232,25 @@ describe('the character view', () => {
     }
   });
 
+  it('describes every attribute whether or not there is a point to spend', () => {
+    // The tooltip used to be the *refusal* when a row could not be allocated to,
+    // so a character between two level-ups -- which is nearly always -- read "no
+    // unspent attribute points" on all six rows. A budget is not an explanation,
+    // so the description is unconditional and comes off the table's own `owns`.
+    for (const points of [0, 3]) {
+      const view = characterViewOf(source([], 4, 6, { unspentAttributePoints: points }));
+      expect(view.unspentAttributePoints).toBe(points);
+      for (const [index, row] of view.attributes.entries()) {
+        const definition = ATTRIBUTES[index];
+        if (!definition) throw new Error(`no attribute ${index}`);
+        expect(row.description, row.key).toContain(definition.verb);
+        for (const owned of definition.owns) {
+          expect(row.description.toLowerCase(), row.key).toContain(owned.toLowerCase());
+        }
+      }
+    }
+  });
+
   it('gives every stat row a hint, and says so where nothing implements it', () => {
     const view = characterViewOf(source([]));
     for (const row of view.stats) {

@@ -15,6 +15,7 @@
 
 import { Column, Row } from '../core/containers.js';
 import { uniformInsets, type Point, type Rect } from '../core/geom.js';
+import type { Widget } from '../core/widget.js';
 import type { Theme } from '../theme/theme.js';
 import { Button, Separator } from '../widgets/button.js';
 import { Label } from '../widgets/label.js';
@@ -68,6 +69,17 @@ export interface AttributeRowView {
   readonly key: string;
   readonly name: string;
   readonly abbrev: string;
+  /**
+   * What this attribute is for, always. "Overpower. Poise damage, stagger
+   * duration, hyper-armour, attack damage."
+   *
+   * Separate from `nextEffect` because the two answer different questions and a
+   * character answers only one of them most of the time: `nextEffect` is empty
+   * once every milestone in a column is met, and the refusal that used to stand
+   * in for both said "no unspent attribute points" -- which is a fact about the
+   * budget and tells a player nothing about the attribute they are pointing at.
+   */
+  readonly description: string;
   /** What has been allocated. What the "+" spends against. */
   readonly allocated: number;
   /** After items and skills. Shown beside it only when the two differ. */
@@ -197,12 +209,24 @@ export class AttributeRow extends Row {
     this.spendButton.enabled = next.canAllocate;
   }
 
-  /** The description, or the refusal, or what this attribute does next. */
+  /**
+   * What this attribute does, then what it does next, then why not.
+   *
+   * Appended rather than substituted, and the same shape as {@link SkillRow}'s.
+   * The refusal used to *replace* the description, so a character with nothing
+   * to spend -- which is every character between two level-ups, i.e. nearly
+   * always -- got "no unspent attribute points" on all six rows and could not
+   * find out what any of them were for. A budget is not an explanation.
+   */
   tooltip(): string {
     const view = this.view;
     if (!view) return '';
-    if (!view.canAllocate && view.blockedBecause.length > 0) return view.blockedBecause;
-    return view.nextEffect;
+    const parts = [view.description];
+    if (view.nextEffect.length > 0 && view.toNext > 0) {
+      parts.push(`${view.toNext} more: ${view.nextEffect}`);
+    }
+    if (!view.canAllocate && view.blockedBecause.length > 0) parts.push(view.blockedBecause);
+    return parts.filter((part) => part.length > 0).join(' -- ');
   }
 }
 
@@ -324,24 +348,56 @@ export class CharacterScreen extends Column {
     return this.attributeRows.get(key) ?? null;
   }
 
+  /** The stat lines, in the order their hints are, so a test can hover them. */
+  get statRowList(): readonly Label[] {
+    return this.statRows.filter((row) => row.visible);
+  }
+
   /**
    * What a hover at `at` should say, or empty.
    *
    * Walks the three kinds of row this screen has -- an attribute, a skill, a
    * stat line -- and asks whichever one the cursor is inside. Pure: the hit test
    * is against laid-out rectangles and nothing here reads a clock.
+   *
+   * `showing` rather than `row.visible`, and that is the whole of the fix. A tab
+   * switched away is *hidden*, never destroyed -- that is what makes a tab keep
+   * what you left in it (spec 124) -- so every row inside one keeps its own
+   * `visible` flag true and keeps the rectangle it was last arranged into. Three
+   * tabs of rows therefore stacked on top of each other at the same coordinates,
+   * and a hover over an attribute was answered by whichever skill was laid out
+   * behind it. Only the ancestor chain knows which tab a row is in.
    */
   hintAt(at: Point): string {
     for (const row of this.attributeRows.values()) {
-      if (row.visible && contains(row.rect, at)) return row.tooltip();
+      if (this.showing(row) && contains(row.rect, at)) return row.tooltip();
     }
     for (const row of this.rows.values()) {
-      if (row.visible && contains(row.rect, at)) return row.tooltip();
+      if (this.showing(row) && contains(row.rect, at)) return row.tooltip();
     }
     for (const [index, row] of this.statRows.entries()) {
-      if (row.visible && contains(row.rect, at)) return this.statHints[index] ?? '';
+      if (this.showing(row) && contains(row.rect, at)) return this.statHints[index] ?? '';
     }
     return '';
+  }
+
+  /**
+   * Whether a row is really on screen: itself visible, and every ancestor up to
+   * this screen visible too.
+   *
+   * Stops at the screen rather than at the root, because a screen's own hosting
+   * -- the window, the layer -- is the mount's business and the mount already
+   * clears the tooltip when the sheet is shut.
+   */
+  private showing(row: Widget): boolean {
+    let node: Widget | null = row;
+    while (node) {
+      if (!node.visible) return false;
+      if (node === this) return true;
+      node = node.parent;
+    }
+    // Detached: rebuilt out from under us, so it is not on screen either.
+    return false;
   }
 
   /** Point the tooltip at whatever is under the cursor. Driven by the mount. */

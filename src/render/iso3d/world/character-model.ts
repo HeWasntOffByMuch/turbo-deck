@@ -291,6 +291,10 @@ export function attributeRowsOf(source: CharacterSource): readonly AttributeRowV
       // narrow the redundant three letters pushed the value column into it.
       name: definition.name,
       abbrev: definition.abbrev,
+      // The verb and what it owns, from the table rather than written here --
+      // `owns` is already the reviewed list of what an attribute is the source
+      // of, and a second description beside it is a second thing to keep true.
+      description: `${definition.verb}. ${sentenceCase(definition.owns.join(', '))}.`,
       allocated: source.baseStats[definition.key],
       total: source.attributes[definition.key],
       canAllocate: check.ok,
@@ -371,4 +375,16 @@ export function characterViewOf(source: CharacterSource): CharacterView {
 /** A skill's definition, for a caller that wants a name without the whole view. */
 export function skillNameOf(id: string): string {
   return skillById(id)?.name ?? id;
+}
+
+/**
+ * First letter up, and nothing else touched.
+ *
+ * `owns` is authored as a list of mechanics rather than as prose -- "poise
+ * damage", not "Poise damage" -- because a test reads it and a reviewer holds a
+ * new mechanic up against it. Turning the joined list into a sentence is this
+ * side's job, so the table stays a table.
+ */
+function sentenceCase(text: string): string {
+  return text.slice(0, 1).toUpperCase() + text.slice(1);
 }
