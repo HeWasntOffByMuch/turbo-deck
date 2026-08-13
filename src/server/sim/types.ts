@@ -12,6 +12,7 @@ import type { Rng } from '../../shared/prng.js';
 import type { Vec2 } from '../../sim/types.js';
 import type { EffectiveStats, Vec3 } from '../state/types.js';
 import type { AttackTiming } from './attack-timing.js';
+import type { Statuses } from './statuses.js';
 
 export const EntityKindValue = {
   Player: 0,
@@ -84,6 +85,18 @@ export const CastEndReason = {
  */
 export interface CastState {
   readonly abilityId: string;
+  /**
+   * What this cast actually cost, captured at the commit (spec 147).
+   *
+   * Stored rather than re-read from the ability row, because the cost is now a
+   * function of the caster -- Wisdom's scale, Attuned, Flow, Intelligence's
+   * shaping premium -- and a withdrawal has to hand back *what was paid*. Reading
+   * the row would refund the list price, which is a resource generator for
+   * anybody with cost reduction and a cancel key.
+   */
+  readonly spentResource: number;
+  /** Health an Arcane Overflow paid on top. Refunded by a withdrawal too. */
+  readonly spentHealth: number;
   /** Tick the request was committed to, turn included. */
   readonly startedTick: number;
   /**
@@ -283,6 +296,33 @@ export interface ServerEntity {
    * has no home to be dragged away from.
    */
   readonly anchor: Vec2 | null;
+
+  // --- progression state (spec 147) --------------------------------------
+  /**
+   * Guard left before this body is staggered. Live, like health: clamped to
+   * `stats.traits.maxPoise` on recalculation and refilled whole by a break.
+   */
+  readonly poise: number;
+  /**
+   * Earliest tick this body may be broken again. The window that stops two
+   * attackers holding a third permanently -- see `sim/poise.ts`.
+   */
+  readonly staggerImmuneUntilTick: number;
+  /** Absorbed before health, and never above `stats.traits.maxShield`. */
+  readonly shield: number;
+  /** The tick the whole shield falls off. Shields expire, they do not decay. */
+  readonly shieldUntilTick: number;
+  /** Every timed state this body is carrying. See `sim/statuses.ts`. */
+  readonly statuses: Statuses;
+  /**
+   * The last tick this body moved, cast or was hit.
+   *
+   * A tick rather than a boolean because what Intelligence's Prepared Casting
+   * asks is "how long", and a boolean would need a counter beside it that meant
+   * the same thing worse. Stamped forward by any of the three, so `tick - this`
+   * is the length of the current lull.
+   */
+  readonly stillSinceTick: number;
 }
 
 /** One map spawner's live state (spec 076). */
@@ -364,6 +404,27 @@ export type ServerSimEvent =
       readonly killed: boolean;
       readonly critical: boolean;
       readonly blocked: boolean;
+      /**
+       * The blow found a weak point (spec 147). Distinct from `critical`: a crit
+       * is a bigger number, a weak point is a bigger number *and* an opening
+       * left behind that anybody can use.
+       */
+      readonly weakPoint: boolean;
+    }
+  | {
+      /**
+       * A body's guard broke (spec 147). It is rooted for `ticks` and whatever
+       * it was casting is gone.
+       *
+       * Its own event rather than a flag on `hit`, because the two do not always
+       * arrive together: an ability with `abilityPoiseFactor` can break a body it
+       * did no damage to, and a break with no blow behind it still has to be
+       * drawn.
+       */
+      readonly kind: 'poiseBroken';
+      readonly entityId: number;
+      readonly breakerId: number;
+      readonly ticks: number;
     }
   | {
       readonly kind: 'correction';

@@ -34,7 +34,7 @@ import {
 const RECORD: PersistedPlayer = {
   id: 'p1',
   displayName: 'P1',
-  baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
+  baseStats: { strength: 5, agility: 5, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
   skills: [],
   equipment: EMPTY_EQUIPMENT,
   inventory: emptyInventory(),
@@ -45,6 +45,7 @@ const RECORD: PersistedPlayer = {
   level: 1,
   experience: 0,
   unspentSkillPoints: 0,
+  unspentAttributePoints: 0,
   health: 100,
   resource: 20,
 };
@@ -594,6 +595,20 @@ describe("the map's spawners", () => {
       expect(body?.position.x).toBe(point.x);
       expect(body?.position.y).toBe(point.y);
       expect(body?.anchor).toEqual({ x: point.x, y: point.y });
+    }
+  });
+
+  it('puts a body into the world with a full guard, not an empty one', () => {
+    // The bug this exists for: a spawned monster is built from its own literal
+    // here rather than through `spawnEntity`, and that literal did not set
+    // `poise` -- so every wandering monster in the game entered it already
+    // broken and spent its first seconds regenerating up from nothing. Poise is
+    // a live resource, so no derivation test looks at it, and every other poise
+    // test builds its bodies through `spawnEntity`, which does set it.
+    const state = step(createWorldState(3), [], spawnerContext()).state;
+    for (const body of monsters(state)) {
+      expect(body.stats.traits.maxPoise, body.typeId).toBeGreaterThan(0);
+      expect(body.poise, body.typeId).toBe(body.stats.traits.maxPoise);
     }
   });
 

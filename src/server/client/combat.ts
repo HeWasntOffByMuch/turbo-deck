@@ -43,6 +43,7 @@ import {
 } from '../sim/abilities.js';
 import { regenerated } from '../sim/resource.js';
 import { CastPhase, EntityKindValue, type CastState, type ServerEntity } from '../sim/types.js';
+import { blankProgression } from '../sim/world.js';
 import type { EffectiveStats } from '../state/types.js';
 
 export interface Point {
@@ -59,6 +60,9 @@ export interface Mirror {
   readonly cooldowns: Readonly<Record<string, number>>;
   readonly cast: CastState | null;
   readonly stats: EffectiveStats;
+  /** Replicated, so the mirror may claim them. Statuses are not (spec 147). */
+  readonly poise: number;
+  readonly shield: number;
 }
 
 /**
@@ -100,6 +104,16 @@ export function asEntity(mirror: Mirror): ServerEntity {
     pardon: null,
     spawnerId: null,
     anchor: null,
+    // The progression state the mirror can honestly claim (spec 147). Poise and
+    // shields are replicated, so they are real; statuses are not, so the mirror
+    // carries none -- which makes the client's predicted cost the *undiscounted*
+    // one and its predicted wind-up the *unshortened* one. Guessing too
+    // expensive and too slow is the right way round to be wrong: the server's
+    // answer only ever arrives cheaper and sooner, and a correction that hands
+    // resource back is invisible where one that takes it away is a stutter.
+    ...blankProgression(),
+    poise: mirror.poise,
+    shield: mirror.shield,
   };
 }
 

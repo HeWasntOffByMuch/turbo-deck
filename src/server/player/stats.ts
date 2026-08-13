@@ -12,17 +12,12 @@
  */
 
 import {
-  ARMOR_PER_AGILITY,
-  HP_PER_STRENGTH,
-  MAX_DAMAGE_REDUCTION,
   MOVE_SPEED_HARD_MAX,
   MOVE_SPEED_HARD_MIN,
   PLAYER_ATTACK_DAMAGE,
   PLAYER_ATTACK_RANGE,
   PLAYER_MAX_HEALTH,
-  SPELL_DAMAGE_PER_INTELLIGENCE,
   TICK_RATE as SIM_TICK_RATE,
-  TURN_RATE_PER_AGILITY,
 } from '../../sim/constants.js';
 import { CHARACTERS } from '../../sim/characters.js';
 import {
@@ -33,9 +28,11 @@ import {
 import { SERVER_TICK_RATE } from '../config.js';
 import { BASIC_ATTACK_ID } from '../data/abilities.js';
 import { itemById } from '../data/items.js';
-import { scaleModifier, sumModifiers, type StatModifier } from '../data/modifiers.js';
-import { skillById } from '../data/skills.js';
-import { EQUIP_SLOTS, type BaseStats, type EffectiveStats, type PersistedPlayer } from '../state/types.js';
+import { above, SCALING } from '../data/scaling.js';
+import type { StatModifier } from '../data/modifiers.js';
+import { armorFromAttributes, deriveTraits } from './derived.js';
+import { heldModifiers, resolveProgression } from './progression.js';
+import { type BaseStats, type EffectiveStats, type PersistedPlayer } from '../state/types.js';
 
 /**
  * The single-player sim's durations are written in 60Hz ticks; this server runs
@@ -46,12 +43,21 @@ export function simTicksToServerTicks(simTicks: number): number {
   return Math.max(1, Math.round((simTicks * SERVER_TICK_RATE) / SIM_TICK_RATE));
 }
 
-/** Health per point of vitality -- the server's own stat, with no sim analogue. */
-export const HP_PER_VITALITY = 14;
+/**
+ * Health per point of constitution.
+ *
+ * These four re-export {@link SCALING} rather than restating it (spec 147). They
+ * are the names the tests and the balance harness already use, and pointing them
+ * at the one tunable table means a balance pass edits `data/scaling.ts` and
+ * nothing here goes stale behind it.
+ */
+export const HP_PER_CONSTITUTION = SCALING.constitution.healthPer;
+/** Health per point of strength. Small: Constitution owns the pool. */
+export const HP_PER_STRENGTH = SCALING.strength.healthPer;
 /** Health granted by each character level beyond the first. */
 export const HP_PER_LEVEL = 8;
 /** Attack damage per point of strength. */
-export const DAMAGE_PER_STRENGTH = 0.6;
+export const DAMAGE_PER_STRENGTH = SCALING.strength.damagePer;
 /**
  * What a body with nothing on it waits between basic attacks (spec 088).
  *
@@ -100,14 +106,24 @@ export function baseAttackTimeTicksFrom(flatTicks: number): number {
   const base = BASE_ATTACK_TIME_TICKS + (Number.isFinite(flatTicks) ? flatTicks : 0);
   return clamp(Math.round(base), MIN_ATTACK_DELAY_TICKS, MAX_ATTACK_DELAY_TICKS);
 }
-/** Critical-hit chance per point of dexterity, and its ceiling. */
-export const CRIT_PER_DEXTERITY = 0.008;
+/**
+ * Critical-hit chance per point of **perception**, and its ceiling (spec 147).
+ *
+ * Moved off Agility deliberately and stated here rather than buried in the
+ * table, because it is the one existing coefficient this spec takes away from a
+ * stat rather than adding to one. Crit is a payoff for knowing where to hit,
+ * which is Perception's whole identity; leaving it on the fast stat is what made
+ * Agility the universal damage stat in the four-stat system.
+ */
+export const CRIT_PER_PERCEPTION = SCALING.perception.critPer;
 export const MAX_CRIT_CHANCE = 0.5;
-/** The ability resource pool (spec 062): a base, plus intelligence. */
+/** The ability resource pool (spec 062): a base, plus intelligence and wisdom. */
 export const BASE_RESOURCE = 20;
-export const RESOURCE_PER_INTELLIGENCE = 2;
-/** Resource regained per second, before modifiers. */
+export const RESOURCE_PER_INTELLIGENCE = SCALING.intelligence.resourcePer;
+export const RESOURCE_PER_WISDOM = SCALING.wisdom.resourcePer;
+/** Resource regained per second, before modifiers. Wisdom adds to it. */
 export const RESOURCE_REGEN_PER_SECOND = 2;
+export const REGEN_PER_WISDOM = SCALING.wisdom.regenPer;
 
 const BASE_MOVE_SPEED = CHARACTERS[0]?.moveSpeed ?? 147.5;
 const BASE_TURN_RATE = CHARACTERS[0]?.turnRate ?? 180;
@@ -118,66 +134,66 @@ function clamp(value: number, min: number, max: number): number {
 
 /**
  * Every modifier a character is currently carrying: one entry per skill level
- * held, one per equipped item. Unknown ids are skipped rather than throwing --
- * an item removed from the table should orphan the slot, not brick the login.
+ * held, one per stat-skill level held, one per equipped item.
+ *
+ * Delegates to `progression.ts`, which is where hop 1 of the dependency graph
+ * lives (spec 147). Kept as an export because the balance harness and the tests
+ * ask for it by this name.
  */
 export function collectModifiers(player: PersistedPlayer): StatModifier[] {
-  const modifiers: StatModifier[] = [];
-  for (const allocation of player.skills) {
-    const definition = skillById(allocation.skillId);
-    if (!definition) continue;
-    const level = clamp(Math.floor(allocation.level), 0, definition.maxLevel);
-    if (level <= 0) continue;
-    modifiers.push(scaleModifier(definition.perLevel, level));
-  }
-  for (const slot of EQUIP_SLOTS) {
-    const itemId = player.equipment[slot];
-    if (!itemId) continue;
-    const definition = itemById(itemId);
-    if (!definition) continue;
-    modifiers.push(definition.modifiers);
-  }
-  return modifiers;
+  return heldModifiers(player);
 }
 
-/** Base stats plus everything skills and items grant on top of them. */
+/** Attributes plus everything skills, stat skills and items grant on top. */
 export function totalBaseStats(player: PersistedPlayer): BaseStats {
-  const bonus = sumModifiers(collectModifiers(player));
+  const { attributes } = resolveProgression(player);
   return {
-    strength: player.baseStats.strength + bonus.strength,
-    dexterity: player.baseStats.dexterity + bonus.dexterity,
-    intelligence: player.baseStats.intelligence + bonus.intelligence,
-    vitality: player.baseStats.vitality + bonus.vitality,
+    strength: attributes.strength,
+    agility: attributes.agility,
+    intelligence: attributes.intelligence,
+    constitution: attributes.constitution,
+    perception: attributes.perception,
+    wisdom: attributes.wisdom,
   };
 }
 
 export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
-  const bonus = sumModifiers(collectModifiers(player));
-  const strength = player.baseStats.strength + bonus.strength;
-  const dexterity = player.baseStats.dexterity + bonus.dexterity;
-  const intelligence = player.baseStats.intelligence + bonus.intelligence;
-  const vitality = player.baseStats.vitality + bonus.vitality;
-  const levels = Math.max(0, player.level - 1);
+  // Hop 1 then hop 2, once (spec 147). `bonus` is everything summed -- held
+  // modifiers *and* the grants of whichever milestones and synergies the
+  // attributes reached -- and the attributes themselves were settled before any
+  // of those grants existed, which is what keeps the graph acyclic.
+  const progression = resolveProgression(player);
+  const bonus = progression.totals;
+  const attributes = progression.attributes;
+  const { strength, agility, intelligence, constitution, perception, wisdom } = attributes;
+  // Held finite as well as non-negative, for the reason `attributesFrom` holds
+  // the attributes: a corrupt save should cost a character their bonuses, not
+  // make them unkillable. `Math.max(0, NaN)` is NaN, and a maxHealth of NaN is a
+  // body that `Math.max(0, health - damage)` can never reduce.
+  const levels = Number.isFinite(player.level) ? Math.max(0, player.level - 1) : 0;
 
   const flatHealth =
     PLAYER_MAX_HEALTH +
     HP_PER_STRENGTH * strength +
-    HP_PER_VITALITY * vitality +
+    HP_PER_CONSTITUTION * constitution +
     HP_PER_LEVEL * levels +
     bonus.maxHealth;
   const maxHealth = Math.max(1, flatHealth * (1 + bonus.maxHealthPct));
 
   const moveSpeed = clamp(
-    (BASE_MOVE_SPEED + bonus.moveSpeed) * (1 + bonus.moveSpeedPct),
+    (BASE_MOVE_SPEED + SCALING.agility.movePer * above(agility) + bonus.moveSpeed) * (1 + bonus.moveSpeedPct),
     MOVE_SPEED_HARD_MIN,
     MOVE_SPEED_HARD_MAX,
   );
 
-  const turnRate = Math.max(30, BASE_TURN_RATE + TURN_RATE_PER_AGILITY * dexterity + bonus.turnRate);
+  const turnRate = Math.max(30, BASE_TURN_RATE + SCALING.agility.turnPer * agility + bonus.turnRate);
 
   const attackDamage = Math.max(
     0,
-    (PLAYER_ATTACK_DAMAGE + DAMAGE_PER_STRENGTH * strength + bonus.attackDamage) *
+    (PLAYER_ATTACK_DAMAGE +
+      DAMAGE_PER_STRENGTH * strength +
+      SCALING.agility.damagePer * agility +
+      bonus.attackDamage) *
       (1 + bonus.attackDamagePct),
   );
 
@@ -201,22 +217,25 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
   // than a refactor, so it is left undone rather than done quietly.
   const baseAttackTimeTicks = baseAttackTimeTicksFrom(0);
 
-  const armor = clamp(ARMOR_PER_AGILITY * dexterity + bonus.armor, 0, MAX_DAMAGE_REDUCTION);
+  const armor = armorFromAttributes(attributes, bonus.armor);
 
   const spellPower = Math.max(
     0,
-    1 + SPELL_DAMAGE_PER_INTELLIGENCE * intelligence + bonus.spellPower,
+    1 + SCALING.intelligence.spellPowerPer * intelligence + bonus.spellPower,
   );
 
-  const critChance = clamp(CRIT_PER_DEXTERITY * dexterity + bonus.critChance, 0, MAX_CRIT_CHANCE);
+  const critChance = clamp(CRIT_PER_PERCEPTION * perception + bonus.critChance, 0, MAX_CRIT_CHANCE);
 
   const maxResource = Math.max(
     0,
-    BASE_RESOURCE + RESOURCE_PER_INTELLIGENCE * intelligence + bonus.maxResource,
+    BASE_RESOURCE +
+      RESOURCE_PER_INTELLIGENCE * intelligence +
+      RESOURCE_PER_WISDOM * wisdom +
+      bonus.maxResource,
   );
   const resourceRegen = Math.max(
     0,
-    RESOURCE_REGEN_PER_SECOND / SERVER_TICK_RATE + bonus.resourceRegen,
+    (RESOURCE_REGEN_PER_SECOND + REGEN_PER_WISDOM * wisdom) / SERVER_TICK_RATE + bonus.resourceRegen,
   );
 
   return {
@@ -233,6 +252,14 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
     maxResource,
     resourceRegen,
     basicAttackId: basicAttackFor(player),
+    // Derived last, because two of its fields are fractions of maxHealth and
+    // one is a duration in ticks -- it needs the pool it is a fraction of, and
+    // the tick rate the sim actually runs at.
+    traits: deriveTraits(attributes, bonus, {
+      tickRate: SERVER_TICK_RATE,
+      maxHealth,
+      attackDamage,
+    }),
   };
 }
 

@@ -78,6 +78,10 @@ interface Sample {
   readonly drop: number;
   /** Whether a wind-up bar was showing under it this frame. */
   readonly casting: boolean;
+  /** Guard left, as a fraction (spec 147). 1 when nothing has dented it. */
+  readonly guard: number;
+  /** Whether the guard track was drawing at all -- it hides at full. */
+  readonly guardShown: boolean;
 }
 
 async function waitForServer(url: string): Promise<void> {
@@ -130,6 +134,8 @@ async function watchBars(page: Page, ms: number): Promise<Sample[]> {
       top: number;
       drop: number;
       casting: boolean;
+      guard: number;
+      guardShown: boolean;
     }[] = [];
     const start = performance.now();
     while (performance.now() - start < duration) {
@@ -138,10 +144,14 @@ async function watchBars(page: Page, ms: number): Promise<Sample[]> {
       for (const node of Array.from(document.querySelectorAll('[data-entity]'))) {
         const holder = node as HTMLElement;
         if (holder.style.display === 'none') continue;
-        const track = holder.firstElementChild;
+        // By hook, never by index. This used to be `firstElementChild`, and
+        // spec 145's name element made that the name -- so the lookup found no
+        // fill inside it and this probe silently sampled nothing from that
+        // point on. Spec 147 adding a guard track would have shifted it again.
+        const track = holder.querySelector('[data-bar="health"]');
         const ghost = track?.children[0] as HTMLElement | undefined;
         const fill = track?.children[1] as HTMLElement | undefined;
-        if (!ghost || !fill) continue;
+        if (!track || !ghost || !fill) continue;
         samples.push({
           t: now,
           id: holder.dataset['entity'] ?? '',
@@ -158,7 +168,20 @@ async function watchBars(page: Page, ms: number): Promise<Sample[]> {
           // from outside: both numbers move together under the flinch, so the
           // difference is the layout on its own.
           drop: (track as HTMLElement).getBoundingClientRect().top - parseFloat(holder.style.top || '0'),
-          casting: (holder.children[1] as HTMLElement | undefined)?.style.display !== 'none',
+          casting:
+            (holder.querySelector('[data-bar="cast"]') as HTMLElement | null)?.style.display !==
+            'none',
+          // Guard is hidden with `visibility` rather than `display` so it can
+          // sit in flow without moving the health bar above it -- so "is it
+          // drawing" is a visibility read, and a `display` check would call
+          // every full guard shown.
+          guard: parseFloat(
+            ((holder.querySelector('[data-bar="guard"]') as HTMLElement | null)
+              ?.firstElementChild as HTMLElement | null)?.style.width || '100',
+          ) / 100,
+          guardShown:
+            (holder.querySelector('[data-bar="guard"]') as HTMLElement | null)?.style
+              .visibility === 'visible',
         });
       }
     }
@@ -320,6 +343,35 @@ async function pickAFight(page: Page): Promise<boolean> {
   return false;
 }
 
+/**
+ * Whether a guard bar was ever drawn, and how far it got dented (spec 147).
+ *
+ * The one thing no Node test can answer about it: `health-bar.test.ts` and the
+ * sim's own poise tests both pass with a track that is stacked behind an opaque
+ * parent or hidden by a stylesheet nobody read.
+ */
+function reportGuard(samples: readonly Sample[], problems: string[]): void {
+  let seen = 0;
+  for (const id of [...new Set(samples.map((sample) => sample.id))]) {
+    const track = forBody(samples, id);
+    const dented = track.filter((sample) => sample.guardShown);
+    if (dented.length === 0) continue;
+    seen++;
+    const lowest = dented.reduce((least, sample) => Math.min(least, sample.guard), 1);
+    console.log(
+      `  entity ${id}: guard drawn on ${dented.length}/${track.length} frames, ` +
+        `down to ${(lowest * 100).toFixed(0)}%`,
+    );
+  }
+  // A full guard is hidden on purpose, so "never shown" is only a problem if
+  // something was actually hitting somebody -- which the flash report answers.
+  if (seen === 0) console.log('  no guard bar was dented during the fight');
+  // Shown at full would mean the visibility rule is inverted, and that IS wrong
+  // however the fight went.
+  const wrong = samples.filter((sample) => sample.guardShown && sample.guard >= 1).length;
+  if (wrong > 0) problems.push(`a full guard bar was drawn on ${wrong} frame(s)`);
+}
+
 /** What the sampled bars did, per body, and whether any of it is wrong. */
 function reportFlashes(samples: readonly Sample[], problems: string[]): void {
   let drawn = 0;
@@ -413,6 +465,7 @@ async function main(): Promise<void> {
     // Sample every frame while that fight runs, and say what the bars did.
     const samples = await watchBars(page, WATCH_MS);
     reportFlashes(samples, problems);
+    reportGuard(samples, problems);
     reportSteadiness(samples, problems);
 
     // Then the flinch, and the picture, both in slow motion (see TIME_SCALE).
@@ -444,7 +497,7 @@ async function main(): Promise<void> {
       caught = await page.evaluate((visible) => {
         for (const node of Array.from(document.querySelectorAll('[data-entity]'))) {
           const holder = node as HTMLElement;
-          const track = holder.firstElementChild;
+          const track = holder.querySelector('[data-bar="health"]');
           const ghost = track?.children[0] as HTMLElement | undefined;
           const fill = track?.children[1] as HTMLElement | undefined;
           if (!ghost || !fill) continue;

@@ -20,8 +20,21 @@
  */
 
 import { SERVER_TICK_RATE } from '../config.js';
+import { monsterTraits } from '../player/derived.js';
 import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
 import type { EffectiveStats } from '../state/types.js';
+import { SCALING } from './scaling.js';
+
+/**
+ * What a row actually authors (spec 147).
+ *
+ * `traits` is deliberately absent: a monster's poise is a function of its own
+ * health and its stagger power a function of its damage, both applied by
+ * {@link withTraits} on the way out. Authoring them per row would be two more
+ * numbers per monster that nobody could tune relative to each other, and a row
+ * added later would be a body that silently cannot be staggered.
+ */
+export type AuthoredStats = Omit<EffectiveStats, 'traits'>;
 
 export interface MonsterDefinition {
   readonly id: string;
@@ -36,11 +49,32 @@ export interface MonsterDefinition {
   readonly passive: boolean;
 }
 
+interface AuthoredMonster extends Omit<MonsterDefinition, 'stats'> {
+  readonly stats: AuthoredStats;
+}
+
+/**
+ * A row, with its poise and its weight worked out from what it already says.
+ *
+ * Poise is a fraction of health, so a big monster takes more staggering than a
+ * small one without a designer choosing a number; stagger power comes off attack
+ * damage, so a heavy hitter shoves harder. Neither is exact balance -- they are
+ * the defaults a row overrides by being retuned, which is what "monsters get
+ * poise from their existing stats" means in practice.
+ */
+function withTraits(monster: AuthoredMonster): MonsterDefinition {
+  const power = monster.stats.attackDamage * 0.5 + SCALING.strength.staggerBase * 0.5;
+  return {
+    ...monster,
+    stats: { ...monster.stats, traits: monsterTraits(monster.stats.maxHealth, power) },
+  };
+}
+
 function seconds(value: number): number {
   return Math.max(1, Math.round(value * SERVER_TICK_RATE));
 }
 
-const DEFINITIONS: readonly MonsterDefinition[] = [
+const AUTHORED: readonly AuthoredMonster[] = [
   {
     id: 'grazer',
     name: 'Grazer',
@@ -173,7 +207,7 @@ const DEFINITIONS: readonly MonsterDefinition[] = [
   },
 ];
 
-const DUMMY: MonsterDefinition = {
+const DUMMY: AuthoredMonster = {
   id: 'dummy',
   name: 'Training Dummy',
   radius: 22,
@@ -197,8 +231,10 @@ const DUMMY: MonsterDefinition = {
   },
 };
 
+const DEFINITIONS: readonly MonsterDefinition[] = AUTHORED.map(withTraits);
+
 export const MONSTERS: ReadonlyMap<string, MonsterDefinition> = new Map(
-  [...DEFINITIONS, DUMMY].map((monster) => [monster.id, monster]),
+  [...DEFINITIONS, withTraits(DUMMY)].map((monster) => [monster.id, monster]),
 );
 
 export const ALL_MONSTERS: readonly MonsterDefinition[] = DEFINITIONS;

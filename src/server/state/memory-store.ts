@@ -18,7 +18,10 @@ function clonePlayer(player: PersistedPlayer): PersistedPlayer {
   return {
     ...player,
     baseStats: { ...player.baseStats },
-    skills: player.skills.map((allocation) => ({ ...allocation })),
+    // Tolerant of a save written before the field existed, like the bag is
+    // (spec 126). A store that throws on an old record is a store that cannot
+    // load the very saves the migration exists for.
+    skills: (player.skills ?? []).map((allocation) => ({ ...allocation })),
     equipment: { ...player.equipment },
     // Each stack copied too: a bag is an array of objects, and a shallow copy of
     // the array would still hand back the very stacks the caller is holding.

@@ -1,92 +1,81 @@
 /**
- * Skill-tree rules, enforced server-side (spec 056).
+ * Rules for the attribute-attuned tree (spec 147).
  *
- * The client UI is expected to grey out an illegal allocation; this module
- * assumes it did not. Every rule is checked here, on a message that could have
- * been hand-crafted, and a rejection leaves the player record byte-identical.
+ * Deliberately much smaller than `skills.ts`, because this tree has no branch
+ * locking and no tier point gates -- what opens a skill is the build you have
+ * actually made. Two rules:
  *
- * Three rules stack:
- *  - **point budget**: you cannot spend what you have not earned.
- *  - **tier gating**: a tier opens only once enough points sit in that branch.
- *  - **branch locking**: investing in a branch permanently forecloses the
- *    branches it locks. This is the irreversible one, so it is checked against
- *    the whole allocation history rather than the current tick's request.
+ *  - **budget**: the same `unspentSkillPoints` the branch tree spends.
+ *  - **attribute gate**: the skill's `requires`, measured against the character's
+ *    *effective* attribute -- items and skills that grant Strength count, which
+ *    is what makes a +5 Strength trinket a build decision rather than a stat
+ *    stick.
+ *
+ * Wisdom's Mastery lowers the tier-3 gate, and only the tier-3 gate. That is the
+ * one cross-attribute rule in this file and it lives here rather than in the
+ * table so that "how much relief do I have" is answered once, from the same
+ * effective attributes everything else is measured against.
+ *
+ * Pure. A rejection leaves the record byte-identical.
  */
 
-import {
-  branchById,
-  skillById,
-  TIER_POINT_GATE,
-  type SkillBranchId,
-  type SkillDefinition,
-} from '../data/skills.js';
+import { skillById, ALL_SKILLS, type SkillDefinition } from '../data/skills.js';
+import { attributeByKey } from '../data/attributes.js';
+import type { AttributeKey } from '../data/attributes.js';
 import type { PersistedPlayer, SkillAllocation } from '../state/types.js';
 
 export type SkillRejection =
   | 'unknownSkill'
   | 'noPointsAvailable'
   | 'alreadyMaxLevel'
-  | 'branchLocked'
-  | 'tierLocked'
-  | 'missingPrerequisite';
+  | 'attributeTooLow';
 
-export type SkillSpendResult =
-  | { readonly ok: true; readonly player: PersistedPlayer; readonly skill: SkillDefinition }
+export type SkillValidation =
+  | { readonly ok: true; readonly skill: SkillDefinition }
   | { readonly ok: false; readonly reason: SkillRejection; readonly detail: string };
+
+/** What this character's attributes are, after every grant. */
+export type AttributeTotals = Readonly<Record<AttributeKey, number>>;
 
 export function levelOf(skills: readonly SkillAllocation[], skillId: string): number {
   return skills.find((allocation) => allocation.skillId === skillId)?.level ?? 0;
 }
 
-/** Total points sunk into one branch, counting every level of every skill in it. */
-export function pointsInBranch(skills: readonly SkillAllocation[], branch: SkillBranchId): number {
-  let total = 0;
-  for (const allocation of skills) {
-    const definition = skillById(allocation.skillId);
-    if (definition?.branch === branch) total += Math.max(0, Math.floor(allocation.level));
-  }
-  return total;
-}
-
-/** Every branch that currently holds at least one point. */
-export function investedBranches(skills: readonly SkillAllocation[]): Set<SkillBranchId> {
-  const branches = new Set<SkillBranchId>();
-  for (const allocation of skills) {
-    if (allocation.level <= 0) continue;
-    const definition = skillById(allocation.skillId);
-    if (definition) branches.add(definition.branch);
-  }
-  return branches;
-}
-
 /**
- * Branches this character can no longer touch, because a branch they have
- * invested in locks them out.
+ * How many points below its stated threshold a tier-3 skill opens.
+ *
+ * Read off the *held* Mastery levels rather than off the trait bundle, because
+ * the trait bundle is derived from the skills and asking it here would be the
+ * one cycle this design does not have. One level, one point, capped at the
+ * skill's own max so it can never open a tier-3 skill at zero attribute.
  */
-export function lockedBranches(skills: readonly SkillAllocation[]): Set<SkillBranchId> {
-  const locked = new Set<SkillBranchId>();
-  for (const invested of investedBranches(skills)) {
-    const branch = branchById(invested);
-    if (!branch) continue;
-    for (const target of branch.locks) locked.add(target);
-  }
-  return locked;
+export function masteryRelief(skills: readonly SkillAllocation[]): number {
+  const held = levelOf(skills, 'wis.mastery');
+  const definition = skillById('wis.mastery');
+  const perLevel = definition?.perLevel.traits?.masteryRelief ?? 0;
+  return Math.max(0, Math.round(held * perLevel));
 }
 
-/** Total points spent, used to sanity-check a save against its own budget. */
-export function totalPointsSpent(skills: readonly SkillAllocation[]): number {
-  return skills.reduce((sum, allocation) => sum + Math.max(0, Math.floor(allocation.level)), 0);
+/** The attribute value a skill actually needs, Mastery included. */
+export function effectiveRequirement(
+  skill: SkillDefinition,
+  skills: readonly SkillAllocation[],
+): number {
+  if (skill.tier < 3) return skill.requires;
+  return Math.max(1, skill.requires - masteryRelief(skills));
 }
 
 /**
- * Whether one more point may go into `skillId`, and why not if it may not.
- * Split out from {@link spendSkillPoint} so the same rules can answer a "what
- * can I take" query without pretending to spend anything.
+ * Whether one more point may go into `skillId`.
+ *
+ * Takes the resolved attribute totals rather than deriving them, so the client's
+ * read model and the server ask the identical question of the identical numbers.
  */
 export function validateSkillSpend(
-  player: PersistedPlayer,
+  player: Pick<PersistedPlayer, 'skills' | 'unspentSkillPoints'>,
+  attributes: AttributeTotals,
   skillId: string,
-): { readonly ok: true; readonly skill: SkillDefinition } | { readonly ok: false; readonly reason: SkillRejection; readonly detail: string } {
+): SkillValidation {
   const skill = skillById(skillId);
   if (!skill) return { ok: false, reason: 'unknownSkill', detail: `no such skill: ${skillId}` };
 
@@ -103,44 +92,30 @@ export function validateSkillSpend(
     };
   }
 
-  if (lockedBranches(player.skills).has(skill.branch)) {
+  const needed = effectiveRequirement(skill, player.skills);
+  const have = attributes[skill.attribute] ?? 0;
+  if (have < needed) {
+    const name = attributeByKey(skill.attribute)?.name ?? skill.attribute;
     return {
       ok: false,
-      reason: 'branchLocked',
-      detail: `the ${skill.branch} branch is locked out by an earlier commitment`,
+      reason: 'attributeTooLow',
+      detail: `${skill.name} needs ${needed} ${name}, you have ${have}`,
     };
-  }
-
-  const gate = TIER_POINT_GATE[skill.tier] ?? 0;
-  const invested = pointsInBranch(player.skills, skill.branch);
-  if (invested < gate) {
-    return {
-      ok: false,
-      reason: 'tierLocked',
-      detail: `tier ${skill.tier} needs ${gate} points in ${skill.branch}, has ${invested}`,
-    };
-  }
-
-  for (const requirement of skill.requires) {
-    if (levelOf(player.skills, requirement) < 1) {
-      return {
-        ok: false,
-        reason: 'missingPrerequisite',
-        detail: `${skill.name} requires ${requirement}`,
-      };
-    }
   }
 
   return { ok: true, skill };
 }
 
-/**
- * Spends one point, returning a *new* player record. On rejection the caller
- * gets a reason and the original record is untouched -- there is deliberately
- * no partial application.
- */
-export function spendSkillPoint(player: PersistedPlayer, skillId: string): SkillSpendResult {
-  const validation = validateSkillSpend(player, skillId);
+export type SkillSpendResult =
+  | { readonly ok: true; readonly player: PersistedPlayer; readonly skill: SkillDefinition }
+  | { readonly ok: false; readonly reason: SkillRejection; readonly detail: string };
+
+export function spendSkillPoint(
+  player: PersistedPlayer,
+  attributes: AttributeTotals,
+  skillId: string,
+): SkillSpendResult {
+  const validation = validateSkillSpend(player, attributes, skillId);
   if (!validation.ok) return validation;
 
   const existing = player.skills.find((allocation) => allocation.skillId === skillId);
@@ -158,12 +133,20 @@ export function spendSkillPoint(player: PersistedPlayer, skillId: string): Skill
 }
 
 /**
- * Drops allocations a save can no longer justify: unknown skills, levels past a
- * skill's maximum, and points in a branch that later became locked. Run on
- * login, so a table edit cannot leave a character in a state the rules say is
- * impossible.
+ * Drops allocations a save can no longer justify: unknown ids, levels past a
+ * maximum, and -- the case a respec creates -- skills whose attribute
+ * requirement is no longer met.
+ *
+ * Requirements are checked against the character's **allocated** attributes
+ * alone, deliberately, and not against the totals items push them to. Otherwise
+ * unequipping a +5 Strength trinket would silently delete points out of the
+ * skill tree, which is a far worse surprise than a skill that keeps working
+ * while the trinket is off.
  */
-export function sanitizeSkills(skills: readonly SkillAllocation[]): SkillAllocation[] {
+export function sanitizeSkills(
+  skills: readonly SkillAllocation[],
+  allocated: AttributeTotals,
+): SkillAllocation[] {
   const kept: SkillAllocation[] = [];
   for (const allocation of skills) {
     const definition = skillById(allocation.skillId);
@@ -172,9 +155,22 @@ export function sanitizeSkills(skills: readonly SkillAllocation[]): SkillAllocat
     if (level <= 0) continue;
     kept.push({ skillId: allocation.skillId, level });
   }
-  const locked = lockedBranches(kept);
-  return kept.filter((allocation) => {
+  // Two passes, because Mastery's relief is read off the kept list and dropping
+  // a Mastery level can close a tier-3 skill that was only open because of it.
+  // One extra pass settles it: nothing here grants Mastery except Mastery.
+  const survives = (allocation: SkillAllocation, against: readonly SkillAllocation[]): boolean => {
     const definition = skillById(allocation.skillId);
-    return definition ? !locked.has(definition.branch) : false;
-  });
+    if (!definition) return false;
+    return (allocated[definition.attribute] ?? 0) >= effectiveRequirement(definition, against);
+  };
+  const firstPass = kept.filter((allocation) => survives(allocation, kept));
+  return firstPass.filter((allocation) => survives(allocation, firstPass));
 }
+
+/** Total points sunk into this tree. Used to sanity-check a save's budget. */
+export function totalSkillPoints(skills: readonly SkillAllocation[]): number {
+  return skills.reduce((sum, allocation) => sum + Math.max(0, Math.floor(allocation.level)), 0);
+}
+
+/** Every stat skill id, for a caller that wants to sweep the table. */
+export const ALL_SKILL_IDS: readonly string[] = ALL_SKILLS.map((skill) => skill.id);

@@ -44,6 +44,7 @@ import {
 } from '../../../server/config.js';
 import { abilityById, BASIC_ATTACK_ID } from '../../../server/data/abilities.js';
 import { EntityKind } from '../../../server/net/protocol.js';
+import type { BaseStatKey } from '../../../server/state/types.js';
 import { viewSeed } from '../seed.js';
 import { DEFAULT_AUTHORED_UNITS, setAuthoredUnits, unitsFromQuery } from './unit-catalog.js';
 import { ASSET_MANIFEST_HASH } from './unit-assets.js';
@@ -519,6 +520,16 @@ export function mountWorld(container: HTMLElement): ViewHandle {
   client.onCastRejected((abilityId, reason) => {
     hud.error(castRefusalText(abilityById(abilityId)?.name ?? abilityId, reason));
   });
+  // Every *other* refusal, into the same stack (spec 147).
+  //
+  // The server already answered a refused allocation, a refused respec and a
+  // refused equip with a reason, and this client dropped all three on the floor:
+  // nothing listened to `onError` at all. A "+" that goes grey and then does
+  // nothing when pressed reads as the game being broken rather than as the rule
+  // it is, and the refusal stack spec 143 built is exactly the place to say so.
+  client.onError((_code, message) => {
+    if (message.length > 0) hud.error(message);
+  });
 
   /** The world point of a body the scene has not drawn, out of the last delta. */
   function replicaAnchor(entityId: number): WorldAnchor | null {
@@ -579,6 +590,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
     map: inputMap,
     onMove: (from, to, count) => client.moveItem(from, to, count),
     onSpend: (skillId) => client.spendSkillPoint(skillId),
+    onAllocate: (key) => client.allocateAttribute(key as BaseStatKey),
+    onRespec: () => client.respecAttributes(),
     onBuy: (vendorId, defId) => client.buyItem(vendorId, defId),
     onSell: (vendorId, index) => client.sellItem(vendorId, index),
     onBuyBack: (vendorId, index) => client.buyBack(vendorId, index),
