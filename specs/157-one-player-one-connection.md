@@ -175,11 +175,17 @@ to ~39.5s, past the whole grace with margin.
   *intentional* disconnect, so no body is held. A strike more than
   `STRIKE_DECAY_TICKS` (600) after the last one starts the count again, which
   makes it the rate it was always meant to be.
-- **Only a refusal fails the handshake.** `game-client.ts` rejects the pending
-  welcome on *any* `Error` message. An ordinary mid-session refusal arriving
-  while a `connect()` is in flight — which is precisely what a resume is — fails
-  it for an unrelated reason. Only `BadProtocolVersion` and `Banned` refuse a
-  connection, so only those reject.
+- **Not: narrowing what fails the handshake.** `game-client.ts` rejects the
+  pending welcome on *any* `Error` message, so an ordinary mid-session refusal
+  arriving while a `connect()` is in flight — which is precisely what a resume
+  is — fails it for an unrelated reason. This spec tried to narrow that to
+  `BadProtocolVersion` and `Banned`, and backed it out: `hello` refuses 'already
+  connected' and 'bad player id' with `RejectedAction`, which is the same code
+  an ordinary refusal carries, and spec 145's hello-twice test rightly waits for
+  the first of those to fail its `connect()`. Telling a handshake refusal from a
+  gameplay one needs an error code that means it, and that is a protocol change
+  rather than this one. Left as it is, and cheaper than it was, because the
+  takeover removes the refusal storm that made it visible.
 
 ## Invariants tested
 

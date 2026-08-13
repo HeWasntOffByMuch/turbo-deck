@@ -99,7 +99,7 @@ describe('a second login for a player who is already playing', () => {
     await settle();
     await tickAlive(r, second, CONNECTION_TIMEOUT_TICKS + RESUME_GRACE_TICKS + 60);
 
-    expect(r.server.players.get('ana')).not.toBeNull();
+    expect(r.server.isLoggedIn('ana')).toBe(true);
     expect(r.bodies()).toBe(1);
   });
 
@@ -115,7 +115,7 @@ describe('a second login for a player who is already playing', () => {
     expect(revived.entityId).toBe(old.entityId);
 
     await tickAlive(r, revived, CONNECTION_TIMEOUT_TICKS + RESUME_GRACE_TICKS + 60);
-    expect(r.server.players.get('cat')).not.toBeNull();
+    expect(r.server.isLoggedIn('cat')).toBe(true);
     expect(r.bodies()).toBe(1);
   });
 
@@ -132,7 +132,7 @@ describe('a second login for a player who is already playing', () => {
     await settle();
     await tickAlive(r, tabB, 8);
 
-    expect(r.server.players.get('bob')).not.toBeNull();
+    expect(r.server.isLoggedIn('bob')).toBe(true);
     expect(r.bodies()).toBe(1);
   });
 
@@ -154,7 +154,7 @@ describe('a second login for a player who is already playing', () => {
     expect(r.bodies()).toBe(1);
 
     await tickAlive(r, second, RESUME_GRACE_TICKS + 60);
-    expect(r.server.players.get('dee')).not.toBeNull();
+    expect(r.server.isLoggedIn('dee')).toBe(true);
     expect(r.bodies()).toBe(1);
   });
 
@@ -172,7 +172,7 @@ describe('a second login for a player who is already playing', () => {
 
     await r.tick(RESUME_GRACE_TICKS * 2 + 120);
     expect(r.bodies()).toBe(0);
-    expect(r.server.players.get('eve')).toBeNull();
+    expect(r.server.isLoggedIn('eve')).toBe(false);
   });
 
   // The invariant this change could plausibly break: the ownership check must
@@ -186,7 +186,7 @@ describe('a second login for a player who is already playing', () => {
     // No close, no pings -- a dead router. Timed out, then reaped.
     await r.tick(CONNECTION_TIMEOUT_TICKS + RESUME_GRACE_TICKS + 60);
     expect(r.bodies()).toBe(0);
-    expect(r.server.players.get('fay')).toBeNull();
+    expect(r.server.isLoggedIn('fay')).toBe(false);
     expect(ana.entityId).toBeGreaterThanOrEqual(0);
   });
 });
@@ -195,5 +195,76 @@ describe('the reconnect ladder', () => {
   it('outlasts the grace the server holds a body for', () => {
     const total = DEFAULT_BACKOFF_TICKS.reduce((sum, ticks) => sum + ticks, 0);
     expect(total).toBeGreaterThan(RESUME_GRACE_TICKS);
+  });
+});
+
+describe('the heartbeat when the tick loop has stopped', () => {
+  // The whole point: a hidden tab stops `advanceTick`, so nothing pings, and
+  // the server's ten-second timeout drops a player who only changed tabs.
+  it('keeps a connection alive with no ticks at all', async () => {
+    const r = rig();
+    const me = await join(r, 'gus');
+    await r.tick(4);
+
+    // Not one `advanceTick` -- the loop is frozen, exactly as a hidden tab is.
+    // The keep-alive fires on its own clock, twice a second.
+    for (let i = 0; i < CONNECTION_TIMEOUT_TICKS + RESUME_GRACE_TICKS + 120; i++) {
+      r.server.tick();
+      if (i % 30 === 0) me.client.keepAlive();
+      await settle();
+    }
+
+    expect(r.server.isLoggedIn('gus')).toBe(true);
+    expect(r.bodies()).toBe(1);
+  });
+
+  // The other half: while the loop *is* running it must add nothing, or the
+  // ping rate doubles and walks into the heartbeat bucket that spec 151 sized
+  // for 2Hz.
+  it('adds nothing while the loop is running', async () => {
+    const r = rig();
+    const me = await join(r, 'hal');
+    await r.tick(4);
+
+    for (let i = 0; i < 600; i++) {
+      r.server.tick();
+      me.client.advanceTick();
+      me.client.keepAlive();
+      await settle();
+    }
+
+    // Still here: not timed out, and not dropped as a flooder either.
+    expect(r.server.isLoggedIn('hal')).toBe(true);
+    expect(r.bodies()).toBe(1);
+  });
+});
+
+describe('the symptom itself', () => {
+  // The bug as reported: the body is standing there, the socket is up, and
+  // every action comes back "not logged in". Asserted through a real refusal
+  // rather than through the session map, because the refusal is what a player
+  // sees and the two could in principle come apart.
+  it('never refuses a live connection for not being logged in', async () => {
+    const r = rig();
+    const first = await join(r, 'ivy');
+    await r.tick(4);
+
+    // A blip the server has not noticed: the client comes back on a new socket
+    // with a good token while the old one is, as far as this end knows, live.
+    const revived = await join(r, 'ivy', first.client.sessionToken);
+    const refusals: string[] = [];
+    revived.client.onError((_code, message) => refusals.push(message));
+    await r.tick(4);
+
+    // Long enough for the old connection to time out, linger and be reaped --
+    // which is when the symptom used to appear, forty seconds after the blip.
+    await tickAlive(r, revived, CONNECTION_TIMEOUT_TICKS + RESUME_GRACE_TICKS + 120);
+
+    revived.client.unequip('mainHand');
+    revived.client.equip('mainHand', 'sword.worn');
+    await tickAlive(r, revived, 8);
+
+    expect(refusals.filter((message) => message.includes('not logged in'))).toEqual([]);
+    expect(r.server.isLoggedIn('ivy')).toBe(true);
   });
 });

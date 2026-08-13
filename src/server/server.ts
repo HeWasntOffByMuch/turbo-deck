@@ -369,6 +369,19 @@ export class GameServer implements AdminHost {
   }
 
   /**
+   * Whether this character has a session (spec 157).
+   *
+   * The question "not logged in" is the answer to, and the one worth asserting
+   * in a test: every refusal in `player-manager.ts` is this returning false,
+   * and the bug this spec closes was it going false under a connection that was
+   * still up. A predicate rather than exposing `players`, because the *answer*
+   * is what a caller outside this class has any business with.
+   */
+  isLoggedIn(playerId: string): boolean {
+    return this.players.get(playerId) !== null;
+  }
+
+  /**
    * How many of a player's inputs are sitting unconsumed (spec 148).
    *
    * The number the pong carries, readable from this end too -- a rate-matching

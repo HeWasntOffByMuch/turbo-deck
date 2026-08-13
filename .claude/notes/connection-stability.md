@@ -1,5 +1,10 @@
 # Session drops and "not logged in" — state of the system
 
+> **Status: fixed in spec 157.** Everything below is the investigation as it
+> stood before the fix, kept because the reproductions and the reasoning are
+> what the spec is built on. What shipped, and the one item deliberately not
+> taken, is recorded at the bottom under *What was done*.
+
 Investigation of the reported symptom: playing normally, and then every action
 starts refusing with **"not logged in"** in the red refusal column, while the
 body is still standing in the world and the connection is still live.
@@ -295,3 +300,47 @@ style of `src/server/client/resume.test.ts`:
 
 Test 5 matters: the fix in 3.1 is a guard against ending a session somebody
 owns, and it must not become a reason a session is never ended.
+
+---
+
+## 6. What was done (spec 157)
+
+Implemented in `specs/157-one-player-one-connection.md`, with
+`src/server/client/spec157.test.ts` as the regression suite — 11 tests, of
+which 7 fail against the unfixed server, including one that drives a real
+action and asserts no "not logged in" refusal ever reaches a live client.
+
+- **3.1, 3.2, 3.3 — all taken.** `hello()` now takes a player over rather than
+  duplicating them: the newest connection adopts the existing entity and
+  session, the old one is *displaced* holding nothing, and `reap()` refuses to
+  log out a `playerId` that a live connection is holding. A fresh login reaps
+  any lingering entry for its id first, which closes the orphan leak.
+- **3.4** is moot: with takeover, two lingering entries for one id cannot arise.
+- **4.1 — taken.** `GameClient.onWelcome` fires on every welcome; the Play tab
+  writes the resume token from there instead of once.
+- **4.2 — taken.** `GameClient.keepAlive()` plus a 500ms `setInterval` in
+  `view.ts` drives the heartbeat and the reconnect backoff off the wall clock.
+  `keepAlive` detects a stalled loop by comparing `localTick` against the last
+  call, so it stays clock-free and sends nothing while the tab is visible.
+- **4.3 — taken.** The ladder is `[30, 60, 120, 240, 480, 480, 480, 480]`, and
+  a test asserts its sum exceeds `RESUME_GRACE_TICKS` so the two cannot drift.
+- **4.4 — taken.** `STRIKE_DECAY_TICKS` (600) retires strikes after a quiet
+  spell, making the flood check a rate rather than a lifetime total.
+- **4.5, 4.6 — not taken**, as recommended above; both are noted in the spec's
+  Out of scope.
+- **4.7 — attempted and backed out.** Narrowing which errors fail a pending
+  handshake cannot be done by code: `hello` refuses 'already connected' with
+  `RejectedAction`, the same code an ordinary refusal carries, and spec 145's
+  hello-twice test rightly depends on that failing its `connect()`. It needs a
+  handshake-specific error code, which is a protocol change. The takeover fix
+  removes the refusal storm that made it visible, so it is cheaper left alone.
+- **The `?name=` rename is deliberately still broken.** Writing the name on
+  every login is worse than the bug — a tab loading with `?id=` and no `?name=`
+  would silently rename you to `Player 1a2b`, because the wire cannot tell
+  "asked for this name" from "defaulted to it". A real fix is a rename verb.
+
+One thing worth recording, because it was nearly shipped: the first cut of the
+takeover read `held.entityId` *after* `displace()` had cleared it, so every
+takeover welcomed the client to entity -1 and hung the handshake. Taking a body
+over and taking it away are the same two fields, and the order between them is
+the whole difference.
