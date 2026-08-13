@@ -328,7 +328,7 @@ function writeTradeSide(writer: BufferWriter, side: TradeSideView): void {
 function readTradeSide(reader: BufferReader): TradeSideView {
   const playerId = reader.str();
   const displayName = reader.str();
-  const count = reader.varuint();
+  const count = reader.count();
   const offer: { defId: string; count: number }[] = [];
   for (let i = 0; i < count; i++) offer.push({ defId: reader.str(), count: reader.varuint() });
   return { playerId, displayName, offer, coins: reader.varuint(), accepted: reader.u8() !== 0 };
@@ -351,7 +351,7 @@ function writeInventory(writer: BufferWriter, inventory: Inventory): void {
 }
 
 function readInventory(reader: BufferReader): Inventory {
-  const count = reader.varuint();
+  const count = reader.count();
   const bag: (ItemStack | null)[] = new Array<ItemStack | null>(count).fill(null);
   for (let i = 0; i < count; i++) {
     const defId = reader.str();
@@ -547,7 +547,7 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
     case ClientMessageType.TradeRespond:
       return { type: ClientMessageType.TradeRespond, accept: reader.u8() !== 0 };
     case ClientMessageType.TradeOffer: {
-      const count = reader.varuint();
+      const count = reader.count();
       const slots: { index: number; count: number }[] = [];
       for (let i = 0; i < count; i++) slots.push({ index: reader.varint(), count: reader.varint() });
       return { type: ClientMessageType.TradeOffer, slots, coins: reader.varint() };
@@ -1027,7 +1027,7 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
 }
 
 function readSkills(reader: BufferReader): readonly SkillAllocation[] {
-  const count = reader.varuint();
+  const count = reader.count();
   const skills: SkillAllocation[] = new Array<SkillAllocation>(count);
   for (let i = 0; i < count; i++) skills[i] = { skillId: reader.str(), level: reader.varuint() };
   return skills;
@@ -1244,7 +1244,7 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
       };
     case ServerMessageType.SpawnerStates: {
       const tick = reader.u32();
-      const count = reader.varuint();
+      const count = reader.count();
       const spawners: SpawnerStatus[] = new Array<SpawnerStatus>(count);
       for (let i = 0; i < count; i++) {
         spawners[i] = {
@@ -1259,7 +1259,7 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
       return { type: ServerMessageType.SpawnerStates, tick, spawners };
     }
     case ServerMessageType.Cooldowns: {
-      const count = reader.varuint();
+      const count = reader.count();
       const entries: { abilityId: string; readyAtTick: number }[] = [];
       for (let i = 0; i < count; i++) {
         entries.push({ abilityId: reader.str(), readyAtTick: reader.u32() });
@@ -1271,10 +1271,10 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
     case ServerMessageType.Delta: {
       const tick = reader.u32();
       const ackInputSeq = reader.varuint();
-      const removedCount = reader.varuint();
+      const removedCount = reader.count();
       const removed: number[] = [];
       for (let i = 0; i < removedCount; i++) removed.push(reader.varuint());
-      const upsertCount = reader.varuint();
+      const upsertCount = reader.count();
       const upserts: EntityDelta[] = [];
       for (let i = 0; i < upsertCount; i++) upserts.push(readEntityDelta(reader));
       return { type: ServerMessageType.Delta, tick, ackInputSeq, removed, upserts };
@@ -1317,10 +1317,10 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
     case ServerMessageType.VendorState: {
       const vendorId = reader.str();
       const name = reader.str();
-      const stockCount = reader.varuint();
+      const stockCount = reader.count();
       const stock: { defId: string; price: number }[] = [];
       for (let i = 0; i < stockCount; i++) stock.push({ defId: reader.str(), price: reader.varuint() });
-      const buybackCount = reader.varuint();
+      const buybackCount = reader.count();
       const buyback: { defId: string; count: number; price: number }[] = [];
       for (let i = 0; i < buybackCount; i++) {
         buyback.push({ defId: reader.str(), count: reader.varuint(), price: reader.varuint() });

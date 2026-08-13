@@ -83,22 +83,61 @@ describe('the buckets', () => {
 describe('arbitrary bytes into the codec', () => {
   const bytes = fc.uint8Array({ minLength: 0, maxLength: 512 });
 
+  /** Either it decoded into a message, or it refused with the one error type. */
+  function decodesOrRefuses(frame: Uint8Array): void {
+    for (const decode of [decodeClientMessage, decodeServerMessage]) {
+      try {
+        const message = decode(frame);
+        // A decode that "succeeded" still has to have produced a message.
+        expect(typeof message).toBe('object');
+        expect(typeof (message as { type: number }).type).toBe('number');
+      } catch (error) {
+        if (!(error instanceof CodecError)) throw error;
+      }
+    }
+  }
+
+  /**
+   * Frames that have actually broken this, kept by hand (spec 152).
+   *
+   * The generated cases below found the first of these and then found it again
+   * only about one run in three, because the property was unseeded -- so it
+   * shipped green and made CI flaky for everybody instead of failing once,
+   * loudly, on the commit that introduced it. A regression this specific should
+   * not depend on a dice roll, so it is spelled out.
+   */
+  const KNOWN_BAD: readonly (readonly number[])[] = [
+    // An inventory whose declared count is past 2^32: `new Array(count)` threw
+    // a RangeError, which is not a CodecError, so nothing caught it.
+    [82, 0, 128, 128, 128, 64],
+    // The same shape below 2^32, where it allocated gigabytes instead of
+    // throwing -- the ArrayPrototypeFill frame in the CI heap-exhaustion stack.
+    [82, 0, 255, 255, 255, 255, 15],
+    // A delta claiming four billion removals.
+    [65, 1, 1, 255, 255, 255, 255, 15],
+  ];
+
+  it('refuses a frame that declares more than it could possibly hold', () => {
+    for (const bad of KNOWN_BAD) {
+      const frame = Uint8Array.from(bad);
+      // Timed, because the failure this replaces was an *allocation*: a decoder
+      // that tried to honour the count could not return in a millisecond.
+      const started = Date.now();
+      expect(() => decodeServerMessage(frame)).toThrow(CodecError);
+      expect(Date.now() - started).toBeLessThan(250);
+      decodesOrRefuses(frame);
+    }
+  });
+
   it('either decodes or throws CodecError, and never anything else', () => {
-    fc.assert(
-      fc.property(bytes, (frame) => {
-        for (const decode of [decodeClientMessage, decodeServerMessage]) {
-          try {
-            const message = decode(frame);
-            // A decode that "succeeded" still has to have produced a message.
-            expect(typeof message).toBe('object');
-            expect(typeof (message as { type: number }).type).toBe('number');
-          } catch (error) {
-            if (!(error instanceof CodecError)) throw error;
-          }
-        }
-      }),
-      { numRuns: 3000 },
-    );
+    fc.assert(fc.property(bytes, decodesOrRefuses), {
+      numRuns: 3000,
+      // Seeded, because this repo's whole premise is that the same seed gives
+      // the same answer, and a property that fails one run in three is the
+      // opposite of a regression guard. Bump it deliberately to go looking for
+      // more; what it must not do is vary by accident.
+      seed: 20260812,
+    });
   });
 
   it('survives a frame that claims to be enormous', () => {
