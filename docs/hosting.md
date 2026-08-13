@@ -154,10 +154,13 @@ understanding before it becomes the permanent answer.
 game can produce, and even a modest upstream would do. Check that the line is
 symmetric, and then stop thinking about it.
 
-**Compute is the actual argument for it.** CPU is this server's capacity
-ceiling and an old desktop core at 3.5 GHz beats a shared vCPU that is
-oversubscribed by design. A ten-year-old i5 or i7 plausibly serves two or three
-times what the €6 boxes above do.
+**Compute is a modest argument, not a big one.** CPU is this server's capacity
+ceiling, and a desktop core beats a shared vCPU that is oversubscribed by
+design — but by less than it sounds. A 2014-era Haswell i5/i7 turboing to
+~3.5-3.9 GHz is roughly on par with an uncontended cloud vCPU and perhaps half
+again as fast as a busy one. Call it par to 1.5x, not the two or three times an
+older draft of this document claimed. What the old box really has is RAM and
+disk nobody is metering.
 
 **"Just power cost" is usually not cheaper.** Polish all-in electricity is
 ~1.04-1.32 PLN/kWh in 2026 (energy plus distribution, the second being over
@@ -203,6 +206,30 @@ of people this week. Move it to a rented box at the point where strangers are
 connecting or where it needs to be up while you sleep — and note that running
 both is normal, since the old machine makes an excellent staging server once
 the public one exists.
+
+### If the box is a decade old
+
+Five things, in the order they pay off:
+
+- **Pull the graphics card out.** This server renders nothing — it is Node and
+  a socket — and a discrete GPU of that era idles at 10-25 W for no reason at
+  all, which is €2-6 a month of nothing. Check the CPU has integrated graphics
+  first: most desktop i5/i7 parts do, but an `-E`/X99 or an FX will not POST
+  without a card in it.
+- **Set the BIOS to power on after AC loss** (`Restore on AC/Power Loss` →
+  `Power On`), and disable suspend in the OS. Otherwise the first power cut
+  ends with a server that is off until somebody walks over to it, which is the
+  single most common way a self-hosted box quietly stops existing.
+- **Measure the wall draw** with a plug meter rather than trusting the table
+  above. A twelve-year-old PSU is also running at the bad end of its efficiency
+  curve at these loads, so the wall figure is worse than the parts suggest.
+- **Boot off an SSD if it is still on a spinning disk.** A twelve-year-old HDD
+  running continuously is the component most likely to end this. It is worth
+  noting what that failure actually costs, though: the world lives in RAM
+  (`MemoryDataStore`), so a dead disk costs an OS reinstall and a `compose up`,
+  not a world.
+- **Dust it and repaste it.** It will be running a tick loop continuously, and
+  it is the only thing here with fans.
 
 **Latency is not what picks the host either.** Falkenstein is ~25ms from Poland
 against ~5ms for a Warsaw datacenter, and that 20ms is worth less than it sounds:
