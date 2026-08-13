@@ -124,6 +124,15 @@ interface Patch {
 interface Reading {
   readonly patches: Patch[];
   readonly dt: number;
+  /**
+   * The slowest frame of the sample.
+   *
+   * Beside the mean because they answer different complaints. The report is "a
+   * still frame smearing across the screen when I moved", which is a *stall* --
+   * one frame held while the world went on without it -- and a mean cannot tell
+   * that apart from a steadily slow frame that never surprises anybody.
+   */
+  readonly worst: number;
   readonly draws: number;
 }
 
@@ -233,6 +242,7 @@ async function read(page: Page, name: string): Promise<Reading> {
   return {
     patches: PATCHES.map((box) => samplePatch(png, box)),
     dt: drawn.length === 0 ? 0 : drawn.reduce((sum, frame) => sum + frame.dt, 0) / drawn.length,
+    worst: drawn.reduce((slowest, frame) => Math.max(slowest, frame.dt), 0),
     draws: drawn.length === 0 ? 0 : total('drawElements') / drawn.length,
   };
 }
@@ -293,6 +303,11 @@ async function main(): Promise<void> {
       const off = await read(page, `span${span}-torch-off`);
       await withMenu(page, 'Player lights', async () => {
         await setCheckbox(page, 'Torch', true);
+        await setCheckbox(page, 'Torch shadows', false);
+      });
+      const flat = await read(page, `span${span}-torch-unshadowed`);
+      await withMenu(page, 'Player lights', async () => {
+        await setCheckbox(page, 'Torch shadows', true);
       });
       const on = await read(page, `span${span}-torch-on`);
 
@@ -315,10 +330,19 @@ async function main(): Promise<void> {
             : `span ${span}: nothing at "${box.name}" moves with the torch`,
         );
       });
-      console.log(
-        `    cost: ${off.dt.toFixed(0)}ms/${off.draws.toFixed(0)} draws with it off, ` +
-          `${on.dt.toFixed(0)}ms/${on.draws.toFixed(0)} draws with it on ` +
-          `(${(on.dt / Math.max(1, off.dt)).toFixed(2)}x)`,
+      const cost = (name: string, reading: Reading): string =>
+        `${name.padEnd(16)} ${reading.dt.toFixed(0).padStart(4)}ms mean  ` +
+        `${reading.worst.toFixed(0).padStart(5)}ms worst  ` +
+        `${reading.draws.toFixed(0).padStart(4)} draws`;
+      console.log(`    ${cost('torch off', off)}`);
+      console.log(`    ${cost('torch, no shadow', flat)}`);
+      console.log(`    ${cost('torch + shadow', on)}`);
+      // The whole question of what to bound: if the unshadowed torch costs what
+      // no torch costs, then every one of those draws and every one of those
+      // milliseconds is the cube map, and the light itself is free.
+      check(
+        flat.draws < off.draws + (on.draws - off.draws) * 0.25,
+        `span ${span}: an unshadowed torch costs about what no torch costs`,
       );
     }
   } finally {
