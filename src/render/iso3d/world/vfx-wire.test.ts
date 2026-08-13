@@ -5,8 +5,11 @@ import {
   CONTACT_RADIUS,
   DAMAGE_EFFECTS,
   effectsForBlow,
+  HEAL_EFFECT,
+  REDUNDANT_SERVER_EFFECTS,
   type CombatFacts,
 } from './vfx-wire.js';
+import { ALL_ABILITIES } from '../../../server/data/abilities.js';
 
 function facts(overrides: Partial<CombatFacts> = {}): CombatFacts {
   return {
@@ -159,6 +162,76 @@ describe('effectsForBlow', () => {
     const played = effectsForBlow(facts({ bleeds: false, critical: true, damageType: 'physical' }), 1);
     const seeds = new Set(played.map((request) => request.seed));
     expect(seeds.size).toBe(played.length);
+  });
+});
+
+describe('a heal (spec 157)', () => {
+  /** The shape a heal actually arrives in: a hit against yourself, sign flipped. */
+  const heal = (overrides: Partial<CombatFacts> = {}): CombatFacts =>
+    facts({ attackerId: 2, targetId: 2, damage: -14, fromX: 100, fromZ: 200, ...overrides });
+
+  it('draws the heal and never blood', () => {
+    // The whole bug: healing travelled on the blow message and the table never
+    // looked at the sign, so a mote picked up sprayed your own blood.
+    expect(effectsForBlow(heal(), 500).map((request) => request.id)).toEqual([HEAL_EFFECT]);
+  });
+
+  it('draws no blood whatever flags the message happens to carry', () => {
+    // A heal event has no business being flagged killed, critical or blocked --
+    // and the wire cannot stop one from being, so the sign has to win.
+    for (const killed of [false, true]) {
+      for (const critical of [false, true]) {
+        for (const blocked of [false, true]) {
+          for (const bleeds of [false, true]) {
+            const played = effectsForBlow(heal({ killed, critical, blocked, bleeds }), 3);
+            expect(played.map((request) => request.id)).toEqual([HEAL_EFFECT]);
+          }
+        }
+      }
+    }
+  });
+
+  it('is drawn on the body and at its feet, whoever cast it', () => {
+    // Not stepped back along a blow and not lifted to a chest: a heal has no
+    // direction to carry, and it comes up out of the ground. `playEffect` adds
+    // the terrain height, so a lift of zero is the feet.
+    const fromElsewhere = effectsForBlow(heal({ attackerId: 9, fromX: 40, fromZ: 90 }), 7)[0];
+    expect(fromElsewhere?.x).toBe(100);
+    expect(fromElsewhere?.z).toBe(200);
+    expect(fromElsewhere?.y).toBe(0);
+    expect(fromElsewhere?.rotation).toBe(0);
+  });
+
+  it('is never louder for a flag that means nothing to it', () => {
+    expect(effectsForBlow(heal({ critical: true }), 1)[0]?.scale).toBe(
+      effectsForBlow(heal(), 1)[0]?.scale,
+    );
+  });
+
+  it('is seeded by where and when, like every other effect', () => {
+    // Two clients watching one heal see one picture.
+    expect(effectsForBlow(heal(), 500)[0]?.seed).toBe(blowSeed(heal(), 500));
+  });
+
+  it('treats a blow that did nothing as a blow, not as a heal', () => {
+    // The test is the sign, not "not positive". A zero-damage hit is a hit.
+    expect(effectsForBlow(facts({ damage: 0 }), 1)[0]?.id).toBe('hit_blood');
+  });
+});
+
+describe('REDUNDANT_SERVER_EFFECTS', () => {
+  it('names the self-heal abilities, which report themselves twice', () => {
+    // Each one sends an Effect message *and* the negative-damage blow that
+    // draws the heal, and the registry has no entry under an ability's own id
+    // -- so drawing this one too puts the orange debug disc under the heal.
+    expect(REDUNDANT_SERVER_EFFECTS.size).toBeGreaterThan(0);
+    for (const id of REDUNDANT_SERVER_EFFECTS) {
+      expect(id.endsWith('.self'), id).toBe(true);
+      const ability = ALL_ABILITIES.find((entry) => `${entry.id}.self` === id);
+      expect(ability, `${id} names no ability`).toBeDefined();
+      // Only an ability whose picture the blow already draws belongs here.
+      expect((ability?.healing ?? 0) + (ability?.healingFraction ?? 0), id).toBeGreaterThan(0);
+    }
   });
 });
 
