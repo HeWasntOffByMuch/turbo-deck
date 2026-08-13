@@ -1272,6 +1272,15 @@ function runSpawners(
       stats: definition.stats,
       radius: definition.radius,
       resource: definition.stats.maxResource,
+      // Full guard, like full health and a full pool. `blankEntity` leaves this
+      // at zero because a blank entity has no stats to size it from, and this
+      // literal is the *second* place a body is built -- `spawnEntity` sets it
+      // on the line below its own spread and this one did not, so every
+      // wandering monster in the world entered it already broken and spent its
+      // first seconds regenerating from nothing. Nothing in Node could see it:
+      // poise is a live resource, so no derivation test looks at it, and the
+      // sim's own poise tests build their bodies through `spawnEntity`.
+      poise: definition.stats.traits.maxPoise,
       spawnerId: point.id,
       anchor: { x: point.x, y: point.y },
     };

@@ -598,6 +598,20 @@ describe("the map's spawners", () => {
     }
   });
 
+  it('puts a body into the world with a full guard, not an empty one', () => {
+    // The bug this exists for: a spawned monster is built from its own literal
+    // here rather than through `spawnEntity`, and that literal did not set
+    // `poise` -- so every wandering monster in the game entered it already
+    // broken and spent its first seconds regenerating up from nothing. Poise is
+    // a live resource, so no derivation test looks at it, and every other poise
+    // test builds its bodies through `spawnEntity`, which does set it.
+    const state = step(createWorldState(3), [], spawnerContext()).state;
+    for (const body of monsters(state)) {
+      expect(body.stats.traits.maxPoise, body.typeId).toBeGreaterThan(0);
+      expect(body.poise, body.typeId).toBe(body.stats.traits.maxPoise);
+    }
+  });
+
   it('never puts a second body on a spawner that still has one', () => {
     let state = createWorldState(3);
     const ctx = spawnerContext();

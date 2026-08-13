@@ -212,9 +212,22 @@ const STAT_ROWS: readonly {
     hint: 'Poise. Spent by blows landing on you; when it empties you are staggered. Constitution.',
   },
   {
+    // `poiseRegen` is per *tick* -- `derived.ts` divides by the tick rate on the
+    // line that computes it -- and a player reads seconds. Multiplied back here
+    // rather than stored twice, so there is still one number.
+    label: 'Guard regen',
+    of: (s) => `${(s.traits.poiseRegen * TICK_RATE).toFixed(1)}/s`,
+    hint: 'Guard you get back per second, and only while standing still until something grants otherwise. Constitution.',
+  },
+  {
     label: 'Stagger',
     of: (s) => String(Math.round(s.traits.staggerPower)),
     hint: 'Guard your blows take off. Break someone and they are rooted and lose what they were casting. Strength.',
+  },
+  {
+    label: 'Hyper-armour',
+    of: (s) => `${Math.round(s.traits.windupPoiseArmor * 100)}%`,
+    hint: 'Guard damage you ignore -- but only while committed to a wind-up, never while idle. Strength.',
   },
   // As percentages of the authored animation, because "0.72x" is a ratio nobody
   // has the other half of. 28% shorter is a sentence.
