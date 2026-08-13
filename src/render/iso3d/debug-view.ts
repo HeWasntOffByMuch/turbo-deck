@@ -13,7 +13,7 @@ import { defaultMechTuning, MechRig, type MechDebug, type MechTuning } from './r
 import { RobeRig, type RobeDebug } from './robe.js';
 import { ClothDebugOverlay, defaultClothLayers, type ClothLayers } from './robe-debug.js';
 import { buildPanel } from './movement.js';
-import { embedGui, guiContents } from './tuning-panel.js';
+import { embedGui, fitPanelHeight, guiContents } from './tuning-panel.js';
 import type { ViewHandle } from './view-handle.js';
 import type { SandboxUnit, UnitKind } from './unit.js';
 import { CritterRig, defaultCritterTuning, type CritterTuning } from './critter.js';
@@ -521,9 +521,16 @@ function buildDebugControls(opts: {
   onClothLayers: (l: ClothLayers) => void;
   onClothVisible: (v: boolean) => void;
   onBodyVisible: (v: boolean) => void;
-}): { element: HTMLElement; setReadout: (text: string) => void; setUnit: (kind: UnitKind) => void } {
+}): {
+  element: HTMLElement;
+  setReadout: (text: string) => void;
+  setUnit: (kind: UnitKind) => void;
+  fit: () => void;
+} {
   const panel = document.createElement('div');
-  panel.style.cssText = `${LABEL_CSS}width:280px;max-height:${CANVAS_H}px;overflow-y:auto;box-sizing:border-box;`;
+  // Runs to the bottom of the window rather than stopping at the viewports;
+  // `fit` measures where the column starts once the tab is on screen.
+  panel.style.cssText = `${LABEL_CSS}width:280px;max-height:100vh;overflow-y:auto;box-sizing:border-box;`;
   const gui = embedGui(new GUI({ container: panel, title: 'Rig debug', width: 280 }));
 
   // --- Time control -------------------------------------------------------
@@ -623,7 +630,12 @@ function buildDebugControls(opts: {
   };
   setUnit('spider');
 
-  return { element: panel, setReadout: (t) => (readout.textContent = t), setUnit };
+  return {
+    element: panel,
+    setReadout: (t) => (readout.textContent = t),
+    setUnit,
+    fit: () => fitPanelHeight(panel),
+  };
 }
 
 const LEG_NAMES = ['FL', 'FR', 'BL', 'BR'] as const;
@@ -861,6 +873,10 @@ export function mountDebug(container: HTMLElement): ViewHandle {
       running = true;
       lastFrame = undefined;
       accumulator = 0;
+      // The shell shows the tab and then starts it, so this is the first moment
+      // either column has a box to measure.
+      controls.fit();
+      panel.fit();
       input.attach(window);
       requestAnimationFrame(frame);
     },

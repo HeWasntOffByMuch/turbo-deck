@@ -93,6 +93,31 @@ export function embedGui(gui: GUI): GUI {
   return gui;
 }
 
+/** Space left under a panel that runs to the bottom of the window. */
+const PANEL_BOTTOM_GAP = 18;
+
+/**
+ * Let a panel run to the bottom of the window rather than stop at the canvas.
+ *
+ * Both sandboxes capped their column at the height of the viewport *beside* it,
+ * which was the right cap when the panel was a short slider list and the wrong
+ * one now: the mech alone is twenty-odd controls, so two thirds of it lived
+ * below a scroll nobody could see the top of.
+ *
+ * The measurement is the panel's own offset and the *cap* is `100vh` arithmetic,
+ * so the browser re-does it on every window resize with nothing listening. What
+ * has to be re-measured is only the offset, and that changes when the tab's
+ * chrome does -- so this is called from `start()`, which the shell runs after it
+ * has made the tab visible. Called while the tab is hidden it does nothing:
+ * there is no box to measure, and writing a height from a zeroed rect is how a
+ * panel ends up one line tall.
+ */
+export function fitPanelHeight(panel: HTMLElement): void {
+  if (panel.offsetParent === null) return;
+  const top = panel.getBoundingClientRect().top + window.scrollY;
+  panel.style.maxHeight = `calc(100vh - ${Math.round(top + PANEL_BOTTOM_GAP)}px)`;
+}
+
 /**
  * Where lil-gui puts a GUI's or a folder's contents.
  *

@@ -35,6 +35,7 @@ import { CRITTERS, CRITTER_IDS, isCritterId, type CritterId } from '../critters/
 import {
   addTuningGroups,
   embedGui,
+  fitPanelHeight,
   LABEL_CSS,
   type TuningGroup,
 } from './tuning-panel.js';
@@ -919,6 +920,14 @@ export interface SandboxPanel {
   readonly element: HTMLElement;
   /** Push every tuning's current values back into the controls (after a reset). */
   sync(): void;
+  /**
+   * Re-measure the column so it runs to the bottom of the window.
+   *
+   * Called by the tab's `start()` rather than at build time, because the shell
+   * makes a tab visible and only then starts it -- and a panel measured while
+   * its tab is `display:none` has no box to measure.
+   */
+  fit(): void;
 }
 
 /**
@@ -978,7 +987,10 @@ const UNIT_CHIPS: readonly { kind: UnitKind; label: string; tip: string }[] = [
  */
 export function buildPanel(opts: SandboxPanelOptions): SandboxPanel {
   const panel = document.createElement('div');
-  panel.style.cssText = `${LABEL_CSS}width:300px;max-height:${DISPLAY_H}px;overflow-y:auto;box-sizing:border-box;`;
+  // No cap of its own: `fit` measures where the column starts and runs it to
+  // the bottom of the window. `100vh` until then, so the very first frame is
+  // bounded by something even if it is never fitted.
+  panel.style.cssText = `${LABEL_CSS}width:300px;max-height:100vh;overflow-y:auto;box-sizing:border-box;`;
 
   const help = document.createElement('div');
   help.style.cssText =
@@ -1095,6 +1107,7 @@ export function buildPanel(opts: SandboxPanelOptions): SandboxPanel {
 
   return {
     element: panel,
+    fit: () => fitPanelHeight(panel),
     sync: () => {
       unit.updateDisplay();
       movement.sync();
@@ -1285,6 +1298,9 @@ export function mountMovement(container: HTMLElement): ViewHandle {
       running = true;
       lastFrame = undefined;
       accumulator = 0;
+      // The shell shows the tab and then starts it, so this is the first moment
+      // the panel has a box to measure.
+      panel.fit();
       input.attach(window);
       requestAnimationFrame(frame);
     },
