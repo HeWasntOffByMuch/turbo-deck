@@ -50,6 +50,7 @@ host:
 
 | | compute | 780 GB egress | total |
 |---|---|---|---|
+| OVH VPS-1, Warsaw (4 vCPU, 8 GB, unmetered) | 44.53 zł inc. VAT | included | **~€10.5** |
 | Hetzner CX23 (2 vCPU, 4 GB, 20 TB traffic) | €5.49 | included | **~€6** |
 | Fly.io shared-cpu-1x 512 MB, `waw` | ~$3 | ~$16 at $0.02/GB | ~$19 |
 | DigitalOcean basic droplet (1 vCPU, 1 GB) | $6 | included in 1 TB | ~$6 |
@@ -125,19 +126,54 @@ enough that it cannot be planned around. Before assuming anything is wrong:
 | RAM | 8 GB |
 | Disk | 75 GB SSD |
 | Traffic | unlimited, capped at 400 Mbit/s |
-| Price | ~€6/month |
+| Price | **44.53 zł/month** at the Polish checkout — ~€10.5, VAT included |
 | Location | Warsaw, Poland |
 
-For this workload that is not a downgrade in any dimension. Unlimited traffic
-removes the resource that made the host choice interesting at all; 400 Mbit/s is
-~3,300 players' worth of deltas at 120 kbit/s each, which is thirty times what
-one core can simulate. And it is the one plan on this page that is *in Poland*,
-so the ~25ms to Falkenstein becomes ~5ms.
+That price is what the order page actually charges, not the ~€6 an earlier
+draft of this document took from a comparison site: those quote net prices, and
+Polish VAT is 23%. It is still the cheapest option here once the old machine is
+in the comparison, since that tower burns ~75 zł a month in electricity to be
+slower.
 
-Two things to check at the checkout rather than take from this table: OVH's
-headline price is sometimes a 12-month commitment rate with a higher monthly
-one beside it, and provisioning is slow — minutes, against Hetzner's seconds.
-Neither changes the recommendation.
+For this workload the plan is not a downgrade in any dimension. Unlimited
+traffic removes the resource that made the host choice interesting at all;
+400 Mbit/s is ~3,300 players' worth of deltas at 120 kbit/s each, which is
+thirty times what one core can simulate. And it is the one plan on this page
+that is *in Poland*, so the ~25ms to Falkenstein becomes ~5ms.
+
+Three smaller things, none of which changes the recommendation: OVH's headline
+price is sometimes a 12-month commitment rate with a higher month-to-month one
+beside it, provisioning takes minutes rather than Hetzner's seconds, and
+**anti-DDoS is included as standard** — which is worth something specific here,
+given that it is the risk self-hosting cannot mitigate.
+
+### Which distribution
+
+**Ubuntu Server 24.04 LTS.** Every command in the runbook below is written for
+it — `apt`, `ufw`, `docker.io`, `unattended-upgrades` — and Docker's own
+packaging targets Ubuntu and Debian first. Free security maintenance runs to
+May 2029, and ten years with Ubuntu Pro, which is free for personal use on up
+to five machines. Take the LTS, not a 25.x interim release: those are supported
+for nine months, which converts a server you wanted to forget about into an
+annual reinstall.
+
+The rest of OVH's menu, so the choice is made rather than defaulted into:
+
+- **Debian** — the other right answer, and marginally leaner for a box that
+  only runs containers. Same `apt`, same `ufw`, so the runbook survives nearly
+  unchanged. Pick it over Ubuntu only if you already prefer it.
+- **AlmaLinux / RockyLinux** — solid RHEL rebuilds with ten-year lifecycles,
+  and entirely reasonable servers. But they are `dnf`, `firewalld`, SELinux
+  enforcing and Podman-by-default, so every command below changes and the
+  SELinux labelling on bind mounts becomes something you have to know about.
+  Correct in a RHEL-shaped shop; pure friction here.
+- **Fedora** — no. A ~13-month support life means reinstalling annually, and it
+  is a distribution for tracking what is new, which is the opposite of what a
+  game server is for.
+- **CloudLinux** — built for shared web hosting, per-tenant resource limits and
+  control panels, and licensed commercially. Nothing to do with this.
+
+Also decline any image sold "with cPanel/Plesk". This box runs two containers.
 
 Also worth knowing: **none of this repo is Hetzner-specific.** The image, the
 compose file, the Caddy config and the deploy workflow want an Ubuntu box with
