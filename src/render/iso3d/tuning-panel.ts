@@ -17,12 +17,15 @@
 /** Keys of `T` whose value is a number: the only ones a row can bind to. */
 export type NumericKeys<T> = { [K in keyof T]: T[K] extends number ? K : never }[keyof T];
 
-/** One editable field. */
-export interface TuningRow<T> {
+interface TuningRowBase<T> {
   readonly label: string;
   readonly key: NumericKeys<T>;
   /** Hover explanation of what the knob does; shown on the whole row. */
   readonly tip: string;
+}
+
+/** One editable number: a slider, or a checkbox over a 0/1. */
+export interface TuningSlider<T> extends TuningRowBase<T> {
   readonly min: number;
   readonly max: number;
   readonly step: number;
@@ -30,6 +33,25 @@ export interface TuningRow<T> {
   readonly digits?: number;
   /** Render as an on/off checkbox instead of a slider; the value is 0 or 1. */
   readonly toggle?: boolean;
+}
+
+/**
+ * One editable colour, over a key holding a hex int (`0xRRGGBB`).
+ *
+ * A colour is still a number, so it binds through the same `NumericKeys` as
+ * every other row -- but a range with a min and a max is the wrong control for
+ * one, and three sliders labelled R, G and B is a worse tool than the picker
+ * every browser already has. `min`/`max`/`step` are absent rather than ignored,
+ * which is why this is a union member and not a flag on the slider.
+ */
+export interface TuningSwatch<T> extends TuningRowBase<T> {
+  readonly swatch: true;
+}
+
+export type TuningRow<T> = TuningSlider<T> | TuningSwatch<T>;
+
+function isSwatch<T>(row: TuningRow<T>): row is TuningSwatch<T> {
+  return 'swatch' in row;
 }
 
 export interface TuningGroup<T> {
@@ -98,7 +120,13 @@ export function buildTuningSection<T>(groups: readonly TuningGroup<T>[], target:
     details.appendChild(summary);
 
     for (const spec of group.rows) {
-      details.appendChild(spec.toggle ? buildToggle(spec, target, refreshers) : buildSlider(spec, target, refreshers));
+      details.appendChild(
+        isSwatch(spec)
+          ? buildSwatch(spec, target, refreshers)
+          : spec.toggle
+            ? buildToggle(spec, target, refreshers)
+            : buildSlider(spec, target, refreshers),
+      );
     }
     element.appendChild(details);
   }
@@ -124,7 +152,45 @@ function write<T>(target: T, key: NumericKeys<T>, value: number): void {
   target[key] = value as T[NumericKeys<T>];
 }
 
-function buildSlider<T>(spec: TuningRow<T>, target: T, refreshers: (() => void)[]): HTMLElement {
+/** `0x1a2b3c` <-> `#1a2b3c`, which is the only format `input[type=color]` speaks. */
+function toCss(hex: number): string {
+  const clamped = Math.max(0, Math.min(0xffffff, Math.round(hex)));
+  return `#${clamped.toString(16).padStart(6, '0')}`;
+}
+
+function buildSwatch<T>(spec: TuningSwatch<T>, target: T, refreshers: (() => void)[]): HTMLElement {
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;align-items:center;gap:8px;margin:5px 0;';
+  row.title = spec.tip;
+
+  const label = document.createElement('label');
+  label.textContent = spec.label;
+  label.style.cssText = 'flex:0 0 44%;';
+  const input = document.createElement('input');
+  input.type = 'color';
+  input.style.cssText =
+    'flex:1;min-width:0;height:22px;padding:0;background:none;border:1px solid #2a2a3a;border-radius:4px;cursor:pointer;';
+  const value = document.createElement('span');
+  value.style.cssText = 'flex:0 0 60px;text-align:right;font-variant-numeric:tabular-nums;color:#e0e0ee;';
+
+  const refresh = (): void => {
+    const css = toCss(read(target, spec.key));
+    input.value = css;
+    // The hex is the readout on purpose: it is the thing somebody copies out of
+    // this panel and pastes into a palette entry.
+    value.textContent = css;
+  };
+  input.addEventListener('input', () => {
+    write(target, spec.key, parseInt(input.value.slice(1), 16));
+    value.textContent = input.value;
+  });
+  refresh();
+  refreshers.push(refresh);
+  row.append(label, input, value);
+  return row;
+}
+
+function buildSlider<T>(spec: TuningSlider<T>, target: T, refreshers: (() => void)[]): HTMLElement {
   const row = document.createElement('div');
   row.style.cssText = 'display:flex;align-items:center;gap:8px;margin:5px 0;';
   // Native hover tooltip on the whole row (label, slider and readout), so
@@ -160,7 +226,7 @@ function buildSlider<T>(spec: TuningRow<T>, target: T, refreshers: (() => void)[
   return row;
 }
 
-function buildToggle<T>(spec: TuningRow<T>, target: T, refreshers: (() => void)[]): HTMLElement {
+function buildToggle<T>(spec: TuningSlider<T>, target: T, refreshers: (() => void)[]): HTMLElement {
   const row = document.createElement('label');
   row.style.cssText = 'display:flex;align-items:center;gap:8px;margin:6px 0;cursor:pointer;';
   row.title = spec.tip;
