@@ -17,7 +17,14 @@ import {
   type TerrainWorld,
 } from '../../terrain/index.js';
 import { buildTerrainMesh } from './terrain-mesh.js';
-import { defaultMechTuning, MechRig, type MechTuning } from './rigs.js';
+import {
+  defaultMechAppearance,
+  defaultMechTuning,
+  MechRig,
+  type MechAppearance,
+  type MechTuning,
+} from './rigs.js';
+import { monsterLookFor, type MechRigTuning } from './world/monster-look.js';
 import { buildPropField } from './props.js';
 import { RobeRig } from './robe.js';
 import { ROBE_TUNING_GROUPS } from './robe-panel.js';
@@ -49,6 +56,56 @@ import { viewSeed } from './seed.js';
 
 // Per-frame easing fraction for camera framing changes (spec 034), matching IsoScene.
 const CAMERA_SMOOTH = 0.15;
+
+/** The monster id whose look the sandbox's small-spider chip mirrors. */
+const SMALL_SPIDER_ID = 'small_spider';
+
+/**
+ * What each mech chip loads into the two shared records (spec 152).
+ *
+ * The mechs have always shared one tuning object, which is what makes the
+ * panel's mech section one set of sliders rather than one per unit. A third
+ * mech with *different* numbers therefore has to load them, exactly as the C key
+ * already loads an archetype preset and the reset button loads the defaults.
+ *
+ * The two halves carry separate ids because they change on different picks.
+ * Spider and walker have always differed in colour and never in tuning, so
+ * moving between them must not touch a slider somebody has dragged -- while
+ * moving to or from the small spider must, or the chip shows a body that is not
+ * the one in the game.
+ */
+interface MechPreset {
+  /** Which chips share this tuning; picking within a group loads nothing. */
+  readonly tuningId: string;
+  /** Overrides on top of `defaultMechTuning()`. Empty is the default mech. */
+  readonly tuning: MechRigTuning;
+  readonly appearanceId: string;
+  readonly appearance: MechAppearance;
+}
+
+const MECH_PRESETS: Readonly<Record<string, MechPreset>> = {
+  spider: {
+    tuningId: 'default',
+    tuning: {},
+    appearanceId: 'spider',
+    appearance: defaultMechAppearance(PALETTE.mechAlly),
+  },
+  walker: {
+    tuningId: 'default',
+    tuning: {},
+    appearanceId: 'walker',
+    appearance: defaultMechAppearance(PALETTE.walkerBody),
+  },
+  'spider-small': {
+    tuningId: 'small-spider',
+    // Read from the table the game draws it from rather than copied, so the
+    // sandbox cannot show a spider the arena does not have.
+    tuning: monsterLookFor(SMALL_SPIDER_ID)?.tuning ?? {},
+    appearanceId: 'small-spider',
+    appearance:
+      monsterLookFor(SMALL_SPIDER_ID)?.appearance ?? defaultMechAppearance(PALETTE.mechAlly),
+  },
+};
 
 /**
  * The movement sandbox tab (spec 032/033/046, restored by 066): no game -- just
@@ -90,14 +147,33 @@ class MovementScene {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.OrthographicCamera;
-  // Both mechs share one tuning object so the panel drives whichever is active;
-  // the grey mech only differs in colour and a non-turning lower body.
+  // Every mech shares one tuning object and one appearance object, so the panel
+  // drives whichever is active; the chips differ in what they *load* into the
+  // two (see MECH_PRESETS) and, for the grey walker, a non-turning lower body.
   private readonly sharedTuning: MechTuning = defaultMechTuning();
-  private readonly spider = new MechRig('ally', PALETTE.mechAlly, { tuning: this.sharedTuning });
+  private readonly sharedAppearance: MechAppearance = defaultMechAppearance(PALETTE.mechAlly);
+  private readonly spider = new MechRig('ally', PALETTE.mechAlly, {
+    tuning: this.sharedTuning,
+    appearance: this.sharedAppearance,
+  });
   private readonly walker = new MechRig('ally', PALETTE.walkerBody, {
     tuning: this.sharedTuning,
+    appearance: this.sharedAppearance,
     lowerBodyTurns: false,
   });
+  /**
+   * The shipped small spider (spec 152) as a third body on the same rig, so the
+   * enemy that is in the game can be tuned rather than a lookalike rebuilt from
+   * memory. It shares the two records like the others; its chip loads the look
+   * table's values into them.
+   */
+  private readonly smallSpider = new MechRig('small_spider', undefined, {
+    tuning: this.sharedTuning,
+    appearance: this.sharedAppearance,
+  });
+  /** Which preset is currently loaded into each shared record; see `loadMechPreset`. */
+  private loadedTuningPreset = 'default';
+  private loadedAppearancePreset = 'spider';
   /** The robed figure (spec 046), built lazily so its cloth costs nothing unless picked. */
   private robeRig: RobeRig | null = null;
   private readonly robeTuning: RobeTuning = defaultRobeTuning();
@@ -200,9 +276,14 @@ class MovementScene {
     return createWorldColliders(ARENA_OBSTACLES, vegetationColliders(this.vegetation));
   }
 
-  /** The shared live-editable tuning both mechs use (the panel binds to it). */
+  /** The shared live-editable tuning every mech uses (the panel binds to it). */
   get tuning(): MechTuning {
     return this.sharedTuning;
+  }
+
+  /** The shared live-editable shape and colours (the colour wells bind to it). */
+  get appearance(): MechAppearance {
+    return this.sharedAppearance;
   }
 
   /** The robe's live-editable tuning (the panel binds to it). */
@@ -240,20 +321,65 @@ class MovementScene {
     return this.dummy;
   }
 
-  /** Swap the controllable unit, keeping the sim (position/heading) running. */
-  setUnit(kind: UnitKind): void {
+  /**
+   * Swap the controllable unit, keeping the sim (position/heading) running.
+   *
+   * Returns whether the panel's controls need re-reading, which is true exactly
+   * when a mech chip loaded a preset the sliders are not already showing.
+   */
+  setUnit(kind: UnitKind): boolean {
     const critter = isCritterId(kind) ? this.ensureCritter(kind) : null;
     const authored = isAuthoredKind(kind) ? this.ensureAuthored(authoredIdOf(kind)) : null;
     this.activeCritter = critter;
     this.activeAuthored = authored;
+    const loaded = this.loadMechPreset(kind);
     const next =
       authored ??
       critter ??
-      (kind === 'walker' ? this.walker : kind === 'robe' ? this.ensureRobe() : this.spider);
-    if (next === this.active) return;
-    this.scene.remove(this.active.group);
-    this.active = next;
-    this.scene.add(this.active.group);
+      (kind === 'walker'
+        ? this.walker
+        : kind === 'robe'
+          ? this.ensureRobe()
+          : kind === 'spider-small'
+            ? this.smallSpider
+            : this.spider);
+    if (next !== this.active) {
+      this.scene.remove(this.active.group);
+      this.active = next;
+      this.scene.add(this.active.group);
+    }
+    return loaded;
+  }
+
+  /**
+   * Load a mech chip's preset into the two shared records, and say whether
+   * anything moved.
+   *
+   * Each half is loaded only when its id changes, so picking between two chips
+   * that agree about it leaves a dragged slider or a picked colour alone. With
+   * `force` it always loads, which is what the reset button wants: reset while
+   * the small spider is up should restore the *small spider*, not the mech.
+   */
+  private loadMechPreset(kind: UnitKind, force = false): boolean {
+    const preset = MECH_PRESETS[kind];
+    if (preset === undefined) return false;
+    let loaded = false;
+    if (force || preset.tuningId !== this.loadedTuningPreset) {
+      this.loadedTuningPreset = preset.tuningId;
+      Object.assign(this.sharedTuning, defaultMechTuning(), preset.tuning);
+      loaded = true;
+    }
+    if (force || preset.appearanceId !== this.loadedAppearancePreset) {
+      this.loadedAppearancePreset = preset.appearanceId;
+      Object.assign(this.sharedAppearance, preset.appearance);
+      loaded = true;
+    }
+    return loaded;
+  }
+
+  /** Restore the active mech chip's own preset, for the panel's reset button. */
+  resetMech(kind: UnitKind): void {
+    this.loadMechPreset(kind, true);
   }
 
   /**
@@ -493,6 +619,17 @@ const MECH_TUNING_GROUPS: readonly TuningGroup<MechTuning>[] = [
         tip: 'Overall creature size — scales every leg and body dimension and how far each step reaches.',
       },
       {
+        label: 'Body size',
+        min: 0.2,
+        max: 3,
+        step: 0.05,
+        key: 'bodySize',
+        digits: 2,
+        tip:
+          'How big the body is against its own legs — the sphere’s radius on a round body, the chassis and everything bolted to it on a boxy one. ' +
+          'Separate from Size, which moves the body and the legs together and so cannot change the proportion between them.',
+      },
+      {
         label: 'Legs',
         min: 3,
         max: 8,
@@ -707,10 +844,43 @@ const MECH_TUNING_GROUPS: readonly TuningGroup<MechTuning>[] = [
   },
 ];
 
+/**
+ * The mech's colours (spec 152), in their own group because they are the two
+ * rows in this panel that are not numbers you drag.
+ *
+ * The hex beside each well is the readout on purpose: it is what somebody
+ * copies out of here and pastes into `monster-look.ts` or the palette.
+ */
+const MECH_LOOK_GROUP: TuningGroup<MechAppearance> = {
+  title: 'Colour',
+  rows: [
+    {
+      label: 'Body',
+      key: 'bodyColor',
+      swatch: true,
+      tip: 'The upper body’s colour. The chassis variant darkens its own top plate off this; the sphere is this exact colour.',
+    },
+    {
+      label: 'Legs',
+      key: 'legColor',
+      swatch: true,
+      tip: 'The legs’ colour. The hip and the shin are drawn a little darker than this, so a leg still reads as three segments.',
+    },
+  ],
+};
+
 /** Everything the sandbox panel needs to drive: the tunings and a set of actions. */
 export interface SandboxPanelOptions {
   /** The mech tuning (also the holder of the sim move-speed/turn-rate overrides). */
   readonly mech: MechTuning;
+  /**
+   * The mech's live shape and colours (spec 152), edited by the colour wells.
+   *
+   * Optional for the same reason `attack` is: the rig debugger mounts this panel
+   * over two mechs whose colours are fixed at construction, so absent means the
+   * colour rows are never shown rather than shown and inert.
+   */
+  readonly appearance?: MechAppearance;
   /** The robed figure's cloth/figure/wind tuning. */
   readonly robe: RobeTuning;
   /** The critters' shared cosmetic tuning. */
@@ -761,6 +931,11 @@ const UNIT_CHIPS: readonly { kind: UnitKind; label: string; tip: string }[] = [
     kind: 'spider',
     label: 'Spider',
     tip: 'Control the organic spider mech — its whole body turns to face where it moves.',
+  },
+  {
+    kind: 'spider-small',
+    label: 'Small spider',
+    tip: 'The enemy that is in the game (spec 152), loaded from the same look table the arena draws it from — so the size, gait and colours below are the shipped ones, ready to be changed.',
   },
   {
     kind: 'walker',
@@ -829,6 +1004,8 @@ export function buildPanel(opts: SandboxPanelOptions): SandboxPanel {
   const attackTarget = opts.attack ?? null;
   const attack = buildTuningSection([ATTACK_GROUP], attackTarget ?? defaultAttackTuning());
   const mech = buildTuningSection(MECH_TUNING_GROUPS, opts.mech);
+  const lookTarget = opts.appearance ?? null;
+  const mechLook = buildTuningSection([MECH_LOOK_GROUP], lookTarget ?? defaultMechAppearance(0));
   const robe = buildTuningSection(ROBE_TUNING_GROUPS, opts.robe);
   const critter = buildTuningSection(CRITTER_TUNING_GROUPS, opts.critter);
   const coats = buildCoatPicker((swatch) => opts.onCoat(swatch.hex));
@@ -896,6 +1073,7 @@ export function buildPanel(opts: SandboxPanelOptions): SandboxPanel {
     attack.element,
     authoredActions,
     mech.element,
+    mechLook.element,
     robe.element,
     robeActions,
     coats.element,
@@ -911,7 +1089,9 @@ export function buildPanel(opts: SandboxPanelOptions): SandboxPanel {
     // does nothing is worse than an absent one (spec 047's rule for this tab).
     attack.setVisible(isAuthored);
     authoredActions.style.display = isAuthored ? 'block' : 'none';
-    mech.setVisible(!isRobe && !isCritter && !isAuthored);
+    const isMech = !isRobe && !isCritter && !isAuthored;
+    mech.setVisible(isMech);
+    mechLook.setVisible(isMech && lookTarget !== null);
     robe.setVisible(isRobe);
     robeActions.style.display = isRobe ? 'block' : 'none';
     critter.setVisible(isCritter);
@@ -947,6 +1127,7 @@ export function buildPanel(opts: SandboxPanelOptions): SandboxPanel {
       movement.sync();
       attack.sync();
       mech.sync();
+      mechLook.sync();
       robe.sync();
       critter.sync();
     },
@@ -1007,6 +1188,7 @@ export function mountMovement(container: HTMLElement): ViewHandle {
 
   const panel = buildPanel({
     mech: tuning,
+    appearance: scene.appearance,
     robe: scene.robe,
     critter: scene.critter,
     attack: attackTuning,
@@ -1014,12 +1196,17 @@ export function mountMovement(container: HTMLElement): ViewHandle {
       if (unit === 'robe') Object.assign(scene.robe, defaultRobeTuning());
       else if (isCritterId(unit)) Object.assign(scene.critter, defaultCritterTuning());
       else if (isAuthoredKind(unit)) Object.assign(attackTuning, defaultAttackTuning());
-      else Object.assign(tuning, defaultMechTuning());
+      // A mech resets to its own chip's preset rather than to the bare defaults:
+      // reset while the small spider is up must restore the small spider, or the
+      // button silently turns the unit into a different one.
+      else scene.resetMech(unit);
       panel.sync();
     },
     onUnit: (kind) => {
       unit = kind;
-      scene.setUnit(kind);
+      // Picking a mech chip may load a preset into the shared tuning and the
+      // shared colours, and the controls are showing the old ones until told.
+      if (scene.setUnit(kind)) panel.sync();
       // A body that has just been built is holding nothing, so the picked
       // weapon has to be put back into it -- switching units and finding an
       // empty hand would read as the weapon picker having broken.
