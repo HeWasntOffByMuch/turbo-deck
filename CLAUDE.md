@@ -668,7 +668,57 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  leaves each bag individually plausible. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
+                 player/progress.ts is what a level *is* (spec 153), and it is
+                 three numbers rather than one: the level, the skill points it
+                 earned, and the experience not yet spent on the next one. Pure,
+                 and the only place any of them is written, because the failure
+                 mode of an admin edit is not a wrong number -- it is a record
+                 that says something the game's own rules call impossible, which
+                 nothing downstream would notice. Three rules, each of them the
+                 fix for the version without it: skill points are **re-derived**
+                 from the resulting level rather than nudged by a delta (grant 5,
+                 spend them, reset the level, and a delta leaves the points gone);
+                 a level too low to pay for the tree it inherits **clears the
+                 tree and refunds every earned point**, since twelve points of
+                 skills at level 1 is not a character; and experience is
+                 **clamped into its own level's band**, or `setLevel 1` on a
+                 level-20 character is somebody who re-levels on their next kill.
+                 `MAX_PLAYER_LEVEL` is the first level cap this game states, and
+                 it bounds an *edit* rather than declaring an endgame --
+                 `computeEffectiveStats` is linear in the level, so an unclamped
+                 `addLevels 1000000` is a body with ten million health. Nothing in
+                 the sim reads it. `grantExperience` is now this function with one
+                 mode fixed instead of its own copy of the level-up loop, so a
+                 monster's award and an admin's grant cannot come to different
+                 answers -- including about that cap, which a second loop ignored.
                  `npm run server`, and `npm run server:bots` for load.
+src/server/admin-client/  the admin console (spec 153): one static HTML file, no
+                 bundler and no dependency, speaking the same binary protocol by
+                 hand so there is nothing to build before an operator can use it.
+                 The shape it is built around is **a selection, not a form per
+                 action**: the player table is polled at 1Hz and one row is
+                 selected, and every action reads that selection. Before 153 the
+                 table and the actions were two unconnected halves of the same
+                 page -- you read an id off the table and retyped it into one of
+                 three unlinked boxes, per action, correctly, or you moderated
+                 the wrong person. The selection is held by `playerId` rather than
+                 by row, so the poll that lands a second later cannot move it,
+                 and an action with nothing selected is refused in the page
+                 instead of sent with an empty id. `admin:listPlayers` stopped
+                 writing an audit entry to make the poll possible -- the log is
+                 for decisions, and asking who is online is not one.
+                 `npx tsx scripts/probe-admin-console.ts` is the only thing that
+                 can check any of it: the page's codec is hand-written, so it is
+                 not the server's codec and no test in the suite imports it.
+                 The probe stands up a real server, attaches real bots, clicks
+                 the real buttons and reads the numbers back off the real DOM.
+                 Two things in it were learned by getting them wrong: it runs
+                 `node_modules/.bin/tsx` in its own process group rather than
+                 `npx tsx`, because `npx` is a wrapper and a SIGTERM to it leaves
+                 the grandchild holding the port -- and it *refuses* a port that
+                 already answers, because the run after a failed one connected to
+                 the previous run's leaked server, same port and same secret, and
+                 reported every check green while measuring older code.
 src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometric
                  world drawn from GameClient.view() and nothing else. interpolate.ts
                  (20Hz deltas to a pose per frame), intent.ts, target.ts (the
