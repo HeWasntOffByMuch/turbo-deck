@@ -152,6 +152,27 @@ describe('two players in one world', () => {
     const before = seen(ana, monsterId)?.health ?? 0;
     expect(before).toBeGreaterThan(0);
 
+    // The point of the test, checked every tick rather than once at the end: it
+    // is the same body in both replicas, with the same health. A client told
+    // about a different monster, or told late, disagrees here.
+    //
+    // Every tick, because the end is no longer a reliable place to stand. A
+    // basic attack multiplies by `weaponPower` since spec 147, and 14 damage at
+    // 1.84x takes a 24-health grazer off the board in one blow -- so a check
+    // that runs after the fight compares two clients that both correctly see
+    // nothing, and proves nothing. Agreement while it is alive is the claim.
+    let agreedWhileAlive = 0;
+    const disagreed: string[] = [];
+    const compare = (): void => {
+      const mine = seen(ana, monsterId);
+      const theirs = seen(ben, monsterId);
+      if (mine?.health !== theirs?.health) {
+        disagreed.push(`${mine?.health ?? 'gone'} vs ${theirs?.health ?? 'gone'}`);
+      } else if (mine) {
+        agreedWhileAlive++;
+      }
+    };
+
     let landed = false;
     for (let i = 0; i < 1800 && !landed; i++) {
       const me = server.playerManager.get('ana')?.record.position;
@@ -166,14 +187,16 @@ describe('two players in one world', () => {
         ana.useAbility(BASIC_ATTACK_ID, it.x, it.y, monsterId, 22);
       }
       await tick();
-      if ((seen(ana, monsterId)?.health ?? before) < before) landed = true;
+      compare();
+      // Gone counts as damage. One blow that empties the bar and one that halves
+      // it are the same event from here, and only one of them leaves a number
+      // behind to subtract.
+      const now = seen(ana, monsterId);
+      if (!now || now.health < before) landed = true;
     }
     expect(landed).toBe(true);
-
-    // The point of the test: it is the same body in both replicas, with the
-    // same health. A client that had been told about a different monster, or
-    // told late, fails here.
-    expect(seen(ben, monsterId)?.health).toBe(seen(ana, monsterId)?.health);
+    expect(disagreed).toEqual([]);
+    expect(agreedWhileAlive).toBeGreaterThan(0);
   }, 30_000);
 });
 

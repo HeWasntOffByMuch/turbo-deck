@@ -61,6 +61,7 @@ change a game outcome.
 | `npm run validate:units` | Validate every authored unit document in `assets/units/` |
 | `npm run validate:items` | Validate every weapon document in `assets/items/`, against its own mesh |
 | `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
+| `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
@@ -451,6 +452,16 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  `focusOnPress` is false on `Widget` and true on `TextField`
                  alone; Tab still reaches everything focusable, because Tab is
                  not a key anybody plays with.
+                 One more rule of the same kind, from spec 147's sheet: **a
+                 hidden tab still has rectangles in it**. A tab switched away is
+                 hidden and never destroyed -- that is what makes a tab keep what
+                 you left in it -- so its rows keep `visible` true and keep the
+                 rect they were last arranged into, and any hover that hit-tests
+                 a *list of rows* gets three tabs stacked at the same
+                 coordinates. Only the ancestor chain says which tab a row is in.
+                 The framework's own `hitTest` is the obvious answer and is the
+                 wrong one for text: `Label` is deliberately pointer transparent,
+                 so a screen whose rows are bare labels goes silent under it.
                  The UI has a *scale*, not a resolution: one UI pixel is always a
                  whole number of device pixels and the viewport is whatever the
                  window leaves, so it never reads the world's `lowRes` setting --
@@ -668,6 +679,102 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  leaves each bag individually plausible. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
+                 Since spec 147 `skills.ts` is the *attuned* tree -- six columns
+                 of six, gated on the attribute you actually built -- and spec
+                 056's branch-locked Might/Finesse/Arcane tree is gone: a system
+                 whose premise is that unusual combinations should be
+                 discoverable cannot also have three columns that permanently
+                 foreclose each other, and keeping both meant two skill systems
+                 where one would do. A save holding the old rows loads with them
+                 dropped and the points handed back. Beside it are the rest of
+                 the progression tables -- six attributes, eighteen milestones,
+                 fifteen pairs -- and `scaling.ts`, which is every coefficient
+                 the six scale by in one object, so a balance pass is a diff of
+                 one file. Three curve shapes and only three, because a number
+                 should be understandable from its shape: `linear` for the
+                 quantities where twice the investment is twice the value,
+                 `softCap` for the ones an unbounded specialist would break, and
+                 `reciprocal` -- `1/(1+attr*per)`, floored -- for every "less of
+                 a thing", because it cannot reach zero and 0.5 means *half*
+                 where "-50%" invites the question of whether two of them is
+                 -100%. All three are measured from the *starting* attribute
+                 rather than from zero: a coefficient on the raw value meant a
+                 brand-new character already carried five points of every scale,
+                 so every authored number in `abilities.ts` described somebody
+                 who does not exist.
+                 The attributes replace spec 056's four, which were four
+                 coefficients -- a sheet with four sliders on it that all mean
+                 "slightly more" asks the player *how much* rather than *how*.
+                 The rule the design is reviewed against, and the one the tests
+                 in `progression-tables.test.ts` enforce rather than trust: every
+                 attribute viable when heavily invested in, and every one of the
+                 fifteen pairs producing an interaction that is not "both numbers
+                 are big". A pair with no row fails CI.
+                 The pairs are also **never named on the character sheet**, and
+                 that is a rule with a test behind it in two places: naming them
+                 would turn fifteen things to discover into fifteen things to
+                 build toward, and the question the sheet exists to ask is "how
+                 do I want to solve problems" rather than "which of the fifteen
+                 am I". They are live in the sim; a player finds out by having
+                 one. What the sheet *does* say is what each attribute changes
+                 next, and one short line per stat row -- and where something is
+                 a socket with nothing plugged into it yet, that line says so in
+                 as many words rather than describing a number that never moves.
+                 The structural commitment is one line in `attackTimingFor`:
+                 **Agility scales the attack point and the backswing and nothing
+                 it writes reaches `baseAttackTimeTicks`.** A high-Agility
+                 character attacks exactly as often as anybody else and spends far
+                 less of each cycle rooted, which makes "the fast stat must not
+                 become the mandatory damage stat" a property of the module graph
+                 rather than a number somebody keeps retuning.
+                 The derivation runs one way and stops (`player/progression.ts`,
+                 `player/derived.ts`): allocation plus held grants settles the
+                 attributes, those decide which milestones and pairs are met, and
+                 only then do their grants feed the traits. A milestone therefore
+                 cannot unlock a milestone -- the graph is acyclic *by
+                 construction* rather than by nobody having yet written the loop,
+                 and it costs one thing, which is that an item granting +5
+                 Strength can open a Strength milestone while a synergy granting
+                 the same could not. No synergy grants an attribute and a test
+                 says so.
+                 `sim/poise.ts` is the mechanic Strength spends and Constitution
+                 resists, and the number that keeps it a mechanic rather than a
+                 removal is the two-second immunity after a break: without it two
+                 attackers hold a third permanently. Hyper-armour is the other
+                 half and its rule is stated once -- **protection applies only
+                 while the body is committed to something**, never while idle and
+                 never merely because Strength was invested in, and it is capped
+                 below 1 because a wind-up nothing can answer would make the
+                 readable commitment this whole game is built on unreadable.
+                 `sim/statuses.ts` is one small timer map and everything the
+                 progression needs to remember between ticks goes in it, because
+                 twelve mechanics as twenty-four entity fields is twenty-four
+                 places for an expiry to be forgotten. Expiry is a comparison and
+                 never a sweep, so reading a stale entry cannot produce a live
+                 effect. `sim/blow.ts` is one blow with all of it applied, in one
+                 order, written once -- and the line in it that must not move is
+                 that **crit is rolled before the weak point and always**: the Rng
+                 is threaded through the whole sim and a body that draws a
+                 different number of values changes every fight after it.
+                 What the tests found and what it was worth: `applyDamage`
+                 multiplied every blow by `spellPower` and read `attackDamage`
+                 nowhere at all, so Strength's damage coefficient had been
+                 decorative since spec 062 -- derived, replicated, printed on the
+                 sheet, reaching nothing. `traits.weaponPower` is that number
+                 turned into a multiplier a basic attack is actually multiplied
+                 by, derived *from* `attackDamage` so there is still one number
+                 meaning "how hard do I hit".
+                 `sim/metrics.ts` and `npm run balance` are the instrumentation,
+                 and the thing to know about them is what the table is *not* for:
+                 six builds with the same damage per second is not evidence of
+                 balance, it is evidence that five of them were tuned into the
+                 sixth. Read the *shape* of a row instead -- Strength high on
+                 staggers, Agility lowest on rooted time and health per kill,
+                 Perception highest on weak-point rate -- and treat a row that
+                 looks like somebody else's as the finding. The harness measures
+                 a stationary duel, so it under-reports Agility's repositioning
+                 and Intelligence's geometry by construction; that is a limit to
+                 read around rather than tune against.
                  `npm run server`, and `npm run server:bots` for load.
 src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometric
                  world drawn from GameClient.view() and nothing else. interpolate.ts

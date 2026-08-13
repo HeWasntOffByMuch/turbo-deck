@@ -39,14 +39,26 @@
 import type { Rng } from '../../shared/prng.js';
 import { SERVER_TICK_RATE } from '../config.js';
 import { abilityById, type AbilityDefinition } from '../data/abilities.js';
-import { applyArmor, projectileLifetimeTicks, projectileSpeedFor } from '../player/stats.js';
+import { SCALING } from '../data/scaling.js';
+import { projectileLifetimeTicks, projectileSpeedFor } from '../player/stats.js';
 import {
   NO_ATTACK_SPEED,
   resolveAttackTiming,
   type AttackTiming,
 } from './attack-timing.js';
 import { ballisticPeak, SHOT_LAUNCH_HEIGHT } from './ballistics.js';
+import { PERFECT_EXIT_COOLDOWN_TICKS, RECENTLY_HIT_TICKS, resolveBlow } from './blow.js';
 import { isInCone } from './combat.js';
+import {
+  applyStatus,
+  clearStatus,
+  hasStatus,
+  NO_STATUSES,
+  stacksOf,
+  statusOf,
+  StatusId,
+  type Statuses,
+} from './statuses.js';
 import {
   ActivityValue,
   CastEndReason,
@@ -57,6 +69,28 @@ import {
   type ServerEntity,
   type ServerSimEvent,
 } from './types.js';
+
+/**
+ * How long a body stays readable after committing an attack (spec 147).
+ *
+ * A constant rather than a stat, because "has this enemy just swung" is a fact
+ * about the world. See the note at the attack point in `advanceCast`.
+ */
+export const OPENING_READ_TICKS = SCALING.perception.openingReadTicks;
+
+/**
+ * What the timing and cost helpers actually need of a body.
+ *
+ * `statuses` is optional on purpose. The character sheet, the HUD and the
+ * probes all ask "how long is this swing" of a bare `EffectiveStats` with no
+ * entity behind it, and forcing each of them to invent an empty status map
+ * would be five copies of the same lie. Absent means "carrying nothing", which
+ * is exactly what a hypothetical body is carrying.
+ */
+export interface TimingSubject {
+  readonly stats: ServerEntity['stats'];
+  readonly statuses?: Statuses;
+}
 
 /** Why a cast could not be started. Reported to the caster, never guessed at. */
 export type CastRejection =
@@ -114,13 +148,19 @@ export interface CastAttempt {
  */
 export function attackTimingFor(
   ability: AbilityDefinition,
-  entity: Pick<ServerEntity, 'stats'>,
+  entity: TimingSubject,
+  tick = 0,
 ): AttackTiming {
+  const shaped = windupScaleFor(ability, entity, tick);
   if (!ability.basicAttack) {
     return resolveAttackTiming(
       {
-        baseAttackTimeTicks: ability.cooldownTicks,
-        baseAttackPointTicks: ability.windupTicks,
+        // Wisdom shortens the *cooldown*, which for a non-basic ability is the
+        // interval (spec 147). Deliberately the only stat that does: a cooldown
+        // is a statement about how often an effect may exist, and only the stat
+        // that owns "getting more out of limited tools" gets to argue with it.
+        baseAttackTimeTicks: ability.cooldownTicks * cooldownScaleFor(ability, entity, tick),
+        baseAttackPointTicks: ability.windupTicks * shaped,
         baseAttackBackswingTicks: ability.backswingTicks ?? 0,
       },
       NO_ATTACK_SPEED,
@@ -129,13 +169,130 @@ export function attackTimingFor(
   }
   return resolveAttackTiming(
     {
+      // **Untouched by Agility, and that is the design** (spec 147). Every
+      // Agility scale below is on the attack point and the backswing; nothing an
+      // Agility character can do shortens this number, so the fast stat cannot
+      // become the damage stat however far it is pushed.
       baseAttackTimeTicks: entity.stats.baseAttackTimeTicks,
-      baseAttackPointTicks: ability.windupTicks,
-      baseAttackBackswingTicks: ability.backswingTicks ?? 0,
+      baseAttackPointTicks: ability.windupTicks * shaped * entity.stats.traits.attackPointScale,
+      baseAttackBackswingTicks: (ability.backswingTicks ?? 0) * backswingScaleFor(entity, tick),
     },
     entity.stats,
     SERVER_TICK_RATE,
   );
+}
+
+/** Abilities this heavy count as heavy, for Strength's Heavy Handling. */
+export const HEAVY_ABILITY_DAMAGE = 40;
+
+/**
+ * Everything that shortens a wind-up, multiplied together.
+ *
+ * Four sources, and each is conditioned on something the player did:
+ *
+ *  - **handling** (Agility) -- anything that launches a projectile. Draw and
+ *    release. It does not touch the interval, so a bow's rate of fire is
+ *    identical; the archer is simply rooted for less of it.
+ *  - **heavy** (Strength) -- an ability over {@link HEAVY_ABILITY_DAMAGE}. The
+ *    brief's "reduces penalties for oversized weapons", expressed as the penalty
+ *    actually being reduced rather than as a flat speed-up.
+ *  - **momentum** (Strength+Agility) -- won by breaking a guard, and gone in a
+ *    second and a bit.
+ *  - **prepared** (Intelligence) -- bought with two seconds of stillness, and
+ *    consumed by the cast that uses it.
+ *
+ * The spellblade rule is the one cross-attribute case: the Agility+Intelligence
+ * pair lets `handlingScale` reach a non-projectile ability, but only while the
+ * `Prepared` status left by a backswing cancel is live.
+ */
+export function windupScaleFor(
+  ability: AbilityDefinition,
+  entity: TimingSubject,
+  tick: number,
+): number {
+  const traits = entity.stats.traits;
+  const statuses = entity.statuses ?? NO_STATUSES;
+  let scale = 1;
+
+  const launches = ability.projectile !== undefined;
+  // The Spellblade pair reads *Flow*, which is what walking out of a
+  // follow-through grants -- so the attack-cancel into a spell is a sequence a
+  // player performs rather than a passive both stats happen to switch on.
+  const spellblade =
+    traits.spellbladeHandling > 0 && !ability.basicAttack && hasStatus(statuses, StatusId.Flow, tick);
+  if (launches || spellblade) scale *= traits.handlingScale;
+
+  if (ability.damage >= HEAVY_ABILITY_DAMAGE) scale *= traits.heavyWindupScale;
+
+  const momentum = statusOf(statuses, StatusId.Momentum, tick);
+  if (momentum) scale *= 1 - momentum.magnitude;
+
+  if (!ability.basicAttack && hasStatus(statuses, StatusId.Prepared, tick)) {
+    scale *= traits.preparedWindupScale;
+  }
+
+  return Math.max(0.05, scale);
+}
+
+/** Agility's follow-through scale, plus whatever Flow is adding to it. */
+export function backswingScaleFor(entity: TimingSubject, tick: number): number {
+  const traits = entity.stats.traits;
+  const flow = stacksOf(entity.statuses ?? NO_STATUSES, StatusId.Flow, tick);
+  return Math.max(0.1, traits.backswingScale * (1 - Math.min(0.6, flow * traits.flowBackswingPct)));
+}
+
+/** Wisdom's cooldown scale, plus the Ranger pair's reach into projectiles. */
+export function cooldownScaleFor(
+  ability: AbilityDefinition,
+  entity: TimingSubject,
+  tick = 0,
+): number {
+  const traits = entity.stats.traits;
+  const handling =
+    traits.handlingCooldowns > 0 && ability.projectile !== undefined ? traits.handlingScale : 1;
+  // The Archmage pair: a *prepared* cast comes back sooner. Read here rather
+  // than at the commit because the cooldown is settled in the same snapshot the
+  // timing is (spec 144), and this is where that snapshot is taken.
+  const prepared =
+    traits.preparedMastery > 0 && hasStatus(entity.statuses ?? NO_STATUSES, StatusId.Prepared, tick)
+      ? 1 - PREPARED_COOLDOWN_REFUND
+      : 1;
+  return Math.max(0.2, traits.cooldownScale * handling * prepared);
+}
+
+/** What a prepared cast takes off its own cooldown, for the Archmage pair. */
+export const PREPARED_COOLDOWN_REFUND = 0.25;
+
+/**
+ * What this cast actually costs (spec 147).
+ *
+ * Wisdom's scale, then Attuned and Flow on top, then Intelligence's shaping
+ * premium -- which is added *after* the reductions rather than before, so
+ * Efficient Construction pays off the premium itself and cannot be turned into
+ * a general discount by stacking Wisdom behind it.
+ *
+ * Floored at zero and never negative. A free ability stays free: every factor
+ * here multiplies, so an ability with `cost: 0` cannot be made to refund.
+ */
+export function resourceCostFor(
+  ability: AbilityDefinition,
+  entity: TimingSubject,
+  tick: number,
+): number {
+  if (ability.cost <= 0) return 0;
+  const traits = entity.stats.traits;
+  const statuses = entity.statuses ?? NO_STATUSES;
+  const attuned = stacksOf(statuses, StatusId.Attuned, tick) * traits.attunedCostPct;
+  const flow = stacksOf(statuses, StatusId.Flow, tick) * traits.flowCostPct;
+  const discount = Math.max(0.1, 1 - Math.min(0.75, attuned + flow));
+
+  const shaped = ability.radius !== undefined || ability.projectile !== undefined;
+  // The Archmage pair waives the premium on a prepared cast, which is the one
+  // thing that makes shaping free rather than merely paid off.
+  const waived = traits.preparedMastery > 0 && hasStatus(statuses, StatusId.Prepared, tick);
+  const premium = shaped && !waived ? 1 + traits.shapingCostPct : 1;
+
+  return Math.max(0, ability.cost * traits.resourceCostScale * discount * premium);
 }
 
 /**
@@ -168,6 +325,42 @@ export function nextReadyTick(
 ): number {
   if (!ability.basicAttack) return releasedAt + cast.timing.intervalTicks;
   return cast.windupStartTick + cast.timing.intervalTicks;
+}
+
+/**
+ * Health a body would pay to cover a `shortfall` of resource, or 0 for "no"
+ * (spec 147).
+ *
+ * Intelligence's Arcane Overflow. Two guards, and both are needed:
+ *
+ *  - the milestone must be held at all (`overflowHealthPerResource > 0`), and
+ *  - the bill must fit inside {@link SCALING.intelligence.overflowHealthFraction}
+ *    of *current* health, not maximum.
+ *
+ * Current rather than maximum is the whole safety property. A fraction of the
+ * maximum would let a character at 5% health pay 40% of their pool and die to
+ * their own spell; a fraction of what is left can never take the last point, so
+ * overflow makes you fragile and never kills you. The thing that kills you is
+ * whatever hits you next, which is the risk the milestone is actually selling.
+ */
+export function overflowCostFor(
+  entity: Pick<ServerEntity, 'stats' | 'health'>,
+  shortfall: number,
+): number {
+  const rate = entity.stats.traits.overflowHealthPerResource;
+  if (rate <= 0 || !(shortfall > 0)) return 0;
+  const bill = shortfall * rate;
+  const affordable = entity.health * SCALING.intelligence.overflowHealthFraction;
+  return bill <= affordable ? bill : 0;
+}
+
+/** An ability's reach for this body: the row, plus Intelligence's shaping. */
+export function castRangeFor(
+  ability: AbilityDefinition,
+  entity: Pick<ServerEntity, 'stats'>,
+): number {
+  if (ability.basicAttack) return ability.range;
+  return ability.range * (1 + entity.stats.traits.spellRangePct);
 }
 
 export type CastStartResult =
@@ -205,7 +398,15 @@ export function startCast(
 
   const readyAt = entity.cooldowns[ability.id] ?? 0;
   if (tick < readyAt) return { ok: false, reason: 'onCooldown' };
-  if (entity.resource < ability.cost) return { ok: false, reason: 'notEnoughResource' };
+
+  // What it costs *this body, right now* (spec 147): Wisdom's scale, Attuned,
+  // Flow, and Intelligence's shaping premium. Resolved once here and spent
+  // below, so a buff that lands mid-wind-up cannot retroactively change what
+  // was paid -- the same snapshot rule spec 144 applies to the timing.
+  const cost = resourceCostFor(ability, entity, tick);
+  const shortfall = cost - entity.resource;
+  const overflow = shortfall > 0 ? overflowCostFor(entity, shortfall) : 0;
+  if (shortfall > 0 && overflow <= 0) return { ok: false, reason: 'notEnoughResource' };
 
   // A skill aimed at a body has to have one (spec 080). Refused rather than
   // quietly downgraded to a cone or a patch of ground: an ability whose whole
@@ -225,7 +426,7 @@ export function startCast(
   if (ability.targeting === 'point' || ability.targeting === 'unit') {
     const dx = attempt.targetX - entity.position.x;
     const dy = attempt.targetY - entity.position.y;
-    const reach = ability.range + (attempt.targetEntityId ? (attempt.targetRadius ?? 0) : 0);
+    const reach = castRangeFor(ability, entity) + (attempt.targetEntityId ? (attempt.targetRadius ?? 0) : 0);
     if (Math.hypot(dx, dy) > reach) return { ok: false, reason: 'outOfRange' };
   }
 
@@ -247,12 +448,14 @@ export function startCast(
   const phase = turning ? CastPhase.Turning : CastPhase.Windup;
   // Snapshotted here and never recomputed (spec 144): a buff that lands halfway
   // through a wind-up belongs to the next attack, not to this one.
-  const timing = attackTimingFor(ability, entity);
+  const timing = attackTimingFor(ability, entity, tick);
   const releaseTick = tick + timing.attackPointTicks;
   const endTick = endTickFor(ability, releaseTick, timing);
 
   const cast: CastState = {
     abilityId: ability.id,
+    spentResource: Math.min(cost, entity.resource),
+    spentHealth: overflow,
     startedTick: tick,
     // Provisional while turning, and re-stamped at alignment: the attack has
     // not started until the wind-up has, and the interval is measured from it.
@@ -275,7 +478,13 @@ export function startCast(
     entity: {
       ...entity,
       cast,
-      resource: entity.resource - ability.cost,
+      resource: Math.max(0, entity.resource - cost),
+      // Arcane Overflow: the shortfall, paid in health (spec 147). Never lethal
+      // -- `overflowCostFor` refuses anything past 40% of what is left -- so the
+      // risk is that the *next* thing to hit you finds you low, which is the
+      // trade the milestone is offering rather than a way to kill yourself.
+      health: overflow > 0 ? Math.max(1, entity.health - overflow) : entity.health,
+      stillSinceTick: tick,
       // The cooldown is *not* stamped here (spec 091). It starts when the blow
       // goes off, so a wind-up withdrawn from costs the time it took and
       // nothing else -- and the button does not grey out for a swing that never
@@ -448,7 +657,7 @@ const NOT_CANCELLED = (entity: ServerEntity): CancelResult => ({
 export function cancelCast(entity: ServerEntity, tick: number, reason: number): CancelResult {
   const cast = entity.cast;
   if (!cast) return NOT_CANCELLED(entity);
-  if (cast.committed) return cancelBackswing(entity, cast, reason);
+  if (cast.committed) return cancelBackswing(entity, cast, tick, reason);
   return cancelWindup(entity, cast, tick, reason);
 }
 
@@ -507,18 +716,52 @@ function cancelWindup(
     ? Object.fromEntries(Object.entries(entity.cooldowns).filter(([id]) => id !== ability.id))
     : entity.cooldowns;
 
+  // Perfect Exit (spec 147): withdrawing shortly after being hit, which is the
+  // read this milestone exists to reward -- you saw the blow coming and stepped
+  // out of your own rather than trading. Gated three ways so it cannot fund a
+  // hit-trade loop: it needs the milestone, it needs a *recent* hit, and it has
+  // its own cooldown carried as a status.
+  const traits = entity.stats.traits;
+  const exiting =
+    !interrupting &&
+    traits.perfectExitResource > 0 &&
+    !hasStatus(entity.statuses, StatusId.PerfectExitSpent, tick) &&
+    withinPerfectExit(entity, tick);
+
+  // Nothing is *un*-consumed here, and nothing needs to be: `Prepared` and
+  // `Momentum` are cleared at the attack point rather than at the commit, so a
+  // wind-up that was withdrawn from never spent them in the first place. That
+  // ordering is deliberate -- it makes "the attack did not happen" true of the
+  // charges as well as of the cost, with no state to put back.
+  let statuses = entity.statuses;
+  if (exiting) {
+    statuses = applyStatus(statuses, StatusId.PerfectExitSpent, tick, PERFECT_EXIT_COOLDOWN_TICKS);
+    statuses = grantFlow(statuses, entity, tick, SCALING.agility.flowMaxStacks);
+  }
+
   return {
     cancelled: true,
     kind: 'windup',
     entity: {
       ...entity,
       cast: null,
-      // Clamped: regen ticks during a wind-up, so an unclamped refund would
-      // hand back more than was spent and let a cancelled cast top the pool up
-      // past its own ceiling.
-      resource: ability
-        ? Math.min(entity.stats.maxResource, entity.resource + ability.cost)
-        : entity.resource,
+      statuses,
+      // Refunds **what was paid**, not what the row lists (spec 147): the cost
+      // is a function of the caster now, and refunding the list price would be a
+      // resource generator for anybody with cost reduction and a cancel key.
+      //
+      // Clamped, for the reason it always was: regen ticks during a wind-up, so
+      // an unclamped refund would top the pool up past its own ceiling.
+      resource: Math.min(
+        entity.stats.maxResource,
+        entity.resource + cast.spentResource + (exiting ? traits.perfectExitResource : 0),
+      ),
+      // An overflow's health comes back too. The attack did not happen, and a
+      // withdrawal that kept the blood price would make feinting cost more than
+      // committing.
+      health: cast.spentHealth > 0
+        ? Math.min(entity.stats.maxHealth, entity.health + cast.spentHealth)
+        : entity.health,
       cooldowns,
       activity: ActivityValue.Idle,
       activityUntilTick: 0,
@@ -527,6 +770,32 @@ function cancelWindup(
       { kind: 'castEnded', entityId: entity.id, abilityId: cast.abilityId, reason },
     ],
   };
+}
+
+/** Whether the hit that Perfect Exit reads is recent enough to still count. */
+function withinPerfectExit(entity: ServerEntity, tick: number): boolean {
+  const hit = statusOf(entity.statuses, StatusId.RecentlyHit, tick);
+  if (!hit) return false;
+  const struckAt = hit.expiresAtTick - RECENTLY_HIT_TICKS;
+  return tick - struckAt <= entity.stats.traits.perfectExitWindowTicks;
+}
+
+/** One Flow stack, or as many as `stacks` asks for. Nothing without the trait. */
+function grantFlow(
+  statuses: Statuses,
+  entity: Pick<ServerEntity, 'stats'>,
+  tick: number,
+  stacks: number,
+): Statuses {
+  const traits = entity.stats.traits;
+  if (traits.flowTicks <= 0) return statuses;
+  let next = statuses;
+  for (let i = 0; i < Math.max(1, stacks); i++) {
+    next = applyStatus(next, StatusId.Flow, tick, traits.flowTicks, {
+      maxStacks: SCALING.agility.flowMaxStacks,
+    });
+  }
+  return next;
 }
 
 /**
@@ -548,14 +817,26 @@ function cancelWindup(
 function cancelBackswing(
   entity: ServerEntity,
   cast: CastState,
+  tick: number,
   reason: number,
 ): CancelResult {
+  // Agility's Flow (spec 147). Walking out of a follow-through is the one action
+  // this system rewards for its own sake, and it is the right one to reward:
+  // it costs nothing mechanically, it demands that the player be paying
+  // attention to a phase boundary, and it can never buy attacks per second.
+  //
+  // Not granted when the body is *dying* -- being killed out of a backswing is
+  // not the same action as choosing to leave one.
+  const statuses =
+    reason === CastEndReason.Interrupted ? entity.statuses : grantFlow(entity.statuses, entity, tick, 1);
+
   return {
     cancelled: true,
     kind: 'backswing',
     entity: {
       ...entity,
       cast: null,
+      statuses,
       activity: ActivityValue.Idle,
       activityUntilTick: 0,
     },
@@ -709,8 +990,23 @@ export function advanceCast(
   if (cast.phase === CastPhase.Windup && tick >= cast.releaseTick) {
     const isChannel = ability.kind === 'channel';
     const committed: CastState = { ...cast, committed: true };
+    // Consumed here rather than at the commit (spec 147): the charges are spent
+    // by an attack that *happened*, which is what makes a withdrawal cost
+    // nothing but time for them as it does for the resource.
+    let statuses = clearStatus(caster.statuses, StatusId.Prepared);
+    statuses = clearStatus(statuses, StatusId.Momentum);
+    // And the body is *open* for a beat -- the tell Perception's Opening Read
+    // exists to see (spec 147).
+    //
+    // Applied to every body that commits, from a constant, and deliberately not
+    // from the reader's stats: whether an enemy has just swung is a fact about
+    // the world rather than about who is looking at it. What Perception buys is
+    // `vulnerableWeakPointFactor` -- the ability to *use* the window -- which is
+    // the difference between an information mechanic and a hidden damage buff.
+    statuses = applyStatus(statuses, StatusId.Vulnerable, tick, OPENING_READ_TICKS);
     caster = {
       ...caster,
+      statuses,
       cast: isChannel
         ? { ...committed, phase: CastPhase.Channel, nextPulseTick: tick }
         : committed,
@@ -871,14 +1167,14 @@ function landAbility(
       // the same arc is a neighbour. Without one it is the cone it always was,
       // which is what the cursor-aimed hotbar still uses.
       return cast.targetEntityId > 0
-        ? landOnTarget(ability, caster, cast, candidates, rng)
-        : landCone(ability, caster, cast, candidates, rng);
+        ? landOnTarget(ability, caster, cast, candidates, tick, rng)
+        : landCone(ability, caster, cast, candidates, tick, rng);
     case 'channel':
-      return landCone(ability, caster, cast, candidates, rng);
+      return landCone(ability, caster, cast, candidates, tick, rng);
     case 'ground':
-      return landBlast(ability, caster, cast.targetX, cast.targetY, candidates, rng);
+      return landBlast(ability, caster, cast.targetX, cast.targetY, candidates, tick, rng);
     case 'self':
-      return landSelf(ability, caster, rng);
+      return landSelf(ability, caster, tick, rng);
     case 'projectile':
       return launchProjectile(ability, caster, cast, tick, rng);
   }
@@ -902,6 +1198,7 @@ function landOnTarget(
   caster: ServerEntity,
   cast: CastState,
   candidates: readonly ServerEntity[],
+  tick: number,
   rng: Rng,
 ): LandResult {
   // Only from `candidates`, which the caller has already filtered by hostility:
@@ -920,8 +1217,20 @@ function landOnTarget(
     };
   }
 
-  const hit = applyDamage(ability, caster, target, rng);
-  return { updated: new Map([[target.id, hit.target]]), spawns: [], events: hit.events, rng: hit.rng };
+  const hit = applyDamage(ability, caster, target, rng, tick);
+  return {
+    // The caster goes back in the map too (spec 147). `advanceCast` folds an
+    // entry with the caster's own id into its local copy, so this is how a weak
+    // point's resource and a break's momentum actually reach the body that
+    // earned them.
+    updated: new Map([
+      [target.id, hit.target],
+      [caster.id, hit.attacker],
+    ]),
+    spawns: [],
+    events: hit.events,
+    rng: hit.rng,
+  };
 }
 
 function landCone(
@@ -929,6 +1238,7 @@ function landCone(
   caster: ServerEntity,
   cast: CastState,
   candidates: readonly ServerEntity[],
+  tick: number,
   rng: Rng,
 ): LandResult {
   const aimX = cast.targetX - caster.position.x;
@@ -941,6 +1251,9 @@ function landCone(
   const events: ServerSimEvent[] = [];
   let currentRng = rng;
   let connected = false;
+  // Carried forward across the sweep so a cone that catches three bodies pays
+  // the caster for all three, rather than for whichever happened to be last.
+  let attacker = caster;
 
   for (const target of candidates) {
     if (target.id === caster.id || target.health <= 0) continue;
@@ -948,13 +1261,15 @@ function landCone(
       continue;
     }
     connected = true;
-    const hit = applyDamage(ability, caster, target, currentRng);
+    const hit = applyDamage(ability, attacker, target, currentRng, tick);
     currentRng = hit.rng;
+    attacker = hit.attacker;
     updated.set(target.id, hit.target);
     events.push(...hit.events);
   }
 
   if (!connected) events.push({ kind: 'attackMissed', attackerId: caster.id });
+  else updated.set(caster.id, attacker);
   return { updated, spawns: [], events, rng: currentRng };
 }
 
@@ -964,34 +1279,47 @@ function landBlast(
   x: number,
   y: number,
   candidates: readonly ServerEntity[],
+  tick: number,
   rng: Rng,
 ): LandResult {
-  const radius = ability.radius ?? 100;
+  // Intelligence's shaping, applied where the blast actually resolves (spec
+  // 147). One line, and it is the whole of "spell geometry" -- a wider Quake is
+  // a different ability to walk out of, which is a mechanic, where a Quake that
+  // hits 12% harder is a number.
+  const radius = (ability.radius ?? 100) * (1 + caster.stats.traits.spellRadiusPct);
   const updated = new Map<number, ServerEntity>();
   const events: ServerSimEvent[] = [
     { kind: 'effect', effectId: `${ability.id}.impact`, x, y, z: 0, radius, durationTicks: Math.round(SERVER_TICK_RATE * 0.4) },
   ];
   let currentRng = rng;
+  let attacker = caster;
+  let connected = false;
 
   for (const target of candidates) {
     if (target.id === caster.id || target.health <= 0) continue;
     const dx = target.position.x - x;
     const dy = target.position.y - y;
     if (Math.hypot(dx, dy) > radius + target.radius) continue;
-    const hit = applyDamage(ability, caster, target, currentRng);
+    const hit = applyDamage(ability, attacker, target, currentRng, tick);
     currentRng = hit.rng;
+    attacker = hit.attacker;
+    connected = true;
     updated.set(target.id, hit.target);
     events.push(...hit.events);
   }
 
+  if (connected) updated.set(caster.id, attacker);
   return { updated, spawns: [], events, rng: currentRng };
 }
 
-function landSelf(ability: AbilityDefinition, caster: ServerEntity, rng: Rng): LandResult {
-  const healing = ability.healing ?? 0;
-  const healed = Math.min(caster.stats.maxHealth, caster.health + healing);
+function landSelf(ability: AbilityDefinition, caster: ServerEntity, tick: number, rng: Rng): LandResult {
+  // Wisdom scales what a restorative tool is worth, and Constitution decides
+  // what happens to the part that will not fit (spec 147). Both go through
+  // `applyHealing`, which is the one place either question is answered.
+  const restored = applyHealing(caster, ability.healing ?? 0, tick);
+  const healed = restored.entity.health;
   return {
-    updated: new Map([[caster.id, { ...caster, health: healed }]]),
+    updated: new Map([[caster.id, restored.entity]]),
     spawns: [],
     events: [
       {
@@ -1014,9 +1342,74 @@ function landSelf(ability: AbilityDefinition, caster: ServerEntity, rng: Rng): L
         killed: false,
         critical: false,
         blocked: false,
+        weakPoint: false,
       },
     ],
     rng,
+  };
+}
+
+export interface HealResult {
+  readonly entity: ServerEntity;
+  /** What actually went into the health bar. */
+  readonly healed: number;
+  /** What did not fit, before Constitution or Wisdom got hold of it. */
+  readonly overheal: number;
+}
+
+/**
+ * One restoration, with the economy applied (spec 147).
+ *
+ * The one place healing is scaled and the one place overheal goes anywhere. In
+ * order:
+ *
+ *  1. Wisdom (and a little Constitution) scale the amount.
+ *  2. The Constitution+Wisdom pair doubles it below its threshold, because an
+ *     attrition build should get *more* out of a heal exactly when it is losing.
+ *  3. What fits goes into health.
+ *  4. What does not fit goes to a shield (Constitution 50), or to resource
+ *     (Wisdom 50), or nowhere. Both are capped -- the shield by `maxShield`, the
+ *     conversion by `conversionCap` per event -- so neither is a loop.
+ *
+ * A body with no traits at all gets `min(max, health + amount)`, which is
+ * exactly what `landSelf` did before this existed.
+ */
+export function applyHealing(entity: ServerEntity, amount: number, tick: number): HealResult {
+  if (!(amount > 0)) return { entity, healed: 0, overheal: 0 };
+  const traits = entity.stats.traits;
+
+  const surge =
+    traits.healingSurge > 0 &&
+    entity.stats.maxHealth > 0 &&
+    entity.health / entity.stats.maxHealth <= traits.healingSurgeBelow
+      ? 1 + traits.healingSurge
+      : 1;
+  const total = amount * traits.healingScale * surge;
+
+  const room = Math.max(0, entity.stats.maxHealth - entity.health);
+  const healed = Math.min(room, total);
+  const overheal = total - healed;
+
+  let shield = tick < entity.shieldUntilTick ? entity.shield : 0;
+  let shieldUntilTick = entity.shieldUntilTick;
+  let resource = entity.resource;
+
+  if (overheal > 0) {
+    if (traits.overhealShieldTicks > 0 && traits.maxShield > 0) {
+      shield = Math.min(traits.maxShield, shield + overheal);
+      shieldUntilTick = tick + traits.overhealShieldTicks;
+    } else if (traits.conversionCap > 0) {
+      resource = Math.min(
+        entity.stats.maxResource,
+        resource + Math.min(traits.conversionCap, overheal),
+      );
+    }
+  }
+
+  return {
+    healed,
+    overheal,
+    entity: { ...entity, health: entity.health + healed, shield, shieldUntilTick, resource },
   };
 }
 
@@ -1080,72 +1473,45 @@ function launchProjectile(
 }
 
 interface DamageResult {
+  /**
+   * The attacker, with whatever the blow returned to it (spec 147): resource
+   * from a weak point, a shield from ability damage, momentum from a break.
+   *
+   * New, and every caller has to write it back. `advanceCast` already folds a
+   * returned caster into its local copy, and `world.ts` does the same for a
+   * projectile's owner -- a caller that drops this silently loses every
+   * Perception and Wisdom payoff in the game, which is why it is not optional.
+   */
+  readonly attacker: ServerEntity;
   readonly target: ServerEntity;
   readonly events: readonly ServerSimEvent[];
   readonly rng: Rng;
 }
 
-/** One application of an ability's damage. */
+/**
+ * One application of an ability's damage.
+ *
+ * A thin wrapper since spec 147: the sequence a blow actually runs through --
+ * rolls, amplifiers, mitigation, shields, poise, aftermath -- is
+ * {@link resolveBlow} in `sim/blow.ts`, written once so that the five places a
+ * blow can originate from cannot each have a slightly different version of it.
+ *
+ * Two rules from before that survive unchanged and are worth restating because
+ * this signature no longer shows them:
+ *
+ *  - Being hit does not knock a target out of a cast (spec 068). Only a poise
+ *    break does now, and only when there was enough force behind it.
+ *  - Death drops a cast and *announces* it, because a client roots itself while
+ *    it believes it is casting.
+ */
 export function applyDamage(
   ability: AbilityDefinition,
   attacker: ServerEntity,
   target: ServerEntity,
   rng: Rng,
+  tick: number,
 ): DamageResult {
-  const [roll, nextRng] = rng.nextInt(0, 9999);
-  const critical = roll / 10000 < attacker.stats.critChance;
-
-  // Ability damage scales with spell power; the melee kinds scale with it too,
-  // so one stat governs "how hard do my abilities hit" rather than two.
-  const raw = ability.damage * attacker.stats.spellPower * (critical ? 1.75 : 1);
-  const damage = applyArmor(raw, target.stats);
-  const health = Math.max(0, target.health - damage);
-  const killed = health <= 0;
-
-  const events: ServerSimEvent[] = [
-    {
-      kind: 'hit',
-      attackerId: attacker.id,
-      targetId: target.id,
-      damage,
-      targetHealth: health,
-      killed,
-      critical,
-      blocked: target.stats.armor > 0 && damage < raw,
-    },
-  ];
-
-  // Being hit no longer knocks the target out of a cast (spec 068): a blow that
-  // has been committed to lands, and taking damage while winding up -- or while
-  // still turning into it -- costs health rather than the whole commitment.
-  //
-  // Death is the exception, since a corpse may not go on swinging. It has to be
-  // *announced*, not just done: clearing `cast` silently leaves the client
-  // holding a cast the server has dropped, and a client roots itself while it
-  // believes it is casting, so the player would be stuck on the spot for good.
-  if (killed) {
-    if (target.cast) {
-      events.push({
-        kind: 'castEnded',
-        entityId: target.id,
-        abilityId: target.cast.abilityId,
-        reason: CastEndReason.Interrupted,
-      });
-    }
-    events.push({ kind: 'died', entityId: target.id, killerId: attacker.id });
-  }
-
-  return {
-    rng: nextRng,
-    events,
-    target: {
-      ...target,
-      health,
-      activity: killed ? ActivityValue.Dead : target.activity,
-      targetId: target.targetId ?? attacker.id,
-      cast: killed ? null : target.cast,
-    },
-  };
+  return resolveBlow(ability, attacker, target, tick, rng);
 }
 
 /** Whether a projectile entity may hit `target`. Owners never hit themselves. */

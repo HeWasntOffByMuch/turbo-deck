@@ -19,7 +19,8 @@
     "dev": "vite",
     "server": "tsx src/server/index.ts",
     "server:bots": "tsx scripts/server-bot.ts",
-    "bake:ui-goldens": "tsx scripts/bake-ui-goldens.ts"
+    "bake:ui-goldens": "tsx scripts/bake-ui-goldens.ts",
+    "balance": "tsx scripts/balance-builds.ts"
   },
   "dependencies": {
     "@types/ws": "^8.18.1",

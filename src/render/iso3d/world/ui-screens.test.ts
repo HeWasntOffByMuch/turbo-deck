@@ -63,6 +63,8 @@ function harness(options: Partial<UiScreensOptions> = {}, viewport = VIEWPORT): 
       map: new InputMap(),
       onMove: (from, to, count) => requests.push(`move:${from.index}->${to.index}x${count}`),
       onSpend: (id) => requests.push(`spend:${id}`),
+      onAllocate: (key) => requests.push(`allocate:${key}`),
+      onRespec: () => requests.push('respec'),
       onBuy: (vendorId, defId) => requests.push(`buy:${vendorId}:${defId}`),
       onSell: (vendorId, index) => requests.push(`sell:${vendorId}:${index}`),
       onBuyBack: (vendorId, index) => requests.push(`buyback:${vendorId}:${index}`),

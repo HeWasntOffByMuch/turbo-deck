@@ -124,6 +124,8 @@ async function play(drive: boolean): Promise<RunResult> {
       map: new InputMap(),
       onMove: (from, to, count) => requests.push(`move:${from.container}${from.index}->${to.container}${to.index}x${count}`),
       onSpend: (skillId) => requests.push(`spend:${skillId}`),
+      onAllocate: (key) => requests.push(`allocate:${key}`),
+      onRespec: () => requests.push('respec'),
       onBuy: (vendorId, defId) => requests.push(`buy:${vendorId}:${defId}`),
       onSell: (vendorId, index) => requests.push(`sell:${vendorId}:${index}`),
       onBuyBack: (vendorId, index) => requests.push(`buyback:${vendorId}:${index}`),

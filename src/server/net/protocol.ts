@@ -76,6 +76,18 @@ export const ClientMessageType = {
    * that tells them apart.
    */
   Goodbye: 0x16,
+  /**
+   * Put one attribute point somewhere (spec 147).
+   *
+   * Names the attribute by *ordinal* into `BASE_STAT_KEYS` rather than by
+   * string: one byte instead of a length-prefixed name, and an ordinal out of
+   * range is a rejection with nothing to parse. There is deliberately no "how
+   * many" -- one message is one point, so a client cannot ask for a hundred and
+   * hope the budget check has an off-by-one in it.
+   */
+  AllocateAttribute: 0x17,
+  /** Hand every allocated point back, for coins. Priced and checked server-side. */
+  RespecAttributes: 0x18,
 } as const;
 
 export const ServerMessageType = {
@@ -253,6 +265,19 @@ export const InputButton = {
  * field did not change since this client's last acknowledged snapshot, so it is
  * simply not on the wire.
  */
+/**
+ * Which fields an entity delta carries.
+ *
+ * **A varuint on the wire, not a byte** (spec 147). Spec 145's `Identity` took
+ * the eighth and last bit of the byte this used to be, and poise and shields
+ * need two more -- so the field is widened rather than the two of them being
+ * folded into one flag. Folding would have been cheaper to write and wrong to
+ * live with: poise changes on almost every tick of a fight and a shield changes
+ * almost never, so one shared bit would put eight bytes of shield on the wire
+ * every time a guard ticked. A varuint costs nothing for the common deltas --
+ * position and facing is 6, still one byte -- and one extra byte only on the
+ * rare frame that carries a shield.
+ */
 export const EntityField = {
   /** Identity, sent once when the entity enters this client's interest set. */
   Spawn: 1 << 0,
@@ -269,6 +294,16 @@ export const EntityField = {
    * human typed and no table can answer.
    */
   Identity: 1 << 6,
+  /**
+   * Guard left, as a fraction (spec 147).
+   *
+   * A fraction rather than a pair of absolutes, and one byte rather than eight:
+   * a client draws a bar, and the only question a bar asks is "how full". The
+   * absolute pool is a build detail nobody watching a fight needs.
+   */
+  Poise: 1 << 7,
+  /** Absorb left, in health units, and the tick it falls off whole. */
+  Shield: 1 << 8,
 } as const;
 
 export const EntityKind = {

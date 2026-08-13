@@ -23,6 +23,7 @@ import type { EffectiveStats } from '../state/types.js';
 import { advanceCast, mayCast, modelledResource, steerFacing, type Mirror } from './combat.js';
 import { GameClient } from './game-client.js';
 import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
+import { NEUTRAL_TRAITS } from '../player/derived.js';
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -40,6 +41,7 @@ const STATS: EffectiveStats = {
   maxResource: 20,
   resourceRegen: 0.1,
   basicAttackId: 'melee.slash',
+  traits: NEUTRAL_TRAITS,
 };
 
 function mirror(overrides: Partial<Mirror> = {}): Mirror {
@@ -53,6 +55,8 @@ function mirror(overrides: Partial<Mirror> = {}): Mirror {
     cooldowns: {},
     cast: null,
     stats: STATS,
+    poise: 0,
+    shield: 0,
     ...overrides,
   };
 }

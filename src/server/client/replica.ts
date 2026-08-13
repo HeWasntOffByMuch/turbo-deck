@@ -36,6 +36,11 @@ export interface ReplicatedEntity {
    */
   readonly name: string;
   readonly turnRate: number;
+  /** Guard left, 0..1 (spec 147). 1 for anything with no poise pool. */
+  readonly poise: number;
+  /** Absorb left in health units, and the tick it falls off whole. */
+  readonly shield: number;
+  readonly shieldUntilTick: number;
 }
 
 export class ReplicatedWorld {
@@ -88,6 +93,9 @@ export class ReplicatedWorld {
           level: record.level ?? 1,
           name: record.name ?? '',
           turnRate: record.turnRate ?? 0,
+          poise: record.poise ?? 1,
+          shield: record.shield ?? 0,
+          shieldUntilTick: record.shieldUntilTick ?? 0,
         });
         continue;
       }
@@ -114,6 +122,18 @@ export class ReplicatedWorld {
           : {}),
         ...(record.fields & EntityField.Identity
           ? { name: record.name ?? existing.name, turnRate: record.turnRate ?? existing.turnRate }
+          : {}),
+        // Guard and shields, which the first-sight branch above has always read
+        // and this one never did -- so a replicated body's guard was whatever it
+        // had when the client first saw it, forever. Invisible until spec 147
+        // drew the bar: nothing else on this side reads either field, so a value
+        // frozen at spawn and a value tracking the server look identical to
+        // every test that only asks whether the number arrived.
+        ...(record.fields & EntityField.Poise && record.poise !== undefined
+          ? { poise: record.poise }
+          : {}),
+        ...(record.fields & EntityField.Shield && record.shield !== undefined
+          ? { shield: record.shield, shieldUntilTick: record.shieldUntilTick ?? existing.shieldUntilTick }
           : {}),
       });
     }

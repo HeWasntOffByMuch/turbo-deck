@@ -29,7 +29,18 @@ import type { Vec2, WorldColliders } from '../../sim/types.js';
 import type { LiveConfig } from '../config.js';
 import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../config.js';
 import { monsterById } from '../data/monsters.js';
+import { NEUTRAL_TRAITS } from '../player/derived.js';
 import { NO_ATTACK_SPEED } from './attack-timing.js';
+import { SECOND_WIND_COOLDOWN_TICKS } from './blow.js';
+import { regenPoise } from './poise.js';
+import {
+  applyStatus,
+  clearStatus,
+  expireStatuses,
+  hasStatus,
+  NO_STATUSES,
+  StatusId,
+} from './statuses.js';
 import type { EffectiveStats, Vec3 } from '../state/types.js';
 import { chunkKeyOf, type ChunkKey } from '../world/chunks.js';
 import type { SpawnPoint } from '../world/spawners.js';
@@ -102,6 +113,7 @@ function blankEntity(id: number): ServerEntity {
       maxResource: 0,
       resourceRegen: 0,
       basicAttackId: '',
+      traits: NEUTRAL_TRAITS,
     },
     activity: ActivityValue.Idle,
     activityUntilTick: 0,
@@ -120,6 +132,29 @@ function blankEntity(id: number): ServerEntity {
     cast: null,
     cooldowns: {},
     projectile: null,
+    ...blankProgression(),
+  };
+}
+
+/**
+ * The progression state every body starts with (spec 147).
+ *
+ * One helper rather than six literals, because there are three places a body is
+ * built -- {@link blankEntity}, {@link spawnEntity} and the client's mirror in
+ * `client/combat.ts` -- and a field added in two of them is a body that behaves
+ * differently depending on where it came from.
+ */
+export function blankProgression(): Pick<
+  ServerEntity,
+  'poise' | 'staggerImmuneUntilTick' | 'shield' | 'shieldUntilTick' | 'statuses' | 'stillSinceTick'
+> {
+  return {
+    poise: 0,
+    staggerImmuneUntilTick: 0,
+    shield: 0,
+    shieldUntilTick: 0,
+    statuses: NO_STATUSES,
+    stillSinceTick: 0,
   };
 }
 
@@ -215,6 +250,10 @@ export function spawnEntity(
     cast: null,
     cooldowns: {},
     projectile: null,
+    // A body enters the world with a full guard, like it enters with full
+    // health: poise is a live resource, not a derived stat.
+    ...blankProgression(),
+    poise: spec.stats.traits.maxPoise,
   };
   const entities = new Map(state.entities);
   entities.set(entity.id, entity);
@@ -423,6 +462,11 @@ export function step(
         : steered.pardon,
     };
     next = expireActivity(next, tick, moved ? ActivityValue.Moving : ActivityValue.Idle);
+    // --- 1b: the progression timers (spec 147) --------------------------
+    // One pass, here, because all four read the same three facts this pass has
+    // just settled -- did the body move, is it committed, is it staggered -- and
+    // a second loop would have to re-derive them or take them on trust.
+    next = advanceProgression(next, tick, moved);
     working.set(next.id, next);
 
     if (outcome.correctionReason !== null && input) {
@@ -679,20 +723,29 @@ export function step(
         radius: ability.radius,
         durationTicks: Math.round(SERVER_TICK_RATE * 0.4),
       });
+      // Intelligence's shaping reaches a projectile's burst too (spec 147), for
+      // the reason it reaches a Quake: the radius is what a player walks out of.
+      const blastRadius = ability.radius * (1 + owner.stats.traits.spellRadiusPct);
+      let shooter = owner;
       for (const target of blastCandidates) {
         const dx = target.position.x - moved.position.x;
         const dy = target.position.y - moved.position.y;
         const length = Math.hypot(dx, dy);
-        if (length > ability.radius + target.radius) continue;
-        const hit = applyDamage(ability, owner, target, rng);
+        if (length > blastRadius + target.radius) continue;
+        const hit = applyDamage(ability, shooter, target, rng, tick);
         rng = hit.rng;
+        shooter = hit.attacker;
         working.set(target.id, hit.target);
         events.push(...hit.events);
       }
+      // The shooter goes back too: a shot that weak-pointed pays whoever loosed
+      // it, and this is the one path where nothing else would write them back.
+      working.set(shooter.id, shooter);
     } else if (struck) {
-      const hit = applyDamage(ability, owner, struck, rng);
+      const hit = applyDamage(ability, owner, struck, rng, tick);
       rng = hit.rng;
       working.set(struck.id, hit.target);
+      working.set(owner.id, hit.attacker);
       events.push(...hit.events);
       events.push({
         kind: 'effect',
@@ -740,6 +793,82 @@ export function step(
   events.push(...spawned.events);
 
   return { state: { tick, entities: working, nextEntityId, rng, spawners: spawned.spawners }, events };
+}
+
+/**
+ * One tick of everything the progression system counts (spec 147).
+ *
+ * Four things, in the one order they can be done in:
+ *
+ *  1. **Expire.** Statuses whose tick has passed, and a shield whose window has
+ *     closed. A shield falls off *whole* rather than decaying, which is what
+ *     makes it readable: you can see the buffer and know it is all there until
+ *     it is all gone.
+ *  2. **Stillness.** Anything the body did this tick -- moving, or being
+ *     committed to a cast -- stamps `stillSinceTick` forward. Being hit stamps
+ *     it too, from `blow.ts`.
+ *  3. **Prime.** Enough stillness grants `Prepared`, Intelligence's opener.
+ *  4. **Regenerate poise**, at whichever of its three rates applies.
+ *
+ * Returns the same object when nothing changed, so an idle world with no
+ * progression on it allocates nothing per tick.
+ */
+export function advanceProgression(
+  entity: ServerEntity,
+  tick: number,
+  moved: boolean,
+): ServerEntity {
+  const traits = entity.stats.traits;
+  const staggered = entity.activity === ActivityValue.Stunned;
+
+  let statuses = expireStatuses(entity.statuses, tick);
+  const busy = moved || entity.cast !== null;
+  const stillSinceTick = busy ? tick : entity.stillSinceTick;
+
+  if (
+    !busy &&
+    traits.prepareTicks > 0 &&
+    tick - stillSinceTick >= traits.prepareTicks &&
+    !hasStatus(statuses, StatusId.Prepared, tick)
+  ) {
+    // Held until it is spent rather than for a duration: the whole point is that
+    // it is banked before the fight, and a charge that decayed while you walked
+    // into range would be a charge nobody could ever use.
+    statuses = applyStatus(statuses, StatusId.Prepared, tick, Number.MAX_SAFE_INTEGER - tick);
+  }
+
+  const shieldLive = tick < entity.shieldUntilTick;
+  const shield = shieldLive ? entity.shield : 0;
+  const poise = regenPoise(entity, tick, moved, staggered);
+
+  // Second Wind (spec 147). Constitution's one comeback, and the *only* thing
+  // in this system that restores health without a heal being cast.
+  //
+  // Three guards, and each closes a loop the others do not: it needs the
+  // threshold to have been crossed, it needs its own long cooldown carried as a
+  // status, and -- the one that matters -- it will not fire again until the
+  // body has climbed back *above* the threshold, so somebody sitting at 29%
+  // health does not get a heartbeat every twenty seconds.
+  let health = entity.health;
+  const armed = traits.secondWindHeal > 0 && entity.stats.maxHealth > 0 && health > 0;
+  const hurt = armed && health / entity.stats.maxHealth <= traits.secondWindBelow;
+  if (armed && !hurt) {
+    statuses = clearStatus(statuses, StatusId.SecondWindSpent);
+  } else if (hurt && !hasStatus(statuses, StatusId.SecondWindSpent, tick)) {
+    health = Math.min(entity.stats.maxHealth, health + entity.stats.maxHealth * traits.secondWindHeal);
+    statuses = applyStatus(statuses, StatusId.SecondWindSpent, tick, SECOND_WIND_COOLDOWN_TICKS);
+  }
+
+  if (
+    statuses === entity.statuses &&
+    stillSinceTick === entity.stillSinceTick &&
+    shield === entity.shield &&
+    poise === entity.poise &&
+    health === entity.health
+  ) {
+    return entity;
+  }
+  return { ...entity, statuses, stillSinceTick, shield, poise, health };
 }
 
 /**
@@ -1143,6 +1272,15 @@ function runSpawners(
       stats: definition.stats,
       radius: definition.radius,
       resource: definition.stats.maxResource,
+      // Full guard, like full health and a full pool. `blankEntity` leaves this
+      // at zero because a blank entity has no stats to size it from, and this
+      // literal is the *second* place a body is built -- `spawnEntity` sets it
+      // on the line below its own spread and this one did not, so every
+      // wandering monster in the world entered it already broken and spent its
+      // first seconds regenerating from nothing. Nothing in Node could see it:
+      // poise is a live resource, so no derivation test looks at it, and the
+      // sim's own poise tests build their bodies through `spawnEntity`.
+      poise: definition.stats.traits.maxPoise,
       spawnerId: point.id,
       anchor: { x: point.x, y: point.y },
     };

@@ -71,12 +71,16 @@ const CHUNK_THROTTLE_BACKOFF_TICKS = 15;
 import { abilityById } from '../data/abilities.js';
 import {
   EMPTY_EQUIPMENT,
+  type BaseStatKey,
+  type BaseStats,
   type EffectiveStats,
   type Equipment,
   type Inventory,
   type SkillAllocation,
   type SlotAddress,
 } from '../state/types.js';
+import { ordinalOfAttribute } from '../data/attributes.js';
+import { startingBaseStats } from '../player/attributes.js';
 import { applyMove, type MoveRequest } from '../player/inventory.js';
 import { NOMINAL, observeQueue, type RateMatchState } from './rate-match.js';
 import { createFlatPredictor, PredictionBuffer, type PredictedInput, type PredictStep } from './prediction.js';
@@ -272,14 +276,27 @@ export interface ClientView {
   readonly experience: number;
   readonly unspentSkillPoints: number;
   /**
-   * Every point this character has spent (spec 128).
+   * Every point this character has spent in the attuned tree (specs 128, 147).
    *
-   * Where a skill tree's "you have three of five in this" comes from. Not
-   * derivable from {@link stats}: two different builds can add up to the same
-   * numbers, which is the same reason equipment had to be replicated rather
-   * than inferred.
+   * Where a tree's "you have three of five in this" comes from. Not derivable
+   * from {@link stats}: two different builds can add up to the same numbers,
+   * which is the same reason equipment had to be replicated rather than
+   * inferred.
    */
   readonly skills: readonly SkillAllocation[];
+  /**
+   * The progression half of the sheet (spec 147).
+   *
+   * `baseStats` is what has been *allocated* and is what the "+" spends
+   * against; `attributes` is what items and skills push it to, and is what
+   * milestone and synergy thresholds are measured on. Both are replicated
+   * because neither is derivable from the other -- a trinket granting +5
+   * Strength makes them differ, and a client with only one of them either
+   * mis-greys the button or mis-draws the thresholds.
+   */
+  readonly baseStats: BaseStats;
+  readonly attributes: BaseStats;
+  readonly unspentAttributePoints: number;
   readonly connected: boolean;
   /** Casts in progress, keyed by caster -- what to draw a wind-up bar over. */
   readonly casts: readonly KnownCast[];
@@ -479,6 +496,9 @@ export class GameClient {
   private experience = 0;
   private unspentSkillPoints = 0;
   private skills: readonly SkillAllocation[] = [];
+  private baseStats: BaseStats = startingBaseStats();
+  private attributes: BaseStats = startingBaseStats();
+  private unspentAttributePoints = 0;
   private seq = 0;
   private connected = false;
   private resolveWelcome: ((info: WelcomeInfo) => void) | null = null;
@@ -810,6 +830,28 @@ export class GameClient {
   }
 
   /**
+   * Ask for one attribute point (spec 147).
+   *
+   * Sends an *ordinal*, and nothing else. There is no amount, no derived value
+   * and no optimistic local update: the answer is the `Stats` message that
+   * follows, or a refusal in the corner. A client that guessed here would draw
+   * a stat it does not have for a round trip.
+   */
+  allocateAttribute(key: BaseStatKey): void {
+    const ordinal = ordinalOfAttribute(key);
+    if (ordinal < 0) return;
+    this.channel.send(
+      encodeClientMessage({ type: ClientMessageType.AllocateAttribute, attribute: ordinal }),
+    );
+  }
+
+  respecAttributes(): void {
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.RespecAttributes }));
+  }
+
+
+
+  /**
    * Asks to commit to an ability. The *effect* is still not predicted -- the
    * local state is "requested", and only the server's CastState makes a cast
    * real. Predicting damage is a much larger commitment than predicting a walk,
@@ -988,6 +1030,12 @@ export class GameClient {
       // previous swing -- the client drew nothing, and the server cast anyway.
       cast: this.castAsOf(atTick),
       stats: this.stats,
+      // Replicated, so honest (spec 147). Statuses are not replicated and the
+      // mirror carries none, so a predicted cost is the undiscounted one -- the
+      // right way round to be wrong, since the server's answer only ever comes
+      // back cheaper.
+      poise: self.poise * this.stats.traits.maxPoise,
+      shield: atTick < self.shieldUntilTick ? self.shield : 0,
     };
   }
 
@@ -1047,6 +1095,12 @@ export class GameClient {
       const ability = abilityById(confirmed.abilityId);
       return {
         abilityId: confirmed.abilityId,
+        // Not replicated and not guessed at (spec 147): a refund is the server's
+        // to issue, and a client that invented a number here would predict a
+        // pool it does not have. Zero means "this client is not modelling the
+        // refund", which is the truth.
+        spentResource: 0,
+        spentHealth: 0,
         startedTick: confirmed.startTick,
         windupStartTick: confirmed.startTick,
         releaseTick: confirmed.releaseTick,
@@ -1296,6 +1350,9 @@ export class GameClient {
       experience: this.experience,
       unspentSkillPoints: this.unspentSkillPoints,
       skills: this.skills,
+      baseStats: this.baseStats,
+      attributes: this.attributes,
+      unspentAttributePoints: this.unspentAttributePoints,
       connected: this.connected,
       casts: this.visibleCasts(),
       requestedAbilityId: this.requestedAbilityId,
@@ -1567,6 +1624,9 @@ export class GameClient {
         this.experience = message.experience;
         this.unspentSkillPoints = message.unspentSkillPoints;
         this.skills = message.skills;
+        this.baseStats = message.baseStats;
+        this.attributes = message.attributes;
+        this.unspentAttributePoints = message.unspentAttributePoints;
         break;
 
       case ServerMessageType.Delta: {
