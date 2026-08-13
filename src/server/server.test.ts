@@ -730,3 +730,60 @@ describe('the asset manifest gate (spec 113)', () => {
     expect(client.received.some((message) => message.type === ServerMessageType.Welcome)).toBe(true);
   });
 });
+
+describe('coming back to a body that is still standing there (spec 150)', () => {
+  /**
+   * The bug: the resume branch sent `Welcome` and returned.
+   *
+   * What survives a resume is the *body*, on the server. The client resuming is
+   * a brand-new page whose `GameClient` was constructed a moment ago and holds
+   * nothing -- so a reconnect that is only told "you are entity 3" has no chunk
+   * list and draws no ground, has no `EffectiveStats` and reads `maxHealth` and
+   * `maxPoise` as zero, and has an empty bag. Every reload after the first one
+   * looked like a broken world, and nothing in Node could see it because every
+   * test here asserts on the *fresh* login path.
+   */
+  async function resumed(): Promise<{ first: Client; back: Client }> {
+    const game = server();
+    const first = new Client(game);
+    await first.hello('ana');
+    const welcome = first.of(ServerMessageType.Welcome)[0];
+    expect(welcome).toBeDefined();
+    // Not `Goodbye`: an unintentional drop is what leaves a body lingering.
+    first.connection.channel.close();
+    await Promise.resolve();
+
+    const back = new Client(game);
+    await back.hello('ana', '', welcome?.sessionToken ?? '');
+    return { first, back };
+  }
+
+  it('hands a resumed client the same opening messages a fresh one gets', async () => {
+    const { first, back } = await resumed();
+    // It really resumed rather than quietly logging in again -- the entity id
+    // is the one that was left standing, which is the whole point of the path.
+    expect(back.of(ServerMessageType.Welcome)[0]?.entityId).toBe(
+      first.of(ServerMessageType.Welcome)[0]?.entityId,
+    );
+    // Against what a *fresh* login is sent rather than against a list written
+    // here, so the rule stays true when a fifth opening message is added: the
+    // two paths open a client the same way or one of them is a bug. (This
+    // harness has no map, so MapInfo is absent from both -- which is exactly
+    // why the comparison is the assertion and a hand-written list is not.)
+    const fresh = new Client(server());
+    await fresh.hello('ben');
+    const kinds = (client: Client): number[] =>
+      [...new Set(client.received.map((message) => message.type))].sort((a, b) => a - b);
+    expect(kinds(back)).toEqual(kinds(fresh));
+  });
+
+  it('gives it stats with a real ceiling in them, not a zeroed one', async () => {
+    // The symptom as a player reads it: `hp 218/0  guard 0/0`. Asserted on the
+    // numbers rather than on the message arriving, because a Stats message with
+    // an empty body would satisfy the test above and still draw zeros.
+    const { back } = await resumed();
+    const stats = back.of(ServerMessageType.Stats).at(-1)?.stats;
+    expect(stats?.maxHealth).toBeGreaterThan(0);
+    expect(stats?.traits.maxPoise).toBeGreaterThan(0);
+  });
+});

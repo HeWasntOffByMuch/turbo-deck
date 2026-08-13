@@ -831,6 +831,17 @@ export class GameServer implements AdminHost {
         this.players.attachEntity(playerId, waiting.entityId);
         this.chunks.place(waiting.entityId, body.position.x, body.position.y, true);
         this.welcome(connection, playerId, waiting.entityId);
+        // Everything a fresh login is pushed, because *the client resuming is
+        // not the client that left*. What survives a resume is the body, on the
+        // server; the page is new, its `GameClient` was constructed a moment
+        // ago and holds nothing. This branch used to send `Welcome` and return,
+        // so a reconnected player got no MapInfo -- no chunk list, so no ground
+        // -- no Stats, so `maxHealth` and `maxPoise` read 0 and the character
+        // sheet had nothing to draw, and no Inventory, so an empty bag. Every
+        // reload after the first one looked like a broken world.
+        this.sendMapInfo(connection);
+        this.sendStats(connection);
+        this.sendInventory(connection, 0);
         return;
       }
       this.lingering.delete(playerId);
