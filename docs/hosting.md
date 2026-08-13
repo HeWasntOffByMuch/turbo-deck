@@ -99,8 +99,52 @@ Two near-misses, so they can be ruled out rather than reconsidered later:
 CX and CAX are EU-only (Germany and Finland). That is the whole location menu,
 and per the paragraph below it does not matter much which one you take.
 
-**Latency is not what picks the host.** Falkenstein is ~25ms from Poland against
-~5ms for a Warsaw datacenter, and that 20ms is worth less here than it sounds:
+### If Hetzner has nothing in stock
+
+This happens regularly and is not an account problem: Hetzner runs its cloud
+close to capacity, individual types go out of stock per location, and they
+usually return within hours. The Arm line in particular is out everywhere often
+enough that it cannot be planned around. Before assuming anything is wrong:
+
+- Try the other two locations. Falkenstein is the tightest; Nuremberg and
+  Helsinki frequently have what it does not.
+- Check a stock tracker (`radar.iodev.org/cloud-status`) rather than clicking
+  around the order page, and try again in a few hours.
+- If *everything* is greyed out and no location works, it is probably the
+  account rather than the stock — a new Hetzner account is limited until
+  identity and payment verification complete, which presents as an order page
+  where nothing can be created.
+
+### The alternative, which is arguably the better box
+
+**OVHcloud VPS-1**, in their **Warsaw** datacenter.
+
+| | |
+|---|---|
+| vCPU | 4 |
+| RAM | 8 GB |
+| Disk | 75 GB SSD |
+| Traffic | unlimited, capped at 400 Mbit/s |
+| Price | ~€6/month |
+| Location | Warsaw, Poland |
+
+For this workload that is not a downgrade in any dimension. Unlimited traffic
+removes the resource that made the host choice interesting at all; 400 Mbit/s is
+~3,300 players' worth of deltas at 120 kbit/s each, which is thirty times what
+one core can simulate. And it is the one plan on this page that is *in Poland*,
+so the ~25ms to Falkenstein becomes ~5ms.
+
+Two things to check at the checkout rather than take from this table: OVH's
+headline price is sometimes a 12-month commitment rate with a higher monthly
+one beside it, and provisioning is slow — minutes, against Hetzner's seconds.
+Neither changes the recommendation.
+
+Also worth knowing: **none of this repo is Hetzner-specific.** The image, the
+compose file, the Caddy config and the deploy workflow want an Ubuntu box with
+Docker and an SSH key. Only this document names a vendor.
+
+**Latency is not what picks the host either.** Falkenstein is ~25ms from Poland
+against ~5ms for a Warsaw datacenter, and that 20ms is worth less than it sounds:
 deltas go out every 50ms (`BROADCAST_EVERY_N_TICKS` = 3 at 60Hz), and
 `MAX_REWIND_TICKS` gives the server 200ms of lag compensation (spec 149). A 20ms
 difference is under two ticks and inside a budget the netcode already spends.
@@ -111,7 +155,8 @@ would actually hurt is hosting in `us-east` and playing from Europe.
 
 ### Once, on the box
 
-A CX23 as specified above, Ubuntu 24.04. From a fresh machine:
+Either box from above, Ubuntu 24.04. Nothing below this line is vendor-specific.
+From a fresh machine:
 
 ```sh
 # as root
