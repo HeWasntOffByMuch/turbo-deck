@@ -247,8 +247,8 @@ async function main(): Promise<void> {
       }
     }
     for (const label of ['Body', 'Legs'] as const) {
-      if (spider[label] !== '#241f31') {
-        problems.push(`the Small spider chip left ${label} at ${spider[label]}, wanted #241f31`);
+      if (spider[label] !== '#3d3846') {
+        problems.push(`the Small spider chip left ${label} at ${spider[label]}, wanted #3d3846`);
       }
     }
     // Photographed standing rather than mid-walk: this shot is about how big the

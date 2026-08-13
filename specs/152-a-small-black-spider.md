@@ -202,7 +202,7 @@ would visibly do nothing.
   move it" cannot be asked of one rig's before and after.
 - A colour change does not re-plant the feet.
 - In a real browser (`preview-sandbox.ts`): the chip loads the shipped 0.60 and
-  `#241f31` into the controls, a tuned body colour paints that many pixels of
+  `#3d3846` into the controls, a tuned body colour paints that many pixels of
   the canvas, and switching back restores the plain spider's numbers.
 - Also in a browser: a coat colour no preset offers paints an animal, which is
   what "any colour" means once it has been through the derivation rather than
