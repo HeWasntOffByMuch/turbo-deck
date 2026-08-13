@@ -569,7 +569,10 @@ Equipment slot order is the wire contract: a new slot is appended to
 Every one of these is refused unless the connection's stored token verifies **on
 that message**, with a `role: admin` claim. Authentication is not a flag set once
 at connect: the token is re-verified per request, so expiry takes effect
-immediately. Every decision, accepted or refused, appends an audit entry.
+immediately. Every **decision**, accepted or refused, appends an audit entry;
+the reads — `listPlayers`, `getConfig`, `getItems`, `getAudit` — do not, because
+asking who is online is not something done to anybody and the console polls the
+list once a second for its live count (spec 154).
 
 | Byte | Message | Payload |
 |---|---|---|
@@ -586,9 +589,22 @@ immediately. Every decision, accepted or refused, appends an audit entry.
 | `0x8A` | `admin:setConfig` | `str key` · `f64 value` |
 | `0x8B` | `admin:getConfig` | — |
 | `0x8C` | `admin:getAudit` | `u16 limit` |
+| `0x8D` | `admin:setProgress` | `str playerId` · `u8 mode` · `u32 amount` |
+| `0x8E` | `admin:giveItem` | `str playerId` · `str defId` · `u16 count` |
+| `0x8F` | `admin:getItems` | — |
+| `0x90` | `admin:kill` | `str playerId` |
 
 Events currently understood by `triggerEvent`: `raid` (magnitude = how many),
 `clear` (magnitude = radius), `heal`.
+
+`setProgress` modes (spec 154): `0` addLevels, `1` setLevel, `2` addExperience,
+`3` setExperience. An unknown mode is a `CodecError` rather than a no-op, because
+the mode selects arithmetic. `amount` is a `u32`, so an `Add` cannot be negative
+by construction — a decrease is a `Set`, and so is a reset (`setLevel 1`,
+`setExperience 0`). Levels are clamped to `MAX_PLAYER_LEVEL`, experience is
+clamped into its own level's band, and skill points are re-derived from the
+resulting level rather than adjusted; a level too low to pay for the tree it
+inherits clears the tree and refunds every earned point.
 
 Live config keys: `spawnRateMultiplier`, `dropRateMultiplier`,
 `maxEntitiesPerChunk`, `correctionThreshold`, `speedTolerance`,
@@ -601,9 +617,14 @@ non-finite value is refused rather than silently ignored.
 |---|---|---|
 | `0xA0` | Ok | `u8 requestType` · `str message` |
 | `0xA1` | Error | `u8 requestType` · `str message` |
-| `0xA2` | PlayerList | `varuint count`, then per row: `str playerId` · `str displayName` · `varuint entityId` · `f32 x` · `f32 y` · `f32 z` · `str zone` · `str chunk` · `f32 health` · `f32 maxHealth` · `varuint level` · `f32 attackDamage` · `f32 moveSpeed` · `bool muted` |
+| `0xA2` | PlayerList | `varuint count`, then per row: `str playerId` · `str displayName` · `varuint entityId` · `f32 x` · `f32 y` · `f32 z` · `str zone` · `str chunk` · `f32 health` · `f32 maxHealth` · `varuint level` · `f32 attackDamage` · `f32 moveSpeed` · `bool muted` · `varuint experience` · `varuint experienceToNextLevel` · `varuint unspentSkillPoints` · `varuint unspentAttributePoints` |
 | `0xA3` | Config | `varuint count`, then per entry: `str key` · `f64 value` |
 | `0xA4` | Audit | `varuint count`, then per entry: `f64 at` (epoch ms) · `str actor` · `str action` · `str target` · `str detail` · `bool accepted` |
+| `0xA5` | ItemList | `varuint count`, then per row: `str id` · `str name` · `str slot` (`-` when it is not worn) · `varuint levelRequirement` · `varuint maxStack` |
+
+`ItemList`'s count is decoded through `BufferReader.count()` (spec 152), so a
+declared length larger than the frame can hold is a `CodecError` rather than an
+allocation. The three replies above it predate that primitive.
 
 ## Client-side prediction contract
 

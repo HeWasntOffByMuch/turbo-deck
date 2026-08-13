@@ -27,6 +27,7 @@ import {
   DENY_ALL_ADMIN,
   type AdminConnectionState,
   type AdminHost,
+  type AdminOutcome,
   type AdminTokenVerifier,
 } from './admin/router.js';
 import {
@@ -50,8 +51,14 @@ import {
 import { TickLoop } from './loop.js';
 import { regenerated } from './sim/resource.js';
 import { monsterById } from './data/monsters.js';
+import { ALL_ITEMS, maxStackOf } from './data/items.js';
 import { compareManifest, mismatchMessage, refusesConnection } from '../units/manifest.js';
-import { decodeAdminRequest, encodeAdminReply, type AdminPlayerRow } from './net/admin-messages.js';
+import {
+  decodeAdminRequest,
+  encodeAdminReply,
+  type AdminItemRow,
+  type AdminPlayerRow,
+} from './net/admin-messages.js';
 import { CodecError } from './net/codec.js';
 import { DeltaTracker } from './net/delta.js';
 import {
@@ -70,10 +77,11 @@ import {
   isAdminRequest,
   ServerMessageType,
   SpawnerStateValue,
+  type AdminProgressModeValue,
 } from './net/protocol.js';
 import { attributeByOrdinal } from './data/attributes.js';
 import { resolveProgression } from './player/progression.js';
-import { DEFAULT_SPAWN, PlayerManager } from './player/player-manager.js';
+import { DEFAULT_SPAWN, experienceForLevel, PlayerManager } from './player/player-manager.js';
 import {
   inTradeRange,
   isSwappable,
@@ -1879,6 +1887,10 @@ export class GameServer implements AdminHost {
       const entity = this.state.entities.get(session.entityId);
       const position: Vec3 = entity?.position ?? session.record.position;
       rows.push({
+        experience: session.record.experience,
+        experienceToNextLevel: experienceForLevel(session.record.level + 1),
+        unspentSkillPoints: session.record.unspentSkillPoints,
+        unspentAttributePoints: session.record.unspentAttributePoints,
         playerId: session.playerId,
         displayName: session.displayName,
         entityId: session.entityId,
@@ -1898,11 +1910,105 @@ export class GameServer implements AdminHost {
     return rows;
   }
 
+  listItems(): readonly AdminItemRow[] {
+    return ALL_ITEMS.map((item) => ({
+      id: item.id,
+      name: item.name,
+      slot: item.slot ?? '-',
+      levelRequirement: item.levelRequirement,
+      // Through `maxStackOf` rather than off the field, which is optional and
+      // means 1 when absent -- the console divides by it.
+      maxStack: maxStackOf(item.id),
+    }));
+  }
+
   kick(playerId: string, reason: string): boolean {
     const connection = this.connectionForPlayer(playerId);
     if (!connection) return false;
     this.drop(connection, `kicked: ${reason}`);
     return true;
+  }
+
+  /**
+   * A level or experience edit (spec 154), pushed to the player it happened to.
+   *
+   * The push is the half that would be easy to leave out and impossible to
+   * notice from the console: the record and the derived stats are correct
+   * immediately, but the client draws its sheet from the last `Stats` message it
+   * was sent, so without this an operator sees level 9 in the table while the
+   * player sees level 4 until something else happens to send them one.
+   */
+  async setProgress(
+    playerId: string,
+    mode: AdminProgressModeValue,
+    amount: number,
+  ): Promise<AdminOutcome> {
+    const result = await this.players.setProgress(playerId, mode, amount);
+    if (!result.ok) return { ok: false, detail: result.reason };
+
+    const connection = this.connectionForPlayer(playerId);
+    if (connection) {
+      this.sendStats(connection);
+      // The tree may have been cleared to pay for a lowered level, and the sheet
+      // draws the tree from the same message; the bag is untouched, so it is not
+      // resent.
+      this.send(connection, {
+        type: ServerMessageType.Chat,
+        channel: ChatChannel.System,
+        from: 'World',
+        text: `An admin changed your progression: ${result.detail}.`,
+      });
+    }
+    return { ok: true, detail: result.detail };
+  }
+
+  async giveItem(playerId: string, defId: string, count: number): Promise<AdminOutcome> {
+    const result = await this.players.giveItem(playerId, defId, count);
+    if (!result.ok) return { ok: false, detail: result.reason };
+
+    const connection = this.connectionForPlayer(playerId);
+    if (connection) {
+      // 0 is "unprompted resend" -- there is no client request this answers.
+      this.sendInventory(connection, 0);
+      this.send(connection, {
+        type: ServerMessageType.Chat,
+        channel: ChatChannel.System,
+        from: 'World',
+        text: `You have been given ${count} x ${defId}.`,
+      });
+    }
+    return { ok: true, detail: `gave ${playerId} ${count} x ${defId}` };
+  }
+
+  /**
+   * Kills a player outright (spec 154).
+   *
+   * Health to zero and nothing else invented: the sim's own sweep marks a
+   * zero-health player `Dead` and leaves the body in the world, and
+   * `handleRespawns` already says "You have fallen" and puts them back on their
+   * feet after `RESPAWN_DELAY_TICKS`. So an admin kill and a monster's kill end
+   * the same way.
+   *
+   * The one thing the sweep does not do is cancel a trade -- only the `'died'`
+   * event does that, and it is emitted by `abilities.ts` when a blow lands, not
+   * by the sweep. So this cancels it, exactly as the `'died'` handler does.
+   * Without it, killing somebody mid-trade is the one way to be dead and still
+   * at the table.
+   */
+  kill(playerId: string): AdminOutcome {
+    const session = this.players.get(playerId);
+    if (!session || session.entityId < 0) return { ok: false, detail: `${playerId} is not in the world` };
+    const entity = this.state.entities.get(session.entityId);
+    if (!entity) return { ok: false, detail: `${playerId} has no body in the world` };
+    if (entity.health <= 0) return { ok: false, detail: `${playerId} is already dead` };
+
+    this.state = replaceEntity(this.state, { ...entity, health: 0 });
+    this.players.syncFromEntity(playerId, entity.position, entity.facing, 0);
+
+    const ended = this.trades.cancelFor(playerId, 'they were killed');
+    if (ended) this.endTrade(ended);
+
+    return { ok: true, detail: `killed ${playerId}` };
   }
 
   async ban(playerId: string, seconds: number, reason: string, issuedBy: string): Promise<boolean> {

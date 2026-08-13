@@ -18,6 +18,7 @@ import {
 } from './messages.js';
 import {
   AdminMessageType,
+  AdminProgressMode,
   AdminReplyType,
   ClientMessageType,
   EntityField,
@@ -379,6 +380,14 @@ describe('admin message round-trip', () => {
     { type: AdminMessageType.SetConfig, key: 'spawnRateMultiplier', value: 2.5 },
     { type: AdminMessageType.GetConfig },
     { type: AdminMessageType.GetAudit, limit: 50 },
+    // Spec 153: all four modes, so none of them is the one nobody encoded.
+    { type: AdminMessageType.SetProgress, playerId: 'bob', mode: AdminProgressMode.AddLevels, amount: 5 },
+    { type: AdminMessageType.SetProgress, playerId: 'bob', mode: AdminProgressMode.SetLevel, amount: 1 },
+    { type: AdminMessageType.SetProgress, playerId: 'bob', mode: AdminProgressMode.AddExperience, amount: 4_000_000_000 },
+    { type: AdminMessageType.SetProgress, playerId: 'bob', mode: AdminProgressMode.SetExperience, amount: 0 },
+    { type: AdminMessageType.GiveItem, playerId: 'bob', defId: 'potion.minor', count: 5 },
+    { type: AdminMessageType.GetItems },
+    { type: AdminMessageType.Kill, playerId: 'bob' },
   ];
 
   it.each(requests.map((r) => [r.type, r] as const))(
@@ -416,6 +425,10 @@ describe('admin message round-trip', () => {
           attackDamage: 12.5,
           moveSpeed: 147.5,
           muted: false,
+          experience: 340,
+          experienceToNextLevel: 671,
+          unspentSkillPoints: 2,
+          unspentAttributePoints: 14,
         },
       ],
     },
@@ -433,6 +446,13 @@ describe('admin message round-trip', () => {
         },
       ],
     },
+    {
+      type: AdminReplyType.ItemList,
+      items: [
+        { id: 'sword.worn', name: 'Worn Sword', slot: 'mainHand', levelRequirement: 1, maxStack: 1 },
+        { id: 'potion.minor', name: 'Minor Potion', slot: '-', levelRequirement: 1, maxStack: 10 },
+      ],
+    },
   ];
 
   it.each(replies.map((r) => [r.type, r] as const))(
@@ -441,4 +461,23 @@ describe('admin message round-trip', () => {
       expect(decodeAdminReply(encodeAdminReply(reply))).toEqual(reply);
     },
   );
+
+  it('refuses an item list that declares more items than the frame holds', () => {
+    // Spec 152's primitive, on the one admin reply that has a counted collection:
+    // a count of ~2^30 in a six-byte frame is a frame that cannot exist.
+    const frame = Uint8Array.from([AdminReplyType.ItemList, 0x80, 0x80, 0x80, 0x40]);
+    expect(() => decodeAdminReply(frame)).toThrow(CodecError);
+  });
+
+  it('refuses an unknown progress mode rather than defaulting to one', () => {
+    const frame = encodeAdminRequest({
+      type: AdminMessageType.SetProgress,
+      playerId: 'bob',
+      mode: AdminProgressMode.AddLevels,
+      amount: 1,
+    });
+    // Byte 0 is the type, 1 is the id's length, then 3 bytes of 'bob', then mode.
+    frame[5] = 99;
+    expect(() => decodeAdminRequest(frame)).toThrow(CodecError);
+  });
 });
