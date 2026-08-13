@@ -1257,6 +1257,11 @@ export class GameServer implements AdminHost {
       rarity: rarityToByte(drop.rarity),
       spawnTick: drop.spawnTick,
       revealTick: drop.revealTick,
+      // Both ends of the throw. Not withheld with the identity: where a thing
+      // was thrown from says nothing about what it is.
+      originX: drop.origin.x,
+      originY: drop.origin.y,
+      originZ: drop.origin.z,
       // Absent rather than flagged. There is no branch on the client that could
       // draw an unrevealed item early, because it was never sent one.
       defId: revealed ? drop.defId : '',
@@ -2201,6 +2206,13 @@ export class GameServer implements AdminHost {
     return true;
   }
 
+  /**
+   * How far the admin drop throws, in world units (spec 156). Inside the
+   * scatter band the real one draws from, so the arc it exercises is the arc a
+   * kill produces.
+   */
+  private static readonly ADMIN_DROP_THROW = 24;
+
   triggerEvent(eventName: string, x: number, y: number, magnitude: number): string {
     switch (eventName) {
       case 'raid': {
@@ -2232,6 +2244,12 @@ export class GameServer implements AdminHost {
         const rarity = rarityFromByte(Math.max(0, Math.round(magnitude)));
         const definition = ALL_ITEMS.find((item) => (item.rarity ?? 'common') === rarity);
         if (!definition) return `no item is authored at rarity ${rarity}`;
+        // A fixed throw rather than the sim's seeded scatter: an admin action
+        // must not draw from `state.rng`, or triggering one would shift every
+        // roll in the world after it and a replay would stop reproducing.
+        const origin: Vec3 = { x, y, z: this.terrain.heightAt(x, y) };
+        const lx = x + GameServer.ADMIN_DROP_THROW;
+        const position: Vec3 = { x: lx, y, z: this.terrain.heightAt(lx, y) };
         const drop = makeDrop(
           definition.id,
           1,
@@ -2239,14 +2257,14 @@ export class GameServer implements AdminHost {
           // Unowned, so whoever is testing can walk up to it. A rolled drop is
           // always owned; this one is not a roll.
           null,
+          origin,
           this.state.tick,
           this.config.get().lootRevealScale,
         );
-        const position: Vec3 = { x, y, z: this.terrain.heightAt(x, y) };
         const spawned = spawnDrop(this.state, drop, position, this.zones.zoneIdAt(x, y));
         this.state = spawned.state;
-        this.chunks.place(spawned.entity.id, x, y, false);
-        return `dropped ${definition.name} (${rarity}) at ${Math.round(x)}, ${Math.round(y)}`;
+        this.chunks.place(spawned.entity.id, position.x, position.y, false);
+        return `dropped ${definition.name} (${rarity}) at ${Math.round(position.x)}, ${Math.round(position.y)}`;
       }
       case 'reveal': {
         // The other half of the developer path (spec 156): pull every drop

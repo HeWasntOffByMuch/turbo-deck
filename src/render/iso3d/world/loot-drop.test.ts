@@ -13,7 +13,21 @@ import type { DropView } from '../../../server/client/game-client.js';
 import { anticipationTickFor, RevealPhase, revealPhaseAt } from '../../../server/sim/loot.js';
 import { rarityRow } from '../../../server/data/loot.js';
 import { RARITY_IDS, type RarityId } from '../../../server/data/items.js';
-import { DropPresenter, flareAt, pickupOrderFor, REVEAL_SETTLE_TICKS } from './loot-drop.js';
+import {
+  DropPresenter,
+  flareAt,
+  heartbeatAt,
+  HEARTBEAT_TICKS,
+  pickupOrderFor,
+  REVEAL_SETTLE_TICKS,
+  TIER_BLEND_TICKS,
+  tierMixAt,
+  tossAt,
+  TOSS_TICKS,
+} from './loot-drop.js';
+
+const ORIGIN = { x: 100, y: 100, z: 0 };
+const LANDING = { x: 124, y: 118, z: 0 };
 
 /** A drop exactly as the client would have built it off the wire. */
 function view(rarity: RarityId, spawnTick = 0, revealed = false): DropView {
@@ -26,6 +40,7 @@ function view(rarity: RarityId, spawnTick = 0, revealed = false): DropView {
     spawnTick,
     anticipationTick: anticipationTickFor(rarity, spawnTick, revealTick),
     revealTick,
+    origin: ORIGIN,
     phase: revealPhaseAt({ anticipationTick: spawnTick, revealTick }, spawnTick),
     defId: known ? 'sword.keen' : null,
     name: known ? 'Keen Longsword' : null,
@@ -88,12 +103,137 @@ describe('the flare', () => {
   });
 });
 
+describe('the throw', () => {
+  it('starts at the body and ends at the landing, exactly', () => {
+    const drop = view('rare');
+    expect(tossAt(drop, LANDING, drop.spawnTick)).toEqual(ORIGIN);
+    expect(tossAt(drop, LANDING, drop.spawnTick + TOSS_TICKS)).toEqual(LANDING);
+    // ...and stays there. A client that connected a minute later computes the
+    // resting position from the same two numbers, with no branch saying so.
+    expect(tossAt(drop, LANDING, drop.spawnTick + 100_000)).toEqual(LANDING);
+  });
+
+  it('arcs above the straight line in between, and comes back down', () => {
+    const drop = view('rare');
+    let highest = -Infinity;
+    let previousGround = -1;
+    for (let i = 0; i <= TOSS_TICKS; i++) {
+      const at = tossAt(drop, LANDING, drop.spawnTick + i);
+      highest = Math.max(highest, at.z);
+      // The ground track is monotone: it travels one way, however it arcs.
+      const along = Math.hypot(at.x - ORIGIN.x, at.y - ORIGIN.y);
+      expect(along).toBeGreaterThanOrEqual(previousGround - 1e-9);
+      previousGround = along;
+    }
+    expect(highest).toBeGreaterThan(Math.max(ORIGIN.z, LANDING.z));
+    expect(tossAt(drop, LANDING, drop.spawnTick + TOSS_TICKS).z).toBe(LANDING.z);
+  });
+
+  /** A drop that barely moved still hops, or it reads as having been placed. */
+  it('still arcs when the scatter was tiny', () => {
+    const drop = view('common');
+    const nearby = { x: ORIGIN.x + 1, y: ORIGIN.y, z: 0 };
+    const mid = tossAt(drop, nearby, drop.spawnTick + TOSS_TICKS / 2);
+    expect(mid.z).toBeGreaterThan(1);
+  });
+
+  it('is the same throw for every observer, because it is a function of two ticks', () => {
+    const drop = view('exceptional');
+    const early = tossAt(drop, LANDING, drop.spawnTick + 5);
+    const same = tossAt(drop, LANDING, drop.spawnTick + 5);
+    expect(early).toEqual(same);
+  });
+});
+
+describe('the heartbeat', () => {
+  it('does not beat for common loot, ever', () => {
+    const drop = view('common');
+    for (let tick = 0; tick < HEARTBEAT_TICKS * 3; tick++) {
+      expect(heartbeatAt(drop, tick)).toBe(1);
+    }
+  });
+
+  it('beats twice a cycle -- a big one and a small one behind it', () => {
+    const drop = view('rare');
+    const cycle: number[] = [];
+    for (let t = 0; t < HEARTBEAT_TICKS; t++) cycle.push(heartbeatAt(drop, t));
+
+    // Count local maxima strictly above the resting scale.
+    const peaks: number[] = [];
+    for (let t = 1; t < cycle.length - 1; t++) {
+      const here = cycle[t] ?? 1;
+      if (here > (cycle[t - 1] ?? 1) && here > (cycle[t + 1] ?? 1) && here > 1.001) peaks.push(t);
+    }
+    // The lub sits at t=0 (the cycle boundary, so not a local max inside it) and
+    // the dub is the one interior peak.
+    expect(peaks).toHaveLength(1);
+    expect(cycle[0]).toBeGreaterThan(1.05);
+    // ...and the second beat is genuinely smaller than the first.
+    expect(cycle[peaks[0] ?? 0] ?? 0).toBeLessThan(cycle[0] ?? 0);
+  });
+
+  it('rests between beats rather than throbbing continuously', () => {
+    const drop = view('exceptional');
+    // Most of the second is quiet: that is what makes it a heart.
+    let quiet = 0;
+    for (let t = 0; t < HEARTBEAT_TICKS; t++) if ((heartbeatAt(drop, t) ?? 1) < 1.01) quiet++;
+    expect(quiet).toBeGreaterThan(HEARTBEAT_TICKS * 0.6);
+  });
+
+  it('stays slight, and never shrinks the object', () => {
+    for (const rarity of RARITY_IDS) {
+      const drop = view(rarity);
+      for (let t = 0; t < HEARTBEAT_TICKS * 2; t++) {
+        const beat = heartbeatAt(drop, t);
+        expect(beat).toBeGreaterThanOrEqual(1);
+        expect(beat).toBeLessThan(1.2);
+      }
+    }
+  });
+
+  it('is phased off the spawn tick, so every client beats together', () => {
+    const early = view('rare', 0);
+    const late = view('rare', 1000);
+    for (let i = 0; i < HEARTBEAT_TICKS; i++) {
+      expect(heartbeatAt(late, 1000 + i)).toBeCloseTo(heartbeatAt(early, i), 9);
+    }
+  });
+});
+
+describe('the tier colour', () => {
+  /** The correction this spec needed: the tier is not readable before the reveal. */
+  it('is entirely withheld until the reveal tick', () => {
+    for (const rarity of ['rare', 'exceptional'] as const) {
+      const drop = view(rarity);
+      for (let tick = drop.spawnTick; tick < drop.revealTick; tick++) {
+        expect(tierMixAt(drop, tick), `${rarity} @ ${tick}`).toBe(0);
+      }
+      expect(tierMixAt(drop, drop.revealTick)).toBe(0);
+      expect(tierMixAt(drop, drop.revealTick + TIER_BLEND_TICKS)).toBe(1);
+    }
+  });
+
+  it('blends in rather than snapping', () => {
+    const drop = view('exceptional');
+    const half = tierMixAt(drop, drop.revealTick + TIER_BLEND_TICKS / 2);
+    expect(half).toBeGreaterThan(0);
+    expect(half).toBeLessThan(1);
+  });
+
+  it('lets a common drop wear its own colour from the first frame', () => {
+    // Its tier colour *is* the neutral one, so there is nothing to withhold.
+    const drop = view('common');
+    expect(tierMixAt(drop, drop.spawnTick)).toBe(0);
+    expect(tierMixAt(drop, drop.spawnTick + TIER_BLEND_TICKS)).toBe(1);
+  });
+});
+
 describe('the label', () => {
   it('is null for as long as the server is withholding the item', () => {
     const presenter = new DropPresenter();
     const drop = view('rare');
     for (let tick = drop.spawnTick; tick < drop.revealTick; tick++) {
-      const shown = presenter.read(drop, tick);
+      const shown = presenter.read(drop, LANDING, tick);
       expect(shown.label, `@ ${tick}`).toBeNull();
       expect(shown.phase).not.toBe(RevealPhase.Revealed);
     }
@@ -105,9 +245,9 @@ describe('the label', () => {
    */
   it('is the item’s real name once it arrives, and nothing before it', () => {
     const presenter = new DropPresenter();
-    expect(presenter.read(view('rare'), 0).label).toBeNull();
+    expect(presenter.read(view('rare'), LANDING, 0).label).toBeNull();
     const revealed = view('rare', 0, true);
-    expect(presenter.read(revealed, revealed.revealTick).label).toBe('Keen Longsword');
+    expect(presenter.read(revealed, LANDING, revealed.revealTick).label).toBe('Keen Longsword');
   });
 });
 
@@ -117,7 +257,7 @@ describe('the cues', () => {
     const drop = view('rare');
     const fired: { tick: number; cue: string }[] = [];
     for (let tick = 0; tick <= drop.revealTick + 60; tick++) {
-      for (const cue of presenter.read(drop, tick).cues) fired.push({ tick, cue });
+      for (const cue of presenter.read(drop, LANDING, tick).cues) fired.push({ tick, cue });
     }
     expect(fired.map((entry) => entry.cue)).toEqual([
       'loot.spawn.rare',
@@ -132,7 +272,7 @@ describe('the cues', () => {
     const presenter = new DropPresenter();
     const drop = view('common');
     const fired: string[] = [];
-    for (let tick = 0; tick < 200; tick++) fired.push(...presenter.read(drop, tick).cues);
+    for (let tick = 0; tick < 200; tick++) fired.push(...presenter.read(drop, LANDING, tick).cues);
     expect(fired).toEqual(['loot.spawn.common']);
   });
 
@@ -140,9 +280,9 @@ describe('the cues', () => {
   it('is silent on a re-read of the same tick', () => {
     const presenter = new DropPresenter();
     const drop = view('rare');
-    expect(presenter.read(drop, 0).cues).toEqual(['loot.spawn.rare']);
-    expect(presenter.read(drop, 0).cues).toEqual([]);
-    expect(presenter.read(drop, drop.revealTick).cues).toEqual([
+    expect(presenter.read(drop, LANDING, 0).cues).toEqual(['loot.spawn.rare']);
+    expect(presenter.read(drop, LANDING, 0).cues).toEqual([]);
+    expect(presenter.read(drop, LANDING, drop.revealTick).cues).toEqual([
       'loot.anticipation.rare',
       'loot.reveal.rare',
     ]);
@@ -155,15 +295,15 @@ describe('the cues', () => {
   it('gives a late observer the spawn cue and nothing else', () => {
     const presenter = new DropPresenter();
     const drop = view('exceptional', 0, true);
-    const first = presenter.read(drop, drop.revealTick + 500);
+    const first = presenter.read(drop, LANDING, drop.revealTick + 500);
     expect(first.cues).toEqual(['loot.spawn.exceptional']);
     expect(first.label).toBe('Keen Longsword');
-    expect(presenter.read(drop, drop.revealTick + 501).cues).toEqual([]);
+    expect(presenter.read(drop, LANDING, drop.revealTick + 501).cues).toEqual([]);
   });
 
   it('forgets a drop that has left, and remembers one that has not', () => {
     const presenter = new DropPresenter();
-    presenter.read(view('rare'), 0);
+    presenter.read(view('rare'), LANDING, 0);
     expect(presenter.tracked).toBe(1);
     presenter.retain(new Set([7]));
     expect(presenter.tracked).toBe(1);

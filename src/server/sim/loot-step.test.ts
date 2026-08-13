@@ -22,6 +22,7 @@ import { createWorldState, spawnDrop, step, type StepContext } from './world.js'
 
 const CHUNK = 100;
 const AT = { x: 600, y: 450, z: 0 };
+const ORIGIN = AT;
 
 function context(overrides: Partial<StepContext> = {}): StepContext {
   return {
@@ -41,7 +42,7 @@ function worldWithDrop(rarity: 'common' | 'rare' | 'exceptional' = 'rare'): {
   state: ServerWorldState;
   id: number;
 } {
-  const drop = makeDrop('sword.keen', 1, rarity, 'ana', 0, 1);
+  const drop = makeDrop('sword.keen', 1, rarity, 'ana', ORIGIN, 0, 1);
   const spawned = spawnDrop(createWorldState(1), drop, AT, 'greenmarch');
   return { state: spawned.state, id: spawned.entity.id };
 }

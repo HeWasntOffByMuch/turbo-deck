@@ -1024,6 +1024,18 @@ export interface LootDropMessage {
   readonly spawnTick: number;
   /** Equal to `spawnTick` for a drop that was never going to wait. */
   readonly revealTick: number;
+  /**
+   * Where the body fell -- the point the item was thrown from (spec 156).
+   *
+   * The entity's replicated position is where it *lands*, so these two are the
+   * ends of an arc the client draws over `TOSS_TICKS` from `spawnTick`. Sent
+   * rather than guessed because the throw has to be the same throw on every
+   * screen, and because a client arriving after the toss computes "already
+   * landed" from the same two numbers with no special case.
+   */
+  readonly originX: number;
+  readonly originY: number;
+  readonly originZ: number;
   /** The item, or `''` while it is still being withheld. */
   readonly defId: string;
   /** How many, or `0` while the identity is withheld. */
@@ -1349,6 +1361,9 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
         .u8(message.rarity)
         .u32(message.spawnTick)
         .u32(message.revealTick)
+        .f32(message.originX)
+        .f32(message.originY)
+        .f32(message.originZ)
         .str(message.defId)
         .varuint(message.count);
       break;
@@ -1515,6 +1530,9 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         rarity: reader.u8(),
         spawnTick: reader.u32(),
         revealTick: reader.u32(),
+        originX: reader.f32(),
+        originY: reader.f32(),
+        originZ: reader.f32(),
         defId: reader.str(),
         count: reader.varuint(),
       };

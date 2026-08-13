@@ -36,6 +36,17 @@ const TIER_COLOR: Record<RarityId, number> = {
   exceptional: 0xffc861,
 };
 
+/**
+ * What an unrevealed drop is drawn in (spec 156).
+ *
+ * **Common's own colour, deliberately.** An item whose tier has not resolved
+ * looks exactly like ordinary loot, so the swell and the pulse are the only
+ * things saying otherwise -- you can tell something is up, not what. Anything
+ * else here would be a fourth colour meaning "unknown", which is a label, and
+ * the whole point is not to put one on it yet.
+ */
+const NEUTRAL_COLOR = TIER_COLOR.common;
+
 /** How big the object itself is drawn, in world units. */
 const ITEM_SIZE = 7;
 /** The halo's radius at `flare` 0 and at 1. */
@@ -46,6 +57,14 @@ const FLOAT_HEIGHT = 9;
 const BOB = 2.2;
 /** Radians per second the object turns on the spot. */
 const SPIN_RATE = 1.1;
+/**
+ * How far a full beat lifts the object, per unit of scale bump.
+ *
+ * The bounce and the swell are one movement rather than two effects: a heart
+ * that grew without moving reads as inflating, and one that hopped without
+ * growing reads as being nudged.
+ */
+const BEAT_LIFT = 55;
 
 export class DropRig {
   readonly group = new THREE.Group();
@@ -55,11 +74,17 @@ export class DropRig {
   private readonly itemMaterial: THREE.MeshStandardMaterial;
   private readonly haloMaterial: THREE.MeshBasicMaterial;
   private readonly ringMaterial: THREE.MeshBasicMaterial;
+  private readonly neutral = new THREE.Color(NEUTRAL_COLOR);
+  private readonly tier: THREE.Color;
   private phase = 0;
   private hovered = false;
+  /** Last mix written, so three colours are not rebuilt on a frame that is flat. */
+  private mixed = -1;
 
   constructor(rarity: RarityId) {
-    const color = TIER_COLOR[rarity] ?? TIER_COLOR.common;
+    this.tier = new THREE.Color(TIER_COLOR[rarity] ?? TIER_COLOR.common);
+    // Built neutral. The tier arrives at the reveal and not one frame before it.
+    const color = NEUTRAL_COLOR;
 
     this.itemMaterial = new THREE.MeshStandardMaterial({
       color,
@@ -124,16 +149,44 @@ export class DropRig {
     this.hovered = on;
   }
 
-  update(dt: number, flare: number): void {
+  /**
+   * How far the tier's colour has arrived, 0..1 (spec 156).
+   *
+   * Three materials lerped from the neutral rather than swapped, because this is
+   * the moment the feature exists for and a hard swap reads as a glitch. Skipped
+   * when the mix has not moved, which is every frame outside the blend.
+   */
+  setTierMix(mix: number): void {
+    const clamped = Math.max(0, Math.min(1, mix));
+    if (clamped === this.mixed) return;
+    this.mixed = clamped;
+    const blended = this.neutral.clone().lerp(this.tier, clamped);
+    this.itemMaterial.color.copy(blended);
+    this.itemMaterial.emissive.copy(blended);
+    this.haloMaterial.color.copy(blended);
+    this.ringMaterial.color.copy(blended);
+  }
+
+  /**
+   * One frame.
+   *
+   * `beat` is the heartbeat multiplier from `loot-drop.ts` -- exactly 1 for a
+   * tier without one, so a common drop needs no branch to stay still. It scales
+   * the object *and* lifts it, because a pulse that only grew would read as
+   * breathing rather than as a beat.
+   */
+  update(dt: number, flare: number, beat = 1): void {
     this.phase += dt;
     const lit = Math.max(0, Math.min(1, flare));
+    const pulse = Math.max(0, beat);
 
     this.item.rotation.y += SPIN_RATE * dt;
-    this.item.position.y = FLOAT_HEIGHT + Math.sin(this.phase * 1.7) * BOB;
+    this.item.position.y = FLOAT_HEIGHT + Math.sin(this.phase * 1.7) * BOB + (pulse - 1) * BEAT_LIFT;
+    this.item.scale.setScalar(pulse);
     this.itemMaterial.emissiveIntensity = 0.25 + lit * 1.2;
 
     const radius = HALO_MIN + (HALO_MAX - HALO_MIN) * lit;
-    this.halo.scale.setScalar(radius);
+    this.halo.scale.setScalar(radius * pulse);
     this.halo.position.y = this.item.position.y;
     // Squared, so the halo fades out fast rather than leaving a permanent glow
     // over a potion: at the common tier's 0.12 this is 0.003, which is nothing.

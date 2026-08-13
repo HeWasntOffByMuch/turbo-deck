@@ -113,11 +113,12 @@ export const INTEREST_CHUNK_RADIUS = 8;
  * 15: the welcome issues a session token and a hello may present one, so a
  * dropped socket can come back to the same body instead of spawning a new one;
  * and a goodbye says a disconnection was meant (spec 150).
- * 16: items drop (spec 156). A fifth entity kind, a `LootDrop` describing one --
- * with its identity withheld until an authoritative reveal tick -- and a
- * `PickUpItem` to take it.
+ * 16, 17: items drop (spec 156). A fifth entity kind, a `LootDrop` describing
+ * one -- with its identity withheld until an authoritative reveal tick, and
+ * carrying the point it was thrown from so every client draws the same arc --
+ * and a `PickUpItem` to take it.
  */
-export const PROTOCOL_VERSION = 16;
+export const PROTOCOL_VERSION = 17;
 
 /**
  * How far from a map chunk a player may be and still be sent it (spec 072).

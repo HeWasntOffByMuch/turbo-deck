@@ -1622,6 +1622,8 @@ export function mountWorld(container: HTMLElement): ViewHandle {
         abilityId: pendingAim?.abilityId ?? order?.abilityId ?? null,
         pending: pendingAim !== null,
       },
+      // What the cursor is over, for the drop's name (spec 156).
+      scene.hoveredEntityId,
       now,
     );
     // Read back off the interface rather than remembered from the press

@@ -32,15 +32,69 @@ describe('the drop rig', () => {
     }
   });
 
-  it('gives each tier its own colour', () => {
+  /**
+   * The rule the whole reveal rests on, expressed where it could be broken by a
+   * one-line edit: a rig is built in the neutral colour whatever its tier, so
+   * the tier is not readable off a drop that has not revealed.
+   */
+  it('builds every tier in the same neutral colour', () => {
     const colors = RARITY_IDS.map((rarity) => {
       const rig = new DropRig(rarity);
-      const material = halo(rig).material as THREE.MeshBasicMaterial;
-      const hex = material.color.getHex();
+      const hex = (halo(rig).material as THREE.MeshBasicMaterial).color.getHex();
+      rig.dispose();
+      return hex;
+    });
+    expect(new Set(colors).size).toBe(1);
+  });
+
+  it('gives each tier its own colour once the mix arrives', () => {
+    const colors = RARITY_IDS.map((rarity) => {
+      const rig = new DropRig(rarity);
+      rig.setTierMix(1);
+      const hex = (halo(rig).material as THREE.MeshBasicMaterial).color.getHex();
       rig.dispose();
       return hex;
     });
     expect(new Set(colors).size).toBe(RARITY_IDS.length);
+  });
+
+  it('blends toward the tier rather than snapping to it', () => {
+    const rig = new DropRig('exceptional');
+    const material = halo(rig).material as THREE.MeshBasicMaterial;
+    const neutral = material.color.getHex();
+    rig.setTierMix(0.5);
+    const half = material.color.getHex();
+    rig.setTierMix(1);
+    const full = material.color.getHex();
+    expect(half).not.toBe(neutral);
+    expect(half).not.toBe(full);
+    // ...and it goes back, so a mix that fell is not a one-way door.
+    rig.setTierMix(0);
+    expect(material.color.getHex()).toBe(neutral);
+    rig.dispose();
+  });
+
+  it('scales and lifts the object with the beat, together', () => {
+    const rig = new DropRig('rare');
+    const item = rig.group.children.find(
+      (child): child is THREE.Mesh =>
+        child instanceof THREE.Mesh && child.geometry instanceof THREE.OctahedronGeometry,
+    );
+    if (!item) throw new Error('no item mesh');
+
+    rig.update(0, 0.5, 1);
+    const restScale = item.scale.x;
+    const restY = item.position.y;
+
+    // Same `dt` of zero, so the idle bob cannot be what moved it.
+    rig.update(0, 0.5, 1.13);
+    expect(item.scale.x).toBeGreaterThan(restScale);
+    expect(item.position.y).toBeGreaterThan(restY);
+
+    rig.update(0, 0.5, 1);
+    expect(item.scale.x).toBeCloseTo(restScale, 9);
+    expect(item.position.y).toBeCloseTo(restY, 9);
+    rig.dispose();
   });
 
   it('grows and brightens the halo with the flare, and shrinks it back', () => {

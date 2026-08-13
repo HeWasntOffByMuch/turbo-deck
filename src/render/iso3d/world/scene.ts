@@ -816,6 +816,17 @@ export class WorldScene {
    * is a frame old at best and null at worst. It picked nothing at all the
    * first time a preview run tried to right-click a monster.
    */
+  /**
+   * The entity under the cursor as of this frame's `syncHover`, or null.
+   *
+   * A render-local pick, which is why it is read off the scene rather than off
+   * the view: nothing about which body a cursor is over is replicated, and
+   * nothing about it may reach the sim.
+   */
+  get hoveredEntityId(): number | null {
+    return this.hovered;
+  }
+
   pickUnitAt(cssX: number, cssY: number): number | null {
     const rect = this.canvas.getBoundingClientRect();
     const point = cursorToNdc(cssX, cssY, rect.width || 1, rect.height || 1);
@@ -1357,13 +1368,17 @@ export class WorldScene {
         this.scene.add(rig.group);
       }
 
-      const shown = this.dropPresenter.read(drop, frame.tick);
-      const ground = this.ground(at.x, at.y);
+      // The entity's replicated position is where it *landed*; the throw that
+      // got it there is drawn between that and the origin the wire carried
+      // (spec 156).
+      const landing = { x: at.x, y: at.y, z: this.ground(at.x, at.y) };
+      const shown = this.dropPresenter.read(drop, landing, frame.tick);
       // Cleared here and turned back on by `syncHover`, the same handshake a
       // body's highlight uses -- so exactly one thing is ever lit.
       rig.setHovered(false);
-      rig.group.position.set(at.x, ground, at.y);
-      rig.update(dt, shown.flare);
+      rig.group.position.set(shown.position.x, shown.position.z, shown.position.y);
+      rig.setTierMix(shown.tierMix);
+      rig.update(dt, shown.flare, shown.beat);
       for (const cue of shown.cues) this.playCue(cue, at.x, at.y);
 
       // Pickable while it is there, at the same footprint the server measures
@@ -1372,9 +1387,12 @@ export class WorldScene {
       this.hoverTargets.push({
         id: drop.entityId,
         object: rig.group,
+        // Picked at where it *landed* rather than where it is mid-flight: the
+        // hitbox must not chase a thing through the air, and the pickup the
+        // server checks is measured to the landing spot anyway.
         position: at,
         radius: DROP_PICK_RADIUS,
-        base: ground,
+        base: landing.z,
         height: DROP_PICK_HEIGHT,
       });
     }

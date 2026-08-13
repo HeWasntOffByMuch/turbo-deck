@@ -12,7 +12,19 @@ import { Rng } from '../../shared/prng.js';
 import { MAX_REVEAL_SCALE, SERVER_TICK_RATE } from '../config.js';
 import { ALL_ITEMS, rarityOf, RARITY_IDS, rarityFromByte, rarityToByte } from '../data/items.js';
 import { ALL_RARITIES, DROP_LIFETIME_TICKS, DROP_TABLES, rarityRow, rollLoot } from '../data/loot.js';
-import { isRevealed, makeDrop, RevealPhase, revealPhaseAt, revealsOn } from './loot.js';
+import {
+  isRevealed,
+  makeDrop,
+  RevealPhase,
+  revealPhaseAt,
+  revealsOn,
+  scatterLanding,
+  SCATTER_MAX,
+  SCATTER_MIN,
+} from './loot.js';
+
+/** Where the body fell. Its own value so the landing is visibly not it. */
+const ORIGIN = { x: 600, y: 450, z: 0 };
 
 describe('the rarity table', () => {
   it('has a row for every tier, and only for tiers', () => {
@@ -67,7 +79,7 @@ describe('the rarity table', () => {
 
 describe('a drop is decided at once and revealed afterwards', () => {
   it('stamps a common drop as revealed on the tick it lands', () => {
-    const drop = makeDrop('potion.minor', 1, 'common', 'ana', 500, 1);
+    const drop = makeDrop('potion.minor', 1, 'common', 'ana', ORIGIN, 500, 1);
     expect(drop.revealTick).toBe(500);
     expect(revealPhaseAt(drop, 500)).toBe(RevealPhase.Revealed);
     expect(isRevealed(drop, 500)).toBe(true);
@@ -77,7 +89,7 @@ describe('a drop is decided at once and revealed afterwards', () => {
   });
 
   it('walks a rare drop through all three phases, in order, and lands exactly', () => {
-    const drop = makeDrop('sword.keen', 1, 'rare', 'ana', 100, 1);
+    const drop = makeDrop('sword.keen', 1, 'rare', 'ana', ORIGIN, 100, 1);
     const row = rarityRow('rare');
     expect(drop.anticipationTick).toBe(100 + row.anticipationTicks);
     expect(drop.revealTick).toBe(100 + row.revealTicks);
@@ -90,7 +102,7 @@ describe('a drop is decided at once and revealed afterwards', () => {
   });
 
   it('is monotone in tick, and never goes backwards', () => {
-    const drop = makeDrop('trinket.bloodstone', 1, 'exceptional', 'ana', 0, 1);
+    const drop = makeDrop('trinket.bloodstone', 1, 'exceptional', 'ana', ORIGIN, 0, 1);
     let highest = RevealPhase.Spawned as number;
     for (let tick = 0; tick <= drop.revealTick + 30; tick++) {
       const phase = revealPhaseAt(drop, tick);
@@ -102,7 +114,7 @@ describe('a drop is decided at once and revealed afterwards', () => {
 
   /** The property the sim's one-message-per-reveal rule is built on. */
   it('crosses into revealed on exactly one tick', () => {
-    const drop = makeDrop('sword.keen', 1, 'rare', 'ana', 7, 1);
+    const drop = makeDrop('sword.keen', 1, 'rare', 'ana', ORIGIN, 7, 1);
     let crossings = 0;
     for (let tick = 0; tick <= drop.revealTick + 100; tick++) if (revealsOn(drop, tick)) crossings++;
     expect(crossings).toBe(1);
@@ -114,7 +126,7 @@ describe('a drop is decided at once and revealed afterwards', () => {
    * reading it a thousand times leaves the drop the object it was.
    */
   it('is not changed by being asked', () => {
-    const drop = makeDrop('sword.keen', 1, 'rare', 'ana', 0, 1);
+    const drop = makeDrop('sword.keen', 1, 'rare', 'ana', ORIGIN, 0, 1);
     const before = JSON.stringify(drop);
     for (let tick = 0; tick < 200; tick++) revealPhaseAt(drop, tick);
     expect(JSON.stringify(drop)).toBe(before);
@@ -122,10 +134,10 @@ describe('a drop is decided at once and revealed afterwards', () => {
 
   it('honours the reveal scale, and clamps a nonsense one', () => {
     const row = rarityRow('rare');
-    expect(makeDrop('sword.keen', 1, 'rare', null, 0, 0).revealTick).toBe(0);
-    expect(makeDrop('sword.keen', 1, 'rare', null, 0, 2).revealTick).toBe(row.revealTicks * 2);
-    expect(makeDrop('sword.keen', 1, 'rare', null, 0, -5).revealTick).toBe(0);
-    expect(makeDrop('sword.keen', 1, 'rare', null, 0, 1e9).revealTick).toBe(
+    expect(makeDrop('sword.keen', 1, 'rare', null, ORIGIN, 0, 0).revealTick).toBe(0);
+    expect(makeDrop('sword.keen', 1, 'rare', null, ORIGIN, 0, 2).revealTick).toBe(row.revealTicks * 2);
+    expect(makeDrop('sword.keen', 1, 'rare', null, ORIGIN, 0, -5).revealTick).toBe(0);
+    expect(makeDrop('sword.keen', 1, 'rare', null, ORIGIN, 0, 1e9).revealTick).toBe(
       row.revealTicks * MAX_REVEAL_SCALE,
     );
   });
@@ -134,7 +146,7 @@ describe('a drop is decided at once and revealed afterwards', () => {
   it('never puts the anticipation past the reveal, at any scale', () => {
     for (const id of RARITY_IDS) {
       for (const scale of [0, 0.01, 0.5, 1, 3, MAX_REVEAL_SCALE]) {
-        const drop = makeDrop('x', 1, id, null, 0, scale);
+        const drop = makeDrop('x', 1, id, null, ORIGIN, 0, scale);
         expect(drop.anticipationTick).toBeLessThanOrEqual(drop.revealTick);
         expect(drop.spawnTick).toBeLessThanOrEqual(drop.anticipationTick);
       }
@@ -143,9 +155,60 @@ describe('a drop is decided at once and revealed afterwards', () => {
 
   it('expires long after it reveals, whatever the scale', () => {
     for (const id of RARITY_IDS) {
-      const drop = makeDrop('x', 1, id, null, 0, MAX_REVEAL_SCALE);
+      const drop = makeDrop('x', 1, id, null, ORIGIN, 0, MAX_REVEAL_SCALE);
       expect(drop.expiresTick).toBeGreaterThan(drop.revealTick);
     }
+  });
+});
+
+describe('where it lands', () => {
+  it('throws it clear of the body, inside the band, every time', () => {
+    let rng = Rng.fromSeed(31);
+    for (let i = 0; i < 400; i++) {
+      const [spot, next] = scatterLanding(rng, ORIGIN);
+      rng = next;
+      const reach = Math.hypot(spot.x - ORIGIN.x, spot.y - ORIGIN.y);
+      // Never under the corpse -- a drop directly on the body reads as placed
+      // rather than dropped, which is the whole reason there is a floor.
+      expect(reach).toBeGreaterThanOrEqual(SCATTER_MIN - 1e-6);
+      expect(reach).toBeLessThanOrEqual(SCATTER_MAX + 1e-6);
+    }
+  });
+
+  it('scatters in every direction rather than favouring one', () => {
+    let rng = Rng.fromSeed(5);
+    const quadrants = [0, 0, 0, 0];
+    for (let i = 0; i < 400; i++) {
+      const [spot, next] = scatterLanding(rng, ORIGIN);
+      rng = next;
+      const q = (spot.x >= ORIGIN.x ? 0 : 1) + (spot.y >= ORIGIN.y ? 0 : 2);
+      quadrants[q] = (quadrants[q] ?? 0) + 1;
+    }
+    for (const count of quadrants) expect(count).toBeGreaterThan(50);
+  });
+
+  /**
+   * The property the whole "it reads for all players" requirement rests on: the
+   * landing is a seeded draw on the server, so two clients are not each
+   * inventing one.
+   */
+  it('reproduces exactly from a seed', () => {
+    const run = (): string => {
+      let rng = Rng.fromSeed(99);
+      const out: string[] = [];
+      for (let i = 0; i < 50; i++) {
+        const [spot, next] = scatterLanding(rng, ORIGIN);
+        rng = next;
+        out.push(`${spot.x.toFixed(6)},${spot.y.toFixed(6)}`);
+      }
+      return out.join('|');
+    };
+    expect(run()).toBe(run());
+  });
+
+  it('remembers where it was thrown from', () => {
+    const drop = makeDrop('sword.keen', 1, 'rare', 'ana', ORIGIN, 10, 1);
+    expect(drop.origin).toEqual(ORIGIN);
   });
 });
 

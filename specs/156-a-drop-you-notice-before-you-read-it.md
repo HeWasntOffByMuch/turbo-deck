@@ -139,6 +139,35 @@ reveal that was pending simply never happens. Anticipation must not be a lock on
 the player's hands; a drop that could not be taken for two seconds would be a
 timer wearing a costume.
 
+### It looks dropped, and it looks dropped to everybody
+
+The item is **thrown clear of the body**, not placed under it. Both ends of the
+arc are authoritative: the drop entity's replicated position is where it
+*landed*, scattered by a seeded draw in `scatterLanding`, and `LootDrop` carries
+the point the body fell at. The client tweens a parabola between them over
+`TOSS_TICKS` and nothing simulates it.
+
+The scatter is server-side for one reason and it is not determinism for its own
+sake: **every player has to see the same throw.** A client-side scatter puts the
+same sword in a different place on every screen, and "did you see where it went"
+stops having an answer.
+
+A rare-or-better drop also has a **heartbeat** — a small scale bump and a lift,
+twice a second, the smaller beat behind the bigger, phased off `spawnTick` so
+every client beats together. It is the notice-without-recognition signal: it
+says a tier was crossed without saying which.
+
+### The tier's colour is withheld, not just its name
+
+`tierMixAt` is `0` for the whole of `Spawned` and `Anticipation`. An unrevealed
+drop is drawn in the **same neutral colour ordinary loot wears**, so the tier is
+not readable off it — the swell and the pulse say *something* is unusual and
+nothing says how unusual until the reveal lands.
+
+This is the difference between a rarity reveal and a rarity *brightness* reveal.
+A drop coloured by its tier from the first frame has already answered the
+question the reveal exists to ask.
+
 ### Presentation is a pure function of the drop and the drawn tick
 
 ```ts
@@ -189,7 +218,20 @@ the delay is tunable on a running server from the admin console.
 - Drops are inert: not hostile, not targetable, not hit by projectiles, and they
   do not walk.
 - Basic loot stays quiet: a `common` drop has `revealTicks === 0`, no
-  anticipation cue, and a `flare` below every other tier's at every tick.
+  anticipation cue, a `flare` below every other tier's at every tick, and no
+  heartbeat at all.
+- The throw starts exactly at the body, ends exactly at the landing, arcs above
+  the line between, and is the same function of the same two replicated points
+  for every observer. Past `TOSS_TICKS` it is the landing, so a late observer
+  needs no case of its own.
+- The landing is inside the scatter band, never under the corpse, spread across
+  every direction, and reproduces from a seed.
+- **`tierMixAt` is 0 at every tick before the reveal**, for every tier that has
+  one, and every rig is built in the same neutral colour whatever its tier.
+- The heartbeat is two beats a cycle with the second smaller, rests for most of
+  the cycle, never shrinks the object, and is phased off `spawnTick`.
+- A revealed drop names itself on hover; an unrevealed one shows nothing at all
+  rather than a placeholder.
 - Presentation cannot change state: the same fight with the drop presentation
   driven and undriven produces identical authoritative state.
 

@@ -69,6 +69,16 @@ export interface RarityRow {
    * two curves.
    */
   readonly peakFlare: number;
+  /**
+   * Whether the drop has a pulse (spec 156).
+   *
+   * The "something landed here that is not ordinary" signal, and the one thing
+   * about a drop that is legible *before* the reveal -- a heartbeat says a tier
+   * was crossed without saying which one, which is exactly the notice-without-
+   * recognition the whole feature is built around. Off for common, so ordinary
+   * loot lies there inert.
+   */
+  readonly heartbeat: boolean;
 }
 
 /**
@@ -88,6 +98,7 @@ const RARITY_ROWS: readonly RarityRow[] = [
     cues: { spawn: 'loot.spawn.common', anticipation: '', reveal: '' },
     restFlare: 0.12,
     peakFlare: 0.12,
+    heartbeat: false,
   },
   {
     id: 'rare',
@@ -101,6 +112,7 @@ const RARITY_ROWS: readonly RarityRow[] = [
     },
     restFlare: 0.45,
     peakFlare: 0.9,
+    heartbeat: true,
   },
   {
     id: 'exceptional',
@@ -114,6 +126,7 @@ const RARITY_ROWS: readonly RarityRow[] = [
     },
     restFlare: 0.7,
     peakFlare: 1,
+    heartbeat: true,
   },
 ];
 

@@ -181,7 +181,11 @@ async function play(animate: boolean): Promise<RunResult> {
 
     // The reveal presentation, driven exactly as the scene drives it: pure, and
     // handed the drawn tick.
-    for (const drop of view.drops) drops.push(dropPresenter.read(drop, view.estimatedTick));
+    for (const drop of view.drops) {
+      const entity = view.entities.find((body) => body.id === drop.entityId);
+      const landing = { x: entity?.x ?? 0, y: entity?.y ?? 0, z: entity?.z ?? 0 };
+      drops.push(dropPresenter.read(drop, landing, view.estimatedTick));
+    }
     dropPresenter.retain(new Set(view.drops.map((drop) => drop.entityId)));
 
     // The animation layer, driven exactly as the scene drives it.

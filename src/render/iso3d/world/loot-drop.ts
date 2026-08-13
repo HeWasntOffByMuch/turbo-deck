@@ -30,8 +30,66 @@ import { RevealPhase, revealPhaseAt, type RevealPhaseValue } from '../../../serv
  */
 export const REVEAL_SETTLE_TICKS = 24;
 
+/**
+ * How long the throw takes, in ticks. ~0.3s at 60Hz.
+ *
+ * Short: this is a body dropping something, not a lobbed shot. Long enough that
+ * the object visibly *travels* rather than teleporting to its landing spot,
+ * which is the whole of what "it looks dropped" means.
+ */
+export const TOSS_TICKS = 18;
+
+/** How high above the straight line the throw arcs, as a fraction of its span. */
+const TOSS_ARC = 0.45;
+/** The lowest an arc ever rises, so a drop that barely moved still hops. */
+const TOSS_ARC_MIN = 10;
+
+/**
+ * The beat's period, in ticks. One second, which is a resting human heart.
+ *
+ * Slow on purpose. A fast pulse reads as an alarm; this is meant to read as
+ * something quietly alive lying in the grass.
+ */
+export const HEARTBEAT_TICKS = 60;
+/** Where the second, smaller beat falls in the cycle -- the "dub" of lub-dub. */
+const HEARTBEAT_DUB_AT = 10;
+/** How sharp each beat is. Smaller is a tighter thump. */
+const HEARTBEAT_WIDTH = 3.2;
+/** How much bigger the object gets at the top of a full beat. Slight. */
+const HEARTBEAT_SCALE = 0.13;
+
+/**
+ * How long the tier's colour takes to arrive once the item is known, in ticks.
+ *
+ * Not instant: a hard colour swap is a state change the eye reads as a glitch,
+ * and this is the moment the whole feature exists for. Short enough to be a
+ * resolution rather than a transition.
+ */
+export const TIER_BLEND_TICKS = 12;
+
 export interface DropPresentation {
   readonly phase: RevealPhaseValue;
+  /**
+   * Where to draw it: on the arc while it is still in the air, at its landing
+   * spot after (spec 156). Both ends came off the wire, so every client draws
+   * the same throw and one that arrived late draws none of it.
+   */
+  readonly position: { readonly x: number; readonly y: number; readonly z: number };
+  /**
+   * How far the tier's colour has arrived, 0..1 (spec 156).
+   *
+   * **0 until the reveal**, which is what makes this a rarity reveal rather
+   * than a rarity *brightness* reveal: an unrevealed drop is drawn in the
+   * neutral colour ordinary loot wears, so the tier is not readable off it.
+   * That misdirection is deliberate -- what you can tell early is that
+   * *something* is unusual (the pulse, the swell), never how unusual.
+   */
+  readonly tierMix: number;
+  /**
+   * A scale multiplier, ~1, carrying the heartbeat (spec 156). Exactly 1 for a
+   * tier with no pulse, so a common drop is inert by arithmetic.
+   */
+  readonly beat: number;
   /**
    * What to scale and light the drop's glow by, 0..1.
    *
@@ -49,6 +107,12 @@ export interface DropPresentation {
   readonly label: string | null;
   /** Cue names that crossed into this read. Usually empty. */
   readonly cues: readonly string[];
+}
+
+export interface Vec3Like {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
 }
 
 /** Smooth both ends, so neither the run-up nor the settle starts with a step. */
@@ -78,6 +142,76 @@ export function flareAt(drop: DropView, tick: number): number {
   }
   const settled = smooth((tick - drop.revealTick) / REVEAL_SETTLE_TICKS);
   return row.peakFlare + (row.restFlare - row.peakFlare) * settled;
+}
+
+/**
+ * Where a drop is at `tick`: on its arc, or resting where it landed.
+ *
+ * A parabola between two authoritative points over a fixed span, so it is a
+ * pure function of what the wire carried and the clock -- which is what makes
+ * two players watching the same kill watch the same throw. Past `TOSS_TICKS` it
+ * is exactly `landing`, so a client that connected a minute later computes the
+ * resting position without a branch saying so.
+ */
+export function tossAt(drop: DropView, landing: Vec3Like, tick: number): Vec3Like {
+  const through = (tick - drop.spawnTick) / TOSS_TICKS;
+  if (!(through > 0)) return { x: drop.origin.x, y: drop.origin.y, z: drop.origin.z };
+  if (through >= 1) return landing;
+
+  const span = Math.hypot(landing.x - drop.origin.x, landing.y - drop.origin.y);
+  const peak = Math.max(TOSS_ARC_MIN, span * TOSS_ARC);
+  // `4t(1-t)` is 0 at both ends and 1 in the middle: the whole arc in one term,
+  // with no easing to pick and no way for it to miss its landing.
+  const lift = 4 * through * (1 - through) * peak;
+  return {
+    x: drop.origin.x + (landing.x - drop.origin.x) * through,
+    y: drop.origin.y + (landing.y - drop.origin.y) * through,
+    z: drop.origin.z + (landing.z - drop.origin.z) * through + lift,
+  };
+}
+
+/** One beat: a bump centred at `at`, in ticks, falling off either side. */
+function thump(t: number, at: number, amplitude: number): number {
+  const d = (t - at) / HEARTBEAT_WIDTH;
+  return amplitude * Math.exp(-d * d);
+}
+
+/**
+ * The pulse, as a scale multiplier around 1 (spec 156).
+ *
+ * Two beats per cycle, the second smaller and close behind the first, which is
+ * what makes it read as a heart rather than as a blink -- lub-dub, then quiet
+ * for most of the second. Phased off `spawnTick` rather than off any local
+ * clock, so every client's copy of the same drop beats together.
+ *
+ * Exactly 1 for a tier with no pulse, so "common loot does not move" needs no
+ * branch at the call site.
+ */
+export function heartbeatAt(drop: DropView, tick: number): number {
+  if (!rarityRow(drop.rarity).heartbeat) return 1;
+  const since = tick - drop.spawnTick;
+  if (!(since >= 0)) return 1;
+  const t = since % HEARTBEAT_TICKS;
+  // The dub of the *previous* cycle can still be decaying into this one, so the
+  // wrap is summed rather than cut -- otherwise every cycle starts with a seam.
+  const beat =
+    thump(t, 0, 1) +
+    thump(t, HEARTBEAT_TICKS, 1) +
+    thump(t, HEARTBEAT_DUB_AT, 0.55);
+  return 1 + HEARTBEAT_SCALE * Math.min(1, beat);
+}
+
+/**
+ * How far the tier's colour has arrived, 0..1 (spec 156).
+ *
+ * Zero for the whole of `Spawned` and `Anticipation`, which is the correction
+ * this spec needed: colouring a drop by its tier from the first frame answers
+ * the question the reveal exists to ask. A common drop's mix is 1 immediately
+ * and it does not matter, because its tier colour *is* the neutral one.
+ */
+export function tierMixAt(drop: DropView, tick: number): number {
+  if (tick < drop.revealTick) return 0;
+  return smooth((tick - drop.revealTick) / TIER_BLEND_TICKS);
 }
 
 export interface Point {
@@ -144,7 +278,7 @@ export function pickupOrderFor(input: PickupInput): PickupOrder {
 export class DropPresenter {
   private readonly heard = new Map<number, Set<string>>();
 
-  read(drop: DropView, tick: number): DropPresentation {
+  read(drop: DropView, landing: Vec3Like, tick: number): DropPresentation {
     const row = rarityRow(drop.rarity);
     const phase = revealPhaseAt(drop, tick);
     let heard = this.heard.get(drop.entityId);
@@ -174,6 +308,9 @@ export class DropPresenter {
 
     return {
       phase,
+      position: tossAt(drop, landing, tick),
+      tierMix: tierMixAt(drop, tick),
+      beat: heartbeatAt(drop, tick),
       flare: flareAt(drop, tick),
       // Straight from the view, which is null until the server said otherwise.
       // There is no branch here that could produce a name early, because there

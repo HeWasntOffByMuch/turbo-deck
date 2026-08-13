@@ -35,6 +35,23 @@ import { castBar } from './cast.js';
 import { aimGesture } from './aim.js';
 import { appearanceOf, displayName } from './appearance.js';
 import { pixelTextSvg } from './pixel-font.js';
+import type { RarityId } from '../../../server/data/items.js';
+
+/** How far above the drop the name floats, in world units. */
+const DROP_LABEL_LIFT = 34;
+
+/**
+ * The tier's colour in *text* (spec 156).
+ *
+ * Separate values from `drop-rig.ts`'s mesh colours and deliberately so: those
+ * are lit and go through the retro pass, and these are 12px type on a dark
+ * plate that has to stay readable. Same three tiers, two different jobs.
+ */
+const DROP_LABEL_COLOR: Record<RarityId, string> = {
+  common: '#cfd6e0',
+  rare: '#8ec5ff',
+  exceptional: '#ffd489',
+};
 import { isHandheldDevice } from '../device.js';
 import { DamagePopups, type Projector, type WorldAnchor } from './damage-popup.js';
 import { ErrorLog } from './error-log.js';
@@ -180,6 +197,15 @@ export interface HudHandle {
      */
     aiming: { readonly abilityId: string | null; readonly pending: boolean },
     /**
+     * The entity under the cursor, or null (spec 156).
+     *
+     * Only a drop does anything with it today: the name of a *revealed* drop is
+     * shown while it is hovered. It comes in as a parameter rather than off the
+     * view because hovering is a render-local pick and has no business being
+     * replicated.
+     */
+    hoveredId: number | null,
+    /**
      * The frame's timestamp, straight from `requestAnimationFrame` (spec 143).
      *
      * The refusal stack decays in seconds rather than in frames, and it is the
@@ -297,6 +323,27 @@ export function createHud(project: Projector): HudHandle {
   // screen instead of re-deriving it. Nothing in the game reads them.
   errors.dataset['errorStack'] = 'true';
   root.append(errors);
+
+  /**
+   * The name of the drop under the cursor (spec 156).
+   *
+   * **One element, not one per drop**, because there is only ever one hovered
+   * thing -- and because a name over every drop in a field is a loot feed with
+   * extra steps, which `docs/reward-philosophy.md` §10 rules out. It is the
+   * whole of the reveal's payoff on screen: before the reveal there is no name
+   * to show, and asking for one gets nothing rather than a placeholder.
+   *
+   * DOM for the reason the health bars are: text through the low-res buffer and
+   * the dither pass comes out as chewed pixels.
+   */
+  const dropLabel = document.createElement('div');
+  dropLabel.style.cssText =
+    'position:absolute;transform:translate(-50%,-100%);white-space:nowrap;display:none;' +
+    'font:12px ui-monospace,Menlo,monospace;padding:2px 6px;border-radius:4px;' +
+    'background:rgba(10,14,20,.78);pointer-events:none;';
+  // Read by `scripts/probe-loot.ts`, like every other invisible handle here.
+  dropLabel.dataset['dropLabel'] = 'true';
+  root.append(dropLabel);
 
   // The spawner overlay lives in its own layer so clearing it is one truncation
   // rather than a walk looking for which children were spawners.
@@ -583,6 +630,44 @@ export function createHud(project: Projector): HudHandle {
     popupElements.delete(id);
   }
 
+  /**
+   * Name the hovered drop, once it has one (spec 156).
+   *
+   * Three ways to show nothing and they are all the same branch: nothing is
+   * hovered, the hovered thing is not a drop, or the drop has not revealed and
+   * therefore has no name. That last one is the feature -- `label` is null
+   * rather than "???", so there is nothing here that could put a placeholder on
+   * screen.
+   */
+  function showDropLabel(
+    view: ClientView,
+    byId: ReadonlyMap<number, ClientView['entities'][number]>,
+    hoveredId: number | null,
+  ): void {
+    const drop = hoveredId === null ? undefined : view.drops.find((d) => d.entityId === hoveredId);
+    const entity = hoveredId === null ? undefined : byId.get(hoveredId);
+    const name = drop?.name ?? null;
+    if (!drop || !entity || name === null) {
+      dropLabel.style.display = 'none';
+      delete dropLabel.dataset['name'];
+      return;
+    }
+    const at = project(entity.x, entity.y, DROP_LABEL_LIFT);
+    if (!at.onScreen) {
+      dropLabel.style.display = 'none';
+      return;
+    }
+    // The count is on the label because a stack of three potions and one potion
+    // are different objects, and the drop draws identically either way.
+    const text = drop.count > 1 ? `${name} x${drop.count}` : name;
+    dropLabel.style.display = 'block';
+    dropLabel.style.left = `${at.x}px`;
+    dropLabel.style.top = `${at.y}px`;
+    dropLabel.style.color = DROP_LABEL_COLOR[drop.rarity] ?? DROP_LABEL_COLOR.common;
+    dropLabel.textContent = text;
+    dropLabel.dataset['name'] = text;
+  }
+
   function dropError(id: number): void {
     errorElements.get(id)?.remove();
     errorElements.delete(id);
@@ -595,9 +680,11 @@ export function createHud(project: Projector): HudHandle {
     corrections: number,
     targetId: number | null,
     aiming: { readonly abilityId: string | null; readonly pending: boolean },
+    hoveredId: number | null,
     nowMs: number,
   ): void {
     const byId = new Map(view.entities.map((entity) => [entity.id, entity]));
+    showDropLabel(view, byId, hoveredId);
     const casts = new Map(view.casts.map((cast) => [cast.entityId, cast]));
     const live = new Set<number>();
 

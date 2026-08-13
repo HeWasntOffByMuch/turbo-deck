@@ -34,7 +34,7 @@ import { monsterById } from '../data/monsters.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
 import { NO_ATTACK_SPEED } from './attack-timing.js';
 import { SECOND_WIND_COOLDOWN_TICKS } from './blow.js';
-import { makeDrop, revealsOn, type DropState } from './loot.js';
+import { makeDrop, revealsOn, scatterLanding, type DropState } from './loot.js';
 import { regenPoise } from './poise.js';
 import {
   applyStatus,
@@ -888,15 +888,26 @@ export function step(
         const [stack, afterRoll] = rollLoot(rng, entity.typeId, context.config.dropRateMultiplier);
         rng = afterRoll;
         if (stack !== null) {
+          // Thrown clear of the body rather than placed under it (spec 156).
+          // Both ends of the arc are authoritative -- the corpse's spot and the
+          // landing -- so the throw every client draws is the same throw.
+          const [spot, afterScatter] = scatterLanding(rng, entity.position);
+          rng = afterScatter;
+          const landing: Vec3 = {
+            x: spot.x,
+            y: spot.y,
+            z: context.terrain.heightAt(spot.x, spot.y),
+          };
           const drop = makeDrop(
             stack.defId,
             stack.count,
             rarityOf(stack.defId),
             killer.ownerPlayerId,
+            entity.position,
             tick,
             context.config.lootRevealScale,
           );
-          const body = dropEntity(nextEntityId, drop, entity.position, entity.zoneId);
+          const body = dropEntity(nextEntityId, drop, landing, entity.zoneId);
           nextEntityId += 1;
           working.set(body.id, body);
           // `typeId` is empty and stays empty: the identity is exactly what an

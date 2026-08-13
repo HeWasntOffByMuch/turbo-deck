@@ -18,9 +18,11 @@
  * its own.
  */
 
+import type { Rng } from '../../shared/prng.js';
 import { MAX_REVEAL_SCALE } from '../config.js';
 import type { RarityId } from '../data/items.js';
 import { DROP_LIFETIME_TICKS, rarityRow } from '../data/loot.js';
+import type { Vec3 } from '../state/types.js';
 
 /**
  * How far a drop's presentation has got.
@@ -57,6 +59,18 @@ export interface DropState {
    * disconnecting and coming back onto a new body (spec 150).
    */
   readonly ownerPlayerId: string | null;
+  /**
+   * Where the body was standing when it fell -- the point the item was thrown
+   * *from* (spec 156).
+   *
+   * The entity's own position is where it lands, so this is the other end of an
+   * arc the client draws and nothing simulates. It is authoritative for one
+   * reason: **every player has to see the same throw.** A scatter picked
+   * client-side would put the same sword in five different places on five
+   * screens, and "did you see where it went" is a question two people standing
+   * next to each other must be able to answer the same way.
+   */
+  readonly origin: Vec3;
   readonly spawnTick: number;
   /** When the anticipation cue fires. Equal to `spawnTick` when there is none. */
   readonly anticipationTick: number;
@@ -79,6 +93,7 @@ export function makeDrop(
   count: number,
   rarity: RarityId,
   ownerPlayerId: string | null,
+  origin: Vec3,
   tick: number,
   revealScale: number,
 ): DropState {
@@ -94,11 +109,46 @@ export function makeDrop(
     count,
     rarity,
     ownerPlayerId,
+    origin,
     spawnTick: tick,
     anticipationTick: tick + anticipation,
     revealTick: tick + reveal,
     expiresTick: tick + DROP_LIFETIME_TICKS,
   };
+}
+
+/**
+ * How far from the body a drop can land, in world units (spec 156).
+ *
+ * Far enough that two drops from the same fight are two objects rather than one
+ * pile, near enough that the thing is obviously *that* kill's. The floor is not
+ * zero because a drop directly under the corpse reads as having been placed
+ * rather than dropped, which is the whole thing this is here to avoid.
+ */
+export const SCATTER_MIN = 14;
+export const SCATTER_MAX = 34;
+
+/**
+ * Where a drop lands, given where the body fell.
+ *
+ * **Server-side and seeded**, and that is the point rather than an
+ * implementation detail: the landing spot is the drop entity's replicated
+ * position, so every client is looking at the same object in the same place and
+ * the throw they each draw ends where the others' do. A client-side scatter
+ * would be five different worlds agreeing about nothing.
+ *
+ * Height is left to the caller, which has the terrain: this is the ground plane
+ * only. Nothing checks the landing against a collider -- a drop is inert and
+ * blocks nobody, so the worst case is an item resting against a rock, and the
+ * cost of a walkability search per kill is not worth avoiding that.
+ */
+export function scatterLanding(rng: Rng, from: Vec3): [{ x: number; y: number }, Rng] {
+  // Two integer draws rather than a float one, so this reproduces exactly
+  // across engines like every other roll in the sim.
+  const [degrees, afterAngle] = rng.nextInt(0, 359);
+  const [reach, afterReach] = afterAngle.nextInt(SCATTER_MIN, SCATTER_MAX);
+  const angle = (degrees * Math.PI) / 180;
+  return [{ x: from.x + Math.cos(angle) * reach, y: from.y + Math.sin(angle) * reach }, afterReach];
 }
 
 /**

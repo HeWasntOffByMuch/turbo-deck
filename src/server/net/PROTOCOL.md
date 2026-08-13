@@ -587,7 +587,7 @@ Equipment slot order is the wire contract: a new slot is appended to
 
 ### `0x55 LootDrop`
 `varuint entityId` · `u8 rarity` · `u32 spawnTick` · `u32 revealTick` ·
-`str defId` · `varuint count`
+`f32 originX` · `f32 originY` · `f32 originZ` · `str defId` · `varuint count`
 
 An item lying in the world, and how much of it this client is allowed to know
 yet (spec 156). Sent when the drop first enters this connection's interest set —
@@ -604,6 +604,15 @@ one the same case with no code of their own.
 exceptional) and *is* sent up front, deliberately: the anticipation cue is
 tier-shaped, so playing it needs the tier. That is the "notice" step. What is
 withheld is the payoff.
+
+`origin` is where the body fell — the point the item was thrown *from*. The
+entity's own replicated position is where it **landed**, scattered server-side
+from a seeded draw, so the two are the ends of an arc the client draws over
+`TOSS_TICKS` and nothing simulates. It is authoritative for one reason: every
+player has to see the same throw, and a scatter picked client-side would put the
+same sword in a different place on every screen. A client whose first sight is
+after the toss computes "already landed" from the same two numbers, with no case
+of its own.
 
 `spawnTick` and `revealTick` are both sent because the client draws the run-up
 against the whole span. Its own "when did I first see this" is not the answer —

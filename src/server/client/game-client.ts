@@ -187,6 +187,11 @@ export interface DropView {
   readonly spawnTick: number;
   readonly anticipationTick: number;
   readonly revealTick: number;
+  /**
+   * Where the body fell (spec 156). The far end of the throw; the near end is
+   * the entity's own replicated position, which is where it landed.
+   */
+  readonly origin: { readonly x: number; readonly y: number; readonly z: number };
   /** One of `RevealPhase`, at the client's current estimate of the tick. */
   readonly phase: RevealPhaseValue;
   /** The item, or null while the server is still withholding it. */
@@ -1705,6 +1710,7 @@ export class GameClient {
           spawnTick: message.spawnTick,
           anticipationTick: anticipationTickFor(rarity, message.spawnTick, message.revealTick),
           revealTick: message.revealTick,
+          origin: { x: message.originX, y: message.originY, z: message.originZ },
           defId: known ? message.defId : null,
           // From the content table the client already has, never from the wire:
           // an item's name is not a replicated field and putting one on the

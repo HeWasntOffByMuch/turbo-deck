@@ -232,6 +232,52 @@ describe('what a client is told, and when', () => {
   });
 });
 
+describe('it looks dropped, and it looks the same to everybody', () => {
+  /**
+   * The requirement in one test: the throw is two authoritative points, so two
+   * players watching the same kill are watching the same throw. A scatter
+   * decided client-side would put the same sword in two places.
+   */
+  it('lands clear of the body, and both ends reach every observer alike', async () => {
+    const r = rig();
+    const ana = await join(r, 'ana');
+    const ben = await join(r, 'ben');
+    await r.tick(4);
+
+    const corpseAt = positionOf(r, ana.view().selfEntityId);
+    const id = await killSomethingNearby(r, ana);
+    await r.tick(4);
+
+    const landing = positionOf(r, id);
+    const thrown = Math.hypot(landing.x - corpseAt.x, landing.y - corpseAt.y);
+    expect(thrown, 'the drop should not be under the body').toBeGreaterThan(0);
+
+    const seenByAna = ana.view().drops.find((d) => d.entityId === id);
+    const seenByBen = ben.view().drops.find((d) => d.entityId === id);
+    expect(seenByAna, 'ana should see it').toBeTruthy();
+    expect(seenByBen, 'ben should see it too').toBeTruthy();
+    // Same origin, same landing, same spawn tick -- so the same arc, drawn by a
+    // pure function of those three on both machines.
+    expect(seenByBen?.origin).toEqual(seenByAna?.origin);
+    expect(seenByBen?.spawnTick).toBe(seenByAna?.spawnTick);
+    const authoritative = r.server.world.entities.get(id)?.drop?.origin;
+    expect(seenByAna?.origin.x).toBeCloseTo(authoritative?.x ?? -1, 2);
+    expect(seenByAna?.origin.y).toBeCloseTo(authoritative?.y ?? -1, 2);
+  });
+
+  it('replays the landing exactly from the same seed', async () => {
+    const run = async (): Promise<string> => {
+      const r = rig();
+      const ana = await join(r, 'ana');
+      await r.tick(2);
+      const id = await killSomethingNearby(r, ana);
+      const at = positionOf(r, id);
+      return `${at.x.toFixed(4)},${at.y.toFixed(4)}`;
+    };
+    expect(await run()).toBe(await run());
+  });
+});
+
 describe('the developer path', () => {
   /**
    * Tuning a presentation must not require farming for one. Both halves are

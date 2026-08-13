@@ -705,6 +705,12 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  of them -- nothing marks itself revealed, so nothing can reveal
                  twice, and the server, the client and a test all answer "how
                  far has this got" from the same comparison.
+                 Both ends of the *throw* are authoritative too: the drop's
+                 replicated position is where it landed, scattered from a seeded
+                 draw, and `origin` on the wire is where the body fell. The arc
+                 between them is drawn and never simulated -- which is what makes
+                 "two players watching the same kill watch the same throw" a
+                 fact rather than a hope about two `Math.random` calls.
                  The decision the wire rests on is that a drop's `typeId` is
                  **empty and stays empty**: the entity record goes to every
                  client in interest range on first sight, and what an unrevealed
@@ -1048,7 +1054,21 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  the dimmest value in the table, since `restFlare === peakFlare`
                  there, which makes "ordinary loot is quieter than everything
                  else at *every* instant" true by construction rather than by two
-                 curves happening not to cross. Cues are names emitted into the
+                 curves happening not to cross.
+                 Three curves beside the flare and each answers a different half
+                 of "what is the reveal actually doing". `tossAt` is the arc, a
+                 parabola between two replicated points over a fixed span.
+                 `heartbeatAt` is the pulse a rare-or-better drop has and a
+                 common one does not -- two beats a second, the smaller behind
+                 the bigger, phased off `spawnTick` so every client beats
+                 together. And `tierMixAt` is the one that had been missing: it
+                 is **zero until the reveal tick**, so an unrevealed drop is
+                 drawn in the neutral colour ordinary loot wears. Colouring a
+                 drop by its tier from the first frame -- which is what the first
+                 cut did -- answers the exact question the reveal exists to ask,
+                 and leaves a feature that only delays a *brightness*. What is
+                 legible early is that something is unusual (the pulse, the
+                 swell); never how unusual, and never what. Cues are names emitted into the
                  vfx system and an unauthored one is *silence*, deliberately --
                  `addEffect`'s fallback ring under every potion that ever drops
                  is exactly the noise the restrained-presentation rule exists to
