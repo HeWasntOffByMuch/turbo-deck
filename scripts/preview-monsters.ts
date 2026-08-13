@@ -283,7 +283,12 @@ MONSTERS.forEach((monster, row) => {
   const look = monsterLookFor(monster.id);
   process.stdout.write(
     `${monster.name}: radius ${monster.radius}, speed ${monster.stats.moveSpeed}, ` +
-      `${look ? `${look.appearance.shape} body at ${look.tuning.sizeScale ?? 1}x` : 'no look row (box body at 1x)'}, ` +
+      `${
+        look
+          ? `${look.appearance.shape} body at ${look.tuning.sizeScale ?? 1}x ` +
+            `(body ${look.tuning.bodySize ?? 1}x, #${look.appearance.bodyColor.toString(16).padStart(6, '0')})`
+          : 'no look row (box body at 1x)'
+      }, ` +
       `${walking.length} triangles\n`,
   );
 });

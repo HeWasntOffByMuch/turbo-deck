@@ -197,12 +197,14 @@ describe('the small spider', () => {
     // Body + three bones per leg. Four legs, because `numLegs` was not one of
     // the values the spider was tuned to.
     expect(meshes).toHaveLength(1 + 3 * 4);
+    const brightest = Math.max(...[16, 8, 0].map((s) => (PALETTE.enemySpider >> s) & 0xff));
     for (const mesh of meshes) {
-      // Read as black: every channel at or under the palette's, which is what
-      // "the body is black and the legs are black as well" means once the rig
-      // has darkened a bone or two off it.
-      for (const value of channels(mesh)) expect(value).toBeLessThanOrEqual(0x18);
+      // Reads black: every mesh at or under the palette's own brightest channel,
+      // which is what "the body is black and the legs are black as well" means
+      // once the rig has darkened a bone or two off it.
+      for (const value of channels(mesh)) expect(value).toBeLessThanOrEqual(brightest);
     }
+    // And not painted out to nothing -- a body with no lit facet is a hole.
     expect(channels(meshes[0] as THREE.Mesh).some((value) => value > 0)).toBe(true);
   });
 
@@ -213,6 +215,7 @@ describe('the small spider', () => {
     const rig = rigFor('small_spider');
     walk(rig, 240);
     expect(rig.tuning.sizeScale).toBe(0.6);
+    expect(rig.tuning.bodySize).toBe(1.25);
     expect(rig.tuning.raisedLegs).toBe(0);
     expect(rig.tuning.pitchGain).toBe(0.0006);
     expect(rig.tuning.rollGain).toBe(0.03);
@@ -223,7 +226,15 @@ describe('the small spider', () => {
   it('leaves every other tuning field at the shared default', () => {
     const rig = rigFor('small_spider');
     const defaults = defaultMechTuning();
-    const tuned = new Set(['sizeScale', 'raisedLegs', 'pitchGain', 'rollGain', 'coxaReach', 'femurScale']);
+    const tuned = new Set([
+      'sizeScale',
+      'bodySize',
+      'raisedLegs',
+      'pitchGain',
+      'rollGain',
+      'coxaReach',
+      'femurScale',
+    ]);
     for (const key of Object.keys(defaults) as (keyof typeof defaults)[]) {
       if (tuned.has(key)) continue;
       expect(rig.tuning[key], key).toBe(defaults[key]);

@@ -57,26 +57,29 @@ export interface MonsterLook {
 
 /**
  * The small spider (spec 152): the movement sandbox's spider at the values it
- * was tuned to, in black.
+ * was tuned to.
  *
- * The six numbers are the whole row. `sizeScale` makes it small; `coxaReach` 0
- * collapses the hip segment so each leg is a bare knee reaching out of the body,
- * and `femurScale` 1.05 gives that leg back its height at the knee; `raisedLegs`
- * 0 keeps every foot working rather than one held up in a recovery hold, which
- * on a body this small reads as a limp; and the two gains all but flatten the
- * pitch and the bank, because a chassis leaning into its own acceleration is a
- * vehicle and this is meant to scuttle.
+ * The seven numbers are the whole row. `sizeScale` makes it small and `bodySize`
+ * gives the abdomen back a quarter of what that took, so the body reads as a
+ * round thing on legs rather than as a bead; `coxaReach` 0 collapses the hip
+ * segment so each leg is a bare knee reaching out of the body, and `femurScale`
+ * 1.05 gives that leg back its height at the knee; `raisedLegs` 0 keeps every
+ * foot working rather than one held up in a recovery hold, which on a body this
+ * small reads as a limp; and the two gains all but flatten the pitch and the
+ * bank, because a chassis leaning into its own acceleration is a vehicle and
+ * this is meant to scuttle.
  */
 const SMALL_SPIDER: MonsterLook = {
   appearance: {
     shape: 'sphere',
-    // Legs the same black as the body rather than the rig's darkened default:
-    // a body at 0x141418 has nothing left to darken toward.
+    // Legs the same colour as the body rather than the rig's darkened default:
+    // a body this dark has nothing left to darken toward.
     bodyColor: PALETTE.enemySpider,
     legColor: PALETTE.enemySpider,
   },
   tuning: {
     sizeScale: 0.6,
+    bodySize: 1.25,
     raisedLegs: 0,
     pitchGain: 0.0006,
     rollGain: 0.03,

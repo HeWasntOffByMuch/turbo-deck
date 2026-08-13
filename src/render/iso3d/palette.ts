@@ -29,11 +29,13 @@ export const PALETTE = {
   enemySkitter: 0x5fb4d6,
   enemyBrute: 0x9a5ad0,
   enemyEye: 0x1a1208,
-  // The small spider (spec 152), body and legs the same black. Not 0x000000:
-  // every material here is a Lambert, so a pure black body multiplies the sun
-  // out and loses its own facets -- it reads as a hole rather than as a round
-  // thing. This is black on screen and still has an edge between two faces.
-  enemySpider: 0x141418,
+  // The small spider (spec 152), body and legs the same colour. Reads black on
+  // grass and is not 0x000000, for two reasons: every material here is a
+  // Lambert, so a pure black body multiplies the sun out and loses its own
+  // facets -- it becomes a hole rather than a round thing -- and the blue in it
+  // is what stops a black body on dark ground from reading as a gap in the
+  // world. Tuned in the movement sandbox against the real grass.
+  enemySpider: 0x241f31,
   // The player-controlled mech in the movement sandbox (a friendly steel blue).
   mechAlly: 0x4a7fb0,
   // The grey metal walker unit in the movement sandbox (a rotating turret on legs).

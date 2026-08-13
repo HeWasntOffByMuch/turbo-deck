@@ -56,11 +56,17 @@ describe('monsterLookFor', () => {
 describe('the small spider', () => {
   const look = monsterLookFor('small_spider');
 
-  it('is a black sphere on black legs', () => {
+  it('is a near-black sphere on legs of the same colour', () => {
     expect(look?.appearance.shape).toBe('sphere');
     expect(look?.appearance.bodyColor).toBe(PALETTE.enemySpider);
     // Stated rather than left to the rig's default, which is the body darkened.
     expect(look?.appearance.legColor).toBe(PALETTE.enemySpider);
+    // Dark enough to read as black against grass, and not `0x000000` -- a pure
+    // black Lambert multiplies the sun out and loses the facets that make the
+    // body round. Both halves matter, so both are pinned.
+    const channels = [16, 8, 0].map((shift) => (PALETTE.enemySpider >> shift) & 0xff);
+    expect(Math.max(...channels)).toBeLessThan(0x40);
+    expect(Math.min(...channels)).toBeGreaterThan(0);
   });
 
   it('carries exactly the numbers it was tuned to, and no others', () => {
@@ -69,6 +75,7 @@ describe('the small spider', () => {
     // about stays at `defaultMechTuning()` when `scene.ts` spreads it.
     expect(look?.tuning).toEqual({
       sizeScale: 0.6,
+      bodySize: 1.25,
       raisedLegs: 0,
       pitchGain: 0.0006,
       rollGain: 0.03,

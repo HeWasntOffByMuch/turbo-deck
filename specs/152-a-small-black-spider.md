@@ -57,29 +57,6 @@ world view's pure half — where nothing outside `scene.ts` and `shot.ts` has ev
 reached for it. So the rig types come in as types and are erased, and the merge
 is a spread at the one place a rig is actually constructed.
 
-## The sandbox
-
-A third mech chip, loaded from this same table, so the body being tuned is the
-one in the game rather than a lookalike rebuilt from memory. The controls it
-exists for are `bodySize` and the two colour wells, which need a third row type
-in `tuning-panel.ts`: a swatch over a hex int, a union member rather than a flag
-on the slider, because `min`/`max`/`step` are meaningless on a colour and absent
-says that better than ignored does.
-
-The mechs have always shared one tuning object — that is what makes the panel's
-mech section one set of sliders rather than one per unit — so a third mech with
-different numbers has to *load* them, exactly as `C` already loads an archetype
-preset. A preset's tuning and its appearance carry separate ids, because they
-change on different picks: spider and walker have always differed in colour and
-never in tuning, so moving between those two must still leave a dragged slider
-alone. Reset follows the active chip rather than the bare defaults, or the button
-quietly turns the small spider into a mech.
-
-The rig debugger mounts this same panel over two mechs whose colours are fixed at
-construction, so it passes no appearance and the colour rows are never shown —
-the rule this tab already applies to the attack section, and to controls that
-would visibly do nothing.
-
 The `Omit` is the point, not a detail. Move speed and turn rate exist on
 `MechTuning` because the movement sandbox needs somewhere to hang its two sim
 overrides, and the rig has never read either. A monster's copies of those numbers
@@ -151,13 +128,36 @@ enemy is small, and auto-framing hides exactly that — and the collider drawn a
 a ring, since the drawn size and the collider are authored in different files and
 nothing forces them to agree.
 
+## The sandbox
+
+A third mech chip, loaded from this same table, so the body being tuned is the
+one in the game rather than a lookalike rebuilt from memory. The controls it
+exists for are `bodySize` and the two colour wells, which need a third row type
+in `tuning-panel.ts`: a swatch over a hex int, a union member rather than a flag
+on the slider, because `min`/`max`/`step` are meaningless on a colour and absent
+says that better than ignored does.
+
+The mechs have always shared one tuning object — that is what makes the panel's
+mech section one set of sliders rather than one per unit — so a third mech with
+different numbers has to *load* them, exactly as `C` already loads an archetype
+preset. A preset's tuning and its appearance carry separate ids, because they
+change on different picks: spider and walker have always differed in colour and
+never in tuning, so moving between those two must still leave a dragged slider
+alone. Reset follows the active chip rather than the bare defaults, or the button
+quietly turns the small spider into a mech.
+
+The rig debugger mounts this same panel over two mechs whose colours are fixed at
+construction, so it passes no appearance and the colour rows are never shown —
+the rule this tab already applies to the attack section, and to controls that
+would visibly do nothing.
+
 ## Invariants tested
 
 - The look table cannot name a sim number: no entry carries `moveSpeed` or
   `turnRate` at runtime, in a test that would still fail if the `Omit` were
   removed from the type.
-- `mechTuningFor('small_spider')` carries exactly the authored values —
-  `sizeScale` 0.6, `raisedLegs` 0, `pitchGain` 0.0006, `rollGain` 0.03,
+- The spider's row carries exactly the authored values —
+  `sizeScale` 0.6, `bodySize` 1.25, `raisedLegs` 0, `pitchGain` 0.0006, `rollGain` 0.03,
   `coxaReach` 0, `femurScale` 1.05 — and every *other* field is untouched from
   `defaultMechTuning()`.
 - A type id with no row gets `null` and the default tuning, so an unknown monster
@@ -180,7 +180,7 @@ nothing forces them to agree.
   move it" cannot be asked of one rig's before and after.
 - A colour change does not re-plant the feet.
 - In a real browser (`preview-sandbox.ts`): the chip loads the shipped 0.60 and
-  `#141418` into the controls, a tuned body colour paints that many pixels of
+  `#241f31` into the controls, a tuned body colour paints that many pixels of
   the canvas, and switching back restores the plain spider's numbers.
 
 ## Out of scope

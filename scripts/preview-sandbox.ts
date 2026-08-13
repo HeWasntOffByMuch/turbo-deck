@@ -188,11 +188,15 @@ async function main(): Promise<void> {
     await page.getByRole('button', { name: 'Small spider' }).click();
     await page.waitForTimeout(900);
     const spider = await panelControls(page);
-    console.log(`  small spider: size ${spider['Size']}, body ${spider['Body']}, legs ${spider['Legs']}`);
+    console.log(
+      `  small spider: size ${spider['Size']}, body size ${spider['Body size']}, ` +
+        `body ${spider['Body']}, legs ${spider['Legs']}`,
+    );
     for (const [label, want] of [
       ['Size', '0.6'],
-      ['Body', '#141418'],
-      ['Legs', '#141418'],
+      ['Body size', '1.25'],
+      ['Body', '#241f31'],
+      ['Legs', '#241f31'],
     ] as const) {
       if (spider[label] !== want) {
         problems.push(`the Small spider chip left ${label} at ${spider[label]}, wanted ${want}`);
