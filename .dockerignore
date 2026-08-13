@@ -1,0 +1,22 @@
+# What never belongs in the server image (spec 153).
+#
+# node_modules first and for two reasons: the image runs `npm ci` itself, and a
+# host tree copied in would carry whatever platform's binaries were installed
+# on the machine that ran the build.
+node_modules
+dist
+.git
+.github
+.claude
+.studio
+specs
+docs
+tools
+public
+scripts
+# The renderer's own entry points. `src/` is copied wholesale because the server
+# imports the shared geometry that lives beside it, so the split is by file
+# rather than by directory here.
+src/render/*.html
+**/*.test.ts
+**/*.md

@@ -1,0 +1,48 @@
+# TLS in front of the game server (spec 153).
+#
+# The client is published on GitHub Pages over https, so the socket has to be
+# wss:// -- a browser refuses a ws:// connection from an https page as mixed
+# content, and the failure is silent enough to look like a server bug. This is
+# the whole reason a proxy exists here at all; the game speaks plain ws behind
+# it on a port that is never published.
+#
+# Caddy obtains and renews the certificate itself over ACME. Nothing about it
+# is in this repository, which is why /data is a named volume in compose.yml.
+
+{$SERVER_DOMAIN} {
+	# WebSocket upgrades pass through untouched -- v2 needs no special matcher
+	# for that, and adding one is how people accidentally break it.
+	reverse_proxy server:8787 {
+		# The tick loop is the clock here. A player who is loading chunks or
+		# sitting in a menu can legitimately say nothing for a while, and the
+		# server has its own idea of when a connection is lost
+		# (CONNECTION_TIMEOUT_TICKS, ten seconds of silence, plus a 30s ping
+		# from the client). A proxy timing a socket out sooner would override
+		# that with a number nobody wrote down.
+		transport http {
+			read_timeout 0
+			write_timeout 0
+		}
+	}
+
+	# Both of these are already gated by the HMAC admin verifier, so this is
+	# depth rather than the actual lock. What it buys is that a bored scanner
+	# cannot reach the studio's routes at all, and those are the routes that can
+	# spend money when TRIPO_API_KEY is set.
+	#
+	# Uncomment and put your own address in to lock them to it. `respond` runs
+	# before `reverse_proxy` in Caddy's directive order, so this needs no
+	# `handle` blocks and the socket route below is untouched.
+	# @blocked {
+	# 	path /admin* /api/studio*
+	# 	not remote_ip 203.0.113.4
+	# }
+	# respond @blocked 404
+
+	encode zstd gzip
+
+	log {
+		output stdout
+		format console
+	}
+}

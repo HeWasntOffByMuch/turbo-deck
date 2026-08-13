@@ -1,0 +1,79 @@
+# The deployed server, as two containers (spec 153).
+#
+# This file lives on the box and is what the deploy workflow reruns: it pulls a
+# new image and recreates the server container. Caddy is the other half and is
+# almost never touched -- it holds the certificate, so restarting it needlessly
+# is the one way to hit an ACME rate limit.
+#
+# Requires a .env beside it (never committed); see docs/hosting.md.
+
+services:
+  server:
+    image: ${SERVER_IMAGE:-ghcr.io/hewasntoffbymuch/turbo-deck:main}
+    restart: unless-stopped
+    # Supplies the PID-1 reaper. The signal handling itself is the Dockerfile's
+    # exec-form CMD, not this.
+    init: true
+    environment:
+      PORT: 8787
+      # Unset means a throwaway signing key per boot -- the server still demands
+      # a signed admin token, nobody can mint one, and that is a fine posture
+      # for a box nobody administers remotely. Set it to use the console.
+      ADMIN_SECRET: ${ADMIN_SECRET:-}
+      # Absent means the Studio tab's routes mount and refuse rather than 404
+      # (spec 108). A deployed game server has no reason to hold this key.
+      TRIPO_API_KEY: ${TRIPO_API_KEY:-}
+    # Deliberately no `ports:`. The only way in is through Caddy, so the plain
+    # ws:// port is not reachable from the internet and TLS cannot be bypassed.
+    expose:
+      - '8787'
+    healthcheck:
+      # `node -e` rather than curl, because node:22-slim ships neither curl nor
+      # wget and installing one to check a JSON endpoint would be a package in
+      # the image forever. Node 22 has a global fetch.
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8787/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      # start_period covers the boot: reading the map and warming the nav grid
+      # is around a second on the shipped map, and a healthcheck that ran during
+      # it would restart the container it was waiting for.
+      start_period: 30s
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      # Uncapped json-file logs are the classic way a small box fills its disk.
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      SERVER_DOMAIN: ${SERVER_DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Named volumes, so a `compose down` does not throw away the certificate
+      # and make the next boot ask Let's Encrypt for a fresh one.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - server
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+volumes:
+  caddy_data:
+  caddy_config:
