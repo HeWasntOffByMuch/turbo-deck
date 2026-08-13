@@ -75,10 +75,18 @@ export interface LostMarkInput {
 }
 
 export function windupLostItsMark(input: LostMarkInput): boolean;
+
+/** The same question asked of a whole client view: find our cast, find its mark. */
+export function windupLostItsMarkIn(view: ViewLike): boolean;
 ```
 
 True only when all four hold: there is a cast, it names a body, it has not
 reached its attack point, and that body is dead or out of the replica.
+
+`windupLostItsMarkIn` exists because there are three callers -- the shipped
+`sendInput` and the two harnesses that drive its loop over a real wire -- and a
+lookup copied into a test is how a test stops being about the client that
+ships.
 
 The attack point is the boundary and the reason is 144's: before it the blow
 has not happened and withdrawing takes everything back; after it the arrow is
@@ -92,7 +100,7 @@ for. A backswing stays theirs to walk out of.
 its own read of the view so the legs come back on the same tick:
 
 ```ts
-withdrawIfMarkGone(client.view());   // finds our cast, finds its mark, cancels
+withdrawIfMarkGone(client.view());   // one call: the rule, then `cancelCast`
 const view = client.view();
 driveCastOrder(view, me);
 driveAutoAttack(view, me);
@@ -149,21 +157,28 @@ protocol, `view.ts`'s own loop):
 - Right-clicking a second body mid-wind-up: the cast ends `Cancelled`, the first
   mark takes no damage from it, and the body closes on and commits to the new
   mark before the abandoned swing would have finished.
-- Right-clicking the body already being attacked, on every tick of a wind-up:
-  zero cancels.
+- Right-clicking the body already being attacked, on every tick of a wind-up
+  and its backswing: zero cancels.
 
 Sharpened in `auto-attack-wire.test.ts`, whose harness gains the rule so it is
-still driving the client that ships:
+still driving the client that ships. Counted per *mark* rather than per firing,
+because the rule can fire twice over one blow: the withdrawal clears the
+client's copy of the cast at once, and a `CastState` for it can still arrive
+before the server has dequeued the cancel, putting the cast back in a view whose
+mark is still gone. The repeat is a no-op on the server — there is nothing left
+to cancel — so what pairs with a `CastEnded` is the blow rather than the ask.
 
-- Every withdrawal in a run is one the client asked for: the server never ends a
+- Every withdrawal in a run is one the client made: the server never ends a
   cast of ours `Cancelled` that we did not call off.
-- Every withdrawal the client asked for had a dead or absent mark behind it, so
-  the count cannot exceed the kills — which is 080's guarantee restated in the
-  form that survives this change.
+- Every blow the client called off had a dead or absent mark behind it, so the
+  count cannot exceed the kills — which is 080's guarantee restated in the form
+  that survives this change.
 - Melee still withdraws from nothing at all, because a swing resolves on its own
   release and the client knows the body is down before it commits again.
 - `asks - commits`, the refusal count and the bar/root coverage are all
-  unchanged.
+  unchanged. The run drains for twenty ticks at a standstill before
+  disconnecting, so a withdrawal asked for on one of the last ticks is answered
+  rather than counted as one the server made alone.
 
 ## Out of scope
 
