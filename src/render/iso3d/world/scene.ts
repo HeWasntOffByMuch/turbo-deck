@@ -1359,6 +1359,9 @@ export class WorldScene {
 
       const shown = this.dropPresenter.read(drop, frame.tick);
       const ground = this.ground(at.x, at.y);
+      // Cleared here and turned back on by `syncHover`, the same handshake a
+      // body's highlight uses -- so exactly one thing is ever lit.
+      rig.setHovered(false);
       rig.group.position.set(at.x, ground, at.y);
       rig.update(dt, shown.flare);
       for (const cue of shown.cues) this.playCue(cue, at.x, at.y);
@@ -1512,7 +1515,13 @@ export class WorldScene {
     const cursor = frame.cursor;
     this.hovered = cursor ? this.pickUnitAt(cursor.x, cursor.y) : null;
 
-    if (this.hovered !== null) this.bodies.get(this.hovered)?.highlight?.setHighlighted(true);
+    if (this.hovered !== null) {
+      this.bodies.get(this.hovered)?.highlight?.setHighlighted(true);
+      // A drop is not in `bodies` (spec 154), so it lights itself. Its response
+      // is the ground ring rather than an outline, because the object is already
+      // glowing and a second glow would read as part of the reveal.
+      this.dropRigs.get(this.hovered)?.setHovered(true);
+    }
 
     const target =
       frame.targetEntityId === null

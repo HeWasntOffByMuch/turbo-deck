@@ -50,6 +50,7 @@ export class DropRig {
   private readonly haloMaterial: THREE.MeshBasicMaterial;
   private readonly ringMaterial: THREE.MeshBasicMaterial;
   private phase = 0;
+  private hovered = false;
 
   constructor(rarity: RarityId) {
     const color = TIER_COLOR[rarity] ?? TIER_COLOR.common;
@@ -105,6 +106,18 @@ export class DropRig {
    * the reveal -- a drop that stopped spinning when it revealed would read as
    * having broken.
    */
+  /**
+   * Whether the cursor is on it.
+   *
+   * The whole hover response is the ground ring, brighter and a touch wider --
+   * a drop already glows on its own, and lighting the object as well would make
+   * the hover indistinguishable from the reveal it is sitting in the middle of.
+   * Set here and read on the next `update`, exactly as a body's highlight is.
+   */
+  setHovered(on: boolean): void {
+    this.hovered = on;
+  }
+
   update(dt: number, flare: number): void {
     this.phase += dt;
     const lit = Math.max(0, Math.min(1, flare));
@@ -120,8 +133,8 @@ export class DropRig {
     // over a potion: at the common tier's 0.12 this is 0.003, which is nothing.
     this.haloMaterial.opacity = 0.22 * lit * lit;
 
-    this.ring.scale.setScalar(0.9 + lit * 0.6);
-    this.ringMaterial.opacity = 0.18 + lit * 0.35;
+    this.ring.scale.setScalar((0.9 + lit * 0.6) * (this.hovered ? 1.15 : 1));
+    this.ringMaterial.opacity = (0.18 + lit * 0.35) * (this.hovered ? 1.8 : 1);
   }
 
   dispose(): void {

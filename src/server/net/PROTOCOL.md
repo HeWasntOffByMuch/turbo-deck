@@ -641,7 +641,13 @@ immediately. Every decision, accepted or refused, appends an audit entry.
 
 Events currently understood by `triggerEvent`: `raid` (magnitude = how many),
 `clear` (magnitude = radius), `heal`, `drop` (magnitude = the rarity ordinal —
-an unowned drop of that tier, so the reveal can be tuned without farming).
+an unowned drop of that tier) and `reveal` (magnitude = radius — pulls every
+unrevealed drop in range to its reveal now).
+
+Those two plus `lootRevealScale` are the whole developer path for spec 154:
+spawn a chosen tier, stretch or collapse its run-up, and force one that is
+already lying there. **None of them can change what the item is** — there is
+nothing in any of them that could, which is the design rather than a promise.
 
 Live config keys: `spawnRateMultiplier`, `dropRateMultiplier`,
 `lootRevealScale`, `maxEntitiesPerChunk`, `correctionThreshold`,

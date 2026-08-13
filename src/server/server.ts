@@ -2146,6 +2146,37 @@ export class GameServer implements AdminHost {
         this.chunks.place(spawned.entity.id, x, y, false);
         return `dropped ${definition.name} (${rarity}) at ${Math.round(x)}, ${Math.round(y)}`;
       }
+      case 'reveal': {
+        // The other half of the developer path (spec 154): pull every drop
+        // within `magnitude` to its reveal now, so a presentation can be
+        // stepped through without waiting for it or restarting the server.
+        //
+        // The one thing allowed to move a clock that is otherwise snapshotted
+        // for life -- and it is an audited admin action for exactly that reason.
+        // Note what it still cannot do: **it does not change what the item is.**
+        // There is nothing here that could, which is the whole design.
+        let revealed = 0;
+        for (const entity of [...this.state.entities.values()]) {
+          const drop = entity.drop;
+          if (!drop || isRevealed(drop, this.state.tick)) continue;
+          if (Math.hypot(entity.position.x - x, entity.position.y - y) > magnitude) continue;
+          this.state = replaceEntity(this.state, {
+            ...entity,
+            drop: { ...drop, anticipationTick: this.state.tick, revealTick: this.state.tick },
+          });
+          // The sim's own crossing test wants `tick === revealTick`, and the
+          // tick this ran on is already past its own sweep -- so the notice goes
+          // out from here rather than being waited for.
+          this.sendToWatchersOf(
+            entity.id,
+            encodeServerMessage(
+              this.lootDropMessage(entity.id, { ...drop, revealTick: this.state.tick }, this.state.tick),
+            ),
+          );
+          revealed += 1;
+        }
+        return `revealed ${revealed} drop(s) within ${magnitude} units`;
+      }
       case 'heal': {
         let healed = 0;
         for (const session of this.players.all()) {

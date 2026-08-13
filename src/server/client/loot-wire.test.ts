@@ -232,6 +232,72 @@ describe('what a client is told, and when', () => {
   });
 });
 
+describe('the developer path', () => {
+  /**
+   * Tuning a presentation must not require farming for one. Both halves are
+   * checked because both are easy to leave half-wired: the spawn produces a
+   * drop of a named tier, and the force pulls one that is already lying there.
+   */
+  it('forces a drop already in the world to reveal, without changing it', async () => {
+    const r = rig();
+    const ana = await join(r, 'ana');
+    await r.tick(2);
+    const at = positionOf(r, ana.view().selfEntityId);
+    r.server.triggerEvent('drop', at.x + 60, at.y, rarityToByte('exceptional'));
+    await r.tick(4);
+
+    const before = ana.view().drops[0];
+    if (!before) throw new Error('no drop');
+    expect(before.defId).toBeNull();
+    const authoritative = r.server.world.entities.get(before.entityId)?.drop?.defId;
+
+    const said = r.server.triggerEvent('reveal', at.x + 60, at.y, 200);
+    expect(said).toContain('revealed 1');
+    await r.tick(2);
+
+    const after = ana.view().drops[0];
+    expect(after?.phase).toBe(RevealPhase.Revealed);
+    // The presentation moved. The item did not, and nothing here could move it.
+    expect(after?.defId).toBe(authoritative);
+    expect(r.server.world.entities.get(before.entityId)?.drop?.defId).toBe(authoritative);
+  });
+
+  it('collapses the run-up to nothing when the scale says so', async () => {
+    const r = rig();
+    r.server.liveConfig.set('lootRevealScale', 0);
+    const ana = await join(r, 'ana');
+    await r.tick(2);
+    const at = positionOf(r, ana.view().selfEntityId);
+    r.server.triggerEvent('drop', at.x + 60, at.y, rarityToByte('exceptional'));
+    await r.tick(4);
+
+    const drop = ana.view().drops[0];
+    expect(drop?.rarity).toBe('exceptional');
+    expect(drop?.phase).toBe(RevealPhase.Revealed);
+    expect(drop?.defId).toBeTruthy();
+  });
+
+  /**
+   * And the knob is snapshotted: a drop already running keeps the clock it was
+   * stamped with, which is spec 144's rule about attack timing applied to a
+   * reveal, and for the same reason -- a finish line that moved while the thing
+   * was running could be put in the past.
+   */
+  it('leaves a reveal already running alone when the scale changes', async () => {
+    const r = rig();
+    const ana = await join(r, 'ana');
+    await r.tick(2);
+    const at = positionOf(r, ana.view().selfEntityId);
+    r.server.triggerEvent('drop', at.x + 60, at.y, rarityToByte('exceptional'));
+    await r.tick(4);
+
+    const stamped = ana.view().drops[0]?.revealTick;
+    r.server.liveConfig.set('lootRevealScale', 0);
+    await r.tick(4);
+    expect(ana.view().drops[0]?.revealTick).toBe(stamped);
+  });
+});
+
 describe('taking it', () => {
   it('serves a pickup before the reveal has finished', async () => {
     const r = rig();

@@ -109,6 +109,16 @@ merge time.
 
 ```
 specs/           spec markdown, one file per system, written before its code
+docs/            durable direction that outlives one spec. vfx-plan.md, ui/, and
+                 reward-philosophy.md (spec 154) -- the rules future loot,
+                 progression, encounter and feedback work is decided against:
+                 world-embedded rewards over reward cards, contrast between
+                 quiet and rare, and the existing combat vocabulary reused
+                 rather than re-invented. Labelled throughout as **Current
+                 rule** / **Implemented** / **Future direction** / **Not yet
+                 implemented**, because the risk with a document like that is a
+                 direction reading as a backlog item and getting built as a side
+                 effect of something else.
 schemas/         JSON Schema (draft-07) for the three unit documents and the weapon
                  document (spec 140), committed
                  and validated against in CI. additionalProperties is false
@@ -679,6 +689,43 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  leaves each bag individually plausible. data/ holds
                  the ABILITIES, SKILLS, ITEMS and MONSTERS tables (spec 062):
                  content is data, and an entity only ever stores an id.
+                 `loot.ts` and `sim/loot.ts` are what a kill leaves behind
+                 (spec 154), and the two of them draw one line: **the item is
+                 decided when the body falls and its presentation unfolds
+                 afterwards.** `data/loot.ts` holds two tables that are
+                 deliberately separate questions -- what drops (probability) and
+                 how loudly it announces itself (a reveal clock and cue *names*,
+                 never assets) -- so a balance change and a presentation change
+                 are visibly different diffs. Rarity is a property of the
+                 `ItemDefinition`, not of a drop: two copies of the same sword
+                 are the same tier forever, since a per-drop rarity would only
+                 mean something if two copies could differ in what they *do*,
+                 which needs affixes, which 154 does not build. `sim/loot.ts`
+                 stamps three ticks at the drop and derives the phase from two
+                 of them -- nothing marks itself revealed, so nothing can reveal
+                 twice, and the server, the client and a test all answer "how
+                 far has this got" from the same comparison.
+                 The decision the wire rests on is that a drop's `typeId` is
+                 **empty and stays empty**: the entity record goes to every
+                 client in interest range on first sight, and what an unrevealed
+                 drop is must not, so the item rides a `LootDrop` of its own
+                 with `defId` absent -- absent from the frame rather than
+                 flagged on it, so there is no path by which a client could draw
+                 it early. What *is* sent up front is the tier, because the
+                 anticipation cue is tier-shaped and playing it needs one; that
+                 is the "notice" step, and the payoff is what is withheld.
+                 Two rules that are not obvious from the types. **Picking a drop
+                 up mid-reveal is legal and served at once** -- anticipation is
+                 presentation and never a lock on the player's hands, and the
+                 pending reveal simply never happens. And `pickUpDrop` removes
+                 the entity *before* it awaits the grant, which is what makes
+                 "one drop, one stack" a property of the code rather than of the
+                 timing; a full bag puts it back, at the same id, because a
+                 refusal that ate the loot would be the worst bug this feature
+                 could have. `admin:triggerEvent 'drop'`/`'reveal'` and the live
+                 `lootRevealScale` are the developer path, so a presentation is
+                 tuned without farming for one -- and none of the three can
+                 change what the item is.
                  Since spec 147 `skills.ts` is the *attuned* tree -- six columns
                  of six, gated on the attribute you actually built -- and spec
                  056's branch-locked Might/Finesse/Arcane tree is gone: a system
@@ -927,6 +974,23 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  requires the same numbers. Everything the feature decides is
                  asserted in Node; what it could not say is whether any of it
                  was connected to anything),
+                 loot-drop.ts (how a drop looks while it is still withholding
+                 itself, spec 154: the phase is a comparison against two ticks
+                 the server sent and the flare is a curve through them, so there
+                 is no timer anywhere in scene.ts and no answer that differs by
+                 frame rate or by who reconnected halfway through. The label is
+                 **null** until the reveal rather than a placeholder -- a made-up
+                 name is a lie the player reads as a fact, and "???" is the
+                 interface announcing that it is hiding something, which is the
+                 opposite of noticing an object. A common drop's curve is flat at
+                 the dimmest value in the table, since `restFlare === peakFlare`
+                 there, which makes "ordinary loot is quieter than everything
+                 else at *every* instant" true by construction rather than by two
+                 curves happening not to cross. Cues are names emitted into the
+                 vfx system and an unauthored one is *silence*, deliberately --
+                 `addEffect`'s fallback ring under every potion that ever drops
+                 is exactly the noise the restrained-presentation rule exists to
+                 prevent),
                  and monster-look.ts (what a monster's rig is *built* with, spec
                  152, beside the appearance.ts that says which rig draws it:
                  body shape, colours and the tuning overrides. Every monster was
@@ -969,7 +1033,11 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  and the collider are authored in different files and nothing
                  forces them to agree.
                  `presentation-only.test.ts` beside them is the brief's
-                 assertion: the same seed and inputs twice, once with the
+                 assertion, and since spec 154 it drives a drop's reveal beside
+                 the machines and the eased yaw -- the compared state carries the
+                 drop's authoritative identity on every tick, because a reveal
+                 implemented as client state would be a client deciding when an
+                 item becomes real: the same seed and inputs twice, once with the
                  animation layer driven and once without, and the authoritative
                  state must be identical.
                  `npx tsx scripts/preview-arcs.ts` plots what a shot's path
