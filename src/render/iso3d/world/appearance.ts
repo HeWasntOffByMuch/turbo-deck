@@ -38,6 +38,16 @@ export interface Appearance {
    * and nothing here has to be told about it.
    */
   readonly look: ProjectileLook | null;
+  /**
+   * An override colour for the rig, or absent for whatever it draws itself as
+   * (spec 154).
+   *
+   * Only motes use it, and only to tell health from focus. It lives here rather
+   * than in the scene because *what colour a thing is* is the same kind of
+   * question as *what shape it is*, and this file is where that question is
+   * answered without a WebGL context.
+   */
+  readonly tint?: number;
 }
 
 /** Fallbacks, sized so an unknown body reads as a body rather than as a speck. */
@@ -47,6 +57,17 @@ const DEFAULT_PROJECTILE_RADIUS = 6;
 const DEFAULT_PROJECTILE_LOOK: ProjectileLook = 'orb';
 /** Matches `SERVER_PLAYER_RADIUS`; a player's look is not a content-table entry. */
 const PLAYER_RADIUS = 16;
+/**
+ * How big a mote is drawn, and in what (spec 154).
+ *
+ * The radius matches the one `world.ts` gives the entity, and the two colours
+ * are the only thing that tells a health mote from a focus one -- so they are
+ * named here beside the shape rather than picked in the scene, where nothing
+ * could check them.
+ */
+const MOTE_RADIUS = 7;
+const MOTE_VITALITY_COLOR = 0xff5a6e;
+const MOTE_FOCUS_COLOR = 0x4fa8ff;
 
 /**
  * The species the play view draws a player as (spec 081).
@@ -96,6 +117,23 @@ export function appearanceOf(entity: AppearanceInput): Appearance {
         look: ability?.projectile?.look ?? DEFAULT_PROJECTILE_LOOK,
       };
     }
+
+    case EntityKind.Mote:
+      // A restorative mote (spec 154). It draws through the *shot* rig, which is
+      // not a shortcut: a mote is a small bright thing floating in the air, which
+      // is exactly what `ShotRig`'s orb already is, and building a second rig to
+      // draw the same sphere would be a second thing to keep looking right. What
+      // it does need is a colour of its own, which is the `tint` below -- red for
+      // health, blue for focus -- because two motes that restore different things
+      // must not be the same object.
+      return {
+        rig: 'projectile',
+        typeId: entity.typeId || 'mote',
+        radius: MOTE_RADIUS,
+        showsHealth: false,
+        look: 'orb',
+        tint: entity.typeId === 'mote.focus' ? MOTE_FOCUS_COLOR : MOTE_VITALITY_COLOR,
+      };
 
     case EntityKind.Prop:
       return { rig: 'prop', typeId: entity.typeId || 'prop', radius: DEFAULT_MONSTER_RADIUS, showsHealth: false, look: null };

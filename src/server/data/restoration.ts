@@ -14,10 +14,22 @@
  * is the stat that is supposed to own efficiency.
  *
  * The reference character is a fresh level-1 build: 200 max health (100 flat +
- * 5 Strength x 6 + 5 Constitution x 14). At that size a vitality mote is 24
- * health and a flask is 70, so three charges are a little over one full bar of
- * insurance -- enough to rescue a disastrous encounter, nowhere near enough to
- * be the economy.
+ * 5 Strength x 6 + 5 Constitution x 14). At that size a vitality mote is 12
+ * health and a flask is 70, so one draught is roughly six motes -- insurance
+ * enough to rescue a disastrous encounter, nowhere near enough to be the
+ * economy.
+ *
+ * **How these numbers were arrived at, and the signature to watch for.** The
+ * first tuning pass generated a mote every half-kill at twice this size, and
+ * `npm run balance` reported every one of the twelve builds at *exactly* net
+ * zero health per kill. That reads as balance and is the opposite: the economy
+ * was producing far more than a fight cost, and the only thing holding it down
+ * was the health bar's own ceiling -- MOTE% in the same table was around 30%,
+ * which is to say two thirds of every mote was being thrown away. A row at
+ * net zero with a low MOTE% is over-generation wearing a costume. What it
+ * should look like instead is what it looks like now: every build modestly
+ * negative, and MOTE% high, because a mote that lands is a mote the fight
+ * actually needed.
  *
  * Pure data. No imports but the tick rate.
  */
@@ -43,11 +55,13 @@ export const RESTORATION = {
    *
    * Weighted off experience rather than off a second authored number, because
    * experience is already the difficulty budget somebody tuned per row -- the
-   * same rule `withTraits` follows when it sizes poise off health. At 2.0 the
-   * current roster reads: spider 20, stalker 36, slinger 64, ravager 110. So an
-   * ordinary fight is a mote every two or three kills before any bonus.
+   * same rule `withTraits` follows when it sizes poise off health. At 1.0 the
+   * current roster reads: spider 10, stalker 18, slinger 32, ravager 55 -- so an
+   * ordinary stalker is roughly a quarter of a mote once its bonuses are in,
+   * and the measured economy is a fifth to a half of a fight's cost coming
+   * back. The rest is what a player has to make up by fighting better.
    */
-  progressPerExperience: 2,
+  progressPerExperience: 1,
   /**
    * What a body that will not fight back is worth.
    *
@@ -106,9 +120,9 @@ export const RESTORATION = {
   // --- motes ------------------------------------------------------------
   mote: {
     /** Health restored, as a fraction of the collector's maximum. */
-    healthFraction: 0.12,
+    healthFraction: 0.06,
     /** Resource restored, as a fraction of the collector's pool. */
-    resourceFraction: 0.25,
+    resourceFraction: 0.2,
     /** How long one survives before it fades. Short enough that hoarding is not a plan. */
     lifetimeTicks: seconds(12),
     /** A beat before it may be taken, so it is seen rather than merely counted. */
@@ -121,6 +135,16 @@ export const RESTORATION = {
     attractSpeed: 300,
     /** How far from the corpse motes are scattered, so two do not share a pixel. */
     scatterRadius: 26,
+    /**
+     * Health deficit above which a mote is always vitality.
+     *
+     * The bias that keeps this a *health* economy. Below a quarter of health
+     * missing, a mote may go to whichever pool is emptier; above it, health
+     * wins outright however short of mana the body is -- because resource
+     * regenerates on its own between fights and health is the thing that does
+     * not.
+     */
+    focusHealthCeiling: 0.25,
   },
 
   // --- the flask --------------------------------------------------------

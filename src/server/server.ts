@@ -49,7 +49,8 @@ import {
 } from './config.js';
 import { TickLoop } from './loop.js';
 import { regenerated } from './sim/resource.js';
-import { monsterById } from './data/monsters.js';
+import { ALL_MONSTERS, monsterById } from './data/monsters.js';
+import { RESTORATION } from './data/restoration.js';
 import { compareManifest, mismatchMessage, refusesConnection } from '../units/manifest.js';
 import { decodeAdminRequest, encodeAdminReply, type AdminPlayerRow } from './net/admin-messages.js';
 import { CodecError } from './net/codec.js';
@@ -101,6 +102,7 @@ import {
   spawnEntity,
   step,
 } from './sim/world.js';
+import { isEliteType, meterFraction } from './sim/restoration.js';
 import { NullTransport, type Channel, type ServerTransport } from './net/transport.js';
 import { ChunkManager } from './world/chunk-manager.js';
 import { PositionHistory } from './world/position-history.js';
@@ -200,6 +202,15 @@ interface Connection {
    */
   sentResource: number;
   sentResourceTick: number;
+  /**
+   * The health economy as this connection was last told it stood (spec 154).
+   *
+   * The meter is held *quantised to the byte the wire carries*, which is what
+   * keeps a bar that moves by a thousandth from marking itself dirty every tick.
+   * Both start at -1, so a client that has never been told is always told.
+   */
+  sentMeter: number;
+  sentCharges: number;
   /** Token bucket on map chunk sends (spec 072). */
   readonly chunkBudget: ChunkBudget;
   /** How often this connection may say a thing (spec 151). */
@@ -392,6 +403,8 @@ export class GameServer implements AdminHost {
       sentCooldowns: null,
       sentResource: -1,
       sentResourceTick: 0,
+      sentMeter: -1,
+      sentCharges: -1,
       chunkBudget: new ChunkBudget(
         MAP_CHUNK_BURST,
         MAP_CHUNK_REFILL_PER_SECOND,
@@ -864,6 +877,10 @@ export class GameServer implements AdminHost {
       level: session.record.level,
       zoneId: session.record.currentZone,
       health: session.record.health,
+      // The flask comes back as it was left (spec 154). `login` has already
+      // turned an absent field into a full one; the fallback here is only what
+      // `exactOptionalPropertyTypes` needs to see, and it is the same answer.
+      fallbackCharges: session.record.fallbackCharges ?? session.stats.traits.fallbackCharges,
     });
     this.state = spawned.state;
     this.players.attachEntity(playerId, spawned.entity.id);
@@ -1144,6 +1161,39 @@ export class GameServer implements AdminHost {
         .filter(([, readyAtTick]) => readyAtTick > tick)
         .map(([abilityId, readyAtTick]) => ({ abilityId, readyAtTick })),
       resource: entity.resource,
+      atTick: tick,
+    });
+  }
+
+  /**
+   * The health economy's two numbers, when either has moved (spec 154).
+   *
+   * Change-driven and owner-only for the same reasons as `sendCooldowns`, with
+   * one difference: there is nothing to model forward. The meter moves on kills
+   * and the flask on casts and rests, none of which a client can predict a curve
+   * for, so "has it changed" is a comparison against what was last sent rather
+   * than against what the client would have believed.
+   *
+   * The meter goes as a *fraction*, quantised to the byte the wire carries, and
+   * the comparison is made on that same quantised value -- otherwise a meter
+   * drifting by a thousandth marks itself dirty every tick and this becomes a
+   * per-tick broadcast of a number that draws the same bar.
+   */
+  private sendRestoration(connection: Connection, tick: number): void {
+    if (connection.entityId < 0) return;
+    const entity = this.state.entities.get(connection.entityId);
+    if (!entity) return;
+
+    const meter = Math.round(meterFraction(entity.restoration) * 255);
+    if (meter === connection.sentMeter && entity.fallbackCharges === connection.sentCharges) return;
+    connection.sentMeter = meter;
+    connection.sentCharges = entity.fallbackCharges;
+
+    this.send(connection, {
+      type: ServerMessageType.Restoration,
+      meter: meter / 255,
+      charges: entity.fallbackCharges,
+      maxCharges: entity.stats.traits.fallbackCharges,
       atTick: tick,
     });
   }
@@ -1501,6 +1551,10 @@ export class GameServer implements AdminHost {
         entity.position,
         entity.facing,
         entity.health,
+        // The flask, mirrored back like health (spec 154): the sim spends it and
+        // the rest loop refills it, so the record has to hear about both or a
+        // relog is the cheapest heal in the game.
+        entity.fallbackCharges,
       );
     }
 
@@ -1518,6 +1572,9 @@ export class GameServer implements AdminHost {
     // Cooldowns ride the same reasoning as corrections: rare, owner-only, and
     // the point of them is that the button greys out the moment it is spent.
     for (const connection of this.connections) this.sendCooldowns(connection, this.state.tick);
+    // The health economy rides the same reasoning (spec 154): rare, owner-only,
+    // and the point of it is that the flask greys out the moment it is drunk.
+    for (const connection of this.connections) this.sendRestoration(connection, this.state.tick);
     if (this.state.tick % BROADCAST_EVERY_N_TICKS === 0) {
       this.broadcastDeltas();
       for (const connection of this.connections) {
@@ -1657,6 +1714,12 @@ export class GameServer implements AdminHost {
         ...entity,
         position,
         health: session.stats.maxHealth,
+        // Death is the other reset point (spec 154): you come back at
+        // Hearthstead whole, flask included, and the meter is gone. That is the
+        // shape the whole economy is built around -- a bad run costs the
+        // momentum you had built, and never leaves you unable to start again.
+        fallbackCharges: entity.stats.traits.fallbackCharges,
+        restoration: 0,
         activity: ActivityValue.Idle,
         activityUntilTick: 0,
         targetId: null,
@@ -1840,7 +1903,14 @@ export class GameServer implements AdminHost {
       const visible: ServerEntity[] = [];
       for (const id of this.chunks.interestSet(connection.entityId)) {
         const entity = this.state.entities.get(id);
-        if (entity) visible.push(entity);
+        if (!entity) continue;
+        // A mote is replicated to exactly one client: the one it belongs to
+        // (spec 154). Filtering here rather than checking ownership at pickup is
+        // the stronger rule and the cheaper one -- a teammate cannot see one,
+        // cannot walk toward one, and cannot be accused of taking one, and the
+        // wire carries no ownership field for anybody to reason about.
+        if (entity.mote && entity.mote.ownerEntityId !== connection.entityId) continue;
+        visible.push(entity);
       }
       const delta = connection.delta.build(
         this.state.tick,
@@ -2029,6 +2099,54 @@ export class GameServer implements AdminHost {
           healed += 1;
         }
         return `healed ${healed} player(s)`;
+      }
+      // --- the health economy's debug controls (spec 154) -----------------
+      // Three levers, on the admin channel, because every one of them is a
+      // question a designer has mid-session and none of them is answerable by
+      // playing: how does a nearly-full meter behave, what does an empty flask
+      // feel like, and what does an elite's guarantee actually drop.
+      case 'meter': {
+        // `magnitude` is a *fraction* of the threshold, so "set it to 0.9" is
+        // the same instruction whatever the threshold is retuned to.
+        const fraction = Math.max(0, Math.min(1, magnitude));
+        let set = 0;
+        for (const session of this.players.all()) {
+          const entity = this.state.entities.get(session.entityId);
+          if (!entity) continue;
+          this.state = replaceEntity(this.state, {
+            ...entity,
+            restoration: RESTORATION.threshold * fraction,
+          });
+          set += 1;
+        }
+        return `meter set to ${Math.round(fraction * 100)}% for ${set} player(s)`;
+      }
+      case 'charges': {
+        let set = 0;
+        for (const session of this.players.all()) {
+          const entity = this.state.entities.get(session.entityId);
+          if (!entity) continue;
+          this.state = replaceEntity(this.state, {
+            ...entity,
+            fallbackCharges: Math.max(
+              0,
+              Math.min(entity.stats.traits.fallbackCharges, Math.round(magnitude)),
+            ),
+          });
+          set += 1;
+        }
+        return `flask set to ${Math.round(magnitude)} for ${set} player(s)`;
+      }
+      case 'elite': {
+        // The heaviest row in the table, which is what `isEliteType` classifies
+        // as elite -- asked of the data rather than named here, so a heavier
+        // monster added later is the one this conjures.
+        const elite = [...ALL_MONSTERS]
+          .filter((row) => isEliteType(row.id))
+          .sort((a, b) => b.experience - a.experience)[0];
+        if (!elite) return 'no elite in the monster table';
+        const spawned = this.spawnEntities(elite.id, x, y, Math.max(1, Math.round(magnitude || 1)));
+        return `elite: ${spawned} ${elite.name} at ${Math.round(x)}, ${Math.round(y)}`;
       }
       default:
         return '';

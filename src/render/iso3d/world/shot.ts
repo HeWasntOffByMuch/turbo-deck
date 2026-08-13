@@ -71,6 +71,16 @@ export class ShotRig {
   constructor(
     readonly look: ProjectileLook,
     radius: number,
+    /**
+     * An override colour for the orb, or absent for the arcane core it has
+     * always been (spec 154).
+     *
+     * Orb only, and deliberately: an arrow and a star are *objects* whose
+     * materials say what they are made of, where an orb is a bead of light and
+     * its colour is the whole of its identity. A mote reuses this rig rather
+     * than growing a second one, and this is the one thing it has to change.
+     */
+    tint?: number,
   ) {
     this.group.add(this.pivot);
 
@@ -84,7 +94,7 @@ export class ShotRig {
         break;
       default:
         this.spinner = null;
-        this.buildOrb(radius);
+        this.buildOrb(radius, tint);
         break;
     }
 
@@ -219,10 +229,10 @@ export class ShotRig {
   }
 
   /** The look every shot had before this spec, and what an unknown one gets. */
-  private buildOrb(radius: number): void {
+  private buildOrb(radius: number, tint?: number): void {
     const mesh = new THREE.Mesh(
       this.track(new THREE.IcosahedronGeometry(Math.max(3, radius), 0)),
-      this.track(new THREE.MeshBasicMaterial({ color: PALETTE.magicCore })),
+      this.track(new THREE.MeshBasicMaterial({ color: tint ?? PALETTE.magicCore })),
     );
     this.pivot.add(mesh);
   }

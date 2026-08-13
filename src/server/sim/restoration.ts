@@ -83,19 +83,26 @@ export const PVP_KILL_PREFIX = 'pvpKill:';
 export const ASSIST_PREFIX = 'dmg:';
 
 /**
- * A spawner's farm key, or the shared one for a body with no spawner.
+ * A spawner's farm key, or a per-type one for a body with no spawner.
  *
- * The shared key matters: an admin-conjured monster, or one a scripted
- * encounter placed, has `spawnerId === null`, and a rule keyed on the spawner
- * alone would make "having no home" the way out of every anti-farm measure in
- * this file.
+ * The fallback matters: an admin-conjured monster, or one a scripted encounter
+ * placed, has `spawnerId === null`, and a rule keyed on the spawner alone would
+ * make "having no home" the way out of every anti-farm measure in this file.
  */
-export function farmKey(spawnerId: string | null): string {
-  return `${FARM_PREFIX}${spawnerId ?? 'loose'}`;
+export function farmKey(victim: Pick<ServerEntity, 'spawnerId' | 'typeId'>): string {
+  // A body with no spawner is keyed by *type* rather than lumped into one
+  // bucket. Lumping was the first version and it was wrong in the direction
+  // that matters least but is easiest to hit: a scripted wave of five different
+  // monsters would have decayed as though it were one spawner farmed five
+  // times, so the anti-farm rule would have punished exactly the encounter a
+  // designer had built on purpose. Keyed by type it still catches the thing it
+  // is for -- conjuring the same monster over and over -- and lets a varied
+  // wave pay what it is worth.
+  return `${FARM_PREFIX}${victim.spawnerId ?? `type:${victim.typeId}`}`;
 }
 
-export function eliteKey(spawnerId: string | null): string {
-  return `${ELITE_PREFIX}${spawnerId ?? 'loose'}`;
+export function eliteKey(victim: Pick<ServerEntity, 'spawnerId' | 'typeId'>): string {
+  return `${ELITE_PREFIX}${victim.spawnerId ?? `type:${victim.typeId}`}`;
 }
 
 export function pvpKillKey(victimEntityId: number): string {
@@ -157,8 +164,8 @@ export function baseContributionOf(victim: ServerEntity): number {
 }
 
 /** How much of a kill's worth survives having farmed this spawner. */
-export function farmFactorOf(killer: ServerEntity, spawnerId: string | null, tick: number): number {
-  const stacks = stacksOf(killer.statuses, farmKey(spawnerId), tick);
+export function farmFactorOf(killer: ServerEntity, victim: ServerEntity, tick: number): number {
+  const stacks = stacksOf(killer.statuses, farmKey(victim), tick);
   return Math.max(RESTORATION.farm.floor, 1 - stacks * RESTORATION.farm.decayPerKill);
 }
 
@@ -210,7 +217,7 @@ export function contributionFor(
   const base = baseContributionOf(victim);
   if (base <= 0) return NO_CONTRIBUTION;
 
-  const farmFactor = farmFactorOf(killer, victim.spawnerId, tick);
+  const farmFactor = farmFactorOf(killer, victim, tick);
   const traits = killer.stats.traits;
   const B = RESTORATION.bonus;
   const sources: ContributionSource[] = [];
@@ -247,7 +254,13 @@ export interface MeterResult {
  * of what an elite is supposed to feel like.
  */
 export function advanceMeter(meter: number, progress: number): MeterResult {
-  const total = Math.max(0, (Number.isFinite(meter) ? meter : 0) + Math.max(0, progress));
+  // Both guarded for finiteness, and the second is not paranoia: `Math.max(0,
+  // NaN)` is NaN, so an unguarded progress would poison the meter permanently
+  // -- every later comparison against it is false and the body never produces
+  // another mote for the rest of its life.
+  const from = Number.isFinite(meter) ? meter : 0;
+  const added = Number.isFinite(progress) ? Math.max(0, progress) : 0;
+  const total = Math.max(0, from + added);
   const motes = Math.floor(total / RESTORATION.threshold);
   return { meter: total - motes * RESTORATION.threshold, motes };
 }
@@ -282,7 +295,16 @@ export function moteKindFor(body: ServerEntity): number {
   const maxHealth = body.stats.maxHealth;
   const healthDeficit = maxHealth > 0 ? 1 - body.health / maxHealth : 0;
   const resourceDeficit = 1 - body.resource / maxResource;
-  return healthDeficit >= resourceDeficit ? MoteKind.Vitality : MoteKind.Focus;
+  // **Vitality unless health is nearly full.** The plain "whichever deficit is
+  // larger" rule was the first version, and the balance harness showed exactly
+  // what is wrong with it: a Constitution build has an enormous health pool and
+  // a small resource pool, so a scratch is a tiny *fraction* of its health while
+  // one cast is a large fraction of its mana -- and the survivability stat got
+  // nothing but focus motes for a whole run. Resource also regenerates on its
+  // own and health does not, so a health economy that hands out mana whenever
+  // the pools happen to compare that way is giving away the only thing it has.
+  if (healthDeficit > RESTORATION.mote.focusHealthCeiling) return MoteKind.Vitality;
+  return resourceDeficit > healthDeficit ? MoteKind.Focus : MoteKind.Vitality;
 }
 
 /** What a mote of `kind` is worth to this body, before `applyHealing` scales it. */
@@ -385,7 +407,7 @@ export function creditKill(
   // significant, and once per spawner per window so a reset loop or a re-pull
   // is worth its meter progress and nothing more. Never in PvP -- a player kill
   // must not be a guaranteed reset, which is the whole of the snowball problem.
-  const eliteWindow = eliteKey(victim.spawnerId);
+  const eliteWindow = eliteKey(victim);
   let statuses = killerIn.statuses;
   if (!pvp && isEliteType(victim.typeId) && !hasStatus(statuses, eliteWindow, tick)) {
     guaranteed = Math.max(0, RESTORATION.elite.motes - count);
@@ -393,7 +415,7 @@ export function creditKill(
     statuses = applyStatus(statuses, eliteWindow, tick, RESTORATION.elite.guaranteeTicks);
   }
 
-  statuses = applyStatus(statuses, farmKey(victim.spawnerId), tick, RESTORATION.farm.windowTicks, {
+  statuses = applyStatus(statuses, farmKey(victim), tick, RESTORATION.farm.windowTicks, {
     maxStacks: RESTORATION.farm.maxStacks,
   });
   if (pvp) {
@@ -429,7 +451,7 @@ export function creditAssist(
   if (helper.kind !== EntityKindValue.Player || helper.health <= 0) {
     return { killer: helper, motes: [], contribution: NO_CONTRIBUTION, guaranteed: 0 };
   }
-  const base = baseContributionOf(victim) * farmFactorOf(helper, victim.spawnerId, tick);
+  const base = baseContributionOf(victim) * farmFactorOf(helper, victim, tick);
   const total = base * RESTORATION.assistFraction;
   if (total <= 0) {
     return { killer: helper, motes: [], contribution: NO_CONTRIBUTION, guaranteed: 0 };

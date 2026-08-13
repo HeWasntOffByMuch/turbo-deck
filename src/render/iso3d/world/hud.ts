@@ -76,6 +76,11 @@ export const HOTBAR: readonly string[] = [
   'bolt.seek',
   'ground.quake',
   'self.mend',
+  // The flask (spec 154). On the bar rather than on a key of its own, because it
+  // is an ability like every other and the only thing that makes it insurance is
+  // what it costs -- putting it somewhere special would be the interface
+  // claiming a distinction the rules do not make.
+  'self.hearthdraught',
   'channel.drain',
 ];
 
@@ -797,6 +802,12 @@ export function createHud(project: Projector): HudHandle {
       `guard ${Math.round((self?.poise ?? 0) * (stats?.traits.maxPoise ?? 0))}/` +
       `${Math.round(stats?.traits.maxPoise ?? 0)}   ` +
       `lvl ${view.level}   xp ${view.experience}\n` +
+      // The health economy, in the readout rather than as a bar (spec 154). The
+      // meter arrives as a fraction and is shown as one: the absolute progress
+      // and the threshold behind it are server tuning, and a client that knew
+      // both could work out exactly which kill produces the next mote.
+      `motes ${Math.round(view.restoration.meter * 100)}%   ` +
+      `flask ${view.restoration.charges}/${view.restoration.maxCharges}\n` +
       `monsters ${monsters}   corrections ${corrections}` +
       (view.connected ? '' : '   (disconnected)') +
       `\n${targetLine(view, targetId)}` +
@@ -990,5 +1001,11 @@ function formatSeconds(seconds: number): string {
  */
 function affordable(view: ClientView, ability: AbilityDefinition | null): boolean {
   if (!ability || !view.stats) return true;
+  // The flask's cost is a charge, not resource (spec 154), and an empty one is
+  // the same kind of "you cannot press this" as an empty pool. Read off the
+  // replicated count minus what a request in flight has already spent, so a
+  // second press inside the round trip is dimmed rather than refused.
+  const charges = ability.chargeCost ?? 0;
+  if (charges > 0 && view.restoration.charges < charges) return false;
   return ability.cost <= view.resource;
 }
