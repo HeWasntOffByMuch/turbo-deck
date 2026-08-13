@@ -26,6 +26,14 @@ shapes and heights and nothing about three.js, so it is checked in Node like the
 rest of this directory's arithmetic.
 
 ```ts
+/** The ground, memoized on a lattice and read back bilinearly. */
+export class SampledGround {
+  constructor(heightAt: HeightAt, lattice?: number, limit?: number);
+  readonly at: HeightAt;
+  invalidate(): void;
+  get size(): number;
+}
+
 /** A flat shape in its own frame: +X is the heading, +Z is to its left. */
 export interface DecalTemplate {
   /** Local XZ pairs, x0,z0,x1,z1,... */
@@ -72,16 +80,52 @@ Tessellation is derived from the size, not authored: the sample spacing targets
 one half of a terrain cell, so the residual error between samples is bounded by
 what the ground does over eleven units rather than by what it does over the
 whole indicator. Segment and ring counts are capped, so a 700-unit ring costs a
-few hundred height lookups a frame rather than an unbounded number.
+bounded number of vertices rather than a proportional one.
+
+Two things were learned by building it and are part of the design rather than
+notes on it.
+
+**What gets buried is an edge, not a vertex.** A vertex placed exactly on the
+heightfield is fine by construction; the straight line to the next one cuts
+under whatever the ground did in between. So a vertex takes the highest of five
+samples half a step around it, and — since what has to be cleared on a hillside
+is a slope rather than a constant — a further `SLOPE_LIFT` of the local spread
+is added, which is zero on level ground and leaves a flat-ground indicator
+exactly where the old one was. What no finite sampling can catch is a *crease*:
+a fold in the ground is a line, and five points can straddle a line. What that
+costs is bounded by the sampling step and the sharpness of the fold, and by
+nothing about the indicator — which is the whole improvement, since the flat
+mesh's error was proportional to the indicator's own size.
+
+**`heightAt` is expensive: 5.6µs a call on the baked arena.** It jitters four
+corners, evaluates two triangle planes and searches the neighbouring ring when
+a point falls outside its nominal cell. Projecting one 140-unit disc is ~1100
+vertices, so asking the heightfield directly costs 35ms a frame. `SampledGround`
+memoizes it on a lattice at the sampling step and interpolates: a cursor moving
+a few units a frame lands in the cells it was already in, so the cost settles at
+a few dozen fresh samples a frame. It is invalidated whenever terrain streams in,
+because a height sampled over ground that had not arrived is a height that has
+to be thrown away.
 
 ## Invariants tested
 
-- Every projected vertex sits exactly `lift` above `heightAt` at its own XZ, for
-  a sloped height function and for a bumpy one. This is the whole feature.
+- A decal's *surface* — sampled between its vertices, not at them — never sinks
+  into the ground, on a slope and on broken ground; and on a crease, what it
+  sinks by is bounded by the fold and the step and not by the indicator's size.
+  This is the whole feature.
+- A decal never floats further above the ground than what the ground itself does
+  over half a step, so "clears the ground" cannot be met by flying.
 - On flat ground, a projected decal is flat and at the same height the old one
   was — conforming changes nothing where there was nothing to conform to.
-- No edge of any template is longer than its `step` in the XZ plane, so the
-  conform error is bounded by the terrain's slope over one step.
+- No edge of any template's triangles is longer in the XZ plane than a grid
+  diagonal of its `step`, so the conform error is bounded by what the terrain
+  does over one step rather than over the whole indicator.
+- `SampledGround` is exact on its own lattice, blends between lattice points
+  rather than snapping (a staircase would terrace a decal on a hillside), asks
+  the heightfield once per lattice point however often it is read, stays warm
+  for a *moving* aim, forgets everything on `invalidate`, and starts over rather
+  than growing without bound. And a decal placed through it lands within a
+  couple of units of where the heightfield itself would have put it.
 - The outline still is the shape: a disc's furthest vertex is at `radius`, a
   sector's vertices all lie within its half-angle of forward, a lane spans
   `0..length` by `±width/2`, and a ring's radii all lie in `[inner, outer]` with
@@ -105,3 +149,22 @@ few hundred height lookups a frame rather than an unbounded number.
   always visible.
 - The blast rings `addEffect` leaves behind, and the VFX layer's own decals.
   Same fault, different owner, and neither is what a player aims with.
+- Making `heightAt` itself faster. It is 5.6µs because of work it genuinely
+  does, it lives in the deterministic core, and the server calls it every tick
+  for every entity — so speeding it up is a change with the sim on the other end
+  of it, and not something to do on the way past while fixing an indicator.
+
+## Measured
+
+`npx tsx scripts/preview-aim.ts`, at the steepest ground in `maps/arena.json`
+(it falls 430 units within 260 of the caster), against the terrain triangles the
+renderer really draws:
+
+| indicator | buried, pinned to one height | buried, on the ground |
+|---|---|---|
+| range ring, 420 | 217.3 | none (clears by 0.33) |
+| quake, radius 140 | 178.2 | 0.74 |
+| bolt lane, 700x16 | 276.7 | none (clears by 0.73) |
+
+A moving 420-unit range ring: 482 vertices, 48 heightfield samples a frame,
+0.42ms a frame — against 35ms for the same projection asking `heightAt` directly.

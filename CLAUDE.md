@@ -866,6 +866,43 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  pausing virtual time works but leaves the clock racing
                  afterwards, which silently starved the next measurement of
                  frames),
+                 ground-decal.ts (an indicator laid on the ground rather than
+                 over it, spec 153: the aim's shape, its range ring and the
+                 telegraph a committed cast draws. Each used to be one flat
+                 horizontal mesh placed at `ground(centre) + lift`, which is
+                 right at exactly one point of itself and wrong everywhere else
+                 the moment the ground is not level -- a 420-unit range ring near
+                 a hill was two hundred units inside it. A transform cannot
+                 express "and follow the hill", so the mesh's transform is never
+                 touched and its *vertices* are world-space and placed on the
+                 heightfield, rebuilt only when the shape changes and rewritten
+                 in place every frame. Three things it holds that were each
+                 learned by getting them wrong. **What gets buried is an edge,
+                 not a vertex** -- a vertex placed exactly on the ground was
+                 always fine, and the straight line to the next one is what cuts
+                 under the bump in between, so a vertex takes the highest of five
+                 samples half a step around it, plus a fraction of the local
+                 spread, which is zero on the flat and leaves a level-ground
+                 indicator exactly where the old one was. What no sampling can
+                 catch is a **crease**, because a fold is a line and five points
+                 can straddle a line -- but what a crease costs is set by the
+                 step and the fold and by *nothing about the indicator*, which is
+                 the whole improvement, since the flat mesh was wrong in
+                 proportion to its own size. And **`heightAt` costs 5.6us a
+                 call**: it jitters four corners, evaluates two triangle planes
+                 and searches the ring of neighbours when a point lands outside
+                 its nominal cell, so one 140-unit disc is 1100 vertices and 35ms
+                 a frame. `SampledGround` memoizes it on a lattice at the
+                 sampling step and blends between -- a cursor moving three units
+                 a frame asks about the cells it was already in, so the cost
+                 settles at a few dozen fresh samples a frame and 0.42ms.
+                 Invalidated whenever a chunk streams in, because a height
+                 sampled over ground that had not arrived is a height that has to
+                 be thrown away. `npx tsx scripts/preview-aim.ts` is the picture
+                 and the acceptance numbers, over the arena's real steepest
+                 ground and against the terrain triangles the renderer actually
+                 draws -- rasterised in software, because what is being looked at
+                 is a shape rather than something that happens over time),
                  inventory-model.ts, character-model.ts and shop-model.ts (what
                  the bag, the sheet and the shop are handed -- `src/ui/` may not
                  reach the sim, so the replicated facts and the content tables
