@@ -35,17 +35,21 @@ describe('monsterLookFor', () => {
     }
   });
 
-  it('never hands two bodies the same tuning object', () => {
-    // `MechRig` holds its tuning live and reads the size every frame, so one
-    // shared record would mean resizing one spider resized the whole nest.
+  it('never hands two bodies the same records', () => {
+    // `MechRig` holds both live and re-reads them every frame, so one shared
+    // record would mean recolouring one spider recoloured the whole nest.
     const first = monsterLookFor('small_spider');
     const second = monsterLookFor('small_spider');
     expect(first).not.toBeNull();
     expect(first?.tuning).not.toBe(second?.tuning);
+    expect(first?.appearance).not.toBe(second?.appearance);
 
     (first?.tuning as Record<string, number>)['sizeScale'] = 9;
+    if (first) first.appearance.bodyColor = 0xff0000;
     expect(second?.tuning.sizeScale).toBe(0.6);
+    expect(second?.appearance.bodyColor).toBe(PALETTE.enemySpider);
     expect(monsterLookFor('small_spider')?.tuning.sizeScale).toBe(0.6);
+    expect(monsterLookFor('small_spider')?.appearance.bodyColor).toBe(PALETTE.enemySpider);
   });
 });
 
@@ -53,10 +57,10 @@ describe('the small spider', () => {
   const look = monsterLookFor('small_spider');
 
   it('is a black sphere on black legs', () => {
-    expect(look?.body).toBe('sphere');
-    expect(look?.bodyColor).toBe(PALETTE.enemySpider);
+    expect(look?.appearance.shape).toBe('sphere');
+    expect(look?.appearance.bodyColor).toBe(PALETTE.enemySpider);
     // Stated rather than left to the rig's default, which is the body darkened.
-    expect(look?.legColor).toBe(PALETTE.enemySpider);
+    expect(look?.appearance.legColor).toBe(PALETTE.enemySpider);
   });
 
   it('carries exactly the numbers it was tuned to, and no others', () => {

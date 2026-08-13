@@ -205,10 +205,9 @@ function render(tris: readonly Tri[], size: number): Uint8ClampedArray {
 /** Exactly how `scene.ts` builds a monster's rig. */
 function rigFor(typeId: string): MechRig {
   const look = monsterLookFor(typeId);
-  return new MechRig(typeId, look?.bodyColor, {
+  return new MechRig(typeId, undefined, {
     tuning: { ...defaultMechTuning(), ...look?.tuning },
-    ...(look?.body === undefined ? {} : { body: look.body }),
-    ...(look?.legColor === undefined ? {} : { legColor: look.legColor }),
+    ...(look === null ? {} : { appearance: look.appearance }),
   });
 }
 
@@ -284,7 +283,7 @@ MONSTERS.forEach((monster, row) => {
   const look = monsterLookFor(monster.id);
   process.stdout.write(
     `${monster.name}: radius ${monster.radius}, speed ${monster.stats.moveSpeed}, ` +
-      `${look ? `${look.body} body at ${look.tuning.sizeScale ?? 1}x` : 'no look row (box body at 1x)'}, ` +
+      `${look ? `${look.appearance.shape} body at ${look.tuning.sizeScale ?? 1}x` : 'no look row (box body at 1x)'}, ` +
       `${walking.length} triangles\n`,
   );
 });

@@ -29,10 +29,10 @@
  * place a rig is actually constructed.
  */
 
-import type { MechBodyShape, MechTuning } from '../rigs.js';
+import type { MechAppearance, MechBodyShape, MechTuning } from '../rigs.js';
 import { PALETTE } from '../palette.js';
 
-export type { MechBodyShape };
+export type { MechAppearance, MechBodyShape };
 
 /**
  * The cosmetic half of a mech's tuning: every field except the two sim inputs.
@@ -44,15 +44,14 @@ export type { MechBodyShape };
 export type MechRigTuning = Partial<Omit<MechTuning, 'moveSpeed' | 'turnRate'>>;
 
 export interface MonsterLook {
-  /** The upper body's shape. `'box'` is the mech chassis every monster draws. */
-  readonly body: MechBodyShape;
-  readonly bodyColor: number;
   /**
-   * The legs' colour. Omitted means the rig's own default, which is the body
-   * darkened -- the contrast a mech chassis wants, and a difference nobody can
-   * see on a body that is already near black.
+   * The shape and the colours, in the record the rig reads live.
+   *
+   * The same type the movement sandbox's colour wells write into, so what
+   * somebody tunes over there is what gets pasted in here -- rather than a
+   * second shape that has to be mapped across and can drift.
    */
-  readonly legColor?: number;
+  readonly appearance: MechAppearance;
   readonly tuning: MechRigTuning;
 }
 
@@ -69,11 +68,13 @@ export interface MonsterLook {
  * vehicle and this is meant to scuttle.
  */
 const SMALL_SPIDER: MonsterLook = {
-  body: 'sphere',
-  // Legs the same black as the body rather than the rig's darkened default: a
-  // body at 0x141418 has nothing left to darken toward.
-  bodyColor: PALETTE.enemySpider,
-  legColor: PALETTE.enemySpider,
+  appearance: {
+    shape: 'sphere',
+    // Legs the same black as the body rather than the rig's darkened default:
+    // a body at 0x141418 has nothing left to darken toward.
+    bodyColor: PALETTE.enemySpider,
+    legColor: PALETTE.enemySpider,
+  },
   tuning: {
     sizeScale: 0.6,
     raisedLegs: 0,
@@ -92,13 +93,14 @@ const LOOKS: ReadonlyMap<string, MonsterLook> = new Map([['small_spider', SMALL_
 /**
  * The look for a monster type, or `null` to build it the way it is built today.
  *
- * The tuning is copied on the way out. Two bodies of the same type must not
- * share one object: `MechRig` holds its tuning live and the size is read every
- * frame, so one shared record would mean resizing one spider resized the nest.
+ * Both records are copied on the way out. Two bodies of the same type must not
+ * share either: `MechRig` holds both live and re-reads them every frame, so one
+ * shared record would mean recolouring one spider recoloured the whole nest.
  */
 export function monsterLookFor(typeId: string): MonsterLook | null {
   const look = LOOKS.get(typeId);
-  return look === undefined ? null : { ...look, tuning: { ...look.tuning } };
+  if (look === undefined) return null;
+  return { appearance: { ...look.appearance }, tuning: { ...look.tuning } };
 }
 
 /** Every type id with a look, for a test or a panel. Sorted, so it is stable. */

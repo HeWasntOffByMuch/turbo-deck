@@ -1587,10 +1587,9 @@ export class WorldScene {
       // rather than in the table because `defaultMechTuning` lives in the rig
       // module, and the pure half of this directory does not import three.
       const look = monsterLookFor(typeId);
-      const mech = new MechRig(typeId, look?.bodyColor, {
+      const mech = new MechRig(typeId, undefined, {
         tuning: { ...defaultMechTuning(), ...look?.tuning },
-        ...(look?.body === undefined ? {} : { body: look.body }),
-        ...(look?.legColor === undefined ? {} : { legColor: look.legColor }),
+        ...(look === null ? {} : { appearance: look.appearance }),
       });
       body = {
         group: mech.group,
