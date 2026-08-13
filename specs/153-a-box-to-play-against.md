@@ -34,11 +34,13 @@ number rather than a guess (`npm run server` plus `npm run server:bots`):
 | RSS | 129 MB | 163 MB |
 | Traffic | — | ~15 KB/s per player |
 
-So ~0.8% of a core and ~2 MB per connected player. The smallest shared-vCPU box
-anybody sells covers dozens of players; **bandwidth is the resource that binds
-first**, since 20Hz deltas to twenty players around the clock is ~780 GB/month.
-That is what picks a host with traffic included over a host that meters egress,
-and it is why this spec buys a box rather than a platform.
+So ~0.8% of a core and ~2 MB per connected player. The sim is single-threaded,
+so one core is what it gets and ~100 players is where that core saturates --
+which no box in this price range struggles to supply. **Bandwidth is what
+differs between hosts**: 20Hz deltas to twenty players around the clock is
+~780 GB/month, metered at $0.02-0.09/GB by every platform and included by every
+box. That is what picks a box over a platform here, and CPU is still the number
+that caps the players on it.
 
 ## Shape
 

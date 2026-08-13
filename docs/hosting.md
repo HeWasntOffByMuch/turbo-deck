@@ -16,8 +16,17 @@ other:
 | Traffic | — | ~15 KB/s per player |
 
 So roughly **0.8% of a core and 2 MB per connected player**, on top of a
-constant 1.4% and 129 MB. Fifty players is about half a core. The smallest box
-anybody sells is enough compute; what runs out first is bandwidth.
+constant 1.4% and 129 MB.
+
+Two ceilings follow, and they are not the same number. The tick loop, the
+socket reads and the broadcast all run on **one thread**, so the sim gets one
+core however many the box has: at 0.8% each, a core saturates somewhere around
+**100-120 players**, and a second vCPU buys headroom for the OS and Caddy
+rather than more players. Traffic runs out much later — 15 KB/s each is ~39 GB
+per player-month, so a 20 TB allowance covers roughly 500 continuously
+connected players. **CPU is the capacity ceiling; bandwidth is the cost
+ceiling**, and which one you notice depends on whether you are counting players
+or reading an invoice.
 
 Four properties decide the hosting shape, and none of them is a preference:
 
@@ -41,17 +50,54 @@ host:
 
 | | compute | 780 GB egress | total |
 |---|---|---|---|
-| Hetzner CX22 (2 vCPU, 4 GB, 20 TB traffic) | ~€4.50 | included | **~€4.50** |
+| Hetzner CX23 (2 vCPU, 4 GB, 20 TB traffic) | €5.49 | included | **~€6** |
 | Fly.io shared-cpu-1x 512 MB, `waw` | ~$3 | ~$16 at $0.02/GB | ~$19 |
 | DigitalOcean basic droplet (1 vCPU, 1 GB) | $6 | included in 1 TB | ~$6 |
 | AWS Lightsail 1 GB | $5 | included in 2 TB | ~$5 |
 | AWS EC2 t4g.small + egress | ~$12 | ~$70 at $0.09/GB | ~$82 |
 
-Prices as of August 2026 and worth re-checking — Hetzner raised cloud prices
-30-50% on 1 April 2026, so the CX22 is ~€4.50 rather than the €3.29 that older
-comparisons quote. Fly's convenience is real (it owns TLS, restarts and OS
-patching, and it has a Warsaw region); it is priced per GB, and this game's
-whole job is sending GBs of deltas.
+Prices as of August 2026, and **re-check them before ordering**: Hetzner raised
+cloud prices twice this year, ~30-50% on 1 April and another 30-38% on the CX
+and CAX lines on 15 June (the CPX and CCX lines roughly doubled to tripled in
+the same round). Third-party comparison sites are full of both pre-increase
+numbers and post-increase ones with no dates on them.
+
+Fly's convenience is real — it owns TLS, restarts and OS patching, and it has a
+Warsaw region. It is also priced per GB, and this game's whole job is sending
+GBs of deltas.
+
+## The exact plan
+
+**Hetzner Cloud CX23**, in Falkenstein (`fsn1`), Nuremberg (`nbg1`) or Helsinki
+(`hel1`).
+
+| | |
+|---|---|
+| vCPU | 2 shared, Intel Xeon (**x86-64** — this matters, see below) |
+| RAM | 4 GB |
+| Disk | 40 GB NVMe |
+| Traffic | 20 TB/month included, €1/TB after |
+| Price | €5.49/month, plus €0.50/month for the primary IPv4 |
+| Image | Ubuntu 24.04 |
+
+Against the measurements above that is ~4x the RAM the process needs at its
+ceiling and enough traffic for five times the players one core can serve. It is
+the cheapest plan that includes 20 TB; there is nothing to gain by going
+smaller and nothing this workload can use by going bigger.
+
+Two near-misses, so they can be ruled out rather than reconsidered later:
+
+- **CAX11** (€5.99, 2 vCPU, 4 GB, 20 TB) is the Arm64/Ampere equivalent — fifty
+  cents more, and the deploy workflow builds an **amd64** image. Going Arm means
+  adding `platforms: linux/arm64` to the build step; without that the container
+  dies with `exec format error`, which reads like a broken image rather than a
+  wrong architecture. Choose x86 unless something else forces the issue.
+- **CPX11** (€5.99, 2 vCPU AMD, 2 GB) includes **1 TB** of traffic, not 20. It
+  is more money for less RAM and 5% of the allowance, which twenty players would
+  exhaust in a fortnight.
+
+CX and CAX are EU-only (Germany and Finland). That is the whole location menu,
+and per the paragraph below it does not matter much which one you take.
 
 **Latency is not what picks the host.** Falkenstein is ~25ms from Poland against
 ~5ms for a Warsaw datacenter, and that 20ms is worth less here than it sounds:
@@ -65,7 +111,7 @@ would actually hurt is hosting in `us-east` and playing from Europe.
 
 ### Once, on the box
 
-A CX22 in Falkenstein or Helsinki, Ubuntu 24.04. From a fresh machine:
+A CX23 as specified above, Ubuntu 24.04. From a fresh machine:
 
 ```sh
 # as root

@@ -73,6 +73,12 @@ jobs:
         with:
           context: .
           push: true
+          # amd64 only, because the box is a Hetzner CX23 (Intel). Stated rather
+          # than left to the runner's default so the assumption is visible: an
+          # Arm box (CAX11 and the rest of that line) needs `linux/arm64` here,
+          # and without it the container dies with `exec format error`, which
+          # reads like a broken image rather than a wrong architecture.
+          platforms: linux/amd64
           # Both tags: `main` is what compose.yml defaults to, and the sha is
           # what a rollback names. An image that only had a moving tag would
           # make "put back what was running an hour ago" impossible.
