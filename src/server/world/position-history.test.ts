@@ -18,6 +18,7 @@ import { EntityKindValue, type ServerEntity, type ServerInput, type ServerWorldS
 import { DEFAULT_LIVE_CONFIG } from '../config.js';
 import { abilityById } from '../data/abilities.js';
 import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
+import { NEUTRAL_TRAITS } from '../player/derived.js';
 import type { Vec3 } from '../state/types.js';
 
 function body(id: number, x: number, y: number): ServerEntity {
@@ -99,6 +100,7 @@ const STATS = {
   maxResource: 100,
   resourceRegen: 0,
   basicAttackId: ATTACK,
+  traits: NEUTRAL_TRAITS,
 };
 
 interface Fight {

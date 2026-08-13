@@ -200,14 +200,13 @@ describe('nothing a client sends carries a stat', () => {
     ]);
 
     const samples: ClientMessage[] = [
-      { type: ClientMessageType.Hello, playerId: 'p', displayName: 'P', protocolVersion: 1, token: '', assetManifest: '' },
+      { type: ClientMessageType.Hello, playerId: 'p', displayName: 'P', protocolVersion: 1, token: '', resumeToken: '', assetManifest: '' },
       { type: ClientMessageType.Ping, nonce: 1 },
       { type: ClientMessageType.Equip, slot: 'head', itemId: 'helm.leather' },
       { type: ClientMessageType.Unequip, slot: 'head' },
       { type: ClientMessageType.SpendSkillPoint, skillId: 'str.crushingBlows' },
       { type: ClientMessageType.AllocateAttribute, attribute: 0 },
       { type: ClientMessageType.RespecAttributes },
-      { type: ClientMessageType.SpendSkillPoint, skillId: 'str.crushingBlows' },
       { type: ClientMessageType.Chat, text: 'hi' },
       { type: ClientMessageType.CancelCast, afterInputSeq: 3 },
     ];
@@ -232,6 +231,7 @@ describe('nothing a client sends carries a stat', () => {
       buttons: 0,
       predictedX: 900,
       predictedY: 900,
+      renderLagTicks: 0,
     };
     const decoded = decodeClientMessage(encodeClientMessage(input));
     expect(Object.keys(decoded).some((key) => forbiddenStatName(key))).toBe(false);
